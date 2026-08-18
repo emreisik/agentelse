@@ -1,3 +1,5 @@
+import { appHref } from "@/lib/app-url";
+
 export type PricingTier = {
   id: "start" | "growth" | "scale" | "enterprise";
   name: string;
@@ -8,9 +10,7 @@ export type PricingTier = {
   usageUnitLabel?: string;
   highlighted?: boolean;
   badge?: string;
-  // href: null renders a plain, non-navigating button (login/signup isn't
-  // wired up yet). Only "Contact sales" goes anywhere.
-  cta: { label: string; href: string | null };
+  cta: { label: string; href: string };
 };
 
 // Single source of truth for tier copy — shared verbatim by the homepage's
@@ -33,7 +33,7 @@ export const PRICING_TIERS: PricingTier[] = [
     ],
     cta: {
       label: "Start free",
-      href: null,
+      href: appHref("/register"),
     },
   },
   {
@@ -56,7 +56,7 @@ export const PRICING_TIERS: PricingTier[] = [
     badge: "Most popular",
     cta: {
       label: "Build your AI team",
-      href: null,
+      href: appHref("/register"),
     },
   },
   {
@@ -77,7 +77,7 @@ export const PRICING_TIERS: PricingTier[] = [
     ],
     cta: {
       label: "Start scaling",
-      href: null,
+      href: appHref("/register"),
     },
   },
   {

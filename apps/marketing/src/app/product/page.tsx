@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { appHref } from "@/lib/app-url";
 import { AppKanbanShowcase } from "@/components/marketing/home/app-kanban-showcase";
 import { FinalCta } from "@/components/marketing/final-cta";
 import {
@@ -303,7 +304,11 @@ export default function ProductPage() {
               where it isn&rsquo;t.
             </p>
             <div className="mt-2 flex flex-wrap gap-3">
-              <Button className="h-11 px-6">
+              <Button
+                className="h-11 px-6"
+                render={<Link href={appHref("/register")} />}
+                nativeButton={false}
+              >
                 Start with your first brand
                 <ArrowUpRight />
               </Button>

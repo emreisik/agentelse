@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { appHref } from "@/lib/app-url";
 import { Reveal } from "@/components/marketing/reveal";
 import { IntegrationIcons } from "@/components/marketing/integration-icons";
 
@@ -19,7 +20,11 @@ export function Hero() {
             continuously.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            <Button className="h-11 px-6">
+            <Button
+              className="h-11 px-6"
+              render={<Link href={appHref("/register")} />}
+              nativeButton={false}
+            >
               Start with your first brand
               <ArrowUpRight />
             </Button>

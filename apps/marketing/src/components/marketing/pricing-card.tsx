@@ -50,9 +50,8 @@ export function PricingCard({ tier }: { tier: PricingTier }) {
       <Button
         variant={tier.highlighted ? "default" : "outline"}
         className="h-10 w-full"
-        {...(tier.cta.href
-          ? { render: <Link href={tier.cta.href} />, nativeButton: false }
-          : {})}
+        render={<Link href={tier.cta.href} />}
+        nativeButton={false}
       >
         {tier.cta.label}
       </Button>

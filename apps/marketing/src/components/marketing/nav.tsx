@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ArrowUpRight, Menu } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { appHref } from "@/lib/app-url";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -47,10 +48,19 @@ export function MarketingNav() {
         <DesktopNav />
 
         <div className="hidden items-center gap-2.5 xl:flex">
-          <Button variant="secondary" className="h-10 px-4">
+          <Button
+            variant="secondary"
+            className="h-10 px-4"
+            nativeButton={false}
+            render={<Link href={appHref("/login")} />}
+          >
             Sign in
           </Button>
-          <Button className="h-10 px-4">
+          <Button
+            className="h-10 px-4"
+            nativeButton={false}
+            render={<Link href={appHref("/register")} />}
+          >
             Start free
             <ArrowUpRight />
           </Button>
@@ -93,10 +103,19 @@ export function MarketingNav() {
               ))}
             </nav>
             <div className="mt-auto flex flex-col gap-2 border-t border-border p-4">
-              <Button variant="secondary" className="h-10">
+              <Button
+                variant="secondary"
+                className="h-10"
+                render={<Link href={appHref("/login")} />}
+                nativeButton={false}
+              >
                 Sign in
               </Button>
-              <Button className="h-10">
+              <Button
+                className="h-10"
+                render={<Link href={appHref("/register")} />}
+                nativeButton={false}
+              >
                 Start free
                 <ArrowUpRight />
               </Button>

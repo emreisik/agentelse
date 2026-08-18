@@ -249,13 +249,8 @@ export async function AppShell({
           className="flex items-center gap-2.5 border-b border-sidebar-border px-4 py-4 transition-opacity hover:opacity-80"
         >
           <LogoBadge size="sm" />
-          <div className="min-w-0">
-            <div className="font-heading text-sm font-semibold tracking-tight text-sidebar-foreground">
-              Agentelse
-            </div>
-            <div className="truncate text-xs text-muted-foreground">
-              {workspace?.name ?? "—"}
-            </div>
+          <div className="min-w-0 font-heading text-sm font-semibold tracking-tight text-sidebar-foreground">
+            Agentelse
           </div>
         </Link>
 

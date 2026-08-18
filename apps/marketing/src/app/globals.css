@@ -1,0 +1,276 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-openai-sans);
+  --font-heading: var(--font-openai-sans);
+  --font-mono: var(--font-openai-sans);
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.4;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.4;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.55;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.26;
+  --text-2xl: 2rem;
+  --text-2xl--line-height: 1.2;
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-special: var(--special);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ============================================================
+   Agentelse — clean monochrome theme (OpenAI/api-style reference):
+   pure white ground, near-black ink, no signature color. Hierarchy
+   comes from type, weight and spacing, not from a brand hue.
+   ============================================================ */
+:root {
+  --font-openai-sans: "OpenAI Sans", var(--font-openai-sans-fallback),
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  --background: #ffffff;
+  --foreground: #0d0d0d;
+  --card: #ffffff;
+  --card-foreground: #0d0d0d;
+  --popover: #ffffff;
+  --popover-foreground: #0d0d0d;
+  --primary: #0d0d0d;
+  --primary-foreground: #ffffff;
+  --secondary: #f5f5f5;
+  --secondary-foreground: #0d0d0d;
+  --muted: #fafafa;
+  --muted-foreground: #666666;
+  --accent: #f5f5f5;
+  --accent-foreground: #0d0d0d;
+  --destructive: #dc2626;
+  --warning: #b45309;
+  --success: #16a34a;
+  --special: #6d28d9;
+  --border: #e5e7eb;
+  --input: #e5e7eb;
+  --ring: rgba(13, 13, 13, 0.3);
+  --radius: 0.875rem;
+
+  /* No signature color — every "accent" reference below resolves to ink or
+     a neutral gray, so existing components (signal-flow line, highlighted
+     pricing tier, StatusPill "accent" tone) stay monochrome automatically
+     without needing per-component edits. */
+  --agentelse-accent: #0d0d0d;
+  --agentelse-accent-foreground: #ffffff;
+  --agentelse-accent-soft: #f5f5f5;
+  --agentelse-line: var(--border);
+  --agentelse-ink-muted: var(--muted-foreground);
+
+  /* OpenAI.com production typography scale. */
+  --agentelse-text-caption: 0.8125rem;
+  --agentelse-text-label: 0.875rem;
+  --agentelse-text-body: 1rem;
+  --agentelse-text-body-lg: 1.125rem;
+  --agentelse-text-lead: 1.125rem;
+  --agentelse-text-lead-lg: 1.125rem;
+  --agentelse-text-h3: 1.375rem;
+  --agentelse-text-h2: clamp(2rem, 1.45rem + 2.35vw, 3rem);
+  --agentelse-text-h1: clamp(2.5rem, 2.05rem + 1.9vw, 3rem);
+  --agentelse-text-display: clamp(2.75rem, 2.05rem + 3vw, 4rem);
+
+  /* rhythm */
+  --agentelse-space-section-y: clamp(4rem, 4rem + 4vw, 8rem);
+  --agentelse-space-gutter: clamp(1.25rem, 1rem + 2vw, 3rem);
+  --agentelse-container: 1280px;
+  --agentelse-container-wide: 1440px;
+
+  /* motion */
+  --agentelse-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --agentelse-duration-fast: 150ms;
+  --agentelse-duration-base: 400ms;
+  --agentelse-duration-slow: 700ms;
+  --agentelse-duration-pulse: 2400ms;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background font-sans text-foreground;
+    font-size: var(--agentelse-text-body);
+    line-height: 1.5;
+    font-feature-settings:
+      "liga" 1,
+      "calt" 1;
+    font-kerning: normal;
+  }
+}
+
+@utility agentelse-container {
+  max-width: var(--agentelse-container);
+  margin-inline: auto;
+  padding-inline: var(--agentelse-space-gutter);
+}
+
+@utility agentelse-container-wide {
+  max-width: var(--agentelse-container-wide);
+  margin-inline: auto;
+  padding-inline: var(--agentelse-space-gutter);
+}
+
+@utility agentelse-section-y {
+  padding-block: var(--agentelse-space-section-y);
+}
+
+@utility agentelse-text-display {
+  font-size: var(--agentelse-text-display);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+@utility agentelse-text-h1 {
+  font-size: var(--agentelse-text-h1);
+  font-weight: 400;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+
+@utility agentelse-text-h2 {
+  font-size: var(--agentelse-text-h2);
+  font-weight: 400;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+
+@utility agentelse-text-h3 {
+  font-size: var(--agentelse-text-h3);
+  font-weight: 500;
+  line-height: 1.26;
+  letter-spacing: -0.01em;
+}
+
+@utility agentelse-text-lead {
+  font-size: var(--agentelse-text-lead);
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: 0;
+}
+
+@utility agentelse-text-body {
+  font-size: var(--agentelse-text-body);
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+@utility agentelse-text-label {
+  font-size: var(--agentelse-text-label);
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
+@utility agentelse-text-caption {
+  font-size: var(--agentelse-text-caption);
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+}
+
+@custom-variant agentelse-visible (&[data-reveal="visible"]);
+
+.agentelse-reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity var(--agentelse-duration-slow) var(--agentelse-ease),
+    transform var(--agentelse-duration-slow) var(--agentelse-ease);
+}
+.agentelse-reveal[data-reveal="visible"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@keyframes agentelse-signal-flow {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.agentelse-signal-path {
+  stroke-dasharray: 6 18;
+  animation: agentelse-signal-flow var(--agentelse-duration-pulse) linear infinite;
+}
+
+/* The hub node in every FlowDiagram (Agency Director) — a slow breathing
+   glow standing in for "always thinking, always on", not a loud effect. */
+@keyframes agentelse-hub-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--agentelse-accent) 22%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklch, var(--agentelse-accent) 0%, transparent);
+  }
+}
+.agentelse-hub-pulse {
+  animation: agentelse-hub-pulse 2.6s ease-in-out infinite;
+}
+
+/* The "Autonomous" live indicator in the app showcase's browser chrome. */
+@keyframes agentelse-live-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.agentelse-live-dot {
+  animation: agentelse-live-dot 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agentelse-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .agentelse-signal-path {
+    animation: none;
+  }
+  .agentelse-hub-pulse {
+    animation: none;
+  }
+  .agentelse-live-dot {
+    animation: none;
+  }
+}

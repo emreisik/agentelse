@@ -1,0 +1,168 @@
+import "server-only";
+
+// Side-effect wiring module: registers the late setup-stage runners and the
+// intelligence pipeline steps into the orchestrator/engine extension points.
+// Imported once by ExecutionWorker so a single import activates the full
+// Agency OS loop without creating module cycles.
+
+import { CouncilEngine } from "@/server/agency/council/council-engine";
+import {
+  AgencyDirector,
+  registerWorkPlanBuilder,
+} from "@/server/agency/director/agency-director";
+import { WorkHandoffEngine } from "@/server/agency/handoffs/work-handoff-engine";
+import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
+import { IntelligenceEngine } from "@/server/agency/intelligence/intelligence-engine";
+import { OpportunityEngine } from "@/server/agency/opportunities/opportunity-engine";
+import { SignalUniverse } from "@/server/agency/signals/signal-universe";
+import { registerSetupStageRunner } from "@/server/agency/setup/project-setup-orchestrator";
+import {
+  registerAgencyTickStep,
+  registerTaskCompletedHandler,
+} from "@/server/agency/continuous/continuous-agency-engine";
+import { LearningEngine } from "@/server/agency/learning/learning-engine";
+import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
+import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
+import { WorkPlanProgressor } from "@/server/agency/work-plans/work-plan-progressor";
+import { IdeaRepository } from "@/server/repositories/idea.repository";
+import { InsightRepository } from "@/server/repositories/insight.repository";
+import { OpportunityRepository } from "@/server/repositories/opportunity.repository";
+import { pollTelegramApprovals } from "@/server/integrations/telegram-approval-poller";
+
+// --- Setup stages 9-11 (spec section 5) ------------------------------------
+
+registerSetupStageRunner("INITIAL_OPPORTUNITIES", async (scope) => {
+  await IntelligenceEngine.synthesizeInsights(scope);
+  const insights = await InsightRepository.listForProject(scope.projectId, {
+    status: "NEW",
+    limit: 10,
+  });
+  await Promise.all(
+    insights.map((insight) =>
+      OpportunityEngine.evaluateInsight(insight.id, scope.projectId),
+    ),
+  );
+});
+
+registerSetupStageRunner("INITIAL_IDEA_PORTFOLIO", async (scope) => {
+  const opportunities = await OpportunityRepository.listForProject(
+    scope.projectId,
+    { status: "EVALUATED", limit: 3 },
+  );
+  for (const opportunity of opportunities) {
+    await IdeaFoundry.generateForOpportunity(opportunity.id, scope.projectId);
+  }
+  // Council pass over the fresh portfolio (bounded parallel batches).
+  const raw = await IdeaRepository.listForProject(scope.projectId, {
+    status: "RAW",
+    limit: 20,
+  });
+  const BATCH = 5;
+  for (let i = 0; i < raw.length; i += BATCH) {
+    await Promise.all(
+      raw
+        .slice(i, i + BATCH)
+        .map((idea) => CouncilEngine.evaluateIdea(idea.id, scope.projectId)),
+    );
+  }
+});
+
+registerSetupStageRunner("INITIAL_WORK_PLAN", async (scope) => {
+  const shortlisted = await IdeaRepository.listForProject(scope.projectId, {
+    status: "SHORTLISTED",
+    limit: 10,
+  });
+  // Per-idea error boundary: one idea that can't be decided (e.g. its
+  // opportunity has no linked ProjectGoal — GoalEngine.assertGoalsLinked)
+  // must not abort the whole stage. Without this, that single idea sorts
+  // first on every retry and the stage fails identically forever, since
+  // nothing here ever mutates its status to move it out of the way.
+  for (const idea of shortlisted) {
+    if (idea.councilEvaluations.length === 0) continue;
+    try {
+      await AgencyDirector.decideOnIdea(idea.id, scope.projectId);
+    } catch (error) {
+      console.error(
+        `[agency-wiring] decideOnIdea failed for idea ${idea.id} (${idea.title}):`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+});
+
+// --- Continuous loop steps (spec section 33, pipeline order) ----------------
+
+registerAgencyTickStep({
+  name: "signal-scans",
+  run: () => SignalUniverse.runDueScans(10),
+});
+registerAgencyTickStep({
+  name: "signal-processing",
+  run: () => IntelligenceEngine.processNewSignals(20),
+});
+registerAgencyTickStep({
+  name: "insight-synthesis",
+  run: async () => {
+    const projects = await IntelligenceEngine.projectsNeedingInsights(5);
+    for (const scope of projects) {
+      await IntelligenceEngine.synthesizeInsights(scope);
+    }
+    return projects.length;
+  },
+});
+registerAgencyTickStep({
+  name: "opportunity-evaluation",
+  run: () => OpportunityEngine.evaluatePromotedInsights(10),
+});
+registerAgencyTickStep({
+  name: "idea-generation",
+  run: () => IdeaFoundry.generateForTopOpportunities(3),
+});
+registerAgencyTickStep({
+  name: "council-evaluation",
+  run: () => CouncilEngine.evaluatePendingIdeas(5),
+});
+registerAgencyTickStep({
+  name: "director-decisions",
+  run: () => AgencyDirector.decideShortlisted(5),
+});
+
+// --- Wave 4: work orchestration wiring --------------------------------------
+
+// Director's multi-department path builds a full WorkPlan.
+registerWorkPlanBuilder((input) => WorkPlanBuilder.buildForIdea(input));
+
+// Completed tasks progress their work plan and close out their handoff.
+registerTaskCompletedHandler(async (taskId) => {
+  await WorkPlanProgressor.onTaskCompleted(taskId);
+});
+registerTaskCompletedHandler(async (taskId) => {
+  await WorkHandoffEngine.onTaskCompleted(taskId);
+});
+
+// --- Wave 5: measurement + learning wiring ----------------------------------
+
+// Externally visible completed work gets a measurement plan; completed
+// MEASUREMENT_CHECK tasks store their observation on the check.
+registerTaskCompletedHandler(async (taskId) => {
+  await MeasurementEngine.planForCompletedTask(taskId);
+});
+registerTaskCompletedHandler(async (taskId) => {
+  await MeasurementEngine.onCheckTaskCompleted(taskId);
+});
+
+registerAgencyTickStep({
+  name: "measurement-checks",
+  run: () => MeasurementEngine.runDueChecks(10),
+});
+registerAgencyTickStep({
+  name: "learning",
+  run: () => LearningEngine.processCompletedMeasurements(10),
+});
+
+registerAgencyTickStep({
+  name: "telegram-approval-polling",
+  run: () => pollTelegramApprovals(),
+});
+
+export const AGENCY_WIRING_LOADED = true;

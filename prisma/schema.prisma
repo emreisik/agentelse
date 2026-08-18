@@ -1,0 +1,2536 @@
+// Hub Connect — Prisma schema
+// AI Digital Agency Operating System
+//
+// Tenant hierarchy: Workspace -> Project (brand/client, e.g. Biduniq) -> Brand
+// (most projects have exactly one default Brand; a project may host more than
+// one brand identity). workspaceId/projectId/brandId are denormalized onto
+// every tenant-scoped table on purpose, so repository-level filters can
+// enforce isolation without joining through parents.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum ProjectStatus {
+  CREATED
+  DISCOVERY
+  NEEDS_INFORMATION
+  PROFILE_REVIEW
+  NEEDS_ASSESSMENT
+  STRATEGY
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  AI
+  OPENCLAW
+  API
+  PARTNER
+}
+
+enum CommandSource {
+  WEB
+  API
+  SYSTEM
+  SCHEDULE
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  DRAFT
+  READY
+  QUEUED
+  RUNNING
+  WAITING_INPUT
+  WAITING_HUMAN
+  WAITING_APPROVAL
+  WAITING_PROVIDER
+  VERIFYING
+  COMPLETED
+  FAILED
+  BLOCKED
+  CANCELLED
+}
+
+enum OperationPhase {
+  OBSERVE
+  THINK
+  PROPOSE
+  APPROVE
+  ACT
+  VERIFY
+  LEARN
+}
+
+enum ExecutionProviderType {
+  OPENCLAW
+  AI
+  API
+  HUMAN
+  EXTERNAL_PARTNER
+  SYSTEM
+}
+
+enum ExecutionJobStatus {
+  QUEUED
+  RUNNING
+  WAITING_HUMAN
+  WAITING_PROVIDER
+  VERIFYING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum CapabilityKey {
+  BRAND_DISCOVERY
+
+  WEB_RESEARCH
+  WEB_BROWSING
+  DATA_EXTRACTION
+  SCREENSHOT_CAPTURE
+
+  COMPETITOR_RESEARCH
+  COMPETITOR_MONITORING
+  COMPETITOR_CHANGE_DETECTION
+
+  MARKET_RESEARCH
+  TREND_RESEARCH
+  CUSTOMER_INTELLIGENCE
+
+  SEO_RESEARCH
+  SEO_ANALYSIS
+  ASO_ANALYSIS
+
+  SOCIAL_RESEARCH
+  SOCIAL_ACCOUNT_SETUP
+  SOCIAL_PROFILE_AUDIT
+
+  CREATE_SOCIAL_CREATIVE
+  CREATE_AD_CREATIVE
+  CREATE_COPY
+  CREATE_CAPTION
+  CREATE_CAMPAIGN_BRIEF
+  CREATE_CONTENT_PLAN
+
+  INSTAGRAM_PUBLISH
+  TIKTOK_PUBLISH
+  LINKEDIN_PUBLISH
+  X_PUBLISH
+
+  META_ADS_ANALYSIS
+  META_CAMPAIGN_CREATE
+  META_CAMPAIGN_UPDATE
+
+  GOOGLE_ADS_ANALYSIS
+  GOOGLE_ADS_CAMPAIGN_CREATE
+
+  ANALYTICS_ANALYSIS
+
+  CRM_ANALYSIS
+
+  EMAIL_DRAFT
+  EMAIL_SEND
+
+  CLAIM_VALIDATION
+  BRAND_SAFETY
+
+  REPORTING
+
+  VERIFY_EXTERNAL_ACTION
+
+  PRODUCT_RESEARCH
+  MEDIA_RESEARCH
+  CULTURAL_RESEARCH
+  CREATOR_RESEARCH
+  PARTNERSHIP_RESEARCH
+  ADVERTISING_RESEARCH
+  REVIEW_RESEARCH
+  TECHNOLOGY_RESEARCH
+
+  SIGNAL_SCAN
+  MEASUREMENT_CHECK
+
+  WEBSITE_UPDATE
+  PR_OUTREACH
+}
+
+enum BrowserProfilePurpose {
+  PUBLIC_RESEARCH
+  INSTAGRAM
+  TIKTOK
+  META_ADS
+  GOOGLE_ADS
+  GA4
+  SEARCH_CONSOLE
+  LINKEDIN
+  X
+  CRM
+  EMAIL
+  GENERAL
+}
+
+enum BrowserProfileStatus {
+  READY
+  RUNNING
+  WAITING
+  LOGIN_REQUIRED
+  MFA_REQUIRED
+  OTP_REQUIRED
+  CAPTCHA_REQUIRED
+  SESSION_EXPIRED
+  USER_ACTION_REQUIRED
+  PERMISSION_REQUIRED
+  UNHEALTHY
+  DISABLED
+}
+
+enum HumanInterventionType {
+  OTP_REQUIRED
+  MFA_REQUIRED
+  LOGIN_REQUIRED
+  CAPTCHA_REQUIRED
+  CONFIRMATION_REQUIRED
+  MANUAL_BROWSER_REQUIRED
+  ACCOUNT_SELECTION_REQUIRED
+  FILE_REQUIRED
+  INFORMATION_REQUIRED
+  DECISION_REQUIRED
+}
+
+enum HumanInterventionStatus {
+  PENDING
+  RESOLVED
+  EXPIRED
+  CANCELLED
+}
+
+enum HumanInterventionInputType {
+  TEXT
+  OTP
+  CONFIRM
+  CHOICE
+  MANUAL_BROWSER
+  FILE
+}
+
+enum ApprovalType {
+  CREATIVE_APPROVAL
+  PUBLISH_APPROVAL
+  CAMPAIGN_APPROVAL
+  ACCOUNT_ACTION_APPROVAL
+  CRITICAL_CHANGE_APPROVAL
+  GENERIC
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVISION_REQUESTED
+  EXPIRED
+  CANCELLED
+}
+
+enum CreativeType {
+  SOCIAL_POST
+  AD_CREATIVE
+  CAPTION
+  COPY
+  CAMPAIGN_BRIEF
+  CONTENT_PLAN
+}
+
+enum CreativeStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum SocialPlatform {
+  INSTAGRAM
+  TIKTOK
+  LINKEDIN
+  X
+  FACEBOOK
+  YOUTUBE
+  PINTEREST
+}
+
+enum SocialAccountStatus {
+  CONNECTING
+  CONNECTED
+  LOGIN_REQUIRED
+  SUSPENDED
+  DISCONNECTED
+  ERROR
+}
+
+enum EvidenceSourceType {
+  WEB_PAGE
+  SCREENSHOT
+  API
+  DOCUMENT
+  SOCIAL_MEDIA
+  AD_LIBRARY
+  SEARCH_RESULT
+  USER_INPUT
+  INTERNAL_DATA
+  SYSTEM_VERIFICATION
+}
+
+enum ExecutionVerificationStatus {
+  PENDING
+  VERIFIED
+  FAILED
+  INCONCLUSIVE
+}
+
+enum SkillStatus {
+  DISCOVERED
+  REVIEW_PENDING
+  APPROVED
+  ACTIVE
+  DISABLED
+  DEPRECATED
+  BLOCKED
+}
+
+enum SkillSecurityStatus {
+  UNKNOWN
+  PASS
+  REVIEW_REQUIRED
+  SUSPICIOUS
+  BLOCKED
+}
+
+enum SkillTrustLevel {
+  UNTRUSTED
+  COMMUNITY
+  REVIEWED
+  TRUSTED
+  INTERNAL
+}
+
+enum SkillPermissionType {
+  BROWSER
+  NETWORK
+  FILE_READ
+  FILE_WRITE
+  CREDENTIAL
+  CLIPBOARD
+  SHELL
+  EXTERNAL_API
+  USER_DATA
+}
+
+enum ProviderHealthStatus {
+  AVAILABLE
+  DEGRADED
+  RATE_LIMITED
+  AUTH_REQUIRED
+  UNAVAILABLE
+  DISABLED
+}
+
+enum DataClassification {
+  PUBLIC
+  INTERNAL
+  CONFIDENTIAL
+  PERSONAL
+  SENSITIVE
+  RESTRICTED
+}
+
+enum AssetType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+  SCREENSHOT
+  LOGO
+  CREATIVE
+  REPORT
+}
+
+enum CredentialStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  NOT_CONFIGURED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+enum OpportunityStatus {
+  NEW
+  REVIEWING
+  EVALUATED
+  ACCEPTED
+  DISMISSED
+  CONVERTED_TO_TASK
+  CONVERTED_TO_IDEA
+  EXPIRED
+  DUPLICATE
+}
+
+// =============================================================================
+// AGENCY OS ENUMS (Setup Mode / Signal Universe / Intelligence / Ideas /
+// Departments / Work Plans / Measurement / Continuous Agency)
+// =============================================================================
+
+enum SetupStage {
+  INTAKE
+  DEEP_DISCOVERY
+  BRAND_CONSTITUTION
+  SIGNAL_PROFILE
+  BASELINE_AUDITS
+  GOAL_GENERATION
+  AGENCY_CONFIGURATION
+  AUTONOMY_CONFIGURATION
+  INITIAL_OPPORTUNITIES
+  INITIAL_IDEA_PORTFOLIO
+  INITIAL_WORK_PLAN
+  PROJECT_ACTIVATION
+}
+
+enum SetupStageStatus {
+  PENDING
+  RUNNING
+  WAITING_CLIENT
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+enum FactClassification {
+  VERIFIED_FACT
+  LIKELY_FACT
+  ASSUMPTION
+  CONTRADICTION
+  UNKNOWN
+  RECOMMENDATION
+}
+
+enum SignalCategory {
+  COMPETITOR
+  PRODUCT_LAUNCH
+  TECHNOLOGY
+  SEO
+  SOCIAL_TREND
+  PAID_ADVERTISING
+  MEDIA
+  CREATOR
+  PARTNERSHIP
+  EVENT
+  OFFLINE
+  CUSTOMER
+  MARKET
+  CULTURE
+  PERFORMANCE
+  OTHER
+}
+
+enum SignalIntensity {
+  VERY_HIGH
+  HIGH
+  MEDIUM
+  LOW
+  OFF
+}
+
+enum SignalStatus {
+  NEW
+  SCORED
+  PROMOTED
+  DISCARDED
+  DUPLICATE
+}
+
+enum FindingSourceType {
+  RESEARCH_TASK
+  SIGNAL
+  AUDIT
+  CLIENT_INPUT
+  LEARNING
+}
+
+enum InsightStatus {
+  NEW
+  EVALUATED
+  PROMOTED
+  ARCHIVED
+}
+
+enum IdeaStatus {
+  RAW
+  RESEARCHING
+  VALIDATED
+  CONCEPT
+  SHORTLISTED
+  APPROVED
+  PLANNING
+  ACTIVE
+  MEASURING
+  LEARNED
+  ARCHIVED
+  REJECTED
+}
+
+enum CreativeLens {
+  BRAND
+  CULTURE
+  PR
+  SOCIAL
+  PRODUCT
+  GROWTH
+  PARTNERSHIP
+  CREATOR
+  MEDIA
+  COMMUNITY
+  TECHNOLOGY
+  EXPERIENCE
+  OFFLINE
+  CONTENT
+  UTILITY
+  DATA
+}
+
+enum CouncilType {
+  STRATEGY
+  CREATIVE
+  GROWTH
+  MEDIA
+  RISK
+}
+
+enum CouncilRecommendation {
+  STRONG_APPROVE
+  APPROVE
+  REVISE
+  REJECT
+}
+
+enum AgencyDecisionType {
+  REJECT
+  BACKLOG
+  RESEARCH_MORE
+  CREATE_EXPERIMENT
+  CREATE_CAMPAIGN
+  CREATE_TASK
+  CREATE_MULTI_DEPARTMENT_PLAN
+}
+
+enum AgencyDecisionSubject {
+  OPPORTUNITY
+  IDEA
+  HANDOFF
+  TRIGGER
+}
+
+enum DepartmentKey {
+  BRAND_STRATEGY
+  MARKET_INTELLIGENCE
+  CUSTOMER_INTELLIGENCE
+  COMPETITOR_INTELLIGENCE
+  CREATIVE
+  ART_DIRECTION
+  COPY_CONTENT
+  SOCIAL_MEDIA
+  SEO
+  PERFORMANCE_MARKETING
+  DATA_ANALYTICS
+  GROWTH
+  PR_MEDIA
+  INFLUENCER_CREATOR
+  PARTNERSHIPS
+  CRM_LIFECYCLE
+  WEB_PRODUCT
+  EVENTS
+  OFFLINE_MEDIA
+}
+
+enum DepartmentMode {
+  OFF
+  LISTEN
+  SUGGEST
+  PREPARE
+  EXECUTE
+}
+
+enum WorkPlanType {
+  SINGLE_TASK
+  EXPERIMENT
+  CAMPAIGN
+  MULTI_DEPARTMENT
+}
+
+enum WorkPlanStatus {
+  DRAFT
+  AWAITING_APPROVAL
+  APPROVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum WorkHandoffStatus {
+  PROPOSED
+  ACCEPTED
+  TASK_CREATED
+  COMPLETED
+  REJECTED
+  EXPIRED
+}
+
+enum ProjectGoalStatus {
+  PROPOSED
+  APPROVED
+  ACTIVE
+  PAUSED
+  ACHIEVED
+  REJECTED
+  ARCHIVED
+}
+
+enum MeasurementPlanStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum MeasurementCheckStatus {
+  PENDING
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+enum AgencyTriggerType {
+  SCHEDULE
+  USER_COMMAND
+  NEW_SIGNAL
+  NEW_EVIDENCE
+  COMPETITOR_CHANGE
+  SEO_CHANGE
+  MARKET_CHANGE
+  MEDIA_CHANGE
+  TREND_CHANGE
+  PERFORMANCE_CHANGE
+  TASK_COMPLETED
+  CAMPAIGN_COMPLETED
+  FOLLOW_UP_DUE
+  PROJECT_GOAL_CHANGED
+}
+
+enum AgencyTriggerStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+  SKIPPED
+}
+
+enum ApprovalLevel {
+  LEVEL_0_AUTO_OBSERVE
+  LEVEL_1_INTERNAL_AUTOMATIC
+  LEVEL_2_AGENCY_DIRECTOR
+  LEVEL_3_CLIENT
+  LEVEL_4_CRITICAL
+}
+
+enum BrandConstitutionStatus {
+  DRAFT
+  ACTIVE
+  SUPERSEDED
+}
+
+enum ScheduleType {
+  CRON
+  INTERVAL
+  ONE_OFF
+}
+
+// =============================================================================
+// AUTH.JS + WORKSPACE
+// =============================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?
+
+  accounts    Account[]
+  sessions    Session[]
+  memberships WorkspaceMember[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Workspace {
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+
+  members  WorkspaceMember[]
+  projects Project[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  workspaceId String
+  name        String
+  slug        String
+  domain      String?
+  status      ProjectStatus @default(CREATED)
+  // Kurulumda seçilir, zorunlu: tüm AI research/reasoning çağrılarının
+  // hangi dilde ve hangi ülke pazarına odaklı çalışacağını belirler
+  // (bkz. src/lib/locales.ts). Mevcut satırlar için migration-safe default.
+  // country, countries'in ilk/birincil elemanıdır — tüm reasoning/prompt
+  // enjeksiyonu chokepoint'leri (ReasoningService, Gemini provider'ları,
+  // ConstitutionService vb.) geriye dönük uyumluluk için hâlâ SADECE bunu
+  // okur. countries yalnızca kurulum sihirbazında seçilen TÜM hedef
+  // pazarları saklamak/göstermek için — iş mantığı buna dallanmaz.
+  language    String        @default("tr")
+  country     String        @default("TR")
+  countries   String[]      @default([])
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  brands    Brand[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId])
+  @@index([status])
+}
+
+model Brand {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  name        String
+  slug        String
+  isDefault   Boolean @default(true)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, slug])
+  @@index([workspaceId])
+  @@index([projectId])
+}
+
+// =============================================================================
+// BRAND BRAIN
+// =============================================================================
+
+model BrandDossier {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String @unique
+
+  summary          String?
+  positioning      String?
+  targetAudiences  Json?
+  markets          Json?
+  products         Json?
+  services         Json?
+  toneOfVoice      String?
+  visualGuidelines Json?
+  approvedColors   Json?
+  approvedFonts    Json?
+  logoAssetId      String?
+  // Project'ten mirror edilir — execution context builder brandId üzerinden
+  // dossier'ı zaten okuyor, ayrı bir Project join'ine gerek kalmaz.
+  language         String?
+  country          String?
+
+  currentStrategyVersionId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([projectId])
+}
+
+model BrandFact {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  category   String
+  key        String
+  value      Json
+  source     String?
+  confidence Float?
+
+  // Agency OS: research findings carry an explicit classification and an
+  // evidence link (VERIFIED_FACT is only writable with evidence attached —
+  // enforced in FindingWriter, mirrored here when facts are promoted).
+  classification FactClassification?
+  evidenceId     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+  @@index([brandId, category])
+}
+
+model BrandAssumption {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  statement String
+  status    String @default("UNVERIFIED") // UNVERIFIED | CONFIRMED | REJECTED
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([brandId])
+}
+
+model ApprovedClaim {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  claim            String
+  category         String?
+  active           Boolean @default(true)
+  approvedByUserId String?
+
+  approvedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([projectId])
+  @@index([brandId])
+}
+
+model NegativeBriefRule {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  rule     String
+  category String?
+  active   Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([brandId])
+}
+
+model BrandDecision {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  topic           String
+  decision        String
+  rationale       String?
+  decidedByType   ActorType
+  decidedByUserId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+  @@index([brandId])
+}
+
+model BrandLearning {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  insight    String
+  sourceType String?
+  sourceRef  String?
+  confidence Float?
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+  @@index([brandId])
+}
+
+model BrandStrategyVersion {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  version         Int
+  summary         String?
+  payload         Json
+  createdByUserId String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([brandId, version])
+  @@index([projectId])
+  @@index([brandId])
+}
+
+model BrandEvidence {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  evidenceId        String
+  relatedEntityType String
+  relatedEntityId   String
+
+  evidence Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+  @@index([brandId])
+  @@index([relatedEntityType, relatedEntityId])
+}
+
+// =============================================================================
+// CONTEXT SNAPSHOT
+// =============================================================================
+
+model ExecutionContextSnapshot {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  brandBrainVersion    Int?
+  strategyVersion      Int?
+  negativeBriefVersion Int?
+
+  payload Json
+  hash    String
+
+  executionJobs ExecutionJob[]
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+}
+
+// =============================================================================
+// COMMAND / TASK / EXECUTION
+// =============================================================================
+
+model Command {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String?
+  brandId     String?
+  // Bir fikrin kendi sohbet iş parçacığına ait mesajsa dolu — hem
+  // kullanıcının o fikirle ilgili yazdığı mesajlar (source: WEB) hem de
+  // ajans pipeline'ının (konsey, iş planı, görev/kreatif tamamlanması)
+  // o fikrin thread'ine yazdığı sistem mesajları (source: SYSTEM) aynı
+  // ideaId ile burada birikir — "her şey tek sohbette" mimarisi.
+  ideaId String?
+
+  source          CommandSource
+  rawText         String
+  parsedIntent    Json?
+  createdByUserId String?
+
+  // Sohbet turu: kullanıcının eklediği dosyalar ve asistanın o tura verdiği
+  // yanıt. attachments = [{ assetId, filename, mimeType, size }].
+  attachments Json?
+  replyText   String?
+  replyStatus String?
+
+  idea  Idea?  @relation(fields: [ideaId], references: [id], onDelete: SetNull)
+  tasks Task[]
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([createdAt])
+  @@index([ideaId])
+}
+
+model Task {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  commandId    String?
+  parentTaskId String?
+
+  title       String
+  description String?
+  // Original command payload (e.g. { request, platform }) — persisted so a
+  // task parked behind an Approval can be re-dispatched with the same
+  // request details once approved, instead of guessing them from the title.
+  payload     Json?
+
+  capability CapabilityKey
+
+  status    TaskStatus   @default(DRAFT)
+  priority  TaskPriority @default(MEDIUM)
+  riskLevel RiskLevel    @default(LOW)
+
+  createdByType   ActorType
+  createdByUserId String?
+
+  requiresApproval     Boolean @default(false)
+  requiresVerification Boolean @default(false)
+
+  // Agency OS additions: which department owns this work, which WorkPlan it
+  // belongs to, which ProjectGoals it serves, and a dedup fingerprint so the
+  // director can refuse to recreate the same work inside a cooldown window.
+  departmentKey    DepartmentKey?
+  workPlanId       String?
+  goalIds          String[]       @default([])
+  fingerprint      String?
+  sourceDecisionId String?
+
+  command            Command?                   @relation(fields: [commandId], references: [id], onDelete: SetNull)
+  parentTask         Task?                      @relation("TaskChildren", fields: [parentTaskId], references: [id], onDelete: SetNull)
+  childTasks         Task[]                     @relation("TaskChildren")
+  dependsOn          TaskDependency[]           @relation("TaskDependent")
+  dependedOnBy       TaskDependency[]           @relation("TaskDependsOn")
+  executionJobs      ExecutionJob[]
+  approvals          Approval[]
+  humanInterventions HumanInterventionRequest[]
+  creatives          Creative[]
+  workPlan           WorkPlan?                  @relation(fields: [workPlanId], references: [id], onDelete: SetNull)
+
+  dueAt       DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+  @@index([status])
+  @@index([capability])
+  @@index([createdAt])
+  @@index([projectId, status])
+  @@index([projectId, fingerprint, createdAt])
+  @@index([workPlanId])
+}
+
+model TaskDependency {
+  id              String @id @default(cuid())
+  taskId          String
+  dependsOnTaskId String
+
+  task          Task @relation("TaskDependent", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOnTask Task @relation("TaskDependsOn", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([taskId, dependsOnTaskId])
+  @@index([dependsOnTaskId])
+}
+
+model ExecutionJob {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+  taskId      String
+
+  capability   CapabilityKey
+  providerType ExecutionProviderType
+  providerId   String?
+
+  skillId      String?
+  skillVersion String?
+
+  browserProfileId String?
+
+  phase  OperationPhase     @default(ACT)
+  status ExecutionJobStatus @default(QUEUED)
+
+  correlationId  String @unique
+  idempotencyKey String @unique
+
+  // Opaque handle returned by the provider's execute() call, used to poll
+  // getStatus()/cancel()/resume() later. Not always equal to correlationId —
+  // real providers may mint their own reference.
+  providerExecutionReference String?
+
+  contextSnapshotId String?
+
+  requestPayload   Json?
+  rawResult        Json?
+  normalizedResult Json?
+
+  errorCode    String?
+  errorMessage String?
+  retryable    Boolean @default(false)
+
+  attemptCount Int @default(0)
+
+  estimatedCost Float?
+  actualCost    Float?
+
+  task               Task                       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  browserProfile     BrowserProfile?            @relation(fields: [browserProfileId], references: [id], onDelete: SetNull)
+  contextSnapshot    ExecutionContextSnapshot?  @relation(fields: [contextSnapshotId], references: [id], onDelete: SetNull)
+  skill              Skill?                     @relation(fields: [skillId], references: [id], onDelete: SetNull)
+  outboxEvents       OutboxEvent[]
+  deadLetterJobs     DeadLetterJob[]
+  verification       ExecutionVerification?
+  evidences          Evidence[]
+  humanInterventions HumanInterventionRequest[]
+
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+  @@index([status])
+  @@index([capability])
+  @@index([createdAt])
+  @@index([taskId])
+}
+
+// =============================================================================
+// PROVIDER HEALTH
+// =============================================================================
+
+model ProviderDefinition {
+  id           String                @id @default(cuid())
+  key          String                @unique
+  name         String
+  providerType ExecutionProviderType
+  configured   Boolean               @default(false)
+
+  health    ProviderHealth?
+  incidents ProviderIncident[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ProviderHealth {
+  id               String               @id @default(cuid())
+  providerId       String               @unique
+  status           ProviderHealthStatus @default(UNAVAILABLE)
+  lastCheckAt      DateTime?
+  lastErrorMessage String?
+
+  provider ProviderDefinition @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  updatedAt DateTime @updatedAt
+}
+
+model ProviderIncident {
+  id         String  @id @default(cuid())
+  providerId String
+  message    String
+  resolved   Boolean @default(false)
+
+  provider ProviderDefinition @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([providerId])
+}
+
+// =============================================================================
+// HUMAN INTERVENTION / TEMPORARY SECRET / APPROVAL
+// =============================================================================
+
+model HumanInterventionRequest {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  taskId           String?
+  executionJobId   String?
+  browserProfileId String?
+
+  type   HumanInterventionType
+  status HumanInterventionStatus @default(PENDING)
+
+  title   String
+  message String?
+
+  inputType HumanInterventionInputType
+
+  task             Task?             @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  executionJob     ExecutionJob?     @relation(fields: [executionJobId], references: [id], onDelete: SetNull)
+  browserProfile   BrowserProfile?   @relation(fields: [browserProfileId], references: [id], onDelete: SetNull)
+  temporarySecrets TemporarySecret[]
+
+  expiresAt        DateTime
+  resolvedAt       DateTime?
+  resolvedByUserId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Ephemeral secret store for OTP/MFA codes. Never referenced from Task
+// description, ExecutionJob payloads, or AuditLog metadata. A background
+// sweep deletes rows past expiresAt; consumedAt marks single-use spend.
+model TemporarySecret {
+  id                         String @id @default(cuid())
+  workspaceId                String
+  humanInterventionRequestId String
+
+  encryptedValue String
+
+  humanInterventionRequest HumanInterventionRequest @relation(fields: [humanInterventionRequestId], references: [id], onDelete: Cascade)
+
+  expiresAt  DateTime
+  consumedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@index([humanInterventionRequestId])
+}
+
+model Approval {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  taskId String?
+
+  entityType String
+  entityId   String
+
+  type   ApprovalType
+  status ApprovalStatus @default(PENDING)
+
+  // Agency OS approval level. Null = legacy row, treated as LEVEL_3_CLIENT.
+  level ApprovalLevel?
+
+  requestedByType ActorType
+  requestedById   String?
+
+  reviewedByUserId String?
+  reviewNote       String?
+
+  // Telegram'daki onay isteği mesajının id'si — karar sonrası butonları
+  // kaldırıp mesajı güncelleyebilmek için.
+  telegramMessageId String?
+
+  task Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  expiresAt  DateTime?
+  createdAt  DateTime  @default(now())
+  reviewedAt DateTime?
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+  @@index([status])
+  @@index([entityType, entityId])
+}
+
+// =============================================================================
+// CREATIVE WORKFLOW / ASSETS
+// =============================================================================
+
+model Asset {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  type     AssetType
+  filename String
+  mimeType String
+
+  storageKey String
+  size       Int
+  hash       String?
+
+  creativeVersions CreativeVersion[]
+  evidences        Evidence[]
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+}
+
+model Creative {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  type     CreativeType
+  platform SocialPlatform?
+
+  title String?
+  brief String?
+
+  status           CreativeStatus @default(DRAFT)
+  currentVersionId String?
+
+  createdByTaskId String?
+
+  createdByTask Task?             @relation(fields: [createdByTaskId], references: [id], onDelete: SetNull)
+  versions      CreativeVersion[] @relation("CreativeVersions")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+  @@index([status])
+}
+
+model CreativeVersion {
+  id         String @id @default(cuid())
+  creativeId String
+
+  version Int
+
+  assetId String?
+  caption String?
+  copy    String?
+
+  generationProvider String?
+  generationMetadata Json?
+
+  revisionReason String?
+
+  creative Creative @relation("CreativeVersions", fields: [creativeId], references: [id], onDelete: Cascade)
+  asset    Asset?   @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@unique([creativeId, version])
+  @@index([creativeId])
+}
+
+// =============================================================================
+// EVIDENCE / VERIFICATION
+// =============================================================================
+
+model Evidence {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  executionJobId String?
+
+  sourceType EvidenceSourceType
+
+  sourceUrl String?
+  pageTitle String?
+
+  assetId String?
+
+  statement       String?
+  extractedText   String?
+  confidenceScore Float?
+
+  accessedAt  DateTime?
+  contentHash String?
+
+  executionJob   ExecutionJob?   @relation(fields: [executionJobId], references: [id], onDelete: SetNull)
+  asset          Asset?          @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  brandEvidences BrandEvidence[]
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+  @@index([executionJobId])
+}
+
+model ExecutionVerification {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  executionJobId String @unique
+
+  status ExecutionVerificationStatus @default(PENDING)
+
+  expectedState Json?
+  observedState Json?
+  evidenceIds   String[]
+
+  executionJob ExecutionJob @relation(fields: [executionJobId], references: [id], onDelete: Cascade)
+
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([projectId])
+  @@index([status])
+}
+
+// =============================================================================
+// COMPETITOR INTELLIGENCE
+// =============================================================================
+
+model Competitor {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  name   String
+  domain String?
+  notes  String?
+
+  sources   CompetitorSource[]
+  snapshots CompetitorSnapshot[]
+  changes   CompetitorChange[]
+  insights  CompetitorInsight[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([brandId])
+}
+
+model CompetitorSource {
+  id           String @id @default(cuid())
+  competitorId String
+
+  sourceType String
+  url        String
+
+  competitor Competitor @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([competitorId])
+}
+
+model CompetitorSnapshot {
+  id           String @id @default(cuid())
+  competitorId String
+
+  capturedAt  DateTime
+  payload     Json
+  contentHash String
+
+  competitor  Competitor         @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  changesFrom CompetitorChange[] @relation("ChangeFromSnapshot")
+  changesTo   CompetitorChange[] @relation("ChangeToSnapshot")
+
+  createdAt DateTime @default(now())
+
+  @@index([competitorId])
+  @@index([capturedAt])
+}
+
+model CompetitorChange {
+  id           String @id @default(cuid())
+  competitorId String
+
+  fromSnapshotId String?
+  toSnapshotId   String
+
+  summary String
+  diff    Json?
+
+  competitor   Competitor          @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  fromSnapshot CompetitorSnapshot? @relation("ChangeFromSnapshot", fields: [fromSnapshotId], references: [id], onDelete: SetNull)
+  toSnapshot   CompetitorSnapshot  @relation("ChangeToSnapshot", fields: [toSnapshotId], references: [id], onDelete: Cascade)
+  insights     CompetitorInsight[]
+
+  createdAt DateTime @default(now())
+
+  @@index([competitorId])
+}
+
+model CompetitorInsight {
+  id           String  @id @default(cuid())
+  competitorId String
+  changeId     String?
+
+  insight    String
+  confidence Float?
+
+  competitor Competitor        @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  change     CompetitorChange? @relation(fields: [changeId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([competitorId])
+}
+
+model Opportunity {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  // Re-pointed from CompetitorInsight to the Agency OS Insight model.
+  insightId String?
+
+  title       String
+  description String?
+  status      OpportunityStatus @default(NEW)
+
+  category SignalCategory?
+  goalIds  String[]        @default([])
+
+  valueScore       Float?
+  urgencyScore     Float?
+  confidenceScore  Float?
+  riskScore        Float?
+  evidenceStrength Float?
+  nbaScore         Float?
+
+  timeWindowStart DateTime?
+  timeWindowEnd   DateTime?
+
+  fingerprint   String?
+  duplicateOfId String?
+  cooldownUntil DateTime?
+  isMock        Boolean   @default(false)
+
+  insight Insight? @relation(fields: [insightId], references: [id], onDelete: SetNull)
+  ideas   Idea[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, fingerprint])
+  @@index([projectId])
+  @@index([brandId])
+  @@index([status])
+  @@index([projectId, status])
+}
+
+// =============================================================================
+// BROWSER PROFILES / SOCIAL ACCOUNTS / SKILLS / CREDENTIALS
+// =============================================================================
+
+model BrowserProfile {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  name     String
+  slug     String
+  provider String                @default("openclaw")
+  purpose  BrowserProfilePurpose
+
+  status BrowserProfileStatus @default(READY)
+
+  externalProfileId String?
+  sessionReference  String?
+
+  lastUsedAt        DateTime?
+  lastHealthCheckAt DateTime?
+
+  executionJobs      ExecutionJob[]
+  humanInterventions HumanInterventionRequest[]
+  socialAccounts     SocialAccount[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, slug])
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+  @@index([status])
+}
+
+model SocialAccount {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  platform SocialPlatform
+
+  username    String
+  displayName String?
+  profileUrl  String?
+
+  browserProfileId String?
+  credentialId     String?
+
+  status SocialAccountStatus @default(CONNECTING)
+
+  lastVerifiedAt DateTime?
+
+  browserProfile BrowserProfile?        @relation(fields: [browserProfileId], references: [id], onDelete: SetNull)
+  credential     IntegrationCredential? @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, platform, username])
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+}
+
+// API-token-based integrations (as opposed to BrowserProfile's session/
+// browser-automation model) — e.g. Telegram's Bot API. `encryptedSecret`
+// is AES-256-GCM via src/server/security/crypto.ts (same cipher already
+// used for TemporarySecret), never the plaintext token. `metadata` holds
+// provider-specific config (Telegram: { chatId, chatTitle }).
+model IntegrationCredential {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  provider     String
+  accountLabel String?
+
+  encryptedSecret String
+  metadata        Json?
+
+  status CredentialStatus @default(NOT_CONFIGURED)
+
+  socialAccounts SocialAccount[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // v1 kapsamı: proje başına bu provider'dan tek bağlantı (Telegram için
+  // tek bot/tek hedef sohbet) — BrowserProfile'ın aksine burada çoklu
+  // hesap desteklenmiyor.
+  @@unique([projectId, provider])
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+}
+
+model Skill {
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+
+  providerType    ExecutionProviderType
+  externalSkillId String?
+
+  source    String
+  publisher String?
+
+  description String?
+
+  status         SkillStatus         @default(DISCOVERED)
+  securityStatus SkillSecurityStatus @default(UNKNOWN)
+  trustLevel     SkillTrustLevel     @default(UNTRUSTED)
+
+  currentVersion String?
+
+  capabilities CapabilityKey[]
+
+  requiredPermissions  SkillPermissionType[]
+  requiredIntegrations String[]
+
+  inputSchema  Json?
+  outputSchema Json?
+  configSchema Json?
+
+  projectSkills ProjectSkill[]
+  executionJobs ExecutionJob[]
+
+  installedAt    DateTime?
+  lastReviewedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+model ProjectSkill {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+  skillId     String
+
+  enabled  Boolean @default(false)
+  priority Int     @default(0)
+
+  configuration Json?
+
+  allowedCapabilities CapabilityKey[]
+  allowedRiskLevels   RiskLevel[]
+
+  requireApproval Boolean @default(true)
+
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, skillId])
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+}
+
+// =============================================================================
+// OUTBOX / WORKER / DEAD LETTER
+// =============================================================================
+
+model OutboxEvent {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String?
+
+  aggregateType String
+  aggregateId   String
+
+  eventType String
+  payload   Json
+
+  status OutboxStatus @default(PENDING)
+
+  executionJobId String?
+  executionJob   ExecutionJob? @relation(fields: [executionJobId], references: [id], onDelete: SetNull)
+
+  attemptCount  Int      @default(0)
+  nextAttemptAt DateTime @default(now())
+
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId])
+  @@index([status])
+  @@index([nextAttemptAt])
+  @@index([aggregateType, aggregateId])
+}
+
+model DeadLetterJob {
+  id             String  @id @default(cuid())
+  executionJobId String?
+
+  reason  String
+  payload Json
+
+  attempts  Int
+  lastError String?
+
+  executionJob ExecutionJob? @relation(fields: [executionJobId], references: [id], onDelete: SetNull)
+
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([executionJobId])
+  @@index([resolvedAt])
+}
+
+// =============================================================================
+// SCHEDULER
+// =============================================================================
+
+model ProjectSchedule {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  name String
+
+  capability     CapabilityKey
+  scheduleType   ScheduleType
+  cronExpression String?
+
+  configuration Json?
+
+  enabled   Boolean   @default(true)
+  nextRunAt DateTime?
+  lastRunAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+  @@index([nextRunAt])
+  @@index([enabled])
+}
+
+// =============================================================================
+// AUDIT LOG
+// =============================================================================
+
+model AuditLog {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String?
+  brandId     String?
+
+  actorType ActorType
+  actorId   String?
+
+  action String
+
+  entityType String
+  entityId   String
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+// =============================================================================
+// AGENCY OS — SETUP MODE
+// =============================================================================
+
+model ProjectSetupState {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String @unique
+  brandId     String
+
+  currentStage SetupStage @default(INTAKE)
+
+  // { brandName, domain, description?, assetIds?, autoApprove? }
+  intake Json
+
+  activatedAt DateTime?
+
+  stageRecords ProjectSetupStageRecord[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+model ProjectSetupStageRecord {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  setupStateId String
+
+  stage  SetupStage
+  status SetupStageStatus @default(PENDING)
+
+  startedAt    DateTime?
+  completedAt  DateTime?
+  output       Json?
+  error        String?
+  attemptCount Int       @default(0)
+
+  setupState ProjectSetupState @relation(fields: [setupStateId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, stage])
+  @@index([projectId])
+}
+
+// =============================================================================
+// AGENCY OS — BRAND CONSTITUTION
+// =============================================================================
+
+model BrandConstitution {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  version Int
+  status  BrandConstitutionStatus @default(DRAFT)
+
+  // Zod-validated structured document (constitution-schema.ts is the contract):
+  // identity, businessModel, products, markets, audiences, positioning,
+  // valueProposition, personality, toneOfVoice, visualIdentity, logoAssets,
+  // colors, fonts, approvedClaims, forbiddenClaims, negativeBrief,
+  // customerProblems, customerObjections, competitors, differentiators,
+  // legalRestrictions, knownFacts, assumptions, openQuestions.
+  payload Json
+
+  summary          String?
+  sourceFindingIds String[] @default([])
+  isMock           Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([brandId, version])
+  @@index([projectId])
+  @@index([brandId, status])
+}
+
+// =============================================================================
+// AGENCY OS — SIGNAL UNIVERSE
+// =============================================================================
+
+model ProjectSignalProfile {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  category  SignalCategory
+  intensity SignalIntensity @default(MEDIUM)
+  config    Json?
+
+  lastScanAt DateTime?
+  nextScanAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, category])
+  @@index([projectId])
+  @@index([nextScanAt])
+}
+
+model Signal {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  source      String
+  category    SignalCategory
+  externalRef String?
+
+  title   String
+  summary String?
+  payload Json?
+
+  occurredAt DateTime?
+
+  freshness      Float?
+  reliability    Float?
+  relevanceScore Float?
+
+  status SignalStatus @default(NEW)
+
+  fingerprint   String
+  duplicateOfId String?
+
+  evidenceId   String?
+  sourceTaskId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, fingerprint])
+  @@index([projectId, status])
+  @@index([projectId, category])
+}
+
+// =============================================================================
+// AGENCY OS — INTELLIGENCE (FINDINGS / INSIGHTS)
+// =============================================================================
+
+model Finding {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  sourceType   FindingSourceType
+  sourceTaskId String?
+  signalId     String?
+
+  category  String?
+  statement String
+  details   Json?
+
+  classification FactClassification
+  confidence     Float?
+  evidenceId     String?
+
+  isMock Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId, classification])
+  @@index([projectId, sourceType])
+  @@index([sourceTaskId])
+}
+
+model Insight {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  title    String
+  summary  String
+  category SignalCategory?
+
+  findingIds String[] @default([])
+  signalIds  String[] @default([])
+
+  importance Float?
+  status     InsightStatus @default(NEW)
+
+  fingerprint String
+  isMock      Boolean @default(false)
+
+  opportunities Opportunity[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, fingerprint])
+  @@index([projectId, status])
+}
+
+// =============================================================================
+// AGENCY OS — IDEAS / COUNCILS / DECISIONS
+// =============================================================================
+
+model Idea {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  opportunityId String?
+
+  lens        CreativeLens?
+  title       String
+  description String
+  concept     Json?
+
+  status IdeaStatus @default(RAW)
+
+  fingerprint String?
+  scores      Json?
+  nbaScore    Float?
+
+  workPlanId String?
+  isMock     Boolean @default(false)
+
+  opportunity        Opportunity?       @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  councilEvaluations CouncilEvaluation[]
+  commands           Command[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, status])
+  @@index([projectId, fingerprint])
+  @@index([opportunityId])
+}
+
+model CouncilEvaluation {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  ideaId String
+
+  councilType CouncilType
+
+  // Per-dimension scores Json. Creative council keys: originality, brandFit,
+  // culturalFit, potentialImpact, shareability, mediaPotential, feasibility,
+  // evidence, risk. Other councils use their own dimension keys.
+  scores Json
+
+  overallScore   Float
+  recommendation CouncilRecommendation
+  rationale      String?
+
+  reasoningCallId String?
+  isMock          Boolean @default(false)
+
+  idea Idea @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([ideaId])
+  @@index([projectId])
+}
+
+model AgencyDecision {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  subjectType AgencyDecisionSubject
+  subjectId   String
+
+  decision  AgencyDecisionType
+  rationale String
+
+  scoreBreakdown Json?
+  inputsSnapshot Json?
+
+  workPlanId    String?
+  taskIds       String[]       @default([])
+  approvalLevel ApprovalLevel?
+
+  isMock Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+  @@index([subjectType, subjectId])
+}
+
+// =============================================================================
+// AGENCY OS — GOALS / DEPARTMENTS / AUDITS
+// =============================================================================
+
+model ProjectGoal {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  title       String
+  description String?
+
+  metricKey    String?
+  targetValue  Float?
+  currentValue Float?
+
+  priority Int               @default(3)
+  status   ProjectGoalStatus @default(PROPOSED)
+
+  sourceInsightIds String[] @default([])
+
+  approvedByType   ActorType?
+  approvedByUserId String?
+
+  isMock Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, status])
+}
+
+model ProjectDepartment {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  department DepartmentKey
+  mode       DepartmentMode @default(LISTEN)
+
+  recommendedMode         DepartmentMode?
+  recommendationRationale String?
+  config                  Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, department])
+  @@index([projectId])
+}
+
+model BaselineAudit {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  department DepartmentKey
+
+  score   Int
+  summary String
+
+  strengths              Json
+  weaknesses             Json
+  risks                  Json
+  potentialOpportunities Json
+
+  findingIds String[] @default([])
+  isMock     Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, department])
+  @@index([projectId])
+}
+
+// =============================================================================
+// AGENCY OS — WORK PLANS / HANDOFFS
+// =============================================================================
+
+model WorkPlan {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  ideaId        String?
+  opportunityId String?
+  decisionId    String?
+
+  title    String
+  planType WorkPlanType
+  status   WorkPlanStatus @default(DRAFT)
+
+  goalIds String[] @default([])
+
+  // Node specs: [{ key, capability, department, dependsOnKeys[], payload, approvalLevel }]
+  graph Json
+
+  isMock Boolean @default(false)
+
+  tasks    Task[]
+  handoffs WorkHandoff[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, status])
+}
+
+model WorkHandoff {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  workPlanId String?
+
+  fromDepartment DepartmentKey
+  toDepartment   DepartmentKey
+
+  fromTaskId String?
+  toTaskId   String?
+
+  reason  String
+  payload Json?
+
+  status WorkHandoffStatus @default(PROPOSED)
+
+  decisionId String?
+  expiresAt  DateTime?
+
+  workPlan WorkPlan? @relation(fields: [workPlanId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, status])
+  @@index([workPlanId])
+}
+
+// =============================================================================
+// AGENCY OS — MEASUREMENT
+// =============================================================================
+
+model MeasurementPlan {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  taskId     String?
+  workPlanId String?
+  ideaId     String?
+
+  description String
+  status      MeasurementPlanStatus @default(ACTIVE)
+
+  checks MeasurementCheck[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, status])
+  @@index([taskId])
+}
+
+model MeasurementCheck {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  planId String
+
+  label      String
+  capability CapabilityKey @default(MEASUREMENT_CHECK)
+
+  dueAt  DateTime
+  status MeasurementCheckStatus @default(PENDING)
+
+  resultTaskId  String?
+  resultSummary Json?
+
+  plan MeasurementPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, dueAt])
+  @@index([planId])
+}
+
+// =============================================================================
+// AGENCY OS — CONTINUOUS AGENCY (TRIGGERS / AUTONOMY / STATS / REASONING)
+// =============================================================================
+
+model AgencyTrigger {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  type    AgencyTriggerType
+  payload Json?
+
+  dedupeKey String?
+
+  status       AgencyTriggerStatus @default(PENDING)
+  attemptCount Int                 @default(0)
+
+  scheduledFor DateTime  @default(now())
+  processedAt  DateTime?
+  error        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, dedupeKey])
+  @@index([status, scheduledFor])
+  @@index([projectId, type])
+}
+
+model AutonomyPolicy {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String @unique
+  brandId     String
+
+  setupAutoApprove Boolean @default(false)
+
+  // Sınırsız mod: günlük sayaç ve bütçe tavanlarını devre dışı bırakır.
+  // Sayaçlar yine işlenir (telemetri bozulmasın), yalnızca eşik kontrolü
+  // atlanır. Limitleri silmek yerine ayrı bir bayrak: kapatıldığında eski
+  // tavanlar olduğu gibi geri gelir.
+  unlimitedMode Boolean @default(false)
+
+  maxTasksPerDay             Int @default(25)
+  maxReasoningCallsPerDay    Int @default(200)
+  maxConcurrentResearchTasks Int @default(5)
+  maxOpenOpportunities       Int @default(30)
+  maxActiveIdeas             Int @default(20)
+
+  dailyBudgetUsd    Float?
+  taskCooldownHours Int    @default(72)
+
+  scoringWeights    Json?
+  approvalOverrides Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+model AgencyDailyStat {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  date DateTime @db.Date
+
+  tasksCreated         Int @default(0)
+  reasoningCalls       Int @default(0)
+  signalsIngested      Int @default(0)
+  opportunitiesCreated Int @default(0)
+  ideasCreated         Int @default(0)
+
+  reasoningCostUsd Float @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, date])
+  @@index([projectId])
+}
+
+model ReasoningCall {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String?
+  brandId     String?
+
+  purpose String
+  model   String
+  isMock  Boolean
+
+  inputTokens  Int?
+  outputTokens Int?
+  costUsd      Float?
+  durationMs   Int
+
+  status       String
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+
+  @@index([projectId, createdAt])
+  @@index([purpose])
+}

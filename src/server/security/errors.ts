@@ -1,0 +1,45 @@
+export const ERROR_CODES = [
+  "LOGIN_REQUIRED",
+  "MFA_REQUIRED",
+  "OTP_REQUIRED",
+  "CAPTCHA_REQUIRED",
+  "SESSION_EXPIRED",
+  "ELEMENT_NOT_FOUND",
+  "UI_CHANGED",
+  "PERMISSION_DENIED",
+  "PROJECT_MISMATCH",
+  "BROWSER_PROFILE_MISMATCH",
+  "PROVIDER_UNAVAILABLE",
+  "PROVIDER_RATE_LIMITED",
+  "INVALID_PROVIDER_RESULT",
+  "APPROVAL_REQUIRED",
+  "HUMAN_ACTION_REQUIRED",
+  "TIMEOUT",
+  "CANCELLED",
+  "NOT_FOUND",
+  "INVALID_STATE_TRANSITION",
+  "BUDGET_EXCEEDED",
+  "DUPLICATE",
+] as const;
+
+export type ErrorCode = (typeof ERROR_CODES)[number];
+
+export class HubConnectError extends Error {
+  readonly code: ErrorCode;
+  readonly retryable: boolean;
+
+  constructor(
+    code: ErrorCode,
+    message: string,
+    options?: { retryable?: boolean },
+  ) {
+    super(message);
+    this.name = "HubConnectError";
+    this.code = code;
+    this.retryable = options?.retryable ?? false;
+  }
+}
+
+export function isHubConnectError(error: unknown): error is HubConnectError {
+  return error instanceof HubConnectError;
+}

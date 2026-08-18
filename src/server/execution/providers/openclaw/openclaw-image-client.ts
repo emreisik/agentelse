@@ -1,0 +1,118 @@
+import "server-only";
+
+import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
+
+import { z } from "zod";
+
+import { getEnv, isIntegrationConfigured } from "@/lib/env";
+
+const execFileAsync = promisify(execFile);
+
+// Confirmed against a live gateway (`openclaw infer image generate --json`,
+// openai/gpt-image-2): unlike `openclaw agent`'s deeply-nested envelope,
+// this direct provider CLI returns a flat, already-useful shape — no
+// separate parsing/normalizer layer needed like openclaw-schemas.ts.
+const inferImageGenerateResponseSchema = z
+  .object({
+    ok: z.boolean(),
+    outputs: z
+      .array(
+        z
+          .object({
+            path: z.string(),
+            mimeType: z.string(),
+            size: z.number(),
+          })
+          .passthrough(),
+      )
+      .optional(),
+  })
+  .passthrough();
+
+export type GeneratedCreativeImage = {
+  storageKey: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  provider: "openclaw";
+};
+
+// Shared local asset directory — also used for uploaded/generated logos
+// (project-actions.ts), not just creative images. Served back by
+// src/app/api/assets/[assetId]/route.ts via the local-asset:// scheme.
+const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
+
+export function isOpenClawImageConfigured(): boolean {
+  return isIntegrationConfigured("OPENCLAW");
+}
+
+// Direct, non-conversational image generation via `openclaw infer image
+// generate` — deliberately not routed through OpenClawClient.runAgentTurn()
+// (agent/session-based, meant for browser-automation-style tasks). Image
+// generation is a stateless provider call, independent of any agent
+// workspace, so it gets its own thin client. Returns null on any failure —
+// callers fall back to the existing mock-placeholder behavior rather than
+// breaking creative generation.
+export async function generateCreativeImageAsset(
+  prompt: string,
+  imageSize?: { width: number; height: number },
+): Promise<GeneratedCreativeImage | null> {
+  const env = getEnv();
+  if (!env.OPENCLAW_CLI_PATH) return null;
+
+  await mkdir(LOCAL_ASSETS_DIR, { recursive: true });
+  const filename = `${randomUUID()}.png`;
+  const outputPath = path.join(LOCAL_ASSETS_DIR, filename);
+
+  const args = [
+    "infer",
+    "image",
+    "generate",
+    "--prompt",
+    prompt,
+    "--output",
+    outputPath,
+    "--model",
+    env.OPENCLAW_IMAGE_MODEL,
+    "--size",
+    imageSize ? `${imageSize.width}x${imageSize.height}` : "1024x1024",
+    "--json",
+    "--timeout-ms",
+    "60000",
+  ];
+
+  const command = env.OPENCLAW_NODE_PATH || env.OPENCLAW_CLI_PATH;
+  const commandArgs = env.OPENCLAW_NODE_PATH
+    ? [env.OPENCLAW_CLI_PATH, ...args]
+    : args;
+
+  try {
+    const { stdout } = await execFileAsync(command, commandArgs, {
+      timeout: 75_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+
+    const parsed = inferImageGenerateResponseSchema.safeParse(
+      JSON.parse(stdout),
+    );
+    if (!parsed.success || !parsed.data.ok) return null;
+
+    const output = parsed.data.outputs?.[0];
+    if (!output) return null;
+
+    return {
+      storageKey: `local-asset://${filename}`,
+      filename,
+      mimeType: output.mimeType,
+      size: output.size,
+      provider: "openclaw",
+    };
+  } catch (error) {
+    console.error("[openclaw-image-client] image generation failed", error);
+    return null;
+  }
+}

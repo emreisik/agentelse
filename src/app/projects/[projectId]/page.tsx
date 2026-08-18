@@ -27,14 +27,14 @@ import {
   type IdeaEventCardData,
 } from "@/types/idea-event-card";
 
-// Command.parsedIntent, SYSTEM kaynaklı satırlarda { card: IdeaEventCardData }
-// olarak yazılır (bkz. IdeaChatRepository) — WEB satırlarında ise komut
-// ayrıştırıcının çıktısını taşır, bu yüzden şekli doğrulanmadan kullanılamaz.
-// pendingApprovalByCreativeId: bir "creative-ready" kartı IN_REVIEW olduğu
-// halde approvalId taşımıyorsa (execution-service.ts'e approvalId eklenmeden
-// ÖNCE üretilmiş eski kayıtlar) burada geriye dönük tamamlanır — böylece
-// halihazırda bekleyen onaylar da sohbette Onayla/Reddet gösterir, ayrı bir
-// backfill script'i gerekmez.
+// Command.parsedIntent is written as { card: IdeaEventCardData } on rows
+// sourced from SYSTEM (see IdeaChatRepository) — on WEB rows it carries the
+// command parser's output instead, so its shape can't be used without validation.
+// pendingApprovalByCreativeId: if a "creative-ready" card is IN_REVIEW but
+// doesn't carry an approvalId (legacy records generated BEFORE approvalId was
+// added to execution-service.ts), it's backfilled here retroactively — so
+// approvals already pending also show Approve/Reject in the chat, without
+// needing a separate backfill script.
 function cardFromParsedIntent(
   parsedIntent: unknown,
   pendingApprovalByCreativeId?: Map<string, string>,
@@ -54,14 +54,15 @@ function cardFromParsedIntent(
   return card;
 }
 
-// TEK bir departmana bağlı olay mesajlarında (görev/kreatif tamamlanması —
-// bkz. IdeaChatRepository.postSystemMessage) parsedIntent.departmentKey
-// doluysa sohbette bir renk şeridi olarak gösterilir (bkz. project-chat.tsx,
-// assistant-ui/thread.tsx). WEB kaynaklı satırlarda departmentKey hiç
-// yazılmaz (parsedIntent orada ParsedIntent şeklindedir — bkz.
-// command-service.ts attachParsedIntent) — bu durumda görevin capability'sinden
-// (department-registry.ts'teki sabit sahiplik haritası) departman türetilir,
-// böylece "Görev oluşturuldu" notu da hangi departmana gittiğini gösterebilir.
+// For event messages tied to a SINGLE department (task/creative completion —
+// see IdeaChatRepository.postSystemMessage), if parsedIntent.departmentKey is
+// set it's shown in chat as a color strip (see project-chat.tsx,
+// assistant-ui/thread.tsx). WEB-sourced rows never have departmentKey written
+// (parsedIntent has the shape of ParsedIntent there — see
+// command-service.ts attachParsedIntent) — in that case the department is
+// derived from the task's capability (the fixed ownership map in
+// department-registry.ts), so the "Task created" note can also show which
+// department it went to.
 function departmentKeyFromParsedIntent(
   parsedIntent: unknown,
 ): DepartmentKey | undefined {
@@ -77,12 +78,12 @@ function departmentKeyFromParsedIntent(
   return undefined;
 }
 
-// Bir entity linkinin (sidebar'daki "Sohbetler" listesi, ya da panellerdeki
-// çapraz kartlar) hangi fikrin sohbet iş parçacığına ait olduğunu bulur.
-// idea → kendisi; workPlan/task → köklerindeki fikir (plain-field ilişki,
-// bkz. WorkPlan.ideaId / Task.workPlanId). Bulunamazsa null: mimari
-// "her şey tek sohbette" öncesinden kalma fikirsiz kayıtlar için salt
-// okunur ProjectFlowView'a düşülür.
+// Resolves which idea's chat thread an entity link (the "Chats" list in the
+// sidebar, or cross-links in the panels) belongs to.
+// idea → itself; workPlan/task → the idea at their root (a plain-field
+// relation, see WorkPlan.ideaId / Task.workPlanId). Returns null if not
+// found: this falls back to the read-only ProjectFlowView for idea-less
+// records left over from before the "everything in one chat" architecture.
 async function resolveIdeaId(entity: EntityRef): Promise<string | null> {
   if (entity.kind === "idea") return entity.id;
   if (entity.kind === "workPlan") {
@@ -94,12 +95,12 @@ async function resolveIdeaId(entity: EntityRef): Promise<string | null> {
   return null;
 }
 
-// Proje-içi deneyimin kökü — artık doğrudan proje sohbeti (ChatGPT'nin ana
-// ekranı gibi: sol sidebar projeleri/sohbetleri listeler, bir projeye
-// tıklamak onun sohbetini açar). Departmanlar/İşler/Sinyaller vb. modüllere
-// TopBar'daki Araçlar menüsünden ulaşılır; bir panel seçiliyken
-// (`?panel=&sub=&entity=`, bkz. hub-core-params.ts) o panel sohbetin
-// YERİNE tam sayfa içerik olarak render edilir — modal değil.
+// Root of the in-project experience — now the project chat itself (like
+// ChatGPT's main screen: the left sidebar lists projects/chats, clicking a
+// project opens its chat). Modules like Departments/Work/Signals are reached
+// from the Tools menu in the TopBar; when a panel is selected
+// (`?panel=&sub=&entity=`, see hub-core-params.ts) that panel is rendered as
+// full-page content IN PLACE OF the chat — not a modal.
 export default async function ProjectChatPage({
   params,
   searchParams,
@@ -132,13 +133,13 @@ export default async function ProjectChatPage({
     );
   }
 
-  // `panel` yokken bir `entity` seçiliyse (sidebar'daki "Sohbetler"
-  // listesinden ya da panellerdeki çapraz kartlardan gelen bir tıklama) —
-  // bu artık o fikrin GERÇEK, aktif sohbet iş parçacığı: konsey/iş planı/
-  // görev/kreatif üretimi pipeline'ının yazdığı sistem mesajlarıyla
-  // birlikte, kullanıcı buradan yeni mesaj da yazabilir (bkz. Command.ideaId).
-  // Fikre kök olamayan eski kayıtlar için salt okunur ProjectFlowView'a
-  // düşülür.
+  // When there's no `panel` but an `entity` is selected (a click coming from
+  // the "Chats" list in the sidebar, or from cross-links in the panels) —
+  // this is now that idea's REAL, active chat thread: complete with the
+  // system messages written by the council/work-plan/task/creative-generation
+  // pipeline, and the user can also write new messages from here (see
+  // Command.ideaId). Falls back to the read-only ProjectFlowView for legacy
+  // records that can't be rooted to an idea.
   if (entity) {
     const ideaId = await resolveIdeaId(entity);
     if (ideaId) {
@@ -166,8 +167,8 @@ export default async function ProjectChatPage({
 
       if (!idea) notFound();
 
-      // Geriye dönük tamamlama: approvalId taşımayan IN_REVIEW kreatif
-      // kartları için bekleyen onayı bul (bkz. cardFromParsedIntent yorumu).
+      // Retroactive backfill: find the pending approval for IN_REVIEW creative
+      // cards that don't carry an approvalId (see the cardFromParsedIntent comment).
       const creativeIdsNeedingApproval = Array.from(
         new Set(
           ideaCommands
@@ -207,15 +208,15 @@ export default async function ProjectChatPage({
 
       return (
         <AppShell projectId={projectId}>
-          {/* key={ideaId}: bir fikirden diğerine geçişte assistant-ui'nin
-              ThreadPrimitive.Viewport'u YENİDEN mount olsun diye — bu proje
-              sohbet arası geçişi Next.js route/searchParam değişimiyle
-              yapıyor (assistant-ui'nin kendi "threadListItem.switchedTo"
-              olayı hiç tetiklenmiyor), key olmadan React aynı Viewport
-              örneğini koruyup eski scroll konumunda bırakıyordu. Yeniden
-              mount, kütüphanenin scrollToBottomOnInitialize davranışını
-              (bkz. useThreadViewportAutoScroll) her seferinde tazeler —
-              sohbet her zaman en alttan/en güncel mesajdan açılır. */}
+          {/* key={ideaId}: so assistant-ui's ThreadPrimitive.Viewport gets
+              REMOUNTED when switching from one idea to another — this project
+              does the chat-to-chat transition via a Next.js route/searchParam
+              change (assistant-ui's own "threadListItem.switchedTo" event never
+              fires), and without the key, React kept the same Viewport instance
+              and left it at its old scroll position. Remounting refreshes the
+              library's scrollToBottomOnInitialize behavior (see
+              useThreadViewportAutoScroll) every time — the chat always opens at
+              the bottom, on the latest message. */}
           <div key={ideaId} className="relative h-[calc(100vh-4rem)]">
             <LiveRefresh
               intervalMs={7000}
@@ -281,9 +282,10 @@ export default async function ProjectChatPage({
 
   return (
     <AppShell projectId={projectId}>
-      {/* key: bkz. yukarıdaki idea-özel sohbet dalındaki aynı açıklama —
-          fikir sohbetinden proje-geneli sohbete (ya da tam tersi) geçişte de
-          Viewport'un yeniden mount olup en alttan başlaması için. */}
+      {/* key: see the same explanation above in the idea-specific chat
+          branch — so the Viewport remounts and starts at the bottom when
+          switching from an idea chat to the project-wide chat (or vice
+          versa) too. */}
       <div key="project-general" className="relative h-[calc(100vh-4rem)]">
         <LiveRefresh
           intervalMs={7000}

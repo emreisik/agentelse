@@ -40,10 +40,10 @@ import {
   rejectApprovalAction,
 } from "@/server/actions/approval-actions";
 
-// Kart çerçevesinin ton'a göre yumuşak rengi — TONE_CLASSES'la aynı token
-// ailesinden (oklch --success/--primary/--warning/--destructive/--special),
-// sadece badge yerine kart zeminine uygulanmış hali. Yeni renk YOK, sadece
-// mevcut semantik paletin kart seviyesinde de kullanılması.
+// Soft color of the card frame based on tone — from the same token family
+// as TONE_CLASSES (oklch --success/--primary/--warning/--destructive/
+// --special), just applied to the card background instead of a badge. NO
+// new color, just reusing the existing semantic palette at the card level.
 const CARD_TONE_CLASSES: Record<StatusTone, string> = {
   positive: "ring-success/20 bg-success/[0.04]",
   active: "ring-primary/20 bg-primary/[0.04]",
@@ -53,21 +53,22 @@ const CARD_TONE_CLASSES: Record<StatusTone, string> = {
   special: "ring-special/20 bg-special/[0.04]",
 };
 
-// Ham departman string'ini (ör. "BRAND_STRATEGY") geçerliyse DepartmentKey'e
-// daraltır — kartlarda departmandan söz edilen HER yerde DepartmentBadge
-// (departmanlar sayfasındaki AYNI ikon+renk) kullanılsın diye, sade
-// metin/renk-siz ikon YOK.
+// Narrows a raw department string (e.g. "BRAND_STRATEGY") to DepartmentKey
+// if valid — so that EVERYWHERE a department is mentioned in cards, the
+// DepartmentBadge (the SAME icon+color as on the departments page) is
+// used, NO plain text/colorless icon.
 function asDepartmentKey(department?: string): DepartmentKey | undefined {
   return department && department in DEPARTMENT_KEY
     ? (department as DepartmentKey)
     : undefined;
 }
 
-// Bir fikrin sohbetindeki HER pipeline olayının ortak render'ı — "altın
-// kural": köken sinyalinden kreatif üretimine kadar hepsi aynı kart
-// formatında. Üstte ikon + başlık (+ varsa rozet) HER ZAMAN görünür; uzun
-// gövdeler (konsey gerekçesi, görev çıktı metni, bulgu/içgörü açıklaması)
-// EventDetailToggle ile varsayılan kapalı, tıklayınca açılır.
+// The common render for EVERY pipeline event in an idea's chat — the
+// "golden rule": from the originating signal to the creative generation,
+// everything uses the same card format. The icon + title (+ badge, if any)
+// at the top is ALWAYS visible; long bodies (council rationale, task
+// output text, finding/insight description) are collapsed by default via
+// EventDetailToggle and expand on click.
 export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
   if (isCreativeCardData(card)) return <CreativeCard card={card} />;
 
@@ -76,7 +77,7 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
       return (
         <EventCard icon={Radio} title={card.title} tone="special">
           {card.summary ? (
-            <EventDetailToggle label="Sinyal detayı">
+            <EventDetailToggle label="Signal details">
               {card.summary}
             </EventDetailToggle>
           ) : null}
@@ -86,7 +87,7 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
     case "finding":
       return (
         <EventCard icon={FileSearch} title={card.title} tone="neutral">
-          <EventDetailToggle label="Bulgu detayı">
+          <EventDetailToggle label="Finding details">
             {card.statement}
           </EventDetailToggle>
         </EventCard>
@@ -99,7 +100,7 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
             <p className="text-sm text-muted-foreground">{card.summary}</p>
           ) : null}
           {card.description ? (
-            <EventDetailToggle label="Fırsat detayı">
+            <EventDetailToggle label="Opportunity details">
               {card.description}
             </EventDetailToggle>
           ) : null}
@@ -123,11 +124,11 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
       return (
         <EventCard
           icon={Compass}
-          title="Konsey değerlendirmesi"
+          title="Council review"
           tone={tone}
           badge={{ label: VERDICT_LABEL[card.verdict] ?? card.verdict, tone }}
         >
-          <EventDetailToggle label="Konsey gerekçelerini gör">
+          <EventDetailToggle label="See council rationale">
             <div className="space-y-3">
               {card.notes.map((note, index) => (
                 <div key={index}>
@@ -179,7 +180,7 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
           iconClassName="animate-spin"
           title={card.title}
           tone="active"
-          badge={{ label: "Çalışıyor", tone: "active" }}
+          badge={{ label: "Running", tone: "active" }}
           department={asDepartmentKey(card.department)}
         />
       );
@@ -199,10 +200,10 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
             : XCircle;
       const badgeLabel =
         card.status === "COMPLETED"
-          ? "Tamamlandı"
+          ? "Completed"
           : card.status === "CANCELLED"
-            ? "İptal Edildi"
-            : "Başarısız";
+            ? "Cancelled"
+            : "Failed";
       return (
         <EventCard
           icon={icon}
@@ -212,7 +213,7 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
           department={asDepartmentKey(card.department)}
         >
           {card.resultText ? (
-            <EventDetailToggle label="Üretilen içeriği gör">
+            <EventDetailToggle label="See generated content">
               {card.resultText}
             </EventDetailToggle>
           ) : null}
@@ -232,12 +233,12 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
           title={card.title}
           tone={tone}
           badge={{
-            label: card.decision === "APPROVED" ? "Onaylandı" : "Reddedildi",
+            label: card.decision === "APPROVED" ? "Approved" : "Rejected",
             tone,
           }}
         >
           {card.note ? (
-            <EventDetailToggle label="Not">{card.note}</EventDetailToggle>
+            <EventDetailToggle label="Note">{card.note}</EventDetailToggle>
           ) : null}
         </EventCard>
       );
@@ -255,13 +256,13 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
           badge={{
             label:
               card.status === "COMPLETED"
-                ? `${card.platform} — Paylaşıldı`
-                : `${card.platform} — Başarısız`,
+                ? `${card.platform} — Published`
+                : `${card.platform} — Failed`,
             tone,
           }}
         >
           {hasDetails ? (
-            <EventDetailToggle label="Yayın detayı">
+            <EventDetailToggle label="Publish details">
               {card.permalink ? (
                 <a
                   href={card.permalink}
@@ -285,18 +286,19 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
 }
 
 const VERDICT_LABEL: Record<string, string> = {
-  STRONG_APPROVE: "Güçlü Onay",
-  APPROVE: "Onay",
-  REVISE: "Revizyon",
-  REJECT: "Ret",
+  STRONG_APPROVE: "Strong Approve",
+  APPROVE: "Approve",
+  REVISE: "Revise",
+  REJECT: "Reject",
 };
 
-// Bir görev onay beklerken sohbette gösterilen, doğrudan tıklanabilir
-// Onayla/Reddet kartı — ayrı bir Onaylar paneline gitmeye gerek kalmadan
-// karar burada verilebilir. Karar sonrası sunucu (bkz.
-// resolveApprovalDecisionCard) AYNI satırı "approval-decision" kartına
-// günceller; router.refresh() o güncel hali getirir. Arada, sunucu yanıtı
-// beklenirken kısa süreliğine iyimser bir sonuç durumu gösterilir.
+// A directly clickable Approve/Reject card shown in chat while a task is
+// awaiting approval — the decision can be made here without navigating to
+// a separate Approvals panel. After the decision, the server (see
+// resolveApprovalDecisionCard) updates the SAME row to an
+// "approval-decision" card; router.refresh() fetches that updated state.
+// In between, an optimistic result state is shown briefly while waiting
+// for the server response.
 function ApprovalRequestCard({
   card,
 }: {
@@ -321,14 +323,14 @@ function ApprovalRequestCard({
         const result = await action(formData);
         if (result.ok) {
           setDecision(to);
-          toast.success(to === "APPROVED" ? "Onaylandı" : "Reddedildi");
+          toast.success(to === "APPROVED" ? "Approved" : "Rejected");
           router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "İşlem başarısız";
+        const message = err instanceof Error ? err.message : "Action failed";
         setError(message);
         toast.error(message);
       }
@@ -339,7 +341,7 @@ function ApprovalRequestCard({
     return (
       <EventCard
         icon={decision === "APPROVED" ? ShieldCheck : ShieldX}
-        title={decision === "APPROVED" ? "Onaylandı" : "Reddedildi"}
+        title={decision === "APPROVED" ? "Approved" : "Rejected"}
         tone={decision === "APPROVED" ? "positive" : "danger"}
         department={departmentKey}
       />
@@ -356,7 +358,9 @@ function ApprovalRequestCard({
       <div className="flex items-start justify-between gap-2.5">
         <div className="flex items-center gap-2">
           <CircleCheck className="size-4 shrink-0 text-foreground" />
-          <p className="text-sm font-semibold text-foreground">Onay bekliyor</p>
+          <p className="text-sm font-semibold text-foreground">
+            Awaiting approval
+          </p>
         </div>
         <StatusBadge meta={RISK_LEVEL[card.riskLevel]} />
       </div>
@@ -369,7 +373,8 @@ function ApprovalRequestCard({
         ) : null}
       </div>
       <p className="text-sm text-muted-foreground">
-        Yürütmeden önce onayınız gerekiyor. Reddedilirse görev iptal edilir.
+        Your approval is required before execution. If rejected, the task will
+        be cancelled.
       </p>
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <div className="flex gap-2">
@@ -381,7 +386,7 @@ function ApprovalRequestCard({
           disabled={isPending}
           onClick={() => decide("REJECTED")}
         >
-          Reddet
+          Reject
         </Button>
         <Button
           type="button"
@@ -390,7 +395,7 @@ function ApprovalRequestCard({
           className="rounded-full bg-success text-success-foreground hover:bg-success/90"
           onClick={() => decide("APPROVED")}
         >
-          Onayla
+          Approve
         </Button>
       </div>
     </div>
@@ -451,9 +456,9 @@ function EventCard({
   );
 }
 
-// Uzun gövdeler için: varsayılan kapalı, tıklayınca açılır (reasoning.tsx'in
-// ReasoningTrigger/ReasoningContent paterni örnek alındı — aynı chevron-
-// rotate + collapsible-up/down animasyon sınıfları).
+// For long bodies: collapsed by default, expands on click (modeled after
+// reasoning.tsx's ReasoningTrigger/ReasoningContent pattern — the same
+// chevron-rotate + collapsible-up/down animation classes).
 function EventDetailToggle({
   label,
   children,

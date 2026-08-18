@@ -1,38 +1,38 @@
 import "server-only";
 
-// Hata sınıflandırma: sistemdeki her hata mesajı (sağlayıcı adaptörleri,
-// ReasoningService, outbox worker) serbest metin olarak kaydediliyor.
-// Otomatik kurtarma kararı verebilmek için önce bu metnin NE anlama
-// geldiğini bilmek gerekir — "kredi bitti" ile "ağ zaman aşımı" aynı
-// müdahaleyi almaz.
+// Error classification: every error message in the system (provider
+// adapters, ReasoningService, outbox worker) is recorded as free text.
+// To make an auto-recovery decision, we first need to know WHAT this text
+// means — "out of credit" and "network timeout" don't get the same
+// intervention.
 //
-// Sınıflandırma bilinçli olarak metin eşleştirmesine dayanıyor: sağlayıcı
-// SDK'ları hata tiplerini birbirinden farklı modelliyor ve hepsi sonunda
-// tek bir `errorMessage` string'ine düşüyor.
+// Classification deliberately relies on text matching: provider SDKs model
+// error types differently from each other, and they all eventually collapse
+// into a single `errorMessage` string.
 
 export type ErrorCategory =
-  | "BILLING" // kredi/kota bitti — para gerektirir
-  | "AUTH" // anahtar geçersiz/eksik — yapılandırma gerektirir
-  | "RATE_LIMIT" // geçici, bekleyip yeniden dene
-  | "TIMEOUT" // geçici, yeniden dene
-  | "NETWORK" // geçici, yeniden dene
-  | "PROVIDER_UNAVAILABLE" // yetenek için sağlayıcı yok — yapılandırma
-  | "CONFIGURATION" // eksik ajan/profil/model ayarı
-  | "INVALID_RESULT" // sağlayıcı beklenen şemayı döndürmedi
-  | "REFUSED" // model isteği reddetti
+  | "BILLING" // out of credit/quota — requires payment
+  | "AUTH" // invalid/missing key — requires configuration
+  | "RATE_LIMIT" // transient, wait and retry
+  | "TIMEOUT" // transient, retry
+  | "NETWORK" // transient, retry
+  | "PROVIDER_UNAVAILABLE" // no provider for this capability — configuration
+  | "CONFIGURATION" // missing agent/profile/model setting
+  | "INVALID_RESULT" // provider didn't return the expected schema
+  | "REFUSED" // model refused the request
   | "UNKNOWN";
 
 export type RecoveryStrategy =
-  | "RETRY" // otomatik yeniden kuyruğa al
-  | "RETRY_AFTER_COOLDOWN" // sağlayıcı soğuyunca yeniden dene
-  | "NEEDS_CONFIG" // insan yapılandırma yapmadan anlamsız
-  | "NEEDS_HUMAN"; // insan kararı gerekir
+  | "RETRY" // auto re-queue
+  | "RETRY_AFTER_COOLDOWN" // retry once the provider has cooled down
+  | "NEEDS_CONFIG" // meaningless without human configuration
+  | "NEEDS_HUMAN"; // requires a human decision
 
 export type ErrorClassification = {
   category: ErrorCategory;
   strategy: RecoveryStrategy;
-  // Sağlayıcı sağlığını bozmalı mı? Kota/anahtar hataları sağlayıcıyı
-  // devre dışı bırakır; şema hatası tek bir işin sorunudur.
+  // Should this degrade provider health? Quota/key errors disable the
+  // provider; a schema error is just a single job's problem.
   degradesProvider: boolean;
   summary: string;
 };
@@ -55,7 +55,8 @@ const RULES: Array<{
     ],
     strategy: "NEEDS_CONFIG",
     degradesProvider: true,
-    summary: "Sağlayıcı bakiyesi/kotası yetersiz — hesaba kredi eklenmeli.",
+    summary:
+      "Insufficient provider balance/quota — credit must be added to the account.",
   },
   {
     category: "AUTH",
@@ -70,7 +71,7 @@ const RULES: Array<{
     ],
     strategy: "NEEDS_CONFIG",
     degradesProvider: true,
-    summary: "Kimlik doğrulama başarısız — API anahtarı eksik veya geçersiz.",
+    summary: "Authentication failed — the API key is missing or invalid.",
   },
   {
     category: "RATE_LIMIT",
@@ -83,14 +84,14 @@ const RULES: Array<{
     strategy: "RETRY_AFTER_COOLDOWN",
     degradesProvider: true,
     summary:
-      "Hız sınırına takıldı — sağlayıcı soğuduktan sonra yeniden denenecek.",
+      "Rate limit hit — will be retried once the provider has cooled down.",
   },
   {
     category: "TIMEOUT",
     patterns: [/timeout/i, /timed out/i, /\baborted\b/i, /ETIMEDOUT/],
     strategy: "RETRY",
     degradesProvider: false,
-    summary: "İşlem zaman aşımına uğradı — yeniden denenebilir.",
+    summary: "The operation timed out — it can be retried.",
   },
   {
     category: "NETWORK",
@@ -105,7 +106,7 @@ const RULES: Array<{
     ],
     strategy: "RETRY",
     degradesProvider: true,
-    summary: "Ağ/sağlayıcı erişilemedi — yeniden denenebilir.",
+    summary: "Network/provider unreachable — it can be retried.",
   },
   {
     category: "PROVIDER_UNAVAILABLE",
@@ -113,7 +114,7 @@ const RULES: Array<{
     strategy: "NEEDS_CONFIG",
     degradesProvider: false,
     summary:
-      "Bu yetenek için yapılandırılmış sağlayıcı yok — entegrasyon gerekir.",
+      "No provider is configured for this capability — an integration is required.",
   },
   {
     category: "CONFIGURATION",
@@ -125,7 +126,8 @@ const RULES: Array<{
     ],
     strategy: "NEEDS_CONFIG",
     degradesProvider: false,
-    summary: "Eksik/yanlış yapılandırma — ajan, profil veya model bulunamadı.",
+    summary:
+      "Missing/incorrect configuration — agent, profile, or model not found.",
   },
   {
     category: "INVALID_RESULT",
@@ -137,7 +139,8 @@ const RULES: Array<{
     ],
     strategy: "RETRY",
     degradesProvider: false,
-    summary: "Sağlayıcı beklenen biçimde yanıt vermedi — yeniden denenebilir.",
+    summary:
+      "The provider did not respond in the expected format — it can be retried.",
   },
   {
     category: "REFUSED",
@@ -145,7 +148,7 @@ const RULES: Array<{
     strategy: "NEEDS_HUMAN",
     degradesProvider: false,
     summary:
-      "Model isteği reddetti — brief insan tarafından gözden geçirilmeli.",
+      "The model refused the request — the brief must be reviewed by a human.",
   },
 ];
 
@@ -153,7 +156,7 @@ const UNKNOWN: ErrorClassification = {
   category: "UNKNOWN",
   strategy: "NEEDS_HUMAN",
   degradesProvider: false,
-  summary: "Sınıflandırılamayan hata — insan incelemesi gerekir.",
+  summary: "Unclassifiable error — requires human review.",
 };
 
 export function classifyError(
@@ -173,8 +176,8 @@ export function classifyError(
   return UNKNOWN;
 }
 
-// Otomatik kurtarma yalnızca geçici hatalarda anlamlı: yapılandırma veya
-// bakiye sorununu yeniden denemek yalnızca aynı hatayı üretir.
+// Auto-recovery only makes sense for transient errors: retrying a
+// configuration or balance issue just produces the same error.
 export function isAutoRecoverable(
   classification: ErrorClassification,
 ): boolean {

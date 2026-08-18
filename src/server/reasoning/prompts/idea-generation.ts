@@ -22,8 +22,8 @@ export type IdeaGenerationOutput = z.infer<typeof IdeaGenerationSchema>;
 export const ideaGenerationDef: ReasoningDef<IdeaGenerationOutput> = {
   purpose: "idea.generate",
   schema: IdeaGenerationSchema,
-  // Fikir üretimi en yüksek hacimli adım (fırsat başına birden çok lens)
-  // ve mekanik: en ucuz kademe yeterli.
+  // Idea generation is the highest-volume step (multiple lenses per
+  // opportunity) and mechanical: the cheapest tier suffices.
   tier: "lite" as const,
   maxTokens: 4096,
 

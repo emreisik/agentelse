@@ -7,9 +7,9 @@ import {
 } from "@/server/observability/error-classifier";
 import { sendTelegramMessage } from "@/server/notifications/telegram.service";
 
-// Telegram'ın HTML parse_mode'u için: mesaj içeriği sağlayıcı hata
-// metinlerinden geliyor, kaçırılmazsa `<`/`>` içeren bir hata mesajı
-// bozuk/parse edilemeyen bir bildirime yol açar.
+// For Telegram's HTML parse_mode: message content comes from provider
+// error text, and without escaping, an error message containing `<`/`>`
+// would produce a broken/unparseable notification.
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -35,18 +35,18 @@ export const DeadLetterRepository = {
       },
     });
 
-    // Geçici hatalar (RETRY/RETRY_AFTER_COOLDOWN) SelfHealingService
-    // tarafından sessizce çözülür — sadece insan müdahalesi gerektirenler
-    // Telegram'a düşer, aksi halde her yeniden deneme spam üretir.
+    // Transient errors (RETRY/RETRY_AFTER_COOLDOWN) are resolved silently by
+    // SelfHealingService — only ones requiring human intervention are sent
+    // to Telegram, otherwise every retry would generate spam.
     const classification = classifyError(input.lastError);
     if (!isAutoRecoverable(classification)) {
       void sendTelegramMessage(
         [
           `<b>⚠️ Dead letter: ${escapeHtml(input.reason)}</b>`,
-          `Kategori: ${classification.category} (${classification.strategy})`,
+          `Category: ${classification.category} (${classification.strategy})`,
           classification.summary,
           input.lastError
-            ? `Hata: <code>${escapeHtml(input.lastError)}</code>`
+            ? `Error: <code>${escapeHtml(input.lastError)}</code>`
             : null,
           input.executionJobId
             ? `ExecutionJob: <code>${input.executionJobId}</code>`

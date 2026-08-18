@@ -38,16 +38,16 @@ function redirectToEntegrasyonlar(
   projectId: string,
   metaError?: string,
 ) {
-  const url = new URL(`/projects/${projectId}/entegrasyonlar`, request.url);
-  url.searchParams.set("entegrasyon", "meta");
+  const url = new URL(`/projects/${projectId}/integrations`, request.url);
+  url.searchParams.set("integration", "meta");
   if (metaError) url.searchParams.set("metaError", metaError);
   return NextResponse.redirect(url);
 }
 
-// Meta'nın consent ekranından dönüş — code'u long-lived token'a çevirir,
-// yönetilen Page'leri (bağlı Instagram Business hesaplarıyla birlikte) ve
-// reklam hesaplarını listeler, bağlantıyı kurar. google/callback/route.ts
-// ile aynı iskelet.
+// Return from Meta's consent screen — exchanges the code for a long-lived
+// token, lists managed Pages (along with their linked Instagram Business
+// accounts) and ad accounts, and establishes the connection. Same skeleton
+// as google/callback/route.ts.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
@@ -78,8 +78,8 @@ export async function GET(request: Request) {
   } catch {
     return redirectToEntegrasyonlar(request, state.projectId, "unauthorized");
   }
-  // İmzalı state hangi kullanıcı adına başlatıldığını taşıyor — mevcut
-  // oturum başka bir kullanıcıya aitse devam etmiyoruz.
+  // The signed state carries which user initiated the flow — we don't
+  // proceed if the current session belongs to a different user.
   if (userId !== state.userId) {
     return redirectToEntegrasyonlar(request, state.projectId, "state_invalid");
   }
@@ -107,18 +107,18 @@ export async function GET(request: Request) {
     );
   }
 
-  // Page/ad account listelerinden biri başarısız olsa da (örn. o Page için
-  // izin verilmemiş) bağlantı yine de kurulur — hata mesajı metadata'da
-  // saklanır, dialog'da gösterilir.
+  // Even if one of the Page/ad account lists fails (e.g. permission wasn't
+  // granted for that Page), the connection is still established — the error
+  // message is stored in the metadata and shown in the dialog.
   const [connectedName, pages, adAccounts] = await Promise.all([
     fetchMetaAccountName(longLivedToken.accessToken),
     safeList(
       listManagedPages(longLivedToken.accessToken),
-      "Page listesi alınamadı",
+      "Failed to fetch Page list",
     ),
     safeList(
       listAdAccounts(longLivedToken.accessToken),
-      "Reklam hesabı listesi alınamadı",
+      "Failed to fetch ad account list",
     ),
   ]);
 

@@ -11,8 +11,9 @@ import { cn } from "@/lib/utils";
 // as the actual thread the work happens in, instead of a timeline. No
 // message ever starts as a user bubble: system/pipeline notes and cards
 // open and carry the whole thread, matching how the main app renders a
-// SYSTEM-source turn (bkz. src/components/commands/project-chat.tsx —
-// "kullanıcı mesajı yoktur, yalnızca asistan balonu"). Card anatomy and
+// SYSTEM-source turn (see src/components/commands/project-chat.tsx —
+// "there is no user message, it is only shown as an assistant bubble").
+// Card anatomy and
 // bubble styles taken from src/components/assistant-ui/thread.tsx and
 // src/components/commands/idea-event-card.tsx. Rendered inside the same
 // browser frame as AppKanbanShowcase, playing itself out on a timer, then

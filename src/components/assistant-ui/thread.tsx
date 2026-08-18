@@ -124,13 +124,14 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
         ["--composer-padding" as string]: "8px",
       }}
     >
-      {/* turnAnchor varsayılanı "bottom" (klasik sohbet davranışı) —
-          bilerek belirtilmiyor. "top" (yeni mesaj üstte sabitlenip yanıt
-          altta büyür — "canlı yazma" hissi) hem gereksizdi (mesajlarımız
-          token'lık akmıyor, tam blok halinde geliyor) hem de assistant-ui'de
-          autoScroll varsayılanını false yapıp LiveRefresh'in getirdiği yeni
-          sistem mesajlarında (görev/onay/kreatif kartları) sayfanın en
-          altına hiç kaymamasına yol açıyordu. */}
+      {/* turnAnchor's default is "bottom" (classic chat behavior) —
+          deliberately left unset. "top" (new message pins at the top and
+          the reply grows below — a "live typing" feel) was both
+          unnecessary (our messages don't stream token by token, they
+          arrive as a whole block) and, in assistant-ui, made autoScroll
+          default to false, causing new system messages brought by
+          LiveRefresh (task/approval/creative cards) to never scroll the
+          page to the bottom. */}
       <ThreadPrimitive.Viewport
         data-slot="aui_thread-viewport"
         className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth"
@@ -190,7 +191,7 @@ const ThreadScrollToBottom: FC = () => {
     <ThreadPrimitive.ScrollToBottom
       render={
         <TooltipIconButton
-          tooltip="Aşağı kaydır"
+          tooltip="Scroll down"
           variant="outline"
           className="aui-thread-scroll-to-bottom dark:border-border dark:bg-background dark:hover:bg-accent absolute -top-12 z-10 self-center rounded-full p-4 disabled:invisible"
         />
@@ -205,7 +206,7 @@ const ThreadWelcome: FC = () => {
   return (
     <div className="aui-thread-welcome-root mb-6 flex flex-col items-center px-4 text-center">
       <h1 className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-semibold duration-200">
-        Bugün nasıl yardımcı olabilirim?
+        How can I help you today?
       </h1>
     </div>
   );
@@ -253,12 +254,12 @@ const Composer: FC = () => {
       >
         <ComposerAttachments />
         <ComposerPrimitive.Input
-          placeholder="Mesaj yazın veya dosya ekleyin…"
+          placeholder="Type a message or attach a file…"
           className="aui-composer-input caret-primary placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
           rows={1}
           autoFocus
           enterKeyHint="send"
-          aria-label="Mesaj girişi"
+          aria-label="Message input"
         />
         <ComposerAction />
       </ComposerPrimitive.AttachmentDropzone>
@@ -278,13 +279,13 @@ const ComposerAction: FC = () => {
             <ComposerPrimitive.Dictate
               render={
                 <TooltipIconButton
-                  tooltip="Sesle yazdır"
+                  tooltip="Dictate"
                   side="bottom"
                   type="button"
                   variant="ghost"
                   size="icon"
                   className="aui-composer-dictate size-7 rounded-full"
-                  aria-label="Sesle yazdırmayı başlat"
+                  aria-label="Start dictation"
                 />
               }
             >
@@ -295,13 +296,13 @@ const ComposerAction: FC = () => {
             <ComposerPrimitive.StopDictation
               render={
                 <TooltipIconButton
-                  tooltip="Sesle yazdırmayı durdur"
+                  tooltip="Stop dictation"
                   side="bottom"
                   type="button"
                   variant="ghost"
                   size="icon"
                   className="aui-composer-stop-dictation text-destructive size-7 rounded-full"
-                  aria-label="Sesle yazdırmayı durdur"
+                  aria-label="Stop dictation"
                 />
               }
             >
@@ -313,13 +314,13 @@ const ComposerAction: FC = () => {
           <ComposerPrimitive.Send
             render={
               <TooltipIconButton
-                tooltip="Gönder"
+                tooltip="Send"
                 side="bottom"
                 type="button"
                 variant="default"
                 size="icon"
                 className="aui-composer-send size-7 rounded-full"
-                aria-label="Gönder"
+                aria-label="Send"
               />
             }
           >
@@ -334,7 +335,7 @@ const ComposerAction: FC = () => {
                 variant="default"
                 size="icon"
                 className="aui-composer-cancel size-7 rounded-full"
-                aria-label="Durdur"
+                aria-label="Stop"
               />
             }
           >
@@ -363,20 +364,22 @@ const AssistantMessage: FC = () => {
     ReasoningGroup,
   } = useContext(ThreadComponentsContext);
 
-  // Kreatif/görsel üretim olayları (bkz. IdeaChatRepository postCreativeLoadingCard/
-  // resolveCreativeCard) mesajın metadata.custom.card'ında taşınır — varsa
-  // normal metin/parça render'ının YERİNE özel bir kart gösterilir (ChatGPT'nin
-  // görsel üretirken gösterdiği yükleniyor → sonuç kartı gibi).
+  // Creative/image generation events (see IdeaChatRepository
+  // postCreativeLoadingCard/resolveCreativeCard) are carried in the
+  // message's metadata.custom.card — if present, a special card is shown
+  // INSTEAD OF the normal text/part render (like ChatGPT's loading →
+  // result card shown while generating images).
   const card = useAuiState((s) => {
     const custom = s.message.metadata.custom as { card?: unknown };
     return isIdeaEventCardData(custom.card) ? custom.card : undefined;
   });
 
-  // TEK bir departmana bağlı olay mesajlarında (görev/kreatif tamamlanması
-  // — bkz. IdeaChatRepository.postSystemMessage) metadata.custom.departmentKey
-  // dolu — hızlı görsel tarama için mesaj içeriğinin sol kenarına o
-  // departmanın renginde ince bir şerit uygulanır (kanban kartıyla aynı
-  // görsel dil, bkz. idea-lens-board.tsx).
+  // For event messages tied to a SINGLE department (task/creative
+  // completion — see IdeaChatRepository.postSystemMessage),
+  // metadata.custom.departmentKey is set — for quick visual scanning, a
+  // thin stripe in that department's color is applied to the left edge of
+  // the message content (the same visual language as the kanban card, see
+  // idea-lens-board.tsx).
   const departmentKey = useAuiState((s) => {
     const custom = s.message.metadata.custom as { departmentKey?: unknown };
     const key = custom.departmentKey;
@@ -458,7 +461,7 @@ const AssistantMessage: FC = () => {
                   <span
                     data-slot="aui_assistant-message-indicator"
                     className="animate-pulse font-sans"
-                    aria-label="Asistan yazıyor"
+                    aria-label="Assistant is typing"
                   >
                     {"●"}
                   </span>
@@ -468,10 +471,11 @@ const AssistantMessage: FC = () => {
             }
           }}
         </MessagePrimitive.GroupedParts>
-        {/* Kart zaten kendi department satırını gösteriyorsa (bkz.
-            idea-event-card.tsx EventCard) burada TEKRAR göstermiyoruz —
-            sadece düz metinli olaylarda (ör. "Görev oluşturuldu") departman
-            departmanlar sayfasındaki AYNI ikon+renkle burada görünür. */}
+        {/* If the card already shows its own department row (see
+            idea-event-card.tsx EventCard), we don't show it AGAIN here —
+            only for plain-text events (e.g. "Task created") does the
+            department appear here with the SAME icon+color as on the
+            departments page. */}
         {!card && departmentKey ? (
           <DepartmentBadge
             department={departmentKey}
@@ -500,7 +504,7 @@ const AssistantActionBar: FC = () => {
       autohide="not-last"
       className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in col-start-3 row-start-2 -ms-1 flex gap-1 duration-200"
     >
-      <ActionBarPrimitive.Copy render={<TooltipIconButton tooltip="Kopyala" />}>
+      <ActionBarPrimitive.Copy render={<TooltipIconButton tooltip="Copy" />}>
         <AuiIf condition={(s) => s.message.isCopied}>
           <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
         </AuiIf>
@@ -509,7 +513,7 @@ const AssistantActionBar: FC = () => {
         </AuiIf>
       </ActionBarPrimitive.Copy>
       <ActionBarPrimitive.Reload
-        render={<TooltipIconButton tooltip="Yenile" />}
+        render={<TooltipIconButton tooltip="Refresh" />}
       >
         <RefreshCwIcon />
       </ActionBarPrimitive.Reload>
@@ -517,7 +521,7 @@ const AssistantActionBar: FC = () => {
         <ActionBarMorePrimitive.Trigger
           render={
             <TooltipIconButton
-              tooltip="Diğer"
+              tooltip="More"
               className="data-[state=open]:bg-accent"
             />
           }
@@ -536,7 +540,7 @@ const AssistantActionBar: FC = () => {
             }
           >
             <DownloadIcon className="size-4" />
-            Markdown olarak dışa aktar
+            Export as Markdown
           </ActionBarPrimitive.ExportMarkdown>
         </ActionBarMorePrimitive.Content>
       </ActionBarMorePrimitive.Root>
@@ -579,10 +583,7 @@ const UserActionBar: FC = () => {
     >
       <ActionBarPrimitive.Edit
         render={
-          <TooltipIconButton
-            tooltip="Düzenle"
-            className="aui-user-action-edit"
-          />
+          <TooltipIconButton tooltip="Edit" className="aui-user-action-edit" />
         }
       >
         <PencilIcon />
@@ -612,12 +613,12 @@ const EditComposer: FC = () => {
               />
             }
           >
-            İptal
+            Cancel
           </ComposerPrimitive.Cancel>
           <ComposerPrimitive.Send
             render={<Button size="sm" className="h-8 rounded-full px-3.5" />}
           >
-            Güncelle
+            Update
           </ComposerPrimitive.Send>
         </div>
       </ComposerPrimitive.Root>
@@ -639,16 +640,14 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
       {...rest}
     >
       <BranchPickerPrimitive.Previous
-        render={<TooltipIconButton tooltip="Önceki" />}
+        render={<TooltipIconButton tooltip="Previous" />}
       >
         <ChevronLeftIcon />
       </BranchPickerPrimitive.Previous>
       <span className="aui-branch-picker-state font-medium">
         <BranchPickerPrimitive.Number /> / <BranchPickerPrimitive.Count />
       </span>
-      <BranchPickerPrimitive.Next
-        render={<TooltipIconButton tooltip="Sonraki" />}
-      >
+      <BranchPickerPrimitive.Next render={<TooltipIconButton tooltip="Next" />}>
         <ChevronRightIcon />
       </BranchPickerPrimitive.Next>
     </BranchPickerPrimitive.Root>

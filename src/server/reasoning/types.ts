@@ -12,11 +12,11 @@ export type ReasoningDef<TOut> = {
   schema: ZodType<TOut>;
   buildPrompt(context: ReasoningContext): { system: string; user: string };
   buildMock(context: ReasoningContext): TOut;
-  // Maliyet/kalite kademesi. "lite" yüksek hacimli mekanik adımlar için
-  // (fikir üretimi, sinyal skorlama), "pro" nadir ama kritik sentezler için.
-  // Belirtilmezse proje geneli varsayılan model kullanılır.
+  // Cost/quality tier. "lite" for high-volume mechanical steps (idea
+  // generation, signal scoring), "pro" for rare but critical syntheses.
+  // If unspecified, the project-wide default model is used.
   tier?: "lite" | "default" | "pro";
-  // Kademeyi atlayıp belirli bir modeli sabitlemek için kaçış kapısı.
+  // Escape hatch to bypass the tier and pin a specific model.
   model?: string;
   maxTokens?: number;
 };
@@ -26,9 +26,9 @@ export type ReasoningInput = {
   projectId: string;
   brandId: string;
   context: ReasoningContext;
-  // Çok modlu girdi (kullanıcının sohbete eklediği görsel/PDF/metin).
-  // Yalnızca gerçek çağrıda kullanılır; mock yolu bunları görmez, bu yüzden
-  // buildMock her zaman yalnız context'ten türetmeye devam eder.
+  // Multi-modal input (image/PDF/text the user attached to the chat).
+  // Used only on the real call path; the mock path never sees these, so
+  // buildMock always keeps deriving solely from context.
   attachments?: { mimeType: string; data: string }[];
 };
 

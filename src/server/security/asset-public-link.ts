@@ -4,12 +4,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { getEnv } from "@/lib/env";
 
-// Dış sağlayıcıların (Meta Graph API gibi Instagram/Ads sunucuları) normal
-// /api/assets/[assetId] rotasına requireUser+requireProjectAccess ile giriş
-// yapması mümkün değil — bu yüzden AUTH_SECRET ile imzalanmış, kısa ömürlü,
-// TEK bir assetId'ye kilitli bir token üretir (oauth-state.ts'teki aynı
-// imzalama deseni). Token süresi dolunca/asset değişince eski linkler
-// otomatik geçersiz kalır, kalıcı bir "herkese açık" URL asla oluşmaz.
+// External providers (Instagram/Ads servers like the Meta Graph API) can't
+// authenticate to the normal /api/assets/[assetId] route via
+// requireUser+requireProjectAccess — so this generates a short-lived token
+// signed with AUTH_SECRET, locked to a SINGLE assetId (the same signing
+// pattern as oauth-state.ts). Once the token expires / the asset changes,
+// old links automatically become invalid, and a permanent "public" URL is
+// never created.
 const LINK_TTL_MS = 15 * 60_000;
 
 type AssetLinkPayload = {
@@ -64,8 +65,8 @@ export function verifyAssetPublicToken(
   return true;
 }
 
-// INSTAGRAM_PUBLISH gibi capability'lerin payload.imageUrl'i için — Meta'nın
-// sunucuları buradan doğrudan (auth'suz) indirebilir.
+// For the payload.imageUrl of capabilities like INSTAGRAM_PUBLISH — Meta's
+// servers can download directly from here (without auth).
 export function buildAssetPublicUrl(assetId: string): string {
   const token = signAssetPublicToken(assetId);
   const env = getEnv();

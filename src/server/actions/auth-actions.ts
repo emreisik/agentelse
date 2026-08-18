@@ -1,21 +1,26 @@
 "use server";
 
+import { headers } from "next/headers";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { signOut } from "@/lib/auth";
+import { isRateLimited } from "@/lib/rate-limit";
+
+const REGISTER_WINDOW_MS = 60 * 60_000;
+const REGISTER_MAX_PER_IP = 10;
 
 export async function signOutAction() {
   await signOut({ redirectTo: "/login" });
 }
 
 const registerSchema = z.object({
-  name: z.string().min(1, "İsim gerekli"),
-  email: z.string().email("Geçerli bir e-posta adresi girin"),
-  password: z.string().min(8, "Şifre en az 8 karakter olmalı"),
-  workspaceName: z.string().min(1, "Şirket/ekip adı gerekli"),
+  name: z.string().min(1, "Name is required"),
+  email: z.string().email("Enter a valid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  workspaceName: z.string().min(1, "Company/team name is required"),
 });
 
 export type RegisterInput = z.infer<typeof registerSchema>;
@@ -29,26 +34,35 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-// Self-signup: yeni bir Workspace + kullanıcıyı OWNER olarak oluşturur.
-// Proje/Marka burada oluşturulmuyor — o, mevcut createProjectAction'ın
-// (project-actions.ts) 12 aşamalı Ajans Kurulumu'na götüren akışı; register
-// sadece "sahibi olduğun bir çalışma alanı" adımını tamamlar, kullanıcı
-// /dashboard'dan ilk projesini kendi başlatır.
+// Self-signup: creates a new Workspace + user as OWNER.
+// Project/Brand are not created here — that's the flow handled by the
+// existing createProjectAction (project-actions.ts), which leads into the
+// 12-stage Agency Setup; register only completes the "a workspace you own"
+// step, and the user starts their first project themselves from /dashboard.
 export async function registerAction(
   input: RegisterInput,
 ): Promise<RegisterResult> {
+  const headerList = await headers();
+  const forwardedFor = headerList.get("x-forwarded-for");
+  const ip = forwardedFor ? forwardedFor.split(",")[0]!.trim() : "unknown";
+  if (
+    isRateLimited(`register:ip:${ip}`, REGISTER_MAX_PER_IP, REGISTER_WINDOW_MS)
+  ) {
+    return { ok: false, error: "Too many attempts. Please try again later." };
+  }
+
   const parsed = registerSchema.safeParse(input);
   if (!parsed.success) {
     return {
       ok: false,
-      error: parsed.error.issues[0]?.message ?? "Geçersiz form verisi",
+      error: parsed.error.issues[0]?.message ?? "Invalid form data",
     };
   }
   const { name, email, password, workspaceName } = parsed.data;
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
-    return { ok: false, error: "Bu e-posta adresiyle zaten bir hesap var" };
+    return { ok: false, error: "An account with this email already exists" };
   }
 
   const baseSlug = slugify(workspaceName) || "workspace";
@@ -78,7 +92,7 @@ export async function registerAction(
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
-      return { ok: false, error: "Bu e-posta adresiyle zaten bir hesap var" };
+      return { ok: false, error: "An account with this email already exists" };
     }
     throw error;
   }

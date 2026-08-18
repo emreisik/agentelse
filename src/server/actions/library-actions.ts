@@ -13,11 +13,11 @@ import {
 } from "@/server/security/tenant-context";
 import type { ActionResult } from "@/components/shared/action-form";
 
-// Kütüphane paneline doğrudan dosya yükleme — sohbet ekindeki
-// CHAT_MIME_TO_EXT ile aynı izinli tür seti (command-actions.ts), çünkü
-// ikisi de aynı /api/assets/[assetId]/route.ts SAFE_FILENAME regex'inden
-// geçmek zorunda. Sohbete özgü boyut/adet sınırları (inlineData isteği)
-// burada geçerli değil — tek dosya, daha yüksek bir sınır yeterli.
+// Direct file upload to the Library panel — the same allowed type set as the
+// chat attachment's CHAT_MIME_TO_EXT (command-actions.ts), because both have
+// to pass through the same /api/assets/[assetId]/route.ts SAFE_FILENAME
+// regex. The chat-specific size/count limits (inlineData request) don't
+// apply here — a single file with a higher limit is enough.
 const LIBRARY_MIME_TO_EXT: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -36,20 +36,20 @@ export async function uploadLibraryAssetAction(
   const projectId = String(formData.get("projectId") ?? "");
   const file = formData.get("file");
   if (!projectId || !(file instanceof File) || file.size === 0) {
-    return { ok: false, message: "Dosya seçilmedi." };
+    return { ok: false, message: "No file selected." };
   }
 
   const ext = LIBRARY_MIME_TO_EXT[file.type];
   if (!ext) {
     return {
       ok: false,
-      message: `Desteklenmeyen dosya türü: ${file.name}. Görsel (PNG/JPG/WebP), PDF veya metin dosyası (TXT/CSV/MD) yükleyin.`,
+      message: `Unsupported file type: ${file.name}. Upload an image (PNG/JPG/WebP), PDF, or text file (TXT/CSV/MD).`,
     };
   }
   if (file.size > MAX_LIBRARY_FILE_SIZE) {
     return {
       ok: false,
-      message: `${file.name} çok büyük (sınır ${MAX_LIBRARY_FILE_SIZE / 1024 / 1024} MB).`,
+      message: `${file.name} is too large (limit ${MAX_LIBRARY_FILE_SIZE / 1024 / 1024} MB).`,
     };
   }
 

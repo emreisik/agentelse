@@ -32,39 +32,39 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
-  AYARLAR_SUB_KEYS,
+  SETTINGS_SUB_KEYS,
   buildHubHref,
-  type AyarlarSubKey,
+  type SettingsSubKey,
 } from "../hub-core-params";
 import { CrossLinkChip } from "../primitives/cross-link-chip";
 import { FieldGrid, type FieldSpec } from "../primitives/field-grid";
 import type { PanelProps } from "./panel-props";
 
-const SUB_LABEL: Record<AyarlarSubKey, string> = {
-  otonomi: "Otonomi",
-  kararlar: "Kararlar",
-  aktivite: "Aktivite",
-  tehlike: "Tehlikeli Bölge",
+const SUB_LABEL: Record<SettingsSubKey, string> = {
+  autonomy: "Autonomy",
+  decisions: "Decisions",
+  activity: "Activity",
+  risk: "Danger Zone",
 };
 
 const WEIGHT_LABELS: Record<string, string> = {
-  impact: "Etki",
-  goalAlignment: "Hedef Uyumu",
-  urgency: "Aciliyet",
-  evidence: "Kanıt",
-  confidence: "Güven",
-  timing: "Zamanlama",
-  originality: "Özgünlük",
-  costPenalty: "Maliyet Cezası",
-  effortPenalty: "Efor Cezası",
-  riskPenalty: "Risk Cezası",
+  impact: "Impact",
+  goalAlignment: "Goal Alignment",
+  urgency: "Urgency",
+  evidence: "Evidence",
+  confidence: "Confidence",
+  timing: "Timing",
+  originality: "Originality",
+  costPenalty: "Cost Penalty",
+  effortPenalty: "Effort Penalty",
+  riskPenalty: "Risk Penalty",
 };
 
-export async function AyarlarPanel({ projectId, sub, entity }: PanelProps) {
-  const activeSub: AyarlarSubKey =
-    sub && (AYARLAR_SUB_KEYS as readonly string[]).includes(sub)
-      ? (sub as AyarlarSubKey)
-      : "otonomi";
+export async function SettingsPanel({ projectId, sub, entity }: PanelProps) {
+  const activeSub: SettingsSubKey =
+    sub && (SETTINGS_SUB_KEYS as readonly string[]).includes(sub)
+      ? (sub as SettingsSubKey)
+      : "autonomy";
 
   const [decisionCount, triggerCount] = await Promise.all([
     prisma.agencyDecision.count({ where: { projectId } }),
@@ -75,19 +75,19 @@ export async function AyarlarPanel({ projectId, sub, entity }: PanelProps) {
     <div className="space-y-6 py-6">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-1 border-b border-foreground/10">
-          {AYARLAR_SUB_KEYS.map((key) => {
+          {SETTINGS_SUB_KEYS.map((key) => {
             const isActive = key === activeSub;
             const count =
-              key === "kararlar"
+              key === "decisions"
                 ? decisionCount
-                : key === "aktivite"
+                : key === "activity"
                   ? triggerCount
                   : undefined;
             return (
               <Link
                 key={key}
                 href={buildHubHref(projectId, {
-                  panel: "ayarlar",
+                  panel: "settings",
                   sub: key,
                   entity: null,
                 })}
@@ -116,14 +116,14 @@ export async function AyarlarPanel({ projectId, sub, entity }: PanelProps) {
             );
           })}
         </div>
-        {activeSub !== "otonomi" ? <LiveRefresh /> : null}
+        {activeSub !== "autonomy" ? <LiveRefresh /> : null}
       </div>
 
-      {activeSub === "kararlar" ? (
+      {activeSub === "decisions" ? (
         <DecisionsTab projectId={projectId} entity={entity} />
-      ) : activeSub === "aktivite" ? (
+      ) : activeSub === "activity" ? (
         <ActivityTab projectId={projectId} />
-      ) : activeSub === "tehlike" ? (
+      ) : activeSub === "risk" ? (
         <DangerTab projectId={projectId} />
       ) : (
         <AutonomyTab projectId={projectId} />
@@ -143,8 +143,8 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
     return (
       <EmptyState
         icon={ShieldCheck}
-        title="Otonomi politikası yok"
-        hint="Politika kurulumun 8. aşamasında oluşturulur; ajansın günlük limitlerini buradan yönetirsiniz."
+        title="No autonomy policy"
+        hint="The policy is created in step 8 of setup; manage the agency's daily limits from here."
       />
     );
   }
@@ -162,53 +162,53 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
   }> = [
     {
       name: "maxTasksPerDay",
-      label: "Günlük görev limiti",
+      label: "Daily task limit",
       value: policy.maxTasksPerDay,
-      hint: "Ajansın bir günde oluşturabileceği en fazla görev",
+      hint: "The maximum number of tasks the agency can create in a day",
     },
     {
       name: "maxReasoningCallsPerDay",
-      label: "Günlük akıl yürütme limiti",
+      label: "Daily reasoning limit",
       value: policy.maxReasoningCallsPerDay,
-      hint: "Bir günde yapılabilecek AI çağrısı sayısı",
+      hint: "The number of AI calls that can be made in a day",
     },
     {
       name: "maxConcurrentResearchTasks",
-      label: "Eşzamanlı araştırma limiti",
+      label: "Concurrent research limit",
       value: policy.maxConcurrentResearchTasks,
-      hint: "Aynı anda yürüyen araştırma görevi sayısı",
+      hint: "The number of research tasks running at the same time",
     },
     {
       name: "maxOpenOpportunities",
-      label: "Açık fırsat limiti",
+      label: "Open opportunity limit",
       value: policy.maxOpenOpportunities,
-      hint: "Aynı anda açık tutulabilecek fırsat sayısı",
+      hint: "The number of opportunities that can stay open at the same time",
     },
     {
       name: "maxActiveIdeas",
-      label: "Aktif fikir limiti",
+      label: "Active idea limit",
       value: policy.maxActiveIdeas,
-      hint: "Aynı anda yaşayan fikir sayısı",
+      hint: "The number of ideas alive at the same time",
     },
     {
       name: "taskCooldownHours",
-      label: "Görev soğuma süresi (saat)",
+      label: "Task cooldown period (hours)",
       value: policy.taskCooldownHours,
-      hint: "Aynı işin tekrar oluşturulması için beklenecek süre",
+      hint: "The time to wait before the same work item can be recreated",
     },
   ];
 
   return (
     <ActionForm
       action={updateAutonomyPolicyAction}
-      successMessage="Otonomi politikası güncellendi"
+      successMessage="Autonomy policy updated"
       className="space-y-4"
     >
       <input type="hidden" name="projectId" value={projectId} />
 
       <Card size="sm">
         <CardHeader>
-          <CardTitle className="text-base">Günlük Limitler</CardTitle>
+          <CardTitle className="text-base">Daily Limits</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           {limitFields.map((field) => (
@@ -227,7 +227,7 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
           ))}
           <div className="space-y-1.5">
             <Label htmlFor="policy-dailyBudgetUsd">
-              Günlük bütçe (USD, boş = sınırsız)
+              Daily budget (USD, blank = unlimited)
             </Label>
             <Input
               id="policy-dailyBudgetUsd"
@@ -238,7 +238,7 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
               defaultValue={policy.dailyBudgetUsd ?? ""}
             />
             <p className="text-xs text-muted-foreground">
-              Günlük AI akıl yürütme harcaması tavanı
+              Daily cap on AI reasoning spend
             </p>
           </div>
           <div className="flex items-center gap-3 pt-6">
@@ -250,10 +250,11 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
             />
             <div>
               <Label htmlFor="policy-setupAutoApprove">
-                Kurulum otomatik onayı
+                Setup auto-approval
               </Label>
               <p className="text-xs text-muted-foreground">
-                Kurulum aşamalarındaki kararları sistem onaylar
+                The system automatically approves decisions during the setup
+                stages
               </p>
             </div>
           </div>
@@ -268,7 +269,7 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
           <span className="flex size-7 items-center justify-center rounded-lg bg-warning/15">
             <InfinityIcon className="size-4 text-warning" />
           </span>
-          <CardTitle className="text-base">Sınırsız Mod</CardTitle>
+          <CardTitle className="text-base">Unlimited Mode</CardTitle>
         </CardHeader>
         <CardContent className="flex items-start gap-3">
           <Switch
@@ -278,17 +279,15 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
             defaultChecked={policy.unlimitedMode}
           />
           <div className="space-y-1">
-            <Label htmlFor="policy-unlimitedMode">
-              Günlük sınırları devre dışı bırak
-            </Label>
+            <Label htmlFor="policy-unlimitedMode">Disable daily limits</Label>
             <p className="text-xs text-muted-foreground">
-              Yukarıdaki tüm tavanlar ve günlük bütçe yok sayılır: ajans
-              durmadan çalışır. Sayaçlar işlemeye devam eder, yalnızca engelleme
-              kalkar — harcamayı Aktivite sekmesinden takip edebilirsiniz.
+              All the caps above and the daily budget are ignored: the agency
+              runs without stopping. Counters keep tracking, only the blocking
+              is lifted — you can monitor spend from the Activity tab.
             </p>
             {policy.unlimitedMode ? (
               <p className="text-xs font-medium text-warning">
-                Şu anda açık — sağlayıcı maliyetinde üst sınır yok.
+                Currently on — no upper limit on provider cost.
               </p>
             ) : null}
           </div>
@@ -297,10 +296,10 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
 
       <Card size="sm">
         <CardHeader>
-          <CardTitle className="text-base">NBA Skor Ağırlıkları</CardTitle>
+          <CardTitle className="text-base">NBA Score Weights</CardTitle>
           <p className="text-xs text-muted-foreground">
-            0-1 arası; boş bırakılan alan motorun varsayılanını kullanır.
-            Cezalar skoru düşürür.
+            Between 0-1; a field left blank uses the engine&apos;s default. Penalties
+            lower the score.
           </p>
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-4">
@@ -317,7 +316,7 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
                 min={0}
                 max={1}
                 defaultValue={weights[key] ?? ""}
-                placeholder="varsayılan"
+                placeholder="default"
               />
             </div>
           ))}
@@ -325,7 +324,7 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
       </Card>
 
       <div className="sticky bottom-4 flex justify-end">
-        <SubmitButton>Kaydet</SubmitButton>
+        <SubmitButton>Save</SubmitButton>
       </div>
     </ActionForm>
   );
@@ -354,8 +353,8 @@ async function DecisionsTab({
     return (
       <EmptyState
         icon={Gavel}
-        title="Karar yok"
-        hint="Ajans direktörü fırsat ve fikirler hakkında karar verdikçe gerekçeleriyle burada günlüklenir."
+        title="No decisions"
+        hint="As the agency director makes decisions about opportunities and ideas, they're logged here with their rationale."
       />
     );
   }
@@ -420,19 +419,19 @@ async function DecisionsTab({
               </div>
               <Link
                 href={buildHubHref(projectId, {
-                  panel: "ayarlar",
-                  sub: "kararlar",
+                  panel: "settings",
+                  sub: "decisions",
                   entity: { kind: "decision", id: decision.id },
                 })}
                 scroll={false}
                 className="block text-sm font-medium underline-offset-2 hover:underline"
               >
                 {subjectTitle.get(decision.subjectId) ??
-                  `${AGENCY_DECISION_SUBJECT[decision.subjectType].label} kaydı`}
+                  `${AGENCY_DECISION_SUBJECT[decision.subjectType].label} record`}
               </Link>
               <details>
                 <summary className="cursor-pointer text-xs text-muted-foreground">
-                  Gerekçe
+                  Rationale
                 </summary>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {decision.rationale}
@@ -455,8 +454,8 @@ async function DecisionsTab({
                 <CrossLinkChip
                   projectId={projectId}
                   entity={{ kind: "workPlan", id: decision.workPlanId }}
-                  text="Oluşturulan iş planı"
-                  sub="planlar"
+                  text="Created work plan"
+                  sub="plans"
                 />
               ) : null}
             </div>
@@ -482,8 +481,8 @@ async function DecisionDetail({
     return (
       <EmptyState
         icon={Gavel}
-        title="Karar bulunamadı"
-        hint="Silinmiş olabilir."
+        title="Decision not found"
+        hint="It may have been deleted."
       />
     );
   }
@@ -509,60 +508,60 @@ async function DecisionDetail({
   const fields: FieldSpec[] = [
     {
       type: "badge",
-      label: "Karar",
+      label: "Decision",
       meta: AGENCY_DECISION_TYPE[decision.decision],
     },
     {
       type: "badge",
-      label: "Konu Türü",
+      label: "Subject Type",
       meta: AGENCY_DECISION_SUBJECT[decision.subjectType],
     },
     {
       type: "badge",
-      label: "Onay Seviyesi",
+      label: "Approval Level",
       meta: decision.approvalLevel
         ? APPROVAL_LEVEL[decision.approvalLevel]
         : undefined,
       fallback: "—",
     },
-    { type: "boolean", label: "Demo Verisi (mock)", value: decision.isMock },
+    { type: "boolean", label: "Demo Data (mock)", value: decision.isMock },
     {
       type: "date",
-      label: "Oluşturuldu",
+      label: "Created",
       value: decision.createdAt,
       relative: true,
     },
-    { type: "text", label: "Gerekçe", value: decision.rationale },
+    { type: "text", label: "Rationale", value: decision.rationale },
   ];
 
   return (
     <div className="space-y-6">
       <Link
         href={buildHubHref(projectId, {
-          panel: "ayarlar",
-          sub: "kararlar",
+          panel: "settings",
+          sub: "decisions",
           entity: null,
         })}
         scroll={false}
         className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowLeft className="size-3.5" />
-        Listeye dön
+        Back to list
       </Link>
 
       <Card size="sm">
         <CardContent className="space-y-3">
           <h3 className="font-heading text-lg font-semibold text-foreground">
             {subjectTitle ??
-              `${AGENCY_DECISION_SUBJECT[decision.subjectType].label} kaydı`}
+              `${AGENCY_DECISION_SUBJECT[decision.subjectType].label} record`}
           </h3>
           <FieldGrid fields={fields} />
           {decision.workPlanId ? (
             <CrossLinkChip
               projectId={projectId}
               entity={{ kind: "workPlan", id: decision.workPlanId }}
-              text="Oluşturulan iş planı"
-              sub="planlar"
+              text="Created work plan"
+              sub="plans"
             />
           ) : null}
           {decision.taskIds.length > 0 ? (
@@ -572,8 +571,8 @@ async function DecisionDetail({
                   key={taskId}
                   projectId={projectId}
                   entity={{ kind: "task", id: taskId }}
-                  text={`Görev ${taskId.slice(0, 8)}`}
-                  sub="gorevler"
+                  text={`Task ${taskId.slice(0, 8)}`}
+                  sub="tasks"
                 />
               ))}
             </div>
@@ -628,11 +627,11 @@ async function ActivityTab({ projectId }: { projectId: string }) {
       | "reasoningCalls";
     label: string;
   }> = [
-    { key: "tasksCreated", label: "Görevler" },
-    { key: "signalsIngested", label: "Sinyaller" },
-    { key: "opportunitiesCreated", label: "Fırsatlar" },
-    { key: "ideasCreated", label: "Fikirler" },
-    { key: "reasoningCalls", label: "AI Çağrıları" },
+    { key: "tasksCreated", label: "Tasks" },
+    { key: "signalsIngested", label: "Signals" },
+    { key: "opportunitiesCreated", label: "Opportunities" },
+    { key: "ideasCreated", label: "Ideas" },
+    { key: "reasoningCalls", label: "AI Calls" },
   ];
 
   const totalCalls = reasoningGroups.reduce((sum, g) => sum + g._count.id, 0);
@@ -667,13 +666,13 @@ async function ActivityTab({ projectId }: { projectId: string }) {
       {stats.length === 0 ? (
         <EmptyState
           icon={Activity}
-          title="Aktivite verisi yok"
-          hint="Ajans çalışmaya başladığında günlük istatistikler burada birikir."
+          title="No activity data"
+          hint="Daily statistics accumulate here once the agency starts working."
         />
       ) : (
         <Card size="sm">
           <CardHeader>
-            <CardTitle className="text-base">Son 30 Gün</CardTitle>
+            <CardTitle className="text-base">Last 30 Days</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {series.map((serie) => {
@@ -710,13 +709,13 @@ async function ActivityTab({ projectId }: { projectId: string }) {
       <Card size="sm">
         <CardHeader>
           <div className="flex items-center justify-between gap-3">
-            <CardTitle className="text-base">AI Akıl Yürütme</CardTitle>
+            <CardTitle className="text-base">AI Reasoning</CardTitle>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="tabular-nums">{totalCalls} çağrı</span>
+              <span className="tabular-nums">{totalCalls} calls</span>
               {totalCalls > 0 ? (
                 <StatusBadge
                   meta={{
-                    label: `%${Math.round((mockCalls / totalCalls) * 100)} mock`,
+                    label: `${Math.round((mockCalls / totalCalls) * 100)}% mock`,
                     tone: "special",
                   }}
                   className="h-4 px-1.5 text-[10px]"
@@ -729,7 +728,7 @@ async function ActivityTab({ projectId }: { projectId: string }) {
         <CardContent className="space-y-4">
           {purposeRows.size === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Henüz AI çağrısı yapılmadı.
+              No AI calls made yet.
             </p>
           ) : (
             <>
@@ -745,7 +744,7 @@ async function ActivityTab({ projectId }: { projectId: string }) {
                         {purpose}
                       </span>
                       <div className="flex shrink-0 items-center gap-3 tabular-nums text-muted-foreground">
-                        <span>{row.count} çağrı</span>
+                        <span>{row.count} calls</span>
                         <span>{row.mock} mock</span>
                         <span>{Math.round(row.avgMs)} ms</span>
                         <span>${row.cost.toFixed(3)}</span>
@@ -770,7 +769,7 @@ async function ActivityTab({ projectId }: { projectId: string }) {
               {recentCalls.length > 0 ? (
                 <div className="space-y-1.5">
                   <p className="text-sm font-medium text-foreground">
-                    Son Çağrılar
+                    Recent Calls
                   </p>
                   <div className="divide-y divide-foreground/5">
                     {recentCalls.map((call) => (
@@ -805,8 +804,8 @@ async function ActivityTab({ projectId }: { projectId: string }) {
                           </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-3 text-muted-foreground">
-                          <span>giriş: {call.inputTokens ?? "—"} tok</span>
-                          <span>çıkış: {call.outputTokens ?? "—"} tok</span>
+                          <span>input: {call.inputTokens ?? "—"} tok</span>
+                          <span>output: {call.outputTokens ?? "—"} tok</span>
                           <span>{call.durationMs} ms</span>
                           <span>${(call.costUsd ?? 0).toFixed(4)}</span>
                         </div>
@@ -827,13 +826,11 @@ async function ActivityTab({ projectId }: { projectId: string }) {
 
       <Card size="sm">
         <CardHeader>
-          <CardTitle className="text-base">Tetikleyiciler</CardTitle>
+          <CardTitle className="text-base">Triggers</CardTitle>
         </CardHeader>
         <CardContent>
           {triggers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Henüz tetikleyici oluşmadı.
-            </p>
+            <p className="text-sm text-muted-foreground">No triggers yet.</p>
           ) : (
             <div className="divide-y divide-foreground/5">
               {triggers.map((trigger) => (
@@ -859,19 +856,19 @@ async function ActivityTab({ projectId }: { projectId: string }) {
                   </div>
                   <details>
                     <summary className="cursor-pointer text-xs text-muted-foreground">
-                      Detaylar
+                      Details
                     </summary>
                     <FieldGrid
                       className="mt-1"
                       fields={[
                         {
                           type: "date",
-                          label: "Zamanlanan",
+                          label: "Scheduled For",
                           value: trigger.scheduledFor,
                         },
                         {
                           type: "date",
-                          label: "İşlenme",
+                          label: "Processed At",
                           value: trigger.processedAt,
                         },
                       ]}
@@ -889,8 +886,8 @@ async function ActivityTab({ projectId }: { projectId: string }) {
 
 // ---------------------------------------------------------------------------
 
-// Silme önizlemesi tablo tablo sayım yaptığı için yalnızca bu sekme
-// açıldığında hesaplanır — diğer sekmelerin yükünü artırmamalı.
+// The deletion preview counts table by table, so it's only computed
+// when this tab is opened — it shouldn't add load to the other tabs.
 async function DangerTab({ projectId }: { projectId: string }) {
   const preview = await ProjectDeletionService.preview(projectId);
   if (!preview) return null;
@@ -898,7 +895,7 @@ async function DangerTab({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-3">
       <p className="flex items-center justify-between rounded-lg bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
-        <span>Yerel varlık dosyaları (asset)</span>
+        <span>Local asset files</span>
         <span className="font-mono tabular-nums text-foreground">
           {preview.localAssetFiles}
         </span>

@@ -15,12 +15,12 @@ export function OpportunitiesPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Öne Çıkan Fırsatlar</CardTitle>
+        <CardTitle className="text-base">Featured Opportunities</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {opportunities.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Henüz fırsat tespit edilmedi.
+            No opportunities detected yet.
           </p>
         ) : (
           opportunities.map((opportunity) => (
@@ -39,7 +39,7 @@ export function OpportunitiesPanel({
               </div>
               <p className="text-xs text-muted-foreground">
                 {projectNameById.get(opportunity.projectId) ??
-                  "Bilinmeyen proje"}
+                  "Unknown project"}
                 {opportunity.description ? ` · ${opportunity.description}` : ""}
               </p>
             </div>

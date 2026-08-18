@@ -10,9 +10,9 @@ import { cn } from "@/lib/utils";
 // department reads from the same brand context — so instead of an
 // abstract five-node diagram it now shows real slices of what that
 // context contains, in the exact shape the app stores it (see
-// src/components/hub-core/panels/marka-beyni-panel.tsx "Varlıklar" for
+// src/components/hub-core/panels/brand-brain-panel.tsx "Assets" for
 // Brand, its BrandDossier json fields for Business, BrandFact/
-// BrandLearning/BrandEvidence for Knowledge, ayarlar-panel.tsx's
+// BrandLearning/BrandEvidence for Knowledge, settings-panel.tsx's
 // AutonomyTab + NegativeBriefRule for Rules, and its ActivityTab daily
 // stats for Data). Minimal, high-contrast, OpenAI-docs-style card system:
 // thin 1px borders, mono numerals, no color noise beyond what the data

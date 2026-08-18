@@ -8,12 +8,13 @@ import { prisma } from "@/lib/prisma";
 const LOCAL_ASSET_SCHEME = "local-asset://";
 const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
-// Markanın gerçek logosunu AI'ye görsel referans olarak vermek için base64'e
-// çevirir (bkz. gemini-image-client.ts'teki referenceImage). applyBrandTemplate
-// (creative-template.ts) ile aynı çözümleme mantığı — Asset'i bul, storageKey
-// yerel şemaya uyuyor mu doğrula, dosyayı oku. Best-effort: logoAssetId yoksa
-// ya da asset/dosya bulunamazsa/okunamazsa null döner, hiçbir zaman throw
-// etmez — çağıran taraf try/catch'e almak zorunda kalmamalı.
+// Converts the brand's actual logo to base64 to give it to the AI as a
+// visual reference (see referenceImage in gemini-image-client.ts). The
+// same resolution logic as applyBrandTemplate (creative-template.ts) —
+// find the Asset, verify storageKey matches the local scheme, read the
+// file. Best-effort: returns null if logoAssetId is missing, or if the
+// asset/file can't be found/read — it never throws, so the caller never
+// has to wrap it in try/catch.
 export async function loadBrandLogoImage(
   logoAssetId: string | null | undefined,
 ): Promise<{ data: string; mimeType: string } | null> {

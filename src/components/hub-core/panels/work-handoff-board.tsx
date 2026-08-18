@@ -16,9 +16,9 @@ import {
 import { StatusBadge } from "@/components/shared/status-badge";
 import { buildHubHref } from "../hub-core-params";
 
-// İşler → Devirler kanban'ı — aynı sistem, filtre ekseni kaynak departman
-// (fromDepartment). Kart, HandoffCard'daki (isler-panel.tsx) departman
-// akış ikonlarını kompakt biçimde taşır.
+// The Work → Handoffs kanban — same system, filter axis is the source
+// department (fromDepartment). Each card carries the department flow icons
+// from HandoffCard (work-panel.tsx) in a compact form.
 export type WorkHandoffBoardItem = {
   id: string;
   fromDepartment: DepartmentKey;
@@ -73,7 +73,7 @@ export function WorkHandoffBoard({
                 : "bg-secondary text-muted-foreground hover:bg-accent",
             )}
           >
-            Tüm departmanlar
+            All departments
           </button>
           {usedDepartments.map(({ department, count }) => {
             const meta = DEPARTMENT_KEY[department];
@@ -124,8 +124,8 @@ export function WorkHandoffBoard({
                   <Link
                     key={handoff.id}
                     href={buildHubHref(projectId, {
-                      panel: "isler",
-                      sub: "devirler",
+                      panel: "work",
+                      sub: "cycles",
                       entity: { kind: "handoff", id: handoff.id },
                     })}
                     scroll={false}

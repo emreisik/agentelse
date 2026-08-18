@@ -1,9 +1,9 @@
 import "server-only";
 
-// İnce, gerçek Meta Graph API + Marketing API sarmalayıcısı — SDK yok, düz
-// `fetch` (google-client.ts ile aynı desen). OAuth authorization-code akışı +
-// Instagram Content Publishing + Marketing API'nin bu entegrasyon için
-// gereken minimum yüzeyi.
+// A thin, real Meta Graph API + Marketing API wrapper — no SDK, plain
+// `fetch` (same pattern as google-client.ts). The OAuth authorization-code
+// flow + the minimum surface of Instagram Content Publishing + Marketing
+// API needed for this integration.
 
 import { getEnv } from "@/lib/env";
 
@@ -24,14 +24,16 @@ const SCOPES = [
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
-// IntegrationCredential.metadata (provider: "meta") şekli — callback route
-// bağlantı kurarken yazar, meta-actions.ts seçim/test sonuçlarını günceller,
-// entegrasyonlar sayfası ve MetaApiProvider doğrudan okur.
+// The shape of IntegrationCredential.metadata (provider: "meta") — the
+// callback route writes it when establishing the connection, meta-actions.ts
+// updates selection/test results, and the integrations page and
+// MetaApiProvider read it directly.
 //
-// NOT: Page Access Token'ı burada BİLEREK saklamıyoruz — o da user token
-// kadar hassas bir secret ve metadata şifrelenmemiş bir JSON alanı.
-// Yayınlama/kampanya işlemleri sırasında `fetchPageAccessToken` ile
-// `encryptedSecret`teki long-lived user token'dan anlık türetiliyor.
+// NOTE: We DELIBERATELY do not store the Page Access Token here — it's just
+// as sensitive a secret as the user token, and metadata is an unencrypted
+// JSON field. It's derived on the fly from the long-lived user token in
+// `encryptedSecret` via `fetchPageAccessToken` right before a
+// publish/campaign operation.
 export type MetaPage = {
   pageId: string;
   pageName: string;
@@ -79,9 +81,9 @@ export class MetaApiError extends Error {
   }
 }
 
-// Ayrı bir META_OAUTH_REDIRECT_URI env var'ı yok — mevcut
-// NEXT_PUBLIC_APP_URL'den türetiliyor, Meta App Dashboard'da bu path
-// "Valid OAuth Redirect URI" olarak kayıtlı olmalı.
+// There is no separate META_OAUTH_REDIRECT_URI env var — it's derived from
+// the existing NEXT_PUBLIC_APP_URL, and this path must be registered as
+// the "Valid OAuth Redirect URI" in the Meta App Dashboard.
 function redirectUri(): string {
   return `${getEnv().NEXT_PUBLIC_APP_URL}/api/integrations/meta/callback`;
 }
@@ -100,8 +102,8 @@ async function request<T>(
     const isAbort = error instanceof Error && error.name === "AbortError";
     throw new MetaApiError(
       isAbort
-        ? `Meta API isteği zaman aşımına uğradı (${timeoutMs}ms)`
-        : `Meta API'ye ulaşılamadı: ${error instanceof Error ? error.message : String(error)}`,
+        ? `Meta API request timed out (${timeoutMs}ms)`
+        : `Could not reach Meta API: ${error instanceof Error ? error.message : String(error)}`,
     );
   } finally {
     clearTimeout(timer);
@@ -111,7 +113,7 @@ async function request<T>(
   try {
     body = await res.json();
   } catch {
-    // boş gövde — sorun değil, aşağıda res.ok kontrolü var.
+    // Empty body — not a problem, res.ok is checked below.
   }
 
   if (!res.ok) {
@@ -119,7 +121,7 @@ async function request<T>(
       error?: { message?: string; code?: number; error_subcode?: number };
     } | null;
     const message =
-      errorBody?.error?.message ?? `Meta API hatası (HTTP ${res.status})`;
+      errorBody?.error?.message ?? `Meta API error (HTTP ${res.status})`;
     throw new MetaApiError(
       message,
       errorBody?.error?.code,
@@ -158,10 +160,10 @@ export async function exchangeMetaAuthCode(
   return { accessToken: result.access_token, expiresIn: result.expires_in };
 }
 
-// Kısa ömürlü (1-2 saat) user access token'ı ~60 günlük long-lived token'a
-// çevirir. Meta'da Google'daki gibi ayrı bir refresh token yok — bu token
-// süresi dolmadan önce yeniden değiştirilmesi gerekiyor (bkz. plan notu:
-// otomatik yenileme sonraki iterasyona bırakıldı).
+// Converts a short-lived (1-2 hour) user access token into a ~60-day
+// long-lived token. Meta doesn't have a separate refresh token like
+// Google does — this token needs to be exchanged again before it expires
+// (see plan note: automatic renewal was left for a later iteration).
 export async function exchangeForLongLivedToken(
   shortLivedToken: string,
 ): Promise<{ accessToken: string; expiresIn: number }> {
@@ -212,9 +214,9 @@ export async function listManagedPages(
   }));
 }
 
-// Page Access Token'ı kalıcı olarak hiçbir yerde saklamıyoruz (bkz.
-// MetaPage yorumu) — yayınlama/kampanya işleminden hemen önce, o anki
-// long-lived user token'dan anlık türetilir.
+// We never persist the Page Access Token anywhere (see the MetaPage
+// comment) — it's derived on the fly from the current long-lived user
+// token right before a publish/campaign operation.
 export async function fetchPageAccessToken(
   pageId: string,
   userAccessToken: string,
@@ -241,10 +243,10 @@ export async function listAdAccounts(
   }));
 }
 
-// Yayınlama/kampanya yapmadan bağlantının gerçekten çalıştığını kanıtlayan
-// tek seferlik test çağrısı (google-client.ts'teki runGa4TestReport ile aynı
-// amaç) — Page token'ın hâlâ geçerli olduğunu ve IG hesabına eriştiğini
-// doğrular.
+// A one-off test call that proves the connection actually works, without
+// publishing/running a campaign (same purpose as runGa4TestReport in
+// google-client.ts) — confirms the Page token is still valid and has
+// access to the IG account.
 export async function verifyInstagramAccess(
   instagramBusinessAccountId: string,
   pageAccessToken: string,
@@ -256,12 +258,13 @@ export async function verifyInstagramAccess(
 }
 
 const CONTAINER_POLL_INTERVAL_MS = 2_000;
-const CONTAINER_POLL_MAX_ATTEMPTS = 15; // ~30sn — tek görsel için fazlasıyla yeterli.
+const CONTAINER_POLL_MAX_ATTEMPTS = 15; // ~30s — plenty for a single image.
 
-// Medya konteyneri oluşturulduktan sonra Instagram, verilen image_url'i
-// arka planda indirip işliyor — status_code IN_PROGRESS'ten FINISHED'a
-// geçmeden media_publish çağrılırsa "media ID does not exist" gibi bir
-// hatayla düşer. Bu yüzden publish'ten önce FINISHED'ı bekliyoruz.
+// After the media container is created, Instagram downloads and processes
+// the given image_url in the background — if media_publish is called
+// before status_code moves from IN_PROGRESS to FINISHED, it fails with an
+// error like "media ID does not exist". So we wait for FINISHED before
+// publishing.
 async function waitForContainerReady(
   creationId: string,
   accessToken: string,
@@ -273,7 +276,7 @@ async function waitForContainerReady(
     if (status.status_code === "FINISHED") return;
     if (status.status_code === "ERROR" || status.status_code === "EXPIRED") {
       throw new MetaApiError(
-        `Instagram medya konteyneri işlenemedi (status_code: ${status.status_code})`,
+        `Instagram media container could not be processed (status_code: ${status.status_code})`,
       );
     }
     await new Promise((resolve) =>
@@ -281,16 +284,17 @@ async function waitForContainerReady(
     );
   }
   throw new MetaApiError(
-    "Instagram medya konteyneri zaman aşımına uğradı (status_code hiç FINISHED olmadı)",
+    "Instagram media container timed out (status_code never reached FINISHED)",
   );
 }
 
-// İki adımlı Instagram Content Publishing akışı: önce medya konteyneri
-// oluşturulur, işlenmesi beklenir, sonra yayınlanır. imageUrl herkese açık
-// olarak erişilebilir olmalı (R2/asset storage URL'i — bkz. src/server/media).
-// mediaType "STORIES" ise Story olarak yayınlanır — Story'lerin caption alanı
-// YOK (Meta API kısıtı, metin görselin içine önceden gömülü olmalı), bu
-// yüzden caption yalnızca normal gönderi (FEED) modunda gönderiliyor.
+// The two-step Instagram Content Publishing flow: first the media
+// container is created, then we wait for it to be processed, then it's
+// published. imageUrl must be publicly reachable (an R2/asset storage URL
+// — see src/server/media). If mediaType is "STORIES", it's published as a
+// Story — Stories have NO caption field (a Meta API constraint; the text
+// must already be embedded in the image), so caption is only sent in
+// normal post (FEED) mode.
 export async function publishInstagramPost(input: {
   instagramBusinessAccountId: string;
   pageAccessToken: string;
@@ -342,8 +346,8 @@ export type MetaAdsInsights = {
   cpm: number;
 };
 
-// `date_preset` Marketing API'nin standart aralıklarından biri — analiz
-// göreviyle aynı payload şekliyle çağrılır (bkz. meta-api-provider.ts).
+// `date_preset` is one of the Marketing API's standard ranges — called
+// with the same payload shape as the analysis task (see meta-api-provider.ts).
 export async function fetchMetaAdsInsights(input: {
   adAccountId: string;
   accessToken: string;
@@ -374,9 +378,9 @@ export async function fetchMetaAdsInsights(input: {
   };
 }
 
-// Minimal zorunlu alan seti — tam bir kampanya sihirbazı değil, AI'ın taslak
-// bir kampanya oluşturması senaryosuna yetecek yüzey. `special_ad_categories`
-// boş dizi olarak gönderilmesi Marketing API'de zorunlu.
+// A minimal required field set — not a full campaign wizard, just enough
+// surface for the scenario of an AI creating a draft campaign. Sending
+// `special_ad_categories` as an empty array is required by the Marketing API.
 export async function createMetaCampaign(input: {
   adAccountId: string;
   accessToken: string;

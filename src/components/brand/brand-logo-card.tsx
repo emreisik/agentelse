@@ -10,8 +10,9 @@ import { SubmitButton } from "@/components/shared/submit-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
-// Logo yükleme/üretme, kaldırılan 3 adımlı kurulum sihirbazından buraya
-// taşındı — marka varlıklarının doğal yeri Marka Beyni'nin Varlıklar sekmesi.
+// Logo upload/generation was moved here from the removed 3-step setup
+// wizard — the natural home for brand assets is the Brand Brain's Assets
+// tab.
 export async function BrandLogoCard({
   projectId,
   brandId,
@@ -37,7 +38,7 @@ export async function BrandLogoCard({
           <div className="flex items-center justify-center rounded-xl bg-accent/40 p-4">
             <Image
               src={`/api/assets/${dossier.logoAssetId}`}
-              alt="Marka logosu"
+              alt="Brand logo"
               width={128}
               height={128}
               unoptimized
@@ -46,8 +47,8 @@ export async function BrandLogoCard({
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            Henüz logo yok. Dosya yükleyebilir ya da marka dosyasındaki
-            konumlandırmadan yapay zekâ ile üretebilirsiniz.
+            No logo yet. You can upload a file or generate one with AI from the
+            brand dossier&apos;s positioning.
           </p>
         )}
 
@@ -60,10 +61,10 @@ export async function BrandLogoCard({
             required
           />
           <p className="text-xs text-muted-foreground">
-            PNG veya JPEG, en fazla 5 MB.
+            PNG or JPEG, up to 5 MB.
           </p>
           <SubmitButton size="sm" variant="outline">
-            Yükle
+            Upload
           </SubmitButton>
         </form>
 
@@ -71,7 +72,7 @@ export async function BrandLogoCard({
           <input type="hidden" name="projectId" value={projectId} />
           <SubmitButton size="sm">
             <Sparkles className="size-4" />
-            Yapay zekâ ile üret
+            Generate with AI
           </SubmitButton>
         </form>
       </CardContent>

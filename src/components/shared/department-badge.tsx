@@ -9,13 +9,13 @@ const SIZE_CLASSES = {
   md: { chip: "size-8 rounded-lg", icon: "size-4", text: "text-sm" },
 } as const;
 
-// Bir departmandan söz edilen HER yerde (sohbetteki "X ekibine atandı"
-// notu, görev kartları, iş planı düğümleri, akış zaman çizelgesi...) aynı
-// kimlik: departman-özel renkte (DEPARTMENT_COLOR) yumuşak arkaplanlı bir
-// ikon rozeti + etiket. departmanlar-panel.tsx'teki kanonik gösterimle
-// (DepartmentDetail başlığı, isler-panel.tsx'teki devir kartları) BİREBİR
-// aynı desen — buraya tek yerden paylaşılsın diye taşındı, artık "sade
-// ikon" ya da "sade metin" gösterimleri KULLANILMAMALI.
+// The same identity EVERYWHERE a department is referenced (the "assigned to
+// X team" note in chat, task cards, work plan nodes, the flow timeline...):
+// an icon badge with a department-specific soft background color
+// (DEPARTMENT_COLOR) + label. IDENTICAL to the canonical rendering in the
+// departments panel (the DepartmentDetail header, the handoff cards in the
+// tasks panel) — moved here to be shared from a single place, so plain-icon
+// or plain-text renderings should NO LONGER be used.
 export function DepartmentBadge({
   department,
   size = "sm",

@@ -1,11 +1,11 @@
 "use client";
 
-// Sinyaller paneli için client-side liste+filtre bileşenleri. HUB CORE'un
-// tek query-param sözleşmesinde (`hub-core-params.ts`) bu panel için bir
-// `sub` alt-sekmesi tanımlı değil — yani kategori/durum/sınıflandırma
-// filtreleri URL üzerinden değil, burada lokal state ile çalışır. Liste
-// zaten sunucu tarafında (createdAt'e göre, sınırlı sayıda) çekiliyor; bu
-// bileşenler sadece o listeyi filtreleyip render ediyor.
+// Client-side list+filter components for the signals panel. In HUB CORE's
+// single query-param contract (`hub-core-params.ts`), no `sub` subtab is
+// defined for this panel — meaning category/status/classification filters
+// don't go through the URL, they work with local state here instead. The
+// list is already fetched server-side (ordered by createdAt, limited count);
+// these components just filter and render that list.
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
@@ -95,8 +95,8 @@ export function SignalList({
     return (
       <EmptyState
         icon={RadioTower}
-        title="Sinyal yok"
-        hint="Proje aktive olduktan sonra sinyal profili taramaları dış dünyadan sinyal toplamaya başlar."
+        title="No signals"
+        hint="Once the project is activated, signal profile scans start collecting signals from the outside world."
       />
     );
   }
@@ -105,7 +105,7 @@ export function SignalList({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-1.5">
         <FilterChip active={!status} onClick={() => setStatus(null)}>
-          Tümü
+          All
         </FilterChip>
         {(Object.keys(SIGNAL_STATUS) as SignalStatus[]).map((s) => (
           <FilterChip
@@ -126,14 +126,14 @@ export function SignalList({
           </FilterChip>
         ) : (
           <span className="text-xs text-muted-foreground">
-            Kategoriye göre filtrelemek için karttaki kategoriye tıklayın
+            Click a category on a card to filter by category
           </span>
         )}
       </div>
 
       {filtered.length === 0 ? (
         <p className="py-6 text-center text-xs text-muted-foreground">
-          Bu filtreyle eşleşen sinyal yok.
+          No signals match this filter.
         </p>
       ) : (
         <Card>
@@ -190,7 +190,10 @@ export function SignalList({
                   </div>
                   {signal.relevanceScore !== null ? (
                     <div className="w-20 shrink-0">
-                      <ScoreBar value={signal.relevanceScore} label="ilgi" />
+                      <ScoreBar
+                        value={signal.relevanceScore}
+                        label="relevance"
+                      />
                     </div>
                   ) : null}
                 </div>
@@ -241,8 +244,8 @@ export function FindingList({
     return (
       <EmptyState
         icon={Library}
-        title="Bulgu yok"
-        hint="Araştırma görevleri tamamlandıkça bulgular burada birikir."
+        title="No findings"
+        hint="Findings accumulate here as research tasks are completed."
       />
     );
   }
@@ -254,7 +257,7 @@ export function FindingList({
           active={!classification}
           onClick={() => setClassification(null)}
         >
-          Tümü
+          All
         </FilterChip>
         {(Object.keys(FACT_CLASSIFICATION) as FactClassification[]).map(
           (cls) => (
@@ -276,7 +279,7 @@ export function FindingList({
 
       {filtered.length === 0 ? (
         <p className="py-6 text-center text-xs text-muted-foreground">
-          Bu filtreyle eşleşen bulgu yok.
+          No findings match this filter.
         </p>
       ) : (
         <Card>
@@ -304,14 +307,14 @@ export function FindingList({
                     />
                     {finding.category ? <span>{finding.category}</span> : null}
                     {finding.evidenceId ? (
-                      <span className="text-success">kanıtlı</span>
+                      <span className="text-success">evidenced</span>
                     ) : null}
                     <span>{timeAgo(finding.createdAt)}</span>
                   </div>
                 </div>
                 {finding.confidence !== null ? (
                   <div className="w-20 shrink-0">
-                    <ScoreBar value={finding.confidence} label="güven" />
+                    <ScoreBar value={finding.confidence} label="confidence" />
                   </div>
                 ) : null}
               </Link>

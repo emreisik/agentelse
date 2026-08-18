@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import { TONE_CLASSES, type EnumMeta } from "@/lib/labels";
 
-// The single way to render an enum status in the Agency OS UI: Turkish label
+// The single way to render an enum status in the Agency OS UI: label
 // + tone tint that works in both themes. Falls back gracefully when a status
 // value has no map entry (renders the raw value, neutral tone).
 export function StatusBadge({
@@ -15,9 +15,9 @@ export function StatusBadge({
   meta: EnumMeta | undefined;
   fallback?: string;
   showIcon?: boolean;
-  // Departman "takım rengi" gibi kimlik kanalları için — tone'un anlamsal
-  // durum rengini (bg/text) hiç değiştirmez, sadece önüne küçük bir nokta
-  // ekler. Bkz. DEPARTMENT_COLOR.
+  // For identity channels like a department's "team color" — never changes
+  // the tone's semantic status color (bg/text), it just prepends a small
+  // dot. See DEPARTMENT_COLOR.
   accentColor?: string;
   className?: string;
   iconClassName?: string;

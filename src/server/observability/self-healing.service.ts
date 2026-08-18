@@ -11,19 +11,20 @@ import {
   isAutoRecoverable,
 } from "@/server/observability/error-classifier";
 
-// Otomatik kurtarma. Kapsamı bilinçli olarak dar: sistemin KENDİ çalışma
-// durumunu onarır (takılmış iş, yeniden denenebilir hatayla ölü kuyruğa
-// düşmüş iş). Kod yazmaz, şema değiştirmez, insan kararı gerektiren hiçbir
-// şeyi kendi başına onaylamaz.
+// Automatic recovery. Its scope is deliberately narrow: it repairs the
+// system's OWN operational state (a stuck job, a job that landed in the
+// dead letter queue with a retryable error). It never writes code, never
+// changes the schema, and never approves anything on its own that requires
+// a human decision.
 //
-// Her kurtarma AuditLog'a yazılır: neyin niçin otomatik onarıldığı geriye
-// dönük olarak görülebilir olmalı.
+// Every recovery is written to AuditLog: what was auto-healed and why must
+// be visible in retrospect.
 
-// Bir sağlayıcı çağrısı bu süreden uzun RUNNING kalmışsa takılmıştır:
-// en yavaş gerçek yol (OpenClaw tarayıcı turu) dakikalar sürer, saat değil.
+// A provider call that's been RUNNING longer than this is stuck: even the
+// slowest real path (an OpenClaw browser session) takes minutes, not hours.
 const STUCK_JOB_AFTER_MS = 30 * 60_000;
-// Aynı iş için bu kadar ölü-kuyruk kaydı birikmişse otomatik kurtarma
-// döngüye girmiş demektir — insana bırak.
+// Once this many dead-letter records have piled up for the same job,
+// auto-recovery has entered a loop — leave it to a human.
 const MAX_AUTO_REQUEUES_PER_JOB = 3;
 
 export type HealingReport = {
@@ -43,9 +44,10 @@ export const SelfHealingService = {
     };
   },
 
-  // pollRunningJobs sağlayıcı hatasını yutup işi RUNNING bırakabiliyor;
-  // sonuç, sonsuza kadar yoklanan ve hiçbir zaman bitmeyen bir iş. Bunları
-  // açıkça FAILED'a çevirir ki normal retry/dead-letter yolu devreye girsin.
+  // pollRunningJobs can swallow a provider error and leave the job RUNNING;
+  // the result is a job that gets polled forever and never finishes.
+  // Explicitly flip these to FAILED so the normal retry/dead-letter path
+  // kicks in.
   async resetStuckJobs(now: Date): Promise<number> {
     const cutoff = new Date(now.getTime() - STUCK_JOB_AFTER_MS);
     const stuck = await prisma.executionJob.findMany({
@@ -66,7 +68,8 @@ export const SelfHealingService = {
 
     let reset = 0;
     for (const job of stuck) {
-      // Koşullu güncelleme: bu arada gerçekten ilerlediyse dokunma.
+      // Conditional update: if it genuinely progressed in the meantime,
+      // don't touch it.
       const result = await prisma.executionJob.updateMany({
         where: {
           id: job.id,
@@ -76,9 +79,9 @@ export const SelfHealingService = {
         data: {
           status: "FAILED",
           errorCode: "STUCK_TIMEOUT",
-          errorMessage: `İş ${Math.round(
+          errorMessage: `Job has not progressed for ${Math.round(
             (now.getTime() - job.updatedAt.getTime()) / 60_000,
-          )} dakikadır ilerlemiyor — otomatik olarak zaman aşımına uğratıldı`,
+          )} minutes — automatically timed out`,
           retryable: true,
           completedAt: now,
         },
@@ -106,10 +109,10 @@ export const SelfHealingService = {
     return reset;
   },
 
-  // Ölü kuyruk şimdiye kadar tek yönlüydü: yazılıyor, hiç okunmuyordu.
-  // Yeniden denenebilir sınıftaki (zaman aşımı, ağ, geçici şema hatası)
-  // kayıtları yeniden kuyruğa alır; bakiye/anahtar/yapılandırma
-  // hatalarına dokunmaz — onları yeniden denemek aynı hatayı üretir.
+  // The dead letter queue has been one-directional until now: written to,
+  // never read from. This requeues records in the retryable class (timeout,
+  // network, transient schema error); it doesn't touch balance/key/
+  // configuration errors — retrying those just produces the same error.
   async requeueRecoverableDeadLetters(
     limit = 10,
   ): Promise<{ requeued: number; skipped: number }> {
@@ -146,8 +149,8 @@ export const SelfHealingService = {
           status: true,
         },
       });
-      // Zaten tamamlanmış/iptal edilmiş bir işi yeniden kuyruğa almak
-      // yanlış olur — kaydı çözülmüş say ve geç.
+      // Requeuing a job that's already completed/cancelled would be wrong —
+      // treat the record as resolved and skip it.
       if (!job || job.status === "COMPLETED" || job.status === "CANCELLED") {
         await prisma.deadLetterJob.update({
           where: { id: entry.id },

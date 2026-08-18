@@ -9,13 +9,16 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 
-// Google'ın kendi consent ekranına yönlendiren başlangıç adımı — bkz.
-// callback/route.ts geri dönüş için.
+// The initial step that redirects to Google's own consent screen — see
+// callback/route.ts for the return trip.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");
   if (!projectId) {
-    return NextResponse.json({ error: "projectId gerekli" }, { status: 400 });
+    return NextResponse.json(
+      { error: "projectId is required" },
+      { status: 400 },
+    );
   }
 
   let userId: string;
@@ -37,7 +40,7 @@ export async function GET(request: Request) {
   if (!isIntegrationConfigured("GOOGLE")) {
     return NextResponse.redirect(
       new URL(
-        `/projects/${projectId}/entegrasyonlar?entegrasyon=google&googleError=not_configured`,
+        `/projects/${projectId}/integrations?integration=google&googleError=not_configured`,
         request.url,
       ),
     );

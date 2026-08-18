@@ -16,11 +16,12 @@ import {
 import { StatusBadge } from "@/components/shared/status-badge";
 import { buildHubHref } from "../hub-core-params";
 
-// Fikirler panosunun (idea-lens-board.tsx) İşler karşılığı — bilinçli olarak
-// birebir aynı sistem: aynı sütun/kart iskeleti, aynı yatay+dikey kaydırma
-// deseni, aynı "filtre çipleri + dolu departman etiketi" görsel dili. Tek
-// fark filtre ekseni: fikirlerde mercek (lens), burada departman — Task
-// modelinde departmentKey doğrudan bir alan olduğu için bu daha doğal.
+// The Work counterpart to the Ideas board (idea-lens-board.tsx) — deliberately
+// the same system end to end: the same column/card skeleton, the same
+// horizontal+vertical scroll pattern, the same "filter chips + filled
+// department label" visual language. The only difference is the filter
+// axis: lens for ideas, department here — since departmentKey is a direct
+// field on the Task model, this is the more natural fit.
 export type TaskBoardItem = {
   id: string;
   title: string;
@@ -62,7 +63,7 @@ export function TaskDepartmentBoard({
                 : "bg-secondary text-muted-foreground hover:bg-accent",
             )}
           >
-            Tüm departmanlar
+            All departments
           </button>
           {usedDepartments.map(({ department, count }) => {
             const meta = DEPARTMENT_KEY[department];
@@ -113,8 +114,8 @@ export function TaskDepartmentBoard({
                   <Link
                     key={task.id}
                     href={buildHubHref(projectId, {
-                      panel: "isler",
-                      sub: "gorevler",
+                      panel: "work",
+                      sub: "tasks",
                       entity: { kind: "task", id: task.id },
                     })}
                     scroll={false}

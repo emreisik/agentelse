@@ -787,16 +787,17 @@ model Project {
   slug        String
   domain      String?
   status      ProjectStatus @default(CREATED)
-  // Kurulumda seçilir, zorunlu: tüm AI research/reasoning çağrılarının
-  // hangi dilde ve hangi ülke pazarına odaklı çalışacağını belirler
-  // (bkz. src/lib/locales.ts). Mevcut satırlar için migration-safe default.
-  // country, countries'in ilk/birincil elemanıdır — tüm reasoning/prompt
-  // enjeksiyonu chokepoint'leri (ReasoningService, Gemini provider'ları,
-  // ConstitutionService vb.) geriye dönük uyumluluk için hâlâ SADECE bunu
-  // okur. countries yalnızca kurulum sihirbazında seçilen TÜM hedef
-  // pazarları saklamak/göstermek için — iş mantığı buna dallanmaz.
-  language    String        @default("tr")
-  country     String        @default("TR")
+  // Selected during setup, required: determines which language and which
+  // country market all AI research/reasoning calls focus on (see
+  // src/lib/locales.ts). Migration-safe default for existing rows.
+  // country is the first/primary element of countries — all reasoning/prompt
+  // injection chokepoints (ReasoningService, Gemini providers,
+  // ConstitutionService, etc.) still read ONLY this field for backward
+  // compatibility. countries exists solely to store/display ALL target
+  // markets selected in the setup wizard — business logic does not branch
+  // on it.
+  language    String        @default("en")
+  country     String        @default("US")
   countries   String[]      @default([])
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -849,8 +850,8 @@ model BrandDossier {
   approvedColors   Json?
   approvedFonts    Json?
   logoAssetId      String?
-  // Project'ten mirror edilir — execution context builder brandId üzerinden
-  // dossier'ı zaten okuyor, ayrı bir Project join'ine gerek kalmaz.
+  // Mirrored from Project — the execution context builder already reads
+  // the dossier via brandId, so no separate Project join is needed.
   language         String?
   country          String?
 
@@ -1048,11 +1049,12 @@ model Command {
   workspaceId String
   projectId   String?
   brandId     String?
-  // Bir fikrin kendi sohbet iş parçacığına ait mesajsa dolu — hem
-  // kullanıcının o fikirle ilgili yazdığı mesajlar (source: WEB) hem de
-  // ajans pipeline'ının (konsey, iş planı, görev/kreatif tamamlanması)
-  // o fikrin thread'ine yazdığı sistem mesajları (source: SYSTEM) aynı
-  // ideaId ile burada birikir — "her şey tek sohbette" mimarisi.
+  // Populated when a message belongs to an idea's own chat thread — both
+  // the messages the user writes about that idea (source: WEB) and the
+  // system messages the agency pipeline (council, work plan, task/creative
+  // completion) writes into that idea's thread (source: SYSTEM) accumulate
+  // here under the same ideaId — the "everything in one conversation"
+  // architecture.
   ideaId String?
 
   source          CommandSource
@@ -1060,8 +1062,8 @@ model Command {
   parsedIntent    Json?
   createdByUserId String?
 
-  // Sohbet turu: kullanıcının eklediği dosyalar ve asistanın o tura verdiği
-  // yanıt. attachments = [{ assetId, filename, mimeType, size }].
+  // Chat turn: files the user attached and the assistant's reply for that
+  // turn. attachments = [{ assetId, filename, mimeType, size }].
   attachments Json?
   replyText   String?
   replyStatus String?
@@ -1353,8 +1355,8 @@ model Approval {
   reviewedByUserId String?
   reviewNote       String?
 
-  // Telegram'daki onay isteği mesajının id'si — karar sonrası butonları
-  // kaldırıp mesajı güncelleyebilmek için.
+  // ID of the approval request message in Telegram — used to remove the
+  // buttons and update the message after a decision is made.
   telegramMessageId String?
 
   task Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
@@ -1742,9 +1744,9 @@ model IntegrationCredential {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // v1 kapsamı: proje başına bu provider'dan tek bağlantı (Telegram için
-  // tek bot/tek hedef sohbet) — BrowserProfile'ın aksine burada çoklu
-  // hesap desteklenmiyor.
+  // v1 scope: a single connection per project from this provider (for
+  // Telegram, a single bot/single target chat) — unlike BrowserProfile,
+  // multiple accounts are not supported here.
   @@unique([projectId, provider])
   @@index([workspaceId])
   @@index([projectId])
@@ -2464,10 +2466,10 @@ model AutonomyPolicy {
 
   setupAutoApprove Boolean @default(false)
 
-  // Sınırsız mod: günlük sayaç ve bütçe tavanlarını devre dışı bırakır.
-  // Sayaçlar yine işlenir (telemetri bozulmasın), yalnızca eşik kontrolü
-  // atlanır. Limitleri silmek yerine ayrı bir bayrak: kapatıldığında eski
-  // tavanlar olduğu gibi geri gelir.
+  // Unlimited mode: disables the daily counter and budget caps. Counters
+  // are still processed (so telemetry doesn't break), only the threshold
+  // check is skipped. A separate flag instead of deleting the limits: when
+  // turned off, the old caps come back exactly as they were.
   unlimitedMode Boolean @default(false)
 
   maxTasksPerDay             Int @default(25)

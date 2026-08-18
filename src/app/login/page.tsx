@@ -2,21 +2,23 @@ import { CheckIcon } from "lucide-react";
 
 import { LoginForm } from "@/components/auth/login-form";
 import { LogoBadge } from "@/components/shared/logo-badge";
+import { sanitizeCallbackUrl } from "@/lib/utils";
 
 const HIGHLIGHTS = [
-  "Gerçek zamanlı kampanya görünürlüğü",
-  "Onay ve insan-inceleme akışları",
-  "Otomatikleştirilmiş raporlama",
+  "Real-time campaign visibility",
+  "Approval and human-review workflows",
+  "Automated reporting",
 ];
 
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const params = await searchParams;
-  const callbackUrl =
-    typeof params.callbackUrl === "string" ? params.callbackUrl : "/dashboard";
+  const callbackUrl = sanitizeCallbackUrl(
+    typeof params.callbackUrl === "string" ? params.callbackUrl : undefined,
+  );
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background lg:flex-row">
-      {/* Sol panel — marka ve değer önerisi (yalnızca masaüstü) */}
+      {/* Left panel — brand and value proposition (desktop only) */}
       <div className="hidden flex-col justify-between bg-primary p-10 text-primary-foreground lg:flex lg:w-1/2 xl:p-16">
         <div className="flex items-center gap-2">
           <LogoBadge />
@@ -32,11 +34,11 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
 
         <div className="max-w-md space-y-6">
           <h1 className="text-3xl font-semibold leading-tight tracking-tight text-balance xl:text-4xl">
-            Ajansınızı büyüten yapay zeka ekibi.
+            The AI team that grows your agency.
           </h1>
           <p className="text-base text-pretty text-primary-foreground/70">
-            Kampanyalar, ekipler ve raporlama Agentelse&apos;de tek çatı altında
-            birleşir.
+            Campaigns, teams, and reporting come together under one roof in
+            Agentelse.
           </p>
           <ul className="space-y-3 pt-2">
             {HIGHLIGHTS.map((item) => (
@@ -59,7 +61,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         </p>
       </div>
 
-      {/* Sağ panel — giriş formu */}
+      {/* Right panel — login form */}
       <div className="flex flex-1 flex-col items-center justify-center gap-10 p-6 sm:p-10">
         <div className="flex flex-col items-center gap-1.5 lg:hidden">
           <div className="flex items-center gap-2">

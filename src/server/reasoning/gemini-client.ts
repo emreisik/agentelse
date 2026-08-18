@@ -3,11 +3,11 @@ import "server-only";
 import { getEnv } from "@/lib/env";
 import { AgentelseError } from "@/server/security/errors";
 
-// Google Gemini REST istemcisi — ReasoningService'in yapılandırılmış çıktı
-// çağrıları için. SDK bağımlılığı yok: generateContent REST ucu +
-// `responseJsonSchema` (Gemini 2.5+ standart JSON Schema kabul eder) ile
-// şema-zorlamalı JSON üretimi. Doğrulama yine çağıran taraftaki zod
-// şemasıyla yapılır.
+// Google Gemini REST client — for ReasoningService's structured-output
+// calls. No SDK dependency: schema-enforced JSON generation via the
+// generateContent REST endpoint + `responseJsonSchema` (Gemini 2.5+
+// accepts standard JSON Schema). Validation is still done by the caller's
+// zod schema.
 
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -17,9 +17,9 @@ export type GeminiStructuredResult = {
   outputTokens?: number;
 };
 
-// Kullanıcının prompt'una eklediği dosya (görsel, PDF, düz metin). Gemini
-// `inlineData` part'ı olarak gönderilir; base64 gövde 20 MB'lık istek
-// sınırına tabi olduğu için çağıran taraf boyutu kırpmakla yükümlüdür.
+// A file attached to the user's prompt (image, PDF, plain text). Sent as a
+// Gemini `inlineData` part; since the base64 body is subject to the 20 MB
+// request limit, the caller is responsible for trimming the size.
 export type GeminiInlineAttachment = { mimeType: string; data: string };
 
 export function isGeminiConfigured(): boolean {
@@ -49,9 +49,9 @@ type GeminiResponse = {
   error?: { message?: string };
 };
 
-// Düz metin üretimi — görev yürütme sağlayıcısı (GeminiAiProvider) için.
-// Yapılandırılmış çağrıdan farkı yalnızca generationConfig: şema yok,
-// serbest metin döner.
+// Plain-text generation — for the task execution provider (GeminiAiProvider).
+// The only difference from the structured call is generationConfig: no
+// schema, returns free-form text.
 export async function runGeminiText(input: {
   model: string;
   system: string;
@@ -75,7 +75,7 @@ export async function runGeminiText(input: {
   if (!text) {
     throw new AgentelseError(
       "INVALID_PROVIDER_RESULT",
-      `Gemini returned no text (finishReason: ${candidate?.finishReason ?? "yok"})`,
+      `Gemini returned no text (finishReason: ${candidate?.finishReason ?? "none"})`,
     );
   }
 
@@ -86,9 +86,10 @@ export async function runGeminiText(input: {
   };
 }
 
-// `urlContext` tool'u etkinken çağrılan runGeminiText — model verilen
-// URL'yi kendi tarafında getirip okur, ayrı bir fetch/scrape adımına gerek
-// kalmaz (Anthropic'in web_fetch tool'unun Gemini eşdeğeri).
+// runGeminiText called with the `urlContext` tool enabled — the model
+// fetches and reads the given URL on its own side, no separate
+// fetch/scrape step is needed (the Gemini equivalent of Anthropic's
+// web_fetch tool).
 export async function runGeminiWithUrlContext(input: {
   model: string;
   system: string;
@@ -128,9 +129,9 @@ async function callGemini(input: {
       contents: [
         {
           role: "user",
-          // Ekler metinden ÖNCE: modeller çok modlu girdide talimatı en
-          // sonda gördüklerinde eklere daha güvenilir atıfta bulunuyor
-          // (görsel düzenlemede de aynı sıra kullanılıyor).
+          // Attachments BEFORE the text: models reference attachments more
+          // reliably when they see the instruction last in multi-modal
+          // input (the same ordering is used for image editing too).
           parts: [
             ...(input.attachments ?? []).map((attachment) => ({
               inlineData: {
@@ -184,7 +185,7 @@ export async function runGeminiStructured(input: {
   if (!text) {
     throw new AgentelseError(
       "INVALID_PROVIDER_RESULT",
-      `Gemini returned no text (finishReason: ${candidate?.finishReason ?? "yok"})`,
+      `Gemini returned no text (finishReason: ${candidate?.finishReason ?? "none"})`,
     );
   }
 
@@ -192,13 +193,14 @@ export async function runGeminiStructured(input: {
   try {
     raw = JSON.parse(text);
   } catch {
-    // finishReason'ı mesaja koy: MAX_TOKENS ise sorun modelin biçimi değil,
-    // yanıtın ortadan kesilmesidir ve çözümü prompt'un maxTokens'ını
-    // artırmaktır. İkisi ayırt edilemeyince yanlış yerde aranıyordu.
+    // Include the finishReason in the message: if it's MAX_TOKENS, the
+    // problem isn't the model's formatting but the response being cut off,
+    // and the fix is to increase the prompt's maxTokens. Without
+    // distinguishing the two, this used to get debugged in the wrong place.
     throw new AgentelseError(
       "INVALID_PROVIDER_RESULT",
       `Gemini returned non-JSON output despite responseMimeType (finishReason: ${
-        candidate?.finishReason ?? "yok"
+        candidate?.finishReason ?? "none"
       })`,
     );
   }

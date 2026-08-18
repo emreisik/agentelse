@@ -34,20 +34,20 @@ export function TasksTable({
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-base">Görevler</CardTitle>
+        <CardTitle className="text-base">Tasks</CardTitle>
       </CardHeader>
       <CardContent>
         {tasks.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Henüz görev yok.</p>
+          <p className="text-sm text-muted-foreground">No tasks yet.</p>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Görev</TableHead>
-                <TableHead>Proje</TableHead>
-                <TableHead>Yetenek</TableHead>
-                <TableHead>Durum</TableHead>
-                <TableHead className="text-right">Güncelleme</TableHead>
+                <TableHead>Task</TableHead>
+                <TableHead>Project</TableHead>
+                <TableHead>Capability</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Updated</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

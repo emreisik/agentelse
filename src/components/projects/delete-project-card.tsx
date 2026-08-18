@@ -28,7 +28,7 @@ export function DeleteProjectCard({
   const [, formAction] = useActionState(
     async (_prev: State, form: FormData) => {
       const result = await deleteProjectAction(form);
-      // Başarı hâlinde aksiyon yönlendirme yapar ve buraya hiç dönmez.
+      // On success the action redirects and never returns here.
       if (result && !result.ok) toast.error(result.message);
       return result as State;
     },
@@ -43,14 +43,14 @@ export function DeleteProjectCard({
         <span className="flex size-7 items-center justify-center rounded-lg bg-destructive/15">
           <AlertTriangle className="size-4 text-destructive" />
         </span>
-        <CardTitle className="text-base">Tehlikeli bölge</CardTitle>
+        <CardTitle className="text-base">Danger zone</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2 text-sm">
           <p>
-            Projeyi silmek <strong>{totalRows.toLocaleString("tr-TR")}</strong>{" "}
-            kaydı kalıcı olarak kaldırır. Bu işlem geri alınamaz ve yedek
-            oluşturmaz.
+            Deleting the project permanently removes{" "}
+            <strong>{totalRows.toLocaleString("tr-TR")}</strong> records. This
+            action cannot be undone and does not create a backup.
           </p>
           {topTables.length > 0 ? (
             <ul className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
@@ -65,9 +65,9 @@ export function DeleteProjectCard({
             </ul>
           ) : null}
           <p className="text-xs text-muted-foreground">
-            OpenClaw ajanı, tarayıcı oturumları ve bağlı sosyal hesaplar gibi
-            dış sistemlerdeki kayıtlar silinmez — onları ilgili araçtan
-            kaldırmanız gerekir.
+            Records in external systems such as the OpenClaw agent, browser
+            sessions, and connected social accounts are not deleted — you need
+            to remove those from the relevant tool.
           </p>
         </div>
 
@@ -77,14 +77,14 @@ export function DeleteProjectCard({
             onClick={() => setArmed(true)}
             className="rounded-lg px-3 py-1.5 text-sm font-medium text-destructive ring-1 ring-destructive/40 transition-colors hover:bg-destructive/10"
           >
-            Projeyi sil
+            Delete project
           </button>
         ) : (
           <form action={formAction} className="space-y-3">
             <input type="hidden" name="projectId" value={projectId} />
             <label className="block space-y-1.5">
               <span className="text-sm">
-                Onaylamak için proje adını yazın:{" "}
+                Type the project name to confirm:{" "}
                 <strong className="font-mono">{projectName}</strong>
               </span>
               <Input
@@ -97,7 +97,7 @@ export function DeleteProjectCard({
             </label>
             <div className="flex gap-2">
               <SubmitButton size="sm" variant="destructive" disabled={!matches}>
-                Kalıcı olarak sil
+                Delete permanently
               </SubmitButton>
               <button
                 type="button"
@@ -107,7 +107,7 @@ export function DeleteProjectCard({
                 }}
                 className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
               >
-                Vazgeç
+                Cancel
               </button>
             </div>
           </form>

@@ -6,10 +6,10 @@ const SIZE_CLASSES = {
   md: "size-9 rounded-xl p-1.5",
 } as const;
 
-// Agentelse marka amblemi için tek render noktası: her zaman beyaz bir
-// rozet içinde, hem koyu hem açık temada aynı görünür (login sayfası +
-// sidebar header burayı kullanır) — rozet sabit beyaz olduğu için amblem
-// rengi de tema token'ı yerine sabit ink tonuna sabitleniyor.
+// Single render point for the Agentelse mark: always inside a white badge,
+// looks identical in both dark and light theme (the login page + sidebar
+// header use this) — since the badge is fixed white, the mark color is
+// also pinned to a fixed ink tone instead of a theme token.
 export function LogoBadge({
   size = "md",
   className,

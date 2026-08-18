@@ -63,7 +63,7 @@ function StatTile({
   );
 }
 
-export default async function SaglikPage() {
+export default async function HealthPage() {
   const { userId } = await requireUser();
   const { workspaceId } = await requireWorkspaceMembership(userId);
   const report = await buildSystemHealthReport(workspaceId);
@@ -82,22 +82,22 @@ export default async function SaglikPage() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="font-heading text-2xl font-semibold tracking-tight">
-              Sistem Sağlığı
+              System Health
             </h1>
             <p className="text-sm text-muted-foreground">
-              Son {report.windowHours} saatteki hatalar, sağlayıcı durumu ve
-              otomatik kurtarma kayıtları
+              Errors, provider status, and auto-recovery records from the last{" "}
+              {report.windowHours} hours
             </p>
           </div>
           <div className="flex items-center gap-2">
             <LiveRefresh intervalMs={15_000} />
             <ActionForm
               action={runHealthScanAction}
-              successMessage="Sağlık taraması çalıştırıldı"
+              successMessage="Health scan started"
             >
               <SubmitButton size="sm" variant="outline">
                 <RefreshCw className="size-4" />
-                Şimdi tara
+                Scan now
               </SubmitButton>
             </ActionForm>
           </div>
@@ -105,27 +105,27 @@ export default async function SaglikPage() {
 
         <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
           <StatTile
-            label="Başarısız görev"
+            label="Failed tasks"
             value={report.totals.failedJobs}
             tone="danger"
           />
           <StatTile
-            label="Başarısız AI çağrısı"
+            label="Failed AI calls"
             value={report.totals.failedReasoningCalls}
             tone="danger"
           />
           <StatTile
-            label="Açık ölü kuyruk"
+            label="Open dead letters"
             value={report.totals.openDeadLetters}
             tone="waiting"
           />
           <StatTile
-            label="Takılan iş"
+            label="Stuck jobs"
             value={report.totals.stuckJobs}
             tone="waiting"
           />
           <StatTile
-            label="Otomatik kurtarma"
+            label="Auto recoveries"
             value={report.totals.autoRecoveries}
             tone="positive"
           />
@@ -138,9 +138,9 @@ export default async function SaglikPage() {
                 <ShieldCheck className="size-5 text-success" />
               </span>
               <div>
-                <p className="font-medium">Her şey yolunda</p>
+                <p className="font-medium">All good</p>
                 <p className="text-sm text-muted-foreground">
-                  Son {report.windowHours} saatte çözülmemiş hata yok.
+                  No unresolved errors in the last {report.windowHours} hours.
                 </p>
               </div>
             </CardContent>
@@ -152,22 +152,22 @@ export default async function SaglikPage() {
             <span className="flex size-7 items-center justify-center rounded-lg bg-accent">
               <Send className="size-4" />
             </span>
-            <CardTitle className="text-base">Bildirim Kanalları</CardTitle>
+            <CardTitle className="text-base">Notification Channels</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-between gap-2 rounded-lg bg-accent/40 px-3 py-2">
               <div className="min-w-0">
                 <p className="text-sm font-medium">Telegram</p>
                 <p className="text-[11px] text-muted-foreground">
-                  İnsan müdahalesi gereken dead letter&apos;larda bildirim
-                  gönderir
+                  Sends notifications for dead letters that require human
+                  intervention
                 </p>
               </div>
               <StatusBadge
                 meta={
                   telegramConfigured
-                    ? { label: "Aktif", tone: "positive" }
-                    : { label: "Yapılandırılmamış", tone: "neutral" }
+                    ? { label: "Active", tone: "positive" }
+                    : { label: "Not configured", tone: "neutral" }
                 }
               />
             </div>
@@ -180,15 +180,15 @@ export default async function SaglikPage() {
               <AlertTriangle className="size-4" />
             </span>
             <CardTitle className="text-base">
-              Hata grupları ({report.groups.length})
+              Error groups ({report.groups.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {report.groups.length === 0 ? (
               <EmptyState
                 icon={HeartPulse}
-                title="Gruplanacak hata yok"
-                hint="Bu pencerede hiçbir görev, AI çağrısı veya kuyruk kaydı hata vermedi."
+                title="No errors to group"
+                hint="No task, AI call, or queue record errored in this window."
               />
             ) : (
               report.groups.map((group) => (
@@ -207,7 +207,7 @@ export default async function SaglikPage() {
                       fallback={group.strategy}
                     />
                     <span className="text-xs text-muted-foreground">
-                      {group.count} kez · son {timeAgo(group.lastSeenAt)}
+                      {group.count} times · last {timeAgo(group.lastSeenAt)}
                     </span>
                   </div>
                   <p className="mt-2 text-sm">{group.summary}</p>
@@ -215,7 +215,7 @@ export default async function SaglikPage() {
                     {group.sampleMessage}
                   </p>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Kaynak: {group.sources.join(", ")}
+                    Source: {group.sources.join(", ")}
                   </p>
                 </div>
               ))
@@ -229,14 +229,14 @@ export default async function SaglikPage() {
               <span className="flex size-7 items-center justify-center rounded-lg bg-accent">
                 <Activity className="size-4" />
               </span>
-              <CardTitle className="text-base">Sağlayıcı durumu</CardTitle>
+              <CardTitle className="text-base">Provider status</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {report.providers.length === 0 ? (
                 <EmptyState
                   icon={Activity}
-                  title="Henüz sağlayıcı kaydı yok"
-                  hint="İlk worker tick'inde sağlayıcılar otomatik kaydedilir."
+                  title="No provider records yet"
+                  hint="Providers are auto-registered on the first worker tick."
                 />
               ) : (
                 report.providers.map((provider) => (
@@ -255,7 +255,7 @@ export default async function SaglikPage() {
                         />
                         {!provider.configured ? (
                           <span className="text-xs text-muted-foreground">
-                            yapılandırılmamış
+                            not configured
                           </span>
                         ) : null}
                       </div>
@@ -268,7 +268,7 @@ export default async function SaglikPage() {
                     {provider.openIncidents > 0 ? (
                       <ActionForm
                         action={clearProviderIncidentAction}
-                        successMessage="Sağlayıcı sağlıklı işaretlendi"
+                        successMessage="Provider marked healthy"
                       >
                         <input
                           type="hidden"
@@ -276,7 +276,7 @@ export default async function SaglikPage() {
                           value={provider.key}
                         />
                         <SubmitButton size="sm" variant="outline">
-                          Sağlıklı işaretle
+                          Mark healthy
                         </SubmitButton>
                       </ActionForm>
                     ) : null}
@@ -292,15 +292,15 @@ export default async function SaglikPage() {
                 <Wrench className="size-4" />
               </span>
               <CardTitle className="text-base">
-                Son otomatik kurtarmalar
+                Recent auto recoveries
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {report.recentRecoveries.length === 0 ? (
                 <EmptyState
                   icon={Wrench}
-                  title="Otomatik kurtarma yapılmadı"
-                  hint="Takılan iş veya yeniden denenebilir kuyruk kaydı çıkarsa sistem kendi onarır ve buraya yazar."
+                  title="No auto recoveries yet"
+                  hint="If a stuck job or a retryable queue record appears, the system heals it automatically and logs it here."
                 />
               ) : (
                 report.recentRecoveries.map((entry) => (
@@ -311,8 +311,8 @@ export default async function SaglikPage() {
                     <div className="flex items-center justify-between gap-2">
                       <span>
                         {entry.action === "self-healing.stuck_job_reset"
-                          ? "Takılan iş zaman aşımına uğratıldı"
-                          : "Ölü kuyruk kaydı yeniden kuyruğa alındı"}
+                          ? "Stuck job timed out"
+                          : "Dead letter record re-queued"}
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {timeAgo(entry.createdAt)}
@@ -331,15 +331,15 @@ export default async function SaglikPage() {
               <AlertTriangle className="size-4" />
             </span>
             <CardTitle className="text-base">
-              Ölü kuyruk ({report.deadLetters.length})
+              Dead letters ({report.deadLetters.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {report.deadLetters.length === 0 ? (
               <EmptyState
                 icon={ShieldCheck}
-                title="Ölü kuyruk boş"
-                hint="Maksimum denemeyi aşan hiçbir iş bekliyor değil."
+                title="Dead letter queue is empty"
+                hint="No job is waiting past the maximum retry count."
               />
             ) : (
               report.deadLetters.map((entry) => (
@@ -355,11 +355,11 @@ export default async function SaglikPage() {
                     />
                     <span className="font-mono text-xs">{entry.reason}</span>
                     <span className="text-xs text-muted-foreground">
-                      {entry.attempts} deneme · {timeAgo(entry.createdAt)}
+                      {entry.attempts} attempts · {timeAgo(entry.createdAt)}
                     </span>
                     {entry.autoRecoverable ? (
                       <span className="text-xs text-success">
-                        otomatik kurtarma sırada
+                        auto recovery queued
                       </span>
                     ) : null}
                   </div>
@@ -371,18 +371,18 @@ export default async function SaglikPage() {
                   <div className="mt-2 flex gap-2">
                     <ActionForm
                       action={retryDeadLetterAction}
-                      successMessage="Yeniden kuyruğa alındı"
+                      successMessage="Re-queued"
                     >
                       <input
                         type="hidden"
                         name="deadLetterId"
                         value={entry.id}
                       />
-                      <SubmitButton size="sm">Yeniden dene</SubmitButton>
+                      <SubmitButton size="sm">Retry</SubmitButton>
                     </ActionForm>
                     <ActionForm
                       action={dismissDeadLetterAction}
-                      successMessage="Kayıt kapatıldı"
+                      successMessage="Record dismissed"
                     >
                       <input
                         type="hidden"
@@ -390,7 +390,7 @@ export default async function SaglikPage() {
                         value={entry.id}
                       />
                       <SubmitButton size="sm" variant="outline">
-                        Kapat
+                        Dismiss
                       </SubmitButton>
                     </ActionForm>
                   </div>

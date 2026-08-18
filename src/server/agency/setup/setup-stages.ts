@@ -8,19 +8,10 @@ import type { CapabilityKey } from "@prisma/client";
 export const DEEP_DISCOVERY_CAPABILITIES: CapabilityKey[] = [
   "BRAND_DISCOVERY",
   "WEB_RESEARCH",
-  "PRODUCT_RESEARCH",
+  "COMPETITOR_RESEARCH",
   "MARKET_RESEARCH",
   "CUSTOMER_INTELLIGENCE",
-  "COMPETITOR_RESEARCH",
   "SEO_RESEARCH",
-  "SOCIAL_RESEARCH",
-  "MEDIA_RESEARCH",
-  "CULTURAL_RESEARCH",
-  "CREATOR_RESEARCH",
-  "PARTNERSHIP_RESEARCH",
-  "ADVERTISING_RESEARCH",
-  "REVIEW_RESEARCH",
-  "TECHNOLOGY_RESEARCH",
 ];
 
 // Discovery completes when >=80% of research tasks are terminal and at least

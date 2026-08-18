@@ -15,7 +15,7 @@ export type ActionResult = { ok: true } | { ok: false; message: string };
 function fail(error: unknown): ActionResult {
   return {
     ok: false,
-    message: error instanceof Error ? error.message : "İşlem başarısız",
+    message: error instanceof Error ? error.message : "Operation failed",
   };
 }
 
@@ -45,11 +45,11 @@ async function audit(
   });
 }
 
-// Yeni bir kanal/entegrasyon satırı açar — bu bir OAuth akışı DEĞİL, sadece
-// "bu kanalı takip etmek istiyorum" kaydını oluşturur. Satır kasıtlı olarak
-// LOGIN_REQUIRED ile başlar: gerçekten bağlı değil, bir operatörün OpenClaw
-// üzerinden manuel giriş yapıp `markIntegrationConnectedAction` ile
-// işaretlemesi gerekiyor.
+// Opens a new channel/integration row — this is NOT an OAuth flow, it just
+// creates a "I want to track this channel" record. The row deliberately
+// starts as LOGIN_REQUIRED: it isn't actually connected yet, an operator
+// needs to log in manually via OpenClaw and mark it with
+// `markIntegrationConnectedAction`.
 export async function addIntegrationAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -57,7 +57,7 @@ export async function addIntegrationAction(
     const projectId = String(formData.get("projectId"));
     const purpose = String(formData.get("purpose")) as BrowserProfilePurpose;
     const name = String(formData.get("name") ?? "").trim();
-    if (!name) return { ok: false, message: "İsim gerekli" };
+    if (!name) return { ok: false, message: "Name is required" };
 
     const { userId } = await requireUser();
     const access = await requireProjectAccess(userId, projectId);
@@ -93,16 +93,16 @@ export async function addIntegrationAction(
       "browser_profile.added",
       profile.id,
     );
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);
   }
 }
 
-// Bir operatör OpenClaw üzerinden manuel giriş yaptıktan sonra ("bu kanal
-// artık gerçekten bağlı") ya da devre dışı bırakılmış bir entegrasyonu
-// yeniden etkinleştirirken kullanılır — ikisi de aynı READY hedefine gider.
+// Used after an operator logs in manually via OpenClaw ("this channel is now
+// really connected"), or when re-enabling a disabled integration — both
+// paths lead to the same READY target.
 export async function markIntegrationConnectedAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -120,7 +120,7 @@ export async function markIntegrationConnectedAction(
       "browser_profile.marked_connected",
       profileId,
     );
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);
@@ -144,7 +144,7 @@ export async function disableIntegrationAction(
       "browser_profile.disabled",
       profileId,
     );
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);

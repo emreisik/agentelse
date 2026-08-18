@@ -43,8 +43,8 @@ import { SubmitButton } from "@/components/shared/submit-button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   buildHubHref,
-  ISLER_SUB_KEYS,
-  type IslerSubKey,
+  WORK_SUB_KEYS,
+  type WorkSubKey,
 } from "../hub-core-params";
 import { AssetPreview } from "../primitives/asset-preview";
 import { CrossLinkChip } from "../primitives/cross-link-chip";
@@ -67,25 +67,26 @@ import type { PanelProps } from "./panel-props";
 
 const DONE_TASK_STATUSES: TaskStatus[] = ["COMPLETED"];
 
-const TAB_LABEL: Record<IslerSubKey, string> = {
-  planlar: "Planlar",
-  gorevler: "Görevler",
-  devirler: "Devirler",
-  olcumler: "Ölçümler",
+const TAB_LABEL: Record<WorkSubKey, string> = {
+  plans: "Plans",
+  tasks: "Tasks",
+  cycles: "Handoffs",
+  measurements: "Measurements",
 };
 
-function isIslerSub(value: string | null): value is IslerSubKey {
-  return !!value && (ISLER_SUB_KEYS as readonly string[]).includes(value);
+function isWorkSub(value: string | null): value is WorkSubKey {
+  return !!value && (WORK_SUB_KEYS as readonly string[]).includes(value);
 }
 
-// Referanslar: src/app/projects/[projectId]/isler/page.tsx (shell) +
+// References: src/app/projects/[projectId]/work/page.tsx (shell) +
 // src/components/work/{plans-tab,tasks-tab,handoffs-tab,measurements-tab,
-// plan-sheet,task-sheet}.tsx. HUB CORE'da 4 alt-sekme `sub` param'ıyla
-// (planlar|gorevler|devirler|olcumler) kendi iç tab-bar'ıyla yönetiliyor;
-// entity bu panelin sahip olduğu 4 türden biriyse (workPlan/task/handoff/
-// measurementPlan — bkz. ENTITY_PANEL) liste yerine tam detay render edilir.
-export async function IslerPanel({ projectId, entity, sub }: PanelProps) {
-  const activeSub: IslerSubKey = isIslerSub(sub) ? sub : "planlar";
+// plan-sheet,task-sheet}.tsx. In HUB CORE the 4 sub-tabs are managed with
+// their own inner tab bar via the `sub` param (plans|tasks|cycles|
+// measurements); if the entity is one of the 4 kinds owned by this panel
+// (workPlan/task/handoff/measurementPlan — see ENTITY_PANEL), the full
+// detail is rendered instead of the list.
+export async function WorkPanel({ projectId, entity, sub }: PanelProps) {
+  const activeSub: WorkSubKey = isWorkSub(sub) ? sub : "plans";
 
   const [planCount, taskCount, handoffCount, measurementCount] =
     await Promise.all([
@@ -94,11 +95,11 @@ export async function IslerPanel({ projectId, entity, sub }: PanelProps) {
       prisma.workHandoff.count({ where: { projectId } }),
       prisma.measurementPlan.count({ where: { projectId } }),
     ]);
-  const tabCount: Record<IslerSubKey, number> = {
-    planlar: planCount,
-    gorevler: taskCount,
-    devirler: handoffCount,
-    olcumler: measurementCount,
+  const tabCount: Record<WorkSubKey, number> = {
+    plans: planCount,
+    tasks: taskCount,
+    cycles: handoffCount,
+    measurements: measurementCount,
   };
 
   const ownedEntity =
@@ -113,13 +114,13 @@ export async function IslerPanel({ projectId, entity, sub }: PanelProps) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-6 pt-6">
       <div className="flex shrink-0 items-center gap-1 border-b border-border">
-        {ISLER_SUB_KEYS.map((key) => {
+        {WORK_SUB_KEYS.map((key) => {
           const isActive = key === activeSub && !ownedEntity;
           return (
             <Link
               key={key}
               href={buildHubHref(projectId, {
-                panel: "isler",
+                panel: "work",
                 sub: key,
                 entity: null,
               })}
@@ -148,11 +149,11 @@ export async function IslerPanel({ projectId, entity, sub }: PanelProps) {
       </div>
 
       <div className="min-h-0 flex-1 pb-6">
-        {activeSub === "gorevler" ? (
+        {activeSub === "tasks" ? (
           <TasksBoard projectId={projectId} />
-        ) : activeSub === "devirler" ? (
+        ) : activeSub === "cycles" ? (
           <HandoffsBoard projectId={projectId} />
-        ) : activeSub === "olcumler" ? (
+        ) : activeSub === "measurements" ? (
           <MeasurementsBoard projectId={projectId} />
         ) : (
           <PlansBoard projectId={projectId} />
@@ -163,15 +164,15 @@ export async function IslerPanel({ projectId, entity, sub }: PanelProps) {
         <EntityDetailSheet
           title={
             ownedEntity.kind === "workPlan"
-              ? "İş planı detayı"
+              ? "Work plan detail"
               : ownedEntity.kind === "task"
-                ? "Görev detayı"
+                ? "Task detail"
                 : ownedEntity.kind === "handoff"
-                  ? "Devir detayı"
-                  : "Ölçüm planı detayı"
+                  ? "Handoff detail"
+                  : "Measurement plan detail"
           }
           closeHref={buildHubHref(projectId, {
-            panel: "isler",
+            panel: "work",
             sub: activeSub,
             entity: null,
           })}
@@ -195,14 +196,15 @@ export async function IslerPanel({ projectId, entity, sub }: PanelProps) {
 }
 
 // ---------------------------------------------------------------------------
-// PLANLAR
+// PLANS
 // ---------------------------------------------------------------------------
 
-// Fikirler/Görevler ile birebir aynı sistem: tam listeyi çek, tip
-// dağılımını groupBy ile hesapla, kanbanı (WorkPlanBoard) besle. Onayla/
-// İptal Et aksiyonları artık kart üstünde değil — WorkPlanDetail'de zaten
-// aynı aksiyonlar var, karta tıklayınca oraya gidiliyor (diğer kanban
-// kartlarıyla tutarlı: kart = navigasyon, aksiyon = detay sayfası).
+// Exactly the same system as Ideas/Tasks: fetch the full list, compute the
+// type distribution with groupBy, feed the kanban (WorkPlanBoard). The
+// Approve/Cancel actions are no longer on the card itself — WorkPlanDetail
+// already has the same actions, and clicking the card takes you there
+// (consistent with the other kanban cards: card = navigation, action =
+// detail page).
 async function PlansBoard({ projectId }: { projectId: string }) {
   const plans = await prisma.workPlan.findMany({
     where: { projectId },
@@ -225,8 +227,8 @@ async function PlansBoard({ projectId }: { projectId: string }) {
     return (
       <EmptyState
         icon={ClipboardList}
-        title="İş planı yok"
-        hint="Onaylanan fikirler görev grafiği içeren iş planlarına dönüştürülür."
+        title="No work plans"
+        hint="Approved ideas are converted into a work plan that contains a task graph."
       />
     );
   }
@@ -262,7 +264,7 @@ async function PlansBoard({ projectId }: { projectId: string }) {
     totalTasks: plan.tasks.length,
     goals: plan.goalIds.map((id) => ({
       id,
-      title: goalTitle.get(id) ?? "Hedef",
+      title: goalTitle.get(id) ?? "Goal",
     })),
     ideaId: plan.ideaId,
     createdAt: plan.createdAt.toISOString(),
@@ -322,7 +324,7 @@ async function WorkPlanDetail({
   if (!plan) {
     return (
       <div className="space-y-4">
-        <EmptyState icon={ClipboardList} title="İş planı bulunamadı" />
+        <EmptyState icon={ClipboardList} title="Work plan not found" />
       </div>
     );
   }
@@ -354,17 +356,17 @@ async function WorkPlanDetail({
   const goalTitle = new Map(goals.map((goal) => [goal.id, goal.title]));
 
   const fields: FieldSpec[] = [
-    { type: "badge", label: "Tür", meta: WORK_PLAN_TYPE[plan.planType] },
-    { type: "badge", label: "Durum", meta: WORK_PLAN_STATUS[plan.status] },
+    { type: "badge", label: "Type", meta: WORK_PLAN_TYPE[plan.planType] },
+    { type: "badge", label: "Status", meta: WORK_PLAN_STATUS[plan.status] },
     { type: "boolean", label: "Demo (isMock)", value: plan.isMock },
     {
       type: "node",
-      label: "Kaynak fikir",
+      label: "Source idea",
       node: plan.ideaId ? (
         <CrossLinkChip
           projectId={projectId}
           entity={{ kind: "idea", id: plan.ideaId }}
-          text="Fikre git"
+          text="Go to idea"
         />
       ) : (
         <span className="text-sm text-muted-foreground">—</span>
@@ -372,12 +374,12 @@ async function WorkPlanDetail({
     },
     {
       type: "node",
-      label: "Kaynak fırsat",
+      label: "Source opportunity",
       node: plan.opportunityId ? (
         <CrossLinkChip
           projectId={projectId}
           entity={{ kind: "opportunity", id: plan.opportunityId }}
-          text="Fırsata git"
+          text="Go to opportunity"
         />
       ) : (
         <span className="text-sm text-muted-foreground">—</span>
@@ -385,12 +387,12 @@ async function WorkPlanDetail({
     },
     {
       type: "node",
-      label: "Karar",
+      label: "Decision",
       node: plan.decisionId ? (
         <CrossLinkChip
           projectId={projectId}
           entity={{ kind: "decision", id: plan.decisionId }}
-          text="Karar günlüğü"
+          text="Decision log"
         />
       ) : (
         <span className="text-sm text-muted-foreground">—</span>
@@ -398,7 +400,7 @@ async function WorkPlanDetail({
     },
     {
       type: "node",
-      label: "Hedefler (goalIds)",
+      label: "Goals (goalIds)",
       node:
         plan.goalIds.length > 0 ? (
           <div className="flex flex-wrap justify-end gap-1">
@@ -407,7 +409,7 @@ async function WorkPlanDetail({
                 key={goalId}
                 projectId={projectId}
                 entity={{ kind: "goal", id: goalId }}
-                text={goalTitle.get(goalId) ?? "Hedef"}
+                text={goalTitle.get(goalId) ?? "Goal"}
               />
             ))}
           </div>
@@ -417,13 +419,13 @@ async function WorkPlanDetail({
     },
     {
       type: "date",
-      label: "Oluşturulma",
+      label: "Created",
       value: plan.createdAt,
       relative: true,
     },
     {
       type: "date",
-      label: "Güncellenme",
+      label: "Updated",
       value: plan.updatedAt,
       relative: true,
     },
@@ -436,7 +438,7 @@ async function WorkPlanDetail({
           {plan.title}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {WORK_PLAN_TYPE[plan.planType].label} · {nodes.length} adım
+          {WORK_PLAN_TYPE[plan.planType].label} · {nodes.length} steps
         </p>
       </div>
 
@@ -451,7 +453,7 @@ async function WorkPlanDetail({
       {nodes.length > 0 ? (
         <div className="space-y-1.5">
           <p className="text-sm font-medium text-foreground">
-            Bağımlılık grafiği
+            Dependency graph
           </p>
           <DependencyGraph nodes={nodes} taskStatusByKey={taskStatusByKey} />
         </div>
@@ -461,13 +463,13 @@ async function WorkPlanDetail({
 
       {plan.tasks.length > 0 ? (
         <div className="space-y-1.5">
-          <p className="text-sm font-medium text-foreground">Görevler</p>
+          <p className="text-sm font-medium text-foreground">Tasks</p>
           {plan.tasks.map((task) => (
             <Link
               key={task.id}
               href={buildHubHref(projectId, {
-                panel: "isler",
-                sub: "gorevler",
+                panel: "work",
+                sub: "tasks",
                 entity: { kind: "task", id: task.id },
               })}
               scroll={false}
@@ -497,13 +499,13 @@ async function WorkPlanDetail({
 
       {plan.handoffs.length > 0 ? (
         <div className="space-y-1.5">
-          <p className="text-sm font-medium text-foreground">Devirler</p>
+          <p className="text-sm font-medium text-foreground">Handoffs</p>
           {plan.handoffs.map((handoff) => (
             <Link
               key={handoff.id}
               href={buildHubHref(projectId, {
-                panel: "isler",
-                sub: "devirler",
+                panel: "work",
+                sub: "cycles",
                 entity: { kind: "handoff", id: handoff.id },
               })}
               scroll={false}
@@ -541,21 +543,21 @@ async function WorkPlanDetail({
         <div className="flex items-center justify-end gap-1.5 border-t border-border pt-3">
           <ActionForm
             action={cancelWorkPlanAction}
-            successMessage="Plan iptal edildi"
+            successMessage="Plan cancelled"
           >
             <input type="hidden" name="projectId" value={projectId} />
             <input type="hidden" name="workPlanId" value={plan.id} />
             <SubmitButton variant="outline" size="xs">
-              İptal Et
+              Cancel
             </SubmitButton>
           </ActionForm>
           <ActionForm
             action={approveWorkPlanAction}
-            successMessage="Plan onaylandı — görevler başlatılıyor"
+            successMessage="Plan approved — starting tasks"
           >
             <input type="hidden" name="projectId" value={projectId} />
             <input type="hidden" name="workPlanId" value={plan.id} />
-            <SubmitButton size="xs">Onayla</SubmitButton>
+            <SubmitButton size="xs">Approve</SubmitButton>
           </ActionForm>
         </div>
       ) : null}
@@ -564,14 +566,14 @@ async function WorkPlanDetail({
 }
 
 // ---------------------------------------------------------------------------
-// GÖREVLER
+// TASKS
 // ---------------------------------------------------------------------------
 
-// Fikirler panosunun (fikirler-panel.tsx IdeaListView) birebir aynı sistemi:
-// tam listeyi çek, departman dağılımını groupBy ile hesapla, kanbanı
-// (TaskDepartmentBoard) besle. departmentKey Task'ta doğrudan bir kolon
-// olduğundan (Idea'daki concept.departmentsInvolved JSON'unun aksine) ekstra
-// bir "primaryDepartment" çıkarımına gerek yok.
+// The exact same system as the Ideas board (ideas-panel.tsx IdeaListView):
+// fetch the full list, compute the department distribution with groupBy,
+// feed the kanban (TaskDepartmentBoard). Since departmentKey is directly a
+// column on Task (unlike Idea's concept.departmentsInvolved JSON), no extra
+// "primaryDepartment" derivation is needed.
 async function TasksBoard({ projectId }: { projectId: string }) {
   const tasks = await prisma.task.findMany({
     where: { projectId },
@@ -591,8 +593,8 @@ async function TasksBoard({ projectId }: { projectId: string }) {
     return (
       <EmptyState
         icon={ClipboardList}
-        title="Görev yok"
-        hint="Ajans karar verdikçe veya siz komut verdikçe görevler burada listelenir."
+        title="No tasks"
+        hint="Tasks are listed here as the agency makes decisions or as you issue commands."
       />
     );
   }
@@ -680,7 +682,7 @@ async function TaskDetail({
   if (!task) {
     return (
       <div className="space-y-4">
-        <EmptyState icon={ClipboardList} title="Görev bulunamadı" />
+        <EmptyState icon={ClipboardList} title="Task not found" />
       </div>
     );
   }
@@ -694,12 +696,12 @@ async function TaskDetail({
   const goalTitle = new Map(goals.map((goal) => [goal.id, goal.title]));
 
   const fields: FieldSpec[] = [
-    { type: "badge", label: "Durum", meta: TASK_STATUS[task.status] },
-    { type: "badge", label: "Öncelik", meta: TASK_PRIORITY[task.priority] },
+    { type: "badge", label: "Status", meta: TASK_STATUS[task.status] },
+    { type: "badge", label: "Priority", meta: TASK_PRIORITY[task.priority] },
     { type: "badge", label: "Risk", meta: RISK_LEVEL[task.riskLevel] },
     {
       type: "badge",
-      label: "Departman",
+      label: "Department",
       meta: task.departmentKey ? DEPARTMENT_KEY[task.departmentKey] : undefined,
       accentColor: task.departmentKey
         ? DEPARTMENT_COLOR[task.departmentKey]
@@ -707,25 +709,29 @@ async function TaskDetail({
     },
     {
       type: "text",
-      label: "Yetenek (capability)",
+      label: "Capability",
       value: capabilityLabel(task.capability),
     },
-    { type: "text", label: "Oluşturan tipi", value: task.createdByType },
-    { type: "boolean", label: "Onay gerektirir", value: task.requiresApproval },
+    { type: "text", label: "Creator type", value: task.createdByType },
     {
       type: "boolean",
-      label: "Doğrulama gerektirir",
+      label: "Requires approval",
+      value: task.requiresApproval,
+    },
+    {
+      type: "boolean",
+      label: "Requires verification",
       value: task.requiresVerification,
     },
     {
       type: "node",
-      label: "Üst görev",
+      label: "Parent task",
       node: task.parentTask ? (
         <CrossLinkChip
           projectId={projectId}
           entity={{ kind: "task", id: task.parentTask.id }}
           text={stripCapabilityPrefix(task.parentTask.title)}
-          sub="gorevler"
+          sub="tasks"
         />
       ) : (
         <span className="text-sm text-muted-foreground">—</span>
@@ -733,13 +739,13 @@ async function TaskDetail({
     },
     {
       type: "node",
-      label: "İş planı",
+      label: "Work plan",
       node: task.workPlanId ? (
         <CrossLinkChip
           projectId={projectId}
           entity={{ kind: "workPlan", id: task.workPlanId }}
-          text={task.workPlan?.title ?? "Plana git"}
-          sub="planlar"
+          text={task.workPlan?.title ?? "Go to plan"}
+          sub="plans"
         />
       ) : (
         <span className="text-sm text-muted-foreground">—</span>
@@ -747,12 +753,12 @@ async function TaskDetail({
     },
     {
       type: "node",
-      label: "Kaynak karar",
+      label: "Source decision",
       node: task.sourceDecisionId ? (
         <CrossLinkChip
           projectId={projectId}
           entity={{ kind: "decision", id: task.sourceDecisionId }}
-          text="Karar günlüğü"
+          text="Decision log"
         />
       ) : (
         <span className="text-sm text-muted-foreground">—</span>
@@ -760,7 +766,7 @@ async function TaskDetail({
     },
     {
       type: "node",
-      label: "Hedefler (goalIds)",
+      label: "Goals (goalIds)",
       node:
         task.goalIds.length > 0 ? (
           <div className="flex flex-wrap justify-end gap-1">
@@ -769,7 +775,7 @@ async function TaskDetail({
                 key={goalId}
                 projectId={projectId}
                 entity={{ kind: "goal", id: goalId }}
-                text={goalTitle.get(goalId) ?? "Hedef"}
+                text={goalTitle.get(goalId) ?? "Goal"}
               />
             ))}
           </div>
@@ -777,23 +783,23 @@ async function TaskDetail({
           <span className="text-sm text-muted-foreground">—</span>
         ),
     },
-    { type: "date", label: "Son tarih (dueAt)", value: task.dueAt },
-    { type: "date", label: "Başlama", value: task.startedAt, relative: true },
+    { type: "date", label: "Due date (dueAt)", value: task.dueAt },
+    { type: "date", label: "Started", value: task.startedAt, relative: true },
     {
       type: "date",
-      label: "Tamamlanma",
+      label: "Completed",
       value: task.completedAt,
       relative: true,
     },
     {
       type: "date",
-      label: "Oluşturulma",
+      label: "Created",
       value: task.createdAt,
       relative: true,
     },
     {
       type: "date",
-      label: "Güncellenme",
+      label: "Updated",
       value: task.updatedAt,
       relative: true,
     },
@@ -829,13 +835,13 @@ async function TaskDetail({
 
       {task.childTasks.length > 0 ? (
         <div className="space-y-1.5">
-          <p className="text-sm font-medium text-foreground">Alt görevler</p>
+          <p className="text-sm font-medium text-foreground">Subtasks</p>
           {task.childTasks.map((child) => (
             <Link
               key={child.id}
               href={buildHubHref(projectId, {
-                panel: "isler",
-                sub: "gorevler",
+                panel: "work",
+                sub: "tasks",
                 entity: { kind: "task", id: child.id },
               })}
               scroll={false}
@@ -856,15 +862,15 @@ async function TaskDetail({
       {task.dependsOn.length > 0 ? (
         <div className="space-y-1.5">
           <p className="text-sm font-medium text-foreground">
-            Bağımlılıklar{" "}
+            Dependencies{" "}
             <span className="text-muted-foreground">(dependsOn)</span>
           </p>
           {task.dependsOn.map((dependency) => (
             <Link
               key={dependency.dependsOnTask.id}
               href={buildHubHref(projectId, {
-                panel: "isler",
-                sub: "gorevler",
+                panel: "work",
+                sub: "tasks",
                 entity: { kind: "task", id: dependency.dependsOnTask.id },
               })}
               scroll={false}
@@ -885,15 +891,15 @@ async function TaskDetail({
       {task.dependedOnBy.length > 0 ? (
         <div className="space-y-1.5">
           <p className="text-sm font-medium text-foreground">
-            Bu göreve bağımlı olanlar{" "}
+            Tasks depending on this{" "}
             <span className="text-muted-foreground">(dependedOnBy)</span>
           </p>
           {task.dependedOnBy.map((dependency) => (
             <Link
               key={dependency.task.id}
               href={buildHubHref(projectId, {
-                panel: "isler",
-                sub: "gorevler",
+                panel: "work",
+                sub: "tasks",
                 entity: { kind: "task", id: dependency.task.id },
               })}
               scroll={false}
@@ -913,7 +919,7 @@ async function TaskDetail({
 
       {task.approvals.length > 0 ? (
         <div className="space-y-1.5">
-          <p className="text-sm font-medium text-foreground">Onaylar</p>
+          <p className="text-sm font-medium text-foreground">Approvals</p>
           {task.approvals.map((approval) => (
             <Card key={approval.id} size="sm">
               <CardContent>
@@ -921,40 +927,40 @@ async function TaskDetail({
                   fields={[
                     {
                       type: "badge",
-                      label: "Tür",
+                      label: "Type",
                       meta: APPROVAL_TYPE[approval.type],
                     },
                     {
                       type: "badge",
-                      label: "Durum",
+                      label: "Status",
                       meta: APPROVAL_STATUS[approval.status],
                     },
                     {
                       type: "badge",
-                      label: "Seviye",
+                      label: "Level",
                       meta: approval.level
                         ? APPROVAL_LEVEL[approval.level]
                         : undefined,
                     },
                     {
                       type: "text",
-                      label: "İnceleme notu",
+                      label: "Review note",
                       value: approval.reviewNote,
                     },
                     {
                       type: "date",
-                      label: "Son geçerlilik",
+                      label: "Expires",
                       value: approval.expiresAt,
                     },
                     {
                       type: "date",
-                      label: "Oluşturulma",
+                      label: "Created",
                       value: approval.createdAt,
                       relative: true,
                     },
                     {
                       type: "date",
-                      label: "İncelenme",
+                      label: "Reviewed",
                       value: approval.reviewedAt,
                       relative: true,
                     },
@@ -970,7 +976,7 @@ async function TaskDetail({
       {task.executionJobs.length > 0 ? (
         <div className="space-y-1.5">
           <p className="text-sm font-medium text-foreground">
-            Yürütme işleri{" "}
+            Execution jobs{" "}
             <span className="text-muted-foreground">(executionJobs)</span>
           </p>
           {task.executionJobs.map((job) => {
@@ -991,40 +997,40 @@ async function TaskDetail({
                     fields={[
                       {
                         type: "text",
-                        label: "Yetenek",
+                        label: "Capability",
                         value: capabilityLabel(job.capability),
                       },
                       {
                         type: "text",
-                        label: "Tahmini maliyet",
+                        label: "Estimated cost",
                         value: job.estimatedCost,
                       },
                       {
                         type: "text",
-                        label: "Gerçek maliyet",
+                        label: "Actual cost",
                         value: job.actualCost,
                       },
                       {
                         type: "date",
-                        label: "Başlama",
+                        label: "Started",
                         value: job.startedAt,
                         relative: true,
                       },
                       {
                         type: "date",
-                        label: "Tamamlanma",
+                        label: "Completed",
                         value: job.completedAt,
                         relative: true,
                       },
                       {
                         type: "date",
-                        label: "Oluşturulma",
+                        label: "Created",
                         value: job.createdAt,
                         relative: true,
                       },
                       {
                         type: "date",
-                        label: "Güncellenme",
+                        label: "Updated",
                         value: job.updatedAt,
                         relative: true,
                       },
@@ -1050,7 +1056,7 @@ async function TaskDetail({
       {task.creatives.length > 0 ? (
         <div className="space-y-1.5">
           <p className="text-sm font-medium text-foreground">
-            Üretilen içerik{" "}
+            Generated content{" "}
             <span className="text-muted-foreground">(creatives)</span>
           </p>
           {task.creatives.map((creative) => (
@@ -1061,7 +1067,7 @@ async function TaskDetail({
                     href={`/creatives/${creative.id}`}
                     className="text-xs text-primary underline-offset-2 hover:underline"
                   >
-                    Kreatifi görüntüle
+                    View creative
                   </Link>
                   <div className="flex items-center gap-1.5">
                     {creative.platform ? (
@@ -1079,17 +1085,17 @@ async function TaskDetail({
                 </div>
                 <FieldGrid
                   fields={[
-                    { type: "text", label: "Tür", value: creative.type },
+                    { type: "text", label: "Type", value: creative.type },
                     { type: "text", label: "Brief", value: creative.brief },
                     {
                       type: "date",
-                      label: "Oluşturulma",
+                      label: "Created",
                       value: creative.createdAt,
                       relative: true,
                     },
                     {
                       type: "date",
-                      label: "Güncellenme",
+                      label: "Updated",
                       value: creative.updatedAt,
                       relative: true,
                     },
@@ -1118,10 +1124,10 @@ async function TaskDetail({
                         ) : null}
                         <div className="flex flex-wrap gap-x-3 text-[10px] text-muted-foreground">
                           <span>
-                            Sağlayıcı: {version.generationProvider ?? "—"}
+                            Provider: {version.generationProvider ?? "—"}
                           </span>
                           {version.revisionReason ? (
-                            <span>Revizyon: {version.revisionReason}</span>
+                            <span>Revision: {version.revisionReason}</span>
                           ) : null}
                         </div>
                       </div>
@@ -1138,7 +1144,7 @@ async function TaskDetail({
 }
 
 // ---------------------------------------------------------------------------
-// DEVİRLER
+// HANDOFFS
 // ---------------------------------------------------------------------------
 
 type HandoffRow = {
@@ -1207,8 +1213,8 @@ function HandoffCard({
             <CrossLinkChip
               projectId={projectId}
               entity={{ kind: "workPlan", id: handoff.workPlanId }}
-              text={handoff.workPlan?.title ?? "İş planı"}
-              sub="planlar"
+              text={handoff.workPlan?.title ?? "Work plan"}
+              sub="plans"
               className="h-4 px-1.5 text-[10px]"
             />
           ) : null}
@@ -1217,11 +1223,9 @@ function HandoffCard({
               projectId={projectId}
               entity={{ kind: "task", id: handoff.fromTaskId }}
               text={
-                fromTask
-                  ? stripCapabilityPrefix(fromTask.title)
-                  : "Kaynak görev"
+                fromTask ? stripCapabilityPrefix(fromTask.title) : "Source task"
               }
-              sub="gorevler"
+              sub="tasks"
               className="h-4 px-1.5 text-[10px]"
             />
           ) : null}
@@ -1230,9 +1234,9 @@ function HandoffCard({
               projectId={projectId}
               entity={{ kind: "task", id: handoff.toTaskId }}
               text={
-                toTask ? stripCapabilityPrefix(toTask.title) : "Hedef görev"
+                toTask ? stripCapabilityPrefix(toTask.title) : "Target task"
               }
-              sub="gorevler"
+              sub="tasks"
               className="h-4 px-1.5 text-[10px]"
             />
           ) : null}
@@ -1240,38 +1244,37 @@ function HandoffCard({
             <CrossLinkChip
               projectId={projectId}
               entity={{ kind: "decision", id: handoff.decisionId }}
-              text="Karar günlüğü"
+              text="Decision log"
               className="h-4 px-1.5 text-[10px]"
             />
           ) : null}
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs text-muted-foreground">
-            {timeAgo(handoff.createdAt)} · güncelleme{" "}
-            {timeAgo(handoff.updatedAt)}
+            {timeAgo(handoff.createdAt)} · updated {timeAgo(handoff.updatedAt)}
             {handoff.expiresAt
-              ? ` · Son geçerlilik: ${shortDate(handoff.expiresAt)}`
+              ? ` · Expires: ${shortDate(handoff.expiresAt)}`
               : ""}
           </span>
           {handoff.status === "PROPOSED" ? (
             <div className="flex items-center gap-1.5">
               <ActionForm
                 action={rejectHandoffAction}
-                successMessage="Devir reddedildi"
+                successMessage="Handoff rejected"
               >
                 <input type="hidden" name="projectId" value={projectId} />
                 <input type="hidden" name="handoffId" value={handoff.id} />
                 <SubmitButton variant="outline" size="xs">
-                  Reddet
+                  Reject
                 </SubmitButton>
               </ActionForm>
               <ActionForm
                 action={acceptHandoffAction}
-                successMessage="Devir kabul edildi — görev oluşturuluyor"
+                successMessage="Handoff accepted — creating task"
               >
                 <input type="hidden" name="projectId" value={projectId} />
                 <input type="hidden" name="handoffId" value={handoff.id} />
-                <SubmitButton size="xs">Kabul Et</SubmitButton>
+                <SubmitButton size="xs">Accept</SubmitButton>
               </ActionForm>
             </div>
           ) : null}
@@ -1281,9 +1284,9 @@ function HandoffCard({
   );
 }
 
-// Kart üstü Kabul Et/Reddet aksiyonları kaldırıldı — HandoffDetail zaten
-// aynı HandoffCard'ı (aksiyonlarıyla birlikte) render ediyor, kart burada
-// da diğer panolar gibi sade bir navigasyon öğesi.
+// The Accept/Reject actions on the card were removed — HandoffDetail
+// already renders the same HandoffCard (with its actions), so the card
+// here is just a plain navigation item like the other boards.
 async function HandoffsBoard({ projectId }: { projectId: string }) {
   const handoffs = await prisma.workHandoff.findMany({
     where: { projectId },
@@ -1303,8 +1306,8 @@ async function HandoffsBoard({ projectId }: { projectId: string }) {
     return (
       <EmptyState
         icon={Send}
-        title="Devir yok"
-        hint="Bir departman işi tamamlayıp diğerine devrettiğinde devirler burada görünür."
+        title="No handoffs"
+        hint="When a department finishes work and hands it off to another, it appears here."
       />
     );
   }
@@ -1352,7 +1355,7 @@ async function HandoffDetail({
   if (!handoff) {
     return (
       <div className="space-y-4">
-        <EmptyState icon={Send} title="Devir bulunamadı" />
+        <EmptyState icon={Send} title="Handoff not found" />
       </div>
     );
   }
@@ -1380,7 +1383,7 @@ async function HandoffDetail({
 }
 
 // ---------------------------------------------------------------------------
-// ÖLÇÜMLER
+// MEASUREMENTS
 // ---------------------------------------------------------------------------
 
 type MeasurementPlanRow = {
@@ -1431,8 +1434,8 @@ function MeasurementPlanCard({
             <CrossLinkChip
               projectId={projectId}
               entity={{ kind: "task", id: plan.taskId }}
-              text={taskTitle.get(plan.taskId) ?? "İlgili görev"}
-              sub="gorevler"
+              text={taskTitle.get(plan.taskId) ?? "Related task"}
+              sub="tasks"
               className="h-4 px-1.5 text-[10px]"
             />
           ) : null}
@@ -1440,8 +1443,8 @@ function MeasurementPlanCard({
             <CrossLinkChip
               projectId={projectId}
               entity={{ kind: "workPlan", id: plan.workPlanId }}
-              text={workPlanTitle.get(plan.workPlanId) ?? "İlgili plan"}
-              sub="planlar"
+              text={workPlanTitle.get(plan.workPlanId) ?? "Related plan"}
+              sub="plans"
               className="h-4 px-1.5 text-[10px]"
             />
           ) : null}
@@ -1449,12 +1452,12 @@ function MeasurementPlanCard({
             <CrossLinkChip
               projectId={projectId}
               entity={{ kind: "idea", id: plan.ideaId }}
-              text={ideaTitle.get(plan.ideaId) ?? "İlgili fikir"}
+              text={ideaTitle.get(plan.ideaId) ?? "Related idea"}
               className="h-4 px-1.5 text-[10px]"
             />
           ) : null}
           <span className="text-[10px] text-muted-foreground">
-            {timeAgo(plan.createdAt)} · güncelleme {timeAgo(plan.updatedAt)}
+            {timeAgo(plan.createdAt)} · updated {timeAgo(plan.updatedAt)}
           </span>
         </div>
         <div className="space-y-1.5">
@@ -1499,8 +1502,8 @@ function MeasurementPlanCard({
                       <CrossLinkChip
                         projectId={projectId}
                         entity={{ kind: "task", id: check.resultTaskId }}
-                        text="Sonuç görevi"
-                        sub="gorevler"
+                        text="Result task"
+                        sub="tasks"
                         className="h-4 px-1.5 text-[10px]"
                       />
                     ) : null}
@@ -1545,8 +1548,8 @@ async function MeasurementsBoard({ projectId }: { projectId: string }) {
     return (
       <EmptyState
         icon={Ruler}
-        title="Ölçüm planı yok"
-        hint="Yayına alınan işler için ölçüm planları otomatik zamanlanır; sonuçlar öğrenimlere dönüşür."
+        title="No measurement plans"
+        hint="Measurement plans are scheduled automatically for published work; results become learnings."
       />
     );
   }
@@ -1629,7 +1632,7 @@ async function MeasurementPlanDetail({
   if (!plan) {
     return (
       <div className="space-y-4">
-        <EmptyState icon={Ruler} title="Ölçüm planı bulunamadı" />
+        <EmptyState icon={Ruler} title="Measurement plan not found" />
       </div>
     );
   }

@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
-// Departmanlar artık HUB CORE'un bir yörünge paneli (bkz. ../page.tsx +
-// src/components/hub-core/panels/departmanlar-panel.tsx) — bu rota eski
-// yer imleri/linkler kırılmasın diye canlı tutuluyor.
+// Departments is now one of HUB CORE's orbit panels (see ../page.tsx +
+// src/components/hub-core/panels/departmanlar-panel.tsx) — this route
+// stays alive so old bookmarks/links don't break.
 export default async function DepartmanlarRedirect({
   params,
   searchParams,

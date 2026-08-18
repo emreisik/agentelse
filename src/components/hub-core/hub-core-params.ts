@@ -1,48 +1,49 @@
-// HUB CORE'un tek query-param sözleşmesi. Eski sayfalardaki dağınık
-// `tab=`/`gorev=`/`plan=`/`fikir=`/`denetim=`/`kart=` param'larının yerini
-// TEK şema alır: `panel` (hangi yörünge düğümü açık), `sub` (o düğümün
-// kendi alt-sekmesi varsa), `entity` (bir kaydın detayını aç, `kind:id`).
+// HUB CORE's single query-param contract. Replaces the scattered
+// `tab=`/`task=`/`plan=`/`idea=`/`audit=`/`card=` params of the old pages
+// with ONE schema: `panel` (which orbit node is open), `sub` (that node's
+// own sub-tab, if it has one), `entity` (open a record's detail, `kind:id`).
 
 export const PANEL_KEYS = [
-  "kurulum",
-  "marka-beyni",
-  "sinyaller",
-  "icgoru-firsat",
-  "hedefler",
-  "fikirler",
-  "isler",
-  "departmanlar",
-  "onaylar",
-  "insan-eylem",
-  "ayarlar",
-  "kutuphane",
+  "setup",
+  "brand-brain",
+  "signals",
+  "insights-opportunities",
+  "goals",
+  "ideas",
+  "work",
+  "departments",
+  "approvals",
+  "human-action",
+  "settings",
+  "library",
 ] as const;
 
 export type PanelKey = (typeof PANEL_KEYS)[number];
 
-export const ISLER_SUB_KEYS = [
-  "planlar",
-  "gorevler",
-  "devirler",
-  "olcumler",
+export const WORK_SUB_KEYS = [
+  "plans",
+  "tasks",
+  "cycles",
+  "measurements",
 ] as const;
-export type IslerSubKey = (typeof ISLER_SUB_KEYS)[number];
+export type WorkSubKey = (typeof WORK_SUB_KEYS)[number];
 
-export const AYARLAR_SUB_KEYS = [
-  "otonomi",
-  "kararlar",
-  "aktivite",
-  "tehlike",
+export const SETTINGS_SUB_KEYS = [
+  "autonomy",
+  "decisions",
+  "activity",
+  "risk",
 ] as const;
-export type AyarlarSubKey = (typeof AYARLAR_SUB_KEYS)[number];
+export type SettingsSubKey = (typeof SETTINGS_SUB_KEYS)[number];
 
 const SUB_KEYS_BY_PANEL: Partial<Record<PanelKey, readonly string[]>> = {
-  isler: ISLER_SUB_KEYS,
-  ayarlar: AYARLAR_SUB_KEYS,
+  work: WORK_SUB_KEYS,
+  settings: SETTINGS_SUB_KEYS,
 };
 
-// Bir kaydın detayını açan tek birleşik param — `kart=idea:ID` deseninin
-// genellenmiş hali. Yeni bir modül eklendiğinde buraya bir satır ekle.
+// The single unified param that opens a record's detail — the generalized
+// form of the old `card=idea:ID` pattern. Add a line here when a new module
+// is introduced.
 export const ENTITY_KINDS = [
   "idea",
   "workPlan",
@@ -102,9 +103,9 @@ export function parseHubParams(sp: RawSearchParams): HubParams {
   return { panel, sub, entity };
 }
 
-// Verilen alanları geçerli param'larla birleştirip proje köküne göreli bir
-// href üretir. `undefined` geçilen alanlar mevcut değerden korunur,
-// `null` geçilenler URL'den temizlenir.
+// Merges the given fields with the current params and produces an href
+// relative to the project root. Fields passed as `undefined` are kept from
+// the current value; fields passed as `null` are cleared from the URL.
 export function buildHubHref(
   projectId: string,
   patch: {
@@ -133,27 +134,27 @@ export function entityRefToParam(entity: EntityRef): string {
   return `${entity.kind}:${entity.id}`;
 }
 
-// Bir kayıt türünü, o kaydı açan panele eşler — cross-link chip'lerin
-// hangi paneli+entity'yi açacağını bilmesi için.
+// Maps a record kind to the panel that opens it — so cross-link chips know
+// which panel+entity to open.
 export const ENTITY_PANEL: Record<EntityKind, PanelKey> = {
-  idea: "fikirler",
-  workPlan: "isler",
-  task: "isler",
-  signal: "sinyaller",
-  finding: "sinyaller",
-  insight: "icgoru-firsat",
-  opportunity: "icgoru-firsat",
-  goal: "hedefler",
-  handoff: "isler",
-  measurementPlan: "isler",
-  department: "departmanlar",
-  decision: "ayarlar",
-  constitution: "marka-beyni",
+  idea: "ideas",
+  workPlan: "work",
+  task: "work",
+  signal: "signals",
+  finding: "signals",
+  insight: "insights-opportunities",
+  opportunity: "insights-opportunities",
+  goal: "goals",
+  handoff: "work",
+  measurementPlan: "work",
+  department: "departments",
+  decision: "settings",
+  constitution: "brand-brain",
 };
 
-// Bir entity'yi doğrudan açan href üretir — cross-link chip'lerin standart
-// kullanımı. Panel otomatik olarak ENTITY_PANEL'den, sub (varsa ilgili
-// panelin ilk mantıklı alt-sekmesi) opsiyonel olarak geçilir.
+// Produces an href that directly opens an entity — the standard usage for
+// cross-link chips. The panel is inferred automatically from ENTITY_PANEL;
+// `sub` (the panel's first sensible sub-tab, if any) is optional.
 export function entityHref(
   projectId: string,
   entity: EntityRef,

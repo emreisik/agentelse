@@ -10,15 +10,15 @@ import { statusBadgeVariant } from "@/lib/utils";
 import { PURPOSE_ICONS } from "@/features/dashboard/purpose-icons";
 
 const PROJECT_STATUS_LABELS: Record<string, string> = {
-  CREATED: "Oluşturuldu",
-  DISCOVERY: "Keşif",
-  NEEDS_INFORMATION: "Bilgi Gerekli",
-  PROFILE_REVIEW: "Profil İncelemesi",
-  NEEDS_ASSESSMENT: "Değerlendirme Gerekli",
-  STRATEGY: "Strateji",
-  ACTIVE: "Aktif",
-  PAUSED: "Duraklatıldı",
-  CLOSED: "Kapatıldı",
+  CREATED: "Created",
+  DISCOVERY: "Discovery",
+  NEEDS_INFORMATION: "Needs Information",
+  PROFILE_REVIEW: "Profile Review",
+  NEEDS_ASSESSMENT: "Needs Assessment",
+  STRATEGY: "Strategy",
+  ACTIVE: "Active",
+  PAUSED: "Paused",
+  CLOSED: "Closed",
 };
 
 export function ProjectOverviewCard({
@@ -48,7 +48,7 @@ export function ProjectOverviewCard({
         <div className="flex flex-wrap gap-1.5">
           {purposes.length === 0 ? (
             <span className="text-xs text-muted-foreground">
-              Henüz aktif entegrasyon yok.
+              No active integrations yet.
             </span>
           ) : (
             purposes.map((purpose) => {
@@ -69,7 +69,7 @@ export function ProjectOverviewCard({
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-xs text-muted-foreground">
-              Sağlık (son 30 gün)
+              Health (last 30 days)
             </div>
             <div className="text-lg font-semibold">
               {healthPercent === null ? "—" : `${healthPercent}%`}

@@ -11,11 +11,12 @@ import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { sendPublishPromptToTelegram } from "@/server/notifications/telegram-approval-notifier";
 
-// Bir onay kararının (Task ya da Creative) hangi fikrin sohbetine ait
-// olduğunu ve kartta gösterilecek başlığı bulur — Task için doğrudan
-// (resolveIdeaIdForTask), Creative için önce onu üreten görev üzerinden
-// (Creative.createdByTaskId), oradan da aynı yoldan. İkisi de yoksa (ör.
-// fikirsiz elle oluşturulmuş görev/kreatif) null döner — sessizce atlanır.
+// Finds which idea's chat an approval decision (Task or Creative) belongs
+// to and the title to show on the card — directly for a Task
+// (resolveIdeaIdForTask), and for a Creative via the task that produced it
+// (Creative.createdByTaskId), then the same lookup from there. If neither
+// resolves (e.g. a manually created task/creative with no idea), returns
+// null and is silently skipped.
 async function resolveApprovalChatTarget(
   approval: Approval,
 ): Promise<{ ideaId: string; title: string } | null> {
@@ -45,18 +46,18 @@ async function resolveApprovalChatTarget(
       }),
     ]);
     if (!ideaId) return null;
-    return { ideaId, title: task?.title ?? "Kreatif" };
+    return { ideaId, title: task?.title ?? "Creative" };
   }
 
   return null;
 }
 
-// approveApprovalAction/rejectApprovalAction (web, src/server/actions/
-// approval-actions.ts) VE Telegram onay poller'ı (src/server/integrations/
-// telegram-approval-poller.ts) ortak bu fonksiyonu kullanır. Session/tenant
-// kontrolü ve revalidatePath bilinçli olarak DIŞARIDA bırakıldı — poller'da
-// ne oturum var ne de bir Next.js sayfa cache'i revalidate edilecek bir
-// istek bağlamı.
+// Both approveApprovalAction/rejectApprovalAction (web, src/server/actions/
+// approval-actions.ts) AND the Telegram approval poller
+// (src/server/integrations/telegram-approval-poller.ts) share this function.
+// Session/tenant checks and revalidatePath are deliberately left OUT — the
+// poller has neither a session nor a request context whose Next.js page
+// cache needs revalidating.
 export async function applyApprovalDecision(input: {
   approval: Approval;
   to: "APPROVED" | "REJECTED";
@@ -94,43 +95,44 @@ export async function applyApprovalDecision(input: {
     );
   }
 
-  // Onay kararı da "altın kural"a tabi: fikrin sohbetinde ayrı bir panele
-  // gitmeden, kimin neyi onayladığı/reddettiği burada görünsün. Best-effort
-  // — fikre bağlanamıyorsa (fikirsiz görev/kreatif) sessizce atlanır.
+  // Approval decisions are also subject to the "golden rule": who
+  // approved/rejected what should show up here, in the idea's own chat,
+  // without going to a separate panel. Best-effort — if it can't be linked
+  // to an idea (a task/creative with no idea), it's silently skipped.
   try {
     const target = await resolveApprovalChatTarget(approval);
     if (target) {
       if (approval.entityType === "Creative") {
-        // Task'ın aksine kartı genel bir "approval-decision" kartına
-        // ÇEVİRMİYORUZ — creative-ready kartı zaten görseli/başlığı
-        // taşıyor, kaybetmemek için sadece status alanı güncellenir (bkz.
-        // resolveCreativeApprovalDecision).
+        // Unlike Task, we do NOT convert the card into a generic
+        // "approval-decision" card — the creative-ready card already
+        // carries the image/title, so only the status field is updated to
+        // avoid losing it (see resolveCreativeApprovalDecision).
         await IdeaChatRepository.resolveCreativeApprovalDecision({
           ideaId: target.ideaId,
           creativeId: approval.entityId,
           status: to,
         });
 
-        // Onaylandıysa, aynı satırı güncellemek yerine sohbete AYRI bir
-        // soru turu düşer — "Sosyal Hesaplarda Paylaş" bölümü zaten
-        // creative-ready kartında var ama sessiz kalıyordu, kullanıcı
-        // fark etmiyordu. Bu, aynı seçenekleri (PublishSection) ayrı,
-        // gözden kaçmayan bir kartta tekrar sunuyor.
+        // If approved, drop a SEPARATE question turn into the chat instead
+        // of updating the same row — the "Share on Social Accounts" section
+        // already exists on the creative-ready card but stayed quiet and
+        // users didn't notice it. This resurfaces the same options
+        // (PublishSection) in a separate, hard-to-miss card.
         if (to === "APPROVED") {
           await IdeaChatRepository.postSystemMessage({
             workspaceId: approval.workspaceId,
             projectId: approval.projectId,
             ideaId: target.ideaId,
-            text: `📤 ${target.title} onaylandı — sosyal medyada paylaşmak ister misiniz?`,
+            text: `📤 ${target.title} approved — want to share it on social media?`,
             card: {
               kind: "publish-prompt",
               creativeId: approval.entityId,
               title: target.title,
             },
           });
-          // Aynı soru Telegram'a da gitsin — kullanıcı web'i açmadan
-          // doğrudan Telegram'dan "Gönderi"/"Story"/"Hayır" seçebilsin
-          // (bkz. telegram-approval-poller.ts pubfeed/pubstory/pubskip).
+          // Send the same question to Telegram too — so the user can pick
+          // "Post"/"Story"/"No" directly from Telegram without opening the
+          // web app (see telegram-approval-poller.ts pubfeed/pubstory/pubskip).
           await sendPublishPromptToTelegram({
             projectId: approval.projectId,
             creativeId: approval.entityId,
@@ -138,10 +140,10 @@ export async function applyApprovalDecision(input: {
           });
         }
       } else {
-        // Task için sohbette zaten AÇIK bir "approval-request" kartı varsa
-        // (bkz. TaskPlanner.planForCapability -> postApprovalRequestCard)
-        // AYNI satır sonuca güncellenir — Onayla/Reddet düğmeleri kararla
-        // birlikte kaybolur, ikinci bir kart belirmez.
+        // If the chat already has an OPEN "approval-request" card for the
+        // task (see TaskPlanner.planForCapability -> postApprovalRequestCard)
+        // that SAME row is updated with the result — the Approve/Reject
+        // buttons disappear along with the decision, no second card appears.
         await IdeaChatRepository.resolveApprovalDecisionCard({
           workspaceId: approval.workspaceId,
           projectId: approval.projectId,
@@ -149,8 +151,8 @@ export async function applyApprovalDecision(input: {
           approvalId: approval.id,
           text:
             to === "APPROVED"
-              ? `✅ Onaylandı: ${target.title}`
-              : `❌ Reddedildi: ${target.title}`,
+              ? `✅ Approved: ${target.title}`
+              : `❌ Rejected: ${target.title}`,
           card: {
             kind: "approval-decision",
             title: target.title,
@@ -162,7 +164,7 @@ export async function applyApprovalDecision(input: {
     }
   } catch (error) {
     console.error(
-      "[approval-decisions] approval-decision card yazılamadı:",
+      "[approval-decisions] failed to write approval-decision card:",
       error,
     );
   }

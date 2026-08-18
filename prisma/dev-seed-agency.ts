@@ -7,9 +7,9 @@
 //   npm run db:seed:agency -- --manual -> BityPay, manual decisions
 //                                        (WAITING_CLIENT decision UI testing)
 
-// Sıra önemli: .env ÖNCE yüklenir, mock bayrakları SONRA yazılır. Tersi
-// durumda .env'deki gerçek ayarlar mock'u eziyor ve script canlı Anthropic
-// API'sine gidiyor.
+// Order matters: .env is loaded FIRST, mock flags are written SECOND.
+// Otherwise the real settings in .env override the mocks and the script
+// hits the live Anthropic API.
 process.loadEnvFile(".env");
 process.env.AGENTELSE_REASONING_MODE = "mock";
 process.env.AGENTELSE_PROVIDER_MODE = "mock";
@@ -42,9 +42,7 @@ async function main() {
     include: { brands: { where: { isDefault: true } } },
   });
   if (!project || !project.brands[0]) {
-    console.error(
-      `Proje bulunamadı: ${slug}. Önce \`npm run db:seed\` çalıştırın.`,
-    );
+    console.error(`Project not found: ${slug}. Run \`npm run db:seed\` first.`);
     process.exitCode = 1;
     return;
   }
@@ -52,14 +50,15 @@ async function main() {
 
   if (process.argv.includes("--reset")) {
     const where = { projectId: project.id };
-    // Sıra: yaprak tablolar önce, kök en sonda.
+    // Order: leaf tables first, root table last.
     await prisma.measurementCheck.deleteMany({
       where: { plan: { projectId: project.id } },
     });
     await prisma.measurementPlan.deleteMany({ where });
     await prisma.workHandoff.deleteMany({ where });
-    // Kuyrukta bekleyen outbox olayları silinen job'lara işaret ederse
-    // worker onları dead-letter'a yazmaya çalışır ve FK ihlali alır.
+    // If pending outbox events in the queue point to deleted jobs, the
+    // worker tries to write them to the dead letter table and hits an FK
+    // violation.
     await prisma.outboxEvent.deleteMany({ where });
     await prisma.deadLetterJob.deleteMany({
       where: { executionJob: { projectId: project.id } },
@@ -92,22 +91,23 @@ async function main() {
     await prisma.projectDepartment.deleteMany({ where });
     await prisma.brandConstitution.deleteMany({ where });
     await prisma.projectSetupState.deleteMany({ where });
-    console.log(`${project.name} ajans verisi sıfırlandı.`);
+    console.log(`${project.name} agency data has been reset.`);
   }
 
   const existing = await prisma.projectSetupState.findUnique({
     where: { projectId: project.id },
   });
   if (existing?.activatedAt) {
-    // Kurulum bitmiş: sürekli ajans döngüsünü pompala ki sinyal/içgörü/fırsat
-    // akışı da (İstihbarat yüzeyleri) dolsun.
+    // Setup is complete: pump the continuous agency loop so the
+    // signal/insight/opportunity flow (Intelligence surfaces) also fills up.
     console.log(
-      `${project.name} kurulumu tamamlanmış — sürekli ajans döngüsü pompalanıyor...`,
+      `${project.name} setup is complete — pumping the continuous agency loop...`,
     );
-    // Tarama takvimini öne çek: aksi halde ilk tarama saatler sonrasına
-    // planlıdır ve sinyal/bulgu yüzeyleri boş kalır.
-    // Kurulumdan kalan görev yığını eşzamanlılık limitini doldurduğu için
-    // tarama hiç başlamıyor; demo verisi uğruna limiti geçici olarak açıyoruz.
+    // Pull the scan schedule forward: otherwise the first scan is scheduled
+    // hours later and the signal/finding surfaces stay empty.
+    // The task backlog left over from setup fills up the concurrency limit,
+    // so scanning never starts; we temporarily raise the limit for the sake
+    // of demo data.
     const policyBefore = await prisma.autonomyPolicy.findFirst({
       where: { projectId: project.id },
       select: { id: true, maxConcurrentResearchTasks: true },
@@ -126,7 +126,7 @@ async function main() {
         data: { nextScanAt: new Date() },
       });
       await ExecutionWorker.tick();
-      process.stdout.write(`\r  döngü ${i + 1}/${rounds}   `);
+      process.stdout.write(`\r  round ${i + 1}/${rounds}   `);
     }
 
     if (policyBefore) {
@@ -144,16 +144,17 @@ async function main() {
   }
   if (existing) {
     console.log(
-      `${project.name} kurulumu devam ediyor — kaldığı yerden pompalanıyor...`,
+      `${project.name} setup is in progress — resuming from where it left off...`,
     );
   } else {
     console.log(
-      `${project.name} için ajans kurulumu başlatılıyor (${manual ? "manuel onay" : "otomatik onay"}, mock)...`,
+      `Starting agency setup for ${project.name} (${manual ? "manual approval" : "auto approval"}, mock)...`,
     );
   }
 
-  // Otomatik modda seed'lenmiş policy (setupAutoApprove:false) tercihi
-  // gölgelememeli — yarım kalmış kurulumlara devam ederken de düzelt.
+  // In automatic mode the seeded policy's (setupAutoApprove:false)
+  // preference shouldn't override this — also fix it when resuming
+  // half-finished setups.
   if (!manual) {
     await prisma.autonomyPolicy.updateMany({
       where: { projectId: project.id },
@@ -172,7 +173,7 @@ async function main() {
         brandName: project.name,
         domain: project.domain ?? `${slug}.com`,
         description:
-          "Avrupa odaklı pazar yeri. Büyüme, marka bilinirliği, sosyal medya, SEO ve kreatif operasyonlar istiyoruz.",
+          "Europe-focused marketplace. We want growth, brand awareness, social media, SEO, and creative operations.",
         autoApprove: !manual,
       },
     );
@@ -189,10 +190,10 @@ async function main() {
       (r) => r.status === "COMPLETED" || r.status === "SKIPPED",
     ).length;
     process.stdout.write(
-      `\r  tick ${i + 1}/${maxTicks} · aşama: ${state.currentStage} · ${done}/12 tamam   `,
+      `\r  tick ${i + 1}/${maxTicks} · stage: ${state.currentStage} · ${done}/12 done   `,
     );
     if (state.activatedAt) {
-      console.log("\nAktivasyon tamamlandı!");
+      console.log("\nActivation complete!");
       break;
     }
     const waiting = state.stageRecords.find(
@@ -200,13 +201,13 @@ async function main() {
     );
     if (waiting && manual) {
       console.log(
-        "\nWAITING_CLIENT aşamasına ulaşıldı — karar UI'ını test edebilirsiniz.",
+        "\nReached the WAITING_CLIENT stage — you can test the decision UI.",
       );
       break;
     }
     if (waiting && !manual) {
-      // Park etmiş karar aşamasını sistem adına onayla (yarım kalmış
-      // kurulumlar policy düzeltmesinden önce buraya düşmüş olabilir).
+      // Approve the parked decision stage on behalf of the system
+      // (half-finished setups may have landed here before the policy fix).
       await ProjectSetupOrchestrator.submitClientDecision(
         project.id,
         waiting.stage,
@@ -247,7 +248,7 @@ async function printSummary(prisma: CountingClient, projectId: string) {
       prisma.projectGoal.count(where),
     ]);
   console.log(
-    `Özet — sinyal: ${signals}, içgörü: ${insights}, fırsat: ${opportunities}, fikir: ${ideas}, plan: ${plans}, karar: ${decisions}, hedef: ${goals}`,
+    `Summary — signals: ${signals}, insights: ${insights}, opportunities: ${opportunities}, ideas: ${ideas}, plans: ${plans}, decisions: ${decisions}, goals: ${goals}`,
   );
 }
 

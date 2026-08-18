@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
-// Marka Beyni artık HUB CORE'un kendi yörünge paneli (bkz. ../page.tsx +
-// src/components/hub-core/panels/marka-beyni-panel.tsx) — bu rota eski
-// yer imleri/linkler kırılmasın diye canlı tutuluyor.
+// Brand Brain is now HUB CORE's own orbit panel (see ../page.tsx +
+// src/components/hub-core/panels/marka-beyni-panel.tsx) — this route stays
+// alive so old bookmarks/links don't break.
 export default async function BeyinRedirect({
   params,
   searchParams,

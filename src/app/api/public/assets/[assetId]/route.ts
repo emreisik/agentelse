@@ -6,11 +6,12 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyAssetPublicToken } from "@/server/security/asset-public-link";
 
-// /api/assets/[assetId]'nin AUTH'SUZ karşılığı — SADECE Meta gibi dış
-// sağlayıcıların (Instagram publish vb.) bir asset'i indirebilmesi için var.
-// Oturum/proje erişimi yerine kısa ömürlü, tek assetId'ye kilitli imzalı bir
-// `token` query param'ı doğrular (bkz. asset-public-link.ts). Token
-// olmadan/geçersizse/süresi dolmuşsa hiçbir asset servis edilmez.
+// The UNAUTHENTICATED counterpart of /api/assets/[assetId] — exists ONLY so
+// external providers like Meta (Instagram publish, etc.) can download an
+// asset. Instead of session/project access, it verifies a short-lived
+// signed `token` query param locked to a single assetId (see
+// asset-public-link.ts). No asset is served without a valid, unexpired
+// token.
 const LOCAL_ASSET_SCHEME = "local-asset://";
 const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 const SAFE_FILENAME = /^[a-zA-Z0-9-]+\.(png|jpe?g|webp|pdf|txt|csv|md)$/;

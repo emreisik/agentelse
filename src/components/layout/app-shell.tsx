@@ -55,9 +55,9 @@ async function getSidebarData(userId: string, projectId?: string) {
     prisma.humanInterventionRequest.count({
       where: { workspaceId: workspace.id, status: "PENDING" },
     }),
-    // Sistem Sağlığı rozeti: çözülmemiş ölü-kuyruk kaydı = ilgilenilmemiş
-    // hata. Proje bağlamı olmadan da gösterilmeli, bu yüzden kabuk
-    // seviyesinde okunuyor.
+    // System Health badge: an unresolved dead-letter record = an
+    // unaddressed error. Must be shown even without a project context, so
+    // it's read at the shell level.
     prisma.deadLetterJob.count({ where: { resolvedAt: null } }),
     projectId ? getProjectBadges(projectId) : Promise.resolve(null),
   ]);
@@ -139,49 +139,50 @@ async function getProjectBadges(
   };
 }
 
-// projectBadges zaten Araçlar menüsündeki panellerle örtüşen sayaçları
-// taşıyor (kurulum/hedefler/isler/onaylar/insan-eylem) — ayrı bir sorgu
-// atmak yerine aynı veriden türetiyoruz (bkz. hub-core.repository.ts'teki
-// getHubSummary'nin badges hesaplamasıyla birebir aynı mantık).
+// projectBadges already carries the counts that overlap with the panels in
+// the Tools menu (setup/goals/work/approvals/human-action) — instead of
+// firing a separate query, we derive from the same data (see the badges
+// calculation in getHubSummary in hub-core.repository.ts for the identical
+// logic).
 function toolBadgesFrom(
   projectBadges: ProjectNavBadges | null,
 ): Partial<Record<PanelKey, number>> {
   if (!projectBadges) return {};
   const badges: Partial<Record<PanelKey, number>> = {};
   if (projectBadges.setupWaitingClient > 0) {
-    badges.kurulum = projectBadges.setupWaitingClient;
+    badges.setup = projectBadges.setupWaitingClient;
   }
   if (projectBadges.proposedGoals > 0) {
-    badges.hedefler = projectBadges.proposedGoals;
+    badges.goals = projectBadges.proposedGoals;
   }
   const islerBadge =
     projectBadges.proposedHandoffs + projectBadges.awaitingPlans;
-  if (islerBadge > 0) badges.isler = islerBadge;
+  if (islerBadge > 0) badges.work = islerBadge;
   if (projectBadges.pendingApprovals > 0) {
-    badges.onaylar = projectBadges.pendingApprovals;
+    badges.approvals = projectBadges.pendingApprovals;
   }
   if (projectBadges.pendingHumanActions > 0) {
-    badges["insan-eylem"] = projectBadges.pendingHumanActions;
+    badges["human-action"] = projectBadges.pendingHumanActions;
   }
   return badges;
 }
 
-// Sidebar'daki "Sohbetler" listesi — Akış kanban'ının eski veri kaynağı
-// (PipelineRepository, dokunulmadı) burada tıklanabilir "sohbet" girişlerine
-// dönüşüyor. Dağınıklığı önlemek için SADECE bir fikre kök olan kartlar
-// listelenir (bir fikrin ürettiği iş planı/görevler zaten aynı "sohbet"in
-// içinde, project-flow-view.tsx'te birleşik gösteriliyor) — fikirsiz
-// tekil görevler/iş planları burada ayrı bir satır açmaz, kalabalık
-// yaratmasın diye (Araçlar → İşler'den hâlâ erişilebilirler). Aynı fikre
-// birden fazla kart denk gelirse (idea + ayrıca eşleşmiş workPlan kartı
-// gibi) tek girişe indirgenir.
+// The "Chats" list in the sidebar — the flow kanban's old data source
+// (PipelineRepository, untouched) turns into clickable "chat" entries
+// here. To avoid clutter, ONLY cards that are rooted in an idea are
+// listed (the work plan/tasks a given idea produces are already shown
+// merged inside the same "chat" in project-flow-view.tsx) — standalone
+// tasks/work plans with no idea don't get their own row here, to avoid
+// crowding (they're still reachable from Tools → Work). If the same idea
+// matches multiple cards (e.g. an idea plus its matched workPlan card),
+// they collapse into a single entry.
 //
-// Sıralama "en son işlem yapılan en üstte": Idea/WorkPlan satırının kendi
-// updatedAt'i (durum değişikliği gibi) tek başına yeterli değil — "her şey
-// tek sohbette" mimarisinde asıl aktivite Command satırları (kullanıcı
-// mesajı, konsey/iş planı/görev-kreatif sistem mesajları) olarak birikiyor
-// ve bunlar Idea satırını dokunmuyor. Bu yüzden her fikir için son Command
-// zamanı da çekilip ikisinin en yenisi kullanılıyor.
+// Sort order is "most recently active on top": the Idea/WorkPlan row's own
+// updatedAt (e.g. a status change) alone isn't enough — in the "everything
+// in one chat" architecture, the real activity accumulates as Command rows
+// (user messages, council/work-plan/task-creative system messages), and
+// those don't touch the Idea row. So we also fetch the latest Command time
+// for each idea and use whichever of the two is more recent.
 async function getSidebarFlows(projectId: string): Promise<SidebarFlow[]> {
   const cards = await PipelineRepository.listCards(projectId);
   const byIdea = new Map<string, { title: string; updatedAt: Date }>();
@@ -262,7 +263,7 @@ export async function AppShell({
           </span>
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-medium text-sidebar-foreground">
-              {displayName ?? "Bilinmeyen kullanıcı"}
+              {displayName ?? "Unknown user"}
             </div>
             <div className="truncate text-[11px] text-muted-foreground">
               {workspace?.name ?? "—"}
@@ -275,7 +276,7 @@ export async function AppShell({
                 type="submit"
                 variant="ghost"
                 size="icon-sm"
-                title="Çıkış yap"
+                title="Sign out"
               >
                 <LogOut />
               </Button>

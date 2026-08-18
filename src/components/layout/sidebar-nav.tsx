@@ -35,13 +35,13 @@ const FLOW_ICON = {
   task: ListChecks,
 };
 
-// ChatGPT'nin sohbet geçmişi mantığı: üstte kompakt bir proje seçici
-// (ProjectSelect), altında seçili projenin "akışları" — her biri bir
-// fikrin/iş kaleminin baştan sona hikayesi, tek tek sohbet girişleri
-// olarak listeleniyor. Birine tıklamak o akışın tüm geçmişini sohbet
-// baloncukları halinde açar (bkz. /projects/[projectId]/page.tsx +
-// project-flow-view.tsx). "Yeni sohbet" projenin serbest-metin ajans
-// sohbetine (mevcut ProjectChat) götürür.
+// Same logic as ChatGPT's chat history: a compact project selector
+// (ProjectSelect) up top, and below it the selected project's "flows" —
+// each one the start-to-finish story of an idea/work item, listed as
+// individual chat entries. Clicking one opens that flow's full history as
+// chat bubbles (see /projects/[projectId]/page.tsx +
+// project-flow-view.tsx). "New chat" takes you to the project's free-text
+// agency chat (the existing ProjectChat).
 export function SidebarNav({
   activeProjectId,
   flows,
@@ -74,66 +74,66 @@ export function SidebarNav({
             )}
           >
             <MessageSquarePlus className="size-4 shrink-0 opacity-80" />
-            Yeni sohbet
+            New chat
           </Link>
 
           <Link
-            href={buildHubHref(activeProjectId, { panel: "marka-beyni" })}
+            href={buildHubHref(activeProjectId, { panel: "brand-brain" })}
             scroll={false}
             className={cn(
               "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              activePanel === "marka-beyni"
+              activePanel === "brand-brain"
                 ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                 : "hover:bg-sidebar-accent/60",
             )}
           >
             <Gem className="size-4 shrink-0 opacity-80" />
-            Marka Beyni
+            Brand Brain
           </Link>
 
           <Link
-            href={buildHubHref(activeProjectId, { panel: "fikirler" })}
+            href={buildHubHref(activeProjectId, { panel: "ideas" })}
             scroll={false}
             className={cn(
               "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              activePanel === "fikirler"
+              activePanel === "ideas"
                 ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                 : "hover:bg-sidebar-accent/60",
             )}
           >
             <Sparkles className="size-4 shrink-0 opacity-80" />
-            Fikirler
+            Ideas
           </Link>
 
           <Link
             href={buildHubHref(activeProjectId, {
-              panel: "isler",
-              sub: "gorevler",
+              panel: "work",
+              sub: "tasks",
             })}
             scroll={false}
             className={cn(
               "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              activePanel === "isler"
+              activePanel === "work"
                 ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                 : "hover:bg-sidebar-accent/60",
             )}
           >
             <ListChecks className="size-4 shrink-0 opacity-80" />
-            İşler
+            Work
           </Link>
 
           <Link
-            href={buildHubHref(activeProjectId, { panel: "kutuphane" })}
+            href={buildHubHref(activeProjectId, { panel: "library" })}
             scroll={false}
             className={cn(
               "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              activePanel === "kutuphane"
+              activePanel === "library"
                 ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                 : "hover:bg-sidebar-accent/60",
             )}
           >
             <Library className="size-4 shrink-0 opacity-80" />
-            Kütüphane
+            Library
           </Link>
 
           {flows && flows.length > 0 ? (
@@ -143,7 +143,7 @@ export function SidebarNav({
               className="pt-2"
             >
               <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg px-2.5 py-1 text-[11px] font-semibold tracking-wide text-muted-foreground/70 uppercase transition-colors hover:text-muted-foreground">
-                Sohbetler
+                Chats
                 <ChevronDown
                   className={cn(
                     "size-3.5 shrink-0 transition-transform",

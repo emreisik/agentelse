@@ -5,11 +5,11 @@ import {
   entityHref,
 } from "@/components/hub-core/hub-core-params";
 
-// Standalone Akış paneli kaldırıldı — bu rota eski yer imleri/linkler
-// kırılmasın diye canlı tutuluyor. Eski `kart=idea:ID|workPlan:ID|task:ID`
-// derin linki, o kaydın sahibi olan panele (Fikirler/İşler) yönlendiriliyor;
-// eşleşme yoksa artık Fikirler paneline düşer (eskiden proje köküne/sohbete
-// düşüyordu).
+// The standalone Flow panel was removed — this route stays alive so
+// old bookmarks/links don't break. The legacy `kart=idea:ID|workPlan:ID|task:ID`
+// deep link redirects to the panel that owns that record (Ideas/Work); if
+// there's no match it now falls through to the Ideas panel (it used to fall
+// through to the project root/chat).
 export default async function AkisRedirect({
   params,
   searchParams,
@@ -33,5 +33,5 @@ export default async function AkisRedirect({
     }
   }
 
-  redirect(buildHubHref(projectId, { panel: "fikirler" }));
+  redirect(buildHubHref(projectId, { panel: "ideas" }));
 }

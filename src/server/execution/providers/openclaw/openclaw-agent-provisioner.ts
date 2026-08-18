@@ -7,14 +7,15 @@ import { getEnv, isIntegrationConfigured } from "@/lib/env";
 
 const execFileAsync = promisify(execFile);
 
-// Her projeye kendi OpenClaw ajanını açar. Bu, eski 3 adımlı kurulum
-// sihirbazından taşındı: yeni 12 aşamalı akış tarayıcı profillerini
-// oluşturuyordu ama ajanı oluşturmuyordu, bu yüzden profil slug'ından
-// türetilen ajan kimliği OpenClaw'da hiç bulunmuyor ve her gerçek tarayıcı
-// görevi `Unknown agent id` ile düşüyordu.
+// Provisions a dedicated OpenClaw agent for each project. Carried over from
+// the old 3-step setup wizard: the new 12-stage flow was creating browser
+// profiles but not the agent, so the agent id derived from the profile slug
+// never existed in OpenClaw, and every real browser task failed with
+// `Unknown agent id`.
 //
-// Başarısızlıkta null döner — ajan açılamadıysa iş varsayılan ajana düşer
-// (bkz. openclaw-provider.ts resolveAgentId), kurulum bu yüzden durmamalı.
+// Returns null on failure — if the agent can't be provisioned, the job
+// falls back to the default agent (see openclaw-provider.ts resolveAgentId),
+// so setup must not stop because of this.
 export async function provisionOpenClawAgent(
   projectSlug: string,
 ): Promise<string | null> {
@@ -40,7 +41,7 @@ export async function provisionOpenClawAgent(
     return projectSlug;
   } catch (error) {
     console.error(
-      `[openclaw-agent-provisioner] ${projectSlug} için ajan açılamadı`,
+      `[openclaw-agent-provisioner] failed to provision agent for ${projectSlug}`,
       error,
     );
     return null;

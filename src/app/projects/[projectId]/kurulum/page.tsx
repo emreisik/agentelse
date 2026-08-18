@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
-// Kurulum artık HUB CORE'un bir yörünge paneli (bkz. ../page.tsx +
-// src/components/hub-core/panels/kurulum-panel.tsx) — bu rota eski yer
-// imleri/linkler kırılmasın diye canlı tutuluyor.
+// Setup is now one of HUB CORE's orbit panels (see ../page.tsx +
+// src/components/hub-core/panels/kurulum-panel.tsx) — this route stays
+// alive so old bookmarks/links don't break.
 export default async function KurulumRedirect({
   params,
 }: {

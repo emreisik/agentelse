@@ -35,37 +35,38 @@ const GROUPS: Array<{
   items: Array<{ panel: PanelKey; icon: LucideIcon }>;
 }> = [
   {
-    title: "Sistem",
+    title: "System",
     items: [
-      { panel: "kurulum", icon: SlidersHorizontal },
-      { panel: "kutuphane", icon: Library },
-      { panel: "departmanlar", icon: Users2 },
-      { panel: "ayarlar", icon: Settings2 },
+      { panel: "setup", icon: SlidersHorizontal },
+      { panel: "library", icon: Library },
+      { panel: "departments", icon: Users2 },
+      { panel: "settings", icon: Settings2 },
     ],
   },
   {
-    title: "İçgörü Zinciri",
+    title: "Insight Chain",
     items: [
-      { panel: "marka-beyni", icon: Gem },
-      { panel: "sinyaller", icon: Radio },
-      { panel: "icgoru-firsat", icon: Lightbulb },
-      { panel: "hedefler", icon: Target },
+      { panel: "brand-brain", icon: Gem },
+      { panel: "signals", icon: Radio },
+      { panel: "insights-opportunities", icon: Lightbulb },
+      { panel: "goals", icon: Target },
     ],
   },
   {
-    title: "Üretim",
+    title: "Production",
     items: [
-      { panel: "fikirler", icon: Sparkles },
-      { panel: "isler", icon: ListChecks },
-      { panel: "onaylar", icon: ClipboardCheck },
-      { panel: "insan-eylem", icon: UserRoundCog },
+      { panel: "ideas", icon: Sparkles },
+      { panel: "work", icon: ListChecks },
+      { panel: "approvals", icon: ClipboardCheck },
+      { panel: "human-action", icon: UserRoundCog },
     ],
   },
 ];
 
-// Eskiden proje köküne özel bir "Dashboard" grid'iydi (dashboard-overview.tsx)
-// — proje kökü artık doğrudan sohbet olduğu için bu, tüm proje-içi
-// sayfalardan erişilebilen kompakt bir açılır menüye taşındı.
+// Used to be a "Dashboard" grid dedicated to the project root
+// (dashboard-overview.tsx) — since the project root is now directly the
+// chat, this was moved into a compact dropdown menu accessible from every
+// page within the project.
 export function ProjectToolsMenu({
   projectId,
   badges,
@@ -87,7 +88,7 @@ export function ProjectToolsMenu({
         }
       >
         <LayoutGrid className="size-4" />
-        Araçlar
+        Tools
         {hasAttention ? (
           <span className="absolute top-1 right-1.5 size-1.5 rounded-full bg-warning" />
         ) : null}
@@ -134,10 +135,10 @@ export function ProjectToolsMenu({
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuItem
-            render={<Link href={`/projects/${projectId}/entegrasyonlar`} />}
+            render={<Link href={`/projects/${projectId}/integrations`} />}
           >
             <Plug className="size-4 text-muted-foreground" />
-            Entegrasyonlar
+            Integrations
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>

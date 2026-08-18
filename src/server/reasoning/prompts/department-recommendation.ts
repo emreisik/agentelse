@@ -20,11 +20,12 @@ export const departmentRecommendationDef: ReasoningDef<DepartmentRecommendationO
   {
     purpose: "department.recommend",
     schema: DepartmentRecommendationSchema,
-    // 2048'de MAX_TOKENS'a takılıp JSON'u yarıda kesiyordu (19 departmanın
-    // hepsi için rationale metniyle) — constitution-synthesis.ts'teki aynı
-    // sorunun notu: "thinking" token'ları da bu bütçeden düşüyor, çıktı
-    // metni küçük görünse bile bütçe hızla tükeniyor. Aynı kalıp
-    // signal-profile-recommendation.ts'te de var, orada da yükseltildi.
+    // At 2048 it was hitting MAX_TOKENS and cutting the JSON off mid-way
+    // (with rationale text for all 19 departments) — same note as the issue
+    // in constitution-synthesis.ts: "thinking" tokens are also deducted
+    // from this budget, so it gets used up fast even when the output text
+    // looks small. The same pattern exists in
+    // signal-profile-recommendation.ts, where it was raised too.
     maxTokens: 8192,
 
     buildPrompt(context) {

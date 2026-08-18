@@ -17,18 +17,18 @@ import { buildHubHref } from "../hub-core-params";
 import type { PanelProps } from "./panel-props";
 
 const ENTITY_LABELS: Record<string, string> = {
-  Task: "Görev",
-  Creative: "Kreatif",
-  WorkPlan: "İş Planı",
-  ProjectGoal: "Hedef",
-  WorkHandoff: "Devir",
+  Task: "Task",
+  Creative: "Creative",
+  WorkPlan: "Work Plan",
+  ProjectGoal: "Goal",
+  WorkHandoff: "Handoff",
 };
 
-// Onaylanan/reddedilen kaydın kendi paneline götüren link — eskiden
-// /approvals sayfasının kendi local'i olan aynı eşleme, artık hub-core'un
-// buildHubHref'iyle (proje köküne göreli) üretiliyor. Creative onayları
-// hub-core'un bir "entity kind"i değil, kendi ayrı /creatives/[id] sayfasına
-// gider — bu, kapsam dışı, dokunulmadı.
+// Link that takes you to the approved/rejected record's own panel — the
+// same mapping that used to live locally in the /approvals page is now
+// produced via hub-core's buildHubHref (relative to the project root).
+// Creative approvals aren't an "entity kind" of hub-core, they go to their
+// own separate /creatives/[id] page — this is out of scope, left untouched.
 function entityHref(approval: {
   entityType: string;
   entityId: string;
@@ -40,40 +40,41 @@ function entityHref(approval: {
       return `/creatives/${approval.entityId}`;
     case "Task":
       return buildHubHref(approval.projectId, {
-        panel: "isler",
-        sub: "gorevler",
+        panel: "work",
+        sub: "tasks",
         entity: { kind: "task", id: approval.entityId },
       });
     case "WorkPlan":
       return buildHubHref(approval.projectId, {
-        panel: "isler",
-        sub: "planlar",
+        panel: "work",
+        sub: "plans",
         entity: { kind: "workPlan", id: approval.entityId },
       });
     case "ProjectGoal":
-      return buildHubHref(approval.projectId, { panel: "hedefler" });
+      return buildHubHref(approval.projectId, { panel: "goals" });
     case "WorkHandoff":
       return buildHubHref(approval.projectId, {
-        panel: "isler",
-        sub: "devirler",
+        panel: "work",
+        sub: "cycles",
       });
     default:
       return approval.taskId
         ? buildHubHref(approval.projectId, {
-            panel: "isler",
-            sub: "gorevler",
+            panel: "work",
+            sub: "tasks",
             entity: { kind: "task", id: approval.taskId },
           })
         : null;
   }
 }
 
-// Eskiden /approvals (workspace geneli, proje bağlamının DIŞINDA, ayrı bir
-// sayfa) altında yaşayan Onay Merkezi — artık her projenin kendi Araçlar
-// menüsünden açılan bir panel (bkz. hub-core-params.ts PANEL_KEYS). Karar
-// vermek için proje bağlamından hiç çıkılmıyor; proje adı/seçici artık
-// gereksiz çünkü zaten o projenin içindeyiz.
-export async function OnaylarPanel({ projectId }: PanelProps) {
+// The Approval Center used to live under /approvals (workspace-wide,
+// OUTSIDE the project context, a separate page) — now it's a panel opened
+// from each project's own Tools menu (see hub-core-params.ts PANEL_KEYS).
+// You never leave the project context to make a decision; the project
+// name/selector is no longer needed since we're already inside that
+// project.
+export async function ApprovalsPanel({ projectId }: PanelProps) {
   const approvals = await prisma.approval.findMany({
     where: { projectId, status: "PENDING" },
     orderBy: { createdAt: "desc" },
@@ -109,29 +110,30 @@ export async function OnaylarPanel({ projectId }: PanelProps) {
             </CardHeader>
             <CardContent className="flex items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">
+                Requested by{" "}
                 {approval.requestedByType === "USER"
-                  ? "Kullanıcı"
+                  ? "User"
                   : approval.requestedByType === "SYSTEM"
-                    ? "Sistem"
-                    : "Ajan"}{" "}
-                talep etti · {timeAgo(approval.createdAt)}
+                    ? "System"
+                    : "Agent"}{" "}
+                · {timeAgo(approval.createdAt)}
               </p>
               <div className="flex gap-2">
                 <ActionForm
                   action={rejectApprovalAction}
-                  successMessage="Onay reddedildi"
+                  successMessage="Approval rejected"
                 >
                   <input type="hidden" name="approvalId" value={approval.id} />
                   <SubmitButton variant="outline" size="sm">
-                    Reddet
+                    Reject
                   </SubmitButton>
                 </ActionForm>
                 <ActionForm
                   action={approveApprovalAction}
-                  successMessage="Onaylandı"
+                  successMessage="Approved"
                 >
                   <input type="hidden" name="approvalId" value={approval.id} />
-                  <SubmitButton size="sm">Onayla</SubmitButton>
+                  <SubmitButton size="sm">Approve</SubmitButton>
                 </ActionForm>
               </div>
             </CardContent>
@@ -142,8 +144,8 @@ export async function OnaylarPanel({ projectId }: PanelProps) {
       {approvals.length === 0 ? (
         <EmptyState
           icon={ClipboardCheck}
-          title="Onay bekleyen işlem yok"
-          hint="Ajans onay gerektiren bir iş hazırladığında burada görünür."
+          title="No pending approvals"
+          hint="Appears here when the agency prepares work that requires approval."
         />
       ) : null}
     </div>

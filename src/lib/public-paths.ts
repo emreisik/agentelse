@@ -4,11 +4,12 @@ export function isPublicPath(pathname: string): boolean {
     pathname === "/register" ||
     pathname === "/api/auth" ||
     pathname.startsWith("/api/auth/") ||
-    // Kendi imzalı-token doğrulamasına sahip (bkz.
-    // asset-public-link.ts/verifyAssetPublicToken) — Meta gibi dış
-    // sağlayıcıların oturum çerezi olmadan bir asset'i indirebilmesi için
-    // BİLEREK oturum korumasının dışında. Token olmadan/geçersizse route
-    // kendi 401'ini döner, burada hariç tutulması güvenliği gevşetmiyor.
+    // Has its own signed-token verification (see
+    // asset-public-link.ts/verifyAssetPublicToken) — DELIBERATELY excluded
+    // from session protection so external providers like Meta can download
+    // an asset without a session cookie. Without a token, or with an
+    // invalid one, the route returns its own 401; excluding it here does
+    // not weaken security.
     pathname.startsWith("/api/public/assets/") ||
     pathname === "/api/debug/headers" ||
     pathname === "/icon" ||

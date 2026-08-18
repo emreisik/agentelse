@@ -3,9 +3,9 @@ import Link from "next/link";
 import { buildHubHref, type PanelKey } from "./hub-core-params";
 import { LINEAGE, PANEL_LABEL, RELATION_LABEL } from "./lineage-map";
 
-// Panel açıldığında üstte görünen "besliyor / beslenir / yapılandırır"
-// rozet şeridi — bir çocuğun bile "bu nereden geliyor, nereye gidiyor"
-// sorusuna cevap bulabilmesi için.
+// The "feeds / fed by / governs" badge strip shown at the top when a panel
+// opens — so even a newcomer can answer "where does this come from, where
+// does it go" at a glance.
 export function HubBreadcrumb({
   projectId,
   panel,

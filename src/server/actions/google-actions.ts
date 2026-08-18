@@ -22,13 +22,13 @@ export type ActionResult = { ok: true } | { ok: false; message: string };
 
 function describeGoogleError(error: unknown): string {
   if (!(error instanceof GoogleApiError)) {
-    return error instanceof Error ? error.message : "İşlem başarısız";
+    return error instanceof Error ? error.message : "Operation failed";
   }
   if (error.googleErrorCode === "invalid_grant") {
-    return "Google: Bağlantının izni geçersiz hale gelmiş — yeniden bağlanmanız gerekiyor.";
+    return "Google: The connection's authorization has become invalid — you need to reconnect.";
   }
   if (error.googleErrorCode === "access_denied") {
-    return "Google: Erişim reddedildi.";
+    return "Google: Access denied.";
   }
   return `Google: ${error.message}`;
 }
@@ -54,7 +54,7 @@ export async function selectGa4PropertyAction(
 
     const credential = await loadCredential(projectId);
     if (!credential) {
-      return { ok: false, message: "Google bağlantısı bulunamadı" };
+      return { ok: false, message: "Google connection not found" };
     }
 
     const metadata = (credential.metadata ?? {}) as GoogleCredentialMetadata;
@@ -62,7 +62,7 @@ export async function selectGa4PropertyAction(
       (p) => p.propertyId === propertyId,
     );
     if (!property) {
-      return { ok: false, message: "Geçersiz GA4 property seçimi" };
+      return { ok: false, message: "Invalid GA4 property selection" };
     }
 
     const nextMetadata: GoogleCredentialMetadata = {
@@ -75,7 +75,7 @@ export async function selectGa4PropertyAction(
       data: { metadata: nextMetadata },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);
@@ -93,7 +93,7 @@ export async function selectSearchConsoleSiteAction(
 
     const credential = await loadCredential(projectId);
     if (!credential) {
-      return { ok: false, message: "Google bağlantısı bulunamadı" };
+      return { ok: false, message: "Google connection not found" };
     }
 
     const metadata = (credential.metadata ?? {}) as GoogleCredentialMetadata;
@@ -101,7 +101,7 @@ export async function selectSearchConsoleSiteAction(
       (s) => s.siteUrl === siteUrl,
     );
     if (!site) {
-      return { ok: false, message: "Geçersiz Search Console site seçimi" };
+      return { ok: false, message: "Invalid Search Console site selection" };
     }
 
     const nextMetadata: GoogleCredentialMetadata = {
@@ -113,15 +113,15 @@ export async function selectSearchConsoleSiteAction(
       data: { metadata: nextMetadata },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);
   }
 }
 
-// Refresh token'ı gerçekten Google'a karşı kullanarak seçili property/site
-// için bir okuma yapar — sahte bir "bağlandı" durumu asla üretilmez.
+// Performs a real read for the selected property/site by actually using the
+// refresh token against Google — a fake "connected" state is never produced.
 export async function testGoogleConnectionAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -132,7 +132,7 @@ export async function testGoogleConnectionAction(
 
     const credential = await loadCredential(projectId);
     if (!credential) {
-      return { ok: false, message: "Google bağlantısı bulunamadı" };
+      return { ok: false, message: "Google connection not found" };
     }
 
     const metadata = (credential.metadata ?? {}) as GoogleCredentialMetadata;
@@ -142,7 +142,7 @@ export async function testGoogleConnectionAction(
     ) {
       return {
         ok: false,
-        message: "Önce bir GA4 property veya Search Console site seçin",
+        message: "Select a GA4 property or Search Console site first",
       };
     }
 
@@ -180,7 +180,7 @@ export async function testGoogleConnectionAction(
       data: { metadata: nextMetadata, status: "ACTIVE" },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     if (lastTestResult.error) {
       return { ok: false, message: lastTestResult.error };
     }
@@ -190,10 +190,10 @@ export async function testGoogleConnectionAction(
   }
 }
 
-// GA4 property / Search Console site listesini Google'a karşı yeniden
-// çeker — bağlandıktan sonra Google tarafında yeni bir property/site
-// eklenmişse (veya erişim kaldırılmışsa) yeniden OAuth'a gitmeden
-// güncellemenin tek yolu bu.
+// Re-fetches the GA4 property / Search Console site list against Google —
+// this is the only way to update after connecting if a new property/site
+// was added on Google's side (or access was removed) without going through
+// OAuth again.
 export async function refreshGoogleListsAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -204,7 +204,7 @@ export async function refreshGoogleListsAction(
 
     const credential = await loadCredential(projectId);
     if (!credential) {
-      return { ok: false, message: "Google bağlantısı bulunamadı" };
+      return { ok: false, message: "Google connection not found" };
     }
 
     const accessToken = await getFreshGoogleAccessToken(credential);
@@ -222,7 +222,7 @@ export async function refreshGoogleListsAction(
       data: { metadata: nextMetadata, status: "ACTIVE" },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     if (lists.ga4ListError || lists.gscListError) {
       return {
         ok: false,
@@ -264,7 +264,7 @@ export async function disconnectGoogleAction(
       metadata: { provider: "google" },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);

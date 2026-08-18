@@ -2,9 +2,9 @@ import { redirect } from "next/navigation";
 
 const VALID_SUBS = ["otonomi", "kararlar", "aktivite", "tehlike"];
 
-// Ayarlar artık HUB CORE'un bir yörünge paneli (bkz. ../page.tsx +
-// src/components/hub-core/panels/ayarlar-panel.tsx) — bu rota eski yer
-// imleri/linkler kırılmasın diye canlı tutuluyor.
+// Settings is now one of HUB CORE's orbit panels (see ../page.tsx +
+// src/components/hub-core/panels/ayarlar-panel.tsx) — this route stays
+// alive so old bookmarks/links don't break.
 export default async function AyarlarRedirect({
   params,
   searchParams,

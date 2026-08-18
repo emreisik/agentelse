@@ -31,8 +31,8 @@ import { CrossLinkChip } from "../primitives/cross-link-chip";
 import { FieldGrid, type FieldSpec } from "../primitives/field-grid";
 import type { PanelProps } from "./panel-props";
 
-// isler-panel'in de kullandığı "aktif görev" durum kümesi — Task.status
-// üzerindeki devam-eden aşamalar (department kartlarındaki sayaç için).
+// The "active task" status set also used by work-panel — the in-progress
+// stages on Task.status (used for the counter on department cards).
 const ACTIVE_TASK_STATUSES = [
   "READY",
   "QUEUED",
@@ -59,7 +59,7 @@ function modeOptions() {
   }));
 }
 
-export async function DepartmanlarPanel({ projectId, entity }: PanelProps) {
+export async function DepartmentsPanel({ projectId, entity }: PanelProps) {
   if (entity && entity.kind === "department" && entity.id in DEPARTMENT_KEY) {
     return (
       <DepartmentDetail
@@ -105,8 +105,8 @@ async function DepartmentList({ projectId }: { projectId: string }) {
       <div className="py-8">
         <EmptyState
           icon={Building2}
-          title="Departman yapılandırması yok"
-          hint="19 departmanın çalışma modu kurulumun 7. aşamasında yapılandırılır."
+          title="No department configuration"
+          hint="The 19 departments' operating modes are configured in step 7 of setup."
         />
       </div>
     );
@@ -114,24 +114,24 @@ async function DepartmentList({ projectId }: { projectId: string }) {
 
   const options = modeOptions();
   const islerHref = buildHubHref(projectId, {
-    panel: "isler",
-    sub: "gorevler",
+    panel: "work",
+    sub: "tasks",
   });
 
   return (
     <div className="space-y-4 py-6">
       <p className="text-sm text-muted-foreground">
-        19 departmanın çalışma modu ve denetim skoru.
+        Operating mode and audit score for the 19 departments.
       </p>
 
       <div className="overflow-hidden rounded-xl ring-1 ring-foreground/10">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Departman</TableHead>
-              <TableHead>Skor</TableHead>
-              <TableHead>Mod</TableHead>
-              <TableHead className="text-right">Aktif görev</TableHead>
+              <TableHead>Department</TableHead>
+              <TableHead>Score</TableHead>
+              <TableHead>Mode</TableHead>
+              <TableHead className="text-right">Active tasks</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -144,7 +144,7 @@ async function DepartmentList({ projectId }: { projectId: string }) {
               const modeMismatch =
                 row?.recommendedMode && row.recommendedMode !== row.mode;
               const detailHref = buildHubHref(projectId, {
-                panel: "departmanlar",
+                panel: "departments",
                 entity: { kind: "department", id: key },
               });
 
@@ -192,11 +192,11 @@ async function DepartmentList({ projectId }: { projectId: string }) {
                           action={updateDepartmentModeAction}
                           hiddenFields={{ projectId, department: key }}
                           fieldName="mode"
-                          successMessage={`${meta.label} modu güncellendi`}
+                          successMessage={`${meta.label} mode updated`}
                         />
                         {modeMismatch && row.recommendedMode ? (
                           <span
-                            title={`Önerilen mod: ${DEPARTMENT_MODE[row.recommendedMode].label}${row.recommendationRationale ? ` — ${row.recommendationRationale}` : ""}`}
+                            title={`Recommended mode: ${DEPARTMENT_MODE[row.recommendedMode].label}${row.recommendationRationale ? ` — ${row.recommendationRationale}` : ""}`}
                           >
                             <Lightbulb className="size-3.5 shrink-0 text-warning" />
                           </span>
@@ -204,7 +204,7 @@ async function DepartmentList({ projectId }: { projectId: string }) {
                       </div>
                     ) : (
                       <span className="text-muted-foreground">
-                        Yapılandırılmadı
+                        Not configured
                       </span>
                     )}
                   </TableCell>
@@ -264,7 +264,7 @@ async function DepartmentDetail({
   const rowFields: FieldSpec[] = [
     {
       type: "badge",
-      label: "Önerilen Mod",
+      label: "Recommended Mode",
       meta: row?.recommendedMode
         ? DEPARTMENT_MODE[row.recommendedMode]
         : undefined,
@@ -272,13 +272,13 @@ async function DepartmentDetail({
     },
     {
       type: "text",
-      label: "Öneri Gerekçesi",
+      label: "Recommendation Rationale",
       value: row?.recommendationRationale,
     },
-    { type: "date", label: "Oluşturuldu", value: row?.createdAt },
+    { type: "date", label: "Created", value: row?.createdAt },
     {
       type: "date",
-      label: "Güncellendi",
+      label: "Updated",
       value: row?.updatedAt,
       relative: true,
     },
@@ -286,11 +286,11 @@ async function DepartmentDetail({
 
   const auditFields: FieldSpec[] = audit
     ? [
-        { type: "boolean", label: "Demo Verisi (mock)", value: audit.isMock },
-        { type: "date", label: "Oluşturuldu", value: audit.createdAt },
+        { type: "boolean", label: "Demo Data (mock)", value: audit.isMock },
+        { type: "date", label: "Created", value: audit.createdAt },
         {
           type: "date",
-          label: "Güncellendi",
+          label: "Updated",
           value: audit.updatedAt,
           relative: true,
         },
@@ -299,22 +299,22 @@ async function DepartmentDetail({
 
   const sections: Array<{ label: string; items: string[]; tone: string }> = [
     {
-      label: "Güçlü Yönler",
+      label: "Strengths",
       items: stringList(audit?.strengths),
       tone: "text-success",
     },
     {
-      label: "Zayıf Yönler",
+      label: "Weaknesses",
       items: stringList(audit?.weaknesses),
       tone: "text-warning",
     },
     {
-      label: "Riskler",
+      label: "Risks",
       items: stringList(audit?.risks),
       tone: "text-destructive",
     },
     {
-      label: "Potansiyel Fırsatlar",
+      label: "Potential Opportunities",
       items: stringList(audit?.potentialOpportunities),
       tone: "text-primary",
     },
@@ -324,14 +324,14 @@ async function DepartmentDetail({
     <div className="space-y-6 py-6">
       <Link
         href={buildHubHref(projectId, {
-          panel: "departmanlar",
+          panel: "departments",
           entity: null,
         })}
         scroll={false}
         className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowLeft className="size-3.5" />
-        Listeye dön
+        Back to list
       </Link>
 
       <div className="flex items-center gap-2.5">
@@ -354,7 +354,7 @@ async function DepartmentDetail({
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium text-foreground">
-                Çalışma Modu
+                Operating Mode
               </span>
               <ModeSwitcher
                 value={row.mode}
@@ -362,7 +362,7 @@ async function DepartmentDetail({
                 action={updateDepartmentModeAction}
                 hiddenFields={{ projectId, department }}
                 fieldName="mode"
-                successMessage={`${meta.label} modu güncellendi`}
+                successMessage={`${meta.label} mode updated`}
               />
             </div>
             <FieldGrid fields={rowFields} />
@@ -371,15 +371,15 @@ async function DepartmentDetail({
       ) : (
         <EmptyState
           icon={Building2}
-          title="Bu departman yapılandırılmadı"
-          hint="Çalışma modu kurulum aşamasında ayarlanır."
+          title="This department is not configured"
+          hint="The operating mode is set during setup."
         />
       )}
 
       {definition ? (
         <div className="space-y-1.5">
           <p className="text-sm font-medium text-foreground">
-            Sahip Olunan Yetenekler
+            Owned Capabilities
           </p>
           <div className="flex flex-wrap gap-1">
             {definition.ownedCapabilities.map((capability) => (
@@ -416,7 +416,7 @@ async function DepartmentDetail({
                 {audit.score}/100
               </span>
               {audit.isMock ? (
-                <StatusBadge meta={{ label: "Demo verisi", tone: "special" }} />
+                <StatusBadge meta={{ label: "Demo data", tone: "special" }} />
               ) : null}
             </div>
 
@@ -445,7 +445,7 @@ async function DepartmentDetail({
             {findings.length > 0 ? (
               <div className="space-y-1.5">
                 <p className="text-sm font-medium text-foreground">
-                  İlişkili Bulgular{" "}
+                  Related Findings{" "}
                   <span className="text-muted-foreground">
                     ({findings.length})
                   </span>
@@ -466,8 +466,9 @@ async function DepartmentDetail({
             {audit.score < 40 ? (
               <p className="flex items-start gap-1.5 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
                 <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-                Bu departmanın mevcut durumu zayıf — ajans bu alanda fırsat ve
-                iyileştirme önerileri üretmeye öncelik verir.
+                This department&apos;s current state is weak — the agency prioritizes
+                generating opportunity and improvement recommendations in this
+                area.
               </p>
             ) : null}
           </CardContent>
@@ -475,8 +476,8 @@ async function DepartmentDetail({
       ) : (
         <EmptyState
           icon={TriangleAlert}
-          title="Temel denetim yok"
-          hint="Bu departman için henüz temel denetim üretilmedi."
+          title="No baseline audit"
+          hint="No baseline audit has been generated for this department yet."
         />
       )}
     </div>

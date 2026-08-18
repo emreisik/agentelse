@@ -198,7 +198,8 @@ export const WorkPlanBuilder = {
       "IN_PROGRESS",
     );
 
-    // Dispatch roots (no dependencies, not approval-parked).
+    // Progress root nodes (no dependencies) — dispatched immediately, or
+    // parked for approval if the capability requires it.
     const { WorkPlanProgressor } = await import("./work-plan-progressor");
     await WorkPlanProgressor.dispatchReadyTasks(plan.id, input.projectId);
 
@@ -206,7 +207,7 @@ export const WorkPlanBuilder = {
       workspaceId: scope.workspaceId,
       projectId: scope.projectId,
       ideaId: idea.id,
-      text: `📋 İş planına dönüştürüldü: **${plan.title}**`,
+      text: `📋 Converted to work plan: **${plan.title}**`,
       card: {
         kind: "work-plan",
         title: plan.title,

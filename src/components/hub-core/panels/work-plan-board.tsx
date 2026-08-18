@@ -16,8 +16,8 @@ import { Progress } from "@/components/ui/progress";
 import { buildHubHref } from "../hub-core-params";
 import { CrossLinkChip } from "../primitives/cross-link-chip";
 
-// İşler → Planlar kanban'ı — task-department-board.tsx ile birebir aynı
-// sistem, filtre ekseni burada plan tipi (WorkPlanType).
+// Work → Plans kanban — the exact same system as task-department-board.tsx,
+// the filter axis here is plan type (WorkPlanType).
 export type WorkPlanBoardItem = {
   id: string;
   title: string;
@@ -59,7 +59,7 @@ export function WorkPlanBoard({
                 : "bg-secondary text-muted-foreground hover:bg-accent",
             )}
           >
-            Tüm türler
+            All types
           </button>
           {usedTypes.map(({ planType, count }) => {
             const active = typeFilter === planType;
@@ -112,8 +112,8 @@ export function WorkPlanBoard({
                     <Link
                       key={plan.id}
                       href={buildHubHref(projectId, {
-                        panel: "isler",
-                        sub: "planlar",
+                        panel: "work",
+                        sub: "plans",
                         entity: { kind: "workPlan", id: plan.id },
                       })}
                       scroll={false}
@@ -160,7 +160,7 @@ export function WorkPlanBoard({
                           <CrossLinkChip
                             projectId={projectId}
                             entity={{ kind: "idea", id: plan.ideaId }}
-                            text="Kaynak fikir"
+                            text="Source idea"
                             className="h-4 px-1.5 text-[10px]"
                           />
                         ) : null}

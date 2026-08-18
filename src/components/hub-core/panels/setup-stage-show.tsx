@@ -15,6 +15,7 @@ import type { SetupStage, SetupStageStatus } from "@prisma/client";
 
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/dates";
+import { LiveRefresh } from "@/components/shared/live-refresh";
 import {
   Popover,
   PopoverContent,
@@ -102,13 +103,13 @@ function StepDot({ entry }: { entry: SetupStageEntry }) {
         </p>
         {entry.error ? (
           <p className="mt-2 text-xs text-destructive">
-            {entry.error} — sistem otomatik olarak yeniden deneyecek.
+            {entry.error} — the system will retry automatically.
           </p>
         ) : null}
         {entry.completedAt ? (
           <p className="mt-2 text-[11px] text-muted-foreground">
-            {timeAgo(entry.completedAt)} tamamlandı
-            {entry.attemptCount > 1 ? ` · ${entry.attemptCount}. deneme` : ""}
+            Completed {timeAgo(entry.completedAt)}
+            {entry.attemptCount > 1 ? ` · attempt ${entry.attemptCount}` : ""}
           </p>
         ) : null}
         {entry.link ? (
@@ -167,12 +168,12 @@ function SpotlightCard({ entry }: { entry: SetupStageEntry }) {
   );
 }
 
-// Bu satır ilk kez mount edildiğinde (yeni tamamlanan bir aşama ya da
-// sayfanın ilk açılışındaki geçmiş) 700ms'lik giriş animasyonunu oynatır,
-// sonra sessizce durur. Aynı `key` ile gelen sonraki poll'larda (LiveRefresh)
-// React bileşeni yeniden mount ETMEZ, bu yüzden animasyon tekrar oynamaz —
-// yalnızca `key` değişince (bkz. SetupStageShow: `${stage}:${status}`)
-// gerçekten yeni bir satır olarak mount edilir.
+// The first time this row is mounted (a newly completed stage, or history
+// on the page's initial load) it plays a 700ms entrance animation, then
+// stops silently. On subsequent polls (LiveRefresh) arriving with the same
+// `key`, React does NOT remount the component, so the animation does not
+// replay — it is only mounted as a genuinely new row when the `key` changes
+// (see SetupStageShow: `${stage}:${status}`).
 function FindingRow({
   entry,
   style,
@@ -231,13 +232,22 @@ function FindingRow({
   );
 }
 
-// Kurulumu Başlat sonrası 12 aşamalı sürecin görünümü: sabit yükseklikte
-// (sayfa aşağı uzamaz) yatay bir kompakt stepper + o an çalışan/karar
-// bekleyen aşama için büyük bir "spotlight" + tamamlanan aşamaları
-// kronolojik, sabit-yükseklikte kaydırılabilir bir akışta gösteren
-// "Son Bulgular" listesi. Poll'lar arası (LiveRefresh) yeni tamamlanan
-// aşamalar akışın başına animasyonla girer, daha önce görülenler sabit kalır.
-export function SetupStageShow({ entries }: { entries: SetupStageEntry[] }) {
+// The view of the 12-stage process after Start Setup: a fixed-height
+// (page doesn't stretch downward) horizontal compact stepper + a large
+// "spotlight" for the stage currently running/awaiting a decision + a
+// "Recent Findings" list showing completed stages chronologically in a
+// fixed-height scrollable feed. Between polls (LiveRefresh), newly
+// completed stages animate into the top of the feed, while previously seen
+// ones stay fixed.
+export function SetupStageShow({
+  entries,
+  percent,
+  autoApproveOn,
+}: {
+  entries: SetupStageEntry[];
+  percent?: number;
+  autoApproveOn?: boolean;
+}) {
   const finished = entries
     .filter((e) => e.status !== "PENDING")
     .filter(
@@ -262,6 +272,17 @@ export function SetupStageShow({ entries }: { entries: SetupStageEntry[] }) {
 
   return (
     <div className="space-y-4">
+      {percent !== undefined ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">%{percent}</span> ·{" "}
+            {doneCount}/{entries.length} stages ·{" "}
+            {autoApproveOn ? "Auto-approve on" : "Waiting for your approval"}
+          </p>
+          <LiveRefresh intervalMs={4000} />
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-2 rounded-xl bg-muted/30 p-3">
         {entries.map((entry, i) => (
           <div key={entry.stage} className="flex items-center gap-1.5">
@@ -287,7 +308,7 @@ export function SetupStageShow({ entries }: { entries: SetupStageEntry[] }) {
         <div>
           <p className="mb-2 flex items-center gap-1.5 text-sm font-medium text-foreground">
             <Sparkles className="size-3.5 text-muted-foreground" />
-            Son Bulgular
+            Recent Findings
             <span className="font-normal text-muted-foreground">
               ({doneCount}/{entries.length})
             </span>

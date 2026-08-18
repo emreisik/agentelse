@@ -1,5 +1,5 @@
-// Json? kolonlar için collapsible pretty-print. Native <details>/<summary>
-// kullanıyor — client JS gerekmiyor, server component olarak kalabiliyor.
+// Collapsible pretty-print for Json? columns. Uses native
+// <details>/<summary> — no client JS needed, can stay a server component.
 export function JsonViewer({
   value,
   label,
@@ -23,10 +23,10 @@ export function JsonViewer({
       <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-1.5 font-mono text-[11px] tracking-wide text-muted-foreground uppercase select-none">
         <span>{label ?? "Json"}</span>
         <span className="text-[10px] text-muted-foreground/70 group-open:hidden">
-          göster
+          show
         </span>
         <span className="hidden text-[10px] text-muted-foreground/70 group-open:inline">
-          gizle
+          hide
         </span>
       </summary>
       <pre className="overflow-x-auto border-t border-border px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre text-foreground/90">

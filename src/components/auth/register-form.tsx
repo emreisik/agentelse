@@ -37,10 +37,10 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const schema = z.object({
-  name: z.string().min(1, "İsim gerekli"),
-  workspaceName: z.string().min(1, "Şirket/ekip adı gerekli"),
-  email: z.string().email("Geçerli bir e-posta adresi girin"),
-  password: z.string().min(8, "Şifre en az 8 karakter olmalı"),
+  name: z.string().min(1, "Name is required"),
+  workspaceName: z.string().min(1, "Company/team name is required"),
+  email: z.string().email("Enter a valid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
 });
 
 export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
@@ -74,8 +74,8 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
     setSubmitting(false);
 
     if (signInResult?.error) {
-      // Hesap oluşturuldu ama otomatik giriş başarısız — kullanıcı giriş
-      // sayfasından manuel deneyebilir, kaydı tekrar yapmaya gerek yok.
+      // Account was created but automatic sign-in failed — the user can try
+      // manually from the login page, no need to register again.
       router.push("/login");
       return;
     }
@@ -88,10 +88,10 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
     <div className="w-full max-w-sm">
       <div className="mb-8 text-center">
         <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground">
-          Hesabınızı oluşturun
+          Create your account
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          İlk markanızla başlayın, dakikalar içinde kurulun
+          Start with your first brand, set up in minutes
         </p>
       </div>
 
@@ -102,7 +102,7 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
             name="name"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-sm font-medium">Ad Soyad</FormLabel>
+                <FormLabel className="text-sm font-medium">Full Name</FormLabel>
                 <InputGroup>
                   <InputGroupAddon>
                     <User />
@@ -112,7 +112,7 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
                       type="text"
                       autoComplete="name"
                       autoFocus
-                      placeholder="Ayşe Yılmaz"
+                      placeholder="Jane Doe"
                       {...field}
                     />
                   </FormControl>
@@ -128,7 +128,7 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
             render={({ field }) => (
               <FormItem>
                 <FormLabel className="text-sm font-medium">
-                  Şirket / Ekip adı
+                  Company / Team Name
                 </FormLabel>
                 <InputGroup>
                   <InputGroupAddon>
@@ -138,7 +138,7 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
                     <InputGroupInput
                       type="text"
                       autoComplete="organization"
-                      placeholder="Ajans Adı"
+                      placeholder="Agency Name"
                       {...field}
                     />
                   </FormControl>
@@ -153,7 +153,7 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
             name="email"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-sm font-medium">E-posta</FormLabel>
+                <FormLabel className="text-sm font-medium">Email</FormLabel>
                 <InputGroup>
                   <InputGroupAddon>
                     <Mail />
@@ -162,7 +162,7 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
                     <InputGroupInput
                       type="email"
                       autoComplete="email"
-                      placeholder="ornek@ajans.com"
+                      placeholder="example@agency.com"
                       {...field}
                     />
                   </FormControl>
@@ -177,7 +177,7 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
             name="password"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-sm font-medium">Şifre</FormLabel>
+                <FormLabel className="text-sm font-medium">Password</FormLabel>
                 <InputGroup>
                   <InputGroupAddon>
                     <Lock />
@@ -198,7 +198,7 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
                     >
                       {showPassword ? <EyeOff /> : <Eye />}
                       <span className="sr-only">
-                        {showPassword ? "Şifreyi gizle" : "Şifreyi göster"}
+                        {showPassword ? "Hide password" : "Show password"}
                       </span>
                     </InputGroupButton>
                   </InputGroupAddon>
@@ -211,7 +211,7 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
           {error ? (
             <Alert variant="destructive">
               <AlertCircle />
-              <AlertTitle>Kayıt başarısız</AlertTitle>
+              <AlertTitle>Registration failed</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : null}
@@ -225,20 +225,20 @@ export function RegisterForm({ callbackUrl }: { callbackUrl: string }) {
             {submitting ? (
               <>
                 <Loader2 className="animate-spin" />
-                Hesap oluşturuluyor…
+                Creating account…
               </>
             ) : (
-              "Hesap oluştur"
+              "Create account"
             )}
           </Button>
 
           <p className="text-center text-sm text-muted-foreground">
-            Zaten bir hesabınız var mı?{" "}
+            Already have an account?{" "}
             <Link
               href="/login"
               className="font-medium text-foreground underline-offset-2 hover:underline"
             >
-              Giriş yapın
+              Sign in
             </Link>
           </p>
         </form>

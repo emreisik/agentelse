@@ -19,33 +19,33 @@ import {
 
 export type ActionResult = { ok: true } | { ok: false; message: string };
 
-// Telegram'ın kendi hata metinlerini kelimesi kelimesine göstermek yerine,
-// ilk kurulumda hemen herkesin takıldığı birkaç bilinen durum için Türkçe,
-// eylemsel bir ipucu ekliyoruz — hatanın kendisi hâlâ görünür (uydurma bir
-// mesajla değiştirilmiyor), sadece "şimdi ne yapmalıyım" cevabı ekleniyor.
+// Instead of showing Telegram's own error text verbatim, for a handful of
+// known cases that trip up almost everyone during initial setup we add an
+// actionable hint — the original error is still shown (never replaced with
+// a made-up message), we just append a "what do I do now" answer.
 function describeTelegramError(error: unknown): string {
   if (!(error instanceof TelegramApiError)) {
-    return error instanceof Error ? error.message : "İşlem başarısız";
+    return error instanceof Error ? error.message : "Operation failed";
   }
   const raw = error.message;
   const lower = raw.toLowerCase();
   if (lower.includes("chat not found")) {
     return (
-      `Telegram: ${raw} — bot bu sohbeti göremiyor. Botu hedef kanala/gruba ` +
-      `yönetici olarak eklediniz mi? Özel (herkese açık olmayan) kanal/` +
-      `gruplarda @kullaniciadi çalışmaz, sayısal ID gerekir (genelde "-100" ` +
-      `ile başlar) — ID'yi bulmak için hedef sohbetten bir mesajı ` +
-      `@userinfobot'a yönlendirebilirsiniz.`
+      `Telegram: ${raw} — the bot can't see this chat. Did you add the bot ` +
+      `as an admin to the target channel/group? @username doesn't work for ` +
+      `private (non-public) channels/groups, you need the numeric ID ` +
+      `(usually starting with "-100") — you can find the ID by forwarding a ` +
+      `message from the target chat to @userinfobot.`
     );
   }
   if (lower.includes("unauthorized")) {
-    return `Telegram: ${raw} — bot token'ı geçersiz. @BotFather'dan aldığınız token'ı tekrar kontrol edin.`;
+    return `Telegram: ${raw} — the bot token is invalid. Double-check the token you got from @BotFather.`;
   }
   if (
     lower.includes("bot was blocked") ||
     lower.includes("bot is not a member")
   ) {
-    return `Telegram: ${raw} — bot bu sohbetten çıkarılmış/engellenmiş, yeniden eklemeniz gerekiyor.`;
+    return `Telegram: ${raw} — the bot has been removed/blocked from this chat, you need to add it again.`;
   }
   return `Telegram: ${raw}`;
 }
@@ -54,17 +54,16 @@ function fail(error: unknown): ActionResult {
   return { ok: false, message: describeTelegramError(error) };
 }
 
-// Kullanıcılar sohbet ID'sini genelde bir yerden kopyala-yapıştır yapıyor
-// (bu uygulamanın kendi sohbetinden, notlardan, vb.) — kaynak metin
-// biçimlendirmesi düz tireyi (-) sık sık en dash/em dash/minus sign gibi
-// görünüşte aynı ama Telegram'ın API'sinin tanımadığı unicode karakterlere
-// çeviriyor; bu da hiçbir görünür fark olmadan "chat not found" hatasına
-// yol açıyor. Bilinen tüm varyantları (hyphen/non-breaking hyphen/figure
-// dash/en dash/em dash/horizontal bar/minus sign, U+2010..U+2015 ve
-// U+2212) düz ASCII tireye normalize ediyoruz. Karakter kodları hex
-// kaçış diziसi (\uXXXX) olarak yazıldı, gerçek glifler olarak değil —
-// böylece bu regex'in kaynak kodu, önlemeye çalıştığı kopyala-yapıştır
-// bozulmasının kendisine kurban gitmiyor.
+// Users usually copy-paste the chat ID from somewhere (this app's own chat,
+// notes, etc.) — source text formatting often converts a plain hyphen (-)
+// into unicode characters that look identical but aren't recognized by
+// Telegram's API, such as an en dash/em dash/minus sign; this causes a
+// "chat not found" error with no visible difference. We normalize all known
+// variants (hyphen/non-breaking hyphen/figure dash/en dash/em dash/
+// horizontal bar/minus sign, U+2010..U+2015 and U+2212) to a plain ASCII
+// hyphen. The character codes are written as hex escape sequences (\uXXXX)
+// rather than as actual glyphs — so this regex's own source code doesn't
+// fall victim to the very copy-paste corruption it's trying to prevent.
 const DASH_CODE_POINTS = [
   0x2010, 0x2011, 0x2012, 0x2013, 0x2014, 0x2015, 0x2212,
 ];
@@ -84,9 +83,9 @@ function parseAllowedApproverIds(raw: string): string[] {
     .filter(Boolean);
 }
 
-// Token'ı ve chat id'yi Telegram'ın kendi API'sine karşı doğrular — ikisi
-// de gerçekten çalışmıyorsa hiçbir şey kaydedilmez, sahte bir "bağlandı"
-// durumu asla üretilmez.
+// Validates the token and chat id against Telegram's own API — if either one
+// isn't actually working, nothing is saved; a fake "connected" state is
+// never produced.
 export async function connectTelegramAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -98,7 +97,7 @@ export async function connectTelegramAction(
       String(formData.get("allowedApproverIds") ?? ""),
     );
     if (!botToken || !chatId) {
-      return { ok: false, message: "Bot token ve sohbet ID'si gerekli" };
+      return { ok: false, message: "Bot token and chat ID are required" };
     }
 
     const { userId } = await requireUser();
@@ -106,13 +105,14 @@ export async function connectTelegramAction(
 
     const bot = await telegramGetMe(botToken);
     const chat = await telegramGetChat(botToken, chatId);
-    // Olası eski bir webhook varsa `getUpdates` (onay butonları polling'i)
-    // ile çakışmasın diye — bkz. src/server/integrations/telegram-approval-poller.ts.
+    // In case an old webhook exists, so it doesn't conflict with `getUpdates`
+    // (the approval-button polling) — see
+    // src/server/integrations/telegram-approval-poller.ts.
     await telegramDeleteWebhook(botToken);
 
-    // Metadata'nın tamamını üzerine yazmak yerine mevcutla birleştiriyoruz —
-    // aksi halde her yeniden bağlanma poller'ın yazdığı
-    // `telegramUpdateOffset`'i sessizce silerdi.
+    // We merge with the existing metadata instead of overwriting it
+    // entirely — otherwise every reconnect would silently wipe the
+    // `telegramUpdateOffset` written by the poller.
     const existing = await prisma.integrationCredential.findUnique({
       where: { projectId_provider: { projectId, provider: "telegram" } },
     });
@@ -158,19 +158,19 @@ export async function connectTelegramAction(
       metadata: { provider: "telegram" },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);
   }
 }
 
-// connectTelegramAction'ın aksine bot token istemiyor — mevcut bağlantının
-// zaten doğrulanmış kimlik bilgilerine dokunmadan sadece onay yetkilisi
-// listesini günceller. Kullanıcı token'ı elde tutmadan (örn. ilk kurulumdan
-// haftalar sonra) sadece "kendi ID'mi ekleyeyim" diyebilsin diye ayrı bir
-// action — connectTelegramAction'ı tekrar çağırmak token'ı yeniden
-// yapıştırmayı zorunlu kılardı.
+// Unlike connectTelegramAction, this doesn't ask for a bot token — it only
+// updates the approver list without touching the existing connection's
+// already-validated credentials. This is a separate action so the user can
+// simply say "let me add my own ID" without having the token on hand (e.g.
+// weeks after initial setup) — calling connectTelegramAction again would
+// require re-pasting the token.
 export async function updateTelegramApproversAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -187,7 +187,7 @@ export async function updateTelegramApproversAction(
       where: { projectId_provider: { projectId, provider: "telegram" } },
     });
     if (!credential) {
-      return { ok: false, message: "Telegram bağlantısı bulunamadı" };
+      return { ok: false, message: "Telegram connection not found" };
     }
 
     const existingMetadata = (credential.metadata ?? {}) as Record<
@@ -199,7 +199,7 @@ export async function updateTelegramApproversAction(
       data: { metadata: { ...existingMetadata, allowedApproverIds } },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);
@@ -218,18 +218,18 @@ export async function sendTelegramTestMessageAction(
       where: { projectId, provider: "telegram" },
     });
     if (!credential) {
-      return { ok: false, message: "Telegram bağlantısı bulunamadı" };
+      return { ok: false, message: "Telegram connection not found" };
     }
     const metadata = (credential.metadata ?? {}) as { chatId?: string };
     if (!metadata.chatId) {
-      return { ok: false, message: "Kayıtlı sohbet ID'si yok" };
+      return { ok: false, message: "No chat ID is saved" };
     }
 
     const token = decryptSecret(credential.encryptedSecret);
     await telegramSendMessage(
       token,
       metadata.chatId,
-      "✅ Agentelse test mesajı — bu entegrasyon çalışıyor.",
+      "✅ Agentelse test message — this integration is working.",
     );
 
     return { ok: true };
@@ -267,7 +267,7 @@ export async function disconnectTelegramAction(
       metadata: { provider: "telegram" },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);

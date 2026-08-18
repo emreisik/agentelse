@@ -36,10 +36,10 @@ type FlowEvent = {
   badge?: React.ReactNode;
 };
 
-// Bir fikrin/iş kaleminin oluşturulmasından bugüne kadarki tüm hikayesini
-// kronolojik bir sohbet akışı gibi gösterir — sidebar'daki "Sohbetler"
-// listesindeki bir girişe tıklanınca açılan tam sayfa görünüm. Salt okunur:
-// yeni mesaj gönderme yok, sadece geçmişin anlatısı.
+// Shows the full story of an idea/work item from its creation up to today
+// as a chronological chat-like feed — the full-page view that opens when
+// an entry in the sidebar's "Chats" list is clicked. Read-only: no sending
+// new messages, just a narrative of the history.
 export async function ProjectFlowView({
   projectId,
   entity,
@@ -71,11 +71,11 @@ async function IdeaFlow({
   const idea = await IdeaRepository.findByIdInProject(ideaId, projectId);
   if (!idea) {
     return (
-      <FlowShell projectId={projectId} title="Sohbet bulunamadı">
+      <FlowShell projectId={projectId} title="Chat not found">
         <EmptyState
           icon={Lightbulb}
-          title="Bu fikir bulunamadı"
-          hint="Kayıt silinmiş olabilir."
+          title="This idea was not found"
+          hint="The record may have been deleted."
         />
       </FlowShell>
     );
@@ -90,7 +90,7 @@ async function IdeaFlow({
       id: "created",
       at: idea.createdAt,
       icon: Lightbulb,
-      title: "Fikir oluşturuldu",
+      title: "Idea created",
       detail: idea.description,
     },
     ...idea.councilEvaluations
@@ -100,7 +100,7 @@ async function IdeaFlow({
         id: evaluation.id,
         at: evaluation.createdAt,
         icon: Sparkles,
-        title: `${COUNCIL_TYPE[evaluation.councilType].label} değerlendirdi`,
+        title: `${COUNCIL_TYPE[evaluation.councilType].label} evaluated`,
         detail: evaluation.rationale,
         badge: (
           <StatusBadge
@@ -115,7 +115,7 @@ async function IdeaFlow({
       id: workPlan.id,
       at: workPlan.createdAt,
       icon: ClipboardList,
-      title: "İş planına dönüştürüldü",
+      title: "Converted to work plan",
       detail: workPlan.title,
     });
     events.push(...taskEvents(workPlan.tasks));
@@ -147,11 +147,11 @@ async function WorkPlanFlow({
   );
   if (!workPlan) {
     return (
-      <FlowShell projectId={projectId} title="Sohbet bulunamadı">
+      <FlowShell projectId={projectId} title="Chat not found">
         <EmptyState
           icon={ClipboardList}
-          title="Bu iş planı bulunamadı"
-          hint="Kayıt silinmiş olabilir."
+          title="This work plan was not found"
+          hint="The record may have been deleted."
         />
       </FlowShell>
     );
@@ -162,7 +162,7 @@ async function WorkPlanFlow({
       id: workPlan.id,
       at: workPlan.createdAt,
       icon: ClipboardList,
-      title: "İş planı oluşturuldu",
+      title: "Work plan created",
       detail: workPlan.title,
     },
     ...taskEvents(workPlan.tasks),
@@ -190,14 +190,14 @@ async function TaskFlow({
 }) {
   const task = await TaskRepository.findByIdInProject(taskId, projectId);
   return (
-    <FlowShell projectId={projectId} title="Görev">
+    <FlowShell projectId={projectId} title="Task">
       {task ? (
         <FlowTimeline events={taskEvents([task])} />
       ) : (
         <EmptyState
           icon={ListChecks}
-          title="Bu görev bulunamadı"
-          hint="Kayıt silinmiş olabilir."
+          title="This task was not found"
+          hint="The record may have been deleted."
         />
       )}
     </FlowShell>
@@ -227,7 +227,7 @@ function taskEvents(
       id: `${task.id}-created`,
       at: task.createdAt,
       icon: ListChecks,
-      title: `Görev oluşturuldu: ${taskTitle}`,
+      title: `Task created: ${taskTitle}`,
       detail: task.description,
       badge: task.departmentKey ? (
         <DepartmentBadge department={task.departmentKey} size="xs" />
@@ -238,7 +238,7 @@ function taskEvents(
         id: `${task.id}-completed`,
         at: task.completedAt,
         icon: ListChecks,
-        title: `Görev tamamlandı: ${taskTitle}`,
+        title: `Task completed: ${taskTitle}`,
         badge: (
           <StatusBadge
             meta={TASK_STATUS[task.status as keyof typeof TASK_STATUS]}
@@ -272,7 +272,7 @@ function FlowShell({
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
-          Yeni sohbet
+          New chat
         </Link>
         <div className="mt-4 flex flex-wrap items-center gap-2.5">
           <h1 className="font-heading text-2xl font-semibold tracking-tight">
@@ -288,9 +288,7 @@ function FlowShell({
 
 function FlowTimeline({ events }: { events: FlowEvent[] }) {
   if (events.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">Henüz bir hareket yok.</p>
-    );
+    return <p className="text-sm text-muted-foreground">No activity yet.</p>;
   }
   return (
     <div className="space-y-6">

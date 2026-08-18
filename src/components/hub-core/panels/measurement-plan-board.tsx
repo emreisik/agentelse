@@ -11,9 +11,9 @@ import {
 import { StatusBadge } from "@/components/shared/status-badge";
 import { buildHubHref } from "../hub-core-params";
 
-// İşler → Ölçümler kanban'ı — aynı sistem, filtre çipi yok (tek anlamlı
-// eksen zaten sütun: durum). Kart, kontrol ilerlemesini (tamamlanan/toplam)
-// taşır.
+// Work → Measurements kanban — same system, no filter chip (the one meaningful
+// axis is already the column: status). The card carries check progress
+// (done/total).
 export type MeasurementPlanBoardItem = {
   id: string;
   description: string;
@@ -55,8 +55,8 @@ export function MeasurementPlanBoard({
                 <Link
                   key={plan.id}
                   href={buildHubHref(projectId, {
-                    panel: "isler",
-                    sub: "olcumler",
+                    panel: "work",
+                    sub: "measurements",
                     entity: { kind: "measurementPlan", id: plan.id },
                   })}
                   scroll={false}
@@ -72,7 +72,7 @@ export function MeasurementPlanBoard({
                     />
                     {plan.totalChecks > 0 ? (
                       <span className="text-[10px] tabular-nums text-muted-foreground">
-                        {plan.doneChecks}/{plan.totalChecks} kontrol
+                        {plan.doneChecks}/{plan.totalChecks} checks
                       </span>
                     ) : null}
                   </div>

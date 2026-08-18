@@ -3,6 +3,9 @@ import "server-only";
 import type { ExecutionProvider } from "@/server/execution/types";
 import { GoogleApiProvider } from "@/server/execution/providers/google/google-api-provider";
 import { MetaApiProvider } from "@/server/execution/providers/meta/meta-api-provider";
+import { TikTokApiProvider } from "@/server/execution/providers/tiktok/tiktok-api-provider";
+import { LinkedInApiProvider } from "@/server/execution/providers/linkedin/linkedin-api-provider";
+import { XApiProvider } from "@/server/execution/providers/x/x-api-provider";
 import { OpenClawProvider } from "@/server/execution/providers/openclaw/openclaw-provider";
 import { GeminiAiProvider } from "@/server/execution/providers/gemini/gemini-ai.provider";
 import { GeminiCreativeProvider } from "@/server/execution/providers/gemini/gemini-creative.provider";
@@ -16,14 +19,17 @@ import { MockPublishingProvider } from "@/server/execution/providers/mock/mock-p
 // development fallback. No domain code should import a concrete provider
 // class directly — only this registry and CapabilityRouter may.
 //
-// MetaApiProvider/GoogleApiProvider OpenClawProvider'dan önce: proje gerçek
-// bir Meta/Google OAuth bağlantısına sahipse (bkz. meta-api-provider.ts ve
-// google-api-provider.ts canExecute) gerçek API, tarayıcı otomasyonuna
-// tercih edilir.
+// MetaApiProvider/GoogleApiProvider come before OpenClawProvider: if the
+// project has a real Meta/Google OAuth connection (see meta-api-provider.ts
+// and google-api-provider.ts canExecute), the real API is preferred over
+// browser automation.
 class ProviderRegistryImpl {
   private readonly providers: ExecutionProvider[] = [
     new MetaApiProvider(),
     new GoogleApiProvider(),
+    new TikTokApiProvider(),
+    new LinkedInApiProvider(),
+    new XApiProvider(),
     new OpenClawProvider(),
     new GeminiCreativeProvider(),
     new GeminiAiProvider(),
@@ -42,16 +48,16 @@ class ProviderRegistryImpl {
         provider.key.startsWith("mock-"),
       );
     }
-    // Varsayılan daima gerçek: mock sağlayıcılar yalnızca test modunda
-    // görünür. Gerçek sağlayıcı yoksa iş sessizce sahte içerikle
-    // "tamamlanmak" yerine açıkça başarısız olur.
+    // Default is always real: mock providers are only visible in test mode.
+    // If no real provider is available, the job fails explicitly instead of
+    // silently "completing" with fake content.
     return this.providers.filter(
       (provider) => !provider.key.startsWith("mock-"),
     );
   }
 
-  // Mod filtresinden geçmemiş ham liste — sağlık senkronizasyonu her
-  // sağlayıcıyı tanımlamalı, yalnızca o an yönlendirmeye uygun olanları değil.
+  // Raw list that hasn't passed through the mode filter — health sync must
+  // know about every provider, not just the ones currently eligible for routing.
   registered(): readonly ExecutionProvider[] {
     return this.providers;
   }

@@ -15,10 +15,16 @@ export type SignalRelevanceOutput = z.infer<typeof SignalRelevanceSchema>;
 // signals genuinely score differently in tests.
 function mockScore(signalText: string, brandText: string): number {
   const signalWords = new Set(
-    signalText.toLowerCase().split(/\W+/).filter((w) => w.length > 3),
+    signalText
+      .toLowerCase()
+      .split(/\W+/)
+      .filter((w) => w.length > 3),
   );
   const brandWords = new Set(
-    brandText.toLowerCase().split(/\W+/).filter((w) => w.length > 3),
+    brandText
+      .toLowerCase()
+      .split(/\W+/)
+      .filter((w) => w.length > 3),
   );
   let overlap = 0;
   for (const w of signalWords) if (brandWords.has(w)) overlap += 1;
@@ -30,7 +36,7 @@ function mockScore(signalText: string, brandText: string): number {
 export const signalRelevanceDef: ReasoningDef<SignalRelevanceOutput> = {
   purpose: "signal.relevance",
   schema: SignalRelevanceSchema,
-  // Her sinyal için tek tek çalışır — hacim yüksek, iş basit skorlama.
+  // Runs individually for every signal — high volume, simple scoring work.
   tier: "lite" as const,
   maxTokens: 1024,
 
@@ -48,7 +54,11 @@ export const signalRelevanceDef: ReasoningDef<SignalRelevanceOutput> = {
   },
 
   buildMock(context) {
-    const signal = (context.signal ?? {}) as { title?: string; summary?: string; category?: string };
+    const signal = (context.signal ?? {}) as {
+      title?: string;
+      summary?: string;
+      category?: string;
+    };
     const brand = JSON.stringify(context.brand ?? {});
     const text = `${signal.title ?? ""} ${signal.summary ?? ""} ${signal.category ?? ""}`;
     const score = mockScore(text, brand);

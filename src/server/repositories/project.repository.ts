@@ -33,9 +33,9 @@ export const ProjectRepository = {
     brandName?: string;
     language: string;
     country: string;
-    // Kurulum sihirbazında seçilen TÜM hedef pazarlar; `country` bunun
-    // ilk/birincili (tüm reasoning/prompt chokepoint'leri hâlâ sadece onu
-    // okur — bkz. schema.prisma). Boşsa [country] ile aynı anlama gelir.
+    // ALL target markets selected in the setup wizard; `country` is the
+    // first/primary one (all reasoning/prompt chokepoints still read only
+    // that — see schema.prisma). If empty, it's equivalent to [country].
     countries?: string[];
   }) {
     return prisma.project.create({

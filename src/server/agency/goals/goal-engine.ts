@@ -75,8 +75,8 @@ export const GoalEngine = {
   },
 
   // Guard used by planners: every SYSTEM-created work item must serve >=1
-  // goal (spec section 12: "Her otomatik iş en az bir ProjectGoal ile
-  // ilişkili olmalıdır").
+  // goal (spec section 12: "Every automated work item must be linked to
+  // at least one ProjectGoal").
   assertGoalsLinked(goalIds: string[], context: string): void {
     if (goalIds.length === 0) {
       throw new AgentelseError(

@@ -5,9 +5,10 @@ import { cn } from "@/lib/utils";
 import { entityHref, ENTITY_PANEL, type EntityRef } from "../hub-core-params";
 import { PANEL_LABEL } from "../lineage-map";
 
-// FK alanlarını başka bir modülün kaydına atlayan bir rozete çevirir —
-// hub içinde sayfa değişmeden `entity=` param'ını günceller. "Eksik veri
-// kalmasın" hedefinin bağlantı tarafı: her FK, tıklanabilir bir chip olur.
+// Turns FK fields into a badge that jumps to another module's record —
+// updates the `entity=` param within the hub without changing pages. The
+// linking side of the "no missing data" goal: every FK becomes a
+// clickable chip.
 export function CrossLinkChip({
   projectId,
   entity,

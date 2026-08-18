@@ -7,12 +7,12 @@ import {
   refreshGoogleAccessToken,
 } from "@/server/integrations/google-client";
 
-// google-client.ts saf bir REST sarmalayıcı olarak kalsın diye (telegram-
-// client.ts ile aynı kural — API client'lar asla prisma'ya dokunmaz) bu
-// küçük orkestrasyon adımı ayrı bir dosyada: refresh token'ı access token'a
-// çevirir, invalid_grant gelirse kimlik bilgisini EXPIRED işaretler. Hem
-// google-actions.ts (manuel test/yenileme) hem google-api-provider.ts
-// (ANALYTICS_ANALYSIS görev yürütmesi) bunu paylaşır.
+// To keep google-client.ts a pure REST wrapper (same rule as
+// telegram-client.ts — API clients never touch prisma), this small
+// orchestration step lives in a separate file: it converts the refresh
+// token into an access token, and marks the credential EXPIRED if
+// invalid_grant comes back. Both google-actions.ts (manual test/refresh)
+// and google-api-provider.ts (ANALYTICS_ANALYSIS task execution) share this.
 export async function getFreshGoogleAccessToken(credential: {
   id: string;
   encryptedSecret: string;

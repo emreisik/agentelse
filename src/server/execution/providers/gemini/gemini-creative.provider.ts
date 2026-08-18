@@ -72,11 +72,11 @@ function buildSystemPrompt(brandContext: unknown): string {
   ].join("\n\n");
 }
 
-// Gemini metni de görseli de üretir (görsel yolu için bkz.
-// @/server/media/creative-image) — tek
-// bir sağlayıcı ikisini birleştirir, çünkü görsel istemi kreatif metnin
-// parçası olarak üretiliyor. Görsel üretimi başarısız olursa iş metinle
-// tamamlanır (asset'siz); kreatif akışı görsel yüzünden düşmez.
+// Gemini produces both the text and the image (see @/server/media/creative-image
+// for the image path) — a single provider combines the two because the
+// image prompt is generated as part of the creative text. If image
+// generation fails, the job still completes with the text (no asset); the
+// creative flow doesn't fail because of the image.
 export class GeminiCreativeProvider implements ExecutionProvider {
   readonly key = "gemini-creative";
   readonly type: ExecutionProviderType = "AI";
@@ -129,12 +129,12 @@ export class GeminiCreativeProvider implements ExecutionProvider {
           })) ?? undefined)
         : undefined;
 
-      // Logo artık deterministik damgalama yerine AI'a görsel referans
-      // olarak veriliyor (bkz. loadBrandLogoImage çağrısı yukarıda) —
-      // applyBrandTemplate hâlâ var ve Görsel Stüdyosu'nun "düzenle"
-      // modunda (creative-actions.ts) kullanılıyor, ama bu otomatik üretim
-      // akışında artık gereksiz ve çift-logo riski taşıyor, o yüzden
-      // kaldırıldı.
+      // The logo is now passed to the AI as a visual reference instead of
+      // deterministic stamping (see the loadBrandLogoImage call above) —
+      // applyBrandTemplate still exists and is used in the Visual Studio's
+      // "edit" mode (creative-actions.ts), but it's now redundant in this
+      // automated generation flow and carries a double-logo risk, so it was
+      // removed here.
 
       store.set(request.correlationId, {
         status: "completed",

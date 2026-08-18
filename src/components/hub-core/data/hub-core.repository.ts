@@ -1,10 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import type { PanelKey } from "../hub-core-params";
 
-// Sidebar-nav.tsx'teki eski `getProjectBadges()`'in genişletilmiş hali —
-// yörünge düğümlerindeki rozet sayıları + çekirdeğin nabız metni. Bilinçli
-// olarak hafif tutuluyor (Faz 0 sadece haritayı canlandırır); her panel
-// Faz 1'de kendi tam verisini ayrıca çeker.
+// Expanded version of the old `getProjectBadges()` from sidebar-nav.tsx —
+// the badge counts on the orbit nodes plus the core's pulse text.
+// Deliberately kept lightweight (Phase 0 only brings the map to life);
+// each panel separately fetches its own full data in Phase 1.
 const ACTIVE_TASK_STATUSES = [
   "READY",
   "QUEUED",
@@ -56,7 +56,12 @@ export async function getHubSummary(
     prisma.humanInterventionRequest.count({
       where: { workspaceId, status: "PENDING" },
     }),
-    prisma.deadLetterJob.count({ where: { resolvedAt: null } }),
+    prisma.deadLetterJob.count({
+      where: {
+        resolvedAt: null,
+        OR: [{ executionJobId: null }, { executionJob: { workspaceId } }],
+      },
+    }),
   ]);
 
   const setupWaitingClient = setupState
@@ -65,14 +70,14 @@ export async function getHubSummary(
     : 0;
 
   const badges: Partial<Record<PanelKey, number>> = {};
-  if (setupWaitingClient > 0) badges.kurulum = setupWaitingClient;
-  if (proposedGoals > 0) badges.hedefler = proposedGoals;
-  const islerBadge = proposedHandoffs + awaitingPlans;
-  if (islerBadge > 0) badges.isler = islerBadge;
+  if (setupWaitingClient > 0) badges.setup = setupWaitingClient;
+  if (proposedGoals > 0) badges.goals = proposedGoals;
+  const workBadge = proposedHandoffs + awaitingPlans;
+  if (workBadge > 0) badges.work = workBadge;
 
   return {
     badges,
-    coreVitals: `${activeTaskCount} aktif · ${pendingApprovalsProject} onay bekliyor`,
+    coreVitals: `${activeTaskCount} active · ${pendingApprovalsProject} pending approval`,
     pendingApprovals: pendingApprovalsWorkspace,
     pendingHumanActions,
     systemErrors,

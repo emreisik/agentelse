@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Silmenin iki kritik güvencesi:
-//   1. Tablo listesi information_schema'dan gelir — elle yazılmış bir
-//      listeye güvenilmez, yoksa yeni tablolar sessizce öksüz kalır.
-//   2. Dosya silme, veritabanı işlemi BAŞARIYLA bittikten sonra yapılır.
-//      Ters sırada başarısız bir işlem dosyaları çoktan yok etmiş olurdu.
+// The two critical guarantees of deletion:
+//   1. The table list comes from information_schema — a hand-written list
+//      is not trusted, otherwise new tables would silently end up orphaned.
+//   2. File deletion happens only after the database transaction finishes
+//      SUCCESSFULLY. In the reverse order, a failed transaction would have
+//      already destroyed the files.
 
 const unlink = vi.hoisted(() => vi.fn());
 vi.mock("node:fs/promises", () => ({ unlink }));
@@ -49,7 +50,7 @@ beforeEach(() => {
 });
 
 describe("ProjectDeletionService.delete", () => {
-  it("information_schema'dan gelen her tabloyu ve Project'i siler", async () => {
+  it("deletes every table from information_schema, plus Project", async () => {
     await ProjectDeletionService.delete("p-1");
 
     expect(executed).toEqual([
@@ -59,14 +60,14 @@ describe("ProjectDeletionService.delete", () => {
     ]);
   });
 
-  it("silinen satır sayısını ölü kuyruk dahil raporlar", async () => {
+  it("reports the deleted row count including dead letters", async () => {
     const result = await ProjectDeletionService.delete("p-1");
-    // 2 ölü kuyruk + 3 ifade × 5 satır
+    // 2 dead letters + 3 statements x 5 rows
     expect(result.deletedRows).toBe(17);
     expect(result.projectName).toBe("Biduniq");
   });
 
-  it("yerel varlık dosyalarını işlem başarılı olduktan SONRA siler", async () => {
+  it("deletes local asset files only AFTER the transaction succeeds", async () => {
     const result = await ProjectDeletionService.delete("p-1");
 
     expect(unlink).toHaveBeenCalledTimes(1);
@@ -74,7 +75,7 @@ describe("ProjectDeletionService.delete", () => {
     expect(result.deletedFiles).toBe(1);
   });
 
-  it("işlem düşerse hiçbir dosyaya dokunmaz", async () => {
+  it("does not touch any file if the transaction fails", async () => {
     prismaMock.$transaction.mockRejectedValue(new Error("deadlock"));
 
     await expect(ProjectDeletionService.delete("p-1")).rejects.toThrow(
@@ -83,7 +84,7 @@ describe("ProjectDeletionService.delete", () => {
     expect(unlink).not.toHaveBeenCalled();
   });
 
-  it("yol kaçışı içeren storageKey'i dosya sisteminde işleme almaz", async () => {
+  it("does not process a storageKey containing a path escape on the filesystem", async () => {
     prismaMock.asset.findMany.mockResolvedValue([
       { storageKey: "local-asset://../../../etc/passwd" },
       { storageKey: "local-asset://nested/path.png" },
@@ -95,7 +96,7 @@ describe("ProjectDeletionService.delete", () => {
     expect(result.deletedFiles).toBe(0);
   });
 
-  it("dosya silinemezse silme işlemini başarısız saymaz", async () => {
+  it("does not count deletion as failed if a file cannot be deleted", async () => {
     unlink.mockRejectedValue(new Error("ENOENT"));
 
     const result = await ProjectDeletionService.delete("p-1");
@@ -104,11 +105,11 @@ describe("ProjectDeletionService.delete", () => {
     expect(result.projectName).toBe("Biduniq");
   });
 
-  it("proje yoksa hata verir", async () => {
+  it("throws if the project does not exist", async () => {
     prismaMock.project.findUnique.mockResolvedValue(null);
 
-    await expect(ProjectDeletionService.delete("yok")).rejects.toThrow(
-      "Proje bulunamadı",
+    await expect(ProjectDeletionService.delete("missing")).rejects.toThrow(
+      "Project not found",
     );
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });

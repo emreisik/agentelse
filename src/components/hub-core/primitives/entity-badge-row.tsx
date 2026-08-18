@@ -1,8 +1,8 @@
 import type { EnumMeta } from "@/lib/labels";
 import { StatusBadge } from "@/components/shared/status-badge";
 
-// Bir kaydın birden fazla enum alanını (status + type + level gibi) tek
-// satırda özetler — panel listelerinde kart başlığının altına konur.
+// Summarizes multiple enum fields of a record (e.g. status + type + level)
+// in a single row — placed under the card title in panel lists.
 export function EntityBadgeRow({
   badges,
 }: {

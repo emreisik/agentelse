@@ -9,11 +9,11 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { PURPOSE_ICONS } from "@/features/dashboard/purpose-icons";
 
 const PROFILE_STATUS_LABELS: Record<string, string> = {
-  READY: "Hazır",
-  PENDING_SETUP: "Kurulum Bekliyor",
-  NEEDS_LOGIN: "Giriş Gerekli",
-  ERROR: "Hata",
-  DISABLED: "Devre Dışı",
+  READY: "Ready",
+  PENDING_SETUP: "Pending Setup",
+  NEEDS_LOGIN: "Needs Login",
+  ERROR: "Error",
+  DISABLED: "Disabled",
 };
 
 export function OpsPanel({
@@ -29,20 +29,20 @@ export function OpsPanel({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base">
-          Tarayıcı Ajanları & İnsan Eylemleri
+          Browser Agents & Human Actions
         </CardTitle>
         <Link
           href="/human-actions"
           className="text-xs text-muted-foreground hover:text-foreground hover:underline"
         >
-          Tümünü gör
+          View all
         </Link>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-1.5">
           {browserProfiles.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Henüz tarayıcı profili yok.
+              No browser profiles yet.
             </p>
           ) : (
             browserProfiles.map((profile) => {
@@ -74,7 +74,7 @@ export function OpsPanel({
                 className="flex items-center justify-between rounded-md py-1 text-sm transition-colors hover:bg-accent"
               >
                 <span className="truncate pr-2">
-                  {projectNameById.get(request.projectId) ?? "Bilinmeyen proje"}{" "}
+                  {projectNameById.get(request.projectId) ?? "Unknown project"}{" "}
                   — {request.title}
                 </span>
                 <StatusBadge

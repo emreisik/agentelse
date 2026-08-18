@@ -24,6 +24,9 @@ import { PURPOSE_ICONS } from "@/features/dashboard/purpose-icons";
 import { BROWSER_PROFILE_TRANSITIONS } from "@/server/state-machine/transitions";
 import type { GoogleCredentialMetadata } from "@/server/integrations/google-client";
 import type { MetaCredentialMetadata } from "@/server/integrations/meta-client";
+import type { TikTokCredentialMetadata } from "@/server/integrations/tiktok-client";
+import type { LinkedInCredentialMetadata } from "@/server/integrations/linkedin-client";
+import type { XCredentialMetadata } from "@/server/integrations/x-client";
 import {
   addIntegrationAction,
   disableIntegrationAction,
@@ -48,6 +51,18 @@ import {
   testMetaConnectionAction,
 } from "@/server/actions/meta-actions";
 import {
+  disconnectTikTokAction,
+  testTikTokConnectionAction,
+} from "@/server/actions/tiktok-actions";
+import {
+  disconnectLinkedInAction,
+  testLinkedInConnectionAction,
+} from "@/server/actions/linkedin-actions";
+import {
+  disconnectXAction,
+  testXConnectionAction,
+} from "@/server/actions/x-actions";
+import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
@@ -65,20 +80,20 @@ import { buttonVariants } from "@/components/ui/button";
 
 const CATEGORIES = {
   sosyal: {
-    title: "Sosyal Medya",
-    purposes: [
-      "INSTAGRAM",
-      "TIKTOK",
-      "LINKEDIN",
-      "X",
-    ] as BrowserProfilePurpose[],
+    title: "Social Media",
+    // TIKTOK/LINKEDIN/X buradan bilerek çıkarıldı — artık BrowserProfile
+    // tabanlı placeholder değiller, Google/Meta gibi gerçek OAuth ile
+    // TikTokTile/LinkedInTile/XTile üzerinden ayrı render ediliyorlar (bkz.
+    // aşağıdaki IntegrationSection'lar). INSTAGRAM burada kalıyor — o hâlâ
+    // eski BrowserProfile placeholder'ı, Meta'nın gerçek OAuth'undan ayrı.
+    purposes: ["INSTAGRAM"] as BrowserProfilePurpose[],
   },
   reklam: {
-    title: "Reklam",
+    title: "Advertising",
     purposes: ["META_ADS", "GOOGLE_ADS"] as BrowserProfilePurpose[],
   },
   analitik: {
-    title: "Analitik & Diğer",
+    title: "Analytics & Other",
     purposes: [
       "GA4",
       "SEARCH_CONSOLE",
@@ -89,12 +104,12 @@ const CATEGORIES = {
 };
 
 const FILTERS = [
-  { key: "tumu", label: "Tümü" },
-  { key: "mesajlasma", label: "Mesajlaşma" },
-  { key: "sosyal", label: "Sosyal Medya" },
-  { key: "reklam", label: "Reklam" },
-  { key: "analitik", label: "Analitik & Diğer" },
-  { key: "kurulu", label: "Kurulu" },
+  { key: "tumu", label: "All" },
+  { key: "mesajlasma", label: "Messaging" },
+  { key: "sosyal", label: "Social Media" },
+  { key: "reklam", label: "Advertising" },
+  { key: "analitik", label: "Analytics & Other" },
+  { key: "kurulu", label: "Installed" },
 ] as const;
 type FilterKey = (typeof FILTERS)[number]["key"];
 
@@ -121,22 +136,38 @@ export default async function EntegrasyonlarPage({
   });
   if (!project) notFound();
 
-  const [allProfiles, telegramCredential, googleCredential, metaCredential] =
-    await Promise.all([
-      prisma.browserProfile.findMany({
-        where: { projectId },
-        orderBy: { createdAt: "asc" },
-      }),
-      prisma.integrationCredential.findFirst({
-        where: { projectId, provider: "telegram" },
-      }),
-      prisma.integrationCredential.findFirst({
-        where: { projectId, provider: "google" },
-      }),
-      prisma.integrationCredential.findFirst({
-        where: { projectId, provider: "meta" },
-      }),
-    ]);
+  const [
+    allProfiles,
+    telegramCredential,
+    googleCredential,
+    metaCredential,
+    tiktokCredential,
+    linkedinCredential,
+    xCredential,
+  ] = await Promise.all([
+    prisma.browserProfile.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.integrationCredential.findFirst({
+      where: { projectId, provider: "telegram" },
+    }),
+    prisma.integrationCredential.findFirst({
+      where: { projectId, provider: "google" },
+    }),
+    prisma.integrationCredential.findFirst({
+      where: { projectId, provider: "meta" },
+    }),
+    prisma.integrationCredential.findFirst({
+      where: { projectId, provider: "tiktok" },
+    }),
+    prisma.integrationCredential.findFirst({
+      where: { projectId, provider: "linkedin" },
+    }),
+    prisma.integrationCredential.findFirst({
+      where: { projectId, provider: "x" },
+    }),
+  ]);
   const profilesByPurpose = new Map<BrowserProfilePurpose, BrowserProfile[]>();
   for (const profile of allProfiles) {
     const list = profilesByPurpose.get(profile.purpose) ?? [];
@@ -150,7 +181,7 @@ export default async function EntegrasyonlarPage({
     FILTERS.some((f) => f.key === sp.kategori)
       ? (sp.kategori as FilterKey)
       : "tumu";
-  const base = `/projects/${projectId}/entegrasyonlar`;
+  const base = `/projects/${projectId}/integrations`;
   const closeHref = filter === "tumu" ? base : `${base}?kategori=${filter}`;
 
   const showMesajlasma =
@@ -164,7 +195,7 @@ export default async function EntegrasyonlarPage({
       : filter === "kurulu"
         ? [
             {
-              title: "Kurulu Entegrasyonlar",
+              title: "Installed Integrations",
               purposes: Object.values(CATEGORIES)
                 .flatMap((c) => c.purposes)
                 .filter((p) => (profilesByPurpose.get(p)?.length ?? 0) > 0),
@@ -174,18 +205,26 @@ export default async function EntegrasyonlarPage({
           ? []
           : [CATEGORIES[filter]];
 
-  const openTelegram = sp.entegrasyon === "telegram";
-  const openGoogle = sp.entegrasyon === "google";
-  const openMeta = sp.entegrasyon === "meta";
+  const openTelegram = sp.integration === "telegram";
+  const openGoogle = sp.integration === "google";
+  const openMeta = sp.integration === "meta";
+  const openTikTok = sp.integration === "tiktok";
+  const openLinkedIn = sp.integration === "linkedin";
+  const openX = sp.integration === "x";
   const googleError =
     typeof sp.googleError === "string" ? sp.googleError : null;
   const metaError = typeof sp.metaError === "string" ? sp.metaError : null;
+  const tiktokError =
+    typeof sp.tiktokError === "string" ? sp.tiktokError : null;
+  const linkedinError =
+    typeof sp.linkedinError === "string" ? sp.linkedinError : null;
+  const xError = typeof sp.xError === "string" ? sp.xError : null;
   const openPurpose =
-    typeof sp.entegrasyon === "string" &&
+    typeof sp.integration === "string" &&
     Object.values(CATEGORIES).some((c) =>
-      c.purposes.includes(sp.entegrasyon as BrowserProfilePurpose),
+      c.purposes.includes(sp.integration as BrowserProfilePurpose),
     )
-      ? (sp.entegrasyon as BrowserProfilePurpose)
+      ? (sp.integration as BrowserProfilePurpose)
       : null;
 
   return (
@@ -193,18 +232,20 @@ export default async function EntegrasyonlarPage({
       <div className="space-y-6 p-6 pb-16">
         <div>
           <h1 className="font-heading text-2xl font-semibold tracking-tight">
-            Entegrasyonlar
+            Integrations
           </h1>
           <p className="text-sm text-muted-foreground">
-            {project.name} — kanal ve reklam hesabı bağlantı durumu
+            {project.name} — channel and ad account connection status
           </p>
           <p className="mt-2 max-w-2xl text-xs text-muted-foreground/80">
-            Aşağıdaki kanal/reklam bağlantılarının çoğu tıkla-bağlan (OAuth)
-            ekranı değil: bağlantılar bir operatör tarafından OpenClaw üzerinden
-            manuel olarak kurulur, burada sadece durumu görür ve işaretlersiniz.{" "}
-            <strong>Google</strong> ve <strong>Meta</strong> bunun istisnası —
-            gerçek OAuth ile kendi hesabınızı bağlayıp Instagram paylaşımı ve
-            reklam kampanyası yönetimi için izin verebilirsiniz.
+            Most of the channel/ad connections below aren&apos;t a
+            click-to-connect (OAuth) screen: connections are set up manually by
+            an operator through OpenClaw, and here you just view the status and
+            mark it. <strong>Google</strong>, <strong>Meta</strong>,{" "}
+            <strong>TikTok</strong>, <strong>LinkedIn</strong> and{" "}
+            <strong>X</strong> are the exception — you can connect your own
+            account with real OAuth and grant permission for posting and, for
+            Google/Meta, ad campaign management.
           </p>
         </div>
 
@@ -229,7 +270,7 @@ export default async function EntegrasyonlarPage({
         </div>
 
         {showMesajlasma ? (
-          <IntegrationSection title="Mesajlaşma">
+          <IntegrationSection title="Messaging">
             <TelegramTile
               base={base}
               kategori={filter === "tumu" ? undefined : filter}
@@ -238,7 +279,7 @@ export default async function EntegrasyonlarPage({
           </IntegrationSection>
         ) : null}
 
-        <IntegrationSection title="Raporlama Bağlantısı">
+        <IntegrationSection title="Reporting Connection">
           <GoogleTile
             base={base}
             kategori={filter === "tumu" ? undefined : filter}
@@ -246,11 +287,29 @@ export default async function EntegrasyonlarPage({
           />
         </IntegrationSection>
 
-        <IntegrationSection title="Meta Bağlantısı (Instagram + Reklam)">
+        <IntegrationSection title="Meta Connection (Instagram + Ads)">
           <MetaTile
             base={base}
             kategori={filter === "tumu" ? undefined : filter}
             credential={metaCredential}
+          />
+        </IntegrationSection>
+
+        <IntegrationSection title="TikTok / LinkedIn / X">
+          <TikTokTile
+            base={base}
+            kategori={filter === "tumu" ? undefined : filter}
+            credential={tiktokCredential}
+          />
+          <LinkedInTile
+            base={base}
+            kategori={filter === "tumu" ? undefined : filter}
+            credential={linkedinCredential}
+          />
+          <XTile
+            base={base}
+            kategori={filter === "tumu" ? undefined : filter}
+            credential={xCredential}
           />
         </IntegrationSection>
 
@@ -304,6 +363,33 @@ export default async function EntegrasyonlarPage({
             metaError={metaError}
           />
         ) : null}
+
+        {openTikTok ? (
+          <TikTokDialog
+            projectId={projectId}
+            credential={tiktokCredential}
+            closeHref={closeHref}
+            tiktokError={tiktokError}
+          />
+        ) : null}
+
+        {openLinkedIn ? (
+          <LinkedInDialog
+            projectId={projectId}
+            credential={linkedinCredential}
+            closeHref={closeHref}
+            linkedinError={linkedinError}
+          />
+        ) : null}
+
+        {openX ? (
+          <XDialog
+            projectId={projectId}
+            credential={xCredential}
+            closeHref={closeHref}
+            xError={xError}
+          />
+        ) : null}
       </div>
     </AppShell>
   );
@@ -320,30 +406,30 @@ function summarize(profiles: BrowserProfile[]): {
 } {
   if (profiles.length === 0) {
     return {
-      label: "Bağlı değil",
-      subtitle: "Henüz eklenmedi",
+      label: "Not connected",
+      subtitle: "Not added yet",
       tone: "neutral",
     };
   }
   const connected = profiles.filter((p) => p.status === "READY").length;
   if (connected > 0) {
     return {
-      label: `${connected} bağlı`,
-      subtitle: `${profiles.length} hesap kayıtlı`,
+      label: `${connected} connected`,
+      subtitle: `${profiles.length} accounts registered`,
       tone: "positive",
     };
   }
   return {
-    label: "Bağlı değil",
-    subtitle: "Kurulu, henüz bağlı değil",
+    label: "Not connected",
+    subtitle: "Set up, not yet connected",
     tone: "waiting",
   };
 }
 
-// Entegrasyonlar sayfasının ortak kartı — nötr (renksiz) ikon rozeti,
-// üstte durum rozeti, altında başlık + kısa açıklama. Markaya özgü renkli
-// kutucuklar yerine tek, sade bir görsel dil; IntegrationSection'daki grid
-// sayesinde kartlar yan yana dizilir.
+// Shared card for the Integrations page — a neutral (colorless) icon badge,
+// status badge on top, title + short description below. A single, clean
+// visual language instead of brand-colored boxes; thanks to the grid in
+// IntegrationSection, the cards line up side by side.
 function IntegrationRow({
   href,
   icon: Icon,
@@ -408,7 +494,7 @@ function IntegrationTile({
 }) {
   const meta = PURPOSE_ICONS[purpose];
   const summary = summarize(profiles);
-  const params = new URLSearchParams({ entegrasyon: purpose });
+  const params = new URLSearchParams({ integration: purpose });
   if (kategori) params.set("kategori", kategori);
 
   return (
@@ -450,7 +536,7 @@ function IntegrationDialog({
           <div className="min-w-0">
             <p className="text-sm font-semibold">{meta.label}</p>
             <p className="text-xs text-muted-foreground">
-              Bağlantı ekleyin, durumu yönetin
+              Add a connection, manage its status
             </p>
           </div>
         </div>
@@ -460,13 +546,13 @@ function IntegrationDialog({
     >
       <div className="space-y-2">
         <p className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-          Bağlı hesaplar
+          Connected accounts
         </p>
         {profiles.length === 0 ? (
           <EmptyState
             icon={Plug}
-            title="Henüz eklenmedi"
-            hint="Aşağıdan bir isim girip yeni bir bağlantı kaydı açabilirsiniz."
+            title="Not added yet"
+            hint="Enter a name below to open a new connection record."
             className="py-8"
           />
         ) : (
@@ -484,17 +570,17 @@ function IntegrationDialog({
 
       <ActionForm
         action={addIntegrationAction}
-        successMessage={`${meta.label} eklendi`}
+        successMessage={`${meta.label} added`}
         className="flex items-center gap-1.5 border-t border-foreground/10 pt-4"
       >
         <input type="hidden" name="projectId" value={projectId} />
         <input type="hidden" name="purpose" value={purpose} />
         <Input
           name="name"
-          placeholder={`${meta.label} hesap adı`}
+          placeholder={`${meta.label} account name`}
           className="h-8 flex-1 text-xs"
         />
-        <SubmitButton size="xs">+ Yeni Bağlantı Ekle</SubmitButton>
+        <SubmitButton size="xs">+ Add New Connection</SubmitButton>
       </ActionForm>
     </EntityDialog>
   );
@@ -513,9 +599,7 @@ function IntegrationProfileRow({
   const canMarkConnected =
     profile.status !== "READY" && transitions.includes("READY");
   const markConnectedLabel =
-    profile.status === "DISABLED"
-      ? "Yeniden Etkinleştir"
-      : "Bağlı Olarak İşaretle";
+    profile.status === "DISABLED" ? "Reactivate" : "Mark as Connected";
 
   return (
     <div className="space-y-2 rounded-lg p-3 ring-1 ring-foreground/10">
@@ -525,10 +609,10 @@ function IntegrationProfileRow({
       </div>
       <p className="text-[11px] text-muted-foreground">
         {profile.lastUsedAt
-          ? `Son kullanım: ${timeAgo(profile.lastUsedAt)}`
-          : `Bağlantı tarihi: ${timeAgo(profile.createdAt)}`}
+          ? `Last used: ${timeAgo(profile.lastUsedAt)}`
+          : `Connected on: ${timeAgo(profile.createdAt)}`}
         {profile.lastHealthCheckAt
-          ? ` · Son kontrol: ${timeAgo(profile.lastHealthCheckAt)}`
+          ? ` · Last checked: ${timeAgo(profile.lastHealthCheckAt)}`
           : ""}
       </p>
       {canDisable || canMarkConnected ? (
@@ -536,19 +620,19 @@ function IntegrationProfileRow({
           {canDisable ? (
             <ActionForm
               action={disableIntegrationAction}
-              successMessage="Devre dışı bırakıldı"
+              successMessage="Disabled"
             >
               <input type="hidden" name="projectId" value={projectId} />
               <input type="hidden" name="profileId" value={profile.id} />
               <SubmitButton variant="outline" size="xs">
-                Devre Dışı Bırak
+                Disable
               </SubmitButton>
             </ActionForm>
           ) : null}
           {canMarkConnected ? (
             <ActionForm
               action={markIntegrationConnectedAction}
-              successMessage="Bağlı olarak işaretlendi"
+              successMessage="Marked as connected"
             >
               <input type="hidden" name="projectId" value={projectId} />
               <input type="hidden" name="profileId" value={profile.id} />
@@ -562,9 +646,9 @@ function IntegrationProfileRow({
 }
 
 // ---------------------------------------------------------------------------
-// Telegram — BrowserProfile değil, IntegrationCredential (Bot API token'ı)
-// tabanlı, ayrı bir bağlantı modeli. Kurulum sırasında gerçekten Telegram'a
-// karşı doğrulanıyor (bkz. connectTelegramAction) — mock/demo satır yok.
+// Telegram — not a BrowserProfile; a separate connection model based on
+// IntegrationCredential (Bot API token). It's actually validated against
+// Telegram during setup (see connectTelegramAction) — no mock/demo path.
 
 function TelegramTile({
   base,
@@ -576,7 +660,7 @@ function TelegramTile({
   credential: IntegrationCredential | null;
 }) {
   const connected = credential?.status === "ACTIVE";
-  const params = new URLSearchParams({ entegrasyon: "telegram" });
+  const params = new URLSearchParams({ integration: "telegram" });
   if (kategori) params.set("kategori", kategori);
 
   return (
@@ -586,17 +670,17 @@ function TelegramTile({
       title="Telegram"
       subtitle={
         connected
-          ? (credential.accountLabel ?? "Bağlı")
+          ? (credential.accountLabel ?? "Connected")
           : credential
-            ? "Bağlantı kesildi"
-            : "Onay ve bildirimler için bağlayın"
+            ? "Disconnected"
+            : "Connect for approvals and notifications"
       }
       badge={
         connected
-          ? { label: "Bağlı", tone: "positive" }
+          ? { label: "Connected", tone: "positive" }
           : credential
-            ? { label: "Bağlantı kesildi", tone: "waiting" }
-            : { label: "Bağlı değil", tone: "neutral" }
+            ? { label: "Disconnected", tone: "waiting" }
+            : { label: "Not connected", tone: "neutral" }
       }
     />
   );
@@ -630,7 +714,7 @@ function TelegramDialog({
           <div className="min-w-0">
             <p className="text-sm font-semibold">Telegram</p>
             <p className="text-xs text-muted-foreground">
-              Kanala/gruba yayın gönderin
+              Send broadcasts to a channel/group
             </p>
           </div>
         </div>
@@ -642,30 +726,30 @@ function TelegramDialog({
         <div className="space-y-2 rounded-lg p-3 ring-1 ring-foreground/10">
           <div className="flex items-center justify-between gap-2">
             <p className="min-w-0 truncate text-sm font-medium">
-              {credential.accountLabel ?? "Telegram botu"}
+              {credential.accountLabel ?? "Telegram bot"}
             </p>
             <StatusBadge
               meta={
                 connected
-                  ? { label: "Bağlı", tone: "positive" }
-                  : { label: "Bağlı değil", tone: "neutral" }
+                  ? { label: "Connected", tone: "positive" }
+                  : { label: "Not connected", tone: "neutral" }
               }
             />
           </div>
           {metadata.chatTitle ? (
             <p className="text-[11px] text-muted-foreground">
-              Hedef: {metadata.chatTitle}
+              Target: {metadata.chatTitle}
             </p>
           ) : null}
           {connected ? (
             <ActionForm
               action={updateTelegramApproversAction}
-              successMessage="Onay yetkilileri güncellendi"
+              successMessage="Approvers updated"
               className="space-y-1"
             >
               <input type="hidden" name="projectId" value={projectId} />
               <label className="text-[11px] font-medium text-muted-foreground">
-                Onay yetkisi olan Telegram kullanıcı ID&apos;leri
+                Telegram user IDs with approval authority
               </label>
               <div className="flex items-center gap-1.5">
                 <Input
@@ -675,13 +759,13 @@ function TelegramDialog({
                   className="h-7 text-xs"
                 />
                 <SubmitButton size="xs" variant="outline">
-                  Kaydet
+                  Save
                 </SubmitButton>
               </div>
               <p className="text-[10px] text-muted-foreground/70">
-                Boş bırakılırsa onay mesajları sadece bilgilendirme amaçlı
-                gönderilir, buton eklenmez. Kendi ID&apos;nizi @userinfobot ile
-                bulabilirsiniz.
+                If left empty, approval messages are sent for informational
+                purposes only, with no button. You can find your own ID via
+                @userinfobot.
               </p>
             </ActionForm>
           ) : null}
@@ -689,19 +773,19 @@ function TelegramDialog({
             <div className="flex items-center justify-end gap-1.5">
               <ActionForm
                 action={disconnectTelegramAction}
-                successMessage="Bağlantı kesildi"
+                successMessage="Disconnected"
               >
                 <input type="hidden" name="projectId" value={projectId} />
                 <SubmitButton variant="outline" size="xs">
-                  Bağlantıyı Kes
+                  Disconnect
                 </SubmitButton>
               </ActionForm>
               <ActionForm
                 action={sendTelegramTestMessageAction}
-                successMessage="Test mesajı gönderildi — Telegram'ı kontrol edin"
+                successMessage="Test message sent — check Telegram"
               >
                 <input type="hidden" name="projectId" value={projectId} />
-                <SubmitButton size="xs">Test Mesajı Gönder</SubmitButton>
+                <SubmitButton size="xs">Send Test Message</SubmitButton>
               </ActionForm>
             </div>
           ) : null}
@@ -709,8 +793,8 @@ function TelegramDialog({
       ) : (
         <EmptyState
           icon={Send}
-          title="Henüz bağlı değil"
-          hint="Aşağıya bot token'ını ve hedef sohbeti girerek bağlayın."
+          title="Not connected yet"
+          hint="Connect below by entering the bot token and target chat."
           className="py-8"
         />
       )}
@@ -726,26 +810,28 @@ function TelegramDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Google — IntegrationCredential (provider: "google") tabanlı, gerçek OAuth
-// bağlantısı (GA4 + Search Console tek grant). Yukarıdaki BrowserProfile
-// tabanlı "GA4"/"SEARCH_CONSOLE" purpose'larından tamamen ayrı bir mekanizma
-// — onlar OpenClaw'ın tarayıcı profilleri, bu gerçek, salt-okunur API erişimi.
+// Google — a real OAuth connection based on IntegrationCredential
+// (provider: "google") (GA4 + Search Console in a single grant). This is a
+// completely separate mechanism from the BrowserProfile-based "GA4"/
+// "SEARCH_CONSOLE" purposes above — those are OpenClaw's browser profiles,
+// this is real, read-only API access.
 
 const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
-  denied: "Google izni reddedildi.",
-  not_configured: "Bu entegrasyon henüz yapılandırılmadı.",
-  no_refresh_token: "Google yenileme token'ı döndürmedi, tekrar deneyin.",
-  exchange_failed: "Google ile bağlantı kurulamadı, tekrar deneyin.",
+  denied: "Google permission was denied.",
+  not_configured: "This integration hasn't been configured yet.",
+  no_refresh_token: "Google didn't return a refresh token, please try again.",
+  exchange_failed:
+    "Couldn't establish a connection with Google, please try again.",
   state_invalid:
-    "Bağlantı isteğinin süresi doldu veya geçersiz, tekrar deneyin.",
-  unauthorized: "Oturumunuz sona ermiş, tekrar giriş yapıp deneyin.",
+    "The connection request expired or is invalid, please try again.",
+  unauthorized: "Your session has expired, please sign in again and retry.",
 };
 
-// Search Console `siteUrl` ham haliyle teknik görünüyor (sc-domain:example.com
-// ya da https://example.com/) — seçim listesinde temiz bir domain gösterip
-// mülk tipini (Domain/HTTPS/HTTP) hint olarak veriyoruz; aynı domain'in hem
-// http hem https ayrı doğrulanmış olabileceği için bu ayrım gerçekten
-// ayırt edici, sadece kozmetik değil.
+// The raw Search Console `siteUrl` looks technical (sc-domain:example.com
+// or https://example.com/) — we show a clean domain in the selection list
+// and provide the property type (Domain/HTTPS/HTTP) as a hint; since the
+// same domain can be separately verified for both http and https, this
+// distinction is genuinely meaningful, not just cosmetic.
 function formatSearchConsoleSite(siteUrl: string): {
   label: string;
   hint?: string;
@@ -776,7 +862,7 @@ function GoogleTile({
 }) {
   const connected = credential?.status === "ACTIVE";
   const expired = credential?.status === "EXPIRED";
-  const params = new URLSearchParams({ entegrasyon: "google" });
+  const params = new URLSearchParams({ integration: "google" });
   if (kategori) params.set("kategori", kategori);
 
   return (
@@ -786,17 +872,17 @@ function GoogleTile({
       title="Google Analytics & Search Console"
       subtitle={
         connected
-          ? (credential.accountLabel ?? "Bağlı")
+          ? (credential.accountLabel ?? "Connected")
           : expired
-            ? "Yeniden bağlanmalı"
-            : "GA4 ve Search Console verilerine erişim"
+            ? "Needs reconnection"
+            : "Access to GA4 and Search Console data"
       }
       badge={
         connected
-          ? { label: "Bağlı", tone: "positive" }
+          ? { label: "Connected", tone: "positive" }
           : expired
-            ? { label: "Yeniden bağlanmalı", tone: "waiting" }
-            : { label: "Bağlı değil", tone: "neutral" }
+            ? { label: "Needs reconnection", tone: "waiting" }
+            : { label: "Not connected", tone: "neutral" }
       }
     />
   );
@@ -832,7 +918,7 @@ function GoogleDialog({
               Google Analytics & Search Console
             </p>
             <p className="text-xs text-muted-foreground">
-              GA4 ve Search Console&apos;a salt-okunur erişim
+              Read-only access to GA4 and Search Console
             </p>
           </div>
         </div>
@@ -843,7 +929,7 @@ function GoogleDialog({
       {googleError ? (
         <p className="rounded-lg bg-destructive/10 p-2.5 text-xs text-destructive">
           {GOOGLE_ERROR_MESSAGES[googleError] ??
-            "Bir şeyler ters gitti, tekrar deneyin."}
+            "Something went wrong, please try again."}
         </p>
       ) : null}
 
@@ -851,44 +937,44 @@ function GoogleDialog({
         <div className="space-y-3 rounded-lg p-3 ring-1 ring-foreground/10">
           <div className="flex items-center justify-between gap-2">
             <p className="min-w-0 truncate text-sm font-medium">
-              {credential.accountLabel ?? "Google hesabı"}
+              {credential.accountLabel ?? "Google account"}
             </p>
             <StatusBadge
               meta={
                 connected
-                  ? { label: "Bağlı", tone: "positive" }
-                  : { label: "Yeniden bağlanmalı", tone: "waiting" }
+                  ? { label: "Connected", tone: "positive" }
+                  : { label: "Needs reconnection", tone: "waiting" }
               }
             />
           </div>
 
           {expired ? (
-            // Next <Link>'in RSC-fetch tabanlı yumuşak navigasyonu, bu route
-            // Google'ın OAuth dialog'una (cross-origin) redirect ettiği için
-            // CORS preflight'a takılıyor — düz <a> tam sayfa navigasyon
-            // yapıp bunu tamamen atlıyor.
+            // Next <Link>'s RSC-fetch-based soft navigation hits a CORS
+            // preflight because this route redirects to Google's OAuth
+            // dialog (cross-origin) — a plain <a> does a full page
+            // navigation and bypasses this entirely.
             <a
               href={`/api/integrations/google/start?projectId=${projectId}`}
               className={cn(buttonVariants({ size: "xs" }))}
             >
-              Yeniden Bağlan
+              Reconnect
             </a>
           ) : (
             <>
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                    Property / Site Seçimi
+                    Property / Site Selection
                   </span>
                   <ActionForm
                     action={refreshGoogleListsAction}
-                    successMessage="Liste güncellendi"
+                    successMessage="List updated"
                   >
                     <input type="hidden" name="projectId" value={projectId} />
                     <SubmitButton
                       variant="ghost"
                       size="icon-xs"
-                      title="Google'da yeni eklenen property/site'ları getir"
+                      title="Fetch newly added properties/sites from Google"
                     >
                       <RefreshCw className="size-3.5" />
                     </SubmitButton>
@@ -901,8 +987,8 @@ function GoogleDialog({
                   {metadata.ga4Properties.length > 0 ? (
                     <SearchableSelect
                       value={metadata.selectedGa4PropertyId ?? ""}
-                      placeholder="Property seçin…"
-                      searchPlaceholder="Property ara…"
+                      placeholder="Select a property…"
+                      searchPlaceholder="Search properties…"
                       options={metadata.ga4Properties.map((p) => ({
                         value: p.propertyId,
                         label: p.propertyName,
@@ -911,12 +997,11 @@ function GoogleDialog({
                       action={selectGa4PropertyAction}
                       hiddenFields={{ projectId }}
                       fieldName="propertyId"
-                      successMessage="GA4 property güncellendi"
+                      successMessage="GA4 property updated"
                     />
                   ) : (
                     <p className="text-[11px] text-muted-foreground">
-                      {metadata.ga4ListError ??
-                        "Erişilebilir property bulunamadı"}
+                      {metadata.ga4ListError ?? "No accessible property found"}
                     </p>
                   )}
                 </div>
@@ -927,8 +1012,8 @@ function GoogleDialog({
                   {metadata.searchConsoleSites.length > 0 ? (
                     <SearchableSelect
                       value={metadata.selectedSearchConsoleSite ?? ""}
-                      placeholder="Site seçin…"
-                      searchPlaceholder="Site ara…"
+                      placeholder="Select a site…"
+                      searchPlaceholder="Search sites…"
                       options={metadata.searchConsoleSites.map((s) => ({
                         value: s.siteUrl,
                         ...formatSearchConsoleSite(s.siteUrl),
@@ -936,11 +1021,11 @@ function GoogleDialog({
                       action={selectSearchConsoleSiteAction}
                       hiddenFields={{ projectId }}
                       fieldName="siteUrl"
-                      successMessage="Search Console site güncellendi"
+                      successMessage="Search Console site updated"
                     />
                   ) : (
                     <p className="text-[11px] text-muted-foreground">
-                      {metadata.gscListError ?? "Erişilebilir site bulunamadı"}
+                      {metadata.gscListError ?? "No accessible site found"}
                     </p>
                   )}
                 </div>
@@ -948,15 +1033,15 @@ function GoogleDialog({
 
               {metadata.lastTestResult ? (
                 <p className="text-[11px] text-muted-foreground">
-                  Son test ({timeAgo(metadata.lastTestResult.testedAt)}):{" "}
+                  Last test ({timeAgo(metadata.lastTestResult.testedAt)}):{" "}
                   {metadata.lastTestResult.error
                     ? metadata.lastTestResult.error
                     : [
                         metadata.lastTestResult.ga4ActiveUsers !== undefined
-                          ? `GA4: ${metadata.lastTestResult.ga4ActiveUsers} kullanıcı (7g)`
+                          ? `GA4: ${metadata.lastTestResult.ga4ActiveUsers} users (7d)`
                           : null,
                         metadata.lastTestResult.gscClicks !== undefined
-                          ? `GSC: ${metadata.lastTestResult.gscClicks} tıklama / ${metadata.lastTestResult.gscImpressions} gösterim (7g)`
+                          ? `GSC: ${metadata.lastTestResult.gscClicks} clicks / ${metadata.lastTestResult.gscImpressions} impressions (7d)`
                           : null,
                       ]
                         .filter(Boolean)
@@ -967,19 +1052,19 @@ function GoogleDialog({
               <div className="flex items-center justify-end gap-1.5">
                 <ActionForm
                   action={disconnectGoogleAction}
-                  successMessage="Bağlantı kesildi"
+                  successMessage="Disconnected"
                 >
                   <input type="hidden" name="projectId" value={projectId} />
                   <SubmitButton variant="outline" size="xs">
-                    Bağlantıyı Kes
+                    Disconnect
                   </SubmitButton>
                 </ActionForm>
                 <ActionForm
                   action={testGoogleConnectionAction}
-                  successMessage="Test başarılı"
+                  successMessage="Test successful"
                 >
                   <input type="hidden" name="projectId" value={projectId} />
-                  <SubmitButton size="xs">Test Et</SubmitButton>
+                  <SubmitButton size="xs">Run Test</SubmitButton>
                 </ActionForm>
               </div>
             </>
@@ -988,13 +1073,13 @@ function GoogleDialog({
       ) : (
         <EmptyState
           icon={BarChart3}
-          title="Henüz bağlı değil"
-          hint="Google hesabınızla bağlanın, ardından GA4 property ve Search Console site'ınızı seçin."
+          title="Not connected yet"
+          hint="Connect with your Google account, then select your GA4 property and Search Console site."
           className="py-8"
         >
-          {/* Düz <a>: bkz. "Yeniden Bağlan" üzerindeki not — <Link>'in
-              RSC-fetch navigasyonu cross-origin OAuth redirect'ine CORS
-              hatası veriyor. */}
+          {/* Plain <a>: see the note above "Reconnect" — <Link>'s RSC-fetch
+              navigation throws a CORS error on the cross-origin OAuth
+              redirect. */}
           <a
             href={`/api/integrations/google/start?projectId=${projectId}`}
             className={cn(
@@ -1003,7 +1088,7 @@ function GoogleDialog({
             )}
             aria-disabled={!configured}
           >
-            Google ile Bağlan
+            Connect with Google
           </a>
         </EmptyState>
       )}
@@ -1012,19 +1097,20 @@ function GoogleDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Meta — IntegrationCredential (provider: "meta") tabanlı, gerçek OAuth
-// bağlantısı (Instagram Content Publishing + Marketing API tek grant).
-// Yukarıdaki BrowserProfile tabanlı "INSTAGRAM"/"META_ADS" purpose'larından
-// tamamen ayrı bir mekanizma — onlar OpenClaw'ın tarayıcı profilleri, bu
-// gerçek Graph/Marketing API erişimi.
+// Meta — a real OAuth connection based on IntegrationCredential
+// (provider: "meta") (Instagram Content Publishing + Marketing API in a
+// single grant). This is a completely separate mechanism from the
+// BrowserProfile-based "INSTAGRAM"/"META_ADS" purposes above — those are
+// OpenClaw's browser profiles, this is real Graph/Marketing API access.
 
 const META_ERROR_MESSAGES: Record<string, string> = {
-  denied: "Meta izni reddedildi.",
-  not_configured: "Bu entegrasyon henüz yapılandırılmadı.",
-  exchange_failed: "Meta ile bağlantı kurulamadı, tekrar deneyin.",
+  denied: "Meta permission was denied.",
+  not_configured: "This integration hasn't been configured yet.",
+  exchange_failed:
+    "Couldn't establish a connection with Meta, please try again.",
   state_invalid:
-    "Bağlantı isteğinin süresi doldu veya geçersiz, tekrar deneyin.",
-  unauthorized: "Oturumunuz sona ermiş, tekrar giriş yapıp deneyin.",
+    "The connection request expired or is invalid, please try again.",
+  unauthorized: "Your session has expired, please sign in again and retry.",
 };
 
 function MetaTile({
@@ -1038,7 +1124,7 @@ function MetaTile({
 }) {
   const connected = credential?.status === "ACTIVE";
   const expired = credential?.status === "EXPIRED";
-  const params = new URLSearchParams({ entegrasyon: "meta" });
+  const params = new URLSearchParams({ integration: "meta" });
   if (kategori) params.set("kategori", kategori);
 
   return (
@@ -1048,17 +1134,17 @@ function MetaTile({
       title="Instagram & Meta Ads"
       subtitle={
         connected
-          ? (credential.accountLabel ?? "Bağlı")
+          ? (credential.accountLabel ?? "Connected")
           : expired
-            ? "Yeniden bağlanmalı"
-            : "Paylaşım ve reklam kampanyası yönetimi"
+            ? "Needs reconnection"
+            : "Posting and ad campaign management"
       }
       badge={
         connected
-          ? { label: "Bağlı", tone: "positive" }
+          ? { label: "Connected", tone: "positive" }
           : expired
-            ? { label: "Yeniden bağlanmalı", tone: "waiting" }
-            : { label: "Bağlı değil", tone: "neutral" }
+            ? { label: "Needs reconnection", tone: "waiting" }
+            : { label: "Not connected", tone: "neutral" }
       }
     />
   );
@@ -1241,6 +1327,536 @@ function MetaDialog({
             aria-disabled={!configured}
           >
             Meta ile Bağlan
+          </a>
+        </EmptyState>
+      )}
+    </EntityDialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TikTok / LinkedIn / X — Google/Meta ile aynı IntegrationCredential tabanlı
+// gerçek OAuth deseni (bkz. src/server/integrations/{tiktok,linkedin,x}-
+// client.ts). BrowserProfile tabanlı eski TIKTOK/LINKEDIN/X purpose'larının
+// yerini alıyorlar (bkz. CATEGORIES'teki not) — bu üçünün BrowserProfilePurpose
+// karşılığı hâlâ execution-policy.ts'te OpenClaw fallback'i için mevcut ama
+// artık bu sayfada ayrı bir placeholder tile olarak gösterilmiyor.
+
+const TIKTOK_ERROR_MESSAGES: Record<string, string> = {
+  denied: "TikTok permission was denied.",
+  not_configured: "This integration hasn't been configured yet.",
+  exchange_failed: "Couldn't connect to TikTok, please try again.",
+  state_invalid:
+    "The connection request expired or is invalid, please try again.",
+  unauthorized: "Your session has expired, please sign in again.",
+};
+
+function TikTokTile({
+  base,
+  kategori,
+  credential,
+}: {
+  base: string;
+  kategori: string | undefined;
+  credential: IntegrationCredential | null;
+}) {
+  const connected = credential?.status === "ACTIVE";
+  const expired = credential?.status === "EXPIRED";
+  const params = new URLSearchParams({ integration: "tiktok" });
+  if (kategori) params.set("kategori", kategori);
+
+  return (
+    <IntegrationRow
+      href={`${base}?${params.toString()}`}
+      icon={PURPOSE_ICONS.TIKTOK.icon}
+      title="TikTok"
+      subtitle={
+        connected
+          ? (credential.accountLabel ?? "Connected")
+          : expired
+            ? "Needs reconnecting"
+            : "Video publishing via Content Posting API"
+      }
+      badge={
+        connected
+          ? { label: "Connected", tone: "positive" }
+          : expired
+            ? { label: "Needs reconnecting", tone: "waiting" }
+            : { label: "Not connected", tone: "neutral" }
+      }
+    />
+  );
+}
+
+function TikTokDialog({
+  projectId,
+  credential,
+  closeHref,
+  tiktokError,
+}: {
+  projectId: string;
+  credential: IntegrationCredential | null;
+  closeHref: string;
+  tiktokError: string | null;
+}) {
+  const metadata = (credential?.metadata ?? {}) as TikTokCredentialMetadata;
+  const connected = credential?.status === "ACTIVE";
+  const expired = credential?.status === "EXPIRED";
+  const configured = isIntegrationConfigured("TIKTOK");
+
+  return (
+    <EntityDialog
+      closeHref={closeHref}
+      title="TikTok"
+      header={
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
+            <PURPOSE_ICONS.TIKTOK.icon className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">TikTok</p>
+            <p className="text-xs text-muted-foreground">
+              Access for video publishing via Content Posting API
+            </p>
+          </div>
+        </div>
+      }
+      size="md"
+      bodyClassName="space-y-4 overflow-y-auto p-4"
+    >
+      {tiktokError ? (
+        <p className="rounded-lg bg-destructive/10 p-2.5 text-xs text-destructive">
+          {TIKTOK_ERROR_MESSAGES[tiktokError] ??
+            "Something went wrong, please try again."}
+        </p>
+      ) : null}
+
+      <p className="rounded-lg bg-amber-500/10 p-2.5 text-xs text-amber-700 dark:text-amber-400">
+        While this app is unaudited by TikTok, published videos are forced to
+        private (self-only) visibility. Public visibility requires TikTok&apos;s
+        client audit process.
+      </p>
+
+      {credential && (connected || expired) ? (
+        <div className="space-y-3 rounded-lg p-3 ring-1 ring-foreground/10">
+          <div className="flex items-center justify-between gap-2">
+            <p className="min-w-0 truncate text-sm font-medium">
+              {credential.accountLabel ?? "TikTok account"}
+            </p>
+            <StatusBadge
+              meta={
+                connected
+                  ? { label: "Connected", tone: "positive" }
+                  : { label: "Needs reconnecting", tone: "waiting" }
+              }
+            />
+          </div>
+
+          {expired ? (
+            <a
+              href={`/api/integrations/tiktok/start?projectId=${projectId}`}
+              className={cn(buttonVariants({ size: "xs" }))}
+            >
+              Reconnect
+            </a>
+          ) : (
+            <>
+              {metadata.lastTestResult ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Last test ({timeAgo(metadata.lastTestResult.testedAt)}):{" "}
+                  {metadata.lastTestResult.error ??
+                    metadata.lastTestResult.displayName ??
+                    "OK"}
+                </p>
+              ) : null}
+
+              <div className="flex items-center justify-end gap-1.5">
+                <ActionForm
+                  action={disconnectTikTokAction}
+                  successMessage="Disconnected"
+                >
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <SubmitButton variant="outline" size="xs">
+                    Disconnect
+                  </SubmitButton>
+                </ActionForm>
+                <ActionForm
+                  action={testTikTokConnectionAction}
+                  successMessage="Test successful"
+                >
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <SubmitButton size="xs">Test</SubmitButton>
+                </ActionForm>
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <EmptyState
+          icon={PURPOSE_ICONS.TIKTOK.icon}
+          title="Not connected yet"
+          hint="Connect with your TikTok account to enable video publishing."
+          className="py-8"
+        >
+          <a
+            href={`/api/integrations/tiktok/start?projectId=${projectId}`}
+            className={cn(
+              buttonVariants({ size: "xs" }),
+              !configured && "pointer-events-none opacity-50",
+            )}
+            aria-disabled={!configured}
+          >
+            Connect with TikTok
+          </a>
+        </EmptyState>
+      )}
+    </EntityDialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+const LINKEDIN_ERROR_MESSAGES: Record<string, string> = {
+  denied: "LinkedIn permission was denied.",
+  not_configured: "This integration hasn't been configured yet.",
+  exchange_failed: "Couldn't connect to LinkedIn, please try again.",
+  state_invalid:
+    "The connection request expired or is invalid, please try again.",
+  unauthorized: "Your session has expired, please sign in again.",
+};
+
+function LinkedInTile({
+  base,
+  kategori,
+  credential,
+}: {
+  base: string;
+  kategori: string | undefined;
+  credential: IntegrationCredential | null;
+}) {
+  const connected = credential?.status === "ACTIVE";
+  const expired = credential?.status === "EXPIRED";
+  const params = new URLSearchParams({ integration: "linkedin" });
+  if (kategori) params.set("kategori", kategori);
+
+  return (
+    <IntegrationRow
+      href={`${base}?${params.toString()}`}
+      icon={PURPOSE_ICONS.LINKEDIN.icon}
+      title="LinkedIn"
+      subtitle={
+        connected
+          ? (credential.accountLabel ?? "Connected")
+          : expired
+            ? "Needs reconnecting"
+            : "Personal profile post publishing"
+      }
+      badge={
+        connected
+          ? { label: "Connected", tone: "positive" }
+          : expired
+            ? { label: "Needs reconnecting", tone: "waiting" }
+            : { label: "Not connected", tone: "neutral" }
+      }
+    />
+  );
+}
+
+function LinkedInDialog({
+  projectId,
+  credential,
+  closeHref,
+  linkedinError,
+}: {
+  projectId: string;
+  credential: IntegrationCredential | null;
+  closeHref: string;
+  linkedinError: string | null;
+}) {
+  const metadata = (credential?.metadata ?? {}) as LinkedInCredentialMetadata;
+  const connected = credential?.status === "ACTIVE";
+  const expired = credential?.status === "EXPIRED";
+  const configured = isIntegrationConfigured("LINKEDIN");
+
+  return (
+    <EntityDialog
+      closeHref={closeHref}
+      title="LinkedIn"
+      header={
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
+            <PURPOSE_ICONS.LINKEDIN.icon className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">LinkedIn</p>
+            <p className="text-xs text-muted-foreground">
+              Access for personal profile post publishing
+            </p>
+          </div>
+        </div>
+      }
+      size="md"
+      bodyClassName="space-y-4 overflow-y-auto p-4"
+    >
+      {linkedinError ? (
+        <p className="rounded-lg bg-destructive/10 p-2.5 text-xs text-destructive">
+          {LINKEDIN_ERROR_MESSAGES[linkedinError] ??
+            "Something went wrong, please try again."}
+        </p>
+      ) : null}
+
+      {credential && (connected || expired) ? (
+        <div className="space-y-3 rounded-lg p-3 ring-1 ring-foreground/10">
+          <div className="flex items-center justify-between gap-2">
+            <p className="min-w-0 truncate text-sm font-medium">
+              {credential.accountLabel ?? "LinkedIn account"}
+            </p>
+            <StatusBadge
+              meta={
+                connected
+                  ? { label: "Connected", tone: "positive" }
+                  : { label: "Needs reconnecting", tone: "waiting" }
+              }
+            />
+          </div>
+
+          {!metadata.hasRefreshToken ? (
+            <p className="text-[11px] text-muted-foreground">
+              No refresh token on this connection — LinkedIn access tokens
+              expire after ~60 days, you&apos;ll need to reconnect then.
+            </p>
+          ) : null}
+
+          {expired ? (
+            <a
+              href={`/api/integrations/linkedin/start?projectId=${projectId}`}
+              className={cn(buttonVariants({ size: "xs" }))}
+            >
+              Reconnect
+            </a>
+          ) : (
+            <>
+              {metadata.lastTestResult ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Last test ({timeAgo(metadata.lastTestResult.testedAt)}):{" "}
+                  {metadata.lastTestResult.error ??
+                    metadata.lastTestResult.displayName ??
+                    "OK"}
+                </p>
+              ) : null}
+
+              <div className="flex items-center justify-end gap-1.5">
+                <ActionForm
+                  action={disconnectLinkedInAction}
+                  successMessage="Disconnected"
+                >
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <SubmitButton variant="outline" size="xs">
+                    Disconnect
+                  </SubmitButton>
+                </ActionForm>
+                <ActionForm
+                  action={testLinkedInConnectionAction}
+                  successMessage="Test successful"
+                >
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <SubmitButton size="xs">Test</SubmitButton>
+                </ActionForm>
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <EmptyState
+          icon={PURPOSE_ICONS.LINKEDIN.icon}
+          title="Not connected yet"
+          hint="Connect with your LinkedIn account to enable post publishing."
+          className="py-8"
+        >
+          <a
+            href={`/api/integrations/linkedin/start?projectId=${projectId}`}
+            className={cn(
+              buttonVariants({ size: "xs" }),
+              !configured && "pointer-events-none opacity-50",
+            )}
+            aria-disabled={!configured}
+          >
+            Connect with LinkedIn
+          </a>
+        </EmptyState>
+      )}
+    </EntityDialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+const X_ERROR_MESSAGES: Record<string, string> = {
+  denied: "X permission was denied.",
+  not_configured: "This integration hasn't been configured yet.",
+  exchange_failed: "Couldn't connect to X, please try again.",
+  state_invalid:
+    "The connection request expired or is invalid, please try again.",
+  unauthorized: "Your session has expired, please sign in again.",
+};
+
+function XTile({
+  base,
+  kategori,
+  credential,
+}: {
+  base: string;
+  kategori: string | undefined;
+  credential: IntegrationCredential | null;
+}) {
+  const connected = credential?.status === "ACTIVE";
+  const expired = credential?.status === "EXPIRED";
+  const params = new URLSearchParams({ integration: "x" });
+  if (kategori) params.set("kategori", kategori);
+
+  return (
+    <IntegrationRow
+      href={`${base}?${params.toString()}`}
+      icon={PURPOSE_ICONS.X.icon}
+      title="X"
+      subtitle={
+        connected
+          ? (credential.accountLabel ?? "Connected")
+          : expired
+            ? "Needs reconnecting"
+            : "Post publishing (pay-per-use)"
+      }
+      badge={
+        connected
+          ? { label: "Connected", tone: "positive" }
+          : expired
+            ? { label: "Needs reconnecting", tone: "waiting" }
+            : { label: "Not connected", tone: "neutral" }
+      }
+    />
+  );
+}
+
+function XDialog({
+  projectId,
+  credential,
+  closeHref,
+  xError,
+}: {
+  projectId: string;
+  credential: IntegrationCredential | null;
+  closeHref: string;
+  xError: string | null;
+}) {
+  const metadata = (credential?.metadata ?? {}) as XCredentialMetadata;
+  const connected = credential?.status === "ACTIVE";
+  const expired = credential?.status === "EXPIRED";
+  const configured = isIntegrationConfigured("X");
+
+  return (
+    <EntityDialog
+      closeHref={closeHref}
+      title="X"
+      header={
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
+            <PURPOSE_ICONS.X.icon className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">X</p>
+            <p className="text-xs text-muted-foreground">
+              Access for post publishing
+            </p>
+          </div>
+        </div>
+      }
+      size="md"
+      bodyClassName="space-y-4 overflow-y-auto p-4"
+    >
+      {xError ? (
+        <p className="rounded-lg bg-destructive/10 p-2.5 text-xs text-destructive">
+          {X_ERROR_MESSAGES[xError] ??
+            "Something went wrong, please try again."}
+        </p>
+      ) : null}
+
+      <p className="rounded-lg bg-amber-500/10 p-2.5 text-xs text-amber-700 dark:text-amber-400">
+        X removed its free API tier for new developers — each post created
+        through this connection has a real, pay-per-use cost on X&apos;s side.
+      </p>
+
+      {credential && (connected || expired) ? (
+        <div className="space-y-3 rounded-lg p-3 ring-1 ring-foreground/10">
+          <div className="flex items-center justify-between gap-2">
+            <p className="min-w-0 truncate text-sm font-medium">
+              {credential.accountLabel ?? "X account"}
+            </p>
+            <StatusBadge
+              meta={
+                connected
+                  ? { label: "Connected", tone: "positive" }
+                  : { label: "Needs reconnecting", tone: "waiting" }
+              }
+            />
+          </div>
+
+          {expired ? (
+            <a
+              href={`/api/integrations/x/start?projectId=${projectId}`}
+              className={cn(buttonVariants({ size: "xs" }))}
+            >
+              Reconnect
+            </a>
+          ) : (
+            <>
+              {metadata.lastTestResult ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Last test ({timeAgo(metadata.lastTestResult.testedAt)}):{" "}
+                  {metadata.lastTestResult.error
+                    ? metadata.lastTestResult.error
+                    : metadata.lastTestResult.username
+                      ? `@${metadata.lastTestResult.username}`
+                      : "OK"}
+                </p>
+              ) : null}
+
+              <div className="flex items-center justify-end gap-1.5">
+                <ActionForm
+                  action={disconnectXAction}
+                  successMessage="Disconnected"
+                >
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <SubmitButton variant="outline" size="xs">
+                    Disconnect
+                  </SubmitButton>
+                </ActionForm>
+                <ActionForm
+                  action={testXConnectionAction}
+                  successMessage="Test successful"
+                >
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <SubmitButton size="xs">Test</SubmitButton>
+                </ActionForm>
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <EmptyState
+          icon={PURPOSE_ICONS.X.icon}
+          title="Not connected yet"
+          hint="Connect with your X account to enable post publishing."
+          className="py-8"
+        >
+          <a
+            href={`/api/integrations/x/start?projectId=${projectId}`}
+            className={cn(
+              buttonVariants({ size: "xs" }),
+              !configured && "pointer-events-none opacity-50",
+            )}
+            aria-disabled={!configured}
+          >
+            Connect with X
           </a>
         </EmptyState>
       )}

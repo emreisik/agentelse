@@ -20,13 +20,13 @@ export type ChatTurnInput = {
   userId: string;
   message: string;
   attachments?: CommandAttachment[];
-  // Gemini'ye inlineData olarak giden gövdeler; attachments ile aynı sırada.
-  // Ayrı taşınıyor çünkü base64 gövde Command satırına yazılmaz (JSON şişer),
-  // yalnızca modele gösterilir.
+  // Bodies sent to Gemini as inlineData; same order as attachments.
+  // Carried separately because the base64 body isn't written to the
+  // Command row (it would bloat the JSON) — it's only shown to the model.
   attachmentBodies?: { mimeType: string; data: string }[];
-  // Bir fikrin kendi sohbet iş parçacığından mesaj gönderiliyorsa — hem
-  // Command bu fikre etiketlenir hem de geçmiş bağlamı (buildContext)
-  // proje-geneli yerine bu fikrin thread'iyle sınırlanır.
+  // Set when a message is sent from an idea's own chat thread — the
+  // Command gets tagged with this idea AND the history context
+  // (buildContext) is scoped to this idea's thread instead of project-wide.
   ideaId?: string;
 };
 
@@ -36,10 +36,11 @@ export type ChatTurnResult = {
   status: CommandReplyStatus;
 };
 
-// Sohbet ekranının sunucu tarafı: her kullanıcı mesajında marka bağlamını
-// toplar, LLM'e niyet + yanıt ürettirir, iş talebiyse CommandService'e
-// devreder ve yanıtı Command satırına kaydeder — sayfa yenilendiğinde
-// konuşma geçmişi veritabanından aynen geri gelir.
+// Server side of the chat screen: on every user message, gathers the brand
+// context, has the LLM produce an intent + reply, hands off to
+// CommandService if it's a work request, and saves the reply to the
+// Command row — so on page reload the conversation history comes back
+// from the database exactly as it was.
 export const ChatService = {
   async turn(input: ChatTurnInput): Promise<ChatTurnResult> {
     const context = await buildContext(input.projectId, input.ideaId);
@@ -66,11 +67,11 @@ export const ChatService = {
       });
       turn = result.output;
     } catch (error) {
-      // LLM düşse bile mesaj kaybolmasın: komut yine kaydedilir, kural
-      // tabanlı ayrıştırıcı devreye girer (eski davranış), yanıt olarak
-      // dürüst bir hata metni yazılır. Gerçek sebep (geçersiz anahtar,
-      // model bulunamadı, kota vb.) kullanıcıya gösterilmediği için burada
-      // loglanmazsa tamamen kayboluyordu.
+      // Even if the LLM fails, the message must not be lost: the command is
+      // still recorded, the rule-based parser kicks in (legacy behavior),
+      // and an honest error message is written as the reply. Since the
+      // real cause (invalid key, model not found, quota, etc.) is never
+      // shown to the user, it would be lost entirely if not logged here.
       console.error(
         "[chat-service] Gemini reasoning failed, falling back to rule-based intent:",
         error instanceof Error ? error.message : error,
@@ -87,16 +88,16 @@ export const ChatService = {
       });
       const reply =
         fallback.status === "PLANNED"
-          ? "Talebinizi görev olarak aldım. (Yapay zekâ yanıtı şu an üretilemedi, iş yine de kuyruğa girdi.)"
-          : `Şu anda yanıt üretemiyorum: ${error instanceof Error ? error.message : "bilinmeyen hata"}. Lütfen tekrar deneyin.`;
+          ? "Got your request as a task. (The AI reply couldn't be generated right now, but the work was still queued.)"
+          : `I can't generate a reply right now: ${error instanceof Error ? error.message : "unknown error"}. Please try again.`;
       const status: CommandReplyStatus =
         fallback.status === "PLANNED" ? "PLANNED" : "ERROR";
       await CommandRepository.recordReply(fallback.commandId, reply, status);
       return { commandId: fallback.commandId, reply, status };
     }
 
-    // LLM'in kararını CommandService'in anladığı niyete çevir. TASK için
-    // taskBrief kullanılır (sohbet bağlamı gömülü); yoksa ham mesaj.
+    // Convert the LLM's decision into the intent CommandService understands.
+    // For TASK, taskBrief is used (chat context embedded); otherwise the raw message.
     const intent = toParsedIntent(turn, input.message);
 
     const submission = await CommandService.submit({
@@ -111,21 +112,22 @@ export const ChatService = {
       intent,
     });
 
-    let reply = turn.reply.trim() || "Aldım.";
+    let reply = turn.reply.trim() || "Got it.";
     let status: CommandReplyStatus;
 
     switch (submission.status) {
       case "PLANNED":
         status = "PLANNED";
         if (submission.requiresApproval) {
-          reply += "\n\nBu iş kritik olduğu için önce onayınıza gelecek.";
+          reply +=
+            "\n\nThis work is critical, so it'll come to you for approval first.";
         }
         break;
       case "APPROVAL_HANDLED":
         status = "APPROVAL_HANDLED";
         break;
       case "NEEDS_PROJECT":
-        // knownProjectId her zaman verildiği için pratikte oluşmaz.
+        // In practice this never happens since knownProjectId is always provided.
         status = "NEEDS_PROJECT";
         break;
       default:
@@ -154,8 +156,8 @@ function toParsedIntent(turn: ChatTurnOutput, message: string): ParsedIntent {
       note: turn.approvalDecision === "REVISE" ? message : undefined,
     };
   }
-  // ANSWER ve UNCLEAR görev açmaz — CommandService komutu kaydeder ve
-  // UNKNOWN_INTENT döner; yanıt zaten LLM'den geldi.
+  // ANSWER and UNCLEAR don't open a task — CommandService records the
+  // command and returns UNKNOWN_INTENT; the reply already came from the LLM.
   return { kind: "UNKNOWN" };
 }
 
@@ -191,12 +193,12 @@ async function buildContext(projectId: string, ideaId?: string) {
         take: 5,
         select: { type: true, entityType: true, createdAt: true },
       }),
-      // Bir fikrin sohbet iş parçacığında geçmiş, o fikre ait TÜM
-      // mesajlardır — kullanıcının yazdıkları (WEB) ve pipeline'ın
-      // yazdığı sistem olayları (SYSTEM: konsey kararı, iş planı, görev/
-      // kreatif tamamlanması). Böylece LLM az önce pipeline'ın ne
-      // yaptığını bilerek yanıt verir. ideaId yoksa (proje-geneli sohbet)
-      // eski davranış korunur: yalnızca WEB.
+      // In an idea's chat thread, history is ALL messages belonging to that
+      // idea — both what the user wrote (WEB) and the system events written
+      // by the pipeline (SYSTEM: council decision, work plan, task/creative
+      // completion). This way the LLM replies knowing what the pipeline
+      // just did. If there's no ideaId (project-wide chat), the old
+      // behavior is preserved: WEB only.
       prisma.command.findMany({
         where: ideaId
           ? { ideaId, source: { in: ["WEB", "SYSTEM"] } }
@@ -217,16 +219,17 @@ async function buildContext(projectId: string, ideaId?: string) {
     throw new Error(`Project ${projectId} has no default brand`);
   }
 
-  // En yeni kayıt en üstte geldi; sohbet kronolojik okunur. SYSTEM
-  // kaynaklı satırların rawText'i boş (pipeline olayı, kullanıcı mesajı
-  // değil) — "Client:" satırı atlanır, yalnızca olay notu yazılır.
+  // The newest record comes first; reversed so the chat reads
+  // chronologically. SYSTEM-sourced rows have an empty rawText (a pipeline
+  // event, not a user message) — the "Client:" line is skipped and only the
+  // event note is written.
   const history = recent
     .reverse()
     .flatMap((command) => {
       const attachmentNote = Array.isArray(command.attachments)
-        ? ` [${(command.attachments as { filename?: string }[])
-            .map((a) => a.filename ?? "dosya")
-            .join(", ")} ekli]`
+        ? ` [attached: ${(command.attachments as { filename?: string }[])
+            .map((a) => a.filename ?? "file")
+            .join(", ")}]`
         : "";
       if (command.source === "SYSTEM") {
         return command.replyText ? [`System: ${command.replyText}`] : [];

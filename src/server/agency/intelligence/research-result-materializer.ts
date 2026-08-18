@@ -42,8 +42,8 @@ type RawSignal = {
 // pipeline — a research task with zero parseable findings simply contributes
 // nothing.
 
-// Sağlayıcıya göre metin farklı alanda gelir: OpenClaw `final`, AI
-// sağlayıcıları `text`.
+// The text arrives in a different field depending on the provider: OpenClaw
+// uses `final`, AI providers use `text`.
 function extractReportText(raw: Record<string, unknown>): string | null {
   for (const key of ["final", "text", "summary"]) {
     const value = raw[key];
@@ -60,13 +60,14 @@ async function extractFindingsFromReport(
   try {
     const { output } = await ReasoningService.run(researchExtractionDef, {
       ...scope,
-      // Çok uzun raporlar prompt'u şişirmesin; başı zaten en yoğun kısım.
+      // Don't let very long reports bloat the prompt; the beginning is
+      // already the densest part.
       context: { capability, report: report.slice(0, 20_000) },
     });
-    // FindingWriter kuralı: VERIFIED_FACT kanıtsız yazılamaz. Model kaynak
-    // URL vermeden "doğrulanmış" diyebiliyor — kuralı gevşetmek yerine
-    // sınıflandırmayı bir kademe indiriyoruz, iddia korunur ama kanıt
-    // zinciri bozulmaz.
+    // FindingWriter rule: VERIFIED_FACT can't be written without evidence.
+    // The model can say "verified" without giving a source URL — instead of
+    // relaxing the rule, we downgrade the classification by one notch; the
+    // claim is preserved but the evidence chain stays intact.
     return output.findings.map((finding) =>
       finding.classification === "VERIFIED_FACT" && !finding.sourceUrl
         ? { ...finding, classification: "LIKELY_FACT" as const }
@@ -74,7 +75,7 @@ async function extractFindingsFromReport(
     );
   } catch (error) {
     console.error(
-      `[research-materializer] ${capability} raporundan bulgu çıkarılamadı`,
+      `[research-materializer] Failed to extract findings from the ${capability} report`,
       error,
     );
     return [];
@@ -111,10 +112,11 @@ export const ResultMaterializer = {
       ? (raw.findings as RawFinding[])
       : [];
 
-    // Gerçek OpenClaw ajanı yapılandırılmış `findings` döndürmez; markdown
-    // bir rapor döndürür (rawResult.final). Yapı yoksa ama metin varsa
-    // raporu bulgulara çeviririz — bu adım olmadan tüm araştırma sessizce
-    // kaybolur ve zincirin geri kalanı boş veriyle çalışır.
+    // The real OpenClaw agent doesn't return structured `findings`; it
+    // returns a markdown report (rawResult.final). If there's no structure
+    // but there is text, we convert the report into findings — without this
+    // step, the entire research would silently vanish and the rest of the
+    // chain would run on empty data.
     if (rawFindings.length === 0) {
       const report = extractReportText(raw);
       if (report) {

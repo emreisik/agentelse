@@ -14,12 +14,13 @@ type Draft = { botToken: string; chatId: string; allowedApproverIds: string };
 
 const EMPTY_DRAFT: Draft = { botToken: "", chatId: "", allowedApproverIds: "" };
 
-// Bu formun taslağı sessionStorage'a yazılır (proje başına ayrı anahtar) —
-// bu oturumda kurulum sırasında birden fazla kez dev sunucusu yeniden
-// başlatılıp sayfa yenilendi ve her seferinde uzun bot token'ı yeniden
-// yazmak gerekti. sessionStorage sekme kapanınca kendiliğinden temizlenir
-// (localStorage değil) ve bağlantı başarılı olduğunda da hemen siliniyor —
-// token gerekenden uzun süre tarayıcıda durmasın diye.
+// This form's draft is written to sessionStorage (a separate key per
+// project) — during setup in this session the dev server restarted and
+// the page reloaded multiple times, requiring the long bot token to be
+// retyped each time. sessionStorage clears itself when the tab closes
+// (unlike localStorage), and it is also cleared immediately once the
+// connection succeeds — so the token doesn't sit in the browser longer
+// than necessary.
 function draftKey(projectId: string): string {
   return `telegram-connect-draft:${projectId}`;
 }
@@ -48,7 +49,7 @@ function readDraft(projectId: string): Draft {
       };
     }
   } catch {
-    // sessionStorage erişilemiyor olabilir (gizli mod vb.) — sessizce yok say.
+    // sessionStorage may be inaccessible (private mode, etc.) — ignore silently.
   }
   return EMPTY_DRAFT;
 }
@@ -57,7 +58,7 @@ function writeDraft(projectId: string, draft: Draft) {
   try {
     window.sessionStorage.setItem(draftKey(projectId), JSON.stringify(draft));
   } catch {
-    // yazılamıyorsa taslak kaydı olmadan devam — kritik değil.
+    // if it can't be written, continue without saving a draft — not critical.
   }
 }
 
@@ -65,14 +66,14 @@ function clearDraft(projectId: string) {
   try {
     window.sessionStorage.removeItem(draftKey(projectId));
   } catch {
-    // yoksay
+    // ignore
   }
 }
 
-// Bot token'ı, sohbet ID'sini ve izinli onaycı listesini kontrollü input
-// olarak tutuyoruz — başarısız bir denemeden sonra (ör. yanlış chat id)
-// veya sayfa yenilemesinden sonra kullanıcı uzun token'ı yeniden yazmak
-// zorunda kalmasın, sadece hatalı alanı düzeltip tekrar denesin.
+// We keep the bot token, chat ID, and allowed approver list as controlled
+// inputs — so that after a failed attempt (e.g. wrong chat id) or a page
+// reload, the user doesn't have to retype the long token, only fix the
+// bad field and retry.
 export function TelegramConnectForm({
   projectId,
   hasExistingConnection,
@@ -85,13 +86,13 @@ export function TelegramConnectForm({
   const [allowedApproverIds, setAllowedApproverIds] = useState("");
   const router = useRouter();
 
-  // Sunucu tarafı render ile eşleşme (hydration) sorunu yaşamamak için
-  // sessionStorage'dan okuma mount sonrası bir efekte bırakılıyor — lazy
-  // useState initializer'ında window'a erişmek SSR/istemci render'ları
-  // arasında uyuşmazlık yaratırdı. Bu, React'in kendi dokümantasyonunun
-  // da örneklediği meşru bir "dış sistemle (tarayıcı depolaması) mount'ta
-  // senkronize ol" efekti — kademeli render riski yaratmıyor çünkü en
-  // fazla bir kez, sadece mount'ta (ya da projectId değişince) çalışıyor.
+  // To avoid a server-render mismatch (hydration) issue, reading from
+  // sessionStorage is deferred to an effect after mount — accessing
+  // window in a lazy useState initializer would create a mismatch
+  // between SSR/client renders. This is a legitimate "sync with an
+  // external system (browser storage) on mount" effect, as React's own
+  // docs illustrate — it doesn't risk cascading renders since it runs at
+  // most once, only on mount (or when projectId changes).
   useEffect(() => {
     const draft = readDraft(projectId);
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -118,7 +119,7 @@ export function TelegramConnectForm({
     async (_prev: State, formData: FormData): Promise<State> => {
       const result = await connectTelegramAction(formData);
       if (result.ok) {
-        toast.success("Telegram bağlandı");
+        toast.success("Telegram connected");
         setBotToken("");
         setChatId("");
         setAllowedApproverIds("");
@@ -149,12 +150,10 @@ export function TelegramConnectForm({
         />
       </div>
       <div className="space-y-1.5">
-        <label className="text-xs font-medium">
-          Sohbet ID veya @kullaniciadi
-        </label>
+        <label className="text-xs font-medium">Chat ID or @username</label>
         <Input
           name="chatId"
-          placeholder="@kanaladi ya da -1001234567890"
+          placeholder="@channelname or -1001234567890"
           className="h-8 text-xs"
           value={chatId}
           onChange={(e) => updateChatId(e.target.value)}
@@ -162,7 +161,7 @@ export function TelegramConnectForm({
       </div>
       <div className="space-y-1.5">
         <label className="text-xs font-medium">
-          Onay yetkisi olan Telegram kullanıcı ID&apos;leri (opsiyonel)
+          Telegram user IDs with approval rights (optional)
         </label>
         <Input
           name="allowedApproverIds"
@@ -176,21 +175,21 @@ export function TelegramConnectForm({
         <p className="text-[11px] text-destructive">{state.message}</p>
       ) : null}
       <p className="text-[11px] text-muted-foreground">
-        Botu @BotFather&apos;dan oluşturun, token&apos;ı buraya girin. Herkese
-        açık kanal için @kullaniciadi yazabilirsiniz; özel grup/kanal için
-        sayısal sohbet ID&apos;sini @userinfobot gibi bir yardımcı botla
-        bulabilirsiniz. Botu hedef kanala/gruba yönetici olarak eklemeyi
-        unutmayın.
+        Create the bot with @BotFather and enter the token here. You can use
+        @username for a public channel; for a private group/channel you can find
+        the numeric chat ID with a helper bot like @userinfobot. Don&apos;t
+        forget to add the bot as an admin to the target channel/group.
       </p>
       <p className="text-[10px] text-muted-foreground/70">
-        Onay isteklerinde &quot;Onayla&quot;/&quot;Reddet&quot; butonlarını
-        kimin kullanabileceğini sınırlar — kendi ID&apos;nizi @userinfobot ile
-        bulabilirsiniz. Boş bırakılırsa onay mesajları sadece bilgilendirme
-        amaçlı gönderilir, buton eklenmez.
+        Restricts who can use the &quot;Approve&quot;/&quot;Reject&quot; buttons
+        on approval requests — you can find your own ID with @userinfobot. If
+        left empty, approval messages are sent for information only, with no
+        buttons.
       </p>
       <p className="text-[10px] text-muted-foreground/70">
-        Girdikleriniz bu sekme açıkken tarayıcınızda tutulur (sayfa yenilense
-        bile kaybolmaz) — bağlantı başarılı olduğunda otomatik temizlenir.
+        Your entries are kept in your browser while this tab is open (they
+        survive a page reload) — cleared automatically once the connection
+        succeeds.
       </p>
       <SubmitButton size="xs">
         {failed ? (
@@ -198,11 +197,7 @@ export function TelegramConnectForm({
         ) : (
           <Plug className="size-3" />
         )}
-        {failed
-          ? "Tekrar Dene"
-          : hasExistingConnection
-            ? "Yeniden Bağla"
-            : "Bağlan"}
+        {failed ? "Try Again" : hasExistingConnection ? "Reconnect" : "Connect"}
       </SubmitButton>
     </form>
   );

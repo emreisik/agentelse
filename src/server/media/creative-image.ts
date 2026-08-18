@@ -13,30 +13,32 @@ import {
 
 export type GeneratedCreativeImage = GeneratedByGemini | GeneratedByOpenClaw;
 
-// Görsel üretiminin tek giriş noktası. Tercih sırası bilinçli:
+// The single entry point for image generation. The preference order is
+// deliberate:
 //
-//   1. Gemini — uygulamanın kendi GEMINI_API_KEY'i, faturası Gemini
-//      hesabına gider.
-//   2. OpenClaw — `infer image generate`, faturası OpenClaw'da yapılandırılmış
-//      OpenAI oturumuna gider (openai/gpt-image-2).
+//   1. Gemini — the app's own GEMINI_API_KEY, billing goes to the Gemini
+//      account.
+//   2. OpenClaw — `infer image generate`, billing goes to the OpenAI
+//      session configured in OpenClaw (openai/gpt-image-2).
 //
-// Gemini yapılandırılmışsa OpenClaw'a hiç düşülmez; yalnızca anahtar yoksa
-// ya da Gemini çağrısı başarısız olursa yedek yol devreye girer.
+// If Gemini is configured, we never fall through to OpenClaw; the fallback
+// path only kicks in if there's no key, or the Gemini call fails.
 export function isCreativeImageConfigured(): boolean {
   return isGeminiImageConfigured() || isOpenClawImageConfigured();
 }
 
 export type GenerateCreativeImageOptions = {
-  // Verildiğinde görsel sıfırdan üretilmez, mevcut görsel talimata göre
-  // düzenlenir. OpenClaw yedeği düzenlemeyi desteklemediği için o yola
-  // düşüldüğünde talimat yeni bir üretim istemi olarak kullanılır.
+  // When given, the image isn't generated from scratch — the existing
+  // image is edited according to the instruction. Since the OpenClaw
+  // fallback doesn't support editing, when that path is taken, the
+  // instruction is used as a fresh generation prompt instead.
   baseImage?: { data: string; mimeType: string };
-  // Sıfırdan üretimde modele markanın gerçek logosunu görsel referans
-  // olarak vermek için (bkz. gemini-image-client.ts). Yalnızca Gemini
-  // path'inde kullanılır — bkz. aşağıdaki not.
+  // For giving the model the brand's actual logo as a visual reference
+  // during from-scratch generation (see gemini-image-client.ts). Only used
+  // on the Gemini path — see the note below.
   referenceImage?: { data: string; mimeType: string };
-  // Gemini'ye giden en-boy oranı ("4:5" gibi) ve OpenClaw'a giden piksel
-  // boyutu — src/lib/creative-platform-format.ts'ten gelir.
+  // The aspect ratio sent to Gemini (like "4:5") and the pixel size sent
+  // to OpenClaw — comes from src/lib/creative-platform-format.ts.
   aspectRatio?: string;
   imageSize?: { width: number; height: number };
 };
@@ -55,13 +57,14 @@ export async function generateCreativeImage(
       referenceImage,
     );
     if (image) return image;
-    // Gemini başarısız oldu (kota, güvenlik reddi, ağ). Yedek varsa dene —
-    // kreatif akışı tek sağlayıcının kötü gününe takılmamalı.
+    // Gemini failed (quota, safety refusal, network). Try the fallback if
+    // one exists — the creative flow shouldn't get stuck on one
+    // provider's bad day.
   }
 
-  // OpenClaw yedeği referans görsel kabul etmiyor (CLI'da böyle bir
-  // parametre yok) — bu yüzden logo/marka referansı sadece Gemini path'inde
-  // kullanılabiliyor, burada sessizce yok sayılır.
+  // The OpenClaw fallback doesn't accept a reference image (there's no
+  // such parameter in the CLI) — so a logo/brand reference is only usable
+  // on the Gemini path, and is silently ignored here.
   if (isOpenClawImageConfigured())
     return generateViaOpenClaw(prompt, imageSize);
   return null;

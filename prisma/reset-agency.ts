@@ -1,16 +1,16 @@
-// Üretime geçiş yardımcısı: seed/demo döneminden kalan TÜM Agency OS verisini
-// (kurulum durumu, anayasa, sinyaller, içgörüler, fırsatlar, fikirler,
-// konseyler, kararlar, hedefler, denetimler, iş planları ve ajans görevleri)
-// proje bazında siler. Projeler, markalar, kullanıcılar, board ve tarayıcı
-// profilleri KALIR — kurulum `/kurulum` sayfasından gerçek sağlayıcılarla
-// yeniden başlatılabilir.
+// Production migration helper: deletes ALL Agency OS data left over from
+// the seed/demo period (setup state, constitution, signals, insights,
+// opportunities, ideas, councils, decisions, goals, audits, work plans,
+// and agency tasks) on a per-project basis. Projects, brands, users, the
+// board, and browser profiles REMAIN — setup can be restarted with real
+// providers from the `/kurulum` page.
 //
-//   npm run db:reset:agency            -> setup durumu olan tüm projeler
-//   npm run db:reset:agency -- biduniq -> yalnız verilen slug'lar
+//   npm run db:reset:agency            -> all projects with setup state
+//   npm run db:reset:agency -- biduniq -> only the given slugs
 //
-// Ayrıca üretim hazırlığı: tarayıcı profillerinin externalProfileId'si
-// "hubconnect" OpenClaw ajanına bağlanır ve setupAutoApprove kapatılır
-// (gerçek kurulumda kararları müşteri verir).
+// Also prepares for production: browser profiles' externalProfileId is
+// bound to the "hubconnect" OpenClaw agent and setupAutoApprove is turned
+// off (in a real setup, the client makes the decisions).
 
 process.loadEnvFile(".env");
 
@@ -41,17 +41,17 @@ async function main() {
   });
 
   if (projects.length === 0) {
-    console.log("Sıfırlanacak proje bulunamadı.");
+    console.log("No projects found to reset.");
     await prisma.$disconnect();
     return;
   }
 
   for (const project of projects) {
     const where = { projectId: project.id };
-    console.log(`\n${project.name} (${project.slug}) sıfırlanıyor...`);
+    console.log(`\n${project.name} (${project.slug}) is being reset...`);
 
-    // Ajans görevleri: iş planına/departmana bağlı olanlar + kurulumun
-    // SYSTEM tarafından açtığı keşif görevleri.
+    // Agency tasks: those tied to a work plan/department + the discovery
+    // tasks setup opened via SYSTEM.
     const agencyTasks = await prisma.task.findMany({
       where: {
         projectId: project.id,
@@ -111,25 +111,25 @@ async function main() {
     await prisma.projectSetupStageRecord.deleteMany({ where });
     await prisma.projectSetupState.deleteMany({ where });
 
-    // Üretim: kurulum kararlarını müşteri verir.
+    // Production: the client makes the setup decisions.
     await prisma.autonomyPolicy.updateMany({
       where,
       data: { setupAutoApprove: false },
     });
 
-    // Tarayıcı profillerini izole "hubconnect" OpenClaw ajanına bağla.
+    // Bind browser profiles to the isolated "hubconnect" OpenClaw agent.
     const boundProfiles = await prisma.browserProfile.updateMany({
       where,
       data: { externalProfileId: OPENCLAW_AGENT_ID },
     });
 
     console.log(
-      `  ${taskIds.length} ajans görevi silindi · ${boundProfiles.count} profil "${OPENCLAW_AGENT_ID}" ajanına bağlandı`,
+      `  ${taskIds.length} agency tasks deleted · ${boundProfiles.count} profiles bound to the "${OPENCLAW_AGENT_ID}" agent`,
     );
   }
 
   console.log(
-    `\n${projects.length} proje sıfırlandı. Gerçek kurulum için: proje > Kurulum sayfası.`,
+    `\n${projects.length} projects reset. For a real setup: project > Setup page.`,
   );
   await prisma.$disconnect();
 }

@@ -14,12 +14,13 @@ export type CreativePromptInput = {
   // this is read defensively rather than typed against one source.
   brandContext?: unknown;
   platformLabel?: string;
-  // Görsele yazılacak başlık metni — verilmişse composition'a "bu metni
-  // oku" talimatı eklenir, verilmezse eskisi gibi metinsiz kalabilir.
+  // The headline text to render on the image — if given, a "render this
+  // text" instruction is added to the composition; if omitted, it can
+  // stay textless as before.
   caption?: string;
-  // Çağıran taraf gerçekten bir referenceImage (bkz. brand-logo.ts)
-  // geçiriyorsa true — prompt metnine "ekli logo" talimatı sadece gerçekten
-  // bir görsel ekleniyorsa yazılsın diye.
+  // True if the caller is actually passing a referenceImage (see
+  // brand-logo.ts) — so the "attached logo" instruction is only written
+  // into the prompt text when an image is actually being attached.
   hasLogoReference?: boolean;
 };
 
@@ -35,12 +36,13 @@ const AVOID =
   "Prefer: visible natural texture, subtle imperfections, natural " +
   "asymmetry, candid unposed framing, faint natural film grain.";
 
-// brandContext'in gerçek şekli — bkz. src/server/context/context-builder.ts
-// (buildExecutionContext, CREATE_SOCIAL_CREATIVE/CREATE_AD_CREATIVE alanları).
-// `identity`/`visualIdentity` bu capability'lerin context'ine hiç girmez
-// (yalnızca BrandConstitution.payload'da var, ki o da fields listesinde
-// değil) — burada aranmıyor olması bilinçli, eskiden buradaki yanlış alan
-// adları hiçbir zaman eşleşmiyordu.
+// The actual shape of brandContext — see
+// src/server/context/context-builder.ts (buildExecutionContext, the
+// CREATE_SOCIAL_CREATIVE/CREATE_AD_CREATIVE fields). `identity`/`visualIdentity`
+// never appear in these capabilities' context (they only exist in
+// BrandConstitution.payload, which itself isn't in the fields list) — not
+// looking for them here is deliberate; the wrong field names that used to
+// be here never matched anything.
 function extractBrandStyle(brandContext: unknown): string | null {
   if (!brandContext || typeof brandContext !== "object") return null;
   const ctx = brandContext as Record<string, unknown>;
@@ -63,11 +65,11 @@ function extractBrandStyle(brandContext: unknown): string | null {
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
-// approvedColors/visualGuidelines gibi alanlar henüz yapılandırılmış bir
-// şemaya bağlı değil (BrandDossier'da serbest Json, bkz. schema.prisma) —
-// string/dizi/obje hangi şekilde gelirse gelsin kısa, okunabilir bir
-// cümleye indirger. Boş/tanımsızsa null döner ki prompt'a gereksiz satır
-// eklenmesin.
+// Fields like approvedColors/visualGuidelines aren't tied to a structured
+// schema yet (free-form Json in BrandDossier, see schema.prisma) — this
+// reduces them to a short, readable sentence regardless of whether they
+// arrive as a string/array/object. Returns null when empty/undefined so no
+// unnecessary line gets added to the prompt.
 function summarizeJsonField(value: unknown): string | null {
   if (!value) return null;
   if (typeof value === "string") return value.trim() || null;

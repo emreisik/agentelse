@@ -24,12 +24,12 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { NbaScoreChip } from "@/components/shared/nba-score-chip";
 import { entityHref } from "../hub-core-params";
 
-// Kanban ızgarası panel genişliğinde (min 440px yan panel) sıkışık kalıyor —
-// bu yüzden HUB CORE içinde durum sütunlarını dikey gruplarla gösteriyoruz.
-// Mercek filtresi client-side kalıyor: hub-core-params.ts'in `sub` şeması
-// yalnızca isler/ayarlar panelleri için tanımlı (DOKUNMA), fikirler paneli
-// için URL'de round-trip eden bir alan yok — bu yüzden filtre state'i burada
-// tutuluyor.
+// The kanban grid ends up cramped at panel width (min 440px side panel) —
+// so within HUB CORE we show status columns as vertical groups instead.
+// The lens filter stays client-side: the `sub` schema in hub-core-params.ts
+// is only defined for the work/settings panels (DO NOT TOUCH), there's no
+// field that round-trips through the URL for the ideas panel — so the
+// filter state is kept here.
 export type IdeaBoardItem = {
   id: string;
   title: string;
@@ -37,11 +37,11 @@ export type IdeaBoardItem = {
   status: IdeaStatus;
   nbaScore: number | null;
   isMock: boolean;
-  // Concept.departmentsInvolved'daki ilk departman — hızlı görsel tarama
-  // için kart kenarında bir renk şeridi olarak gösterilir (bkz.
-  // DEPARTMENT_COLOR). Fikir birden fazla departmanı kapsayabilir; detay
-  // görünümü hepsini badge olarak listeler, kart burada sadece birincili
-  // taşır.
+  // The first department in concept.departmentsInvolved — shown as a color
+  // stripe on the card edge for quick visual scanning (see
+  // DEPARTMENT_COLOR). An idea can span multiple departments; the detail
+  // view lists all of them as badges, the card here only carries the
+  // primary one.
   department?: DepartmentKey;
   councilDots: Array<{
     id: string;
@@ -50,9 +50,9 @@ export type IdeaBoardItem = {
   }>;
 };
 
-// Departman rengi artık kart kenarında şerit değil, başlığın altında dolu
-// (solid) bir etiket olarak taşınıyor — Jira panosundaki kategori
-// etiketlerine benzer tek güçlü renk vurgusu için.
+// The department color is now carried as a solid label below the title
+// rather than a stripe on the card edge — for a single strong color accent
+// similar to category tags on a Jira board.
 const departmentPillClasses =
   "inline-flex w-fit items-center rounded-sm px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase text-[var(--dept-badge-foreground)]";
 
@@ -84,7 +84,7 @@ export function IdeaLensBoard({
                 : "bg-secondary text-muted-foreground hover:bg-accent",
             )}
           >
-            Tüm mercekler
+            All lenses
           </button>
           {usedLenses.map(({ lens, count }) => {
             const meta = CREATIVE_LENS[lens];

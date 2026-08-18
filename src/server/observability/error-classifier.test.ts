@@ -6,7 +6,7 @@ import {
 } from "@/server/observability/error-classifier";
 
 describe("classifyError", () => {
-  it("bakiye hatasını yeniden denenmeyecek şekilde sınıflandırır", () => {
+  it("classifies a billing error as non-retryable", () => {
     const result = classifyError(
       '400 {"type":"error","error":{"message":"Your credit balance is too low to access the Anthropic API."}}',
     );
@@ -16,21 +16,21 @@ describe("classifyError", () => {
     expect(isAutoRecoverable(result)).toBe(false);
   });
 
-  it("hız sınırını soğuma sonrası yeniden denenecek olarak işaretler", () => {
+  it("marks a rate limit as retryable after cooldown", () => {
     const result = classifyError("429 Too Many Requests — rate_limit_error");
     expect(result.category).toBe("RATE_LIMIT");
     expect(isAutoRecoverable(result)).toBe(true);
     expect(result.degradesProvider).toBe(true);
   });
 
-  it("zaman aşımını sağlayıcıyı bozmadan yeniden denenebilir sayar", () => {
+  it("counts a timeout as retryable without degrading the provider", () => {
     const result = classifyError("aborted");
     expect(result.category).toBe("TIMEOUT");
     expect(isAutoRecoverable(result)).toBe(true);
     expect(result.degradesProvider).toBe(false);
   });
 
-  it("bilinmeyen ajan kimliğini yapılandırma sorunu olarak ayırır", () => {
+  it("separates out an unknown agent id as a configuration issue", () => {
     const result = classifyError(
       'Error: Unknown agent id "web-health-public_research".',
     );
@@ -38,7 +38,7 @@ describe("classifyError", () => {
     expect(isAutoRecoverable(result)).toBe(false);
   });
 
-  it("sağlayıcı yokluğunu entegrasyon eksiği olarak sınıflandırır", () => {
+  it("classifies a missing provider as a missing integration", () => {
     const result = classifyError(
       "No execution provider available for capability SIGNAL_SCAN",
     );
@@ -46,7 +46,7 @@ describe("classifyError", () => {
     expect(result.degradesProvider).toBe(false);
   });
 
-  it("şema ihlalini yeniden denenebilir sayar", () => {
+  it("counts a schema violation as retryable", () => {
     const result = classifyError(
       "openclaw agent --json did not return the confirmed schema",
     );
@@ -54,17 +54,17 @@ describe("classifyError", () => {
     expect(isAutoRecoverable(result)).toBe(true);
   });
 
-  it("boş ve tanınmayan mesajlar insan incelemesine düşer", () => {
+  it("falls back to human review for empty and unrecognized messages", () => {
     expect(classifyError(null).category).toBe("UNKNOWN");
-    expect(classifyError("beklenmedik bir şey oldu").strategy).toBe(
+    expect(classifyError("something unexpected happened").strategy).toBe(
       "NEEDS_HUMAN",
     );
   });
 
-  it("bakiye kuralı hız sınırı kuralından önce eşleşir", () => {
-    // Her iki anahtar kelimeyi de içeren mesajda sıralama belirleyicidir:
-    // bakiye sorunu beklemekle çözülmez, yanlış sınıflandırma sonsuz
-    // yeniden deneme döngüsü yaratır.
+  it("matches the billing rule before the rate-limit rule", () => {
+    // Ordering is decisive for a message containing both keywords: a
+    // billing problem isn't solved by waiting, and misclassifying it
+    // creates an infinite retry loop.
     const result = classifyError(
       "quota exceeded — too many requests for this billing period",
     );

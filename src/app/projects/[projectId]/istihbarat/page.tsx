@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
-// İstihbarat artık HUB CORE'un Sinyaller / İçgörü & Fırsat panelleri
-// (bkz. ../page.tsx) — bu rota eski yer imleri/linkler kırılmasın diye
-// canlı tutuluyor.
+// Intelligence is now covered by HUB CORE's Signals / Insight & Opportunity
+// panels (see ../page.tsx) — this route stays alive so old bookmarks/links
+// don't break.
 export default async function IstihbaratRedirect({
   params,
   searchParams,

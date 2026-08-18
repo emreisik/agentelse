@@ -22,24 +22,24 @@ import { FieldGrid, type FieldSpec } from "../primitives/field-grid";
 import type { PanelProps } from "./panel-props";
 
 const GOAL_GROUPS: Array<{ label: string; statuses: ProjectGoalStatus[] }> = [
-  { label: "Kararınız bekleniyor", statuses: ["PROPOSED"] },
-  { label: "Aktif", statuses: ["APPROVED", "ACTIVE"] },
-  { label: "Diğer", statuses: ["PAUSED", "ACHIEVED", "REJECTED", "ARCHIVED"] },
+  { label: "Awaiting your decision", statuses: ["PROPOSED"] },
+  { label: "Active", statuses: ["APPROVED", "ACTIVE"] },
+  { label: "Other", statuses: ["PAUSED", "ACHIEVED", "REJECTED", "ARCHIVED"] },
 ];
 
 const ACTOR_TYPE_LABEL: Record<ActorType, string> = {
-  USER: "Kullanıcı",
-  SYSTEM: "Sistem",
-  AI: "Yapay Zeka",
+  USER: "User",
+  SYSTEM: "System",
+  AI: "AI",
   OPENCLAW: "OpenClaw",
   API: "API",
   PARTNER: "Partner",
 };
 
-// Hedefler paneli — boru hattındaki tek gerçek "karar bekliyor"
-// aksiyonlarının (Onayla/Reddet) yaşadığı yer. `entity` bir hedefi işaret
-// ediyorsa liste yerine o hedefin tam detayı gösterilir.
-export async function HedeflerPanel({ projectId, entity }: PanelProps) {
+// Goals panel — the one place in the pipeline where real "awaiting decision"
+// actions (Approve/Reject) live. If `entity` points to a goal, the full
+// detail of that goal is shown instead of the list.
+export async function GoalsPanel({ projectId, entity }: PanelProps) {
   if (entity?.kind === "goal") {
     return (
       <div className="space-y-4 py-6">
@@ -61,14 +61,14 @@ function BackToList({ projectId }: { projectId: string }) {
   return (
     <Link
       href={buildHubHref(projectId, {
-        panel: "hedefler",
+        panel: "goals",
         sub: null,
         entity: null,
       })}
       className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
     >
       <ArrowLeft className="size-3" />
-      Listeye dön
+      Back to list
     </Link>
   );
 }
@@ -85,8 +85,8 @@ async function GoalListSection({ projectId }: { projectId: string }) {
     return (
       <EmptyState
         icon={Target}
-        title="Hedef yok"
-        hint="Hedefler kurulumun 6. aşamasında araştırma bulgularından önerilir."
+        title="No goals"
+        hint="Goals are suggested from research findings in step 6 of setup."
       />
     );
   }
@@ -143,9 +143,9 @@ async function GoalListSection({ projectId }: { projectId: string }) {
                       {goal.metricKey ? <span>{goal.metricKey}</span> : null}
                       {goal.targetValue !== null ? (
                         <span className="tabular-nums">
-                          Hedef: {goal.targetValue}
+                          Target: {goal.targetValue}
                           {goal.currentValue !== null
-                            ? ` · Mevcut: ${goal.currentValue}`
+                            ? ` · Current: ${goal.currentValue}`
                             : ""}
                         </span>
                       ) : null}
@@ -173,7 +173,7 @@ async function GoalListSection({ projectId }: { projectId: string }) {
                         <>
                           <ActionForm
                             action={rejectGoalAction}
-                            successMessage="Hedef reddedildi"
+                            successMessage="Goal rejected"
                           >
                             <input
                               type="hidden"
@@ -186,12 +186,12 @@ async function GoalListSection({ projectId }: { projectId: string }) {
                               value={goal.id}
                             />
                             <SubmitButton variant="outline" size="xs">
-                              Reddet
+                              Reject
                             </SubmitButton>
                           </ActionForm>
                           <ActionForm
                             action={approveGoalAction}
-                            successMessage="Hedef onaylandı"
+                            successMessage="Goal approved"
                           >
                             <input
                               type="hidden"
@@ -203,7 +203,7 @@ async function GoalListSection({ projectId }: { projectId: string }) {
                               name="goalId"
                               value={goal.id}
                             />
-                            <SubmitButton size="xs">Onayla</SubmitButton>
+                            <SubmitButton size="xs">Approve</SubmitButton>
                           </ActionForm>
                         </>
                       ) : null}
@@ -238,8 +238,8 @@ async function GoalDetail({
         <BackToList projectId={projectId} />
         <EmptyState
           icon={Target}
-          title="Hedef bulunamadı"
-          hint="Bu kayıt silinmiş olabilir."
+          title="Goal not found"
+          hint="This record may have been deleted."
         />
       </div>
     );
@@ -261,38 +261,38 @@ async function GoalDetail({
   ]);
 
   const fields: FieldSpec[] = [
-    { type: "text", label: "Metrik anahtarı", value: goal.metricKey },
-    { type: "text", label: "Hedef değer", value: goal.targetValue },
-    { type: "text", label: "Mevcut değer", value: goal.currentValue },
-    { type: "text", label: "Öncelik", value: goal.priority },
-    { type: "boolean", label: "Demo verisi", value: goal.isMock },
+    { type: "text", label: "Metric key", value: goal.metricKey },
+    { type: "text", label: "Target value", value: goal.targetValue },
+    { type: "text", label: "Current value", value: goal.currentValue },
+    { type: "text", label: "Priority", value: goal.priority },
+    { type: "boolean", label: "Demo data", value: goal.isMock },
     {
       type: "text",
-      label: "Onaylayan tipi",
+      label: "Approver type",
       value: goal.approvedByType ? ACTOR_TYPE_LABEL[goal.approvedByType] : null,
     },
     {
       type: "text",
-      label: "Onaylayan kullanıcı",
+      label: "Approved by",
       value: approvedByUser
         ? (approvedByUser.name ?? approvedByUser.email ?? approvedByUser.id)
         : null,
     },
     {
       type: "date",
-      label: "Oluşturulma",
+      label: "Created",
       value: goal.createdAt,
       relative: true,
     },
     {
       type: "date",
-      label: "Güncellenme",
+      label: "Updated",
       value: goal.updatedAt,
       relative: true,
     },
     {
       type: "node",
-      label: "Kaynak içgörüler",
+      label: "Source insights",
       node:
         sourceInsights.length > 0 ? (
           <div className="flex flex-wrap justify-end gap-1.5">
@@ -358,21 +358,21 @@ async function GoalDetail({
               <>
                 <ActionForm
                   action={rejectGoalAction}
-                  successMessage="Hedef reddedildi"
+                  successMessage="Goal rejected"
                 >
                   <input type="hidden" name="projectId" value={projectId} />
                   <input type="hidden" name="goalId" value={goal.id} />
                   <SubmitButton variant="outline" size="xs">
-                    Reddet
+                    Reject
                   </SubmitButton>
                 </ActionForm>
                 <ActionForm
                   action={approveGoalAction}
-                  successMessage="Hedef onaylandı"
+                  successMessage="Goal approved"
                 >
                   <input type="hidden" name="projectId" value={projectId} />
                   <input type="hidden" name="goalId" value={goal.id} />
-                  <SubmitButton size="xs">Onayla</SubmitButton>
+                  <SubmitButton size="xs">Approve</SubmitButton>
                 </ActionForm>
               </>
             ) : null}

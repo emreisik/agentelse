@@ -5,10 +5,10 @@ import { classifyError } from "@/server/observability/error-classifier";
 import type { ErrorCategory } from "@/server/observability/error-classifier";
 import { capabilityLabel } from "@/lib/labels";
 
-// Sistem Sağlığı ekranının tek veri kaynağı. Hatalar dört ayrı tabloya
-// dağılmış durumda (ExecutionJob, DeadLetterJob, ReasoningCall, Task) —
-// burada tek bir okumada toplanır ve mesaja göre gruplanır, böylece
-// "aynı hata 34 kez" tek satır olarak görünür.
+// The single data source for the System Health screen. Errors are spread
+// across four separate tables (ExecutionJob, DeadLetterJob, ReasoningCall,
+// Task) — here they're gathered in one read and grouped by message, so
+// "the same error 34 times" shows up as a single row.
 
 export type ErrorGroup = {
   signature: string;
@@ -60,8 +60,8 @@ export type SystemHealthReport = {
 
 const STUCK_AFTER_MS = 30 * 60_000;
 
-// Değişken kısımları (id, sayı, tırnak içi değer) siler ki aynı hata tek
-// grupta toplansın.
+// Strips out variable parts (id, number, quoted value) so the same error
+// collapses into a single group.
 function signatureOf(message: string): string {
   return message
     .replace(
@@ -69,7 +69,7 @@ function signatureOf(message: string): string {
       "<id>",
     )
     .replace(/\bc[a-z0-9]{20,}\b/gi, "<id>")
-    .replace(/"[^"]{0,80}"/g, '"<değer>"')
+    .replace(/"[^"]{0,80}"/g, '"<value>"')
     .replace(/\d+/g, "<n>")
     .slice(0, 200)
     .trim();
@@ -108,7 +108,14 @@ export async function buildSystemHealthReport(
       take: 500,
     }),
     prisma.deadLetterJob.findMany({
-      where: { resolvedAt: null },
+      where: {
+        resolvedAt: null,
+        // System-level records (executionJobId null — worker/cron error)
+        // stay visible to everyone; records tied to a specific job are only
+        // visible to that job's workspace (see the same distinction in
+        // retryDeadLetterAction).
+        OR: [{ executionJobId: null }, { executionJob: { workspaceId } }],
+      },
       orderBy: { createdAt: "desc" },
       take: 50,
     }),
@@ -165,14 +172,14 @@ export async function buildSystemHealthReport(
     add(
       job.errorMessage,
       job.updatedAt,
-      `görev: ${capabilityLabel(job.capability)}`,
+      `task: ${capabilityLabel(job.capability)}`,
     );
   }
   for (const call of failedReasoning) {
-    add(call.errorMessage, call.createdAt, `akıl yürütme: ${call.purpose}`);
+    add(call.errorMessage, call.createdAt, `reasoning: ${call.purpose}`);
   }
   for (const entry of deadLetters) {
-    add(entry.lastError, entry.createdAt, "ölü kuyruk");
+    add(entry.lastError, entry.createdAt, "dead letter");
   }
 
   return {

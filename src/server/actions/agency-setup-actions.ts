@@ -30,7 +30,7 @@ export async function startAgencySetupAction(
     const { userId } = await requireUser();
     const access = await requireProjectAccess(userId, projectId);
 
-    if (!brandName) return { ok: false, message: "Marka adı zorunludur" };
+    if (!brandName) return { ok: false, message: "Brand name is required" };
 
     const existing = await prisma.projectSetupState.findUnique({
       where: { projectId },
@@ -61,7 +61,7 @@ export async function startAgencySetupAction(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "İşlem başarısız",
+      message: error instanceof Error ? error.message : "Operation failed",
     };
   }
 }
@@ -80,7 +80,10 @@ export async function submitSetupDecisionAction(
     await requireProjectAccess(userId, projectId);
 
     if (stage !== "GOAL_GENERATION" && stage !== "INITIAL_WORK_PLAN") {
-      return { ok: false, message: `Bu aşama karar almaz: ${stage}` };
+      return {
+        ok: false,
+        message: `This stage does not accept decisions: ${stage}`,
+      };
     }
 
     await ProjectSetupOrchestrator.submitClientDecision(projectId, stage, {
@@ -93,7 +96,7 @@ export async function submitSetupDecisionAction(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "İşlem başarısız",
+      message: error instanceof Error ? error.message : "Operation failed",
     };
   }
 }

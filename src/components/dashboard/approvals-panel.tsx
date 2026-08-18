@@ -24,10 +24,10 @@ export function ApprovalsPanel({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base">
-          Onaylar
+          Approvals
           {approvals.length > 0 ? (
             <Badge variant="outline" className="ml-2 align-middle">
-              {approvals.length} bekliyor
+              {approvals.length} pending
             </Badge>
           ) : null}
         </CardTitle>
@@ -35,14 +35,12 @@ export function ApprovalsPanel({
           href="/approvals"
           className="text-xs text-muted-foreground hover:text-foreground hover:underline"
         >
-          Tümünü gör
+          View all
         </Link>
       </CardHeader>
       <CardContent className="space-y-3">
         {approvals.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Onay bekleyen işlem yok.
-          </p>
+          <p className="text-sm text-muted-foreground">No approvals pending.</p>
         ) : (
           approvals.map((approval) => (
             <div
@@ -51,8 +49,7 @@ export function ApprovalsPanel({
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-sm font-medium">
-                  {projectNameById.get(approval.projectId) ??
-                    "Bilinmeyen proje"}{" "}
+                  {projectNameById.get(approval.projectId) ?? "Unknown project"}{" "}
                   — {approval.entityType}
                 </span>
                 <div className="flex shrink-0 items-center gap-1">
@@ -71,28 +68,28 @@ export function ApprovalsPanel({
               </div>
               <p className="text-xs text-muted-foreground">
                 {approval.requestedByType === "USER"
-                  ? "Kullanıcı"
+                  ? "User"
                   : approval.requestedByType === "SYSTEM"
-                    ? "Sistem"
-                    : "Ajan"}{" "}
-                talep etti · {timeAgo(approval.createdAt)}
+                    ? "System"
+                    : "Agent"}{" "}
+                requested · {timeAgo(approval.createdAt)}
               </p>
               <div className="flex gap-2">
                 <ActionForm
                   action={rejectApprovalAction}
-                  successMessage="Onay reddedildi"
+                  successMessage="Approval rejected"
                 >
                   <input type="hidden" name="approvalId" value={approval.id} />
                   <SubmitButton variant="outline" size="sm">
-                    Reddet
+                    Reject
                   </SubmitButton>
                 </ActionForm>
                 <ActionForm
                   action={approveApprovalAction}
-                  successMessage="Onaylandı"
+                  successMessage="Approved"
                 >
                   <input type="hidden" name="approvalId" value={approval.id} />
-                  <SubmitButton size="sm">Onayla</SubmitButton>
+                  <SubmitButton size="sm">Approve</SubmitButton>
                 </ActionForm>
               </div>
             </div>

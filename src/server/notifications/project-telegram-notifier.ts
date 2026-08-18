@@ -4,11 +4,12 @@ import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/server/security/crypto";
 import { telegramSendMessage } from "@/server/integrations/telegram-client";
 
-// Projenin kendi Telegram bağlantısına (IntegrationCredential, provider=
-// "telegram") bir mesaj gönderir. `telegram.service.ts`'teki global/env
-// tabanlı sistem uyarılarıyla aynı "bildirim hatası asıl işlemi asla
-// bozmamalı" prensibi: proje Telegram'a hiç bağlanmamışsa veya bağlantı
-// REVOKED ise sessizce no-op, gönderim başarısız olursa sadece log.
+// Sends a message to the project's own Telegram connection
+// (IntegrationCredential, provider="telegram"). Same "a notification
+// failure must never break the actual operation" principle as the
+// global/env-based system alerts in `telegram.service.ts`: if the project
+// was never connected to Telegram, or the connection is REVOKED, this is a
+// silent no-op; if sending fails, it's only logged.
 export async function notifyProjectTelegram(
   projectId: string,
   text: string,
@@ -25,6 +26,6 @@ export async function notifyProjectTelegram(
     const token = decryptSecret(credential.encryptedSecret);
     await telegramSendMessage(token, metadata.chatId, text);
   } catch (error) {
-    console.error("Proje Telegram bildirimi gönderilemedi:", error);
+    console.error("Failed to send project Telegram notification:", error);
   }
 }

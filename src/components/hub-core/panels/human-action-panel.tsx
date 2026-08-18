@@ -16,12 +16,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { PanelProps } from "./panel-props";
 
-// Eskiden /human-actions (workspace geneli, proje bağlamının DIŞINDA, hiç
-// projectId filtresi olmayan ayrı bir sayfa) altında yaşayan İnsan Eylem
-// Merkezi — artık her projenin kendi Araçlar menüsünden açılan bir panel,
-// SADECE o projenin bekleyen talepleri (bkz. onaylar-panel.tsx'teki aynı
-// dönüşüm).
-export async function InsanEylemPanel({ projectId }: PanelProps) {
+// Formerly lived under /human-actions (a workspace-wide page OUTSIDE the
+// project context, with no projectId filter at all) as the Human Action
+// Center — now a panel opened from each project's own Tools menu, showing
+// ONLY that project's pending requests (see the same transformation in
+// approvals-panel.tsx).
+export async function HumanActionPanel({ projectId }: PanelProps) {
   const requests = await prisma.humanInterventionRequest.findMany({
     where: { projectId, status: "PENDING" },
     orderBy: { createdAt: "desc" },
@@ -43,7 +43,7 @@ export async function InsanEylemPanel({ projectId }: PanelProps) {
             <p className="text-xs text-muted-foreground">
               {timeAgo(request.createdAt)}
               {request.expiresAt
-                ? ` · Son geçerlilik: ${timeAgo(request.expiresAt)}`
+                ? ` · Expires: ${timeAgo(request.expiresAt)}`
                 : ""}
             </p>
 
@@ -53,35 +53,35 @@ export async function InsanEylemPanel({ projectId }: PanelProps) {
                   variant="outline"
                   size="sm"
                   disabled
-                  title="Uzak tarayıcı oturumu bağlantısı henüz mevcut değil"
+                  title="Remote browser session connection not yet available"
                 >
-                  Tarayıcıyı Aç
+                  Open Browser
                 </Button>
                 <ActionForm
                   action={cancelHumanActionAction}
-                  successMessage="Görev iptal edildi"
+                  successMessage="Task cancelled"
                 >
                   <input type="hidden" name="requestId" value={request.id} />
                   <SubmitButton variant="ghost" size="sm">
-                    Görevi İptal Et
+                    Cancel Task
                   </SubmitButton>
                 </ActionForm>
               </div>
             ) : (
               <ActionForm
                 action={resolveHumanActionAction}
-                successMessage="Yanıt gönderildi"
+                successMessage="Response sent"
                 className="flex items-center gap-2"
               >
                 <input type="hidden" name="requestId" value={request.id} />
                 <Input
                   name="value"
                   placeholder={
-                    request.inputType === "OTP" ? "Kodu girin" : "Değeri girin"
+                    request.inputType === "OTP" ? "Enter code" : "Enter value"
                   }
                   className="max-w-48"
                 />
-                <SubmitButton size="sm">Gönder</SubmitButton>
+                <SubmitButton size="sm">Send</SubmitButton>
               </ActionForm>
             )}
           </CardContent>
@@ -91,8 +91,8 @@ export async function InsanEylemPanel({ projectId }: PanelProps) {
       {requests.length === 0 ? (
         <EmptyState
           icon={UserRoundCog}
-          title="Bekleyen insan eylemi yok"
-          hint="Ajanlar bir doğrulama koduna veya manuel müdahaleye ihtiyaç duyduğunda burada görünür."
+          title="No pending human actions"
+          hint="Appears here when agents need a verification code or manual intervention."
         />
       ) : null}
     </div>

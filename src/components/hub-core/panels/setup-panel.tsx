@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
-  Loader2,
   PartyPopper,
   Rocket,
   Target,
@@ -26,7 +25,6 @@ import {
   submitSetupDecisionAction,
 } from "@/server/actions/agency-setup-actions";
 import { ActionForm } from "@/components/shared/action-form";
-import { LiveRefresh } from "@/components/shared/live-refresh";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { Button } from "@/components/ui/button";
@@ -39,7 +37,6 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { buildHubHref } from "../hub-core-params";
 import { AssetPreviewGrid } from "../primitives/asset-preview";
@@ -79,12 +76,13 @@ function IconChip({
   );
 }
 
-// "Kurulum" düğümü hiçbir `EntityKind`'in sahibi değil (ENTITY_PANEL'de
-// hedef yok) — bu yüzden `entity` burada hiç kullanılmıyor.
-// 12 aşamalı ProjectSetupState/ProjectSetupStageRecord makinesinin tamamı +
-// WAITING_CLIENT karar formları (kurulum/page.tsx'in HUB CORE'a taşınmış
-// hali, DEĞİŞTİRME yasak olan orchestrator/action'ları sadece çağırır).
-export async function KurulumPanel({ projectId }: PanelProps) {
+// The "Setup" node doesn't own any `EntityKind` (no target in ENTITY_PANEL)
+// — so `entity` is never used here.
+// This covers the full 12-stage ProjectSetupState/ProjectSetupStageRecord
+// state machine + WAITING_CLIENT decision forms (the HUB CORE-migrated
+// version of setup/page.tsx; it only calls the orchestrator/actions, which
+// must NOT be modified).
+export async function SetupPanel({ projectId }: PanelProps) {
   const [project, setupState] = await Promise.all([
     prisma.project.findUnique({
       where: { id: projectId },
@@ -106,7 +104,7 @@ export async function KurulumPanel({ projectId }: PanelProps) {
 
   if (!project) {
     return (
-      <p className="py-8 text-sm text-muted-foreground">Proje bulunamadı.</p>
+      <p className="py-8 text-sm text-muted-foreground">Project not found.</p>
     );
   }
 
@@ -150,29 +148,66 @@ export async function KurulumPanel({ projectId }: PanelProps) {
       })
     : [];
 
-  // countries her zaman en az [country] içerir (bkz. ProjectRepository.create
-  // ve project_countries_array migration'ındaki backfill) — birincil pazar
-  // ("country") en başta, diğer seçili pazarlar onu takip eder.
+  // countries always contains at least [country] (see ProjectRepository.create
+  // and the backfill in the project_countries_array migration) — the primary
+  // market ("country") comes first, followed by any other selected markets.
   const markets = project.countries.length
     ? project.countries
     : [project.country];
-  const projectFields: FieldSpec[] = [
-    { type: "text", label: "Ad", value: project.name },
+  const detailFields: FieldSpec[] = [
+    { type: "text", label: "Name", value: project.name },
     { type: "text", label: "Slug", value: project.slug },
     { type: "text", label: "Domain", value: project.domain },
-    { type: "badge", label: "Durum", meta: PROJECT_STATUS[project.status] },
-    { type: "text", label: "Dil", value: languageLabel(project.language) },
+    { type: "badge", label: "Status", meta: PROJECT_STATUS[project.status] },
+    { type: "text", label: "Language", value: languageLabel(project.language) },
     {
       type: "node",
-      label: markets.length > 1 ? "Pazarlar" : "Pazar",
+      label: markets.length > 1 ? "Markets" : "Market",
       node: <MarketsField labels={markets.map((code) => countryLabel(code))} />,
     },
   ];
 
-  // Her aşamanın "ne bulduğunu" göstermek için hafif sayımlar — orchestrator
-  // stage.output'a bunları yazmıyor (sadece INTAKE yazıyor), o yüzden
-  // aşamanın gerçek ürettiği tabloları doğrudan sayıyoruz. Sadece kurulum
-  // başladıysa çalışır.
+  // Once setup has started, fold the intake snapshot into the same list
+  // instead of a second near-duplicate block — only surface brand/domain
+  // again if the user actually changed them from the project's own values.
+  if (setupState) {
+    if (intake.brandName && intake.brandName !== project.name) {
+      detailFields.push({
+        type: "text",
+        label: "Requested Brand Name",
+        value: intake.brandName,
+      });
+    }
+    if (intake.domain && intake.domain !== project.domain) {
+      detailFields.push({
+        type: "text",
+        label: "Requested Domain",
+        value: intake.domain,
+      });
+    }
+    detailFields.push(
+      { type: "text", label: "Description", value: intake.description },
+      { type: "boolean", label: "Auto-Approve", value: intake.autoApprove },
+      {
+        type: "date",
+        label: "Setup Started",
+        value: setupState.createdAt,
+        relative: true,
+      },
+    );
+    if (setupState.activatedAt) {
+      detailFields.push({
+        type: "date",
+        label: "Activated",
+        value: setupState.activatedAt,
+      });
+    }
+  }
+
+  // Lightweight counts to show "what each stage found" — the orchestrator
+  // doesn't write these to stage.output (only INTAKE does), so we count the
+  // tables each stage actually produces directly. Only runs once setup has
+  // started.
   const [
     signalCount,
     constitution,
@@ -202,29 +237,27 @@ export async function KurulumPanel({ projectId }: PanelProps) {
   function findingFor(stage: SetupStage): string | null {
     switch (stage) {
       case "DEEP_DISCOVERY":
-        return signalCount > 0 ? `${signalCount} sinyal bulundu` : null;
+        return signalCount > 0 ? `${signalCount} signals found` : null;
       case "BRAND_CONSTITUTION":
         return constitution
-          ? (constitution.summary ?? "Marka anayasası yazıldı")
+          ? (constitution.summary ?? "Brand constitution written")
           : null;
       case "SIGNAL_PROFILE":
         return signalProfileCount > 0
-          ? `${signalProfileCount} sinyal kategorisi kuruldu`
+          ? `${signalProfileCount} signal categories set up`
           : null;
       case "BASELINE_AUDITS":
-        return auditCount > 0 ? `${auditCount} departman denetlendi` : null;
+        return auditCount > 0 ? `${auditCount} departments audited` : null;
       case "GOAL_GENERATION":
-        return goalCount > 0 ? `${goalCount} hedef önerildi` : null;
+        return goalCount > 0 ? `${goalCount} goals proposed` : null;
       case "INITIAL_OPPORTUNITIES":
         return opportunityCount > 0
-          ? `${opportunityCount} fırsat belirlendi`
+          ? `${opportunityCount} opportunities identified`
           : null;
       case "INITIAL_IDEA_PORTFOLIO":
-        return ideaCount > 0 ? `${ideaCount} fikir üretildi` : null;
+        return ideaCount > 0 ? `${ideaCount} ideas generated` : null;
       case "INITIAL_WORK_PLAN":
-        return workPlanCount > 0
-          ? `${workPlanCount} iş planı oluşturuldu`
-          : null;
+        return workPlanCount > 0 ? `${workPlanCount} work plans created` : null;
       default:
         return null;
     }
@@ -234,19 +267,19 @@ export async function KurulumPanel({ projectId }: PanelProps) {
     const approveButton = (
       <ActionForm
         action={submitSetupDecisionAction}
-        successMessage="Onaylandı, kurulum devam ediyor"
+        successMessage="Approved, setup continuing"
       >
         <input type="hidden" name="projectId" value={projectId} />
         <input type="hidden" name="stage" value={stage} />
         <input type="hidden" name="approve" value="true" />
-        <SubmitButton size="sm">Onayla ve Devam Et</SubmitButton>
+        <SubmitButton size="sm">Approve and Continue</SubmitButton>
       </ActionForm>
     );
 
     if (stage === "GOAL_GENERATION") {
       return (
         <div className="space-y-3">
-          <p className="text-sm font-medium">Önerilen hedefler</p>
+          <p className="text-sm font-medium">Proposed goals</p>
           <div className="space-y-2">
             {proposedGoals.map((goal) => (
               <div
@@ -258,7 +291,7 @@ export async function KurulumPanel({ projectId }: PanelProps) {
                   <p className="text-sm">{goal.title}</p>
                   {goal.metricKey ? (
                     <p className="text-xs text-muted-foreground">
-                      Metrik: {goal.metricKey} · Öncelik P{goal.priority}
+                      Metric: {goal.metricKey} · Priority P{goal.priority}
                     </p>
                   ) : null}
                 </div>
@@ -280,7 +313,7 @@ export async function KurulumPanel({ projectId }: PanelProps) {
     if (stage === "INITIAL_WORK_PLAN") {
       return (
         <div className="space-y-3">
-          <p className="text-sm font-medium">Hazırlanan iş planları</p>
+          <p className="text-sm font-medium">Prepared work plan</p>
           <div className="flex flex-wrap gap-1.5">
             {pendingPlans.map((plan) => (
               <CrossLinkChip
@@ -324,12 +357,14 @@ export async function KurulumPanel({ projectId }: PanelProps) {
   return (
     <div className="space-y-8 py-6">
       <section className="space-y-2">
-        <SectionLabel>Proje</SectionLabel>
-        <Card size="sm">
-          <CardContent>
-            <FieldGrid fields={projectFields} />
-          </CardContent>
-        </Card>
+        <SectionLabel>Project</SectionLabel>
+        <FieldGrid fields={detailFields} />
+        {setupState && intakeAssets.length > 0 ? (
+          <div className="space-y-1.5 border-t border-border/60 pt-3">
+            <p className="text-xs font-medium text-foreground">Assets</p>
+            <AssetPreviewGrid assets={intakeAssets} />
+          </div>
+        ) : null}
       </section>
 
       {!setupState ? (
@@ -337,23 +372,24 @@ export async function KurulumPanel({ projectId }: PanelProps) {
           <CardHeader>
             <CardTitle className="flex items-center gap-3 text-base">
               <IconChip icon={Rocket} />
-              Ajans Kurulumunu Başlat
+              Start Agency Setup
             </CardTitle>
             <CardDescription>
-              Sadece marka adı, domain ve kısa bir açıklama yeterli. Ajansınız
-              markayı derinlemesine araştırır, anayasasını yazar, sinyal
-              profilini kurar, hedefler önerir ve ilk iş planını üretir.
+              Just a brand name, domain, and a short description is enough. Your
+              agency will research the brand in depth, write its constitution,
+              set up a signal profile, propose goals, and produce the first work
+              plan.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             <ActionForm
               action={startAgencySetupAction}
-              successMessage="Kurulum başlatıldı"
+              successMessage="Setup started"
               className="space-y-4"
             >
               <input type="hidden" name="projectId" value={projectId} />
               <div className="space-y-1.5">
-                <Label htmlFor="brandName">Marka Adı</Label>
+                <Label htmlFor="brandName">Brand Name</Label>
                 <Input
                   id="brandName"
                   name="brandName"
@@ -366,17 +402,17 @@ export async function KurulumPanel({ projectId }: PanelProps) {
                 <Input
                   id="domain"
                   name="domain"
-                  placeholder="ornek.com"
+                  placeholder="example.com"
                   defaultValue={project.domain ?? ""}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="description">Açıklama</Label>
+                <Label htmlFor="description">Description</Label>
                 <Textarea
                   id="description"
                   name="description"
                   rows={3}
-                  placeholder="Ne istediğinizi serbestçe anlatın: büyüme, marka bilinirliği, sosyal, SEO..."
+                  placeholder="Describe what you want in your own words: growth, brand awareness, social, SEO..."
                 />
               </div>
               <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/60 bg-muted/30 p-3 text-sm transition-colors hover:bg-muted/50">
@@ -388,21 +424,22 @@ export async function KurulumPanel({ projectId }: PanelProps) {
                 />
                 <span>
                   <span className="block font-medium">
-                    Kararları otomatik onayla
+                    Auto-approve decisions
                   </span>
                   <span className="block text-xs text-muted-foreground">
-                    Hedefler ve ilk iş planı insan onayı beklemeden ilerler.
+                    Goals and the initial work plan proceed without waiting for
+                    human approval.
                   </span>
                 </span>
               </label>
               <SubmitButton size="lg">
-                Kurulumu Başlat
+                Start Setup
                 <ArrowRight className="size-4" />
               </SubmitButton>
             </ActionForm>
             <div className="border-t border-border/60 pt-5">
               <p className="mb-2.5 text-xs font-medium text-muted-foreground">
-                12 aşamalı süreç
+                12-stage process
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {SETUP_STAGE_ORDER_UI.map((stage, i) => (
@@ -425,12 +462,12 @@ export async function KurulumPanel({ projectId }: PanelProps) {
                 <IconChip icon={PartyPopper} tone="success" />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">
-                    Ajansınız aktif! Kurulum {shortDate(setupState.activatedAt)}{" "}
-                    tarihinde tamamlandı.
+                    Your agency is active! Setup was completed on{" "}
+                    {shortDate(setupState.activatedAt)}.
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Sürekli döngü çalışıyor: sinyaller toplanıyor, fırsatlar
-                    değerlendiriliyor, işler üretiliyor.
+                    The continuous loop is running: signals are being collected,
+                    opportunities are being evaluated, work is being produced.
                   </p>
                 </div>
                 <Button
@@ -445,93 +482,19 @@ export async function KurulumPanel({ projectId }: PanelProps) {
                   size="sm"
                   className="shrink-0"
                 >
-                  Sohbete Dön
+                  Back to Chat
                 </Button>
               </CardContent>
             </Card>
-          ) : (
-            <Card>
-              <CardContent className="flex items-center gap-4">
-                <IconChip icon={Loader2} iconClassName="animate-spin" />
-                <div className="min-w-0 flex-1 space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">
-                        {SETUP_STAGE[setupState.currentStage].label}
-                      </p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {SETUP_STAGE_HINTS[setupState.currentStage]}
-                      </p>
-                    </div>
-                    <span className="shrink-0 font-heading text-lg font-semibold tabular-nums">
-                      %{percent}
-                    </span>
-                  </div>
-                  <Progress value={percent} />
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-xs text-muted-foreground">
-                      {done}/{total} aşama tamam ·{" "}
-                      {intake.autoApprove
-                        ? "Otomatik onay açık"
-                        : "Kararlar sizin onayınızı bekleyecek"}
-                    </p>
-                    <LiveRefresh intervalMs={4000} />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+          ) : null}
 
           <section className="space-y-2">
-            <SectionLabel>Alım Bilgileri</SectionLabel>
-            <Card size="sm">
-              <CardContent className="space-y-3">
-                <FieldGrid
-                  fields={[
-                    {
-                      type: "text",
-                      label: "Marka Adı",
-                      value: intake.brandName,
-                    },
-                    { type: "text", label: "Domain", value: intake.domain },
-                    {
-                      type: "text",
-                      label: "Açıklama",
-                      value: intake.description,
-                    },
-                    {
-                      type: "boolean",
-                      label: "Otomatik Onay",
-                      value: intake.autoApprove,
-                    },
-                    {
-                      type: "date",
-                      label: "Oluşturuldu",
-                      value: setupState.createdAt,
-                      relative: true,
-                    },
-                    {
-                      type: "date",
-                      label: "Aktifleşti",
-                      value: setupState.activatedAt,
-                    },
-                  ]}
-                />
-                {intakeAssets.length > 0 ? (
-                  <div className="space-y-1.5 border-t border-border/60 pt-3">
-                    <p className="text-xs font-medium text-foreground">
-                      Varlıklar
-                    </p>
-                    <AssetPreviewGrid assets={intakeAssets} />
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-          </section>
-
-          <section className="space-y-2">
-            <SectionLabel>Aşamalar</SectionLabel>
-            <SetupStageShow entries={stageEntries} />
+            <SectionLabel>Stages</SectionLabel>
+            <SetupStageShow
+              entries={stageEntries}
+              percent={activated ? undefined : percent}
+              autoApproveOn={activated ? undefined : intake.autoApprove}
+            />
           </section>
         </>
       )}
@@ -546,53 +509,53 @@ function stageLink(
   switch (stage) {
     case "BRAND_CONSTITUTION":
       return {
-        href: buildHubHref(projectId, { panel: "marka-beyni" }),
-        label: "Anayasayı gör →",
+        href: buildHubHref(projectId, { panel: "brand-brain" }),
+        label: "View constitution →",
       };
     case "SIGNAL_PROFILE":
       return {
-        href: buildHubHref(projectId, { panel: "sinyaller" }),
-        label: "Sinyal profilini gör →",
+        href: buildHubHref(projectId, { panel: "signals" }),
+        label: "View signal profile →",
       };
     case "BASELINE_AUDITS":
       return {
-        href: buildHubHref(projectId, { panel: "departmanlar" }),
-        label: "Denetimleri gör →",
+        href: buildHubHref(projectId, { panel: "departments" }),
+        label: "View audits →",
       };
     case "GOAL_GENERATION":
       return {
-        href: buildHubHref(projectId, { panel: "hedefler" }),
-        label: "Hedefleri gör →",
+        href: buildHubHref(projectId, { panel: "goals" }),
+        label: "View goals →",
       };
     case "AGENCY_CONFIGURATION":
       return {
-        href: buildHubHref(projectId, { panel: "departmanlar" }),
-        label: "Departmanları gör →",
+        href: buildHubHref(projectId, { panel: "departments" }),
+        label: "View departments →",
       };
     case "AUTONOMY_CONFIGURATION":
       return {
-        href: buildHubHref(projectId, { panel: "ayarlar" }),
-        label: "Otonomi ayarlarını gör →",
+        href: buildHubHref(projectId, { panel: "settings" }),
+        label: "View autonomy settings →",
       };
     case "INITIAL_OPPORTUNITIES":
       return {
-        href: buildHubHref(projectId, { panel: "icgoru-firsat" }),
-        label: "Fırsatları gör →",
+        href: buildHubHref(projectId, { panel: "insights-opportunities" }),
+        label: "View opportunities →",
       };
     case "INITIAL_IDEA_PORTFOLIO":
       return {
-        href: buildHubHref(projectId, { panel: "fikirler" }),
-        label: "Fikirleri gör →",
+        href: buildHubHref(projectId, { panel: "ideas" }),
+        label: "View ideas →",
       };
     case "INITIAL_WORK_PLAN":
       return {
-        href: buildHubHref(projectId, { panel: "isler" }),
-        label: "İş planlarını gör →",
+        href: buildHubHref(projectId, { panel: "work" }),
+        label: "View work plan →",
       };
     case "DEEP_DISCOVERY":
       return {
-        href: buildHubHref(projectId, { panel: "sinyaller" }),
-        label: "Bulguları gör →",
+        href: buildHubHref(projectId, { panel: "signals" }),
+        label: "View findings →",
       };
     default:
       return null;

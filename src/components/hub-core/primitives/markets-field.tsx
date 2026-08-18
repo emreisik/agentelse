@@ -10,10 +10,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 
-// Proje kurulumunda "Avrupa" gibi bir kıta kısayoluyla 26 ülkeye kadar pazar
-// seçilebiliyor — hepsini FieldGrid satırında chip olarak basmak satırı
-// birden çok satıra bölüp kartı aşağı şişiriyordu. Bunun yerine tek satırlık
-// bir özet ("Türkiye +25") gösterilir, tam liste tıklayınca popover'da açılır.
+// During project setup, up to 26 markets can be selected via a continent
+// shortcut like "Europe" — printing all of them as chips in a FieldGrid
+// row used to wrap the row across multiple lines and bloat the card. A
+// single-line summary ("Turkey +25") is shown instead, with the full list
+// opening in a popover on click.
 export function MarketsField({ labels }: { labels: string[] }) {
   const [open, setOpen] = useState(false);
   const [primary, ...rest] = labels;
@@ -46,7 +47,7 @@ export function MarketsField({ labels }: { labels: string[] }) {
       </PopoverTrigger>
       <PopoverContent align="end" className="max-h-64 w-64 overflow-y-auto">
         <p className="mb-1.5 text-xs font-medium text-muted-foreground">
-          {labels.length} pazar
+          {labels.length} markets
         </p>
         <div className="flex flex-wrap gap-1">
           {labels.map((label, index) => (
@@ -55,7 +56,7 @@ export function MarketsField({ labels }: { labels: string[] }) {
               className="rounded-md bg-secondary px-1.5 py-0.5 font-mono text-[11px] text-secondary-foreground"
             >
               {label}
-              {index === 0 ? " · birincil" : ""}
+              {index === 0 ? " · primary" : ""}
             </span>
           ))}
         </div>

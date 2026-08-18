@@ -5,6 +5,7 @@ import type {
   ApprovalLevel,
   CapabilityKey,
   DepartmentKey,
+  RiskLevel,
   SocialPlatform,
 } from "@prisma/client";
 
@@ -111,53 +112,23 @@ export const TaskPlanner = {
       ...(input.payloadExtra ?? {}),
     };
 
-    if (requiresApproval) {
-      await TaskRepository.transition(
-        task.id,
-        input.projectId,
-        "WAITING_APPROVAL",
-      );
-      const approval = await ApprovalRepository.create({
-        workspaceId: input.workspaceId,
-        projectId: input.projectId,
-        brandId: input.brandId,
-        taskId: task.id,
-        entityType: "Task",
-        entityId: task.id,
-        type: publishApprovalType(input.capability),
-        level,
-        requestedByType: input.createdByType,
-        requestedById: input.createdByUserId,
-      });
-
-      // "Altın kural": görev onaya park edilince sohbette AYNI anda
-      // görünür olsun — ayrı bir Onaylar panelinde aramaya gerek kalmadan
-      // Onayla/Reddet kartı buradan da işlenebilir (bkz. idea-event-card.tsx
-      // ApprovalRequestCard). Best-effort, fikre bağlanamıyorsa atlanır.
-      await IdeaChatRepository.postApprovalRequestCard({
-        workspaceId: input.workspaceId,
-        projectId: input.projectId,
-        taskId: task.id,
-        approvalId: approval.id,
-        title: task.title,
-        riskLevel,
-        departmentKey: input.departmentKey,
-      }).catch((error) => {
-        console.error("[task-planner] postApprovalRequestCard failed:", error);
-      });
-
-      return { task, dispatched: false as const, level };
-    }
-
     if (input.deferDispatch) {
-      // Plan-node task: stays READY (or is BLOCKED by the plan builder);
-      // WorkPlanProgressor dispatches it when dependencies complete.
+      // Plan-node task: stays READY regardless of requiresApproval —
+      // WorkPlanProgressor.dispatchReadyTasks only acts on it once its
+      // dependencies are COMPLETED, and decides then whether to park it for
+      // approval (via requestApproval) or dispatch it straight to
+      // execution. Parking it here, before its dependencies have run, would
+      // let a human approve a task built on data that doesn't exist yet.
       return {
         task,
         dispatched: false as const,
         level,
         deferred: true as const,
       };
+    }
+
+    if (requiresApproval) {
+      return TaskPlanner.requestApproval(task, level);
     }
 
     await TaskRepository.transition(task.id, input.projectId, "QUEUED");
@@ -200,6 +171,72 @@ export const TaskPlanner = {
       contextSnapshotId: snapshot.id,
       payload: task.payload ?? { request: task.description ?? "" },
     });
+  },
+
+  // Parks a task behind an Approval and posts the chat card. Shared by the
+  // immediate path (planForCapability, level already resolved) and
+  // WorkPlanProgressor.dispatchReadyTasks (deferred node becomes ready,
+  // level re-resolved from the persisted task — the callers that use
+  // deferDispatch never pass approvalOverrides, so this matches the
+  // original resolution exactly).
+  async requestApproval(
+    task: {
+      id: string;
+      workspaceId: string;
+      projectId: string;
+      brandId: string;
+      title: string;
+      capability: CapabilityKey;
+      riskLevel: RiskLevel;
+      createdByType: ActorType;
+      createdByUserId: string | null;
+      departmentKey: DepartmentKey | null;
+    },
+    level?: ApprovalLevel,
+  ) {
+    const resolvedLevel =
+      level ??
+      ApprovalPolicy.resolveLevel(task.capability, {
+        createdByType: task.createdByType,
+        riskLevel: task.riskLevel,
+      });
+
+    await TaskRepository.transition(
+      task.id,
+      task.projectId,
+      "WAITING_APPROVAL",
+    );
+    const approval = await ApprovalRepository.create({
+      workspaceId: task.workspaceId,
+      projectId: task.projectId,
+      brandId: task.brandId,
+      taskId: task.id,
+      entityType: "Task",
+      entityId: task.id,
+      type: publishApprovalType(task.capability),
+      level: resolvedLevel,
+      requestedByType: task.createdByType,
+      requestedById: task.createdByUserId ?? undefined,
+    });
+
+    // "Golden rule": the moment a task is parked for approval, it should
+    // show up in the chat AT THE SAME TIME — the Approve/Reject card can
+    // be handled right here, with no need to search a separate Approvals
+    // panel (see idea-event-card.tsx ApprovalRequestCard). Best-effort,
+    // skipped if it can't be linked to an idea.
+    await IdeaChatRepository.postApprovalRequestCard({
+      workspaceId: task.workspaceId,
+      projectId: task.projectId,
+      taskId: task.id,
+      approvalId: approval.id,
+      title: task.title,
+      riskLevel: task.riskLevel,
+      departmentKey: task.departmentKey ?? undefined,
+    }).catch((error) => {
+      console.error("[task-planner] postApprovalRequestCard failed:", error);
+    });
+
+    return { task, dispatched: false as const, level: resolvedLevel };
   },
 };
 

@@ -17,7 +17,7 @@ export async function resolveHumanActionAction(
   try {
     const requestId = String(formData.get("requestId"));
     const value = String(formData.get("value") ?? "");
-    if (!value.trim()) return { ok: false, message: "Değer boş olamaz" };
+    if (!value.trim()) return { ok: false, message: "Value cannot be empty" };
 
     const { userId } = await requireUser();
     const request = await prisma.humanInterventionRequest.findUniqueOrThrow({
@@ -37,7 +37,7 @@ export async function resolveHumanActionAction(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "İşlem başarısız",
+      message: error instanceof Error ? error.message : "Operation failed",
     };
   }
 }
@@ -61,7 +61,7 @@ export async function cancelHumanActionAction(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "İşlem başarısız",
+      message: error instanceof Error ? error.message : "Operation failed",
     };
   }
 }

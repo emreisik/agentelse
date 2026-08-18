@@ -58,10 +58,11 @@ export const CapabilityRouter = {
     capability: CapabilityKey,
     context: ExecutionPolicyContext,
   ): Promise<ExecutionProvider> {
-    // Devre kesici: son yarım saatte sürekli hata veren (kota bitmiş,
-    // anahtarı geçersiz, erişilemeyen) sağlayıcılar atlanır ve iş varsa bir
-    // sonraki sağlayıcıya gider. Sağlık okunamazsa hiçbir sağlayıcı elenmez
-    // — gözlemlenebilirlik katmanı yürütmeyi engellememeli.
+    // Circuit breaker: providers that have been failing continuously over
+    // the last half hour (quota exhausted, invalid key, unreachable) are
+    // skipped, and if there's work, it goes to the next provider. If health
+    // can't be read, no provider is excluded — the observability layer must
+    // never block execution.
     const unhealthy = await ProviderHealthService.unhealthyProviderKeys().catch(
       () => new Set<string>(),
     );
@@ -80,7 +81,7 @@ export const CapabilityRouter = {
     throw new AgentelseError(
       "PROVIDER_UNAVAILABLE",
       skipped.length > 0
-        ? `No healthy execution provider available for capability ${capability} (devre kesici: ${skipped.join(", ")})`
+        ? `No healthy execution provider available for capability ${capability} (circuit breaker: ${skipped.join(", ")})`
         : `No execution provider available for capability ${capability}`,
     );
   },

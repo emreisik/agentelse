@@ -38,33 +38,33 @@ import { JsonViewer } from "../primitives/json-viewer";
 import type { PanelProps } from "./panel-props";
 
 const ACTOR_TYPE_LABEL: Record<ActorType, string> = {
-  USER: "Kullanıcı",
-  SYSTEM: "Sistem",
-  AI: "Yapay Zekâ",
+  USER: "User",
+  SYSTEM: "System",
+  AI: "AI",
   OPENCLAW: "OpenClaw",
   API: "API",
-  PARTNER: "Ortak",
+  PARTNER: "Partner",
 };
 
 const EVIDENCE_SOURCE_LABEL: Record<EvidenceSourceType, string> = {
-  WEB_PAGE: "Web Sayfası",
-  SCREENSHOT: "Ekran Görüntüsü",
+  WEB_PAGE: "Web Page",
+  SCREENSHOT: "Screenshot",
   API: "API",
-  DOCUMENT: "Doküman",
-  SOCIAL_MEDIA: "Sosyal Medya",
-  AD_LIBRARY: "Reklam Kütüphanesi",
-  SEARCH_RESULT: "Arama Sonucu",
-  USER_INPUT: "Kullanıcı Girdisi",
-  INTERNAL_DATA: "Dahili Veri",
-  SYSTEM_VERIFICATION: "Sistem Doğrulaması",
+  DOCUMENT: "Document",
+  SOCIAL_MEDIA: "Social Media",
+  AD_LIBRARY: "Ad Library",
+  SEARCH_RESULT: "Search Result",
+  USER_INPUT: "User Input",
+  INTERNAL_DATA: "Internal Data",
+  SYSTEM_VERIFICATION: "System Verification",
 };
 
-// "Marka Beyni" düğümü — kodlanmış/referans çıktı katmanı: anayasa, marka
-// varlıkları, strateji sürümleri, kararlar, kanıtlar, öğrenimler
-// (marka-beyni-tab.tsx'in HUB CORE'a taşınmış + genişletilmiş hali).
-// `constitution`, ENTITY_PANEL'de bu panele ait tek tür — entity derinliği
-// sadece o tür için devreye girer.
-export async function MarkaBeyniPanel({ projectId, entity }: PanelProps) {
+// The "Brand Brain" node — the codified/reference output layer: constitution,
+// brand assets, strategy versions, decisions, evidence, learnings
+// (the HUB CORE-migrated + expanded version of brand-brain-tab.tsx).
+// `constitution` is the only type in ENTITY_PANEL that belongs to this panel
+// — entity depth only kicks in for that type.
+export async function BrandBrainPanel({ projectId, entity }: PanelProps) {
   const brand = await prisma.brand.findFirst({
     where: { projectId, isDefault: true },
     select: { id: true },
@@ -75,8 +75,8 @@ export async function MarkaBeyniPanel({ projectId, entity }: PanelProps) {
       <div className="py-8">
         <EmptyState
           icon={BookOpen}
-          title="Marka bulunamadı"
-          hint="Bu projede henüz varsayılan bir marka yok."
+          title="Brand not found"
+          hint="This project doesn't have a default brand yet."
         />
       </div>
     );
@@ -91,14 +91,14 @@ export async function MarkaBeyniPanel({ projectId, entity }: PanelProps) {
       <div className="space-y-4 py-6">
         <Link
           href={buildHubHref(projectId, {
-            panel: "marka-beyni",
+            panel: "brand-brain",
             entity: null,
           })}
           scroll={false}
           className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="size-3.5" />
-          Listeye dön
+          Back to list
         </Link>
         <ConstitutionSection
           projectId={projectId}
@@ -116,23 +116,23 @@ export async function MarkaBeyniPanel({ projectId, entity }: PanelProps) {
   return (
     <div className="space-y-8 py-6">
       <AssetsSection projectId={projectId} brandId={brandId} />
-      <Section title="Anayasa" icon={BookOpen}>
+      <Section title="Constitution" icon={BookOpen}>
         <ConstitutionSection
           projectId={projectId}
           brandId={brandId}
           focusedId={null}
         />
       </Section>
-      <Section title="Strateji Sürümleri" icon={GitBranch}>
+      <Section title="Strategy Versions" icon={GitBranch}>
         <StrategyVersionsSection brandId={brandId} />
       </Section>
-      <Section title="Marka Kararları" icon={Gavel}>
+      <Section title="Brand Decisions" icon={Gavel}>
         <DecisionsSection brandId={brandId} />
       </Section>
-      <Section title="Kanıtlar" icon={FileSearch}>
+      <Section title="Evidence" icon={FileSearch}>
         <EvidenceSection brandId={brandId} />
       </Section>
-      <Section title={`Öğrenimler (${learningCount})`} icon={GraduationCap}>
+      <Section title={`Learnings (${learningCount})`} icon={GraduationCap}>
         <LearningsSection projectId={projectId} />
       </Section>
     </div>
@@ -186,18 +186,18 @@ async function ConstitutionSection({
     return (
       <EmptyState
         icon={BookOpen}
-        title="Anayasa henüz üretilmedi"
-        hint="Marka anayasası kurulumun 3. aşamasında araştırma bulgularından sentezlenir."
+        title="Constitution not generated yet"
+        hint="The brand constitution is synthesized from research findings during stage 3 of setup."
       >
         <Link
           href={buildHubHref(projectId, {
-            panel: "kurulum",
+            panel: "setup",
             entity: null,
           })}
           scroll={false}
           className="text-xs text-primary underline-offset-2 hover:underline"
         >
-          Kuruluma git →
+          Go to setup →
         </Link>
       </EmptyState>
     );
@@ -246,7 +246,7 @@ async function ConstitutionSection({
         ))}
         <StatusBadge meta={CONSTITUTION_STATUS[constitution.status]} />
         {constitution.isMock ? (
-          <StatusBadge meta={{ label: "Demo verisi", tone: "special" }} />
+          <StatusBadge meta={{ label: "Demo data", tone: "special" }} />
         ) : null}
       </div>
 
@@ -254,24 +254,24 @@ async function ConstitutionSection({
         fields={[
           {
             type: "date",
-            label: "Oluşturuldu",
+            label: "Created",
             value: constitution.createdAt,
             relative: true,
           },
           {
             type: "date",
-            label: "Güncellendi",
+            label: "Updated",
             value: constitution.updatedAt,
             relative: true,
           },
           {
             type: "text",
-            label: "Dil",
+            label: "Language",
             value: payload.language as string | undefined,
           },
           {
             type: "text",
-            label: "Ülke",
+            label: "Country",
             value: payload.country as string | undefined,
           },
         ]}
@@ -284,7 +284,7 @@ async function ConstitutionSection({
               <span className="flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1 text-[10px] font-semibold text-muted-foreground">
                 {constitution.sourceFindingIds.length}
               </span>
-              Kaynak Bulgular
+              Source Findings
             </span>
             <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open/findings:rotate-180" />
           </summary>
@@ -377,10 +377,11 @@ function SectionValue({ value }: { value: unknown }) {
 
 type ColorSwatch = { hex: string; name?: string };
 
-// approvedColors/approvedFonts hâlâ serbest Json (bkz. creative-template.ts
-// extractAccentColorHex) — tek hex string'i, hex dizisini ve {hex,name}
-// nesne dizisini savunmacı biçimde swatch'e çevirir. Ayrıştırılamayan
-// veri sessizce kaybolmaz: çağıran taraf ham JSON'u FieldGrid'de gösterir.
+// approvedColors/approvedFonts is still a free-form Json field (see
+// creative-template.ts extractAccentColorHex) — defensively converts a
+// single hex string, a hex array, and a {hex,name} object array into
+// swatches. Data that can't be parsed isn't silently dropped: the caller
+// shows the raw JSON in FieldGrid instead.
 function parseColorSwatches(value: unknown): ColorSwatch[] {
   const HEX = /^#[0-9a-fA-F]{3,8}$/;
   const entries = Array.isArray(value) ? value : value ? [value] : [];
@@ -472,9 +473,9 @@ async function AssetsSection({
 
   const colors = parseColorSwatches(dossier?.approvedColors);
   const fonts = parseFontNames(dossier?.approvedFonts);
-  // Renk/font bir listeye sığmayan bir şekilde geldiyse (örn. serbest metin
-  // ya da beklenmeyen bir obje şekli) ham veri swatch listesinin altında
-  // JsonViewer olarak kalır — "eksik veri kalmasın" ilkesi.
+  // If colors/fonts arrive in a shape that doesn't fit a list (e.g. free
+  // text or an unexpected object shape), the raw data stays below the
+  // swatch list as a JsonViewer — the "don't let data go missing" principle.
   const colorsUnparsed =
     hasContent(dossier?.approvedColors) && colors.length === 0;
   const fontsUnparsed =
@@ -482,30 +483,30 @@ async function AssetsSection({
 
   const dossierFields: FieldSpec[] = dossier
     ? [
-        { type: "text", label: "Özet", value: dossier.summary },
-        { type: "text", label: "Dil", value: dossier.language },
-        { type: "text", label: "Ülke", value: dossier.country },
+        { type: "text", label: "Summary", value: dossier.summary },
+        { type: "text", label: "Language", value: dossier.language },
+        { type: "text", label: "Country", value: dossier.country },
         {
           type: "text",
-          label: "Güncel Strateji",
+          label: "Current Strategy",
           value: strategyVersionLabel,
         },
         {
           type: "json",
-          label: "Hedef Kitleler",
+          label: "Target Audiences",
           value: dossier.targetAudiences,
         },
-        { type: "json", label: "Pazarlar", value: dossier.markets },
-        { type: "json", label: "Ürünler", value: dossier.products },
-        { type: "json", label: "Hizmetler", value: dossier.services },
+        { type: "json", label: "Markets", value: dossier.markets },
+        { type: "json", label: "Products", value: dossier.products },
+        { type: "json", label: "Services", value: dossier.services },
         {
           type: "json",
-          label: "Görsel Kurallar",
+          label: "Visual Guidelines",
           value: dossier.visualGuidelines,
         },
         {
           type: "date",
-          label: "Güncellendi",
+          label: "Updated",
           value: dossier.updatedAt,
           relative: true,
         },
@@ -520,11 +521,11 @@ async function AssetsSection({
         </span>
         <div>
           <p className="font-heading text-base font-semibold tracking-tight text-foreground">
-            Varlıklar
+            Assets
           </p>
           <p className="text-xs text-muted-foreground">
-            Markanın korunan çekirdek kimliği — logo, konumlandırma, ses tonu,
-            onaylı renk ve fontlar
+            The brand&apos;s protected core identity — logo, positioning, tone of
+            voice, approved colors and fonts
           </p>
         </div>
       </div>
@@ -542,22 +543,24 @@ async function AssetsSection({
               </blockquote>
             ) : !dossier ? (
               <p className="text-sm text-muted-foreground">
-                Marka dosyası henüz oluşturulmadı.
+                Brand dossier hasn&apos;t been created yet.
               </p>
             ) : null}
 
             {dossier?.toneOfVoice ? (
               <p className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">Ses Tonu: </span>
+                <span className="font-medium text-foreground">
+                  Tone of Voice:{" "}
+                </span>
                 {dossier.toneOfVoice}
               </p>
             ) : null}
 
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <StatTile label="Marka Gerçeği" value={facts.length} />
-              <StatTile label="Onaylı İddia" value={claims.length} />
-              <StatTile label="Varsayım" value={assumptions.length} />
-              <StatTile label="Negatif Kural" value={negativeRules.length} />
+              <StatTile label="Brand Facts" value={facts.length} />
+              <StatTile label="Approved Claims" value={claims.length} />
+              <StatTile label="Assumptions" value={assumptions.length} />
+              <StatTile label="Negative Rules" value={negativeRules.length} />
             </div>
           </div>
         </div>
@@ -568,7 +571,7 @@ async function AssetsSection({
               <div className="space-y-2">
                 <p className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
                   <Palette className="size-3.5" />
-                  Onaylı Renkler
+                  Approved Colors
                 </p>
                 <div className="flex flex-wrap gap-3">
                   {colors.map((color, index) => (
@@ -594,7 +597,7 @@ async function AssetsSection({
               <div className="space-y-2">
                 <p className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
                   <FontIcon className="size-3.5" />
-                  Onaylı Fontlar
+                  Approved Fonts
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {fonts.map((font, index) => (
@@ -616,13 +619,13 @@ async function AssetsSection({
           <div className="grid gap-3 border-t border-foreground/10 bg-card p-5 sm:grid-cols-2 sm:p-6">
             {colorsUnparsed ? (
               <JsonViewer
-                label="Onaylı Renkler (ham)"
+                label="Approved Colors (raw)"
                 value={dossier?.approvedColors}
               />
             ) : null}
             {fontsUnparsed ? (
               <JsonViewer
-                label="Onaylı Fontlar (ham)"
+                label="Approved Fonts (raw)"
                 value={dossier?.approvedFonts}
               />
             ) : null}
@@ -633,7 +636,7 @@ async function AssetsSection({
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-            <CardTitle className="text-base">Marka Dosyası</CardTitle>
+            <CardTitle className="text-base">Brand Dossier</CardTitle>
             <BrandDossierEditSheet
               projectId={projectId}
               dossier={{
@@ -656,7 +659,7 @@ async function AssetsSection({
               <FieldGrid fields={dossierFields} />
             ) : (
               <p className="text-sm text-muted-foreground">
-                Marka dosyası henüz oluşturulmadı.
+                Brand dossier hasn&apos;t been created yet.
               </p>
             )}
           </CardContent>
@@ -665,12 +668,12 @@ async function AssetsSection({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              Negatif Brief Kuralları ({negativeRules.length})
+              Negative Brief Rules ({negativeRules.length})
             </CardTitle>
           </CardHeader>
           <CardContent>
             {negativeRules.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Kural yok.</p>
+              <p className="text-sm text-muted-foreground">No rules.</p>
             ) : (
               <ul className="space-y-2 text-sm">
                 {negativeRules.map((rule) => (
@@ -693,12 +696,12 @@ async function AssetsSection({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              Marka Gerçekleri ({facts.length})
+              Brand Facts ({facts.length})
             </CardTitle>
           </CardHeader>
           <CardContent>
             {facts.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Kayıt yok.</p>
+              <p className="text-sm text-muted-foreground">No records.</p>
             ) : (
               <div className="space-y-2.5 text-sm">
                 {facts.map((fact) => (
@@ -725,12 +728,12 @@ async function AssetsSection({
                       ) : null}
                       {fact.source ? (
                         <span className="text-[10px] text-muted-foreground">
-                          Kaynak: {fact.source}
+                          Source: {fact.source}
                         </span>
                       ) : null}
                       {fact.confidence !== null ? (
                         <span className="text-[10px] text-muted-foreground">
-                          Güven: %{Math.round(fact.confidence * 100)}
+                          Confidence: {Math.round(fact.confidence * 100)}%
                         </span>
                       ) : null}
                     </div>
@@ -744,27 +747,27 @@ async function AssetsSection({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              Onaylı İddialar ({claims.length}) & Varsayımlar (
+              Approved Claims ({claims.length}) & Assumptions (
               {assumptions.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {claims.length === 0 && assumptions.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Kayıt yok.</p>
+              <p className="text-sm text-muted-foreground">No records.</p>
             ) : (
               <>
                 {claims.map((claim) => (
                   <div key={claim.id} className="space-y-0.5">
                     <div className="flex items-center gap-2 text-sm">
                       <StatusBadge
-                        meta={{ label: "İddia", tone: "positive" }}
+                        meta={{ label: "Claim", tone: "positive" }}
                         className="h-4 px-1.5 text-[10px]"
                       />
                       <span className="min-w-0">{claim.claim}</span>
                     </div>
                     <p className="pl-1 text-[11px] text-muted-foreground">
                       {claim.category ? `${claim.category} · ` : ""}
-                      {timeAgo(claim.approvedAt)} onaylandı
+                      approved {timeAgo(claim.approvedAt)}
                     </p>
                   </div>
                 ))}
@@ -802,7 +805,7 @@ async function StrategyVersionsSection({ brandId }: { brandId: string }) {
 
   if (versions.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">Strateji sürümü yok.</p>
+      <p className="text-sm text-muted-foreground">No strategy versions.</p>
     );
   }
 
@@ -837,7 +840,7 @@ async function DecisionsSection({ brandId }: { brandId: string }) {
   });
 
   if (decisions.length === 0) {
-    return <p className="text-sm text-muted-foreground">Marka kararı yok.</p>;
+    return <p className="text-sm text-muted-foreground">No brand decisions.</p>;
   }
 
   return (
@@ -893,7 +896,7 @@ async function EvidenceSection({ brandId }: { brandId: string }) {
   });
 
   if (items.length === 0) {
-    return <p className="text-sm text-muted-foreground">Kanıt yok.</p>;
+    return <p className="text-sm text-muted-foreground">No evidence.</p>;
   }
 
   return (
@@ -955,8 +958,8 @@ async function LearningsSection({ projectId }: { projectId: string }) {
     return (
       <EmptyState
         icon={GraduationCap}
-        title="Öğrenim yok"
-        hint="Yürütülen işlerin ölçüm sonuçları analiz edildikçe marka öğrenimleri burada birikir ve sonraki işlerin bağlamına girer."
+        title="No learnings"
+        hint="As measurement results from completed work are analyzed, brand learnings accumulate here and feed into the context of subsequent work."
       />
     );
   }
@@ -979,14 +982,14 @@ async function LearningsSection({ projectId }: { projectId: string }) {
                   <span>{learning.sourceType}</span>
                 ) : null}
                 {learning.sourceRef ? (
-                  <span>Kaynak: {learning.sourceRef}</span>
+                  <span>Source: {learning.sourceRef}</span>
                 ) : null}
                 <span>{timeAgo(learning.createdAt)}</span>
               </div>
             </div>
             {learning.confidence !== null ? (
               <div className="w-20 shrink-0">
-                <ScoreBar value={learning.confidence} label="güven" />
+                <ScoreBar value={learning.confidence} label="confidence" />
               </div>
             ) : null}
           </div>

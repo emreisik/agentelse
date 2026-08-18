@@ -1,34 +1,35 @@
-// Ham AuditLog.action string'lerini (örn. "work_plan.approved") okunur
-// Türkçe cümlelere çevirir — sidebar aktivite akışı ve ileride eklenecek
-// başka aktivite listeleri için tek kaynak.
+// Translates raw AuditLog.action strings (e.g. "work_plan.approved") into
+// readable English sentences — the single source for the sidebar activity
+// feed and any other activity lists added later.
 const AUDIT_ACTION_LABELS: Record<string, string> = {
-  "setup.started": "Kurulum başlatıldı",
-  "agency-setup.started": "Ajans kurulumu başlatıldı",
-  "self-healing.stuck_job_reset": "Takılan iş otomatik onarıldı",
-  "self-healing.dead_letter_requeued": "Başarısız iş yeniden kuyruğa alındı",
-  "department.mode_changed": "Departman modu değiştirildi",
-  "signal_profile.intensity_changed": "Sinyal profili yoğunluğu değiştirildi",
-  "autonomy_policy.updated": "Otonomi politikası güncellendi",
-  "work_plan.approved": "İş planı onaylandı",
-  "work_plan.cancelled": "İş planı iptal edildi",
-  "handoff.accepted": "Devir teklifi kabul edildi",
-  "handoff.rejected": "Devir teklifi reddedildi",
-  "project.created": "Proje oluşturuldu",
-  "project.deleted": "Proje silindi",
-  "command.received": "Komut alındı",
-  "human_action.resolved": "İnsan eylemi çözümlendi",
-  "integration_credential.connected": "Entegrasyon bağlandı",
-  "integration_credential.disconnected": "Entegrasyon bağlantısı kesildi",
-  "health.dead_letter_retried": "Ölü kuyruk kaydı yeniden denendi",
-  "browser_profile.added": "Kanal eklendi",
-  "browser_profile.marked_connected": "Kanal bağlı olarak işaretlendi",
-  "browser_profile.disabled": "Kanal devre dışı bırakıldı",
-  "approval.approved": "Onay verildi",
-  "approval.rejected": "Onay reddedildi",
+  "setup.started": "Setup started",
+  "agency-setup.started": "Agency setup started",
+  "self-healing.stuck_job_reset": "Stuck job auto-recovered",
+  "self-healing.dead_letter_requeued": "Failed job requeued",
+  "department.mode_changed": "Department mode changed",
+  "signal_profile.intensity_changed": "Signal profile intensity changed",
+  "autonomy_policy.updated": "Autonomy policy updated",
+  "work_plan.approved": "Work plan approved",
+  "work_plan.cancelled": "Work plan cancelled",
+  "handoff.accepted": "Handoff offer accepted",
+  "handoff.rejected": "Handoff offer rejected",
+  "project.created": "Project created",
+  "project.deleted": "Project deleted",
+  "command.received": "Command received",
+  "human_action.resolved": "Human action resolved",
+  "integration_credential.connected": "Integration connected",
+  "integration_credential.disconnected": "Integration disconnected",
+  "health.dead_letter_retried": "Dead letter record retried",
+  "browser_profile.added": "Channel added",
+  "browser_profile.marked_connected": "Channel marked as connected",
+  "browser_profile.disabled": "Channel disabled",
+  "approval.approved": "Approval granted",
+  "approval.rejected": "Approval rejected",
 };
 
-// Haritada olmayan (yeni eklenen) action'lar için sessizce kırılmak yerine
-// kaba ama okunur bir dönüşüm: "some_thing.happened" -> "Some thing happened".
+// Fallback for actions that aren't in the map (newly added ones) — instead
+// of silently breaking, a rough but readable transform:
+// "some_thing.happened" -> "Some thing happened".
 function humanize(action: string): string {
   const spaced = action.replace(/[._-]+/g, " ").trim();
   if (!spaced) return action;
@@ -37,7 +38,7 @@ function humanize(action: string): string {
 
 export function describeAuditAction(action: string): string {
   if (action.startsWith("reasoning.")) {
-    return `AI muhakeme: ${humanize(action.slice("reasoning.".length))}`;
+    return `AI reasoning: ${humanize(action.slice("reasoning.".length))}`;
   }
   return AUDIT_ACTION_LABELS[action] ?? humanize(action);
 }

@@ -2,12 +2,12 @@ import { prisma } from "@/lib/prisma";
 import { LibraryBrowser, type LibraryAsset } from "./library-browser";
 import type { PanelProps } from "./panel-props";
 
-// "Kütüphane" hiçbir `EntityKind`'in sahibi değil, sadece proje genelindeki
-// tüm Asset satırlarını (logo, sohbet eki, creative görseli, belge — hepsi
-// tek tabloda) tek bir gözatıcıda toplar. Filtreleme/görünüm client'ta
-// (LibraryBrowser) yapılır; proje başına dosya sayısı küçük olduğundan
-// tam listeyi tek sorguda çekmek yeterli.
-export async function KutuphanePanel({ projectId }: PanelProps) {
+// The "Library" doesn't own any `EntityKind` — it just gathers all Asset
+// rows for the project (logos, chat attachments, creative images, documents
+// — all in a single table) into one browser. Filtering/view happens on the
+// client (LibraryBrowser); since the file count per project is small, it's
+// sufficient to fetch the full list in a single query.
+export async function LibraryPanel({ projectId }: PanelProps) {
   const assets = await prisma.asset.findMany({
     where: { projectId },
     orderBy: { createdAt: "desc" },

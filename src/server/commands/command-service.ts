@@ -10,6 +10,7 @@ import {
 } from "@/server/repositories/command.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { ApprovalRepository } from "@/server/repositories/approval.repository";
+import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import {
   parseIntent,
   type ParsedIntent,
@@ -27,24 +28,24 @@ export type SubmitCommandInput = {
   // ProjectResolver so a fuzzy text match can't misroute a follow-up message
   // to the wrong brand.
   knownProjectId?: string;
-  // Bir fikrin kendi sohbet iş parçacığından gönderiliyorsa — Command bu
-  // fikre etiketlenir (bkz. Command.ideaId).
+  // Set when a message is sent from an idea's own chat thread — the
+  // Command gets tagged with this idea (see Command.ideaId).
   ideaId?: string;
-  // Sohbet yüzeyinden gelen dosyalar. Komutun kendisine kaydedilir ve
-  // oluşan görevin payload'ına asset id'leri olarak taşınır.
+  // Files coming from the chat surface. Saved on the command itself and
+  // carried into the resulting task's payload as asset ids.
   attachments?: CommandAttachment[];
-  // Verildiğinde kural tabanlı parseIntent atlanır. Sohbet yüzeyi niyeti
-  // LLM ile çözüyor; kural tabanlı ayrıştırıcı serbest metnin çoğuna
-  // UNKNOWN dönüyor ve mesaj sessizce düşüyordu.
+  // When provided, the rule-based parseIntent is skipped. The chat surface
+  // resolves intent with the LLM; the rule-based parser returns UNKNOWN for
+  // most free text and the message used to be silently dropped.
   intent?: ParsedIntent;
-  // Composer'daki entegrasyon quick-action'ları (ör. "+" menüsünden
-  // Instagram'da paylaş) gibi, niyeti ZATEN tam olarak bilen çağıranlar
-  // için — TaskPlanner.planForCapability'ye olduğu gibi geçirilir (ör.
-  // INSTAGRAM_PUBLISH için { imageUrl, caption }). Ek dosyalardan türeyen
-  // attachmentAssetIds ile birleştirilir (çakışırsa bu alan üstün gelir).
+  // For callers that ALREADY know the intent precisely, like the composer's
+  // integration quick-actions (e.g. "share on Instagram" from the "+" menu)
+  // — passed through as-is to TaskPlanner.planForCapability (e.g.
+  // { imageUrl, caption } for INSTAGRAM_PUBLISH). Merged with the
+  // attachmentAssetIds derived from attachments (this field wins on conflict).
   payloadExtra?: Record<string, unknown>;
-  // Belirtilirse görev doğrudan bu departmana etiketlenir — sohbet
-  // kartlarında departman adı/ikonu bu alandan gösterilir (bkz.
+  // If given, the task is directly tagged with this department — the
+  // department name/icon shown on chat cards comes from this field (see
   // idea-event-card.tsx).
   departmentKey?: DepartmentKey;
 };
@@ -98,6 +99,7 @@ export const CommandService = {
       const approval = await findLatestPendingApproval(
         input.workspaceId,
         input.knownProjectId,
+        input.ideaId,
       );
       if (!approval) {
         return { status: "UNKNOWN_INTENT", commandId: command.id };
@@ -205,8 +207,9 @@ export const CommandService = {
       createdByType: input.actorType,
       createdByUserId: input.userId,
       departmentKey: input.departmentKey,
-      // Ekler görevin payload'ına taşınır: yürütücü sağlayıcı (örn. kreatif
-      // görsel üretimi) kullanıcının referans görselini burada bulur.
+      // Attachments are carried into the task's payload: the execution
+      // provider (e.g. creative image generation) finds the user's
+      // reference image here.
       payloadExtra:
         attachmentPayloadExtra || input.payloadExtra
           ? { ...attachmentPayloadExtra, ...input.payloadExtra }
@@ -223,16 +226,39 @@ export const CommandService = {
   },
 };
 
+// When the command comes from a specific idea's chat thread (input.ideaId),
+// "I approve" must resolve to THAT idea's pending approval — not just the
+// most recently created one in the project. Two ideas in the same project
+// can easily have overlapping pending approvals (e.g. two work-plan nodes
+// clearing their dependencies around the same time), and picking the wrong
+// one means approving/rejecting work the user never looked at.
 async function findLatestPendingApproval(
   workspaceId: string,
   projectId?: string,
+  ideaId?: string,
 ) {
-  return prisma.approval.findFirst({
+  const pending = await prisma.approval.findMany({
     where: {
       workspaceId,
       status: "PENDING",
       ...(projectId ? { projectId } : {}),
     },
     orderBy: { createdAt: "desc" },
+    take: 20,
   });
+
+  if (ideaId) {
+    for (const approval of pending) {
+      if (!approval.taskId) continue;
+      const resolvedIdeaId = await IdeaChatRepository.resolveIdeaIdForTask(
+        approval.taskId,
+      );
+      if (resolvedIdeaId === ideaId) return approval;
+    }
+    // No pending approval tied to THIS idea — fall through to the
+    // project-wide "most recent" behavior below, since not every approval
+    // flow is idea-scoped (e.g. commands sent outside an idea thread).
+  }
+
+  return pending[0] ?? null;
 }

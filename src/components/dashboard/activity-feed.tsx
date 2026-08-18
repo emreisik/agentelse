@@ -2,16 +2,16 @@ import { timeAgo } from "@/lib/dates";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const ACTION_LABELS: Record<string, string> = {
-  "approval.approved": "onaylandı",
-  "approval.rejected": "reddedildi",
-  "task.cancelled": "görev iptal edildi",
-  "task.retried": "görev yeniden denendi",
-  "task.unblocked": "görev blokajı kaldırıldı",
-  "agency-setup.started": "ajans kurulumu başlatıldı",
-  "goal.approved": "hedef onaylandı",
-  "goal.rejected": "hedef reddedildi",
-  "goal.updated": "hedef güncellendi",
-  "autonomy_policy.updated": "otonomi politikası güncellendi",
+  "approval.approved": "approved",
+  "approval.rejected": "rejected",
+  "task.cancelled": "task cancelled",
+  "task.retried": "task retried",
+  "task.unblocked": "task unblocked",
+  "agency-setup.started": "agency setup started",
+  "goal.approved": "goal approved",
+  "goal.rejected": "goal rejected",
+  "goal.updated": "goal updated",
+  "autonomy_policy.updated": "autonomy policy updated",
 };
 
 function describeAction(action: string) {
@@ -35,11 +35,11 @@ export function ActivityFeed({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Son Aktivite</CardTitle>
+        <CardTitle className="text-base">Recent Activity</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {activities.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Henüz aktivite yok.</p>
+          <p className="text-sm text-muted-foreground">No activity yet.</p>
         ) : (
           activities.map((activity) => (
             <div

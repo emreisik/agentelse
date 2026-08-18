@@ -1,10 +1,11 @@
-// Bir kreatif/görsel üretim olayının fikir sohbetindeki temsili. Command.
-// parsedIntent alanına `{ card: CreativeCardData }` olarak yazılır (bkz.
-// IdeaChatRepository) ve sohbet ekranında (project-chat.tsx + thread.tsx)
-// düz metin yerine özel bir kart bileşeniyle render edilir. Aynı taskId için
-// önce "creative-loading" yazılır, iş bitince AYNI satır "creative-ready"
-// ya da "creative-failed"e güncellenir (ChatGPT'deki üretim sırasında
-// gösterilen yükleniyor → sonuç geçişiyle aynı mantık).
+// Representation of a creative/image generation event in an idea's chat.
+// Written into Command.parsedIntent as `{ card: CreativeCardData }` (see
+// IdeaChatRepository) and rendered in the chat screen (project-chat.tsx +
+// thread.tsx) via a dedicated card component instead of plain text. For the
+// same taskId, "creative-loading" is written first, and once the job
+// finishes the SAME row is updated to "creative-ready" or "creative-failed"
+// (the same logic as the loading → result transition shown during
+// generation in ChatGPT).
 export type CreativeCardData =
   | {
       kind: "creative-loading";
@@ -21,9 +22,10 @@ export type CreativeCardData =
       caption?: string;
       copy?: string;
       status: string;
-      // status "IN_REVIEW" iken sohbette doğrudan Onayla/Reddet düğmelerini
-      // göstermek için — bkz. CreativeCard, ApprovalRepository.create'in
-      // döndürdüğü Approval.id (execution-service.ts materializeCreativeFromResult).
+      // For showing Approve/Reject buttons directly in the chat while status
+      // is "IN_REVIEW" — see CreativeCard, and the Approval.id returned by
+      // ApprovalRepository.create (execution-service.ts
+      // materializeCreativeFromResult).
       approvalId?: string;
     }
   | {
@@ -33,10 +35,10 @@ export type CreativeCardData =
       message?: string;
     }
   | {
-      // Kreatif onaylandıktan sonra sohbete düşen ayrı bir soru turu —
-      // "Sosyal Hesaplarda Paylaş" bölümünün (creative-ready kartındaki)
-      // aynısını içerir, ama gözden kaçmasın diye kendi satırında (bkz.
-      // approval-decisions.ts).
+      // A separate prompt turn that lands in the chat after a creative is
+      // approved — contains the same "Share on Social Accounts" section as
+      // the one on the creative-ready card, but on its own row so it doesn't
+      // get missed (see approval-decisions.ts).
       kind: "publish-prompt";
       creativeId: string;
       title: string;

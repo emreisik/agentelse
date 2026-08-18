@@ -4,15 +4,19 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { getEnv } from "@/lib/env";
 
-// Google OAuth authorization-code akışının `state` parametresi için CSRF
-// koruması — ayrı bir DB tablosu/cookie yerine AUTH_SECRET ile imzalanmış,
-// süreli bir token. Standart OAuth2 state deseni bu kadarını gerektirir.
+// CSRF protection for the `state` parameter of the Google OAuth
+// authorization-code flow — a time-limited token signed with AUTH_SECRET,
+// instead of a separate DB table/cookie. The standard OAuth2 state pattern
+// requires no more than this.
 const STATE_TTL_MS = 10 * 60_000;
 
 type OAuthStatePayload = {
   projectId: string;
   userId: string;
   issuedAt: number;
+  // Only filled in by providers that require PKCE (TikTok, X) — see
+  // pkce.ts. Google/Meta/LinkedIn never send this field.
+  codeVerifier?: string;
 };
 
 function sign(payloadB64: string): string {
@@ -22,7 +26,7 @@ function sign(payloadB64: string): string {
 }
 
 export function signOAuthState(
-  input: Pick<OAuthStatePayload, "projectId" | "userId">,
+  input: Pick<OAuthStatePayload, "projectId" | "userId" | "codeVerifier">,
 ): string {
   const payload: OAuthStatePayload = { ...input, issuedAt: Date.now() };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -31,7 +35,7 @@ export function signOAuthState(
 
 export function verifyOAuthState(
   token: string,
-): Pick<OAuthStatePayload, "projectId" | "userId"> | null {
+): Pick<OAuthStatePayload, "projectId" | "userId" | "codeVerifier"> | null {
   const [payloadB64, sig] = token.split(".");
   if (!payloadB64 || !sig) return null;
 
@@ -54,11 +58,17 @@ export function verifyOAuthState(
   if (
     typeof payload.projectId !== "string" ||
     typeof payload.userId !== "string" ||
-    typeof payload.issuedAt !== "number"
+    typeof payload.issuedAt !== "number" ||
+    (payload.codeVerifier !== undefined &&
+      typeof payload.codeVerifier !== "string")
   ) {
     return null;
   }
   if (Date.now() - payload.issuedAt > STATE_TTL_MS) return null;
 
-  return { projectId: payload.projectId, userId: payload.userId };
+  return {
+    projectId: payload.projectId,
+    userId: payload.userId,
+    codeVerifier: payload.codeVerifier,
+  };
 }

@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
-// Fikirler artık HUB CORE'un bir yörünge paneli (bkz. ../page.tsx +
-// src/components/hub-core/panels/fikirler-panel.tsx) — bu rota eski yer
-// imleri/linkler kırılmasın diye canlı tutuluyor.
+// Ideas is now one of HUB CORE's orbit panels (see ../page.tsx +
+// src/components/hub-core/panels/fikirler-panel.tsx) — this route stays
+// alive so old bookmarks/links don't break.
 export default async function FikirlerRedirect({
   params,
   searchParams,

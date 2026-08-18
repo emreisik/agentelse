@@ -9,13 +9,17 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 
-// Meta'nın kendi consent ekranına yönlendiren başlangıç adımı — bkz.
-// callback/route.ts geri dönüş için. google/start/route.ts ile aynı desen.
+// The initial step that redirects to Meta's own consent screen — see
+// callback/route.ts for the return trip. Same pattern as
+// google/start/route.ts.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");
   if (!projectId) {
-    return NextResponse.json({ error: "projectId gerekli" }, { status: 400 });
+    return NextResponse.json(
+      { error: "projectId is required" },
+      { status: 400 },
+    );
   }
 
   let userId: string;
@@ -37,7 +41,7 @@ export async function GET(request: Request) {
   if (!isIntegrationConfigured("META")) {
     return NextResponse.redirect(
       new URL(
-        `/projects/${projectId}/entegrasyonlar?entegrasyon=meta&metaError=not_configured`,
+        `/projects/${projectId}/integrations?integration=meta&metaError=not_configured`,
         request.url,
       ),
     );

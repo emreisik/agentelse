@@ -2,9 +2,9 @@ import "server-only";
 
 import { getEnv, isIntegrationConfigured } from "@/lib/env";
 
-// Telegram Bot API'ye doğrudan HTTP çağrısı — SDK gerektirmiyor. Yapılandırma
-// eksikse (bkz. env.ts) sessizce no-op: opsiyonel entegrasyonların hiçbiri
-// eksik olduğunda sistemi kıramaz.
+// A direct HTTP call to the Telegram Bot API — no SDK required. If
+// configuration is missing (see env.ts), it's a silent no-op: a missing
+// optional integration must never break the system.
 export async function sendTelegramMessage(text: string): Promise<void> {
   if (!isIntegrationConfigured("TELEGRAM")) return;
 
@@ -24,11 +24,11 @@ export async function sendTelegramMessage(text: string): Promise<void> {
     );
     if (!response.ok) {
       console.error(
-        `Telegram bildirimi başarısız: ${response.status} ${await response.text()}`,
+        `Telegram notification failed: ${response.status} ${await response.text()}`,
       );
     }
   } catch (error) {
-    // Bildirim altyapısının çökmesi asıl işlemi asla bozmamalı.
-    console.error("Telegram bildirimi gönderilemedi:", error);
+    // A crash in the notification infrastructure must never break the actual operation.
+    console.error("Failed to send Telegram notification:", error);
   }
 }

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Otomatik kurtarmanın kritik güvencesi: yalnızca GEÇİCİ hataları yeniden
-// dener. Bakiye/anahtar/yapılandırma hatalarını yeniden denemek sonsuz
-// döngü ve boşa maliyet demek — bu davranış testle çivilenmiş olmalı.
+// The critical guarantee of auto-recovery: it only retries TRANSIENT
+// errors. Retrying balance/key/configuration errors means an infinite loop
+// and wasted cost — this behavior must be nailed down with a test.
 
 const deadLetterJob = {
   findMany: vi.fn(),
@@ -68,7 +68,7 @@ beforeEach(() => {
 });
 
 describe("requeueRecoverableDeadLetters", () => {
-  it("zaman aşımı hatasını yeniden kuyruğa alır", async () => {
+  it("requeues a timeout error", async () => {
     deadLetterJob.findMany.mockResolvedValue([deadLetter()]);
 
     const result = await SelfHealingService.requeueRecoverableDeadLetters();
@@ -77,7 +77,7 @@ describe("requeueRecoverableDeadLetters", () => {
     expect(OutboxRepository.enqueue).toHaveBeenCalledTimes(1);
   });
 
-  it("bakiye hatasına DOKUNMAZ", async () => {
+  it("does NOT touch a balance error", async () => {
     deadLetterJob.findMany.mockResolvedValue([
       deadLetter({ lastError: "Your credit balance is too low" }),
     ]);
@@ -88,7 +88,7 @@ describe("requeueRecoverableDeadLetters", () => {
     expect(OutboxRepository.enqueue).not.toHaveBeenCalled();
   });
 
-  it("yapılandırma hatasına DOKUNMAZ", async () => {
+  it("does NOT touch a configuration error", async () => {
     deadLetterJob.findMany.mockResolvedValue([
       deadLetter({
         lastError: "No execution provider available for capability SIGNAL_SCAN",
@@ -101,7 +101,7 @@ describe("requeueRecoverableDeadLetters", () => {
     expect(OutboxRepository.enqueue).not.toHaveBeenCalled();
   });
 
-  it("aynı iş için deneme tavanı aşılınca durur", async () => {
+  it("stops once the retry cap for the same job is exceeded", async () => {
     deadLetterJob.findMany.mockResolvedValue([deadLetter()]);
     deadLetterJob.count.mockResolvedValue(4); // MAX_AUTO_REQUEUES_PER_JOB = 3
 
@@ -111,7 +111,7 @@ describe("requeueRecoverableDeadLetters", () => {
     expect(OutboxRepository.enqueue).not.toHaveBeenCalled();
   });
 
-  it("tamamlanmış işi yeniden kuyruğa almaz, kaydı kapatır", async () => {
+  it("does not requeue a completed job, and closes the record", async () => {
     deadLetterJob.findMany.mockResolvedValue([deadLetter()]);
     executionJob.findUnique.mockResolvedValue({
       id: "job-1",
@@ -133,7 +133,7 @@ describe("requeueRecoverableDeadLetters", () => {
 describe("resetStuckJobs", () => {
   const now = new Date("2026-08-08T12:00:00Z");
 
-  it("uzun süre ilerlemeyen işi FAILED'a çevirir", async () => {
+  it("turns a job that hasn't progressed in a long time into FAILED", async () => {
     executionJob.findMany.mockResolvedValue([
       {
         id: "job-9",
@@ -158,7 +158,7 @@ describe("resetStuckJobs", () => {
     );
   });
 
-  it("bu arada ilerlemiş işi saymaz", async () => {
+  it("does not count a job that progressed in the meantime", async () => {
     executionJob.findMany.mockResolvedValue([
       {
         id: "job-9",
@@ -169,7 +169,7 @@ describe("resetStuckJobs", () => {
         updatedAt: new Date("2026-08-08T10:00:00Z"),
       },
     ]);
-    // Koşullu güncelleme hiçbir satırı etkilemedi = iş gerçekten ilerlemiş.
+    // The conditional update affected no rows = the job genuinely progressed.
     executionJob.updateMany.mockResolvedValue({ count: 0 });
 
     expect(await SelfHealingService.resetStuckJobs(now)).toBe(0);

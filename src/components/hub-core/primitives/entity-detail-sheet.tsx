@@ -5,11 +5,12 @@ import type { ReactNode } from "react";
 
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
-// Kanban kartlarına tıklanınca artık pano bir detay sayfasıyla YER
-// DEĞİŞTİRMİYOR — pano arkada canlı kalıyor, detay sağdan açılan %50
-// genişlikte bir panelde üstüne biniyor. Kapatma (X / dışına tıkla / Esc)
-// `closeHref`e (entity=null) navigate ederek olur; bu component sadece
-// `entity` URL'de doluyken mount edildiği için `open` hep true.
+// Clicking a kanban card no longer REPLACES the board with a detail
+// page — the board stays alive underneath, and the detail overlays it in
+// a 50%-wide panel that opens from the right. Closing (X / click outside /
+// Esc) happens by navigating to `closeHref` (entity=null); since this
+// component is only mounted while `entity` is present in the URL, `open`
+// is always true.
 export function EntityDetailSheet({
   title,
   closeHref,

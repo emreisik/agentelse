@@ -1,13 +1,14 @@
 import { type CreativeCardData, isCreativeCardData } from "./creative-card";
 
-// Bir fikrin sohbetindeki HER pipeline olayının (köken sinyali/bulgusu,
-// içgörü/fırsat, fikir doğumu, konsey kararı, iş planı, görev sonucu,
-// kreatif üretimi) temsili — "altın kural": hepsi aynı kart formatında,
-// Command.parsedIntent alanına `{ card: IdeaEventCardData }` olarak yazılır
-// (bkz. IdeaChatRepository) ve sohbet ekranında (project-chat.tsx +
-// thread.tsx) düz metin yerine IdeaEventCard bileşeniyle render edilir.
-// Uzun gövdeler (konsey gerekçesi, görev çıktı metni, bulgu/içgörü
-// açıklaması) varsayılan kapalı, tıklayınca açılan bir alanda gösterilir.
+// Representation of EVERY pipeline event in an idea's chat (origin
+// signal/finding, insight/opportunity, idea birth, council decision, work
+// plan, task result, creative generation) — the "golden rule": all of them
+// use the same card format, written into Command.parsedIntent as
+// `{ card: IdeaEventCardData }` (see IdeaChatRepository) and rendered in the
+// chat screen (project-chat.tsx + thread.tsx) via the IdeaEventCard
+// component instead of plain text. Long bodies (council rationale, task
+// result text, finding/insight description) are shown collapsed by default,
+// in an area that expands on click.
 export type IdeaEventCardData =
   | { kind: "signal"; title: string; summary?: string }
   | { kind: "finding"; title: string; statement: string }

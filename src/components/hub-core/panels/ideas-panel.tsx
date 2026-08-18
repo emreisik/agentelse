@@ -45,9 +45,9 @@ function parseConcept(concept: unknown): IdeaConcept | null {
     : null;
 }
 
-// Kart/liste görünümünde hızlı taramaya yetecek TEK bir departman —
-// concept.departmentsInvolved birden fazla taşıyabilir, ilki kullanılır.
-// Detay görünümü hepsini badge olarak listeler (bkz. IdeaDetail).
+// A SINGLE department that's enough for quick scanning in card/list view —
+// concept.departmentsInvolved can carry more than one, the first is used.
+// The detail view lists all of them as badges (see IdeaDetail).
 function primaryDepartment(
   concept: IdeaConcept | null,
 ): DepartmentKey | undefined {
@@ -55,20 +55,20 @@ function primaryDepartment(
   return key && key in DEPARTMENT_KEY ? (key as DepartmentKey) : undefined;
 }
 
-// Referans: src/app/projects/[projectId]/fikirler/page.tsx (sayfa+IdeaSheet).
-// HUB CORE'da lens filtresi + kanban `IdeaLensBoard` client bileşenine
-// taşındı (bkz. o dosyadaki yorum); burası yalnızca veri çeker ve
-// entity=idea:ID geldiğinde tam detayı render eder.
-export async function FikirlerPanel({ projectId, entity }: PanelProps) {
+// Reference: src/app/projects/[projectId]/ideas/page.tsx (page+IdeaSheet).
+// In HUB CORE the lens filter + kanban were moved into the `IdeaLensBoard`
+// client component (see the comment in that file); this component only
+// fetches data and renders the full detail when entity=idea:ID is present.
+export async function IdeasPanel({ projectId, entity }: PanelProps) {
   const ideaId = entity && entity.kind === "idea" ? entity.id : null;
   return (
     <>
       <IdeaListView projectId={projectId} />
       {ideaId ? (
         <EntityDetailSheet
-          title="Fikir detayı"
+          title="Idea details"
           closeHref={buildHubHref(projectId, {
-            panel: "fikirler",
+            panel: "ideas",
             entity: null,
           })}
         >
@@ -103,8 +103,8 @@ async function IdeaListView({ projectId }: { projectId: string }) {
       <div className="py-6">
         <EmptyState
           icon={Lightbulb}
-          title="Fikir yok"
-          hint="Fikir atölyesi fırsatları 16 kreatif mercekten geçirerek fikir üretir; kurulumun 10. aşamasında ilk portföy oluşur."
+          title="No ideas"
+          hint="The idea workshop runs opportunities through 16 creative lenses to generate ideas; the initial portfolio is created in stage 10 of setup."
         />
       </div>
     );
@@ -159,7 +159,7 @@ async function IdeaDetail({
   if (!idea) {
     return (
       <div className="space-y-4 py-6">
-        <EmptyState icon={Lightbulb} title="Fikir bulunamadı" />
+        <EmptyState icon={Lightbulb} title="Idea not found" />
       </div>
     );
   }
@@ -179,28 +179,28 @@ async function IdeaDetail({
   const canArchive = allowedIdeaTransitions.includes("ARCHIVED");
 
   const fields: FieldSpec[] = [
-    { type: "badge", label: "Durum", meta: IDEA_STATUS[idea.status] },
+    { type: "badge", label: "Status", meta: IDEA_STATUS[idea.status] },
     {
       type: "badge",
-      label: "Mercek",
+      label: "Lens",
       meta: lensMeta ?? undefined,
       fallback: idea.lens ?? undefined,
     },
     {
       type: "text",
-      label: "NBA Skoru",
+      label: "NBA Score",
       value: idea.nbaScore !== null ? idea.nbaScore.toFixed(2) : null,
     },
     { type: "boolean", label: "Demo (isMock)", value: idea.isMock },
     {
       type: "date",
-      label: "Oluşturulma",
+      label: "Created",
       value: idea.createdAt,
       relative: true,
     },
     {
       type: "date",
-      label: "Güncellenme",
+      label: "Updated",
       value: idea.updatedAt,
       relative: true,
     },
@@ -228,7 +228,7 @@ async function IdeaDetail({
         <CrossLinkChip
           projectId={projectId}
           entity={{ kind: "opportunity", id: idea.opportunity.id }}
-          text={`Kaynak fırsat: ${idea.opportunity.title}`}
+          text={`Source opportunity: ${idea.opportunity.title}`}
         />
       ) : null}
 
@@ -244,7 +244,7 @@ async function IdeaDetail({
           {concept.bigIdea ? (
             <div>
               <p className="text-xs font-medium text-muted-foreground">
-                Büyük Fikir
+                Big Idea
               </p>
               <p className="mt-0.5 text-sm">{concept.bigIdea}</p>
             </div>
@@ -252,7 +252,7 @@ async function IdeaDetail({
           {concept.executionSketch ? (
             <div>
               <p className="text-xs font-medium text-muted-foreground">
-                Uygulama Taslağı
+                Execution Sketch
               </p>
               <p className="mt-0.5 text-sm">{concept.executionSketch}</p>
             </div>
@@ -279,7 +279,7 @@ async function IdeaDetail({
       {idea.councilEvaluations.length > 0 ? (
         <div className="space-y-2">
           <p className="text-sm font-medium text-foreground">
-            Konsey değerlendirmeleri
+            Council evaluations
           </p>
           {idea.councilEvaluations.map((evaluation) => {
             const scores =
@@ -318,9 +318,7 @@ async function IdeaDetail({
                     </p>
                   ) : null}
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 pt-2 font-mono text-[10px] text-muted-foreground">
-                    <span>
-                      {evaluation.isMock ? "Demo veri" : "Gerçek veri"}
-                    </span>
+                    <span>{evaluation.isMock ? "Demo data" : "Real data"}</span>
                     <span>{timeAgo(evaluation.createdAt)}</span>
                   </div>
                 </CardContent>
@@ -333,7 +331,7 @@ async function IdeaDetail({
       {decision ? (
         <div className="space-y-1.5 rounded-lg bg-accent/40 p-3">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium">Ajans kararı</span>
+            <span className="text-xs font-medium">Agency decision</span>
             <StatusBadge meta={AGENCY_DECISION_TYPE[decision.decision]} />
           </div>
           <p className="text-xs text-muted-foreground">{decision.rationale}</p>
@@ -344,44 +342,35 @@ async function IdeaDetail({
         <CrossLinkChip
           projectId={projectId}
           entity={{ kind: "workPlan", id: idea.workPlanId }}
-          text="İş planına git"
-          sub="planlar"
+          text="Go to work plan"
+          sub="plans"
         />
       ) : null}
 
       <div className="flex items-center justify-end gap-1.5 border-t border-border pt-3">
         {canArchive ? (
-          <ActionForm
-            action={archiveIdeaAction}
-            successMessage="Fikir arşivlendi"
-          >
+          <ActionForm action={archiveIdeaAction} successMessage="Idea archived">
             <input type="hidden" name="projectId" value={projectId} />
             <input type="hidden" name="ideaId" value={idea.id} />
             <SubmitButton variant="ghost" size="xs">
-              Arşivle
+              Archive
             </SubmitButton>
           </ActionForm>
         ) : null}
         {canReject ? (
-          <ActionForm
-            action={rejectIdeaAction}
-            successMessage="Fikir reddedildi"
-          >
+          <ActionForm action={rejectIdeaAction} successMessage="Idea rejected">
             <input type="hidden" name="projectId" value={projectId} />
             <input type="hidden" name="ideaId" value={idea.id} />
             <SubmitButton variant="outline" size="xs">
-              Reddet
+              Reject
             </SubmitButton>
           </ActionForm>
         ) : null}
         {canApprove ? (
-          <ActionForm
-            action={approveIdeaAction}
-            successMessage="Fikir onaylandı"
-          >
+          <ActionForm action={approveIdeaAction} successMessage="Idea approved">
             <input type="hidden" name="projectId" value={projectId} />
             <input type="hidden" name="ideaId" value={idea.id} />
-            <SubmitButton size="xs">Onayla</SubmitButton>
+            <SubmitButton size="xs">Approve</SubmitButton>
           </ActionForm>
         ) : null}
       </div>

@@ -18,7 +18,7 @@ export type ActionResult = { ok: true } | { ok: false; message: string };
 function fail(error: unknown): ActionResult {
   return {
     ok: false,
-    message: error instanceof Error ? error.message : "İşlem başarısız",
+    message: error instanceof Error ? error.message : "Operation failed",
   };
 }
 
@@ -117,7 +117,7 @@ export async function updateGoalAction(
       goalId,
       projectId,
     );
-    if (!goal) return { ok: false, message: "Hedef bulunamadı" };
+    if (!goal) return { ok: false, message: "Goal not found" };
 
     const parsed = GoalUpdateSchema.parse({
       title: formData.get("title"),

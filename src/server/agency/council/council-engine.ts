@@ -95,7 +95,7 @@ export const CouncilEngine = {
       workspaceId: scope.workspaceId,
       projectId: scope.projectId,
       ideaId: idea.id,
-      text: `🧭 Konsey değerlendirmesi tamamlandı — sonuç: **${COUNCIL_RECOMMENDATION[combined].label}**`,
+      text: `🧭 Council evaluation completed — result: **${COUNCIL_RECOMMENDATION[combined].label}**`,
       card: {
         kind: "council",
         verdict: combined,

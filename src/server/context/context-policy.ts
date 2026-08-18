@@ -1,9 +1,9 @@
 import type { CapabilityKey } from "@prisma/client";
 
 // Which slice of the full Brand Brain bundle a capability is allowed to see.
-// Spec section 36: "Tüm project database'ini verme" — every capability gets
-// exactly the fields it needs, nothing more. Unlisted capabilities fall back
-// to CORE_FIELDS only.
+// Spec section 36: "Don't hand over the entire project database" — every
+// capability gets exactly the fields it needs, nothing more. Unlisted
+// capabilities fall back to CORE_FIELDS only.
 export type ContextField =
   | "language"
   | "country"
@@ -103,8 +103,9 @@ const CAPABILITY_CONTEXT_FIELDS: Partial<
 
 export const ContextPolicy = {
   fieldsFor(capability: CapabilityKey): readonly ContextField[] {
-    // CORE_FIELDS (dil/ülke dahil) her capability'ye eklenir — capability'ye
-    // özel liste varsa onunla birleştirilir, yoksa tek başına kullanılır.
+    // CORE_FIELDS (including language/country) is added to every capability
+    // — if a capability-specific list exists, it's merged with that,
+    // otherwise CORE_FIELDS is used on its own.
     return [
       ...new Set([
         ...CORE_FIELDS,

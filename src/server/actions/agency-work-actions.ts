@@ -15,7 +15,7 @@ export type ActionResult = { ok: true } | { ok: false; message: string };
 function fail(error: unknown): ActionResult {
   return {
     ok: false,
-    message: error instanceof Error ? error.message : "İşlem başarısız",
+    message: error instanceof Error ? error.message : "Operation failed",
   };
 }
 
@@ -97,7 +97,7 @@ export async function acceptHandoffAction(
       handoffId,
       projectId,
     );
-    if (!handoff) return { ok: false, message: "Devir bulunamadı" };
+    if (!handoff) return { ok: false, message: "Handoff not found" };
 
     // Capability/goal context comes from the handoff payload; fall back to a
     // generic content capability + the project's active goals.
@@ -120,7 +120,7 @@ export async function acceptHandoffAction(
       return {
         ok: false,
         message:
-          "Devir kabul edilemedi (departman modu veya günlük limit engeli)",
+          "Handoff could not be accepted (blocked by department mode or daily limit)",
       };
     }
 

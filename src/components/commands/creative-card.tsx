@@ -16,15 +16,16 @@ import {
 import {
   getCreativePublishTargetsAction,
   publishCreativeToInstagramAction,
+  publishCreativeToSocialAction,
 } from "@/server/actions/publish-actions";
 import type { PublishTarget } from "@/server/integrations/meta-connection-status";
 import type { CreativeCardData } from "@/types/creative-card";
 
-// Bir kreatif/görsel üretim olayının sohbetteki görsel temsili — ChatGPT'nin
-// görsel üretirken gösterdiği "yükleniyor" → sonuç kartı geçişiyle aynı
-// mantık. thread.tsx'teki AssistantMessage, mesajın metadata.custom.card
-// alanında bunu bulunca normal metin/parça render'ının YERİNE bu kartı
-// gösterir (bkz. isCreativeCardData).
+// Visual representation of a creative/image generation event in the chat —
+// the same logic as ChatGPT's "loading" → result card transition while
+// generating images. When AssistantMessage in thread.tsx finds this in the
+// message's metadata.custom.card field, it shows this card INSTEAD OF the
+// normal text/part render (see isCreativeCardData).
 export function CreativeCard({ card }: { card: CreativeCardData }) {
   if (card.kind === "creative-loading") {
     return (
@@ -33,7 +34,7 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
           <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted via-muted/60 to-muted" />
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground">
             <Loader2 className="size-5 animate-spin" />
-            <span className="text-xs font-medium">Görsel oluşturuluyor…</span>
+            <span className="text-xs font-medium">Generating image…</span>
           </div>
         </div>
         <div className="px-3.5 py-2.5">
@@ -53,7 +54,7 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
         </span>
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-foreground">
-            Görsel üretilemedi
+            Image generation failed
           </p>
           <p className="truncate text-xs text-muted-foreground">
             {stripCapabilityPrefix(card.title)}
@@ -71,8 +72,8 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
             <Share2 className="size-3.5" />
           </span>
           <p className="text-sm font-medium text-foreground">
-            {stripCapabilityPrefix(card.title)} onaylandı — sosyal medyada
-            paylaşmak ister misiniz?
+            {stripCapabilityPrefix(card.title)} approved — would you like to
+            share it on social media?
           </p>
         </div>
         <PublishSection creativeId={card.creativeId} />
@@ -83,9 +84,9 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
   return <CreativeReadyCard card={card} />;
 }
 
-// "creative-ready" kartı için ayrı bileşen — sadece bu dalda hook
-// gerekiyor (onay durumu/geçiş), loading/failed dallarını hook kurallarını
-// bozmadan basit tutmak için ayrıldı.
+// Separate component for the "creative-ready" card — a hook is only
+// needed in this branch (approval state/transition), split out to keep
+// the loading/failed branches simple without breaking hook rules.
 function CreativeReadyCard({
   card,
 }: {
@@ -114,14 +115,14 @@ function CreativeReadyCard({
         const result = await action(formData);
         if (result.ok) {
           setLocalStatus(to);
-          toast.success(to === "APPROVED" ? "Onaylandı" : "Reddedildi");
+          toast.success(to === "APPROVED" ? "Approved" : "Rejected");
           router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "İşlem başarısız";
+        const message = err instanceof Error ? err.message : "Action failed";
         setError(message);
         toast.error(message);
       }
@@ -137,7 +138,7 @@ function CreativeReadyCard({
           title={title}
           className="block"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element -- kaynak /api/assets/<id>, next/image optimize edemez */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it */}
           <img
             src={src}
             alt={card.caption || title}
@@ -175,7 +176,7 @@ function CreativeReadyCard({
               disabled={isPending}
               onClick={() => decide("REJECTED")}
             >
-              Reddet
+              Reject
             </Button>
             <Button
               type="button"
@@ -184,7 +185,7 @@ function CreativeReadyCard({
               className="rounded-full bg-success text-success-foreground hover:bg-success/90"
               onClick={() => decide("APPROVED")}
             >
-              Onayla
+              Approve
             </Button>
           </div>
         ) : null}
@@ -196,15 +197,20 @@ function CreativeReadyCard({
   );
 }
 
-// Onaylanmış kreatiften sonraki adım: hangi bağlı sosyal hesaplara
-// gönderilebileceğini göstermek. Composer'daki eski gizli "hızlı işlemler"
-// menüsünün yerine geçti — kart yalnızca creativeId biliyor,
-// approveApprovalAction'ın approvalId'den self-contained çalışması gibi
-// projectId/ideaId burada server tarafında creativeId'den çözülüyor.
+// The next step after an approved creative: showing which connected social
+// accounts it can be sent to. Replaces the old hidden "quick actions" menu
+// in the composer — the card only knows creativeId, and just like
+// approveApprovalAction working self-contained from approvalId,
+// projectId/ideaId are resolved here server-side from creativeId.
 type PublishFormat = "FEED" | "STORIES";
 const FORMAT_LABEL: Record<PublishFormat, string> = {
-  FEED: "Gönderi",
+  FEED: "Post",
   STORIES: "Story",
+};
+const PLATFORM_LABEL: Record<"tiktok" | "linkedin" | "x", string> = {
+  tiktok: "TikTok",
+  linkedin: "LinkedIn",
+  x: "X",
 };
 
 function PublishSection({ creativeId }: { creativeId: string }) {
@@ -227,12 +233,19 @@ function PublishSection({ creativeId }: { creativeId: string }) {
   if (targets.length === 0) {
     return (
       <p className="pt-0.5 text-xs text-muted-foreground">
-        Henüz bağlı bir sosyal hesap yok.
+        No connected social accounts yet.
       </p>
     );
   }
 
-  const publish = (target: PublishTarget, format: PublishFormat) => {
+  // Instagram carries a FEED/STORIES choice; TikTok/LinkedIn/X don't have a
+  // format concept, so they get a single "Share" button and a key that's
+  // just the platform name (there's at most one connected account per
+  // platform — see getSimpleCredentialTarget in meta-connection-status.ts).
+  const publishInstagram = (
+    target: Extract<PublishTarget, { platform: "instagram" }>,
+    format: PublishFormat,
+  ) => {
     const key = `${target.pageId}:${format}`;
     setPendingKey(key);
     publishCreativeToInstagramAction(creativeId, format)
@@ -247,55 +260,109 @@ function PublishSection({ creativeId }: { creativeId: string }) {
       .finally(() => setPendingKey(null));
   };
 
+  const publishSocial = (platform: "tiktok" | "linkedin" | "x") => {
+    setPendingKey(platform);
+    publishCreativeToSocialAction(creativeId, platform)
+      .then((result) => {
+        if (result.ok) {
+          toast.success(result.message);
+          setPublishedKeys((prev) => new Set(prev).add(platform));
+        } else {
+          toast.error(result.message);
+        }
+      })
+      .finally(() => setPendingKey(null));
+  };
+
   return (
     <div className="space-y-1.5 border-t border-border pt-2.5">
       <p className="text-xs font-medium text-muted-foreground">
-        Sosyal Hesaplarda Paylaş
+        Share on Social Accounts
       </p>
-      {targets.map((target) => (
-        <div
-          key={target.pageId}
-          className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2.5 py-1.5"
-        >
-          <div className="min-w-0">
-            <p className="truncate text-xs font-medium text-foreground">
-              {target.pageName}
-            </p>
-            {target.igUsername ? (
-              <p className="truncate text-[11px] text-muted-foreground">
-                @{target.igUsername}
+      {targets.map((target) => {
+        const rowKey =
+          target.platform === "instagram" ? target.pageId : target.platform;
+        const title =
+          target.platform === "instagram"
+            ? target.pageName
+            : PLATFORM_LABEL[target.platform];
+        const subtitle =
+          target.platform === "instagram"
+            ? target.igUsername
+              ? `@${target.igUsername}`
+              : undefined
+            : target.accountLabel;
+
+        return (
+          <div
+            key={rowKey}
+            className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2.5 py-1.5"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-xs font-medium text-foreground">
+                {title}
               </p>
-            ) : null}
-          </div>
-          <div className="flex shrink-0 gap-1">
-            {(["FEED", "STORIES"] as const).map((format) => {
-              const key = `${target.pageId}:${format}`;
-              const isPublished = publishedKeys.has(key);
-              const isPending = pendingKey === key;
-              return (
+              {subtitle ? (
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {subtitle}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 gap-1">
+              {target.platform === "instagram" ? (
+                (["FEED", "STORIES"] as const).map((format) => {
+                  const key = `${target.pageId}:${format}`;
+                  const isPublished = publishedKeys.has(key);
+                  const isPending = pendingKey === key;
+                  return (
+                    <Button
+                      key={format}
+                      type="button"
+                      variant={isPublished ? "ghost" : "outline"}
+                      size="sm"
+                      className="h-7 rounded-full px-2 text-xs"
+                      disabled={isPending || isPublished}
+                      onClick={() => publishInstagram(target, format)}
+                    >
+                      {isPublished ? (
+                        <Check className="size-3.5" />
+                      ) : isPending ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Share2 className="size-3.5" />
+                      )}
+                      {isPublished ? "Sent" : FORMAT_LABEL[format]}
+                    </Button>
+                  );
+                })
+              ) : (
                 <Button
-                  key={format}
                   type="button"
-                  variant={isPublished ? "ghost" : "outline"}
+                  variant={
+                    publishedKeys.has(target.platform) ? "ghost" : "outline"
+                  }
                   size="sm"
                   className="h-7 rounded-full px-2 text-xs"
-                  disabled={isPending || isPublished}
-                  onClick={() => publish(target, format)}
+                  disabled={
+                    pendingKey === target.platform ||
+                    publishedKeys.has(target.platform)
+                  }
+                  onClick={() => publishSocial(target.platform)}
                 >
-                  {isPublished ? (
+                  {publishedKeys.has(target.platform) ? (
                     <Check className="size-3.5" />
-                  ) : isPending ? (
+                  ) : pendingKey === target.platform ? (
                     <Loader2 className="size-3.5 animate-spin" />
                   ) : (
                     <Share2 className="size-3.5" />
                   )}
-                  {isPublished ? "Gönderildi" : FORMAT_LABEL[format]}
+                  {publishedKeys.has(target.platform) ? "Sent" : "Share"}
                 </Button>
-              );
-            })}
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

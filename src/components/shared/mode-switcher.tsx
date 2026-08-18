@@ -23,7 +23,7 @@ export function ModeSwitcher({
   action,
   hiddenFields,
   fieldName,
-  successMessage = "Güncellendi",
+  successMessage = "Updated",
   size = "sm",
 }: {
   value: string;
@@ -53,7 +53,7 @@ export function ModeSwitcher({
         if (result && result.ok === false) toast.error(result.message);
         else toast.success(successMessage);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "İşlem başarısız");
+        toast.error(error instanceof Error ? error.message : "Action failed");
       }
     });
   }

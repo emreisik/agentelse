@@ -15,13 +15,14 @@ export default function ProjectError({
       <span className="flex size-10 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
         <AlertTriangle className="size-5" />
       </span>
-      <p className="text-sm font-medium">Bir şeyler ters gitti</p>
+      <p className="text-sm font-medium">Something went wrong</p>
       <p className="max-w-sm text-xs text-muted-foreground">
-        Sayfa yüklenirken beklenmeyen bir hata oluştu. Tekrar deneyin; sorun
-        sürerse ajans motoru çalışırken kısa süreli bir tutarsızlık olabilir.
+        An unexpected error occurred while loading the page. Please try again;
+        if the problem persists, it may be a brief inconsistency while the
+        agency engine is running.
       </p>
       <Button variant="outline" size="sm" onClick={reset}>
-        Tekrar dene
+        Try again
       </Button>
     </div>
   );

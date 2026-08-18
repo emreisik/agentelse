@@ -56,8 +56,9 @@ export const ConstitutionService = {
 
     const payload = BrandConstitutionPayloadSchema.parse({
       ...output,
-      // Modelin ürettiği metin yerine bilinen doğru kodlar yazılır — kesin
-      // eşleşme garantisi verir, model parafraz riskini ortadan kaldırır.
+      // Known-correct codes are written instead of the model's generated
+      // text — guarantees an exact match and removes the risk of the model
+      // paraphrasing them.
       language: project.language,
       country: project.country,
       logoAssetIds: input.logoAssetIds ?? [],

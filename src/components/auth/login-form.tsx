@@ -27,8 +27,8 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const schema = z.object({
-  email: z.string().email("Geçerli bir e-posta adresi girin"),
-  password: z.string().min(1, "Şifre gerekli"),
+  email: z.string().email("Enter a valid email address"),
+  password: z.string().min(1, "Password is required"),
 });
 
 export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
@@ -51,7 +51,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
     setSubmitting(false);
 
     if (result?.error) {
-      setError("E-posta veya şifre hatalı");
+      setError("Incorrect email or password");
       return;
     }
 
@@ -63,10 +63,10 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
     <div className="w-full max-w-sm">
       <div className="mb-8 text-center">
         <h1 className="font-heading text-2xl font-semibold tracking-tight text-foreground">
-          Tekrar hoş geldiniz
+          Welcome back
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Ajans operasyon konsoluna giriş yapın
+          Sign in to the agency operations console
         </p>
       </div>
 
@@ -77,7 +77,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
             name="email"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-sm font-medium">E-posta</FormLabel>
+                <FormLabel className="text-sm font-medium">Email</FormLabel>
                 <InputGroup>
                   <InputGroupAddon>
                     <Mail />
@@ -87,7 +87,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
                       type="email"
                       autoComplete="email"
                       autoFocus
-                      placeholder="ornek@ajans.com"
+                      placeholder="example@agency.com"
                       {...field}
                     />
                   </FormControl>
@@ -102,7 +102,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
             name="password"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-sm font-medium">Şifre</FormLabel>
+                <FormLabel className="text-sm font-medium">Password</FormLabel>
                 <InputGroup>
                   <InputGroupAddon>
                     <Lock />
@@ -123,7 +123,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
                     >
                       {showPassword ? <EyeOff /> : <Eye />}
                       <span className="sr-only">
-                        {showPassword ? "Şifreyi gizle" : "Şifreyi göster"}
+                        {showPassword ? "Hide password" : "Show password"}
                       </span>
                     </InputGroupButton>
                   </InputGroupAddon>
@@ -136,7 +136,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
           {error ? (
             <Alert variant="destructive">
               <AlertCircle />
-              <AlertTitle>Giriş başarısız</AlertTitle>
+              <AlertTitle>Sign-in failed</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : null}
@@ -150,20 +150,20 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
             {submitting ? (
               <>
                 <Loader2 className="animate-spin" />
-                Giriş yapılıyor…
+                Signing in…
               </>
             ) : (
-              "Giriş yap"
+              "Sign in"
             )}
           </Button>
 
           <p className="text-center text-sm text-muted-foreground">
-            Hesabınız yok mu?{" "}
+            Don&apos;t have an account?{" "}
             <Link
               href="/register"
               className="font-medium text-foreground underline-offset-2 hover:underline"
             >
-              Kayıt olun
+              Sign up
             </Link>
           </p>
         </form>

@@ -128,7 +128,7 @@ async function main() {
       type: "SOCIAL_POST",
       platform: "INSTAGRAM",
       title: "[SEED DEMO] iPhone 17 launch post",
-      brief: "iPhone 17 temalı Instagram postu",
+      brief: "iPhone 17-themed Instagram post",
       status: "IN_REVIEW",
     },
   });

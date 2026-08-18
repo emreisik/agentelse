@@ -25,23 +25,23 @@ import { cn, statusBadgeVariant } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
 const PROJECT_STATUS_LABELS: Record<string, string> = {
-  CREATED: "Oluşturuldu",
-  DISCOVERY: "Keşif",
-  NEEDS_INFORMATION: "Bilgi Gerekli",
-  PROFILE_REVIEW: "Profil İncelemesi",
-  NEEDS_ASSESSMENT: "Değerlendirme Gerekli",
-  STRATEGY: "Strateji",
-  ACTIVE: "Aktif",
-  PAUSED: "Duraklatıldı",
-  CLOSED: "Kapatıldı",
+  CREATED: "Created",
+  DISCOVERY: "Discovery",
+  NEEDS_INFORMATION: "Needs Information",
+  PROFILE_REVIEW: "Profile Review",
+  NEEDS_ASSESSMENT: "Needs Assessment",
+  STRATEGY: "Strategy",
+  ACTIVE: "Active",
+  PAUSED: "Paused",
+  CLOSED: "Closed",
 };
 
 type ProjectItem = { id: string; name: string; status: string };
 
-// Dashboard'daki büyük, ChatGPT tarzı "arama/komut" çubuğu — tıklanınca
-// cmdk tabanlı bir komut paletine açılır: projeler arasında ara ya da
-// sık kullanılan işlemlere (yeni proje, onaylar, insan eylemleri, sistem
-// sağlığı) tek tuşla atla. Cmd/Ctrl+K ile de açılır.
+// The large, ChatGPT-style "search/command" bar on the dashboard — clicking
+// it opens a cmdk-based command palette: search across projects or jump
+// with one keystroke to frequently used actions (new project, approvals,
+// human actions, system health). Also opens with Cmd/Ctrl+K.
 export function DashboardCommandBar({ projects }: { projects: ProjectItem[] }) {
   const [open, setOpen] = React.useState(false);
   const router = useRouter();
@@ -73,7 +73,7 @@ export function DashboardCommandBar({ projects }: { projects: ProjectItem[] }) {
       >
         <Search className="size-4.5 shrink-0 text-muted-foreground" />
         <span className="flex-1 truncate text-sm text-muted-foreground">
-          Bir proje arayın ya da bir işlem yapın…
+          Search a project or run an action…
         </span>
         <kbd className="hidden shrink-0 items-center gap-0.5 rounded-md border border-border bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground sm:flex">
           <span className="text-xs">⌘</span>K
@@ -83,14 +83,14 @@ export function DashboardCommandBar({ projects }: { projects: ProjectItem[] }) {
       <CommandDialog
         open={open}
         onOpenChange={setOpen}
-        title="Komut paleti"
-        description="Proje arayın ya da bir işlem seçin"
+        title="Command palette"
+        description="Search a project or choose an action"
       >
-        <CommandInput placeholder="Proje arayın ya da bir işlem yazın…" />
+        <CommandInput placeholder="Search a project or type an action…" />
         <CommandList>
-          <CommandEmpty>Sonuç bulunamadı.</CommandEmpty>
+          <CommandEmpty>No results found.</CommandEmpty>
           {projects.length > 0 ? (
-            <CommandGroup heading="Projeler">
+            <CommandGroup heading="Projects">
               {projects.map((project) => (
                 <CommandItem
                   key={project.id}
@@ -110,29 +110,29 @@ export function DashboardCommandBar({ projects }: { projects: ProjectItem[] }) {
             </CommandGroup>
           ) : null}
           <CommandSeparator />
-          <CommandGroup heading="Hızlı işlemler">
+          <CommandGroup heading="Quick actions">
             <CommandItem
-              value="yeni proje"
+              value="new project"
               onSelect={() => go("/projects/new")}
             >
               <Plus className="text-muted-foreground" />
-              Yeni proje oluştur
+              Create new project
             </CommandItem>
-            <CommandItem value="onaylar" onSelect={() => go("/approvals")}>
+            <CommandItem value="approvals" onSelect={() => go("/approvals")}>
               <ClipboardCheck className="text-muted-foreground" />
-              Onayları görüntüle
-              <CommandShortcut>Onaylar</CommandShortcut>
+              View approvals
+              <CommandShortcut>Approvals</CommandShortcut>
             </CommandItem>
             <CommandItem
-              value="insan eylemleri"
+              value="human actions"
               onSelect={() => go("/human-actions")}
             >
               <UserRoundCog className="text-muted-foreground" />
-              İnsan eylemlerini görüntüle
+              View human actions
             </CommandItem>
-            <CommandItem value="sistem sagligi" onSelect={() => go("/saglik")}>
+            <CommandItem value="system health" onSelect={() => go("/health")}>
               <HeartPulse className="text-muted-foreground" />
-              Sistem sağlığını görüntüle
+              View system health
             </CommandItem>
           </CommandGroup>
         </CommandList>

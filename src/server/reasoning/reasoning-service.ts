@@ -25,9 +25,10 @@ function resolveMode(): ReasoningMode {
 }
 
 function shouldMock(): boolean {
-  // Varsayılan daima gerçek: mock yalnızca açıkça istendiğinde devreye girer
-  // (testler ve seed script'leri AGENTELSE_REASONING_MODE=mock ayarlar).
-  // API anahtarı yoksa sessizce mock'a düşmek yerine çağrı açıkça hata verir.
+  // The default is always real: mock only kicks in when explicitly
+  // requested (tests and seed scripts set AGENTELSE_REASONING_MODE=mock).
+  // If there's no API key, the call errors explicitly instead of silently
+  // falling back to mock.
   return resolveMode() === "mock";
 }
 
@@ -36,10 +37,11 @@ function shouldMock(): boolean {
 // but still budget-capped per project per day and fully audited via
 // ReasoningCall + AuditLog rows.
 
-// Projenin dili/pazarı her prompt'a tek noktadan enjekte edilir. Tek tek
-// prompt dosyalarına yazmak yerine burada: aksi halde bir prompt eklendiğinde
-// unutuluyor ve çıktı sessizce İngilizce dönüyordu (hedefler, denetimler ve
-// anayasa fiilen böyle üretilmişti).
+// The project's language/market is injected into every prompt from a
+// single point. Here, rather than in each individual prompt file:
+// otherwise it kept getting forgotten when a new prompt was added, and the
+// output silently came back in English (goals, audits and the constitution
+// had actually been generated this way).
 const localeCache = new Map<string, string>();
 
 async function localeDirective(projectId: string): Promise<string> {
@@ -73,9 +75,9 @@ export const ReasoningService = {
     input: ReasoningInput,
   ): Promise<ReasoningResult<TOut>> {
     const mock = shouldMock();
-    // def.model, prompt bazında model seçimine izin verir (ağır sentezler
-    // için Pro, sık çalışan ucuz adımlar için Flash). Tanımsızsa proje
-    // geneli varsayılan kullanılır.
+    // def.model allows model selection on a per-prompt basis (Pro for
+    // heavy syntheses, Flash for cheap, frequently-run steps). If
+    // undefined, the project-wide default is used.
     const model = mock ? "mock" : (def.model ?? geminiModelForTier(def.tier));
     const startedAt = Date.now();
 
@@ -109,9 +111,9 @@ export const ReasoningService = {
         const result = await runGeminiStructured({
           model,
           system: `${directive}\n\n${prompt.system}`,
-          // Talimat hem başta hem sonda: yalnızca sistem prompt'una
-          // konduğunda uzun prompt'larda güvenilir izlenmiyordu ve çıktının
-          // bir kısmı İngilizce dönüyordu.
+          // The directive goes both at the start and at the end: when
+          // placed only in the system prompt, it wasn't reliably followed
+          // on long prompts and part of the output came back in English.
           user: `${prompt.user}\n\n${directive}`,
           jsonSchema: z.toJSONSchema(def.schema),
           maxOutputTokens: def.maxTokens ?? 8192,
@@ -122,9 +124,9 @@ export const ReasoningService = {
         outputTokens = result.outputTokens;
       }
 
-      // Maliyet çağrı başına hesaplanır ve hem kaydın kendisine hem de
-      // günlük toplama yazılır — dailyBudgetUsd sınırının çalışabilmesi
-      // için sayacın gerçek harcamayı taşıması gerekiyor.
+      // Cost is calculated per call and written to both the record itself
+      // and the daily aggregate — the counter needs to carry actual
+      // spending for the dailyBudgetUsd cap to work.
       const costUsd = mock
         ? 0
         : estimateReasoningCostUsd({ model, inputTokens, outputTokens });
@@ -144,7 +146,7 @@ export const ReasoningService = {
       });
 
       if (costUsd > 0) {
-        // Sayaç zaten yukarıda artırıldı; burada yalnızca maliyet eklenir.
+        // The counter was already incremented above; only the cost is added here.
         await AutonomyPolicyRepository.checkAndIncrement(
           {
             workspaceId: input.workspaceId,
@@ -169,10 +171,7 @@ export const ReasoningService = {
 
       return { output, isMock: mock, reasoningCallId: call.id };
     } catch (error) {
-      if (
-        error instanceof AgentelseError &&
-        error.code === "BUDGET_EXCEEDED"
-      ) {
+      if (error instanceof AgentelseError && error.code === "BUDGET_EXCEEDED") {
         throw error;
       }
       await ReasoningCallRepository.record({

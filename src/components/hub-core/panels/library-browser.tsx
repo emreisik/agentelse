@@ -86,8 +86,8 @@ function FileTypeIcon({
   return <File className={className} />;
 }
 
-// Görsellerse tıklanınca lightbox'ta büyür (bkz. asset-preview.tsx'in aynı
-// deseni), diğer dosya türleri /api/assets/{id} üzerinden yeni sekmede açılır.
+// Images enlarge in a lightbox on click (see the same pattern in
+// asset-preview.tsx); other file types open in a new tab via /api/assets/{id}.
 function LibraryEntryLink({
   asset,
   className,
@@ -135,7 +135,7 @@ function FileThumb({
           dimClass,
         )}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element -- kaynak /api/assets/<id>, next/image optimize edemez */}
+        {/* eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it */}
         <img
           src={`/api/assets/${asset.id}`}
           alt={asset.filename}
@@ -199,27 +199,27 @@ function EmptyState({
       </span>
       <div>
         <p className="text-sm font-medium">
-          {hasAnyAssets ? "Sonuç bulunamadı" : "Henüz dosya yok"}
+          {hasAnyAssets ? "No results found" : "No files yet"}
         </p>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {hasAnyAssets
-            ? "Farklı bir arama veya sekme deneyin."
-            : "Projeye ait görseller ve belgeler burada listelenecek."}
+            ? "Try a different search or tab."
+            : "Images and documents belonging to this project will be listed here."}
         </p>
       </div>
       {!hasAnyAssets ? (
         <Button size="sm" onClick={onUploadClick}>
           <Upload className="size-4" />
-          Dosya Yükle
+          Upload File
         </Button>
       ) : null}
     </div>
   );
 }
 
-// Ekran görüntüsündeki dosya gezgini: arama + "Yeni" (gerçek yükleme) +
-// Tümü/Görseller/Belgeler sekmeleri + grid/liste geçişi. Tüm filtreleme
-// client'ta — proje başına dosya sayısı küçük, server round-trip'e gerek yok.
+// File explorer as seen in the screenshot: search + "New" (actual upload) +
+// All/Images/Documents tabs + grid/list toggle. All filtering happens
+// client-side — the file count per project is small, no need for a server round-trip.
 export function LibraryBrowser({
   projectId,
   assets,
@@ -267,15 +267,13 @@ export function LibraryBrowser({
       try {
         const result = await uploadLibraryAssetAction(formData);
         if (result.ok) {
-          toast.success("Dosya yüklendi");
+          toast.success("File uploaded");
           router.refresh();
         } else {
           toast.error(result.message);
         }
       } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Yükleme başarısız",
-        );
+        toast.error(error instanceof Error ? error.message : "Upload failed");
       }
     });
   }
@@ -296,7 +294,7 @@ export function LibraryBrowser({
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Ara"
+            placeholder="Search"
             className="rounded-full pl-8"
           />
         </div>
@@ -314,13 +312,13 @@ export function LibraryBrowser({
             ) : (
               <Upload className="size-4" />
             )}
-            Yeni
+            New
             <ChevronDown className="size-3.5 opacity-70" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={triggerUpload}>
               <Upload className="size-4 text-muted-foreground" />
-              Dosya Yükle
+              Upload File
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -328,18 +326,18 @@ export function LibraryBrowser({
 
       <div className="flex items-center gap-1">
         <TabPill active={tab === "all"} onClick={() => setTab("all")}>
-          Tümü
+          All
           <span className="text-xs text-muted-foreground">{assets.length}</span>
         </TabPill>
         <TabPill active={tab === "images"} onClick={() => setTab("images")}>
-          Görseller
+          Images
           <span className="text-xs text-muted-foreground">{imageCount}</span>
         </TabPill>
         <TabPill
           active={tab === "documents"}
           onClick={() => setTab("documents")}
         >
-          Belgeler
+          Documents
           <span className="text-xs text-muted-foreground">{documentCount}</span>
         </TabPill>
         <div className="ml-auto flex items-center gap-0.5">
@@ -380,9 +378,9 @@ export function LibraryBrowser({
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead>Ad</TableHead>
-                <TableHead className="w-32">Değiştirilme</TableHead>
-                <TableHead className="w-24 text-right">Boyut</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead className="w-32">Modified</TableHead>
+                <TableHead className="w-24 text-right">Size</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -62,7 +62,8 @@ export const IntelligenceEngine = {
               category: signal.category.toLowerCase(),
               statement: `${signal.title}${signal.summary ? ` — ${signal.summary}` : ""}`,
               classification: "LIKELY_FACT",
-              confidence: (signal.reliability ?? 0.5) * (output.relevanceScore / 100),
+              confidence:
+                (signal.reliability ?? 0.5) * (output.relevanceScore / 100),
               isMock: ReasoningService.isMockMode(),
             },
           ],
@@ -128,7 +129,9 @@ export const IntelligenceEngine = {
         title: insight.title,
         summary: insight.summary,
         category: related.find((r) => r.kind === "signal")
-          ? signals.find((s) => s.id === related.find((r) => r.kind === "signal")?.id)?.category
+          ? signals.find(
+              (s) => s.id === related.find((r) => r.kind === "signal")?.id,
+            )?.category
           : undefined,
         findingIds: related
           .filter((r) => r.kind === "finding")
@@ -145,10 +148,10 @@ export const IntelligenceEngine = {
   },
 
   // Projects that have promoted signals not yet folded into any insight.
-  // Aday seçimi hem PROMOTED sinyallere hem de HENÜZ İŞLENMEMİŞ bulgulara
-  // bakar. Yalnızca sinyale bakıldığında, araştırmadan gelen yüzlerce bulgu
-  // olmasına rağmen (sinyal taraması henüz sinyal üretmediyse) proje hiç
-  // seçilmiyor ve içgörü zinciri hiç başlamıyordu.
+  // Candidate selection looks at both PROMOTED signals and NOT-YET-PROCESSED
+  // findings. When only signals were considered, a project with hundreds of
+  // findings from research (but whose signal scan hadn't produced a signal
+  // yet) was never selected, and the insight chain never started.
   async projectsNeedingInsights(limit = 5) {
     const { prisma } = await import("@/lib/prisma");
 
@@ -162,7 +165,12 @@ export const IntelligenceEngine = {
 
     const candidates = new Map<
       string,
-      { workspaceId: string; projectId: string; brandId: string; promotedCount: number }
+      {
+        workspaceId: string;
+        projectId: string;
+        brandId: string;
+        promotedCount: number;
+      }
     >();
     for (const group of bySignal) {
       candidates.set(group.projectId, {
@@ -185,9 +193,9 @@ export const IntelligenceEngine = {
         if (candidates.size >= limit) break;
         if (candidates.has(group.projectId)) continue;
 
-        // Son bulgu son içgörüden yeniyse işlenmemiş malzeme var demektir.
-        // Bu kontrol olmadan aynı proje her tick'te yeniden sentezlenip
-        // kotayı boşa yakardı.
+        // If the latest finding is newer than the latest insight, there's
+        // unprocessed material. Without this check, the same project would
+        // get re-synthesized on every tick, burning through the quota for nothing.
         const latestInsight = await prisma.insight.findFirst({
           where: { projectId: group.projectId },
           orderBy: { createdAt: "desc" },

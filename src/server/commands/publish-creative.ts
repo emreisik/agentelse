@@ -10,15 +10,15 @@ import { getPublishTargets } from "@/server/integrations/meta-connection-status"
 export type PublishQuickActionResult =
   { ok: true; message: string } | { ok: false; message: string };
 
-// publishCreativeToInstagramAction'ın (src/server/actions/publish-actions.ts,
-// web/session tabanlı) VE Telegram callback'inin (telegram-approval-poller.ts,
-// oturumsuz arka plan bağlamı) paylaştığı asıl mantık. Bilerek "use server"
-// İŞARETLİ DEĞİL — bu bir Server Action değil, düz bir sunucu-taraf fonksiyonu;
-// requireUser() burada YOK, çağıran taraf (web action ya da poller) kendi
-// yetkilendirmesini kendisi yapıp workspaceId/projectId/actorUserId'yi
-// zaten doğrulanmış olarak geçiriyor. applyApprovalDecision'ın
-// reviewedByUserId için "telegram:<id>" sözde-kullanıcı deseniyle aynı
-// mantık burada da actorUserId için geçerli.
+// The core logic shared by publishCreativeToInstagramAction
+// (src/server/actions/publish-actions.ts, web/session-based) AND the
+// Telegram callback (telegram-approval-poller.ts, sessionless background
+// context). Deliberately NOT marked "use server" — this isn't a Server
+// Action, it's a plain server-side function; there's NO requireUser() here,
+// the caller (the web action or the poller) does its own authorization and
+// passes workspaceId/projectId/actorUserId already validated. The same
+// logic as applyApprovalDecision's "telegram:<id>" pseudo-user pattern for
+// reviewedByUserId applies here for actorUserId too.
 export async function publishCreativeCore(input: {
   creativeId: string;
   format: "FEED" | "STORIES";
@@ -32,13 +32,13 @@ export async function publishCreativeCore(input: {
     where: { id: creativeId },
     include: { versions: { orderBy: { version: "desc" }, take: 1 } },
   });
-  if (!creative) return { ok: false, message: "Kreatif bulunamadı." };
+  if (!creative) return { ok: false, message: "Creative not found." };
 
   const targets = await getPublishTargets(projectId);
   if (targets.length === 0) {
     return {
       ok: false,
-      message: "Bağlı ve Instagram hesabına sahip bir Meta sayfası yok.",
+      message: "There's no connected Meta page with an Instagram account.",
     };
   }
 
@@ -46,7 +46,7 @@ export async function publishCreativeCore(input: {
   if (!version?.assetId) {
     return {
       ok: false,
-      message: "Bu kreatif için paylaşılacak bir görsel yok.",
+      message: "This creative has no image to publish.",
     };
   }
 
@@ -56,13 +56,13 @@ export async function publishCreativeCore(input: {
 
   const imageUrl = buildAssetPublicUrl(version.assetId);
   const caption = version.caption || version.copy || "";
-  const title = creative.title ?? "Kreatif";
-  const formatLabel = format === "STORIES" ? "story" : "gönderi";
+  const title = creative.title ?? "Creative";
+  const formatLabel = format === "STORIES" ? "story" : "post";
 
   const submission = await CommandService.submit({
     workspaceId,
     source: "WEB",
-    rawText: `Instagram'da paylaş (${formatLabel}): ${title}`,
+    rawText: `Publish on Instagram (${formatLabel}): ${title}`,
     actorType: "USER",
     userId: actorUserId,
     knownProjectId: projectId,
@@ -72,7 +72,7 @@ export async function publishCreativeCore(input: {
       kind: "CAPABILITY",
       capability: "INSTAGRAM_PUBLISH",
       targetPlatform: "INSTAGRAM",
-      request: `${title} — Instagram ${formatLabel} paylaşımı`,
+      request: `${title} — Instagram ${formatLabel} publish`,
     },
     payloadExtra: {
       imageUrl,
@@ -84,9 +84,9 @@ export async function publishCreativeCore(input: {
   const reply =
     submission.status === "PLANNED"
       ? submission.requiresApproval
-        ? `📤 Instagram ${formatLabel} paylaşımı onaya gönderildi.`
-        : `📤 Instagram ${formatLabel} paylaşımı kuyruğa alındı.`
-      : "Paylaşım isteği oluşturulamadı.";
+        ? `📤 Instagram ${formatLabel} publish sent for approval.`
+        : `📤 Instagram ${formatLabel} publish queued.`
+      : "Failed to create the publish request.";
   await CommandRepository.recordReply(
     submission.commandId,
     reply,
@@ -94,7 +94,116 @@ export async function publishCreativeCore(input: {
   );
 
   if (submission.status !== "PLANNED") {
-    return { ok: false, message: "Paylaşım isteği oluşturulamadı." };
+    return { ok: false, message: "Failed to create the publish request." };
+  }
+  return { ok: true, message: reply };
+}
+
+const SOCIAL_PUBLISH_CONFIG = {
+  tiktok: {
+    label: "TikTok",
+    capability: "TIKTOK_PUBLISH",
+    targetPlatform: "TIKTOK",
+  },
+  linkedin: {
+    label: "LinkedIn",
+    capability: "LINKEDIN_PUBLISH",
+    targetPlatform: "LINKEDIN",
+  },
+  x: { label: "X", capability: "X_PUBLISH", targetPlatform: "X" },
+} as const;
+
+// The shared core for TikTok/LinkedIn/X, alongside publishCreativeCore
+// (Instagram-only — its capability/payload shape is fixed). Differs from
+// the Instagram version: TikTok requires a video asset (videoUrl, not
+// imageUrl), while LinkedIn/X only need text (caption) — an image/video
+// isn't required. publishCreativeCore is left UNTOUCHED (also called by the
+// Telegram poller, a function whose behavior must stay fixed) — hence a
+// separate function that repeats the shared `submit + reply` skeleton.
+export async function publishCreativeToSocialCore(input: {
+  creativeId: string;
+  platform: "tiktok" | "linkedin" | "x";
+  workspaceId: string;
+  projectId: string;
+  actorUserId: string;
+}): Promise<PublishQuickActionResult> {
+  const { creativeId, platform, workspaceId, projectId, actorUserId } = input;
+  const config = SOCIAL_PUBLISH_CONFIG[platform];
+
+  const creative = await prisma.creative.findUnique({
+    where: { id: creativeId },
+    include: {
+      versions: {
+        orderBy: { version: "desc" },
+        take: 1,
+        include: { asset: true },
+      },
+    },
+  });
+  if (!creative) return { ok: false, message: "Creative not found." };
+
+  const targets = await getPublishTargets(projectId);
+  const hasTarget = targets.some((t) => t.platform === platform);
+  if (!hasTarget) {
+    return {
+      ok: false,
+      message: `There's no connected ${config.label} account.`,
+    };
+  }
+
+  const version = creative.versions[0];
+  const caption = version?.caption || version?.copy || "";
+
+  const payloadExtra: Record<string, unknown> = { caption };
+  if (platform === "tiktok") {
+    if (!version || !version.asset || version.asset.type !== "VIDEO") {
+      return {
+        ok: false,
+        message: "This creative has no video to publish to TikTok.",
+      };
+    }
+    payloadExtra.videoUrl = buildAssetPublicUrl(version.asset.id);
+  } else if (!caption) {
+    return { ok: false, message: "This creative has no text to publish." };
+  }
+
+  const ideaId = creative.createdByTaskId
+    ? await IdeaChatRepository.resolveIdeaIdForTask(creative.createdByTaskId)
+    : null;
+  const title = creative.title ?? "Creative";
+
+  const submission = await CommandService.submit({
+    workspaceId,
+    source: "WEB",
+    rawText: `Publish on ${config.label}: ${title}`,
+    actorType: "USER",
+    userId: actorUserId,
+    knownProjectId: projectId,
+    ideaId: ideaId ?? undefined,
+    departmentKey: "SOCIAL_MEDIA",
+    intent: {
+      kind: "CAPABILITY",
+      capability: config.capability,
+      targetPlatform: config.targetPlatform,
+      request: `${title} — ${config.label} publish`,
+    },
+    payloadExtra,
+  });
+
+  const reply =
+    submission.status === "PLANNED"
+      ? submission.requiresApproval
+        ? `📤 ${config.label} publish sent for approval.`
+        : `📤 ${config.label} publish queued.`
+      : "Failed to create the publish request.";
+  await CommandRepository.recordReply(
+    submission.commandId,
+    reply,
+    submission.status === "PLANNED" ? "PLANNED" : "ERROR",
+  );
+
+  if (submission.status !== "PLANNED") {
+    return { ok: false, message: "Failed to create the publish request." };
   }
   return { ok: true, message: reply };
 }

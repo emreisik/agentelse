@@ -5,43 +5,44 @@ import { cn } from "@/lib/utils";
 import { buildHubHref, type EntityRef, type PanelKey } from "./hub-core-params";
 import { PANEL_LABEL } from "./lineage-map";
 import { HubBreadcrumb } from "./hub-breadcrumb";
-import { KurulumPanel } from "./panels/kurulum-panel";
-import { KutuphanePanel } from "./panels/kutuphane-panel";
-import { MarkaBeyniPanel } from "./panels/marka-beyni-panel";
-import { SinyallerPanel } from "./panels/sinyaller-panel";
-import { IcgoruFirsatPanel } from "./panels/icgoru-firsat-panel";
-import { HedeflerPanel } from "./panels/hedefler-panel";
-import { FikirlerPanel } from "./panels/fikirler-panel";
-import { IslerPanel } from "./panels/isler-panel";
-import { DepartmanlarPanel } from "./panels/departmanlar-panel";
-import { OnaylarPanel } from "./panels/onaylar-panel";
-import { InsanEylemPanel } from "./panels/insan-eylem-panel";
-import { AyarlarPanel } from "./panels/ayarlar-panel";
+import { SetupPanel } from "./panels/setup-panel";
+import { LibraryPanel } from "./panels/library-panel";
+import { BrandBrainPanel } from "./panels/brand-brain-panel";
+import { SignalsPanel } from "./panels/signals-panel";
+import { InsightsOpportunitiesPanel } from "./panels/insights-opportunities-panel";
+import { GoalsPanel } from "./panels/goals-panel";
+import { IdeasPanel } from "./panels/ideas-panel";
+import { WorkPanel } from "./panels/work-panel";
+import { DepartmentsPanel } from "./panels/departments-panel";
+import { ApprovalsPanel } from "./panels/approvals-panel";
+import { HumanActionPanel } from "./panels/human-action-panel";
+import { SettingsPanel } from "./panels/settings-panel";
 import type { PanelProps } from "./panels/panel-props";
 
 const PANEL_COMPONENT: Record<
   PanelKey,
   (props: PanelProps) => Promise<React.ReactNode>
 > = {
-  kurulum: KurulumPanel,
-  "marka-beyni": MarkaBeyniPanel,
-  sinyaller: SinyallerPanel,
-  "icgoru-firsat": IcgoruFirsatPanel,
-  hedefler: HedeflerPanel,
-  fikirler: FikirlerPanel,
-  isler: IslerPanel,
-  departmanlar: DepartmanlarPanel,
-  onaylar: OnaylarPanel,
-  "insan-eylem": InsanEylemPanel,
-  ayarlar: AyarlarPanel,
-  kutuphane: KutuphanePanel,
+  setup: SetupPanel,
+  "brand-brain": BrandBrainPanel,
+  signals: SignalsPanel,
+  "insights-opportunities": InsightsOpportunitiesPanel,
+  goals: GoalsPanel,
+  ideas: IdeasPanel,
+  work: WorkPanel,
+  departments: DepartmentsPanel,
+  approvals: ApprovalsPanel,
+  "human-action": HumanActionPanel,
+  settings: SettingsPanel,
+  library: LibraryPanel,
 };
 
-// `?panel=&sub=&entity=` sözleşmesine göre dispatch eden görünüm — artık
-// modal değil, proje köküyle (sohbet) yer değiştiren tam sayfa bir içerik
-// (ChatGPT'nin ayarlar/araçlar ekranlarına geçişi gibi: üstte geri linki,
-// altında sade, tek sütun bir içerik alanı). Kapanınca proje köküne
-// (sohbet ekranına) döner.
+// View dispatched according to the `?panel=&sub=&entity=` contract — no
+// longer a modal, now a full-page piece of content that replaces the
+// project root (chat) itself (similar to ChatGPT's transition to its
+// settings/tools screens: a back link on top, a plain single-column
+// content area below). Returns to the project root (chat screen) on
+// close.
 export async function PanelShell({
   projectId,
   panel,
@@ -61,13 +62,13 @@ export async function PanelShell({
     entity: null,
   });
   const Panel = PANEL_COMPONENT[panel];
-  // fikirler ve isler panellerinin liste (kanban) görünümü sayfa
-  // kaydırmasını değil, kendi sütun/kart taşmasını kullanır — bir entity
-  // detayı açıldığında (entity=idea:ID, entity=task:ID vb.) ise normal
-  // uzun-kaydırmalı bir görünüme dönülür, ondan ayırmak gerekiyor. isler'in
-  // 4 alt-sekmesinin (planlar/gorevler/devirler/olcumler) hepsi artık aynı
-  // kanban sistemi (bkz. isler-panel.tsx *Board fonksiyonları).
-  const isBoard = (panel === "fikirler" || panel === "isler") && !entity;
+  // The list (kanban) view of the ideas and work panels uses its own
+  // column/card overflow instead of page scrolling — this needs to be
+  // distinguished from the normal long-scroll view that's used when an
+  // entity detail is open (entity=idea:ID, entity=task:ID, etc). All 4
+  // sub-tabs of work (plans/tasks/cycles/measurements) now share the same
+  // kanban system (see the *Board functions in work-panel.tsx).
+  const isBoard = (panel === "ideas" || panel === "work") && !entity;
 
   return (
     <div
@@ -90,7 +91,7 @@ export async function PanelShell({
           className="inline-flex shrink-0 items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
-          Sohbete dön
+          Back to chat
         </Link>
         <h1 className="mt-4 shrink-0 font-heading text-2xl font-semibold tracking-tight">
           {PANEL_LABEL[panel]}

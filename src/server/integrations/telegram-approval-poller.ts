@@ -47,17 +47,17 @@ async function processCredential(
 
     if (!allowedApproverIds.includes(String(cq.from.id))) {
       await telegramAnswerCallbackQuery(token, cq.id, {
-        text: "Bu işlem için yetkiniz yok",
+        text: "You are not authorized for this action",
         showAlert: true,
       }).catch(() => {});
       continue;
     }
 
-    // "Sosyal medyada paylaşmak ister misiniz?" sorusu — gerçek bir Approval
-    // satırına bağlı değil (bkz. sendPublishPromptToTelegram), `id` burada
-    // creativeId. approve/reject'ten ayrı ele alınıyor çünkü karar sonrası
-    // henüz oluşmamış bir INSTAGRAM_PUBLISH görevini TETİKLİYOR, var olan
-    // birini karara bağlamıyor.
+    // The "Would you like to share on social media?" question — not tied
+    // to a real Approval row (see sendPublishPromptToTelegram), `id` here
+    // is the creativeId. Handled separately from approve/reject because,
+    // after the decision, it TRIGGERS an INSTAGRAM_PUBLISH task that
+    // doesn't exist yet, rather than deciding an existing one.
     if (PUBLISH_ACTIONS.has(action)) {
       const clearKeyboard = () =>
         cq.message
@@ -72,7 +72,7 @@ async function processCredential(
       if (action === "pubskip") {
         await clearKeyboard();
         await telegramAnswerCallbackQuery(token, cq.id, {
-          text: "Tamam, paylaşılmayacak",
+          text: "OK, it will not be shared",
         }).catch(() => {});
         continue;
       }
@@ -92,7 +92,7 @@ async function processCredential(
         }).catch(() => {});
       } catch (error) {
         await telegramAnswerCallbackQuery(token, cq.id, {
-          text: error instanceof Error ? error.message : "İşlem başarısız oldu",
+          text: error instanceof Error ? error.message : "The action failed",
           showAlert: true,
         }).catch(() => {});
       }
@@ -105,7 +105,7 @@ async function processCredential(
       });
       if (!approval) {
         await telegramAnswerCallbackQuery(token, cq.id, {
-          text: "Bu onay bulunamadı",
+          text: "This approval was not found",
           showAlert: true,
         }).catch(() => {});
         continue;
@@ -119,12 +119,12 @@ async function processCredential(
       });
 
       await telegramAnswerCallbackQuery(token, cq.id, {
-        text: action === "approve" ? "✅ Onaylandı" : "❌ Reddedildi",
+        text: action === "approve" ? "✅ Approved" : "❌ Rejected",
       }).catch(() => {});
     } catch (error) {
       const message = isAgentelseError(error)
-        ? "Bu onay artık karara bağlanamıyor (muhtemelen zaten karar verilmiş)"
-        : "İşlem başarısız oldu";
+        ? "This approval can no longer be decided (it has probably already been decided)"
+        : "The action failed";
       await telegramAnswerCallbackQuery(token, cq.id, {
         text: message,
         showAlert: true,
@@ -141,11 +141,11 @@ async function processCredential(
   });
 }
 
-// agency-wiring.ts'teki 3sn'lik tick'e "free-ride" eden bir adım: her
-// ACTIVE Telegram bağlantısı için kısa (non-blocking) bir `getUpdates`
-// çağrısı yapar, "✅ Onayla"/"❌ Reddet" callback'lerini işler. Bir
-// credential'daki hata diğerlerini etkilemesin diye her biri kendi
-// try/catch'i içinde işlenir.
+// A step that "free-rides" on the 3s tick in agency-wiring.ts: makes a
+// short (non-blocking) `getUpdates` call for every ACTIVE Telegram
+// connection and processes the "✅ Approve"/"❌ Reject" callbacks. Each
+// credential is processed inside its own try/catch so an error on one
+// doesn't affect the others.
 export async function pollTelegramApprovals(): Promise<void> {
   const credentials = await prisma.integrationCredential.findMany({
     where: { provider: "telegram", status: "ACTIVE" },
@@ -156,7 +156,7 @@ export async function pollTelegramApprovals(): Promise<void> {
       await processCredential(credential);
     } catch (error) {
       console.error(
-        `Telegram onay polling hatası (credential ${credential.id}):`,
+        `Telegram approval polling error (credential ${credential.id}):`,
         error,
       );
     }

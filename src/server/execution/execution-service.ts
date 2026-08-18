@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import type { CapabilityKey, RiskLevel } from "@prisma/client";
+import { Prisma, type CapabilityKey, type RiskLevel } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { capabilityLabel, PLATFORM_LABEL } from "@/lib/labels";
@@ -61,38 +61,57 @@ export const ExecutionService = {
 
     const correlationId = randomUUID();
 
-    return prisma.$transaction(async (tx) => {
-      const job = await tx.executionJob.create({
-        data: {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const job = await tx.executionJob.create({
+          data: {
+            workspaceId: input.workspaceId,
+            projectId: input.projectId,
+            brandId: input.brandId,
+            taskId: input.taskId,
+            capability: input.capability,
+            providerType: "SYSTEM",
+            skillId: input.skillId,
+            browserProfileId,
+            contextSnapshotId: input.contextSnapshotId,
+            correlationId,
+            idempotencyKey,
+            requestPayload: input.payload as never,
+            status: "QUEUED",
+            phase: "ACT",
+          },
+        });
+
+        await OutboxRepository.enqueue(tx, {
           workspaceId: input.workspaceId,
           projectId: input.projectId,
-          brandId: input.brandId,
-          taskId: input.taskId,
-          capability: input.capability,
-          providerType: "SYSTEM",
-          skillId: input.skillId,
-          browserProfileId,
-          contextSnapshotId: input.contextSnapshotId,
-          correlationId,
-          idempotencyKey,
-          requestPayload: input.payload as never,
-          status: "QUEUED",
-          phase: "ACT",
-        },
-      });
+          aggregateType: "ExecutionJob",
+          aggregateId: job.id,
+          eventType: OUTBOX_EVENT_TYPES.EXECUTION_DISPATCH,
+          payload: { executionJobId: job.id, riskLevel: input.riskLevel },
+          executionJobId: job.id,
+        });
 
-      await OutboxRepository.enqueue(tx, {
-        workspaceId: input.workspaceId,
-        projectId: input.projectId,
-        aggregateType: "ExecutionJob",
-        aggregateId: job.id,
-        eventType: OUTBOX_EVENT_TYPES.EXECUTION_DISPATCH,
-        payload: { executionJobId: job.id, riskLevel: input.riskLevel },
-        executionJobId: job.id,
+        return job;
       });
-
-      return job;
-    });
+    } catch (error) {
+      // Two callers raced to dispatch the same task+capability (the
+      // findUnique check above is TOCTOU-vulnerable under concurrency —
+      // e.g. two sibling WorkPlan tasks completing near-simultaneously and
+      // both fanning out to the same downstream dispatch). The unique
+      // idempotencyKey constraint catches it; the loser returns the
+      // winner's job instead of failing the caller.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        const winner = await prisma.executionJob.findUnique({
+          where: { idempotencyKey },
+        });
+        if (winner) return winner;
+      }
+      throw error;
+    }
   },
 
   // Called by the worker for a claimed EXECUTION_DISPATCH outbox event.
@@ -282,7 +301,7 @@ export const ExecutionService = {
         browserProfileId: job.browserProfileId ?? undefined,
         type: outcome.humanIntervention.type,
         inputType: outcome.humanIntervention.inputType,
-        title: `${capabilityLabel(job.capability)} için insan girdisi gerekiyor`,
+        title: `Human input needed for ${capabilityLabel(job.capability)}`,
         message: status.errorMessage,
       });
     }
@@ -306,11 +325,11 @@ export const ExecutionService = {
         workspaceId: job.workspaceId,
         projectId: job.projectId,
         taskId: job.taskId,
-        text: `❌ Görsel üretilemedi: ${failedTask?.title ?? "görev"}`,
+        text: `❌ Image generation failed: ${failedTask?.title ?? "task"}`,
         card: {
           kind: "creative-failed",
           taskId: job.taskId,
-          title: failedTask?.title ?? "Kreatif",
+          title: failedTask?.title ?? "Creative",
           message: status.errorMessage ?? undefined,
         },
         departmentKey: failedTask?.departmentKey ?? undefined,
@@ -330,7 +349,7 @@ export const ExecutionService = {
         where: { id: job.taskId },
         select: { title: true, departmentKey: true },
       });
-      const title = publishedTask?.title ?? "Yayın";
+      const title = publishedTask?.title ?? "Publish";
       const platform = PLATFORM_LABEL[job.capability] ?? job.capability;
       const rawResult = (status.rawResult ?? {}) as Record<string, unknown>;
       const postId =
@@ -341,8 +360,8 @@ export const ExecutionService = {
         taskId: job.taskId,
         text:
           outcome.jobStatus === "COMPLETED"
-            ? `📤 ${platform}'da yayınlandı: ${title}`
-            : `❌ ${platform} yayını başarısız: ${title}`,
+            ? `📤 Published on ${platform}: ${title}`
+            : `❌ ${platform} publish failed: ${title}`,
         card: {
           kind: "publish-result",
           taskId: job.taskId,
@@ -433,8 +452,8 @@ export const ExecutionService = {
   },
 };
 
-// Sağlayıcı sonucu şemasız `unknown` olarak geliyor — Asset yazmadan önce
-// dört alanın da beklenen tipte olduğunu doğrula.
+// The provider result arrives schema-less as `unknown` — verify all four
+// fields are of the expected type before writing the Asset.
 function generatedImageFrom(
   value: unknown,
 ):
@@ -473,8 +492,8 @@ async function materializeCreativeFromResult(
 ) {
   const result = (rawResult ?? {}) as Record<string, unknown>;
 
-  // Gerçek görsel (GeminiCreativeProvider → openclaw infer image generate)
-  // varsa onu kaydeder; yoksa eski sahte yer tutucuya düşer.
+  // If a real image exists (GeminiCreativeProvider -> openclaw infer image
+  // generate), it's saved; otherwise falls back to the legacy fake placeholder.
   const generatedImage = generatedImageFrom(result.image);
   const asset = generatedImage
     ? await prisma.asset.create({
@@ -549,23 +568,23 @@ async function materializeCreativeFromResult(
     requestedByType: "AI",
   });
 
-  // Kreatif, bir fikre bağlıysa (iş planı zinciri ya da doğrudan o fikrin
-  // sohbetinden gelen komut — bkz. resolveIdeaIdForTask) üretilen görsel o
-  // fikrin sohbet iş parçacığına düşer — startExecution'da açılan "yükleniyor"
-  // kartı burada sonuca güncellenir (aynı satır, kalıcı bir "yükleniyor"
-  // hayaleti kalmaz). Best-effort: bulunamazsa/yazılamazsa kreatif üretimi
-  // bozulmaz.
+  // If the creative is linked to an idea (a work-plan chain, or a command
+  // that came directly from that idea's chat — see resolveIdeaIdForTask),
+  // the generated image lands in that idea's chat thread — the "loading"
+  // card opened in startExecution is here updated with the result (same
+  // row, so no lingering "loading" ghost remains). Best-effort: if it can't
+  // be found/written, creative generation itself is unaffected.
   try {
     const task = await prisma.task.findUnique({
       where: { id: job.taskId },
       select: { title: true, departmentKey: true },
     });
-    const title = task?.title ?? "Kreatif";
+    const title = task?.title ?? "Creative";
     await IdeaChatRepository.resolveCreativeCard({
       workspaceId: job.workspaceId,
       projectId: job.projectId,
       taskId: job.taskId,
-      text: `🎨 Kreatif hazır: ${title} — onay bekliyor.`,
+      text: `🎨 Creative ready: ${title} — awaiting approval.`,
       card: {
         kind: "creative-ready",
         taskId: job.taskId,

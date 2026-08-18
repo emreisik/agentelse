@@ -40,7 +40,7 @@ export async function approveApprovalAction(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "İşlem başarısız",
+      message: error instanceof Error ? error.message : "Operation failed",
     };
   }
 }
@@ -66,7 +66,7 @@ export async function rejectApprovalAction(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "İşlem başarısız",
+      message: error instanceof Error ? error.message : "Operation failed",
     };
   }
 }

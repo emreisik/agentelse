@@ -97,11 +97,11 @@ export const ALL_DEPARTMENT_KEYS_UI = Object.keys(
   DEPARTMENT_KEY,
 ) as DepartmentKey[];
 
-// Departman "takım rengi" kimliği — StatusTone'dan bağımsız ayrı bir görsel
-// kanal (bkz. StatusBadge accentColor). 19 departman, kolorblind-güvenli
-// olarak doğrulanmış 4 kategorik aileye gruplanır; departmanın tam kimliğini
-// her zaman ikon + "X Team" etiketi taşır, renk yalnızca hızlı görsel tarama
-// içindir.
+// Department "team color" identity — a separate visual channel independent
+// of StatusTone (see StatusBadge accentColor). The 19 departments are
+// grouped into 4 colorblind-safe categorical families; the department's
+// full identity is always carried by the icon + "X Team" label, color is
+// only for quick visual scanning.
 export const DEPARTMENT_COLOR: Record<DepartmentKey, string> = {
   BRAND_STRATEGY: "var(--dept-strategy)",
   PARTNERSHIPS: "var(--dept-strategy)",
@@ -128,144 +128,144 @@ export const DEPARTMENT_COLOR: Record<DepartmentKey, string> = {
 };
 
 export const DEPARTMENT_MODE: EnumMap<DepartmentMode> = {
-  OFF: { label: "Kapalı", tone: "neutral" },
-  LISTEN: { label: "Dinle", tone: "neutral" },
-  SUGGEST: { label: "Öner", tone: "active" },
-  PREPARE: { label: "Hazırla", tone: "waiting" },
-  EXECUTE: { label: "Uygula", tone: "positive" },
+  OFF: { label: "Off", tone: "neutral" },
+  LISTEN: { label: "Listen", tone: "neutral" },
+  SUGGEST: { label: "Suggest", tone: "active" },
+  PREPARE: { label: "Prepare", tone: "waiting" },
+  EXECUTE: { label: "Execute", tone: "positive" },
 };
 
 export const DEPARTMENT_MODE_HINT: Record<DepartmentMode, string> = {
-  OFF: "Hiç çalışmaz",
-  LISTEN: "Yalnızca sinyal toplar",
-  SUGGEST: "Sinyal toplar, fırsat ve fikir önerir",
-  PREPARE: "İşi hazırlar, onay bekler",
-  EXECUTE: "Politika izin verdiği ölçüde işi tamamlar",
+  OFF: "Never runs",
+  LISTEN: "Only collects signals",
+  SUGGEST: "Collects signals, suggests opportunities and ideas",
+  PREPARE: "Prepares the work, waits for approval",
+  EXECUTE: "Completes the work to the extent policy allows",
 };
 
 export const WORK_PLAN_TYPE: EnumMap<WorkPlanType> = {
-  SINGLE_TASK: { label: "Tek Görev", tone: "neutral" },
-  EXPERIMENT: { label: "Deney", tone: "active" },
-  CAMPAIGN: { label: "Kampanya", tone: "positive" },
-  MULTI_DEPARTMENT: { label: "Çok Departmanlı", tone: "positive" },
+  SINGLE_TASK: { label: "Single Task", tone: "neutral" },
+  EXPERIMENT: { label: "Experiment", tone: "active" },
+  CAMPAIGN: { label: "Campaign", tone: "positive" },
+  MULTI_DEPARTMENT: { label: "Multi-Department", tone: "positive" },
 };
 
 export const WORK_PLAN_STATUS: EnumMap<WorkPlanStatus> = {
-  DRAFT: { label: "Taslak", tone: "neutral" },
-  AWAITING_APPROVAL: { label: "Onay Bekliyor", tone: "waiting" },
-  APPROVED: { label: "Onaylandı", tone: "positive" },
-  IN_PROGRESS: { label: "Yürütülüyor", tone: "active" },
-  COMPLETED: { label: "Tamamlandı", tone: "positive" },
-  CANCELLED: { label: "İptal Edildi", tone: "neutral" },
-  FAILED: { label: "Başarısız", tone: "danger" },
+  DRAFT: { label: "Draft", tone: "neutral" },
+  AWAITING_APPROVAL: { label: "Awaiting Approval", tone: "waiting" },
+  APPROVED: { label: "Approved", tone: "positive" },
+  IN_PROGRESS: { label: "In Progress", tone: "active" },
+  COMPLETED: { label: "Completed", tone: "positive" },
+  CANCELLED: { label: "Cancelled", tone: "neutral" },
+  FAILED: { label: "Failed", tone: "danger" },
 };
 
-// İşler → Planlar kanban sütunları — TASK_BOARD_COLUMNS'un (core.ts) plan
-// yaşam döngüsü karşılığı.
+// Tasks → Plans kanban columns — the plan-lifecycle counterpart of
+// TASK_BOARD_COLUMNS (core.ts).
 export const WORK_PLAN_BOARD_COLUMNS: Array<{
   key: string;
   label: string;
   statuses: WorkPlanStatus[];
 }> = [
   {
-    key: "hazirlaniyor",
-    label: "Hazırlanıyor",
+    key: "preparing",
+    label: "Preparing",
     statuses: ["DRAFT", "AWAITING_APPROVAL"],
   },
-  { key: "onaylandi", label: "Onaylandı", statuses: ["APPROVED"] },
-  { key: "yurutuluyor", label: "Yürütülüyor", statuses: ["IN_PROGRESS"] },
-  { key: "tamamlandi", label: "Tamamlandı", statuses: ["COMPLETED"] },
-  { key: "sorunlu", label: "Sorunlu", statuses: ["CANCELLED", "FAILED"] },
+  { key: "approved", label: "Approved", statuses: ["APPROVED"] },
+  { key: "in-progress", label: "In Progress", statuses: ["IN_PROGRESS"] },
+  { key: "completed", label: "Completed", statuses: ["COMPLETED"] },
+  { key: "issues", label: "Issues", statuses: ["CANCELLED", "FAILED"] },
 ];
 
 export const WORK_HANDOFF_STATUS: EnumMap<WorkHandoffStatus> = {
-  PROPOSED: { label: "Önerildi", tone: "waiting" },
-  ACCEPTED: { label: "Kabul Edildi", tone: "active" },
-  TASK_CREATED: { label: "Görev Oluşturuldu", tone: "active" },
-  COMPLETED: { label: "Tamamlandı", tone: "positive" },
-  REJECTED: { label: "Reddedildi", tone: "danger" },
-  EXPIRED: { label: "Süresi Doldu", tone: "neutral" },
+  PROPOSED: { label: "Proposed", tone: "waiting" },
+  ACCEPTED: { label: "Accepted", tone: "active" },
+  TASK_CREATED: { label: "Task Created", tone: "active" },
+  COMPLETED: { label: "Completed", tone: "positive" },
+  REJECTED: { label: "Rejected", tone: "danger" },
+  EXPIRED: { label: "Expired", tone: "neutral" },
 };
 
-// İşler → Devirler kanban sütunları.
+// Tasks → Handoffs kanban columns.
 export const WORK_HANDOFF_BOARD_COLUMNS: Array<{
   key: string;
   label: string;
   statuses: WorkHandoffStatus[];
 }> = [
-  { key: "onerildi", label: "Önerildi", statuses: ["PROPOSED"] },
-  { key: "kabul", label: "Kabul Edildi", statuses: ["ACCEPTED"] },
-  { key: "gorev", label: "Görev Oluşturuldu", statuses: ["TASK_CREATED"] },
-  { key: "tamamlandi", label: "Tamamlandı", statuses: ["COMPLETED"] },
-  { key: "sorunlu", label: "Sorunlu", statuses: ["REJECTED", "EXPIRED"] },
+  { key: "proposed", label: "Proposed", statuses: ["PROPOSED"] },
+  { key: "accepted", label: "Accepted", statuses: ["ACCEPTED"] },
+  { key: "task-created", label: "Task Created", statuses: ["TASK_CREATED"] },
+  { key: "completed", label: "Completed", statuses: ["COMPLETED"] },
+  { key: "issues", label: "Issues", statuses: ["REJECTED", "EXPIRED"] },
 ];
 
 export const PROJECT_GOAL_STATUS: EnumMap<ProjectGoalStatus> = {
-  PROPOSED: { label: "Önerildi", tone: "waiting" },
-  APPROVED: { label: "Onaylandı", tone: "positive" },
-  ACTIVE: { label: "Aktif", tone: "positive" },
-  PAUSED: { label: "Duraklatıldı", tone: "neutral" },
-  ACHIEVED: { label: "Başarıldı", tone: "special" },
-  REJECTED: { label: "Reddedildi", tone: "danger" },
-  ARCHIVED: { label: "Arşivlendi", tone: "neutral" },
+  PROPOSED: { label: "Proposed", tone: "waiting" },
+  APPROVED: { label: "Approved", tone: "positive" },
+  ACTIVE: { label: "Active", tone: "positive" },
+  PAUSED: { label: "Paused", tone: "neutral" },
+  ACHIEVED: { label: "Achieved", tone: "special" },
+  REJECTED: { label: "Rejected", tone: "danger" },
+  ARCHIVED: { label: "Archived", tone: "neutral" },
 };
 
 export const MEASUREMENT_PLAN_STATUS: EnumMap<MeasurementPlanStatus> = {
-  ACTIVE: { label: "Aktif", tone: "active" },
-  COMPLETED: { label: "Tamamlandı", tone: "positive" },
-  CANCELLED: { label: "İptal Edildi", tone: "neutral" },
+  ACTIVE: { label: "Active", tone: "active" },
+  COMPLETED: { label: "Completed", tone: "positive" },
+  CANCELLED: { label: "Cancelled", tone: "neutral" },
 };
 
-// İşler → Ölçümler kanban sütunları — sadece 3 durum var, diğer İşler
-// panolarıyla aynı sistemin en küçük hali.
+// Tasks → Measurements kanban columns — only 3 statuses, the smallest
+// instance of the same system as the other Tasks boards.
 export const MEASUREMENT_PLAN_BOARD_COLUMNS: Array<{
   key: string;
   label: string;
   statuses: MeasurementPlanStatus[];
 }> = [
-  { key: "aktif", label: "Aktif", statuses: ["ACTIVE"] },
-  { key: "tamamlandi", label: "Tamamlandı", statuses: ["COMPLETED"] },
-  { key: "iptal", label: "İptal", statuses: ["CANCELLED"] },
+  { key: "active", label: "Active", statuses: ["ACTIVE"] },
+  { key: "completed", label: "Completed", statuses: ["COMPLETED"] },
+  { key: "cancelled", label: "Cancelled", statuses: ["CANCELLED"] },
 ];
 
 export const MEASUREMENT_CHECK_STATUS: EnumMap<MeasurementCheckStatus> = {
-  PENDING: { label: "Bekliyor", tone: "neutral" },
-  SCHEDULED: { label: "Zamanlandı", tone: "waiting" },
-  RUNNING: { label: "Çalışıyor", tone: "active" },
-  COMPLETED: { label: "Tamamlandı", tone: "positive" },
-  FAILED: { label: "Başarısız", tone: "danger" },
-  SKIPPED: { label: "Atlandı", tone: "neutral" },
+  PENDING: { label: "Pending", tone: "neutral" },
+  SCHEDULED: { label: "Scheduled", tone: "waiting" },
+  RUNNING: { label: "Running", tone: "active" },
+  COMPLETED: { label: "Completed", tone: "positive" },
+  FAILED: { label: "Failed", tone: "danger" },
+  SKIPPED: { label: "Skipped", tone: "neutral" },
 };
 
 export const AGENCY_TRIGGER_TYPE: EnumMap<AgencyTriggerType> = {
-  SCHEDULE: { label: "Zamanlama", tone: "neutral" },
-  USER_COMMAND: { label: "Kullanıcı Komutu", tone: "active" },
-  NEW_SIGNAL: { label: "Yeni Sinyal", tone: "active" },
-  NEW_EVIDENCE: { label: "Yeni Kanıt", tone: "active" },
-  COMPETITOR_CHANGE: { label: "Rakip Değişikliği", tone: "active" },
-  SEO_CHANGE: { label: "SEO Değişikliği", tone: "active" },
-  MARKET_CHANGE: { label: "Pazar Değişikliği", tone: "active" },
-  MEDIA_CHANGE: { label: "Medya Değişikliği", tone: "active" },
-  TREND_CHANGE: { label: "Trend Değişikliği", tone: "active" },
-  PERFORMANCE_CHANGE: { label: "Performans Değişikliği", tone: "active" },
-  TASK_COMPLETED: { label: "Görev Tamamlandı", tone: "positive" },
-  CAMPAIGN_COMPLETED: { label: "Kampanya Tamamlandı", tone: "positive" },
-  FOLLOW_UP_DUE: { label: "Takip Zamanı", tone: "waiting" },
-  PROJECT_GOAL_CHANGED: { label: "Hedef Değişti", tone: "active" },
+  SCHEDULE: { label: "Schedule", tone: "neutral" },
+  USER_COMMAND: { label: "User Command", tone: "active" },
+  NEW_SIGNAL: { label: "New Signal", tone: "active" },
+  NEW_EVIDENCE: { label: "New Evidence", tone: "active" },
+  COMPETITOR_CHANGE: { label: "Competitor Change", tone: "active" },
+  SEO_CHANGE: { label: "SEO Change", tone: "active" },
+  MARKET_CHANGE: { label: "Market Change", tone: "active" },
+  MEDIA_CHANGE: { label: "Media Change", tone: "active" },
+  TREND_CHANGE: { label: "Trend Change", tone: "active" },
+  PERFORMANCE_CHANGE: { label: "Performance Change", tone: "active" },
+  TASK_COMPLETED: { label: "Task Completed", tone: "positive" },
+  CAMPAIGN_COMPLETED: { label: "Campaign Completed", tone: "positive" },
+  FOLLOW_UP_DUE: { label: "Follow-up Due", tone: "waiting" },
+  PROJECT_GOAL_CHANGED: { label: "Goal Changed", tone: "active" },
 };
 
 export const AGENCY_TRIGGER_STATUS: EnumMap<AgencyTriggerStatus> = {
-  PENDING: { label: "Bekliyor", tone: "neutral" },
-  PROCESSING: { label: "İşleniyor", tone: "active" },
-  PROCESSED: { label: "İşlendi", tone: "positive" },
-  FAILED: { label: "Başarısız", tone: "danger" },
-  SKIPPED: { label: "Atlandı", tone: "neutral" },
+  PENDING: { label: "Pending", tone: "neutral" },
+  PROCESSING: { label: "Processing", tone: "active" },
+  PROCESSED: { label: "Processed", tone: "positive" },
+  FAILED: { label: "Failed", tone: "danger" },
+  SKIPPED: { label: "Skipped", tone: "neutral" },
 };
 
-// "publish-result" kartında ("INSTAGRAM_PUBLISH" yerine) okunabilir platform
-// adı göstermek için — execution-service.ts VE task.repository.ts'in ikisi
-// de kullanıyor (aralarında dairesel import olmaması için burada, nötr bir
-// dosyada tutuluyor).
+// Shows a readable platform name (instead of "INSTAGRAM_PUBLISH") on the
+// "publish-result" card — used by both execution-service.ts AND
+// task.repository.ts (kept here, in a neutral file, so there's no circular
+// import between them).
 export const PLATFORM_LABEL: Partial<Record<CapabilityKey, string>> = {
   INSTAGRAM_PUBLISH: "Instagram",
   TIKTOK_PUBLISH: "TikTok",

@@ -36,7 +36,7 @@ export function ThemeToggle() {
     <Button
       variant="ghost"
       size="icon-sm"
-      title={dark ? "Açık temaya geç" : "Koyu temaya geç"}
+      title={dark ? "Switch to light theme" : "Switch to dark theme"}
       onClick={() => setTheme(dark ? "light" : "dark")}
     >
       {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}

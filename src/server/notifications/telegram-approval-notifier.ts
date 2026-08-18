@@ -15,9 +15,9 @@ import {
 } from "@/server/integrations/telegram-client";
 import { notifyProjectTelegram } from "@/server/notifications/project-telegram-notifier";
 
-// Aynı yerel-disk asset şeması src/app/api/assets/[assetId]/route.ts'te de
-// var — burada kasıtlı olarak küçük bir kopyası tutuluyor (o route'u bu
-// özellik için genişletmek kapsam dışı).
+// The same local-disk asset scheme also exists in
+// src/app/api/assets/[assetId]/route.ts — a small copy is deliberately kept
+// here (extending that route for this feature is out of scope).
 const LOCAL_ASSET_SCHEME = "local-asset://";
 const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 const SAFE_FILENAME = /^[a-zA-Z0-9-]+\.(png|jpe?g|webp|pdf|txt|csv|md)$/;
@@ -64,8 +64,8 @@ function buildKeyboard(
   return {
     inline_keyboard: [
       [
-        { text: "✅ Onayla", callback_data: `approve:${approvalId}` },
-        { text: "❌ Reddet", callback_data: `reject:${approvalId}` },
+        { text: "✅ Approve", callback_data: `approve:${approvalId}` },
+        { text: "❌ Reject", callback_data: `reject:${approvalId}` },
       ],
     ],
   };
@@ -82,13 +82,14 @@ function findActiveTelegramCredential(projectId: string) {
   });
 }
 
-// Yeni bir Approval oluştuğunda proje Telegram'a bağlıysa zengin bir
-// bildirim gönderir: Creative ise caption/copy + varsa görsel, değilse
-// düz metin — ikisinde de (izinli kullanıcı listesi doluysa) "Onayla"/
-// "Reddet" butonları eklenir; liste boşsa buton eklenmez (çalışmayan bir
-// buton göstermemek için). Dönen mesaj id'si karar sonrası butonları
-// kaldırabilmek için Approval'a yazılır. Best-effort — hata asla onay
-// oluşturmayı bozmaz.
+// When a new Approval is created, if the project is connected to Telegram,
+// sends a rich notification: for a Creative, caption/copy plus an image if
+// available, otherwise plain text — in both cases (if the allowed-approver
+// list is non-empty) "Approve"/"Reject" buttons are added; if the list is
+// empty, no button is added (to avoid showing a button that doesn't work).
+// The returned message id is written back onto the Approval so the buttons
+// can be removed after the decision. Best-effort — an error never breaks
+// approval creation.
 export async function sendApprovalRequestToTelegram(approval: {
   id: string;
   projectId: string;
@@ -125,7 +126,7 @@ export async function sendApprovalRequestToTelegram(approval: {
 
       const text = truncate(
         [
-          "📋 Creative onayı bekliyor",
+          "📋 Creative approval pending",
           version?.caption ? `\nCaption: ${version.caption}` : null,
           version?.copy ? `\nCopy: ${version.copy}` : null,
         ]
@@ -155,7 +156,7 @@ export async function sendApprovalRequestToTelegram(approval: {
       const sent = await telegramSendMessage(
         token,
         metadata.chatId,
-        `🔔 Onay bekliyor: ${label} (${approval.type})`,
+        `🔔 Awaiting approval: ${label} (${approval.type})`,
         { replyMarkup },
       );
       messageId = sent.message_id;
@@ -168,7 +169,7 @@ export async function sendApprovalRequestToTelegram(approval: {
       });
     }
   } catch (error) {
-    console.error("Telegram onay isteği gönderilemedi:", error);
+    console.error("Failed to send Telegram approval request:", error);
   }
 }
 
@@ -176,21 +177,21 @@ function buildPublishPromptKeyboard(creativeId: string): TelegramReplyMarkup {
   return {
     inline_keyboard: [
       [
-        { text: "📷 Gönderi", callback_data: `pubfeed:${creativeId}` },
+        { text: "📷 Post", callback_data: `pubfeed:${creativeId}` },
         { text: "📱 Story", callback_data: `pubstory:${creativeId}` },
       ],
-      [{ text: "Hayır, paylaşma", callback_data: `pubskip:${creativeId}` }],
+      [{ text: "No, don't share", callback_data: `pubskip:${creativeId}` }],
     ],
   };
 }
 
-// Bir kreatif onaylandığında sohbetteki "publish-prompt" kartının Telegram
-// karşılığı — approval-decisions.ts tarafından çağrılır. Gerçek bir Approval
-// satırına bağlı DEĞİL (henüz hangi formatta paylaşılacağı bile belli değil),
-// bu yüzden approve/reject'ten farklı, kendi callback_data ön ekleri var
-// (bkz. telegram-approval-poller.ts). Onay butonlarıyla aynı hassasiyette
-// bir karar olduğu için aynı allowedApproverIds listesi kullanılıyor —
-// liste boşsa (approval butonlarında olduğu gibi) hiç gönderilmez.
+// The Telegram counterpart of the "publish-prompt" card in chat when a
+// creative is approved — called from approval-decisions.ts. NOT tied to a
+// real Approval row (it isn't even known yet which format it'll be shared
+// in), so unlike approve/reject it has its own callback_data prefixes (see
+// telegram-approval-poller.ts). Since this is as sensitive a decision as the
+// approval buttons, it uses the same allowedApproverIds list — if that list
+// is empty (same as the approval buttons), nothing is sent at all.
 export async function sendPublishPromptToTelegram(input: {
   projectId: string;
   creativeId: string;
@@ -204,7 +205,7 @@ export async function sendPublishPromptToTelegram(input: {
 
     const token = decryptSecret(credential.encryptedSecret);
     const replyMarkup = buildPublishPromptKeyboard(input.creativeId);
-    const text = `📤 ${input.title} onaylandı — sosyal medyada paylaşmak ister misiniz?`;
+    const text = `📤 ${input.title} approved — want to share it on social media?`;
 
     const creative = await prisma.creative.findUnique({
       where: { id: input.creativeId },
@@ -232,13 +233,13 @@ export async function sendPublishPromptToTelegram(input: {
       await telegramSendMessage(token, metadata.chatId, text, { replyMarkup });
     }
   } catch (error) {
-    console.error("Telegram paylaşım sorusu gönderilemedi:", error);
+    console.error("Failed to send Telegram publish prompt:", error);
   }
 }
 
-// Bir onay karara bağlandığında: orijinal mesajdaki butonları kaldırır
-// (varsa) ve — APPROVED/REJECTED/REVISION_REQUESTED için — kısa bir takip
-// mesajı gönderir. Best-effort, hiçbir zaman karar işlemini bozmaz.
+// When an approval decision is made: removes the buttons on the original
+// message (if any) and — for APPROVED/REJECTED/REVISION_REQUESTED — sends a
+// short follow-up message. Best-effort, never breaks the decision process.
 export async function notifyApprovalDecision(
   approval: Approval,
   to: ApprovalStatus,
@@ -261,29 +262,32 @@ export async function notifyApprovalDecision(
           null,
         );
       } catch {
-        // Mesaj silinmiş/artık düzenlenemez olabilir — takip mesajı yine de gönderilsin.
+        // The message may have been deleted/is no longer editable — still send the follow-up.
       }
     }
 
     const prefix =
       to === "APPROVED"
-        ? "✅ Onaylandı"
+        ? "✅ Approved"
         : to === "REJECTED"
-          ? "❌ Reddedildi"
+          ? "❌ Rejected"
           : to === "REVISION_REQUESTED"
-            ? "✏️ Revizyon istendi"
+            ? "✏️ Revision requested"
             : null;
     if (!prefix) return;
 
     const label = await resolveApprovalLabel(approval);
     const via = reviewedByUserId.startsWith("telegram:")
-      ? " (Telegram üzerinden)"
+      ? " (via Telegram)"
       : "";
     await notifyProjectTelegram(
       approval.projectId,
       `${prefix}: ${label}${via}`,
     );
   } catch (error) {
-    console.error("Telegram onay kararı bildirimi gönderilemedi:", error);
+    console.error(
+      "Failed to send Telegram approval-decision notification:",
+      error,
+    );
   }
 }

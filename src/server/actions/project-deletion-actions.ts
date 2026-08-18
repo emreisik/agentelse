@@ -13,12 +13,12 @@ import {
 
 export type ActionResult = { ok: true } | { ok: false; message: string };
 
-// Projeyi ve ona ait TÜM veriyi kalıcı olarak siler. Üç kapı var:
-//   1. Çalışma alanı üyeliği (requireProjectAccess)
-//   2. OWNER/ADMIN rolü — sıradan üye proje silemez
-//   3. Kullanıcının proje adını harfi harfine yazması
-// Yanlışlıkla tetiklenmesi mümkün olmasın diye onay sunucu tarafında da
-// doğrulanır; istemci tarafı kontrolü tek başına yeterli değildir.
+// Permanently deletes the project and ALL of its data. There are three gates:
+//   1. Workspace membership (requireProjectAccess)
+//   2. OWNER/ADMIN role — a regular member cannot delete a project
+//   3. The user typing the project name exactly
+// To make accidental triggering impossible, the confirmation is also
+// validated server-side; client-side validation alone is not sufficient.
 export async function deleteProjectAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -38,7 +38,7 @@ export async function deleteProjectAction(
     if (membership?.role !== "OWNER" && membership?.role !== "ADMIN") {
       return {
         ok: false,
-        message: "Proje silmek için yönetici yetkisi gerekir",
+        message: "Admin privileges are required to delete a project",
       };
     }
 
@@ -46,19 +46,19 @@ export async function deleteProjectAction(
       where: { id: projectId },
       select: { name: true },
     });
-    if (!project) return { ok: false, message: "Proje bulunamadı" };
+    if (!project) return { ok: false, message: "Project not found" };
 
     if (confirmation !== project.name) {
       return {
         ok: false,
-        message: `Onaylamak için proje adını tam olarak yazın: ${project.name}`,
+        message: `Type the project name exactly to confirm: ${project.name}`,
       };
     }
 
     const result = await ProjectDeletionService.delete(projectId);
 
-    // Silme kaydı çalışma alanı seviyesinde tutulur — projeye bağlanırsa
-    // az önce silinen satırların arasına düşer ve iz kalmaz.
+    // The deletion record is kept at the workspace level — if linked to the
+    // project, it would fall among the rows just deleted and leave no trace.
     await AuditLogRepository.record({
       workspaceId,
       actorType: "USER",
@@ -78,12 +78,12 @@ export async function deleteProjectAction(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "Silme başarısız",
+      message: error instanceof Error ? error.message : "Deletion failed",
     };
   }
 
-  // redirect() içeride bir hata fırlatarak çalışır; try/catch içinde
-  // çağrılırsa kendi kontrol akışını yakalarız.
+  // redirect() works internally by throwing an error; if called inside a
+  // try/catch we'd catch its own control-flow signal.
   if (redirectTo) redirect(redirectTo);
   return { ok: true };
 }

@@ -6,21 +6,46 @@ import { TaskRepository } from "@/server/repositories/task.repository";
 import { WorkPlanRepository } from "@/server/repositories/work-plan.repository";
 
 // Dependency-gated dispatch for WorkPlan node tasks (spec section 26).
-// Tasks are created deferred (READY); this progressor queues each one the
-// moment all its dependencies are COMPLETED. Approval-parked tasks
-// (WAITING_APPROVAL) are dispatched by the existing approval flow instead.
+// Tasks are created deferred (READY) regardless of whether their capability
+// requires approval; this progressor acts on each one the moment all its
+// dependencies are COMPLETED — dispatching it straight to execution, or, if
+// the capability requires approval, parking it (WAITING_APPROVAL) only now
+// that its inputs actually exist. From there the normal human-approval flow
+// takes over and calls TaskPlanner.dispatchApprovedTask itself.
 export const WorkPlanProgressor = {
-  async dispatchReadyTasks(workPlanId: string, projectId: string): Promise<number> {
+  async dispatchReadyTasks(
+    workPlanId: string,
+    projectId: string,
+  ): Promise<number> {
     const tasks = await prisma.task.findMany({
       where: { workPlanId, projectId, status: "READY" },
-      select: { id: true },
+      select: {
+        id: true,
+        workspaceId: true,
+        projectId: true,
+        brandId: true,
+        title: true,
+        capability: true,
+        riskLevel: true,
+        createdByType: true,
+        createdByUserId: true,
+        departmentKey: true,
+        requiresApproval: true,
+      },
     });
 
     let dispatched = 0;
     for (const task of tasks) {
       const satisfied = await TaskRepository.dependenciesSatisfied(task.id);
       if (!satisfied) continue;
-      await TaskPlanner.dispatchApprovedTask(task.id, projectId);
+      if (task.requiresApproval) {
+        // Dependency just cleared — only now is it safe to surface the
+        // approval card (see task-planner.ts's deferDispatch branch for why
+        // this can't happen at plan-creation time).
+        await TaskPlanner.requestApproval(task);
+      } else {
+        await TaskPlanner.dispatchApprovedTask(task.id, projectId);
+      }
       dispatched += 1;
     }
     return dispatched;

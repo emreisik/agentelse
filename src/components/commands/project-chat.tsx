@@ -27,11 +27,12 @@ export type ChatAttachment = {
   mimeType: string;
 };
 
-// Sunucudan gelen kalıcı sohbet turu (Command satırı). source: "SYSTEM"
-// pipeline'ın (konsey, iş planı, görev/kreatif tamamlanması) bu fikrin
-// thread'ine yazdığı olay mesajıdır — kullanıcı mesajı yoktur, yalnızca
-// asistan balonu olarak gösterilir. `card` doluysa (kreatif üretimi) düz
-// metin yerine thread.tsx'teki CreativeCard ile render edilir.
+// A persistent chat turn from the server (Command row). source: "SYSTEM"
+// is an event message the pipeline (council, work plan, task/creative
+// completion) writes to this idea's thread — there is no user message, it
+// is only shown as an assistant bubble. If `card` is present (creative
+// generation), it is rendered with the CreativeCard in thread.tsx instead
+// of plain text.
 export type ChatTurn = {
   commandId: string;
   source: "WEB" | "SYSTEM";
@@ -40,9 +41,9 @@ export type ChatTurn = {
   replyStatus: string | null;
   attachments: ChatAttachment[];
   card?: IdeaEventCardData;
-  // Yalnızca TEK bir departmana bağlı olay mesajlarında dolu (görev/kreatif
-  // tamamlanması) — sohbette departman renginde bir kenar şeridi olarak
-  // gösterilir (bkz. thread.tsx AssistantMessage).
+  // Only set for event messages tied to a SINGLE department (task/creative
+  // completion) — shown in chat as a colored side stripe matching the
+  // department (see thread.tsx AssistantMessage).
   departmentKey?: DepartmentKey;
   createdAt: string;
 };
@@ -53,9 +54,9 @@ type LocalAttachment = {
   previewUrl?: string;
 };
 
-// Gönderilmiş ama sunucu listesine henüz düşmemiş yerel tur. Sayfa canlı
-// yenilemeyle (LiveRefresh) tazelendiğinde aynı commandId sunucu
-// listesinde görünür ve yerel kopya elenir.
+// A local turn that has been sent but not yet reflected in the server
+// list. When the page is refreshed via live refresh (LiveRefresh), the
+// same commandId appears in the server list and the local copy is dropped.
 type LocalTurn = {
   key: string;
   text: string;
@@ -85,16 +86,16 @@ const CHAT_ACCEPT =
   "image/png,image/jpeg,image/webp,application/pdf,text/plain,text/csv,text/markdown";
 
 const STATUS_NOTE: Record<string, string> = {
-  PLANNED: "Görev oluşturuldu",
-  APPROVAL_HANDLED: "Onay işlendi",
-  UNCLEAR: "Netleştirme bekleniyor",
-  ERROR: "Hata",
+  PLANNED: "Task created",
+  APPROVAL_HANDLED: "Approval processed",
+  UNCLEAR: "Awaiting clarification",
+  ERROR: "Error",
 };
 
-// assistant-ui'nin composer'ı eklenen dosyayı hemen "gönderilebilir" kabul
-// ediyor — gerçek yükleme (Asset kaydı + Gemini gövdesi) sunucu action'ı
-// içinde, mesaj gönderiminde oluyor. Bu adaptör sadece File referansını
-// mesaja kadar taşır.
+// assistant-ui's composer immediately treats an added file as
+// "sendable" — the actual upload (Asset record + Gemini payload) happens
+// inside the server action, at message submission time. This adapter just
+// carries the File reference through to the message.
 class ProjectChatAttachmentAdapter implements AttachmentAdapter {
   accept = CHAT_ACCEPT;
 
@@ -135,9 +136,9 @@ export function ProjectChat({
   projectId: string;
   projectName: string;
   turns: ChatTurn[];
-  // Verildiğinde bu sohbet bir fikrin thread'idir: gönderilen mesajlar o
-  // fikre etiketlenir ve LLM bağlamı bu fikrin geçmişiyle (kullanıcı +
-  // pipeline olayları) sınırlanır (bkz. ChatService.turn ideaId).
+  // When provided, this chat is an idea's thread: sent messages are
+  // tagged to that idea and the LLM context is scoped to this idea's
+  // history (user + pipeline events) (see ChatService.turn ideaId).
   ideaId?: string;
 }) {
   const [localTurns, setLocalTurns] = React.useState<LocalTurn[]>([]);
@@ -147,7 +148,7 @@ export function ProjectChat({
     [],
   );
 
-  // Sunucu listesine düşen turların yerel kopyalarını ele.
+  // Drop local copies of turns once they land in the server list.
   const serverIds = React.useMemo(
     () => new Set(turns.map((turn) => turn.commandId)),
     [turns],
@@ -160,9 +161,9 @@ export function ProjectChat({
     const out: FlatMessage[] = [];
     for (const turn of turns) {
       if (turn.source === "SYSTEM") {
-        // Pipeline olayı: kullanıcı balonu yok, sadece asistan notu — kart
-        // verisi varsa (kreatif üretimi) düz metin yerine CreativeCard
-        // gösterilir (bkz. convertMessage).
+        // Pipeline event: no user bubble, just an assistant note — if
+        // card data is present (creative generation), CreativeCard is
+        // shown instead of plain text (see convertMessage).
         if (turn.reply) {
           out.push({
             id: `${turn.commandId}-a`,
@@ -188,9 +189,10 @@ export function ProjectChat({
           id: `${turn.commandId}-a`,
           role: "assistant",
           text: note ? `${turn.reply}\n\n*${note}*` : turn.reply,
-          // "Görev oluşturuldu" notuyla birlikte hangi ekibe gittiği artık
-          // düz metin DEĞİL, thread.tsx'in departmentKey'den render ettiği
-          // gerçek DepartmentBadge (departman rengi+ikonu) ile gösterilir.
+          // Which team it went to, alongside the "Task created" note, is
+          // now shown NOT as plain text but with the actual
+          // DepartmentBadge (department color+icon) rendered by
+          // thread.tsx from departmentKey.
           departmentKey: turn.departmentKey,
         });
       }
@@ -206,7 +208,7 @@ export function ProjectChat({
         out.push({
           id: `${turn.key}-a`,
           role: "assistant",
-          text: "Düşünüyor…",
+          text: "Thinking…",
         });
       } else if (turn.reply) {
         out.push({
@@ -240,12 +242,13 @@ export function ProjectChat({
           }),
         };
       }
-      // Kart verisi varsa (kreatif üretimi — yükleniyor/hazır/başarısız)
-      // düz metin yerine metadata.custom.card üzerinden thread.tsx'teki
-      // CreativeCard render edilir (bkz. AssistantMessage); content boş
-      // bırakılır ki aynı bilgi iki kez (hem düz metin hem kart) görünmesin.
-      // departmentKey (kart olsun olmasın) aynı metadata.custom üzerinden
-      // taşınır — thread.tsx bunu bir kenar şeridi olarak render eder.
+      // If card data is present (creative generation — loading/ready/
+      // failed), the CreativeCard in thread.tsx is rendered via
+      // metadata.custom.card instead of plain text (see AssistantMessage);
+      // content is left empty so the same info doesn't show up twice
+      // (both as plain text and as a card). departmentKey (whether or not
+      // a card is present) is carried through the same metadata.custom —
+      // thread.tsx renders it as a side stripe.
       if (message.card || message.departmentKey) {
         return {
           role: "assistant",
@@ -290,7 +293,7 @@ export function ProjectChat({
         ...current,
         {
           key,
-          text: text || "(dosya gönderildi)",
+          text: text || "(file sent)",
           attachments: files.map((file) => ({
             filename: file.name,
             mimeType: file.type,
@@ -317,7 +320,9 @@ export function ProjectChat({
             result = {
               ok: false,
               message:
-                error instanceof Error ? error.message : "Mesaj gönderilemedi",
+                error instanceof Error
+                  ? error.message
+                  : "Failed to send message",
             };
           }
 
@@ -358,9 +363,9 @@ export function ProjectChat({
           <Sparkles className="size-4" />
         </span>
         <p className="max-w-sm text-sm text-muted-foreground">
-          Merhaba! {projectName} için buradayım. Bir içerik isteyin, soru sorun
-          ya da görsel/dosya ekleyerek talimat verin — örneğin &quot;bu görseli
-          kullanarak Instagram postu hazırla&quot;.
+          Hi! I&apos;m here for {projectName}. Ask for content, ask a question,
+          or give instructions by attaching an image/file — for example
+          &quot;prepare an Instagram post using this image&quot;.
         </p>
       </div>
     ),

@@ -12,7 +12,7 @@ type ServerAction = (formData: FormData) => Promise<ActionResult | void>;
 // { ok, message } (preferred) or return void/throw — both are handled.
 export function ActionForm({
   action,
-  successMessage = "İşlem tamamlandı",
+  successMessage = "Action completed",
   className,
   children,
 }: {
@@ -35,7 +35,7 @@ export function ActionForm({
       } catch (error) {
         return {
           ok: false as const,
-          message: error instanceof Error ? error.message : "İşlem başarısız",
+          message: error instanceof Error ? error.message : "Action failed",
           seq: Date.now(),
         };
       }
@@ -52,7 +52,7 @@ export function ActionForm({
       toast.success(successMessage);
       router.refresh();
     } else {
-      toast.error(state.message || "İşlem başarısız");
+      toast.error(state.message || "Action failed");
     }
   }, [state, successMessage, router]);
 

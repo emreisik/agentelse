@@ -17,38 +17,39 @@ import type {
 import type { EnumMap } from "./types";
 
 export const TASK_STATUS: EnumMap<TaskStatus> = {
-  DRAFT: { label: "Taslak", tone: "neutral" },
-  READY: { label: "Hazır", tone: "neutral" },
-  QUEUED: { label: "Kuyrukta", tone: "waiting" },
-  RUNNING: { label: "Çalışıyor", tone: "active" },
-  WAITING_INPUT: { label: "Girdi Bekliyor", tone: "waiting" },
-  WAITING_HUMAN: { label: "İnsan Bekliyor", tone: "waiting" },
-  WAITING_APPROVAL: { label: "Onay Bekliyor", tone: "waiting" },
-  WAITING_PROVIDER: { label: "Sağlayıcı Bekliyor", tone: "waiting" },
-  VERIFYING: { label: "Doğrulanıyor", tone: "active" },
-  COMPLETED: { label: "Tamamlandı", tone: "positive" },
-  FAILED: { label: "Başarısız", tone: "danger" },
-  BLOCKED: { label: "Engellendi", tone: "danger" },
-  CANCELLED: { label: "İptal Edildi", tone: "neutral" },
+  DRAFT: { label: "Draft", tone: "neutral" },
+  READY: { label: "Ready", tone: "neutral" },
+  QUEUED: { label: "Queued", tone: "waiting" },
+  RUNNING: { label: "Running", tone: "active" },
+  WAITING_INPUT: { label: "Waiting for Input", tone: "waiting" },
+  WAITING_HUMAN: { label: "Waiting for Human", tone: "waiting" },
+  WAITING_APPROVAL: { label: "Waiting for Approval", tone: "waiting" },
+  WAITING_PROVIDER: { label: "Waiting for Provider", tone: "waiting" },
+  VERIFYING: { label: "Verifying", tone: "active" },
+  COMPLETED: { label: "Completed", tone: "positive" },
+  FAILED: { label: "Failed", tone: "danger" },
+  BLOCKED: { label: "Blocked", tone: "danger" },
+  CANCELLED: { label: "Cancelled", tone: "neutral" },
 };
 
-// Kanban column grouping for the İşler (task) board — IDEA_BOARD_COLUMNS'un
-// (ideas.ts) görev yaşam döngüsü karşılığı. TaskStatus'un 13 değeri 5 sütuna
-// gruplanır ki Fikirler panosuyla aynı görsel yoğunlukta kalsın.
+// Kanban column grouping for the Tasks board — the task-lifecycle
+// counterpart of IDEA_BOARD_COLUMNS (ideas.ts). TaskStatus's 13 values are
+// grouped into 5 columns to keep the same visual density as the Ideas
+// board.
 export const TASK_BOARD_COLUMNS: Array<{
   key: string;
   label: string;
   statuses: TaskStatus[];
 }> = [
   {
-    key: "hazirlaniyor",
-    label: "Hazırlanıyor",
+    key: "preparing",
+    label: "Preparing",
     statuses: ["DRAFT", "READY", "QUEUED"],
   },
-  { key: "calisiyor", label: "Çalışıyor", statuses: ["RUNNING", "VERIFYING"] },
+  { key: "running", label: "Running", statuses: ["RUNNING", "VERIFYING"] },
   {
-    key: "bekliyor",
-    label: "Bekliyor",
+    key: "waiting",
+    label: "Waiting",
     statuses: [
       "WAITING_INPUT",
       "WAITING_HUMAN",
@@ -56,187 +57,196 @@ export const TASK_BOARD_COLUMNS: Array<{
       "WAITING_PROVIDER",
     ],
   },
-  { key: "tamamlandi", label: "Tamamlandı", statuses: ["COMPLETED"] },
+  { key: "completed", label: "Completed", statuses: ["COMPLETED"] },
   {
-    key: "sorunlu",
-    label: "Sorunlu",
+    key: "issues",
+    label: "Issues",
     statuses: ["FAILED", "BLOCKED", "CANCELLED"],
   },
 ];
 
 export const TASK_PRIORITY: EnumMap<TaskPriority> = {
-  LOW: { label: "Düşük", tone: "neutral" },
-  MEDIUM: { label: "Orta", tone: "neutral" },
-  HIGH: { label: "Yüksek", tone: "waiting" },
-  URGENT: { label: "Acil", tone: "danger" },
+  LOW: { label: "Low", tone: "neutral" },
+  MEDIUM: { label: "Medium", tone: "neutral" },
+  HIGH: { label: "High", tone: "waiting" },
+  URGENT: { label: "Urgent", tone: "danger" },
 };
 
 export const RISK_LEVEL: EnumMap<RiskLevel> = {
-  LOW: { label: "Düşük Risk", tone: "positive" },
-  MEDIUM: { label: "Orta Risk", tone: "neutral" },
-  HIGH: { label: "Yüksek Risk", tone: "waiting" },
-  CRITICAL: { label: "Kritik Risk", tone: "danger" },
+  LOW: { label: "Low Risk", tone: "positive" },
+  MEDIUM: { label: "Medium Risk", tone: "neutral" },
+  HIGH: { label: "High Risk", tone: "waiting" },
+  CRITICAL: { label: "Critical Risk", tone: "danger" },
 };
 
 export const PROJECT_STATUS: EnumMap<ProjectStatus> = {
-  CREATED: { label: "Oluşturuldu", tone: "neutral" },
-  DISCOVERY: { label: "Keşif", tone: "active" },
-  NEEDS_INFORMATION: { label: "Bilgi Gerekli", tone: "waiting" },
-  PROFILE_REVIEW: { label: "Profil İncelemesi", tone: "waiting" },
-  NEEDS_ASSESSMENT: { label: "Değerlendirme Gerekli", tone: "waiting" },
-  STRATEGY: { label: "Strateji", tone: "active" },
-  ACTIVE: { label: "Aktif", tone: "positive" },
-  PAUSED: { label: "Duraklatıldı", tone: "neutral" },
-  CLOSED: { label: "Kapatıldı", tone: "neutral" },
+  CREATED: { label: "Created", tone: "neutral" },
+  DISCOVERY: { label: "Discovery", tone: "active" },
+  NEEDS_INFORMATION: { label: "Needs Information", tone: "waiting" },
+  PROFILE_REVIEW: { label: "Profile Review", tone: "waiting" },
+  NEEDS_ASSESSMENT: { label: "Needs Assessment", tone: "waiting" },
+  STRATEGY: { label: "Strategy", tone: "active" },
+  ACTIVE: { label: "Active", tone: "positive" },
+  PAUSED: { label: "Paused", tone: "neutral" },
+  CLOSED: { label: "Closed", tone: "neutral" },
 };
 
 export const APPROVAL_STATUS: EnumMap<ApprovalStatus> = {
-  PENDING: { label: "Bekliyor", tone: "waiting" },
-  APPROVED: { label: "Onaylandı", tone: "positive" },
-  REJECTED: { label: "Reddedildi", tone: "danger" },
-  REVISION_REQUESTED: { label: "Revizyon İstendi", tone: "waiting" },
-  EXPIRED: { label: "Süresi Doldu", tone: "neutral" },
-  CANCELLED: { label: "İptal Edildi", tone: "neutral" },
+  PENDING: { label: "Pending", tone: "waiting" },
+  APPROVED: { label: "Approved", tone: "positive" },
+  REJECTED: { label: "Rejected", tone: "danger" },
+  REVISION_REQUESTED: { label: "Revision Requested", tone: "waiting" },
+  EXPIRED: { label: "Expired", tone: "neutral" },
+  CANCELLED: { label: "Cancelled", tone: "neutral" },
 };
 
 export const APPROVAL_TYPE: EnumMap<ApprovalType> = {
-  CREATIVE_APPROVAL: { label: "Kreatif Onayı", tone: "active" },
-  PUBLISH_APPROVAL: { label: "Yayın Onayı", tone: "waiting" },
-  CAMPAIGN_APPROVAL: { label: "Kampanya Onayı", tone: "waiting" },
-  ACCOUNT_ACTION_APPROVAL: { label: "Hesap İşlemi Onayı", tone: "waiting" },
+  CREATIVE_APPROVAL: { label: "Creative Approval", tone: "active" },
+  PUBLISH_APPROVAL: { label: "Publish Approval", tone: "waiting" },
+  CAMPAIGN_APPROVAL: { label: "Campaign Approval", tone: "waiting" },
+  ACCOUNT_ACTION_APPROVAL: {
+    label: "Account Action Approval",
+    tone: "waiting",
+  },
   CRITICAL_CHANGE_APPROVAL: {
-    label: "Kritik Değişiklik Onayı",
+    label: "Critical Change Approval",
     tone: "danger",
   },
-  GENERIC: { label: "Genel Onay", tone: "neutral" },
+  GENERIC: { label: "General Approval", tone: "neutral" },
 };
 
 export const APPROVAL_LEVEL: EnumMap<ApprovalLevel> = {
-  LEVEL_0_AUTO_OBSERVE: { label: "S0 · Otomatik Gözlem", tone: "neutral" },
-  LEVEL_1_INTERNAL_AUTOMATIC: { label: "S1 · İç Otomatik", tone: "neutral" },
-  LEVEL_2_AGENCY_DIRECTOR: { label: "S2 · Ajans Direktörü", tone: "active" },
-  LEVEL_3_CLIENT: { label: "S3 · Müşteri Onayı", tone: "waiting" },
-  LEVEL_4_CRITICAL: { label: "S4 · Kritik Onay", tone: "danger" },
+  LEVEL_0_AUTO_OBSERVE: {
+    label: "L0 · Automatic Observation",
+    tone: "neutral",
+  },
+  LEVEL_1_INTERNAL_AUTOMATIC: {
+    label: "L1 · Internal Automatic",
+    tone: "neutral",
+  },
+  LEVEL_2_AGENCY_DIRECTOR: { label: "L2 · Agency Director", tone: "active" },
+  LEVEL_3_CLIENT: { label: "L3 · Client Approval", tone: "waiting" },
+  LEVEL_4_CRITICAL: { label: "L4 · Critical Approval", tone: "danger" },
 };
 
 export const HUMAN_INTERVENTION_TYPE: EnumMap<HumanInterventionType> = {
-  OTP_REQUIRED: { label: "OTP Gerekli", tone: "waiting" },
-  MFA_REQUIRED: { label: "MFA Gerekli", tone: "waiting" },
-  LOGIN_REQUIRED: { label: "Giriş Gerekli", tone: "waiting" },
-  CAPTCHA_REQUIRED: { label: "CAPTCHA Gerekli", tone: "waiting" },
-  CONFIRMATION_REQUIRED: { label: "Onay Gerekli", tone: "waiting" },
+  OTP_REQUIRED: { label: "OTP Required", tone: "waiting" },
+  MFA_REQUIRED: { label: "MFA Required", tone: "waiting" },
+  LOGIN_REQUIRED: { label: "Login Required", tone: "waiting" },
+  CAPTCHA_REQUIRED: { label: "CAPTCHA Required", tone: "waiting" },
+  CONFIRMATION_REQUIRED: { label: "Confirmation Required", tone: "waiting" },
   MANUAL_BROWSER_REQUIRED: {
-    label: "Manuel Tarayıcı Gerekli",
+    label: "Manual Browser Required",
     tone: "waiting",
   },
   ACCOUNT_SELECTION_REQUIRED: {
-    label: "Hesap Seçimi Gerekli",
+    label: "Account Selection Required",
     tone: "waiting",
   },
-  FILE_REQUIRED: { label: "Dosya Gerekli", tone: "waiting" },
-  INFORMATION_REQUIRED: { label: "Bilgi Gerekli", tone: "waiting" },
-  DECISION_REQUIRED: { label: "Karar Gerekli", tone: "waiting" },
+  FILE_REQUIRED: { label: "File Required", tone: "waiting" },
+  INFORMATION_REQUIRED: { label: "Information Required", tone: "waiting" },
+  DECISION_REQUIRED: { label: "Decision Required", tone: "waiting" },
 };
 
 export const HUMAN_INTERVENTION_STATUS: EnumMap<HumanInterventionStatus> = {
-  PENDING: { label: "Bekliyor", tone: "waiting" },
-  RESOLVED: { label: "Çözüldü", tone: "positive" },
-  EXPIRED: { label: "Süresi Doldu", tone: "neutral" },
-  CANCELLED: { label: "İptal Edildi", tone: "neutral" },
+  PENDING: { label: "Pending", tone: "waiting" },
+  RESOLVED: { label: "Resolved", tone: "positive" },
+  EXPIRED: { label: "Expired", tone: "neutral" },
+  CANCELLED: { label: "Cancelled", tone: "neutral" },
 };
 
 // Connection health of a project's per-platform browser session — the
 // layer CapabilityRouter actually dispatches publish/ads jobs through.
 export const BROWSER_PROFILE_STATUS: EnumMap<BrowserProfileStatus> = {
-  READY: { label: "Bağlı", tone: "positive" },
-  RUNNING: { label: "Çalışıyor", tone: "active" },
-  WAITING: { label: "Bekliyor", tone: "waiting" },
-  LOGIN_REQUIRED: { label: "Giriş Gerekli", tone: "danger" },
-  MFA_REQUIRED: { label: "MFA Gerekli", tone: "danger" },
-  OTP_REQUIRED: { label: "OTP Gerekli", tone: "danger" },
-  CAPTCHA_REQUIRED: { label: "CAPTCHA Gerekli", tone: "danger" },
-  SESSION_EXPIRED: { label: "Oturum Sona Erdi", tone: "danger" },
-  USER_ACTION_REQUIRED: { label: "Eylem Gerekli", tone: "danger" },
-  PERMISSION_REQUIRED: { label: "İzin Gerekli", tone: "danger" },
-  UNHEALTHY: { label: "Sorunlu", tone: "danger" },
-  DISABLED: { label: "Devre Dışı", tone: "neutral" },
+  READY: { label: "Connected", tone: "positive" },
+  RUNNING: { label: "Running", tone: "active" },
+  WAITING: { label: "Waiting", tone: "waiting" },
+  LOGIN_REQUIRED: { label: "Login Required", tone: "danger" },
+  MFA_REQUIRED: { label: "MFA Required", tone: "danger" },
+  OTP_REQUIRED: { label: "OTP Required", tone: "danger" },
+  CAPTCHA_REQUIRED: { label: "CAPTCHA Required", tone: "danger" },
+  SESSION_EXPIRED: { label: "Session Expired", tone: "danger" },
+  USER_ACTION_REQUIRED: { label: "Action Required", tone: "danger" },
+  PERMISSION_REQUIRED: { label: "Permission Required", tone: "danger" },
+  UNHEALTHY: { label: "Unhealthy", tone: "danger" },
+  DISABLED: { label: "Disabled", tone: "neutral" },
 };
 
 export const EXECUTION_JOB_STATUS: EnumMap<ExecutionJobStatus> = {
-  QUEUED: { label: "Kuyrukta", tone: "waiting" },
-  RUNNING: { label: "Çalışıyor", tone: "active" },
-  WAITING_HUMAN: { label: "İnsan Bekliyor", tone: "waiting" },
-  WAITING_PROVIDER: { label: "Sağlayıcı Bekliyor", tone: "waiting" },
-  VERIFYING: { label: "Doğrulanıyor", tone: "active" },
-  COMPLETED: { label: "Tamamlandı", tone: "positive" },
-  FAILED: { label: "Başarısız", tone: "danger" },
-  CANCELLED: { label: "İptal Edildi", tone: "neutral" },
+  QUEUED: { label: "Queued", tone: "waiting" },
+  RUNNING: { label: "Running", tone: "active" },
+  WAITING_HUMAN: { label: "Waiting for Human", tone: "waiting" },
+  WAITING_PROVIDER: { label: "Waiting for Provider", tone: "waiting" },
+  VERIFYING: { label: "Verifying", tone: "active" },
+  COMPLETED: { label: "Completed", tone: "positive" },
+  FAILED: { label: "Failed", tone: "danger" },
+  CANCELLED: { label: "Cancelled", tone: "neutral" },
 };
 
 export const CREATIVE_STATUS: EnumMap<CreativeStatus> = {
-  DRAFT: { label: "Taslak", tone: "neutral" },
-  IN_REVIEW: { label: "İncelemede", tone: "waiting" },
-  APPROVED: { label: "Onaylandı", tone: "positive" },
-  REJECTED: { label: "Reddedildi", tone: "danger" },
-  PUBLISHED: { label: "Yayınlandı", tone: "positive" },
-  ARCHIVED: { label: "Arşivlendi", tone: "neutral" },
+  DRAFT: { label: "Draft", tone: "neutral" },
+  IN_REVIEW: { label: "In Review", tone: "waiting" },
+  APPROVED: { label: "Approved", tone: "positive" },
+  REJECTED: { label: "Rejected", tone: "danger" },
+  PUBLISHED: { label: "Published", tone: "positive" },
+  ARCHIVED: { label: "Archived", tone: "neutral" },
 };
 
-// Hand-curated Turkish labels for the most visible capabilities; anything
+// Hand-curated English labels for the most visible capabilities; anything
 // unlisted falls back to a prettified form of the enum key.
 const CAPABILITY_LABELS: Partial<Record<CapabilityKey, string>> = {
-  BRAND_DISCOVERY: "Marka Keşfi",
-  WEB_RESEARCH: "Web Araştırması",
-  PRODUCT_RESEARCH: "Ürün Araştırması",
-  MARKET_RESEARCH: "Pazar Araştırması",
-  CUSTOMER_INTELLIGENCE: "Müşteri İstihbaratı",
-  COMPETITOR_RESEARCH: "Rakip Araştırması",
-  COMPETITOR_MONITORING: "Rakip Takibi",
-  SEO_RESEARCH: "SEO Araştırması",
-  SEO_ANALYSIS: "SEO Analizi",
-  SOCIAL_RESEARCH: "Sosyal Medya Araştırması",
-  MEDIA_RESEARCH: "Medya Araştırması",
-  CULTURAL_RESEARCH: "Kültürel Araştırma",
-  CREATOR_RESEARCH: "Üretici Araştırması",
-  PARTNERSHIP_RESEARCH: "Ortaklık Araştırması",
-  ADVERTISING_RESEARCH: "Reklam Araştırması",
-  REVIEW_RESEARCH: "Yorum Araştırması",
-  TECHNOLOGY_RESEARCH: "Teknoloji Araştırması",
-  SIGNAL_SCAN: "Sinyal Taraması",
-  MEASUREMENT_CHECK: "Ölçüm Kontrolü",
-  CREATE_SOCIAL_CREATIVE: "Sosyal Kreatif Üretimi",
-  CREATE_AD_CREATIVE: "Reklam Kreatifi Üretimi",
-  CREATE_COPY: "Metin Yazımı",
-  CREATE_CAPTION: "Başlık Yazımı",
-  CREATE_CAMPAIGN_BRIEF: "Kampanya Brief'i",
-  CREATE_CONTENT_PLAN: "İçerik Planı",
-  INSTAGRAM_PUBLISH: "Instagram Yayını",
-  TIKTOK_PUBLISH: "TikTok Yayını",
-  LINKEDIN_PUBLISH: "LinkedIn Yayını",
-  X_PUBLISH: "X Yayını",
-  META_ADS_ANALYSIS: "Meta Reklam Analizi",
-  META_CAMPAIGN_CREATE: "Meta Kampanya Oluşturma",
-  META_CAMPAIGN_UPDATE: "Meta Kampanya Güncelleme",
-  WEBSITE_UPDATE: "Web Sitesi Güncellemesi",
-  PR_OUTREACH: "PR İletişimi",
-  ANALYTICS_ANALYSIS: "Analitik Analizi",
-  REPORTING: "Raporlama",
-  VERIFY_EXTERNAL_ACTION: "Harici Eylem Doğrulama",
-  SOCIAL_ACCOUNT_SETUP: "Sosyal Hesap Kurulumu",
-  ASO_ANALYSIS: "Uygulama Mağazası (ASO) Analizi",
-  BRAND_SAFETY: "Marka Güvenliği Kontrolü",
-  CLAIM_VALIDATION: "İddia Doğrulama",
-  COMPETITOR_CHANGE_DETECTION: "Rakip Değişikliği Tespiti",
-  CRM_ANALYSIS: "CRM Analizi",
-  DATA_EXTRACTION: "Veri Çıkarımı",
-  EMAIL_DRAFT: "E-posta Taslağı",
-  EMAIL_SEND: "E-posta Gönderimi",
-  GOOGLE_ADS_ANALYSIS: "Google Ads Analizi",
-  GOOGLE_ADS_CAMPAIGN_CREATE: "Google Ads Kampanya Oluşturma",
-  SCREENSHOT_CAPTURE: "Ekran Görüntüsü Alma",
-  SOCIAL_PROFILE_AUDIT: "Sosyal Medya Profil Denetimi",
-  TREND_RESEARCH: "Trend Araştırması",
-  WEB_BROWSING: "Web Tarama",
+  BRAND_DISCOVERY: "Brand Discovery",
+  WEB_RESEARCH: "Web Research",
+  PRODUCT_RESEARCH: "Product Research",
+  MARKET_RESEARCH: "Market Research",
+  CUSTOMER_INTELLIGENCE: "Customer Intelligence",
+  COMPETITOR_RESEARCH: "Competitor Research",
+  COMPETITOR_MONITORING: "Competitor Monitoring",
+  SEO_RESEARCH: "SEO Research",
+  SEO_ANALYSIS: "SEO Analysis",
+  SOCIAL_RESEARCH: "Social Media Research",
+  MEDIA_RESEARCH: "Media Research",
+  CULTURAL_RESEARCH: "Cultural Research",
+  CREATOR_RESEARCH: "Creator Research",
+  PARTNERSHIP_RESEARCH: "Partnership Research",
+  ADVERTISING_RESEARCH: "Advertising Research",
+  REVIEW_RESEARCH: "Review Research",
+  TECHNOLOGY_RESEARCH: "Technology Research",
+  SIGNAL_SCAN: "Signal Scan",
+  MEASUREMENT_CHECK: "Measurement Check",
+  CREATE_SOCIAL_CREATIVE: "Social Creative Production",
+  CREATE_AD_CREATIVE: "Ad Creative Production",
+  CREATE_COPY: "Copywriting",
+  CREATE_CAPTION: "Caption Writing",
+  CREATE_CAMPAIGN_BRIEF: "Campaign Brief",
+  CREATE_CONTENT_PLAN: "Content Plan",
+  INSTAGRAM_PUBLISH: "Instagram Publish",
+  TIKTOK_PUBLISH: "TikTok Publish",
+  LINKEDIN_PUBLISH: "LinkedIn Publish",
+  X_PUBLISH: "X Publish",
+  META_ADS_ANALYSIS: "Meta Ads Analysis",
+  META_CAMPAIGN_CREATE: "Meta Campaign Creation",
+  META_CAMPAIGN_UPDATE: "Meta Campaign Update",
+  WEBSITE_UPDATE: "Website Update",
+  PR_OUTREACH: "PR Outreach",
+  ANALYTICS_ANALYSIS: "Analytics Analysis",
+  REPORTING: "Reporting",
+  VERIFY_EXTERNAL_ACTION: "External Action Verification",
+  SOCIAL_ACCOUNT_SETUP: "Social Account Setup",
+  ASO_ANALYSIS: "App Store (ASO) Analysis",
+  BRAND_SAFETY: "Brand Safety Check",
+  CLAIM_VALIDATION: "Claim Validation",
+  COMPETITOR_CHANGE_DETECTION: "Competitor Change Detection",
+  CRM_ANALYSIS: "CRM Analysis",
+  DATA_EXTRACTION: "Data Extraction",
+  EMAIL_DRAFT: "Email Draft",
+  EMAIL_SEND: "Email Send",
+  GOOGLE_ADS_ANALYSIS: "Google Ads Analysis",
+  GOOGLE_ADS_CAMPAIGN_CREATE: "Google Ads Campaign Creation",
+  SCREENSHOT_CAPTURE: "Screenshot Capture",
+  SOCIAL_PROFILE_AUDIT: "Social Media Profile Audit",
+  TREND_RESEARCH: "Trend Research",
+  WEB_BROWSING: "Web Browsing",
 };
 
 export function capabilityLabel(key: CapabilityKey | string): string {
@@ -247,13 +257,14 @@ export function capabilityLabel(key: CapabilityKey | string): string {
 
 const CAPABILITY_PREFIX_RE = /^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*):\s*/;
 
-// Eski görev başlıkları "CREATE_CAMPAIGN_BRIEF: Güvenin Kriptografik
-// Mührü..." gibi ham capability-key önekiyle üretilirdi (task-planner.ts
-// artık bunu yapmıyor, ama geçmiş kayıtlarda hâlâ var). Departman rozeti
-// zaten hangi ekibin işi olduğunu gösterdiğinden bu önek artık gereksiz ve
-// okunaksız — kartlarda/panellerde görev başlığı gösterilen HER yerde bu
-// fonksiyonla temizlenir. Yalnızca gerçek bir CapabilityKey'e denk gelen
-// önekler sökülür, rastgele "TODO: ..." gibi metinler dokunulmadan kalır.
+// Older task titles used to be generated with a raw capability-key prefix,
+// e.g. "CREATE_CAMPAIGN_BRIEF: Trust's Cryptographic Seal..." (task-planner.ts
+// no longer does this, but the prefix still lingers in historical records).
+// Since the department badge already shows which team owns the work, this
+// prefix is now redundant and hard to read — it's stripped by this function
+// everywhere a task title is shown on cards/panels. Only prefixes that
+// actually match a real CapabilityKey are stripped; arbitrary text like
+// "TODO: ..." is left untouched.
 export function stripCapabilityPrefix(title: string): string {
   const match = CAPABILITY_PREFIX_RE.exec(title);
   const prefix = match?.[1];

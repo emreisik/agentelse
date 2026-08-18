@@ -67,28 +67,28 @@ function normalizeDomain(value: string): string {
 const schema = z.object({
   name: z
     .string()
-    .max(120, "En fazla 120 karakter")
-    .refine((value) => value.trim().length > 0, "Proje adı gerekli"),
+    .max(120, "120 characters max")
+    .refine((value) => value.trim().length > 0, "Project name is required"),
   domain: z
     .string()
     .optional()
     .refine((value) => !value || DOMAIN_PATTERN.test(normalizeDomain(value)), {
-      message: "Geçerli bir web adresi girin (örn: ornek.com)",
+      message: "Enter a valid website address (e.g. example.com)",
     }),
-  brandName: z.string().max(120, "En fazla 120 karakter").optional(),
+  brandName: z.string().max(120, "120 characters max").optional(),
   language: z
     .string()
     .refine(
       (value) => SUPPORTED_LANGUAGES.some((lang) => lang.code === value),
-      "Bir dil seçin",
+      "Select a language",
     ),
   country: z
     .array(z.string())
-    .min(1, "En az bir pazar seçin")
+    .min(1, "Select at least one market")
     .refine(
       (codes) =>
         codes.every((code) => SUPPORTED_COUNTRIES.some((c) => c.code === code)),
-      "Geçersiz pazar seçimi",
+      "Invalid market selection",
     ),
 });
 
@@ -96,10 +96,10 @@ type FormValues = z.infer<typeof schema>;
 type StepId = "name" | "brand" | "locale" | "review";
 
 const STEPS: { id: StepId; title: string }[] = [
-  { id: "name", title: "Proje" },
-  { id: "brand", title: "Marka" },
-  { id: "locale", title: "Dil & Pazar" },
-  { id: "review", title: "Onay" },
+  { id: "name", title: "Project" },
+  { id: "brand", title: "Brand" },
+  { id: "locale", title: "Language & Market" },
+  { id: "review", title: "Review" },
 ];
 
 const STEP_FIELDS: Record<StepId, (keyof FormValues)[]> = {
@@ -122,11 +122,12 @@ export function NewProjectWizard() {
       domain: "",
       brandName: "",
       language: "tr",
-      // Kasıtlı olarak boş: sabit bir varsayılan ("TR") burada olsaydı,
-      // kullanıcı yeni pazarlar EKLEDİĞİNDE (ki toggleCountry/toggleContinent
-      // sadece ekler/çıkarır, asla sıfırlamaz) o sessiz varsayılan dizinin
-      // başında kalır ve handleCreate() her zaman onu "birincil" sanıp
-      // gönderirdi — kullanıcının gerçekte seçtiği pazarlar hiç kaydedilmez.
+      // Deliberately empty: if a fixed default (e.g. "TR") were set here,
+      // when the user ADDS new markets (toggleCountry/toggleContinent only
+      // add/remove, never reset), that silent default would stay at the
+      // front of the array and handleCreate() would always treat it as
+      // "primary" and submit it — the markets the user actually selected
+      // would never be saved.
       country: [],
     },
   });
@@ -154,11 +155,12 @@ export function NewProjectWizard() {
       );
       formData.set("brandName", values.brandName?.trim() ?? "");
       formData.set("language", values.language);
-      // Her seçili pazar ayrı bir "country" girişi olarak eklenir (ilki
-      // birincil pazar) — server formData.getAll("country") ile hepsini okur.
+      // Each selected market is appended as a separate "country" entry
+      // (the first is the primary market) — the server reads them all
+      // with formData.getAll("country").
       for (const code of values.country) formData.append("country", code);
       await createProjectAction(formData);
-      setSubmitError("Proje oluşturulamadı. Lütfen tekrar deneyin.");
+      setSubmitError("Failed to create project. Please try again.");
     });
   }
 
@@ -271,7 +273,7 @@ export function NewProjectWizard() {
                 disabled={pending}
                 className={cn(isFirstStep && "invisible")}
               >
-                <ArrowLeft /> Geri
+                <ArrowLeft /> Back
               </Button>
               <Button
                 type="submit"
@@ -281,15 +283,15 @@ export function NewProjectWizard() {
               >
                 {pending ? (
                   <>
-                    <Loader2 className="animate-spin" /> Oluşturuluyor…
+                    <Loader2 className="animate-spin" /> Creating…
                   </>
                 ) : isLastStep ? (
                   <>
-                    <Rocket /> Oluştur ve Kuruluma Başla
+                    <Rocket /> Create and Start Setup
                   </>
                 ) : (
                   <>
-                    Devam Et <ArrowRight />
+                    Continue <ArrowRight />
                   </>
                 )}
               </Button>
@@ -330,20 +332,20 @@ function NameStep({ form }: { form: UseFormReturn<FormValues> }) {
     <div>
       <StepHeading
         icon={<Sparkles className="size-5" />}
-        title="Yeni projene bir isim ver"
-        description="Bu isim, marka için oluşturacağımız çalışma alanının başlığı olacak."
+        title="Give your new project a name"
+        description="This name will be the title of the workspace we create for the brand."
       />
       <FormField
         control={form.control}
         name="name"
         render={({ field }) => (
           <FormItem className="mx-auto w-full max-w-sm">
-            <FormLabel className="sr-only">Proje / Marka Adı</FormLabel>
+            <FormLabel className="sr-only">Project / Brand Name</FormLabel>
             <FormControl>
               <Input
                 {...field}
                 autoFocus
-                placeholder="Örn: Biduniq"
+                placeholder="e.g. Biduniq"
                 className="h-12 text-center text-base sm:text-lg"
               />
             </FormControl>
@@ -360,8 +362,8 @@ function BrandStep({ form }: { form: UseFormReturn<FormValues> }) {
     <div>
       <StepHeading
         icon={<Globe className="size-5" />}
-        title="Markanı tanıyalım"
-        description="Web siteni verirsen markanı otomatik analiz etmeyi deneriz. İkisi de opsiyonel."
+        title="Let's get to know your brand"
+        description="If you give us your website, we'll try to analyze your brand automatically. Both fields are optional."
       />
       <div className="mx-auto w-full max-w-sm space-y-4">
         <FormField
@@ -369,12 +371,12 @@ function BrandStep({ form }: { form: UseFormReturn<FormValues> }) {
           name="domain"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Web sitesi</FormLabel>
+              <FormLabel>Website</FormLabel>
               <FormControl>
                 <Input
                   {...field}
                   autoFocus
-                  placeholder="ornek.com"
+                  placeholder="example.com"
                   className="h-11"
                 />
               </FormControl>
@@ -387,16 +389,16 @@ function BrandStep({ form }: { form: UseFormReturn<FormValues> }) {
           name="brandName"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Marka adı (proje adından farklıysa)</FormLabel>
+              <FormLabel>Brand name (if different from project name)</FormLabel>
               <FormControl>
                 <Input
                   {...field}
-                  placeholder="Boş bırakabilirsin"
+                  placeholder="You can leave this empty"
                   className="h-11"
                 />
               </FormControl>
               <FormDescription>
-                Boş bırakırsan proje adı marka adı olarak kullanılır.
+                If left empty, the project name will be used as the brand name.
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -439,9 +441,9 @@ function ComboboxField({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-(--anchor-width) min-w-64 p-0">
         <Command>
-          <CommandInput placeholder="Ara…" />
+          <CommandInput placeholder="Search…" />
           <CommandList>
-            <CommandEmpty>Sonuç bulunamadı.</CommandEmpty>
+            <CommandEmpty>No results found.</CommandEmpty>
             <CommandGroup>
               {options.map((option) => (
                 <CommandItem
@@ -466,8 +468,8 @@ function ComboboxField({
 
 function summarizeMarketSelection(codes: string[]): string {
   const labels = codes.map((code) => countryLabel(code));
-  if (labels.length === 0) return "Pazar seç";
-  if (labels.length === 1) return labels[0] ?? "Pazar seç";
+  if (labels.length === 0) return "Select market";
+  if (labels.length === 1) return labels[0] ?? "Select market";
   if (labels.length === 2) return labels.join(", ");
   return `${labels.slice(0, 2).join(", ")} +${labels.length - 2}`;
 }
@@ -522,10 +524,10 @@ function MarketMultiSelect({
           className="w-(--anchor-width) min-w-64 p-0"
         >
           <Command>
-            <CommandInput placeholder="Ara…" />
+            <CommandInput placeholder="Search…" />
             <CommandList>
-              <CommandEmpty>Sonuç bulunamadı.</CommandEmpty>
-              <CommandGroup heading="Kıtalar">
+              <CommandEmpty>No results found.</CommandEmpty>
+              <CommandGroup heading="Continents">
                 {COUNTRY_CONTINENTS.map((continent) => (
                   <CommandItem
                     key={continent.id}
@@ -537,12 +539,12 @@ function MarketMultiSelect({
                   >
                     {continent.label}
                     <CommandShortcut>
-                      {continent.countryCodes.length} ülke
+                      {continent.countryCodes.length} countries
                     </CommandShortcut>
                   </CommandItem>
                 ))}
               </CommandGroup>
-              <CommandGroup heading="Ülkeler">
+              <CommandGroup heading="Countries">
                 {SUPPORTED_COUNTRIES.map((option) => (
                   <CommandItem
                     key={option.code}
@@ -572,13 +574,13 @@ function MarketMultiSelect({
             >
               {countryLabel(code)}
               {index === 0 ? (
-                <span className="text-[10px] opacity-70">· birincil</span>
+                <span className="text-[10px] opacity-70">· primary</span>
               ) : null}
               <button
                 type="button"
                 onClick={() => toggleCountry(code)}
                 className="flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-foreground/10"
-                aria-label={`${countryLabel(code)} kaldır`}
+                aria-label={`Remove ${countryLabel(code)}`}
               >
                 <X className="size-3" />
               </button>
@@ -595,8 +597,8 @@ function LocaleStep({ form }: { form: UseFormReturn<FormValues> }) {
     <div>
       <StepHeading
         icon={<Languages className="size-5" />}
-        title="Dil ve pazarını seç"
-        description="Tüm AI araştırmaları ve içerik üretimi bu dilde ve bu pazarlara odaklı yapılır."
+        title="Choose your language and market"
+        description="All AI research and content generation will be focused on this language and these markets."
       />
       <div className="mx-auto w-full max-w-sm space-y-5">
         <FormField
@@ -605,7 +607,7 @@ function LocaleStep({ form }: { form: UseFormReturn<FormValues> }) {
           render={({ field, fieldState }) => (
             <div className="space-y-2">
               <span className="text-sm font-medium leading-none">
-                Araştırma dili
+                Research language
               </span>
               <ComboboxField
                 value={field.value}
@@ -614,7 +616,7 @@ function LocaleStep({ form }: { form: UseFormReturn<FormValues> }) {
                   code: l.code,
                   label: l.label,
                 }))}
-                placeholder="Dil seç"
+                placeholder="Select language"
               />
               {fieldState.error ? (
                 <p className="text-sm text-destructive">
@@ -630,16 +632,17 @@ function LocaleStep({ form }: { form: UseFormReturn<FormValues> }) {
           render={({ field, fieldState }) => (
             <div className="space-y-2">
               <span className="text-sm font-medium leading-none">
-                Hedef pazar(lar)
+                Target market(s)
               </span>
               <MarketMultiSelect
                 value={field.value}
                 onChange={field.onChange}
               />
               <p className="text-xs text-muted-foreground">
-                Birden fazla pazar seçebilir, kıta kısayollarını
-                kullanabilirsin. İlk seçtiğin pazar birincil olur — AI
-                araştırmaları ona odaklanır, diğerleri de projene kaydedilir.
+                You can select multiple markets, and use the continent
+                shortcuts. The first market you select becomes primary — AI
+                research focuses on it, and the others are also saved to your
+                project.
               </p>
               {fieldState.error ? (
                 <p className="text-sm text-destructive">
@@ -664,31 +667,31 @@ function ReviewStep({
   const values = form.watch();
   const rows: { label: string; value: string; stepIndex: number }[] = [
     {
-      label: "Proje / Marka Adı",
+      label: "Project / Brand Name",
       value: values.name.trim() || "—",
       stepIndex: 0,
     },
     {
-      label: "Web Sitesi",
-      value: values.domain ? normalizeDomain(values.domain) : "Belirtilmedi",
+      label: "Website",
+      value: values.domain ? normalizeDomain(values.domain) : "Not specified",
       stepIndex: 1,
     },
     {
-      label: "Marka Adı",
+      label: "Brand Name",
       value: values.brandName?.trim() || values.name.trim() || "—",
       stepIndex: 1,
     },
     {
-      label: "Araştırma Dili",
+      label: "Research Language",
       value: languageLabel(values.language),
       stepIndex: 2,
     },
     {
-      label: "Hedef Pazar(lar)",
+      label: "Target Market(s)",
       value: values.country
         .map(
           (code, index) =>
-            countryLabel(code) + (index === 0 ? " (birincil)" : ""),
+            countryLabel(code) + (index === 0 ? " (primary)" : ""),
         )
         .join(", "),
       stepIndex: 2,
@@ -699,8 +702,8 @@ function ReviewStep({
     <div>
       <StepHeading
         icon={<Rocket className="size-5" />}
-        title="Her şey hazır"
-        description="Onayladığında projeyi oluşturup 12 aşamalı Ajans Kurulumu'nu başlatacağız."
+        title="Everything is ready"
+        description="Once you confirm, we'll create the project and start the 12-stage Agency Setup."
       />
       <dl className="mx-auto w-full max-w-sm divide-y divide-border/60 overflow-hidden rounded-xl ring-1 ring-foreground/10">
         {rows.map((row) => (
@@ -717,15 +720,15 @@ function ReviewStep({
               onClick={() => onEdit(row.stepIndex)}
               className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
             >
-              <Pencil className="size-3" /> Düzenle
+              <Pencil className="size-3" /> Edit
             </button>
           </div>
         ))}
       </dl>
       {values.country.length > 1 ? (
         <p className="mx-auto mt-3 w-full max-w-sm text-center text-xs text-muted-foreground">
-          AI araştırmaları birincil pazara odaklanır; diğer pazarlar da projene
-          kaydedilir.
+          AI research focuses on the primary market; the other markets are also
+          saved to your project.
         </p>
       ) : null}
     </div>

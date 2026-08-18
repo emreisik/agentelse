@@ -8,11 +8,12 @@ function Progress({
   className,
   children,
   value,
-  // Base UI, locale verilmezse aria-valuetext'i çalışma zamanının varsayılan
-  // yerel ayarıyla biçimlendiriyor — sunucuda (Node/ICU, genelde "en-US")
-  // ve tarayıcıda (navigator.language, ör. Türkçe için "%8" gibi işaret-önce
-  // biçimi) FARKLI sonuç verip hydration uyumsuzluğuna yol açıyordu. Sabit
-  // bir locale ile SSR/CSR her zaman aynı metni üretiyor.
+  // If no locale is given, Base UI formats aria-valuetext using the
+  // runtime's default locale — this produced DIFFERENT results on the
+  // server (Node/ICU, usually "en-US") versus the browser
+  // (navigator.language, e.g. a sign-before-number format like "%8" for
+  // Turkish), causing a hydration mismatch. A fixed locale makes SSR/CSR
+  // always produce the same text.
   locale = "en-US",
   ...props
 }: ProgressPrimitive.Root.Props) {

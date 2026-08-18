@@ -18,17 +18,17 @@ import type {
   ProviderExecutionStatus,
 } from "@/server/execution/types";
 
-// Gerçek GA4 Data API + Search Console API — OpenClawProvider'ın tarayıcı
-// otomasyonu yerine, projede bir OAuth ile bağlanmış Google hesabı ve seçili
-// bir property/site varsa onu kullanır. provider-registry.ts'de
-// OpenClawProvider'dan önce kayıtlı: gerçek API her zaman ekran kazımaya
-// tercih edilir (meta-api-provider.ts ile aynı desen).
+// The real GA4 Data API + Search Console API — used instead of
+// OpenClawProvider's browser automation whenever the project has a Google
+// account connected via OAuth with a selected property/site. Registered
+// before OpenClawProvider in provider-registry.ts: the real API is always
+// preferred over screen scraping (same pattern as meta-api-provider.ts).
 const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "ANALYTICS_ANALYSIS",
 ]);
 
-// Rapor penceresi: tek seferlik "Test Et" 7 gün kullanıyor, gerçek analiz
-// görevi burada 28 gün — trend görmeye yeter, ekstra sorgu maliyeti yok.
+// Report window: the one-off "Test" uses 7 days, the real analysis task
+// here uses 28 — enough to see a trend, without extra query cost.
 const REPORT_WINDOW_DAYS = 28;
 
 type StoredResult = {
@@ -71,9 +71,9 @@ export class GoogleApiProvider implements ExecutionProvider {
     );
   }
 
-  // Google API çağrıları senkron ve saniyeler içinde döner —
-  // OpenClawProvider/MetaApiProvider'ın "senkron çalıştır, sonucu
-  // önbelleğe al" desenini izliyoruz.
+  // Google API calls are synchronous and return within seconds — we follow
+  // OpenClawProvider/MetaApiProvider's "run synchronously, cache the
+  // result" pattern.
   async execute(request: ExecutionRequest): Promise<ExecutionAcceptedResult> {
     const result = await this.runCapability(request);
     store.set(request.correlationId, result);
@@ -101,7 +101,7 @@ export class GoogleApiProvider implements ExecutionProvider {
       request.context.projectId,
     );
     if (!credential) {
-      return { status: "FAILED", errorMessage: "Google bağlantısı bulunamadı" };
+      return { status: "FAILED", errorMessage: "Google connection not found" };
     }
     const metadata = (credential.metadata ?? {}) as GoogleCredentialMetadata;
 
@@ -140,20 +140,20 @@ export class GoogleApiProvider implements ExecutionProvider {
     if (!ga4 && !searchConsole) {
       return {
         status: "FAILED",
-        errorMessage: "Seçili GA4 property veya Search Console site yok",
+        errorMessage: "No GA4 property or Search Console site selected",
       };
     }
 
     const parts: string[] = [];
     if (ga4) {
       parts.push(
-        `GA4: ${ga4.activeUsers} kullanıcı, ${ga4.sessions} oturum (${REPORT_WINDOW_DAYS}g)`,
+        `GA4: ${ga4.activeUsers} users, ${ga4.sessions} sessions (${REPORT_WINDOW_DAYS}d)`,
       );
     }
     if (searchConsole) {
       parts.push(
-        `Search Console: ${searchConsole.clicks} tıklama / ${searchConsole.impressions} gösterim, ` +
-          `ort. sıra ${searchConsole.position.toFixed(1)} (${REPORT_WINDOW_DAYS}g)`,
+        `Search Console: ${searchConsole.clicks} clicks / ${searchConsole.impressions} impressions, ` +
+          `avg. position ${searchConsole.position.toFixed(1)} (${REPORT_WINDOW_DAYS}d)`,
       );
     }
 

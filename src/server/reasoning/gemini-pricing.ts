@@ -1,11 +1,11 @@
 import "server-only";
 
-// Gemini API liste fiyatları (ücretli katman, 1M token başına USD).
-// ai.google.dev/gemini-api/docs/pricing — 2026-08 itibarıyla doğrulandı.
+// Gemini API list prices (paid tier, USD per 1M tokens).
+// ai.google.dev/gemini-api/docs/pricing — verified as of 2026-08.
 //
-// Bu tablo olmadan ReasoningCall.costUsd hep 0 kalıyordu; sonucunda
-// AgencyDailyStat.reasoningCostUsd de 0 kalıyor ve AutonomyPolicy'deki
-// `dailyBudgetUsd` bütçe sınırı hiçbir zaman tetiklenemiyordu.
+// Without this table, ReasoningCall.costUsd always stayed 0; as a result
+// AgencyDailyStat.reasoningCostUsd also stayed 0, and AutonomyPolicy's
+// `dailyBudgetUsd` budget cap could never be triggered.
 type ModelPrice = { inputPerMillion: number; outputPerMillion: number };
 
 const PRICES: Record<string, ModelPrice> = {
@@ -20,14 +20,14 @@ const PRICES: Record<string, ModelPrice> = {
   "gemini-2.5-pro": { inputPerMillion: 1.25, outputPerMillion: 10 },
 };
 
-// Bilinmeyen/alias model adları (örn. "gemini-pro-latest") için: Pro
-// fiyatıyla hesapla. Maliyeti olduğundan düşük göstermektense yüksek
-// göstermek daha güvenli — bütçe sınırı erken tetiklenir, geç değil.
+// For unknown/alias model names (e.g. "gemini-pro-latest"): calculate
+// using the Pro price. It's safer to overstate the cost than understate
+// it — the budget cap triggers early rather than late.
 const FALLBACK: ModelPrice = { inputPerMillion: 2, outputPerMillion: 12 };
 
 function priceFor(model: string): ModelPrice {
   if (PRICES[model]) return PRICES[model];
-  // Alias'ları aileye göre eşle: "...-flash-lite" > "...-flash" > "...-pro".
+  // Match aliases by family: "...-flash-lite" > "...-flash" > "...-pro".
   if (model.includes("flash-lite")) return PRICES["gemini-3.1-flash-lite"]!;
   if (model.includes("flash")) return PRICES["gemini-3.6-flash"]!;
   return FALLBACK;

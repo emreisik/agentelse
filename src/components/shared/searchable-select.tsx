@@ -23,24 +23,24 @@ import type { ActionResult } from "@/components/shared/action-form";
 export type SearchableSelectOption = {
   value: string;
   label: string;
-  // İkinci satırda gösterilen ayırt edici bilgi — örn. aynı isimli birden
-  // fazla GA4 property'si varsa hangi hesaba ait olduğu.
+  // Disambiguating info shown on the second line — e.g. which account a
+  // GA4 property belongs to when multiple properties share the same name.
   hint?: string;
 };
 
-// ModeSwitcher'ın aranabilir/geniş liste versiyonu — düzinelerce seçenek
-// (GA4 property, Search Console site gibi) native <select>'te okunaksız
-// hale geliyor, bu yüzden Command+Popover tabanlı bir combobox kullanıyor.
+// The searchable/wide-list version of ModeSwitcher — dozens of options
+// (e.g. GA4 property, Search Console site) become unreadable in a native
+// <select>, so this uses a Command+Popover based combobox instead.
 export function SearchableSelect({
   value,
-  placeholder = "Seçin…",
-  searchPlaceholder = "Ara…",
-  emptyText = "Sonuç bulunamadı.",
+  placeholder = "Select…",
+  searchPlaceholder = "Search…",
+  emptyText = "No results found.",
   options,
   action,
   hiddenFields,
   fieldName,
-  successMessage = "Güncellendi",
+  successMessage = "Updated",
 }: {
   value: string;
   placeholder?: string;
@@ -70,7 +70,7 @@ export function SearchableSelect({
         if (result && result.ok === false) toast.error(result.message);
         else toast.success(successMessage);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "İşlem başarısız");
+        toast.error(error instanceof Error ? error.message : "Action failed");
       }
     });
   }

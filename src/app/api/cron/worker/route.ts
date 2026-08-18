@@ -1,8 +1,20 @@
+import { timingSafeEqual } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import { getEnv } from "@/lib/env";
 import { ExecutionWorker } from "@/server/workers/execution-worker";
 import { DeadLetterRepository } from "@/server/repositories/dead-letter.repository";
+
+function isValidCronSecret(authHeader: string | null, secret: string): boolean {
+  if (!authHeader) return false;
+  const actualBuf = Buffer.from(authHeader);
+  const expectedBuf = Buffer.from(`Bearer ${secret}`);
+  return (
+    actualBuf.length === expectedBuf.length &&
+    timingSafeEqual(actualBuf, expectedBuf)
+  );
+}
 
 // Production entry point for the outbox worker tick — call this from an
 // external scheduler (Railway cron, GitHub Actions, cron-job.org) since a
@@ -12,7 +24,7 @@ export async function POST(request: Request) {
   const env = getEnv();
   const authHeader = request.headers.get("authorization");
 
-  if (!env.CRON_SECRET || authHeader !== `Bearer ${env.CRON_SECRET}`) {
+  if (!env.CRON_SECRET || !isValidCronSecret(authHeader, env.CRON_SECRET)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -20,8 +32,8 @@ export async function POST(request: Request) {
   try {
     await ExecutionWorker.tick();
   } catch (error) {
-    // Dış zamanlayıcı 500'ü görmeyebilir; hatanın kalıcı bir izi kalsın ki
-    // Sistem Sağlığı ekranında görünsün.
+    // The external scheduler may not see the 500; leave a persistent trace
+    // of the error so it shows up on the System Health screen.
     const message = error instanceof Error ? error.message : String(error);
     await DeadLetterRepository.create({
       reason: "cron.worker.tick_failed",

@@ -1,9 +1,9 @@
 import "server-only";
 
-// İnce, gerçek Google REST API sarmalayıcısı — SDK yok, düz `fetch`
-// (telegram-client.ts ile aynı desen). OAuth authorization-code akışı +
-// GA4 (Analytics Admin/Data API) + Search Console API'nin bu entegrasyon
-// için gereken minimum yüzeyi.
+// A thin, real Google REST API wrapper — no SDK, plain `fetch` (same
+// pattern as telegram-client.ts). The OAuth authorization-code flow + the
+// minimum surface of the GA4 (Analytics Admin/Data API) + Search Console
+// API needed for this integration.
 
 import { getEnv } from "@/lib/env";
 
@@ -23,9 +23,9 @@ const SCOPES = [
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
-// IntegrationCredential.metadata (provider: "google") şekli — callback
-// route bağlantı kurarken yazar, google-actions.ts seçim/test sonuçlarını
-// günceller, entegrasyonlar sayfası doğrudan okur.
+// The shape of IntegrationCredential.metadata (provider: "google") — the
+// callback route writes it when establishing the connection, google-actions.ts
+// updates selection/test results, and the integrations page reads it directly.
 export type GoogleCredentialMetadata = {
   connectedEmail?: string;
   ga4Properties: Ga4Property[];
@@ -53,9 +53,9 @@ export class GoogleApiError extends Error {
   }
 }
 
-// Ayrı bir GOOGLE_OAUTH_REDIRECT_URI env var'ı yok — mevcut
-// NEXT_PUBLIC_APP_URL'den türetiliyor, Google Cloud Console'da bu path
-// authorized redirect URI olarak kayıtlı olmalı.
+// There is no separate GOOGLE_OAUTH_REDIRECT_URI env var — it's derived
+// from the existing NEXT_PUBLIC_APP_URL, and this path must be registered
+// as the authorized redirect URI in Google Cloud Console.
 function redirectUri(): string {
   return `${getEnv().NEXT_PUBLIC_APP_URL}/api/integrations/google/callback`;
 }
@@ -74,8 +74,8 @@ async function request<T>(
     const isAbort = error instanceof Error && error.name === "AbortError";
     throw new GoogleApiError(
       isAbort
-        ? `Google API isteği zaman aşımına uğradı (${timeoutMs}ms)`
-        : `Google API'ye ulaşılamadı: ${error instanceof Error ? error.message : String(error)}`,
+        ? `Google API request timed out (${timeoutMs}ms)`
+        : `Could not reach Google API: ${error instanceof Error ? error.message : String(error)}`,
     );
   } finally {
     clearTimeout(timer);
@@ -85,7 +85,7 @@ async function request<T>(
   try {
     body = await res.json();
   } catch {
-    // boş gövde (örn. bazı 204'ler) — sorun değil, aşağıda res.ok kontrolü var.
+    // Empty body (e.g. some 204s) — not a problem, res.ok is checked below.
   }
 
   if (!res.ok) {
@@ -99,7 +99,7 @@ async function request<T>(
       typeof errorBody?.error === "object" && errorBody?.error?.message
         ? errorBody.error.message
         : (errorBody?.error_description ??
-          `Google API hatası (HTTP ${res.status})`);
+          `Google API error (HTTP ${res.status})`);
     throw new GoogleApiError(message, code);
   }
 
@@ -150,9 +150,9 @@ export async function exchangeGoogleAuthCode(code: string): Promise<{
   };
 }
 
-// invalid_grant → refresh token iptal edilmiş/geçersiz olmuş, çağıran taraf
-// bunu kimlik bilgisini EXPIRED işaretleyip yeniden bağlanma isteğine
-// çevirmeli (bkz. testGoogleConnectionAction).
+// invalid_grant -> the refresh token has been revoked/is invalid; the
+// caller should turn this into marking the credential EXPIRED and
+// requesting a reconnect (see testGoogleConnectionAction).
 export async function refreshGoogleAccessToken(
   refreshToken: string,
 ): Promise<{ accessToken: string; expiresIn: number }> {
@@ -235,8 +235,8 @@ export async function listSearchConsoleSites(
 
   const sites: SearchConsoleSite[] = [];
   for (const site of result.siteEntry ?? []) {
-    // Doğrulanmamış site'lara karşı searchAnalytics çağrıları 403 döner —
-    // seçim listesine hiç koymuyoruz.
+    // searchAnalytics calls against unverified sites return 403 — we don't
+    // put them in the selection list at all.
     if (!site.siteUrl || site.permissionLevel === "siteUnverifiedUser") {
       continue;
     }
@@ -248,9 +248,9 @@ export async function listSearchConsoleSites(
   return sites;
 }
 
-// Son `days` günün activeUsers/sessions toplamı — hem "Test Et" butonu
-// (days=7 varsayılan) hem ANALYTICS_ANALYSIS görevini yürüten
-// GoogleApiProvider (days=28) bunu kullanır.
+// Sum of activeUsers/sessions for the last `days` days — used both by the
+// "Test" button (days=7 default) and by GoogleApiProvider (days=28), which
+// runs the ANALYTICS_ANALYSIS task.
 export async function fetchGa4Report(
   accessToken: string,
   propertyId: string,
@@ -276,9 +276,9 @@ export async function fetchGa4Report(
   };
 }
 
-// Son `days` günün clicks/impressions/ctr/position toplamı — boyutsuz, tek
-// satırlık agregat sorgu. Search Console bu dört metriği aynı çağrıda
-// döndürüyor, ekstra istek gerekmiyor.
+// Sum of clicks/impressions/ctr/position for the last `days` days —
+// dimensionless, single-row aggregate query. Search Console returns all
+// four metrics in the same call, no extra request needed.
 export async function fetchSearchConsoleReport(
   accessToken: string,
   siteUrl: string,
@@ -332,11 +332,11 @@ export type GoogleLists = {
   gscListError?: string;
 };
 
-// GA4 property + Search Console site listelerini paralel çeker; biri
-// başarısız olsa da (örn. o API bu GCP projesinde etkin değil) diğeri
-// etkilenmez — hata mesajı ilgili *ListError alanına yazılır. Hem OAuth
-// callback'i (ilk bağlantı) hem refreshGoogleListsAction (manuel yenileme)
-// bu fonksiyonu kullanır.
+// Fetches the GA4 property + Search Console site lists in parallel; if one
+// fails (e.g. that API isn't enabled in this GCP project), the other is
+// unaffected — the error message is written to the corresponding *ListError
+// field. Both the OAuth callback (initial connection) and
+// refreshGoogleListsAction (manual refresh) use this function.
 export async function fetchGoogleLists(
   accessToken: string,
 ): Promise<GoogleLists> {
@@ -348,7 +348,7 @@ export async function fetchGoogleLists(
         error:
           error instanceof Error
             ? error.message
-            : "GA4 property listesi alınamadı",
+            : "Could not fetch the GA4 property list",
       }),
     ),
     listSearchConsoleSites(accessToken).then(
@@ -358,7 +358,7 @@ export async function fetchGoogleLists(
         error:
           error instanceof Error
             ? error.message
-            : "Search Console site listesi alınamadı",
+            : "Could not fetch the Search Console site list",
       }),
     ),
   ]);
@@ -370,9 +370,10 @@ export async function fetchGoogleLists(
   };
 }
 
-// Yeni liste çekildiğinde önceki seçim hâlâ listede varsa korunur, yoksa
-// (property/site silinmiş veya erişim kaldırılmışsa) temizlenir — kullanıcı
-// artık erişemediği bir property'yi "seçili" gibi görmesin diye.
+// When a fresh list is fetched, the previous selection is kept if it's
+// still in the list, otherwise (the property/site was deleted or access
+// was revoked) it's cleared — so the user never sees a property as
+// "selected" that they no longer have access to.
 export function reconcileGoogleSelection(
   existing: GoogleCredentialMetadata,
   fresh: GoogleLists,

@@ -21,13 +21,13 @@ export type ActionResult = { ok: true } | { ok: false; message: string };
 
 function describeMetaError(error: unknown): string {
   if (!(error instanceof MetaApiError)) {
-    return error instanceof Error ? error.message : "İşlem başarısız";
+    return error instanceof Error ? error.message : "Operation failed";
   }
-  // 190 = OAuthException (token süresi dolmuş/iptal edilmiş) — Meta'nın
-  // long-lived token'ları Google'ın refresh token'ı gibi otomatik
-  // yenilenmiyor, kullanıcı yeniden bağlanmalı.
+  // 190 = OAuthException (token expired/revoked) — unlike Google's refresh
+  // token, Meta's long-lived tokens don't renew automatically, the user has
+  // to reconnect.
   if (error.metaErrorCode === 190) {
-    return "Meta: Bağlantının izni geçersiz hale gelmiş — yeniden bağlanmanız gerekiyor.";
+    return "Meta: The connection's authorization has become invalid — you need to reconnect.";
   }
   return `Meta: ${error.message}`;
 }
@@ -53,13 +53,13 @@ export async function selectMetaPageAction(
 
     const credential = await loadCredential(projectId);
     if (!credential) {
-      return { ok: false, message: "Meta bağlantısı bulunamadı" };
+      return { ok: false, message: "Meta connection not found" };
     }
 
     const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
     const page = metadata.pages?.find((p) => p.pageId === pageId);
     if (!page) {
-      return { ok: false, message: "Geçersiz Page seçimi" };
+      return { ok: false, message: "Invalid Page selection" };
     }
 
     const nextMetadata: MetaCredentialMetadata = {
@@ -72,7 +72,7 @@ export async function selectMetaPageAction(
       data: { metadata: nextMetadata },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);
@@ -90,7 +90,7 @@ export async function selectMetaAdAccountAction(
 
     const credential = await loadCredential(projectId);
     if (!credential) {
-      return { ok: false, message: "Meta bağlantısı bulunamadı" };
+      return { ok: false, message: "Meta connection not found" };
     }
 
     const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
@@ -98,7 +98,7 @@ export async function selectMetaAdAccountAction(
       (a) => a.adAccountId === adAccountId,
     );
     if (!account) {
-      return { ok: false, message: "Geçersiz reklam hesabı seçimi" };
+      return { ok: false, message: "Invalid ad account selection" };
     }
 
     const nextMetadata: MetaCredentialMetadata = {
@@ -111,15 +111,16 @@ export async function selectMetaAdAccountAction(
       data: { metadata: nextMetadata },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);
   }
 }
 
-// Long-lived token'ı gerçekten Meta'ya karşı kullanarak seçili Page/reklam
-// hesabı için bir okuma yapar — sahte bir "bağlandı" durumu asla üretilmez.
+// Performs a real read for the selected Page/ad account by actually using
+// the long-lived token against Meta — a fake "connected" state is never
+// produced.
 export async function testMetaConnectionAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -130,14 +131,14 @@ export async function testMetaConnectionAction(
 
     const credential = await loadCredential(projectId);
     if (!credential) {
-      return { ok: false, message: "Meta bağlantısı bulunamadı" };
+      return { ok: false, message: "Meta connection not found" };
     }
 
     const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
     if (!metadata.selectedPageId && !metadata.selectedAdAccountId) {
       return {
         ok: false,
-        message: "Önce bir Page veya reklam hesabı seçin",
+        message: "Select a Page or ad account first",
       };
     }
 
@@ -189,7 +190,7 @@ export async function testMetaConnectionAction(
       },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     if (lastTestResult.error) {
       return { ok: false, message: lastTestResult.error };
     }
@@ -226,7 +227,7 @@ export async function disconnectMetaAction(
       metadata: { provider: "meta" },
     });
 
-    revalidatePath(`/projects/${projectId}/entegrasyonlar`);
+    revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);

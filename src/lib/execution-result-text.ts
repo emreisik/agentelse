@@ -1,8 +1,9 @@
-// ExecutionJob.rawResult şekli provider'a göre değişir — sabit bir şema
-// yok, bu yüzden okunabilir bir özet en iyi çabayla çıkarılır. Hem İşler
-// panelindeki (isler-panel.tsx) görev detayında hem de fikir sohbetindeki
-// "task-result" kartında (task.repository.ts postTaskChatEvent) aynı
-// mantıkla kullanılır — tek kaynak, iki yerde kopya değil.
+// The shape of ExecutionJob.rawResult varies by provider — there's no fixed
+// schema, so a readable summary is extracted on a best-effort basis. Used
+// with the same logic both in the task detail on the Tasks panel
+// (isler-panel.tsx) and in the "task-result" card in the idea chat
+// (task.repository.ts postTaskChatEvent) — a single source, not a
+// duplicate in two places.
 export function extractResultText(rawResult: unknown): string | null {
   if (!rawResult || typeof rawResult !== "object") return null;
   const result = rawResult as Record<string, unknown>;

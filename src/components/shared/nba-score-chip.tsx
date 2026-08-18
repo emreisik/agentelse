@@ -22,7 +22,7 @@ export function NbaScoreChip({
             : "bg-muted text-muted-foreground",
         className,
       )}
-      title="Next Best Action skoru"
+      title="Next Best Action score"
     >
       <span className="text-[9px] font-medium opacity-80">NBA</span>
       {value.toFixed(2)}

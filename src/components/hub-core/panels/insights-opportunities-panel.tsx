@@ -44,11 +44,11 @@ const OPPORTUNITY_GROUPS: Array<{
   statuses: OpportunityStatus[];
 }> = [
   {
-    label: "Açık fırsatlar",
+    label: "Open opportunities",
     statuses: ["NEW", "REVIEWING", "EVALUATED", "ACCEPTED"],
   },
   {
-    label: "Diğer",
+    label: "Other",
     statuses: [
       "DISMISSED",
       "CONVERTED_TO_TASK",
@@ -59,11 +59,12 @@ const OPPORTUNITY_GROUPS: Array<{
   },
 ];
 
-// İçgörü & Fırsat paneli — İçgörü'den Fırsat'a tek yönlü türetim
-// (Opportunity.insightId) burada aynı panelde iki bölüm olarak yaşıyor.
-// `entity` bu panelin sahip olduğu bir kaydı (insight/opportunity) işaret
-// ediyorsa, ilgili bölüm listenin yerine o kaydın tam detayını gösterir.
-export async function IcgoruFirsatPanel({ projectId, entity }: PanelProps) {
+// Insight & Opportunity panel — the one-way derivation from Insight to
+// Opportunity (Opportunity.insightId) lives here as two sections within the
+// same panel. If `entity` points to a record owned by this panel
+// (insight/opportunity), the corresponding section shows that record's full
+// detail instead of the list.
+export async function InsightsOpportunitiesPanel({ projectId, entity }: PanelProps) {
   const [insightCount, opportunityCount] = await Promise.all([
     prisma.insight.count({ where: { projectId } }),
     prisma.opportunity.count({ where: { projectId } }),
@@ -73,7 +74,7 @@ export async function IcgoruFirsatPanel({ projectId, entity }: PanelProps) {
     <div className="space-y-8 py-6">
       <section className="space-y-3">
         <p className="text-sm font-medium text-foreground">
-          İçgörüler{" "}
+          Insights{" "}
           <span className="text-muted-foreground">({insightCount})</span>
         </p>
         {entity?.kind === "insight" ? (
@@ -85,7 +86,7 @@ export async function IcgoruFirsatPanel({ projectId, entity }: PanelProps) {
 
       <section className="space-y-3">
         <p className="text-sm font-medium text-foreground">
-          Fırsatlar{" "}
+          Opportunities{" "}
           <span className="text-muted-foreground">({opportunityCount})</span>
         </p>
         {entity?.kind === "opportunity" ? (
@@ -104,14 +105,14 @@ function BackToList({ projectId }: { projectId: string }) {
   return (
     <Link
       href={buildHubHref(projectId, {
-        panel: "icgoru-firsat",
+        panel: "insights-opportunities",
         sub: null,
         entity: null,
       })}
       className="inline-flex items-center gap-1 text-xs text-primary underline-offset-2 hover:underline"
     >
       <ArrowLeft className="size-3" />
-      Listeye dön
+      Back to list
     </Link>
   );
 }
@@ -132,8 +133,8 @@ async function InsightsSection({ projectId }: { projectId: string }) {
     return (
       <EmptyState
         icon={Lightbulb}
-        title="İçgörü yok"
-        hint="Zeka motoru bulgular ve sinyaller biriktikçe içgörüler üretir."
+        title="No insights"
+        hint="The intelligence engine generates insights as findings and signals accumulate."
       />
     );
   }
@@ -175,8 +176,8 @@ async function InsightsSection({ projectId }: { projectId: string }) {
                   showIcon
                 />
               ) : null}
-              <span>{insight.findingIds.length} bulgu</span>
-              <span>{insight.signalIds.length} sinyal</span>
+              <span>{insight.findingIds.length} findings</span>
+              <span>{insight.signalIds.length} signals</span>
               {insight.isMock ? (
                 <StatusBadge
                   meta={{ label: "Demo", tone: "special" }}
@@ -185,7 +186,7 @@ async function InsightsSection({ projectId }: { projectId: string }) {
               ) : null}
               <span>{timeAgo(insight.createdAt)}</span>
             </div>
-            <ScoreBar value={insight.importance} label="Önem" />
+            <ScoreBar value={insight.importance} label="Importance" />
             {insight.opportunities.length > 0 ? (
               <div className="space-y-1">
                 {insight.opportunities.map((opportunity) => (
@@ -235,8 +236,8 @@ async function InsightDetail({
         <BackToList projectId={projectId} />
         <EmptyState
           icon={Lightbulb}
-          title="İçgörü bulunamadı"
-          hint="Bu kayıt silinmiş olabilir."
+          title="Insight not found"
+          hint="This record may have been deleted."
         />
       </div>
     );
@@ -258,22 +259,22 @@ async function InsightDetail({
   ]);
 
   const fields: FieldSpec[] = [
-    { type: "boolean", label: "Demo verisi", value: insight.isMock },
+    { type: "boolean", label: "Demo data", value: insight.isMock },
     {
       type: "date",
-      label: "Oluşturulma",
+      label: "Created",
       value: insight.createdAt,
       relative: true,
     },
     {
       type: "date",
-      label: "Güncellenme",
+      label: "Updated",
       value: insight.updatedAt,
       relative: true,
     },
     {
       type: "node",
-      label: "Kaynak bulgular",
+      label: "Source findings",
       node:
         findings.length > 0 ? (
           <div className="flex flex-wrap justify-end gap-1.5">
@@ -292,7 +293,7 @@ async function InsightDetail({
     },
     {
       type: "node",
-      label: "Kaynak sinyaller",
+      label: "Source signals",
       node:
         signals.length > 0 ? (
           <div className="flex flex-wrap justify-end gap-1.5">
@@ -330,12 +331,12 @@ async function InsightDetail({
               <StatusBadge meta={SIGNAL_CATEGORY[insight.category]} showIcon />
             ) : null}
           </div>
-          <ScoreBar value={insight.importance} label="Önem" />
+          <ScoreBar value={insight.importance} label="Importance" />
           <FieldGrid fields={fields} />
           {insight.opportunities.length > 0 ? (
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground">
-                Türetilen fırsatlar
+                Derived opportunities
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {insight.opportunities.map((o) => (
@@ -394,8 +395,8 @@ async function OpportunitiesSection({ projectId }: { projectId: string }) {
     return (
       <EmptyState
         icon={Compass}
-        title="Fırsat yok"
-        hint="Fırsat motoru içgörüleri değerlendirdikçe fırsatlar burada NBA skoruna göre sıralanır."
+        title="No opportunities"
+        hint="As the opportunity engine evaluates insights, opportunities appear here ranked by NBA score."
       />
     );
   }
@@ -487,20 +488,17 @@ function OpportunityCard({
         ) : null}
 
         <div className="grid grid-cols-5 gap-2">
-          <ScoreBar value={opportunity.valueScore} label="Değer" />
-          <ScoreBar value={opportunity.urgencyScore} label="Aciliyet" />
-          <ScoreBar value={opportunity.confidenceScore} label="Güven" />
+          <ScoreBar value={opportunity.valueScore} label="Value" />
+          <ScoreBar value={opportunity.urgencyScore} label="Urgency" />
+          <ScoreBar value={opportunity.confidenceScore} label="Confidence" />
           <ScoreBar value={opportunity.riskScore} label="Risk" invert />
-          <ScoreBar value={opportunity.evidenceStrength} label="Kanıt" />
+          <ScoreBar value={opportunity.evidenceStrength} label="Evidence" />
         </div>
 
         {windowClosing ? (
           <p className="flex items-center gap-1.5 text-xs font-medium text-warning">
             <Hourglass className="size-3.5" />
-            Zaman penceresi daralıyor — {shortDate(
-              opportunity.timeWindowEnd!,
-            )}{" "}
-            sonuna kadar
+            Time window closing — until {shortDate(opportunity.timeWindowEnd!)}
           </p>
         ) : null}
 
@@ -517,7 +515,7 @@ function OpportunityCard({
               key={goalId}
               projectId={projectId}
               entity={{ kind: "goal", id: goalId }}
-              text={goalTitle.get(goalId) ?? "Hedef"}
+              text={goalTitle.get(goalId) ?? "Goal"}
               className="h-5 text-[10px]"
             />
           ))}
@@ -525,7 +523,7 @@ function OpportunityCard({
             <CrossLinkChip
               projectId={projectId}
               entity={{ kind: "insight", id: opportunity.insight.id }}
-              text={`İçgörü: ${opportunity.insight.title}`}
+              text={`Insight: ${opportunity.insight.title}`}
               className="h-5 text-[10px]"
             />
           ) : null}
@@ -555,14 +553,14 @@ function OpportunityCard({
         {canDismiss ? (
           <ActionForm
             action={dismissOpportunityAction}
-            successMessage="Fırsat yoksayıldı"
+            successMessage="Opportunity dismissed"
             className="flex justify-end"
           >
             <input type="hidden" name="projectId" value={projectId} />
             <input type="hidden" name="opportunityId" value={opportunity.id} />
             <SubmitButton variant="ghost" size="xs">
               <XCircle className="size-3" />
-              Yoksay
+              Dismiss
             </SubmitButton>
           </ActionForm>
         ) : null}
@@ -591,8 +589,8 @@ async function OpportunityDetail({
         <BackToList projectId={projectId} />
         <EmptyState
           icon={Compass}
-          title="Fırsat bulunamadı"
-          hint="Bu kayıt silinmiş olabilir."
+          title="Opportunity not found"
+          hint="This record may have been deleted."
         />
       </div>
     );
@@ -649,25 +647,25 @@ async function OpportunityDetail({
   const fields: FieldSpec[] = [
     {
       type: "date",
-      label: "Bekleme (cooldown)",
+      label: "Cooldown",
       value: opportunity.cooldownUntil,
     },
-    { type: "boolean", label: "Demo verisi", value: opportunity.isMock },
+    { type: "boolean", label: "Demo data", value: opportunity.isMock },
     {
       type: "date",
-      label: "Oluşturulma",
+      label: "Created",
       value: opportunity.createdAt,
       relative: true,
     },
     {
       type: "date",
-      label: "Güncellenme",
+      label: "Updated",
       value: opportunity.updatedAt,
       relative: true,
     },
     {
       type: "node",
-      label: "Mükerrer",
+      label: "Duplicate of",
       node: duplicateOf ? (
         <CrossLinkChip
           projectId={projectId}
@@ -680,7 +678,7 @@ async function OpportunityDetail({
     },
     {
       type: "node",
-      label: "Hedefler",
+      label: "Goals",
       node:
         goals.length > 0 ? (
           <div className="flex flex-wrap justify-end gap-1.5">
@@ -725,15 +723,15 @@ async function OpportunityDetail({
             ) : null}
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <ScoreBar value={opportunity.valueScore} label="Değer" />
-            <ScoreBar value={opportunity.urgencyScore} label="Aciliyet" />
-            <ScoreBar value={opportunity.confidenceScore} label="Güven" />
+            <ScoreBar value={opportunity.valueScore} label="Value" />
+            <ScoreBar value={opportunity.urgencyScore} label="Urgency" />
+            <ScoreBar value={opportunity.confidenceScore} label="Confidence" />
             <ScoreBar value={opportunity.riskScore} label="Risk" invert />
-            <ScoreBar value={opportunity.evidenceStrength} label="Kanıt" />
+            <ScoreBar value={opportunity.evidenceStrength} label="Evidence" />
           </div>
           {opportunity.timeWindowStart || opportunity.timeWindowEnd ? (
             <p className="text-xs text-muted-foreground">
-              Zaman penceresi:{" "}
+              Time window:{" "}
               {opportunity.timeWindowStart
                 ? shortDate(opportunity.timeWindowStart)
                 : "—"}{" "}
@@ -747,7 +745,7 @@ async function OpportunityDetail({
             <CrossLinkChip
               projectId={projectId}
               entity={{ kind: "insight", id: opportunity.insight.id }}
-              text={`Kaynak içgörü: ${opportunity.insight.title}`}
+              text={`Source insight: ${opportunity.insight.title}`}
             />
           ) : null}
           <FieldGrid fields={fields} />
@@ -755,7 +753,7 @@ async function OpportunityDetail({
           {decision ? (
             <div className="space-y-2 rounded-lg bg-accent/40 p-3">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-medium">Ajans kararı</span>
+                <span className="text-xs font-medium">Agency decision</span>
                 <StatusBadge meta={AGENCY_DECISION_TYPE[decision.decision]} />
                 {decision.approvalLevel ? (
                   <StatusBadge meta={APPROVAL_LEVEL[decision.approvalLevel]} />
@@ -802,7 +800,7 @@ async function OpportunityDetail({
           {generatedIdeas.length > 0 ? (
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground">
-                Üretilen fikirler
+                Generated ideas
               </p>
               <div className="space-y-1.5">
                 {generatedIdeas.map((idea) => (

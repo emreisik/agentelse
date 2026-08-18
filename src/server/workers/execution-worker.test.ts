@@ -60,8 +60,8 @@ vi.mock("@/server/repositories/outbox.repository", () => ({
     scheduleRetry: mocks.scheduleRetry,
   },
 }));
-// Gözlemlenebilirlik aşamalarının kendi testleri var; burada worker'ın
-// akışını ölçüyoruz, onların prisma çağrıları sayaçları kirletmesin.
+// The observability stages have their own tests; here we're measuring the
+// worker's flow, so their prisma calls shouldn't pollute the counters.
 vi.mock("@/server/observability/self-healing.service", () => ({
   SelfHealingService: { run: mocks.selfHealingRun },
 }));
@@ -169,7 +169,7 @@ describe("ExecutionWorker.tick", () => {
   });
 
   it("releases the single-flight lock when a tick fails", async () => {
-    // Yalıtılmamış aşama: dispatch kuyruğu patlarsa tick gerçekten düşer.
+    // Unisolated stage: if the dispatch queue blows up, the tick genuinely fails.
     mocks.claimBatch.mockRejectedValueOnce(new Error("dispatch failed"));
 
     const first = ExecutionWorker.tick();
@@ -184,9 +184,10 @@ describe("ExecutionWorker.tick", () => {
     expect(mocks.claimBatch).toHaveBeenCalledTimes(2);
   });
 
-  it("bozuk bir zamanlayıcı tick'in geri kalanını düşürmez", async () => {
-    // Aşama yalıtımı: tek bir bozuk cron ifadesi dispatch/poll/verify
-    // adımlarını da engelliyordu; artık hata kaydedilip devam edilir.
+  it("a broken scheduler does not bring down the rest of the tick", async () => {
+    // Stage isolation: a single broken cron expression used to also block
+    // the dispatch/poll/verify steps; now the error is recorded and
+    // execution continues.
     mocks.schedulerRun.mockRejectedValueOnce(new Error("scheduler failed"));
 
     await expect(ExecutionWorker.tick()).resolves.toBeUndefined();
@@ -229,10 +230,7 @@ describe("ExecutionWorker.tick", () => {
       recoverStalledDispatch: false,
     });
     expect(mocks.markProcessed).toHaveBeenCalledTimes(1);
-    expect(mocks.markProcessed).toHaveBeenCalledWith(
-      "event-1",
-      claimedUntil,
-    );
+    expect(mocks.markProcessed).toHaveBeenCalledWith("event-1", claimedUntil);
   });
 
   it("schedules a retry with exponential backoff after dispatch failure", async () => {
@@ -251,8 +249,8 @@ describe("ExecutionWorker.tick", () => {
 
     await expect(ExecutionWorker.processDispatchQueue()).resolves.toBe(0);
 
-    // Backoff jitter'lı (±%25): tam değer değil aralık doğrulanır, aksi
-    // halde aynı anda düşen işler aynı anda yeniden denenir.
+    // Backoff has jitter (+-25%): a range is verified, not the exact value —
+    // otherwise jobs that fail at the same time would retry at the same time.
     expectBackoffRetry(1, 4_000, claimedUntil);
     expect(mocks.markFailed).not.toHaveBeenCalled();
     expect(mocks.deadLetterCreate).not.toHaveBeenCalled();
@@ -274,11 +272,7 @@ describe("ExecutionWorker.tick", () => {
 
     await expect(ExecutionWorker.processDispatchQueue()).resolves.toBe(0);
 
-    expect(mocks.markFailed).toHaveBeenCalledWith(
-      "event-1",
-      5,
-      claimedUntil,
-    );
+    expect(mocks.markFailed).toHaveBeenCalledWith("event-1", 5, claimedUntil);
     expect(mocks.deadLetterCreate).toHaveBeenCalledWith({
       executionJobId: "job-1",
       reason: "execution.dispatch failed after max attempts",
@@ -350,10 +344,7 @@ describe("ExecutionWorker.tick", () => {
 
     expect(mocks.transaction).not.toHaveBeenCalled();
     expect(mocks.evidenceCreate).not.toHaveBeenCalled();
-    expect(mocks.executionComplete).toHaveBeenCalledWith(
-      "job-1",
-      "project-1",
-    );
+    expect(mocks.executionComplete).toHaveBeenCalledWith("job-1", "project-1");
     expect(mocks.taskComplete).toHaveBeenCalledWith("task-1", "project-1");
   });
 
@@ -381,14 +372,14 @@ describe("ExecutionWorker.tick", () => {
       recoverStalledDispatch: true,
     });
     expect(mocks.markProcessed).not.toHaveBeenCalled();
-    // Backoff jitter'lı (±%25): tam değer değil aralık doğrulanır, aksi
-    // halde aynı anda düşen işler aynı anda yeniden denenir.
+    // Backoff has jitter (+-25%): a range is verified, not the exact value —
+    // otherwise jobs that fail at the same time would retry at the same time.
     expectBackoffRetry(1, 4_000, claimedUntil);
   });
 });
 
-// attempt için beklenen taban backoff'un ±%25 bandında bir yeniden deneme
-// planlandığını doğrular.
+// Verifies that a retry is scheduled within +-25% of the expected base
+// backoff for the given attempt.
 function expectBackoffRetry(
   attempt: number,
   baseMs: number,

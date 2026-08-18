@@ -100,7 +100,7 @@ const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
       </DialogTrigger>
       <DialogContent className="aui-attachment-preview-dialog-content [&>button]:bg-foreground/60 [&>button]:hover:bg-foreground/80 [&_svg]:text-background p-2 sm:max-w-3xl [&>button]:rounded-full [&>button]:p-1 [&>button]:opacity-100 [&>button]:ring-0!">
         <DialogTitle className="aui-sr-only sr-only">
-          Görsel eki önizlemesi
+          Image attachment preview
         </DialogTitle>
         <div className="aui-attachment-preview bg-background relative mx-auto flex max-h-[80dvh] w-full items-center justify-center overflow-hidden rounded-sm">
           <AttachmentPreview src={src} />
@@ -136,11 +136,11 @@ const AttachmentUI: FC = () => {
     const type = s.attachment.type;
     switch (type) {
       case "image":
-        return "Görsel";
+        return "Image";
       case "document":
-        return "Belge";
+        return "Document";
       case "file":
-        return "Dosya";
+        return "File";
       default:
         return type;
     }
@@ -160,7 +160,7 @@ const AttachmentUI: FC = () => {
   const errorMessage = useAuiState((s) =>
     s.attachment.status.type === "incomplete" &&
     s.attachment.status.reason === "error"
-      ? (s.attachment.status.message ?? "Yükleme başarısız")
+      ? (s.attachment.status.message ?? "Upload failed")
       : undefined,
   );
 
@@ -199,11 +199,11 @@ const AttachmentUI: FC = () => {
                   onKeyUp={(e) => {
                     if (e.key === " ") e.currentTarget.click();
                   }}
-                  aria-label={`${typeLabel} eki${
+                  aria-label={`${typeLabel} attachment${
                     isError
-                      ? ", yükleme başarısız"
+                      ? ", upload failed"
                       : isUploading
-                        ? ", yükleniyor"
+                        ? ", uploading"
                         : ""
                   }`}
                 />
@@ -246,7 +246,7 @@ const AttachmentRemove: FC = () => {
     <AttachmentPrimitive.Remove
       render={
         <TooltipIconButton
-          tooltip="Dosyayı kaldır"
+          tooltip="Remove file"
           className="aui-attachment-tile-remove absolute end-1 top-1 size-5 rounded-full bg-black/50! text-white backdrop-blur-sm after:absolute after:-inset-1.5 hover:bg-black/70! hover:text-white! active:scale-[0.96] motion-reduce:transition-none"
           side="top"
         />
@@ -282,12 +282,12 @@ export const ComposerAddAttachment: FC = () => {
     <ComposerPrimitive.AddAttachment
       render={
         <TooltipIconButton
-          tooltip="Dosya ekle"
+          tooltip="Add file"
           side="bottom"
           variant="ghost"
           size="icon"
           className="aui-composer-add-attachment hover:bg-muted-foreground/15 dark:border-muted-foreground/15 dark:hover:bg-muted-foreground/30 size-7 rounded-full p-1 text-xs font-semibold active:scale-[0.96] motion-reduce:transition-none"
-          aria-label="Dosya ekle"
+          aria-label="Add file"
         />
       }
     >

@@ -15,10 +15,10 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-// Görsel dosyalar (mimeType image/*) doğrudan küçük resim olarak, tıklanınca
-// modalda büyütülmüş halde gösterilir; diğer dosya türleri (pdf, txt,
-// csv...) dosya adı + boyut rozeti olarak `/api/assets/{id}` üzerinden yeni
-// sekmede açılır (bunlar için modal önizleme anlamsız).
+// Image files (mimeType image/*) are shown directly as a thumbnail and
+// enlarged in a modal on click; other file types (pdf, txt, csv...) open
+// in a new tab via `/api/assets/{id}` as a filename + size badge (a modal
+// preview doesn't make sense for these).
 export function AssetPreview({ asset }: { asset: AssetSummary | null }) {
   if (!asset) return null;
   const src = `/api/assets/${asset.id}`;

@@ -4,7 +4,7 @@ import type { CapabilityKey } from "@prisma/client";
 // carry a structured `findings` array (and `signals` for SIGNAL_SCAN) in the
 // exact shape ResultMaterializer consumes, derived ONLY from the request
 // input — never hardcoded brand content — so setup/loop tests exercise real
-// data flow (spec: "Hardcoded Biduniq sonuçları kullanma").
+// data flow (spec: "Do not use hardcoded Biduniq results").
 
 export type MockFinding = {
   statement: string;

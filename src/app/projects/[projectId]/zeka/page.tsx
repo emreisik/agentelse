@@ -2,10 +2,11 @@ import { redirect } from "next/navigation";
 
 const VALID_PANELS = ["sinyaller", "icgoru-firsat", "hedefler", "marka-beyni"];
 
-// Zekâ artık HUB CORE'un üç yörünge paneline ayrıldı (Sinyaller / İçgörü &
-// Fırsat / Hedefler — Marka Beyni ayrı bir düğüm; bkz. ../page.tsx +
-// src/components/hub-core/panels/*.tsx) — bu rota eski yer imleri/linkler
-// kırılmasın diye canlı tutuluyor, doğru panele/derin linke yönlendiriyor.
+// Intelligence is now split across three of HUB CORE's orbit panels
+// (Signals / Insight & Opportunity / Goals — Brand Brain is a separate
+// node; see ../page.tsx + src/components/hub-core/panels/*.tsx) — this
+// route stays alive so old bookmarks/links don't break, redirecting to the
+// correct panel/deep link.
 export default async function ZekaRedirect({
   params,
   searchParams,

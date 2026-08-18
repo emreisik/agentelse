@@ -36,11 +36,11 @@ export async function submitProjectCommandAction(formData: FormData) {
 }
 
 // ---------------------------------------------------------------------------
-// Sohbet ekranı
+// Chat screen
 // ---------------------------------------------------------------------------
 
-// Gemini inlineData'nın anladığı türler. Görseller ayrıca kreatif düzenleme
-// girdisi olarak kullanılabilir; belgeler yalnızca bağlam sağlar.
+// Types understood by Gemini's inlineData. Images can also be used as
+// creative editing input; documents only provide context.
 const CHAT_MIME_TO_EXT: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -50,7 +50,7 @@ const CHAT_MIME_TO_EXT: Record<string, string> = {
   "text/csv": "csv",
   "text/markdown": "md",
 };
-const MAX_CHAT_FILE_SIZE = 8 * 1024 * 1024; // inlineData istek sınırının altında
+const MAX_CHAT_FILE_SIZE = 8 * 1024 * 1024; // below the inlineData request limit
 const MAX_CHAT_FILES = 4;
 const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
@@ -74,25 +74,25 @@ export async function submitChatMessageAction(
     .filter((entry): entry is File => entry instanceof File && entry.size > 0);
 
   if (!text && files.length === 0) {
-    return { ok: false, message: "Mesaj boş." };
+    return { ok: false, message: "Message is empty." };
   }
   if (files.length > MAX_CHAT_FILES) {
     return {
       ok: false,
-      message: `En fazla ${MAX_CHAT_FILES} dosya eklenebilir.`,
+      message: `You can attach at most ${MAX_CHAT_FILES} files.`,
     };
   }
   for (const file of files) {
     if (!CHAT_MIME_TO_EXT[file.type]) {
       return {
         ok: false,
-        message: `Desteklenmeyen dosya türü: ${file.name}. Görsel (PNG/JPG/WebP), PDF veya metin dosyası ekleyin.`,
+        message: `Unsupported file type: ${file.name}. Attach an image (PNG/JPG/WebP), PDF, or text file.`,
       };
     }
     if (file.size > MAX_CHAT_FILE_SIZE) {
       return {
         ok: false,
-        message: `${file.name} çok büyük (sınır ${MAX_CHAT_FILE_SIZE / 1024 / 1024} MB).`,
+        message: `${file.name} is too large (limit ${MAX_CHAT_FILE_SIZE / 1024 / 1024} MB).`,
       };
     }
   }
@@ -100,8 +100,8 @@ export async function submitChatMessageAction(
   const { userId } = await requireUser();
   const access = await requireProjectAccess(userId, projectId);
 
-  // Dosyaları diske + Asset tablosuna yaz; aynı okumadan base64 gövdeyi de
-  // çıkar ki Gemini'ye ikinci bir disk turu olmadan gitsin.
+  // Write files to disk + the Asset table; extract the base64 body from the
+  // same read so it goes to Gemini without a second disk round-trip.
   const attachments: CommandAttachment[] = [];
   const attachmentBodies: { mimeType: string; data: string }[] = [];
 
@@ -129,7 +129,7 @@ export async function submitChatMessageAction(
 
     attachments.push({
       assetId: asset.id,
-      // Orijinal ad kullanıcıya gösterilir; diskteki ad her zaman UUID.
+      // The original name is shown to the user; the on-disk name is always a UUID.
       filename: file.name,
       mimeType: file.type,
       size: file.size,
@@ -145,7 +145,7 @@ export async function submitChatMessageAction(
       workspaceId: access.workspaceId,
       projectId,
       userId,
-      message: text || "(yalnızca dosya gönderildi)",
+      message: text || "(file only, no message text)",
       attachments,
       attachmentBodies,
       ideaId: typeof ideaId === "string" && ideaId ? ideaId : undefined,
@@ -165,7 +165,8 @@ export async function submitChatMessageAction(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "Mesaj gönderilemedi",
+      message:
+        error instanceof Error ? error.message : "Failed to send message",
     };
   }
 }

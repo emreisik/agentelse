@@ -48,19 +48,19 @@ function brandName(context: ReasoningContext): string {
 }
 
 function languageName(context: ReasoningContext): string {
-  return (context.languageName as string | undefined) ?? "Turkish";
+  return (context.languageName as string | undefined) ?? "English";
 }
 
 function countryName(context: ReasoningContext): string {
-  return (context.countryName as string | undefined) ?? "Turkey";
+  return (context.countryName as string | undefined) ?? "United States";
 }
 
 export const constitutionSynthesisDef: ReasoningDef<ConstitutionOutput> = {
   purpose: "constitution.synthesize",
   schema: ConstitutionOutputSchema,
-  // 22 bölümlük anayasa, üstelik Gemini'de düşünme tokenları da bu limite
-  // sayılıyor: gerçek bulgularla beslendiğinde 8192'de yanıt JSON'un
-  // ortasında kesiliyordu (finishReason: MAX_TOKENS).
+  // A 22-section constitution, and on top of that, Gemini's thinking
+  // tokens also count against this limit: when fed real findings, the
+  // response at 8192 was getting cut off mid-JSON (finishReason: MAX_TOKENS).
   maxTokens: 32768,
 
   buildPrompt(context) {

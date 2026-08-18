@@ -2,16 +2,16 @@ import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
 
-// Sohbet yüzeyinin beyni. Kural tabanlı `parseIntent` yalnızca bir avuç
-// kalıbı tanıyor ("instagram postu hazırla" gibi) ve geri kalan her şeye
-// UNKNOWN dönüyordu — yani kullanıcı serbestçe yazdığında ekran sessiz
-// kalıyordu. Bu prompt iki işi birden yapar: kullanıcıya Türkçe (proje
-// diline göre) gerçek bir yanıt yazar VE mesajın iş talebi mi, soru mu,
-// onay mı olduğuna karar verir.
+// The brain of the chat surface. The rule-based `parseIntent` only
+// recognized a handful of patterns (like "prepare an instagram post") and
+// returned UNKNOWN for everything else — meaning the screen stayed silent
+// whenever the user wrote freely. This prompt does two jobs at once: it
+// writes the user a genuine reply (in the project's language) AND decides
+// whether the message is a work request, a question, or an approval.
 //
-// Sohbetten tetiklenebilecek yetenekler bilinçli olarak kısıtlı: SIGNAL_SCAN
-// / MEASUREMENT_CHECK gibi motor-içi yetenekler ajansın kendi ritmine ait,
-// kullanıcı komutuyla tekil olarak çalıştırılmaz.
+// Capabilities that can be triggered from chat are deliberately restricted:
+// engine-internal capabilities like SIGNAL_SCAN / MEASUREMENT_CHECK belong
+// to the agency's own rhythm and are never run one-off via a user command.
 export const CHAT_CAPABILITIES = [
   "CREATE_SOCIAL_CREATIVE",
   "CREATE_AD_CREATIVE",
@@ -52,14 +52,14 @@ export const CHAT_PLATFORMS = [
 ] as const;
 
 export const ChatTurnOutputSchema = z.object({
-  // Kullanıcıya gösterilen yanıt. Proje dilinde, 2-5 cümle.
+  // The reply shown to the user. In the project's language, 2-5 sentences.
   reply: z.string(),
   intentKind: z.enum(["TASK", "ANSWER", "APPROVAL", "UNCLEAR"]),
   capability: z.enum(CHAT_CAPABILITIES).optional(),
   platform: z.enum(CHAT_PLATFORMS).optional(),
-  // Göreve yazılacak, kendi başına anlaşılır brief. Kullanıcının cümlesini
-  // aynen kopyalamak yerine sohbet geçmişindeki bağlamı içine alır —
-  // yürütücü ajan sohbeti görmüyor, yalnızca bu metni görüyor.
+  // A self-contained brief to write onto the task. Instead of copying the
+  // user's sentence verbatim, it folds in the context from the chat
+  // history — the executing agent doesn't see the chat, only this text.
   taskBrief: z.string().optional(),
   approvalDecision: z.enum(["APPROVE", "REJECT", "REVISE"]).optional(),
 });
@@ -69,7 +69,7 @@ export type ChatTurnOutput = z.infer<typeof ChatTurnOutputSchema>;
 export const chatTurnDef: ReasoningDef<ChatTurnOutput> = {
   purpose: "chat.turn",
   schema: ChatTurnOutputSchema,
-  // Her kullanıcı mesajında çalışır — en sık çağrılan prompt. Ucuz kademe.
+  // Runs on every user message — the most frequently called prompt. Cheap tier.
   tier: "lite" as const,
   maxTokens: 2048,
 
@@ -109,7 +109,7 @@ export const chatTurnDef: ReasoningDef<ChatTurnOutput> = {
   buildMock(context) {
     const message = String(context.message ?? "");
     return {
-      reply: `Mock yanıt: "${message.slice(0, 120)}" mesajını aldım.`,
+      reply: `Mock reply: received the message "${message.slice(0, 120)}".`,
       intentKind: "ANSWER" as const,
     };
   },

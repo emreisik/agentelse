@@ -6,18 +6,19 @@ import path from "node:path";
 
 import { getEnv } from "@/lib/env";
 
-// Gemini görsel üretimi. OpenClaw'un `infer image generate` yolundan farkı:
-// çağrı doğrudan uygulamanın kendi GEMINI_API_KEY'i ile yapılır, yani
-// faturası da Gemini hesabına gider — OpenClaw'daki OpenAI oturumuna değil.
+// Gemini image generation. The difference from OpenClaw's `infer image
+// generate` path: the call is made directly with the app's own
+// GEMINI_API_KEY, so billing also goes to the Gemini account — not to
+// OpenClaw's OpenAI session.
 //
-// Görsel modelleri metin modellerinden farklı davranır: yanıt `inlineData`
-// içinde base64 gelir, ayrı bir "images" ucu yoktur. Canlı doğrulandı
-// (gemini-3.1-flash-image → image/jpeg, ~10 sn).
+// Image models behave differently from text models: the response comes as
+// base64 inside `inlineData`, there's no separate "images" endpoint. Live
+// verified (gemini-3.1-flash-image -> image/jpeg, ~10s).
 
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
-// Paylaşılan yerel varlık klasörü — OpenClaw görsel istemcisiyle aynı yer,
-// böylece iki üretici de aynı `local-asset://` şemasıyla servis edilir.
+// Shared local asset folder — same location as the OpenClaw image client,
+// so both generators are served under the same `local-asset://` scheme.
 const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
 export type GeneratedCreativeImage = {
@@ -25,11 +26,11 @@ export type GeneratedCreativeImage = {
   filename: string;
   mimeType: string;
   size: number;
-  // Hangi backend'in ürettiği — creative-image.ts'nin Gemini→OpenClaw sessiz
-  // yedek geçişini sonradan (generationMetadata üzerinden) izlenebilir kılmak
-  // için. Model adı yanlış/geçersizse Gemini çağrısı 404/400 ile düşer ve bu
-  // olmadan hangi backend'in devrede olduğu yalnızca sunucu loglarından
-  // anlaşılabilirdi.
+  // Which backend produced it — so creative-image.ts's silent Gemini->OpenClaw
+  // fallback switch can later be traced (via generationMetadata). If the
+  // model name is wrong/invalid, the Gemini call fails with 404/400, and
+  // without this, which backend was actually in play could only be told
+  // from the server logs.
   provider: "gemini";
 };
 
@@ -60,15 +61,17 @@ export function geminiImageModel(): string {
   return getEnv().GEMINI_IMAGE_MODEL;
 }
 
-// Başarısızlıkta null döner — çağıranlar (kreatif üretimi, logo) görsel
-// olmadan da işlerini tamamlayabilmeli.
-// baseImage verildiğinde model sıfırdan üretmez, verilen görseli talimata
-// göre DÜZENLER (Gemini görsel modelleri aynı generateContent ucundan hem
-// üretim hem düzenleme yapar; fark, girdiye inlineData eklenmesi).
-// referenceImage, baseImage'dan farklı bir senaryo için: sıfırdan üretim
-// sırasında modele markanın gerçek logosunu "işte bu, buna sadık kal" diye
-// görsel referans olarak vermek. İkisi aynı anda kullanılmaz — baseImage
-// varsa (düzenleme modu) referenceImage yok sayılır.
+// Returns null on failure — callers (creative generation, logo) must be
+// able to complete their work even without an image.
+// When baseImage is given, the model doesn't generate from scratch, it
+// EDITS the given image according to the instruction (Gemini image models
+// do both generation and editing from the same generateContent endpoint;
+// the difference is adding inlineData to the input).
+// referenceImage is for a different scenario than baseImage: giving the
+// model the brand's actual logo as a visual reference during from-scratch
+// generation, saying "here it is, stay faithful to it." The two are never
+// used together — if baseImage is present (edit mode), referenceImage is
+// ignored.
 export async function generateGeminiImage(
   prompt: string,
   baseImage?: { data: string; mimeType: string },
@@ -128,7 +131,7 @@ export async function generateGeminiImage(
     const payload = (await response.json()) as GeminiImageResponse;
     if (!response.ok) {
       console.error(
-        "[gemini-image] üretim başarısız:",
+        "[gemini-image] generation failed:",
         response.status,
         payload.error?.message,
       );
@@ -141,7 +144,7 @@ export async function generateGeminiImage(
     )?.inlineData;
     if (!inline?.data) {
       console.error(
-        "[gemini-image] yanıtta görsel yok, finishReason:",
+        "[gemini-image] no image in response, finishReason:",
         candidate?.finishReason,
       );
       return null;
@@ -162,7 +165,7 @@ export async function generateGeminiImage(
       provider: "gemini",
     };
   } catch (error) {
-    console.error("[gemini-image] üretim başarısız", error);
+    console.error("[gemini-image] generation failed", error);
     return null;
   }
 }

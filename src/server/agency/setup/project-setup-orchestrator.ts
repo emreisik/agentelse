@@ -68,13 +68,13 @@ const STANDARD_BROWSER_PROFILE_PURPOSES = [
   "LINKEDIN",
 ] as const;
 
-
-// Aktivasyon yalnızca PROFILE_REVIEW'dan ACTIVE'e geçiyordu. Proje başka bir
-// ara durumdaysa (örneğin kaldırılan eski sihirbazdan kalma
-// NEEDS_INFORMATION) geçiş sessizce atlanıyor, kurulum "aktive edildi"
-// görünüyor ama proje ACTIVE olmuyordu — sürekli ajans döngüsü ve sinyal
-// taramaları ACTIVE şartı aradığı için sistem hiç çalışmıyordu.
-// Durum makinesindeki yasal yolu adım adım yürüyerek ACTIVE'e ulaşıyoruz.
+// Activation used to only transition from PROFILE_REVIEW to ACTIVE. If the
+// project was in a different intermediate status (e.g. NEEDS_INFORMATION
+// left over from the removed legacy wizard), the transition was silently
+// skipped — setup showed as "activated" but the project never became
+// ACTIVE, and since the continuous agency loop and signal scans require
+// ACTIVE, the system never ran at all.
+// We now walk the legal path in the state machine step by step to reach ACTIVE.
 const PATH_TO_ACTIVE: Partial<Record<ProjectStatus, ProjectStatus[]>> = {
   CREATED: ["DISCOVERY", "PROFILE_REVIEW", "ACTIVE"],
   DISCOVERY: ["PROFILE_REVIEW", "ACTIVE"],
@@ -93,7 +93,11 @@ async function activateProjectRow(scope: SetupScope): Promise<void> {
   if (!project || project.status === "ACTIVE") return;
 
   for (const next of PATH_TO_ACTIVE[project.status] ?? []) {
-    await ProjectRepository.transition(scope.projectId, scope.workspaceId, next);
+    await ProjectRepository.transition(
+      scope.projectId,
+      scope.workspaceId,
+      next,
+    );
   }
 }
 
@@ -114,10 +118,10 @@ export const ProjectSetupOrchestrator = {
         where: { id: scope.projectId },
         select: { slug: true },
       });
-      // Projeye ait OpenClaw ajanı olmadan profil slug'ları hiçbir ajana
-      // karşılık gelmez ve gerçek tarayıcı görevleri `Unknown agent id`
-      // ile düşer. Ajan açılamazsa externalProfileId boş kalır ve iş
-      // varsayılan ajana düşer — kurulum yine de ilerler.
+      // Without an OpenClaw agent for the project, profile slugs don't map
+      // to any agent and real browser tasks fail with `Unknown agent id`.
+      // If the agent can't be provisioned, externalProfileId stays empty
+      // and the job falls back to the default agent — setup still proceeds.
       const externalProfileId =
         (await provisionOpenClawAgent(projectRow.slug)) ?? undefined;
 

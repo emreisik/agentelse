@@ -7,13 +7,13 @@ import type { CommandAttachment } from "./command.repository";
 import type { CreativeCardData } from "@/types/creative-card";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
-// Ajans pipeline'ının (konsey değerlendirmesi, iş planına dönüşüm, görev/
-// kreatif tamamlanması) bir fikrin sohbet iş parçacığına yazdığı sistem
-// mesajları — kullanıcının o fikirle ilgili yazdığı gerçek mesajlarla
-// (source: WEB) AYNI ideaId altında birikir, tek bir sohbet akışı
-// oluşturur (bkz. Command.ideaId). Çağıranlar bu yazmayı try/catch ile
-// sarmalı: bir sohbet mesajının yazılamaması, altındaki asıl iş mantığını
-// (fikir/konsey/iş planı/görev) ASLA durdurmamalı.
+// System messages the agency pipeline (council evaluation, conversion to a
+// work plan, task/creative completion) writes to an idea's chat thread —
+// these accumulate under the SAME ideaId as the user's actual messages
+// about that idea (source: WEB), forming a single chat stream (see
+// Command.ideaId). Callers must wrap this write in try/catch: failure to
+// write a chat message must NEVER stop the underlying business logic
+// (idea/council/work plan/task).
 export const IdeaChatRepository = {
   postSystemMessage(input: {
     workspaceId: string;
@@ -22,14 +22,15 @@ export const IdeaChatRepository = {
     text: string;
     attachments?: CommandAttachment[];
     card?: IdeaEventCardData;
-    // Yalnızca TEK bir departmana bağlı olayları (görev/kreatif) işaretler
-    // — sohbet ekranında departman renginde bir kenar şeridi olarak
-    // gösterilir (bkz. project-chat.tsx, assistant-ui/thread.tsx).
-    // Konsey/iş-planı gibi çoklu-departman olaylarında verilmez.
+    // Marks events tied to a SINGLE department only (task/creative) — shown
+    // in the chat view as a department-colored side stripe (see
+    // project-chat.tsx, assistant-ui/thread.tsx). Not provided for
+    // multi-department events like council/work-plan.
     departmentKey?: DepartmentKey;
-    // Köken zinciri (Sinyal/Bulgu/İçgörü-Fırsat) geriye dönük yazılırken
-    // her adımın KENDİ gerçek oluşturulma anıyla görünmesi için — verilmezse
-    // Command.createdAt'in @default(now()) davranışı korunur.
+    // For when the provenance chain (Signal/Finding/Insight-Opportunity) is
+    // written retroactively, so each step shows with its OWN actual creation
+    // moment — if omitted, Command.createdAt's @default(now()) behavior is
+    // preserved.
     createdAt?: Date;
   }) {
     const parsedIntent =
@@ -54,9 +55,10 @@ export const IdeaChatRepository = {
     });
   },
 
-  // Bir kreatif üretimi başladığında sohbete "yükleniyor" kartı düşer
-  // (ChatGPT'nin görsel üretirken gösterdiği bekleme durumu gibi). Fikre
-  // bağlanamayan görevlerde (ideaId çözülemezse) sessizce atlanır.
+  // When a creative generation starts, posts a "loading" card to the chat
+  // (like the waiting state ChatGPT shows while generating an image). For
+  // tasks that can't be linked to an idea (ideaId can't be resolved), this
+  // is silently skipped.
   async postCreativeLoadingCard(input: {
     workspaceId: string;
     projectId: string;
@@ -70,7 +72,7 @@ export const IdeaChatRepository = {
       workspaceId: input.workspaceId,
       projectId: input.projectId,
       ideaId,
-      text: `🎨 Görsel oluşturuluyor: ${input.title}`,
+      text: `🎨 Generating image: ${input.title}`,
       card: {
         kind: "creative-loading",
         taskId: input.taskId,
@@ -80,11 +82,11 @@ export const IdeaChatRepository = {
     });
   },
 
-  // Bir kreatif üretimi bitince (başarılı ya da başarısız) o task için
-  // AYNI yükleniyor kartını sonuca günceller — sayfa yenilendiğinde/yeniden
-  // ziyaret edildiğinde "yükleniyor" hiç kalıcı olarak takılı kalmaz.
-  // Karşılık gelen yükleniyor kartı bulunamazsa (ör. postCreativeLoadingCard
-  // o an başarısız olduysa) yeni bir satır olarak düşer — best-effort.
+  // When a creative generation finishes (success or failure), updates the
+  // SAME loading card for that task to the result — so "loading" never
+  // stays stuck permanently on page refresh/revisit. If the matching
+  // loading card can't be found (e.g. postCreativeLoadingCard failed at the
+  // time), posts a new row instead — best-effort.
   async resolveCreativeCard(input: {
     workspaceId: string;
     projectId: string;
@@ -135,10 +137,10 @@ export const IdeaChatRepository = {
     });
   },
 
-  // Kreatif-dışı bir görev RUNNING'e geçtiğinde sohbete "çalışıyor" kartı
-  // düşer — kreatif üretimindeki yükleniyor kartıyla aynı görsel dil
-  // (bkz. postCreativeLoadingCard), ama TÜM görev tiplerinde: artık
-  // "başladı" anı sadece kreatiflerde değil her yerde görünür.
+  // When a non-creative task transitions to RUNNING, posts a "running" card
+  // to the chat — the same visual language as the creative generation
+  // loading card (see postCreativeLoadingCard), but for ALL task types: the
+  // "started" moment is now visible everywhere, not just for creatives.
   async postTaskRunningCard(input: {
     workspaceId: string;
     projectId: string;
@@ -152,7 +154,7 @@ export const IdeaChatRepository = {
       workspaceId: input.workspaceId,
       projectId: input.projectId,
       ideaId,
-      text: `⏳ Görev başladı: ${input.title}`,
+      text: `⏳ Task started: ${input.title}`,
       card: {
         kind: "task-running",
         taskId: input.taskId,
@@ -163,11 +165,12 @@ export const IdeaChatRepository = {
     });
   },
 
-  // Bir görev tamamlanınca/başarısız/iptal olunca, o görev için AÇIK olan
-  // "çalışıyor" kartını (postTaskRunningCard) AYNI satırda sonuca günceller
-  // — resolveCreativeCard'ın kreatifler için yaptığının görev-sonucu
-  // karşılığı. Karşılık gelen çalışıyor kartı bulunamazsa (ör. hiç
-  // RUNNING'e geçmeden tamamlanan/iptal edilen görev) yeni satır düşer.
+  // When a task completes/fails/is cancelled, updates the OPEN "running"
+  // card for that task (postTaskRunningCard) to the result in the SAME
+  // row — the task-result counterpart of what resolveCreativeCard does for
+  // creatives. If the matching running card can't be found (e.g. a task
+  // completed/cancelled without ever going through RUNNING), posts a new
+  // row.
   async resolveTaskResultCard(input: {
     workspaceId: string;
     projectId: string;
@@ -213,8 +216,9 @@ export const IdeaChatRepository = {
     });
   },
 
-  // resolveTaskResultCard'ın yayın (INSTAGRAM_PUBLISH vb.) görevleri için
-  // karşılığı — aynı "çalışıyor" kartını sonuca (postId/hata) günceller.
+  // The counterpart of resolveTaskResultCard for publish tasks
+  // (INSTAGRAM_PUBLISH etc.) — updates the same "running" card to the
+  // result (postId/error).
   async resolvePublishResultCard(input: {
     workspaceId: string;
     projectId: string;
@@ -260,12 +264,12 @@ export const IdeaChatRepository = {
     });
   },
 
-  // Bir görev onay gerektirdiği için WAITING_APPROVAL'a düşünce (bkz.
-  // TaskPlanner.planForCapability) sohbete Onayla/Reddet düğmeli bir kart
-  // düşer — ekran görüntüsündeki tasarımla aynı: "Onay bekliyor" + risk
-  // rozeti + açıklama + iki buton (bkz. idea-event-card.tsx
-  // ApprovalRequestCard). Karar verilince AYNI satır resolveApprovalDecisionCard
-  // ile sonuca güncellenir, düğmeler kaybolur.
+  // When a task drops into WAITING_APPROVAL because it requires approval
+  // (see TaskPlanner.planForCapability), posts a card with Approve/Reject
+  // buttons to the chat — matching the mockup design: "Awaiting approval" +
+  // risk badge + description + two buttons (see idea-event-card.tsx
+  // ApprovalRequestCard). Once decided, the SAME row is updated to the
+  // result by resolveApprovalDecisionCard, and the buttons disappear.
   async postApprovalRequestCard(input: {
     workspaceId: string;
     projectId: string;
@@ -281,7 +285,7 @@ export const IdeaChatRepository = {
       workspaceId: input.workspaceId,
       projectId: input.projectId,
       ideaId,
-      text: `⏸️ Onay bekliyor: ${input.title}`,
+      text: `⏸️ Awaiting approval: ${input.title}`,
       card: {
         kind: "approval-request",
         approvalId: input.approvalId,
@@ -294,11 +298,12 @@ export const IdeaChatRepository = {
     });
   },
 
-  // Bir onay kararı verilince (approve/reject) sohbetteki AÇIK
-  // "approval-request" kartını (postApprovalRequestCard) AYNI satırda
-  // sonuca günceller — buton çiftinin karardan sonra da orada kalıp tekrar
-  // tıklanabilir görünmesini önler. Karşılık gelen istek kartı bulunamazsa
-  // (ör. Telegram'dan gelen ya da sohbet dışı bir onay) yeni satır düşer.
+  // When an approval decision (approve/reject) is made, updates the OPEN
+  // "approval-request" card (postApprovalRequestCard) to the result in the
+  // SAME row — this prevents the button pair from staying there and
+  // looking clickable after the decision. If the matching request card
+  // can't be found (e.g. an approval that came from Telegram or outside
+  // the chat), posts a new row.
   async resolveApprovalDecisionCard(input: {
     workspaceId: string;
     projectId: string;
@@ -345,13 +350,14 @@ export const IdeaChatRepository = {
     });
   },
 
-  // Bir kreatif onaylanınca/reddedilince — Task onaylarının aksine — kartı
-  // genel bir "approval-decision" kartına ÇEVİRMİYORUZ, çünkü creative-ready
-  // kartı zaten görseli/başlığı taşıyor: onu kaybetmemek için AYNI kartın
-  // sadece `status` alanı (IN_REVIEW -> APPROVED/REJECTED) güncellenir, kart
-  // biçimi (görsel, caption, copy) olduğu gibi kalır. Sohbette karşılık
-  // gelen bir creative-ready kartı yoksa (ör. sohbet dışı elle oluşturulmuş
-  // kreatif) sessizce atlanır.
+  // When a creative is approved/rejected — unlike task approvals — we do
+  // NOT convert the card into a generic "approval-decision" card, because
+  // the creative-ready card already carries the image/title: to avoid
+  // losing that, only the `status` field of the SAME card is updated
+  // (IN_REVIEW -> APPROVED/REJECTED), and the card's shape (image, caption,
+  // copy) stays as-is. If there's no matching creative-ready card in the
+  // chat (e.g. a creative created manually outside the chat), this is
+  // silently skipped.
   async resolveCreativeApprovalDecision(input: {
     ideaId: string;
     creativeId: string;
@@ -388,9 +394,9 @@ export const IdeaChatRepository = {
     });
   },
 
-  // WorkPlan/Task, fikirsiz akışlarda (elle oluşturma, isMock) ideaId'siz
-  // kalabilir — bu durumda null döner, çağıran sohbet mesajı yazmayı/idea
-  // sohbetine yönlendirmeyi atlamalı.
+  // A WorkPlan/Task can end up without an ideaId in idea-less flows (manual
+  // creation, isMock) — in that case this returns null, and the caller
+  // should skip writing a chat message / routing to the idea chat.
   async resolveIdeaIdForWorkPlan(workPlanId: string): Promise<string | null> {
     const workPlan = await prisma.workPlan.findUnique({
       where: { id: workPlanId },
@@ -399,12 +405,12 @@ export const IdeaChatRepository = {
     return workPlan?.ideaId ?? null;
   },
 
-  // Bir görev iki yoldan bir fikre bağlı olabilir: (1) bir iş planının
-  // parçasıysa workPlanId -> WorkPlan.ideaId, (2) doğrudan bir fikrin
-  // sohbetinden komutla istenmişse (workPlanId yok) commandId ->
-  // Command.ideaId. Önce commandId denenir — kullanıcı o fikrin
-  // thread'inden yazdıysa görevin "gerçek" bağlamı odur; iş planı
-  // zincirine sadece o yol yoksa düşülür.
+  // A task can be linked to an idea through two paths: (1) if it's part of
+  // a work plan, workPlanId -> WorkPlan.ideaId; (2) if it was requested
+  // directly via a command from an idea's chat (no workPlanId),
+  // commandId -> Command.ideaId. commandId is tried first — if the user
+  // wrote from that idea's thread, that's the task's "real" context; we
+  // only fall back to the work-plan chain if that path isn't available.
   async resolveIdeaIdForTask(taskId: string): Promise<string | null> {
     const task = await prisma.task.findUnique({
       where: { id: taskId },

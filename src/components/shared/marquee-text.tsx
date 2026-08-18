@@ -4,14 +4,15 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
-// ChatGPT'nin sidebar sohbet listesindeki davranışıyla aynı: başlık kutuya
-// sığmıyorsa üzerine gelince (üst satırdaki `group/marquee`'nin hover'ında)
-// metin yavaşça sola kayıp tamamı görünür, fare çekilince başa döner.
-// Kayma mesafesi — dolayısıyla sabit bir piksel/saniye hızıyla süresi de —
-// metnin GERÇEK taşma miktarına göre burada ölçülüp bir CSS custom
-// property'ye yazılır; CSS tek başına (içerik dinamik olduğu için) bunu
-// bilemez. Sığan başlıklarda taşma 0 olduğundan hover'ın hiçbir görünür
-// etkisi olmaz — ayrı bir "kaydırılabilir mi" dalı gerekmez.
+// Same behavior as ChatGPT's sidebar chat list: if the title doesn't fit
+// the box, hovering over it (on the `group/marquee` hover from the parent
+// row) slowly scrolls the text left until it's fully visible, and it
+// resets when the mouse leaves. The scroll distance — and therefore the
+// duration at a fixed pixels/second speed — is measured here from the
+// text's ACTUAL overflow amount and written to a CSS custom property;
+// CSS alone can't know this (since the content is dynamic). Titles that
+// fit have zero overflow, so hover has no visible effect — no separate
+// "is it scrollable" branch is needed.
 export function MarqueeText({
   children,
   className,

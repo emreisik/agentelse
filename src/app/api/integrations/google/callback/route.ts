@@ -21,16 +21,17 @@ function redirectToEntegrasyonlar(
   projectId: string,
   googleError?: string,
 ) {
-  const url = new URL(`/projects/${projectId}/entegrasyonlar`, request.url);
-  url.searchParams.set("entegrasyon", "google");
+  const url = new URL(`/projects/${projectId}/integrations`, request.url);
+  url.searchParams.set("integration", "google");
   if (googleError) url.searchParams.set("googleError", googleError);
   return NextResponse.redirect(url);
 }
 
-// Google'ın consent ekranından dönüş — code'u token'a çevirir, erişilebilir
-// GA4 property'lerini + Search Console site'larını listeler, bağlantıyı
-// kurar. projectId'yi bilmediğimiz tek durum (state doğrulanamadığında)
-// dışında tüm hatalar entegrasyonlar sayfasına geri yönlendirilir.
+// Return from Google's consent screen — exchanges the code for a token,
+// lists accessible GA4 properties + Search Console sites, and establishes
+// the connection. Except for the one case where we don't know the
+// projectId (when the state can't be verified), all errors redirect back
+// to the integrations page.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
@@ -61,9 +62,9 @@ export async function GET(request: Request) {
   } catch {
     return redirectToEntegrasyonlar(request, state.projectId, "unauthorized");
   }
-  // İmzalı state hangi kullanıcı adına başlatıldığını taşıyor — mevcut
-  // oturum başka bir kullanıcıya aitse (örn. bağlantı linki paylaşılmış)
-  // devam etmiyoruz.
+  // The signed state carries which user initiated the flow — we don't
+  // proceed if the current session belongs to a different user (e.g. the
+  // connection link was shared).
   if (userId !== state.userId) {
     return redirectToEntegrasyonlar(request, state.projectId, "state_invalid");
   }
@@ -97,9 +98,9 @@ export async function GET(request: Request) {
     );
   }
 
-  // Property/site listelerinden biri başarısız olsa da (örn. o API GCP
-  // projesinde etkinleştirilmemiş) bağlantı yine de kurulur — hata mesajı
-  // metadata'da saklanır, dialog'da gösterilir.
+  // Even if one of the property/site lists fails (e.g. that API isn't
+  // enabled on the GCP project), the connection is still established — the
+  // error message is stored in the metadata and shown in the dialog.
   const [connectedEmail, lists] = await Promise.all([
     fetchGoogleAccountEmail(tokens.accessToken),
     fetchGoogleLists(tokens.accessToken),

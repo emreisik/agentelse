@@ -30,10 +30,10 @@ export function TopBar({
   const activeProject = projects.find((project) =>
     pathname.startsWith(`/projects/${project.id}`),
   );
-  // Proje bağlamında topbar ChatGPT'nin minimal, kenarlıksız üst şeridine
-  // yaklaşır — workspace geneli sayfalarda mevcut çerçeveli görünüm korunur.
-  // Proje listesi artık sidebar'da olduğu için burada tekrar edilmiyor —
-  // sadece aktif projenin adı gösteriliyor.
+  // In a project context, the topbar moves closer to ChatGPT's minimal,
+  // borderless top strip — workspace-wide pages keep the existing bordered
+  // look. The project list now lives in the sidebar so it isn't repeated
+  // here — only the active project's name is shown.
   const minimal = Boolean(activeProject);
 
   return (
@@ -59,31 +59,31 @@ export function TopBar({
         <TopBarAction
           href={
             activeProject
-              ? buildHubHref(activeProject.id, { panel: "onaylar" })
+              ? buildHubHref(activeProject.id, { panel: "approvals" })
               : "/approvals"
           }
           icon={ClipboardCheck}
-          label="onay"
-          count={activeProject ? (toolBadges.onaylar ?? 0) : pendingApprovals}
+          label="approvals"
+          count={activeProject ? (toolBadges.approvals ?? 0) : pendingApprovals}
         />
         <TopBarAction
           href={
             activeProject
-              ? buildHubHref(activeProject.id, { panel: "insan-eylem" })
+              ? buildHubHref(activeProject.id, { panel: "human-action" })
               : "/human-actions"
           }
           icon={UserRoundCog}
-          label="eylem"
+          label="actions"
           count={
             activeProject
-              ? (toolBadges["insan-eylem"] ?? 0)
+              ? (toolBadges["human-action"] ?? 0)
               : pendingHumanActions
           }
         />
         <TopBarAction
-          href="/saglik"
+          href="/health"
           icon={HeartPulse}
-          label="hata"
+          label="errors"
           count={systemErrors}
         />
         <Button
@@ -93,7 +93,7 @@ export function TopBar({
           className="ml-1 gap-1.5"
         >
           <Plus className="size-4" />
-          Yeni proje
+          New project
         </Button>
       </div>
     </header>
@@ -102,9 +102,9 @@ export function TopBar({
 
 // ---------------------------------------------------------------------------
 
-// Proje içindeyken de (üstteki minimal topbar) proje dışındaki (workspace
-// geneli) sayfalarla BİREBİR aynı görünüm: ikon + sayı + etiket metni, sade
-// ghost buton — iki bağlam için ayrı bir stil YOK.
+// IDENTICAL look whether inside a project (the minimal topbar above) or on
+// non-project (workspace-wide) pages: icon + count + label text, a plain
+// ghost button — no separate style for the two contexts.
 function TopBarAction({
   href,
   icon: Icon,

@@ -6,10 +6,10 @@ import type { EnumMeta } from "@/lib/labels";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { JsonViewer } from "./json-viewer";
 
-// "Eksik hiçbir data kalmasın" gereksinimi için TEK genel çözüm: her panel
-// kendi alan listesini bu tipe döküp <FieldGrid> render eder. Yeni bir
-// gösterim biçimi gerekirse buraya bir `type` eklenir — panel dosyaları
-// tekrar tekrar aynı JSX'i icat etmez.
+// The ONE general solution for the "no data left missing" requirement:
+// each panel maps its own field list into this type and renders it with
+// <FieldGrid>. If a new display format is needed, a `type` is added here —
+// panel files don't reinvent the same JSX over and over.
 export type FieldSpec =
   | { type: "text"; label: string; value: string | number | null | undefined }
   | { type: "boolean"; label: string; value: boolean | null | undefined }
@@ -48,8 +48,8 @@ function FieldValue({ field }: { field: FieldSpec }) {
           {field.value === null || field.value === undefined
             ? "—"
             : field.value
-              ? "Evet"
-              : "Hayır"}
+              ? "Yes"
+              : "No"}
         </span>
       );
     case "date":

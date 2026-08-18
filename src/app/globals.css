@@ -95,9 +95,9 @@
   --warning: oklch(0.685 0.16 63);
   --success: oklch(0.6 0.135 155);
   --special: oklch(0.56 0.19 300);
-  /* Departman takım rengi kimliği — statü tonlarından (destructive/warning/
-     success/special) ve chart-* renklerinden ayrık, validate_palette.js ile
-     doğrulanmış 4 kategorik aile. */
+  /* Department team color identity — distinct from status tones
+     (destructive/warning/success/special) and chart-* colors, a 4-color
+     categorical family validated with validate_palette.js. */
   --dept-strategy: oklch(0.5 0.18 258);
   --dept-intel: oklch(0.6 0.13 222);
   --dept-creative: oklch(0.55 0.2 346);

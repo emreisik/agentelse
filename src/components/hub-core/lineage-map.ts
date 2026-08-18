@@ -1,7 +1,7 @@
-// Şemadaki gerçek foreign-key zincirinden türetilmiş statik ilişki
-// tablosu — panel açıldığında üstte gösterilen "besliyor / beslenir"
-// breadcrumb rozetleri buradan okunur. Kod değil, veri: yeni bir modül
-// eklendiğinde tek satır eklemek yeterli.
+// Static relation table derived from the schema's actual foreign-key
+// chain — the "feeds / fed by" breadcrumb badges shown at the top when a
+// panel opens are read from here. Data, not code: adding a new module
+// only requires adding one line.
 
 import type { PanelKey } from "./hub-core-params";
 
@@ -10,55 +10,55 @@ export type LineageRelation = "feeds" | "fedBy" | "relatesTo" | "governs";
 export type LineageEdge = { panel: PanelKey; relation: LineageRelation };
 
 export const PANEL_LABEL: Record<PanelKey, string> = {
-  kurulum: "Kurulum",
-  "marka-beyni": "Marka Beyni",
-  sinyaller: "Sinyaller",
-  "icgoru-firsat": "İçgörü & Fırsat",
-  hedefler: "Hedefler",
-  fikirler: "Fikirler",
-  isler: "İşler",
-  departmanlar: "Departmanlar",
-  onaylar: "Onay Merkezi",
-  "insan-eylem": "İnsan Eylem Merkezi",
-  ayarlar: "Ayarlar",
-  kutuphane: "Kütüphane",
+  setup: "Setup",
+  "brand-brain": "Brand Brain",
+  signals: "Signals",
+  "insights-opportunities": "Insights & Opportunities",
+  goals: "Goals",
+  ideas: "Ideas",
+  work: "Work",
+  departments: "Departments",
+  approvals: "Approval Center",
+  "human-action": "Human Action Center",
+  settings: "Settings",
+  library: "Library",
 };
 
 export const RELATION_LABEL: Record<LineageRelation, string> = {
-  feeds: "Besler",
-  fedBy: "Beslenir",
-  relatesTo: "İlişkili",
-  governs: "Yapılandırır",
+  feeds: "Feeds",
+  fedBy: "Fed by",
+  relatesTo: "Related",
+  governs: "Governs",
 };
 
-// Her panel için giden/gelen ilişkiler. Simetrik ilişkiler (feeds/fedBy)
-// bilinçli olarak her iki uçta da tekrar tanımlanıyor ki her panel kendi
-// perspektifinden okunabilsin.
+// Outgoing/incoming relations for each panel. Symmetric relations
+// (feeds/fedBy) are deliberately defined again on both ends so each panel
+// can be read from its own perspective.
 export const LINEAGE: Record<PanelKey, LineageEdge[]> = {
-  kurulum: [],
-  "marka-beyni": [{ panel: "sinyaller", relation: "feeds" }],
-  sinyaller: [
-    { panel: "marka-beyni", relation: "fedBy" },
-    { panel: "icgoru-firsat", relation: "feeds" },
+  setup: [],
+  "brand-brain": [{ panel: "signals", relation: "feeds" }],
+  signals: [
+    { panel: "brand-brain", relation: "fedBy" },
+    { panel: "insights-opportunities", relation: "feeds" },
   ],
-  "icgoru-firsat": [
-    { panel: "sinyaller", relation: "fedBy" },
-    { panel: "hedefler", relation: "feeds" },
-    { panel: "fikirler", relation: "feeds" },
+  "insights-opportunities": [
+    { panel: "signals", relation: "fedBy" },
+    { panel: "goals", relation: "feeds" },
+    { panel: "ideas", relation: "feeds" },
   ],
-  hedefler: [{ panel: "icgoru-firsat", relation: "fedBy" }],
-  fikirler: [
-    { panel: "icgoru-firsat", relation: "fedBy" },
-    { panel: "isler", relation: "feeds" },
+  goals: [{ panel: "insights-opportunities", relation: "fedBy" }],
+  ideas: [
+    { panel: "insights-opportunities", relation: "fedBy" },
+    { panel: "work", relation: "feeds" },
   ],
-  isler: [
-    { panel: "fikirler", relation: "fedBy" },
-    { panel: "departmanlar", relation: "relatesTo" },
-    { panel: "onaylar", relation: "feeds" },
+  work: [
+    { panel: "ideas", relation: "fedBy" },
+    { panel: "departments", relation: "relatesTo" },
+    { panel: "approvals", relation: "feeds" },
   ],
-  departmanlar: [{ panel: "isler", relation: "relatesTo" }],
-  onaylar: [{ panel: "isler", relation: "fedBy" }],
-  "insan-eylem": [{ panel: "isler", relation: "relatesTo" }],
-  ayarlar: [],
-  kutuphane: [],
+  departments: [{ panel: "work", relation: "relatesTo" }],
+  approvals: [{ panel: "work", relation: "fedBy" }],
+  "human-action": [{ panel: "work", relation: "relatesTo" }],
+  settings: [],
+  library: [],
 };

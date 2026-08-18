@@ -202,10 +202,10 @@ async function getDashboardData(workspaceId: string) {
         log.actorType === "USER" && log.actorId
           ? (userById.get(log.actorId)?.name ??
             userById.get(log.actorId)?.email ??
-            "bir kullanıcı")
+            "a user")
           : log.actorType === "SYSTEM"
-            ? "sistem"
-            : "ajan",
+            ? "system"
+            : "agent",
     })),
     healthRowsByProject,
   };
@@ -227,10 +227,10 @@ export default async function DashboardPage() {
         <div className="mb-10 flex flex-col items-center gap-5 text-center">
           <div>
             <h1 className="font-heading text-3xl font-semibold tracking-tight md:text-4xl">
-              Bugün ne yapmak istersiniz?
+              What would you like to do today?
             </h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              Ajans genelinde operasyon özeti
+              Agency-wide operations overview
             </p>
           </div>
           <div className="w-full max-w-xl">
@@ -246,37 +246,37 @@ export default async function DashboardPage() {
 
         <div className="mx-auto grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-3">
           <StatCard
-            label="Aktif proje"
+            label="Active projects"
             value={data.stats.activeProjects}
             href="#"
             icon={FolderKanban}
           />
           <StatCard
-            label="Çalışan ajan"
+            label="Running agents"
             value={data.stats.runningAgents}
             href="#"
             icon={Activity}
           />
           <StatCard
-            label="Bekleyen onay"
+            label="Pending approvals"
             value={data.stats.waitingApprovals}
             href="/approvals"
             icon={ClipboardCheck}
           />
           <StatCard
-            label="İnsan eylemi"
+            label="Human actions"
             value={data.stats.humanActionsRequired}
             href="/human-actions"
             icon={UserRoundCog}
           />
           <StatCard
-            label="Aylık maliyet"
+            label="Monthly cost"
             value={currencyFormatter.format(data.stats.monthlyCost)}
             href="#"
             icon={Wallet}
           />
           <StatCard
-            label="Tamamlanan görev"
+            label="Completed tasks"
             value={data.stats.tasksCompletedThisMonth}
             href="#"
             icon={CheckCircle2}
@@ -286,10 +286,10 @@ export default async function DashboardPage() {
         <Tabs defaultValue="projeler" className="mt-14">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <TabsList>
-              <TabsTrigger value="projeler">Projeler</TabsTrigger>
-              <TabsTrigger value="gorevler">Görevler</TabsTrigger>
-              <TabsTrigger value="onaylar">Onaylar &amp; Eylemler</TabsTrigger>
-              <TabsTrigger value="aktivite">Aktivite</TabsTrigger>
+              <TabsTrigger value="projeler">Projects</TabsTrigger>
+              <TabsTrigger value="gorevler">Tasks</TabsTrigger>
+              <TabsTrigger value="onaylar">Approvals &amp; Actions</TabsTrigger>
+              <TabsTrigger value="aktivite">Activity</TabsTrigger>
             </TabsList>
             <Button
               render={<Link href="/projects/new" />}
@@ -298,7 +298,7 @@ export default async function DashboardPage() {
               size="sm"
             >
               <Plus className="size-4" />
-              Yeni Proje
+              New Project
             </Button>
           </div>
 
@@ -329,7 +329,7 @@ export default async function DashboardPage() {
               </div>
             ) : (
               <p className="py-10 text-center text-sm text-muted-foreground">
-                Henüz proje yok.
+                No projects yet.
               </p>
             )}
           </TabsContent>

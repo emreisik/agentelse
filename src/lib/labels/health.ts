@@ -14,45 +14,45 @@ import {
 
 import type { EnumMeta } from "./types";
 
-// Hata kategorileri (src/server/observability/error-classifier.ts) ve
-// ProviderHealthStatus için Türkçe etiketler. Tonlar aciliyeti anlatır:
-// danger = müdahale gerekir, waiting = kendiliğinden geçebilir.
+// English labels for error categories (src/server/observability/error-classifier.ts)
+// and ProviderHealthStatus. Tones convey urgency: danger = needs
+// intervention, waiting = may resolve on its own.
 export const ERROR_CATEGORY: Record<string, EnumMeta> = {
-  BILLING: { label: "Bakiye / Kota", tone: "danger", icon: CreditCard },
-  AUTH: { label: "Kimlik Doğrulama", tone: "danger", icon: KeyRound },
-  RATE_LIMIT: { label: "Hız Sınırı", tone: "waiting", icon: Timer },
-  TIMEOUT: { label: "Zaman Aşımı", tone: "waiting", icon: Clock },
-  NETWORK: { label: "Ağ", tone: "waiting", icon: Wifi },
+  BILLING: { label: "Billing / Quota", tone: "danger", icon: CreditCard },
+  AUTH: { label: "Authentication", tone: "danger", icon: KeyRound },
+  RATE_LIMIT: { label: "Rate Limit", tone: "waiting", icon: Timer },
+  TIMEOUT: { label: "Timeout", tone: "waiting", icon: Clock },
+  NETWORK: { label: "Network", tone: "waiting", icon: Wifi },
   PROVIDER_UNAVAILABLE: {
-    label: "Sağlayıcı Yok",
+    label: "Provider Unavailable",
     tone: "danger",
     icon: Plug,
   },
-  CONFIGURATION: { label: "Yapılandırma", tone: "danger", icon: Settings2 },
+  CONFIGURATION: { label: "Configuration", tone: "danger", icon: Settings2 },
   INVALID_RESULT: {
-    label: "Geçersiz Yanıt",
+    label: "Invalid Result",
     tone: "waiting",
     icon: CircleSlash,
   },
-  REFUSED: { label: "Reddedildi", tone: "special", icon: ShieldAlert },
-  UNKNOWN: { label: "Bilinmeyen", tone: "neutral", icon: AlertTriangle },
+  REFUSED: { label: "Refused", tone: "special", icon: ShieldAlert },
+  UNKNOWN: { label: "Unknown", tone: "neutral", icon: AlertTriangle },
 };
 
 export const RECOVERY_STRATEGY: Record<string, EnumMeta> = {
-  RETRY: { label: "Otomatik yeniden denenir", tone: "positive" },
+  RETRY: { label: "Retried automatically", tone: "positive" },
   RETRY_AFTER_COOLDOWN: {
-    label: "Soğuma sonrası denenir",
+    label: "Retried after cooldown",
     tone: "waiting",
   },
-  NEEDS_CONFIG: { label: "Yapılandırma gerekir", tone: "danger" },
-  NEEDS_HUMAN: { label: "İnsan incelemesi gerekir", tone: "special" },
+  NEEDS_CONFIG: { label: "Needs configuration", tone: "danger" },
+  NEEDS_HUMAN: { label: "Needs human review", tone: "special" },
 };
 
 export const PROVIDER_HEALTH_STATUS: Record<string, EnumMeta> = {
-  AVAILABLE: { label: "Sağlıklı", tone: "positive" },
-  DEGRADED: { label: "Bozulmuş", tone: "waiting" },
-  RATE_LIMITED: { label: "Hız Sınırlı", tone: "waiting" },
-  AUTH_REQUIRED: { label: "Yetki Gerekli", tone: "danger" },
-  UNAVAILABLE: { label: "Erişilemiyor", tone: "danger", icon: Ban },
-  DISABLED: { label: "Devre Dışı", tone: "neutral" },
+  AVAILABLE: { label: "Healthy", tone: "positive" },
+  DEGRADED: { label: "Degraded", tone: "waiting" },
+  RATE_LIMITED: { label: "Rate Limited", tone: "waiting" },
+  AUTH_REQUIRED: { label: "Authorization Required", tone: "danger" },
+  UNAVAILABLE: { label: "Unavailable", tone: "danger", icon: Ban },
+  DISABLED: { label: "Disabled", tone: "neutral" },
 };

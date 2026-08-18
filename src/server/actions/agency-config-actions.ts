@@ -23,7 +23,7 @@ export type ActionResult = { ok: true } | { ok: false; message: string };
 function fail(error: unknown): ActionResult {
   return {
     ok: false,
-    message: error instanceof Error ? error.message : "İşlem başarısız",
+    message: error instanceof Error ? error.message : "Operation failed",
   };
 }
 
@@ -167,7 +167,7 @@ export async function updateAutonomyPolicyAction(
       if (!Number.isFinite(value) || value < 0 || value > 1) {
         return {
           ok: false,
-          message: `Geçersiz ağırlık: ${key} (0-1 arası olmalı)`,
+          message: `Invalid weight: ${key} (must be between 0 and 1)`,
         };
       }
       weights[key] = value;

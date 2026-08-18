@@ -36,11 +36,11 @@ function toJsonText(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-// "Marka Dosyası" kartının düzenle formu — goal-edit-dialog.tsx ile aynı
-// etkileşim deseni (kontrollü açık/kapalı state, onSubmit+useTransition ile
-// server action çağrısı, başarıda toast + kapan) ama alan sayısı fazla
-// olduğu için Dialog yerine Sheet: başlık/alt bilgi sabit kalıyor, alanlar
-// kendi içinde kaydırılıyor.
+// Edit form for the "Brand Dossier" card — the same interaction pattern
+// as goal-edit-dialog.tsx (controlled open/closed state, server action
+// call via onSubmit+useTransition, toast + close on success), but a Sheet
+// instead of a Dialog because of the number of fields: the title/subtitle
+// stay fixed while the fields scroll within their own area.
 export function BrandDossierEditSheet({
   projectId,
   dossier,
@@ -59,7 +59,7 @@ export function BrandDossierEditSheet({
     startTransition(async () => {
       const result = await action(formData);
       if (result.ok) {
-        toast.success("Marka dosyası güncellendi");
+        toast.success("Brand dossier updated");
         setOpen(false);
       } else {
         toast.error(result.message);
@@ -73,22 +73,23 @@ export function BrandDossierEditSheet({
         variant="ghost"
         size="icon-sm"
         onClick={() => setOpen(true)}
-        aria-label="Marka dosyasını düzenle"
+        aria-label="Edit brand dossier"
       >
         <Pencil className="size-3.5" />
       </Button>
       <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-lg">
         <SheetHeader className="shrink-0 border-b border-foreground/10">
-          <SheetTitle>Marka Dosyasını Düzenle</SheetTitle>
+          <SheetTitle>Edit Brand Dossier</SheetTitle>
           <SheetDescription>
-            Bu bilgiler markanın tüm üretimlerine bağlam olarak akar.
+            This information flows as context into all of the brand&apos;s
+            output.
           </SheetDescription>
         </SheetHeader>
         <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
           <input type="hidden" name="projectId" value={projectId} />
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
             <div className="space-y-1.5">
-              <Label htmlFor="dossier-summary">Özet</Label>
+              <Label htmlFor="dossier-summary">Summary</Label>
               <Textarea
                 id="dossier-summary"
                 name="summary"
@@ -97,7 +98,7 @@ export function BrandDossierEditSheet({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="dossier-positioning">Konumlandırma</Label>
+              <Label htmlFor="dossier-positioning">Positioning</Label>
               <Textarea
                 id="dossier-positioning"
                 name="positioning"
@@ -106,7 +107,7 @@ export function BrandDossierEditSheet({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="dossier-tone">Ses Tonu</Label>
+              <Label htmlFor="dossier-tone">Tone of Voice</Label>
               <Textarea
                 id="dossier-tone"
                 name="toneOfVoice"
@@ -116,7 +117,7 @@ export function BrandDossierEditSheet({
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label htmlFor="dossier-language">Dil</Label>
+                <Label htmlFor="dossier-language">Language</Label>
                 <Input
                   id="dossier-language"
                   name="language"
@@ -124,7 +125,7 @@ export function BrandDossierEditSheet({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="dossier-country">Ülke</Label>
+                <Label htmlFor="dossier-country">Country</Label>
                 <Input
                   id="dossier-country"
                   name="country"
@@ -135,25 +136,25 @@ export function BrandDossierEditSheet({
 
             <div className="space-y-1 border-t border-border/60 pt-4">
               <p className="text-xs font-medium text-foreground">
-                Yapılandırılmış veri (JSON)
+                Structured data (JSON)
               </p>
               <p className="text-[11px] text-muted-foreground">
-                Her alan geçerli JSON olmalı. Boş bırakılırsa temizlenir.
+                Each field must be valid JSON. Leave empty to clear it.
               </p>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="dossier-audiences">Hedef Kitleler</Label>
+              <Label htmlFor="dossier-audiences">Target Audiences</Label>
               <Textarea
                 id="dossier-audiences"
                 name="targetAudiences"
                 defaultValue={toJsonText(dossier.targetAudiences)}
                 rows={4}
                 className="font-mono text-xs"
-                placeholder='[{"label": "Birincil", "description": "18-34 şehirli profesyoneller"}]'
+                placeholder='[{"label": "Primary", "description": "18-34 urban professionals"}]'
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="dossier-markets">Pazarlar</Label>
+              <Label htmlFor="dossier-markets">Markets</Label>
               <Textarea
                 id="dossier-markets"
                 name="markets"
@@ -163,7 +164,7 @@ export function BrandDossierEditSheet({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="dossier-products">Ürünler</Label>
+              <Label htmlFor="dossier-products">Products</Label>
               <Textarea
                 id="dossier-products"
                 name="products"
@@ -173,7 +174,7 @@ export function BrandDossierEditSheet({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="dossier-services">Hizmetler</Label>
+              <Label htmlFor="dossier-services">Services</Label>
               <Textarea
                 id="dossier-services"
                 name="services"
@@ -183,7 +184,7 @@ export function BrandDossierEditSheet({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="dossier-visual">Görsel Kurallar</Label>
+              <Label htmlFor="dossier-visual">Visual Guidelines</Label>
               <Textarea
                 id="dossier-visual"
                 name="visualGuidelines"
@@ -199,11 +200,11 @@ export function BrandDossierEditSheet({
               variant="outline"
               onClick={() => setOpen(false)}
             >
-              Vazgeç
+              Cancel
             </Button>
             <Button type="submit" disabled={pending}>
               {pending ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              Kaydet
+              Save
             </Button>
           </SheetFooter>
         </form>

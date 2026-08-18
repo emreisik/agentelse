@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
-// Fırsatlar artık HUB CORE'un İçgörü & Fırsat / Hedefler panelleri
-// (bkz. ../page.tsx) — bu rota eski yer imleri/linkler kırılmasın diye
-// canlı tutuluyor.
+// Opportunities is now covered by HUB CORE's Insight & Opportunity / Goals
+// panels (see ../page.tsx) — this route stays alive so old bookmarks/links
+// don't break.
 export default async function FirsatlarRedirect({
   params,
   searchParams,

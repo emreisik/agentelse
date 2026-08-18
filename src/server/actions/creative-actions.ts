@@ -30,9 +30,8 @@ export type ActionResult = { ok: true } | { ok: false; message: string };
 const LOCAL_ASSET_SCHEME = "local-asset://";
 const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
-// Mevcut görseli düzenleyebilmek için dosyayı base64 olarak okur. Yalnızca
-// yerel şemayı kabul eder; mock:// yer tutucuların düzenlenecek bir içeriği
-// yoktur.
+// Reads the file as base64 so the existing image can be edited. Only accepts
+// the local scheme; mock:// placeholders have no content to edit.
 async function readAssetForEditing(
   assetId: string | null | undefined,
 ): Promise<{ data: string; mimeType: string } | undefined> {
@@ -52,10 +51,10 @@ async function readAssetForEditing(
   }
 }
 
-// Kreatif görselini üretir veya düzenler. `instruction` verilmişse kullanıcı
-// ne istediğini yazmıştır; `mode=edit` ise mevcut görsel girdi olarak
-// modele verilir ve talimata göre değiştirilir — sıfırdan üretmek yerine
-// kompozisyonu koruyarak düzeltme yapılır.
+// Generates or edits the creative image. If `instruction` is given, the user
+// has written what they want; if `mode=edit`, the existing image is fed to
+// the model as input and changed according to the instruction — rather than
+// generating from scratch, the composition is preserved and refined.
 export async function generateRealCreativeImageAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -80,13 +79,14 @@ export async function generateRealCreativeImageAction(
     if (mode === "edit" && !baseImage) {
       return {
         ok: false,
-        message: "Düzenlenecek mevcut bir görsel yok — önce görsel üretin",
+        message: "No existing image to edit — generate an image first",
       };
     }
 
-    // Düzenlemede talimat tek başına yeterli (görsel zaten bağlam taşıyor);
-    // sıfırdan üretimde kreatifin metni + marka kimliği + platform formatı
-    // yapılandırılmış bir prompt'a dönüştürülür (bkz. creative-prompt-builder.ts).
+    // In edit mode the instruction alone is enough (the image already carries
+    // context); when generating from scratch, the creative's text + brand
+    // identity + platform format are turned into a structured prompt (see
+    // creative-prompt-builder.ts).
     const contextText =
       currentVersion?.caption ||
       currentVersion?.copy ||
@@ -95,19 +95,20 @@ export async function generateRealCreativeImageAction(
       "A social media marketing creative image";
     const platformFormat = getCreativePlatformFormat(creative.platform);
 
-    // Marka logosu ve onaylı renkler — sıfırdan üretimde AI'a görsel
-    // referans olarak vermek (loadBrandLogoImage) ya da düzenleme modunda
-    // üretilen görseli deterministik olarak damgalamak (applyBrandTemplate)
-    // için tek sorguda çekilir, moda göre farklı amaçla kullanılır.
+    // Brand logo and approved colors — fetched in a single query and used
+    // for a different purpose depending on mode: as a visual reference for
+    // the AI when generating from scratch (loadBrandLogoImage), or to
+    // deterministically stamp the generated image in edit mode
+    // (applyBrandTemplate).
     const dossier = await prisma.brandDossier.findUnique({
       where: { brandId: creative.brandId },
       select: { logoAssetId: true, approvedColors: true },
     });
 
-    // Sıfırdan üretimde logo artık deterministik damgalama yerine AI'a
-    // görsel referans olarak veriliyor; düzenleme modunda baseImage zaten
-    // var, referenceImage kullanılmaz (adım 2'deki kural: ikisi birden
-    // kullanılmaz).
+    // When generating from scratch, the logo is now given to the AI as a
+    // visual reference instead of deterministic stamping; in edit mode
+    // baseImage already exists, so referenceImage is not used (rule from
+    // step 2: never use both at once).
     const logoImage = baseImage
       ? null
       : await loadBrandLogoImage(dossier?.logoAssetId);
@@ -136,17 +137,19 @@ export async function generateRealCreativeImageAction(
     if (!generated) {
       return {
         ok: false,
-        message: "Görsel üretilemedi — Sistem Sağlığı ekranındaki hataya bakın",
+        message:
+          "Image generation failed — see the error on the System Health screen",
       };
     }
 
-    // Düzenleme modunda (mode === "edit") logo AI'a görsel referans olarak
-    // verilmez (baseImage varken referenceImage kullanılmaz), o yüzden
-    // gerçek marka logosu burada hâlâ applyBrandTemplate ile deterministik
-    // olarak bindirilir. Sıfırdan üretimde (mode !== "edit") logo zaten
-    // yukarıda AI'a referans olarak verildiği için burada TEKRAR
-    // bindirilmez — aksi halde çift logo riski olurdu. Best-effort:
-    // başarısız olursa ham AI görseli olduğu gibi kalır, işlem düşmez.
+    // In edit mode (mode === "edit") the logo is not given to the AI as a
+    // visual reference (referenceImage is unused while baseImage is set), so
+    // the real brand logo is still overlaid deterministically here via
+    // applyBrandTemplate. When generating from scratch (mode !== "edit") the
+    // logo was already given to the AI as a reference above, so it is NOT
+    // overlaid again here — otherwise there would be a risk of a duplicate
+    // logo. Best-effort: on failure, the raw AI image is kept as-is and the
+    // action does not fail.
     if (baseImage) {
       try {
         const templated = await applyBrandTemplate({
@@ -184,17 +187,17 @@ export async function generateRealCreativeImageAction(
         edited: Boolean(baseImage),
         aspectRatio: platformFormat.aspectRatio,
         platform: creative.platform,
-        // Gerçekte hangi backend'in ürettiği — Gemini çağrısı başarısız
-        // olursa creative-image.ts sessizce OpenClaw'a düşer (logo/metin
-        // referansı olmadan); bu alan olmadan bunu ayırt etmenin tek yolu
-        // sunucu loglarıydı.
+        // Which backend actually produced it — if the Gemini call fails,
+        // creative-image.ts silently falls back to OpenClaw (without a
+        // logo/text reference); without this field the only way to tell
+        // the difference was the server logs.
         imageProvider: generated.provider,
       },
       revisionReason: baseImage
-        ? `Görsel talimatla düzenlendi: ${instruction.slice(0, 200)}`
+        ? `Image edited per instruction: ${instruction.slice(0, 200)}`
         : instruction
-          ? `Görsel talimatla yeniden üretildi: ${instruction.slice(0, 200)}`
-          : "Görsel yeniden üretildi",
+          ? `Image regenerated per instruction: ${instruction.slice(0, 200)}`
+          : "Image regenerated",
     });
 
     await AuditLogRepository.record({
@@ -208,11 +211,12 @@ export async function generateRealCreativeImageAction(
       entityId: creative.id,
     });
 
-    // Creatives sayfasından elle yapılan revizyon de "altın kural"a tabi:
-    // ayrı bir panelde kaybolmadan, fikrin sohbetine YENİ bir olay olarak
-    // düşer (mevcut creative-ready kartını güncellemek yerine — böylece
-    // önceki versiyonlar da sohbet geçmişinde görünür kalır). Best-effort,
-    // fikre bağlanamıyorsa sessizce atlanır.
+    // A manual revision from the Creatives page is also subject to the
+    // "golden rule": instead of getting lost in a separate panel, it lands
+    // in the idea's chat as a NEW event (rather than updating the existing
+    // creative-ready card — so previous versions also stay visible in the
+    // chat history). Best-effort: silently skipped if it can't be linked to
+    // an idea.
     if (creative.createdByTaskId) {
       try {
         const [ideaId, task] = await Promise.all([
@@ -223,12 +227,12 @@ export async function generateRealCreativeImageAction(
           }),
         ]);
         if (ideaId) {
-          const title = creative.title ?? "Kreatif";
+          const title = creative.title ?? "Creative";
           await IdeaChatRepository.postSystemMessage({
             workspaceId: creative.workspaceId,
             projectId: creative.projectId,
             ideaId,
-            text: `🎨 Kreatif revize edildi: ${title}`,
+            text: `🎨 Creative revised: ${title}`,
             card: {
               kind: "creative-ready",
               taskId: creative.createdByTaskId,
@@ -245,7 +249,7 @@ export async function generateRealCreativeImageAction(
         }
       } catch (error) {
         console.error(
-          "[creative-actions] revizyon sohbet kartı yazılamadı:",
+          "[creative-actions] failed to write revision chat card:",
           error,
         );
       }
@@ -256,7 +260,7 @@ export async function generateRealCreativeImageAction(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "İşlem başarısız",
+      message: error instanceof Error ? error.message : "Operation failed",
     };
   }
 }

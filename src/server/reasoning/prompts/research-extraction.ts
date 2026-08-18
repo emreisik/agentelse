@@ -2,11 +2,11 @@ import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
 
-// OpenClaw ajanları araştırmayı gerçekten yapıyor ama sonucu serbest metin
-// (markdown rapor) olarak döndürüyor; ResultMaterializer ise yapılandırılmış
-// `findings[]` bekliyor. Bu prompt aradaki köprü: raporu okunabilir
-// bulgulara çevirir. Olmadığında araştırma sonuçları sessizce kayboluyordu
-// ve anayasa "Belirsiz" diyerek üretiliyordu.
+// OpenClaw agents actually do the research, but return the result as free
+// text (a markdown report); ResultMaterializer, however, expects a
+// structured `findings[]`. This prompt is the bridge between the two: it
+// turns the report into readable findings. Without it, research results
+// were silently lost and the constitution was generated saying "Unclear".
 export const ResearchExtractionOutputSchema = z.object({
   findings: z.array(
     z.object({
@@ -33,8 +33,8 @@ export type ResearchExtractionOutput = z.infer<
 export const researchExtractionDef: ReasoningDef<ResearchExtractionOutput> = {
   purpose: "research.extract-findings",
   schema: ResearchExtractionOutputSchema,
-  // Her araştırma raporu için çalışır; iş biçim dönüştürme, akıl yürütme
-  // değil — ucuz kademe yeterli.
+  // Runs for every research report; the job is format conversion, not
+  // reasoning — the cheap tier suffices.
   tier: "lite" as const,
   maxTokens: 8192,
 

@@ -6,7 +6,7 @@ export default function NewProjectPage() {
     <AppShell>
       <div className="flex h-full flex-col items-center justify-center gap-8 overflow-y-auto p-6">
         <p className="text-sm font-medium text-muted-foreground">
-          Yeni Proje Oluştur
+          Create New Project
         </p>
         <NewProjectWizard />
       </div>

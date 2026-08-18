@@ -20,11 +20,11 @@ import { SubmitButton } from "@/components/shared/submit-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const ENTITY_LABELS: Record<string, string> = {
-  Task: "Görev",
-  Creative: "Kreatif",
-  WorkPlan: "İş Planı",
-  ProjectGoal: "Hedef",
-  WorkHandoff: "Devir",
+  Task: "Task",
+  Creative: "Creative",
+  WorkPlan: "Work Plan",
+  ProjectGoal: "Goal",
+  WorkHandoff: "Handoff",
 };
 
 function entityHref(approval: {
@@ -79,11 +79,11 @@ export default async function ApprovalsPage({
       <div className="space-y-4 p-6">
         <div>
           <h1 className="font-heading text-2xl font-semibold tracking-tight">
-            Onay Merkezi
+            Approval Center
           </h1>
           <p className="text-sm text-muted-foreground">
-            Yayınlama, kampanya ve hesap işlemleri buradan onay almadan asla
-            çalışmaz.
+            Publishing, campaign, and account actions never run without approval
+            from here.
           </p>
         </div>
 
@@ -100,7 +100,7 @@ export default async function ApprovalsPage({
                 <CardHeader className="flex flex-row items-center justify-between space-y-0">
                   <CardTitle className="text-base">
                     {projectNameById.get(approval.projectId) ??
-                      "Bilinmeyen proje"}{" "}
+                      "Unknown project"}{" "}
                     —{" "}
                     {href ? (
                       <Link href={href} className="hover:underline">
@@ -123,16 +123,16 @@ export default async function ApprovalsPage({
                 <CardContent className="flex items-center justify-between gap-3">
                   <p className="text-sm text-muted-foreground">
                     {approval.requestedByType === "USER"
-                      ? "Kullanıcı"
+                      ? "User"
                       : approval.requestedByType === "SYSTEM"
-                        ? "Sistem"
-                        : "Ajan"}{" "}
-                    talep etti · {timeAgo(approval.createdAt)}
+                        ? "System"
+                        : "Agent"}{" "}
+                    requested · {timeAgo(approval.createdAt)}
                   </p>
                   <div className="flex gap-2">
                     <ActionForm
                       action={rejectApprovalAction}
-                      successMessage="Onay reddedildi"
+                      successMessage="Approval rejected"
                     >
                       <input
                         type="hidden"
@@ -140,19 +140,19 @@ export default async function ApprovalsPage({
                         value={approval.id}
                       />
                       <SubmitButton variant="outline" size="sm">
-                        Reddet
+                        Reject
                       </SubmitButton>
                     </ActionForm>
                     <ActionForm
                       action={approveApprovalAction}
-                      successMessage="Onaylandı"
+                      successMessage="Approved"
                     >
                       <input
                         type="hidden"
                         name="approvalId"
                         value={approval.id}
                       />
-                      <SubmitButton size="sm">Onayla</SubmitButton>
+                      <SubmitButton size="sm">Approve</SubmitButton>
                     </ActionForm>
                   </div>
                 </CardContent>
@@ -163,8 +163,8 @@ export default async function ApprovalsPage({
           {approvals.length === 0 ? (
             <EmptyState
               icon={ClipboardCheck}
-              title="Onay bekleyen işlem yok"
-              hint="Ajans onay gerektiren bir iş hazırladığında burada görünür."
+              title="No approvals pending"
+              hint="Appears here when the agency prepares work that requires approval."
             />
           ) : null}
         </div>

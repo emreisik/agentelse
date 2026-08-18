@@ -4,9 +4,9 @@ import type { CommandSource } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
-// Bir sohbet turuna iliştirilen dosya. Asset satırına yumuşak referans:
-// gerçek FK yok, çünkü Command çok kiracılı ve ekler proje silinirken
-// Asset temizliğiyle birlikte gidiyor.
+// A file attached to a chat turn. A soft reference to the Asset row:
+// no real FK, because Command is multi-tenant and attachments are cleaned
+// up together with the Asset when the project is deleted.
 export type CommandAttachment = {
   assetId: string;
   filename: string;
@@ -14,14 +14,14 @@ export type CommandAttachment = {
   size: number;
 };
 
-// Asistanın bir tura verdiği yanıtın sonucu.
+// The outcome of the assistant's reply to a turn.
 export type CommandReplyStatus =
-  | "PLANNED" // görev oluşturuldu
-  | "ANSWERED" // soruya yanıt verildi, iş açılmadı
-  | "APPROVAL_HANDLED" // bekleyen onay bu mesajla karara bağlandı
-  | "NEEDS_PROJECT" // proje çözülemedi (sohbet yüzeyinde oluşmaz)
-  | "UNCLEAR" // niyet anlaşılamadı, soru soruldu
-  | "ERROR"; // yanıt üretilirken hata
+  | "PLANNED" // a task was created
+  | "ANSWERED" // the question was answered, no work was opened
+  | "APPROVAL_HANDLED" // a pending approval was decided by this message
+  | "NEEDS_PROJECT" // the project could not be resolved (doesn't occur on the chat surface)
+  | "UNCLEAR" // intent could not be understood, a question was asked
+  | "ERROR"; // an error occurred while generating the reply
 
 export const CommandRepository = {
   create(input: {

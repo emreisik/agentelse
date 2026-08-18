@@ -10,11 +10,11 @@ import { prisma } from "@/lib/prisma";
 const LOCAL_ASSET_SCHEME = "local-asset://";
 const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
-// Onaylı renkler için henüz bir yazma akışı yok (BrandDossier.approvedColors
-// hâlâ serbest Json) — dizideki ilk geçerli hex kodu ya da tek bir hex
-// string'i savunmacı biçimde ayıklanır. Bulunamazsa null: şablon o zaman
-// marka rengi yerine nötr (beyaz) bir rozet kullanır, alt vurgu şeridi
-// eklenmez.
+// There's no write flow for approved colors yet (BrandDossier.approvedColors
+// is still free-form Json) — this defensively extracts the first valid hex
+// code from the array, or a single hex string. Returns null when none is
+// found: the template then uses a neutral (white) badge instead of a
+// brand color, and no accent stripe is added.
 function extractAccentColorHex(approvedColors: unknown): string | null {
   const HEX = /^#[0-9a-fA-F]{3,8}$/;
   if (typeof approvedColors === "string" && HEX.test(approvedColors)) {
@@ -36,16 +36,18 @@ function extractAccentColorHex(approvedColors: unknown): string | null {
   return null;
 }
 
-// AI'nin serbest yorumuna bırakmak yerine, üretilen kreatif görselinin
-// üzerine markanın GERÇEK logosunu (piksel-doğru, bozulmadan) ve varsa
-// marka rengini SABİT bir şablon yerleşiminde bindirir: sağ-alt köşede
-// yarı saydam beyaz bir rozet üzerinde logo, altında (renk biliniyorsa)
-// tam genişlikte bir vurgu şeridi. Her üretimde aynı yerleşim — gerçek bir
-// "şablon" garantisi, tutarlılığı modelin o anki yorumuna bırakmaz.
+// Instead of leaving it to the AI's free interpretation, this overlays the
+// brand's ACTUAL logo (pixel-accurate, undistorted) and, if available, the
+// brand color onto the generated creative image in a FIXED template
+// layout: the logo on a semi-transparent white badge in the bottom-right
+// corner, with a full-width accent stripe below it (when a color is
+// known). The same layout on every generation — a genuine "template"
+// guarantee, so consistency doesn't depend on the model's interpretation
+// in the moment.
 //
-// Best-effort: logo yoksa ya da compositing herhangi bir sebeple
-// başarısız olursa dosya olduğu gibi bırakılır — kreatif üretimi görsel
-// şablonlama yüzünden asla düşmemeli.
+// Best-effort: if there's no logo, or compositing fails for any reason,
+// the file is left as-is — creative generation must never fail because of
+// visual templating.
 export async function applyBrandTemplate(input: {
   filename: string;
   logoAssetId?: string | null;

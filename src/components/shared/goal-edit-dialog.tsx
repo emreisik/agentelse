@@ -46,7 +46,7 @@ export function GoalEditDialog({
     startTransition(async () => {
       const result = await action(formData);
       if (result.ok) {
-        toast.success("Hedef güncellendi");
+        toast.success("Goal updated");
         setOpen(false);
       } else {
         toast.error(result.message);
@@ -60,22 +60,22 @@ export function GoalEditDialog({
         variant="ghost"
         size="icon-sm"
         onClick={() => setOpen(true)}
-        aria-label="Hedefi düzenle"
+        aria-label="Edit goal"
       >
         <Pencil className="size-3.5" />
       </Button>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Hedefi Düzenle</DialogTitle>
+          <DialogTitle>Edit Goal</DialogTitle>
           <DialogDescription>
-            Başlık, öncelik ve hedef değeri güncelleyin.
+            Update the title, priority, and target value.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="space-y-4">
           <input type="hidden" name="projectId" value={projectId} />
           <input type="hidden" name="goalId" value={goal.id} />
           <div className="space-y-1.5">
-            <Label htmlFor={`goal-title-${goal.id}`}>Başlık</Label>
+            <Label htmlFor={`goal-title-${goal.id}`}>Title</Label>
             <Input
               id={`goal-title-${goal.id}`}
               name="title"
@@ -84,7 +84,7 @@ export function GoalEditDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor={`goal-desc-${goal.id}`}>Açıklama</Label>
+            <Label htmlFor={`goal-desc-${goal.id}`}>Description</Label>
             <Textarea
               id={`goal-desc-${goal.id}`}
               name="description"
@@ -94,7 +94,7 @@ export function GoalEditDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor={`goal-priority-${goal.id}`}>Öncelik (1-5)</Label>
+              <Label htmlFor={`goal-priority-${goal.id}`}>Priority (1-5)</Label>
               <Input
                 id={`goal-priority-${goal.id}`}
                 name="priority"
@@ -106,7 +106,7 @@ export function GoalEditDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor={`goal-target-${goal.id}`}>Hedef değer</Label>
+              <Label htmlFor={`goal-target-${goal.id}`}>Target value</Label>
               <Input
                 id={`goal-target-${goal.id}`}
                 name="targetValue"
@@ -122,11 +122,11 @@ export function GoalEditDialog({
               variant="outline"
               onClick={() => setOpen(false)}
             >
-              Vazgeç
+              Cancel
             </Button>
             <Button type="submit" disabled={pending}>
               {pending ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              Kaydet
+              Save
             </Button>
           </DialogFooter>
         </form>

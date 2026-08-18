@@ -5,23 +5,24 @@ import path from "node:path";
 
 import { prisma } from "@/lib/prisma";
 
-// Proje silme. Şemada YALNIZCA Brand tablosu Project'e gerçek bir yabancı
-// anahtarla bağlı (onDelete: Cascade); diğer 50 tablodaki `projectId`
-// sütunları kısıtlamasız düz sütunlar. Yani `prisma.project.delete()` tek
-// başına çağrılırsa veritabanı hiç şikâyet etmeden ~50 tabloda öksüz satır
-// bırakır — bu satırlar sonra Sistem Sağlığı, kuyruk ve raporlarda hayalet
-// veri olarak görünür.
+// Project deletion. In the schema, ONLY the Brand table is linked to
+// Project with a real foreign key (onDelete: Cascade); the `projectId`
+// columns on the other ~50 tables are plain, unconstrained columns. That
+// means if `prisma.project.delete()` is called on its own, the database
+// leaves orphaned rows in ~50 tables without complaint — these rows then
+// show up as ghost data in System Health, queues and reports.
 //
-// Bu yüzden silinecek tablo listesi information_schema'dan ÇALIŞMA ANINDA
-// türetilir: şemaya yarın `projectId` taşıyan yeni bir tablo eklenirse bu
-// servis elle güncellenmeden onu da kapsar.
+// That's why the list of tables to delete from is derived from
+// information_schema AT RUNTIME: if a new table carrying `projectId` is
+// added to the schema tomorrow, this service covers it too without a
+// manual update.
 
 const LOCAL_ASSET_PREFIX = "local-asset://";
 const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
-// Kapsam dışı olup kapsam içi bir tabloya SET NULL ile bağlı olan tek
-// gerçek artık: silinen işlere ait ölü-kuyruk kayıtları. Bırakılırsa
-// Sistem Sağlığı ekranında sahipsiz hata olarak durur.
+// The one real leftover that's out-of-scope but linked to an in-scope
+// table via SET NULL: dead-letter records belonging to deleted jobs. If
+// left behind, they sit as ownerless errors on the System Health screen.
 async function deleteOrphanedDeadLetters(projectId: string): Promise<number> {
   const result = await prisma.deadLetterJob.deleteMany({
     where: { executionJob: { projectId } },
@@ -49,7 +50,7 @@ export type DeletionPreview = {
 };
 
 export const ProjectDeletionService = {
-  // Onay diyaloğunda gösterilir: kullanıcı neyi kaybettiğini rakamla görür.
+  // Shown in the confirmation dialog: the user sees exactly what they're about to lose, in numbers.
   async preview(projectId: string): Promise<DeletionPreview | null> {
     const project = await prisma.project.findUnique({
       where: { id: projectId },
@@ -84,8 +85,8 @@ export const ProjectDeletionService = {
     };
   },
 
-  // Tüm proje verisini tek işlemde siler. Kısmi silme mümkün değil: ya
-  // hepsi gider ya hiçbiri.
+  // Deletes all project data in a single transaction. Partial deletion is
+  // not possible: either everything goes, or nothing does.
   async delete(projectId: string): Promise<{
     deletedRows: number;
     deletedFiles: number;
@@ -95,10 +96,11 @@ export const ProjectDeletionService = {
       where: { id: projectId },
       select: { name: true },
     });
-    if (!project) throw new Error("Proje bulunamadı");
+    if (!project) throw new Error("Project not found");
 
-    // Dosya adlarını işlemden ÖNCE topla; satırlar silindikten sonra
-    // hangi dosyaların bu projeye ait olduğunu bilmenin yolu kalmaz.
+    // Collect file names BEFORE the transaction; once the rows are
+    // deleted, there's no way left to know which files belonged to this
+    // project.
     const localAssets = await prisma.asset.findMany({
       where: { projectId, storageKey: { startsWith: LOCAL_ASSET_PREFIX } },
       select: { storageKey: true },
@@ -125,13 +127,14 @@ export const ProjectDeletionService = {
       { timeout: 30_000 },
     );
 
-    // Dosya silme işlemin DIŞINDA ve en sonda: dosya sistemi geri
-    // alınamaz, veritabanı işlemi geri alınabilir. Sıra tersine olsaydı
-    // başarısız bir işlem dosyaları çoktan yok etmiş olurdu.
+    // File deletion happens OUTSIDE the transaction and last: the file
+    // system can't be rolled back, but the database transaction can. If
+    // the order were reversed, a failed transaction would have already
+    // destroyed the files.
     let deletedFiles = 0;
     for (const asset of localAssets) {
       const filename = asset.storageKey.slice(LOCAL_ASSET_PREFIX.length);
-      // Yol kaçışına karşı: yalnızca düz dosya adı kabul edilir.
+      // Guard against path escaping: only a plain filename is accepted.
       if (!filename || filename.includes("/") || filename.includes("..")) {
         continue;
       }
@@ -139,7 +142,7 @@ export const ProjectDeletionService = {
         await unlink(path.join(LOCAL_ASSETS_DIR, filename));
         deletedFiles += 1;
       } catch {
-        // Dosya zaten yok veya erişilemiyor — silme başarısı buna bağlı değil.
+        // The file is already gone or inaccessible — deletion success doesn't depend on this.
       }
     }
 

@@ -34,18 +34,18 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-// Projeyi + varsayılan Marka'yı oluşturur ve kullanıcıyı 12 aşamalı
-// Ajans Kurulumu'na bırakır. Proje durumunu burada ilerletmiyoruz:
-// yaşam döngüsünün sahibi ProjectSetupOrchestrator (CREATED -> DISCOVERY
-// geçişini kurulum başlarken o yapıyor).
+// Creates the Project + default Brand and drops the user into the 12-stage
+// Agency Setup. We don't advance the project status here: the owner of the
+// lifecycle is ProjectSetupOrchestrator (it performs the CREATED -> DISCOVERY
+// transition when setup starts).
 export async function createProjectAction(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const domain = String(formData.get("domain") ?? "").trim();
   const brandName = String(formData.get("brandName") ?? "").trim();
   const language = String(formData.get("language") ?? "").trim();
-  // Sihirbaz birden fazla pazar seçtirebilir — client her seçili kodu ayrı
-  // bir "country" girişi olarak append eder (ilki = birincil pazar).
-  // formData.getAll() sıralamayı korur.
+  // The wizard can select multiple markets — the client appends each selected
+  // code as a separate "country" entry (the first = primary market).
+  // formData.getAll() preserves ordering.
   const countries = [
     ...new Set(
       formData
@@ -215,13 +215,13 @@ const BrandDossierTextField = z.string().transform((value) => {
   return trimmed.length > 0 ? trimmed : null;
 });
 
-// targetAudiences/markets/products/services/visualGuidelines serbest Json
-// kolonları — tek bir öngörülmüş şekilleri yok (bkz. prisma/seed.ts:
-// targetAudiences {label,description}[] iken constitution-synthesis.ts
-// düz string[] üretiyor). Bu yüzden form alanı ham, düzenlenebilir JSON
-// metni: mevcut şekli ne olursa olsun kayıpsız gidip geliyor. Boş
-// bırakılırsa kolon Prisma.DbNull ile temizlenir (nullable Json kolonunda
-// literal `null` Prisma tarafından reddedilir).
+// targetAudiences/markets/products/services/visualGuidelines are free-form
+// Json columns — they don't have a single predetermined shape (see
+// prisma/seed.ts: targetAudiences is {label,description}[] while
+// constitution-synthesis.ts produces a plain string[]). So the form field is
+// raw, editable JSON text: whatever shape it currently has round-trips
+// losslessly. If left empty, the column is cleared with Prisma.DbNull (a
+// literal `null` is rejected by Prisma on a nullable Json column).
 function parseDossierJsonField(
   formData: FormData,
   field: string,
@@ -232,14 +232,15 @@ function parseDossierJsonField(
   try {
     return JSON.parse(raw) as Prisma.InputJsonValue;
   } catch {
-    throw new Error(`${label}: geçerli bir JSON değil`);
+    throw new Error(`${label}: not valid JSON`);
   }
 }
 
-// Marka Beyni > Varlıklar > Marka Dosyası kartındaki "Düzenle" formunun
-// hedefi — logo upsert'leriyle aynı tenant-scoping deseni (requireUser +
-// requireProjectAccess, brandId İSTEMCİDEN DEĞİL access.defaultBrandId'den).
-// Dossier henüz yoksa upsert onu ilk kez de oluşturur.
+// Target of the "Edit" form on the Brand Dossier card in Brand Brain >
+// Assets — same tenant-scoping pattern as the logo upserts (requireUser +
+// requireProjectAccess, brandId from access.defaultBrandId, NOT from the
+// client). If the dossier doesn't exist yet, the upsert creates it for the
+// first time.
 export async function updateBrandDossierAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -267,15 +268,15 @@ export async function updateBrandDossierAction(
       targetAudiences: parseDossierJsonField(
         formData,
         "targetAudiences",
-        "Hedef Kitleler",
+        "Target Audiences",
       ),
-      markets: parseDossierJsonField(formData, "markets", "Pazarlar"),
-      products: parseDossierJsonField(formData, "products", "Ürünler"),
-      services: parseDossierJsonField(formData, "services", "Hizmetler"),
+      markets: parseDossierJsonField(formData, "markets", "Markets"),
+      products: parseDossierJsonField(formData, "products", "Products"),
+      services: parseDossierJsonField(formData, "services", "Services"),
       visualGuidelines: parseDossierJsonField(
         formData,
         "visualGuidelines",
-        "Görsel Kurallar",
+        "Visual Guidelines",
       ),
     };
 
@@ -306,7 +307,7 @@ export async function updateBrandDossierAction(
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "İşlem başarısız",
+      message: error instanceof Error ? error.message : "Operation failed",
     };
   }
 }

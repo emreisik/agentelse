@@ -25,15 +25,16 @@ const MAX_ATTEMPTS = 5;
 const BASE_BACKOFF_MS = 2_000;
 let activeTick: Promise<void> | undefined;
 
-// Tick aşamalarını birbirinden yalıtır: hata yutulmaz, AuditLog'a yazılır
-// ama sonraki aşamayı engellemez.
+// Isolates tick stages from each other: errors are not swallowed, they're
+// written to AuditLog, but they never block the next stage.
 async function isolate(stage: string, run: () => Promise<unknown>) {
   try {
     await run();
   } catch (error) {
-    // Worker seviyesindeki hatanın workspace'i yok, bu yüzden AuditLog'a
-    // değil ölü-kuyruğa yazılır: "başarısız oldu ve kimse ilgilenmedi"
-    // kaydının zaten doğru yeri orası ve Sistem Sağlığı ekranı orayı okuyor.
+    // A worker-level error has no workspace, so it's written to the
+    // dead-letter queue rather than AuditLog: that's already the right
+    // place for a "failed and nobody noticed" record, and the System
+    // Health screen reads from there.
     try {
       await DeadLetterRepository.create({
         reason: `worker.tick.stage_failed.${stage}`,
@@ -42,14 +43,15 @@ async function isolate(stage: string, run: () => Promise<unknown>) {
         lastError: error instanceof Error ? error.message : String(error),
       });
     } catch {
-      // Hata kaydını yazamamak, hatayı yutup tick'i sürdürmeye engel değil.
+      // Failing to write the error record doesn't stop us from swallowing
+      // the error and continuing the tick.
     }
   }
 }
 
-// Üstel backoff + jitter. Jitter olmadan aynı anda düşen N iş aynı anda
-// yeniden denenir (thundering herd) ve zaten zorlanan sağlayıcıyı tekrar
-// devirir; ±%25 saçılma bunu kırar.
+// Exponential backoff + jitter. Without jitter, N jobs that fail at the
+// same time get retried at the same time (thundering herd), knocking over
+// an already-struggling provider again; +-25% scatter breaks this up.
 function backoffMs(attempt: number): number {
   const base = Math.min(BASE_BACKOFF_MS * 2 ** attempt, 5 * 60_000);
   const jitter = base * 0.25 * (Math.random() * 2 - 1);
@@ -249,8 +251,9 @@ export const ExecutionWorker = {
     if (activeTick) return activeTick;
 
     const run = (async () => {
-      // Her aşama izole: tek bir bozuk cron ifadesi ya da sağlık taraması
-      // hatası tüm tick'i (dispatch + poll + verify dahil) düşürmemeli.
+      // Every stage is isolated: a single broken cron expression or health
+      // scan error must not bring down the whole tick (including dispatch +
+      // poll + verify).
       await isolate("scheduler", () => SchedulerService.runDueSchedules());
       await isolate("self-healing", () => SelfHealingService.run());
       await isolate("provider-health", () => ProviderHealthService.refresh());

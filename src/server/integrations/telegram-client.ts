@@ -1,9 +1,9 @@
 import "server-only";
 
-// İnce, gerçek Telegram Bot API sarmalayıcısı — SDK yok, düz `fetch`
-// (gemini-image-client.ts ve OpenClaw client'larıyla aynı desen). Mock
-// yok: her çağrı gerçek bir HTTP isteği, başarısızlıkta Telegram'ın kendi
-// `description` metnini taşıyan bir hata fırlatır.
+// A thin, real Telegram Bot API wrapper — no SDK, plain `fetch` (same
+// pattern as gemini-image-client.ts and the OpenClaw clients). No mock:
+// every call is a real HTTP request, and on failure it throws an error
+// carrying Telegram's own `description` text.
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const DEFAULT_TIMEOUT_MS = 8_000;
@@ -14,10 +14,10 @@ type TelegramResponse<T> =
   | { ok: true; result: T }
   | { ok: false; description: string; error_code: number };
 
-// `getUpdates` uzun-polling'de Telegram'ı `timeoutMs` kadar açık tutmamız
-// gerekebileceği için isteğe bağlı bir timeout override'ı kabul ediyoruz —
-// aksi halde varsayılan 8sn, `agency-wiring.ts`'teki sıralı tick zincirini
-// asılı kalmış bir ağ isteğiyle geciktirmeyi engelliyor.
+// We accept an optional timeout override because `getUpdates` long-polling
+// may need to keep Telegram open for `timeoutMs` — otherwise the default
+// 8s prevents a hung network request from delaying the sequential tick
+// chain in `agency-wiring.ts`.
 async function request<T>(
   token: string,
   path: string,
@@ -36,8 +36,8 @@ async function request<T>(
     const isAbort = error instanceof Error && error.name === "AbortError";
     throw new TelegramApiError(
       isAbort
-        ? `Telegram API isteği zaman aşımına uğradı (${timeoutMs}ms)`
-        : `Telegram API'ye ulaşılamadı: ${error instanceof Error ? error.message : String(error)}`,
+        ? `Telegram API request timed out (${timeoutMs}ms)`
+        : `Could not reach Telegram API: ${error instanceof Error ? error.message : String(error)}`,
     );
   } finally {
     clearTimeout(timer);
@@ -48,11 +48,11 @@ async function request<T>(
     body = (await res.json()) as TelegramResponse<T>;
   } catch {
     throw new TelegramApiError(
-      `Telegram API beklenmeyen bir yanıt döndürdü (HTTP ${res.status})`,
+      `Telegram API returned an unexpected response (HTTP ${res.status})`,
     );
   }
   if (!body.ok) {
-    throw new TelegramApiError(body.description || "Telegram API hatası");
+    throw new TelegramApiError(body.description || "Telegram API error");
   }
   return body.result;
 }
@@ -63,8 +63,8 @@ export type TelegramBotInfo = {
   first_name: string;
 };
 
-// Token gerçekten geçerli mi, hangi bota ait — bağlantı kurulurken ilk
-// doğrulama adımı.
+// Whether the token is actually valid and which bot it belongs to — the
+// first verification step when establishing the connection.
 export function telegramGetMe(token: string): Promise<TelegramBotInfo> {
   return request<TelegramBotInfo>(token, "getMe");
 }
@@ -76,10 +76,10 @@ export type TelegramChatInfo = {
   type: string;
 };
 
-// Bot bu sohbeti gerçekten görebiliyor mu (kanala/gruba eklenmiş mi) —
-// chatId hem sayısal id (`-1001234567890`) hem herkese açık kanal
-// kullanıcı adı (`@kanaladi`) olabilir, Telegram'ın kendi API'si ikisini
-// de kabul ediyor.
+// Whether the bot can actually see this chat (whether it's been added to
+// the channel/group) — chatId can be either a numeric id
+// (`-1001234567890`) or a public channel username (`@channelname`);
+// Telegram's own API accepts both.
 export function telegramGetChat(
   token: string,
   chatId: string,
@@ -113,9 +113,9 @@ export function telegramSendMessage(
   });
 }
 
-// Onay isteklerinde görseli (Creative asset'i) göstermek için — dosya
-// zaten sunucunun yerel diskinde (storage/assets/), bir URL değil, bu
-// yüzden multipart/form-data ile byte içeriği olarak yüklüyoruz.
+// For showing the image (the Creative asset) in approval requests — the
+// file already lives on the server's local disk (storage/assets/), not at
+// a URL, so we upload it as byte content via multipart/form-data.
 export function telegramSendPhoto(
   token: string,
   chatId: string,
@@ -165,11 +165,11 @@ export type TelegramUpdate = {
   callback_query?: TelegramCallbackQuery;
 };
 
-// Long-polling: webhook için genel erişilebilir bir prod URL/imza
-// doğrulama altyapımız yok, bu yüzden onay butonlarını `getUpdates` ile
-// (agency-wiring.ts'teki mevcut 3sn'lik tick'e yeni bir adım olarak)
-// dinliyoruz. `timeoutSeconds=0` = kısa/non-blocking poll, tick zincirini
-// bloke etmesin diye.
+// Long-polling: we don't have infrastructure for a publicly reachable prod
+// URL/signature verification for a webhook, so we listen for approval
+// button presses via `getUpdates` (as a new step on the existing 3s tick
+// in agency-wiring.ts). `timeoutSeconds=0` = a short/non-blocking poll, so
+// it doesn't block the tick chain.
 export function telegramGetUpdates(
   token: string,
   offset?: number,
@@ -204,9 +204,9 @@ export function telegramAnswerCallbackQuery(
   });
 }
 
-// Bağlantı kurulurken bir kez çağrılır — olası eski bir webhook varsa
-// `getUpdates` ile "Conflict: can't use getUpdates while webhook is
-// active" hatasına yol açar, bu yüzden proaktif olarak temizliyoruz.
+// Called once when establishing the connection — a leftover old webhook,
+// if any, would cause `getUpdates` to fail with "Conflict: can't use
+// getUpdates while webhook is active", so we proactively clear it.
 export function telegramDeleteWebhook(token: string): Promise<true> {
   return request<true>(token, "deleteWebhook");
 }

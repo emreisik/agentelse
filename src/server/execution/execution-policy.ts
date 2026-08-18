@@ -4,8 +4,8 @@ import type {
   RiskLevel,
 } from "@prisma/client";
 
-// Deterministic policy layer (spec section 18: "AI her kararı serbestçe
-// vermemelidir"). AgencyDirector/CommandService consult this instead of
+// Deterministic policy layer (spec section 18: "AI must not make every
+// decision freely"). AgencyDirector/CommandService consult this instead of
 // letting a model decide whether something needs a human in the loop.
 
 const APPROVAL_REQUIRED_CAPABILITIES: ReadonlySet<CapabilityKey> =
@@ -82,10 +82,11 @@ const HIGH_RISK_CAPABILITIES: ReadonlySet<CapabilityKey> =
     "PR_OUTREACH",
   ]);
 
-// Bu görevler kendi zengin sohbet kartına sahip (creative-loading/ready/
-// failed — bkz. IdeaChatRepository, execution-service.ts). Görev geçiş
-// katmanının (task.repository.ts) genel "başladı/tamamlandı" kartlarıyla
-// bunları İKİNCİ kez sohbete düşürmemesi için tek kaynak burası.
+// These tasks have their own rich chat card (creative-loading/ready/failed —
+// see IdeaChatRepository, execution-service.ts). This is the single source
+// of truth that keeps the task-transition layer's (task.repository.ts)
+// generic "started/completed" cards from dropping these into the chat a
+// SECOND time.
 const CREATIVE_CAPABILITIES: ReadonlySet<CapabilityKey> =
   new Set<CapabilityKey>(["CREATE_SOCIAL_CREATIVE", "CREATE_AD_CREATIVE"]);
 
@@ -102,11 +103,12 @@ export const ExecutionPolicy = {
     return CREATIVE_CAPABILITIES.has(capability);
   },
 
-  // Bu görevler de (kreatifler gibi) kendi zengin sohbet kartına sahip
-  // ("publish-result" — bkz. IdeaChatRepository.resolvePublishResultCard,
-  // execution-service.ts) — task.repository.ts'in genel task-result
-  // kartıyla İKİNCİ kez sohbete düşmesin diye aynı dışlama deseni
-  // (bkz. publishApprovalType() in task-planner.ts — aynı suffix testi).
+  // These tasks (like creatives) also have their own rich chat card
+  // ("publish-result" — see IdeaChatRepository.resolvePublishResultCard,
+  // execution-service.ts) — the same exclusion pattern keeps them from
+  // dropping into the chat a SECOND time via task.repository.ts's generic
+  // task-result card (see publishApprovalType() in task-planner.ts — same
+  // suffix test).
   isPublish(capability: CapabilityKey): boolean {
     return capability.endsWith("_PUBLISH");
   },

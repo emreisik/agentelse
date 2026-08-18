@@ -17,9 +17,9 @@ import {
 
 export type ActionResult = { ok: true } | { ok: false; message: string };
 
-// Ölü kuyruktaki bir kaydı elle yeniden kuyruğa alır. Otomatik kurtarmanın
-// dokunmadığı (yapılandırma/bakiye sınıfı) kayıtlar için: kullanıcı sorunu
-// giderdikten sonra işi tekrar denemek ister.
+// Manually re-queues a dead-letter entry. For entries auto-recovery doesn't
+// touch (configuration/balance class): the user wants to retry the job after
+// fixing the issue.
 export async function retryDeadLetterAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -31,16 +31,16 @@ export async function retryDeadLetterAction(
     const entry = await prisma.deadLetterJob.findUnique({
       where: { id: deadLetterId },
     });
-    if (!entry) return { ok: false, message: "Kayıt bulunamadı" };
+    if (!entry) return { ok: false, message: "Record not found" };
     if (entry.resolvedAt) return { ok: true };
     if (!entry.executionJobId) {
-      // Sistem seviyesi kayıt (worker/cron hatası) — yeniden kuyruğa
-      // alınacak bir iş yok, yalnızca kapatılır.
+      // System-level entry (worker/cron error) — there is no job to
+      // re-queue, it is just closed.
       await prisma.deadLetterJob.update({
         where: { id: entry.id },
         data: { resolvedAt: new Date() },
       });
-      revalidatePath("/saglik");
+      revalidatePath("/health");
       return { ok: true };
     }
 
@@ -49,10 +49,16 @@ export async function retryDeadLetterAction(
       select: { id: true, workspaceId: true, projectId: true, status: true },
     });
     if (!job || job.workspaceId !== workspaceId) {
-      return { ok: false, message: "İş bu çalışma alanına ait değil" };
+      return {
+        ok: false,
+        message: "The job does not belong to this workspace",
+      };
     }
     if (job.status === "COMPLETED" || job.status === "CANCELLED") {
-      return { ok: false, message: `İş zaten ${job.status} durumunda` };
+      return {
+        ok: false,
+        message: `The job is already in ${job.status} status`,
+      };
     }
 
     await prisma.$transaction(async (tx) => {
@@ -82,41 +88,60 @@ export async function retryDeadLetterAction(
       metadata: { deadLetterId: entry.id },
     });
 
-    revalidatePath("/saglik");
+    revalidatePath("/health");
     return { ok: true };
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "İşlem başarısız",
+      message: error instanceof Error ? error.message : "Operation failed",
     };
   }
 }
 
-// Kaydı yeniden denemeden kapatır — "biliyorum, umursamıyorum".
+// Closes the entry without retrying — "I know, I don't care".
 export async function dismissDeadLetterAction(
   formData: FormData,
 ): Promise<ActionResult> {
   try {
     const deadLetterId = String(formData.get("deadLetterId"));
     const { userId } = await requireUser();
-    await requireWorkspaceMembership(userId);
+    const { workspaceId } = await requireWorkspaceMembership(userId);
+
+    const entry = await prisma.deadLetterJob.findUnique({
+      where: { id: deadLetterId },
+      select: {
+        id: true,
+        executionJobId: true,
+        executionJob: { select: { workspaceId: true } },
+      },
+    });
+    if (!entry) return { ok: false, message: "Record not found" };
+    if (
+      entry.executionJobId &&
+      entry.executionJob?.workspaceId !== workspaceId
+    ) {
+      return {
+        ok: false,
+        message: "The job does not belong to this workspace",
+      };
+    }
 
     await prisma.deadLetterJob.updateMany({
       where: { id: deadLetterId, resolvedAt: null },
       data: { resolvedAt: new Date() },
     });
 
-    revalidatePath("/saglik");
+    revalidatePath("/health");
     return { ok: true };
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "İşlem başarısız",
+      message: error instanceof Error ? error.message : "Operation failed",
     };
   }
 }
 
-// Sağlık taramasını ve otomatik kurtarmayı beklemeden çalıştırır.
+// Runs the health scan and auto-recovery without waiting.
 export async function runHealthScanAction(): Promise<ActionResult> {
   try {
     const { userId } = await requireUser();
@@ -125,18 +150,18 @@ export async function runHealthScanAction(): Promise<ActionResult> {
     await SelfHealingService.run();
     await ProviderHealthService.refresh();
 
-    revalidatePath("/saglik");
+    revalidatePath("/health");
     return { ok: true };
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "Tarama başarısız",
+      message: error instanceof Error ? error.message : "Scan failed",
     };
   }
 }
 
-// Sağlayıcıyı elle "sağlıklı" işaretler: kullanıcı kök nedeni (anahtar,
-// bakiye) düzelttiğinde devre kesiciyi beklemeden kapatmak için.
+// Manually marks the provider "healthy": lets the user close the circuit
+// breaker without waiting once they've fixed the root cause (key, balance).
 export async function clearProviderIncidentAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -148,7 +173,7 @@ export async function clearProviderIncidentAction(
     const definition = await prisma.providerDefinition.findUnique({
       where: { key: providerKey },
     });
-    if (!definition) return { ok: false, message: "Sağlayıcı bulunamadı" };
+    if (!definition) return { ok: false, message: "Provider not found" };
 
     await prisma.providerHealth.upsert({
       where: { providerId: definition.id },
@@ -168,12 +193,12 @@ export async function clearProviderIncidentAction(
       data: { resolved: true, resolvedAt: new Date() },
     });
 
-    revalidatePath("/saglik");
+    revalidatePath("/health");
     return { ok: true };
   } catch (error) {
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "İşlem başarısız",
+      message: error instanceof Error ? error.message : "Operation failed",
     };
   }
 }

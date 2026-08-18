@@ -84,14 +84,14 @@ export const ApprovalRepository = {
 
     StateMachine.assertApprovalTransition(approval.status, to);
 
-    // Claim (compare-and-swap): aynı karar iki kez teslim edilirse (ör.
-    // Telegram'ın aynı callback_query'i tekrar göndermesi, ya da web+
-    // Telegram'dan neredeyse eşzamanlı çift tıklama) `from === to` no-op
-    // olarak sessizce başarı dönmesin — sadece STATUS HÂLÂ okuduğumuz
-    // değerdeyse güncelle, aksi halde "zaten karara bağlanmış" fırlat. Bu,
-    // çağıranın (applyApprovalDecision) downstream dispatch'i (görev
-    // başlatma/creative onaylama) iki kez çalıştırmasını engeller —
-    // execution-worker.ts'teki resolvePendingVerifications ile aynı desen.
+    // Claim (compare-and-swap): if the same decision is delivered twice
+    // (e.g. Telegram resending the same callback_query, or a near-simultaneous
+    // double click from web + Telegram), don't let `from === to` silently
+    // return success as a no-op — only update if STATUS is STILL the value
+    // we read, otherwise throw "already decided". This keeps the caller
+    // (applyApprovalDecision) from running the downstream dispatch (task
+    // start / creative approval) twice — the same pattern as
+    // resolvePendingVerifications in execution-worker.ts.
     const claim = await prisma.approval.updateMany({
       where: { id, projectId, status: approval.status },
       data: {

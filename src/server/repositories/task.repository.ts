@@ -18,28 +18,30 @@ import { notifyProjectTelegram } from "@/server/notifications/project-telegram-n
 import { extractResultText } from "@/lib/execution-result-text";
 import { PLATFORM_LABEL } from "@/lib/labels";
 
-// Bir görev tamamlanınca/başarısız/iptal olunca, o görev bir fikre bağlıysa
-// (bir iş planı üzerinden ya da doğrudan o fikrin sohbetinden komutla
-// istenmişse — bkz. IdeaChatRepository.resolveIdeaIdForTask) o fikrin
-// sohbet iş parçacığına olay mesajı düşer. Sadece başlık değil, görevin
-// GERÇEKTEN ürettiği içerik de (son ExecutionJob.rawResult'tan çıkarılır —
-// bkz. extractResultText) "task-result" kartının açılır/kapanır gövdesine
-// eklenir; böylece "BRAND_STRATEGY: ... — positioning + campaign brief"
-// gibi tek satırlık başlığın ARKASINDAKİ gerçek metin de sohbette görünür.
-// Kreatif görevler (CREATE_SOCIAL_CREATIVE/CREATE_AD_CREATIVE) hariç: onlar
-// zaten kendi zengin kartını execution-service.ts'teki resolveCreativeCard
-// üzerinden alıyor — burada da yazarsak aynı görev için sohbette İKİ kart
-// belirir. Yayın görevleri (INSTAGRAM_PUBLISH vb.) BURADA, aşağıdaki
-// isPublish dalında çözülüyor — execution-service.ts'in kendi
-// resolvePublishResultCard çağrısı yalnızca doğrulama GEREKTİRMEYEN
-// tamamlanma yolunu kapsıyor; INSTAGRAM_PUBLISH gibi doğrulama gerektiren
-// (bkz. execution-policy.ts VERIFICATION_REQUIRED_CAPABILITIES) capability'ler
-// completeAfterVerification üzerinden tamamlanıyor ve o yol SADECE burayı
-// çağırıyordu — önceden bu dal da erken dönüp hiçbir şey yapmadığı için
-// "çalışıyor" kartı hiç sonuca güncellenmiyordu (iki yol da işi diğerinin
-// yaptığını varsayıyordu). Şimdi bu fonksiyon kendi başına yeterli;
-// execution-service.ts'in çağrısıyla nadiren çakışsa da resolvePublishResultCard
-// idempotent (var olan kartı günceller), zararsız.
+// When a task completes/fails/is cancelled, if that task is linked to an
+// idea (via a work plan, or requested directly via a command from that
+// idea's chat — see IdeaChatRepository.resolveIdeaIdForTask), an event
+// message is posted to that idea's chat thread. Not just the title — the
+// content the task ACTUALLY produced (extracted from the latest
+// ExecutionJob.rawResult — see extractResultText) is also appended to the
+// "task-result" card's expandable body, so the real text BEHIND a
+// one-line title like "BRAND_STRATEGY: ... — positioning + campaign
+// brief" is also visible in the chat. Creative tasks
+// (CREATE_SOCIAL_CREATIVE/CREATE_AD_CREATIVE) are excluded: they already
+// get their own rich card via resolveCreativeCard in
+// execution-service.ts — writing here too would produce TWO cards in the
+// chat for the same task. Publish tasks (INSTAGRAM_PUBLISH etc.) are
+// resolved HERE, in the isPublish branch below — execution-service.ts's
+// own resolvePublishResultCard call only covers the completion path that
+// does NOT require verification; capabilities that require verification
+// (see execution-policy.ts VERIFICATION_REQUIRED_CAPABILITIES), like
+// INSTAGRAM_PUBLISH, complete via completeAfterVerification, and that path
+// used to call ONLY this function — previously this branch also returned
+// early and did nothing, so the "running" card was never updated to a
+// result (both paths assumed the other one did the work). Now this
+// function is self-sufficient; even though it rarely overlaps with
+// execution-service.ts's call, resolvePublishResultCard is idempotent
+// (updates the existing card), so it's harmless.
 async function postTaskChatEvent(task: {
   id: string;
   workspaceId: string;
@@ -73,8 +75,8 @@ async function postTaskChatEvent(task: {
         taskId: task.id,
         text:
           publishStatus === "COMPLETED"
-            ? `📤 ${platform}'da yayınlandı: ${task.title}`
-            : `❌ ${platform} yayını başarısız: ${task.title}`,
+            ? `📤 Published on ${platform}: ${task.title}`
+            : `❌ ${platform} publish failed: ${task.title}`,
         card: {
           kind: "publish-result",
           taskId: task.id,
@@ -94,10 +96,10 @@ async function postTaskChatEvent(task: {
 
     const prefix =
       task.status === "COMPLETED"
-        ? "✅ Görev tamamlandı"
+        ? "✅ Task completed"
         : task.status === "CANCELLED"
-          ? "🚫 Görev iptal edildi"
-          : "❌ Görev başarısız";
+          ? "🚫 Task cancelled"
+          : "❌ Task failed";
     const resultText = latestJob
       ? (extractResultText(latestJob.rawResult) ?? undefined)
       : undefined;
@@ -268,14 +270,14 @@ export const TaskRepository = {
 
     if (to === "COMPLETED" || to === "FAILED") {
       const prefix =
-        to === "COMPLETED" ? "✅ Görev tamamlandı" : "❌ Görev başarısız";
+        to === "COMPLETED" ? "✅ Task completed" : "❌ Task failed";
       try {
         await notifyProjectTelegram(
           task.projectId,
           `${prefix}: ${updated.title}`,
         );
       } catch {
-        // Best-effort — bildirim hatası görev geçişini asla bozmamalı.
+        // Best-effort — a notification failure must never break the task transition.
       }
     }
 

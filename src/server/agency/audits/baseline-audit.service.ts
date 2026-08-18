@@ -70,10 +70,10 @@ export const BaselineAuditService = {
       } satisfies Audit;
     };
 
-    // allSettled, Promise.all değil: tek bir departmanın modeli kesik JSON
-    // döndürmesi bütün partiyi çöpe atıyordu, hiçbir denetim kaydedilmiyordu
-    // ve aşama baştan başlıyordu — %27 hata oranıyla aşama pratikte hiç
-    // bitmiyor, her turda 19 çağrı yeniden harcanıyordu.
+    // allSettled, not Promise.all: a single department's model returning
+    // truncated JSON used to trash the whole batch, no audit got saved,
+    // and the stage restarted from scratch — with a 27% error rate the
+    // stage practically never finished, wasting 19 calls on every round.
     const audits: Audit[] = [];
     const failed: Array<(typeof AUDIT_DEPARTMENTS)[number]> = [];
     const BATCH = 5;
@@ -86,21 +86,21 @@ export const BaselineAuditService = {
       });
     }
 
-    // Kesik JSON geçici bir hata — başarısız departmanlara tek bir ek şans.
+    // Truncated JSON is a transient error — give failed departments one extra try.
     for (const department of failed) {
       try {
         audits.push(await auditOne(department));
       } catch {
-        // İkinci deneme de tuttursa o departman denetimsiz kalır; aşama
-        // yine de ilerler ve elde edilenler kaydedilir.
+        // If the retry also fails, that department is left without an
+        // audit; the stage still proceeds and whatever was produced is saved.
       }
     }
 
-    // Hiçbiri tutmadıysa gerçek bir arıza var (kota, anahtar, sağlayıcı):
-    // aşamayı FAILED'a düşür ki Sistem Sağlığı'nda görünsün.
+    // If none succeeded, there's a real failure (quota, key, provider):
+    // drop the stage to FAILED so it shows up in System Health.
     if (audits.length === 0) {
       throw new Error(
-        `Hiçbir departman için temel denetim üretilemedi (${AUDIT_DEPARTMENTS.length} deneme)`,
+        `Failed to generate a baseline audit for any department (${AUDIT_DEPARTMENTS.length} attempts)`,
       );
     }
 

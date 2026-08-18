@@ -51,8 +51,9 @@ export const AutonomyPolicyRepository = {
         brandId: scope.brandId,
         setupAutoApprove: scope.setupAutoApprove ?? false,
       },
-      // Açıkça verilen setupAutoApprove mevcut policy'ye de uygulanır — seed
-      // edilmiş projelerde kurulum formundaki tercih aksi halde yok sayılır.
+      // An explicitly given setupAutoApprove is also applied to an existing
+      // policy — otherwise the setup form's preference would be ignored for
+      // already-seeded projects.
       update:
         scope.setupAutoApprove === undefined
           ? {}
@@ -101,8 +102,8 @@ export const AutonomyPolicyRepository = {
       },
     });
 
-    // Sınırsız modda sayaç yine artar (Aktivite ekranı ve maliyet takibi
-    // doğru kalsın) ama eşik kontrolü hiç yapılmaz.
+    // In unlimited mode the counter still increments (so the Activity view
+    // and cost tracking stay accurate) but the threshold check is skipped.
     if (policy.unlimitedMode) return;
 
     const capField = COUNTER_TO_CAP[field];

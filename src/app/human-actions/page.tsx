@@ -41,11 +41,11 @@ export default async function HumanActionsPage() {
       <div className="space-y-4 p-6">
         <div>
           <h1 className="font-heading text-2xl font-semibold tracking-tight">
-            İnsan Eylem Merkezi
+            Human Action Center
           </h1>
           <p className="text-sm text-muted-foreground">
-            OTP, MFA, CAPTCHA ve manuel tarayıcı talepleri burada insan yanıtı
-            bekler.
+            OTP, MFA, CAPTCHA, and manual browser requests wait here for a human
+            response.
           </p>
         </div>
 
@@ -57,7 +57,7 @@ export default async function HumanActionsPage() {
             >
               <CardHeader className="flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-base">
-                  {projectNameById.get(request.projectId) ?? "Bilinmeyen proje"}{" "}
+                  {projectNameById.get(request.projectId) ?? "Unknown project"}{" "}
                   — {request.title}
                 </CardTitle>
                 <StatusBadge
@@ -72,7 +72,7 @@ export default async function HumanActionsPage() {
                 <p className="text-xs text-muted-foreground">
                   {timeAgo(request.createdAt)}
                   {request.expiresAt
-                    ? ` · Son geçerlilik: ${timeAgo(request.expiresAt)}`
+                    ? ` · Expires: ${timeAgo(request.expiresAt)}`
                     : ""}
                 </p>
 
@@ -82,13 +82,13 @@ export default async function HumanActionsPage() {
                       variant="outline"
                       size="sm"
                       disabled
-                      title="Uzak tarayıcı oturumu bağlantısı henüz mevcut değil"
+                      title="Remote browser session connection is not yet available"
                     >
-                      Tarayıcıyı Aç
+                      Open Browser
                     </Button>
                     <ActionForm
                       action={cancelHumanActionAction}
-                      successMessage="Görev iptal edildi"
+                      successMessage="Task cancelled"
                     >
                       <input
                         type="hidden"
@@ -96,14 +96,14 @@ export default async function HumanActionsPage() {
                         value={request.id}
                       />
                       <SubmitButton variant="ghost" size="sm">
-                        Görevi İptal Et
+                        Cancel Task
                       </SubmitButton>
                     </ActionForm>
                   </div>
                 ) : (
                   <ActionForm
                     action={resolveHumanActionAction}
-                    successMessage="Yanıt gönderildi"
+                    successMessage="Response sent"
                     className="flex items-center gap-2"
                   >
                     <input type="hidden" name="requestId" value={request.id} />
@@ -111,12 +111,12 @@ export default async function HumanActionsPage() {
                       name="value"
                       placeholder={
                         request.inputType === "OTP"
-                          ? "Kodu girin"
-                          : "Değeri girin"
+                          ? "Enter code"
+                          : "Enter value"
                       }
                       className="max-w-48"
                     />
-                    <SubmitButton size="sm">Gönder</SubmitButton>
+                    <SubmitButton size="sm">Send</SubmitButton>
                   </ActionForm>
                 )}
               </CardContent>
@@ -126,8 +126,8 @@ export default async function HumanActionsPage() {
           {requests.length === 0 ? (
             <EmptyState
               icon={UserRoundCog}
-              title="Bekleyen insan eylemi yok"
-              hint="Ajanlar bir doğrulama koduna veya manuel müdahaleye ihtiyaç duyduğunda burada görünür."
+              title="No pending human actions"
+              hint="Appears here when agents need a verification code or manual intervention."
             />
           ) : null}
         </div>

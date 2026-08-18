@@ -97,7 +97,7 @@ const HUMAN_INTERVENTION_TRANSITIONS: Record<
   CANCELLED: [],
 };
 
-// Exported so UI code (Entegrasyonlar sayfası) can derive its action
+// Exported so UI code (the Integrations page) can derive its action
 // buttons from the exact same table the server enforces, instead of a
 // hand-maintained duplicate that can silently drift out of sync.
 export const BROWSER_PROFILE_TRANSITIONS: Record<
@@ -138,17 +138,17 @@ const CREATIVE_TRANSITIONS: Record<CreativeStatus, CreativeStatus[]> = {
   ARCHIVED: [],
 };
 
-// Projenin kaba yaşam döngüsü. Sahibi ProjectSetupOrchestrator: 12 aşamalı
-// Ajans Kurulumu yalnızca CREATED -> DISCOVERY -> PROFILE_REVIEW -> ACTIVE
-// yolunu kullanır (ince taneli ilerleme SetupStage/SetupStageStatus'ta
-// tutulur).
+// The project's coarse life cycle. Owned by ProjectSetupOrchestrator: the
+// 12-stage Agency Setup only uses the CREATED -> DISCOVERY ->
+// PROFILE_REVIEW -> ACTIVE path (fine-grained progress is tracked in
+// SetupStage/SetupStageStatus).
 //
-// NEEDS_INFORMATION, NEEDS_ASSESSMENT ve STRATEGY'yi artık hiçbir kod
-// yazmıyor: ilki kaldırılan 3 adımlı kurulum sihirbazının manuel giriş
-// yoluydu, diğer ikisi hiç yazılmamış marka-strateji akışı için rezerveydi.
-// Enum değerleri ve geçişleri, eski satırların okunabilirliği için duruyor —
-// Postgres'te enum değeri düşürmek tabloyu yeniden kurmayı gerektirir ve
-// kazancı yok.
+// No code writes NEEDS_INFORMATION, NEEDS_ASSESSMENT or STRATEGY anymore:
+// the first was the manual-entry path of the removed 3-step setup wizard,
+// the other two were reserved for a brand-strategy flow that was never
+// written. The enum values and transitions remain for the readability of
+// old rows — dropping an enum value in Postgres requires rebuilding the
+// table, and there's no payoff.
 const PROJECT_TRANSITIONS: Record<ProjectStatus, ProjectStatus[]> = {
   CREATED: ["DISCOVERY"],
   DISCOVERY: ["NEEDS_INFORMATION", "PROFILE_REVIEW"],

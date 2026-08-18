@@ -156,7 +156,7 @@ function CoordinateVisual() {
   );
 }
 
-// Step 5 — the exact Görevler/Tasks card anatomy: title, capability,
+// Step 5 — the exact Tasks card anatomy: title, capability,
 // solid department pill, status badge.
 function ExecuteVisual() {
   return (

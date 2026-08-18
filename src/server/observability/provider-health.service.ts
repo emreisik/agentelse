@@ -6,15 +6,15 @@ import { prisma } from "@/lib/prisma";
 import { ProviderRegistry } from "@/server/execution/provider-registry";
 import { classifyError } from "@/server/observability/error-classifier";
 
-// Sağlayıcı sağlığı: şemadaki ProviderDefinition/ProviderHealth/
-// ProviderIncident modelleri tanımlıydı ama hiçbir kod onlara yazmıyordu.
-// Bu servis son N dakikadaki ExecutionJob sonuçlarından her sağlayıcının
-// durumunu türetir, durum değişiminde olay (incident) açar/kapatır ve
-// CapabilityRouter'ın devre kesici kararını besler.
+// Provider health: the ProviderDefinition/ProviderHealth/ProviderIncident
+// models were defined in the schema, but no code was writing to them. This
+// service derives each provider's status from the ExecutionJob results in
+// the last N minutes, opens/closes an incident on status change, and feeds
+// the CapabilityRouter's circuit-breaker decision.
 
 const WINDOW_MS = 30 * 60_000;
-// Ardışık değil, pencere içi oran: tek bir hata sağlayıcıyı düşürmemeli
-// ama üst üste gelen hatalar hızla düşürmeli.
+// Rate within the window, not consecutive: a single failure shouldn't take
+// a provider down, but a burst of failures should take it down fast.
 const MIN_SAMPLE = 3;
 const DEGRADED_FAILURE_RATE = 0.5;
 const DOWN_FAILURE_RATE = 0.9;
@@ -29,20 +29,21 @@ export type ProviderHealthSnapshot = {
   lastCheckAt: Date | null;
 };
 
-// Devre kesici "yarı-açık" davranışı: bir sağlayıcı UNAVAILABLE/DEGRADED/
-// RATE_LIMITED'a düşünce CapabilityRouter ona bir daha iş vermiyor (bkz.
-// unhealthyProviderKeys) — bu da pencerede ASLA yeni örnek biriktiremeyeceği
-// anlamına geliyor (dispatch edilmeyen bir işin sonucu da olmaz). Önceki
-// kod bu durumda son bilinen (kötü) statüyü SONSUZA DEK koruyordu: gerçek
-// hata çoktan 30dk'lık pencereden çıksa bile sağlayıcı bir daha asla
-// denenmiyordu (canlıda openclaw + meta-api'nin başına geldi — bkz. bu
-// oturumun notları). Pencerede hiç örnek kalmayınca (jobs.length === 0,
-// yani son WINDOW_MS'de bu sağlayıcıya tek bir iş bile düşmemiş) AVAILABLE'a
-// dönüp bir sonraki dispatch'in tekrar denemesine izin veriyoruz — sorun
-// gerçekten sürüyorsa yeni bir hata hemen yeniden UNAVAILABLE'a düşürür,
-// gerçekten geçtiyse sağlayıcı sessizce toparlanır. AUTH_REQUIRED/DISABLED
-// istisna: bunlar insan müdahalesi (anahtar/yapılandırma) gerektirir,
-// zamanla kendiliğinden düzelmez, o yüzden decay olmadan korunuyor.
+// Circuit-breaker "half-open" behavior: once a provider drops to
+// UNAVAILABLE/DEGRADED/RATE_LIMITED, CapabilityRouter stops giving it work
+// (see unhealthyProviderKeys) — which means it can NEVER accumulate new
+// samples in the window (a job that's never dispatched produces no result
+// either). The previous code kept the last known (bad) status FOREVER in
+// this case: even after the real failure had long since aged out of the
+// 30-minute window, the provider was never retried again (this happened in
+// production with openclaw + meta-api — see this session's notes). Once the
+// window has no samples left (jobs.length === 0, meaning not a single job
+// hit this provider in the last WINDOW_MS), we fall back to AVAILABLE and
+// let the next dispatch try again — if the problem is really still there, a
+// fresh failure immediately drops it back to UNAVAILABLE; if it really
+// passed, the provider quietly recovers. Exception: AUTH_REQUIRED/DISABLED
+// require human intervention (key/configuration) and don't fix themselves
+// over time, so they're preserved without decay.
 function decayStatus(
   previous: ProviderHealthStatus | undefined,
 ): ProviderHealthStatus {
@@ -59,8 +60,9 @@ function statusFromSamples(
   const rate = failed / total;
   if (rate < DEGRADED_FAILURE_RATE) return "AVAILABLE";
 
-  // Hata tipi durumu belirler: kota/anahtar sorunları beklemekle geçmez,
-  // bu yüzden ayrı durumlara düşerler ve devre kesici onları farklı ele alır.
+  // The error type determines the status: quota/key problems don't resolve
+  // by waiting, so they fall into separate states and the circuit breaker
+  // handles them differently.
   const classification = classifyError(lastError);
   if (classification.category === "RATE_LIMIT") return "RATE_LIMITED";
   if (
@@ -73,8 +75,8 @@ function statusFromSamples(
 }
 
 export const ProviderHealthService = {
-  // Kayıt defterindeki her sağlayıcı için ProviderDefinition satırının
-  // varlığını garanti eder — sağlık ve olay kayıtları buna bağlı.
+  // Guarantees a ProviderDefinition row exists for every provider in the
+  // registry — health and incident records depend on it.
   async syncDefinitions(): Promise<void> {
     for (const provider of ProviderRegistry.registered()) {
       await prisma.providerDefinition.upsert({
@@ -90,8 +92,9 @@ export const ProviderHealthService = {
     }
   },
 
-  // Son penceredeki iş sonuçlarından sağlığı yeniden hesaplar. Her tick'te
-  // çağrılabilir; yazma yalnızca durum değiştiğinde olay üretir.
+  // Recomputes health from the job results in the latest window. Can be
+  // called on every tick; a write only produces an incident when the status
+  // actually changes.
   async refresh(now = new Date()): Promise<ProviderHealthSnapshot[]> {
     await this.syncDefinitions();
 
@@ -112,11 +115,12 @@ export const ProviderHealthService = {
         orderBy: { updatedAt: "desc" },
       });
 
-      // Yalnızca sağlayıcının GERÇEKTEN bozuk olduğuna kanıt olan hatalar
-      // (classifyError().degradesProvider) devre kesiciyi besler — içerik
-      // doğrulama hatası gibi "isteğimiz kötüydü" türü başarısızlıklar
-      // (ör. Instagram'ın "Only photo or video..." reddi) sağlayıcıyı
-      // UNAVAILABLE'a düşürmemeli, çünkü sağlayıcının kendisi sağlıklı.
+      // Only errors that are evidence the provider is ACTUALLY broken
+      // (classifyError().degradesProvider) feed the circuit breaker —
+      // "our request was bad" type failures like a content validation
+      // error (e.g. Instagram's "Only photo or video..." rejection)
+      // shouldn't drop the provider to UNAVAILABLE, because the provider
+      // itself is healthy.
       const failures = jobs.filter(
         (job) =>
           job.status === "FAILED" &&
@@ -164,7 +168,8 @@ export const ProviderHealthService = {
     return snapshots;
   },
 
-  // Sağlıklıya dönüşte açık olayları kapatır, bozulmada yeni olay açar.
+  // Closes open incidents on recovery to healthy, opens a new one on
+  // degradation.
   async recordStatusChange(
     providerDefinitionId: string,
     previous: ProviderHealthStatus | undefined,
@@ -190,7 +195,7 @@ export const ProviderHealthService = {
         providerId: providerDefinitionId,
         message: [
           `${previous ?? "AVAILABLE"} → ${next}`,
-          lastErrorMessage ? `Son hata: ${lastErrorMessage}` : null,
+          lastErrorMessage ? `Last error: ${lastErrorMessage}` : null,
         ]
           .filter(Boolean)
           .join(" · "),
@@ -198,7 +203,7 @@ export const ProviderHealthService = {
     });
   },
 
-  // Devre kesicinin okuduğu küme: bu sağlayıcılara yeni iş verilmez.
+  // The set the circuit breaker reads: these providers get no new work.
   async unhealthyProviderKeys(): Promise<ReadonlySet<string>> {
     const rows = await prisma.providerHealth.findMany({
       where: { status: { in: ["UNAVAILABLE", "AUTH_REQUIRED", "DISABLED"] } },

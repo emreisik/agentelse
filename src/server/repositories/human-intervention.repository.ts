@@ -67,10 +67,10 @@ export const HumanInterventionRepository = {
     try {
       await notifyProjectTelegram(
         input.projectId,
-        `🖐️ İnsan müdahalesi gerekiyor: ${input.title}`,
+        `🖐️ Human intervention needed: ${input.title}`,
       );
     } catch {
-      // Best-effort — bildirim hatası müdahale talebini asla bozmamalı.
+      // Best-effort — a notification failure must never break the intervention request.
     }
 
     return request;

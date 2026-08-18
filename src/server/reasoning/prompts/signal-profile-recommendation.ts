@@ -20,9 +20,10 @@ export const signalProfileRecommendationDef: ReasoningDef<SignalProfileRecommend
   {
     purpose: "signal-profile.recommend",
     schema: SignalProfileRecommendationSchema,
-    // department-recommendation.ts'teki MAX_TOKENS kesilmesiyle aynı risk
-    // şekli (16 kategori × rationale metni, "thinking" token'ları da aynı
-    // bütçeden düşüyor) — önleyici olarak aynı şekilde yükseltildi.
+    // Same shape of risk as the MAX_TOKENS truncation in
+    // department-recommendation.ts (16 categories x rationale text,
+    // "thinking" tokens also deduct from the same budget) — raised
+    // preemptively in the same way.
     maxTokens: 8192,
 
     buildPrompt(context) {

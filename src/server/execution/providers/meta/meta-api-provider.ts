@@ -21,10 +21,10 @@ import type {
   ProviderExecutionStatus,
 } from "@/server/execution/types";
 
-// Gerçek Meta Graph/Marketing API — OpenClawProvider'ın tarayıcı otomasyonu
-// yerine, projede bir OAuth ile bağlanmış Meta hesabı varsa onu kullanır.
-// provider-registry.ts'de OpenClawProvider'dan önce kayıtlı: gerçek API her
-// zaman ekran kazımaya tercih edilir.
+// The real Meta Graph/Marketing API — used instead of OpenClawProvider's
+// browser automation whenever the project has a Meta account connected via
+// OAuth. Registered before OpenClawProvider in provider-registry.ts: the
+// real API is always preferred over screen scraping.
 const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "INSTAGRAM_PUBLISH",
   "META_ADS_ANALYSIS",
@@ -80,10 +80,11 @@ export class MetaApiProvider implements ExecutionProvider {
     return Boolean(metadata.selectedAdAccountId);
   }
 
-  // Meta Graph/Marketing API çağrıları senkron ve saniyeler içinde döner —
-  // OpenClawProvider'ın "senkron çalıştır, sonucu önbelleğe al" desenini
-  // izliyoruz: execute() işlemi baştan sona burada yürütür, hata durumunda
-  // fırlatmak yerine FAILED sonucu saklar; getStatus() sadece geri okur.
+  // Meta Graph/Marketing API calls are synchronous and return within
+  // seconds — we follow OpenClawProvider's "run synchronously, cache the
+  // result" pattern: execute() runs the operation start-to-finish here,
+  // storing a FAILED result instead of throwing on error; getStatus() just
+  // reads it back.
   async execute(request: ExecutionRequest): Promise<ExecutionAcceptedResult> {
     const result = await this.runCapability(request);
     store.set(request.correlationId, result);
@@ -111,7 +112,7 @@ export class MetaApiProvider implements ExecutionProvider {
       request.context.projectId,
     );
     if (!credential) {
-      return { status: "FAILED", errorMessage: "Meta bağlantısı bulunamadı" };
+      return { status: "FAILED", errorMessage: "Meta connection not found" };
     }
     const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
     const accessToken = decryptSecret(credential.encryptedSecret);
@@ -130,7 +131,7 @@ export class MetaApiProvider implements ExecutionProvider {
         default:
           return {
             status: "FAILED",
-            errorMessage: `MetaApiProvider capability ${request.capability} desteklemiyor`,
+            errorMessage: `MetaApiProvider does not support capability ${request.capability}`,
           };
       }
     } catch (error) {
@@ -152,7 +153,7 @@ export class MetaApiProvider implements ExecutionProvider {
     if (!page?.instagramBusinessAccountId) {
       return {
         status: "FAILED",
-        errorMessage: "Seçili Page'in bağlı Instagram hesabı yok",
+        errorMessage: "The selected Page has no connected Instagram account",
       };
     }
     const imageUrl =
@@ -161,7 +162,7 @@ export class MetaApiProvider implements ExecutionProvider {
     if (!imageUrl) {
       return {
         status: "FAILED",
-        errorMessage: "INSTAGRAM_PUBLISH için `imageUrl` gerekli",
+        errorMessage: "INSTAGRAM_PUBLISH requires `imageUrl`",
       };
     }
 
@@ -181,9 +182,9 @@ export class MetaApiProvider implements ExecutionProvider {
     });
     return {
       status: "COMPLETED",
-      // requestedMediaType: canlıda gerçekten hangi media_type'ın Meta'ya
-      // gönderildiğini sonradan doğrulamak için (bkz. targetFormat akışı) —
-      // gözlemlenebilirlik amaçlı, kalıcı olarak faydalı.
+      // requestedMediaType: lets us later verify which media_type was
+      // actually sent to Meta in production (see the targetFormat flow) —
+      // for observability, permanently useful.
       rawResult: { postId, requestedMediaType: mediaType ?? "FEED" },
     };
   }
@@ -194,7 +195,7 @@ export class MetaApiProvider implements ExecutionProvider {
     payload: Record<string, unknown>,
   ): Promise<StoredResult> {
     if (!metadata.selectedAdAccountId) {
-      return { status: "FAILED", errorMessage: "Seçili reklam hesabı yok" };
+      return { status: "FAILED", errorMessage: "No ad account selected" };
     }
     const datePreset =
       typeof payload.datePreset === "string" ? payload.datePreset : undefined;
@@ -212,7 +213,7 @@ export class MetaApiProvider implements ExecutionProvider {
     payload: Record<string, unknown>,
   ): Promise<StoredResult> {
     if (!metadata.selectedAdAccountId) {
-      return { status: "FAILED", errorMessage: "Seçili reklam hesabı yok" };
+      return { status: "FAILED", errorMessage: "No ad account selected" };
     }
     const name = typeof payload.name === "string" ? payload.name : undefined;
     const objective =
@@ -220,7 +221,7 @@ export class MetaApiProvider implements ExecutionProvider {
     if (!name || !objective) {
       return {
         status: "FAILED",
-        errorMessage: "META_CAMPAIGN_CREATE için `name` ve `objective` gerekli",
+        errorMessage: "META_CAMPAIGN_CREATE requires `name` and `objective`",
       };
     }
     const status = payload.status === "ACTIVE" ? "ACTIVE" : "PAUSED";
@@ -249,7 +250,7 @@ export class MetaApiProvider implements ExecutionProvider {
     if (!campaignId) {
       return {
         status: "FAILED",
-        errorMessage: "META_CAMPAIGN_UPDATE için `campaignId` gerekli",
+        errorMessage: "META_CAMPAIGN_UPDATE requires `campaignId`",
       };
     }
     const status =

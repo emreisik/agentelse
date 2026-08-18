@@ -13,12 +13,13 @@ import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 
 import { DEFAULT_LENS_MIX, LENS_DEFINITIONS } from "./creative-lenses";
 
-// Fikrin sohbetteki "sıfır noktası"nın ÖNCESİni de göster: bu fikri doğuran
-// Sinyal(ler)/Bulgu(lar)/İçgörü+Fırsat zincirini (Opportunity.insightId ->
-// Insight.{signalIds,findingIds}) KENDİ gerçek oluşturulma anlarıyla, fikir
-// mesajından ÖNCE gelecek kronolojik sırada yazar. Zincir yoksa (elle
-// oluşturulan/opportunity'siz fikir) sessizce atlanır. Best-effort — bir
-// köken mesajının yazılamaması fikir oluşturma akışını asla durdurmamalı.
+// Also shows what came BEFORE the idea's "zero point" in the chat: writes
+// the Signal(s)/Finding(s)/Insight+Opportunity chain that produced this idea
+// (Opportunity.insightId -> Insight.{signalIds,findingIds}) using their OWN
+// real creation timestamps, in chronological order BEFORE the idea message.
+// If there's no chain (a manually created idea with no opportunity), it's
+// silently skipped. Best-effort — failing to write an origin message must
+// never block the idea-creation flow.
 async function postOriginLineage(
   scope: { workspaceId: string; projectId: string },
   opportunity: Opportunity,
@@ -45,7 +46,7 @@ async function postOriginLineage(
     await IdeaChatRepository.postSystemMessage({
       ...scope,
       ideaId,
-      text: `📡 Sinyal tespit edildi: **${signal.title}**${signal.summary ? `\n\n${signal.summary}` : ""}`,
+      text: `📡 Signal detected: **${signal.title}**${signal.summary ? `\n\n${signal.summary}` : ""}`,
       card: {
         kind: "signal",
         title: signal.title,
@@ -59,10 +60,10 @@ async function postOriginLineage(
     await IdeaChatRepository.postSystemMessage({
       ...scope,
       ideaId,
-      text: `🔍 Bulgu: ${finding.statement}`,
+      text: `🔍 Finding: ${finding.statement}`,
       card: {
         kind: "finding",
-        title: finding.category ?? "Bulgu",
+        title: finding.category ?? "Finding",
         statement: finding.statement,
       },
       createdAt: finding.createdAt,
@@ -72,7 +73,7 @@ async function postOriginLineage(
   await IdeaChatRepository.postSystemMessage({
     ...scope,
     ideaId,
-    text: `✨ İçgörü/Fırsat: **${opportunity.title}**${opportunity.description ? `\n\n${opportunity.description}` : ""}`,
+    text: `✨ Insight/Opportunity: **${opportunity.title}**${opportunity.description ? `\n\n${opportunity.description}` : ""}`,
     card: {
       kind: "insight-opportunity",
       title: opportunity.title,
@@ -151,24 +152,24 @@ export const IdeaFoundry = {
       });
       created += 1;
 
-      // Fikrin sohbetteki "sıfır noktası"nın ÖNCESİni yaz (Sinyal/Bulgu/
-      // İçgörü+Fırsat, kendi gerçek tarihleriyle) — idea mesajından ÖNCE,
-      // ki sohbet kronolojik sırayla açılsın. Best-effort.
+      // Write what came BEFORE the idea's "zero point" in the chat (Signal/
+      // Finding/Insight+Opportunity, with their own real timestamps) BEFORE
+      // the idea message, so the chat opens in chronological order. Best-effort.
       await postOriginLineage(scope, opportunity, createdIdea.id).catch(
         (error) => {
           console.error("[idea-foundry] postOriginLineage failed:", error);
         },
       );
 
-      // Bu fikrin sohbet iş parçacığının sıfır noktası: pipeline'ın ondan
-      // sonraki her adımı (konsey, iş planı, görev/kreatif) aynı ideaId
-      // altında bu mesajın devamı olarak birikir. Yazma başarısız olsa
-      // bile fikir oluşturma akışı durmamalı.
+      // This is the zero point of the idea's chat thread: every subsequent
+      // pipeline step (council, work plan, task/creative) accumulates under
+      // the same ideaId as a continuation of this message. Even if the
+      // write fails, the idea-creation flow must not stop.
       await IdeaChatRepository.postSystemMessage({
         workspaceId: scope.workspaceId,
         projectId: scope.projectId,
         ideaId: createdIdea.id,
-        text: `💡 Yeni fikir üretildi: **${idea.title}**\n\n${idea.description}`,
+        text: `💡 New idea generated: **${idea.title}**\n\n${idea.description}`,
         card: {
           kind: "idea",
           title: idea.title,

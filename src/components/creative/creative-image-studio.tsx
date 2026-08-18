@@ -12,10 +12,11 @@ import type { SocialPlatform } from "@prisma/client";
 
 type State = { ok: true } | { ok: false; message: string } | null;
 
-// Kreatif görselini yeniden üretmek veya mevcut görseli talimatla
-// düzenlemek için. İki mod aynı formu paylaşır; fark, gönderilen `mode`
-// alanı: "edit" mevcut görseli modele girdi olarak verir ve kompozisyonu
-// koruyarak değiştirir, "new" sıfırdan üretir.
+// For regenerating a creative's image or editing the existing image with
+// an instruction. Both modes share the same form; the difference is the
+// submitted `mode` field: "edit" feeds the existing image to the model as
+// input and modifies it while preserving composition, "new" generates
+// from scratch.
 export function CreativeImageStudio({
   creativeId,
   hasImage,
@@ -34,8 +35,8 @@ export function CreativeImageStudio({
       if (result.ok) {
         toast.success(
           form.get("mode") === "edit"
-            ? "Görsel talimata göre düzenlendi"
-            : "Yeni görsel üretildi",
+            ? "Image edited per instruction"
+            : "New image generated",
         );
         setInstruction("");
       } else {
@@ -58,7 +59,7 @@ export function CreativeImageStudio({
           <span className="flex size-7 items-center justify-center rounded-lg bg-accent">
             <Wand2 className="size-4" />
           </span>
-          <p className="text-sm font-medium">Görsel stüdyosu</p>
+          <p className="text-sm font-medium">Image studio</p>
         </div>
         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
           <Ratio className="size-3" />
@@ -73,8 +74,8 @@ export function CreativeImageStudio({
         rows={3}
         placeholder={
           hasImage
-            ? "Ne değişsin? Örnek: arka planı sadeleştir, ürünü büyüt, marka mavisini öne çıkar, üstteki yazıyı kaldır"
-            : "Nasıl bir görsel istiyorsunuz? Örnek: koyu zeminde premium ürün çekimi, yumuşak yan ışık, metin yok"
+            ? "What should change? Example: simplify the background, enlarge the product, bring out the brand blue, remove the text at the top"
+            : "What kind of image do you want? Example: premium product shot on a dark background, soft side lighting, no text"
         }
       />
 
@@ -87,7 +88,7 @@ export function CreativeImageStudio({
             disabled={!instruction.trim()}
           >
             <Wand2 className="size-4" />
-            Bu görseli düzenle
+            Edit this image
           </SubmitButton>
         ) : null}
 
@@ -97,17 +98,17 @@ export function CreativeImageStudio({
           ) : (
             <ImagePlus className="size-4" />
           )}
-          {hasImage ? "Sıfırdan yeniden üret" : "Görsel üret"}
+          {hasImage ? "Regenerate from scratch" : "Generate image"}
         </SubmitButton>
       </div>
 
       <p className="text-xs text-muted-foreground">
         {hasImage
-          ? "Düzenleme mevcut görseli temel alır ve kompozisyonu korur. Sıfırdan üretim açıklamayı ve kreatif metnini kullanır; açıklama boşsa yalnızca metinden üretir."
-          : "Açıklama boş bırakılırsa görsel, kreatifin başlık ve metninden üretilir."}
+          ? "Editing builds on the existing image and preserves the composition. Generating from scratch uses the description and the creative's copy; if the description is empty, it generates from the copy alone."
+          : "If the description is left empty, the image is generated from the creative's title and copy."}
       </p>
       <p className="text-xs text-muted-foreground">
-        Her üretim yeni bir sürüm oluşturur — eski görseller kaybolmaz.
+        Every generation creates a new version — older images are not lost.
       </p>
     </form>
   );

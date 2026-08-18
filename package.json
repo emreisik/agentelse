@@ -9,6 +9,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "postinstall": "prisma generate",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "dev:marketing": "npm run dev -w apps/marketing",

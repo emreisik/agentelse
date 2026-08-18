@@ -258,6 +258,32 @@
   animation: agentelse-live-dot 2s ease-in-out infinite;
 }
 
+/* Mobile integration-logo row: a continuous right-to-left drift instead of
+   discrete slot swaps. The track renders the logo pool twice back-to-back,
+   so animating exactly one half-width per loop is seamless — no jump, no
+   pause, constant speed. */
+@keyframes agentelse-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.agentelse-marquee-track {
+  animation: agentelse-marquee 24s linear infinite;
+}
+.agentelse-marquee-mask {
+  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 8%,
+    black 92%,
+    transparent
+  );
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agentelse-reveal {
     opacity: 1;
@@ -271,6 +297,9 @@
     animation: none;
   }
   .agentelse-live-dot {
+    animation: none;
+  }
+  .agentelse-marquee-track {
     animation: none;
   }
 }

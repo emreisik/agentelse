@@ -2,7 +2,6 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { appHref } from "@/lib/app-url";
 import { Reveal } from "@/components/marketing/reveal";
 import { IntegrationIcons } from "@/components/marketing/integration-icons";
 
@@ -11,16 +10,16 @@ export function Hero() {
     <header className="pt-16 pb-14 md:pt-20 md:pb-16">
       <div className="agentelse-container-wide flex flex-col items-center">
         <Reveal className="flex w-full flex-col items-center text-center">
-          <h1 className="agentelse-text-display mx-auto max-w-[20ch] text-balance">
-            <span className="block">Your growth department.</span>
-            <span className="block">Now autonomous.</span>
+          <h1 className="agentelse-text-display mx-auto max-w-[22ch] text-balance">
+            Your Autonomous Growth Department.
           </h1>
+          <p className="agentelse-text-lead mx-auto mt-6 max-w-[56ch] text-muted-foreground">
+            Agentelse researches your market, finds growth opportunities,
+            coordinates specialized AI agents, and turns ideas into action —
+            continuously.
+          </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-            <Button
-              className="h-11 px-6"
-              render={<Link href={appHref("/login?callbackUrl=/dashboard")} />}
-              nativeButton={false}
-            >
+            <Button className="h-11 px-6">
               Start with your first brand
               <ArrowUpRight />
             </Button>

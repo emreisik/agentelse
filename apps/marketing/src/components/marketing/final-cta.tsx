@@ -1,7 +1,6 @@
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
-import { appHref } from "@/lib/app-url";
 import { Reveal } from "@/components/marketing/reveal";
 import { Section } from "@/components/marketing/section";
 
@@ -16,13 +15,7 @@ export function FinalCta() {
           Start with one brand. Let Agentelse learn how your company grows.
         </p>
         <div className="flex flex-wrap gap-3">
-          <Button
-            className="h-11 px-6"
-            render={<Link href={appHref("/login?callbackUrl=/dashboard")} />}
-            nativeButton={false}
-          >
-            Start with your first brand
-          </Button>
+          <Button className="h-11 px-6">Start with your first brand</Button>
           <Button
             variant="outline"
             className="h-11 px-6"

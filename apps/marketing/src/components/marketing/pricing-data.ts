@@ -1,5 +1,3 @@
-import { appHref } from "@/lib/app-url";
-
 export type PricingTier = {
   id: "start" | "growth" | "scale" | "enterprise";
   name: string;
@@ -10,7 +8,9 @@ export type PricingTier = {
   usageUnitLabel?: string;
   highlighted?: boolean;
   badge?: string;
-  cta: { label: string; href: string };
+  // href: null renders a plain, non-navigating button (login/signup isn't
+  // wired up yet). Only "Contact sales" goes anywhere.
+  cta: { label: string; href: string | null };
 };
 
 // Single source of truth for tier copy — shared verbatim by the homepage's
@@ -31,7 +31,10 @@ export const PRICING_TIERS: PricingTier[] = [
       "GA4 + Search Console",
       "500 AI Operations",
     ],
-    cta: { label: "Start free", href: appHref("/login?callbackUrl=/dashboard") },
+    cta: {
+      label: "Start free",
+      href: null,
+    },
   },
   {
     id: "growth",
@@ -51,7 +54,10 @@ export const PRICING_TIERS: PricingTier[] = [
     ],
     highlighted: true,
     badge: "Most popular",
-    cta: { label: "Build your AI team", href: appHref("/login?callbackUrl=/dashboard") },
+    cta: {
+      label: "Build your AI team",
+      href: null,
+    },
   },
   {
     id: "scale",
@@ -69,7 +75,10 @@ export const PRICING_TIERS: PricingTier[] = [
       "10,000 AI Operations",
       "Priority execution",
     ],
-    cta: { label: "Start scaling", href: appHref("/login?callbackUrl=/dashboard") },
+    cta: {
+      label: "Start scaling",
+      href: null,
+    },
   },
   {
     id: "enterprise",

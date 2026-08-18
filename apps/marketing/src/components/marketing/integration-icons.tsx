@@ -62,41 +62,55 @@ export function IntegrationIcons({ className }: { className?: string }) {
   }, []);
 
   return (
-    <div
-      className={cn(
-        "mx-auto grid w-full max-w-4xl grid-cols-4 items-center justify-items-center gap-x-3 gap-y-10 sm:gap-x-6 xl:gap-x-10",
-        className,
-      )}
-    >
-      {slots.map((logoIndex, slot) => {
-        const logo = LOGO_POOL[logoIndex] ?? LOGO_POOL[0]!;
-        const { name, Icon, wordmark } = logo;
-        return (
-          <span
-            key={slot}
-            className="flex h-12 w-full min-w-0 items-center justify-center"
-          >
+    <div className={cn("w-full", className)}>
+      {/* Mobile: one continuous right-to-left marquee, evenly spaced, no
+          per-item jumps — the pool is duplicated once so the 0%→-50%
+          loop is seamless. */}
+      <div className="agentelse-marquee-mask overflow-hidden sm:hidden">
+        <div className="agentelse-marquee-track flex w-max items-center gap-10">
+          {[...LOGO_POOL, ...LOGO_POOL].map((logo, index) => (
+            <LogoMark key={`${logo.name}-${index}`} {...logo} />
+          ))}
+        </div>
+      </div>
+
+      {/* Tablet/desktop: fixed slots, one logo fades in at a time. */}
+      <div className="mx-auto hidden w-full max-w-4xl grid-cols-4 items-center justify-items-center gap-x-3 gap-y-10 sm:grid sm:gap-x-6 xl:gap-x-10">
+        {slots.map((logoIndex, slot) => {
+          const logo = LOGO_POOL[logoIndex] ?? LOGO_POOL[0]!;
+          return (
             <span
-              key={name}
-              className="animate-in fade-in slide-in-from-bottom-2 flex items-center justify-center gap-1.5 text-foreground duration-300 motion-reduce:animate-none sm:gap-2.5"
+              key={slot}
+              className="flex h-12 w-full min-w-0 items-center justify-center"
             >
-              <Icon
-                className={
-                  wordmark ? "h-6 w-auto sm:h-8" : "size-6 shrink-0 sm:size-8"
-                }
-                aria-hidden="true"
-              />
-              {wordmark ? (
-                <span className="sr-only">{name}</span>
-              ) : (
-                <span className="truncate text-sm font-semibold sm:text-base">
-                  {name}
-                </span>
-              )}
+              <span
+                key={logo.name}
+                className="animate-in fade-in slide-in-from-bottom-2 inline-flex duration-300 motion-reduce:animate-none"
+              >
+                <LogoMark {...logo} />
+              </span>
             </span>
-          </span>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
+  );
+}
+
+function LogoMark({ name, Icon, wordmark }: (typeof LOGO_POOL)[number]) {
+  return (
+    <span className="flex shrink-0 items-center justify-center gap-1.5 text-foreground sm:gap-2.5">
+      <Icon
+        className={wordmark ? "h-6 w-auto sm:h-8" : "size-6 shrink-0 sm:size-8"}
+        aria-hidden="true"
+      />
+      {wordmark ? (
+        <span className="sr-only">{name}</span>
+      ) : (
+        <span className="text-sm font-semibold whitespace-nowrap sm:text-base">
+          {name}
+        </span>
+      )}
+    </span>
   );
 }

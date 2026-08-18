@@ -31,7 +31,9 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${openAiSansFallback.variable} h-full antialiased`}
+      translate="no"
+      className={`${openAiSansFallback.variable} h-full antialiased notranslate`}
+      suppressHydrationWarning
     >
       <body className="flex min-h-full flex-col bg-background font-sans text-foreground">
         <MarketingNav />

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "buildCommand": "npm run build --workspace=@agentelse/marketing"
+  },
+  "deploy": {
+    "startCommand": "npm run start --workspace=@agentelse/marketing"
+  }
+}

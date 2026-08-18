@@ -7,7 +7,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export type CreateOpportunityInput = {
@@ -138,7 +138,7 @@ export const OpportunityRepository = {
       where: { id: opportunityId, projectId },
     });
     if (!opportunity)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `Opportunity ${opportunityId} not found in project ${projectId}`,
       );

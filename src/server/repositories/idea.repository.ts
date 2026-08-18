@@ -8,7 +8,7 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export type CreateIdeaInput = {
@@ -125,7 +125,7 @@ export const IdeaRepository = {
       where: { id: ideaId, projectId },
     });
     if (!idea)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `Idea ${ideaId} not found in project ${projectId}`,
       );

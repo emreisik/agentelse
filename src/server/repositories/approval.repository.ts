@@ -8,7 +8,7 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 import {
   sendApprovalRequestToTelegram,
@@ -77,7 +77,7 @@ export const ApprovalRepository = {
       where: { id, projectId },
     });
     if (!approval)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `Approval ${id} not found in project ${projectId}`,
       );
@@ -102,7 +102,7 @@ export const ApprovalRepository = {
       },
     });
     if (claim.count === 0) {
-      throw new HubConnectError(
+      throw new AgentelseError(
         "INVALID_STATE_TRANSITION",
         `Approval ${id} was already decided`,
       );

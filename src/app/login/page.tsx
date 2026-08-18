@@ -22,7 +22,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           <LogoBadge />
           <div className="leading-tight">
             <div className="font-heading text-lg font-semibold tracking-tight">
-              HubTeam.ai
+              Agentelse
             </div>
             <div className="text-xs text-primary-foreground/60">
               Your AI Growth Team
@@ -35,8 +35,8 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
             Ajansınızı büyüten yapay zeka ekibi.
           </h1>
           <p className="text-base text-pretty text-primary-foreground/70">
-            Kampanyalar, ekipler ve raporlama HubTeam.ai&apos;de tek çatı
-            altında birleşir.
+            Kampanyalar, ekipler ve raporlama Agentelse&apos;de tek çatı altında
+            birleşir.
           </p>
           <ul className="space-y-3 pt-2">
             {HIGHLIGHTS.map((item) => (
@@ -55,7 +55,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         </div>
 
         <p className="text-xs text-primary-foreground/40">
-          © {new Date().getFullYear()} HubTeam.ai
+          © {new Date().getFullYear()} Agentelse
         </p>
       </div>
 
@@ -65,7 +65,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           <div className="flex items-center gap-2">
             <LogoBadge />
             <span className="font-heading text-lg font-semibold tracking-tight">
-              HubTeam.ai
+              Agentelse
             </span>
           </div>
           <span className="text-xs text-muted-foreground">

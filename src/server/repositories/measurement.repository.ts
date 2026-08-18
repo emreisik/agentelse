@@ -3,7 +3,7 @@ import "server-only";
 import type { MeasurementCheckStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export type CreateMeasurementPlanInput = {
@@ -75,7 +75,7 @@ export const MeasurementRepository = {
       where: { id: checkId, projectId },
     });
     if (!check)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `MeasurementCheck ${checkId} not found in project ${projectId}`,
       );

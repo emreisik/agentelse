@@ -3,7 +3,7 @@ import "server-only";
 import { Prisma, type SignalCategory, type SignalStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export type CreateSignalInput = {
@@ -112,7 +112,7 @@ export const SignalRepository = {
       where: { id: signalId, projectId },
     });
     if (!signal)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `Signal ${signalId} not found in project ${projectId}`,
       );

@@ -229,7 +229,7 @@ export async function sendTelegramTestMessageAction(
     await telegramSendMessage(
       token,
       metadata.chatId,
-      "✅ Hub Connect test mesajı — bu entegrasyon çalışıyor.",
+      "✅ Agentelse test mesajı — bu entegrasyon çalışıyor.",
     );
 
     return { ok: true };

@@ -9,7 +9,7 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError, isHubConnectError } from "@/server/security/errors";
+import { AgentelseError, isAgentelseError } from "@/server/security/errors";
 import {
   requireBrowserProfileInProject,
   requireProjectAccess,
@@ -117,7 +117,7 @@ describeIntegration("tenant isolation (spec section 76)", () => {
       requireBrowserProfileInProject(browserProfileBId, projectAId),
     ).rejects.toSatisfy(
       (error: unknown) =>
-        isHubConnectError(error) && error.code === "BROWSER_PROFILE_MISMATCH",
+        isAgentelseError(error) && error.code === "BROWSER_PROFILE_MISMATCH",
     );
   });
 
@@ -139,13 +139,13 @@ describeIntegration("tenant isolation (spec section 76)", () => {
       requireProjectAccess(outsiderUserId, projectAId),
     ).rejects.toSatisfy(
       (error: unknown) =>
-        isHubConnectError(error) && error.code === "PERMISSION_DENIED",
+        isAgentelseError(error) && error.code === "PERMISSION_DENIED",
     );
   });
 
   it("rejects an unknown project id", async () => {
     await expect(
       requireProjectAccess(memberUserId, "nonexistent-project-id"),
-    ).rejects.toBeInstanceOf(HubConnectError);
+    ).rejects.toBeInstanceOf(AgentelseError);
   });
 });

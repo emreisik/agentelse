@@ -37,7 +37,7 @@ async function seedProject(
       workspaceId,
       projectId: project.id,
       brandId: brand.id,
-      summary: `[SEED DEMO] ${name} is a demo brand seeded for Hub Connect development.`,
+      summary: `[SEED DEMO] ${name} is a demo brand seeded for Agentelse development.`,
       positioning: `[SEED DEMO] ${name} positioning statement placeholder.`,
       toneOfVoice: "Confident, modern, concise.",
       approvedColors: ["#111111", "#F5F5F5"],
@@ -81,16 +81,16 @@ async function seedProject(
 }
 
 async function main() {
-  const passwordHash = await bcrypt.hash("hubconnect-dev", 10);
+  const passwordHash = await bcrypt.hash("agentelse-dev", 10);
 
   const workspace = await prisma.workspace.create({
-    data: { name: "Hub Connect", slug: "hub-connect" },
+    data: { name: "Agentelse", slug: "agentelse" },
   });
 
   const user = await prisma.user.create({
     data: {
-      name: "Hub Connect Admin",
-      email: "admin@hubconnect.dev",
+      name: "Agentelse Admin",
+      email: "admin@agentelse.dev",
       passwordHash,
     },
   });
@@ -182,7 +182,6 @@ async function main() {
     },
   });
 
-
   // Agency OS baseline for demo projects: autonomy policy + default
   // department modes so the continuous loop has a governed starting posture.
   for (const seeded of [biduniq, bitypay, blabla]) {
@@ -218,11 +217,12 @@ async function main() {
           projectId: seeded.project.id,
           brandId: seeded.brand.id,
           department,
-          mode: department.endsWith("INTELLIGENCE") ||
+          mode:
+            department.endsWith("INTELLIGENCE") ||
             department === "DATA_ANALYTICS" ||
             department === "BRAND_STRATEGY"
-            ? "EXECUTE"
-            : "PREPARE",
+              ? "EXECUTE"
+              : "PREPARE",
         },
         update: {},
       });
@@ -231,7 +231,7 @@ async function main() {
 
   console.log("Seed complete:");
   console.log(`  Workspace: ${workspace.name} (${workspace.id})`);
-  console.log(`  Admin login: admin@hubconnect.dev / hubconnect-dev`);
+  console.log(`  Admin login: admin@agentelse.dev / agentelse-dev`);
   console.log(
     `  Projects: Biduniq (${biduniq.project.id}), BityPay (${bitypay.project.id}), Blabla (${blabla.project.id})`,
   );

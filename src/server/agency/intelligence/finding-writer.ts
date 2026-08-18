@@ -7,7 +7,7 @@ import {
   FindingRepository,
   type CreateFindingInput,
 } from "@/server/repositories/finding.repository";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 
 export type FindingDraft = {
   sourceType: FindingSourceType;
@@ -58,7 +58,7 @@ export const FindingWriter = {
       const evidenceId = evidenceIds[index];
 
       if (draft.classification === "VERIFIED_FACT" && !evidenceId) {
-        throw new HubConnectError(
+        throw new AgentelseError(
           "INVALID_PROVIDER_RESULT",
           `VERIFIED_FACT finding without evidence: "${draft.statement.slice(0, 80)}"`,
         );

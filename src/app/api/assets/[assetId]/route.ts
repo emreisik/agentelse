@@ -8,7 +8,7 @@ import {
   requireUser,
   requireProjectAccess,
 } from "@/server/security/tenant-context";
-import { isHubConnectError } from "@/server/security/errors";
+import { isAgentelseError } from "@/server/security/errors";
 
 // Serves locally-generated/uploaded assets (creative images from
 // openclaw-image-client.ts, logo uploads/generations from
@@ -43,7 +43,7 @@ export async function GET(
   try {
     await requireProjectAccess(userId, asset.projectId);
   } catch (error) {
-    if (isHubConnectError(error)) {
+    if (isAgentelseError(error)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     throw error;

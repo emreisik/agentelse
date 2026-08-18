@@ -3,7 +3,7 @@ import "server-only";
 import type { ActorType, CommandSource, DepartmentKey } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import {
   CommandRepository,
   type CommandAttachment,
@@ -104,7 +104,7 @@ export const CommandService = {
       }
 
       if (!input.userId) {
-        throw new HubConnectError(
+        throw new AgentelseError(
           "PERMISSION_DENIED",
           "Approval decisions require an authenticated user",
         );
@@ -176,7 +176,7 @@ export const CommandService = {
         where: { projectId, isDefault: true },
       });
       if (!brand)
-        throw new HubConnectError(
+        throw new AgentelseError(
           "NOT_FOUND",
           `Project ${projectId} has no default brand`,
         );

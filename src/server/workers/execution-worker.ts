@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { isHubConnectError } from "@/server/security/errors";
+import { isAgentelseError } from "@/server/security/errors";
 import { ExecutionService } from "@/server/execution/execution-service";
 import {
   OutboxRepository,
@@ -136,7 +136,7 @@ export const ExecutionWorker = {
         await ExecutionService.pollOnce(job.id);
         polled += 1;
       } catch (error) {
-        if (!isHubConnectError(error)) throw error;
+        if (!isAgentelseError(error)) throw error;
         // Provider hiccup — leave the job RUNNING, the next tick retries.
       }
     }

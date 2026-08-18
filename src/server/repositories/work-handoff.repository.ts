@@ -3,7 +3,7 @@ import "server-only";
 import type { DepartmentKey, WorkHandoffStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export type CreateWorkHandoffInput = {
@@ -77,7 +77,7 @@ export const WorkHandoffRepository = {
       where: { id: handoffId, projectId },
     });
     if (!handoff)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `WorkHandoff ${handoffId} not found in project ${projectId}`,
       );

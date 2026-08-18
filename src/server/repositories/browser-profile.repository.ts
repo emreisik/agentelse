@@ -6,7 +6,7 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export const BrowserProfileRepository = {
@@ -32,7 +32,7 @@ export const BrowserProfileRepository = {
       where: { projectId, purpose },
     });
     if (!profile) {
-      throw new HubConnectError(
+      throw new AgentelseError(
         "BROWSER_PROFILE_MISMATCH",
         `No browser profile with purpose ${purpose} in project ${projectId}`,
       );
@@ -60,7 +60,7 @@ export const BrowserProfileRepository = {
       where: { id, projectId },
     });
     if (!profile)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `BrowserProfile ${id} not found in project ${projectId}`,
       );

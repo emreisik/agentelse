@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "HubTeam.ai",
+  title: "Agentelse",
   description: "Your AI Growth Team",
 };
 

@@ -7,7 +7,7 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export type CreateExecutionJobInput = {
@@ -128,7 +128,7 @@ export const ExecutionJobRepository = {
       where: { id, projectId },
     });
     if (!job)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `ExecutionJob ${id} not found in project ${projectId}`,
       );

@@ -1,4 +1,4 @@
-// Hub Connect — Prisma schema
+// Agentelse — Prisma schema
 // AI Digital Agency Operating System
 //
 // Tenant hierarchy: Workspace -> Project (brand/client, e.g. Biduniq) -> Brand

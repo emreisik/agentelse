@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   executionComplete: vi.fn(),
   executionStart: vi.fn(),
   humanExpiry: vi.fn(),
-  isHubConnectError: vi.fn(),
+  isAgentelseError: vi.fn(),
   markFailed: vi.fn(),
   markProcessed: vi.fn(),
   pollOnce: vi.fn(),
@@ -43,7 +43,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/server/security/errors", () => ({
-  isHubConnectError: mocks.isHubConnectError,
+  isAgentelseError: mocks.isAgentelseError,
 }));
 vi.mock("@/server/execution/execution-service", () => ({
   ExecutionService: {

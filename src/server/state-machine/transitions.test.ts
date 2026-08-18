@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { StateMachine } from "@/server/state-machine/transitions";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 
 describe("StateMachine — Task transitions", () => {
   it("allows the normal happy path", () => {
@@ -28,13 +28,13 @@ describe("StateMachine — Task transitions", () => {
   it("rejects COMPLETED -> RUNNING", () => {
     expect(() =>
       StateMachine.assertTaskTransition("COMPLETED", "RUNNING"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 
   it("rejects skipping straight from DRAFT to COMPLETED", () => {
     expect(() =>
       StateMachine.assertTaskTransition("DRAFT", "COMPLETED"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 
   it("is a no-op for identical from/to", () => {
@@ -66,10 +66,10 @@ describe("StateMachine — ExecutionJob transitions", () => {
   it("rejects COMPLETED -> anything", () => {
     expect(() =>
       StateMachine.assertExecutionJobTransition("COMPLETED", "RUNNING"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
     expect(() =>
       StateMachine.assertExecutionJobTransition("COMPLETED", "FAILED"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 
   it("allows FAILED -> QUEUED (manual retry)", () => {
@@ -95,7 +95,7 @@ describe("StateMachine — Approval transitions", () => {
   it("rejects re-deciding an already-approved approval", () => {
     expect(() =>
       StateMachine.assertApprovalTransition("APPROVED", "REJECTED"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 });
 
@@ -115,7 +115,7 @@ describe("StateMachine — Creative transitions", () => {
   it("rejects publishing a rejected creative directly", () => {
     expect(() =>
       StateMachine.assertCreativeTransition("REJECTED", "PUBLISHED"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 });
 
@@ -150,13 +150,13 @@ describe("StateMachine — Project transitions (setup wizard)", () => {
   it("rejects skipping straight from CREATED to ACTIVE", () => {
     expect(() =>
       StateMachine.assertProjectTransition("CREATED", "ACTIVE"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 
   it("rejects re-activating a closed project", () => {
     expect(() =>
       StateMachine.assertProjectTransition("CLOSED", "ACTIVE"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 });
 
@@ -192,7 +192,7 @@ describe("StateMachine — SetupStageRecord transitions", () => {
   it("rejects reopening a COMPLETED stage", () => {
     expect(() =>
       StateMachine.assertSetupStageTransition("COMPLETED", "RUNNING"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 });
 
@@ -215,7 +215,7 @@ describe("StateMachine — Signal transitions", () => {
   it("rejects resurrecting a DISCARDED signal", () => {
     expect(() =>
       StateMachine.assertSignalTransition("DISCARDED", "SCORED"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 });
 
@@ -244,7 +244,7 @@ describe("StateMachine — Opportunity transitions", () => {
   it("rejects converting a DISMISSED opportunity", () => {
     expect(() =>
       StateMachine.assertOpportunityTransition("DISMISSED", "CONVERTED_TO_TASK"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 });
 
@@ -276,14 +276,14 @@ describe("StateMachine — Idea lifecycle", () => {
 
   it("rejects skipping from RAW straight to APPROVED", () => {
     expect(() => StateMachine.assertIdeaTransition("RAW", "APPROVED")).toThrow(
-      HubConnectError,
+      AgentelseError,
     );
   });
 
   it("rejects reviving a REJECTED idea", () => {
     expect(() =>
       StateMachine.assertIdeaTransition("REJECTED", "RAW"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 });
 
@@ -318,7 +318,7 @@ describe("StateMachine — WorkPlan / WorkHandoff transitions", () => {
   it("rejects creating a task from a REJECTED handoff", () => {
     expect(() =>
       StateMachine.assertWorkHandoffTransition("REJECTED", "TASK_CREATED"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 });
 
@@ -365,6 +365,6 @@ describe("StateMachine — ProjectGoal / MeasurementCheck / AgencyTrigger", () =
   it("rejects reprocessing a PROCESSED trigger", () => {
     expect(() =>
       StateMachine.assertAgencyTriggerTransition("PROCESSED", "PROCESSING"),
-    ).toThrow(HubConnectError);
+    ).toThrow(AgentelseError);
   });
 });

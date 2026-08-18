@@ -7,7 +7,7 @@ import { goalGenerationDef } from "@/server/reasoning/prompts/goal-generation";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { BaselineAuditRepository } from "@/server/repositories/baseline-audit.repository";
 import { ProjectGoalRepository } from "@/server/repositories/project-goal.repository";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 
 export type GenerateGoalsInput = {
   workspaceId: string;
@@ -79,7 +79,7 @@ export const GoalEngine = {
   // ilişkili olmalıdır").
   assertGoalsLinked(goalIds: string[], context: string): void {
     if (goalIds.length === 0) {
-      throw new HubConnectError(
+      throw new AgentelseError(
         "PERMISSION_DENIED",
         `Autonomous work must link at least one ProjectGoal (${context})`,
       );

@@ -1,5 +1,4 @@
-import Image from "next/image";
-
+import { AgentelseMark } from "@/components/shared/agentelse-mark";
 import { cn } from "@/lib/utils";
 
 const SIZE_CLASSES = {
@@ -7,9 +6,10 @@ const SIZE_CLASSES = {
   md: "size-9 rounded-xl p-1.5",
 } as const;
 
-// Gerçek marka amblemi (public/logo.png — beyaz zeminli, lacivert H düğümü)
-// için tek render noktası: her zaman beyaz bir rozet içinde, hem koyu hem
-// açık temada aynı görünür (login sayfası + sidebar header burayı kullanır).
+// Agentelse marka amblemi için tek render noktası: her zaman beyaz bir
+// rozet içinde, hem koyu hem açık temada aynı görünür (login sayfası +
+// sidebar header burayı kullanır) — rozet sabit beyaz olduğu için amblem
+// rengi de tema token'ı yerine sabit ink tonuna sabitleniyor.
 export function LogoBadge({
   size = "md",
   className,
@@ -25,13 +25,7 @@ export function LogoBadge({
         className,
       )}
     >
-      <Image
-        src="/logo.png"
-        alt="HubTeam.ai"
-        width={64}
-        height={64}
-        className="h-full w-full object-contain"
-      />
+      <AgentelseMark className="h-full w-full text-[#0d0d0d]" />
     </span>
   );
 }

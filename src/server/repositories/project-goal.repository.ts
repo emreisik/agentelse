@@ -3,7 +3,7 @@ import "server-only";
 import type { ActorType, ProjectGoalStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export type CreateGoalInput = {
@@ -68,7 +68,7 @@ export const ProjectGoalRepository = {
       where: { id: goalId, projectId },
     });
     if (!goal)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `ProjectGoal ${goalId} not found in project ${projectId}`,
       );

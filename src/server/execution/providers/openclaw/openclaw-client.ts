@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { getEnv, isIntegrationConfigured } from "@/lib/env";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import {
   openClawAgentListSchema,
   openClawRawAgentResponseSchema,
@@ -122,7 +122,7 @@ export class OpenClawClient {
   ): Promise<OpenClawAgentResult> {
     const env = getEnv();
     if (!env.OPENCLAW_CLI_PATH) {
-      throw new HubConnectError(
+      throw new AgentelseError(
         "PROVIDER_UNAVAILABLE",
         "OPENCLAW_CLI_PATH is not configured",
       );
@@ -154,14 +154,14 @@ export class OpenClawClient {
       });
       const result = tryParseAgentResult(stdout);
       if (!result) {
-        throw new HubConnectError(
+        throw new AgentelseError(
           "INVALID_PROVIDER_RESULT",
           "openclaw agent --json did not return the confirmed schema",
         );
       }
       return result;
     } catch (error) {
-      if (error instanceof HubConnectError) throw error;
+      if (error instanceof AgentelseError) throw error;
 
       // execFile rejects on non-zero exit / timeout. In practice a
       // pre-flight failure (missing model auth, gateway unreachable) never

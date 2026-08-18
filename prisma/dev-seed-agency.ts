@@ -11,8 +11,8 @@
 // durumda .env'deki gerçek ayarlar mock'u eziyor ve script canlı Anthropic
 // API'sine gidiyor.
 process.loadEnvFile(".env");
-process.env.HUBCONNECT_REASONING_MODE = "mock";
-process.env.HUBCONNECT_PROVIDER_MODE = "mock";
+process.env.AGENTELSE_REASONING_MODE = "mock";
+process.env.AGENTELSE_PROVIDER_MODE = "mock";
 
 // "server-only" throws outside Next's bundler — pre-populate the CJS require
 // cache with an empty module so app imports load under tsx (same effect as

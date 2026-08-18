@@ -12,21 +12,21 @@ import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
 import { ReasoningCallRepository } from "@/server/repositories/reasoning-call.repository";
 import { estimateReasoningCostUsd } from "@/server/reasoning/gemini-pricing";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 
 import type { ReasoningDef, ReasoningInput, ReasoningResult } from "./types";
 
 type ReasoningMode = "mock" | "auto";
 
 function resolveMode(): ReasoningMode {
-  const raw = process.env.HUBCONNECT_REASONING_MODE;
+  const raw = process.env.AGENTELSE_REASONING_MODE;
   if (raw === "mock") return raw;
   return "auto";
 }
 
 function shouldMock(): boolean {
   // Varsayılan daima gerçek: mock yalnızca açıkça istendiğinde devreye girer
-  // (testler ve seed script'leri HUBCONNECT_REASONING_MODE=mock ayarlar).
+  // (testler ve seed script'leri AGENTELSE_REASONING_MODE=mock ayarlar).
   // API anahtarı yoksa sessizce mock'a düşmek yerine çağrı açıkça hata verir.
   return resolveMode() === "mock";
 }
@@ -99,7 +99,7 @@ export const ReasoningService = {
         output = def.schema.parse(def.buildMock(input.context));
       } else {
         if (!isGeminiConfigured()) {
-          throw new HubConnectError(
+          throw new AgentelseError(
             "PROVIDER_UNAVAILABLE",
             `Reasoning ${def.purpose}: GEMINI_API_KEY is not configured`,
           );
@@ -170,7 +170,7 @@ export const ReasoningService = {
       return { output, isMock: mock, reasoningCallId: call.id };
     } catch (error) {
       if (
-        error instanceof HubConnectError &&
+        error instanceof AgentelseError &&
         error.code === "BUDGET_EXCEEDED"
       ) {
         throw error;

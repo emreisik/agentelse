@@ -4,8 +4,8 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
-process.env.HUBCONNECT_REASONING_MODE = "mock";
-process.env.HUBCONNECT_PROVIDER_MODE = "mock";
+process.env.AGENTELSE_REASONING_MODE = "mock";
+process.env.AGENTELSE_PROVIDER_MODE = "mock";
 
 import { prisma } from "@/lib/prisma";
 import {

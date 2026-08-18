@@ -63,7 +63,7 @@ function localeInstruction(brandContext: unknown): string {
 
 function buildSystemPrompt(brandContext: unknown): string {
   return [
-    "You are Hub Connect's creative engine for a digital agency.",
+    "You are Agentelse's creative engine for a digital agency.",
     "Given a creative brief and brand context, produce: `caption` (short social caption), `copy` (longer supporting marketing copy), and `imagePrompt` (a concrete, literal visual description for an image generator — subject, composition, style, colours; no text overlays, no brand logos).",
     "Respect any negativeBrief/approvedClaims entries in the brand context as hard constraints — never violate them.",
     localeInstruction(brandContext),

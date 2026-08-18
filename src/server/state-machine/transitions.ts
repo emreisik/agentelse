@@ -18,7 +18,7 @@ import type {
   WorkPlanStatus,
 } from "@prisma/client";
 
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 
 // Centralized transition tables. Every status mutation in the codebase must
 // go through assertTransition() below instead of writing `status: X`
@@ -290,7 +290,7 @@ function assertTransition<T extends string>(
   if (from === to) return;
   const allowed = table[from] ?? [];
   if (!allowed.includes(to)) {
-    throw new HubConnectError(
+    throw new AgentelseError(
       "INVALID_STATE_TRANSITION",
       `${entity}: invalid transition ${from} -> ${to}`,
     );

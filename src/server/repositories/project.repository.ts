@@ -3,7 +3,7 @@ import "server-only";
 import type { ProjectStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export const ProjectRepository = {
@@ -65,7 +65,7 @@ export const ProjectRepository = {
       where: { id, workspaceId },
     });
     if (!project)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `Project ${id} not found in workspace ${workspaceId}`,
       );

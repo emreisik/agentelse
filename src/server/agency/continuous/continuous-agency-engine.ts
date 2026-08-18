@@ -4,7 +4,7 @@ import { ResultMaterializer } from "@/server/agency/intelligence/research-result
 import { ProjectSetupOrchestrator } from "@/server/agency/setup/project-setup-orchestrator";
 import { AgencyTriggerRepository } from "@/server/repositories/agency-trigger.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
-import { isHubConnectError } from "@/server/security/errors";
+import { isAgentelseError } from "@/server/security/errors";
 
 // The Agency OS main loop (spec section 33). NOT recursion — a DB-polled
 // pipeline where every sub-step reads rows the prior step produced, runs
@@ -78,7 +78,7 @@ export const ContinuousAgencyEngine = {
         // BUDGET_EXCEEDED is the cap system working as intended — skip
         // quietly; anything else gets an audit trail entry but never
         // interrupts the remaining steps or the execution worker.
-        if (isHubConnectError(error) && error.code === "BUDGET_EXCEEDED") {
+        if (isAgentelseError(error) && error.code === "BUDGET_EXCEEDED") {
           continue;
         }
         try {

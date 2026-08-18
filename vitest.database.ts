@@ -1,5 +1,5 @@
 const DISABLED_DATABASE_URL =
-  "postgresql://hubconnect_test_disabled:disabled@127.0.0.1:1/hubconnect_test_disabled";
+  "postgresql://agentelse_test_disabled:disabled@127.0.0.1:1/agentelse_test_disabled";
 
 const TEST_MARKER = /(^|[^a-z0-9])test(?:s|ing)?([^a-z0-9]|$)/i;
 
@@ -63,14 +63,14 @@ export function configureTestDatabase(
   const testDatabaseUrl = environment.TEST_DATABASE_URL?.trim();
   const testDirectUrl = environment.TEST_DIRECT_URL?.trim();
 
-  environment.HUBCONNECT_INTEGRATION_TESTS_ENABLED = "0";
+  environment.AGENTELSE_INTEGRATION_TESTS_ENABLED = "0";
   environment.DATABASE_URL = DISABLED_DATABASE_URL;
   delete environment.DIRECT_URL;
 
   if (!testDatabaseUrl) {
-    if (environment.HUBCONNECT_REQUIRE_TEST_DATABASE === "1") {
+    if (environment.AGENTELSE_REQUIRE_TEST_DATABASE === "1") {
       throw new Error(
-        "TEST_DATABASE_URL is required when HUBCONNECT_REQUIRE_TEST_DATABASE=1.",
+        "TEST_DATABASE_URL is required when AGENTELSE_REQUIRE_TEST_DATABASE=1.",
       );
     }
     return { enabled: false, reason: "TEST_DATABASE_URL is not configured" };
@@ -101,19 +101,19 @@ export function configureTestDatabase(
       );
     }
     if (
-      environment.HUBCONNECT_ALLOW_UNMARKED_TEST_DATABASE !== "1" &&
+      environment.AGENTELSE_ALLOW_UNMARKED_TEST_DATABASE !== "1" &&
       !hasTestMarker(target.parsed)
     ) {
       throw new Error(
         `${target.name} must contain "test" in its host, database name, or schema. ` +
-          "Set HUBCONNECT_ALLOW_UNMARKED_TEST_DATABASE=1 only for an intentionally isolated target.",
+          "Set AGENTELSE_ALLOW_UNMARKED_TEST_DATABASE=1 only for an intentionally isolated target.",
       );
     }
   }
 
   environment.DATABASE_URL = testDatabaseUrl;
   environment.DIRECT_URL = testDirectUrl || testDatabaseUrl;
-  environment.HUBCONNECT_INTEGRATION_TESTS_ENABLED = "1";
+  environment.AGENTELSE_INTEGRATION_TESTS_ENABLED = "1";
 
   return { enabled: true };
 }

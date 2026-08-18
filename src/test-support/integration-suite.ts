@@ -4,5 +4,5 @@ import { describe } from "vitest";
 // validated TEST_DATABASE_URL is present. Skipping at the suite boundary also
 // guarantees beforeAll/afterAll hooks cannot touch Prisma in that state.
 export const describeIntegration = describe.skipIf(
-  process.env.HUBCONNECT_INTEGRATION_TESTS_ENABLED !== "1",
+  process.env.AGENTELSE_INTEGRATION_TESTS_ENABLED !== "1",
 );

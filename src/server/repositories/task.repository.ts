@@ -12,7 +12,7 @@ import { prisma } from "@/lib/prisma";
 import { AgencyTriggerRepository } from "@/server/repositories/agency-trigger.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 import { notifyProjectTelegram } from "@/server/notifications/project-telegram-notifier";
 import { extractResultText } from "@/lib/execution-result-text";
@@ -228,7 +228,7 @@ export const TaskRepository = {
       where: { id: taskId, projectId },
     });
     if (!task)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `Task ${taskId} not found in project ${projectId}`,
       );
@@ -305,7 +305,7 @@ export const TaskRepository = {
       where: { id: taskId, projectId },
     });
     if (!task) {
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `Task ${taskId} not found in project ${projectId}`,
       );

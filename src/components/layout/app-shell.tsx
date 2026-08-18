@@ -251,7 +251,7 @@ export async function AppShell({
           <LogoBadge size="sm" />
           <div className="min-w-0">
             <div className="font-heading text-sm font-semibold tracking-tight text-sidebar-foreground">
-              HubTeam.ai
+              Agentelse
             </div>
             <div className="truncate text-xs text-muted-foreground">
               {workspace?.name ?? "—"}

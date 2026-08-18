@@ -34,10 +34,10 @@ class ProviderRegistryImpl {
   ];
 
   all(): readonly ExecutionProvider[] {
-    // HUBCONNECT_PROVIDER_MODE=mock forces the mock fleet regardless of
+    // AGENTELSE_PROVIDER_MODE=mock forces the mock fleet regardless of
     // which real providers are configured — integration tests run against
     // the full pipeline without spending real API/OpenClaw calls.
-    if (process.env.HUBCONNECT_PROVIDER_MODE === "mock") {
+    if (process.env.AGENTELSE_PROVIDER_MODE === "mock") {
       return this.providers.filter((provider) =>
         provider.key.startsWith("mock-"),
       );

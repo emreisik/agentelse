@@ -6,7 +6,7 @@ import type { CapabilityKey, RiskLevel } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { capabilityLabel, PLATFORM_LABEL } from "@/lib/labels";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 import { CapabilityRouter } from "@/server/execution/capability-router";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
@@ -231,7 +231,7 @@ export const ExecutionService = {
 
     const provider = ProviderRegistry.getByKey(job.providerId);
     if (!provider) {
-      throw new HubConnectError(
+      throw new AgentelseError(
         "PROVIDER_UNAVAILABLE",
         `Provider ${job.providerId} is no longer registered`,
       );

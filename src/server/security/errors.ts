@@ -24,7 +24,7 @@ export const ERROR_CODES = [
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
-export class HubConnectError extends Error {
+export class AgentelseError extends Error {
   readonly code: ErrorCode;
   readonly retryable: boolean;
 
@@ -34,12 +34,12 @@ export class HubConnectError extends Error {
     options?: { retryable?: boolean },
   ) {
     super(message);
-    this.name = "HubConnectError";
+    this.name = "AgentelseError";
     this.code = code;
     this.retryable = options?.retryable ?? false;
   }
 }
 
-export function isHubConnectError(error: unknown): error is HubConnectError {
-  return error instanceof HubConnectError;
+export function isAgentelseError(error: unknown): error is AgentelseError {
+  return error instanceof AgentelseError;
 }

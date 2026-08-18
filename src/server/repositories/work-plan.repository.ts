@@ -3,7 +3,7 @@ import "server-only";
 import type { WorkPlanStatus, WorkPlanType } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export type CreateWorkPlanInput = {
@@ -75,7 +75,7 @@ export const WorkPlanRepository = {
       where: { id: workPlanId, projectId },
     });
     if (!plan)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `WorkPlan ${workPlanId} not found in project ${projectId}`,
       );

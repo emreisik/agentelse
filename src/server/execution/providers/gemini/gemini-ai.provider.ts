@@ -59,7 +59,7 @@ function buildSystemPrompt(
   brandContext: unknown,
 ): string {
   return [
-    `You are Hub Connect's AI execution engine handling the ${capability} capability for a digital agency managing multiple client brands.`,
+    `You are Agentelse's AI execution engine handling the ${capability} capability for a digital agency managing multiple client brands.`,
     `Respond with the production-ready deliverable only — no meta commentary about what you are doing, no "Here is..." preamble.`,
     localeInstruction(brandContext),
     `Brand context for this request (JSON, may be partial — treat any negativeBrief/approvedClaims entries as hard constraints):`,

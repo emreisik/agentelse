@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 
 export type AuthenticatedUser = {
   userId: string;
@@ -17,7 +17,7 @@ export type AuthenticatedUser = {
 export async function requireUser(): Promise<AuthenticatedUser> {
   const session = await auth();
   if (!session?.user?.id) {
-    throw new HubConnectError("LOGIN_REQUIRED", "Authentication required");
+    throw new AgentelseError("LOGIN_REQUIRED", "Authentication required");
   }
   return { userId: session.user.id, email: session.user.email ?? null };
 }
@@ -57,7 +57,7 @@ export async function requireProjectAccess(
   });
 
   if (!project) {
-    throw new HubConnectError("NOT_FOUND", `Project ${projectId} not found`);
+    throw new AgentelseError("NOT_FOUND", `Project ${projectId} not found`);
   }
 
   const membership = await prisma.workspaceMember.findUnique({
@@ -66,7 +66,7 @@ export async function requireProjectAccess(
   });
 
   if (!membership) {
-    throw new HubConnectError(
+    throw new AgentelseError(
       "PERMISSION_DENIED",
       `User ${userId} has no access to workspace ${project.workspaceId}`,
     );
@@ -74,7 +74,7 @@ export async function requireProjectAccess(
 
   const defaultBrandId = project.brands[0]?.id;
   if (!defaultBrandId) {
-    throw new HubConnectError(
+    throw new AgentelseError(
       "NOT_FOUND",
       `Project ${projectId} has no default brand`,
     );
@@ -101,7 +101,7 @@ export async function requireBrandInProject(
   });
 
   if (!brand || brand.projectId !== projectId) {
-    throw new HubConnectError(
+    throw new AgentelseError(
       "PROJECT_MISMATCH",
       `Brand ${brandId} does not belong to project ${projectId}`,
     );
@@ -121,7 +121,7 @@ export async function requireBrowserProfileInProject(
   });
 
   if (!profile || profile.projectId !== projectId) {
-    throw new HubConnectError(
+    throw new AgentelseError(
       "BROWSER_PROFILE_MISMATCH",
       `Browser profile ${browserProfileId} does not belong to project ${projectId}`,
     );

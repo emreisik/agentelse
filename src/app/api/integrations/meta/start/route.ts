@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { isIntegrationConfigured } from "@/lib/env";
 import { buildMetaAuthorizeUrl } from "@/server/integrations/meta-client";
 import { signOAuthState } from "@/server/security/oauth-state";
-import { isHubConnectError } from "@/server/security/errors";
+import { isAgentelseError } from "@/server/security/errors";
 import {
   requireProjectAccess,
   requireUser,
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
   try {
     await requireProjectAccess(userId, projectId);
   } catch (error) {
-    if (isHubConnectError(error)) {
+    if (isAgentelseError(error)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     throw error;

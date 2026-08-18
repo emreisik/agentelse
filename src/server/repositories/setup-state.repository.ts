@@ -3,7 +3,7 @@ import "server-only";
 import type { SetupStage, SetupStageStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export const SETUP_STAGE_ORDER: SetupStage[] = [
@@ -104,7 +104,7 @@ export const SetupStateRepository = {
       where: { projectId_stage: { projectId, stage } },
     });
     if (!record)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `Setup stage ${stage} not found for project ${projectId}`,
       );

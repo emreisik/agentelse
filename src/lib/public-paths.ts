@@ -10,8 +10,7 @@ export function isPublicPath(pathname: string): boolean {
     // kendi 401'ini döner, burada hariç tutulması güvenliği gevşetmiyor.
     pathname.startsWith("/api/public/assets/") ||
     pathname === "/api/debug/headers" ||
-    pathname === "/icon.png" ||
-    pathname === "/apple-icon.png" ||
-    pathname === "/logo.png"
+    pathname === "/icon" ||
+    pathname === "/apple-icon"
   );
 }

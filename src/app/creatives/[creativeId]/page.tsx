@@ -6,7 +6,7 @@ import {
   requireUser,
   requireProjectAccess,
 } from "@/server/security/tenant-context";
-import { isHubConnectError } from "@/server/security/errors";
+import { isAgentelseError } from "@/server/security/errors";
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionForm } from "@/components/shared/action-form";
 import { CreativeImageStudio } from "@/components/creative/creative-image-studio";
@@ -40,7 +40,7 @@ export default async function CreativeDetailPage({
     await requireProjectAccess(userId, creative.projectId);
   } catch (error) {
     if (
-      isHubConnectError(error) &&
+      isAgentelseError(error) &&
       (error.code === "NOT_FOUND" || error.code === "PERMISSION_DENIED")
     ) {
       notFound();

@@ -1,6 +1,6 @@
-# HubTeam.ai
+# Agentelse
 
-**Your AI Growth Team.** HubTeam.ai, birden fazla marka için araştırma, planlama, onay, yürütme, doğrulama ve öğrenme akışlarını tek yerde yöneten çok kiracılı bir **AI ajans işletim sistemidir**. Kod tabanı mikroservis değil; sınırları belirgin bir **modüler monolit** olarak kurulmuştur.
+**Your AI Growth Team.** Agentelse, birden fazla marka için araştırma, planlama, onay, yürütme, doğrulama ve öğrenme akışlarını tek yerde yöneten çok kiracılı bir **AI ajans işletim sistemidir**. Kod tabanı mikroservis değil; sınırları belirgin bir **modüler monolit** olarak kurulmuştur.
 
 ## Workspace yapısı
 
@@ -114,7 +114,7 @@ npm run dev
 Uygulama `http://localhost:3000` adresinde açılır. Demo seed giriş bilgileri:
 
 ```text
-admin@hubconnect.dev / hubconnect-dev
+admin@agentelse.dev / agentelse-dev
 ```
 
 Neon kullanılıyorsa `DATABASE_URL` pooled, `DIRECT_URL` ise doğrudan bağlantı URL'si olmalıdır. Yerel PostgreSQL'de iki değer aynı olabilir.
@@ -125,10 +125,10 @@ Execution provider'ları ile Agency OS iç reasoning çağrıları ayrı katmanl
 
 - `OPENCLAW_CLI_PATH` ayarlıysa OpenClaw provider gerçek `openclaw` CLI süreci üzerinden çalışır. HTTP tabanlı `OPENCLAW_BASE_URL` entegrasyonu yoktur.
 - `GEMINI_API_KEY`, metin/analiz ve yaratıcı metin execution provider'larını etkinleştirir.
-- `HUBCONNECT_PROVIDER_MODE=mock`, yalnızca geliştirme ve test için mock provider filosunu zorlar.
+- `AGENTELSE_PROVIDER_MODE=mock`, yalnızca geliştirme ve test için mock provider filosunu zorlar.
 - Provider modu `mock` değilse registry yalnız gerçek provider'ları değerlendirir. Yapılandırılmış gerçek provider yoksa iş açıkça `PROVIDER_UNAVAILABLE` ile başarısız olur; sessiz mock fallback yapılmaz.
-- `HUBCONNECT_REASONING_MODE=auto` varsayılanında (tek gerçek arka uç) Gemini kullanılır.
-- `HUBCONNECT_REASONING_MODE=mock`, test ve seed senaryoları için deterministik reasoning üretir.
+- `AGENTELSE_REASONING_MODE=auto` varsayılanında (tek gerçek arka uç) Gemini kullanılır.
+- `AGENTELSE_REASONING_MODE=mock`, test ve seed senaryoları için deterministik reasoning üretir.
 
 OpenClaw iki farklı biçimde kullanılır:
 
@@ -193,13 +193,13 @@ Entegrasyon testlerinde geliştirme veritabanı kullanılmamalıdır. `TEST_DATA
 Örnek yerel akış:
 
 ```bash
-createdb hubconnect_test
+createdb agentelse_test
 
-DATABASE_URL='postgresql://localhost:5432/hubconnect_test?schema=public' \
-DIRECT_URL='postgresql://localhost:5432/hubconnect_test?schema=public' \
+DATABASE_URL='postgresql://localhost:5432/agentelse_test?schema=public' \
+DIRECT_URL='postgresql://localhost:5432/agentelse_test?schema=public' \
 npx prisma migrate deploy
 
-TEST_DATABASE_URL='postgresql://localhost:5432/hubconnect_test?schema=public' \
+TEST_DATABASE_URL='postgresql://localhost:5432/agentelse_test?schema=public' \
 npm test
 ```
 

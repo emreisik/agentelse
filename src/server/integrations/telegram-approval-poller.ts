@@ -11,7 +11,7 @@ import {
 } from "@/server/integrations/telegram-client";
 import { applyApprovalDecision } from "@/server/commands/approval-decisions";
 import { publishCreativeCore } from "@/server/commands/publish-creative";
-import { isHubConnectError } from "@/server/security/errors";
+import { isAgentelseError } from "@/server/security/errors";
 
 type TelegramCredentialMetadata = {
   chatId?: string;
@@ -122,7 +122,7 @@ async function processCredential(
         text: action === "approve" ? "✅ Onaylandı" : "❌ Reddedildi",
       }).catch(() => {});
     } catch (error) {
-      const message = isHubConnectError(error)
+      const message = isAgentelseError(error)
         ? "Bu onay artık karara bağlanamıyor (muhtemelen zaten karar verilmiş)"
         : "İşlem başarısız oldu";
       await telegramAnswerCallbackQuery(token, cq.id, {

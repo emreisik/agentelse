@@ -7,7 +7,7 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 import { notifyProjectTelegram } from "@/server/notifications/project-telegram-notifier";
 
@@ -81,7 +81,7 @@ export const HumanInterventionRepository = {
       where: { id, projectId },
     });
     if (!request)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `HumanInterventionRequest ${id} not found in project ${projectId}`,
       );
@@ -99,7 +99,7 @@ export const HumanInterventionRepository = {
       where: { id, projectId },
     });
     if (!request)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `HumanInterventionRequest ${id} not found in project ${projectId}`,
       );

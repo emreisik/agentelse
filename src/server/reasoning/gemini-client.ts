@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getEnv } from "@/lib/env";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 
 // Google Gemini REST istemcisi — ReasoningService'in yapılandırılmış çıktı
 // çağrıları için. SDK bağımlılığı yok: generateContent REST ucu +
@@ -73,7 +73,7 @@ export async function runGeminiText(input: {
     .join("")
     .trim();
   if (!text) {
-    throw new HubConnectError(
+    throw new AgentelseError(
       "INVALID_PROVIDER_RESULT",
       `Gemini returned no text (finishReason: ${candidate?.finishReason ?? "yok"})`,
     );
@@ -111,7 +111,7 @@ async function callGemini(input: {
 }): Promise<GeminiResponse> {
   const env = getEnv();
   if (!env.GEMINI_API_KEY) {
-    throw new HubConnectError(
+    throw new AgentelseError(
       "PROVIDER_UNAVAILABLE",
       "GEMINI_API_KEY is not configured",
     );
@@ -149,7 +149,7 @@ async function callGemini(input: {
 
   const payload = (await response.json()) as GeminiResponse;
   if (!response.ok) {
-    throw new HubConnectError(
+    throw new AgentelseError(
       "INVALID_PROVIDER_RESULT",
       `Gemini ${response.status}: ${payload.error?.message ?? "unknown error"}`,
     );
@@ -182,7 +182,7 @@ export async function runGeminiStructured(input: {
     .map((part) => part.text ?? "")
     .join("");
   if (!text) {
-    throw new HubConnectError(
+    throw new AgentelseError(
       "INVALID_PROVIDER_RESULT",
       `Gemini returned no text (finishReason: ${candidate?.finishReason ?? "yok"})`,
     );
@@ -195,7 +195,7 @@ export async function runGeminiStructured(input: {
     // finishReason'ı mesaja koy: MAX_TOKENS ise sorun modelin biçimi değil,
     // yanıtın ortadan kesilmesidir ve çözümü prompt'un maxTokens'ını
     // artırmaktır. İkisi ayırt edilemeyince yanlış yerde aranıyordu.
-    throw new HubConnectError(
+    throw new AgentelseError(
       "INVALID_PROVIDER_RESULT",
       `Gemini returned non-JSON output despite responseMimeType (finishReason: ${
         candidate?.finishReason ?? "yok"

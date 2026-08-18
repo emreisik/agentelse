@@ -2,7 +2,7 @@ import "server-only";
 
 import type { BrowserProfilePurpose, CapabilityKey } from "@prisma/client";
 
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { BrowserProfileRepository } from "@/server/repositories/browser-profile.repository";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
 import { ProviderRegistry } from "@/server/execution/provider-registry";
@@ -34,7 +34,7 @@ export const CapabilityRouter = {
       const platform = (payload as Record<string, unknown> | undefined)
         ?.platform;
       if (typeof platform !== "string") {
-        throw new HubConnectError(
+        throw new AgentelseError(
           "ELEMENT_NOT_FOUND",
           "SOCIAL_ACCOUNT_SETUP requires a `platform` field in the request payload",
         );
@@ -77,7 +77,7 @@ export const CapabilityRouter = {
       return provider;
     }
 
-    throw new HubConnectError(
+    throw new AgentelseError(
       "PROVIDER_UNAVAILABLE",
       skipped.length > 0
         ? `No healthy execution provider available for capability ${capability} (devre kesici: ${skipped.join(", ")})`

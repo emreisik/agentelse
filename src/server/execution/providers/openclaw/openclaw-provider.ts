@@ -69,7 +69,7 @@ function buildTaskPrompt(capability: CapabilityKey, payload: unknown): string {
     typeof input.request === "string" ? input.request : JSON.stringify(input);
   const platform =
     typeof input.platform === "string" ? ` Platform: ${input.platform}.` : "";
-  return `[Hub Connect task — capability: ${capability}]${platform} ${request}`;
+  return `[Agentelse task — capability: ${capability}]${platform} ${request}`;
 }
 
 export class OpenClawProvider implements ExecutionProvider {

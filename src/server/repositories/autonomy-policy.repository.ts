@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 
 export type DailyCounterField =
   | "tasksCreated"
@@ -120,7 +120,7 @@ export const AutonomyPolicyRepository = {
           reasoningCostUsd: { decrement: costUsd },
         },
       });
-      throw new HubConnectError(
+      throw new AgentelseError(
         "BUDGET_EXCEEDED",
         overBudget
           ? `Daily reasoning budget exceeded for project ${scope.projectId}`

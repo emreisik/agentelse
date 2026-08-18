@@ -4,7 +4,7 @@ import { HumanInterventionRepository } from "@/server/repositories/human-interve
 import { TemporarySecretRepository } from "@/server/repositories/temporary-secret.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { ExecutionService } from "@/server/execution/execution-service";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 
 // The end-to-end OTP/MFA/confirmation resolution flow (spec sections 25-27):
 // a value from the web Human Action Center is stored encrypted
@@ -22,7 +22,7 @@ export const HumanInterventionService = {
       projectId,
     );
     if (!request) {
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `HumanInterventionRequest ${requestId} not found`,
       );

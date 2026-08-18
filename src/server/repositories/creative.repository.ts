@@ -7,7 +7,7 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { HubConnectError } from "@/server/security/errors";
+import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
 export const CreativeRepository = {
@@ -58,7 +58,7 @@ export const CreativeRepository = {
       include: { versions: { orderBy: { version: "desc" }, take: 1 } },
     });
     if (!creative)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `Creative ${creativeId} not found in project ${projectId}`,
       );
@@ -91,7 +91,7 @@ export const CreativeRepository = {
       where: { id, projectId },
     });
     if (!creative)
-      throw new HubConnectError(
+      throw new AgentelseError(
         "NOT_FOUND",
         `Creative ${id} not found in project ${projectId}`,
       );

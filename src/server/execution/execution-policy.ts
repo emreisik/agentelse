@@ -52,9 +52,19 @@ const BROWSER_PURPOSE_BY_CAPABILITY: Partial<
   SOCIAL_RESEARCH: "PUBLIC_RESEARCH",
   SOCIAL_PROFILE_AUDIT: "PUBLIC_RESEARCH",
   INSTAGRAM_PUBLISH: "INSTAGRAM",
-  TIKTOK_PUBLISH: "TIKTOK",
-  LINKEDIN_PUBLISH: "LINKEDIN",
-  X_PUBLISH: "X",
+  // TIKTOK_PUBLISH/LINKEDIN_PUBLISH/X_PUBLISH deliberately NOT mapped here
+  // (unlike INSTAGRAM_PUBLISH, which still needs a placeholder BrowserProfile
+  // because capability-router.ts's resolveBrowserProfile() runs unconditionally
+  // at ExecutionService.dispatch() time, BEFORE provider selection — see
+  // execution-service.ts). TikTok/LinkedIn/X now route exclusively through
+  // TikTokApiProvider/LinkedInApiProvider/XApiProvider, which resolve their
+  // own IntegrationCredential directly and never touch BrowserProfile; the
+  // integrations page also no longer offers any way to create a BrowserProfile
+  // for these three purposes (see CATEGORIES in integrations/page.tsx). Leaving
+  // them mapped here would make resolveBrowserProfile() throw
+  // BROWSER_PROFILE_MISMATCH for every project the moment a submitted
+  // TIKTOK_PUBLISH/LINKEDIN_PUBLISH/X_PUBLISH task gets approved, since no such
+  // BrowserProfile row could ever exist.
   META_ADS_ANALYSIS: "META_ADS",
   META_CAMPAIGN_CREATE: "META_ADS",
   META_CAMPAIGN_UPDATE: "META_ADS",

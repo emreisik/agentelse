@@ -26,8 +26,24 @@ const LIBRARY_MIME_TO_EXT: Record<string, string> = {
   "text/plain": "txt",
   "text/csv": "csv",
   "text/markdown": "md",
+  // Added for TikTok publishing (see publish-creative.ts's
+  // publishCreativeToSocialCore) — before this, AssetType.VIDEO was declared
+  // in the Prisma schema but no upload path ever produced one, making the
+  // TikTok publish flow permanently unreachable.
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+  "video/webm": "webm",
 };
+const VIDEO_MIME_TYPES = new Set([
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+]);
 const MAX_LIBRARY_FILE_SIZE = 20 * 1024 * 1024;
+// Videos are inherently larger than the image/document assets this limit was
+// sized for — TikTok's own content limits run into the hundreds of MB, so a
+// higher ceiling avoids rejecting normal short-form video.
+const MAX_VIDEO_FILE_SIZE = 200 * 1024 * 1024;
 const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
 export async function uploadLibraryAssetAction(
@@ -43,13 +59,15 @@ export async function uploadLibraryAssetAction(
   if (!ext) {
     return {
       ok: false,
-      message: `Unsupported file type: ${file.name}. Upload an image (PNG/JPG/WebP), PDF, or text file (TXT/CSV/MD).`,
+      message: `Unsupported file type: ${file.name}. Upload an image (PNG/JPG/WebP), video (MP4/MOV/WebM), PDF, or text file (TXT/CSV/MD).`,
     };
   }
-  if (file.size > MAX_LIBRARY_FILE_SIZE) {
+  const isVideo = VIDEO_MIME_TYPES.has(file.type);
+  const sizeLimit = isVideo ? MAX_VIDEO_FILE_SIZE : MAX_LIBRARY_FILE_SIZE;
+  if (file.size > sizeLimit) {
     return {
       ok: false,
-      message: `${file.name} is too large (limit ${MAX_LIBRARY_FILE_SIZE / 1024 / 1024} MB).`,
+      message: `${file.name} is too large (limit ${sizeLimit / 1024 / 1024} MB).`,
     };
   }
 
@@ -68,7 +86,11 @@ export async function uploadLibraryAssetAction(
       workspaceId: access.workspaceId,
       projectId,
       brandId: access.defaultBrandId,
-      type: file.type.startsWith("image/") ? "IMAGE" : "DOCUMENT",
+      type: file.type.startsWith("image/")
+        ? "IMAGE"
+        : isVideo
+          ? "VIDEO"
+          : "DOCUMENT",
       filename,
       mimeType: file.type,
       storageKey: `local-asset://${filename}`,

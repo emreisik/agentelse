@@ -77,9 +77,3 @@ export async function getPublishTargets(
     (t): t is PublishTarget => t !== null,
   );
 }
-
-export async function hasPublishableInstagramConnection(
-  projectId: string,
-): Promise<boolean> {
-  return (await getPublishTargets(projectId)).length > 0;
-}

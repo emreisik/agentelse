@@ -9,6 +9,7 @@ export function isPublicPath(pathname: string): boolean {
     // BİLEREK oturum korumasının dışında. Token olmadan/geçersizse route
     // kendi 401'ini döner, burada hariç tutulması güvenliği gevşetmiyor.
     pathname.startsWith("/api/public/assets/") ||
+    pathname === "/api/debug/headers" ||
     pathname === "/icon.png" ||
     pathname === "/apple-icon.png" ||
     pathname === "/logo.png"

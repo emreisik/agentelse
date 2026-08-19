@@ -23,6 +23,15 @@ import { MockPublishingProvider } from "@/server/execution/providers/mock/mock-p
 // project has a real Meta/Google OAuth connection (see meta-api-provider.ts
 // and google-api-provider.ts canExecute), the real API is preferred over
 // browser automation.
+//
+// GeminiAiProvider comes before OpenClawProvider too: the only capabilities
+// both can serve are the 4 SEARCH_GROUNDED_CAPABILITIES (see
+// gemini-ai.provider.ts) — Gemini's grounded search answers them in one
+// HTTP call instead of a multi-minute CLI browser session. OpenClaw is
+// still walked right after: if Gemini is unconfigured or
+// ProviderHealthService circuit-breaks it for sustained failures, routing
+// falls through to OpenClaw unchanged. No other capability overlaps between
+// the two.
 class ProviderRegistryImpl {
   private readonly providers: ExecutionProvider[] = [
     new MetaApiProvider(),
@@ -30,9 +39,9 @@ class ProviderRegistryImpl {
     new TikTokApiProvider(),
     new LinkedInApiProvider(),
     new XApiProvider(),
+    new GeminiAiProvider(),
     new OpenClawProvider(),
     new GeminiCreativeProvider(),
-    new GeminiAiProvider(),
     new MockCreativeProvider(),
     new MockPublishingProvider(),
     new MockAiProvider(),

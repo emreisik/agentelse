@@ -248,8 +248,22 @@ export const AgencyDirector = {
     let decided = 0;
     for (const idea of ideas) {
       if (idea.councilEvaluations.length === 0) continue;
-      const result = await this.decideOnIdea(idea.id, idea.projectId);
-      if (result) decided += 1;
+      // Per-idea error boundary, same as the INITIAL_WORK_PLAN setup-stage
+      // runner (agency-wiring.ts): one idea that can't be decided (e.g. its
+      // opportunity has no linked ProjectGoal — GoalEngine.assertGoalsLinked)
+      // must not abort the whole batch. Since listByStatus now spreads its
+      // `limit` slots across distinct projects, one bad idea here would
+      // otherwise also block every OTHER project's idea in the same batch,
+      // not just its own.
+      try {
+        const result = await this.decideOnIdea(idea.id, idea.projectId);
+        if (result) decided += 1;
+      } catch (error) {
+        console.error(
+          `[agency-director] decideOnIdea failed for idea ${idea.id} (${idea.title}):`,
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
     return decided;
   },

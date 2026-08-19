@@ -2,7 +2,13 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { Prisma, type CapabilityKey, type RiskLevel } from "@prisma/client";
+import {
+  Prisma,
+  type CapabilityKey,
+  type CreativeContentFormat,
+  type RiskLevel,
+  type SocialPlatform,
+} from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { capabilityLabel, PLATFORM_LABEL } from "@/lib/labels";
@@ -454,16 +460,19 @@ export const ExecutionService = {
 
 // The provider result arrives schema-less as `unknown` — verify all four
 // fields are of the expected type before writing the Asset.
-function generatedImageFrom(
-  value: unknown,
-):
-  | { storageKey: string; filename: string; mimeType: string; size: number }
+function generatedImageFrom(value: unknown):
+  | {
+      storageKey: string;
+      filename: string;
+      mimeType: string;
+      size: number;
+      width?: number;
+      height?: number;
+    }
   | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const { storageKey, filename, mimeType, size } = value as Record<
-    string,
-    unknown
-  >;
+  const { storageKey, filename, mimeType, size, width, height } =
+    value as Record<string, unknown>;
   if (
     typeof storageKey !== "string" ||
     typeof filename !== "string" ||
@@ -472,7 +481,14 @@ function generatedImageFrom(
   ) {
     return undefined;
   }
-  return { storageKey, filename, mimeType, size };
+  return {
+    storageKey,
+    filename,
+    mimeType,
+    size,
+    width: typeof width === "number" ? width : undefined,
+    height: typeof height === "number" ? height : undefined,
+  };
 }
 
 // Turns a completed CREATE_SOCIAL_CREATIVE/CREATE_AD_CREATIVE job's result
@@ -495,6 +511,14 @@ async function materializeCreativeFromResult(
   // If a real image exists (GeminiCreativeProvider -> openclaw infer image
   // generate), it's saved; otherwise falls back to the legacy fake placeholder.
   const generatedImage = generatedImageFrom(result.image);
+  const platform =
+    typeof result.platform === "string"
+      ? (result.platform as SocialPlatform)
+      : undefined;
+  const contentFormat =
+    typeof result.contentFormat === "string"
+      ? (result.contentFormat as CreativeContentFormat)
+      : undefined;
   const asset = generatedImage
     ? await prisma.asset.create({
         data: {
@@ -506,6 +530,8 @@ async function materializeCreativeFromResult(
           mimeType: generatedImage.mimeType,
           storageKey: generatedImage.storageKey,
           size: generatedImage.size,
+          width: generatedImage.width,
+          height: generatedImage.height,
         },
       })
     : typeof result.placeholderImageUrl === "string"
@@ -532,6 +558,11 @@ async function materializeCreativeFromResult(
         job.capability === "CREATE_AD_CREATIVE" ? "AD_CREATIVE" : "SOCIAL_POST",
       status: "IN_REVIEW",
       createdByTaskId: job.taskId,
+      // Only set when the task's payload actually carried a targetPlatform
+      // (see task-planner.ts) — most idea->WorkPlan-generated tasks don't
+      // yet, so this is often null here; regenerating later then falls back
+      // to the generic 1:1 format instead of the original platform's.
+      platform,
     },
   });
 
@@ -542,6 +573,7 @@ async function materializeCreativeFromResult(
       assetId: asset?.id,
       caption: typeof result.caption === "string" ? result.caption : undefined,
       copy: typeof result.copy === "string" ? result.copy : undefined,
+      contentFormat,
       generationProvider: job.providerId ?? "unknown",
       generationMetadata: result as never,
     },
@@ -596,6 +628,10 @@ async function materializeCreativeFromResult(
           typeof result.caption === "string" ? result.caption : undefined,
         copy: typeof result.copy === "string" ? result.copy : undefined,
         status: "IN_REVIEW",
+        assetWidth: asset?.width ?? undefined,
+        assetHeight: asset?.height ?? undefined,
+        platform,
+        contentFormat,
         approvalId: approval.id,
       },
       attachments: asset

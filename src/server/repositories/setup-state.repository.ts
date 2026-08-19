@@ -111,8 +111,19 @@ export const SetupStateRepository = {
 
     StateMachine.assertSetupStageTransition(record.status, to);
 
-    return prisma.projectSetupStageRecord.update({
-      where: { id: record.id },
+    // Compare-and-swap on the status read above: if two advance() calls for
+    // the same project ever overlap (e.g. two worker processes briefly
+    // alive at once), a plain update-by-id would let both "win" — the
+    // second write completing a stage whose runStage() is, from its own
+    // point of view, still mid-flight (this produced a real incident: a
+    // stage got marked COMPLETED and the state machine moved on to the next
+    // stage before the first stage's own reasoning call had actually
+    // returned, so a later stage read empty data a still-running earlier
+    // stage hadn't written yet). Requiring the row to still be at the
+    // status we read makes only one writer succeed; the loser gets a clear
+    // error instead of silently corrupting state.
+    const result = await prisma.projectSetupStageRecord.updateMany({
+      where: { id: record.id, status: record.status },
       data: {
         status: to,
         startedAt:
@@ -130,5 +141,12 @@ export const SetupStateRepository = {
           to === "RUNNING" ? record.attemptCount + 1 : record.attemptCount,
       },
     });
+
+    if (result.count !== 1) {
+      throw new AgentelseError(
+        "INVALID_STATE_TRANSITION",
+        `Setup stage ${stage} for project ${projectId} was already moved out of ${record.status} by a concurrent transition`,
+      );
+    }
   },
 };

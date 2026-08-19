@@ -7,8 +7,8 @@ import { prisma } from "@/lib/prisma";
 import { BrowserProfileRepository } from "@/server/repositories/browser-profile.repository";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
 import { OpenClawClient } from "@/server/execution/providers/openclaw/openclaw-client";
+import { OpenClawGatewayClient } from "@/server/execution/providers/openclaw/openclaw-gateway-client";
 import { normalizeOpenClawAgentResult } from "@/server/execution/providers/openclaw/openclaw-normalizer";
-import type { OpenClawAgentResult } from "@/server/execution/providers/openclaw/openclaw-types";
 import type {
   ExecutionAcceptedResult,
   ExecutionPolicyContext,
@@ -59,7 +59,7 @@ const OPENCLAW_CAPABILITIES: ReadonlySet<CapabilityKey> =
     "VERIFY_EXTERNAL_ACTION",
   ]);
 
-type StoredRun = { agentId: string; result: OpenClawAgentResult };
+type StoredRun = { agentId: string; sessionKey: string; runId: string };
 
 const store = new Map<string, StoredRun>();
 
@@ -75,10 +75,15 @@ function buildTaskPrompt(capability: CapabilityKey, payload: unknown): string {
 export class OpenClawProvider implements ExecutionProvider {
   readonly key = "openclaw";
   readonly type: ExecutionProviderType = "OPENCLAW";
+  // Still used for listAgentIds() in resolveAgentId() below — the CLI
+  // subprocess model itself is gone from the execute/getStatus path (see
+  // openclaw-gateway-client.ts), but validating a candidate agent id
+  // against OpenClaw's configured list is a low-risk, rarely-called lookup
+  // that wasn't worth moving to the Gateway in this pass.
   private readonly client = new OpenClawClient();
 
   get isConfigured(): boolean {
-    return this.client.isConfigured;
+    return OpenClawGatewayClient.isConfigured;
   }
 
   async canExecute(
@@ -94,18 +99,26 @@ export class OpenClawProvider implements ExecutionProvider {
     return Boolean(context.browserProfileId);
   }
 
-  // openclaw agent --agent <id> --message ... --json is synchronous, so this
-  // runs the full turn inline and caches the outcome — getStatus() below
-  // just reads it back, same pattern as the mock providers use.
+  // Non-blocking: only waits for the Gateway to ACCEPT the run (a
+  // round-trip over an already-open WebSocket, not a full agent turn) —
+  // unlike the old CLI-subprocess model, this does NOT block the calling
+  // ExecutionWorker tick for however long the browser task takes.
+  // getStatus() below is what ExecutionWorker.pollRunningJobs() then calls
+  // repeatedly until a terminal Gateway event arrives.
   async execute(request: ExecutionRequest): Promise<ExecutionAcceptedResult> {
     const agentId = await this.resolveAgentId(request.context);
-    const result = await this.client.runAgentTurn({
+    const { runId } = await OpenClawGatewayClient.startAgentRun({
       agentId,
       message: buildTaskPrompt(request.capability, request.payload),
       sessionKey: request.correlationId,
+      idempotencyKey: request.correlationId,
     });
 
-    store.set(request.correlationId, { agentId, result });
+    store.set(request.correlationId, {
+      agentId,
+      sessionKey: request.correlationId,
+      runId,
+    });
 
     return { executionReference: request.correlationId, isMock: false };
   }
@@ -121,12 +134,22 @@ export class OpenClawProvider implements ExecutionProvider {
         isMock: false,
       };
     }
-    return normalizeOpenClawAgentResult(record.result);
+
+    const state = OpenClawGatewayClient.getRunState(
+      record.runId,
+      getEnv().OPENCLAW_TIMEOUT_SECONDS,
+    );
+    if (state.kind === "running") {
+      return { status: "RUNNING", isMock: false };
+    }
+    return normalizeOpenClawAgentResult(state.result);
   }
 
-  // Continues the same OpenClaw session (same sessionKey) with the human's
-  // answer as the next message — this is how an OTP/2FA value actually
-  // reaches the paused browser-control run.
+  // Sends the human's answer as a follow-up message on the same OpenClaw
+  // session (same sessionKey) — this is how an OTP/2FA value actually
+  // reaches a paused browser-control run. Starts a new Gateway run against
+  // that session, so the stored runId is updated to the new one; getStatus()
+  // picks it up on the next poll exactly like a fresh execute() would.
   async resume(
     executionReference: string,
     input: { value: string },
@@ -134,13 +157,13 @@ export class OpenClawProvider implements ExecutionProvider {
     const record = store.get(executionReference);
     if (!record) return;
 
-    const result = await this.client.runAgentTurn({
+    const { runId } = await OpenClawGatewayClient.sendFollowUp({
       agentId: record.agentId,
+      sessionKey: record.sessionKey,
       message: input.value,
-      sessionKey: executionReference,
     });
 
-    store.set(executionReference, { agentId: record.agentId, result });
+    store.set(executionReference, { ...record, runId });
   }
 
   private async resolveAgentId(

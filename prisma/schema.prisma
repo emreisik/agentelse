@@ -293,6 +293,25 @@ enum SocialPlatform {
   PINTEREST
 }
 
+// Content-type dimension crossed with SocialPlatform in
+// src/lib/creative-platform-format.ts — e.g. Instagram STORY (1080x1920)
+// vs. Instagram FEED_PORTRAIT (1080x1350) are different pixel targets on
+// the same platform. Carousel intentionally has no dedicated value — it
+// reuses the platform's FEED_* pixel size.
+enum CreativeContentFormat {
+  FEED_SQUARE
+  FEED_PORTRAIT
+  FEED_LANDSCAPE
+  STORY
+  REEL
+  COVER
+  THUMBNAIL
+  LINK_PREVIEW
+  HEADER
+  PIN
+  SHORTS
+}
+
 enum SocialAccountStatus {
   CONNECTING
   CONNECTED
@@ -1055,7 +1074,7 @@ model Command {
   // completion) writes into that idea's thread (source: SYSTEM) accumulate
   // here under the same ideaId — the "everything in one conversation"
   // architecture.
-  ideaId String?
+  ideaId      String?
 
   source          CommandSource
   rawText         String
@@ -1390,6 +1409,13 @@ model Asset {
   size       Int
   hash       String?
 
+  // Real pixel dimensions — measured with sharp at write time (AI-generated
+  // creative images: src/server/media/creative-image.ts; user uploads:
+  // library-actions.ts). Null for videos/documents and for rows created
+  // before this field existed.
+  width  Int?
+  height Int?
+
   creativeVersions CreativeVersion[]
   evidences        Evidence[]
 
@@ -1438,6 +1464,11 @@ model CreativeVersion {
   assetId String?
   caption String?
   copy    String?
+
+  // Which platform × content-type slot this version was generated for
+  // (see src/lib/creative-platform-format.ts) — null for older rows and
+  // for versions with no platform (creative.platform is also optional).
+  contentFormat CreativeContentFormat?
 
   generationProvider String?
   generationMetadata Json?
@@ -2163,7 +2194,7 @@ model Idea {
   workPlanId String?
   isMock     Boolean @default(false)
 
-  opportunity        Opportunity?       @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
+  opportunity        Opportunity?        @relation(fields: [opportunityId], references: [id], onDelete: SetNull)
   councilEvaluations CouncilEvaluation[]
   commands           Command[]
 

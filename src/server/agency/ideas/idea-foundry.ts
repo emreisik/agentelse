@@ -199,19 +199,39 @@ export const IdeaFoundry = {
   },
 
   // NBA-ranked EVALUATED opportunities without ideas get a generation pass.
+  // nbaScore is never actually populated on Opportunity (only on Idea, by
+  // agency-director.ts — see the grep, there is no writer for
+  // Opportunity.nbaScore anywhere), so this always degenerates to a single
+  // system-wide FIFO-by-createdAt queue. A project with an old backlog (154
+  // opportunities from a project created 10 days earlier, in one incident)
+  // then permanently starves every other project, including a brand-new
+  // one, from ever getting an idea generated. `distinct: ["projectId"]`
+  // picks at most one candidate per project instead, so `limit` slots are
+  // spread fairly across whichever projects actually have a backlog.
   async generateForTopOpportunities(limit = 3): Promise<number> {
     const { prisma } = await import("@/lib/prisma");
     const candidates = await prisma.opportunity.findMany({
       where: { status: "EVALUATED", ideas: { none: {} } },
       orderBy: [{ nbaScore: "desc" }, { createdAt: "asc" }],
+      distinct: ["projectId"],
       take: limit,
     });
     let total = 0;
     for (const opportunity of candidates) {
-      total += await this.generateForOpportunity(
-        opportunity.id,
-        opportunity.projectId,
-      );
+      // Per-opportunity error boundary: one opportunity that fails to
+      // generate an idea must not also block every OTHER project's
+      // opportunity in the same batch.
+      try {
+        total += await this.generateForOpportunity(
+          opportunity.id,
+          opportunity.projectId,
+        );
+      } catch (error) {
+        console.error(
+          `[idea-foundry] generateForOpportunity failed for opportunity ${opportunity.id} (${opportunity.title}):`,
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
     return total;
   },

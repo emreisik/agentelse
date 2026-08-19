@@ -86,10 +86,15 @@ export const IdeaRepository = {
     });
   },
 
+  // distinct: one idea per project, so a project with an old backlog can't
+  // starve every other project out of its `limit` slots each tick (see
+  // idea-foundry.ts generateForTopOpportunities for the incident this
+  // pattern was copied from fixing).
   listByStatus(status: IdeaStatus, limit: number) {
     return prisma.idea.findMany({
       where: { status },
       take: limit,
+      distinct: ["projectId"],
       orderBy: { createdAt: "asc" },
       include: { councilEvaluations: true },
     });

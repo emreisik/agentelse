@@ -1,9 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
-
 import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
@@ -13,6 +9,7 @@ import {
 } from "@/server/security/tenant-context";
 import { CommandService } from "@/server/commands/command-service";
 import { ChatService } from "@/server/commands/chat-service";
+import { putAsset } from "@/server/storage/asset-storage";
 import type { CommandAttachment } from "@/server/repositories/command.repository";
 
 export async function submitProjectCommandAction(formData: FormData) {
@@ -52,7 +49,6 @@ const CHAT_MIME_TO_EXT: Record<string, string> = {
 };
 const MAX_CHAT_FILE_SIZE = 8 * 1024 * 1024; // below the inlineData request limit
 const MAX_CHAT_FILES = 4;
-const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
 export type ChatMessageResult =
   | {
@@ -100,19 +96,15 @@ export async function submitChatMessageAction(
   const { userId } = await requireUser();
   const access = await requireProjectAccess(userId, projectId);
 
-  // Write files to disk + the Asset table; extract the base64 body from the
-  // same read so it goes to Gemini without a second disk round-trip.
+  // Write files to storage + the Asset table; extract the base64 body from
+  // the same read so it goes to Gemini without a second round-trip.
   const attachments: CommandAttachment[] = [];
   const attachmentBodies: { mimeType: string; data: string }[] = [];
 
-  if (files.length > 0) {
-    await mkdir(LOCAL_ASSETS_DIR, { recursive: true });
-  }
   for (const file of files) {
     const ext = CHAT_MIME_TO_EXT[file.type]!;
-    const filename = `${randomUUID()}.${ext}`;
     const buffer = Buffer.from(await file.arrayBuffer());
-    await writeFile(path.join(LOCAL_ASSETS_DIR, filename), buffer);
+    const { storageKey, filename } = await putAsset(buffer, ext, file.type);
 
     const asset = await prisma.asset.create({
       data: {
@@ -122,7 +114,7 @@ export async function submitChatMessageAction(
         type: file.type.startsWith("image/") ? "IMAGE" : "DOCUMENT",
         filename,
         mimeType: file.type,
-        storageKey: `local-asset://${filename}`,
+        storageKey,
         size: file.size,
       },
     });

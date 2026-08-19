@@ -118,13 +118,26 @@ export const OpportunityEngine = {
     return { created: true, opportunityId: result.opportunity.id };
   },
 
-  // Batch pass over EVALUATED insights across projects.
+  // Batch pass over EVALUATED insights across projects. Per-insight error
+  // boundary: listByStatus spreads its `limit` slots across distinct
+  // projects, so one insight that fails to evaluate must not also block
+  // every OTHER project's insight in the same batch.
   async evaluatePromotedInsights(limit = 10): Promise<number> {
     const insights = await InsightRepository.listByStatus("NEW", limit);
     let created = 0;
     for (const insight of insights) {
-      const result = await this.evaluateInsight(insight.id, insight.projectId);
-      if (result.created) created += 1;
+      try {
+        const result = await this.evaluateInsight(
+          insight.id,
+          insight.projectId,
+        );
+        if (result.created) created += 1;
+      } catch (error) {
+        console.error(
+          `[opportunity-engine] evaluateInsight failed for insight ${insight.id} (${insight.title}):`,
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
     return created;
   },

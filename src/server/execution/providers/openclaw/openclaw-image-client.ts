@@ -2,13 +2,15 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 import { z } from "zod";
 
 import { getEnv, isIntegrationConfigured } from "@/lib/env";
+import { putAsset } from "@/server/storage/asset-storage";
 
 const execFileAsync = promisify(execFile);
 
@@ -41,11 +43,6 @@ export type GeneratedCreativeImage = {
   provider: "openclaw";
 };
 
-// Shared local asset directory — also used for uploaded/generated logos
-// (project-actions.ts), not just creative images. Served back by
-// src/app/api/assets/[assetId]/route.ts via the local-asset:// scheme.
-const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
-
 export function isOpenClawImageConfigured(): boolean {
   return isIntegrationConfigured("OPENCLAW");
 }
@@ -64,9 +61,11 @@ export async function generateCreativeImageAsset(
   const env = getEnv();
   if (!env.OPENCLAW_CLI_PATH) return null;
 
-  await mkdir(LOCAL_ASSETS_DIR, { recursive: true });
-  const filename = `${randomUUID()}.png`;
-  const outputPath = path.join(LOCAL_ASSETS_DIR, filename);
+  // The CLI can only write to a real filesystem path — it has no concept of
+  // R2 — so its output goes to a scratch temp file first, then gets read
+  // into a buffer and handed to putAsset() (disk or R2, whichever is
+  // configured) like every other generator.
+  const outputPath = path.join(tmpdir(), `${randomUUID()}.png`);
 
   const args = [
     "infer",
@@ -104,8 +103,15 @@ export async function generateCreativeImageAsset(
     const output = parsed.data.outputs?.[0];
     if (!output) return null;
 
+    const buffer = await readFile(outputPath);
+    const { storageKey, filename } = await putAsset(
+      buffer,
+      "png",
+      output.mimeType,
+    );
+
     return {
-      storageKey: `local-asset://${filename}`,
+      storageKey,
       filename,
       mimeType: output.mimeType,
       size: output.size,
@@ -114,5 +120,7 @@ export async function generateCreativeImageAsset(
   } catch (error) {
     console.error("[openclaw-image-client] image generation failed", error);
     return null;
+  } finally {
+    await rm(outputPath, { force: true });
   }
 }

@@ -74,10 +74,15 @@ export const InsightRepository = {
     return prisma.insight.findFirst({ where: { id: insightId, projectId } });
   },
 
+  // distinct: one insight per project, so a project with an old backlog
+  // can't starve every other project out of its `limit` slots each tick
+  // (see idea-foundry.ts generateForTopOpportunities for the incident this
+  // pattern was copied from fixing).
   listByStatus(status: InsightStatus, limit: number) {
     return prisma.insight.findMany({
       where: { status },
       take: limit,
+      distinct: ["projectId"],
       orderBy: { createdAt: "asc" },
     });
   },

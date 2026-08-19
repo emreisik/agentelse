@@ -1,8 +1,5 @@
 import "server-only";
 
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-
 import type { Approval, ApprovalStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
@@ -14,13 +11,7 @@ import {
   type TelegramReplyMarkup,
 } from "@/server/integrations/telegram-client";
 import { notifyProjectTelegram } from "@/server/notifications/project-telegram-notifier";
-
-// The same local-disk asset scheme also exists in
-// src/app/api/assets/[assetId]/route.ts — a small copy is deliberately kept
-// here (extending that route for this feature is out of scope).
-const LOCAL_ASSET_SCHEME = "local-asset://";
-const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
-const SAFE_FILENAME = /^[a-zA-Z0-9-]+\.(png|jpe?g|webp|pdf|txt|csv|md)$/;
+import { readAsset } from "@/server/storage/asset-storage";
 
 const TELEGRAM_CAPTION_LIMIT = 1024;
 
@@ -28,15 +19,13 @@ function truncate(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
-async function readLocalAsset(
-  storageKey: string,
-): Promise<{ buffer: Buffer; filename: string } | null> {
-  if (!storageKey.startsWith(LOCAL_ASSET_SCHEME)) return null;
-  const filename = storageKey.slice(LOCAL_ASSET_SCHEME.length);
-  if (!SAFE_FILENAME.test(filename)) return null;
+async function readLocalAsset(asset: {
+  storageKey: string;
+  filename: string;
+}): Promise<{ buffer: Buffer; filename: string } | null> {
   try {
-    const buffer = await readFile(path.join(LOCAL_ASSETS_DIR, filename));
-    return { buffer, filename };
+    const buffer = await readAsset(asset.storageKey);
+    return { buffer, filename: asset.filename };
   } catch {
     return null;
   }
@@ -136,7 +125,7 @@ export async function sendApprovalRequestToTelegram(approval: {
       );
 
       const localAsset = version?.asset
-        ? await readLocalAsset(version.asset.storageKey)
+        ? await readLocalAsset(version.asset)
         : null;
 
       const sent = localAsset
@@ -218,7 +207,7 @@ export async function sendPublishPromptToTelegram(input: {
         })
       : null;
     const localAsset = version?.asset
-      ? await readLocalAsset(version.asset.storageKey)
+      ? await readLocalAsset(version.asset)
       : null;
 
     if (localAsset) {

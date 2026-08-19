@@ -10,6 +10,13 @@ import { AgentelseError } from "@/server/security/errors";
 // zod schema.
 
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+// fetch() has no default timeout in Node — a stalled connection (dead peer,
+// network partition) hangs this call forever. Since the worker's tick loop
+// awaits this synchronously with no timeout of its own further up the
+// chain, one hung Gemini call used to be able to wedge the entire
+// background worker permanently (every subsequent tick just re-awaits the
+// same stuck promise). Bounding the request here is the fix.
+const FETCH_TIMEOUT_MS = 45_000;
 
 export type GeminiStructuredResult = {
   raw: unknown;
@@ -102,6 +109,24 @@ export async function runGeminiWithUrlContext(input: {
   });
 }
 
+// runGeminiText called with Gemini's native "Grounding with Google Search"
+// tool enabled — the model runs its own web search and cites sources in
+// groundingMetadata, no separate research step or browser automation is
+// needed. This replaces a synchronous CLI browser session (tens of seconds
+// to minutes per call) for public-web research capabilities with a single
+// HTTP call.
+export async function runGeminiWithSearchGrounding(input: {
+  model: string;
+  system: string;
+  user: string;
+  maxOutputTokens: number;
+}): Promise<{ text: string; inputTokens?: number; outputTokens?: number }> {
+  return runGeminiText({
+    ...input,
+    tools: [{ googleSearch: {} }],
+  });
+}
+
 async function callGemini(input: {
   model: string;
   system: string;
@@ -118,35 +143,48 @@ async function callGemini(input: {
     );
   }
 
-  const response = await fetch(`${BASE_URL}/${input.model}:generateContent`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-goog-api-key": env.GEMINI_API_KEY,
-    },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: input.system }] },
-      contents: [
-        {
-          role: "user",
-          // Attachments BEFORE the text: models reference attachments more
-          // reliably when they see the instruction last in multi-modal
-          // input (the same ordering is used for image editing too).
-          parts: [
-            ...(input.attachments ?? []).map((attachment) => ({
-              inlineData: {
-                mimeType: attachment.mimeType,
-                data: attachment.data,
-              },
-            })),
-            { text: input.user },
-          ],
-        },
-      ],
-      generationConfig: input.generationConfig,
-      ...(input.tools ? { tools: input.tools } : {}),
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}/${input.model}:generateContent`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-goog-api-key": env.GEMINI_API_KEY,
+      },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: input.system }] },
+        contents: [
+          {
+            role: "user",
+            // Attachments BEFORE the text: models reference attachments more
+            // reliably when they see the instruction last in multi-modal
+            // input (the same ordering is used for image editing too).
+            parts: [
+              ...(input.attachments ?? []).map((attachment) => ({
+                inlineData: {
+                  mimeType: attachment.mimeType,
+                  data: attachment.data,
+                },
+              })),
+              { text: input.user },
+            ],
+          },
+        ],
+        generationConfig: input.generationConfig,
+        ...(input.tools ? { tools: input.tools } : {}),
+      }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new AgentelseError(
+        "TIMEOUT",
+        `Gemini request timed out after ${FETCH_TIMEOUT_MS}ms`,
+        { retryable: true },
+      );
+    }
+    throw error;
+  }
 
   const payload = (await response.json()) as GeminiResponse;
   if (!response.ok) {

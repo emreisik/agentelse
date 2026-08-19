@@ -1,3 +1,5 @@
+import type { CreativeContentFormat, SocialPlatform } from "@prisma/client";
+
 // Representation of a creative/image generation event in an idea's chat.
 // Written into Command.parsedIntent as `{ card: CreativeCardData }` (see
 // IdeaChatRepository) and rendered in the chat screen (project-chat.tsx +
@@ -22,6 +24,14 @@ export type CreativeCardData =
       caption?: string;
       copy?: string;
       status: string;
+      // Real measured pixel size of the generated image (see
+      // creative-image.ts normalizeToTarget) — together with
+      // platform/contentFormat, powers the "1080 x 1920 px · TikTok ·
+      // Video" note shown under the image in CreativeCard.
+      assetWidth?: number;
+      assetHeight?: number;
+      platform?: SocialPlatform | null;
+      contentFormat?: CreativeContentFormat | null;
       // For showing Approve/Reject buttons directly in the chat while status
       // is "IN_REVIEW" — see CreativeCard, and the Approval.id returned by
       // ApprovalRepository.create (execution-service.ts

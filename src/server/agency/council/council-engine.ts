@@ -130,14 +130,24 @@ export const CouncilEngine = {
     return { recommendation: combined };
   },
 
-  // RAW ideas without evaluations get a council pass.
+  // RAW ideas without evaluations get a council pass. Per-idea error
+  // boundary: listByStatus spreads its `limit` slots across distinct
+  // projects, so one idea that fails to evaluate must not also block every
+  // OTHER project's idea in the same batch.
   async evaluatePendingIdeas(limit = 5): Promise<number> {
     const ideas = await IdeaRepository.listByStatus("RAW", limit);
     let evaluated = 0;
     for (const idea of ideas) {
       if (idea.councilEvaluations.length > 0) continue;
-      await this.evaluateIdea(idea.id, idea.projectId);
-      evaluated += 1;
+      try {
+        await this.evaluateIdea(idea.id, idea.projectId);
+        evaluated += 1;
+      } catch (error) {
+        console.error(
+          `[council-engine] evaluateIdea failed for idea ${idea.id} (${idea.title}):`,
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
     return evaluated;
   },

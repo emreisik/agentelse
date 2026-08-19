@@ -1,20 +1,17 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { verifyAssetPublicToken } from "@/server/security/asset-public-link";
+import { readAsset } from "@/server/storage/asset-storage";
 
 // The UNAUTHENTICATED counterpart of /api/assets/[assetId] — exists ONLY so
 // external providers like Meta (Instagram publish, etc.) can download an
 // asset. Instead of session/project access, it verifies a short-lived
 // signed `token` query param locked to a single assetId (see
 // asset-public-link.ts). No asset is served without a valid, unexpired
-// token.
-const LOCAL_ASSET_SCHEME = "local-asset://";
-const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
-const SAFE_FILENAME = /^[a-zA-Z0-9-]+\.(png|jpe?g|webp|pdf|txt|csv|md)$/;
+// token. R2-backed assets normally never reach this route at all —
+// buildAssetPublicUrl hands out R2's own direct public URL instead — this
+// stays as the fallback for local-asset:// (dev without R2 configured).
 
 export async function GET(
   request: Request,
@@ -32,20 +29,8 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (!asset.storageKey.startsWith(LOCAL_ASSET_SCHEME)) {
-    return NextResponse.json(
-      { error: "Asset has no locally-servable file" },
-      { status: 404 },
-    );
-  }
-
-  const filename = asset.storageKey.slice(LOCAL_ASSET_SCHEME.length);
-  if (!SAFE_FILENAME.test(filename)) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
   try {
-    const file = await readFile(path.join(LOCAL_ASSETS_DIR, filename));
+    const file = await readAsset(asset.storageKey);
     return new NextResponse(new Uint8Array(file), {
       headers: {
         "Content-Type": asset.mimeType,

@@ -41,5 +41,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# locally-generated/uploaded assets (creative images, logos — no S3/R2 storage layer yet)
+# locally-generated/uploaded assets — the local-disk fallback used when R2
+# isn't configured (see src/server/storage/asset-storage.ts)
 /storage/assets/

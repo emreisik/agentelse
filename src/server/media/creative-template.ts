@@ -1,14 +1,9 @@
 import "server-only";
 
-import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-
 import sharp from "sharp";
 
 import { prisma } from "@/lib/prisma";
-
-const LOCAL_ASSET_SCHEME = "local-asset://";
-const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
+import { readAsset, overwriteAsset } from "@/server/storage/asset-storage";
 
 // There's no write flow for approved colors yet (BrandDossier.approvedColors
 // is still free-form Json) — this defensively extracts the first valid hex
@@ -49,7 +44,8 @@ function extractAccentColorHex(approvedColors: unknown): string | null {
 // the file is left as-is — creative generation must never fail because of
 // visual templating.
 export async function applyBrandTemplate(input: {
-  filename: string;
+  storageKey: string;
+  mimeType: string;
   logoAssetId?: string | null;
   approvedColors?: unknown;
 }): Promise<{ size: number } | null> {
@@ -59,12 +55,11 @@ export async function applyBrandTemplate(input: {
     where: { id: input.logoAssetId },
     select: { storageKey: true },
   });
-  if (!logoAsset?.storageKey.startsWith(LOCAL_ASSET_SCHEME)) return null;
-  const logoFilename = logoAsset.storageKey.slice(LOCAL_ASSET_SCHEME.length);
+  if (!logoAsset) return null;
 
   const [baseBuffer, logoBuffer] = await Promise.all([
-    readFile(path.join(LOCAL_ASSETS_DIR, input.filename)),
-    readFile(path.join(LOCAL_ASSETS_DIR, logoFilename)),
+    readAsset(input.storageKey),
+    readAsset(logoAsset.storageKey),
   ]);
 
   const baseMeta = await sharp(baseBuffer).metadata();
@@ -111,7 +106,7 @@ export async function applyBrandTemplate(input: {
   }
 
   const outputBuffer = await sharp(baseBuffer).composite(composites).toBuffer();
-  await writeFile(path.join(LOCAL_ASSETS_DIR, input.filename), outputBuffer);
+  await overwriteAsset(input.storageKey, outputBuffer, input.mimeType);
 
   return { size: outputBuffer.byteLength };
 }

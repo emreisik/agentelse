@@ -6,6 +6,7 @@ import { requireUser } from "@/server/security/tenant-context";
 import { signOutAction } from "@/server/actions/auth-actions";
 import { PipelineRepository } from "@/server/repositories/pipeline.repository";
 import { SidebarNav, type SidebarFlow } from "@/components/layout/sidebar-nav";
+import { SetupProgressWidget } from "@/components/layout/setup-progress-widget";
 import { LogoBadge } from "@/components/shared/logo-badge";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
 import { TopBar } from "@/components/layout/top-bar";
@@ -296,6 +297,12 @@ export async function AppShell({
         <main className="min-w-0 flex-1 overflow-y-auto bg-background">
           {children}
         </main>
+        {projectId && projectBadges?.setupPercent != null ? (
+          <SetupProgressWidget
+            projectId={projectId}
+            initialPercent={projectBadges.setupPercent}
+          />
+        ) : null}
       </div>
     </div>
   );

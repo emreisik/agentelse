@@ -6,6 +6,7 @@ import {
   geminiModel,
   isGeminiConfigured,
   runGeminiText,
+  runGeminiWithSearchGrounding,
 } from "@/server/reasoning/gemini-client";
 import type {
   ExecutionAcceptedResult,
@@ -13,6 +14,22 @@ import type {
   ExecutionRequest,
   ProviderExecutionStatus,
 } from "@/server/execution/types";
+
+// These need live web facts (brand mentions, competitor sites, SERP
+// signals) a knowledge-cutoff model can't answer from parametric memory
+// alone. Previously OpenClaw-only (a synchronous CLI browser session, tens
+// of seconds to minutes, blocking the dispatch loop) — Gemini's native
+// Google Search grounding tool answers the same class of question with one
+// HTTP call. OpenClaw stays registered right after in provider-registry.ts
+// as a fallback: if GEMINI_API_KEY is unset or ProviderHealthService
+// circuit-breaks Gemini, routing falls through to it unchanged.
+const SEARCH_GROUNDED_CAPABILITIES: ReadonlySet<CapabilityKey> =
+  new Set<CapabilityKey>([
+    "BRAND_DISCOVERY",
+    "WEB_RESEARCH",
+    "COMPETITOR_RESEARCH",
+    "SEO_RESEARCH",
+  ]);
 
 // Text/analysis capabilities — the real "AI thinks" step. Content that
 // produces a visual asset is GeminiCreativeProvider's job instead.
@@ -31,6 +48,7 @@ const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "CLAIM_VALIDATION",
   "BRAND_SAFETY",
   "REPORTING",
+  ...SEARCH_GROUNDED_CAPABILITIES,
 ]);
 
 type StoredResult = {
@@ -88,7 +106,10 @@ export class GeminiAiProvider implements ExecutionProvider {
       typeof input.request === "string" ? input.request : JSON.stringify(input);
 
     try {
-      const { text } = await runGeminiText({
+      const call = SEARCH_GROUNDED_CAPABILITIES.has(request.capability)
+        ? runGeminiWithSearchGrounding
+        : runGeminiText;
+      const { text } = await call({
         model: geminiModel(),
         system: buildSystemPrompt(request.capability, input.brandContext),
         user: requestText,

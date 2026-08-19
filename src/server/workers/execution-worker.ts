@@ -23,6 +23,22 @@ import "@/server/agency/continuous/agency-wiring";
 
 const MAX_ATTEMPTS = 5;
 const BASE_BACKOFF_MS = 2_000;
+// Mirrors AutonomyPolicy.maxConcurrentResearchTasks' default (5,
+// prisma/schema.prisma). Not an exact per-project enforcement — a claimed
+// batch can span multiple projects and that policy is project-scoped — but
+// a simple process-wide cap that's easy to reason about and matches the
+// codebase's existing bounded-batch pattern (see baseline-audit.service.ts
+// BATCH=5).
+const DISPATCH_CONCURRENCY = 5;
+// Generous last-resort backstop, not a normal-path budget: a legitimate
+// tick can itself take a couple of minutes (e.g. an OpenClaw dispatch's own
+// 135s timeout, or advanceOneProject's 45s per-project setup budget) — this
+// exists only to guarantee the worker recovers from a hang nothing else
+// catches (a fetch with no timeout, a stalled DB connection), not to police
+// normal duration. Without it, a single stuck tick wedges activeTick
+// forever: every later interval firing just re-awaits the same promise, so
+// the whole worker goes silent with no error ever logged.
+const TICK_WATCHDOG_MS = 5 * 60_000;
 let activeTick: Promise<void> | undefined;
 
 // Isolates tick stages from each other: errors are not swallowed, they're
@@ -49,6 +65,22 @@ async function isolate(stage: string, run: () => Promise<unknown>) {
   }
 }
 
+// Races `run` against this timer. Returns a cancel() so the caller can
+// clear the timer once `run` settles on its own — otherwise, at one 3s tick
+// creating a fresh 5-minute timer, the process would accumulate ~100
+// pending timers at any moment even though almost all of them become moot
+// the instant their tick's `run` finishes.
+function watchdog(ms: number): { promise: Promise<never>; cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout>;
+  const promise = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`worker tick exceeded ${ms}ms`)),
+      ms,
+    );
+  });
+  return { promise, cancel: () => clearTimeout(timer) };
+}
+
 // Exponential backoff + jitter. Without jitter, N jobs that fail at the
 // same time get retried at the same time (thundering herd), knocking over
 // an already-struggling provider again; +-25% scatter breaks this up.
@@ -67,62 +99,83 @@ export const ExecutionWorker = {
       limit,
       OUTBOX_EVENT_TYPES.EXECUTION_DISPATCH,
     );
+
+    // Each event above was already exclusively claimed via a per-row
+    // compare-and-swap (OutboxRepository.claimBatch) — no two workers can
+    // hold the same event, so processing the claimed batch concurrently is
+    // race-free. Bounded to DISPATCH_CONCURRENCY rather than a bare
+    // Promise.all over the whole batch: some providers (e.g. OpenClaw) spawn
+    // real CLI/browser processes, so unbounded fan-out risks colliding
+    // sessions and provider rate limits, not just DB races.
     let processed = 0;
-
-    for (const event of batch) {
-      if (event.eventType !== OUTBOX_EVENT_TYPES.EXECUTION_DISPATCH) continue;
-
-      const payload = event.payload as {
-        executionJobId: string;
-        riskLevel: string;
-      };
-
-      try {
-        const job = await ExecutionService.startExecution(
-          payload.executionJobId,
-          payload.riskLevel as never,
-          { recoverStalledDispatch: event.reclaimed },
-        );
-        if (job.status === "RUNNING" && !job.providerExecutionReference) {
-          throw new Error(
-            `ExecutionJob ${job.id} is still waiting for a provider reference`,
-          );
-        }
-
-        const result = await OutboxRepository.markProcessed(
-          event.id,
-          event.nextAttemptAt,
-        );
-        processed += result.count;
-      } catch (error) {
-        const attempt = event.attemptCount + 1;
-        if (attempt >= MAX_ATTEMPTS) {
-          const result = await OutboxRepository.markFailed(
-            event.id,
-            attempt,
-            event.nextAttemptAt,
-          );
-          if (result.count === 1) {
-            await DeadLetterRepository.create({
-              executionJobId: payload.executionJobId,
-              reason: "execution.dispatch failed after max attempts",
-              payload: event.payload,
-              attempts: attempt,
-              lastError: error instanceof Error ? error.message : String(error),
-            });
-          }
-        } else {
-          await OutboxRepository.scheduleRetry(
-            event.id,
-            attempt,
-            backoffMs(attempt),
-            event.nextAttemptAt,
-          );
-        }
-      }
+    for (let i = 0; i < batch.length; i += DISPATCH_CONCURRENCY) {
+      const chunk = batch.slice(i, i + DISPATCH_CONCURRENCY);
+      const results = await Promise.all(
+        chunk.map((event) => this.processDispatchEvent(event)),
+      );
+      processed += results.reduce((sum, count) => sum + count, 0);
     }
 
     return processed;
+  },
+
+  // Single-event dispatch handling, split out of processDispatchQueue so it
+  // can run concurrently across a claimed batch. Behavior is unchanged from
+  // the previous sequential loop.
+  async processDispatchEvent(
+    event: Awaited<ReturnType<typeof OutboxRepository.claimBatch>>[number],
+  ): Promise<number> {
+    if (event.eventType !== OUTBOX_EVENT_TYPES.EXECUTION_DISPATCH) return 0;
+
+    const payload = event.payload as {
+      executionJobId: string;
+      riskLevel: string;
+    };
+
+    try {
+      const job = await ExecutionService.startExecution(
+        payload.executionJobId,
+        payload.riskLevel as never,
+        { recoverStalledDispatch: event.reclaimed },
+      );
+      if (job.status === "RUNNING" && !job.providerExecutionReference) {
+        throw new Error(
+          `ExecutionJob ${job.id} is still waiting for a provider reference`,
+        );
+      }
+
+      const result = await OutboxRepository.markProcessed(
+        event.id,
+        event.nextAttemptAt,
+      );
+      return result.count;
+    } catch (error) {
+      const attempt = event.attemptCount + 1;
+      if (attempt >= MAX_ATTEMPTS) {
+        const result = await OutboxRepository.markFailed(
+          event.id,
+          attempt,
+          event.nextAttemptAt,
+        );
+        if (result.count === 1) {
+          await DeadLetterRepository.create({
+            executionJobId: payload.executionJobId,
+            reason: "execution.dispatch failed after max attempts",
+            payload: event.payload,
+            attempts: attempt,
+            lastError: error instanceof Error ? error.message : String(error),
+          });
+        }
+      } else {
+        await OutboxRepository.scheduleRetry(
+          event.id,
+          attempt,
+          backoffMs(attempt),
+          event.nextAttemptAt,
+        );
+      }
+      return 0;
+    }
   },
 
   async pollRunningJobs(limit = 20): Promise<number> {
@@ -271,9 +324,16 @@ export const ExecutionWorker = {
     })();
 
     activeTick = run;
+    const dog = watchdog(TICK_WATCHDOG_MS);
     try {
-      await run;
+      // Races the tick against the watchdog rather than just `await run` —
+      // whichever settles first decides the outcome. A normal run() error
+      // still propagates exactly as before (callers: instrumentation.ts's
+      // console.error, the cron route's dead-letter + 500); a watchdog
+      // timeout now propagates the same way instead of hanging forever.
+      await Promise.race([run, dog.promise]);
     } finally {
+      dog.cancel();
       if (activeTick === run) activeTick = undefined;
     }
   },

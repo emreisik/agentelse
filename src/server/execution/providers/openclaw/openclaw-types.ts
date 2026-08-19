@@ -13,17 +13,6 @@
 // itself from stderr; there is no confirmed real JSON error envelope to
 // validate against.
 
-export type OpenClawAgentRequest = {
-  agentId: string;
-  message: string;
-  // Reusing the same sessionKey across calls continues the same OpenClaw
-  // conversation — this is how resume() feeds an OTP/2FA value back into an
-  // in-progress browser-control run.
-  sessionKey: string;
-  timeoutSeconds?: number;
-  model?: string;
-};
-
 export type OpenClawAgentSuccessResult = {
   ok: true;
   runId: string;

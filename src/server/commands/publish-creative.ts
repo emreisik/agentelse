@@ -54,7 +54,7 @@ export async function publishCreativeCore(input: {
     ? await IdeaChatRepository.resolveIdeaIdForTask(creative.createdByTaskId)
     : null;
 
-  const imageUrl = buildAssetPublicUrl(version.assetId);
+  const imageUrl = await buildAssetPublicUrl(version.assetId);
   const caption = version.caption || version.copy || "";
   const title = creative.title ?? "Creative";
   const formatLabel = format === "STORIES" ? "story" : "post";
@@ -162,7 +162,7 @@ export async function publishCreativeToSocialCore(input: {
         message: "This creative has no video to publish to TikTok.",
       };
     }
-    payloadExtra.videoUrl = buildAssetPublicUrl(version.asset.id);
+    payloadExtra.videoUrl = await buildAssetPublicUrl(version.asset.id);
   } else if (!caption) {
     return { ok: false, message: "This creative has no text to publish." };
   }

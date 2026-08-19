@@ -114,8 +114,9 @@ export function telegramSendMessage(
 }
 
 // For showing the image (the Creative asset) in approval requests — the
-// file already lives on the server's local disk (storage/assets/), not at
-// a URL, so we upload it as byte content via multipart/form-data.
+// caller already has the file as bytes (via asset-storage.ts's readAsset,
+// disk or R2), not a URL, so we upload it as byte content via
+// multipart/form-data.
 export function telegramSendPhoto(
   token: string,
   chatId: string,

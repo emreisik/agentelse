@@ -14,6 +14,19 @@ export type CreativePromptInput = {
   // this is read defensively rather than typed against one source.
   brandContext?: unknown;
   platformLabel?: string;
+  // Human label for the content-type slot, e.g. "Story (9:16)" — see
+  // src/lib/creative-platform-format.ts. Only meaningful together with
+  // platformLabel.
+  contentFormatLabel?: string;
+  // Exact target canvas — stated explicitly so the model composes to fill
+  // it rather than leaving letterboxing; creative-image.ts still normalizes
+  // the actual output with sharp afterward, since Gemini's aspectRatio
+  // param is best-effort, not a guarantee.
+  pixelSize?: { width: number; height: number };
+  // Approximate top/bottom margin, in px, reserved by the platform's own UI
+  // chrome on full-screen vertical formats (Story/Reel/Shorts) — keeps
+  // critical subject matter and on-image text out of that band.
+  safeZone?: { top?: number; bottom?: number };
   // The headline text to render on the image — if given, a "render this
   // text" instruction is added to the composition; if omitted, it can
   // stay textless as before.
@@ -97,15 +110,34 @@ export function buildCreativePrompt({
   subject,
   brandContext,
   platformLabel,
+  contentFormatLabel,
+  pixelSize,
+  safeZone,
   caption,
   hasLogoReference,
 }: CreativePromptInput): string {
   const brandStyle = extractBrandStyle(brandContext);
   const compositionParts = [
     platformLabel
-      ? `Framed for a ${platformLabel} post — clean negative space where a headline or logo could later be placed.`
+      ? `Framed for a ${platformLabel}${contentFormatLabel ? ` ${contentFormatLabel}` : ""} post — clean negative space where a headline or logo could later be placed.`
       : "Clean, uncluttered composition with room for a headline.",
   ];
+  if (pixelSize) {
+    compositionParts.push(
+      `Output canvas: exactly ${pixelSize.width}x${pixelSize.height}px. Compose the full frame to fill this canvas — no letterboxing, no padding bars.`,
+    );
+  }
+  if (safeZone?.top || safeZone?.bottom) {
+    const zones = [
+      safeZone.top ? `the top ~${safeZone.top}px` : null,
+      safeZone.bottom ? `the bottom ~${safeZone.bottom}px` : null,
+    ]
+      .filter((zone): zone is string => Boolean(zone))
+      .join(" and ");
+    compositionParts.push(
+      `This is a full-screen vertical format: keep all critical subject matter and any on-image text out of ${zones}, reserved for the platform's own UI overlays (profile icon, captions, controls).`,
+    );
+  }
   if (caption?.trim()) {
     compositionParts.push(
       `Include the headline text: "${caption.trim()}" — rendered legibly, in a style consistent with the brand tone.`,

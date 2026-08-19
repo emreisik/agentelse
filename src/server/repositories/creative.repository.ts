@@ -1,6 +1,7 @@
 import "server-only";
 
 import type {
+  CreativeContentFormat,
   CreativeStatus,
   CreativeType,
   SocialPlatform,
@@ -48,6 +49,7 @@ export const CreativeRepository = {
       assetId?: string;
       caption?: string;
       copy?: string;
+      contentFormat?: CreativeContentFormat;
       generationProvider?: string;
       generationMetadata?: unknown;
       revisionReason?: string;
@@ -72,6 +74,7 @@ export const CreativeRepository = {
         assetId: input.assetId,
         caption: input.caption,
         copy: input.copy,
+        contentFormat: input.contentFormat,
         generationProvider: input.generationProvider,
         generationMetadata: input.generationMetadata as never,
         revisionReason: input.revisionReason,

@@ -15,6 +15,7 @@ import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.
 import { ProjectRepository } from "@/server/repositories/project.repository";
 import {
   SetupStateRepository,
+  SETUP_STAGE_ORDER,
   nextStage,
 } from "@/server/repositories/setup-state.repository";
 import { SignalProfileRepository } from "@/server/repositories/signal-profile.repository";
@@ -55,6 +56,18 @@ export function registerSetupStageRunner(
 }
 
 const TERMINAL_TASK_STATUSES = ["COMPLETED", "FAILED", "CANCELLED"] as const;
+
+// Each of the 12 linear stages costs at most 2 advance() calls (PENDING ->
+// RUNNING+runStage, then RUNNING -> COMPLETED+pointer move); a FAILED retry
+// adds one more call. This gives real headroom to walk every stage within a
+// single tick without being unbounded.
+const MAX_ADVANCE_STEPS_PER_PROJECT = SETUP_STAGE_ORDER.length * 2 + 6;
+// Real backstop, not the step count above: DEEP_DISCOVERY/BASELINE_AUDITS
+// can each take real wall-clock seconds even with no bugs. Caps how long one
+// project's setup can hog a tick before ContinuousAgencyEngine moves on to
+// its other steps (signal scans, opportunity eval, ...) and to the next
+// project in this same advanceAll batch.
+const PER_PROJECT_SETUP_BUDGET_MS = 45_000;
 
 // Standard browser-profile bundle (mirrors activateProjectAction/seed.ts).
 // Provisioned at INTAKE because deep-discovery research tasks need the
@@ -269,18 +282,29 @@ export const ProjectSetupOrchestrator = {
     return { stage, status: "COMPLETED", advanced: false };
   },
 
-  // Worker entry: advance all unfinished setups, several steps each so a
-  // single tick can walk synchronous stages without waiting a tick per stage.
+  // Worker entry: advance all unfinished setups. Each project's own stages
+  // are inherently sequential (stage N+1 reads stage N's DB output — e.g.
+  // BASELINE_AUDITS reads the BRAND_CONSTITUTION output), so within one
+  // project advance() calls stay a simple loop. Different projects have no
+  // such dependency, so they advance concurrently — this is what lets one
+  // project's setup finish inside a single tick instead of trickling
+  // through one extra 3s tick per stage.
   async advanceAll(limit = 5): Promise<number> {
     const states = await SetupStateRepository.listUnfinished(limit);
+    const results = await Promise.all(
+      states.map((state) => this.advanceOneProject(state.projectId)),
+    );
+    return results.reduce((sum, n) => sum + n, 0);
+  },
+
+  async advanceOneProject(projectId: string): Promise<number> {
     let advanced = 0;
-    for (const state of states) {
-      // Bounded inner loop: keep stepping while progress is being made.
-      for (let i = 0; i < 6; i += 1) {
-        const result = await this.advance(state.projectId);
-        if (result.advanced) advanced += 1;
-        else break;
-      }
+    const deadline = Date.now() + PER_PROJECT_SETUP_BUDGET_MS;
+    for (let i = 0; i < MAX_ADVANCE_STEPS_PER_PROJECT; i += 1) {
+      if (Date.now() > deadline) break;
+      const result = await this.advance(projectId);
+      if (result.advanced) advanced += 1;
+      else break;
     }
     return advanced;
   },

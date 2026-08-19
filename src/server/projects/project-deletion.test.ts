@@ -7,8 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //      SUCCESSFULLY. In the reverse order, a failed transaction would have
 //      already destroyed the files.
 
-const unlink = vi.hoisted(() => vi.fn());
-vi.mock("node:fs/promises", () => ({ unlink }));
+const deleteAsset = vi.hoisted(() => vi.fn());
+vi.mock("@/server/storage/asset-storage", () => ({ deleteAsset }));
 
 const prismaMock = vi.hoisted(() => ({
   project: { findUnique: vi.fn() },
@@ -38,6 +38,7 @@ beforeEach(() => {
   prismaMock.asset.findMany.mockResolvedValue([
     { storageKey: "local-asset://abc.png" },
   ]);
+  deleteAsset.mockResolvedValue(true);
   prismaMock.$transaction.mockImplementation(
     async (fn: (tx: unknown) => Promise<number>) =>
       fn({
@@ -67,12 +68,25 @@ describe("ProjectDeletionService.delete", () => {
     expect(result.projectName).toBe("Biduniq");
   });
 
-  it("deletes local asset files only AFTER the transaction succeeds", async () => {
+  it("deletes asset files only AFTER the transaction succeeds", async () => {
     const result = await ProjectDeletionService.delete("p-1");
 
-    expect(unlink).toHaveBeenCalledTimes(1);
-    expect(String(unlink.mock.calls[0]?.[0])).toContain("abc.png");
+    expect(deleteAsset).toHaveBeenCalledTimes(1);
+    expect(deleteAsset).toHaveBeenCalledWith("local-asset://abc.png");
     expect(result.deletedFiles).toBe(1);
+  });
+
+  it("also deletes r2:// assets, not just local-asset:// ones", async () => {
+    prismaMock.asset.findMany.mockResolvedValue([
+      { storageKey: "local-asset://abc.png" },
+      { storageKey: "r2://def.png" },
+    ]);
+
+    const result = await ProjectDeletionService.delete("p-1");
+
+    expect(deleteAsset).toHaveBeenCalledTimes(2);
+    expect(deleteAsset).toHaveBeenCalledWith("r2://def.png");
+    expect(result.deletedFiles).toBe(2);
   });
 
   it("does not touch any file if the transaction fails", async () => {
@@ -81,23 +95,11 @@ describe("ProjectDeletionService.delete", () => {
     await expect(ProjectDeletionService.delete("p-1")).rejects.toThrow(
       "deadlock",
     );
-    expect(unlink).not.toHaveBeenCalled();
+    expect(deleteAsset).not.toHaveBeenCalled();
   });
 
-  it("does not process a storageKey containing a path escape on the filesystem", async () => {
-    prismaMock.asset.findMany.mockResolvedValue([
-      { storageKey: "local-asset://../../../etc/passwd" },
-      { storageKey: "local-asset://nested/path.png" },
-    ]);
-
-    const result = await ProjectDeletionService.delete("p-1");
-
-    expect(unlink).not.toHaveBeenCalled();
-    expect(result.deletedFiles).toBe(0);
-  });
-
-  it("does not count deletion as failed if a file cannot be deleted", async () => {
-    unlink.mockRejectedValue(new Error("ENOENT"));
+  it("does not count deletion as failed toward deletedFiles if the backend reports failure", async () => {
+    deleteAsset.mockResolvedValue(false);
 
     const result = await ProjectDeletionService.delete("p-1");
 

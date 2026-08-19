@@ -1,9 +1,7 @@
 import "server-only";
 
-import { unlink } from "node:fs/promises";
-import path from "node:path";
-
 import { prisma } from "@/lib/prisma";
+import { deleteAsset } from "@/server/storage/asset-storage";
 
 // Project deletion. In the schema, ONLY the Brand table is linked to
 // Project with a real foreign key (onDelete: Cascade); the `projectId`
@@ -16,9 +14,6 @@ import { prisma } from "@/lib/prisma";
 // information_schema AT RUNTIME: if a new table carrying `projectId` is
 // added to the schema tomorrow, this service covers it too without a
 // manual update.
-
-const LOCAL_ASSET_PREFIX = "local-asset://";
-const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
 // The one real leftover that's out-of-scope but linked to an in-scope
 // table via SET NULL: dead-letter records belonging to deleted jobs. If
@@ -72,9 +67,7 @@ export const ProjectDeletionService = {
       if (count > 0) byTable.push({ table, count });
     }
 
-    const assets = await prisma.asset.count({
-      where: { projectId, storageKey: { startsWith: LOCAL_ASSET_PREFIX } },
-    });
+    const assets = await prisma.asset.count({ where: { projectId } });
 
     return {
       projectId: project.id,
@@ -98,11 +91,11 @@ export const ProjectDeletionService = {
     });
     if (!project) throw new Error("Project not found");
 
-    // Collect file names BEFORE the transaction; once the rows are
+    // Collect storageKeys BEFORE the transaction; once the rows are
     // deleted, there's no way left to know which files belonged to this
     // project.
-    const localAssets = await prisma.asset.findMany({
-      where: { projectId, storageKey: { startsWith: LOCAL_ASSET_PREFIX } },
+    const projectAssets = await prisma.asset.findMany({
+      where: { projectId },
       select: { storageKey: true },
     });
 
@@ -127,23 +120,14 @@ export const ProjectDeletionService = {
       { timeout: 30_000 },
     );
 
-    // File deletion happens OUTSIDE the transaction and last: the file
-    // system can't be rolled back, but the database transaction can. If
-    // the order were reversed, a failed transaction would have already
-    // destroyed the files.
+    // File deletion happens OUTSIDE the transaction and last: storage
+    // (disk or R2) can't be rolled back, but the database transaction can.
+    // If the order were reversed, a failed transaction would have already
+    // destroyed the files. deleteAsset() is a safe no-op for storageKeys
+    // it doesn't recognize (e.g. mock:// placeholders with no real file).
     let deletedFiles = 0;
-    for (const asset of localAssets) {
-      const filename = asset.storageKey.slice(LOCAL_ASSET_PREFIX.length);
-      // Guard against path escaping: only a plain filename is accepted.
-      if (!filename || filename.includes("/") || filename.includes("..")) {
-        continue;
-      }
-      try {
-        await unlink(path.join(LOCAL_ASSETS_DIR, filename));
-        deletedFiles += 1;
-      } catch {
-        // The file is already gone or inaccessible — deletion success doesn't depend on this.
-      }
+    for (const asset of projectAssets) {
+      if (await deleteAsset(asset.storageKey)) deletedFiles += 1;
     }
 
     return { deletedRows, deletedFiles, projectName: project.name };

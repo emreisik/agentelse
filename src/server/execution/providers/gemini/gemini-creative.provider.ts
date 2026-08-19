@@ -2,6 +2,7 @@ import "server-only";
 
 import type {
   CapabilityKey,
+  CreativeContentFormat,
   ExecutionProviderType,
   SocialPlatform,
 } from "@prisma/client";
@@ -43,6 +44,9 @@ type StoredResult = {
   caption?: string;
   copy?: string;
   image?: GeneratedCreativeImage;
+  platform?: SocialPlatform;
+  aspectRatio?: string;
+  contentFormat?: CreativeContentFormat;
   errorMessage?: string;
 };
 
@@ -118,6 +122,9 @@ export class GeminiCreativeProvider implements ExecutionProvider {
         subject: parsed.imagePrompt,
         brandContext: input.brandContext,
         platformLabel: platformFormat.label,
+        contentFormatLabel: platformFormat.contentFormatLabel,
+        pixelSize: platformFormat.pixelSize,
+        safeZone: platformFormat.safeZone,
         caption: parsed.caption,
         hasLogoReference: Boolean(logoImage),
       });
@@ -141,6 +148,12 @@ export class GeminiCreativeProvider implements ExecutionProvider {
         caption: parsed.caption,
         copy: parsed.copy,
         image,
+        platform:
+          typeof input.platform === "string"
+            ? (input.platform as SocialPlatform)
+            : undefined,
+        aspectRatio: platformFormat.aspectRatio,
+        contentFormat: platformFormat.contentFormat,
       });
     } catch (error) {
       store.set(request.correlationId, {
@@ -176,6 +189,9 @@ export class GeminiCreativeProvider implements ExecutionProvider {
         caption: record.caption,
         copy: record.copy,
         image: record.image,
+        platform: record.platform,
+        aspectRatio: record.aspectRatio,
+        contentFormat: record.contentFormat,
       },
       isMock: false,
     };

@@ -49,9 +49,14 @@ registerSetupStageRunner("INITIAL_IDEA_PORTFOLIO", async (scope) => {
     scope.projectId,
     { status: "EVALUATED", limit: 3 },
   );
-  for (const opportunity of opportunities) {
-    await IdeaFoundry.generateForOpportunity(opportunity.id, scope.projectId);
-  }
+  // Independent per-opportunity generation — each does its own dedup check
+  // scoped to its own opportunityId+lens, no shared mutable state — so
+  // there's no reason for these to run one after another.
+  await Promise.all(
+    opportunities.map((opportunity) =>
+      IdeaFoundry.generateForOpportunity(opportunity.id, scope.projectId),
+    ),
+  );
   // Council pass over the fresh portfolio (bounded parallel batches).
   const raw = await IdeaRepository.listForProject(scope.projectId, {
     status: "RAW",
@@ -116,7 +121,14 @@ registerAgencyTickStep({
 });
 registerAgencyTickStep({
   name: "idea-generation",
-  run: () => IdeaFoundry.generateForTopOpportunities(3),
+  // 3 was too tight now that generateForTopOpportunities spreads its slots
+  // across distinct projects (see idea-foundry.ts): with only a handful of
+  // projects ever competing at once, a small limit still let one or two
+  // old, large backlogs occupy most of the slots every tick and left
+  // whichever project ranked last (newest createdAt) waiting indefinitely.
+  // 10 matches opportunity-evaluation's limit just below, the structurally
+  // closest sibling step (also one LLM call per candidate).
+  run: () => IdeaFoundry.generateForTopOpportunities(10),
 });
 registerAgencyTickStep({
   name: "council-evaluation",

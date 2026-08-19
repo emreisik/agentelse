@@ -4,11 +4,21 @@ import { useActionState, useState } from "react";
 import { ImagePlus, Ratio, Sparkles, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
+import {
+  getAvailableContentFormats,
+  getCreativePlatformFormat,
+} from "@/lib/creative-platform-format";
 import { generateRealCreativeImageAction } from "@/server/actions/creative-actions";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { Textarea } from "@/components/ui/textarea";
-import type { SocialPlatform } from "@prisma/client";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { CreativeContentFormat, SocialPlatform } from "@prisma/client";
 
 type State = { ok: true } | { ok: false; message: string } | null;
 
@@ -26,7 +36,15 @@ export function CreativeImageStudio({
   hasImage: boolean;
   platform?: SocialPlatform | null;
 }) {
-  const format = getCreativePlatformFormat(platform);
+  // A platform can carry more than one content-type slot (Instagram Post
+  // vs. Story vs. Reel are different pixel targets) — when there's more
+  // than one, the user picks which one to generate for; otherwise the
+  // platform's single/default format is used silently, same as before.
+  const availableFormats = platform ? getAvailableContentFormats(platform) : [];
+  const [contentFormat, setContentFormat] = useState<
+    CreativeContentFormat | undefined
+  >(availableFormats[0]?.contentFormat);
+  const format = getCreativePlatformFormat(platform, contentFormat);
   const [instruction, setInstruction] = useState("");
 
   const [, formAction] = useActionState(
@@ -53,6 +71,9 @@ export function CreativeImageStudio({
       className="space-y-2 rounded-xl p-3 ring-1 ring-foreground/10"
     >
       <input type="hidden" name="creativeId" value={creativeId} />
+      {contentFormat ? (
+        <input type="hidden" name="contentFormat" value={contentFormat} />
+      ) : null}
 
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -61,11 +82,43 @@ export function CreativeImageStudio({
           </span>
           <p className="text-sm font-medium">Image studio</p>
         </div>
-        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <Ratio className="size-3" />
-          {format.label} · {format.aspectRatio}
-        </span>
+        {availableFormats.length > 1 ? (
+          <Select
+            items={availableFormats.map((f) => ({
+              value: f.contentFormat,
+              label: f.contentFormatLabel,
+            }))}
+            value={contentFormat}
+            onValueChange={(next) =>
+              next && setContentFormat(next as CreativeContentFormat)
+            }
+          >
+            <SelectTrigger size="sm" className="h-7 text-[11px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {availableFormats.map((f) => (
+                <SelectItem key={f.contentFormat} value={f.contentFormat}>
+                  {f.contentFormatLabel}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Ratio className="size-3" />
+            {format.label} · {format.aspectRatio}
+          </span>
+        )}
       </div>
+
+      {availableFormats.length > 1 ? (
+        <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <Ratio className="size-3" />
+          {format.label} · {format.pixelSize.width} × {format.pixelSize.height}
+          px ({format.aspectRatio})
+        </p>
+      ) : null}
 
       <Textarea
         name="instruction"

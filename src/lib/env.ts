@@ -36,6 +36,17 @@ const envSchema = z.object({
   // gateway: the "openai" image provider is the one actually configured.
   OPENCLAW_IMAGE_MODEL: z.string().optional().default("openai/gpt-image-2"),
 
+  // OpenClaw Gateway — the WebSocket RPC endpoint that `openclaw agent`
+  // itself talks to under the hood (see openclaw-gateway-client.ts). Used
+  // ONLY for runAgentTurn (browser/research/publish tasks); image
+  // generation and agent provisioning still go through the CLI subprocess
+  // above. Separate from OPENCLAW_CLI_PATH on purpose — a project can run
+  // against a Gateway deployed as its own service (e.g. a dedicated Railway
+  // service) without the web app's own container ever needing the
+  // `openclaw` binary for this path.
+  OPENCLAW_GATEWAY_URL: z.string().optional().default(""),
+  OPENCLAW_GATEWAY_TOKEN: z.string().optional().default(""),
+
   // Google Gemini — ReasoningService's primary LLM backend. If a key is
   // set, all reasoning calls go to Gemini; the model alias tracks the
   // latest stable Pro.
@@ -126,6 +137,7 @@ export function getEnv() {
 export function isIntegrationConfigured(
   key:
     | "OPENCLAW"
+    | "OPENCLAW_GATEWAY"
     | "GEMINI"
     | "R2"
     | "SENTRY"
@@ -140,6 +152,8 @@ export function isIntegrationConfigured(
   switch (key) {
     case "OPENCLAW":
       return Boolean(env.OPENCLAW_CLI_PATH);
+    case "OPENCLAW_GATEWAY":
+      return Boolean(env.OPENCLAW_GATEWAY_URL && env.OPENCLAW_GATEWAY_TOKEN);
     case "GEMINI":
       return Boolean(env.GEMINI_API_KEY);
     case "R2":

@@ -1,10 +1,7 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
-
 import { getEnv } from "@/lib/env";
+import { putAsset } from "@/server/storage/asset-storage";
 
 // Gemini image generation. The difference from OpenClaw's `infer image
 // generate` path: the call is made directly with the app's own
@@ -16,10 +13,6 @@ import { getEnv } from "@/lib/env";
 // verified (gemini-3.1-flash-image -> image/jpeg, ~10s).
 
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-
-// Shared local asset folder — same location as the OpenClaw image client,
-// so both generators are served under the same `local-asset://` scheme.
-const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
 export type GeneratedCreativeImage = {
   storageKey: string;
@@ -151,14 +144,13 @@ export async function generateGeminiImage(
     }
 
     const mimeType = inline.mimeType ?? "image/png";
-    const filename = `${randomUUID()}.${EXTENSION_BY_MIME[mimeType] ?? "png"}`;
+    const ext = EXTENSION_BY_MIME[mimeType] ?? "png";
     const buffer = Buffer.from(inline.data, "base64");
 
-    await mkdir(LOCAL_ASSETS_DIR, { recursive: true });
-    await writeFile(path.join(LOCAL_ASSETS_DIR, filename), buffer);
+    const { storageKey, filename } = await putAsset(buffer, ext, mimeType);
 
     return {
-      storageKey: `local-asset://${filename}`,
+      storageKey,
       filename,
       mimeType,
       size: buffer.byteLength,

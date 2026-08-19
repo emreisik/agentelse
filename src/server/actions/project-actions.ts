@@ -1,8 +1,6 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
@@ -17,6 +15,7 @@ import {
 import { ProjectRepository } from "@/server/repositories/project.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { generateCreativeImage } from "@/server/media/creative-image";
+import { putAsset } from "@/server/storage/asset-storage";
 import { isSupportedLanguage, isSupportedCountry } from "@/lib/locales";
 
 async function getWorkspaceId(userId: string): Promise<string> {
@@ -107,7 +106,6 @@ const LOGO_MIME_TO_EXT: Record<string, string> = {
   "image/jpeg": "jpg",
 };
 const MAX_LOGO_SIZE = 5 * 1024 * 1024;
-const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
 export async function uploadLogoAction(formData: FormData) {
   const projectId = String(formData.get("projectId"));
@@ -125,12 +123,8 @@ export async function uploadLogoAction(formData: FormData) {
   const { userId } = await requireUser();
   const access = await requireProjectAccess(userId, projectId);
 
-  await mkdir(LOCAL_ASSETS_DIR, { recursive: true });
-  const filename = `${randomUUID()}.${ext}`;
-  await writeFile(
-    path.join(LOCAL_ASSETS_DIR, filename),
-    Buffer.from(await file.arrayBuffer()),
-  );
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const { storageKey, filename } = await putAsset(buffer, ext, file.type);
 
   const asset = await prisma.asset.create({
     data: {
@@ -140,7 +134,7 @@ export async function uploadLogoAction(formData: FormData) {
       type: "LOGO",
       filename,
       mimeType: file.type,
-      storageKey: `local-asset://${filename}`,
+      storageKey,
       size: file.size,
     },
   });

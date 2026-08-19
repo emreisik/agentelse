@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { AlertCircle, Check, ImageIcon, Loader2, Share2 } from "lucide-react";
 
 import { CREATIVE_STATUS, stripCapabilityPrefix } from "@/lib/labels/core";
+import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
 import { Button } from "@/components/ui/button";
@@ -102,6 +103,13 @@ function CreativeReadyCard({
   const status = localStatus ?? card.status;
   const canDecide = status === "IN_REVIEW" && Boolean(card.approvalId);
   const title = stripCapabilityPrefix(card.title);
+  const format = getCreativePlatformFormat(card.platform, card.contentFormat);
+  // Real measured size wins over the target format's nominal size — the
+  // sharp normalize step in creative-image.ts is meant to make these equal,
+  // but the note should show what the file actually is, not what was asked
+  // for.
+  const displayWidth = card.assetWidth ?? format.pixelSize.width;
+  const displayHeight = card.assetHeight ?? format.pixelSize.height;
 
   const decide = (to: "APPROVED" | "REJECTED") => {
     if (!card.approvalId) return;
@@ -142,7 +150,8 @@ function CreativeReadyCard({
           <img
             src={src}
             alt={card.caption || title}
-            className="aspect-square w-full object-cover"
+            style={{ aspectRatio: `${displayWidth} / ${displayHeight}` }}
+            className="w-full object-cover"
           />
         </ImageLightbox>
       ) : (
@@ -160,6 +169,14 @@ function CreativeReadyCard({
             fallback={status}
           />
         </div>
+        {card.assetWidth && card.assetHeight ? (
+          <p className="text-[11px] text-muted-foreground">
+            {card.assetWidth} × {card.assetHeight} px
+            {card.platform
+              ? ` · ${format.label} · ${format.contentFormatLabel}`
+              : ""}
+          </p>
+        ) : null}
         {card.copy ? (
           <p className="text-sm whitespace-pre-line text-muted-foreground">
             {card.copy}

@@ -1,16 +1,14 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
-
 import { revalidatePath } from "next/cache";
+import sharp from "sharp";
 
 import { prisma } from "@/lib/prisma";
 import {
   requireUser,
   requireProjectAccess,
 } from "@/server/security/tenant-context";
+import { putAsset } from "@/server/storage/asset-storage";
 import type { ActionResult } from "@/components/shared/action-form";
 
 // Direct file upload to the Library panel — the same allowed type set as the
@@ -44,7 +42,6 @@ const MAX_LIBRARY_FILE_SIZE = 20 * 1024 * 1024;
 // sized for — TikTok's own content limits run into the hundreds of MB, so a
 // higher ceiling avoids rejecting normal short-form video.
 const MAX_VIDEO_FILE_SIZE = 200 * 1024 * 1024;
-const LOCAL_ASSETS_DIR = path.join(process.cwd(), "storage", "assets");
 
 export async function uploadLibraryAssetAction(
   formData: FormData,
@@ -74,27 +71,34 @@ export async function uploadLibraryAssetAction(
   const { userId } = await requireUser();
   const access = await requireProjectAccess(userId, projectId);
 
-  await mkdir(LOCAL_ASSETS_DIR, { recursive: true });
-  const filename = `${randomUUID()}.${ext}`;
-  await writeFile(
-    path.join(LOCAL_ASSETS_DIR, filename),
-    Buffer.from(await file.arrayBuffer()),
-  );
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const { storageKey, filename } = await putAsset(buffer, ext, file.type);
+
+  const isImage = file.type.startsWith("image/");
+  // Real pixel size, measured up front — this is what the TikTok
+  // aspect-ratio check in createCreativeFromLibraryAssetAction (and the
+  // "N x M px" note wherever this asset later shows up as a creative) reads.
+  // Video dimensions aren't probed here (would need ffprobe, not sharp) —
+  // width/height stay null for VIDEO/DOCUMENT rows.
+  const dimensions = isImage
+    ? await sharp(buffer)
+        .metadata()
+        .then((meta) => ({ width: meta.width, height: meta.height }))
+        .catch(() => ({ width: undefined, height: undefined }))
+    : { width: undefined, height: undefined };
 
   await prisma.asset.create({
     data: {
       workspaceId: access.workspaceId,
       projectId,
       brandId: access.defaultBrandId,
-      type: file.type.startsWith("image/")
-        ? "IMAGE"
-        : isVideo
-          ? "VIDEO"
-          : "DOCUMENT",
+      type: isImage ? "IMAGE" : isVideo ? "VIDEO" : "DOCUMENT",
       filename,
       mimeType: file.type,
-      storageKey: `local-asset://${filename}`,
+      storageKey,
       size: file.size,
+      width: dimensions.width,
+      height: dimensions.height,
     },
   });
 

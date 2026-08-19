@@ -3,6 +3,8 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { getEnv } from "@/lib/env";
+import { prisma } from "@/lib/prisma";
+import { resolveDirectPublicUrl } from "@/server/storage/asset-storage";
 
 // External providers (Instagram/Ads servers like the Meta Graph API) can't
 // authenticate to the normal /api/assets/[assetId] route via
@@ -65,9 +67,20 @@ export function verifyAssetPublicToken(
   return true;
 }
 
-// For the payload.imageUrl of capabilities like INSTAGRAM_PUBLISH — Meta's
-// servers can download directly from here (without auth).
-export function buildAssetPublicUrl(assetId: string): string {
+// For the payload.imageUrl of capabilities like INSTAGRAM_PUBLISH — external
+// providers (Meta, TikTok, LinkedIn, X) can download directly from here
+// (without auth). R2-backed assets get R2's own permanent public URL
+// directly — no token, no expiry, no proxy through this app at all. Only
+// local-asset:// (R2 not configured, e.g. local dev) falls back to the
+// short-lived signed-token proxy below.
+export async function buildAssetPublicUrl(assetId: string): Promise<string> {
+  const asset = await prisma.asset.findUnique({
+    where: { id: assetId },
+    select: { storageKey: true },
+  });
+  const directUrl = asset ? resolveDirectPublicUrl(asset.storageKey) : null;
+  if (directUrl) return directUrl;
+
   const token = signAssetPublicToken(assetId);
   const env = getEnv();
   const base = env.PUBLIC_ASSET_BASE_URL || env.NEXT_PUBLIC_APP_URL;

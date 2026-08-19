@@ -1,6 +1,10 @@
 import "server-only";
 
-import type { CapabilityKey, DepartmentKey } from "@prisma/client";
+import type {
+  CapabilityKey,
+  DepartmentKey,
+  SocialPlatform,
+} from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { taskFingerprint } from "@/server/agency/fingerprint";
@@ -9,11 +13,26 @@ import { IdeaRepository } from "@/server/repositories/idea.repository";
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { WorkPlanRepository } from "@/server/repositories/work-plan.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
+import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 
 // Turns an approved multi-department idea into a WorkPlan with a task
 // dependency graph (spec section 26). Deterministic template: strategy leads,
 // creative/copy fan out, channel planning joins them, externally visible
 // steps park behind approval, analytics closes the loop.
+
+// The connected-account list is already priority-ordered (instagram,
+// tiktok, linkedin, x — see getPublishTargets) — the first entry is
+// treated as this project's primary platform for sizing AI-generated
+// creative images (see getCreativePlatformFormat). No connected accounts
+// -> undefined, same generic 1:1 fallback as before this existed.
+async function resolvePrimaryPlatform(
+  projectId: string,
+): Promise<SocialPlatform | undefined> {
+  const targets = await getPublishTargets(projectId);
+  return targets[0]
+    ? (targets[0].platform.toUpperCase() as SocialPlatform)
+    : undefined;
+}
 
 export type PlanNode = {
   key: string;
@@ -138,6 +157,8 @@ export const WorkPlanBuilder = {
           .then((o) => o?.goalIds ?? [])
       : [];
 
+    const targetPlatform = await resolvePrimaryPlatform(input.projectId);
+
     const departments = input.departments.filter(
       (d): d is DepartmentKey =>
         d in DEPARTMENT_CONTRIBUTIONS ||
@@ -161,9 +182,17 @@ export const WorkPlanBuilder = {
     // Create every node task (deferred), record key->taskId, wire deps.
     const taskIdByKey = new Map<string, string>();
     for (const node of nodes) {
+      // Only the two capabilities that actually generate an AI image read
+      // targetPlatform (see gemini-creative.provider.ts) — scoped narrowly
+      // so brief/copy/content-plan/etc. task payloads don't carry an
+      // unrelated platform field.
+      const isCreativeCapability =
+        node.capability === "CREATE_SOCIAL_CREATIVE" ||
+        node.capability === "CREATE_AD_CREATIVE";
       const planned = await TaskPlanner.planForCapability({
         ...scope,
         capability: node.capability,
+        targetPlatform: isCreativeCapability ? targetPlatform : undefined,
         request: node.request,
         createdByType: "SYSTEM",
         departmentKey: node.department,

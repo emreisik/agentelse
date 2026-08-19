@@ -84,6 +84,14 @@ jobs:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
           DIRECT_URL: ${{ env.TEST_DATABASE_URL }}
 
+      # Generates .next/types (PageProps/LayoutProps for every route) without
+      # a full build. Typecheck depends on these ambient types existing —
+      # relying solely on the .next/cache restore above is fragile: any
+      # package-lock.json change busts that cache key (including its
+      # restore-keys prefix), silently breaking typecheck.
+      - name: Generate route types
+        run: npx next typegen
+
       - name: Typecheck
         run: npm run typecheck
 

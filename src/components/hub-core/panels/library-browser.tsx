@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useMemo,
   useRef,
   useState,
@@ -19,13 +20,16 @@ import {
   List,
   Loader2,
   Search,
+  Send,
   SlidersHorizontal,
   Upload,
+  Video,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { smartDate } from "@/lib/dates";
 import { uploadLibraryAssetAction } from "@/server/actions/library-actions";
+import { createCreativeFromLibraryAssetAction } from "@/server/actions/creative-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -50,13 +54,14 @@ export type LibraryAsset = {
   mimeType: string;
   size: number;
   createdAt: string;
+  type: string;
 };
 
-type TabKey = "all" | "images" | "documents";
+type TabKey = "all" | "images" | "videos" | "documents";
 type ViewMode = "list" | "grid";
 
 const ACCEPTED_FILE_TYPES =
-  "image/png,image/jpeg,image/webp,application/pdf,text/plain,text/csv,text/markdown";
+  "image/png,image/jpeg,image/webp,application/pdf,text/plain,text/csv,text/markdown,video/mp4,video/quicktime,video/webm";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -68,6 +73,13 @@ function isImageAsset(asset: LibraryAsset): boolean {
   return asset.mimeType.startsWith("image/");
 }
 
+// TikTok's publish flow specifically requires a VIDEO-typed Asset (see
+// publishCreativeToSocialCore in publish-creative.ts) — this is the only
+// upload path that can produce one (see library-actions.ts).
+function isVideoAsset(asset: LibraryAsset): boolean {
+  return asset.type === "VIDEO";
+}
+
 function FileTypeIcon({
   mimeType,
   className,
@@ -75,6 +87,7 @@ function FileTypeIcon({
   mimeType: string;
   className?: string;
 }) {
+  if (mimeType.startsWith("video/")) return <Video className={className} />;
   if (mimeType === "text/csv") return <FileSpreadsheet className={className} />;
   if (
     mimeType === "application/pdf" ||
@@ -217,8 +230,60 @@ function EmptyState({
   );
 }
 
+// Inline caption form for turning a video Asset into a publishable TikTok
+// Creative (see createCreativeFromLibraryAssetAction) — kept as a real
+// top-level component (not an inline closure) so its <textarea> doesn't
+// remount and lose focus/value on every LibraryBrowser re-render.
+function PrepareForTikTokForm({
+  caption,
+  onCaptionChange,
+  onSubmit,
+  onCancel,
+  pending,
+}: {
+  caption: string;
+  onCaptionChange: (value: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  pending: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg bg-muted/50 p-2.5">
+      <Input
+        value={caption}
+        onChange={(event) => onCaptionChange(event.target.value)}
+        placeholder="Caption for this TikTok video…"
+        className="h-8 flex-1 text-xs"
+        autoFocus
+      />
+      <Button
+        size="sm"
+        className="h-8 shrink-0 gap-1"
+        disabled={pending}
+        onClick={onSubmit}
+      >
+        {pending ? (
+          <Loader2 className="size-3.5 animate-spin" />
+        ) : (
+          <Send className="size-3.5" />
+        )}
+        Create
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 shrink-0"
+        disabled={pending}
+        onClick={onCancel}
+      >
+        Cancel
+      </Button>
+    </div>
+  );
+}
+
 // File explorer as seen in the screenshot: search + "New" (actual upload) +
-// All/Images/Documents tabs + grid/list toggle. All filtering happens
+// All/Images/Videos/Documents tabs + grid/list toggle. All filtering happens
 // client-side — the file count per project is small, no need for a server round-trip.
 export function LibraryBrowser({
   projectId,
@@ -233,18 +298,29 @@ export function LibraryBrowser({
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [pending, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Which video asset currently has its inline "prepare for TikTok" caption
+  // form open — at most one at a time, keyed by assetId.
+  const [preparingAssetId, setPreparingAssetId] = useState<string | null>(null);
+  const [caption, setCaption] = useState("");
+  const [preparePending, startPrepareTransition] = useTransition();
 
   const imageCount = useMemo(
     () => assets.filter(isImageAsset).length,
     [assets],
   );
-  const documentCount = assets.length - imageCount;
+  const videoCount = useMemo(
+    () => assets.filter(isVideoAsset).length,
+    [assets],
+  );
+  const documentCount = assets.length - imageCount - videoCount;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return assets.filter((asset) => {
       if (tab === "images" && !isImageAsset(asset)) return false;
-      if (tab === "documents" && isImageAsset(asset)) return false;
+      if (tab === "videos" && !isVideoAsset(asset)) return false;
+      if (tab === "documents" && (isImageAsset(asset) || isVideoAsset(asset)))
+        return false;
       if (q && !asset.filename.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -274,6 +350,36 @@ export function LibraryBrowser({
         }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Upload failed");
+      }
+    });
+  }
+
+  function openPrepareForm(assetId: string) {
+    setPreparingAssetId(assetId);
+    setCaption("");
+  }
+
+  function submitPrepareForTikTok(assetId: string) {
+    const formData = new FormData();
+    formData.set("projectId", projectId);
+    formData.set("assetId", assetId);
+    formData.set("platform", "TIKTOK");
+    formData.set("caption", caption);
+
+    startPrepareTransition(async () => {
+      try {
+        const result = await createCreativeFromLibraryAssetAction(formData);
+        if (result.ok) {
+          toast.success("Ready to publish — find it on the project page.");
+          setPreparingAssetId(null);
+          router.refresh();
+        } else {
+          toast.error(result.message);
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Could not prepare video",
+        );
       }
     });
   }
@@ -333,6 +439,10 @@ export function LibraryBrowser({
           Images
           <span className="text-xs text-muted-foreground">{imageCount}</span>
         </TabPill>
+        <TabPill active={tab === "videos"} onClick={() => setTab("videos")}>
+          Videos
+          <span className="text-xs text-muted-foreground">{videoCount}</span>
+        </TabPill>
         <TabPill
           active={tab === "documents"}
           onClick={() => setTab("documents")}
@@ -381,29 +491,58 @@ export function LibraryBrowser({
                 <TableHead>Name</TableHead>
                 <TableHead className="w-32">Modified</TableHead>
                 <TableHead className="w-24 text-right">Size</TableHead>
+                <TableHead className="w-10" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.map((asset) => (
-                <TableRow key={asset.id}>
-                  <TableCell className="max-w-0">
-                    <LibraryEntryLink
-                      asset={asset}
-                      className="flex min-w-0 items-center gap-3"
-                    >
-                      <FileThumb asset={asset} size="sm" />
-                      <span className="min-w-0 flex-1 truncate">
-                        {asset.filename}
-                      </span>
-                    </LibraryEntryLink>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {smartDate(asset.createdAt)}
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {formatBytes(asset.size)}
-                  </TableCell>
-                </TableRow>
+                <Fragment key={asset.id}>
+                  <TableRow>
+                    <TableCell className="max-w-0">
+                      <LibraryEntryLink
+                        asset={asset}
+                        className="flex min-w-0 items-center gap-3"
+                      >
+                        <FileThumb asset={asset} size="sm" />
+                        <span className="min-w-0 flex-1 truncate">
+                          {asset.filename}
+                        </span>
+                      </LibraryEntryLink>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {smartDate(asset.createdAt)}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {formatBytes(asset.size)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {isVideoAsset(asset) ? (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="Prepare for TikTok"
+                          className="text-muted-foreground"
+                          onClick={() => openPrepareForm(asset.id)}
+                        >
+                          <Send className="size-3.5" />
+                        </Button>
+                      ) : null}
+                    </TableCell>
+                  </TableRow>
+                  {preparingAssetId === asset.id ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="py-2">
+                        <PrepareForTikTokForm
+                          caption={caption}
+                          onCaptionChange={setCaption}
+                          onSubmit={() => submitPrepareForTikTok(asset.id)}
+                          onCancel={() => setPreparingAssetId(null)}
+                          pending={preparePending}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </Fragment>
               ))}
             </TableBody>
           </Table>
@@ -426,6 +565,29 @@ export function LibraryBrowser({
                   </p>
                 </div>
               </LibraryEntryLink>
+              {isVideoAsset(asset) ? (
+                <div className="border-t border-border p-2.5">
+                  {preparingAssetId === asset.id ? (
+                    <PrepareForTikTokForm
+                      caption={caption}
+                      onCaptionChange={setCaption}
+                      onSubmit={() => submitPrepareForTikTok(asset.id)}
+                      onCancel={() => setPreparingAssetId(null)}
+                      pending={preparePending}
+                    />
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 w-full gap-1 text-xs"
+                      onClick={() => openPrepareForm(asset.id)}
+                    >
+                      <Send className="size-3.5" />
+                      Prepare for TikTok
+                    </Button>
+                  )}
+                </div>
+              ) : null}
             </div>
           ))}
         </div>

@@ -5,6 +5,8 @@ import path from "node:path";
 
 import { revalidatePath } from "next/cache";
 
+import type { AssetType } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import {
@@ -256,6 +258,82 @@ export async function generateRealCreativeImageAction(
     }
 
     revalidatePath(`/creatives/${creativeId}`);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Operation failed",
+    };
+  }
+}
+
+// Bridges the Library panel (see library-browser.tsx) to the Creative/
+// publish pipeline. Before this, the ONLY way a Creative ever came into
+// existence was execution-service.ts's AI generation path — there was no
+// way to turn a user-uploaded Library asset (e.g. a video, which the AI
+// pipeline can't generate at all — see media/creative-image.ts, image-only)
+// into something publishCreativeToSocialCore (publish-creative.ts) could
+// actually publish. This is the manual counterpart: pick an existing Asset,
+// wrap it in a single-version Creative, and fast-track it straight to
+// APPROVED (DRAFT -> IN_REVIEW -> APPROVED, the only path the state machine
+// allows — see CREATIVE_TRANSITIONS in transitions.ts) since the user is
+// knowingly approving their own upload right here, not an AI draft that
+// needs a human review step.
+export async function createCreativeFromLibraryAssetAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    const projectId = String(formData.get("projectId") ?? "");
+    const assetId = String(formData.get("assetId") ?? "");
+    const caption = String(formData.get("caption") ?? "").trim();
+    const platformRaw = String(formData.get("platform") ?? "");
+    const platform =
+      platformRaw === "TIKTOK" ||
+      platformRaw === "LINKEDIN" ||
+      platformRaw === "X" ||
+      platformRaw === "INSTAGRAM"
+        ? platformRaw
+        : undefined;
+    if (!projectId || !assetId) {
+      return { ok: false, message: "Missing project or asset." };
+    }
+
+    const { userId } = await requireUser();
+    const access = await requireProjectAccess(userId, projectId);
+
+    const asset = await prisma.asset.findFirst({
+      where: { id: assetId, projectId },
+    });
+    if (!asset) {
+      return { ok: false, message: "Asset not found in this project." };
+    }
+    // TikTok specifically requires a VIDEO-typed asset (see
+    // publishCreativeToSocialCore's TikTok branch) — catching a mismatch
+    // here gives a clear message instead of a confusing failure at publish
+    // time.
+    if (platform === "TIKTOK" && (asset.type as AssetType) !== "VIDEO") {
+      return {
+        ok: false,
+        message: "TikTok requires a video asset — this file isn't a video.",
+      };
+    }
+
+    const creative = await CreativeRepository.create({
+      workspaceId: access.workspaceId,
+      projectId,
+      brandId: access.defaultBrandId,
+      type: "SOCIAL_POST",
+      platform,
+      title: asset.filename,
+    });
+    await CreativeRepository.addVersion(creative.id, projectId, {
+      assetId: asset.id,
+      caption: caption || undefined,
+    });
+    await CreativeRepository.transition(creative.id, projectId, "IN_REVIEW");
+    await CreativeRepository.transition(creative.id, projectId, "APPROVED");
+
+    revalidatePath(`/projects/${projectId}`);
     return { ok: true };
   } catch (error) {
     return {

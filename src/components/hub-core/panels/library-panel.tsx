@@ -17,6 +17,7 @@ export async function LibraryPanel({ projectId }: PanelProps) {
       mimeType: true,
       size: true,
       createdAt: true,
+      type: true,
     },
   });
 

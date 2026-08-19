@@ -9,9 +9,9 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 
-// LinkedIn'in kendi consent ekranına yönlendiren başlangıç adımı — bkz.
-// callback/route.ts geri dönüş için. google/start ile aynı desen (PKCE yok
-// — LinkedIn'in 3-legged akışı bunu gerektirmiyor, tiktok/start'ın aksine).
+// The start step that redirects to LinkedIn's own consent screen — see
+// callback/route.ts for the return trip. Same pattern as google/start (no
+// PKCE — LinkedIn's 3-legged flow doesn't require it, unlike tiktok/start).
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");

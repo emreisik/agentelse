@@ -54,12 +54,35 @@ describe("ExecutionPolicy.staticBrowserPurpose", () => {
     expect(ExecutionPolicy.staticBrowserPurpose("INSTAGRAM_PUBLISH")).toBe(
       "INSTAGRAM",
     );
-    expect(ExecutionPolicy.staticBrowserPurpose("TIKTOK_PUBLISH")).toBe(
-      "TIKTOK",
-    );
     expect(ExecutionPolicy.staticBrowserPurpose("GOOGLE_ADS_ANALYSIS")).toBe(
       "GOOGLE_ADS",
     );
+  });
+
+  // TikTok/LinkedIn/X now route exclusively through their own
+  // IntegrationCredential-based API providers (tiktok/linkedin/x-api-provider.ts),
+  // which never touch BrowserProfile — unlike INSTAGRAM_PUBLISH, which still
+  // needs one because capability-router.ts's resolveBrowserProfile() runs
+  // unconditionally before provider selection (see execution-policy.ts's
+  // comment on BROWSER_PURPOSE_BY_CAPABILITY). Mapping these here would make
+  // every approved TIKTOK_PUBLISH/LINKEDIN_PUBLISH/X_PUBLISH task fail with
+  // BROWSER_PROFILE_MISMATCH, since the integrations page no longer offers
+  // any way to create such a BrowserProfile row.
+  it("has no static browser-purpose mapping for TikTok/LinkedIn/X publish — they're OAuth/API-only now", () => {
+    expect(
+      ExecutionPolicy.staticBrowserPurpose("TIKTOK_PUBLISH"),
+    ).toBeUndefined();
+    expect(
+      ExecutionPolicy.staticBrowserPurpose("LINKEDIN_PUBLISH"),
+    ).toBeUndefined();
+    expect(ExecutionPolicy.staticBrowserPurpose("X_PUBLISH")).toBeUndefined();
+    expect(ExecutionPolicy.requiresBrowserProfile("TIKTOK_PUBLISH")).toBe(
+      false,
+    );
+    expect(ExecutionPolicy.requiresBrowserProfile("LINKEDIN_PUBLISH")).toBe(
+      false,
+    );
+    expect(ExecutionPolicy.requiresBrowserProfile("X_PUBLISH")).toBe(false);
   });
 
   it("has no static mapping for SOCIAL_ACCOUNT_SETUP — the platform is only known at runtime", () => {

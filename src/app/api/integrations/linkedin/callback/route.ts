@@ -25,9 +25,10 @@ function redirectToEntegrasyonlar(
   return NextResponse.redirect(url);
 }
 
-// LinkedIn'in consent ekranından dönüş — code'u access token'a çevirir,
-// profil bilgisini (OpenID Connect userinfo) çeker, bağlantıyı kurar.
-// google/callback ve meta/callback ile aynı iskelet.
+// The return trip from LinkedIn's consent screen — exchanges the code for
+// an access token, fetches profile info (OpenID Connect userinfo), and
+// establishes the connection. Same skeleton as google/callback and
+// meta/callback.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
@@ -113,9 +114,10 @@ export async function GET(request: Request) {
     hasRefreshToken: Boolean(tokens.refreshToken),
   };
 
-  // Refresh token yoksa (ürün onayı alınmamışsa) yalnızca access token
-  // saklanır — testXConnectionAction/callback bunu EXPIRED'e çevirdiğinde
-  // kullanıcı yeniden bağlanmalı (Meta'nın long-lived token'ı gibi).
+  // If there's no refresh token (product approval not granted), only the
+  // access token is stored — once testLinkedInConnectionAction/callback
+  // flips this to EXPIRED, the user has to reconnect (same as Meta's
+  // long-lived token).
   const secretPayload = tokens.refreshToken
     ? JSON.stringify({
         accessToken: tokens.accessToken,

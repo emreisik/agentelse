@@ -79,13 +79,13 @@ import { Input } from "@/components/ui/input";
 import { buttonVariants } from "@/components/ui/button";
 
 const CATEGORIES = {
-  sosyal: {
+  social: {
     title: "Social Media",
-    // TIKTOK/LINKEDIN/X buradan bilerek çıkarıldı — artık BrowserProfile
-    // tabanlı placeholder değiller, Google/Meta gibi gerçek OAuth ile
-    // TikTokTile/LinkedInTile/XTile üzerinden ayrı render ediliyorlar (bkz.
-    // aşağıdaki IntegrationSection'lar). INSTAGRAM burada kalıyor — o hâlâ
-    // eski BrowserProfile placeholder'ı, Meta'nın gerçek OAuth'undan ayrı.
+    // TIKTOK/LINKEDIN/X were deliberately removed from here — they're no
+    // longer BrowserProfile-based placeholders, they now render separately
+    // through real OAuth via TikTokTile/LinkedInTile/XTile (see the
+    // IntegrationSections below). INSTAGRAM stays here — it's still the old
+    // BrowserProfile placeholder, separate from Meta's real OAuth.
     purposes: ["INSTAGRAM"] as BrowserProfilePurpose[],
   },
   reklam: {
@@ -106,7 +106,7 @@ const CATEGORIES = {
 const FILTERS = [
   { key: "tumu", label: "All" },
   { key: "mesajlasma", label: "Messaging" },
-  { key: "sosyal", label: "Social Media" },
+  { key: "social", label: "Social Media" },
   { key: "reklam", label: "Advertising" },
   { key: "analitik", label: "Analytics & Other" },
   { key: "kurulu", label: "Installed" },
@@ -1178,7 +1178,7 @@ function MetaDialog({
           <div className="min-w-0">
             <p className="text-sm font-semibold">Instagram & Meta Ads</p>
             <p className="text-xs text-muted-foreground">
-              Instagram paylaşımı ve reklam kampanyası yönetimi için erişim
+              Access for Instagram publishing and ad campaign management
             </p>
           </div>
         </div>
@@ -1189,7 +1189,7 @@ function MetaDialog({
       {metaError ? (
         <p className="rounded-lg bg-destructive/10 p-2.5 text-xs text-destructive">
           {META_ERROR_MESSAGES[metaError] ??
-            "Bir şeyler ters gitti, tekrar deneyin."}
+            "Something went wrong, please try again."}
         </p>
       ) : null}
 
@@ -1197,26 +1197,26 @@ function MetaDialog({
         <div className="space-y-3 rounded-lg p-3 ring-1 ring-foreground/10">
           <div className="flex items-center justify-between gap-2">
             <p className="min-w-0 truncate text-sm font-medium">
-              {credential.accountLabel ?? "Meta hesabı"}
+              {credential.accountLabel ?? "Meta account"}
             </p>
             <StatusBadge
               meta={
                 connected
-                  ? { label: "Bağlı", tone: "positive" }
-                  : { label: "Yeniden bağlanmalı", tone: "waiting" }
+                  ? { label: "Connected", tone: "positive" }
+                  : { label: "Needs reconnect", tone: "waiting" }
               }
             />
           </div>
 
           {expired ? (
-            // Düz <a>: bkz. Google bloğundaki not — <Link>'in RSC-fetch
-            // navigasyonu Meta'nın OAuth dialog'una (cross-origin) CORS
-            // hatası veriyor.
+            // Plain <a>: see the note in the Google block — <Link>'s RSC-fetch
+            // navigation triggers a CORS error against Meta's (cross-origin)
+            // OAuth dialog.
             <a
               href={`/api/integrations/meta/start?projectId=${projectId}`}
               className={cn(buttonVariants({ size: "xs" }))}
             >
-              Yeniden Bağlan
+              Reconnect
             </a>
           ) : (
             <>
@@ -1237,18 +1237,17 @@ function MetaDialog({
                       action={selectMetaPageAction}
                       hiddenFields={{ projectId }}
                       fieldName="pageId"
-                      successMessage="Page güncellendi"
+                      successMessage="Page updated"
                     />
                   ) : (
                     <span className="text-[11px] text-muted-foreground">
-                      {metadata.pagesListError ??
-                        "Erişilebilir Page bulunamadı"}
+                      {metadata.pagesListError ?? "No accessible Page found"}
                     </span>
                   )}
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] text-muted-foreground">
-                    Reklam Hesabı
+                    Ad Account
                   </span>
                   {metadata.adAccounts.length > 0 ? (
                     <ModeSwitcher
@@ -1260,12 +1259,12 @@ function MetaDialog({
                       action={selectMetaAdAccountAction}
                       hiddenFields={{ projectId }}
                       fieldName="adAccountId"
-                      successMessage="Reklam hesabı güncellendi"
+                      successMessage="Ad account updated"
                     />
                   ) : (
                     <span className="text-[11px] text-muted-foreground">
                       {metadata.adAccountsListError ??
-                        "Erişilebilir reklam hesabı bulunamadı"}
+                        "No accessible ad account found"}
                     </span>
                   )}
                 </div>
@@ -1273,7 +1272,7 @@ function MetaDialog({
 
               {metadata.lastTestResult ? (
                 <p className="text-[11px] text-muted-foreground">
-                  Son test ({timeAgo(metadata.lastTestResult.testedAt)}):{" "}
+                  Last test ({timeAgo(metadata.lastTestResult.testedAt)}):{" "}
                   {metadata.lastTestResult.error
                     ? metadata.lastTestResult.error
                     : [
@@ -1281,7 +1280,7 @@ function MetaDialog({
                           ? `IG: @${metadata.lastTestResult.igUsername}`
                           : null,
                         metadata.lastTestResult.adAccountSpend !== undefined
-                          ? `Harcama (7g): ${metadata.lastTestResult.adAccountSpend}`
+                          ? `Spend (7d): ${metadata.lastTestResult.adAccountSpend}`
                           : null,
                       ]
                         .filter(Boolean)
@@ -1292,19 +1291,19 @@ function MetaDialog({
               <div className="flex items-center justify-end gap-1.5">
                 <ActionForm
                   action={disconnectMetaAction}
-                  successMessage="Bağlantı kesildi"
+                  successMessage="Disconnected"
                 >
                   <input type="hidden" name="projectId" value={projectId} />
                   <SubmitButton variant="outline" size="xs">
-                    Bağlantıyı Kes
+                    Disconnect
                   </SubmitButton>
                 </ActionForm>
                 <ActionForm
                   action={testMetaConnectionAction}
-                  successMessage="Test başarılı"
+                  successMessage="Test successful"
                 >
                   <input type="hidden" name="projectId" value={projectId} />
-                  <SubmitButton size="xs">Test Et</SubmitButton>
+                  <SubmitButton size="xs">Test</SubmitButton>
                 </ActionForm>
               </div>
             </>
@@ -1313,11 +1312,11 @@ function MetaDialog({
       ) : (
         <EmptyState
           icon={ImageIcon}
-          title="Henüz bağlı değil"
-          hint="Meta hesabınızla bağlanın, ardından Page ve reklam hesabınızı seçin."
+          title="Not connected yet"
+          hint="Connect your Meta account, then choose your Page and ad account."
           className="py-8"
         >
-          {/* Düz <a>: bkz. Google bloğundaki not. */}
+          {/* Plain <a>: see the note in the Google block. */}
           <a
             href={`/api/integrations/meta/start?projectId=${projectId}`}
             className={cn(
@@ -1326,7 +1325,7 @@ function MetaDialog({
             )}
             aria-disabled={!configured}
           >
-            Meta ile Bağlan
+            Connect with Meta
           </a>
         </EmptyState>
       )}
@@ -1335,12 +1334,13 @@ function MetaDialog({
 }
 
 // ---------------------------------------------------------------------------
-// TikTok / LinkedIn / X — Google/Meta ile aynı IntegrationCredential tabanlı
-// gerçek OAuth deseni (bkz. src/server/integrations/{tiktok,linkedin,x}-
-// client.ts). BrowserProfile tabanlı eski TIKTOK/LINKEDIN/X purpose'larının
-// yerini alıyorlar (bkz. CATEGORIES'teki not) — bu üçünün BrowserProfilePurpose
-// karşılığı hâlâ execution-policy.ts'te OpenClaw fallback'i için mevcut ama
-// artık bu sayfada ayrı bir placeholder tile olarak gösterilmiyor.
+// TikTok / LinkedIn / X — the same real, IntegrationCredential-based OAuth
+// pattern as Google/Meta (see src/server/integrations/{tiktok,linkedin,x}-
+// client.ts). They replace the old BrowserProfile-based TIKTOK/LINKEDIN/X
+// purposes (see the note in CATEGORIES) — their BrowserProfilePurpose
+// counterpart still exists in execution-policy.ts for the OpenClaw
+// fallback, but it's no longer shown as a separate placeholder tile on
+// this page.
 
 const TIKTOK_ERROR_MESSAGES: Record<string, string> = {
   denied: "TikTok permission was denied.",

@@ -13,9 +13,9 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 
-// X'in kendi consent ekranına yönlendiren başlangıç adımı — bkz.
-// callback/route.ts geri dönüş için. tiktok/start ile aynı desen: PKCE
-// zorunlu, code_verifier imzalı state'e gömülüyor.
+// The start step that redirects to X's own consent screen — see
+// callback/route.ts for the return trip. Same pattern as tiktok/start:
+// PKCE required, code_verifier embedded in the signed state.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");

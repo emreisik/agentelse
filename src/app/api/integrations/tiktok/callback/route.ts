@@ -26,9 +26,10 @@ function redirectToEntegrasyonlar(
   return NextResponse.redirect(url);
 }
 
-// TikTok'un consent ekranından dönüş — code'u (PKCE code_verifier ile
-// birlikte) access+refresh token çiftine çevirir, profil bilgisini çeker,
-// bağlantıyı kurar. google/callback ve meta/callback ile aynı iskelet.
+// The return trip from TikTok's consent screen — exchanges the code
+// (together with the PKCE code_verifier) for an access+refresh token pair,
+// fetches profile info, and establishes the connection. Same skeleton as
+// google/callback and meta/callback.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");

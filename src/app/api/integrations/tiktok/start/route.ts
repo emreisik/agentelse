@@ -13,10 +13,11 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 
-// TikTok'un kendi consent ekranına yönlendiren başlangıç adımı — bkz.
-// callback/route.ts geri dönüş için. google/start ve meta/start ile aynı
-// desen, tek fark: TikTok PKCE zorunlu kıldığı için code_verifier üretilip
-// imzalı state'e gömülüyor (bkz. oauth-state.ts, pkce.ts).
+// The start step that redirects to TikTok's own consent screen — see
+// callback/route.ts for the return trip. Same pattern as google/start and
+// meta/start, with one difference: since TikTok requires PKCE, a
+// code_verifier is generated and embedded in the signed state (see
+// oauth-state.ts, pkce.ts).
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");

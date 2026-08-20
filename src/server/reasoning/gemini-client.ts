@@ -18,6 +18,25 @@ const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 // same stuck promise). Bounding the request here is the fix.
 const FETCH_TIMEOUT_MS = 45_000;
 
+// Gemini returns 429/5xx during transient capacity spikes ("model is
+// currently experiencing high demand") that normally clear within seconds.
+// Without an in-process retry, every one of these blips surfaced as a full
+// ReasoningService failure — which still charged the project's daily
+// reasoningCalls budget (checkAndIncrement runs before the call even
+// starts) and left the setup wizard stage FAILED until the orchestrator's
+// next tick retried it from scratch. Retrying here resolves most blips
+// inside the original call instead of burning a budget slot + a tick.
+const MAX_ATTEMPTS = 4;
+const RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status < 600);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export type GeminiStructuredResult = {
   raw: unknown;
   inputTokens?: number;
@@ -143,57 +162,78 @@ async function callGemini(input: {
     );
   }
 
-  let response: Response;
-  try {
-    response = await fetch(`${BASE_URL}/${input.model}:generateContent`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-goog-api-key": env.GEMINI_API_KEY,
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: input.system }] },
-        contents: [
-          {
-            role: "user",
-            // Attachments BEFORE the text: models reference attachments more
-            // reliably when they see the instruction last in multi-modal
-            // input (the same ordering is used for image editing too).
-            parts: [
-              ...(input.attachments ?? []).map((attachment) => ({
-                inlineData: {
-                  mimeType: attachment.mimeType,
-                  data: attachment.data,
-                },
-              })),
-              { text: input.user },
-            ],
-          },
+  const body = JSON.stringify({
+    systemInstruction: { parts: [{ text: input.system }] },
+    contents: [
+      {
+        role: "user",
+        // Attachments BEFORE the text: models reference attachments more
+        // reliably when they see the instruction last in multi-modal
+        // input (the same ordering is used for image editing too).
+        parts: [
+          ...(input.attachments ?? []).map((attachment) => ({
+            inlineData: {
+              mimeType: attachment.mimeType,
+              data: attachment.data,
+            },
+          })),
+          { text: input.user },
         ],
-        generationConfig: input.generationConfig,
-        ...(input.tools ? { tools: input.tools } : {}),
-      }),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === "TimeoutError") {
+      },
+    ],
+    generationConfig: input.generationConfig,
+    ...(input.tools ? { tools: input.tools } : {}),
+  });
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(`${BASE_URL}/${input.model}:generateContent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": env.GEMINI_API_KEY,
+        },
+        body,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "TimeoutError") {
+        throw new AgentelseError(
+          "TIMEOUT",
+          `Gemini request timed out after ${FETCH_TIMEOUT_MS}ms`,
+          { retryable: true },
+        );
+      }
+      throw error;
+    }
+
+    if (response.ok) {
+      return (await response.json()) as GeminiResponse;
+    }
+
+    const payload = (await response.json().catch(() => ({}))) as GeminiResponse;
+    const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
+    if (!isRetryableStatus(response.status) || isLastAttempt) {
       throw new AgentelseError(
-        "TIMEOUT",
-        `Gemini request timed out after ${FETCH_TIMEOUT_MS}ms`,
-        { retryable: true },
+        response.status === 429 || response.status >= 500
+          ? "PROVIDER_RATE_LIMITED"
+          : "INVALID_PROVIDER_RESULT",
+        `Gemini ${response.status}: ${payload.error?.message ?? "unknown error"}`,
+        { retryable: isRetryableStatus(response.status) },
       );
     }
-    throw error;
+
+    await sleep(RETRY_DELAYS_MS[attempt] ?? 4_000);
   }
 
-  const payload = (await response.json()) as GeminiResponse;
-  if (!response.ok) {
-    throw new AgentelseError(
-      "INVALID_PROVIDER_RESULT",
-      `Gemini ${response.status}: ${payload.error?.message ?? "unknown error"}`,
-    );
-  }
-  return payload;
+  // Unreachable — the loop always returns or throws — but keeps the
+  // function's return type honest without a non-null assertion.
+  throw new AgentelseError(
+    "PROVIDER_RATE_LIMITED",
+    "Gemini request failed after retries",
+    { retryable: true },
+  );
 }
 
 export async function runGeminiStructured(input: {

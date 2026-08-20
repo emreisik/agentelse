@@ -264,10 +264,10 @@ const SECTIONS: TermsSection[] = [
       <p>
         Questions about these Terms? Reach us at{" "}
         <a
-          href="mailto:hello@agentelse.com"
+          href="mailto:hello@agentelse.ai"
           className="underline underline-offset-4"
         >
-          hello@agentelse.com
+          hello@agentelse.ai
         </a>
         .
       </p>

@@ -154,10 +154,10 @@ const SECTIONS: PolicySection[] = [
         backup, and record-keeping purposes. You can request deletion of your
         account and associated data by contacting us at{" "}
         <a
-          href="mailto:hello@agentelse.com"
+          href="mailto:hello@agentelse.ai"
           className="underline underline-offset-4"
         >
-          hello@agentelse.com
+          hello@agentelse.ai
         </a>
         .
       </p>
@@ -194,10 +194,10 @@ const SECTIONS: PolicySection[] = [
         or restrict certain processing. You can exercise these rights, or opt
         out of product communications, by contacting us at{" "}
         <a
-          href="mailto:hello@agentelse.com"
+          href="mailto:hello@agentelse.ai"
           className="underline underline-offset-4"
         >
-          hello@agentelse.com
+          hello@agentelse.ai
         </a>
         . We will respond within a reasonable time and in accordance with
         applicable law.
@@ -257,10 +257,10 @@ const SECTIONS: PolicySection[] = [
       <p>
         Questions about this Privacy Policy? Reach us at{" "}
         <a
-          href="mailto:hello@agentelse.com"
+          href="mailto:hello@agentelse.ai"
           className="underline underline-offset-4"
         >
-          hello@agentelse.com
+          hello@agentelse.ai
         </a>
         .
       </p>

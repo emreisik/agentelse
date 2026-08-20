@@ -1,5 +1,10 @@
 export function isPublicPath(pathname: string): boolean {
   return (
+    // Public marketing homepage — required by Google OAuth brand
+    // verification (the consent screen's homepage URL must be reachable
+    // and explain the app's purpose without signing in). page.tsx redirects
+    // signed-in visitors to /dashboard itself.
+    pathname === "/" ||
     pathname === "/login" ||
     pathname === "/register" ||
     pathname === "/privacy" ||

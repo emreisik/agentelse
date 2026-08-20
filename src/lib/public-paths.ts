@@ -2,6 +2,8 @@ export function isPublicPath(pathname: string): boolean {
   return (
     pathname === "/login" ||
     pathname === "/register" ||
+    pathname === "/privacy" ||
+    pathname === "/terms" ||
     pathname === "/api/auth" ||
     pathname.startsWith("/api/auth/") ||
     // Has its own signed-token verification (see

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { appUrl } from "@/lib/app-url";
 import { prisma } from "@/lib/prisma";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { encryptSecret } from "@/server/security/crypto";
@@ -14,12 +15,8 @@ import {
   type LinkedInCredentialMetadata,
 } from "@/server/integrations/linkedin-client";
 
-function redirectToEntegrasyonlar(
-  request: Request,
-  projectId: string,
-  linkedinError?: string,
-) {
-  const url = new URL(`/projects/${projectId}/integrations`, request.url);
+function redirectToEntegrasyonlar(projectId: string, linkedinError?: string) {
+  const url = appUrl(`/projects/${projectId}/integrations`);
   url.searchParams.set("integration", "linkedin");
   if (linkedinError) url.searchParams.set("linkedinError", linkedinError);
   return NextResponse.redirect(url);
@@ -38,7 +35,7 @@ export async function GET(request: Request) {
   const state = stateParam ? verifyOAuthState(stateParam) : null;
   if (!state) {
     return NextResponse.redirect(
-      new URL("/dashboard?linkedinError=state_invalid", request.url),
+      appUrl("/dashboard?linkedinError=state_invalid"),
     );
   }
 
@@ -46,24 +43,20 @@ export async function GET(request: Request) {
     error === "user_cancelled_login" ||
     error === "user_cancelled_authorize"
   ) {
-    return redirectToEntegrasyonlar(request, state.projectId, "denied");
+    return redirectToEntegrasyonlar(state.projectId, "denied");
   }
   if (!code) {
-    return redirectToEntegrasyonlar(
-      request,
-      state.projectId,
-      "exchange_failed",
-    );
+    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
   }
 
   let userId: string;
   try {
     ({ userId } = await requireUser());
   } catch {
-    return redirectToEntegrasyonlar(request, state.projectId, "unauthorized");
+    return redirectToEntegrasyonlar(state.projectId, "unauthorized");
   }
   if (userId !== state.userId) {
-    return redirectToEntegrasyonlar(request, state.projectId, "state_invalid");
+    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
   }
 
   let access: {
@@ -74,7 +67,7 @@ export async function GET(request: Request) {
   try {
     access = await requireProjectAccess(userId, state.projectId);
   } catch {
-    return redirectToEntegrasyonlar(request, state.projectId, "state_invalid");
+    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
   }
 
   let tokens: {
@@ -85,11 +78,7 @@ export async function GET(request: Request) {
   try {
     tokens = await exchangeLinkedInAuthCode(code);
   } catch {
-    return redirectToEntegrasyonlar(
-      request,
-      state.projectId,
-      "exchange_failed",
-    );
+    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
   }
 
   // A userinfo hiccup (rate limit, transient 500, timeout, ...) must not
@@ -158,5 +147,5 @@ export async function GET(request: Request) {
     metadata: { provider: "linkedin" },
   });
 
-  return redirectToEntegrasyonlar(request, state.projectId);
+  return redirectToEntegrasyonlar(state.projectId);
 }

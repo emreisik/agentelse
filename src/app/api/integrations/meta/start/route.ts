@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { appUrl } from "@/lib/app-url";
 import { isIntegrationConfigured } from "@/lib/env";
 import { buildMetaAuthorizeUrl } from "@/server/integrations/meta-client";
 import { signOAuthState } from "@/server/security/oauth-state";
@@ -40,9 +41,8 @@ export async function GET(request: Request) {
 
   if (!isIntegrationConfigured("META")) {
     return NextResponse.redirect(
-      new URL(
+      appUrl(
         `/projects/${projectId}/integrations?integration=meta&metaError=not_configured`,
-        request.url,
       ),
     );
   }

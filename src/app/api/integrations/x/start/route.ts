@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { appUrl } from "@/lib/app-url";
 import { isIntegrationConfigured } from "@/lib/env";
 import { buildXAuthorizeUrl } from "@/server/integrations/x-client";
 import {
@@ -41,9 +42,8 @@ export async function GET(request: Request) {
 
   if (!isIntegrationConfigured("X")) {
     return NextResponse.redirect(
-      new URL(
+      appUrl(
         `/projects/${projectId}/integrations?integration=x&xError=not_configured`,
-        request.url,
       ),
     );
   }

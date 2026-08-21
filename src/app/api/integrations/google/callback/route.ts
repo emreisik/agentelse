@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { appUrl } from "@/lib/app-url";
 import { prisma } from "@/lib/prisma";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { encryptSecret } from "@/server/security/crypto";
@@ -16,12 +17,8 @@ import {
   type GoogleCredentialMetadata,
 } from "@/server/integrations/google-client";
 
-function redirectToEntegrasyonlar(
-  request: Request,
-  projectId: string,
-  googleError?: string,
-) {
-  const url = new URL(`/projects/${projectId}/integrations`, request.url);
+function redirectToEntegrasyonlar(projectId: string, googleError?: string) {
+  const url = appUrl(`/projects/${projectId}/integrations`);
   url.searchParams.set("integration", "google");
   if (googleError) url.searchParams.set("googleError", googleError);
   return NextResponse.redirect(url);
@@ -41,32 +38,28 @@ export async function GET(request: Request) {
   const state = stateParam ? verifyOAuthState(stateParam) : null;
   if (!state) {
     return NextResponse.redirect(
-      new URL("/dashboard?googleError=state_invalid", request.url),
+      appUrl("/dashboard?googleError=state_invalid"),
     );
   }
 
   if (error === "access_denied") {
-    return redirectToEntegrasyonlar(request, state.projectId, "denied");
+    return redirectToEntegrasyonlar(state.projectId, "denied");
   }
   if (!code) {
-    return redirectToEntegrasyonlar(
-      request,
-      state.projectId,
-      "exchange_failed",
-    );
+    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
   }
 
   let userId: string;
   try {
     ({ userId } = await requireUser());
   } catch {
-    return redirectToEntegrasyonlar(request, state.projectId, "unauthorized");
+    return redirectToEntegrasyonlar(state.projectId, "unauthorized");
   }
   // The signed state carries which user initiated the flow — we don't
   // proceed if the current session belongs to a different user (e.g. the
   // connection link was shared).
   if (userId !== state.userId) {
-    return redirectToEntegrasyonlar(request, state.projectId, "state_invalid");
+    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
   }
 
   let access: {
@@ -77,25 +70,17 @@ export async function GET(request: Request) {
   try {
     access = await requireProjectAccess(userId, state.projectId);
   } catch {
-    return redirectToEntegrasyonlar(request, state.projectId, "state_invalid");
+    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
   }
 
   let tokens: Awaited<ReturnType<typeof exchangeGoogleAuthCode>>;
   try {
     tokens = await exchangeGoogleAuthCode(code);
   } catch {
-    return redirectToEntegrasyonlar(
-      request,
-      state.projectId,
-      "exchange_failed",
-    );
+    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
   }
   if (!tokens.refreshToken) {
-    return redirectToEntegrasyonlar(
-      request,
-      state.projectId,
-      "no_refresh_token",
-    );
+    return redirectToEntegrasyonlar(state.projectId, "no_refresh_token");
   }
 
   // Even if one of the property/site lists fails (e.g. that API isn't
@@ -153,5 +138,5 @@ export async function GET(request: Request) {
     metadata: { provider: "google" },
   });
 
-  return redirectToEntegrasyonlar(request, state.projectId);
+  return redirectToEntegrasyonlar(state.projectId);
 }

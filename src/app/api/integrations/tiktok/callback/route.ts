@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { appUrl } from "@/lib/app-url";
 import { prisma } from "@/lib/prisma";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { encryptSecret } from "@/server/security/crypto";
@@ -15,12 +16,8 @@ import {
   type TikTokCredentialMetadata,
 } from "@/server/integrations/tiktok-client";
 
-function redirectToEntegrasyonlar(
-  request: Request,
-  projectId: string,
-  tiktokError?: string,
-) {
-  const url = new URL(`/projects/${projectId}/integrations`, request.url);
+function redirectToEntegrasyonlar(projectId: string, tiktokError?: string) {
+  const url = appUrl(`/projects/${projectId}/integrations`);
   url.searchParams.set("integration", "tiktok");
   if (tiktokError) url.searchParams.set("tiktokError", tiktokError);
   return NextResponse.redirect(url);
@@ -39,36 +36,28 @@ export async function GET(request: Request) {
   const state = stateParam ? verifyOAuthState(stateParam) : null;
   if (!state) {
     return NextResponse.redirect(
-      new URL("/dashboard?tiktokError=state_invalid", request.url),
+      appUrl("/dashboard?tiktokError=state_invalid"),
     );
   }
 
   if (error === "access_denied") {
-    return redirectToEntegrasyonlar(request, state.projectId, "denied");
+    return redirectToEntegrasyonlar(state.projectId, "denied");
   }
   if (error) {
-    return redirectToEntegrasyonlar(
-      request,
-      state.projectId,
-      "exchange_failed",
-    );
+    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
   }
   if (!code || !state.codeVerifier) {
-    return redirectToEntegrasyonlar(
-      request,
-      state.projectId,
-      "exchange_failed",
-    );
+    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
   }
 
   let userId: string;
   try {
     ({ userId } = await requireUser());
   } catch {
-    return redirectToEntegrasyonlar(request, state.projectId, "unauthorized");
+    return redirectToEntegrasyonlar(state.projectId, "unauthorized");
   }
   if (userId !== state.userId) {
-    return redirectToEntegrasyonlar(request, state.projectId, "state_invalid");
+    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
   }
 
   let access: {
@@ -79,18 +68,14 @@ export async function GET(request: Request) {
   try {
     access = await requireProjectAccess(userId, state.projectId);
   } catch {
-    return redirectToEntegrasyonlar(request, state.projectId, "state_invalid");
+    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
   }
 
   let tokens: { accessToken: string; refreshToken: string; expiresIn: number };
   try {
     tokens = await exchangeTikTokAuthCode(code, state.codeVerifier);
   } catch {
-    return redirectToEntegrasyonlar(
-      request,
-      state.projectId,
-      "exchange_failed",
-    );
+    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
   }
 
   const profile = await fetchTikTokProfile(tokens.accessToken);
@@ -147,5 +132,5 @@ export async function GET(request: Request) {
     metadata: { provider: "tiktok" },
   });
 
-  return redirectToEntegrasyonlar(request, state.projectId);
+  return redirectToEntegrasyonlar(state.projectId);
 }

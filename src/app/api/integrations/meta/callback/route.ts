@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { appUrl } from "@/lib/app-url";
 import { prisma } from "@/lib/prisma";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { encryptSecret } from "@/server/security/crypto";
@@ -33,12 +34,8 @@ async function safeList<T>(
   }
 }
 
-function redirectToEntegrasyonlar(
-  request: Request,
-  projectId: string,
-  metaError?: string,
-) {
-  const url = new URL(`/projects/${projectId}/integrations`, request.url);
+function redirectToEntegrasyonlar(projectId: string, metaError?: string) {
+  const url = appUrl(`/projects/${projectId}/integrations`);
   url.searchParams.set("integration", "meta");
   if (metaError) url.searchParams.set("metaError", metaError);
   return NextResponse.redirect(url);
@@ -56,32 +53,26 @@ export async function GET(request: Request) {
 
   const state = stateParam ? verifyOAuthState(stateParam) : null;
   if (!state) {
-    return NextResponse.redirect(
-      new URL("/dashboard?metaError=state_invalid", request.url),
-    );
+    return NextResponse.redirect(appUrl("/dashboard?metaError=state_invalid"));
   }
 
   if (error === "access_denied") {
-    return redirectToEntegrasyonlar(request, state.projectId, "denied");
+    return redirectToEntegrasyonlar(state.projectId, "denied");
   }
   if (!code) {
-    return redirectToEntegrasyonlar(
-      request,
-      state.projectId,
-      "exchange_failed",
-    );
+    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
   }
 
   let userId: string;
   try {
     ({ userId } = await requireUser());
   } catch {
-    return redirectToEntegrasyonlar(request, state.projectId, "unauthorized");
+    return redirectToEntegrasyonlar(state.projectId, "unauthorized");
   }
   // The signed state carries which user initiated the flow — we don't
   // proceed if the current session belongs to a different user.
   if (userId !== state.userId) {
-    return redirectToEntegrasyonlar(request, state.projectId, "state_invalid");
+    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
   }
 
   let access: {
@@ -92,7 +83,7 @@ export async function GET(request: Request) {
   try {
     access = await requireProjectAccess(userId, state.projectId);
   } catch {
-    return redirectToEntegrasyonlar(request, state.projectId, "state_invalid");
+    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
   }
 
   let longLivedToken: { accessToken: string; expiresIn: number };
@@ -100,11 +91,7 @@ export async function GET(request: Request) {
     const shortLived = await exchangeMetaAuthCode(code);
     longLivedToken = await exchangeForLongLivedToken(shortLived.accessToken);
   } catch {
-    return redirectToEntegrasyonlar(
-      request,
-      state.projectId,
-      "exchange_failed",
-    );
+    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
   }
 
   // Even if one of the Page/ad account lists fails (e.g. permission wasn't
@@ -194,5 +181,5 @@ export async function GET(request: Request) {
     metadata: { provider: "meta" },
   });
 
-  return redirectToEntegrasyonlar(request, state.projectId);
+  return redirectToEntegrasyonlar(state.projectId);
 }

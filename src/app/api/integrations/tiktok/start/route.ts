@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { appUrl } from "@/lib/app-url";
 import { isIntegrationConfigured } from "@/lib/env";
 import { buildTikTokAuthorizeUrl } from "@/server/integrations/tiktok-client";
 import {
@@ -43,9 +44,8 @@ export async function GET(request: Request) {
 
   if (!isIntegrationConfigured("TIKTOK")) {
     return NextResponse.redirect(
-      new URL(
+      appUrl(
         `/projects/${projectId}/integrations?integration=tiktok&tiktokError=not_configured`,
-        request.url,
       ),
     );
   }

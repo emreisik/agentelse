@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { appUrl } from "@/lib/app-url";
 import { isIntegrationConfigured } from "@/lib/env";
 import { buildGoogleAuthorizeUrl } from "@/server/integrations/google-client";
 import { signOAuthState } from "@/server/security/oauth-state";
@@ -39,9 +40,8 @@ export async function GET(request: Request) {
 
   if (!isIntegrationConfigured("GOOGLE")) {
     return NextResponse.redirect(
-      new URL(
+      appUrl(
         `/projects/${projectId}/integrations?integration=google&googleError=not_configured`,
-        request.url,
       ),
     );
   }

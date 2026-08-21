@@ -23,127 +23,151 @@ import { describeIntegration } from "@/test-support/integration-suite";
 // Spec test (b): a simulated "new technology product launch" signal walks
 // Signal -> Intelligence -> relevance -> Opportunity -> Idea Foundry (multi
 // concepts) -> Council -> Agency Director -> plan -> department tasks.
-describeIntegration("Continuous loop — signal to work plan (spec test b)", () => {
-  const runId = randomUUID().slice(0, 8);
-  let fixture: Awaited<ReturnType<typeof createActiveAgencyFixture>>;
+describeIntegration(
+  "Continuous loop — signal to work plan (spec test b)",
+  () => {
+    const runId = randomUUID().slice(0, 8);
+    let fixture: Awaited<ReturnType<typeof createActiveAgencyFixture>>;
 
-  beforeAll(async () => {
-    fixture = await createActiveAgencyFixture(runId);
-    const result = await SignalUniverse.ingestRaw({
-      ...fixture,
-      source: "test-feed",
-      category: "PRODUCT_LAUNCH",
-      externalRef: `launch-${runId}`,
-      title: "Major competitor launches new technology product",
-      summary:
-        "A major consumer technology product launch is drawing marketplace attention across Europe",
-    });
-    expect(result.duplicate).toBe(false);
-  }, 60_000);
-
-  afterAll(async () => {
-    await teardownAgencyFixture(fixture?.workspaceId);
-  });
-
-  it("dedupes an identical raw signal", async () => {
-    const dup = await SignalUniverse.ingestRaw({
-      ...fixture,
-      source: "test-feed",
-      category: "PRODUCT_LAUNCH",
-      externalRef: `launch-${runId}`,
-      title: "Major competitor launches new technology product (repost)",
-    });
-    expect(dup.duplicate).toBe(true);
-    const count = await prisma.signal.count({
-      where: { projectId: fixture.projectId },
-    });
-    expect(count).toBe(1);
-  });
-
-  it("walks the signal through intelligence to an agency decision with work", async () => {
-    const done = await pumpWorker(async () => {
-      const decision = await prisma.agencyDecision.findFirst({
-        where: {
-          projectId: fixture.projectId,
-          decision: {
-            in: [
-              "CREATE_TASK",
-              "CREATE_CAMPAIGN",
-              "CREATE_MULTI_DEPARTMENT_PLAN",
-            ],
-          },
-        },
+    beforeAll(async () => {
+      fixture = await createActiveAgencyFixture(runId);
+      const result = await SignalUniverse.ingestRaw({
+        ...fixture,
+        source: "test-feed",
+        category: "PRODUCT_LAUNCH",
+        externalRef: `launch-${runId}`,
+        title: "Major competitor launches new technology product",
+        summary:
+          "A major consumer technology product launch is drawing marketplace attention across Europe",
       });
-      return Boolean(decision);
-    }, 60);
-    expect(done).toBe(true);
+      expect(result.duplicate).toBe(false);
+    }, 60_000);
 
-    const signal = await prisma.signal.findFirst({
-      where: { projectId: fixture.projectId },
+    afterAll(async () => {
+      await teardownAgencyFixture(fixture?.workspaceId);
     });
-    expect(signal?.status).toBe("PROMOTED");
-    expect(signal?.relevanceScore).not.toBeNull();
 
-    const insight = await prisma.insight.findFirst({
-      where: { projectId: fixture.projectId },
+    it("dedupes an identical raw signal", async () => {
+      const dup = await SignalUniverse.ingestRaw({
+        ...fixture,
+        source: "test-feed",
+        category: "PRODUCT_LAUNCH",
+        externalRef: `launch-${runId}`,
+        title: "Major competitor launches new technology product (repost)",
+      });
+      expect(dup.duplicate).toBe(true);
+      const count = await prisma.signal.count({
+        where: { projectId: fixture.projectId },
+      });
+      expect(count).toBe(1);
     });
-    expect(insight).toBeTruthy();
 
-    const opportunity = await prisma.opportunity.findFirst({
-      where: { projectId: fixture.projectId },
+    it("walks the signal through intelligence to an agency decision with work", async () => {
+      const done = await pumpWorker(async () => {
+        const decision = await prisma.agencyDecision.findFirst({
+          where: {
+            projectId: fixture.projectId,
+            decision: {
+              in: [
+                "CREATE_TASK",
+                "CREATE_CAMPAIGN",
+                "CREATE_MULTI_DEPARTMENT_PLAN",
+              ],
+            },
+          },
+        });
+        if (!decision) return false;
+
+        // A decision on the first council-evaluated idea can land well before
+        // its sibling lens-ideas get their turn: council-evaluation pulls RAW
+        // ideas via listByStatus, which caps each tick to one idea PER PROJECT
+        // (distinct: ["projectId"], see idea.repository.ts) so one very active
+        // project can never starve every other project's backlog. With only
+        // one project in this fixture, that fairness cap means its 3+ sibling
+        // ideas clear the council one per tick — so wait for all of them
+        // before checking below, instead of stopping at the first decision.
+        const evaluatedCount = await prisma.idea.count({
+          where: {
+            projectId: fixture.projectId,
+            councilEvaluations: { some: {} },
+          },
+        });
+        return evaluatedCount >= 3;
+      }, 60);
+      expect(done).toBe(true);
+
+      const signal = await prisma.signal.findFirst({
+        where: { projectId: fixture.projectId },
+      });
+      expect(signal?.status).toBe("PROMOTED");
+      expect(signal?.relevanceScore).not.toBeNull();
+
+      const insight = await prisma.insight.findFirst({
+        where: { projectId: fixture.projectId },
+      });
+      expect(insight).toBeTruthy();
+
+      const opportunity = await prisma.opportunity.findFirst({
+        where: { projectId: fixture.projectId },
+      });
+      expect(opportunity).toBeTruthy();
+      expect(opportunity?.goalIds.length).toBeGreaterThan(0);
+      expect(opportunity?.valueScore).not.toBeNull();
+      expect(opportunity?.nbaScore ?? opportunity?.valueScore).not.toBeNull();
+
+      const ideas = await prisma.idea.findMany({
+        where: { projectId: fixture.projectId },
+        include: { councilEvaluations: true },
+      });
+      expect(ideas.length).toBeGreaterThanOrEqual(3);
+      const lenses = new Set(ideas.map((i) => i.lens));
+      expect(lenses.size).toBeGreaterThanOrEqual(3);
+      const withCouncil = ideas.filter((i) => i.councilEvaluations.length > 0);
+      expect(withCouncil.length).toBeGreaterThanOrEqual(3);
+    }, 400_000);
+
+    it("multi-department decisions produce a dependency-wired work plan", async () => {
+      const plan = await prisma.workPlan.findFirst({
+        where: { projectId: fixture.projectId },
+        include: { tasks: true },
+      });
+      // At least one decided idea should have gone the multi-department path
+      // (mock lens concepts always involve >=2 departments).
+      expect(plan).toBeTruthy();
+      expect(plan?.tasks.length).toBeGreaterThanOrEqual(3);
+
+      const departments = new Set(plan?.tasks.map((t) => t.departmentKey));
+      expect(departments.size).toBeGreaterThanOrEqual(2);
+
+      const deps = await prisma.taskDependency.findMany({
+        where: { task: { workPlanId: plan?.id } },
+      });
+      expect(deps.length).toBeGreaterThanOrEqual(2);
+
+      // Every plan task carries goals (autonomous work must serve a goal).
+      for (const task of plan?.tasks ?? []) {
+        expect(task.goalIds.length).toBeGreaterThan(0);
+      }
     });
-    expect(opportunity).toBeTruthy();
-    expect(opportunity?.goalIds.length).toBeGreaterThan(0);
-    expect(opportunity?.valueScore).not.toBeNull();
-    expect(opportunity?.nbaScore ?? opportunity?.valueScore).not.toBeNull();
 
-    const ideas = await prisma.idea.findMany({
-      where: { projectId: fixture.projectId },
-      include: { councilEvaluations: true },
+    it("parks externally visible plan nodes behind leveled approvals", async () => {
+      const approvals = await prisma.approval.findMany({
+        where: { projectId: fixture.projectId, status: "PENDING" },
+      });
+      // PR/web nodes (if generated) must carry LEVEL_3+; there may be none if
+      // no external node was in the winning plans — so only assert on found
+      // rows. `level: null` is schema.prisma's documented "legacy row,
+      // treated as LEVEL_3_CLIENT" (see the Approval model) — a valid value
+      // here, not a missing one.
+      for (const approval of approvals) {
+        if (approval.level === null) continue;
+        expect(["LEVEL_3_CLIENT", "LEVEL_4_CRITICAL"]).toContain(
+          approval.level,
+        );
+      }
     });
-    expect(ideas.length).toBeGreaterThanOrEqual(3);
-    const lenses = new Set(ideas.map((i) => i.lens));
-    expect(lenses.size).toBeGreaterThanOrEqual(3);
-    const withCouncil = ideas.filter((i) => i.councilEvaluations.length > 0);
-    expect(withCouncil.length).toBeGreaterThanOrEqual(3);
-  }, 400_000);
-
-  it("multi-department decisions produce a dependency-wired work plan", async () => {
-    const plan = await prisma.workPlan.findFirst({
-      where: { projectId: fixture.projectId },
-      include: { tasks: true },
-    });
-    // At least one decided idea should have gone the multi-department path
-    // (mock lens concepts always involve >=2 departments).
-    expect(plan).toBeTruthy();
-    expect(plan?.tasks.length).toBeGreaterThanOrEqual(3);
-
-    const departments = new Set(plan?.tasks.map((t) => t.departmentKey));
-    expect(departments.size).toBeGreaterThanOrEqual(2);
-
-    const deps = await prisma.taskDependency.findMany({
-      where: { task: { workPlanId: plan?.id } },
-    });
-    expect(deps.length).toBeGreaterThanOrEqual(2);
-
-    // Every plan task carries goals (autonomous work must serve a goal).
-    for (const task of plan?.tasks ?? []) {
-      expect(task.goalIds.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("parks externally visible plan nodes behind leveled approvals", async () => {
-    const approvals = await prisma.approval.findMany({
-      where: { projectId: fixture.projectId, status: "PENDING" },
-    });
-    // PR/web nodes (if generated) must carry LEVEL_3+; there may be none if
-    // no external node was in the winning plans — so only assert on found rows.
-    for (const approval of approvals) {
-      expect(approval.level).not.toBeNull();
-      expect(["LEVEL_3_CLIENT", "LEVEL_4_CRITICAL"]).toContain(approval.level);
-    }
-  });
-});
+  },
+);
 
 // Spec test (c): SEO content-gap finding -> content task -> completed ->
 // WorkHandoff to WEB_PRODUCT -> approval -> deploy -> verify -> measure ->

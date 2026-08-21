@@ -61,7 +61,7 @@ export default async function CreativeDetailPage({
   ]);
 
   return (
-    <AppShell>
+    <AppShell projectId={project.id}>
       <div className="p-6 space-y-6 max-w-3xl">
         <div>
           <Link

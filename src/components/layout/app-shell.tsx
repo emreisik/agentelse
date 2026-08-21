@@ -1,16 +1,12 @@
 import Link from "next/link";
-import { LogOut } from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/server/security/tenant-context";
-import { signOutAction } from "@/server/actions/auth-actions";
 import { PipelineRepository } from "@/server/repositories/pipeline.repository";
 import { SidebarNav, type SidebarFlow } from "@/components/layout/sidebar-nav";
 import { SetupProgressWidget } from "@/components/layout/setup-progress-widget";
 import { LogoBadge } from "@/components/shared/logo-badge";
-import { ThemeToggle } from "@/components/shared/theme-toggle";
 import { TopBar } from "@/components/layout/top-bar";
-import { Button } from "@/components/ui/button";
 import type { PanelKey } from "@/components/hub-core/hub-core-params";
 
 export type ProjectNavBadges = {
@@ -229,9 +225,15 @@ async function getSidebarFlows(projectId: string): Promise<SidebarFlow[]> {
 export async function AppShell({
   children,
   projectId,
+  showSidebar,
 }: {
   children: React.ReactNode;
   projectId?: string;
+  // Project route segments render this shell from a loading.tsx boundary,
+  // which (per Next.js) never receives params — so it can't pass projectId
+  // yet. Those pass showSidebar explicitly instead of relying on the
+  // projectId-presence default below.
+  showSidebar?: boolean;
 }) {
   const { userId, email } = await requireUser();
   const {
@@ -242,57 +244,37 @@ export async function AppShell({
     projectBadges,
   } = await getSidebarData(userId, projectId);
   const flows = projectId ? await getSidebarFlows(projectId) : null;
+  const sidebarVisible = showSidebar ?? Boolean(projectId);
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <aside className="flex h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar">
-        <Link
-          href="/dashboard"
-          className="flex items-center gap-2.5 border-b border-sidebar-border px-4 py-4 transition-opacity hover:opacity-80"
-        >
-          <LogoBadge size="sm" />
-          <div className="min-w-0 font-heading text-sm font-semibold tracking-tight text-sidebar-foreground">
-            Agentelse
-          </div>
-        </Link>
-
-        <SidebarNav activeProjectId={projectId} flows={flows} />
-
-        <div className="flex items-center gap-2.5 border-t border-sidebar-border px-3 py-3">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-            {(displayName ?? email ?? "?").charAt(0).toUpperCase()}
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-xs font-medium text-sidebar-foreground">
-              {displayName ?? "Unknown user"}
+      {sidebarVisible ? (
+        <aside className="flex h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar">
+          <Link
+            href="/dashboard"
+            className="flex items-center gap-2.5 border-b border-sidebar-border px-4 py-4 transition-opacity hover:opacity-80"
+          >
+            <LogoBadge size="sm" />
+            <div className="min-w-0 font-heading text-sm font-semibold tracking-tight text-sidebar-foreground">
+              Agentelse
             </div>
-            <div className="truncate text-[11px] text-muted-foreground">
-              {workspace?.name ?? "—"}
-            </div>
-          </div>
-          <div className="flex items-center gap-0.5">
-            <ThemeToggle />
-            <form action={signOutAction}>
-              <Button
-                type="submit"
-                variant="ghost"
-                size="icon-sm"
-                title="Sign out"
-              >
-                <LogOut />
-              </Button>
-            </form>
-          </div>
-        </div>
-      </aside>
+          </Link>
+
+          <SidebarNav activeProjectId={projectId} flows={flows} />
+        </aside>
+      ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
+          showLogo={!sidebarVisible}
           projects={workspace?.projects ?? []}
           pendingApprovals={pendingApprovals}
           pendingHumanActions={pendingHumanActions}
           systemErrors={projectBadges?.systemErrors ?? 0}
           toolBadges={toolBadgesFrom(projectBadges)}
+          displayName={displayName}
+          workspaceName={workspace?.name ?? null}
+          email={email}
         />
         <main className="min-w-0 flex-1 overflow-y-auto bg-background">
           {children}

@@ -2,9 +2,18 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ClipboardCheck, HeartPulse, Plus, UserRoundCog } from "lucide-react";
+import {
+  ClipboardCheck,
+  HeartPulse,
+  LogOut,
+  Plus,
+  UserRoundCog,
+} from "lucide-react";
 
+import { signOutAction } from "@/server/actions/auth-actions";
 import { Button } from "@/components/ui/button";
+import { LogoBadge } from "@/components/shared/logo-badge";
+import { ThemeToggle } from "@/components/shared/theme-toggle";
 import { ProjectSelect } from "@/components/layout/project-select";
 import { ProjectToolsMenu } from "@/components/hub-core/project-tools-menu";
 import {
@@ -14,17 +23,25 @@ import {
 import { cn } from "@/lib/utils";
 
 export function TopBar({
+  showLogo,
   projects,
   pendingApprovals,
   pendingHumanActions,
   systemErrors,
   toolBadges,
+  displayName,
+  workspaceName,
+  email,
 }: {
+  showLogo: boolean;
   projects: { id: string; name: string; status: string }[];
   pendingApprovals: number;
   pendingHumanActions: number;
   systemErrors: number;
   toolBadges: Partial<Record<PanelKey, number>>;
+  displayName: string | null;
+  workspaceName: string | null;
+  email: string | null;
 }) {
   const pathname = usePathname();
   const activeProject = projects.find((project) =>
@@ -43,7 +60,18 @@ export function TopBar({
         !minimal && "border-b border-border",
       )}
     >
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 items-center gap-3">
+        {showLogo ? (
+          <Link
+            href="/dashboard"
+            className="flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80"
+          >
+            <LogoBadge size="sm" />
+            <span className="font-heading text-sm font-semibold tracking-tight">
+              Agentelse
+            </span>
+          </Link>
+        ) : null}
         {activeProject ? (
           <ProjectSelect
             projects={projects}
@@ -95,6 +123,40 @@ export function TopBar({
           <Plus className="size-4" />
           New project
         </Button>
+
+        <div className="ml-2 flex items-center gap-2 border-l border-border pl-3">
+          <Link
+            href="/profile"
+            className="flex min-w-0 items-center gap-2 rounded-md transition-opacity hover:opacity-80"
+            title="Profile settings"
+          >
+            <span
+              className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground"
+              title={displayName ?? email ?? undefined}
+            >
+              {(displayName ?? email ?? "?").charAt(0).toUpperCase()}
+            </span>
+            <div className="hidden min-w-0 leading-tight sm:block">
+              <div className="max-w-32 truncate text-xs font-medium">
+                {displayName ?? "Unknown user"}
+              </div>
+              <div className="max-w-32 truncate text-[11px] text-muted-foreground">
+                {workspaceName ?? "—"}
+              </div>
+            </div>
+          </Link>
+          <ThemeToggle />
+          <form action={signOutAction}>
+            <Button
+              type="submit"
+              variant="ghost"
+              size="icon-sm"
+              title="Sign out"
+            >
+              <LogOut />
+            </Button>
+          </form>
+        </div>
       </div>
     </header>
   );

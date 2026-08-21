@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Loading() {
   return (
-    <AppShell>
+    <AppShell showSidebar>
       <div className="space-y-6 p-6">
         <div className="space-y-2">
           <Skeleton className="h-7 w-32" />

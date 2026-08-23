@@ -18,6 +18,11 @@ export function isPublicPath(pathname: string): boolean {
     // invalid one, the route returns its own 401; excluding it here does
     // not weaken security.
     pathname.startsWith("/api/public/assets/") ||
+    // Has its own signed-secret verification (see cron/worker/route.ts's
+    // isValidCronSecret) — DELIBERATELY excluded from session protection so
+    // an external scheduler (no session cookie) can call it. Without a
+    // valid CRON_SECRET bearer token the route returns its own 401.
+    pathname.startsWith("/api/cron/") ||
     pathname === "/api/debug/headers" ||
     pathname === "/icon" ||
     pathname === "/apple-icon"

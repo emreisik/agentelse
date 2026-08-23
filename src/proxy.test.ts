@@ -9,6 +9,7 @@ describe("proxy public path matching", () => {
     "/api/auth",
     "/api/auth/session",
     "/api/auth/callback/credentials",
+    "/api/cron/worker",
   ])("allows %s", (pathname) => {
     expect(isPublicPath(pathname)).toBe(true);
   });

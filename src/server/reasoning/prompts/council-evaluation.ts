@@ -16,7 +16,11 @@ export type CouncilEvaluationOutput = z.infer<
 export const councilEvaluationDef: ReasoningDef<CouncilEvaluationOutput> = {
   purpose: "council.evaluate",
   schema: CouncilEvaluationOutputSchema,
-  maxTokens: 2048,
+  // 2048 wasn't enough on thinking models (gemini-pro-latest spends part of
+  // the output budget on reasoning tokens): 147 of the first ~400 prod calls
+  // died with finishReason MAX_TOKENS mid-JSON. The output itself is small;
+  // the headroom is for thinking.
+  maxTokens: 8192,
 
   buildPrompt(context) {
     return {
@@ -58,7 +62,13 @@ export const councilEvaluationDef: ReasoningDef<CouncilEvaluationOutput> = {
       scores,
       overallScore: overall,
       recommendation:
-        overall >= 8 ? "STRONG_APPROVE" : overall >= 6.5 ? "APPROVE" : overall >= 5 ? "REVISE" : "REJECT",
+        overall >= 8
+          ? "STRONG_APPROVE"
+          : overall >= 6.5
+            ? "APPROVE"
+            : overall >= 5
+              ? "REVISE"
+              : "REJECT",
       rationale: `Mock council evaluation of "${idea.title ?? "idea"}" (${idea.lens ?? "?"} lens), overall ${overall}`,
     };
   },

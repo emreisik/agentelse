@@ -301,6 +301,10 @@ export default async function ProjectChatPage({
             reply: command.replyText,
             replyStatus: command.replyStatus,
             departmentKey: departmentKeyFromParsedIntent(command.parsedIntent),
+            // Limit-notice cards are also written to WEB-sourced rows (see
+            // chat-service.ts) — without this, the card would only show
+            // until the next refresh, then fall back to plain text.
+            card: cardFromParsedIntent(command.parsedIntent),
             attachments: Array.isArray(command.attachments)
               ? (command.attachments as ChatAttachment[])
               : [],

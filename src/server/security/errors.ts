@@ -27,16 +27,21 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 export class AgentelseError extends Error {
   readonly code: ErrorCode;
   readonly retryable: boolean;
+  // Structured detail for surfaces that render the error (e.g. the chat's
+  // limit-notice card): which cap was hit, its value, today's usage. The
+  // message string stays the log-facing source of truth; meta is for UIs.
+  readonly meta?: Record<string, unknown>;
 
   constructor(
     code: ErrorCode,
     message: string,
-    options?: { retryable?: boolean },
+    options?: { retryable?: boolean; meta?: Record<string, unknown> },
   ) {
     super(message);
     this.name = "AgentelseError";
     this.code = code;
     this.retryable = options?.retryable ?? false;
+    this.meta = options?.meta;
   }
 }
 

@@ -126,6 +126,17 @@ export const AutonomyPolicyRepository = {
         overBudget
           ? `Daily reasoning budget exceeded for project ${scope.projectId}`
           : `Daily cap ${String(capField)} exceeded for project ${scope.projectId}`,
+        {
+          // Which cap and where it stood — the chat's limit-notice card
+          // renders these (see limit-notice.ts).
+          meta: overBudget
+            ? {
+                limit: "dailyBudgetUsd",
+                cap: policy.dailyBudgetUsd,
+                used: stat.reasoningCostUsd,
+              }
+            : { limit: capField, cap, used: stat[field] },
+        },
       );
     }
   },

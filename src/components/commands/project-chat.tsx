@@ -63,6 +63,9 @@ type LocalTurn = {
   attachments: LocalAttachment[];
   state: "pending" | "done" | "error";
   reply?: string;
+  // Structured card reply (e.g. limit-notice) — shown immediately, before
+  // the server list refresh delivers the persisted copy.
+  card?: IdeaEventCardData;
   commandId?: string;
 };
 
@@ -189,6 +192,9 @@ export function ProjectChat({
           id: `${turn.commandId}-a`,
           role: "assistant",
           text: note ? `${turn.reply}\n\n*${note}*` : turn.reply,
+          // A user turn can also carry a card reply (limit-notice) — when
+          // present it replaces the plain text, same as SYSTEM events.
+          card: turn.card,
           // Which team it went to, alongside the "Task created" note, is
           // now shown NOT as plain text but with the actual
           // DepartmentBadge (department color+icon) rendered by
@@ -215,6 +221,7 @@ export function ProjectChat({
           id: `${turn.key}-a`,
           role: "assistant",
           text: turn.reply,
+          card: turn.card,
           error: turn.state === "error",
         });
       }
@@ -334,6 +341,7 @@ export function ProjectChat({
                       ...turn,
                       state: "done",
                       reply: result.reply,
+                      card: result.card,
                       commandId: result.commandId,
                     }
                   : { ...turn, state: "error", reply: result.message }

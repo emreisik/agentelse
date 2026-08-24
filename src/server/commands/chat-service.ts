@@ -13,6 +13,11 @@ import {
   type CommandReplyStatus,
 } from "@/server/repositories/command.repository";
 import type { ParsedIntent } from "@/server/commands/intent-router";
+import {
+  limitNoticeFromError,
+  limitNoticeReplyText,
+} from "@/server/commands/limit-notice";
+import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 export type ChatTurnInput = {
   workspaceId: string;
@@ -34,6 +39,11 @@ export type ChatTurnResult = {
   commandId: string;
   reply: string;
   status: CommandReplyStatus;
+  // Set when the reply is a structured chat card (today: the limit-notice
+  // card explaining why no reply could be generated). The client renders
+  // this instead of the plain reply text, without waiting for the next
+  // server refresh.
+  card?: IdeaEventCardData;
 };
 
 // Server side of the chat screen: on every user message, gathers the brand
@@ -67,6 +77,29 @@ export const ChatService = {
       });
       turn = result.output;
     } catch (error) {
+      // A recognized block (daily cap/budget hit, provider key missing,
+      // provider rate-limited/timed out): don't queue fallback work — it
+      // would hit the same wall in the worker — record the message with a
+      // limit-notice card instead. The card explains the cause and (for
+      // caps) links into the autonomy settings panel (idea-event-card.tsx).
+      const notice = limitNoticeFromError(error);
+      if (notice) {
+        const command = await CommandRepository.create({
+          workspaceId: input.workspaceId,
+          projectId: input.projectId,
+          brandId: context.brandId,
+          ideaId: input.ideaId,
+          source: "WEB",
+          rawText: input.message,
+          parsedIntent: { card: notice },
+          createdByUserId: input.userId,
+          attachments: input.attachments,
+        });
+        const reply = limitNoticeReplyText(notice);
+        await CommandRepository.recordReply(command.id, reply, "ERROR");
+        return { commandId: command.id, reply, status: "ERROR", card: notice };
+      }
+
       // Even if the LLM fails, the message must not be lost: the command is
       // still recorded, the rule-based parser kicks in (legacy behavior),
       // and an honest error message is written as the reply. Since the

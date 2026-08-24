@@ -68,6 +68,24 @@ export type IdeaEventCardData =
       permalink?: string;
       errorMessage?: string;
     }
+  // Why the assistant couldn't reply: a daily cap/budget was hit or the AI
+  // provider is unavailable. Rendered with an explanation + (for caps) a
+  // CTA into the autonomy settings panel (see limit-notice.ts for the
+  // error -> reason mapping).
+  | {
+      kind: "limit-notice";
+      reason:
+        | "daily-budget"
+        | "daily-reasoning"
+        | "daily-tasks"
+        | "open-opportunities"
+        | "active-ideas"
+        | "provider-unconfigured"
+        | "provider-rate-limited"
+        | "provider-timeout";
+      cap?: number;
+      used?: number;
+    }
   | CreativeCardData;
 
 const EVENT_KINDS = new Set([
@@ -82,6 +100,7 @@ const EVENT_KINDS = new Set([
   "approval-request",
   "approval-decision",
   "publish-result",
+  "limit-notice",
 ]);
 
 export function isIdeaEventCardData(

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { DepartmentKey } from "@prisma/client";
 import {
@@ -11,18 +12,23 @@ import {
   ClipboardList,
   Compass,
   FileSearch,
+  Gauge,
+  Hourglass,
+  KeyRound,
   Lightbulb,
   Loader2,
   Radio,
   Send,
+  Settings2,
   ShieldCheck,
   ShieldX,
   Sparkles,
+  Timer,
   XCircle,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { DepartmentBadge } from "@/components/shared/department-badge";
 import {
@@ -224,6 +230,9 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
     case "approval-request":
       return <ApprovalRequestCard card={card} />;
 
+    case "limit-notice":
+      return <LimitNoticeCard card={card} />;
+
     case "approval-decision": {
       const tone: StatusTone =
         card.decision === "APPROVED" ? "positive" : "danger";
@@ -291,6 +300,135 @@ const VERDICT_LABEL: Record<string, string> = {
   REVISE: "Revise",
   REJECT: "Reject",
 };
+
+type LimitNoticeData = Extract<IdeaEventCardData, { kind: "limit-notice" }>;
+
+// One entry per reply-blocking cause (see limit-notice.ts for the error ->
+// reason mapping). settingsCta marks the causes the user can actually fix
+// in the autonomy settings panel; provider-level causes get an honest
+// explanation instead of a link that wouldn't help.
+const LIMIT_NOTICE_COPY: Record<
+  LimitNoticeData["reason"],
+  {
+    icon: typeof Gauge;
+    tone: StatusTone;
+    title: string;
+    description: (card: LimitNoticeData) => string;
+    settingsCta: boolean;
+  }
+> = {
+  "daily-reasoning": {
+    icon: Gauge,
+    tone: "waiting",
+    title: "Daily AI call limit reached",
+    description: (card) =>
+      `This project used all of today's AI calls${
+        card.cap != null ? ` (${card.cap})` : ""
+      }, so a reply can't be generated right now. The counter resets at midnight (UTC) — or raise the cap in autonomy settings.`,
+    settingsCta: true,
+  },
+  "daily-budget": {
+    icon: Gauge,
+    tone: "waiting",
+    title: "Daily AI budget reached",
+    description: (card) =>
+      `Today's AI spend reached the project's daily budget${
+        card.cap != null ? ` ($${card.cap})` : ""
+      }. Replies resume when it resets at midnight (UTC) — or raise the budget in autonomy settings.`,
+    settingsCta: true,
+  },
+  "daily-tasks": {
+    icon: Gauge,
+    tone: "waiting",
+    title: "Daily task limit reached",
+    description: (card) =>
+      `Today's new-task limit${
+        card.cap != null ? ` (${card.cap})` : ""
+      } is full, so this request can't be queued right now. It resets at midnight (UTC) — or raise the cap in autonomy settings.`,
+    settingsCta: true,
+  },
+  "open-opportunities": {
+    icon: Gauge,
+    tone: "waiting",
+    title: "Open-opportunities cap is full",
+    description: () =>
+      "Close or archive some opportunities, or raise the cap in autonomy settings.",
+    settingsCta: true,
+  },
+  "active-ideas": {
+    icon: Gauge,
+    tone: "waiting",
+    title: "Active-ideas cap is full",
+    description: () =>
+      "Archive some ideas, or raise the cap in autonomy settings.",
+    settingsCta: true,
+  },
+  "provider-unconfigured": {
+    icon: KeyRound,
+    tone: "danger",
+    title: "AI provider isn't configured",
+    description: () =>
+      "No AI API key is set on the server, so replies can't be generated. This needs a deployment-side fix — it isn't a project setting.",
+    settingsCta: false,
+  },
+  "provider-rate-limited": {
+    icon: Hourglass,
+    tone: "waiting",
+    title: "AI provider is rate-limiting",
+    description: () =>
+      "Too many requests hit the AI provider at once. This usually clears within a minute — send your message again shortly.",
+    settingsCta: false,
+  },
+  "provider-timeout": {
+    icon: Timer,
+    tone: "waiting",
+    title: "AI provider timed out",
+    description: () =>
+      "The AI provider took too long to respond. Send your message again.",
+    settingsCta: false,
+  },
+};
+
+// Why the assistant couldn't reply — cause + (when fixable there) a CTA
+// into the autonomy settings panel. The usage badge shows where the cap
+// stood when it was hit.
+function LimitNoticeCard({ card }: { card: LimitNoticeData }) {
+  const params = useParams<{ projectId?: string }>();
+  const projectId =
+    typeof params?.projectId === "string" ? params.projectId : undefined;
+  const copy = LIMIT_NOTICE_COPY[card.reason];
+
+  const isBudget = card.reason === "daily-budget";
+  const usage =
+    card.used != null && card.cap != null
+      ? isBudget
+        ? `$${card.used.toFixed(2)} / $${card.cap}`
+        : `${card.used} / ${card.cap}`
+      : undefined;
+
+  return (
+    <EventCard
+      icon={copy.icon}
+      title={copy.title}
+      tone={copy.tone}
+      badge={usage ? { label: usage, tone: copy.tone } : undefined}
+    >
+      <p className="text-sm text-muted-foreground">{copy.description(card)}</p>
+      {copy.settingsCta && projectId ? (
+        <Link
+          href={`/projects/${projectId}?panel=ayarlar&sub=otonomi`}
+          className={cn(
+            buttonVariants({ size: "sm", variant: "outline" }),
+            "w-fit",
+          )}
+        >
+          <Settings2 className="size-3.5" />
+          Open autonomy settings
+        </Link>
+      ) : null}
+    </EventCard>
+  );
+}
 
 // A directly clickable Approve/Reject card shown in chat while a task is
 // awaiting approval — the decision can be made here without navigating to

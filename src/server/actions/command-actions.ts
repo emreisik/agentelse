@@ -11,6 +11,7 @@ import { CommandService } from "@/server/commands/command-service";
 import { ChatService } from "@/server/commands/chat-service";
 import { putAsset } from "@/server/storage/asset-storage";
 import type { CommandAttachment } from "@/server/repositories/command.repository";
+import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 export async function submitProjectCommandAction(formData: FormData) {
   const projectId = String(formData.get("projectId"));
@@ -56,6 +57,9 @@ export type ChatMessageResult =
       commandId: string;
       reply: string;
       attachments: { assetId: string; filename: string; mimeType: string }[];
+      // Structured chat card (e.g. limit-notice) — rendered by the client
+      // in place of the plain reply text (see ChatTurnResult.card).
+      card?: IdeaEventCardData;
     }
   | { ok: false; message: string };
 
@@ -148,6 +152,7 @@ export async function submitChatMessageAction(
       ok: true,
       commandId: result.commandId,
       reply: result.reply,
+      card: result.card,
       attachments: attachments.map(({ assetId, filename, mimeType }) => ({
         assetId,
         filename,

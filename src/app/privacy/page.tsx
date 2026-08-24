@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { LogoBadge } from "@/components/shared/logo-badge";
-
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description:
@@ -273,11 +271,8 @@ export default function PrivacyPage() {
     <div className="flex min-h-screen w-full flex-col bg-background">
       <header className="border-b border-border">
         <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-6 py-5">
-          <Link href="/login" className="flex items-center gap-2">
-            <LogoBadge size="sm" />
-            <span className="font-heading text-sm font-semibold tracking-tight">
-              Agentelse
-            </span>
+          <Link href="/login" className="flex items-center">
+            <img src="/logo.png" alt="Agentelse" className="h-6 w-auto" />
           </Link>
           <Link
             href="/login"

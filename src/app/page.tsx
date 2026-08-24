@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { CheckIcon } from "lucide-react";
 
 import { auth } from "@/lib/auth";
-import { LogoBadge } from "@/components/shared/logo-badge";
 import { Button } from "@/components/ui/button";
 
 const CAPABILITIES = [
@@ -24,12 +23,7 @@ export default async function Home() {
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <header className="flex items-center justify-between px-6 py-5 sm:px-10">
-        <div className="flex items-center gap-2">
-          <LogoBadge />
-          <span className="font-heading text-lg font-semibold tracking-tight">
-            Agentelse
-          </span>
-        </div>
+        <img src="/logo.png" alt="Agentelse" className="h-7 w-auto" />
         <Button
           render={<Link href="/login" />}
           nativeButton={false}

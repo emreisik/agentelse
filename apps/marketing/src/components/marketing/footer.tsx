@@ -1,7 +1,5 @@
 import Link from "next/link";
 
-import { AgentelseMark } from "@/components/marketing/agentelse-mark";
-
 const FOOTER_COLUMNS: {
   title: string;
   links: { label: string; href: string }[];
@@ -34,11 +32,8 @@ export function MarketingFooter() {
     <footer className="border-t border-border">
       <div className="agentelse-container-wide grid gap-12 py-16 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
         <div className="flex flex-col gap-3">
-          <Link href="/" className="flex items-center gap-2">
-            <AgentelseMark className="size-6" />
-            <span className="text-sm font-extrabold tracking-wide uppercase">
-              Agentelse
-            </span>
+          <Link href="/" className="flex items-center">
+            <img src="/logo.png" alt="Agentelse" className="h-6 w-auto" />
           </Link>
           <p className="max-w-[26ch] text-sm text-muted-foreground">
             Your Autonomous Growth Department.

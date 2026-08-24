@@ -15,7 +15,6 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { AgentelseMark } from "@/components/marketing/agentelse-mark";
 import { DesktopNav, NAV_LINKS } from "@/components/marketing/nav-menu";
 
 export function MarketingNav() {
@@ -38,11 +37,8 @@ export function MarketingNav() {
       )}
     >
       <div className="agentelse-container-wide flex h-16 items-center justify-between">
-        <Link href="/" className="flex items-center gap-2.5">
-          <AgentelseMark className="size-8" />
-          <span className="text-lg font-extrabold tracking-wide uppercase">
-            Agentelse
-          </span>
+        <Link href="/" className="flex items-center">
+          <img src="/logo.png" alt="Agentelse" className="h-7 w-auto" />
         </Link>
 
         <DesktopNav />
@@ -82,11 +78,8 @@ export function MarketingNav() {
           <SheetContent side="right">
             <SheetHeader>
               <SheetTitle>
-                <span className="flex items-center gap-2">
-                  <AgentelseMark className="size-6" />
-                  <span className="text-base font-extrabold tracking-wide uppercase">
-                    Agentelse
-                  </span>
+                <span className="flex items-center">
+                  <img src="/logo.png" alt="Agentelse" className="h-6 w-auto" />
                 </span>
               </SheetTitle>
             </SheetHeader>

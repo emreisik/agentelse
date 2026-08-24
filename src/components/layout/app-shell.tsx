@@ -5,7 +5,6 @@ import { requireUser } from "@/server/security/tenant-context";
 import { PipelineRepository } from "@/server/repositories/pipeline.repository";
 import { SidebarNav, type SidebarFlow } from "@/components/layout/sidebar-nav";
 import { SetupProgressWidget } from "@/components/layout/setup-progress-widget";
-import { LogoBadge } from "@/components/shared/logo-badge";
 import { TopBar } from "@/components/layout/top-bar";
 import type { PanelKey } from "@/components/hub-core/hub-core-params";
 
@@ -252,12 +251,13 @@ export async function AppShell({
         <aside className="flex h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar">
           <Link
             href="/dashboard"
-            className="flex items-center gap-2.5 border-b border-sidebar-border px-4 py-4 transition-opacity hover:opacity-80"
+            className="flex items-center border-b border-sidebar-border px-4 py-4 transition-opacity hover:opacity-80"
           >
-            <LogoBadge size="sm" />
-            <div className="min-w-0 font-heading text-sm font-semibold tracking-tight text-sidebar-foreground">
-              Agentelse
-            </div>
+            <img
+              src="/agentelse.png"
+              alt="Agentelse"
+              className="h-10 w-full object-contain"
+            />
           </Link>
 
           <SidebarNav activeProjectId={projectId} flows={flows} />

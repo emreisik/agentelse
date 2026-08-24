@@ -12,7 +12,6 @@ import {
 
 import { signOutAction } from "@/server/actions/auth-actions";
 import { Button } from "@/components/ui/button";
-import { LogoBadge } from "@/components/shared/logo-badge";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
 import { ProjectSelect } from "@/components/layout/project-select";
 import { ProjectToolsMenu } from "@/components/hub-core/project-tools-menu";
@@ -64,12 +63,13 @@ export function TopBar({
         {showLogo ? (
           <Link
             href="/dashboard"
-            className="flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80"
+            className="flex shrink-0 items-center transition-opacity hover:opacity-80"
           >
-            <LogoBadge size="sm" />
-            <span className="font-heading text-sm font-semibold tracking-tight">
-              Agentelse
-            </span>
+            <img
+              src="/agentelse.png"
+              alt="Agentelse"
+              className="h-10 w-full object-contain"
+            />
           </Link>
         ) : null}
         {activeProject ? (

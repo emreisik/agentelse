@@ -98,7 +98,7 @@ export async function createProjectAction(formData: FormData) {
     entityId: project.id,
   });
 
-  redirect(`/projects/${project.id}?panel=kurulum`);
+  redirect(`/projects/${project.id}?panel=setup`);
 }
 
 const LOGO_MIME_TO_EXT: Record<string, string> = {

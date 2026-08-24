@@ -1,4 +1,3 @@
-import { AgentelseMark } from "@/components/shared/agentelse-mark";
 import { cn } from "@/lib/utils";
 
 const SIZE_CLASSES = {
@@ -6,10 +5,9 @@ const SIZE_CLASSES = {
   md: "size-9 rounded-xl p-1.5",
 } as const;
 
-// Single render point for the Agentelse mark: always inside a white badge,
+// Single render point for the Agentelse logo: always inside a white badge,
 // looks identical in both dark and light theme (the login page + sidebar
-// header use this) — since the badge is fixed white, the mark color is
-// also pinned to a fixed ink tone instead of a theme token.
+// header use this).
 export function LogoBadge({
   size = "md",
   className,
@@ -25,7 +23,11 @@ export function LogoBadge({
         className,
       )}
     >
-      <AgentelseMark className="h-full w-full text-[#0d0d0d]" />
+      <img
+        src="/agentelse.png"
+        alt="Agentelse"
+        className="h-full w-full object-contain"
+      />
     </span>
   );
 }

@@ -9,5 +9,5 @@ export default async function KurulumRedirect({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  redirect(`/projects/${projectId}?panel=kurulum`);
+  redirect(`/projects/${projectId}?panel=setup`);
 }

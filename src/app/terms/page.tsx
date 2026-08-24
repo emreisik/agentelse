@@ -308,7 +308,11 @@ export default function TermsPage() {
 
         <div className="mt-12 flex flex-col divide-y divide-border border-t border-border">
           {SECTIONS.map((section) => (
-            <div key={section.id} className="flex flex-col gap-3 py-8">
+            <div
+              key={section.id}
+              id={section.id}
+              className="flex flex-col gap-3 py-8 scroll-mt-24"
+            >
               <h2 className="text-xl font-semibold tracking-tight text-foreground">
                 {section.title}
               </h2>

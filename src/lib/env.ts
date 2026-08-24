@@ -69,6 +69,23 @@ const envSchema = z.object({
   // gemini-3.1-flash-image.
   GEMINI_IMAGE_MODEL: z.string().optional().default("gemini-3-pro-image"),
 
+  // OpenAI — ReasoningService's optional second backend (see
+  // openai-client.ts). Gemini remains the default; REASONING_PROVIDER=openai
+  // switches the structured reasoning path over without touching any prompt
+  // file. Tier mapping mirrors the Gemini one above.
+  OPENAI_API_KEY: z.string().optional().default(""),
+  OPENAI_MODEL: z.string().optional().default("gpt-5.6-luna"),
+  OPENAI_LITE_MODEL: z.string().optional().default("gpt-5.4-mini"),
+  OPENAI_PRO_MODEL: z.string().optional().default("gpt-5.6-terra"),
+  // Which backend ReasoningService.run uses. Unknown values fall back to
+  // "gemini" via catch() so a typo in the env degrades to the default
+  // instead of crashing the first request.
+  REASONING_PROVIDER: z
+    .enum(["gemini", "openai"])
+    .optional()
+    .default("gemini")
+    .catch("gemini"),
+
   R2_ACCOUNT_ID: z.string().optional().default(""),
   R2_ACCESS_KEY_ID: z.string().optional().default(""),
   R2_SECRET_ACCESS_KEY: z.string().optional().default(""),
@@ -139,6 +156,7 @@ export function isIntegrationConfigured(
     | "OPENCLAW"
     | "OPENCLAW_GATEWAY"
     | "GEMINI"
+    | "OPENAI"
     | "R2"
     | "SENTRY"
     | "TELEGRAM"
@@ -156,6 +174,8 @@ export function isIntegrationConfigured(
       return Boolean(env.OPENCLAW_GATEWAY_URL && env.OPENCLAW_GATEWAY_TOKEN);
     case "GEMINI":
       return Boolean(env.GEMINI_API_KEY);
+    case "OPENAI":
+      return Boolean(env.OPENAI_API_KEY);
     case "R2":
       return Boolean(
         env.R2_ACCOUNT_ID &&

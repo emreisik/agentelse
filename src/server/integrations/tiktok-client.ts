@@ -167,7 +167,7 @@ export async function exchangeTikTokAuthCode(
   const result = await request<{
     access_token: string;
     refresh_token: string;
-    expires_in: number;
+    expires_in?: number;
   }>(TOKEN_URL, {
     method: "POST",
     headers: {
@@ -179,7 +179,9 @@ export async function exchangeTikTokAuthCode(
   return {
     accessToken: result.access_token,
     refreshToken: result.refresh_token,
-    expiresIn: result.expires_in,
+    // expires_in eksik gelirse NaN tarih -> RangeError (meta-client'ta
+    // yaşandı); TikTok'un dokümante 24 saatini varsay.
+    expiresIn: result.expires_in ?? 86400,
   };
 }
 
@@ -199,7 +201,7 @@ export async function refreshTikTokAccessToken(
   const result = await request<{
     access_token: string;
     refresh_token: string;
-    expires_in: number;
+    expires_in?: number;
   }>(TOKEN_URL, {
     method: "POST",
     headers: {
@@ -211,7 +213,7 @@ export async function refreshTikTokAccessToken(
   return {
     accessToken: result.access_token,
     refreshToken: result.refresh_token,
-    expiresIn: result.expires_in,
+    expiresIn: result.expires_in ?? 86400,
   };
 }
 

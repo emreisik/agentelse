@@ -154,10 +154,13 @@ export async function exchangeMetaAuthCode(
     redirect_uri: redirectUri(),
     code,
   });
-  const result = await request<{ access_token: string; expires_in: number }>(
+  const result = await request<{ access_token: string; expires_in?: number }>(
     `${GRAPH_BASE}/oauth/access_token?${params.toString()}`,
   );
-  return { accessToken: result.access_token, expiresIn: result.expires_in };
+  return {
+    accessToken: result.access_token,
+    expiresIn: result.expires_in ?? 3600,
+  };
 }
 
 // Converts a short-lived (1-2 hour) user access token into a ~60-day
@@ -174,10 +177,17 @@ export async function exchangeForLongLivedToken(
     client_secret: env.META_APP_SECRET,
     fb_exchange_token: shortLivedToken,
   });
-  const result = await request<{ access_token: string; expires_in: number }>(
+  // Meta bu yanıtta expires_in alanını her zaman GÖNDERMEZ (bazı token
+  // türleri süresiz döner) — undefined * 1000 = NaN, new Date(NaN)
+  // .toISOString() ise RangeError fırlatıp callback'i 500'e düşürüyordu.
+  // Alan yoksa dokümante edilen ~60 günlük ömrü varsayıyoruz.
+  const result = await request<{ access_token: string; expires_in?: number }>(
     `${GRAPH_BASE}/oauth/access_token?${params.toString()}`,
   );
-  return { accessToken: result.access_token, expiresIn: result.expires_in };
+  return {
+    accessToken: result.access_token,
+    expiresIn: result.expires_in ?? 60 * 24 * 60 * 60,
+  };
 }
 
 export async function fetchMetaAccountName(

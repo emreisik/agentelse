@@ -175,7 +175,7 @@ export async function exchangeXAuthCode(
   const result = await request<{
     access_token: string;
     refresh_token: string;
-    expires_in: number;
+    expires_in?: number;
   }>(TOKEN_URL, {
     method: "POST",
     headers: {
@@ -187,7 +187,9 @@ export async function exchangeXAuthCode(
   return {
     accessToken: result.access_token,
     refreshToken: result.refresh_token,
-    expiresIn: result.expires_in,
+    // expires_in eksik gelirse NaN tarih -> RangeError (meta-client'ta
+    // yaşandı); X'in dokümante 2 saatini varsay.
+    expiresIn: result.expires_in ?? 7200,
   };
 }
 
@@ -203,7 +205,7 @@ export async function refreshXAccessToken(
   const result = await request<{
     access_token: string;
     refresh_token: string;
-    expires_in: number;
+    expires_in?: number;
   }>(TOKEN_URL, {
     method: "POST",
     headers: {
@@ -215,7 +217,7 @@ export async function refreshXAccessToken(
   return {
     accessToken: result.access_token,
     refreshToken: result.refresh_token,
-    expiresIn: result.expires_in,
+    expiresIn: result.expires_in ?? 7200,
   };
 }
 

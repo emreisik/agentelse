@@ -137,7 +137,7 @@ export async function exchangeGoogleAuthCode(code: string): Promise<{
   const result = await request<{
     access_token: string;
     refresh_token?: string;
-    expires_in: number;
+    expires_in?: number;
   }>(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -146,7 +146,9 @@ export async function exchangeGoogleAuthCode(code: string): Promise<{
   return {
     accessToken: result.access_token,
     refreshToken: result.refresh_token ?? null,
-    expiresIn: result.expires_in,
+    // expires_in eksik gelirse NaN tarih -> RangeError zinciri oluşmasın
+    // (meta-client'ta yaşandı); Google'ın standart 1 saatini varsay.
+    expiresIn: result.expires_in ?? 3600,
   };
 }
 
@@ -163,7 +165,7 @@ export async function refreshGoogleAccessToken(
     client_secret: env.GOOGLE_OAUTH_CLIENT_SECRET,
     grant_type: "refresh_token",
   });
-  const result = await request<{ access_token: string; expires_in: number }>(
+  const result = await request<{ access_token: string; expires_in?: number }>(
     TOKEN_URL,
     {
       method: "POST",
@@ -171,7 +173,10 @@ export async function refreshGoogleAccessToken(
       body: body.toString(),
     },
   );
-  return { accessToken: result.access_token, expiresIn: result.expires_in };
+  return {
+    accessToken: result.access_token,
+    expiresIn: result.expires_in ?? 3600,
+  };
 }
 
 export async function fetchGoogleAccountEmail(

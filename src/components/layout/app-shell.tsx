@@ -193,10 +193,10 @@ async function getSidebarFlows(projectId: string): Promise<SidebarFlow[]> {
   const ideaIds = Array.from(byIdea.keys());
   const lastActivityByIdea = ideaIds.length
     ? await prisma.command.groupBy({
-        by: ["ideaId"],
-        where: { ideaId: { in: ideaIds } },
-        _max: { createdAt: true },
-      })
+      by: ["ideaId"],
+      where: { ideaId: { in: ideaIds } },
+      _max: { createdAt: true },
+    })
     : [];
   const lastActivityMap = new Map(
     lastActivityByIdea
@@ -256,7 +256,7 @@ export async function AppShell({
             <img
               src="/logo.png"
               alt="Agentelse"
-              className="h-10 w-full object-contain"
+              className="h-7 object-contain"
             />
           </Link>
 

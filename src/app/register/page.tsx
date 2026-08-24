@@ -21,11 +21,8 @@ export default async function RegisterPage({
     <div className="flex min-h-screen w-full flex-col bg-background lg:flex-row">
       {/* Left panel — brand and value proposition (desktop only) */}
       <div className="hidden flex-col justify-between bg-primary p-10 text-primary-foreground lg:flex lg:w-1/2 xl:p-16">
-        <div className="flex flex-col gap-1.5">
+        <div className="flex">
           <img src="/logo-black.png" alt="Agentelse" className="h-8 w-auto" />
-          <div className="text-xs text-primary-foreground/60">
-            Your AI Growth Team
-          </div>
         </div>
 
         <div className="max-w-md space-y-6">

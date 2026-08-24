@@ -68,7 +68,7 @@ export function TopBar({
             <img
               src="/logo.png"
               alt="Agentelse"
-              className="h-10 w-full object-contain"
+              className="h-7 object-contain"
             />
           </Link>
         ) : null}

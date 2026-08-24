@@ -66,7 +66,7 @@ export function TopBar({
             className="flex shrink-0 items-center transition-opacity hover:opacity-80"
           >
             <img
-              src="/agentelse.png"
+              src="/logo.png"
               alt="Agentelse"
               className="h-10 w-full object-contain"
             />

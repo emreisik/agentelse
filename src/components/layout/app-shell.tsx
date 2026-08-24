@@ -254,7 +254,7 @@ export async function AppShell({
             className="flex items-center border-b border-sidebar-border px-4 py-4 transition-opacity hover:opacity-80"
           >
             <img
-              src="/agentelse.png"
+              src="/logo.png"
               alt="Agentelse"
               className="h-10 w-full object-contain"
             />

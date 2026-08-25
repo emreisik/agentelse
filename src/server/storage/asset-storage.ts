@@ -105,6 +105,15 @@ export async function putAsset(
     await putR2(filename, buffer, mimeType);
     return { storageKey: `${R2_SCHEME}${filename}`, filename };
   }
+  // Loud on purpose, not just the one-time boot log (instrumentation.ts):
+  // this repo's dev DB is the same live database production reads from
+  // (see memory: shared-remote-db), so a creative generated from a local
+  // `npm run dev` with no R2 creds in the local .env writes its bytes to
+  // THIS machine's disk while the row lands in the shared DB — production
+  // then 404s on it, discovered days later instead of in this terminal now.
+  console.warn(
+    `[asset-storage] R2 not configured — writing ${filename} to local disk (${LOCAL_ASSETS_DIR}). If this DB is shared with production, that row will 404 there.`,
+  );
   await writeLocal(filename, buffer);
   return { storageKey: `${LOCAL_ASSET_SCHEME}${filename}`, filename };
 }

@@ -246,6 +246,8 @@ function publishApprovalType(capability: CapabilityKey) {
   if (capability.endsWith("_PUBLISH")) return "PUBLISH_APPROVAL" as const;
   if (
     capability.startsWith("META_CAMPAIGN") ||
+    capability === "META_ADSET_CREATE" ||
+    capability === "META_AD_CREATE" ||
     capability.startsWith("GOOGLE_ADS_CAMPAIGN")
   ) {
     return "CAMPAIGN_APPROVAL" as const;

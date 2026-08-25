@@ -5,12 +5,18 @@ import type { CapabilityKey, ExecutionProviderType } from "@prisma/client";
 import { isIntegrationConfigured } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/server/security/crypto";
+import { readAsset } from "@/server/storage/asset-storage";
 import {
+  createMetaAd,
+  createMetaAdCreative,
+  createMetaAdSet,
   createMetaCampaign,
   fetchMetaAdsInsights,
   fetchPageAccessToken,
   publishInstagramPost,
   updateMetaCampaign,
+  uploadMetaAdImage,
+  type MetaAdSetTargeting,
   type MetaCredentialMetadata,
 } from "@/server/integrations/meta-client";
 import type {
@@ -30,6 +36,8 @@ const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "META_ADS_ANALYSIS",
   "META_CAMPAIGN_CREATE",
   "META_CAMPAIGN_UPDATE",
+  "META_ADSET_CREATE",
+  "META_AD_CREATE",
 ]);
 
 type StoredResult = {
@@ -76,6 +84,15 @@ export class MetaApiProvider implements ExecutionProvider {
         (p) => p.pageId === metadata.selectedPageId,
       );
       return Boolean(page?.instagramBusinessAccountId);
+    }
+    if (capability === "META_AD_CREATE") {
+      // createAd() also needs a selected Facebook Page to build the
+      // AdCreative's object_story_spec — unlike INSTAGRAM_PUBLISH, it
+      // doesn't need that page to have a linked Instagram account.
+      const page = metadata.pages?.find(
+        (p) => p.pageId === metadata.selectedPageId,
+      );
+      return Boolean(metadata.selectedAdAccountId) && Boolean(page);
     }
     return Boolean(metadata.selectedAdAccountId);
   }
@@ -128,6 +145,10 @@ export class MetaApiProvider implements ExecutionProvider {
           return await this.createCampaign(metadata, accessToken, payload);
         case "META_CAMPAIGN_UPDATE":
           return await this.updateCampaign(accessToken, payload);
+        case "META_ADSET_CREATE":
+          return await this.createAdSet(metadata, accessToken, payload);
+        case "META_AD_CREATE":
+          return await this.createAd(metadata, accessToken, payload);
         default:
           return {
             status: "FAILED",
@@ -269,5 +290,168 @@ export class MetaApiProvider implements ExecutionProvider {
       dailyBudgetCents,
     });
     return { status: "COMPLETED", rawResult: { campaignId } };
+  }
+
+  private async createAdSet(
+    metadata: MetaCredentialMetadata,
+    accessToken: string,
+    payload: Record<string, unknown>,
+  ): Promise<StoredResult> {
+    if (!metadata.selectedAdAccountId) {
+      return { status: "FAILED", errorMessage: "No ad account selected" };
+    }
+    const campaignId =
+      typeof payload.campaignId === "string" ? payload.campaignId : undefined;
+    const name = typeof payload.name === "string" ? payload.name : undefined;
+    const dailyBudgetCents =
+      typeof payload.dailyBudgetCents === "number"
+        ? payload.dailyBudgetCents
+        : undefined;
+    const billingEvent =
+      typeof payload.billingEvent === "string"
+        ? payload.billingEvent
+        : undefined;
+    const optimizationGoal =
+      typeof payload.optimizationGoal === "string"
+        ? payload.optimizationGoal
+        : undefined;
+    const targeting = payload.targeting as MetaAdSetTargeting | undefined;
+    if (
+      !campaignId ||
+      !name ||
+      !dailyBudgetCents ||
+      !billingEvent ||
+      !optimizationGoal ||
+      !targeting?.countries?.length
+    ) {
+      return {
+        status: "FAILED",
+        errorMessage:
+          "META_ADSET_CREATE requires `campaignId`, `name`, `dailyBudgetCents`, `billingEvent`, `optimizationGoal` and `targeting.countries`",
+      };
+    }
+    const status = payload.status === "ACTIVE" ? "ACTIVE" : "PAUSED";
+
+    const { adSetId } = await createMetaAdSet({
+      adAccountId: metadata.selectedAdAccountId,
+      accessToken,
+      campaignId,
+      name,
+      dailyBudgetCents,
+      billingEvent,
+      optimizationGoal,
+      targeting,
+      status,
+    });
+    return { status: "COMPLETED", rawResult: { adSetId } };
+  }
+
+  // Three sequential Marketing API calls: upload the image (if given) ->
+  // create the AdCreative -> create the Ad. If a later step fails, the
+  // resource created by an earlier step is left orphaned on Meta's side
+  // (not cleaned up) — the error message below names which step failed so
+  // this is at least visible, not silent.
+  private async createAd(
+    metadata: MetaCredentialMetadata,
+    accessToken: string,
+    payload: Record<string, unknown>,
+  ): Promise<StoredResult> {
+    if (!metadata.selectedAdAccountId) {
+      return { status: "FAILED", errorMessage: "No ad account selected" };
+    }
+    const page = metadata.pages?.find(
+      (p) => p.pageId === metadata.selectedPageId,
+    );
+    if (!page) {
+      return {
+        status: "FAILED",
+        errorMessage: "No Facebook Page selected for the ad creative",
+      };
+    }
+    const adSetId =
+      typeof payload.adSetId === "string" ? payload.adSetId : undefined;
+    const name = typeof payload.name === "string" ? payload.name : undefined;
+    const message =
+      typeof payload.message === "string" ? payload.message : undefined;
+    const link = typeof payload.link === "string" ? payload.link : undefined;
+    const callToActionType =
+      typeof payload.callToActionType === "string"
+        ? payload.callToActionType
+        : "LEARN_MORE";
+    const imageAssetId =
+      typeof payload.imageAssetId === "string"
+        ? payload.imageAssetId
+        : undefined;
+    if (!adSetId || !name || !message || !link || !imageAssetId) {
+      return {
+        status: "FAILED",
+        errorMessage:
+          "META_AD_CREATE requires `adSetId`, `name`, `message`, `link` and `imageAssetId`",
+      };
+    }
+    const status = payload.status === "ACTIVE" ? "ACTIVE" : "PAUSED";
+
+    const asset = await prisma.asset.findUnique({
+      where: { id: imageAssetId },
+      select: { storageKey: true },
+    });
+    if (!asset) {
+      return { status: "FAILED", errorMessage: "Ad image asset not found" };
+    }
+
+    let imageHash: string;
+    try {
+      const buffer = await readAsset(asset.storageKey);
+      const uploaded = await uploadMetaAdImage({
+        adAccountId: metadata.selectedAdAccountId,
+        accessToken,
+        imageBuffer: buffer,
+      });
+      imageHash = uploaded.imageHash;
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `Image upload step failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    let creativeId: string;
+    try {
+      const created = await createMetaAdCreative({
+        adAccountId: metadata.selectedAdAccountId,
+        accessToken,
+        pageId: page.pageId,
+        imageHash,
+        message,
+        link,
+        callToActionType,
+      });
+      creativeId = created.creativeId;
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `Ad creative step failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    try {
+      const { adId } = await createMetaAd({
+        adAccountId: metadata.selectedAdAccountId,
+        accessToken,
+        adSetId,
+        name,
+        creativeId,
+        status,
+      });
+      return {
+        status: "COMPLETED",
+        rawResult: { adId, creativeId, imageHash },
+      };
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `Ad creation step failed (creative ${creativeId} was created): ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
 }

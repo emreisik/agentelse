@@ -1,6 +1,11 @@
 import "server-only";
 
-import type { ActorType, CommandSource, DepartmentKey } from "@prisma/client";
+import type {
+  ActorType,
+  CapabilityKey,
+  CommandSource,
+  DepartmentKey,
+} from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { AgentelseError } from "@/server/security/errors";
@@ -64,7 +69,34 @@ export type SubmitCommandResult =
       candidates?: { projectId: string; name: string }[];
     }
   | { status: "APPROVAL_HANDLED"; commandId: string; approvalId: string }
-  | { status: "UNKNOWN_INTENT"; commandId: string };
+  | { status: "UNKNOWN_INTENT"; commandId: string }
+  // The capability was recognized, but it needs structured parameters
+  // (budget, targeting, creative) that free text can't reliably carry — see
+  // FORM_REQUIRED_CAPABILITIES below. No Task is created; formHref points
+  // into the Ads Manager's create dialog instead.
+  | { status: "FORM_REQUIRED"; commandId: string; formHref: string };
+
+// Capabilities where a chat TASK intent must NOT go straight to
+// TaskPlanner.planForCapability — the parameters they need (ad budget,
+// targeting, a creative image) can't be reliably extracted from free text
+// the way a taskBrief can for e.g. CREATE_COPY. META_ADSET_CREATE and
+// META_AD_CREATE are deliberately absent from CHAT_CAPABILITIES entirely
+// (see chat-turn.ts) rather than listed here — chat can't know which
+// existing campaign/ad set they'd attach to, so those are only ever started
+// from the Ads Manager page itself, next to the parent row.
+const FORM_REQUIRED_CAPABILITIES: ReadonlySet<CapabilityKey> =
+  new Set<CapabilityKey>(["META_CAMPAIGN_CREATE"]);
+
+// `brief` becomes the New Campaign dialog's Name field default — carrying
+// over what the client already typed (via intent.request, the LLM's
+// taskBrief) instead of making them retype it into the form that opens
+// right after. It's a starting point, not a parsed field: budget/objective
+// still have to be entered explicitly, since free text can't be trusted to
+// map onto those reliably.
+function adsFormHref(projectId: string, brief: string): string {
+  const params = new URLSearchParams({ create: "campaign", brief });
+  return `/projects/${projectId}/ads?${params.toString()}`;
+}
 
 // Single entry point for turning natural-language input into work,
 // regardless of where it came from (spec section 72 — Web, API, System,
@@ -191,6 +223,26 @@ export const CommandService = {
       projectId,
       brandId,
     );
+
+    if (FORM_REQUIRED_CAPABILITIES.has(intent.capability)) {
+      const formHref = adsFormHref(projectId, intent.request);
+      if (command.ideaId) {
+        await IdeaChatRepository.postAdsFormPromptCard({
+          workspaceId: input.workspaceId,
+          projectId,
+          ideaId: command.ideaId,
+          title: intent.request,
+          formHref,
+          departmentKey: input.departmentKey,
+        }).catch((error) => {
+          console.error(
+            "[command-service] postAdsFormPromptCard failed:",
+            error,
+          );
+        });
+      }
+      return { status: "FORM_REQUIRED", commandId: command.id, formHref };
+    }
 
     const attachmentPayloadExtra = input.attachments?.length
       ? { attachmentAssetIds: input.attachments.map((a) => a.assetId) }

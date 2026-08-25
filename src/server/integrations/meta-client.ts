@@ -439,3 +439,305 @@ export async function updateMetaCampaign(input: {
     body: body.toString(),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Listing — read-only inventory calls used by the /ads page (see
+// meta-ads-query.ts). Deliberately NOT routed through the Task/Approval/
+// ExecutionJob system: a read has no side effect worth an approval record.
+
+const LISTING_MAX_PAGES = 10;
+
+// The Graph API defaults to ~25 items per page — without following
+// `paging.next`, an ad account with more than that would silently
+// under-report (a campaign on page 2 would 404 as "not found" when the
+// user drills into it, with no indication more rows exist). `paging.next`
+// is a complete, ready-to-fetch URL (access_token included). Capped at
+// LISTING_MAX_PAGES as a backstop against runaway pagination on a
+// pathologically large account, not because we expect to hit it in
+// practice with `limit=100`.
+async function requestAllPages<T>(url: string): Promise<T[]> {
+  const results: T[] = [];
+  let nextUrl: string | undefined = url;
+  for (let page = 0; nextUrl && page < LISTING_MAX_PAGES; page++) {
+    const body: { data?: T[]; paging?: { next?: string } } =
+      await request(nextUrl);
+    results.push(...(body.data ?? []));
+    nextUrl = body.paging?.next;
+  }
+  return results;
+}
+
+export type MetaCampaignSummary = {
+  campaignId: string;
+  name: string;
+  objective: string;
+  status: string;
+  effectiveStatus: string;
+  dailyBudgetCents?: number;
+  lifetimeBudgetCents?: number;
+};
+
+export async function listMetaCampaigns(input: {
+  adAccountId: string;
+  accessToken: string;
+}): Promise<MetaCampaignSummary[]> {
+  const params = new URLSearchParams({
+    fields:
+      "id,name,objective,status,effective_status,daily_budget,lifetime_budget",
+    limit: "100",
+    access_token: input.accessToken,
+  });
+  const rows = await requestAllPages<{
+    id: string;
+    name: string;
+    objective: string;
+    status: string;
+    effective_status: string;
+    daily_budget?: string;
+    lifetime_budget?: string;
+  }>(`${GRAPH_BASE}/${input.adAccountId}/campaigns?${params.toString()}`);
+
+  return rows.map((c) => ({
+    campaignId: c.id,
+    name: c.name,
+    objective: c.objective,
+    status: c.status,
+    effectiveStatus: c.effective_status,
+    dailyBudgetCents: c.daily_budget ? Number(c.daily_budget) : undefined,
+    lifetimeBudgetCents: c.lifetime_budget
+      ? Number(c.lifetime_budget)
+      : undefined,
+  }));
+}
+
+export type MetaAdSetSummary = {
+  adSetId: string;
+  name: string;
+  status: string;
+  effectiveStatus: string;
+  dailyBudgetCents?: number;
+  optimizationGoal?: string;
+  billingEvent?: string;
+};
+
+export async function listMetaAdSets(input: {
+  campaignId: string;
+  accessToken: string;
+}): Promise<MetaAdSetSummary[]> {
+  const params = new URLSearchParams({
+    fields:
+      "id,name,status,effective_status,daily_budget,optimization_goal,billing_event",
+    limit: "100",
+    access_token: input.accessToken,
+  });
+  const rows = await requestAllPages<{
+    id: string;
+    name: string;
+    status: string;
+    effective_status: string;
+    daily_budget?: string;
+    optimization_goal?: string;
+    billing_event?: string;
+  }>(`${GRAPH_BASE}/${input.campaignId}/adsets?${params.toString()}`);
+
+  return rows.map((a) => ({
+    adSetId: a.id,
+    name: a.name,
+    status: a.status,
+    effectiveStatus: a.effective_status,
+    dailyBudgetCents: a.daily_budget ? Number(a.daily_budget) : undefined,
+    optimizationGoal: a.optimization_goal,
+    billingEvent: a.billing_event,
+  }));
+}
+
+export type MetaAdSummary = {
+  adId: string;
+  name: string;
+  status: string;
+  effectiveStatus: string;
+  creativeId?: string;
+  thumbnailUrl?: string;
+};
+
+export async function listMetaAds(input: {
+  adSetId: string;
+  accessToken: string;
+}): Promise<MetaAdSummary[]> {
+  const params = new URLSearchParams({
+    fields: "id,name,status,effective_status,creative{id,thumbnail_url}",
+    limit: "100",
+    access_token: input.accessToken,
+  });
+  const rows = await requestAllPages<{
+    id: string;
+    name: string;
+    status: string;
+    effective_status: string;
+    creative?: { id: string; thumbnail_url?: string };
+  }>(`${GRAPH_BASE}/${input.adSetId}/ads?${params.toString()}`);
+
+  return rows.map((a) => ({
+    adId: a.id,
+    name: a.name,
+    status: a.status,
+    effectiveStatus: a.effective_status,
+    creativeId: a.creative?.id,
+    thumbnailUrl: a.creative?.thumbnail_url,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// AdSet / Ad / AdCreative creation — the write path behind META_ADSET_CREATE
+// and META_AD_CREATE (see MetaApiProvider). Minimal field sets, same spirit
+// as createMetaCampaign: enough surface for an AI-assisted draft, not a full
+// ads-manager clone. Targeting is deliberately shallow for v1 — country
+// codes + an age range — Meta's full targeting spec (interests, custom
+// audiences, placements...) is out of scope here.
+export type MetaAdSetTargeting = {
+  countries: string[];
+  ageMin?: number;
+  ageMax?: number;
+};
+
+export async function createMetaAdSet(input: {
+  adAccountId: string;
+  accessToken: string;
+  campaignId: string;
+  name: string;
+  dailyBudgetCents: number;
+  billingEvent: string;
+  optimizationGoal: string;
+  targeting: MetaAdSetTargeting;
+  status: "ACTIVE" | "PAUSED";
+}): Promise<{ adSetId: string }> {
+  const targeting = {
+    geo_locations: { countries: input.targeting.countries },
+    ...(input.targeting.ageMin !== undefined
+      ? { age_min: input.targeting.ageMin }
+      : {}),
+    ...(input.targeting.ageMax !== undefined
+      ? { age_max: input.targeting.ageMax }
+      : {}),
+  };
+
+  const body = new URLSearchParams({
+    name: input.name,
+    campaign_id: input.campaignId,
+    daily_budget: String(input.dailyBudgetCents),
+    billing_event: input.billingEvent,
+    optimization_goal: input.optimizationGoal,
+    targeting: JSON.stringify(targeting),
+    status: input.status,
+    access_token: input.accessToken,
+  });
+
+  const result = await request<{ id: string }>(
+    `${GRAPH_BASE}/${input.adAccountId}/adsets`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    },
+  );
+  return { adSetId: result.id };
+}
+
+const IMAGE_UPLOAD_TIMEOUT_MS = 20_000;
+
+// The Marketing API's `adimages` endpoint accepts base64 image bytes as a
+// plain `bytes` form field — no multipart upload required, unlike
+// publishInstagramPost (which needs a public image_url because Instagram
+// fetches it itself). This means it works even when the asset has no
+// public URL (e.g. local storage without R2 configured) — the caller reads
+// the asset's bytes (see asset-storage.ts's readAsset) and passes them here.
+export async function uploadMetaAdImage(input: {
+  adAccountId: string;
+  accessToken: string;
+  imageBuffer: Buffer;
+}): Promise<{ imageHash: string }> {
+  const body = new URLSearchParams({
+    bytes: input.imageBuffer.toString("base64"),
+    access_token: input.accessToken,
+  });
+
+  const result = await request<{
+    images?: Record<string, { hash?: string }>;
+  }>(
+    `${GRAPH_BASE}/${input.adAccountId}/adimages`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    },
+    IMAGE_UPLOAD_TIMEOUT_MS,
+  );
+
+  const entry = Object.values(result.images ?? {})[0];
+  if (!entry?.hash) {
+    throw new MetaApiError("Meta did not return an image hash for the upload");
+  }
+  return { imageHash: entry.hash };
+}
+
+export async function createMetaAdCreative(input: {
+  adAccountId: string;
+  accessToken: string;
+  pageId: string;
+  imageHash: string;
+  message: string;
+  link: string;
+  callToActionType: string;
+}): Promise<{ creativeId: string }> {
+  const objectStorySpec = {
+    page_id: input.pageId,
+    link_data: {
+      image_hash: input.imageHash,
+      link: input.link,
+      message: input.message,
+      call_to_action: { type: input.callToActionType },
+    },
+  };
+
+  const body = new URLSearchParams({
+    object_story_spec: JSON.stringify(objectStorySpec),
+    access_token: input.accessToken,
+  });
+
+  const result = await request<{ id: string }>(
+    `${GRAPH_BASE}/${input.adAccountId}/adcreatives`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    },
+  );
+  return { creativeId: result.id };
+}
+
+export async function createMetaAd(input: {
+  adAccountId: string;
+  accessToken: string;
+  adSetId: string;
+  name: string;
+  creativeId: string;
+  status: "ACTIVE" | "PAUSED";
+}): Promise<{ adId: string }> {
+  const body = new URLSearchParams({
+    name: input.name,
+    adset_id: input.adSetId,
+    creative: JSON.stringify({ creative_id: input.creativeId }),
+    status: input.status,
+    access_token: input.accessToken,
+  });
+
+  const result = await request<{ id: string }>(
+    `${GRAPH_BASE}/${input.adAccountId}/ads`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    },
+  );
+  return { adId: result.id };
+}

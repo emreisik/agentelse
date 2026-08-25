@@ -17,6 +17,8 @@ const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "X_PUBLISH",
   "META_CAMPAIGN_CREATE",
   "META_CAMPAIGN_UPDATE",
+  "META_ADSET_CREATE",
+  "META_AD_CREATE",
   "GOOGLE_ADS_CAMPAIGN_CREATE",
   "EMAIL_SEND",
   // Agency OS externally-visible actions

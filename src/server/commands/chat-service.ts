@@ -159,6 +159,14 @@ export const ChatService = {
       case "APPROVAL_HANDLED":
         status = "APPROVAL_HANDLED";
         break;
+      case "FORM_REQUIRED":
+        // No Task/Approval was created — the ads-form-prompt card (posted
+        // by CommandService when ideaId is known) carries the actual CTA;
+        // this reply is just the plain-text fallback for project-wide chat
+        // (no ideaId) where the card can't be posted.
+        status = "ANSWERED";
+        reply += `\n\nOpen the form to finish this: ${submission.formHref}`;
+        break;
       case "NEEDS_PROJECT":
         // In practice this never happens since knownProjectId is always provided.
         status = "NEEDS_PROJECT";

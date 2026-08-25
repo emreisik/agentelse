@@ -394,6 +394,34 @@ export const IdeaChatRepository = {
     });
   },
 
+  // Posted instead of a Task/Approval when a chat capability is in
+  // FORM_REQUIRED_CAPABILITIES (see command-service.ts) — budget/targeting/
+  // creative parameters need a structured form, not free text. No taskId
+  // exists yet at this point (no Task was created), so unlike the other
+  // post*Card methods this isn't resolved into a result card later; it's a
+  // standalone CTA into the Ads Manager's create dialog.
+  async postAdsFormPromptCard(input: {
+    workspaceId: string;
+    projectId: string;
+    ideaId: string;
+    title: string;
+    formHref: string;
+    departmentKey?: DepartmentKey;
+  }): Promise<void> {
+    await IdeaChatRepository.postSystemMessage({
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      ideaId: input.ideaId,
+      text: `📣 ${input.title} — opened a form for the details.`,
+      card: {
+        kind: "ads-form-prompt",
+        title: input.title,
+        formHref: input.formHref,
+      },
+      departmentKey: input.departmentKey,
+    });
+  },
+
   // A WorkPlan/Task can end up without an ideaId in idea-less flows (manual
   // creation, isMock) — in that case this returns null, and the caller
   // should skip writing a chat message / routing to the idea chat.

@@ -59,7 +59,7 @@ describe("MetaApiProvider.canExecute", () => {
     expect(await provider.canExecute("META_ADS_ANALYSIS", context)).toBe(false);
   });
 
-  it("requires a selected ad account for campaign/analysis capabilities", async () => {
+  it("requires a selected ad account for campaign/adset/ad/analysis capabilities", async () => {
     prismaMocks.findUnique.mockResolvedValue({
       status: "ACTIVE",
       metadata: { pages: [], adAccounts: [] },
@@ -69,9 +69,11 @@ describe("MetaApiProvider.canExecute", () => {
     expect(await provider.canExecute("META_CAMPAIGN_CREATE", context)).toBe(
       false,
     );
+    expect(await provider.canExecute("META_ADSET_CREATE", context)).toBe(false);
+    expect(await provider.canExecute("META_AD_CREATE", context)).toBe(false);
   });
 
-  it("allows campaign/analysis capabilities once an ad account is selected", async () => {
+  it("allows campaign/adset/analysis capabilities once an ad account is selected", async () => {
     prismaMocks.findUnique.mockResolvedValue({
       status: "ACTIVE",
       metadata: { pages: [], adAccounts: [], selectedAdAccountId: "act_1" },
@@ -81,6 +83,42 @@ describe("MetaApiProvider.canExecute", () => {
     expect(await provider.canExecute("META_CAMPAIGN_UPDATE", context)).toBe(
       true,
     );
+    expect(await provider.canExecute("META_ADSET_CREATE", context)).toBe(true);
+  });
+
+  it("requires BOTH a selected ad account and a selected Page for META_AD_CREATE", async () => {
+    const provider = new MetaApiProvider();
+
+    // Ad account only, no Page selected — createAd() needs the Page to
+    // build the AdCreative's object_story_spec.
+    prismaMocks.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      metadata: { pages: [], adAccounts: [], selectedAdAccountId: "act_1" },
+    });
+    expect(await provider.canExecute("META_AD_CREATE", context)).toBe(false);
+
+    // Page selected but no ad account.
+    prismaMocks.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      metadata: {
+        selectedPageId: "page-1",
+        pages: [{ pageId: "page-1", pageName: "Test Page" }],
+        adAccounts: [],
+      },
+    });
+    expect(await provider.canExecute("META_AD_CREATE", context)).toBe(false);
+
+    // Both selected.
+    prismaMocks.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      metadata: {
+        selectedAdAccountId: "act_1",
+        selectedPageId: "page-1",
+        pages: [{ pageId: "page-1", pageName: "Test Page" }],
+        adAccounts: [],
+      },
+    });
+    expect(await provider.canExecute("META_AD_CREATE", context)).toBe(true);
   });
 
   it("requires the selected page to have a linked Instagram business account for INSTAGRAM_PUBLISH", async () => {

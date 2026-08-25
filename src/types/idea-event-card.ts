@@ -68,6 +68,17 @@ export type IdeaEventCardData =
       permalink?: string;
       errorMessage?: string;
     }
+  // A CTA card shown when the chat recognizes a Meta ads request but the
+  // parameters (budget, targeting, creative) need to come from a structured
+  // form instead of free text — see FORM_REQUIRED_CAPABILITIES in
+  // command-service.ts. Clicking through opens the Ads Manager's create
+  // dialog (see /projects/[projectId]/ads/page.tsx), pre-filled with
+  // whatever the LLM's taskBrief captured.
+  | {
+      kind: "ads-form-prompt";
+      title: string;
+      formHref: string;
+    }
   // Why the assistant couldn't reply: a daily cap/budget was hit or the AI
   // provider is unavailable. Rendered with an explanation + (for caps) a
   // CTA into the autonomy settings panel (see limit-notice.ts for the
@@ -101,6 +112,7 @@ const EVENT_KINDS = new Set([
   "approval-decision",
   "publish-result",
   "limit-notice",
+  "ads-form-prompt",
 ]);
 
 export function isIdeaEventCardData(

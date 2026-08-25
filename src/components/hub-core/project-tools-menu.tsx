@@ -6,6 +6,7 @@ import {
   Library,
   Lightbulb,
   ListChecks,
+  Megaphone,
   Plug,
   Radio,
   Settings2,
@@ -134,6 +135,12 @@ export function ProjectToolsMenu({
         ))}
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
+          <DropdownMenuItem
+            render={<Link href={`/projects/${projectId}/ads`} />}
+          >
+            <Megaphone className="size-4 text-muted-foreground" />
+            Ads Manager
+          </DropdownMenuItem>
           <DropdownMenuItem
             render={<Link href={`/projects/${projectId}/integrations`} />}
           >

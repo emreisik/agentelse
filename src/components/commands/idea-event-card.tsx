@@ -17,6 +17,7 @@ import {
   KeyRound,
   Lightbulb,
   Loader2,
+  Megaphone,
   Radio,
   Send,
   Settings2,
@@ -288,6 +289,27 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
         </EventCard>
       );
     }
+
+    case "ads-form-prompt":
+      return (
+        <div className="mt-1 w-full max-w-sm space-y-2 rounded-2xl border border-border bg-card p-3.5">
+          <div className="flex items-center gap-2">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Megaphone className="size-3.5" />
+            </span>
+            <p className="text-sm font-medium text-foreground">
+              {stripCapabilityPrefix(card.title)} — I&apos;ve opened a form for
+              the budget and targeting details.
+            </p>
+          </div>
+          <Link
+            href={card.formHref}
+            className={cn(buttonVariants({ size: "sm" }), "w-full")}
+          >
+            Open Form
+          </Link>
+        </div>
+      );
 
     default:
       return null;

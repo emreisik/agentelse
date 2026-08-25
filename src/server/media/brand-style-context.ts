@@ -2,6 +2,10 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { parseColorSwatches, type ColorSwatch } from "@/lib/color-swatches";
+import type {
+  LogoPositionValue,
+  AccentBarPositionValue,
+} from "@/server/media/creative-template";
 
 // The single shared source of "what does this brand look like" — the fix
 // for a real bug: image generation runs through two divergent paths (the
@@ -35,13 +39,13 @@ export type BrandVisualIdentityContext = {
   referenceImageAssetId: string | null;
   template: {
     enabled: boolean;
-    logoPosition: string;
+    logoPosition: LogoPositionValue;
     logoSizePercent: number;
     logoMarginPercent: number;
     accentBarEnabled: boolean;
     accentBarColorHex: string | null;
     accentBarHeightPercent: number;
-    accentBarPosition: string;
+    accentBarPosition: AccentBarPositionValue;
   };
 };
 

@@ -3,107 +3,181 @@ import "server-only";
 import sharp from "sharp";
 
 import { prisma } from "@/lib/prisma";
+import { parseColorSwatches } from "@/lib/color-swatches";
 import { readAsset, overwriteAsset } from "@/server/storage/asset-storage";
 
-// There's no write flow for approved colors yet (BrandDossier.approvedColors
-// is still free-form Json) — this defensively extracts the first valid hex
-// code from the array, or a single hex string. Returns null when none is
-// found: the template then uses a neutral (white) badge instead of a
-// brand color, and no accent stripe is added.
+export type LogoPositionValue =
+  "TOP_LEFT" | "TOP_RIGHT" | "BOTTOM_LEFT" | "BOTTOM_RIGHT" | "CENTER_BOTTOM";
+
+export type AccentBarPositionValue = "TOP" | "BOTTOM";
+
+export type TemplateConfig = {
+  enabled: boolean;
+  logoPosition: LogoPositionValue;
+  logoSizePercent: number;
+  logoMarginPercent: number;
+  accentBarEnabled: boolean;
+  accentBarColorHex: string | null;
+  accentBarHeightPercent: number;
+  accentBarPosition: AccentBarPositionValue;
+};
+
+// Matches BrandVisualIdentity's schema.prisma defaults exactly — a brand
+// that never opens the Visual Identity settings gets byte-for-byte the
+// same output this module always produced (bottom-right badge, bottom
+// accent stripe, same proportions).
+export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
+  enabled: true,
+  logoPosition: "BOTTOM_RIGHT",
+  logoSizePercent: 16,
+  logoMarginPercent: 4,
+  accentBarEnabled: true,
+  accentBarColorHex: null,
+  accentBarHeightPercent: 5,
+  accentBarPosition: "BOTTOM",
+};
+
+// There's no write flow for legacy approved colors (BrandDossier.
+// approvedColors is still free-form Json) — this defensively extracts the
+// first valid hex code from the array, or a single hex string. Returns
+// null when none is found.
 function extractAccentColorHex(approvedColors: unknown): string | null {
   const HEX = /^#[0-9a-fA-F]{3,8}$/;
   if (typeof approvedColors === "string" && HEX.test(approvedColors)) {
     return approvedColors;
   }
-  if (Array.isArray(approvedColors)) {
-    for (const entry of approvedColors) {
-      if (typeof entry === "string" && HEX.test(entry)) return entry;
-      if (
-        entry &&
-        typeof entry === "object" &&
-        typeof (entry as { hex?: unknown }).hex === "string" &&
-        HEX.test((entry as { hex: string }).hex)
-      ) {
-        return (entry as { hex: string }).hex;
-      }
-    }
-  }
-  return null;
+  const swatch = parseColorSwatches(approvedColors)[0];
+  return swatch?.hex ?? null;
 }
 
 // Instead of leaving it to the AI's free interpretation, this overlays the
-// brand's ACTUAL logo (pixel-accurate, undistorted) and, if available, the
-// brand color onto the generated creative image in a FIXED template
-// layout: the logo on a semi-transparent white badge in the bottom-right
-// corner, with a full-width accent stripe below it (when a color is
-// known). The same layout on every generation — a genuine "template"
-// guarantee, so consistency doesn't depend on the model's interpretation
-// in the moment.
+// brand's ACTUAL logo (pixel-accurate, undistorted) and an accent color bar
+// onto the generated creative image, in the position/size the brand's
+// Visual Identity settings specify (see BrandVisualIdentity, brand-style-
+// context.ts) — the SAME layout on every single generation regardless of
+// which provider (OpenAI/Gemini/OpenClaw) produced the base image. This is
+// the one place in the pipeline that GUARANTEES visual consistency; prompt
+// text alone can only nudge a stochastic model, never guarantee it.
 //
-// Best-effort: if there's no logo, or compositing fails for any reason,
-// the file is left as-is — creative generation must never fail because of
-// visual templating.
+// Best-effort: if there's nothing to draw, or compositing fails for any
+// reason, the file is left as-is — creative generation must never fail
+// because of visual templating.
 export async function applyBrandTemplate(input: {
   storageKey: string;
   mimeType: string;
   logoAssetId?: string | null;
-  approvedColors?: unknown;
+  // Structured accent colors (role-labeled) from BrandVisualIdentity —
+  // used when template.accentBarColorHex isn't explicitly set. Legacy
+  // approvedColors (BrandDossier, untyped Json) is the final fallback for
+  // brands that haven't configured Visual Identity yet.
+  accentColors?: { hex: string; name?: string }[];
+  legacyApprovedColors?: unknown;
+  template?: Partial<TemplateConfig>;
 }): Promise<{ size: number } | null> {
-  if (!input.logoAssetId) return null;
+  const cfg: TemplateConfig = {
+    ...DEFAULT_TEMPLATE_CONFIG,
+    ...input.template,
+  };
+  if (!cfg.enabled) return null;
 
-  const logoAsset = await prisma.asset.findUnique({
-    where: { id: input.logoAssetId },
-    select: { storageKey: true },
-  });
-  if (!logoAsset) return null;
+  const accentHex = cfg.accentBarEnabled
+    ? (cfg.accentBarColorHex ??
+      input.accentColors?.[0]?.hex ??
+      extractAccentColorHex(input.legacyApprovedColors))
+    : null;
 
-  const [baseBuffer, logoBuffer] = await Promise.all([
-    readAsset(input.storageKey),
-    readAsset(logoAsset.storageKey),
-  ]);
+  // Relaxed from the original "no logo -> bail out entirely": a brand with
+  // no logo yet can still get a consistent accent-bar treatment. Only skip
+  // when there's truly nothing to draw.
+  const hasLogo = Boolean(input.logoAssetId);
+  if (!hasLogo && !accentHex) return null;
 
+  let logoAssetStorageKey: string | null = null;
+  if (hasLogo) {
+    const logoAsset = await prisma.asset.findUnique({
+      where: { id: input.logoAssetId! },
+      select: { storageKey: true },
+    });
+    logoAssetStorageKey = logoAsset?.storageKey ?? null;
+  }
+  if (!logoAssetStorageKey && !accentHex) return null;
+
+  const baseBuffer = await readAsset(input.storageKey);
   const baseMeta = await sharp(baseBuffer).metadata();
   const width = baseMeta.width ?? 1024;
   const height = baseMeta.height ?? 1024;
 
-  const margin = Math.round(width * 0.04);
-  const logoWidth = Math.round(width * 0.16);
-  const resizedLogo = await sharp(logoBuffer)
-    .resize({ width: logoWidth, withoutEnlargement: false })
-    .toBuffer();
-  const logoHeight = (await sharp(resizedLogo).metadata()).height ?? logoWidth;
+  const barHeight = accentHex
+    ? Math.round(height * (cfg.accentBarHeightPercent / 100))
+    : 0;
+  const barOnTop = Boolean(accentHex) && cfg.accentBarPosition === "TOP";
+  const barOnBottom = Boolean(accentHex) && cfg.accentBarPosition === "BOTTOM";
 
-  const badgePaddingX = Math.round(logoWidth * 0.18);
-  const badgePaddingY = Math.round(logoHeight * 0.18);
-  const badgeWidth = logoWidth + badgePaddingX * 2;
-  const badgeHeight = logoHeight + badgePaddingY * 2;
-  const badgeSvg = `<svg width="${badgeWidth}" height="${badgeHeight}"><rect width="${badgeWidth}" height="${badgeHeight}" rx="${Math.round(badgeHeight * 0.18)}" fill="white" fill-opacity="0.88"/></svg>`;
-
-  const accentHex = extractAccentColorHex(input.approvedColors);
-  const barHeight = accentHex ? Math.round(height * 0.05) : 0;
-  const bottomMargin = margin + barHeight;
-
-  const composites: { input: Buffer; left: number; top: number }[] = [
-    {
-      input: Buffer.from(badgeSvg),
-      left: width - margin - badgeWidth,
-      top: height - bottomMargin - badgeHeight,
-    },
-    {
-      input: resizedLogo,
-      left: width - margin - badgeWidth + badgePaddingX,
-      top: height - bottomMargin - badgeHeight + badgePaddingY,
-    },
-  ];
+  const composites: { input: Buffer; left: number; top: number }[] = [];
 
   if (accentHex && barHeight > 0) {
     const barSvg = `<svg width="${width}" height="${barHeight}"><rect width="${width}" height="${barHeight}" fill="${accentHex}" fill-opacity="0.85"/></svg>`;
-    composites.unshift({
+    composites.push({
       input: Buffer.from(barSvg),
       left: 0,
-      top: height - barHeight,
+      top: cfg.accentBarPosition === "TOP" ? 0 : height - barHeight,
     });
   }
+
+  if (logoAssetStorageKey) {
+    const logoBuffer = await readAsset(logoAssetStorageKey);
+    const margin = Math.round(width * (cfg.logoMarginPercent / 100));
+    const logoWidth = Math.round(width * (cfg.logoSizePercent / 100));
+    const resizedLogo = await sharp(logoBuffer)
+      .resize({ width: logoWidth, withoutEnlargement: false })
+      .toBuffer();
+    const logoHeight =
+      (await sharp(resizedLogo).metadata()).height ?? logoWidth;
+
+    const badgePaddingX = Math.round(logoWidth * 0.18);
+    const badgePaddingY = Math.round(logoHeight * 0.18);
+    const badgeWidth = logoWidth + badgePaddingX * 2;
+    const badgeHeight = logoHeight + badgePaddingY * 2;
+    const badgeSvg = `<svg width="${badgeWidth}" height="${badgeHeight}"><rect width="${badgeWidth}" height="${badgeHeight}" rx="${Math.round(badgeHeight * 0.18)}" fill="white" fill-opacity="0.88"/></svg>`;
+
+    // Reserve space for the accent bar only when the logo shares its edge
+    // (top badge + top bar, or a bottom-anchored badge + bottom bar) — a
+    // logo on the opposite edge from the bar never needs the offset.
+    let left: number;
+    let top: number;
+    switch (cfg.logoPosition) {
+      case "TOP_LEFT":
+        left = margin;
+        top = margin + (barOnTop ? barHeight : 0);
+        break;
+      case "TOP_RIGHT":
+        left = width - margin - badgeWidth;
+        top = margin + (barOnTop ? barHeight : 0);
+        break;
+      case "BOTTOM_LEFT":
+        left = margin;
+        top = height - margin - badgeHeight - (barOnBottom ? barHeight : 0);
+        break;
+      case "CENTER_BOTTOM":
+        left = Math.round((width - badgeWidth) / 2);
+        top = height - margin - badgeHeight - (barOnBottom ? barHeight : 0);
+        break;
+      case "BOTTOM_RIGHT":
+      default:
+        left = width - margin - badgeWidth;
+        top = height - margin - badgeHeight - (barOnBottom ? barHeight : 0);
+        break;
+    }
+
+    composites.push({ input: Buffer.from(badgeSvg), left, top });
+    composites.push({
+      input: resizedLogo,
+      left: left + badgePaddingX,
+      top: top + badgePaddingY,
+    });
+  }
+
+  if (composites.length === 0) return null;
 
   const outputBuffer = await sharp(baseBuffer).composite(composites).toBuffer();
   await overwriteAsset(input.storageKey, outputBuffer, input.mimeType);

@@ -35,9 +35,15 @@ export type CreativePromptInput = {
   // stay textless as before.
   caption?: string;
   // True if the caller is actually passing a referenceImage (see
-  // brand-logo.ts) — so the "attached logo" instruction is only written
-  // into the prompt text when an image is actually being attached.
-  hasLogoReference?: boolean;
+  // brand-logo.ts's loadReferenceImage) — so the style-reference
+  // instruction below is only written when an image is actually being
+  // attached. Renamed from hasLogoReference: the logo itself is no longer
+  // ever sent to the AI this way (see gemini-creative.provider.ts /
+  // creative-actions.ts) — it's added afterward, guaranteed, by
+  // applyBrandTemplate. This slot now carries an optional brand "style
+  // board" image instead, which the wording below explicitly must NOT be
+  // copied for its literal subject/logo content — only style/palette/mood.
+  hasStyleReference?: boolean;
 };
 
 // Global baseline — applies to every generation regardless of brand. A
@@ -250,7 +256,7 @@ export function buildCreativePrompt({
   pixelSize,
   safeZone,
   caption,
-  hasLogoReference,
+  hasStyleReference,
 }: CreativePromptInput): string {
   const { brandLine, styleAddition, avoidAddition, compositionAddition } =
     extractBrandStyle(brandContext);
@@ -281,9 +287,9 @@ export function buildCreativePrompt({
       `Include the headline text: "${caption.trim()}" — rendered legibly, in a style consistent with the brand tone.`,
     );
   }
-  if (hasLogoReference) {
+  if (hasStyleReference) {
     compositionParts.push(
-      "A reference image of the brand's real logo is attached as the first image — incorporate it accurately and tastefully into the design; do not redraw, reinterpret, or distort it.",
+      "A brand style-reference image is attached as the first image — match its visual style, color palette, and mood, but do NOT copy any logo, text, or literal subject matter from it into the new image.",
     );
   }
   if (compositionAddition) compositionParts.push(compositionAddition);

@@ -25,6 +25,7 @@ import {
 } from "@/lib/labels";
 import { BrandDossierEditSheet } from "@/components/brand/brand-dossier-edit-sheet";
 import { BrandLogoCard } from "@/components/brand/brand-logo-card";
+import { VisualIdentitySection } from "@/components/brand/visual-identity-section";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -116,6 +117,9 @@ export async function BrandBrainPanel({ projectId, entity }: PanelProps) {
   return (
     <div className="space-y-8 py-6">
       <AssetsSection projectId={projectId} brandId={brandId} />
+      <Section title="Visual Identity" icon={Palette}>
+        <VisualIdentitySection projectId={projectId} brandId={brandId} />
+      </Section>
       <Section title="Constitution" icon={BookOpen}>
         <ConstitutionSection
           projectId={projectId}
@@ -524,8 +528,8 @@ async function AssetsSection({
             Assets
           </p>
           <p className="text-xs text-muted-foreground">
-            The brand&apos;s protected core identity — logo, positioning, tone of
-            voice, approved colors and fonts
+            The brand&apos;s protected core identity — logo, positioning, tone
+            of voice, approved colors and fonts
           </p>
         </div>
       </div>

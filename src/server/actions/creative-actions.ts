@@ -16,7 +16,7 @@ import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
 import { applyBrandTemplate } from "@/server/media/creative-template";
-import { loadBrandLogoImage } from "@/server/media/brand-logo";
+import { loadReferenceImage } from "@/server/media/brand-logo";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import { readAsset } from "@/server/storage/asset-storage";
@@ -110,13 +110,18 @@ export async function generateRealCreativeImageAction(
     // which it does have.
     const brandStyle = await resolveBrandStyleContext(creative.brandId);
 
-    // When generating from scratch, the logo is now given to the AI as a
-    // visual reference instead of deterministic stamping; in edit mode
-    // baseImage already exists, so referenceImage is not used (rule from
-    // step 2: never use both at once).
-    const logoImage = baseImage
+    // The logo is NEVER sent to the AI as a referenceImage in either mode
+    // — it's added afterward, guaranteed, by applyBrandTemplate below (see
+    // step 2: prompt text alone is stochastic, only compositing
+    // guarantees exact placement). The referenceImage slot instead carries
+    // the brand's optional "style board" image, and only in from-scratch
+    // mode (edit mode already has baseImage; the two are never used
+    // together).
+    const styleImage = baseImage
       ? null
-      : await loadBrandLogoImage(brandStyle.logoAssetId ?? undefined);
+      : await loadReferenceImage(
+          brandStyle.visualIdentity?.referenceImageAssetId ?? undefined,
+        );
 
     const prompt = baseImage
       ? instruction ||
@@ -136,12 +141,12 @@ export async function generateRealCreativeImageAction(
           pixelSize: platformFormat.pixelSize,
           safeZone: platformFormat.safeZone,
           caption: currentVersion?.caption ?? creative.title ?? undefined,
-          hasLogoReference: Boolean(logoImage),
+          hasStyleReference: Boolean(styleImage),
         });
 
     const generated = await generateCreativeImage(prompt, {
       baseImage,
-      referenceImage: logoImage ?? undefined,
+      referenceImage: styleImage ?? undefined,
       aspectRatio: platformFormat.aspectRatio,
       imageSize: platformFormat.pixelSize,
     });
@@ -153,26 +158,24 @@ export async function generateRealCreativeImageAction(
       };
     }
 
-    // In edit mode (mode === "edit") the logo is not given to the AI as a
-    // visual reference (referenceImage is unused while baseImage is set), so
-    // the real brand logo is still overlaid deterministically here via
-    // applyBrandTemplate. When generating from scratch (mode !== "edit") the
-    // logo was already given to the AI as a reference above, so it is NOT
-    // overlaid again here — otherwise there would be a risk of a duplicate
-    // logo. Best-effort: on failure, the raw AI image is kept as-is and the
-    // action does not fail.
-    if (baseImage) {
-      try {
-        const templated = await applyBrandTemplate({
-          storageKey: generated.storageKey,
-          mimeType: generated.mimeType,
-          logoAssetId: brandStyle.logoAssetId,
-          approvedColors: brandStyle.legacyApprovedColors,
-        });
-        if (templated) generated.size = templated.size;
-      } catch (error) {
-        console.error("[creative-actions] applyBrandTemplate failed:", error);
-      }
+    // Deterministic logo + accent-bar compositing — the ONE guarantee in
+    // this pipeline, now applied identically in both edit and from-scratch
+    // modes (previously edit-only, since from-scratch used to send the logo
+    // to the AI as a reference instead — see step 2 above for why that
+    // stopped). Best-effort: on failure, the raw AI image is kept as-is and
+    // the action does not fail.
+    try {
+      const templated = await applyBrandTemplate({
+        storageKey: generated.storageKey,
+        mimeType: generated.mimeType,
+        logoAssetId: brandStyle.logoAssetId,
+        accentColors: brandStyle.visualIdentity?.accentColors,
+        legacyApprovedColors: brandStyle.legacyApprovedColors,
+        template: brandStyle.visualIdentity?.template ?? undefined,
+      });
+      if (templated) generated.size = templated.size;
+    } catch (error) {
+      console.error("[creative-actions] applyBrandTemplate failed:", error);
     }
 
     const asset = await prisma.asset.create({

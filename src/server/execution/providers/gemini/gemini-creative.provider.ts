@@ -20,7 +20,9 @@ import {
   type GeneratedCreativeImage,
 } from "@/server/media/creative-image";
 import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
-import { loadBrandLogoImage } from "@/server/media/brand-logo";
+import { loadReferenceImage } from "@/server/media/brand-logo";
+import { applyBrandTemplate } from "@/server/media/creative-template";
+import type { BrandVisualIdentityContext } from "@/server/media/brand-style-context";
 import type {
   ExecutionAcceptedResult,
   ExecutionProvider,
@@ -116,8 +118,18 @@ export class GeminiCreativeProvider implements ExecutionProvider {
       const brandCtx = (input.brandContext ?? {}) as {
         logoAssetId?: string | null;
         approvedColors?: unknown;
+        visualIdentity?: BrandVisualIdentityContext | null;
       };
-      const logoImage = await loadBrandLogoImage(brandCtx.logoAssetId);
+      // The logo itself is NEVER sent to the AI as a referenceImage — it's
+      // added afterward, guaranteed, by applyBrandTemplate below (that's
+      // the whole point: prompt text can only nudge a stochastic model,
+      // never guarantee exact placement). The referenceImage slot instead
+      // carries the brand's optional "style board" image, if configured —
+      // see hasStyleReference's wording in creative-prompt-builder.ts for
+      // why that image must never be copied for its literal content.
+      const styleImage = await loadReferenceImage(
+        brandCtx.visualIdentity?.referenceImageAssetId,
+      );
       const finalImagePrompt = buildCreativePrompt({
         subject: parsed.imagePrompt,
         brandContext: input.brandContext,
@@ -126,22 +138,40 @@ export class GeminiCreativeProvider implements ExecutionProvider {
         pixelSize: platformFormat.pixelSize,
         safeZone: platformFormat.safeZone,
         caption: parsed.caption,
-        hasLogoReference: Boolean(logoImage),
+        hasStyleReference: Boolean(styleImage),
       });
-      const image = isCreativeImageConfigured()
+      let image = isCreativeImageConfigured()
         ? ((await generateCreativeImage(finalImagePrompt, {
             aspectRatio: platformFormat.aspectRatio,
             imageSize: platformFormat.pixelSize,
-            referenceImage: logoImage ?? undefined,
+            referenceImage: styleImage ?? undefined,
           })) ?? undefined)
         : undefined;
 
-      // The logo is now passed to the AI as a visual reference instead of
-      // deterministic stamping (see the loadBrandLogoImage call above) —
-      // applyBrandTemplate still exists and is used in the Visual Studio's
-      // "edit" mode (creative-actions.ts), but it's now redundant in this
-      // automated generation flow and carries a double-logo risk, so it was
-      // removed here.
+      // Deterministic logo + accent-bar compositing — the ONE guarantee in
+      // this pipeline (prompt text alone is stochastic). Reads from the
+      // frozen context snapshot (brandCtx), never a live Brand Brain query
+      // — this execution's behavior must not change mid-flight from a
+      // concurrent Visual Identity edit (spec section 35). Best-effort: a
+      // templating failure must never fail creative generation.
+      if (image) {
+        try {
+          const templated = await applyBrandTemplate({
+            storageKey: image.storageKey,
+            mimeType: image.mimeType,
+            logoAssetId: brandCtx.logoAssetId,
+            accentColors: brandCtx.visualIdentity?.accentColors,
+            legacyApprovedColors: brandCtx.approvedColors,
+            template: brandCtx.visualIdentity?.template ?? undefined,
+          });
+          if (templated) image = { ...image, size: templated.size };
+        } catch (error) {
+          console.error(
+            "[gemini-creative-provider] applyBrandTemplate failed:",
+            error,
+          );
+        }
+      }
 
       store.set(request.correlationId, {
         status: "completed",

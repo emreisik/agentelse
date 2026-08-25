@@ -1,0 +1,480 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { Loader2, Pencil } from "lucide-react";
+import { toast } from "sonner";
+
+import type { ActionResult } from "@/components/shared/action-form";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  ColorSwatchInput,
+  type ColorSwatchValue,
+} from "@/components/brand/color-swatch-input";
+import { VisualIdentityPreview } from "@/components/brand/visual-identity-preview";
+import type {
+  LogoPositionValue,
+  AccentBarPositionValue,
+} from "@/server/media/creative-template";
+
+export type VisualIdentityEditable = {
+  primaryColors: ColorSwatchValue[];
+  secondaryColors: ColorSwatchValue[];
+  accentColors: ColorSwatchValue[];
+  photographyStyle: string | null;
+  styleRefinement: string | null;
+  moodTags: string[];
+  compositionNotes: string | null;
+  backgroundTone: string | null;
+  alwaysInclude: string[];
+  alwaysAvoid: string[];
+  templateEnabled: boolean;
+  logoPosition: LogoPositionValue;
+  logoSizePercent: number;
+  logoMarginPercent: number;
+  accentBarEnabled: boolean;
+  accentBarColorHex: string | null;
+  accentBarHeightPercent: number;
+  accentBarPosition: AccentBarPositionValue;
+};
+
+const PHOTOGRAPHY_STYLE_LABEL: Record<string, string> = {
+  PHOTOGRAPHIC: "Photographic",
+  ILLUSTRATED: "Illustrated",
+  THREE_D_RENDER: "3D render",
+  FLAT_DESIGN: "Flat design",
+  MIXED: "Mixed / whichever fits",
+};
+const BACKGROUND_TONE_LABEL: Record<string, string> = {
+  LIGHT: "Light",
+  DARK: "Dark",
+  BRAND_COLORED: "Brand-colored",
+  NO_PREFERENCE: "No preference",
+};
+const LOGO_POSITION_LABEL: Record<LogoPositionValue, string> = {
+  TOP_LEFT: "Top left",
+  TOP_RIGHT: "Top right",
+  BOTTOM_LEFT: "Bottom left",
+  BOTTOM_RIGHT: "Bottom right",
+  CENTER_BOTTOM: "Bottom center",
+};
+
+// Same interaction pattern as brand-dossier-edit-sheet.tsx (controlled
+// Sheet, useTransition, toast + close-on-success), but with lifted state
+// for the fields the live preview needs to react to (colors + template
+// geometry) — everything else stays a plain uncontrolled form field,
+// matching the rest of the codebase's Sheet forms.
+export function VisualIdentityEditSheet({
+  projectId,
+  logoUrl,
+  identity,
+  action,
+}: {
+  projectId: string;
+  logoUrl: string | null;
+  identity: VisualIdentityEditable;
+  action: (formData: FormData) => Promise<ActionResult>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+
+  const [primaryColors, setPrimaryColors] = useState(identity.primaryColors);
+  const [secondaryColors, setSecondaryColors] = useState(
+    identity.secondaryColors,
+  );
+  const [logoPosition, setLogoPosition] = useState<LogoPositionValue>(
+    identity.logoPosition,
+  );
+  const [logoSizePercent, setLogoSizePercent] = useState(
+    identity.logoSizePercent,
+  );
+  const [logoMarginPercent, setLogoMarginPercent] = useState(
+    identity.logoMarginPercent,
+  );
+  const [accentBarEnabled, setAccentBarEnabled] = useState(
+    identity.accentBarEnabled,
+  );
+  const [accentBarColorHex, setAccentBarColorHex] = useState(
+    identity.accentBarColorHex ?? "",
+  );
+  const [accentBarHeightPercent, setAccentBarHeightPercent] = useState(
+    identity.accentBarHeightPercent,
+  );
+  const [accentBarPosition, setAccentBarPosition] =
+    useState<AccentBarPositionValue>(identity.accentBarPosition);
+
+  function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    startTransition(async () => {
+      const result = await action(formData);
+      if (result.ok) {
+        toast.success("Visual identity updated");
+        setOpen(false);
+      } else {
+        toast.error(result.message);
+      }
+    });
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={() => setOpen(true)}
+        aria-label="Edit visual identity"
+      >
+        <Pencil className="size-3.5" />
+      </Button>
+      <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-2xl">
+        <SheetHeader className="shrink-0 border-b border-foreground/10">
+          <SheetTitle>Edit Visual Identity</SheetTitle>
+          <SheetDescription>
+            Sets the palette, style, and logo/accent-bar template every
+            AI-generated creative uses — the template part is composited after
+            generation, so it&apos;s the same on every image, not just a
+            suggestion to the model.
+          </SheetDescription>
+        </SheetHeader>
+        <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
+          <input type="hidden" name="projectId" value={projectId} />
+          <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto p-4 sm:grid-cols-[1fr_220px]">
+            <div className="space-y-5">
+              <div className="space-y-1 border-b border-border/60 pb-1">
+                <p className="text-xs font-semibold tracking-wide text-foreground uppercase">
+                  Palette
+                </p>
+              </div>
+              <ColorSwatchInput
+                name="primaryColors"
+                label="Primary colors"
+                defaultValue={identity.primaryColors}
+                onChange={setPrimaryColors}
+              />
+              <ColorSwatchInput
+                name="secondaryColors"
+                label="Secondary colors"
+                defaultValue={identity.secondaryColors}
+                onChange={setSecondaryColors}
+              />
+              <ColorSwatchInput
+                name="accentColors"
+                label="Accent colors"
+                defaultValue={identity.accentColors}
+              />
+
+              <div className="space-y-1 border-b border-border/60 pt-2 pb-1">
+                <p className="text-xs font-semibold tracking-wide text-foreground uppercase">
+                  Style
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="vi-photography-style">
+                    Photography style
+                  </Label>
+                  <Select
+                    items={Object.entries(PHOTOGRAPHY_STYLE_LABEL).map(
+                      ([value, label]) => ({ value, label }),
+                    )}
+                    name="photographyStyle"
+                    defaultValue={identity.photographyStyle ?? undefined}
+                  >
+                    <SelectTrigger id="vi-photography-style" className="w-full">
+                      <SelectValue placeholder="Not set" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(PHOTOGRAPHY_STYLE_LABEL).map(
+                        ([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="vi-background-tone">Background tone</Label>
+                  <Select
+                    items={Object.entries(BACKGROUND_TONE_LABEL).map(
+                      ([value, label]) => ({ value, label }),
+                    )}
+                    name="backgroundTone"
+                    defaultValue={identity.backgroundTone ?? undefined}
+                  >
+                    <SelectTrigger id="vi-background-tone" className="w-full">
+                      <SelectValue placeholder="Not set" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(BACKGROUND_TONE_LABEL).map(
+                        ([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="vi-style-refinement">
+                  Style refinement (free text)
+                </Label>
+                <Textarea
+                  id="vi-style-refinement"
+                  name="styleRefinement"
+                  defaultValue={identity.styleRefinement ?? ""}
+                  rows={2}
+                  placeholder="e.g. soft natural light, shallow depth of field"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="vi-mood-tags">Mood / aesthetic tags</Label>
+                <Input
+                  id="vi-mood-tags"
+                  name="moodTags"
+                  defaultValue={identity.moodTags.join(", ")}
+                  placeholder="premium, playful, editorial"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Comma-separated.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="vi-composition-notes">Composition notes</Label>
+                <Textarea
+                  id="vi-composition-notes"
+                  name="compositionNotes"
+                  defaultValue={identity.compositionNotes ?? ""}
+                  rows={2}
+                  placeholder="e.g. rule-of-thirds, generous negative space"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="vi-always-include">Always include</Label>
+                  <Textarea
+                    id="vi-always-include"
+                    name="alwaysInclude"
+                    defaultValue={identity.alwaysInclude.join("\n")}
+                    rows={3}
+                    placeholder="One instruction per line"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="vi-always-avoid">Always avoid</Label>
+                  <Textarea
+                    id="vi-always-avoid"
+                    name="alwaysAvoid"
+                    defaultValue={identity.alwaysAvoid.join("\n")}
+                    rows={3}
+                    placeholder="One instruction per line"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1 border-b border-border/60 pt-2 pb-1">
+                <p className="text-xs font-semibold tracking-wide text-foreground uppercase">
+                  Template — logo &amp; accent bar
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Composited onto every generated image after AI generation —
+                  guaranteed, not a prompt suggestion.
+                </p>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    Apply template
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Off = pure AI output, no guaranteed logo placement.
+                  </p>
+                </div>
+                <Switch
+                  name="templateEnabled"
+                  defaultChecked={identity.templateEnabled}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="vi-logo-position">Logo position</Label>
+                  <Select
+                    items={Object.entries(LOGO_POSITION_LABEL).map(
+                      ([value, label]) => ({ value, label }),
+                    )}
+                    name="logoPosition"
+                    value={logoPosition}
+                    onValueChange={(next) =>
+                      next && setLogoPosition(next as LogoPositionValue)
+                    }
+                  >
+                    <SelectTrigger id="vi-logo-position" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(LOGO_POSITION_LABEL).map(
+                        ([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="vi-logo-size">Logo size (% of width)</Label>
+                  <Input
+                    id="vi-logo-size"
+                    name="logoSizePercent"
+                    type="number"
+                    min={8}
+                    max={30}
+                    value={logoSizePercent}
+                    onChange={(event) =>
+                      setLogoSizePercent(Number(event.target.value) || 16)
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="vi-logo-margin">Logo margin (%)</Label>
+                  <Input
+                    id="vi-logo-margin"
+                    name="logoMarginPercent"
+                    type="number"
+                    min={1}
+                    max={15}
+                    value={logoMarginPercent}
+                    onChange={(event) =>
+                      setLogoMarginPercent(Number(event.target.value) || 4)
+                    }
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="vi-accent-bar-color">
+                    Accent bar color override
+                  </Label>
+                  <Input
+                    id="vi-accent-bar-color"
+                    name="accentBarColorHex"
+                    value={accentBarColorHex}
+                    onChange={(event) =>
+                      setAccentBarColorHex(event.target.value)
+                    }
+                    placeholder="Defaults to first accent color"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2">
+                <p className="text-sm font-medium text-foreground">
+                  Accent color bar
+                </p>
+                <Switch
+                  name="accentBarEnabled"
+                  checked={accentBarEnabled}
+                  onCheckedChange={setAccentBarEnabled}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="vi-accent-bar-position">
+                    Accent bar position
+                  </Label>
+                  <Select
+                    items={[
+                      { value: "TOP", label: "Top" },
+                      { value: "BOTTOM", label: "Bottom" },
+                    ]}
+                    name="accentBarPosition"
+                    value={accentBarPosition}
+                    onValueChange={(next) =>
+                      next &&
+                      setAccentBarPosition(next as AccentBarPositionValue)
+                    }
+                  >
+                    <SelectTrigger
+                      id="vi-accent-bar-position"
+                      className="w-full"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="TOP">Top</SelectItem>
+                      <SelectItem value="BOTTOM">Bottom</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="vi-accent-bar-height">
+                    Accent bar height (%)
+                  </Label>
+                  <Input
+                    id="vi-accent-bar-height"
+                    name="accentBarHeightPercent"
+                    type="number"
+                    min={2}
+                    max={15}
+                    value={accentBarHeightPercent}
+                    onChange={(event) =>
+                      setAccentBarHeightPercent(Number(event.target.value) || 5)
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="sm:sticky sm:top-0">
+              <VisualIdentityPreview
+                logoUrl={logoUrl}
+                primaryColors={primaryColors}
+                secondaryColors={secondaryColors}
+                logoPosition={logoPosition}
+                logoSizePercent={logoSizePercent}
+                logoMarginPercent={logoMarginPercent}
+                accentBarEnabled={accentBarEnabled}
+                accentBarColorHex={accentBarColorHex || null}
+                accentBarHeightPercent={accentBarHeightPercent}
+                accentBarPosition={accentBarPosition}
+              />
+            </div>
+          </div>
+          <SheetFooter className="shrink-0 flex-row justify-end gap-2 border-t border-foreground/10">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={pending}>
+              {pending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              Save
+            </Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
+}

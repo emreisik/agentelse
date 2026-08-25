@@ -48,12 +48,12 @@ export function isOpenClawImageConfigured(): boolean {
 }
 
 // Direct, non-conversational image generation via `openclaw infer image
-// generate` — deliberately not routed through OpenClawClient.runAgentTurn()
-// (agent/session-based, meant for browser-automation-style tasks). Image
-// generation is a stateless provider call, independent of any agent
-// workspace, so it gets its own thin client. Returns null on any failure —
-// callers fall back to the existing mock-placeholder behavior rather than
-// breaking creative generation.
+// generate` — a direct HTTP call to the provider, with no agent/session and
+// no Gateway RPC equivalent (confirmed: no `infer.*`/`image.*` method exists
+// on the Gateway's WS surface). Stays on the CLI subprocess for this reason,
+// unlike agent listing/provisioning which moved to the Gateway. Returns
+// null on any failure — callers fall back to the existing mock-placeholder
+// behavior rather than breaking creative generation.
 export async function generateCreativeImageAsset(
   prompt: string,
   imageSize?: { width: number; height: number },

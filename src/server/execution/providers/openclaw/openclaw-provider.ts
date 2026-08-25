@@ -6,7 +6,6 @@ import { getEnv } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { BrowserProfileRepository } from "@/server/repositories/browser-profile.repository";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
-import { OpenClawClient } from "@/server/execution/providers/openclaw/openclaw-client";
 import { OpenClawGatewayClient } from "@/server/execution/providers/openclaw/openclaw-gateway-client";
 import { normalizeOpenClawAgentResult } from "@/server/execution/providers/openclaw/openclaw-normalizer";
 import type {
@@ -75,12 +74,6 @@ function buildTaskPrompt(capability: CapabilityKey, payload: unknown): string {
 export class OpenClawProvider implements ExecutionProvider {
   readonly key = "openclaw";
   readonly type: ExecutionProviderType = "OPENCLAW";
-  // Still used for listAgentIds() in resolveAgentId() below — the CLI
-  // subprocess model itself is gone from the execute/getStatus path (see
-  // openclaw-gateway-client.ts), but validating a candidate agent id
-  // against OpenClaw's configured list is a low-risk, rarely-called lookup
-  // that wasn't worth moving to the Gateway in this pass.
-  private readonly client = new OpenClawClient();
 
   get isConfigured(): boolean {
     return OpenClawGatewayClient.isConfigured;
@@ -194,7 +187,7 @@ export class OpenClawProvider implements ExecutionProvider {
     const [preferred] = candidates;
     if (!preferred) return fallback;
 
-    const configured = await this.client.listAgentIds();
+    const configured = await OpenClawGatewayClient.listAgentIds();
     // Empty set = the list could not be read; trust the candidate rather
     // than silently rerouting every project to the shared default agent.
     if (configured.size === 0) return preferred;

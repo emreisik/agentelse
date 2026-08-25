@@ -3,10 +3,10 @@ import "server-only";
 // A real WebSocket client for the OpenClaw Gateway — the same RPC surface
 // `openclaw agent` itself talks to under the hood (confirmed: `openclaw
 // agent --help` literally says "Run an agent turn via the Gateway"). Unlike
-// openclaw-client.ts (CLI subprocess, blocks the caller for the whole agent
-// turn), this is genuinely async: startAgentRun() only waits for the
-// Gateway's ACCEPTANCE of the run and returns immediately; the real result
-// streams in later via Gateway events and is read back with getRunState().
+// a CLI subprocess (which would block the caller for the whole agent turn),
+// this is genuinely async: startAgentRun() only waits for the Gateway's
+// ACCEPTANCE of the run and returns immediately; the real result streams in
+// later via Gateway events and is read back with getRunState().
 //
 // Protocol (confirmed directly against a live local Gateway — `openclaw
 // gateway --help` / `openclaw gateway call --help` — and
@@ -36,10 +36,12 @@ import { randomUUID } from "node:crypto";
 import { getEnv, isIntegrationConfigured } from "@/lib/env";
 import { AgentelseError } from "@/server/security/errors";
 import { parseAgentResultPayload } from "@/server/execution/providers/openclaw/openclaw-response-parser";
+import { openClawAgentListSchema } from "@/server/execution/providers/openclaw/openclaw-schemas";
 import type { OpenClawAgentResult } from "@/server/execution/providers/openclaw/openclaw-types";
 
 const CONNECT_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 30_000; // covers "connect"/"agent" ACK only, never the full run
+const AGENT_LIST_CACHE_TTL_MS = 60_000;
 
 // Statuses OpenClaw uses for a run that hasn't produced a final result yet.
 // Anything NOT in this set (ok/error/timeout/anything else unrecognized) is
@@ -77,6 +79,7 @@ let connecting: Promise<WebSocket> | null = null;
 let reqCounter = 0;
 const pendingRequests = new Map<string, PendingRequest>();
 const runStates = new Map<string, RunState>();
+let agentIdCache: { ids: ReadonlySet<string>; fetchedAt: number } | null = null;
 
 function nextRequestId(): string {
   reqCounter += 1;
@@ -331,5 +334,59 @@ export const OpenClawGatewayClient = {
       return { kind: "done", result: timedOut };
     }
     return { kind: "running" };
+  },
+
+  // Agent ids configured on the Gateway's side — confirmed via
+  // `openclaw gateway call agents.list --json` against a live gateway:
+  // returns { defaultId, mainKey, scope, agents: [{id, workspace, ...}] }.
+  // Cached because resolveAgentId() (openclaw-provider.ts) consults this on
+  // every dispatch; a newly provisioned agent shows up after the TTL.
+  async listAgentIds(): Promise<ReadonlySet<string>> {
+    const now = Date.now();
+    if (
+      agentIdCache &&
+      now - agentIdCache.fetchedAt < AGENT_LIST_CACHE_TTL_MS
+    ) {
+      return agentIdCache.ids;
+    }
+
+    try {
+      const payload = await sendRequest("agents.list", {});
+      const agents = (payload as { agents?: unknown } | null)?.agents;
+      const parsed = openClawAgentListSchema.safeParse(agents);
+      if (!parsed.success) return agentIdCache?.ids ?? new Set();
+      const ids = new Set(parsed.data.map((agent) => agent.id));
+      agentIdCache = { ids, fetchedAt: now };
+      return ids;
+    } catch {
+      // Gateway unreachable/misconfigured — keep whatever we knew, and let
+      // the caller fall back to the default agent rather than hard-failing.
+      return agentIdCache?.ids ?? new Set();
+    }
+  },
+
+  // Provisions a dedicated OpenClaw agent for a project — confirmed via
+  // live probing that `agents.create` exists and requires {name, workspace}
+  // (params validation rejected calls missing either, in that order).
+  // `workspace` is resolved against OPENCLAW_GATEWAY_WORKSPACE_ROOT because
+  // it's interpreted by the Gateway process's own filesystem, not this
+  // app's — see that env var's doc comment in env.ts.
+  async createAgent(input: {
+    id: string;
+    workspace: string;
+  }): Promise<boolean> {
+    try {
+      await sendRequest("agents.create", {
+        name: input.id,
+        workspace: input.workspace,
+      });
+      return true;
+    } catch (error) {
+      console.error(
+        `[openclaw-gateway-client] failed to create agent "${input.id}"`,
+        error,
+      );
+      return false;
+    }
   },
 };

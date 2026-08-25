@@ -29,6 +29,7 @@ const gatewayMocks = vi.hoisted(() => ({
   startAgentRun: vi.fn(),
   sendFollowUp: vi.fn(),
   getRunState: vi.fn(),
+  listAgentIds: vi.fn(),
 }));
 vi.mock(
   "@/server/execution/providers/openclaw/openclaw-gateway-client",
@@ -40,11 +41,13 @@ vi.mock(
       startAgentRun: gatewayMocks.startAgentRun,
       sendFollowUp: gatewayMocks.sendFollowUp,
       getRunState: gatewayMocks.getRunState,
+      listAgentIds: gatewayMocks.listAgentIds,
     },
   }),
 );
 
 import { OpenClawProvider } from "@/server/execution/providers/openclaw/openclaw-provider";
+import { BrowserProfileRepository } from "@/server/repositories/browser-profile.repository";
 import type {
   ExecutionPolicyContext,
   ExecutionRequest,
@@ -63,6 +66,7 @@ describe("OpenClawProvider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     envMocks.gatewayConfigured = true;
+    gatewayMocks.listAgentIds.mockResolvedValue(new Set());
   });
 
   describe("canExecute", () => {
@@ -176,6 +180,63 @@ describe("OpenClawProvider", () => {
       const provider = new OpenClawProvider();
       const status = await provider.getStatus("never-executed");
       expect(status.status).toBe("FAILED");
+    });
+  });
+
+  describe("resolveAgentId", () => {
+    it("uses the Gateway's agent list to validate a browser profile's candidate agent id", async () => {
+      gatewayMocks.listAgentIds.mockResolvedValue(new Set(["project-slug-1"]));
+      gatewayMocks.startAgentRun.mockResolvedValue({ runId: "run-abc" });
+      vi.mocked(BrowserProfileRepository.findByIdInProject).mockResolvedValue({
+        externalProfileId: null,
+        slug: "project-slug-1",
+      } as never);
+      prismaMocks.findUniqueProject.mockResolvedValue({
+        slug: "project-slug-1",
+      });
+
+      const provider = new OpenClawProvider();
+      await provider.execute({
+        executionJobId: "job-1",
+        correlationId: "corr-1",
+        idempotencyKey: "task-1:INSTAGRAM_PUBLISH",
+        capability: "INSTAGRAM_PUBLISH",
+        context: { ...context, browserProfileId: "profile-1" },
+        payload: {},
+      });
+
+      expect(gatewayMocks.listAgentIds).toHaveBeenCalled();
+      expect(gatewayMocks.startAgentRun).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: "project-slug-1" }),
+      );
+    });
+
+    it("falls back to the default agent when the candidate isn't in the Gateway's list", async () => {
+      gatewayMocks.listAgentIds.mockResolvedValue(
+        new Set(["some-other-agent"]),
+      );
+      gatewayMocks.startAgentRun.mockResolvedValue({ runId: "run-abc" });
+      vi.mocked(BrowserProfileRepository.findByIdInProject).mockResolvedValue({
+        externalProfileId: null,
+        slug: "project-slug-1",
+      } as never);
+      prismaMocks.findUniqueProject.mockResolvedValue({
+        slug: "project-slug-1",
+      });
+
+      const provider = new OpenClawProvider();
+      await provider.execute({
+        executionJobId: "job-1",
+        correlationId: "corr-1",
+        idempotencyKey: "task-1:INSTAGRAM_PUBLISH",
+        capability: "INSTAGRAM_PUBLISH",
+        context: { ...context, browserProfileId: "profile-1" },
+        payload: {},
+      });
+
+      expect(gatewayMocks.startAgentRun).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: "hubconnect" }),
+      );
     });
   });
 

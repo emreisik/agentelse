@@ -1,11 +1,7 @@
 import "server-only";
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import { getEnv, isIntegrationConfigured } from "@/lib/env";
-
-const execFileAsync = promisify(execFile);
+import { OpenClawGatewayClient } from "@/server/execution/providers/openclaw/openclaw-gateway-client";
 
 // Provisions a dedicated OpenClaw agent for each project. Carried over from
 // the old 3-step setup wizard: the new 12-stage flow was creating browser
@@ -19,31 +15,16 @@ const execFileAsync = promisify(execFile);
 export async function provisionOpenClawAgent(
   projectSlug: string,
 ): Promise<string | null> {
-  if (!isIntegrationConfigured("OPENCLAW")) return null;
+  if (!isIntegrationConfigured("OPENCLAW_GATEWAY")) return null;
 
   const env = getEnv();
-  const command = env.OPENCLAW_NODE_PATH || env.OPENCLAW_CLI_PATH;
-  const args = [
-    "agents",
-    "add",
-    projectSlug,
-    "--non-interactive",
-    "--workspace",
-    `${process.env.HOME}/.openclaw/workspaces/${projectSlug}`,
-    "--json",
-  ];
-  const commandArgs = env.OPENCLAW_NODE_PATH
-    ? [env.OPENCLAW_CLI_PATH, ...args]
-    : args;
+  // `workspace` is resolved by the Gateway process itself, not this app —
+  // see OPENCLAW_GATEWAY_WORKSPACE_ROOT's doc comment in env.ts.
+  const workspace = `${env.OPENCLAW_GATEWAY_WORKSPACE_ROOT}/${projectSlug}`;
 
-  try {
-    await execFileAsync(command, commandArgs, { timeout: 30_000 });
-    return projectSlug;
-  } catch (error) {
-    console.error(
-      `[openclaw-agent-provisioner] failed to provision agent for ${projectSlug}`,
-      error,
-    );
-    return null;
-  }
+  const created = await OpenClawGatewayClient.createAgent({
+    id: projectSlug,
+    workspace,
+  });
+  return created ? projectSlug : null;
 }

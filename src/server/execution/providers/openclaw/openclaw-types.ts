@@ -9,9 +9,9 @@
 //
 // Failures are worse: a pre-flight error (missing model auth, gateway
 // unreachable) doesn't print JSON at all — just a raw string to stderr and a
-// non-zero exit. openclaw-client.ts's catch path constructs the error shape
-// itself from stderr; there is no confirmed real JSON error envelope to
-// validate against.
+// non-zero exit. The caller's catch path constructs the error shape itself
+// from stderr; there is no confirmed real JSON error envelope to validate
+// against.
 
 export type OpenClawAgentSuccessResult = {
   ok: true;

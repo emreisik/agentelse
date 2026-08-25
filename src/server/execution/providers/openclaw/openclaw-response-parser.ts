@@ -1,14 +1,13 @@
 import { openClawRawAgentResponseSchema } from "@/server/execution/providers/openclaw/openclaw-schemas";
 import type { OpenClawAgentResult } from "@/server/execution/providers/openclaw/openclaw-types";
 
-// Shared between openclaw-client.ts (CLI subprocess, `agent --json` stdout)
-// and openclaw-gateway-client.ts (WebSocket Gateway, the `agent` RPC's final
-// event payload) — confirmed by directly probing a live Gateway
+// Used by openclaw-gateway-client.ts (WebSocket Gateway, the `agent` RPC's
+// final event payload) — confirmed by directly probing a live Gateway
 // (`openclaw gateway call agent --params ... --expect-final --json`) that
-// the two carry the IDENTICAL {runId, status, summary, result: {payloads,
-// meta: {agentMeta, finalAssistantVisibleText}}} shape. The CLI is just a
-// thin wrapper around this same RPC, so there was never a second schema to
-// maintain.
+// this matches the OpenClaw CLI's own `agent --json` stdout shape:
+// {runId, status, summary, result: {payloads, meta: {agentMeta,
+// finalAssistantVisibleText}}}. The CLI is just a thin wrapper around this
+// same RPC, so there was never a second schema to maintain.
 export function tryParseAgentResult(text: string): OpenClawAgentResult | null {
   let json: unknown;
   try {

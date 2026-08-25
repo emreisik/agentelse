@@ -16,9 +16,13 @@ const envSchema = z.object({
   // to NEXT_PUBLIC_APP_URL when empty.
   PUBLIC_ASSET_BASE_URL: z.string().optional().default(""),
 
-  // OpenClaw integrates as a CLI subprocess, not an HTTP API — its real
-  // interface is `openclaw agent --json` (see openclaw-client.ts). Path to
-  // the `openclaw` binary; empty means "not configured".
+  // Only image generation (`openclaw infer image generate`) still shells
+  // out to the CLI subprocess — it's a direct provider HTTP call with no
+  // Gateway RPC equivalent (confirmed: no `infer.*`/`image.*` method exists
+  // on the Gateway). Agent listing and provisioning moved to the Gateway
+  // (see openclaw-gateway-client.ts). Path to the `openclaw` binary; empty
+  // means "not configured" — this fallback is dormant whenever Gemini
+  // (creative-image.ts's primary image provider) is configured.
   OPENCLAW_CLI_PATH: z.string().optional().default(""),
   // Optional: a Node binary compatible with OpenClaw's engine requirement,
   // when the environment's default `node` is older (this machine's default
@@ -38,14 +42,26 @@ const envSchema = z.object({
 
   // OpenClaw Gateway — the WebSocket RPC endpoint that `openclaw agent`
   // itself talks to under the hood (see openclaw-gateway-client.ts). Used
-  // ONLY for runAgentTurn (browser/research/publish tasks); image
-  // generation and agent provisioning still go through the CLI subprocess
-  // above. Separate from OPENCLAW_CLI_PATH on purpose — a project can run
-  // against a Gateway deployed as its own service (e.g. a dedicated Railway
-  // service) without the web app's own container ever needing the
-  // `openclaw` binary for this path.
+  // for runAgentTurn (browser/research/publish tasks), agent id
+  // listing/validation, and per-project agent provisioning. Only image
+  // generation still goes through the CLI subprocess (see
+  // OPENCLAW_CLI_PATH above). Separate from OPENCLAW_CLI_PATH on purpose —
+  // a project can run against a Gateway deployed as its own service (e.g. a
+  // dedicated Railway service) without the web app's own container ever
+  // needing the `openclaw` binary.
   OPENCLAW_GATEWAY_URL: z.string().optional().default(""),
   OPENCLAW_GATEWAY_TOKEN: z.string().optional().default(""),
+  // Workspace root as seen by the Gateway process itself (not this app's
+  // filesystem) — used to build the `workspace` path passed to
+  // agents.create when provisioning a per-project agent. Defaults to the
+  // clawdbot-railway-template convention (its README pins
+  // OPENCLAW_WORKSPACE_DIR=/data/workspace); override for a Gateway with a
+  // different layout (e.g. a local dev gateway using
+  // ~/.openclaw/workspaces).
+  OPENCLAW_GATEWAY_WORKSPACE_ROOT: z
+    .string()
+    .optional()
+    .default("/data/workspace"),
 
   // Google Gemini — ReasoningService's primary LLM backend. If a key is
   // set, all reasoning calls go to Gemini; the model alias tracks the

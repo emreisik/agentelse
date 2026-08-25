@@ -885,6 +885,92 @@ model BrandDossier {
   @@index([projectId])
 }
 
+enum PhotographyStyle {
+  PHOTOGRAPHIC
+  ILLUSTRATED
+  THREE_D_RENDER
+  FLAT_DESIGN
+  MIXED
+}
+
+enum BackgroundTonePreference {
+  LIGHT
+  DARK
+  BRAND_COLORED
+  NO_PREFERENCE
+}
+
+enum LogoPosition {
+  TOP_LEFT
+  TOP_RIGHT
+  BOTTOM_LEFT
+  BOTTOM_RIGHT
+  CENTER_BOTTOM
+}
+
+enum AccentBarPosition {
+  TOP
+  BOTTOM
+}
+
+// Structured, image-pipeline-facing visual identity — deliberately a
+// separate model from BrandDossier rather than more fields there.
+// BrandDossier's existing edit pattern is "raw JSON textarea for every
+// structured field" (see brand-dossier-edit-sheet.tsx), which is exactly
+// why approvedColors/approvedFonts never got a real UI. This model gets
+// its own typed Sheet instead (see brand-visual-identity-actions.ts).
+// BrandDossier.approvedColors/approvedFonts are untouched — no migration,
+// no dual-write; a brand with no row here falls back to legacy behavior
+// everywhere (creative-prompt-builder.ts, creative-template.ts).
+model BrandVisualIdentity {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String @unique
+
+  // {name?, hex}[] each, role-separated — unlike BrandDossier.approvedColors
+  // (a flat, roleless array), the prompt builder and the deterministic
+  // accent bar both need to know which color plays which role.
+  primaryColors   Json?
+  secondaryColors Json?
+  accentColors    Json?
+
+  photographyStyle PhotographyStyle?
+  styleRefinement  String?
+  moodTags         String[] @default([])
+  compositionNotes String?
+  backgroundTone   BackgroundTonePreference?
+
+  // Brand-specific ADDITIONS to creative-prompt-builder.ts's hardcoded
+  // global STYLE_AND_LIGHTING/AVOID baseline — not a replacement.
+  alwaysInclude String[] @default([])
+  alwaysAvoid   String[] @default([])
+
+  // v1: a single "style board" reference image (an Asset, type IMAGE) sent
+  // to the AI as referenceImage once the logo itself stops being sent that
+  // way (see gemini-creative.provider.ts / creative-actions.ts Phase 2).
+  referenceImageAssetId String?
+
+  // Deterministic template config for applyBrandTemplate() — the ONLY
+  // pixel-guaranteed (non-stochastic) part of a generated image. Defaults
+  // reproduce today's hardcoded creative-template.ts behavior exactly, so
+  // a brand that never opens the new settings sees no change.
+  templateEnabled       Boolean           @default(true)
+  logoPosition           LogoPosition      @default(BOTTOM_RIGHT)
+  logoSizePercent        Int               @default(16)
+  logoMarginPercent      Int               @default(4)
+  accentBarEnabled       Boolean           @default(true)
+  accentBarColorHex      String?
+  accentBarHeightPercent Int               @default(5)
+  accentBarPosition      AccentBarPosition @default(BOTTOM)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([projectId])
+}
+
 model BrandFact {
   id          String @id @default(cuid())
   workspaceId String

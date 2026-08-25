@@ -7,6 +7,7 @@ import {
   ContextPolicy,
   type ContextField,
 } from "@/server/context/context-policy";
+import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 
 export type BuiltContext = Partial<Record<ContextField, unknown>>;
 
@@ -40,6 +41,12 @@ export async function buildExecutionContext(
     context.logoAssetId = dossier?.logoAssetId ?? null;
   if (fields.has("products")) context.products = dossier?.products ?? null;
   if (fields.has("services")) context.services = dossier?.services ?? null;
+
+  if (fields.has("visualIdentity")) {
+    context.visualIdentity = (
+      await resolveBrandStyleContext(brandId)
+    ).visualIdentity;
+  }
 
   if (fields.has("brandFacts")) {
     context.brandFacts = await prisma.brandFact.findMany({

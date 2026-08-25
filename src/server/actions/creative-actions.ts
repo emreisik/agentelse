@@ -18,6 +18,7 @@ import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
 import { applyBrandTemplate } from "@/server/media/creative-template";
 import { loadBrandLogoImage } from "@/server/media/brand-logo";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
+import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import { readAsset } from "@/server/storage/asset-storage";
 
 // Manual, opt-in image generation — deliberately outside the
@@ -95,15 +96,19 @@ export async function generateRealCreativeImageAction(
       contentFormat,
     );
 
-    // Brand logo and approved colors — fetched in a single query and used
-    // for a different purpose depending on mode: as a visual reference for
-    // the AI when generating from scratch (loadBrandLogoImage), or to
-    // deterministically stamp the generated image in edit mode
-    // (applyBrandTemplate).
-    const dossier = await prisma.brandDossier.findUnique({
-      where: { brandId: creative.brandId },
-      select: { logoAssetId: true, approvedColors: true },
-    });
+    // Brand logo, colors, and structured Visual Identity — one shared
+    // resolver (see brand-style-context.ts) instead of the ad-hoc
+    // BrandDossier-only query this used to run. This is also the fix for a
+    // real bug: ConstitutionService.getBrandContext() below never contains
+    // `approvedColors`/`visualGuidelines` (its two possible return shapes
+    // are the raw Constitution payload or a 5-field dossier slice — neither
+    // has those keys), so brand colors were silently dropped from every
+    // manual "Visual Studio" regenerate, unlike the automated agency
+    // pipeline (context-builder.ts), which reads them correctly. Merging
+    // resolveBrandStyleContext()'s result into brandContext below fixes
+    // that; getBrandContext() is still used for identity/positioning/tone,
+    // which it does have.
+    const brandStyle = await resolveBrandStyleContext(creative.brandId);
 
     // When generating from scratch, the logo is now given to the AI as a
     // visual reference instead of deterministic stamping; in edit mode
@@ -111,7 +116,7 @@ export async function generateRealCreativeImageAction(
     // step 2: never use both at once).
     const logoImage = baseImage
       ? null
-      : await loadBrandLogoImage(dossier?.logoAssetId);
+      : await loadBrandLogoImage(brandStyle.logoAssetId ?? undefined);
 
     const prompt = baseImage
       ? instruction ||
@@ -120,9 +125,12 @@ export async function generateRealCreativeImageAction(
           subject: instruction
             ? `${instruction}\n\nBrand/creative context: ${contextText}`
             : contextText,
-          brandContext: await ConstitutionService.getBrandContext(
-            creative.brandId,
-          ),
+          brandContext: {
+            ...(await ConstitutionService.getBrandContext(creative.brandId)),
+            visualGuidelines: brandStyle.legacyVisualGuidelines,
+            approvedColors: brandStyle.legacyApprovedColors,
+            visualIdentity: brandStyle.visualIdentity,
+          },
           platformLabel: platformFormat.label,
           contentFormatLabel: platformFormat.contentFormatLabel,
           pixelSize: platformFormat.pixelSize,
@@ -158,8 +166,8 @@ export async function generateRealCreativeImageAction(
         const templated = await applyBrandTemplate({
           storageKey: generated.storageKey,
           mimeType: generated.mimeType,
-          logoAssetId: dossier?.logoAssetId,
-          approvedColors: dossier?.approvedColors,
+          logoAssetId: brandStyle.logoAssetId,
+          approvedColors: brandStyle.legacyApprovedColors,
         });
         if (templated) generated.size = templated.size;
       } catch (error) {

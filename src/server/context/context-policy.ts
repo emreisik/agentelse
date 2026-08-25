@@ -17,6 +17,11 @@ export type ContextField =
   | "products"
   | "services"
   | "toneOfVoice"
+  // Structured BrandVisualIdentity data — see brand-style-context.ts. Kept
+  // separate from the legacy visualGuidelines/approvedColors/approvedFonts
+  // fields above (still read as-is for brands with no BrandVisualIdentity
+  // row) rather than replacing them.
+  | "visualIdentity"
   | "approvedClaims"
   | "negativeBrief"
   | "recentApprovedCreatives"
@@ -46,6 +51,7 @@ const CAPABILITY_CONTEXT_FIELDS: Partial<
     "approvedColors",
     "approvedFonts",
     "logoAssetId",
+    "visualIdentity",
     "products",
     "approvedClaims",
     "negativeBrief",
@@ -57,6 +63,7 @@ const CAPABILITY_CONTEXT_FIELDS: Partial<
     "visualGuidelines",
     "approvedColors",
     "logoAssetId",
+    "visualIdentity",
     "products",
     "approvedClaims",
     "negativeBrief",

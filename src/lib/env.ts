@@ -101,6 +101,20 @@ const envSchema = z.object({
     .optional()
     .default("gemini")
     .catch("gemini"),
+  // gpt-image-2 — see openai-image-client.ts. Separate model slot from
+  // OPENAI_MODEL/OPENCLAW_IMAGE_MODEL because it names an image model, not
+  // a chat one.
+  OPENAI_IMAGE_MODEL: z.string().optional().default("gpt-image-2"),
+  // Which backend creative-image.ts tries first — OpenAI by default; the
+  // other of {openai, gemini} is tried automatically if the primary
+  // isn't configured or fails (see creative-image.ts), so this only
+  // controls ORDER, not exclusivity. Unknown values fall back to "openai"
+  // via catch(), same rationale as REASONING_PROVIDER above.
+  IMAGE_PROVIDER: z
+    .enum(["openai", "gemini"])
+    .optional()
+    .default("openai")
+    .catch("openai"),
 
   R2_ACCOUNT_ID: z.string().optional().default(""),
   R2_ACCESS_KEY_ID: z.string().optional().default(""),

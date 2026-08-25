@@ -532,6 +532,23 @@ function ApprovalRequestCard({
           <DepartmentBadge department={departmentKey} size="xs" />
         ) : null}
       </div>
+      {card.details && card.details.length > 0 ? (
+        <div className="space-y-1 rounded-lg bg-muted/40 p-2.5">
+          {card.details.map((detail) => (
+            <div
+              key={detail.label}
+              className="flex items-start justify-between gap-3 text-xs"
+            >
+              <span className="shrink-0 text-muted-foreground">
+                {detail.label}
+              </span>
+              <span className="text-right font-medium text-foreground">
+                {detail.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <p className="text-sm text-muted-foreground">
         Your approval is required before execution. If rejected, the task will
         be cancelled.

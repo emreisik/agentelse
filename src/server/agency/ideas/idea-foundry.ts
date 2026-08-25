@@ -4,6 +4,7 @@ import type { CreativeLens, Opportunity } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
+import { MetaAdsQuery } from "@/server/integrations/meta-ads-query";
 import { ideaGenerationDef } from "@/server/reasoning/prompts/idea-generation";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
@@ -124,6 +125,21 @@ export const IdeaFoundry = {
       opportunity.brandId,
     );
 
+    // For a performance-driven opportunity (see meta-performance-scanner.ts
+    // — Track 1 feeds "performance" signals through this same
+    // Insight->Opportunity chain), ground the idea generation in real,
+    // fresh Meta Ads numbers instead of letting the LLM guess at what
+    // "performance" means. Nothing else needs to change — buildPrompt()
+    // already serializes context.opportunity as-is, so this extra field
+    // just shows up. Best-effort: a Meta API hiccup here must not block
+    // idea generation for every other opportunity category.
+    const performanceContext =
+      opportunity.category === "PERFORMANCE"
+        ? await MetaAdsQuery.performanceSnapshotForProject(
+            opportunity.projectId,
+          ).catch(() => null)
+        : null;
+
     const { output, isMock } = await ReasoningService.run(ideaGenerationDef, {
       ...scope,
       context: {
@@ -132,6 +148,7 @@ export const IdeaFoundry = {
           title: opportunity.title,
           description: opportunity.description,
           category: opportunity.category,
+          ...(performanceContext ? { performanceContext } : {}),
         },
         lenses,
       },

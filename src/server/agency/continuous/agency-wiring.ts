@@ -22,6 +22,7 @@ import {
 } from "@/server/agency/continuous/continuous-agency-engine";
 import { LearningEngine } from "@/server/agency/learning/learning-engine";
 import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
+import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
 import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
 import { WorkPlanProgressor } from "@/server/agency/work-plans/work-plan-progressor";
 import { IdeaRepository } from "@/server/repositories/idea.repository";
@@ -100,6 +101,18 @@ registerSetupStageRunner("INITIAL_WORK_PLAN", async (scope) => {
 registerAgencyTickStep({
   name: "signal-scans",
   run: () => SignalUniverse.runDueScans(10),
+});
+// Structured, real-Meta-Insights signal source — deliberately separate
+// from SignalUniverse.runDueScans (which fans out generic OpenClaw web
+// research per SignalCategory cadence, see scan-cadence.ts): this scans
+// connected Meta ad accounts directly via the Marketing API on its own
+// ~7h cadence and can also short-circuit straight to a Track 2 Approval
+// (see performance-optimizer.ts) for high-severity findings, something a
+// generic signal source never does. Placed right before signal-processing
+// so PERFORMANCE signals produced this tick get scored in the same tick.
+registerAgencyTickStep({
+  name: "meta-ads-performance-scan",
+  run: () => MetaPerformanceScanner.runDueScans(5),
 });
 registerAgencyTickStep({
   name: "signal-processing",

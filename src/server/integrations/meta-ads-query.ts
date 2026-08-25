@@ -139,4 +139,83 @@ export const MetaAdsQuery = {
     ]);
     return ads.map((a) => ({ ...a, insights: insights.get(a.adId) }));
   },
+
+  // Compact snapshot for IdeaFoundry's "performance" lens (see
+  // idea-foundry.ts) — best/worst campaign by cost-per-result plus an
+  // objective breakdown, so a fresh idea generation for a PERFORMANCE
+  // opportunity can reference real current numbers instead of guessing.
+  // Returns null when there's nothing to summarize (not connected, or no
+  // campaign had any delivery in the window) — the caller treats that as
+  // "generate without performance context," not an error.
+  async performanceSnapshotForProject(
+    projectId: string,
+    datePreset: DatePreset = DEFAULT_DATE_PRESET,
+  ): Promise<PerformanceSnapshot | null> {
+    const conn = await resolveConnection(projectId);
+    if (conn.status !== "READY") return null;
+
+    const campaigns = await MetaAdsQuery.campaigns(conn, datePreset);
+    // Unlike buildAdsAnalysisText (a historical report, which must include
+    // paused campaigns that still delivered in the window), this snapshot
+    // feeds IdeaFoundry's "what's working right now" context for a NEW
+    // campaign idea — a currently-paused campaign's strategy is a weaker
+    // basis to build on, so effectiveStatus === "ACTIVE" is intentional here.
+    const withDelivery = campaigns.filter(
+      (c) => c.effectiveStatus === "ACTIVE" && (c.insights?.spend ?? 0) > 0,
+    );
+    if (withDelivery.length === 0) return null;
+
+    const ranked = [...withDelivery].sort((a, b) => {
+      const aCpr = a.insights?.costPerResult ?? Infinity;
+      const bCpr = b.insights?.costPerResult ?? Infinity;
+      return aCpr - bCpr;
+    });
+    // Non-null: ranked is a sort of withDelivery, and withDelivery.length is
+    // already confirmed > 0 above.
+    const best = ranked[0]!;
+    const worst = ranked[ranked.length - 1]!;
+
+    const objectiveDistribution: Record<string, number> = {};
+    for (const c of withDelivery) {
+      objectiveDistribution[c.objective] =
+        (objectiveDistribution[c.objective] ?? 0) + 1;
+    }
+
+    return {
+      activeCampaignCount: withDelivery.length,
+      bestCampaign: {
+        name: best.name,
+        objective: best.objective,
+        costPerResult: best.insights?.costPerResult,
+        resultLabel: best.insights?.resultLabel,
+      },
+      worstCampaign:
+        worst.campaignId !== best.campaignId
+          ? {
+              name: worst.name,
+              objective: worst.objective,
+              costPerResult: worst.insights?.costPerResult,
+              resultLabel: worst.insights?.resultLabel,
+            }
+          : undefined,
+      objectiveDistribution,
+    };
+  },
+};
+
+export type PerformanceSnapshot = {
+  activeCampaignCount: number;
+  bestCampaign: {
+    name: string;
+    objective: string;
+    costPerResult?: number;
+    resultLabel?: string;
+  };
+  worstCampaign?: {
+    name: string;
+    objective: string;
+    costPerResult?: number;
+    resultLabel?: string;
+  };
+  objectiveDistribution: Record<string, number>;
 };

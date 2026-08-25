@@ -64,6 +64,12 @@ export type MetaCredentialMetadata = {
     igUsername?: string;
     error?: string;
   };
+  // Bookkeeping for MetaPerformanceScanner's due-scan check (see
+  // meta-performance-scanner.ts) — same "unstructured JSON, no migration"
+  // pattern as lastTestResult above. adsPerformanceScanFailureCount backs an
+  // exponential backoff on repeated scan failures (bad token, rate limit).
+  lastAdsPerformanceScanAt?: string;
+  adsPerformanceScanFailureCount?: number;
 };
 
 export class MetaApiError extends Error {

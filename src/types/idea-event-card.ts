@@ -50,6 +50,11 @@ export type IdeaEventCardData =
       title: string;
       department?: string;
       riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+      // Concrete before/after numbers for a system-generated proposal (e.g.
+      // a performance-driven budget cut) — see approval-details.ts. Absent
+      // for ordinary human-requested/creative approvals, which have
+      // nothing structured to show beyond the title.
+      details?: { label: string; value: string }[];
     }
   | {
       kind: "approval-decision";

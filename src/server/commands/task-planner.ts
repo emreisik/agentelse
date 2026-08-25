@@ -18,6 +18,7 @@ import {
   isAutoExecutable,
   maxLevel,
 } from "@/server/execution/approval-policy";
+import { buildApprovalDetails } from "@/server/execution/approval-details";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
 import { ExecutionService } from "@/server/execution/execution-service";
 
@@ -191,6 +192,7 @@ export const TaskPlanner = {
       createdByType: ActorType;
       createdByUserId: string | null;
       departmentKey: DepartmentKey | null;
+      payload?: unknown;
     },
     level?: ApprovalLevel,
   ) {
@@ -232,6 +234,7 @@ export const TaskPlanner = {
       title: task.title,
       riskLevel: task.riskLevel,
       departmentKey: task.departmentKey ?? undefined,
+      details: buildApprovalDetails(task.capability, task.payload),
     }).catch((error) => {
       console.error("[task-planner] postApprovalRequestCard failed:", error);
     });

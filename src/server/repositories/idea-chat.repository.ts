@@ -278,6 +278,10 @@ export const IdeaChatRepository = {
     title: string;
     riskLevel: RiskLevel;
     departmentKey?: DepartmentKey;
+    // Concrete before/after numbers for a system-generated proposal (e.g.
+    // a performance-driven budget cut) — see approval-details.ts. Absent
+    // for ordinary approvals, which render exactly as before.
+    details?: { label: string; value: string }[];
   }): Promise<void> {
     const ideaId = await IdeaChatRepository.resolveIdeaIdForTask(input.taskId);
     if (!ideaId) return;
@@ -293,6 +297,7 @@ export const IdeaChatRepository = {
         title: input.title,
         riskLevel: input.riskLevel,
         department: input.departmentKey ?? undefined,
+        details: input.details,
       },
       departmentKey: input.departmentKey,
     });

@@ -11,7 +11,6 @@ import {
   createMetaAdCreative,
   createMetaAdSet,
   createMetaCampaign,
-  fetchMetaAdsInsights,
   fetchPageAccessToken,
   publishInstagramPost,
   updateMetaCampaign,
@@ -19,6 +18,13 @@ import {
   type MetaAdSetTargeting,
   type MetaCredentialMetadata,
 } from "@/server/integrations/meta-client";
+import {
+  DATE_PRESETS,
+  DEFAULT_DATE_PRESET,
+  isDatePreset,
+  MetaAdsQuery,
+} from "@/server/integrations/meta-ads-query";
+import { buildAdsAnalysisText } from "./meta-ads-analysis-text";
 import type {
   ExecutionAcceptedResult,
   ExecutionPolicyContext,
@@ -210,6 +216,11 @@ export class MetaApiProvider implements ExecutionProvider {
     };
   }
 
+  // Campaign-level (and, when a specific campaign is asked about, adset-
+  // level) analysis — replaces the old account-level single-row summary.
+  // Reuses MetaAdsQuery (the same listing+insights join the /ads page
+  // uses) so this and the page can never drift out of sync on what
+  // "performance" means.
   private async analyzeAds(
     metadata: MetaCredentialMetadata,
     accessToken: string,
@@ -219,13 +230,46 @@ export class MetaApiProvider implements ExecutionProvider {
       return { status: "FAILED", errorMessage: "No ad account selected" };
     }
     const datePreset =
-      typeof payload.datePreset === "string" ? payload.datePreset : undefined;
-    const insights = await fetchMetaAdsInsights({
-      adAccountId: metadata.selectedAdAccountId,
+      typeof payload.datePreset === "string" && isDatePreset(payload.datePreset)
+        ? payload.datePreset
+        : DEFAULT_DATE_PRESET;
+    const datePresetLabel =
+      DATE_PRESETS.find((p) => p.value === datePreset)?.label ?? datePreset;
+    const currency =
+      metadata.adAccounts?.find(
+        (a) => a.adAccountId === metadata.selectedAdAccountId,
+      )?.currency ?? "USD";
+    const conn = {
+      status: "READY" as const,
       accessToken,
-      datePreset,
-    });
-    return { status: "COMPLETED", rawResult: insights };
+      adAccountId: metadata.selectedAdAccountId,
+    };
+
+    const campaigns = await MetaAdsQuery.campaigns(conn, datePreset);
+    const campaignId =
+      typeof payload.campaignId === "string" ? payload.campaignId : undefined;
+    const targetCampaign = campaignId
+      ? campaigns.find((c) => c.campaignId === campaignId)
+      : undefined;
+    const adSets = targetCampaign
+      ? await MetaAdsQuery.adSets(conn, targetCampaign.campaignId, datePreset)
+      : undefined;
+
+    const text = buildAdsAnalysisText(
+      campaigns,
+      currency,
+      datePresetLabel,
+      targetCampaign && adSets
+        ? { campaignName: targetCampaign.name, adSets }
+        : undefined,
+    );
+    return {
+      status: "COMPLETED",
+      rawResult: {
+        text,
+        summary: { datePreset, currency, campaigns, adSets },
+      },
+    };
   }
 
   private async createCampaign(

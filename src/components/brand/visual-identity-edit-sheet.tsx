@@ -16,13 +16,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -77,11 +77,21 @@ const LOGO_POSITION_LABEL: Record<LogoPositionValue, string> = {
   CENTER_BOTTOM: "Bottom center",
 };
 
-// Same interaction pattern as brand-dossier-edit-sheet.tsx (controlled
-// Sheet, useTransition, toast + close-on-success), but with lifted state
-// for the fields the live preview needs to react to (colors + template
-// geometry) — everything else stays a plain uncontrolled form field,
-// matching the rest of the codebase's Sheet forms.
+// A centered Dialog, not a side Sheet: this form is wide (a two-column
+// field grid plus a live preview column) and Sheet's side="right" panel
+// hardcodes `sm:max-w-sm` via a data-[side=right] compound class, which
+// beats a plain className override on specificity — the content gets
+// crushed into ~220px no matter what width you pass in. Dialog's default
+// max-width has no such compound variant, so overriding it in the same
+// modifier group (sm:) actually works (see entity-dialog.tsx's SIZE_CLASSES
+// comment for the same tailwind-merge gotcha).
+//
+// Same interaction pattern as brand-dossier-edit-sheet.tsx otherwise
+// (controlled open state, useTransition, toast + close-on-success), but
+// with lifted state for the fields the live preview needs to react to
+// (colors + template geometry) — everything else stays a plain
+// uncontrolled form field, matching the rest of the codebase's dialog
+// forms.
 export function VisualIdentityEditSheet({
   projectId,
   logoUrl,
@@ -136,7 +146,7 @@ export function VisualIdentityEditSheet({
   }
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={setOpen}>
       <Button
         variant="ghost"
         size="icon-sm"
@@ -145,16 +155,16 @@ export function VisualIdentityEditSheet({
       >
         <Pencil className="size-3.5" />
       </Button>
-      <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-2xl">
-        <SheetHeader className="shrink-0 border-b border-foreground/10">
-          <SheetTitle>Edit Visual Identity</SheetTitle>
-          <SheetDescription>
+      <DialogContent className="flex max-h-[85vh] w-full max-w-2xl flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-2xl">
+        <DialogHeader className="shrink-0 border-b border-foreground/10 p-4">
+          <DialogTitle>Edit Visual Identity</DialogTitle>
+          <DialogDescription>
             Sets the palette, style, and logo/accent-bar template every
             AI-generated creative uses — the template part is composited after
             generation, so it&apos;s the same on every image, not just a
             suggestion to the model.
-          </SheetDescription>
-        </SheetHeader>
+          </DialogDescription>
+        </DialogHeader>
         <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
           <input type="hidden" name="projectId" value={projectId} />
           <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto p-4 sm:grid-cols-[1fr_220px]">
@@ -460,7 +470,7 @@ export function VisualIdentityEditSheet({
               />
             </div>
           </div>
-          <SheetFooter className="shrink-0 flex-row justify-end gap-2 border-t border-foreground/10">
+          <DialogFooter className="mx-0 mb-0 shrink-0 flex-row justify-end gap-2 rounded-none">
             <Button
               type="button"
               variant="outline"
@@ -472,9 +482,9 @@ export function VisualIdentityEditSheet({
               {pending ? <Loader2 className="size-3.5 animate-spin" /> : null}
               Save
             </Button>
-          </SheetFooter>
+          </DialogFooter>
         </form>
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   );
 }

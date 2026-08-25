@@ -467,6 +467,170 @@ async function requestAllPages<T>(url: string): Promise<T[]> {
   return results;
 }
 
+// ---------------------------------------------------------------------------
+// Performance insights per row — the numbers a reporting/strategy view
+// actually needs (spend, reach, results, cost per result), fetched
+// alongside the inventory listing above. Uses the Marketing API's
+// `level` parameter: ONE call against `/{adAccountId}/insights?level=X`
+// returns a row per campaign/adset/ad instead of N calls (one per entity) —
+// avoids an N+1 that would otherwise fire once per row in the table.
+const RESULT_ACTION_LABELS: Record<string, string> = {
+  landing_page_view: "Landing Page Views",
+  link_click: "Link Clicks",
+  post_engagement: "Post Engagement",
+  page_engagement: "Page Engagement",
+  like: "Page Likes",
+  lead: "Leads",
+  purchase: "Purchases",
+  "offsite_conversion.fb_pixel_purchase": "Purchases",
+  "offsite_conversion.fb_pixel_lead": "Leads",
+  "offsite_conversion.fb_pixel_add_to_cart": "Add to Cart",
+  video_view: "Video Views",
+  mobile_app_install: "App Installs",
+  "onsite_conversion.messaging_conversation_started_7d":
+    "Conversations Started",
+  comment: "Comments",
+  post_reaction: "Reactions",
+  post: "Post Shares",
+};
+
+function resultActionLabel(actionType: string): string {
+  return (
+    RESULT_ACTION_LABELS[actionType] ??
+    actionType
+      .replace(/^offsite_conversion\./, "")
+      .replace(/^onsite_conversion\./, "")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+  );
+}
+
+export type MetaInsightsRow = {
+  spend: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  frequency: number;
+  // The single action type with the highest count — a heuristic stand-in
+  // for Meta's own "primary result" logic (which derives from the adset's
+  // optimization_goal): in practice the metric being optimized for is
+  // almost always the one with the highest count, so picking the max
+  // avoids needing a full optimization_goal -> action_type mapping table.
+  resultCount?: number;
+  resultLabel?: string;
+  costPerResult?: number;
+};
+
+type RawInsightsRow = {
+  campaign_id?: string;
+  adset_id?: string;
+  ad_id?: string;
+  spend?: string;
+  impressions?: string;
+  reach?: string;
+  clicks?: string;
+  ctr?: string;
+  cpc?: string;
+  cpm?: string;
+  frequency?: string;
+  actions?: Array<{ action_type: string; value: string }>;
+};
+
+function toInsightsRow(row: RawInsightsRow): MetaInsightsRow {
+  const spend = Number(row.spend ?? 0);
+  const topAction = (row.actions ?? []).reduce<
+    { action_type: string; value: number } | undefined
+  >((best, a) => {
+    const value = Number(a.value);
+    // Skip a non-numeric value outright — `!best` alone would let a NaN
+    // become `best` on the first iteration and get stuck there forever,
+    // since every `value > NaN` comparison is false (NaN never loses a
+    // later round to a legitimate number).
+    if (Number.isNaN(value)) return best;
+    if (!best || value > best.value)
+      return { action_type: a.action_type, value };
+    return best;
+  }, undefined);
+
+  return {
+    spend,
+    impressions: Number(row.impressions ?? 0),
+    reach: Number(row.reach ?? 0),
+    clicks: Number(row.clicks ?? 0),
+    ctr: Number(row.ctr ?? 0),
+    cpc: Number(row.cpc ?? 0),
+    cpm: Number(row.cpm ?? 0),
+    frequency: Number(row.frequency ?? 0),
+    resultCount: topAction?.value,
+    resultLabel: topAction
+      ? resultActionLabel(topAction.action_type)
+      : undefined,
+    costPerResult:
+      topAction && topAction.value > 0 ? spend / topAction.value : undefined,
+  };
+}
+
+const INSIGHTS_FIELDS =
+  "spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,actions";
+
+// Returns a Map keyed by the row's own id at that level (campaign_id for
+// level=campaign, etc.) — a campaign/adset/ad with no delivery in the date
+// window simply has no entry (Meta omits zero-activity rows from insights
+// rather than returning zeros), callers should treat a missing key as "no
+// data yet" rather than an error.
+//
+// `scopedTo` narrows the query to one parent's children via the Marketing
+// API's `filtering` param (e.g. `{ field: "campaign.id", value: campaignId }`
+// when level=adset) — without it, drilling into a single campaign on an
+// account with thousands of ad sets/ads would still pull insights for the
+// WHOLE account on every navigation.
+export async function fetchMetaLevelInsights(input: {
+  adAccountId: string;
+  accessToken: string;
+  level: "campaign" | "adset" | "ad";
+  datePreset: string;
+  scopedTo?: { field: "campaign.id" | "adset.id"; value: string };
+}): Promise<Map<string, MetaInsightsRow>> {
+  const params = new URLSearchParams({
+    level: input.level,
+    fields: `${input.level}_id,${INSIGHTS_FIELDS}`,
+    date_preset: input.datePreset,
+    limit: "500",
+    access_token: input.accessToken,
+  });
+  if (input.scopedTo) {
+    params.set(
+      "filtering",
+      JSON.stringify([
+        {
+          field: input.scopedTo.field,
+          operator: "IN",
+          value: [input.scopedTo.value],
+        },
+      ]),
+    );
+  }
+  const rows = await requestAllPages<RawInsightsRow>(
+    `${GRAPH_BASE}/${input.adAccountId}/insights?${params.toString()}`,
+  );
+
+  const map = new Map<string, MetaInsightsRow>();
+  for (const row of rows) {
+    const id =
+      input.level === "campaign"
+        ? row.campaign_id
+        : input.level === "adset"
+          ? row.adset_id
+          : row.ad_id;
+    if (!id) continue;
+    map.set(id, toInsightsRow(row));
+  }
+  return map;
+}
+
 export type MetaCampaignSummary = {
   campaignId: string;
   name: string;

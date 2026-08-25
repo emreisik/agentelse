@@ -7,8 +7,17 @@ import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
-import { MetaAdsQuery } from "@/server/integrations/meta-ads-query";
-import type { MetaCredentialMetadata } from "@/server/integrations/meta-client";
+import {
+  DATE_PRESETS,
+  DEFAULT_DATE_PRESET,
+  isDatePreset,
+  MetaAdsQuery,
+  type DatePreset,
+} from "@/server/integrations/meta-ads-query";
+import type {
+  MetaCredentialMetadata,
+  MetaInsightsRow,
+} from "@/server/integrations/meta-client";
 import {
   createMetaAdAction,
   createMetaAdSetAction,
@@ -96,15 +105,19 @@ export default async function AdsPage({
   const campaignId =
     typeof sp.campaignId === "string" ? sp.campaignId : undefined;
   const adSetId = typeof sp.adSetId === "string" ? sp.adSetId : undefined;
+  const datePreset: DatePreset =
+    typeof sp.range === "string" && isDatePreset(sp.range)
+      ? sp.range
+      : DEFAULT_DATE_PRESET;
 
-  const campaigns = await MetaAdsQuery.campaigns(connection);
+  const campaigns = await MetaAdsQuery.campaigns(connection, datePreset);
   const activeCampaign = campaignId
     ? campaigns.find((c) => c.campaignId === campaignId)
     : undefined;
 
   const adSets =
     campaignId && activeCampaign
-      ? await MetaAdsQuery.adSets(connection, campaignId)
+      ? await MetaAdsQuery.adSets(connection, campaignId, datePreset)
       : [];
   const activeAdSet =
     adSetId && adSets.length
@@ -112,50 +125,66 @@ export default async function AdsPage({
       : undefined;
 
   const ads =
-    adSetId && activeAdSet ? await MetaAdsQuery.ads(connection, adSetId) : [];
+    adSetId && activeAdSet
+      ? await MetaAdsQuery.ads(connection, adSetId, datePreset)
+      : [];
 
   const create = typeof sp.create === "string" ? sp.create : undefined;
   const brief = typeof sp.brief === "string" ? sp.brief : undefined;
   const currentUrl = new URLSearchParams();
   if (campaignId) currentUrl.set("campaignId", campaignId);
   if (adSetId) currentUrl.set("adSetId", adSetId);
+  if (datePreset !== DEFAULT_DATE_PRESET) currentUrl.set("range", datePreset);
   const closeHref = currentUrl.toString()
     ? `${base}?${currentUrl.toString()}`
     : base;
   const createParams = new URLSearchParams(currentUrl);
   createParams.set("create", "campaign");
   const createCampaignHref = `${base}?${createParams.toString()}`;
+  const createAdSetParams = new URLSearchParams(currentUrl);
+  createAdSetParams.set("create", "adset");
+  const createAdSetHref = `${base}?${createAdSetParams.toString()}`;
+  const createAdParams = new URLSearchParams(currentUrl);
+  createAdParams.set("create", "ad");
+  const createAdHref = `${base}?${createAdParams.toString()}`;
 
   return (
     <AppShell projectId={projectId}>
       <div className="space-y-6 p-6 pb-16">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <Header projectName={project.name} />
-          {!campaignId ? (
-            <Link
-              href={createCampaignHref}
-              className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
-            >
-              <Plus className="size-4" />
-              New Campaign
-            </Link>
-          ) : activeCampaign && !adSetId ? (
-            <Link
-              href={`${base}?campaignId=${campaignId}&create=adset`}
-              className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
-            >
-              <Plus className="size-4" />
-              New Ad Set
-            </Link>
-          ) : activeAdSet ? (
-            <Link
-              href={`${base}?campaignId=${campaignId}&adSetId=${adSetId}&create=ad`}
-              className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
-            >
-              <Plus className="size-4" />
-              New Ad
-            </Link>
-          ) : null}
+          <div className="flex items-center gap-2">
+            <DateRangeSelector
+              currentUrl={currentUrl}
+              base={base}
+              value={datePreset}
+            />
+            {!campaignId ? (
+              <Link
+                href={createCampaignHref}
+                className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
+              >
+                <Plus className="size-4" />
+                New Campaign
+              </Link>
+            ) : activeCampaign && !adSetId ? (
+              <Link
+                href={createAdSetHref}
+                className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
+              >
+                <Plus className="size-4" />
+                New Ad Set
+              </Link>
+            ) : activeAdSet ? (
+              <Link
+                href={createAdHref}
+                className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
+              >
+                <Plus className="size-4" />
+                New Ad
+              </Link>
+            ) : null}
+          </div>
         </div>
 
         <Breadcrumb base={base} campaign={activeCampaign} adSet={activeAdSet} />
@@ -188,7 +217,7 @@ export default async function AdsPage({
             className="py-16"
           />
         ) : (
-          <AdsTable ads={ads} />
+          <AdsTable ads={ads} currency={currency} />
         )}
 
         {create === "campaign" ? (
@@ -547,15 +576,77 @@ function Breadcrumb({
   );
 }
 
+// Budgets (daily_budget/lifetime_budget) come back from Meta in minor units
+// (cents) — insights values (spend, cost_per_result) do NOT, they're
+// already in the account's major currency unit. Two separate formatters so
+// that distinction can't get silently mixed up at a call site.
 function formatMoney(cents: number | undefined, currency: string): string {
   if (cents === undefined) return "—";
   return `${(cents / 100).toFixed(2)} ${currency}`;
+}
+
+function formatCurrency(amount: number | undefined, currency: string): string {
+  if (amount === undefined) return "—";
+  return `${amount.toFixed(2)} ${currency}`;
+}
+
+function formatCount(value: number | undefined): string {
+  if (value === undefined) return "—";
+  return new Intl.NumberFormat("en-US").format(Math.round(value));
+}
+
+function formatPercent(value: number | undefined): string {
+  if (value === undefined) return "—";
+  return `${value.toFixed(2)}%`;
 }
 
 function statusTone(status: string): "positive" | "waiting" | "neutral" {
   if (status === "ACTIVE") return "positive";
   if (status === "PAUSED") return "waiting";
   return "neutral";
+}
+
+// A row of plain links that swap `?range=` — no client state, same
+// RSC-first pattern as the rest of this page (see FILTERS in
+// integrations/page.tsx). currentUrl already carries campaignId/adSetId so
+// switching the range doesn't reset the drill-down level.
+function DateRangeSelector({
+  currentUrl,
+  base,
+  value,
+}: {
+  currentUrl: URLSearchParams;
+  base: string;
+  value: DatePreset;
+}) {
+  return (
+    <div className="flex items-center gap-1 rounded-full bg-muted p-0.5">
+      {DATE_PRESETS.map((preset) => {
+        const params = new URLSearchParams(currentUrl);
+        if (preset.value === DEFAULT_DATE_PRESET) {
+          params.delete("range");
+        } else {
+          params.set("range", preset.value);
+        }
+        const href = params.toString() ? `${base}?${params.toString()}` : base;
+        const active = preset.value === value;
+        return (
+          <Link
+            key={preset.value}
+            href={href}
+            className={cn(
+              "rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+              active
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {preset.label}
+          </Link>
+        );
+      })}
+    </div>
+  );
 }
 
 function Table({
@@ -578,12 +669,15 @@ function Table({
     );
   }
   return (
-    <div className="overflow-hidden rounded-xl border border-border">
+    <div className="overflow-x-auto rounded-xl border border-border">
       <table className="w-full text-sm">
         <thead className="bg-muted/50 text-xs text-muted-foreground uppercase">
           <tr>
             {columns.map((c) => (
-              <th key={c} className="px-3.5 py-2 text-left font-medium">
+              <th
+                key={c}
+                className="px-3.5 py-2 text-left font-medium whitespace-nowrap"
+              >
                 {c}
               </th>
             ))}
@@ -592,6 +686,60 @@ function Table({
         <tbody className="divide-y divide-border">{children}</tbody>
       </table>
     </div>
+  );
+}
+
+// Right-aligned, whitespace-nowrap — every reporting number column
+// (results, spend, impressions, reach, ...) shares this cell so figures
+// line up in a column instead of ragging left like the text columns.
+function NumCell({ children }: { children: React.ReactNode }) {
+  return (
+    <td className="px-3.5 py-2.5 text-right whitespace-nowrap text-muted-foreground tabular-nums">
+      {children}
+    </td>
+  );
+}
+
+const REPORTING_COLUMNS = [
+  "Results",
+  "Cost / Result",
+  "Amount Spent",
+  "Impressions",
+  "Reach",
+  "CTR",
+  "CPM",
+];
+
+function ReportingCells({
+  insights,
+  currency,
+}: {
+  insights: MetaInsightsRow | undefined;
+  currency: string;
+}) {
+  return (
+    <>
+      <NumCell>
+        {insights?.resultCount !== undefined ? (
+          <span className="flex flex-col items-end">
+            <span className="font-medium text-foreground">
+              {formatCount(insights.resultCount)}
+            </span>
+            <span className="text-[10px] text-muted-foreground/70">
+              {insights.resultLabel}
+            </span>
+          </span>
+        ) : (
+          "—"
+        )}
+      </NumCell>
+      <NumCell>{formatCurrency(insights?.costPerResult, currency)}</NumCell>
+      <NumCell>{formatCurrency(insights?.spend, currency)}</NumCell>
+      <NumCell>{formatCount(insights?.impressions)}</NumCell>
+      <NumCell>{formatCount(insights?.reach)}</NumCell>
+      <NumCell>{formatPercent(insights?.ctr)}</NumCell>
+      <NumCell>{formatCurrency(insights?.cpm, currency)}</NumCell>
+    </>
   );
 }
 
@@ -606,12 +754,18 @@ function CampaignsTable({
 }) {
   return (
     <Table
-      columns={["Name", "Objective", "Status", "Daily budget"]}
+      columns={[
+        "Name",
+        "Objective",
+        "Status",
+        "Daily Budget",
+        ...REPORTING_COLUMNS,
+      ]}
       empty={campaigns.length === 0}
     >
       {campaigns.map((c) => (
         <tr key={c.campaignId} className="hover:bg-muted/30">
-          <td className="px-3.5 py-2.5">
+          <td className="px-3.5 py-2.5 whitespace-nowrap">
             <Link
               href={`${base}?campaignId=${c.campaignId}`}
               className="font-medium text-foreground hover:underline"
@@ -619,15 +773,18 @@ function CampaignsTable({
               {c.name}
             </Link>
           </td>
-          <td className="px-3.5 py-2.5 text-muted-foreground">{c.objective}</td>
-          <td className="px-3.5 py-2.5">
+          <td className="px-3.5 py-2.5 whitespace-nowrap text-muted-foreground">
+            {c.objective}
+          </td>
+          <td className="px-3.5 py-2.5 whitespace-nowrap">
             <StatusBadge
               meta={{ label: c.effectiveStatus, tone: statusTone(c.status) }}
             />
           </td>
-          <td className="px-3.5 py-2.5 text-muted-foreground">
+          <td className="px-3.5 py-2.5 whitespace-nowrap text-muted-foreground">
             {formatMoney(c.dailyBudgetCents, currency)}
           </td>
+          <ReportingCells insights={c.insights} currency={currency} />
         </tr>
       ))}
     </Table>
@@ -647,12 +804,18 @@ function AdSetsTable({
 }) {
   return (
     <Table
-      columns={["Name", "Optimization goal", "Status", "Daily budget"]}
+      columns={[
+        "Name",
+        "Optimization Goal",
+        "Status",
+        "Daily Budget",
+        ...REPORTING_COLUMNS,
+      ]}
       empty={adSets.length === 0}
     >
       {adSets.map((a) => (
         <tr key={a.adSetId} className="hover:bg-muted/30">
-          <td className="px-3.5 py-2.5">
+          <td className="px-3.5 py-2.5 whitespace-nowrap">
             <Link
               href={`${base}?campaignId=${campaignId}&adSetId=${a.adSetId}`}
               className="font-medium text-foreground hover:underline"
@@ -660,17 +823,18 @@ function AdSetsTable({
               {a.name}
             </Link>
           </td>
-          <td className="px-3.5 py-2.5 text-muted-foreground">
+          <td className="px-3.5 py-2.5 whitespace-nowrap text-muted-foreground">
             {a.optimizationGoal ?? "—"}
           </td>
-          <td className="px-3.5 py-2.5">
+          <td className="px-3.5 py-2.5 whitespace-nowrap">
             <StatusBadge
               meta={{ label: a.effectiveStatus, tone: statusTone(a.status) }}
             />
           </td>
-          <td className="px-3.5 py-2.5 text-muted-foreground">
+          <td className="px-3.5 py-2.5 whitespace-nowrap text-muted-foreground">
             {formatMoney(a.dailyBudgetCents, currency)}
           </td>
+          <ReportingCells insights={a.insights} currency={currency} />
         </tr>
       ))}
     </Table>
@@ -679,21 +843,27 @@ function AdSetsTable({
 
 function AdsTable({
   ads,
+  currency,
 }: {
   ads: Awaited<ReturnType<typeof MetaAdsQuery.ads>>;
+  currency: string;
 }) {
   return (
-    <Table columns={["Name", "Status"]} empty={ads.length === 0}>
+    <Table
+      columns={["Name", "Status", ...REPORTING_COLUMNS]}
+      empty={ads.length === 0}
+    >
       {ads.map((a) => (
         <tr key={a.adId} className="hover:bg-muted/30">
-          <td className="px-3.5 py-2.5 font-medium text-foreground">
+          <td className="px-3.5 py-2.5 font-medium whitespace-nowrap text-foreground">
             {a.name}
           </td>
-          <td className="px-3.5 py-2.5">
+          <td className="px-3.5 py-2.5 whitespace-nowrap">
             <StatusBadge
               meta={{ label: a.effectiveStatus, tone: statusTone(a.status) }}
             />
           </td>
+          <ReportingCells insights={a.insights} currency={currency} />
         </tr>
       ))}
     </Table>

@@ -43,11 +43,12 @@ beforeEach(() => {
 });
 
 describe("putAsset", () => {
-  it("writes to disk with a local-asset:// key when R2 isn't configured", async () => {
-    const result = await putAsset(Buffer.from("x"), "png", "image/png");
+  it("throws instead of silently writing to local disk when R2 isn't configured", async () => {
+    await expect(
+      putAsset(Buffer.from("x"), "png", "image/png"),
+    ).rejects.toThrow(/R2 is not configured/);
 
-    expect(result.storageKey).toMatch(/^local-asset:\/\/.+\.png$/);
-    expect(fsMocks.writeFile).toHaveBeenCalledTimes(1);
+    expect(fsMocks.writeFile).not.toHaveBeenCalled();
     expect(s3Mocks.send).not.toHaveBeenCalled();
   });
 

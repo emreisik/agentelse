@@ -101,21 +101,26 @@ export async function putAsset(
   mimeType: string,
 ): Promise<{ storageKey: string; filename: string }> {
   const filename = `${randomUUID()}.${ext}`;
-  if (isIntegrationConfigured("R2")) {
-    await putR2(filename, buffer, mimeType);
-    return { storageKey: `${R2_SCHEME}${filename}`, filename };
+  // Hard requirement, not a soft fallback: this repo's DB is the same live
+  // database production reads from (see memory: shared-remote-db). A
+  // silent local-disk write here used to let a `npm run dev` with no R2
+  // creds create an Asset row that only ever loads on the machine that
+  // made it — production then 404s on it, discovered days later instead of
+  // at generation time. Fail loudly instead. `local-asset://` reads/writes
+  // (readAsset/overwriteAsset) stay supported for rows created before this
+  // guard existed — see the scheme comment above.
+  if (!isIntegrationConfigured("R2")) {
+    throw new Error(
+      `[asset-storage] R2 is not configured (R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/` +
+        `R2_SECRET_ACCESS_KEY/R2_BUCKET_NAME) — refusing to write ${filename} ` +
+        `to local disk, since this DB is shared with production and a ` +
+        `local-only row would 404 there. Add R2 creds to this environment, ` +
+        `or run local dev via 'railway run --service "@agentelse" -- npm run dev' ` +
+        `to use production's R2 bucket.`,
+    );
   }
-  // Loud on purpose, not just the one-time boot log (instrumentation.ts):
-  // this repo's dev DB is the same live database production reads from
-  // (see memory: shared-remote-db), so a creative generated from a local
-  // `npm run dev` with no R2 creds in the local .env writes its bytes to
-  // THIS machine's disk while the row lands in the shared DB — production
-  // then 404s on it, discovered days later instead of in this terminal now.
-  console.warn(
-    `[asset-storage] R2 not configured — writing ${filename} to local disk (${LOCAL_ASSETS_DIR}). If this DB is shared with production, that row will 404 there.`,
-  );
-  await writeLocal(filename, buffer);
-  return { storageKey: `${LOCAL_ASSET_SCHEME}${filename}`, filename };
+  await putR2(filename, buffer, mimeType);
+  return { storageKey: `${R2_SCHEME}${filename}`, filename };
 }
 
 // Overwrites the file an EXISTING storageKey already points to (same

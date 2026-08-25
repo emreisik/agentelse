@@ -97,39 +97,64 @@ export function VisualIdentityEditSheet({
   logoUrl,
   identity,
   action,
+  suggestion = null,
+  open: openProp,
+  onOpenChange: onOpenChangeProp,
+  hideTrigger = false,
 }: {
   projectId: string;
   logoUrl: string | null;
   identity: VisualIdentityEditable;
   action: (formData: FormData) => Promise<ActionResult>;
+  // AI-suggested values (e.g. from Instagram import) layered over the
+  // saved identity — pre-fills the form for review, never auto-saves. Only
+  // read on mount (useState initial value + uncontrolled defaultValue), so
+  // the CALLER must remount this component (a `key` on <VisualIdentityEditSheet>
+  // itself, e.g. keyed by a suggestion version counter) whenever a new
+  // suggestion should take effect — changing this prop in place on an
+  // already-mounted instance has no effect.
+  suggestion?: Partial<VisualIdentityEditable> | null;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  // The Instagram import flow renders its own trigger and drives `open`
+  // itself; the plain "edit" entry point keeps the built-in pencil button.
+  hideTrigger?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const setOpen = onOpenChangeProp ?? setOpenState;
   const [pending, startTransition] = useTransition();
 
-  const [primaryColors, setPrimaryColors] = useState(identity.primaryColors);
+  const effectiveIdentity = suggestion
+    ? { ...identity, ...suggestion }
+    : identity;
+
+  const [primaryColors, setPrimaryColors] = useState(
+    effectiveIdentity.primaryColors,
+  );
   const [secondaryColors, setSecondaryColors] = useState(
-    identity.secondaryColors,
+    effectiveIdentity.secondaryColors,
   );
   const [logoPosition, setLogoPosition] = useState<LogoPositionValue>(
-    identity.logoPosition,
+    effectiveIdentity.logoPosition,
   );
   const [logoSizePercent, setLogoSizePercent] = useState(
-    identity.logoSizePercent,
+    effectiveIdentity.logoSizePercent,
   );
   const [logoMarginPercent, setLogoMarginPercent] = useState(
-    identity.logoMarginPercent,
+    effectiveIdentity.logoMarginPercent,
   );
   const [accentBarEnabled, setAccentBarEnabled] = useState(
-    identity.accentBarEnabled,
+    effectiveIdentity.accentBarEnabled,
   );
   const [accentBarColorHex, setAccentBarColorHex] = useState(
-    identity.accentBarColorHex ?? "",
+    effectiveIdentity.accentBarColorHex ?? "",
   );
   const [accentBarHeightPercent, setAccentBarHeightPercent] = useState(
-    identity.accentBarHeightPercent,
+    effectiveIdentity.accentBarHeightPercent,
   );
   const [accentBarPosition, setAccentBarPosition] =
-    useState<AccentBarPositionValue>(identity.accentBarPosition);
+    useState<AccentBarPositionValue>(effectiveIdentity.accentBarPosition);
 
   function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -147,14 +172,16 @@ export function VisualIdentityEditSheet({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => setOpen(true)}
-        aria-label="Edit visual identity"
-      >
-        <Pencil className="size-3.5" />
-      </Button>
+      {hideTrigger ? null : (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => setOpen(true)}
+          aria-label="Edit visual identity"
+        >
+          <Pencil className="size-3.5" />
+        </Button>
+      )}
       <DialogContent className="flex max-h-[85vh] w-full max-w-2xl flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-2xl">
         <DialogHeader className="shrink-0 border-b border-foreground/10 p-4">
           <DialogTitle>Edit Visual Identity</DialogTitle>
@@ -177,19 +204,19 @@ export function VisualIdentityEditSheet({
               <ColorSwatchInput
                 name="primaryColors"
                 label="Primary colors"
-                defaultValue={identity.primaryColors}
+                defaultValue={effectiveIdentity.primaryColors}
                 onChange={setPrimaryColors}
               />
               <ColorSwatchInput
                 name="secondaryColors"
                 label="Secondary colors"
-                defaultValue={identity.secondaryColors}
+                defaultValue={effectiveIdentity.secondaryColors}
                 onChange={setSecondaryColors}
               />
               <ColorSwatchInput
                 name="accentColors"
                 label="Accent colors"
-                defaultValue={identity.accentColors}
+                defaultValue={effectiveIdentity.accentColors}
               />
 
               <div className="space-y-1 border-b border-border/60 pt-2 pb-1">
@@ -207,7 +234,9 @@ export function VisualIdentityEditSheet({
                       ([value, label]) => ({ value, label }),
                     )}
                     name="photographyStyle"
-                    defaultValue={identity.photographyStyle ?? undefined}
+                    defaultValue={
+                      effectiveIdentity.photographyStyle ?? undefined
+                    }
                   >
                     <SelectTrigger id="vi-photography-style" className="w-full">
                       <SelectValue placeholder="Not set" />
@@ -230,7 +259,7 @@ export function VisualIdentityEditSheet({
                       ([value, label]) => ({ value, label }),
                     )}
                     name="backgroundTone"
-                    defaultValue={identity.backgroundTone ?? undefined}
+                    defaultValue={effectiveIdentity.backgroundTone ?? undefined}
                   >
                     <SelectTrigger id="vi-background-tone" className="w-full">
                       <SelectValue placeholder="Not set" />
@@ -254,7 +283,7 @@ export function VisualIdentityEditSheet({
                 <Textarea
                   id="vi-style-refinement"
                   name="styleRefinement"
-                  defaultValue={identity.styleRefinement ?? ""}
+                  defaultValue={effectiveIdentity.styleRefinement ?? ""}
                   rows={2}
                   placeholder="e.g. soft natural light, shallow depth of field"
                 />
@@ -264,7 +293,7 @@ export function VisualIdentityEditSheet({
                 <Input
                   id="vi-mood-tags"
                   name="moodTags"
-                  defaultValue={identity.moodTags.join(", ")}
+                  defaultValue={effectiveIdentity.moodTags.join(", ")}
                   placeholder="premium, playful, editorial"
                 />
                 <p className="text-[11px] text-muted-foreground">
@@ -276,7 +305,7 @@ export function VisualIdentityEditSheet({
                 <Textarea
                   id="vi-composition-notes"
                   name="compositionNotes"
-                  defaultValue={identity.compositionNotes ?? ""}
+                  defaultValue={effectiveIdentity.compositionNotes ?? ""}
                   rows={2}
                   placeholder="e.g. rule-of-thirds, generous negative space"
                 />
@@ -287,7 +316,7 @@ export function VisualIdentityEditSheet({
                   <Textarea
                     id="vi-always-include"
                     name="alwaysInclude"
-                    defaultValue={identity.alwaysInclude.join("\n")}
+                    defaultValue={effectiveIdentity.alwaysInclude.join("\n")}
                     rows={3}
                     placeholder="One instruction per line"
                   />
@@ -297,7 +326,7 @@ export function VisualIdentityEditSheet({
                   <Textarea
                     id="vi-always-avoid"
                     name="alwaysAvoid"
-                    defaultValue={identity.alwaysAvoid.join("\n")}
+                    defaultValue={effectiveIdentity.alwaysAvoid.join("\n")}
                     rows={3}
                     placeholder="One instruction per line"
                   />
@@ -324,7 +353,7 @@ export function VisualIdentityEditSheet({
                 </div>
                 <Switch
                   name="templateEnabled"
-                  defaultChecked={identity.templateEnabled}
+                  defaultChecked={effectiveIdentity.templateEnabled}
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">

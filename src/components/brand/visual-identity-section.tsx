@@ -10,7 +10,7 @@ import {
   removeStyleReferenceAction,
 } from "@/server/actions/brand-visual-identity-actions";
 import type { ColorSwatchValue } from "@/components/brand/color-swatch-input";
-import { VisualIdentityEditSheet } from "@/components/brand/visual-identity-edit-sheet";
+import { VisualIdentityControls } from "@/components/brand/visual-identity-controls";
 import { DEFAULT_TEMPLATE_CONFIG } from "@/server/media/creative-template";
 
 function ColorRow({
@@ -151,7 +151,7 @@ export async function VisualIdentitySection({
           </span>
           <CardTitle className="text-base">Visual Identity</CardTitle>
         </div>
-        <VisualIdentityEditSheet
+        <VisualIdentityControls
           projectId={projectId}
           logoUrl={logoUrl}
           identity={editable}

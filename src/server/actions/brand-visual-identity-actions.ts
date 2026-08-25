@@ -10,6 +10,12 @@ import {
 } from "@/server/security/tenant-context";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { putAsset } from "@/server/storage/asset-storage";
+import { fetchInstagramPostPreview } from "@/server/media/instagram-post-preview";
+import {
+  analyzeInstagramStyle,
+  downloadImageAsAttachment,
+} from "@/server/media/instagram-style-analyzer";
+import type { InstagramStyleSuggestion } from "@/server/reasoning/prompts/instagram-style";
 
 export type ActionResult = { ok: true } | { ok: false; message: string };
 
@@ -278,4 +284,108 @@ export async function removeStyleReferenceAction(
   });
 
   revalidatePath(`/projects/${projectId}`);
+}
+
+const MAX_INSTAGRAM_URLS = 5;
+
+export type InstagramImportResult =
+  | { ok: true; suggestion: InstagramStyleSuggestion; failedUrls: string[] }
+  | { ok: false; message: string };
+
+// Analysis only — this never writes to BrandVisualIdentity. It hands its
+// suggestion to the client, which pre-fills the same edit Sheet
+// updateBrandVisualIdentityAction already serves; saving still goes through
+// that one action, so nothing about this feature bypasses the user
+// reviewing/editing before anything is persisted.
+export async function analyzeInstagramPostsAction(
+  formData: FormData,
+): Promise<InstagramImportResult> {
+  try {
+    const projectId = String(formData.get("projectId"));
+    const { userId } = await requireUser();
+    const access = await requireProjectAccess(userId, projectId);
+
+    const urls = String(formData.get("urls") ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, MAX_INSTAGRAM_URLS);
+
+    if (urls.length === 0) {
+      return { ok: false, message: "Paste at least one Instagram post link" };
+    }
+
+    const previews = await Promise.all(
+      urls.map(async (url) => ({
+        url,
+        preview: await fetchInstagramPostPreview(url),
+      })),
+    );
+
+    const failedUrls = previews.filter((p) => !p.preview.ok).map((p) => p.url);
+    const succeeded = previews.filter(
+      (
+        p,
+      ): p is {
+        url: string;
+        preview: Extract<typeof p.preview, { ok: true }>;
+      } => p.preview.ok,
+    );
+
+    if (succeeded.length === 0) {
+      return {
+        ok: false,
+        message:
+          "Couldn't read any of those links — check they're public post/reel URLs",
+      };
+    }
+
+    const downloaded = await Promise.all(
+      succeeded.map((p) => downloadImageAsAttachment(p.preview.imageUrl)),
+    );
+    const images = downloaded.filter((img) => img !== null);
+    const imageFailedUrls = succeeded
+      .filter((_, i) => downloaded[i] === null)
+      .map((p) => p.url);
+
+    if (images.length === 0) {
+      return {
+        ok: false,
+        message: "Found the posts but couldn't download their images",
+      };
+    }
+
+    const captions = succeeded
+      .filter((_, i) => downloaded[i] !== null)
+      .map((p) => p.preview.caption);
+
+    const suggestion = await analyzeInstagramStyle(images, captions, {
+      workspaceId: access.workspaceId,
+      projectId,
+      brandId: access.defaultBrandId,
+    });
+
+    await AuditLogRepository.record({
+      workspaceId: access.workspaceId,
+      projectId,
+      brandId: access.defaultBrandId,
+      actorType: "USER",
+      actorId: userId,
+      action: "brand_visual_identity.instagram_import_analyzed",
+      entityType: "BrandVisualIdentity",
+      entityId: access.defaultBrandId,
+      metadata: { urlCount: urls.length, imageCount: images.length },
+    });
+
+    return {
+      ok: true,
+      suggestion,
+      failedUrls: [...failedUrls, ...imageFailedUrls],
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Import failed",
+    };
+  }
 }

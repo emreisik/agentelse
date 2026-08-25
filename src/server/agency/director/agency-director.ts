@@ -1,6 +1,10 @@
 import "server-only";
 
-import type { AgencyDecisionType, CreativeLens } from "@prisma/client";
+import {
+  Prisma,
+  type AgencyDecisionType,
+  type CreativeLens,
+} from "@prisma/client";
 
 import { taskFingerprint } from "@/server/agency/fingerprint";
 import { DepartmentRouter } from "@/server/agency/departments/department-router";
@@ -217,16 +221,39 @@ export const AgencyDirector = {
       return decision; // Cap reached — decision recorded, task deferred.
     }
 
-    const planned = await TaskPlanner.planForCapability({
-      ...scope,
-      capability,
-      request: `${idea.title}: ${idea.description.slice(0, 200)}`,
-      createdByType: "SYSTEM",
-      departmentKey: department,
-      goalIds,
-      fingerprint,
-      sourceDecisionId: decision.id,
-    });
+    let planned: Awaited<ReturnType<typeof TaskPlanner.planForCapability>>;
+    try {
+      planned = await TaskPlanner.planForCapability({
+        ...scope,
+        capability,
+        request: `${idea.title}: ${idea.description.slice(0, 200)}`,
+        createdByType: "SYSTEM",
+        departmentKey: department,
+        goalIds,
+        fingerprint,
+        sourceDecisionId: decision.id,
+      });
+    } catch (error) {
+      // The findRecentByFingerprint check above is check-then-act, not
+      // atomic: two ideas that resolve to the same fingerprint (mock/
+      // templated titles routinely do — see the "Landing page content..."
+      // collisions this was found from) can both pass it before either
+      // commits, and the loser hits the DB's real (projectId, fingerprint)
+      // unique constraint here. Every other fingerprint-deduped repository
+      // in this codebase (signal/insight/opportunity/agency-trigger) treats
+      // a P2002 on that constraint as "already exists," not an error — Task
+      // creation is the one path that didn't, so the race surfaced as a
+      // silently-dropped task instead of a graceful duplicate. Same
+      // handling as the pre-check's duplicate branch above.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        await IdeaRepository.transition(ideaId, projectId, "ACTIVE");
+        return decision;
+      }
+      throw error;
+    }
 
     await IdeaRepository.transition(ideaId, projectId, "ACTIVE");
     await AgencyDecisionRepository.create({

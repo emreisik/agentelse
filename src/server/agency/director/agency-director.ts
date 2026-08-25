@@ -198,11 +198,23 @@ export const AgencyDirector = {
     const capability = "CREATE_CAMPAIGN_BRIEF" as const;
     const department = DepartmentRouter.ownerOf(capability) ?? "COPY_CONTENT";
 
-    // Task fingerprint + cooldown gate (noise control).
+    // Task fingerprint + cooldown gate (noise control) — keyed by idea.id,
+    // NOT idea.title. This is a per-idea re-trigger guard (stop the SAME
+    // idea from spawning a new task on every continuous-engine tick), not a
+    // cross-idea content dedup: two DIFFERENT ideas routinely produce
+    // similar or identical titles (mock/templated reasoning output does
+    // this often — confirmed via CI's agency-loop.integration.test.ts,
+    // where several distinct ideas shared the literal title "Landing page
+    // content..."). Fingerprinting on title text made those collide as if
+    // they were the same idea, silently dropping every task past the
+    // first — undercounting the resulting work plan and occasionally
+    // racing the P2002 catch below. idea.id is unique per idea by
+    // definition, so same-idea reprocessing is still caught, and different
+    // ideas never collide regardless of title similarity.
     const fingerprint = taskFingerprint({
       capability,
       department,
-      subject: idea.title,
+      subject: idea.id,
     });
     const since = new Date(Date.now() - policy.taskCooldownHours * 3600_000);
     const duplicate = await TaskRepository.findRecentByFingerprint(

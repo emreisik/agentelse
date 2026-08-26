@@ -221,7 +221,7 @@ CI uses no Neon/development secrets. The ephemeral PostgreSQL service attached t
 
 ## Worker and deployment
 
-The development server starts a three-second local worker loop via `src/instrumentation.ts`. It can be disabled with `DISABLE_LOCAL_WORKER=true`.
+The development server can start a three-second local worker loop via `src/instrumentation.ts`, opt-in only: set `ENABLE_LOCAL_WORKER=true`. It stays off by default because this app's `DATABASE_URL` is routinely the same live database production reads from — an unconditional local worker would silently start executing real production jobs the moment `npm run dev` runs.
 
 In production, a long-lived interval should not be relied upon. An external scheduler must call the following endpoint:
 

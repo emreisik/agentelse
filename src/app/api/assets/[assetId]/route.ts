@@ -23,6 +23,7 @@ export async function GET(
 
   const asset = await prisma.asset.findUnique({ where: { id: assetId } });
   if (!asset) {
+    console.error(`[api/assets] no Asset row for id ${assetId}`);
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -30,6 +31,11 @@ export async function GET(
     await requireProjectAccess(userId, asset.projectId);
   } catch (error) {
     if (isAgentelseError(error)) {
+      console.error(
+        `[api/assets] requireProjectAccess denied for asset ${assetId} ` +
+          `(project ${asset.projectId}, user ${userId})`,
+        error,
+      );
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     throw error;
@@ -43,7 +49,17 @@ export async function GET(
         "Cache-Control": "private, max-age=31536000, immutable",
       },
     });
-  } catch {
+  } catch (error) {
+    // Distinguishes the two ways this can fail: a `local-asset://` key means
+    // the file only ever existed on whatever machine wrote it (see
+    // asset-storage.ts's putAsset R2 guard) — this process can never serve
+    // it, no matter how many times it's retried. An `r2://` key failing here
+    // means R2 itself errored (bad creds, network, object genuinely deleted).
+    console.error(
+      `[api/assets] readAsset failed for asset ${assetId} ` +
+        `(storageKey: ${asset.storageKey})`,
+      error,
+    );
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 }

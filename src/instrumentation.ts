@@ -1,8 +1,18 @@
 // Next.js instrumentation hook — runs once when the server process starts.
-// In local development this is what makes the PostgreSQL-backed worker loop
-// active without any separate process, Docker, or Redis. In production
-// (Railway/serverless) prefer hitting /api/cron/worker on a schedule instead
-// — a long-lived setInterval does not survive serverless cold starts.
+// In local development, with ENABLE_LOCAL_WORKER=true opted in, this is what
+// makes the PostgreSQL-backed worker loop active without any separate
+// process, Docker, or Redis. In production (Railway/serverless) prefer
+// hitting /api/cron/worker on a schedule instead — a long-lived setInterval
+// does not survive serverless cold starts.
+//
+// The opt-in is deliberate, not incidental: this app's DATABASE_URL is
+// routinely the same live database production reads from (shared-remote-db
+// convention), so an unconditional "starts whenever NODE_ENV=development"
+// would mean any local `npm run dev` silently starts claiming and executing
+// REAL production execution jobs the moment it's running. A long-lived local
+// dev process did exactly that for ~40 hours, processing real user creative
+// jobs with stale pre-fix code and writing the images to its own disk — see
+// local-worker-policy.ts's comment for the incident this closed.
 import { shouldStartLocalWorker } from "@/lib/local-worker-policy";
 
 export async function register() {

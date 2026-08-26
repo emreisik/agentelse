@@ -26,6 +26,7 @@ export async function GET(
 
   const asset = await prisma.asset.findUnique({ where: { id: assetId } });
   if (!asset) {
+    console.error(`[api/public/assets] no Asset row for id ${assetId}`);
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -37,7 +38,14 @@ export async function GET(
         "Cache-Control": "private, max-age=900, immutable",
       },
     });
-  } catch {
+  } catch (error) {
+    // See the sibling authenticated route for what storageKey scheme tells
+    // you about a failure here (local-asset:// vs r2://).
+    console.error(
+      `[api/public/assets] readAsset failed for asset ${assetId} ` +
+        `(storageKey: ${asset.storageKey})`,
+      error,
+    );
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 }

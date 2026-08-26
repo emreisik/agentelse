@@ -250,6 +250,7 @@ function publishApprovalType(capability: CapabilityKey) {
   if (
     capability.startsWith("META_CAMPAIGN") ||
     capability === "META_ADSET_CREATE" ||
+    capability === "META_ADSET_UPDATE" ||
     capability === "META_AD_CREATE" ||
     capability.startsWith("GOOGLE_ADS_CAMPAIGN")
   ) {

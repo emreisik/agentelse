@@ -182,7 +182,18 @@ function toolBadgesFrom(
 async function getSidebarFlows(projectId: string): Promise<SidebarFlow[]> {
   const cards = await PipelineRepository.listCards(projectId);
   const byIdea = new Map<string, { title: string; updatedAt: Date }>();
+  // Orphan (idea-less) task cards with an open approval — e.g.
+  // PerformanceOptimizer's rule-based proposals, which bypass Idea/Council
+  // entirely (see performance-optimizer.ts) and so never get an idea row.
+  // Gated on openApprovalCount > 0 rather than listing every orphan task:
+  // that's the one signal that actually means "needs your attention now,"
+  // and keeps this from flooding the sidebar with routine completed/running
+  // system tasks that already show up in the Work panel.
+  const orphanTaskFlows: SidebarFlow[] = [];
   for (const card of cards) {
+    if (card.kind === "task" && !card.ideaId && card.openApprovalCount > 0) {
+      orphanTaskFlows.push({ id: card.id, kind: "task", title: card.title });
+    }
     if (!card.ideaId) continue;
     const existing = byIdea.get(card.ideaId);
     if (!existing || card.updatedAt > existing.updatedAt) {
@@ -193,10 +204,10 @@ async function getSidebarFlows(projectId: string): Promise<SidebarFlow[]> {
   const ideaIds = Array.from(byIdea.keys());
   const lastActivityByIdea = ideaIds.length
     ? await prisma.command.groupBy({
-      by: ["ideaId"],
-      where: { ideaId: { in: ideaIds } },
-      _max: { createdAt: true },
-    })
+        by: ["ideaId"],
+        where: { ideaId: { in: ideaIds } },
+        _max: { createdAt: true },
+      })
     : [];
   const lastActivityMap = new Map(
     lastActivityByIdea
@@ -206,7 +217,7 @@ async function getSidebarFlows(projectId: string): Promise<SidebarFlow[]> {
       .map((row) => [row.ideaId, row._max.createdAt]),
   );
 
-  return Array.from(byIdea.entries())
+  const ideaFlows: SidebarFlow[] = Array.from(byIdea.entries())
     .map(([ideaId, { title, updatedAt }]) => {
       const lastCommandAt = lastActivityMap.get(ideaId);
       const lastActivityAt =
@@ -219,6 +230,10 @@ async function getSidebarFlows(projectId: string): Promise<SidebarFlow[]> {
       kind: "idea" as const,
       title,
     }));
+
+  // Orphan tasks awaiting approval surface first — they need attention now,
+  // unlike idea threads which are just recent conversation history.
+  return [...orphanTaskFlows, ...ideaFlows];
 }
 
 export async function AppShell({

@@ -70,6 +70,15 @@ export type MetaCredentialMetadata = {
   // exponential backoff on repeated scan failures (bad token, rate limit).
   lastAdsPerformanceScanAt?: string;
   adsPerformanceScanFailureCount?: number;
+  // A one-deep snapshot of the LAST scan's per-entity metrics — not a full
+  // time series, just enough to power "CPA doubled since last scan"-style
+  // trend rules (see meta-performance-rules.ts's evaluateTrendFinding).
+  // Keyed "meta-campaign:<id>" / "meta-adset:<id>". A real trend store
+  // (weekly charts, long-run regression) is deliberately out of scope.
+  previousScanSnapshot?: Record<
+    string,
+    { spend: number; costPerResult?: number; ctr: number }
+  >;
 };
 
 export class MetaApiError extends Error {
@@ -446,6 +455,27 @@ export async function updateMetaCampaign(input: {
   });
 }
 
+// Same shape as updateMetaCampaign — the write path behind
+// META_ADSET_UPDATE (see MetaApiProvider.updateAdSet).
+export async function updateMetaAdSet(input: {
+  adSetId: string;
+  accessToken: string;
+  status?: "ACTIVE" | "PAUSED";
+  dailyBudgetCents?: number;
+}): Promise<void> {
+  const body = new URLSearchParams({ access_token: input.accessToken });
+  if (input.status) body.set("status", input.status);
+  if (input.dailyBudgetCents !== undefined) {
+    body.set("daily_budget", String(input.dailyBudgetCents));
+  }
+
+  await request<{ success: boolean }>(`${GRAPH_BASE}/${input.adSetId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Listing — read-only inventory calls used by the /ads page (see
 // meta-ads-query.ts). Deliberately NOT routed through the Task/Approval/
@@ -759,15 +789,21 @@ export async function listMetaAds(input: {
 
 // ---------------------------------------------------------------------------
 // AdSet / Ad / AdCreative creation — the write path behind META_ADSET_CREATE
-// and META_AD_CREATE (see MetaApiProvider). Minimal field sets, same spirit
-// as createMetaCampaign: enough surface for an AI-assisted draft, not a full
-// ads-manager clone. Targeting is deliberately shallow for v1 — country
-// codes + an age range — Meta's full targeting spec (interests, custom
-// audiences, placements...) is out of scope here.
+// and META_AD_CREATE (see MetaApiProvider). Same spirit as createMetaCampaign:
+// enough surface for an AI-assisted draft, not a full ads-manager clone —
+// basic demographics + location, Meta's detailed targeting (interests/
+// behaviors, custom/lookalike audiences) is out of scope here.
 export type MetaAdSetTargeting = {
   countries: string[];
+  // `key` is the geo location id from searchMetaAdGeoLocations — Meta
+  // requires the search endpoint's own opaque key, not a city name.
+  cities?: { key: string; radiusKm?: number }[];
   ageMin?: number;
   ageMax?: number;
+  // Meta's numeric gender codes: 1 = male, 2 = female. Omitted/empty = all.
+  genders?: (1 | 2)[];
+  // Meta's numeric locale ids (see META_LOCALES in meta-ad-targeting-data.ts).
+  locales?: number[];
 };
 
 export async function createMetaAdSet(input: {
@@ -782,12 +818,29 @@ export async function createMetaAdSet(input: {
   status: "ACTIVE" | "PAUSED";
 }): Promise<{ adSetId: string }> {
   const targeting = {
-    geo_locations: { countries: input.targeting.countries },
+    geo_locations: {
+      countries: input.targeting.countries,
+      ...(input.targeting.cities?.length
+        ? {
+            cities: input.targeting.cities.map((c) => ({
+              key: c.key,
+              radius: c.radiusKm ?? 25,
+              distance_unit: "kilometer",
+            })),
+          }
+        : {}),
+    },
     ...(input.targeting.ageMin !== undefined
       ? { age_min: input.targeting.ageMin }
       : {}),
     ...(input.targeting.ageMax !== undefined
       ? { age_max: input.targeting.ageMax }
+      : {}),
+    ...(input.targeting.genders?.length
+      ? { genders: input.targeting.genders }
+      : {}),
+    ...(input.targeting.locales?.length
+      ? { locales: input.targeting.locales }
       : {}),
   };
 
@@ -811,6 +864,44 @@ export async function createMetaAdSet(input: {
     },
   );
   return { adSetId: result.id };
+}
+
+export type MetaAdGeoLocation = {
+  key: string;
+  name: string;
+  countryCode?: string;
+  region?: string;
+};
+
+// City-search behind the AdSet wizard's targeting step — Meta requires the
+// opaque `key` this endpoint returns (not a plain city name) in
+// createMetaAdSet's targeting.cities. Scoped to `type=city` only: region/
+// zip/geo-market targeting is out of scope here.
+export async function searchMetaAdGeoLocations(input: {
+  query: string;
+  accessToken: string;
+}): Promise<MetaAdGeoLocation[]> {
+  const params = new URLSearchParams({
+    type: "adgeolocation",
+    location_types: JSON.stringify(["city"]),
+    q: input.query,
+    access_token: input.accessToken,
+  });
+  const result = await request<{
+    data?: Array<{
+      key: string;
+      name: string;
+      country_code?: string;
+      region?: string;
+    }>;
+  }>(`${GRAPH_BASE}/search?${params.toString()}`);
+
+  return (result.data ?? []).map((loc) => ({
+    key: loc.key,
+    name: loc.name,
+    countryCode: loc.country_code,
+    region: loc.region,
+  }));
 }
 
 const IMAGE_UPLOAD_TIMEOUT_MS = 20_000;

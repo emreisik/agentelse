@@ -22,6 +22,7 @@ import {
 } from "@/server/agency/continuous/continuous-agency-engine";
 import { LearningEngine } from "@/server/agency/learning/learning-engine";
 import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
+import { MetaAdSetChainRelay } from "@/server/agency/meta-ads/meta-adset-chain-relay";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
 import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
 import { WorkPlanProgressor } from "@/server/agency/work-plans/work-plan-progressor";
@@ -163,6 +164,10 @@ registerTaskCompletedHandler(async (taskId) => {
 });
 registerTaskCompletedHandler(async (taskId) => {
   await WorkHandoffEngine.onTaskCompleted(taskId);
+});
+// Combined AdSet+Ad wizard's second-Task fan-out (see meta-adset-chain-relay.ts).
+registerTaskCompletedHandler(async (taskId) => {
+  await MetaAdSetChainRelay.onTaskCompleted(taskId);
 });
 
 // --- Wave 5: measurement + learning wiring ----------------------------------

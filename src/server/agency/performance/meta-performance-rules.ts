@@ -18,7 +18,8 @@ export type PerformanceFinding = {
     | "HIGH_CPA"
     | "LOW_CTR"
     | "AD_FATIGUE"
-    | "CHRONIC_BUDGET_BURN";
+    | "CHRONIC_BUDGET_BURN"
+    | "CPA_REGRESSION";
   severity: FindingSeverity;
   // Human-readable, already carrying the concrete numbers — this is what
   // gets embedded into the Signal's title/summary text (see
@@ -146,12 +147,15 @@ export function evaluateCampaignFinding(input: {
   );
 }
 
-// AdSet-level reflection of rules 1/2 — informational only (Track 1), no
-// suggestedAction: there is no META_ADSET_UPDATE capability yet (see plan's
-// "Açık Noktalar"), so an adset finding can never become a Track 2
-// proposal. Severity is downgraded one notch versus the campaign-level
-// version — a single underperforming adset inside an otherwise-healthy
-// campaign is a narrower signal.
+// AdSet-level reflection of rules 1/2 — same PAUSE/REDUCE_BUDGET rules as
+// evaluateCampaignFinding, scoped to one adset. HIGH-severity findings keep
+// their suggestedAction (META_ADSET_UPDATE exists — see
+// performance-optimizer.ts's proposeAdSetAction), so they can become a
+// Track 2 proposal like a campaign-level HIGH finding does. MEDIUM/LOW
+// findings (low CTR, ad fatigue, chronic burn — no capability-backed action
+// either way) stay informational-only, and their severity is downgraded one
+// notch versus the campaign-level version: a single underperforming adset
+// inside an otherwise-healthy campaign is a narrower signal.
 export function evaluateAdSetFinding(input: {
   campaignName: string;
   adSetName: string;
@@ -165,10 +169,68 @@ export function evaluateAdSetFinding(input: {
     dailyBudgetCents: input.dailyBudgetCents,
     currency: input.currency,
   });
-  if (!finding || finding.suggestedAction === undefined) return finding;
+  if (!finding) return finding;
+  if (finding.severity === "HIGH" && finding.suggestedAction) return finding;
+  // MEDIUM/LOW findings never carry a suggestedAction to begin with (see
+  // evaluateCampaignFinding above) — this branch only downgrades a stray
+  // HIGH-without-action case, which can't currently occur but is handled
+  // defensively; MEDIUM/LOW severities pass through unchanged.
   return {
     ...finding,
     severity: finding.severity === "HIGH" ? "MEDIUM" : finding.severity,
     suggestedAction: undefined,
+  };
+}
+
+const CPA_REGRESSION_MULTIPLIER = 1.5; // +50% or more since the last scan
+
+export type ScanSnapshot = {
+  spend: number;
+  costPerResult?: number;
+  ctr: number;
+};
+
+// Simplified trend rule — compares the current scan against the ONE
+// previous snapshot stored in IntegrationCredential.metadata
+// (previousScanSnapshot, see meta-client.ts), not a real time series. Only
+// fires when both scans have a costPerResult to compare (an entity with no
+// tracked results has nothing to regress) and the previous scan had
+// meaningful spend (avoids a noisy 10x "regression" off a near-zero base).
+// Informational only (Track 1) — no suggestedAction, since a single
+// cost-per-result jump isn't enough signal on its own to justify an
+// automatic budget action the way the absolute thresholds above are.
+export function evaluateTrendFinding(input: {
+  entityName: string;
+  current: ScanSnapshot;
+  previous: ScanSnapshot | undefined;
+}): PerformanceFinding | null {
+  const { entityName, current, previous } = input;
+  if (
+    !previous ||
+    previous.costPerResult === undefined ||
+    current.costPerResult === undefined ||
+    previous.spend < 1 ||
+    previous.costPerResult <= 0
+  ) {
+    return null;
+  }
+  if (
+    current.costPerResult <
+    previous.costPerResult * CPA_REGRESSION_MULTIPLIER
+  ) {
+    return null;
+  }
+  const pctChange = Math.round(
+    (current.costPerResult / previous.costPerResult - 1) * 100,
+  );
+  return {
+    rule: "CPA_REGRESSION",
+    severity: "MEDIUM",
+    title: `${entityName}: cost per result rising`,
+    summary: `"${entityName}"'s cost per result went from ${previous.costPerResult.toFixed(2)} to ${current.costPerResult.toFixed(2)} since the last scan (+${pctChange}%).`,
+    metricsSnapshot: {
+      previousCostPerResult: previous.costPerResult,
+      currentCostPerResult: current.costPerResult,
+    },
   };
 }

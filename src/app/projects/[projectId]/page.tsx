@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { DepartmentKey } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
@@ -250,6 +250,16 @@ export default async function ProjectChatPage({
       );
     }
 
+    // A task with no idea lineage (e.g. PerformanceOptimizer's rule-based
+    // proposals — see idea-chat.repository.ts) has nowhere else to show its
+    // approval card: ProjectFlowView's TaskFlow is read-only (no Approve/
+    // Reject buttons), and the card itself only ever posts to the general
+    // chat (see chat-service.ts / the general-chat query above). Sending
+    // the user there directly avoids the dead end a sidebar click on an
+    // orphan task's "needs approval" entry would otherwise land on.
+    if (entity.kind === "task") {
+      redirect(`/projects/${projectId}`);
+    }
     return (
       <AppShell projectId={projectId}>
         <ProjectFlowView projectId={projectId} entity={entity} />
@@ -263,11 +273,20 @@ export default async function ProjectChatPage({
       select: { name: true },
     }),
     prisma.command.findMany({
-      where: { projectId, source: "WEB" },
+      // WEB (the user's own messages) plus idea-less SYSTEM events — a
+      // system-generated Task with no idea lineage (e.g.
+      // PerformanceOptimizer's rule-based proposals, see
+      // idea-chat.repository.ts) posts here instead of a specific idea
+      // thread, so its approval/result cards are still visible somewhere.
+      where: {
+        projectId,
+        OR: [{ source: "WEB" }, { source: "SYSTEM", ideaId: null }],
+      },
       orderBy: { createdAt: "desc" },
       take: 30,
       select: {
         id: true,
+        source: true,
         rawText: true,
         replyText: true,
         replyStatus: true,
@@ -296,7 +315,7 @@ export default async function ProjectChatPage({
           projectName={project.name}
           turns={chatCommands.reverse().map((command): ChatTurn => ({
             commandId: command.id,
-            source: "WEB",
+            source: command.source as "WEB" | "SYSTEM",
             text: command.rawText,
             reply: command.replyText,
             replyStatus: command.replyStatus,

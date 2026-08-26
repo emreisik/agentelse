@@ -168,7 +168,10 @@
       "WebFetch(domain:developers.google.com)",
       "Bash(node /private/tmp/claude-501/-Users-emre-Desktop-SASS-PROJELER-hubconnect/a5a69a15-9550-46d7-a9fc-a819b2f29cf7/scratchpad/pkg/validate_palette.js '#085dc7,#0090b7,#bc2c8a,#1e7729,#ca4b20' --mode light --surface '#fdfdff' --pairs all)",
       "Bash(node /private/tmp/claude-501/-Users-emre-Desktop-SASS-PROJELER-hubconnect/a5a69a15-9550-46d7-a9fc-a819b2f29cf7/scratchpad/oklch2hex.mjs strategy,0.68,0.16,258 intel,0.72,0.11,222 creative,0.68,0.19,346 growth,0.68,0.14,145 pr,0.72,0.16,38)",
-      "Bash(node -e \"console.log\\(Object.keys\\(require\\('/Users/emre/Desktop/SASS-PROJELER/hubconnect/node_modules/lucide-react'\\)\\).filter\\(k=>/instagram|share/i.test\\(k\\)\\)\\)\")"
+      "Bash(node -e \"console.log\\(Object.keys\\(require\\('/Users/emre/Desktop/SASS-PROJELER/hubconnect/node_modules/lucide-react'\\)\\).filter\\(k=>/instagram|share/i.test\\(k\\)\\)\\)\")",
+      "Bash(/opt/homebrew/opt/node@24/bin/node /opt/homebrew/bin/openclaw gateway call health --json)",
+      "Bash(curl -s -m 15 -A facebookexternalhit/1.1 https://www.instagram.com/p/DWm8OQKlKvC/ -o /private/tmp/claude-501/-Users-emre-Desktop-SASS-PROJELER-hubconnect/e8a520a4-0ccd-4200-b336-5821642ca877/scratchpad/ig_post.html)",
+      "WebFetch(domain:scontent.cdninstagram.com)"
     ],
     "defaultMode": "bypassPermissions",
     "additionalDirectories": [

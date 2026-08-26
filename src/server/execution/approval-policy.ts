@@ -23,6 +23,7 @@ const LEVEL_4_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>(
     "META_CAMPAIGN_CREATE",
     "META_CAMPAIGN_UPDATE",
     "META_ADSET_CREATE",
+    "META_ADSET_UPDATE",
     "GOOGLE_ADS_CAMPAIGN_CREATE",
   ],
 );

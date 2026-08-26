@@ -18,11 +18,7 @@ import type {
   MetaCredentialMetadata,
   MetaInsightsRow,
 } from "@/server/integrations/meta-client";
-import {
-  createMetaAdAction,
-  createMetaAdSetAction,
-  createMetaCampaignAction,
-} from "@/server/actions/meta-ads-actions";
+import { createMetaAdAction } from "@/server/actions/meta-ads-actions";
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionForm } from "@/components/shared/action-form";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -31,6 +27,8 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { Input } from "@/components/ui/input";
 import { buttonVariants } from "@/components/ui/button";
+import { CampaignWizard } from "@/components/ads/campaign-wizard";
+import { AdSetAdWizard } from "@/components/ads/adset-ad-wizard";
 import { cn } from "@/lib/utils";
 
 // Live, read-only drill-down over Meta's Campaign -> AdSet -> Ad hierarchy —
@@ -252,15 +250,6 @@ export default async function AdsPage({
 // TaskPlanner.planForCapability call (see meta-ads-actions.ts); nothing is
 // created on Meta until the resulting Approval is decided.
 
-const OBJECTIVES = [
-  "OUTCOME_AWARENESS",
-  "OUTCOME_TRAFFIC",
-  "OUTCOME_ENGAGEMENT",
-  "OUTCOME_LEADS",
-  "OUTCOME_APP_PROMOTION",
-  "OUTCOME_SALES",
-];
-
 function CreateCampaignDialog({
   projectId,
   closeHref,
@@ -274,63 +263,17 @@ function CreateCampaignDialog({
     <EntityDialog
       closeHref={closeHref}
       title="New Campaign"
-      description="Creates a draft (paused) campaign — requires approval before it goes live on Meta."
       size="md"
-      bodyClassName="space-y-3 overflow-y-auto p-4"
+      bodyClassName="overflow-y-auto p-6"
     >
-      <ActionForm
-        action={createMetaCampaignAction}
-        successMessage="Campaign submitted for approval"
-        className="space-y-3"
-      >
-        <input type="hidden" name="projectId" value={projectId} />
-        <Field label="Name">
-          <Input
-            name="name"
-            required
-            defaultValue={prefillName}
-            placeholder="Summer sale — traffic"
-          />
-        </Field>
-        <Field label="Objective">
-          <select
-            name="objective"
-            required
-            className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-xs"
-          >
-            {OBJECTIVES.map((o) => (
-              <option key={o} value={o}>
-                {o}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Daily budget">
-          <Input
-            name="dailyBudget"
-            type="number"
-            min="1"
-            step="0.01"
-            required
-            placeholder="20.00"
-          />
-        </Field>
-        <div className="flex justify-end pt-1">
-          <SubmitButton size="sm">Create Campaign</SubmitButton>
-        </div>
-      </ActionForm>
+      <CampaignWizard
+        projectId={projectId}
+        closeHref={closeHref}
+        prefillName={prefillName}
+      />
     </EntityDialog>
   );
 }
-
-const OPTIMIZATION_GOALS = [
-  "LINK_CLICKS",
-  "IMPRESSIONS",
-  "REACH",
-  "LANDING_PAGE_VIEWS",
-  "POST_ENGAGEMENT",
-];
-const BILLING_EVENTS = ["IMPRESSIONS", "LINK_CLICKS"];
 
 function CreateAdSetDialog({
   projectId,
@@ -344,86 +287,16 @@ function CreateAdSetDialog({
   return (
     <EntityDialog
       closeHref={closeHref}
-      title="New Ad Set"
-      description="Targeting, budget and scheduling for this campaign — requires approval."
+      title="New Ad Set + Ad"
+      description="Targeting, budget and one ad's creative — both require approval."
       size="md"
-      bodyClassName="space-y-3 overflow-y-auto p-4"
+      bodyClassName="overflow-y-auto p-6"
     >
-      <ActionForm
-        action={createMetaAdSetAction}
-        successMessage="Ad set submitted for approval"
-        className="space-y-3"
-      >
-        <input type="hidden" name="projectId" value={projectId} />
-        <input type="hidden" name="campaignId" value={campaignId} />
-        <Field label="Name">
-          <Input name="name" required placeholder="US — 25-45" />
-        </Field>
-        <Field label="Daily budget">
-          <Input
-            name="dailyBudget"
-            type="number"
-            min="1"
-            step="0.01"
-            required
-            placeholder="10.00"
-          />
-        </Field>
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Billing event">
-            <select
-              name="billingEvent"
-              required
-              className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-xs"
-            >
-              {BILLING_EVENTS.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Optimization goal">
-            <select
-              name="optimizationGoal"
-              required
-              className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-xs"
-            >
-              {OPTIMIZATION_GOALS.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
-        <Field label="Countries (comma-separated ISO codes)">
-          <Input name="countries" required placeholder="US, CA" />
-        </Field>
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Min age">
-            <Input
-              name="ageMin"
-              type="number"
-              min="13"
-              max="65"
-              placeholder="18"
-            />
-          </Field>
-          <Field label="Max age">
-            <Input
-              name="ageMax"
-              type="number"
-              min="13"
-              max="65"
-              placeholder="65"
-            />
-          </Field>
-        </div>
-        <div className="flex justify-end pt-1">
-          <SubmitButton size="sm">Create Ad Set</SubmitButton>
-        </div>
-      </ActionForm>
+      <AdSetAdWizard
+        projectId={projectId}
+        campaignId={campaignId}
+        closeHref={closeHref}
+      />
     </EntityDialog>
   );
 }

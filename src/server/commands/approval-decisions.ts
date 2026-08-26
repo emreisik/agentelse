@@ -19,8 +19,12 @@ import { sendPublishPromptToTelegram } from "@/server/notifications/telegram-app
 // null and is silently skipped.
 async function resolveApprovalChatTarget(
   approval: Approval,
-): Promise<{ ideaId: string; title: string } | null> {
+): Promise<{ ideaId: string | null; title: string } | null> {
   if (approval.entityType === "Task" && approval.taskId) {
+    // ideaId may be null (a system-generated task with no idea lineage —
+    // e.g. PerformanceOptimizer's proposals) — the decision card still
+    // posts, into the project's general chat stream. Only `task` missing
+    // (the task itself doesn't exist) is a real "nothing to show" case.
     const [ideaId, task] = await Promise.all([
       IdeaChatRepository.resolveIdeaIdForTask(approval.taskId),
       prisma.task.findUnique({
@@ -28,7 +32,7 @@ async function resolveApprovalChatTarget(
         select: { title: true },
       }),
     ]);
-    if (!ideaId || !task) return null;
+    if (!task) return null;
     return { ideaId, title: task.title };
   }
 
@@ -103,12 +107,17 @@ export async function applyApprovalDecision(input: {
     const target = await resolveApprovalChatTarget(approval);
     if (target) {
       if (approval.entityType === "Creative") {
+        // Non-null: resolveApprovalChatTarget's Creative branch already
+        // returns null (not a target with a null ideaId) when no idea can
+        // be resolved — unlike the Task branch, creatives are always
+        // idea-scoped (see the function above).
+        const creativeIdeaId = target.ideaId!;
         // Unlike Task, we do NOT convert the card into a generic
         // "approval-decision" card — the creative-ready card already
         // carries the image/title, so only the status field is updated to
         // avoid losing it (see resolveCreativeApprovalDecision).
         await IdeaChatRepository.resolveCreativeApprovalDecision({
-          ideaId: target.ideaId,
+          ideaId: creativeIdeaId,
           creativeId: approval.entityId,
           status: to,
         });

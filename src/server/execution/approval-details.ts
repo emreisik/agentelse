@@ -9,7 +9,12 @@ export function buildApprovalDetails(
   capability: CapabilityKey,
   payload: unknown,
 ): { label: string; value: string }[] | undefined {
-  if (capability !== "META_CAMPAIGN_UPDATE") return undefined;
+  if (
+    capability !== "META_CAMPAIGN_UPDATE" &&
+    capability !== "META_ADSET_UPDATE"
+  ) {
+    return undefined;
+  }
   const p = (payload ?? {}) as Record<string, unknown>;
 
   const details: { label: string; value: string }[] = [];

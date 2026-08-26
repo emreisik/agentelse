@@ -13,6 +13,7 @@ import {
   createMetaCampaign,
   fetchPageAccessToken,
   publishInstagramPost,
+  updateMetaAdSet,
   updateMetaCampaign,
   uploadMetaAdImage,
   type MetaAdSetTargeting,
@@ -43,6 +44,7 @@ const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "META_CAMPAIGN_CREATE",
   "META_CAMPAIGN_UPDATE",
   "META_ADSET_CREATE",
+  "META_ADSET_UPDATE",
   "META_AD_CREATE",
 ]);
 
@@ -64,6 +66,14 @@ async function findActiveMetaCredential(projectId: string) {
 
 function payloadRecord(payload: unknown): Record<string, unknown> {
   return (payload ?? {}) as Record<string, unknown>;
+}
+
+function readCampaignStatus(value: unknown): "ACTIVE" | "PAUSED" | undefined {
+  return value === "ACTIVE" || value === "PAUSED" ? value : undefined;
+}
+
+function readBudgetCents(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
 }
 
 export class MetaApiProvider implements ExecutionProvider {
@@ -153,6 +163,8 @@ export class MetaApiProvider implements ExecutionProvider {
           return await this.updateCampaign(accessToken, payload);
         case "META_ADSET_CREATE":
           return await this.createAdSet(metadata, accessToken, payload);
+        case "META_ADSET_UPDATE":
+          return await this.updateAdSet(accessToken, payload);
         case "META_AD_CREATE":
           return await this.createAd(metadata, accessToken, payload);
         default:
@@ -318,14 +330,18 @@ export class MetaApiProvider implements ExecutionProvider {
         errorMessage: "META_CAMPAIGN_UPDATE requires `campaignId`",
       };
     }
-    const status =
-      payload.status === "ACTIVE" || payload.status === "PAUSED"
-        ? payload.status
-        : undefined;
-    const dailyBudgetCents =
-      typeof payload.dailyBudgetCents === "number"
-        ? payload.dailyBudgetCents
-        : undefined;
+    // Accepts BOTH `status`/`dailyBudgetCents` (a direct, e.g. future
+    // chat-triggered, update request) AND `proposedStatus`/
+    // `proposedDailyBudgetCents` (PerformanceOptimizer.proposeCampaignAction
+    // — see performance-optimizer.ts — writes the "proposed" names so
+    // approval-details.ts can show "current -> proposed" on the approval
+    // card). Without this fallback, an approved performance proposal would
+    // call updateMetaCampaign with both fields undefined — a no-op POST
+    // that still reports COMPLETED, silently not changing anything on Meta.
+    const status = readCampaignStatus(payload.status ?? payload.proposedStatus);
+    const dailyBudgetCents = readBudgetCents(
+      payload.dailyBudgetCents ?? payload.proposedDailyBudgetCents,
+    );
 
     await updateMetaCampaign({
       campaignId,
@@ -334,6 +350,35 @@ export class MetaApiProvider implements ExecutionProvider {
       dailyBudgetCents,
     });
     return { status: "COMPLETED", rawResult: { campaignId } };
+  }
+
+  private async updateAdSet(
+    accessToken: string,
+    payload: Record<string, unknown>,
+  ): Promise<StoredResult> {
+    const adSetId =
+      typeof payload.adSetId === "string" ? payload.adSetId : undefined;
+    if (!adSetId) {
+      return {
+        status: "FAILED",
+        errorMessage: "META_ADSET_UPDATE requires `adSetId`",
+      };
+    }
+    // See the identical fallback comment in updateCampaign above —
+    // PerformanceOptimizer.proposeAdSetAction writes proposedStatus/
+    // proposedDailyBudgetCents, not status/dailyBudgetCents.
+    const status = readCampaignStatus(payload.status ?? payload.proposedStatus);
+    const dailyBudgetCents = readBudgetCents(
+      payload.dailyBudgetCents ?? payload.proposedDailyBudgetCents,
+    );
+
+    await updateMetaAdSet({
+      adSetId,
+      accessToken,
+      status,
+      dailyBudgetCents,
+    });
+    return { status: "COMPLETED", rawResult: { adSetId } };
   }
 
   private async createAdSet(

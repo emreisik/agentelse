@@ -18,6 +18,7 @@ const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "META_CAMPAIGN_CREATE",
   "META_CAMPAIGN_UPDATE",
   "META_ADSET_CREATE",
+  "META_ADSET_UPDATE",
   "META_AD_CREATE",
   "GOOGLE_ADS_CAMPAIGN_CREATE",
   "EMAIL_SEND",
@@ -69,7 +70,33 @@ export class MockPublishingProvider implements ExecutionProvider {
         capability: record.capability,
         publishedAt: new Date().toISOString(),
         externalPostUrl: "mock://social/post/placeholder",
+        ...mockCreatedIds(record.capability, executionReference),
       },
     };
+  }
+}
+
+// Real providers (see MetaApiProvider.createCampaign/createAdSet/createAd)
+// echo back the id they just created — some downstream code depends on
+// that id being present on a COMPLETED task's rawResult even when the mock
+// provider stood in (e.g. MetaAdSetChainRelay reads a completed
+// META_ADSET_CREATE job's rawResult.adSetId to plan the ad set's ad). A
+// mock-created id is deterministic per execution so it's traceable back to
+// the run that produced it, but is never a real Meta object — nothing
+// downstream should call the live API with it.
+function mockCreatedIds(
+  capability: CapabilityKey,
+  executionReference: string,
+): Record<string, string> {
+  switch (capability) {
+    case "META_CAMPAIGN_CREATE":
+    case "GOOGLE_ADS_CAMPAIGN_CREATE":
+      return { campaignId: `mock-campaign-${executionReference}` };
+    case "META_ADSET_CREATE":
+      return { adSetId: `mock-adset-${executionReference}` };
+    case "META_AD_CREATE":
+      return { adId: `mock-ad-${executionReference}` };
+    default:
+      return {};
   }
 }

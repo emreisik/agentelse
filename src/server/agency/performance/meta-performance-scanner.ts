@@ -7,6 +7,8 @@ import { PerformanceOptimizer } from "./performance-optimizer";
 import {
   evaluateAdSetFinding,
   evaluateCampaignFinding,
+  evaluateTrendFinding,
+  type ScanSnapshot,
 } from "./meta-performance-rules";
 import {
   fetchMetaLevelInsights,
@@ -134,6 +136,8 @@ async function scanOneCredential(
     projectId: credential.projectId,
     brandId: credential.brandId,
   };
+  const previousSnapshot = metadata.previousScanSnapshot ?? {};
+  const nextSnapshot: Record<string, ScanSnapshot> = {};
 
   const [campaigns, campaignInsights] = await Promise.all([
     listMetaCampaigns({ adAccountId, accessToken }),
@@ -154,6 +158,13 @@ async function scanOneCredential(
 
   for (const { campaign, insights } of active) {
     if (!insights || !campaign.dailyBudgetCents) continue;
+
+    const snapshotKey = `meta-campaign:${campaign.campaignId}`;
+    nextSnapshot[snapshotKey] = {
+      spend: insights.spend,
+      costPerResult: insights.costPerResult,
+      ctr: insights.ctr,
+    };
 
     const finding = evaluateCampaignFinding({
       campaignName: campaign.name,
@@ -183,6 +194,26 @@ async function scanOneCredential(
       continue;
     }
 
+    // No absolute-threshold finding — check for a trend regression instead
+    // (e.g. CPA creeping up scan-over-scan without yet crossing an absolute
+    // threshold). Informational only (Track 1), see evaluateTrendFinding.
+    const trendFinding = evaluateTrendFinding({
+      entityName: campaign.name,
+      current: nextSnapshot[snapshotKey],
+      previous: previousSnapshot[snapshotKey],
+    });
+    if (trendFinding) {
+      await SignalUniverse.ingestRaw({
+        ...scope,
+        source: "meta-ads-performance-scan",
+        category: "PERFORMANCE",
+        externalRef: `meta-campaign:${campaign.campaignId}:${trendFinding.rule}`,
+        title: trendFinding.title,
+        summary: trendFinding.summary,
+        reliability: 1,
+      });
+    }
+
     // Only drill into adsets for campaigns that already look suspicious
     // (spend with weak/no results) — a healthy campaign's adsets aren't
     // worth the extra API call.
@@ -203,6 +234,11 @@ async function scanOneCredential(
     for (const adSet of adSets) {
       const adSetRow = adSetInsights.get(adSet.adSetId);
       if (!adSetRow || !adSet.dailyBudgetCents) continue;
+      nextSnapshot[`meta-adset:${adSet.adSetId}`] = {
+        spend: adSetRow.spend,
+        costPerResult: adSetRow.costPerResult,
+        ctr: adSetRow.ctr,
+      };
       const adSetFinding = evaluateAdSetFinding({
         campaignName: campaign.name,
         adSetName: adSet.name,
@@ -220,6 +256,16 @@ async function scanOneCredential(
           summary: adSetFinding.summary,
           reliability: 1,
         });
+        if (adSetFinding.severity === "HIGH" && adSetFinding.suggestedAction) {
+          await PerformanceOptimizer.proposeAdSetAction({
+            scope,
+            campaignId: campaign.campaignId,
+            adSetId: adSet.adSetId,
+            adSetName: adSet.name,
+            currentDailyBudgetCents: adSet.dailyBudgetCents,
+            finding: adSetFinding,
+          });
+        }
       }
     }
   }
@@ -231,6 +277,7 @@ async function scanOneCredential(
         ...metadata,
         lastAdsPerformanceScanAt: new Date().toISOString(),
         adsPerformanceScanFailureCount: 0,
+        previousScanSnapshot: nextSnapshot,
       } as never,
     },
   });

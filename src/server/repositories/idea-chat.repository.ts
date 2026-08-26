@@ -15,10 +15,16 @@ import type { IdeaEventCardData } from "@/types/idea-event-card";
 // write a chat message must NEVER stop the underlying business logic
 // (idea/council/work plan/task).
 export const IdeaChatRepository = {
+  // ideaId is nullable: system events for a Task with no idea lineage (e.g.
+  // PerformanceOptimizer's rule-based proposals, which bypass Idea/Council
+  // entirely — see performance-optimizer.ts) still need to reach the user.
+  // Command.ideaId is nullable in the schema; a null here lands the row in
+  // the project's general chat stream instead of a specific idea thread
+  // (see the general-chat query in page.tsx / chat-service.ts buildContext).
   postSystemMessage(input: {
     workspaceId: string;
     projectId: string;
-    ideaId: string;
+    ideaId: string | null;
     text: string;
     attachments?: CommandAttachment[];
     card?: IdeaEventCardData;
@@ -149,7 +155,6 @@ export const IdeaChatRepository = {
     departmentKey?: DepartmentKey;
   }): Promise<void> {
     const ideaId = await IdeaChatRepository.resolveIdeaIdForTask(input.taskId);
-    if (!ideaId) return;
     await IdeaChatRepository.postSystemMessage({
       workspaceId: input.workspaceId,
       projectId: input.projectId,
@@ -180,7 +185,6 @@ export const IdeaChatRepository = {
     departmentKey?: DepartmentKey;
   }): Promise<void> {
     const ideaId = await IdeaChatRepository.resolveIdeaIdForTask(input.taskId);
-    if (!ideaId) return;
 
     const existing = await prisma.command.findFirst({
       where: {
@@ -228,7 +232,6 @@ export const IdeaChatRepository = {
     departmentKey?: DepartmentKey;
   }): Promise<void> {
     const ideaId = await IdeaChatRepository.resolveIdeaIdForTask(input.taskId);
-    if (!ideaId) return;
 
     const existing = await prisma.command.findFirst({
       where: {
@@ -284,7 +287,6 @@ export const IdeaChatRepository = {
     details?: { label: string; value: string }[];
   }): Promise<void> {
     const ideaId = await IdeaChatRepository.resolveIdeaIdForTask(input.taskId);
-    if (!ideaId) return;
     await IdeaChatRepository.postSystemMessage({
       workspaceId: input.workspaceId,
       projectId: input.projectId,
@@ -312,7 +314,7 @@ export const IdeaChatRepository = {
   async resolveApprovalDecisionCard(input: {
     workspaceId: string;
     projectId: string;
-    ideaId: string;
+    ideaId: string | null;
     approvalId: string;
     text: string;
     card: Extract<IdeaEventCardData, { kind: "approval-decision" }>;

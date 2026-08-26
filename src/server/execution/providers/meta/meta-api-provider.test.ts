@@ -70,6 +70,7 @@ describe("MetaApiProvider.canExecute", () => {
       false,
     );
     expect(await provider.canExecute("META_ADSET_CREATE", context)).toBe(false);
+    expect(await provider.canExecute("META_ADSET_UPDATE", context)).toBe(false);
     expect(await provider.canExecute("META_AD_CREATE", context)).toBe(false);
   });
 
@@ -84,6 +85,7 @@ describe("MetaApiProvider.canExecute", () => {
       true,
     );
     expect(await provider.canExecute("META_ADSET_CREATE", context)).toBe(true);
+    expect(await provider.canExecute("META_ADSET_UPDATE", context)).toBe(true);
   });
 
   it("requires BOTH a selected ad account and a selected Page for META_AD_CREATE", async () => {

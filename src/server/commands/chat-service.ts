@@ -238,12 +238,18 @@ async function buildContext(projectId: string, ideaId?: string) {
       // idea — both what the user wrote (WEB) and the system events written
       // by the pipeline (SYSTEM: council decision, work plan, task/creative
       // completion). This way the LLM replies knowing what the pipeline
-      // just did. If there's no ideaId (project-wide chat), the old
-      // behavior is preserved: WEB only.
+      // just did. If there's no ideaId (project-wide chat), WEB messages
+      // plus idea-less SYSTEM events (e.g. PerformanceOptimizer's
+      // rule-based proposals, which have no idea lineage — see
+      // idea-chat.repository.ts) are included, so the LLM can answer things
+      // like "what does that approval card mean" in the general chat too.
       prisma.command.findMany({
         where: ideaId
           ? { ideaId, source: { in: ["WEB", "SYSTEM"] } }
-          : { projectId, source: "WEB" },
+          : {
+              projectId,
+              OR: [{ source: "WEB" }, { source: "SYSTEM", ideaId: null }],
+            },
         orderBy: { createdAt: "desc" },
         take: HISTORY_TURNS,
         select: {

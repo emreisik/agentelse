@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { prisma } from "@/lib/prisma";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
+import { shortDate } from "@/lib/dates";
 import {
   requireUser,
   requireProjectAccess,
@@ -138,7 +139,7 @@ export default async function CreativeDetailPage({
                     ) : null}
                   </CardTitle>
                   <span className="text-xs text-muted-foreground">
-                    {version.createdAt.toLocaleString()}
+                    {shortDate(version.createdAt)}
                   </span>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">

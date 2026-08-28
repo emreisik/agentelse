@@ -230,14 +230,12 @@ POST /api/cron/worker
 Authorization: Bearer <CRON_SECRET>
 ```
 
-A worker tick covers the scheduler, outbox dispatch, running job polling, verification, the Continuous Agency Engine, and cleanup of expired records.
+A worker tick covers the scheduler, outbox dispatch, running job polling, verification, the Continuous Agency Engine, and cleanup of expired records. In production this scheduler is `.github/workflows/cron-worker.yml`, calling the endpoint above every 5 minutes. Each tick only processes a bounded batch (at most 10 dispatch events, 20 running jobs — see `execution-worker.ts`), so this cadence is far slower than local dev's 3-second loop; a large backlog drains visibly slower than it would locally.
 
 ## Current limitations
 
-- The Telegram integration has been removed: the source code contains no Telegram service/webhook or `CommandSource.TELEGRAM`.
 - The Gemini creative provider generates copy and the image prompt; the actual image is generated separately via the OpenClaw image action.
 - Competitor models exist; the regular research -> snapshot -> diff pipeline is not yet complete.
 - `Skill` and `ProjectSkill` models exist; the skill discovery/review/sandbox/approval pipeline is not yet complete.
-- A local disk asset service exists. Cloudflare R2 variables are reserved in the schema, but there is no R2 storage adapter yet.
 - `SENTRY_DSN` is readable, but there is no direct Sentry bootstrap integration yet.
 - OpenClaw's CLI call is blocking within the worker; a separate process/queue model for long browser tasks has not been implemented yet.

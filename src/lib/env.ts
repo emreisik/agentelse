@@ -211,7 +211,8 @@ export function isIntegrationConfigured(
         env.R2_ACCOUNT_ID &&
         env.R2_ACCESS_KEY_ID &&
         env.R2_SECRET_ACCESS_KEY &&
-        env.R2_BUCKET_NAME,
+        env.R2_BUCKET_NAME &&
+        env.R2_PUBLIC_URL,
       );
     case "SENTRY":
       return Boolean(env.SENTRY_DSN);

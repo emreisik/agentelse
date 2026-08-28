@@ -1,0 +1,21 @@
+name: Trigger execution worker
+
+# Production entry point for the outbox worker tick. A serverless/Railway
+# deployment cannot keep instrumentation.ts's setInterval loop alive between
+# requests (see that file's comment) — this is the external scheduler it
+# expects, POSTing to /api/cron/worker on a fixed cadence instead.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: POST /api/cron/worker
+        run: |
+          curl -sf -X POST "${{ secrets.PROD_WORKER_URL }}/api/cron/worker" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -o /dev/null -w "status=%{http_code}\n"

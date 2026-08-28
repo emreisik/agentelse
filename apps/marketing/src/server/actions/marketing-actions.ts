@@ -2,6 +2,8 @@
 
 import { z } from "zod";
 
+import { sendTelegramMessage } from "@/server/notifications/telegram.service";
+
 const contactSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Enter a valid email address"),
@@ -11,10 +13,21 @@ const contactSchema = z.object({
 
 export type ContactFormValues = z.infer<typeof contactSchema>;
 
-// Phase 1 stub: validates and logs server-side. No email/CRM delivery yet —
-// that needs a provider decision (resend/CRM webhook/etc.) before real
-// delivery is wired up. The contact page keeps a visible mailto: fallback
-// for anyone who lands here before that ships.
+// sendTelegramMessage uses Telegram's HTML parse mode — escape user input
+// before interpolating it so a submitted name/message can't break the
+// markup or inject unintended formatting.
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// Validates and logs server-side, then notifies the team over Telegram
+// (silent no-op if TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID aren't configured on
+// this deploy — see telegram.service.ts). Delivery failure never blocks the
+// response: the contact page also keeps a visible mailto: fallback for
+// anyone who lands here before a lead is confirmed received.
 export async function submitContactRequest(
   values: ContactFormValues,
 ): Promise<{ success: true } | { success: false; error: string }> {
@@ -31,6 +44,21 @@ export async function submitContactRequest(
     email: parsed.data.email,
     company: parsed.data.company,
   });
+
+  await sendTelegramMessage(
+    [
+      "<b>New contact request</b>",
+      `Name: ${escapeHtml(parsed.data.name)}`,
+      `Email: ${escapeHtml(parsed.data.email)}`,
+      parsed.data.company
+        ? `Company: ${escapeHtml(parsed.data.company)}`
+        : null,
+      "",
+      escapeHtml(parsed.data.message),
+    ]
+      .filter((line) => line !== null)
+      .join("\n"),
+  );
 
   return { success: true };
 }

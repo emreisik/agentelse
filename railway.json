@@ -5,6 +5,6 @@
     "buildCommand": "npm run build"
   },
   "deploy": {
-    "startCommand": "npm run start"
+    "startCommand": "npx prisma migrate deploy && npm run start"
   }
 }

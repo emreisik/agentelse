@@ -42,6 +42,18 @@ export type GoogleCredentialMetadata = {
     gscImpressions?: number;
     error?: string;
   };
+  // Bookkeeping for GoogleAnalyticsScanner's due-scan check (see
+  // google-analytics-scanner.ts) — same pattern as Meta's
+  // lastAdsPerformanceScanAt/adsPerformanceScanFailureCount in
+  // meta-client.ts's MetaCredentialMetadata.
+  lastAnalyticsScanAt?: string;
+  analyticsScanFailureCount?: number;
+  // One-deep snapshot of the last scan's GA4 aggregate — powers
+  // seo-rules.ts's evaluateTrafficFinding the same way Meta's
+  // previousScanSnapshot powers evaluateTrendFinding.
+  previousAnalyticsSnapshot?: {
+    ga4?: { activeUsers: number; sessions: number };
+  };
 };
 
 export class GoogleApiError extends Error {
@@ -328,6 +340,65 @@ export async function fetchSearchConsoleReport(
     ctr: row?.ctr ?? 0,
     position: row?.position ?? 0,
   };
+}
+
+export type SearchConsoleQueryRow = {
+  keys: string[];
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+};
+
+// Row-level Search Console data, broken out by dimension (e.g. "query") —
+// unlike fetchSearchConsoleReport's dimensionless single-row aggregate above,
+// this is what a content-opportunity rule needs to point at a specific query
+// or page. Separate function rather than an overload so the simple aggregate
+// call (used by the "Test connection" button and ANALYTICS_ANALYSIS) keeps
+// its exact existing shape and behavior untouched.
+export async function fetchSearchConsoleQueryRows(
+  accessToken: string,
+  siteUrl: string,
+  dimensions: Array<"query" | "page">,
+  days = 28,
+  rowLimit = 25,
+): Promise<SearchConsoleQueryRow[]> {
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(start.getDate() - days);
+  const format = (d: Date) => d.toISOString().slice(0, 10);
+
+  const result = await request<{
+    rows?: Array<{
+      keys?: string[];
+      clicks?: number;
+      impressions?: number;
+      ctr?: number;
+      position?: number;
+    }>;
+  }>(
+    `${SEARCH_CONSOLE_BASE}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        startDate: format(start),
+        endDate: format(today),
+        dimensions,
+        rowLimit,
+      }),
+    },
+  );
+  return (result.rows ?? []).map((row) => ({
+    keys: row.keys ?? [],
+    clicks: row.clicks ?? 0,
+    impressions: row.impressions ?? 0,
+    ctr: row.ctr ?? 0,
+    position: row.position ?? 0,
+  }));
 }
 
 export type GoogleLists = {

@@ -411,6 +411,11 @@ enum AssetType {
   REPORT
 }
 
+enum AssetSource {
+  AI_GENERATED
+  CUSTOMER_UPLOAD
+}
+
 enum CredentialStatus {
   ACTIVE
   EXPIRED
@@ -1492,6 +1497,7 @@ model Asset {
   brandId     String
 
   type     AssetType
+  source   AssetSource @default(AI_GENERATED)
   filename String
   mimeType String
 
@@ -1727,6 +1733,64 @@ model CompetitorInsight {
   createdAt DateTime @default(now())
 
   @@index([competitorId])
+}
+
+// =============================================================================
+// PRODUCT / OFFER SIGNALS
+// =============================================================================
+// Generic inbound capability: an external system (an e-commerce/auction
+// backend, e.g.) can report that one of a project's products has a live
+// dynamic offer/bid window, via /api/webhooks/product-offers. Kept
+// deliberately generic (no biduniq-specific fields) — see that route for the
+// per-project IntegrationCredential-based auth that gates it.
+
+enum ProductOfferStatus {
+  SCHEDULED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+model Product {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  externalId String
+  name       String
+  metadata   Json?
+
+  offers ProductOffer[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, externalId])
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([brandId])
+}
+
+model ProductOffer {
+  id        String @id @default(cuid())
+  productId String
+
+  externalRef String
+  minPrice    Float?
+  maxPrice    Float?
+  status      ProductOfferStatus
+  startsAt    DateTime?
+  endsAt      DateTime?
+  payload     Json?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, externalRef])
+  @@index([productId])
 }
 
 model Opportunity {

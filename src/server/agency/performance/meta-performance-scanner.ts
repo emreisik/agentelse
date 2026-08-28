@@ -191,6 +191,13 @@ async function scanOneCredential(
           finding,
         });
       }
+      if (finding.rule === "AD_FATIGUE") {
+        await PerformanceOptimizer.proposeCreativeRefresh({
+          scope,
+          subjectId: campaign.campaignId,
+          finding,
+        });
+      }
       continue;
     }
 
@@ -263,6 +270,13 @@ async function scanOneCredential(
             adSetId: adSet.adSetId,
             adSetName: adSet.name,
             currentDailyBudgetCents: adSet.dailyBudgetCents,
+            finding: adSetFinding,
+          });
+        }
+        if (adSetFinding.rule === "AD_FATIGUE") {
+          await PerformanceOptimizer.proposeCreativeRefresh({
+            scope,
+            subjectId: adSet.adSetId,
             finding: adSetFinding,
           });
         }

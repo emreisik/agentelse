@@ -116,6 +116,7 @@ export async function submitChatMessageAction(
         projectId,
         brandId: access.defaultBrandId,
         type: file.type.startsWith("image/") ? "IMAGE" : "DOCUMENT",
+        source: "CUSTOMER_UPLOAD",
         filename,
         mimeType: file.type,
         storageKey,

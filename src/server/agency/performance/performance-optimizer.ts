@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { CapabilityKey } from "@prisma/client";
+import type { CapabilityKey, DepartmentKey } from "@prisma/client";
 
 import { taskFingerprint } from "@/server/agency/fingerprint";
 import { TaskPlanner } from "@/server/commands/task-planner";
@@ -33,13 +33,15 @@ export type ProposeResult =
 async function proposeAction(input: {
   scope: PerformanceScope;
   capability: CapabilityKey;
+  departmentKey?: DepartmentKey;
   subject: string;
   title: string;
   payloadExtra: Record<string, unknown>;
 }): Promise<ProposeResult> {
+  const departmentKey = input.departmentKey ?? "PERFORMANCE_MARKETING";
   const fingerprint = taskFingerprint({
     capability: input.capability,
-    department: "PERFORMANCE_MARKETING",
+    department: departmentKey,
     subject: input.subject,
   });
   const policy = await AutonomyPolicyRepository.getOrCreate(input.scope);
@@ -65,7 +67,7 @@ async function proposeAction(input: {
     capability: input.capability,
     request: input.title,
     createdByType: "SYSTEM",
-    departmentKey: "PERFORMANCE_MARKETING",
+    departmentKey,
     fingerprint,
     payloadExtra: input.payloadExtra,
   });
@@ -93,7 +95,7 @@ export const PerformanceOptimizer = {
         campaignName: input.campaignName,
         currentDailyBudgetCents: input.currentDailyBudgetCents,
         proposedDailyBudgetCents:
-          action.type === "REDUCE_BUDGET"
+          action.type === "REDUCE_BUDGET" || action.type === "SCALE_BUDGET"
             ? action.proposedDailyBudgetCents
             : undefined,
         proposedStatus: action.type === "PAUSE" ? "PAUSED" : undefined,
@@ -125,10 +127,36 @@ export const PerformanceOptimizer = {
         campaignId: input.campaignId,
         currentDailyBudgetCents: input.currentDailyBudgetCents,
         proposedDailyBudgetCents:
-          action.type === "REDUCE_BUDGET"
+          action.type === "REDUCE_BUDGET" || action.type === "SCALE_BUDGET"
             ? action.proposedDailyBudgetCents
             : undefined,
         proposedStatus: action.type === "PAUSE" ? "PAUSED" : undefined,
+        reason: input.finding.summary,
+        metricsSnapshot: input.finding.metricsSnapshot,
+      },
+    });
+  },
+
+  // AD_FATIGUE has no suggestedAction (meta-performance-rules.ts keeps it
+  // informational-only for the budget/pause path — a fatigued but otherwise
+  // fine campaign shouldn't get its budget touched) but it IS a clear signal
+  // that the creative itself needs refreshing. Routed through CREATE_AD_
+  // CREATIVE, owned by CREATIVE (not PERFORMANCE_MARKETING) — this proposes
+  // new creative, not a budget/campaign change, so it isn't gated by
+  // approval-policy.ts's LEVEL_4_CAPABILITIES floor the way
+  // proposeCampaignAction/proposeAdSetAction's targets are.
+  async proposeCreativeRefresh(input: {
+    scope: PerformanceScope;
+    subjectId: string;
+    finding: PerformanceFinding;
+  }): Promise<ProposeResult> {
+    return proposeAction({
+      scope: input.scope,
+      capability: "CREATE_AD_CREATIVE",
+      departmentKey: "CREATIVE",
+      subject: input.subjectId,
+      title: input.finding.title,
+      payloadExtra: {
         reason: input.finding.summary,
         metricsSnapshot: input.finding.metricsSnapshot,
       },

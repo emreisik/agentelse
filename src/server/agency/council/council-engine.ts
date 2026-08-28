@@ -2,6 +2,7 @@ import "server-only";
 
 import type { CouncilRecommendation } from "@prisma/client";
 
+import { prisma } from "@/lib/prisma";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { councilEvaluationDef } from "@/server/reasoning/prompts/council-evaluation";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
@@ -36,6 +37,21 @@ export const CouncilEngine = {
       externallyVisible: true,
     });
 
+    // Real competitor evidence (see competitor-materializer.ts), not the
+    // LLM's general knowledge — without this the "evidence" dimension had
+    // nothing project-specific to ground itself in. Most recent first, capped
+    // small: this is prompt context, not a report.
+    const competitorInsights = await prisma.competitorInsight.findMany({
+      where: { competitor: { projectId } },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: {
+        insight: true,
+        confidence: true,
+        competitor: { select: { name: true } },
+      },
+    });
+
     const recommendations: CouncilRecommendation[] = [];
     const evaluationNotes: {
       council: string;
@@ -52,6 +68,11 @@ export const CouncilEngine = {
             councilType,
             dimensions: definition.dimensions,
             brand,
+            competitorInsights: competitorInsights.map((i) => ({
+              competitor: i.competitor.name,
+              insight: i.insight,
+              confidence: i.confidence,
+            })),
             idea: {
               title: idea.title,
               description: idea.description,

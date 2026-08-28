@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import sharp from "sharp";
 
 import { prisma } from "@/lib/prisma";
+import { SignalUniverse } from "@/server/agency/signals/signal-universe";
 import {
   requireUser,
   requireProjectAccess,
@@ -87,12 +88,13 @@ export async function uploadLibraryAssetAction(
         .catch(() => ({ width: undefined, height: undefined }))
     : { width: undefined, height: undefined };
 
-  await prisma.asset.create({
+  const asset = await prisma.asset.create({
     data: {
       workspaceId: access.workspaceId,
       projectId,
       brandId: access.defaultBrandId,
       type: isImage ? "IMAGE" : isVideo ? "VIDEO" : "DOCUMENT",
+      source: "CUSTOMER_UPLOAD",
       filename,
       mimeType: file.type,
       storageKey,
@@ -101,6 +103,32 @@ export async function uploadLibraryAssetAction(
       height: dimensions.height,
     },
   });
+
+  // A customer-provided video is real, ready-to-publish content — feed it
+  // into the same Signal -> Insight -> Opportunity -> Idea funnel every
+  // other signal source uses instead of leaving it sitting in the library
+  // until someone remembers to do something with it. Goes through the
+  // normal council/director gate (not an automatic publish) since customer
+  // content still needs a brand-safety/quality check before it goes out.
+  if (isVideo) {
+    await SignalUniverse.ingestRaw({
+      workspaceId: access.workspaceId,
+      projectId,
+      brandId: access.defaultBrandId,
+      source: "customer-video-upload",
+      category: "CUSTOMER",
+      externalRef: `asset:${asset.id}`,
+      title: `New customer video: ${file.name}`,
+      summary: `A customer-provided video ("${file.name}") was uploaded to the library and may be worth publishing.`,
+      payload: { assetId: asset.id },
+      reliability: 1,
+    }).catch((error) => {
+      console.error(
+        `[library-actions] Failed to ingest signal for video asset ${asset.id}:`,
+        error instanceof Error ? error.message : error,
+      );
+    });
+  }
 
   revalidatePath(`/projects/${projectId}`);
   return { ok: true };

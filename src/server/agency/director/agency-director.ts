@@ -43,6 +43,21 @@ export function registerWorkPlanBuilder(builder: PlanBuilder): void {
 const APPROVE_THRESHOLD = 0.45;
 const BACKLOG_THRESHOLD = 0.3;
 
+// Deterministic visual-need signal: idea.lens is a structured Prisma enum,
+// far more reliable than the LLM's free-text departmentsInvolved output
+// (idea-generation.ts's schema doesn't constrain it to a known set). Lenses
+// that inherently produce visual/social content route through CREATIVE
+// regardless of what the LLM named — mirrors the lens->department intent
+// idea-generation.ts's buildMock lensDepartments table already encodes for
+// BRAND/CULTURE/SOCIAL/EXPERIENCE/OFFLINE.
+const VISUAL_LENSES = new Set<CreativeLens>([
+  "BRAND",
+  "CULTURE",
+  "SOCIAL",
+  "EXPERIENCE",
+  "OFFLINE",
+]);
+
 export const AgencyDirector = {
   async decideOnIdea(ideaId: string, projectId: string) {
     const idea = await IdeaRepository.findByIdInProject(ideaId, projectId);
@@ -121,6 +136,13 @@ export const AgencyDirector = {
     };
     const departments = concept.departmentsInvolved ?? [];
 
+    const needsVisual =
+      (idea.lens !== null && VISUAL_LENSES.has(idea.lens)) ||
+      departments.includes("CREATIVE");
+    if (needsVisual && !departments.includes("CREATIVE")) {
+      departments.push("CREATIVE");
+    }
+
     let decisionType: AgencyDecisionType;
     if (score < BACKLOG_THRESHOLD || !inWindow) {
       decisionType = "REJECT";
@@ -192,10 +214,14 @@ export const AgencyDirector = {
       return decision;
     }
 
-    // Single task: route to the concept's first department's most relevant
-    // capability — CREATE_CAMPAIGN_BRIEF as the universal "start the work"
-    // capability for a single-department idea.
-    const capability = "CREATE_CAMPAIGN_BRIEF" as const;
+    // Single task: route to the concept's most relevant capability.
+    // CREATE_CAMPAIGN_BRIEF is the universal "start the work" capability for
+    // a single-department idea — except when the idea needs visual output,
+    // where routing to the text-only brief silently never produced an image
+    // (this branch never looked at `departments`/lens at all). Visual-need
+    // ideas go straight to CREATE_SOCIAL_CREATIVE instead.
+    const capability: "CREATE_SOCIAL_CREATIVE" | "CREATE_CAMPAIGN_BRIEF" =
+      needsVisual ? "CREATE_SOCIAL_CREATIVE" : "CREATE_CAMPAIGN_BRIEF";
     const department = DepartmentRouter.ownerOf(capability) ?? "COPY_CONTENT";
 
     // Task fingerprint + cooldown gate (noise control) — keyed by idea.id,

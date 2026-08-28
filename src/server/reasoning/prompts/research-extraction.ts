@@ -22,6 +22,12 @@ export const ResearchExtractionOutputSchema = z.object({
       category: z.string(),
       confidence: z.number().min(0).max(1),
       sourceUrl: z.string().optional(),
+      // Only meaningful for COMPETITOR_RESEARCH/MONITORING/CHANGE_DETECTION
+      // reports — which named company this finding is about. Lets
+      // research-result-materializer.ts group findings per-competitor
+      // instead of dropping the identity entirely (see competitor-
+      // materializer.ts). Omitted for every other capability.
+      competitorName: z.string().optional(),
     }),
   ),
 });
@@ -47,6 +53,10 @@ export const researchExtractionDef: ReasoningDef<ResearchExtractionOutput> = {
           "LIKELY_FACT when strongly implied; ASSUMPTION when the researcher inferred it; " +
           "RECOMMENDATION for suggested actions; CONTRADICTION when the report contradicts itself.",
         "confidence is 0-1. Include sourceUrl only when the report gives an explicit URL.",
+        "If the research capability is about competitors (COMPETITOR_RESEARCH, " +
+          "COMPETITOR_MONITORING, COMPETITOR_CHANGE_DETECTION), set competitorName " +
+          "to the specific company/brand each finding is about, whenever the report " +
+          "names one — omit it for findings not tied to a single named competitor.",
         "Skip filler, headings and meta commentary about the research process itself.",
         "Return at most 25 findings, ordered by importance.",
       ].join(" "),

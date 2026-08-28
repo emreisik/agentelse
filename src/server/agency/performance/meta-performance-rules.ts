@@ -10,7 +10,8 @@ export type FindingSeverity = "LOW" | "MEDIUM" | "HIGH";
 
 export type SuggestedAction =
   | { type: "PAUSE" }
-  | { type: "REDUCE_BUDGET"; proposedDailyBudgetCents: number };
+  | { type: "REDUCE_BUDGET"; proposedDailyBudgetCents: number }
+  | { type: "SCALE_BUDGET"; proposedDailyBudgetCents: number };
 
 export type PerformanceFinding = {
   rule:
@@ -19,7 +20,8 @@ export type PerformanceFinding = {
     | "LOW_CTR"
     | "AD_FATIGUE"
     | "CHRONIC_BUDGET_BURN"
-    | "CPA_REGRESSION";
+    | "CPA_REGRESSION"
+    | "SCALE_BUDGET";
   severity: FindingSeverity;
   // Human-readable, already carrying the concrete numbers — this is what
   // gets embedded into the Signal's title/summary text (see
@@ -40,6 +42,10 @@ const AD_FATIGUE_FREQUENCY_THRESHOLD = 4;
 const AD_FATIGUE_CTR_THRESHOLD = 1.0;
 const CHRONIC_BURN_FRACTION = 0.9;
 const REDUCE_BUDGET_FACTOR = 0.7; // propose cutting budget by 30%
+const SCALE_BUDGET_CPA_FRACTION = 0.2; // cost per result under 20% of budget = headroom
+const SCALE_BUDGET_CTR_THRESHOLD = 1.0; // same floor AD_FATIGUE treats as healthy
+const SCALE_BUDGET_MIN_RESULTS = 5; // enough volume to trust the signal
+const SCALE_UP_FACTOR = 1.3; // propose raising budget by 30%
 
 // Evaluates ONE campaign's last_7d insights against the rule table and
 // returns its single most severe finding (a campaign rarely needs more
@@ -92,6 +98,40 @@ export function evaluateCampaignFinding(input: {
       metricsSnapshot: {
         costPerResult: insights.costPerResult,
         resultCount: insights.resultCount,
+        dailyBudgetMajor,
+      },
+    });
+  }
+
+  // Mirror image of HIGH_CPA: strong, high-volume, non-fatigued performance
+  // with plenty of budget headroom -> propose scaling instead of only ever
+  // reacting to bad performance (PAUSE/REDUCE_BUDGET above). Thresholds are
+  // deliberately disjoint from HIGH_CPA/LOW_CTR/AD_FATIGUE's ranges so a
+  // campaign can never match both a "bad" and "good" rule in the same scan.
+  if (
+    insights.resultCount &&
+    insights.resultCount >= SCALE_BUDGET_MIN_RESULTS &&
+    insights.costPerResult !== undefined &&
+    insights.costPerResult > 0 &&
+    insights.costPerResult < dailyBudgetMajor * SCALE_BUDGET_CPA_FRACTION &&
+    insights.ctr >= SCALE_BUDGET_CTR_THRESHOLD &&
+    insights.frequency < AD_FATIGUE_FREQUENCY_THRESHOLD &&
+    insights.spend >= dailyBudgetMajor * 5
+  ) {
+    const proposedDailyBudgetCents = Math.round(
+      dailyBudgetCents * SCALE_UP_FACTOR,
+    );
+    candidates.push({
+      rule: "SCALE_BUDGET",
+      severity: "HIGH",
+      title: `${campaignName}: strong performance, scale budget`,
+      summary: `"${campaignName}"'s cost per ${insights.resultLabel ?? "result"} is ${insights.costPerResult.toFixed(2)} ${currency} — well under its ${dailyBudgetMajor.toFixed(2)} ${currency} daily budget, with healthy CTR (${insights.ctr.toFixed(2)}%) and no fatigue (${insights.frequency.toFixed(1)}x frequency). Proposing a budget increase to capture more volume.`,
+      suggestedAction: { type: "SCALE_BUDGET", proposedDailyBudgetCents },
+      metricsSnapshot: {
+        costPerResult: insights.costPerResult,
+        resultCount: insights.resultCount,
+        ctr: insights.ctr,
+        frequency: insights.frequency,
         dailyBudgetMajor,
       },
     });

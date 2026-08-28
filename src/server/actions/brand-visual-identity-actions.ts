@@ -247,6 +247,7 @@ export async function uploadStyleReferenceAction(
       projectId,
       brandId: access.defaultBrandId,
       type: "IMAGE",
+      source: "CUSTOMER_UPLOAD",
       filename,
       mimeType: file.type,
       storageKey,

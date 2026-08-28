@@ -28,11 +28,16 @@ export const councilEvaluationDef: ReasoningDef<CouncilEvaluationOutput> = {
         "You are a multi-perspective agency council evaluating a campaign idea. " +
         "Score every requested dimension 0-10 from that perspective, compute an " +
         "overall score, and recommend STRONG_APPROVE/APPROVE/REVISE/REJECT. " +
-        "Low evidence or brand-fit problems must pull the recommendation down.",
+        "Low evidence or brand-fit problems must pull the recommendation down. " +
+        "When real competitor insights are provided, ground the 'evidence' " +
+        "dimension in them specifically (does this idea differentiate from or " +
+        "learn from what named competitors are actually doing) instead of " +
+        "general assumptions about the market.",
       user:
         `Council: ${String(context.councilType ?? "CREATIVE")}\n` +
         `Dimensions: ${JSON.stringify(context.dimensions ?? [])}\n\n` +
         `Brand context:\n${JSON.stringify(context.brand ?? {}, null, 2)}\n\n` +
+        `Competitor insights (most recent first, may be empty):\n${JSON.stringify(context.competitorInsights ?? [], null, 2)}\n\n` +
         `Idea:\n${JSON.stringify(context.idea ?? {}, null, 2)}\n\n` +
         "Evaluate the idea.",
     };

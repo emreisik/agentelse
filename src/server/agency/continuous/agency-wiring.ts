@@ -23,6 +23,7 @@ import {
 import { LearningEngine } from "@/server/agency/learning/learning-engine";
 import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
 import { MetaAdSetChainRelay } from "@/server/agency/meta-ads/meta-adset-chain-relay";
+import { GoogleAnalyticsScanner } from "@/server/agency/performance/google-analytics-scanner";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
 import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
 import { WorkPlanProgressor } from "@/server/agency/work-plans/work-plan-progressor";
@@ -114,6 +115,13 @@ registerAgencyTickStep({
 registerAgencyTickStep({
   name: "meta-ads-performance-scan",
   run: () => MetaPerformanceScanner.runDueScans(5),
+});
+// Same role as meta-ads-performance-scan above, for GA4/Search Console —
+// SEO signals produced this tick get scored in the same tick's
+// signal-processing step. See google-analytics-scanner.ts.
+registerAgencyTickStep({
+  name: "google-analytics-scan",
+  run: () => GoogleAnalyticsScanner.runDueScans(5),
 });
 registerAgencyTickStep({
   name: "signal-processing",

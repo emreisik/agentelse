@@ -9,7 +9,14 @@ import { SignalRepository } from "@/server/repositories/signal.repository";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { researchExtractionDef } from "@/server/reasoning/prompts/research-extraction";
 
+import { CompetitorMaterializer } from "./competitor-materializer";
 import { FindingWriter } from "./finding-writer";
+
+const COMPETITOR_CAPABILITIES: ReadonlySet<string> = new Set([
+  "COMPETITOR_RESEARCH",
+  "COMPETITOR_MONITORING",
+  "COMPETITOR_CHANGE_DETECTION",
+]);
 
 const VALID_CLASSIFICATIONS: ReadonlySet<string> = new Set([
   "VERIFIED_FACT",
@@ -26,6 +33,7 @@ type RawFinding = {
   category?: unknown;
   confidence?: unknown;
   sourceUrl?: unknown;
+  competitorName?: unknown;
 };
 
 type RawSignal = {
@@ -148,6 +156,41 @@ export const ResultMaterializer = {
         }));
       const written = await FindingWriter.writeMany(scope, drafts);
       findingCount = written.length;
+
+      // In addition to the generic Finding rows above, competitor-research
+      // capabilities also get materialized into the dedicated Competitor/
+      // CompetitorSnapshot/CompetitorChange/CompetitorInsight tables — see
+      // competitor-materializer.ts. Best-effort: a materialization failure
+      // must not roll back the Finding writes that already succeeded.
+      if (COMPETITOR_CAPABILITIES.has(task.capability)) {
+        const competitorFindings = rawFindings
+          .filter(
+            (f) =>
+              typeof f.statement === "string" &&
+              typeof f.competitorName === "string" &&
+              f.competitorName.trim().length > 0,
+          )
+          .map((f) => ({
+            competitorName: f.competitorName as string,
+            statement: f.statement as string,
+            confidence:
+              typeof f.confidence === "number" ? f.confidence : undefined,
+          }));
+        if (competitorFindings.length > 0) {
+          try {
+            await CompetitorMaterializer.materialize(
+              scope,
+              task.id,
+              competitorFindings,
+            );
+          } catch (error) {
+            console.error(
+              `[research-materializer] Competitor materialization failed for task ${task.id}:`,
+              error instanceof Error ? error.message : error,
+            );
+          }
+        }
+      }
     }
 
     let signalCount = 0;

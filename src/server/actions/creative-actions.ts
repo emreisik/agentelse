@@ -184,6 +184,7 @@ export async function generateRealCreativeImageAction(
         projectId: creative.projectId,
         brandId: creative.brandId,
         type: "CREATIVE",
+        source: "AI_GENERATED",
         filename: generated.filename,
         mimeType: generated.mimeType,
         storageKey: generated.storageKey,

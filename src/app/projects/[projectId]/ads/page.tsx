@@ -1,6 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronRight, Eye, Megaphone, Plug, Plus } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronRight,
+  Eye,
+  Megaphone,
+  Plug,
+  Plus,
+} from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
 import {
@@ -36,6 +43,15 @@ import { CampaignEditForm } from "@/components/ads/campaign-edit-form";
 import { AdSetEditWizard } from "@/components/ads/adset-edit-wizard";
 import { AdEditWizard } from "@/components/ads/ad-edit-wizard";
 import { cn } from "@/lib/utils";
+
+// MetaApiError and network failures land here uncaught otherwise (see the
+// isolated try/catch around each drill-down level's fetch below) — safe to
+// surface as-is, it's Meta's own descriptive text, never the access token.
+function metaErrorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : "Failed to load data from Meta.";
+}
 
 // Live, read-only drill-down over Meta's Campaign -> AdSet -> Ad hierarchy —
 // no local Campaign/AdSet/Ad table (see MetaAdsQuery). The same page renders
@@ -114,24 +130,45 @@ export default async function AdsPage({
       ? sp.range
       : DEFAULT_DATE_PRESET;
 
-  const campaigns = await MetaAdsQuery.campaigns(connection, datePreset);
+  // Each level's fetch is isolated in its own try/catch: a Meta API error at
+  // any level (rate limit, expired token, an object deleted on Meta's side
+  // between listing and drill-down) used to propagate uncaught out of this
+  // RSC render and take down the whole page with a generic 500. Now it
+  // degrades to a retry prompt for just that level instead.
+  let campaigns: Awaited<ReturnType<typeof MetaAdsQuery.campaigns>> = [];
+  let campaignsError: string | null = null;
+  try {
+    campaigns = await MetaAdsQuery.campaigns(connection, datePreset);
+  } catch (error) {
+    campaignsError = metaErrorMessage(error);
+  }
   const activeCampaign = campaignId
     ? campaigns.find((c) => c.campaignId === campaignId)
     : undefined;
 
-  const adSets =
-    campaignId && activeCampaign
-      ? await MetaAdsQuery.adSets(connection, campaignId, datePreset)
-      : [];
+  let adSets: Awaited<ReturnType<typeof MetaAdsQuery.adSets>> = [];
+  let adSetsError: string | null = null;
+  if (campaignId && activeCampaign) {
+    try {
+      adSets = await MetaAdsQuery.adSets(connection, campaignId, datePreset);
+    } catch (error) {
+      adSetsError = metaErrorMessage(error);
+    }
+  }
   const activeAdSet =
     adSetId && adSets.length
       ? adSets.find((a) => a.adSetId === adSetId)
       : undefined;
 
-  const ads =
-    adSetId && activeAdSet
-      ? await MetaAdsQuery.ads(connection, adSetId, datePreset)
-      : [];
+  let ads: Awaited<ReturnType<typeof MetaAdsQuery.ads>> = [];
+  let adsError: string | null = null;
+  if (adSetId && activeAdSet) {
+    try {
+      ads = await MetaAdsQuery.ads(connection, adSetId, datePreset);
+    } catch (error) {
+      adsError = metaErrorMessage(error);
+    }
+  }
 
   const create = typeof sp.create === "string" ? sp.create : undefined;
   const brief = typeof sp.brief === "string" ? sp.brief : undefined;
@@ -223,7 +260,9 @@ export default async function AdsPage({
 
         <Breadcrumb base={base} campaign={activeCampaign} adSet={activeAdSet} />
 
-        {!campaignId ? (
+        {campaignsError ? (
+          <LoadErrorState message={campaignsError} />
+        ) : !campaignId ? (
           <CampaignsTable
             base={base}
             campaigns={campaigns}
@@ -237,6 +276,8 @@ export default async function AdsPage({
             hint="It may have been deleted or renamed on Meta's side."
             className="py-16"
           />
+        ) : adSetsError ? (
+          <LoadErrorState message={adSetsError} />
         ) : !adSetId ? (
           <AdSetsTable
             base={base}
@@ -252,6 +293,8 @@ export default async function AdsPage({
             hint="It may have been deleted or renamed on Meta's side."
             className="py-16"
           />
+        ) : adsError ? (
+          <LoadErrorState message={adsError} />
         ) : (
           <AdsTable
             ads={ads}
@@ -557,6 +600,21 @@ function Header({ projectName }: { projectName: string }) {
         {projectName} — Meta campaigns, ad sets and ads (live from Meta)
       </p>
     </div>
+  );
+}
+
+function LoadErrorState({ message }: { message: string }) {
+  return (
+    <EmptyState
+      icon={AlertTriangle}
+      title="Couldn't load from Meta"
+      hint={message}
+      className="py-16"
+    >
+      <p className="text-xs text-muted-foreground">
+        Reload the page to try again.
+      </p>
+    </EmptyState>
   );
 }
 

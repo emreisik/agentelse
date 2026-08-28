@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, type UseFormReturn } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -8,18 +8,21 @@ import { z } from "zod";
 import {
   ArrowLeft,
   ArrowRight,
+  GalleryHorizontal,
   ImagePlus,
   Info,
   Loader2,
   Pencil,
   Rocket,
   Target,
+  Video,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { countryLabel } from "@/lib/locales";
-import { GENDER_OPTIONS, META_LOCALES } from "@/lib/meta-ad-targeting-data";
+import { GENDER_OPTIONS } from "@/lib/meta-ad-targeting-data";
+import { useObjectUrl, useObjectUrls } from "@/lib/use-object-url";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -38,11 +41,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { WizardSteps } from "@/components/shared/wizard-steps";
 import { GeoTargetSelect } from "@/components/ads/geo-target-select";
 import { CitySearchCommand } from "@/components/ads/city-search-command";
 import { GenderToggle } from "@/components/ads/gender-toggle";
-import { LocaleMultiSelect } from "@/components/ads/locale-multi-select";
+import { LocaleSearchCommand } from "@/components/ads/locale-search-command";
+import { CarouselCardEditor } from "@/components/ads/carousel-card-editor";
+import { VideoUploadField } from "@/components/ads/video-upload-field";
+import {
+  AdPreviewCard,
+  type AdPreviewMedia,
+} from "@/components/ads/ad-preview-card";
 import { createMetaAdSetWithAdAction } from "@/server/actions/meta-ads-actions";
 
 const BILLING_EVENTS = ["IMPRESSIONS", "LINK_CLICKS"] as const;
@@ -72,6 +82,65 @@ const CTA_LABEL: Record<(typeof CALL_TO_ACTIONS)[number], string> = {
 
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+const MIN_CARDS = 2;
+const MAX_CARDS = 10;
+
+const urlField = z.string().refine((v) => {
+  try {
+    new URL(v);
+    return true;
+  } catch {
+    return false;
+  }
+}, "Enter a valid URL");
+
+const adNameField = z
+  .string()
+  .max(120, "120 characters max")
+  .refine((v) => v.trim().length > 0, "Ad name is required");
+const messageField = z
+  .string()
+  .max(500, "500 characters max")
+  .refine((v) => v.trim().length > 0, "Primary text is required");
+const callToActionField = z.enum(CALL_TO_ACTIONS);
+
+const adSchema = z.discriminatedUnion("format", [
+  z.object({
+    format: z.literal("SINGLE_IMAGE"),
+    adName: adNameField,
+    callToActionType: callToActionField,
+    message: messageField,
+    link: urlField,
+  }),
+  z.object({
+    format: z.literal("CAROUSEL"),
+    adName: adNameField,
+    callToActionType: callToActionField,
+    message: messageField,
+    cards: z
+      .array(
+        z.object({
+          link: urlField,
+          name: z
+            .string()
+            .max(80, "80 characters max")
+            .refine((v) => v.trim().length > 0, "Card headline is required"),
+          description: z.string().max(200, "200 characters max").optional(),
+        }),
+      )
+      .min(MIN_CARDS, `At least ${MIN_CARDS} cards are required`)
+      .max(MAX_CARDS, `At most ${MAX_CARDS} cards allowed`),
+  }),
+  z.object({
+    format: z.literal("VIDEO"),
+    adName: adNameField,
+    callToActionType: callToActionField,
+    message: messageField,
+    link: urlField,
+  }),
+]);
 
 const schema = z
   .object({
@@ -95,36 +164,23 @@ const schema = z
       return Number.isInteger(n) && n >= 13 && n <= 65;
     }, "Enter an age between 13 and 65"),
     gender: z.string(),
-    locales: z.array(z.number()),
-    adName: z
-      .string()
-      .max(120, "120 characters max")
-      .refine((v) => v.trim().length > 0, "Ad name is required"),
-    message: z
-      .string()
-      .max(500, "500 characters max")
-      .refine((v) => v.trim().length > 0, "Primary text is required"),
-    link: z.string().refine((v) => {
-      try {
-        new URL(v);
-        return true;
-      } catch {
-        return false;
-      }
-    }, "Enter a valid URL"),
-    callToActionType: z.enum(CALL_TO_ACTIONS),
+    locales: z.array(
+      z.object({ id: z.number(), label: z.string().optional() }),
+    ),
+    ad: adSchema,
   })
   .refine((v) => Number(v.ageMin) <= Number(v.ageMax), {
     message: "Min age must be less than or equal to max age",
     path: ["ageMax"],
   });
 
-type FormValues = z.infer<typeof schema>;
-type StepId = "budget" | "targeting" | "content" | "review";
+export type FormValues = z.infer<typeof schema>;
+type StepId = "budget" | "targeting" | "format" | "content" | "review";
 
 const STEPS: { id: StepId; title: string }[] = [
   { id: "budget", title: "Budget" },
   { id: "targeting", title: "Targeting" },
+  { id: "format", title: "Format" },
   { id: "content", title: "Ad" },
   { id: "review", title: "Review" },
 ];
@@ -132,7 +188,11 @@ const STEPS: { id: StepId; title: string }[] = [
 const STEP_FIELDS: Record<StepId, (keyof FormValues)[]> = {
   budget: ["name", "dailyBudget", "billingEvent", "optimizationGoal"],
   targeting: ["countries", "ageMin", "ageMax"],
-  content: ["adName", "message", "link", "callToActionType"],
+  format: [],
+  // Triggering the top-level "ad" key validates its whole nested subtree
+  // (whichever branch of the discriminated union is currently selected) —
+  // simpler and more robust than enumerating per-format dot-paths here.
+  content: ["ad"],
   review: [],
 };
 
@@ -142,6 +202,35 @@ function validateImage(file: File | null): string | null {
     return "Image must be JPEG, PNG or WebP";
   if (file.size > MAX_IMAGE_BYTES) return "Image must be 8MB or smaller";
   return null;
+}
+
+function validateVideo(file: File | null): string | null {
+  if (!file) return "A video is required";
+  if (!ALLOWED_VIDEO_TYPES.includes(file.type))
+    return "Video must be MP4, MOV or WebM";
+  if (file.size > MAX_VIDEO_BYTES) return "Video must be 50MB or smaller";
+  return null;
+}
+
+function defaultAdForFormat(
+  format: FormValues["ad"]["format"],
+  carry: {
+    adName: string;
+    callToActionType: (typeof CALL_TO_ACTIONS)[number];
+    message: string;
+  },
+): FormValues["ad"] {
+  if (format === "CAROUSEL") {
+    return {
+      format,
+      ...carry,
+      cards: [
+        { link: "", name: "", description: "" },
+        { link: "", name: "", description: "" },
+      ],
+    };
+  }
+  return { format, ...carry, link: "" };
 }
 
 // Combined "ad set + ad" wizard — mirrors Meta Ads Manager's single "New ad
@@ -157,27 +246,33 @@ export function AdSetAdWizard({
   projectId,
   campaignId,
   closeHref,
+  pageName,
 }: {
   projectId: string;
   campaignId: string;
   closeHref: string;
+  pageName: string;
 }) {
   const router = useRouter();
   const [stepIndex, setStepIndex] = useState(0);
   const [direction, setDirection] = useState<1 | -1>(1);
   const [pending, startTransition] = useTransition();
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Every creative File lives here, outside react-hook-form — same
+  // reasoning throughout this file: a File isn't a zod-validated text
+  // field, and keeping it out of the form avoids re-render churn.
   const [image, setImage] = useState<File | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
-  const imagePreviewUrl = useMemo(
-    () => (image ? URL.createObjectURL(image) : null),
-    [image],
-  );
-  useEffect(() => {
-    return () => {
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-    };
-  }, [imagePreviewUrl]);
+  const [cardImages, setCardImages] = useState<(File | null)[]>([null, null]);
+  const [cardImagesError, setCardImagesError] = useState<string | null>(null);
+  const [video, setVideo] = useState<File | null>(null);
+  const [thumbnail, setThumbnail] = useState<File | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
+
+  const imagePreviewUrl = useObjectUrl(image);
+  const cardPreviewUrls = useObjectUrls(cardImages);
+  const thumbnailPreviewUrl = useObjectUrl(thumbnail);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -192,20 +287,55 @@ export function AdSetAdWizard({
       ageMax: "65",
       gender: "",
       locales: [],
-      adName: "",
-      message: "",
-      link: "",
-      callToActionType: "LEARN_MORE",
+      ad: {
+        format: "SINGLE_IMAGE",
+        adName: "",
+        callToActionType: "LEARN_MORE",
+        message: "",
+        link: "",
+      },
     },
   });
 
   const step = STEPS[stepIndex]!;
   const isFirstStep = stepIndex === 0;
   const isLastStep = stepIndex === STEPS.length - 1;
+  const ad = form.watch("ad");
 
   function goTo(index: number) {
     setDirection(index > stepIndex ? 1 : -1);
     setStepIndex(index);
+  }
+
+  function handleFormatChange(format: FormValues["ad"]["format"]) {
+    const current = form.getValues("ad");
+    form.setValue(
+      "ad",
+      defaultAdForFormat(format, {
+        adName: current.adName,
+        callToActionType: current.callToActionType,
+        message: current.message,
+      }),
+      { shouldValidate: false },
+    );
+    // Every creative File is format-specific local state, kept in sync by
+    // hand with the form's `ad` field — defaultAdForFormat above always
+    // rebuilds CAROUSEL's `cards` as a fresh 2-entry array, so leaving a
+    // longer/shorter `cardImages` behind from a PRIOR carousel session
+    // permanently desyncs the two arrays' lengths (CarouselCardEditor's
+    // add/remove only ever moves them together by ±1, so an existing
+    // offset can never close through the UI) and permanently fails the
+    // content step's "every card needs an image" check. Resetting all four
+    // pieces of creative state on every format switch — not just
+    // cardImages — also means switching formats never carries forward an
+    // image/video that no longer belongs to the newly selected format.
+    setImage(null);
+    setImageError(null);
+    setCardImages([null, null]);
+    setCardImagesError(null);
+    setVideo(null);
+    setThumbnail(null);
+    setVideoError(null);
   }
 
   function handleCreate() {
@@ -226,12 +356,39 @@ export function AdSetAdWizard({
       formData.set("ageMin", values.ageMin);
       formData.set("ageMax", values.ageMax);
       if (values.gender) formData.set("gender", values.gender);
-      values.locales.forEach((id) => formData.append("locales", String(id)));
-      formData.set("adName", values.adName.trim());
-      formData.set("message", values.message.trim());
-      formData.set("link", values.link.trim());
-      formData.set("callToActionType", values.callToActionType);
-      if (image) formData.set("image", image);
+      if (values.locales.length) {
+        formData.set("locales", JSON.stringify(values.locales));
+      }
+
+      formData.set("format", values.ad.format);
+      formData.set("adName", values.ad.adName.trim());
+      formData.set("callToActionType", values.ad.callToActionType);
+      formData.set("message", values.ad.message.trim());
+
+      if (values.ad.format === "SINGLE_IMAGE") {
+        formData.set("link", values.ad.link.trim());
+        if (image) formData.set("image", image);
+      } else if (values.ad.format === "CAROUSEL") {
+        formData.set(
+          "cards",
+          JSON.stringify(
+            values.ad.cards.map((c) => ({
+              link: c.link.trim(),
+              name: c.name.trim(),
+              ...(c.description?.trim()
+                ? { description: c.description.trim() }
+                : {}),
+            })),
+          ),
+        );
+        cardImages.forEach((file) => {
+          if (file) formData.append("cardImage", file);
+        });
+      } else if (values.ad.format === "VIDEO") {
+        formData.set("link", values.ad.link.trim());
+        if (video) formData.set("video", video);
+        if (thumbnail) formData.set("thumbnail", thumbnail);
+      }
 
       const result = await createMetaAdSetWithAdAction(formData);
       if (result.ok) {
@@ -251,8 +408,29 @@ export function AdSetAdWizard({
       if (!valid) return;
     }
     if (step.id === "content") {
-      const err = validateImage(image);
-      setImageError(err);
+      const values = form.getValues();
+      let err: string | null = null;
+      if (values.ad.format === "SINGLE_IMAGE") {
+        err = validateImage(image);
+        setImageError(err);
+      } else if (values.ad.format === "CAROUSEL") {
+        const missing =
+          cardImages.length !== values.ad.cards.length
+            ? "Every card needs an image"
+            : cardImages.some((f) => !f)
+              ? "Every card needs an image"
+              : cardImages.map(validateImage).find(Boolean) || null;
+        err = missing;
+        setCardImagesError(err);
+      } else if (values.ad.format === "VIDEO") {
+        err =
+          validateVideo(video) ??
+          (() => {
+            const thumbErr = validateImage(thumbnail);
+            return thumbErr ? `Thumbnail: ${thumbErr}` : null;
+          })();
+        setVideoError(err);
+      }
       if (err) return;
     }
     if (isLastStep) {
@@ -262,85 +440,124 @@ export function AdSetAdWizard({
     goTo(stepIndex + 1);
   }
 
+  const previewMedia: AdPreviewMedia =
+    ad.format === "CAROUSEL"
+      ? {
+          kind: "carousel",
+          cards: ad.cards.map((c, i) => ({
+            imageUrl: cardPreviewUrls[i] ?? null,
+            name: c.name,
+          })),
+        }
+      : ad.format === "VIDEO"
+        ? { kind: "video", thumbnailUrl: thumbnailPreviewUrl }
+        : { kind: "single", imageUrl: imagePreviewUrl };
+
   return (
-    <div className="w-full">
-      <WizardSteps
-        steps={STEPS}
-        currentIndex={stepIndex}
-        onStepClick={goTo}
-        disabled={pending}
-      />
-      <Form {...form}>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void handleContinue();
-          }}
-        >
-          <div
-            key={step.id}
-            className={cn(
-              "min-h-[320px]",
-              direction === 1
-                ? "animate-in fade-in slide-in-from-right-3 duration-300"
-                : "animate-in fade-in slide-in-from-left-3 duration-300",
-            )}
+    <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="w-full">
+        <WizardSteps
+          steps={STEPS}
+          currentIndex={stepIndex}
+          onStepClick={goTo}
+          disabled={pending}
+        />
+        <Form {...form}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleContinue();
+            }}
           >
-            {step.id === "budget" ? <BudgetStep form={form} /> : null}
-            {step.id === "targeting" ? (
-              <TargetingStep form={form} projectId={projectId} />
-            ) : null}
-            {step.id === "content" ? (
-              <ContentStep
-                form={form}
-                image={image}
-                onImageChange={setImage}
-                imagePreviewUrl={imagePreviewUrl}
-                imageError={imageError}
-              />
-            ) : null}
-            {step.id === "review" ? (
-              <ReviewStep
-                form={form}
-                imagePreviewUrl={imagePreviewUrl}
-                onEdit={goTo}
-              />
-            ) : null}
-          </div>
-
-          {submitError ? (
-            <p className="mt-3 text-sm text-destructive">{submitError}</p>
-          ) : null}
-
-          <div className="mt-6 flex items-center justify-between gap-3 border-t border-border/60 pt-4">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => goTo(stepIndex - 1)}
-              disabled={pending}
-              className={cn(isFirstStep && "invisible")}
-            >
-              <ArrowLeft /> Back
-            </Button>
-            <Button type="submit" size="sm" disabled={pending}>
-              {pending ? (
-                <>
-                  <Loader2 className="animate-spin" /> Submitting…
-                </>
-              ) : isLastStep ? (
-                <>
-                  <Rocket /> Create Ad Set + Ad
-                </>
-              ) : (
-                <>
-                  Continue <ArrowRight />
-                </>
+            <div
+              key={step.id}
+              className={cn(
+                "min-h-[320px]",
+                direction === 1
+                  ? "animate-in fade-in slide-in-from-right-3 duration-300"
+                  : "animate-in fade-in slide-in-from-left-3 duration-300",
               )}
-            </Button>
-          </div>
-        </form>
-      </Form>
+            >
+              {step.id === "budget" ? <BudgetStep form={form} /> : null}
+              {step.id === "targeting" ? (
+                <TargetingStep form={form} projectId={projectId} />
+              ) : null}
+              {step.id === "format" ? (
+                <FormatStep value={ad.format} onChange={handleFormatChange} />
+              ) : null}
+              {step.id === "content" ? (
+                <ContentStep
+                  form={form}
+                  format={ad.format}
+                  image={image}
+                  onImageChange={setImage}
+                  imagePreviewUrl={imagePreviewUrl}
+                  imageError={imageError}
+                  cardImages={cardImages}
+                  onCardImagesChange={setCardImages}
+                  cardImagesError={cardImagesError}
+                  video={video}
+                  onVideoChange={setVideo}
+                  thumbnail={thumbnail}
+                  onThumbnailChange={setThumbnail}
+                  videoError={videoError}
+                />
+              ) : null}
+              {step.id === "review" ? (
+                <ReviewStep
+                  form={form}
+                  imagePreviewUrl={imagePreviewUrl}
+                  onEdit={goTo}
+                />
+              ) : null}
+            </div>
+
+            {submitError ? (
+              <p className="mt-3 text-sm text-destructive">{submitError}</p>
+            ) : null}
+
+            <div className="mt-6 flex items-center justify-between gap-3 border-t border-border/60 pt-4">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => goTo(stepIndex - 1)}
+                disabled={pending}
+                className={cn(isFirstStep && "invisible")}
+              >
+                <ArrowLeft /> Back
+              </Button>
+              <Button type="submit" size="sm" disabled={pending}>
+                {pending ? (
+                  <>
+                    <Loader2 className="animate-spin" /> Submitting…
+                  </>
+                ) : isLastStep ? (
+                  <>
+                    <Rocket /> Create Ad Set + Ad
+                  </>
+                ) : (
+                  <>
+                    Continue <ArrowRight />
+                  </>
+                )}
+              </Button>
+            </div>
+          </form>
+        </Form>
+      </div>
+      <div className="hidden md:sticky md:top-0 md:block md:self-start">
+        <p className="mb-2 text-xs font-medium text-muted-foreground">
+          Preview
+        </p>
+        <AdPreviewCard
+          pageName={pageName}
+          message={ad.message}
+          link={ad.format !== "CAROUSEL" ? ad.link : ""}
+          callToActionLabel={CTA_LABEL[ad.callToActionType]}
+          media={previewMedia}
+        />
+      </div>
     </div>
   );
 }
@@ -533,7 +750,8 @@ function TargetingStep({
               </span>
             </FormLabel>
             <FormControl>
-              <LocaleMultiSelect
+              <LocaleSearchCommand
+                projectId={projectId}
                 value={field.value}
                 onChange={field.onChange}
               />
@@ -545,24 +763,129 @@ function TargetingStep({
   );
 }
 
+const FORMAT_META: Record<
+  FormValues["ad"]["format"],
+  { icon: typeof ImagePlus; title: string; description: string }
+> = {
+  SINGLE_IMAGE: {
+    icon: ImagePlus,
+    title: "Single image",
+    description: "One image, one destination link — the classic feed ad.",
+  },
+  CAROUSEL: {
+    icon: GalleryHorizontal,
+    title: "Carousel",
+    description:
+      "2-10 scrollable cards, each with its own image, headline and link.",
+  },
+  VIDEO: {
+    icon: Video,
+    title: "Video",
+    description: "A video with a cover thumbnail shown before it plays.",
+  },
+};
+
+function FormatStep({
+  value,
+  onChange,
+}: {
+  value: FormValues["ad"]["format"];
+  onChange: (format: FormValues["ad"]["format"]) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-4 text-center">
+        <h2 className="font-heading text-lg font-semibold tracking-tight">
+          Choose an ad format
+        </h2>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          This decides what creative you&apos;ll upload next.
+        </p>
+      </div>
+      <RadioGroup
+        value={value}
+        onValueChange={(next) => onChange(next as FormValues["ad"]["format"])}
+        className="mx-auto max-w-sm gap-2"
+      >
+        {(Object.keys(FORMAT_META) as (keyof typeof FORMAT_META)[]).map(
+          (format) => {
+            const meta = FORMAT_META[format];
+            const Icon = meta.icon;
+            const isSelected = format === value;
+            return (
+              <label
+                key={format}
+                className={cn(
+                  "flex cursor-pointer items-center gap-3 rounded-xl p-3 ring-1 transition-colors",
+                  isSelected
+                    ? "bg-primary/5 ring-primary/30"
+                    : "ring-foreground/10 hover:bg-muted/50",
+                )}
+              >
+                <RadioGroupItem value={format} />
+                <span
+                  className={cn(
+                    "flex size-9 shrink-0 items-center justify-center rounded-lg",
+                    isSelected
+                      ? "bg-primary/10 text-primary"
+                      : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  <Icon className="size-4" strokeWidth={1.75} />
+                </span>
+                <span>
+                  <span className="block text-sm font-medium text-foreground">
+                    {meta.title}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    {meta.description}
+                  </span>
+                </span>
+              </label>
+            );
+          },
+        )}
+      </RadioGroup>
+    </div>
+  );
+}
+
 function ContentStep({
   form,
+  format,
   image,
   onImageChange,
   imagePreviewUrl,
   imageError,
+  cardImages,
+  onCardImagesChange,
+  cardImagesError,
+  video,
+  onVideoChange,
+  thumbnail,
+  onThumbnailChange,
+  videoError,
 }: {
   form: UseFormReturn<FormValues>;
+  format: FormValues["ad"]["format"];
   image: File | null;
   onImageChange: (file: File | null) => void;
   imagePreviewUrl: string | null;
   imageError: string | null;
+  cardImages: (File | null)[];
+  onCardImagesChange: (images: (File | null)[]) => void;
+  cardImagesError: string | null;
+  video: File | null;
+  onVideoChange: (file: File | null) => void;
+  thumbnail: File | null;
+  onThumbnailChange: (file: File | null) => void;
+  videoError: string | null;
 }) {
   return (
     <div className="space-y-4">
       <FormField
         control={form.control}
-        name="adName"
+        name="ad.adName"
         render={({ field }) => (
           <FormItem>
             <FormLabel>Ad name</FormLabel>
@@ -575,7 +898,7 @@ function ContentStep({
       />
       <FormField
         control={form.control}
-        name="message"
+        name="ad.message"
         render={({ field }) => (
           <FormItem>
             <FormLabel>Primary text</FormLabel>
@@ -590,26 +913,28 @@ function ContentStep({
           </FormItem>
         )}
       />
+      {format !== "CAROUSEL" ? (
+        <FormField
+          control={form.control}
+          name="ad.link"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Destination link</FormLabel>
+              <FormControl>
+                <Input
+                  {...field}
+                  type="url"
+                  placeholder="https://example.com/sale"
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      ) : null}
       <FormField
         control={form.control}
-        name="link"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>Destination link</FormLabel>
-            <FormControl>
-              <Input
-                {...field}
-                type="url"
-                placeholder="https://example.com/sale"
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-      <FormField
-        control={form.control}
-        name="callToActionType"
+        name="ad.callToActionType"
         render={({ field }) => (
           <FormItem>
             <FormLabel>Call to action</FormLabel>
@@ -631,41 +956,61 @@ function ContentStep({
           </FormItem>
         )}
       />
-      <div className="space-y-1.5">
-        <label className="text-sm font-medium">Image</label>
-        <div className="flex items-center gap-3">
-          {imagePreviewUrl ? (
-            // Local blob: preview of a not-yet-uploaded File — next/image
-            // can't optimize a client-only object URL.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={imagePreviewUrl}
-              alt=""
-              className="size-16 shrink-0 rounded-lg object-cover ring-1 ring-foreground/10"
-            />
-          ) : (
-            <div className="flex size-16 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-              <ImagePlus className="size-5" />
+
+      {format === "SINGLE_IMAGE" ? (
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium">Image</label>
+          <div className="flex items-center gap-3">
+            {imagePreviewUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={imagePreviewUrl}
+                alt=""
+                className="size-16 shrink-0 rounded-lg object-cover ring-1 ring-foreground/10"
+              />
+            ) : (
+              <div className="flex size-16 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <ImagePlus className="size-5" />
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(event) =>
+                  onImageChange(event.target.files?.[0] ?? null)
+                }
+                className="w-full text-xs"
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {image ? image.name : "JPEG, PNG or WebP — max 8MB."}
+              </p>
             </div>
-          )}
-          <div className="min-w-0 flex-1">
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={(event) =>
-                onImageChange(event.target.files?.[0] ?? null)
-              }
-              className="w-full text-xs"
-            />
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              {image ? image.name : "JPEG, PNG or WebP — max 8MB."}
-            </p>
           </div>
+          {imageError ? (
+            <p className="text-sm text-destructive">{imageError}</p>
+          ) : null}
         </div>
-        {imageError ? (
-          <p className="text-sm text-destructive">{imageError}</p>
-        ) : null}
-      </div>
+      ) : null}
+
+      {format === "CAROUSEL" ? (
+        <CarouselCardEditor
+          form={form}
+          images={cardImages}
+          onImagesChange={onCardImagesChange}
+          imagesError={cardImagesError}
+        />
+      ) : null}
+
+      {format === "VIDEO" ? (
+        <VideoUploadField
+          video={video}
+          onVideoChange={onVideoChange}
+          thumbnail={thumbnail}
+          onThumbnailChange={onThumbnailChange}
+          error={videoError}
+        />
+      ) : null}
     </div>
   );
 }
@@ -683,8 +1028,9 @@ function ReviewStep({
   const genderLabel =
     GENDER_OPTIONS.find((g) => g.value === values.gender)?.label ?? "All";
   const localeLabels = values.locales
-    .map((id) => META_LOCALES.find((l) => l.id === id)?.label ?? String(id))
+    .map((l) => l.label ?? `Locale #${l.id}`)
     .join(", ");
+  const formatValue = FORMAT_META[values.ad.format].title;
 
   const rows: { label: string; value: string; stepIndex: number }[] = [
     { label: "Ad set name", value: values.name.trim() || "—", stepIndex: 0 },
@@ -721,18 +1067,29 @@ function ReviewStep({
     ...(localeLabels
       ? [{ label: "Languages", value: localeLabels, stepIndex: 1 }]
       : []),
-    { label: "Ad name", value: values.adName.trim() || "—", stepIndex: 2 },
-    {
-      label: "Destination link",
-      value: values.link.trim() || "—",
-      stepIndex: 2,
-    },
+    { label: "Format", value: formatValue, stepIndex: 2 },
+    { label: "Ad name", value: values.ad.adName.trim() || "—", stepIndex: 3 },
+    ...(values.ad.format !== "CAROUSEL"
+      ? [
+          {
+            label: "Destination link",
+            value: values.ad.link.trim() || "—",
+            stepIndex: 3,
+          },
+        ]
+      : [
+          {
+            label: "Cards",
+            value: `${values.ad.cards.length} card${values.ad.cards.length === 1 ? "" : "s"}`,
+            stepIndex: 3,
+          },
+        ]),
     {
       label: "Call to action",
-      value: CTA_LABEL[values.callToActionType],
-      stepIndex: 2,
+      value: CTA_LABEL[values.ad.callToActionType],
+      stepIndex: 3,
     },
-    { label: "Status", value: "Paused (draft)", stepIndex: 2 },
+    { label: "Status", value: "Paused (draft)", stepIndex: 3 },
   ];
 
   return (
@@ -746,19 +1103,21 @@ function ReviewStep({
           go live on Meta.
         </p>
       </div>
-      <div className="mb-4 flex items-start gap-3 rounded-xl bg-muted/30 p-3 ring-1 ring-foreground/10">
-        {imagePreviewUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={imagePreviewUrl}
-            alt=""
-            className="size-14 shrink-0 rounded-lg object-cover"
-          />
-        ) : null}
-        <p className="min-w-0 flex-1 text-sm text-muted-foreground">
-          {values.message.trim() || "—"}
-        </p>
-      </div>
+      {values.ad.format === "SINGLE_IMAGE" ? (
+        <div className="mb-4 flex items-start gap-3 rounded-xl bg-muted/30 p-3 ring-1 ring-foreground/10">
+          {imagePreviewUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={imagePreviewUrl}
+              alt=""
+              className="size-14 shrink-0 rounded-lg object-cover"
+            />
+          ) : null}
+          <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+            {values.ad.message.trim() || "—"}
+          </p>
+        </div>
+      ) : null}
       <dl className="divide-y divide-border/60 overflow-hidden rounded-xl ring-1 ring-foreground/10">
         {rows.map((row) => (
           <div

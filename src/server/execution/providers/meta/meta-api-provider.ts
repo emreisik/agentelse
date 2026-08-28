@@ -5,17 +5,25 @@ import type { CapabilityKey, ExecutionProviderType } from "@prisma/client";
 import { isIntegrationConfigured } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/server/security/crypto";
-import { readAsset } from "@/server/storage/asset-storage";
 import {
+  readAsset,
+  resolveDirectPublicUrl,
+} from "@/server/storage/asset-storage";
+import {
+  checkMetaVideoStatus,
   createMetaAd,
   createMetaAdCreative,
   createMetaAdSet,
   createMetaCampaign,
+  createMetaCarouselAdCreative,
+  createMetaVideoAdCreative,
   fetchPageAccessToken,
   publishInstagramPost,
+  updateMetaAd,
   updateMetaAdSet,
   updateMetaCampaign,
   uploadMetaAdImage,
+  uploadMetaAdVideo,
   type MetaAdSetTargeting,
   type MetaCredentialMetadata,
 } from "@/server/integrations/meta-client";
@@ -46,6 +54,7 @@ const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "META_ADSET_CREATE",
   "META_ADSET_UPDATE",
   "META_AD_CREATE",
+  "META_AD_UPDATE",
 ]);
 
 type StoredResult = {
@@ -55,6 +64,49 @@ type StoredResult = {
 };
 
 const store = new Map<string, StoredResult>();
+
+// A META_AD_CREATE or META_AD_UPDATE with format "VIDEO" can't resolve
+// synchronously like every other capability here — Meta's own video
+// processing can take minutes (see checkMetaVideoStatus in meta-client.ts).
+// Following OpenClawProvider's pattern (src/server/execution/providers/
+// openclaw/openclaw-provider.ts): execute() only starts the upload and
+// returns immediately; getStatus() is polled repeatedly by
+// ExecutionWorker.pollRunningJobs() across ticks and finishes the ad
+// creative/ad creation (or ad update) the first time it observes the video
+// is ready. `projectId` (not a cached credential) is stored so each poll
+// re-resolves the Meta credential fresh, the same way runCapability()
+// always does — no decrypted access token is held in memory between polls.
+// `mode` distinguishes the two finish actions (create a new Ad vs point an
+// EXISTING Ad at the new creative) pollVideoAd takes once the video is
+// ready — see updateAd's non-video branches for the same create/update
+// split applied to the single-image and carousel formats.
+type PendingVideoAd =
+  | {
+      mode: "create";
+      projectId: string;
+      videoId: string;
+      thumbnailUrl: string;
+      adSetId: string;
+      name: string;
+      message: string;
+      link: string;
+      callToActionType: string;
+      status: "ACTIVE" | "PAUSED";
+    }
+  | {
+      mode: "update";
+      projectId: string;
+      videoId: string;
+      thumbnailUrl: string;
+      adId: string;
+      name?: string;
+      message: string;
+      link: string;
+      callToActionType: string;
+      status?: "ACTIVE" | "PAUSED";
+    };
+
+const pendingVideoAds = new Map<string, PendingVideoAd>();
 
 async function findActiveMetaCredential(projectId: string) {
   const credential = await prisma.integrationCredential.findUnique({
@@ -74,6 +126,44 @@ function readCampaignStatus(value: unknown): "ACTIVE" | "PAUSED" | undefined {
 
 function readBudgetCents(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+// Resolves the image_hash for ONE creative image slot (the single-image ad
+// itself, or one carousel card): either uploads a freshly provided local
+// asset, or — edit-only — reuses an already-uploaded hash carried over from
+// the ad's CURRENT creative when the user didn't replace that image. Meta's
+// adimages library lets a brand-new creative reference an existing hash
+// without re-uploading, which is what makes "edit only the message, leave
+// the picture alone" possible without forcing a redundant re-upload.
+async function resolveImageHash(
+  adAccountId: string,
+  accessToken: string,
+  projectId: string,
+  ref: { assetId?: string; existingHash?: string },
+): Promise<{ ok: true; imageHash: string } | { ok: false; error: string }> {
+  if (ref.assetId) {
+    const asset = await prisma.asset.findFirst({
+      where: { id: ref.assetId, projectId },
+      select: { storageKey: true },
+    });
+    if (!asset) return { ok: false, error: "Image asset not found" };
+    try {
+      const buffer = await readAsset(asset.storageKey);
+      const uploaded = await uploadMetaAdImage({
+        adAccountId,
+        accessToken,
+        imageBuffer: buffer,
+      });
+      return { ok: true, imageHash: uploaded.imageHash };
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Image upload failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+  if (ref.existingHash) return { ok: true, imageHash: ref.existingHash };
+  return { ok: false, error: "An image is required" };
 }
 
 export class MetaApiProvider implements ExecutionProvider {
@@ -102,7 +192,7 @@ export class MetaApiProvider implements ExecutionProvider {
       return Boolean(page?.instagramBusinessAccountId);
     }
     if (capability === "META_AD_CREATE") {
-      // createAd() also needs a selected Facebook Page to build the
+      // createAd() always needs a selected Facebook Page to build the
       // AdCreative's object_story_spec — unlike INSTAGRAM_PUBLISH, it
       // doesn't need that page to have a linked Instagram account.
       const page = metadata.pages?.find(
@@ -110,6 +200,17 @@ export class MetaApiProvider implements ExecutionProvider {
       );
       return Boolean(metadata.selectedAdAccountId) && Boolean(page);
     }
+    // META_AD_UPDATE is deliberately NOT checked for a Page here (unlike
+    // META_AD_CREATE) — canExecute has no access to the Task payload
+    // (ExecutionPolicyContext carries no payload field), so it can't tell a
+    // pure name/status edit (updateAd's `!format` branch, which never
+    // touches a Page at all — see updateMetaAd in meta-client.ts) apart
+    // from a creative-content edit (which does need one). Requiring a Page
+    // unconditionally here would make even a status toggle un-executable
+    // for a project that has an ad account selected but no Page selected.
+    // A creative edit that genuinely needs a Page and doesn't have one
+    // still fails, just one layer down, inside updateAd's own per-branch
+    // check, with a clear "No Facebook Page selected" error.
     return Boolean(metadata.selectedAdAccountId);
   }
 
@@ -117,8 +218,30 @@ export class MetaApiProvider implements ExecutionProvider {
   // seconds — we follow OpenClawProvider's "run synchronously, cache the
   // result" pattern: execute() runs the operation start-to-finish here,
   // storing a FAILED result instead of throwing on error; getStatus() just
-  // reads it back.
+  // reads it back. The one exception is a video-format META_AD_CREATE — see
+  // startVideoAd/pollVideoAd below — which genuinely can't resolve within a
+  // single tick, so it's routed to the async pendingVideoAds path instead.
   async execute(request: ExecutionRequest): Promise<ExecutionAcceptedResult> {
+    const payload = payloadRecord(request.payload);
+    const isVideoFormat = payload.format === "VIDEO";
+    // A NEW video file (create always requires one; an update requiring one
+    // is signaled by `videoAssetId`) needs uploading + Meta's async
+    // processing wait — see startVideoAd (whose own validation reports a
+    // missing videoAssetId, so create's video path always routes here
+    // regardless of whether the field is actually present). An UPDATE that
+    // instead sends `existingVideoId` (keeping the current, already-
+    // processed video) skips this entirely and resolves synchronously
+    // inside updateAd's video branch below, since there's nothing left to
+    // wait for.
+    const needsAsyncVideoUpload =
+      isVideoFormat &&
+      (request.capability === "META_AD_CREATE" ||
+        (request.capability === "META_AD_UPDATE" &&
+          typeof payload.videoAssetId === "string"));
+    if (needsAsyncVideoUpload) {
+      await this.startVideoAd(request);
+      return { executionReference: request.correlationId, isMock: false };
+    }
     const result = await this.runCapability(request);
     store.set(request.correlationId, result);
     return { executionReference: request.correlationId, isMock: false };
@@ -127,6 +250,10 @@ export class MetaApiProvider implements ExecutionProvider {
   async getStatus(
     executionReference: string,
   ): Promise<ProviderExecutionStatus> {
+    const pending = pendingVideoAds.get(executionReference);
+    if (pending) {
+      return this.pollVideoAd(executionReference, pending);
+    }
     const record = store.get(executionReference);
     if (!record) {
       return {
@@ -136,6 +263,264 @@ export class MetaApiProvider implements ExecutionProvider {
       };
     }
     return { ...record, isMock: false };
+  }
+
+  // Uploads the video (bounded, synchronous — same class of wait as an
+  // image upload) and stores just enough to finish the job later; never
+  // throws — same "store a FAILED result instead" convention as
+  // runCapability(), just via pendingVideoAds' sibling `store` map so a
+  // failed start is indistinguishable from any other failed capability to
+  // the very next getStatus() call. Handles BOTH META_AD_CREATE (new ad)
+  // and META_AD_UPDATE (existing ad, new creative) — see PendingVideoAd's
+  // `mode` field.
+  private async startVideoAd(request: ExecutionRequest): Promise<void> {
+    const fail = (errorMessage: string): void => {
+      store.set(request.correlationId, { status: "FAILED", errorMessage });
+    };
+    const isUpdate = request.capability === "META_AD_UPDATE";
+
+    const credential = await findActiveMetaCredential(
+      request.context.projectId,
+    );
+    if (!credential) return fail("Meta connection not found");
+    const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+    if (!metadata.selectedAdAccountId) return fail("No ad account selected");
+    const accessToken = decryptSecret(credential.encryptedSecret);
+
+    const payload = payloadRecord(request.payload);
+    const name = typeof payload.name === "string" ? payload.name : undefined;
+    const message =
+      typeof payload.message === "string" ? payload.message : undefined;
+    const link = typeof payload.link === "string" ? payload.link : undefined;
+    const callToActionType =
+      typeof payload.callToActionType === "string"
+        ? payload.callToActionType
+        : "LEARN_MORE";
+    const videoAssetId =
+      typeof payload.videoAssetId === "string"
+        ? payload.videoAssetId
+        : undefined;
+    const thumbnailAssetId =
+      typeof payload.thumbnailAssetId === "string"
+        ? payload.thumbnailAssetId
+        : undefined;
+    const status =
+      payload.status === "ACTIVE" || payload.status === "PAUSED"
+        ? payload.status
+        : undefined;
+    if (!message || !link || !videoAssetId || !thumbnailAssetId) {
+      return fail(
+        `${request.capability} (video) requires \`message\`, \`link\`, \`videoAssetId\` and \`thumbnailAssetId\``,
+      );
+    }
+
+    const adSetId =
+      typeof payload.adSetId === "string" ? payload.adSetId : undefined;
+    const adId = typeof payload.adId === "string" ? payload.adId : undefined;
+    if (isUpdate) {
+      if (!adId) return fail("META_AD_UPDATE (video) requires `adId`");
+    } else if (!adSetId || !name) {
+      return fail(
+        "META_AD_CREATE (video) requires `adSetId`, `name`, `message`, `link`, `videoAssetId` and `thumbnailAssetId`",
+      );
+    }
+
+    // Scoped by projectId, not just id — Task.payload is untyped JSON, and
+    // an unscoped lookup would let a mis-sourced assetId from any project
+    // have its bytes read and uploaded to THIS project's Meta ad account.
+    const [videoAsset, thumbnailAsset] = await Promise.all([
+      prisma.asset.findFirst({
+        where: { id: videoAssetId, projectId: request.context.projectId },
+        select: { storageKey: true, mimeType: true },
+      }),
+      prisma.asset.findFirst({
+        where: { id: thumbnailAssetId, projectId: request.context.projectId },
+        select: { storageKey: true },
+      }),
+    ]);
+    if (!videoAsset) return fail("Ad video asset not found");
+    const thumbnailUrl = thumbnailAsset
+      ? resolveDirectPublicUrl(thumbnailAsset.storageKey)
+      : null;
+    if (!thumbnailUrl) {
+      return fail(
+        "Ad video thumbnail has no public URL (R2 storage is required for video ads)",
+      );
+    }
+
+    try {
+      const buffer = await readAsset(videoAsset.storageKey);
+      const { videoId } = await uploadMetaAdVideo({
+        adAccountId: metadata.selectedAdAccountId,
+        accessToken,
+        videoBuffer: buffer,
+        mimeType: videoAsset.mimeType,
+      });
+      if (isUpdate) {
+        pendingVideoAds.set(request.correlationId, {
+          mode: "update",
+          projectId: request.context.projectId,
+          videoId,
+          thumbnailUrl,
+          adId: adId!,
+          name,
+          message,
+          link,
+          callToActionType,
+          status,
+        });
+      } else {
+        pendingVideoAds.set(request.correlationId, {
+          mode: "create",
+          projectId: request.context.projectId,
+          videoId,
+          thumbnailUrl,
+          adSetId: adSetId!,
+          name: name!,
+          message,
+          link,
+          callToActionType,
+          status: status ?? "PAUSED",
+        });
+      }
+    } catch (error) {
+      fail(
+        `Video upload step failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  // Called by getStatus() on every poll while a video ad is pending.
+  // Credentials are re-resolved fresh each time (never cached across
+  // polls) — same reasoning as the projectId-only PendingVideoAd comment
+  // above.
+  private async pollVideoAd(
+    executionReference: string,
+    pending: PendingVideoAd,
+  ): Promise<ProviderExecutionStatus> {
+    // Unlike every other getStatus() in this codebase (a pure in-memory
+    // Map read), this one does live DB + decryption I/O on every single
+    // poll — a transient DB error or a malformed secret here must not
+    // propagate: it isn't an AgentelseError, so ExecutionWorker.
+    // pollRunningJobs()'s per-job catch (`if (!isAgentelseError(error))
+    // throw error;`) would otherwise rethrow it, aborting the WHOLE tick's
+    // poll loop (every other RUNNING job that tick, plus every later stage
+    // — resolvePendingVerifications, the Agency OS loop — since
+    // pollRunningJobs() isn't wrapped in tick()'s isolate() helper the way
+    // the earlier stages are).
+    let metadata: MetaCredentialMetadata;
+    let accessToken: string;
+    try {
+      const credential = await findActiveMetaCredential(pending.projectId);
+      if (!credential) {
+        pendingVideoAds.delete(executionReference);
+        return {
+          status: "FAILED",
+          errorMessage: "Meta connection not found",
+          isMock: false,
+        };
+      }
+      metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+      accessToken = decryptSecret(credential.encryptedSecret);
+    } catch (error) {
+      pendingVideoAds.delete(executionReference);
+      return {
+        status: "FAILED",
+        errorMessage: `Could not resolve Meta credentials: ${error instanceof Error ? error.message : String(error)}`,
+        isMock: false,
+      };
+    }
+
+    let ready: boolean;
+    try {
+      ready = await checkMetaVideoStatus({
+        videoId: pending.videoId,
+        accessToken,
+      });
+    } catch (error) {
+      pendingVideoAds.delete(executionReference);
+      return {
+        status: "FAILED",
+        errorMessage: `Video processing check failed: ${error instanceof Error ? error.message : String(error)}`,
+        isMock: false,
+      };
+    }
+    if (!ready) {
+      return { status: "RUNNING", isMock: false };
+    }
+
+    pendingVideoAds.delete(executionReference);
+    if (!metadata.selectedAdAccountId) {
+      return {
+        status: "FAILED",
+        errorMessage: "No ad account selected",
+        isMock: false,
+      };
+    }
+    const page = metadata.pages?.find(
+      (p) => p.pageId === metadata.selectedPageId,
+    );
+    if (!page) {
+      return {
+        status: "FAILED",
+        errorMessage: "No Facebook Page selected for the ad creative",
+        isMock: false,
+      };
+    }
+
+    try {
+      const created = await createMetaVideoAdCreative({
+        adAccountId: metadata.selectedAdAccountId,
+        accessToken,
+        pageId: page.pageId,
+        videoId: pending.videoId,
+        thumbnailUrl: pending.thumbnailUrl,
+        message: pending.message,
+        link: pending.link,
+        callToActionType: pending.callToActionType,
+      });
+      if (pending.mode === "update") {
+        await updateMetaAd({
+          adId: pending.adId,
+          accessToken,
+          name: pending.name,
+          status: pending.status,
+          creativeId: created.creativeId,
+        });
+        return {
+          status: "COMPLETED",
+          isMock: false,
+          rawResult: {
+            adId: pending.adId,
+            creativeId: created.creativeId,
+            videoId: pending.videoId,
+          },
+        };
+      }
+      const { adId } = await createMetaAd({
+        adAccountId: metadata.selectedAdAccountId,
+        accessToken,
+        adSetId: pending.adSetId,
+        name: pending.name,
+        creativeId: created.creativeId,
+        status: pending.status,
+      });
+      return {
+        status: "COMPLETED",
+        isMock: false,
+        rawResult: {
+          adId,
+          creativeId: created.creativeId,
+          videoId: pending.videoId,
+        },
+      };
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `Video ad creative/ad ${pending.mode === "update" ? "update" : "creation"} failed (video ${pending.videoId} was processed): ${error instanceof Error ? error.message : String(error)}`,
+        isMock: false,
+      };
+    }
   }
 
   private async runCapability(
@@ -166,7 +551,20 @@ export class MetaApiProvider implements ExecutionProvider {
         case "META_ADSET_UPDATE":
           return await this.updateAdSet(accessToken, payload);
         case "META_AD_CREATE":
-          return await this.createAd(metadata, accessToken, payload);
+          return await this.createAd(
+            metadata,
+            accessToken,
+            payload,
+            request.context.projectId,
+          );
+        case "META_AD_UPDATE":
+          // Video never reaches here — see execute()'s special case above.
+          return await this.updateAd(
+            metadata,
+            accessToken,
+            payload,
+            request.context.projectId,
+          );
         default:
           return {
             status: "FAILED",
@@ -371,12 +769,16 @@ export class MetaApiProvider implements ExecutionProvider {
     const dailyBudgetCents = readBudgetCents(
       payload.dailyBudgetCents ?? payload.proposedDailyBudgetCents,
     );
+    // Only the user-triggered manual edit path (updateMetaAdSetAction) ever
+    // sets `targeting` — PerformanceOptimizer's proposals never touch it.
+    const targeting = payload.targeting as MetaAdSetTargeting | undefined;
 
     await updateMetaAdSet({
       adSetId,
       accessToken,
       status,
       dailyBudgetCents,
+      targeting,
     });
     return { status: "COMPLETED", rawResult: { adSetId } };
   }
@@ -439,12 +841,20 @@ export class MetaApiProvider implements ExecutionProvider {
   // create the AdCreative -> create the Ad. If a later step fails, the
   // resource created by an earlier step is left orphaned on Meta's side
   // (not cleaned up) — the error message below names which step failed so
-  // this is at least visible, not silent.
+  // this is at least visible, not silent. `format` defaults to
+  // SINGLE_IMAGE for backward compatibility with every ad created before
+  // the wizard supported multiple formats — this is the only branch point;
+  // VIDEO never reaches here (see execute()'s special case above, since a
+  // video ad can't resolve synchronously).
   private async createAd(
     metadata: MetaCredentialMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
+    projectId: string,
   ): Promise<StoredResult> {
+    if (payload.format === "CAROUSEL") {
+      return this.createCarouselAd(metadata, accessToken, payload, projectId);
+    }
     if (!metadata.selectedAdAccountId) {
       return { status: "FAILED", errorMessage: "No ad account selected" };
     }
@@ -480,8 +890,10 @@ export class MetaApiProvider implements ExecutionProvider {
     }
     const status = payload.status === "ACTIVE" ? "ACTIVE" : "PAUSED";
 
-    const asset = await prisma.asset.findUnique({
-      where: { id: imageAssetId },
+    // Scoped by projectId, not just id — see the same comment on
+    // startVideoAd's asset reads above.
+    const asset = await prisma.asset.findFirst({
+      where: { id: imageAssetId, projectId },
       select: { storageKey: true },
     });
     if (!asset) {
@@ -540,6 +952,481 @@ export class MetaApiProvider implements ExecutionProvider {
       return {
         status: "FAILED",
         errorMessage: `Ad creation step failed (creative ${creativeId} was created): ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  // Same three-step shape as createAd's single-image path, except step one
+  // uploads one image PER CARD (sequential, not parallel — Meta's adimages
+  // endpoint is per-account rate limited, and a carousel is capped at 10
+  // cards, so the extra latency here is bounded and not worth the added
+  // complexity of a bounded-concurrency helper for this one call site).
+  private async createCarouselAd(
+    metadata: MetaCredentialMetadata,
+    accessToken: string,
+    payload: Record<string, unknown>,
+    projectId: string,
+  ): Promise<StoredResult> {
+    if (!metadata.selectedAdAccountId) {
+      return { status: "FAILED", errorMessage: "No ad account selected" };
+    }
+    const page = metadata.pages?.find(
+      (p) => p.pageId === metadata.selectedPageId,
+    );
+    if (!page) {
+      return {
+        status: "FAILED",
+        errorMessage: "No Facebook Page selected for the ad creative",
+      };
+    }
+    const adSetId =
+      typeof payload.adSetId === "string" ? payload.adSetId : undefined;
+    const name = typeof payload.name === "string" ? payload.name : undefined;
+    const message =
+      typeof payload.message === "string" ? payload.message : undefined;
+    const callToActionType =
+      typeof payload.callToActionType === "string"
+        ? payload.callToActionType
+        : "LEARN_MORE";
+    const rawCards = Array.isArray(payload.cards) ? payload.cards : [];
+    const cards = rawCards.filter(
+      (
+        c,
+      ): c is {
+        link: string;
+        name: string;
+        description?: string;
+        imageAssetId: string;
+      } =>
+        typeof c === "object" &&
+        c !== null &&
+        typeof (c as { link?: unknown }).link === "string" &&
+        typeof (c as { name?: unknown }).name === "string" &&
+        typeof (c as { imageAssetId?: unknown }).imageAssetId === "string",
+    );
+    if (!adSetId || !name || !message || cards.length < 2) {
+      return {
+        status: "FAILED",
+        errorMessage:
+          "META_AD_CREATE (carousel) requires `adSetId`, `name`, `message` and at least 2 valid `cards` (each with `link`, `name`, `imageAssetId`)",
+      };
+    }
+    const status = payload.status === "ACTIVE" ? "ACTIVE" : "PAUSED";
+
+    const uploadedCards: {
+      link: string;
+      name: string;
+      description?: string;
+      imageHash: string;
+    }[] = [];
+    try {
+      for (const card of cards) {
+        // Scoped by projectId, not just id — see the same comment on
+        // startVideoAd's asset reads above.
+        const asset = await prisma.asset.findFirst({
+          where: { id: card.imageAssetId, projectId },
+          select: { storageKey: true },
+        });
+        if (!asset) {
+          throw new Error(`Card image asset ${card.imageAssetId} not found`);
+        }
+        const buffer = await readAsset(asset.storageKey);
+        const uploaded = await uploadMetaAdImage({
+          adAccountId: metadata.selectedAdAccountId,
+          accessToken,
+          imageBuffer: buffer,
+        });
+        uploadedCards.push({
+          link: card.link,
+          name: card.name,
+          description: card.description,
+          imageHash: uploaded.imageHash,
+        });
+      }
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `Card image upload step failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    let creativeId: string;
+    try {
+      const created = await createMetaCarouselAdCreative({
+        adAccountId: metadata.selectedAdAccountId,
+        accessToken,
+        pageId: page.pageId,
+        message,
+        cards: uploadedCards,
+        callToActionType,
+      });
+      creativeId = created.creativeId;
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `Ad creative step failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    try {
+      const { adId } = await createMetaAd({
+        adAccountId: metadata.selectedAdAccountId,
+        accessToken,
+        adSetId,
+        name,
+        creativeId,
+        status,
+      });
+      return {
+        status: "COMPLETED",
+        rawResult: { adId, creativeId, cardCount: uploadedCards.length },
+      };
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `Ad creation step failed (creative ${creativeId} was created): ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  // Updates an EXISTING ad. A pure name/status edit (no `format` in the
+  // payload — the wizard always sends one when the creative itself was
+  // touched) skips creative rebuilding entirely and goes straight to
+  // updateMetaAd. Otherwise a BRAND NEW creative is built (AdCreative
+  // content is immutable on Meta's side — see updateMetaAd's comment in
+  // meta-client.ts) and the ad is pointed at it; VIDEO never reaches here
+  // (see execute()'s special case above).
+  private async updateAd(
+    metadata: MetaCredentialMetadata,
+    accessToken: string,
+    payload: Record<string, unknown>,
+    projectId: string,
+  ): Promise<StoredResult> {
+    const adId = typeof payload.adId === "string" ? payload.adId : undefined;
+    if (!adId) {
+      return {
+        status: "FAILED",
+        errorMessage: "META_AD_UPDATE requires `adId`",
+      };
+    }
+    const name = typeof payload.name === "string" ? payload.name : undefined;
+    const status =
+      payload.status === "ACTIVE" || payload.status === "PAUSED"
+        ? payload.status
+        : undefined;
+    const format =
+      typeof payload.format === "string" ? payload.format : undefined;
+
+    if (!format) {
+      if (!name && !status) {
+        return {
+          status: "FAILED",
+          errorMessage:
+            "META_AD_UPDATE requires at least `name`, `status` or a creative `format`",
+        };
+      }
+      await updateMetaAd({ adId, accessToken, name, status });
+      return { status: "COMPLETED", rawResult: { adId } };
+    }
+
+    if (format === "CAROUSEL") {
+      return this.updateCarouselAd(
+        metadata,
+        accessToken,
+        payload,
+        projectId,
+        adId,
+        name,
+        status,
+      );
+    }
+
+    // `existingVideoId` means the user kept the current video and only
+    // changed message/link/CTA/status — Meta's already-processed video
+    // needs no re-upload and no wait, so this stays fully synchronous
+    // (unlike a NEW video file, which execute() routes to the async
+    // pendingVideoAds path via startVideoAd instead of reaching here at
+    // all). A thumbnail is still required fresh every time: nothing here
+    // tracks the OLD thumbnail's underlying asset to reuse it the way
+    // resolveImageHash reuses an image_hash.
+    if (format === "VIDEO") {
+      const existingVideoId =
+        typeof payload.existingVideoId === "string"
+          ? payload.existingVideoId
+          : undefined;
+      if (!existingVideoId) {
+        return {
+          status: "FAILED",
+          errorMessage:
+            "META_AD_UPDATE (video) requires either a new video upload or `existingVideoId`",
+        };
+      }
+      if (!metadata.selectedAdAccountId) {
+        return { status: "FAILED", errorMessage: "No ad account selected" };
+      }
+      const videoPage = metadata.pages?.find(
+        (p) => p.pageId === metadata.selectedPageId,
+      );
+      if (!videoPage) {
+        return {
+          status: "FAILED",
+          errorMessage: "No Facebook Page selected for the ad creative",
+        };
+      }
+      const videoMessage =
+        typeof payload.message === "string" ? payload.message : undefined;
+      const videoLink =
+        typeof payload.link === "string" ? payload.link : undefined;
+      const videoCallToActionType =
+        typeof payload.callToActionType === "string"
+          ? payload.callToActionType
+          : "LEARN_MORE";
+      const thumbnailAssetId =
+        typeof payload.thumbnailAssetId === "string"
+          ? payload.thumbnailAssetId
+          : undefined;
+      if (!videoMessage || !videoLink || !thumbnailAssetId) {
+        return {
+          status: "FAILED",
+          errorMessage:
+            "META_AD_UPDATE (video) requires `message`, `link` and `thumbnailAssetId`",
+        };
+      }
+      const thumbnailAsset = await prisma.asset.findFirst({
+        where: { id: thumbnailAssetId, projectId },
+        select: { storageKey: true },
+      });
+      const thumbnailUrl = thumbnailAsset
+        ? resolveDirectPublicUrl(thumbnailAsset.storageKey)
+        : null;
+      if (!thumbnailUrl) {
+        return {
+          status: "FAILED",
+          errorMessage:
+            "Ad video thumbnail has no public URL (R2 storage is required for video ads)",
+        };
+      }
+      try {
+        const created = await createMetaVideoAdCreative({
+          adAccountId: metadata.selectedAdAccountId,
+          accessToken,
+          pageId: videoPage.pageId,
+          videoId: existingVideoId,
+          thumbnailUrl,
+          message: videoMessage,
+          link: videoLink,
+          callToActionType: videoCallToActionType,
+        });
+        await updateMetaAd({
+          adId,
+          accessToken,
+          name,
+          status,
+          creativeId: created.creativeId,
+        });
+        return {
+          status: "COMPLETED",
+          rawResult: {
+            adId,
+            creativeId: created.creativeId,
+            videoId: existingVideoId,
+          },
+        };
+      } catch (error) {
+        return {
+          status: "FAILED",
+          errorMessage: `Ad creative/update step failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }
+
+    if (!metadata.selectedAdAccountId) {
+      return { status: "FAILED", errorMessage: "No ad account selected" };
+    }
+    const page = metadata.pages?.find(
+      (p) => p.pageId === metadata.selectedPageId,
+    );
+    if (!page) {
+      return {
+        status: "FAILED",
+        errorMessage: "No Facebook Page selected for the ad creative",
+      };
+    }
+    const message =
+      typeof payload.message === "string" ? payload.message : undefined;
+    const link = typeof payload.link === "string" ? payload.link : undefined;
+    const callToActionType =
+      typeof payload.callToActionType === "string"
+        ? payload.callToActionType
+        : "LEARN_MORE";
+    const imageAssetId =
+      typeof payload.imageAssetId === "string"
+        ? payload.imageAssetId
+        : undefined;
+    const existingImageHash =
+      typeof payload.existingImageHash === "string"
+        ? payload.existingImageHash
+        : undefined;
+    if (!message || !link) {
+      return {
+        status: "FAILED",
+        errorMessage:
+          "META_AD_UPDATE (single image) requires `message` and `link`",
+      };
+    }
+
+    const resolved = await resolveImageHash(
+      metadata.selectedAdAccountId,
+      accessToken,
+      projectId,
+      { assetId: imageAssetId, existingHash: existingImageHash },
+    );
+    if (!resolved.ok) {
+      return { status: "FAILED", errorMessage: resolved.error };
+    }
+
+    let creativeId: string;
+    try {
+      const created = await createMetaAdCreative({
+        adAccountId: metadata.selectedAdAccountId,
+        accessToken,
+        pageId: page.pageId,
+        imageHash: resolved.imageHash,
+        message,
+        link,
+        callToActionType,
+      });
+      creativeId = created.creativeId;
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `Ad creative step failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    try {
+      await updateMetaAd({ adId, accessToken, name, status, creativeId });
+      return {
+        status: "COMPLETED",
+        rawResult: { adId, creativeId, imageHash: resolved.imageHash },
+      };
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `Ad update step failed (creative ${creativeId} was created): ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  // Same shape as updateAd's single-image branch, one image resolution
+  // (new upload or reused hash) per card — mirrors createCarouselAd's
+  // sequential-not-parallel reasoning above.
+  private async updateCarouselAd(
+    metadata: MetaCredentialMetadata,
+    accessToken: string,
+    payload: Record<string, unknown>,
+    projectId: string,
+    adId: string,
+    name: string | undefined,
+    status: "ACTIVE" | "PAUSED" | undefined,
+  ): Promise<StoredResult> {
+    if (!metadata.selectedAdAccountId) {
+      return { status: "FAILED", errorMessage: "No ad account selected" };
+    }
+    const page = metadata.pages?.find(
+      (p) => p.pageId === metadata.selectedPageId,
+    );
+    if (!page) {
+      return {
+        status: "FAILED",
+        errorMessage: "No Facebook Page selected for the ad creative",
+      };
+    }
+    const message =
+      typeof payload.message === "string" ? payload.message : undefined;
+    const callToActionType =
+      typeof payload.callToActionType === "string"
+        ? payload.callToActionType
+        : "LEARN_MORE";
+    const rawCards = Array.isArray(payload.cards) ? payload.cards : [];
+    const cards = rawCards.filter(
+      (
+        c,
+      ): c is {
+        link: string;
+        name: string;
+        description?: string;
+        imageAssetId?: string;
+        existingImageHash?: string;
+      } =>
+        typeof c === "object" &&
+        c !== null &&
+        typeof (c as { link?: unknown }).link === "string" &&
+        typeof (c as { name?: unknown }).name === "string",
+    );
+    if (!message || cards.length < 2) {
+      return {
+        status: "FAILED",
+        errorMessage:
+          "META_AD_UPDATE (carousel) requires `message` and at least 2 valid `cards` (each with `link`, `name`)",
+      };
+    }
+
+    const uploadedCards: {
+      link: string;
+      name: string;
+      description?: string;
+      imageHash: string;
+    }[] = [];
+    for (const card of cards) {
+      const resolved = await resolveImageHash(
+        metadata.selectedAdAccountId,
+        accessToken,
+        projectId,
+        { assetId: card.imageAssetId, existingHash: card.existingImageHash },
+      );
+      if (!resolved.ok) {
+        return {
+          status: "FAILED",
+          errorMessage: `Card "${card.name}": ${resolved.error}`,
+        };
+      }
+      uploadedCards.push({
+        link: card.link,
+        name: card.name,
+        description: card.description,
+        imageHash: resolved.imageHash,
+      });
+    }
+
+    let creativeId: string;
+    try {
+      const created = await createMetaCarouselAdCreative({
+        adAccountId: metadata.selectedAdAccountId,
+        accessToken,
+        pageId: page.pageId,
+        message,
+        cards: uploadedCards,
+        callToActionType,
+      });
+      creativeId = created.creativeId;
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `Ad creative step failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    try {
+      await updateMetaAd({ adId, accessToken, name, status, creativeId });
+      return {
+        status: "COMPLETED",
+        rawResult: { adId, creativeId, cardCount: uploadedCards.length },
+      };
+    } catch (error) {
+      return {
+        status: "FAILED",
+        errorMessage: `Ad update step failed (creative ${creativeId} was created): ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   }

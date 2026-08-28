@@ -114,6 +114,7 @@ export const DEPARTMENTS: Record<DepartmentKey, DepartmentDefinition> = {
       "META_ADSET_CREATE",
       "META_ADSET_UPDATE",
       "META_AD_CREATE",
+      "META_AD_UPDATE",
       "GOOGLE_ADS_ANALYSIS",
       "GOOGLE_ADS_CAMPAIGN_CREATE",
     ],

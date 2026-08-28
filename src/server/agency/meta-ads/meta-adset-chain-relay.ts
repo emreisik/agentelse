@@ -7,36 +7,23 @@ import { TaskRepository } from "@/server/repositories/task.repository";
 
 type PendingAd = {
   name: string;
-  message: string;
-  link: string;
-  callToActionType: string;
-  imageAssetId: string;
-  status: string;
+  // The rest of the ad's fields are format-dependent (SINGLE_IMAGE needs
+  // imageAssetId+link, CAROUSEL needs cards, VIDEO needs
+  // videoAssetId+thumbnailAssetId+link — see createMetaAdSetWithAdAction in
+  // meta-ads-actions.ts and MetaApiProvider.createAd/createCarouselAd/
+  // startVideoAd, which read them back out by name). This relay only needs
+  // `name` for the Task's title — everything else is passed through
+  // untouched so a new format never requires a change here.
+  raw: Record<string, unknown>;
 };
 
 function readPendingAd(payload: unknown): PendingAd | null {
   const record = (payload ?? {}) as Record<string, unknown>;
   const pendingAd = record.pendingAd as Record<string, unknown> | undefined;
-  if (
-    !pendingAd ||
-    typeof pendingAd.name !== "string" ||
-    typeof pendingAd.message !== "string" ||
-    typeof pendingAd.link !== "string" ||
-    typeof pendingAd.imageAssetId !== "string"
-  ) {
+  if (!pendingAd || typeof pendingAd.name !== "string") {
     return null;
   }
-  return {
-    name: pendingAd.name,
-    message: pendingAd.message,
-    link: pendingAd.link,
-    callToActionType:
-      typeof pendingAd.callToActionType === "string"
-        ? pendingAd.callToActionType
-        : "LEARN_MORE",
-    imageAssetId: pendingAd.imageAssetId,
-    status: pendingAd.status === "ACTIVE" ? "ACTIVE" : "PAUSED",
-  };
+  return { name: pendingAd.name, raw: pendingAd };
 }
 
 // TASK_COMPLETED fan-out for the combined AdSet+Ad wizard (see
@@ -93,13 +80,8 @@ export const MetaAdSetChainRelay = {
       departmentKey: "PERFORMANCE_MARKETING",
       fingerprint,
       payloadExtra: {
+        ...pendingAd.raw,
         adSetId,
-        name: pendingAd.name,
-        message: pendingAd.message,
-        link: pendingAd.link,
-        callToActionType: pendingAd.callToActionType,
-        imageAssetId: pendingAd.imageAssetId,
-        status: pendingAd.status,
       },
     });
   },

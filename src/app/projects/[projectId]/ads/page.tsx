@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronRight, Megaphone, Plug, Plus } from "lucide-react";
+import { ChevronRight, Eye, Megaphone, Plug, Plus } from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
 import {
@@ -29,6 +29,12 @@ import { Input } from "@/components/ui/input";
 import { buttonVariants } from "@/components/ui/button";
 import { CampaignWizard } from "@/components/ads/campaign-wizard";
 import { AdSetAdWizard } from "@/components/ads/adset-ad-wizard";
+import { CampaignDetailSheet } from "@/components/ads/campaign-detail-sheet";
+import { AdSetDetailSheet } from "@/components/ads/adset-detail-sheet";
+import { AdDetailSheet } from "@/components/ads/ad-detail-sheet";
+import { CampaignEditForm } from "@/components/ads/campaign-edit-form";
+import { AdSetEditWizard } from "@/components/ads/adset-edit-wizard";
+import { AdEditWizard } from "@/components/ads/ad-edit-wizard";
 import { cn } from "@/lib/utils";
 
 // Live, read-only drill-down over Meta's Campaign -> AdSet -> Ad hierarchy —
@@ -129,6 +135,16 @@ export default async function AdsPage({
 
   const create = typeof sp.create === "string" ? sp.create : undefined;
   const brief = typeof sp.brief === "string" ? sp.brief : undefined;
+  const campaignDetailId =
+    typeof sp.campaignDetail === "string" ? sp.campaignDetail : undefined;
+  const adSetDetailId =
+    typeof sp.adsetDetail === "string" ? sp.adsetDetail : undefined;
+  const adDetailId = typeof sp.adDetail === "string" ? sp.adDetail : undefined;
+  const campaignEditId =
+    typeof sp.campaignEdit === "string" ? sp.campaignEdit : undefined;
+  const adSetEditId =
+    typeof sp.adsetEdit === "string" ? sp.adsetEdit : undefined;
+  const adEditId = typeof sp.adEdit === "string" ? sp.adEdit : undefined;
   const currentUrl = new URLSearchParams();
   if (campaignId) currentUrl.set("campaignId", campaignId);
   if (adSetId) currentUrl.set("adSetId", adSetId);
@@ -145,6 +161,26 @@ export default async function AdsPage({
   const createAdParams = new URLSearchParams(currentUrl);
   createAdParams.set("create", "ad");
   const createAdHref = `${base}?${createAdParams.toString()}`;
+
+  // Detail-sheet hrefs are built the same way as create-dialog hrefs
+  // (currentUrl + one extra param) so opening/closing a detail sheet never
+  // disturbs the drill-down level (campaignId/adSetId) or date range.
+  function detailHref(
+    param: "campaignDetail" | "adsetDetail" | "adDetail",
+    id: string,
+  ) {
+    const params = new URLSearchParams(currentUrl);
+    params.set(param, id);
+    return `${base}?${params.toString()}`;
+  }
+  function editHref(
+    param: "campaignEdit" | "adsetEdit" | "adEdit",
+    id: string,
+  ) {
+    const params = new URLSearchParams(currentUrl);
+    params.set(param, id);
+    return `${base}?${params.toString()}`;
+  }
 
   return (
     <AppShell projectId={projectId}>
@@ -192,6 +228,7 @@ export default async function AdsPage({
             base={base}
             campaigns={campaigns}
             currency={currency}
+            detailHref={(id) => detailHref("campaignDetail", id)}
           />
         ) : !activeCampaign ? (
           <EmptyState
@@ -206,6 +243,7 @@ export default async function AdsPage({
             campaignId={campaignId}
             adSets={adSets}
             currency={currency}
+            detailHref={(id) => detailHref("adsetDetail", id)}
           />
         ) : !activeAdSet ? (
           <EmptyState
@@ -215,7 +253,11 @@ export default async function AdsPage({
             className="py-16"
           />
         ) : (
-          <AdsTable ads={ads} currency={currency} />
+          <AdsTable
+            ads={ads}
+            currency={currency}
+            detailHref={(id) => detailHref("adDetail", id)}
+          />
         )}
 
         {create === "campaign" ? (
@@ -230,6 +272,7 @@ export default async function AdsPage({
             projectId={projectId}
             campaignId={campaignId}
             closeHref={closeHref}
+            pageName={metadata.selectedPageName ?? "Your Page"}
           />
         ) : null}
         {create === "ad" && adSetId ? (
@@ -239,6 +282,108 @@ export default async function AdsPage({
             closeHref={closeHref}
           />
         ) : null}
+
+        {campaignDetailId
+          ? (() => {
+              const campaign = campaigns.find(
+                (c) => c.campaignId === campaignDetailId,
+              );
+              return campaign ? (
+                <CampaignDetailSheet
+                  campaign={campaign}
+                  currency={currency}
+                  closeHref={closeHref}
+                  editHref={editHref("campaignEdit", campaignDetailId)}
+                />
+              ) : null;
+            })()
+          : null}
+        {adSetDetailId
+          ? (() => {
+              const adSet = adSets.find((a) => a.adSetId === adSetDetailId);
+              return adSet ? (
+                <AdSetDetailSheet
+                  adSet={adSet}
+                  currency={currency}
+                  closeHref={closeHref}
+                  editHref={editHref("adsetEdit", adSetDetailId)}
+                />
+              ) : null;
+            })()
+          : null}
+        {adDetailId
+          ? (() => {
+              const ad = ads.find((a) => a.adId === adDetailId);
+              return ad ? (
+                <AdDetailSheet
+                  ad={ad}
+                  pageName={metadata.selectedPageName ?? "Your Page"}
+                  closeHref={closeHref}
+                  editHref={editHref("adEdit", adDetailId)}
+                />
+              ) : null;
+            })()
+          : null}
+
+        {campaignEditId
+          ? (() => {
+              const campaign = campaigns.find(
+                (c) => c.campaignId === campaignEditId,
+              );
+              return campaign ? (
+                <EntityDialog
+                  closeHref={closeHref}
+                  title={`Edit ${campaign.name}`}
+                  description="Budget and status — requires approval."
+                  size="md"
+                  bodyClassName="overflow-y-auto p-4"
+                >
+                  <CampaignEditForm projectId={projectId} campaign={campaign} />
+                </EntityDialog>
+              ) : null;
+            })()
+          : null}
+        {adSetEditId
+          ? (() => {
+              const adSet = adSets.find((a) => a.adSetId === adSetEditId);
+              return adSet ? (
+                <EntityDialog
+                  closeHref={closeHref}
+                  title={`Edit ${adSet.name}`}
+                  description="Budget, status and targeting — requires approval."
+                  size="full"
+                  bodyClassName="overflow-y-auto p-6"
+                >
+                  <AdSetEditWizard
+                    projectId={projectId}
+                    adSet={adSet}
+                    closeHref={closeHref}
+                  />
+                </EntityDialog>
+              ) : null;
+            })()
+          : null}
+        {adEditId
+          ? (() => {
+              const ad = ads.find((a) => a.adId === adEditId);
+              return ad ? (
+                <EntityDialog
+                  closeHref={closeHref}
+                  title={`Edit ${ad.name}`}
+                  description="Creative, copy and status — requires approval."
+                  size="full"
+                  bodyClassName="overflow-y-auto p-6"
+                >
+                  <AdEditWizard
+                    projectId={projectId}
+                    ad={ad}
+                    closeHref={closeHref}
+                    pageName={metadata.selectedPageName ?? "Your Page"}
+                  />
+                </EntityDialog>
+              ) : null;
+            })()
+          : null}
       </div>
     </AppShell>
   );
@@ -279,23 +424,26 @@ function CreateAdSetDialog({
   projectId,
   campaignId,
   closeHref,
+  pageName,
 }: {
   projectId: string;
   campaignId: string;
   closeHref: string;
+  pageName: string;
 }) {
   return (
     <EntityDialog
       closeHref={closeHref}
       title="New Ad Set + Ad"
       description="Targeting, budget and one ad's creative — both require approval."
-      size="md"
+      size="full"
       bodyClassName="overflow-y-auto p-6"
     >
       <AdSetAdWizard
         projectId={projectId}
         campaignId={campaignId}
         closeHref={closeHref}
+        pageName={pageName}
       />
     </EntityDialog>
   );
@@ -620,10 +768,12 @@ function CampaignsTable({
   base,
   campaigns,
   currency,
+  detailHref,
 }: {
   base: string;
   campaigns: Awaited<ReturnType<typeof MetaAdsQuery.campaigns>>;
   currency: string;
+  detailHref: (id: string) => string;
 }) {
   return (
     <Table
@@ -639,12 +789,21 @@ function CampaignsTable({
       {campaigns.map((c) => (
         <tr key={c.campaignId} className="hover:bg-muted/30">
           <td className="px-3.5 py-2.5 whitespace-nowrap">
-            <Link
-              href={`${base}?campaignId=${c.campaignId}`}
-              className="font-medium text-foreground hover:underline"
-            >
-              {c.name}
-            </Link>
+            <div className="flex items-center gap-1.5">
+              <Link
+                href={`${base}?campaignId=${c.campaignId}`}
+                className="font-medium text-foreground hover:underline"
+              >
+                {c.name}
+              </Link>
+              <Link
+                href={detailHref(c.campaignId)}
+                className="flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+                aria-label={`View details for ${c.name}`}
+              >
+                <Eye className="size-3.5" />
+              </Link>
+            </div>
           </td>
           <td className="px-3.5 py-2.5 whitespace-nowrap text-muted-foreground">
             {c.objective}
@@ -669,11 +828,13 @@ function AdSetsTable({
   campaignId,
   adSets,
   currency,
+  detailHref,
 }: {
   base: string;
   campaignId: string;
   adSets: Awaited<ReturnType<typeof MetaAdsQuery.adSets>>;
   currency: string;
+  detailHref: (id: string) => string;
 }) {
   return (
     <Table
@@ -689,12 +850,21 @@ function AdSetsTable({
       {adSets.map((a) => (
         <tr key={a.adSetId} className="hover:bg-muted/30">
           <td className="px-3.5 py-2.5 whitespace-nowrap">
-            <Link
-              href={`${base}?campaignId=${campaignId}&adSetId=${a.adSetId}`}
-              className="font-medium text-foreground hover:underline"
-            >
-              {a.name}
-            </Link>
+            <div className="flex items-center gap-1.5">
+              <Link
+                href={`${base}?campaignId=${campaignId}&adSetId=${a.adSetId}`}
+                className="font-medium text-foreground hover:underline"
+              >
+                {a.name}
+              </Link>
+              <Link
+                href={detailHref(a.adSetId)}
+                className="flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+                aria-label={`View details for ${a.name}`}
+              >
+                <Eye className="size-3.5" />
+              </Link>
+            </div>
           </td>
           <td className="px-3.5 py-2.5 whitespace-nowrap text-muted-foreground">
             {a.optimizationGoal ?? "—"}
@@ -717,9 +887,11 @@ function AdSetsTable({
 function AdsTable({
   ads,
   currency,
+  detailHref,
 }: {
   ads: Awaited<ReturnType<typeof MetaAdsQuery.ads>>;
   currency: string;
+  detailHref: (id: string) => string;
 }) {
   return (
     <Table
@@ -729,7 +901,18 @@ function AdsTable({
       {ads.map((a) => (
         <tr key={a.adId} className="hover:bg-muted/30">
           <td className="px-3.5 py-2.5 font-medium whitespace-nowrap text-foreground">
-            {a.name}
+            <div className="flex items-center gap-1.5">
+              <Link href={detailHref(a.adId)} className="hover:underline">
+                {a.name}
+              </Link>
+              <Link
+                href={detailHref(a.adId)}
+                className="flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+                aria-label={`View details for ${a.name}`}
+              >
+                <Eye className="size-3.5" />
+              </Link>
+            </div>
           </td>
           <td className="px-3.5 py-2.5 whitespace-nowrap">
             <StatusBadge

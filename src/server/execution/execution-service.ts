@@ -268,7 +268,26 @@ export const ExecutionService = {
       ExecutionPolicy.requiresVerification(job.capability),
     );
 
-    if (outcome.jobStatus === job.status) return job;
+    if (outcome.jobStatus === job.status) {
+      // Nothing transitioned, but reaching the provider at all proves the
+      // job is still alive — bump `updatedAt` (via a no-op `status` write;
+      // the `@updatedAt` field advances on any update regardless of which
+      // fields changed) so SelfHealingService.resetStuckJobs' 30-minute
+      // "no progress" timeout doesn't force-fail a capability that
+      // genuinely just hasn't finished yet (e.g. Meta's video processing,
+      // an OpenClaw browser session) — without this, a job that only ever
+      // reports RUNNING/RUNNING never gets a DB write until it actually
+      // transitions, so its `updatedAt` stays frozen at dispatch time.
+      // Best-effort: a missed heartbeat write is no worse than today's
+      // behavior, so failures here are swallowed rather than surfaced.
+      await prisma.executionJob
+        .updateMany({
+          where: { id: job.id, status: job.status },
+          data: { status: job.status },
+        })
+        .catch(() => undefined);
+      return job;
+    }
 
     StateMachine.assertExecutionJobTransition(job.status, outcome.jobStatus);
 

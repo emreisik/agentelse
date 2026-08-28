@@ -252,6 +252,7 @@ function publishApprovalType(capability: CapabilityKey) {
     capability === "META_ADSET_CREATE" ||
     capability === "META_ADSET_UPDATE" ||
     capability === "META_AD_CREATE" ||
+    capability === "META_AD_UPDATE" ||
     capability.startsWith("GOOGLE_ADS_CAMPAIGN")
   ) {
     return "CAMPAIGN_APPROVAL" as const;

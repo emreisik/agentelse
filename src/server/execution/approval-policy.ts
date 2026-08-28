@@ -15,9 +15,10 @@ import { ExecutionPolicy } from "./execution-policy";
 // blocks on a human, regardless of what this layer computes. New levels only
 // ADD granularity below/above that floor, never weaken it.
 
-// LEVEL_4: budget/financial/contract-adjacent writes. META_AD_CREATE is
-// deliberately absent — it carries a creative + name, not a budget; it lands
-// on LEVEL_3_CLIENT via the ExecutionPolicy.requiresApproval() floor below.
+// LEVEL_4: budget/financial/contract-adjacent writes. META_AD_CREATE and
+// META_AD_UPDATE are deliberately absent — an Ad carries a creative + name,
+// not a budget (that lives on the Campaign/AdSet); both land on
+// LEVEL_3_CLIENT via the ExecutionPolicy.requiresApproval() floor below.
 const LEVEL_4_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>(
   [
     "META_CAMPAIGN_CREATE",

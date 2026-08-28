@@ -1,6 +1,16 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Next's default Server Action body cap is 1MB — createMetaAdSetWithAdAction
+  // (src/server/actions/meta-ads-actions.ts) accepts a multipart FormData
+  // upload up to a single ~50MB video + 8MB thumbnail, or a carousel of up
+  // to 10 images at 8MB each (~80MB) — both would be rejected by Next's
+  // framework-level limit before the action's own size/type checks ever ran.
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "100mb",
+    },
+  },
   async headers() {
     return [
       {

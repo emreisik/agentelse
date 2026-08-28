@@ -462,11 +462,15 @@ export async function updateMetaAdSet(input: {
   accessToken: string;
   status?: "ACTIVE" | "PAUSED";
   dailyBudgetCents?: number;
+  targeting?: MetaAdSetTargeting;
 }): Promise<void> {
   const body = new URLSearchParams({ access_token: input.accessToken });
   if (input.status) body.set("status", input.status);
   if (input.dailyBudgetCents !== undefined) {
     body.set("daily_budget", String(input.dailyBudgetCents));
+  }
+  if (input.targeting) {
+    body.set("targeting", JSON.stringify(buildTargetingSpec(input.targeting)));
   }
 
   await request<{ success: boolean }>(`${GRAPH_BASE}/${input.adSetId}`, {
@@ -718,7 +722,58 @@ export type MetaAdSetSummary = {
   dailyBudgetCents?: number;
   optimizationGoal?: string;
   billingEvent?: string;
+  // Undefined only if Meta returned no targeting at all (shouldn't happen
+  // for a real adset) — see parseTargeting below.
+  targeting?: MetaAdSetTargeting;
 };
+
+type RawTargeting = {
+  geo_locations?: {
+    countries?: string[];
+    cities?: {
+      key: string;
+      name?: string;
+      radius?: number;
+      distance_unit?: string;
+    }[];
+  };
+  age_min?: number;
+  age_max?: number;
+  genders?: number[];
+  locales?: number[];
+};
+
+// Mirrors createMetaAdSet's targeting BUILD (above) in reverse — same field
+// names (geo_locations.countries/cities, age_min/age_max, genders, locales)
+// confirmed against Meta's Marketing API docs. `radius` is read back as-is
+// regardless of the echoed `distance_unit` (this app always creates cities
+// with distance_unit "kilometer", see createMetaAdSet, but an adset created
+// outside this app could theoretically use miles) — good enough for display,
+// worth revisiting only if editing needs to round-trip an exact radius.
+function parseTargeting(raw: RawTargeting | undefined): MetaAdSetTargeting {
+  return {
+    countries: raw?.geo_locations?.countries ?? [],
+    cities: raw?.geo_locations?.cities?.length
+      ? raw.geo_locations.cities.map((c) => ({
+          key: c.key,
+          name: c.name ?? c.key,
+          radiusKm: c.radius,
+        }))
+      : undefined,
+    ageMin: raw?.age_min,
+    ageMax: raw?.age_max,
+    genders: raw?.genders?.filter((g): g is 1 | 2 => g === 1 || g === 2),
+    // Meta's targeting GET never returns a locale's human name, only its
+    // numeric id — `label` stays undefined here; callers fall back to
+    // showing "Locale #<id>" for an adset that already existed before this
+    // session (see adset-detail-sheet.tsx). A FRESH selection (the wizard's
+    // own LocaleSearchCommand, backed by searchMetaAdLocales) carries the
+    // real label straight from Meta's search result instead.
+    locales: raw?.locales?.length
+      ? raw.locales.map((id) => ({ id }))
+      : undefined,
+  };
+}
 
 export async function listMetaAdSets(input: {
   campaignId: string;
@@ -726,7 +781,7 @@ export async function listMetaAdSets(input: {
 }): Promise<MetaAdSetSummary[]> {
   const params = new URLSearchParams({
     fields:
-      "id,name,status,effective_status,daily_budget,optimization_goal,billing_event",
+      "id,name,status,effective_status,daily_budget,optimization_goal,billing_event,targeting",
     limit: "100",
     access_token: input.accessToken,
   });
@@ -738,6 +793,7 @@ export async function listMetaAdSets(input: {
     daily_budget?: string;
     optimization_goal?: string;
     billing_event?: string;
+    targeting?: RawTargeting;
   }>(`${GRAPH_BASE}/${input.campaignId}/adsets?${params.toString()}`);
 
   return rows.map((a) => ({
@@ -748,7 +804,104 @@ export async function listMetaAdSets(input: {
     dailyBudgetCents: a.daily_budget ? Number(a.daily_budget) : undefined,
     optimizationGoal: a.optimization_goal,
     billingEvent: a.billing_event,
+    targeting: parseTargeting(a.targeting),
   }));
+}
+
+export type MetaAdCreativeCard = {
+  link: string;
+  name: string;
+  description?: string;
+  // Present when read back from an existing ad (see parseCreativeDetail) —
+  // NOT sent by the wizard's create-side card shape, which only has a
+  // local File to upload. Lets an edit that doesn't replace a given card's
+  // image reuse this hash directly instead of re-uploading.
+  imageHash?: string;
+};
+
+// The listing/detail-view shape of an existing ad's creative — deliberately
+// NOT the same as the wizard's `pendingAd` creation payload (that one also
+// carries imageAssetId/videoAssetId/thumbnailAssetId, which only make sense
+// for a not-yet-uploaded local File). `imageHash`/`videoId` exist so an EDIT
+// that only changes text (message/link/CTA) can rebuild the creative
+// pointing at the SAME already-uploaded image/video instead of forcing the
+// user to re-select a file they didn't mean to change — Meta's adimages/
+// advideos library lets a new creative reference an existing hash/id
+// without re-uploading. `thumbnailUrl` on MetaAdSummary (Meta's own
+// one-image preview for any creative type, usually the first card for a
+// carousel) remains the only fetchable per-ad IMAGE URL for display.
+export type MetaAdCreativeDetail = {
+  format: "SINGLE_IMAGE" | "CAROUSEL" | "VIDEO";
+  message?: string;
+  link?: string;
+  callToActionType?: string;
+  imageHash?: string;
+  videoId?: string;
+  cards?: MetaAdCreativeCard[];
+};
+
+type RawObjectStorySpec = {
+  link_data?: {
+    link?: string;
+    message?: string;
+    image_hash?: string;
+    call_to_action?: { type?: string };
+    child_attachments?: {
+      link?: string;
+      name?: string;
+      description?: string;
+      image_hash?: string;
+    }[];
+  };
+  video_data?: {
+    video_id?: string;
+    message?: string;
+    call_to_action?: { type?: string; value?: { link?: string } };
+  };
+};
+
+// object_story_spec carries EITHER link_data (single image, or carousel
+// when it has child_attachments) OR video_data — the two are mutually
+// exclusive, confirmed against Meta's Marketing API docs. video_data has no
+// top-level link (unlike link_data) — its destination URL is nested inside
+// call_to_action.value.link, matching createMetaVideoAdCreative's write
+// side above.
+function parseCreativeDetail(
+  spec: RawObjectStorySpec | undefined,
+): MetaAdCreativeDetail | undefined {
+  if (!spec) return undefined;
+  if (spec.video_data) {
+    return {
+      format: "VIDEO",
+      message: spec.video_data.message,
+      link: spec.video_data.call_to_action?.value?.link,
+      callToActionType: spec.video_data.call_to_action?.type,
+      videoId: spec.video_data.video_id,
+    };
+  }
+  if (spec.link_data?.child_attachments?.length) {
+    return {
+      format: "CAROUSEL",
+      message: spec.link_data.message,
+      callToActionType: spec.link_data.call_to_action?.type,
+      cards: spec.link_data.child_attachments.map((c) => ({
+        link: c.link ?? "",
+        name: c.name ?? "",
+        description: c.description,
+        imageHash: c.image_hash,
+      })),
+    };
+  }
+  if (spec.link_data) {
+    return {
+      format: "SINGLE_IMAGE",
+      message: spec.link_data.message,
+      link: spec.link_data.link,
+      callToActionType: spec.link_data.call_to_action?.type,
+      imageHash: spec.link_data.image_hash,
+    };
+  }
+  return undefined;
 }
 
 export type MetaAdSummary = {
@@ -758,6 +911,7 @@ export type MetaAdSummary = {
   effectiveStatus: string;
   creativeId?: string;
   thumbnailUrl?: string;
+  creative?: MetaAdCreativeDetail;
 };
 
 export async function listMetaAds(input: {
@@ -765,7 +919,8 @@ export async function listMetaAds(input: {
   accessToken: string;
 }): Promise<MetaAdSummary[]> {
   const params = new URLSearchParams({
-    fields: "id,name,status,effective_status,creative{id,thumbnail_url}",
+    fields:
+      "id,name,status,effective_status,creative{id,thumbnail_url,object_story_spec}",
     limit: "100",
     access_token: input.accessToken,
   });
@@ -774,7 +929,11 @@ export async function listMetaAds(input: {
     name: string;
     status: string;
     effective_status: string;
-    creative?: { id: string; thumbnail_url?: string };
+    creative?: {
+      id: string;
+      thumbnail_url?: string;
+      object_story_spec?: RawObjectStorySpec;
+    };
   }>(`${GRAPH_BASE}/${input.adSetId}/ads?${params.toString()}`);
 
   return rows.map((a) => ({
@@ -784,6 +943,7 @@ export async function listMetaAds(input: {
     effectiveStatus: a.effective_status,
     creativeId: a.creative?.id,
     thumbnailUrl: a.creative?.thumbnail_url,
+    creative: parseCreativeDetail(a.creative?.object_story_spec),
   }));
 }
 
@@ -796,15 +956,50 @@ export async function listMetaAds(input: {
 export type MetaAdSetTargeting = {
   countries: string[];
   // `key` is the geo location id from searchMetaAdGeoLocations — Meta
-  // requires the search endpoint's own opaque key, not a city name.
-  cities?: { key: string; radiusKm?: number }[];
+  // requires the search endpoint's own opaque key, not a city name. `name`
+  // is display-only (not sent to Meta, which ignores unknown fields in the
+  // request body) — the create wizard already carries it through from its
+  // city chips, and parseTargeting (below) fills it in when reading an
+  // existing adset back so the detail view can show a human city name
+  // instead of a bare opaque key.
+  cities?: { key: string; name?: string; radiusKm?: number }[];
   ageMin?: number;
   ageMax?: number;
   // Meta's numeric gender codes: 1 = male, 2 = female. Omitted/empty = all.
   genders?: (1 | 2)[];
-  // Meta's numeric locale ids (see META_LOCALES in meta-ad-targeting-data.ts).
-  locales?: number[];
+  // Meta's numeric locale ids, resolved live via searchMetaAdLocales (see
+  // LocaleSearchCommand) — NOT a hardcoded table; Meta doesn't publish a
+  // static locale reference, and a former one here had at least one
+  // confirmed-wrong id. `label` is display-only (not sent to Meta), same
+  // reasoning as `cities.name` above — undefined when read back from an
+  // existing adset, since Meta's targeting GET never returns a locale name.
+  locales?: { id: number; label?: string }[];
 };
+
+// Shared between createMetaAdSet and updateMetaAdSet's targeting update —
+// same geo_locations/age/gender/locale shape either way.
+function buildTargetingSpec(targeting: MetaAdSetTargeting) {
+  return {
+    geo_locations: {
+      countries: targeting.countries,
+      ...(targeting.cities?.length
+        ? {
+            cities: targeting.cities.map((c) => ({
+              key: c.key,
+              radius: c.radiusKm ?? 25,
+              distance_unit: "kilometer",
+            })),
+          }
+        : {}),
+    },
+    ...(targeting.ageMin !== undefined ? { age_min: targeting.ageMin } : {}),
+    ...(targeting.ageMax !== undefined ? { age_max: targeting.ageMax } : {}),
+    ...(targeting.genders?.length ? { genders: targeting.genders } : {}),
+    ...(targeting.locales?.length
+      ? { locales: targeting.locales.map((l) => l.id) }
+      : {}),
+  };
+}
 
 export async function createMetaAdSet(input: {
   adAccountId: string;
@@ -817,40 +1012,13 @@ export async function createMetaAdSet(input: {
   targeting: MetaAdSetTargeting;
   status: "ACTIVE" | "PAUSED";
 }): Promise<{ adSetId: string }> {
-  const targeting = {
-    geo_locations: {
-      countries: input.targeting.countries,
-      ...(input.targeting.cities?.length
-        ? {
-            cities: input.targeting.cities.map((c) => ({
-              key: c.key,
-              radius: c.radiusKm ?? 25,
-              distance_unit: "kilometer",
-            })),
-          }
-        : {}),
-    },
-    ...(input.targeting.ageMin !== undefined
-      ? { age_min: input.targeting.ageMin }
-      : {}),
-    ...(input.targeting.ageMax !== undefined
-      ? { age_max: input.targeting.ageMax }
-      : {}),
-    ...(input.targeting.genders?.length
-      ? { genders: input.targeting.genders }
-      : {}),
-    ...(input.targeting.locales?.length
-      ? { locales: input.targeting.locales }
-      : {}),
-  };
-
   const body = new URLSearchParams({
     name: input.name,
     campaign_id: input.campaignId,
     daily_budget: String(input.dailyBudgetCents),
     billing_event: input.billingEvent,
     optimization_goal: input.optimizationGoal,
-    targeting: JSON.stringify(targeting),
+    targeting: JSON.stringify(buildTargetingSpec(input.targeting)),
     status: input.status,
     access_token: input.accessToken,
   });
@@ -901,6 +1069,39 @@ export async function searchMetaAdGeoLocations(input: {
     name: loc.name,
     countryCode: loc.country_code,
     region: loc.region,
+  }));
+}
+
+export type MetaAdLocale = {
+  id: number;
+  label: string;
+};
+
+// Locale (ad_locale) search behind the AdSet wizard's targeting step —
+// replaces a former hardcoded META_LOCALES table that turned out to have
+// at least one wrong id (verified: id 24 is actually "English (UK)", not
+// "Turkish" as the table claimed) with no way to catch the rest without a
+// live call. Meta doesn't publish a static locale reference; `type=adlocale`
+// is the only way to get a locale's real numeric id, confirmed against the
+// same `/search` endpoint searchMetaAdGeoLocations already uses above (same
+// shape: `key`/`name` pairs), just with a numeric `key` instead of a string
+// one.
+export async function searchMetaAdLocales(input: {
+  query: string;
+  accessToken: string;
+}): Promise<MetaAdLocale[]> {
+  const params = new URLSearchParams({
+    type: "adlocale",
+    q: input.query,
+    access_token: input.accessToken,
+  });
+  const result = await request<{
+    data?: Array<{ key: number; name: string }>;
+  }>(`${GRAPH_BASE}/search?${params.toString()}`);
+
+  return (result.data ?? []).map((loc) => ({
+    id: loc.key,
+    label: loc.name,
   }));
 }
 
@@ -976,6 +1177,175 @@ export async function createMetaAdCreative(input: {
   return { creativeId: result.id };
 }
 
+// Same object_story_spec shape as createMetaAdCreative, except link_data
+// carries `child_attachments` (one entry per carousel card) instead of a
+// single image_hash/link pair. Meta requires 2-10 cards for a carousel
+// creative — the lower bound is guarded here, the upper bound is left to
+// Meta's own API validation (surfaced as a normal MetaApiError via `request`).
+export async function createMetaCarouselAdCreative(input: {
+  adAccountId: string;
+  accessToken: string;
+  pageId: string;
+  message: string;
+  cards: {
+    link: string;
+    name: string;
+    imageHash: string;
+    description?: string;
+  }[];
+  callToActionType?: string;
+}): Promise<{ creativeId: string }> {
+  if (input.cards.length < 2) {
+    throw new MetaApiError("A carousel creative requires at least 2 cards");
+  }
+
+  const objectStorySpec = {
+    page_id: input.pageId,
+    link_data: {
+      // Meta still requires a top-level fallback `link` on link_data even
+      // when child_attachments is present (used by older/limited surfaces
+      // that can't render the carousel) — the first card's link is a
+      // reasonable default; every child still carries its own link.
+      link: input.cards[0]!.link,
+      message: input.message,
+      child_attachments: input.cards.map((card) => ({
+        link: card.link,
+        name: card.name,
+        image_hash: card.imageHash,
+        ...(card.description ? { description: card.description } : {}),
+      })),
+      ...(input.callToActionType
+        ? { call_to_action: { type: input.callToActionType } }
+        : {}),
+    },
+  };
+
+  const body = new URLSearchParams({
+    object_story_spec: JSON.stringify(objectStorySpec),
+    access_token: input.accessToken,
+  });
+
+  const result = await request<{ id: string }>(
+    `${GRAPH_BASE}/${input.adAccountId}/adcreatives`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    },
+  );
+  return { creativeId: result.id };
+}
+
+// video_data's own shape (unlike link_data) has no top-level `link` — the
+// destination URL is nested inside call_to_action.value.link instead.
+// image_url is a REQUIRED cover/thumbnail image and must be a public URL
+// (unlike adimages' image_hash, video_data won't accept a hash here) — see
+// resolveDirectPublicUrl in asset-storage.ts, which is why the wizard
+// requires a separate thumbnail upload rather than deriving one from the
+// video itself (no server-side video-frame extraction here).
+export async function createMetaVideoAdCreative(input: {
+  adAccountId: string;
+  accessToken: string;
+  pageId: string;
+  videoId: string;
+  thumbnailUrl: string;
+  message: string;
+  link: string;
+  callToActionType: string;
+}): Promise<{ creativeId: string }> {
+  const objectStorySpec = {
+    page_id: input.pageId,
+    video_data: {
+      video_id: input.videoId,
+      image_url: input.thumbnailUrl,
+      message: input.message,
+      call_to_action: {
+        type: input.callToActionType,
+        value: { link: input.link },
+      },
+    },
+  };
+
+  const body = new URLSearchParams({
+    object_story_spec: JSON.stringify(objectStorySpec),
+    access_token: input.accessToken,
+  });
+
+  const result = await request<{ id: string }>(
+    `${GRAPH_BASE}/${input.adAccountId}/adcreatives`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    },
+  );
+  return { creativeId: result.id };
+}
+
+const VIDEO_UPLOAD_TIMEOUT_MS = 120_000; // a video is far larger than a
+// single image (uploadMetaAdImage's IMAGE_UPLOAD_TIMEOUT_MS = 20_000) — give
+// the transfer itself generous headroom, independent of Meta's own
+// background processing (checked separately, see checkMetaVideoStatus below).
+
+// Unlike uploadMetaAdImage's `adimages` endpoint (base64 bytes as a plain
+// form field), the Marketing API's `advideos` endpoint requires a genuine
+// multipart upload — `source` must be a file part or Meta rejects it. A
+// native FormData body sets its own multipart boundary, so — unlike every
+// other write in this file — Content-Type must NOT be set manually here;
+// fetch derives it from the FormData instance.
+export async function uploadMetaAdVideo(input: {
+  adAccountId: string;
+  accessToken: string;
+  videoBuffer: Buffer;
+  mimeType: string;
+}): Promise<{ videoId: string }> {
+  const form = new FormData();
+  form.set(
+    "source",
+    new Blob([new Uint8Array(input.videoBuffer)], { type: input.mimeType }),
+    "ad-video",
+  );
+  form.set("access_token", input.accessToken);
+
+  const result = await request<{ id: string }>(
+    `${GRAPH_BASE}/${input.adAccountId}/advideos`,
+    { method: "POST", body: form },
+    VIDEO_UPLOAD_TIMEOUT_MS,
+  );
+  if (!result.id) {
+    throw new MetaApiError("Meta did not return a video id for the upload");
+  }
+  return { videoId: result.id };
+}
+
+// A SINGLE status check (not a retry loop, unlike waitForContainerReady
+// above) — Meta processes an uploaded video asynchronously (transcoding,
+// thumbnail generation) before it can back an ad creative, and that can
+// take anywhere from seconds to several minutes. Looping with an in-process
+// sleep here would block the calling ExecutionWorker tick for that whole
+// span (risking its 5-minute tick watchdog and stalling every OTHER job's
+// polling in the same tick) — instead MetaApiProvider's video path calls
+// this ONCE per getStatus() poll, the same "check once, let the caller's
+// own tick loop retry later" shape OpenClawProvider already uses for
+// long-running browser runs. Returns false while still processing, true
+// once ready; throws only on Meta's own reported error state.
+export async function checkMetaVideoStatus(input: {
+  videoId: string;
+  accessToken: string;
+}): Promise<boolean> {
+  const result = await request<{ status?: { video_status?: string } }>(
+    `${GRAPH_BASE}/${input.videoId}?fields=status&access_token=${encodeURIComponent(input.accessToken)}`,
+  );
+  const videoStatus = result.status?.video_status;
+  if (videoStatus === "ready") return true;
+  if (videoStatus === "error") {
+    throw new MetaApiError(
+      `Meta video could not be processed (video_status: ${videoStatus})`,
+    );
+  }
+  return false;
+}
+
 export async function createMetaAd(input: {
   adAccountId: string;
   accessToken: string;
@@ -1001,4 +1371,32 @@ export async function createMetaAd(input: {
     },
   );
   return { adId: result.id };
+}
+
+// Updates an EXISTING ad — the write path behind META_AD_UPDATE. Meta's
+// AdCreative content is immutable once created (confirmed against Meta's
+// Marketing API docs: no update example exists for object_story_spec, only
+// for name/status), so "editing" an ad's creative always means building a
+// brand-new creative first (createMetaAdCreative/createMetaCarouselAdCreative/
+// createMetaVideoAdCreative, same as at creation time) and pointing this ad
+// at it via `creativeId` — never in-place content mutation.
+export async function updateMetaAd(input: {
+  adId: string;
+  accessToken: string;
+  name?: string;
+  status?: "ACTIVE" | "PAUSED";
+  creativeId?: string;
+}): Promise<void> {
+  const body = new URLSearchParams({ access_token: input.accessToken });
+  if (input.name) body.set("name", input.name);
+  if (input.status) body.set("status", input.status);
+  if (input.creativeId) {
+    body.set("creative", JSON.stringify({ creative_id: input.creativeId }));
+  }
+
+  await request<{ success: boolean }>(`${GRAPH_BASE}/${input.adId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
 }

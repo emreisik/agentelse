@@ -4,11 +4,18 @@ import type { ReasoningDef } from "../types";
 
 export const MeasurementAnalysisSchema = z.object({
   summary: z.string(),
-  outcome: z.enum(["POSITIVE", "NEUTRAL", "NEGATIVE", "INCONCLUSIVE"]),
+  // .catch("INCONCLUSIVE") — the enum's own designated "couldn't determine
+  // a clean outcome" value, so an invalid value degrades to exactly what a
+  // human would call it instead of crashing the whole analysis.
+  outcome: z
+    .enum(["POSITIVE", "NEUTRAL", "NEGATIVE", "INCONCLUSIVE"])
+    .catch("INCONCLUSIVE"),
   notable: z.boolean(),
 });
 
-export type MeasurementAnalysisOutput = z.infer<typeof MeasurementAnalysisSchema>;
+export type MeasurementAnalysisOutput = z.infer<
+  typeof MeasurementAnalysisSchema
+>;
 
 export const measurementAnalysisDef: ReasoningDef<MeasurementAnalysisOutput> = {
   purpose: "measurement.analyze",

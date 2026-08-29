@@ -6,7 +6,13 @@ import { zBoundedScore } from "../score-schema";
 export const CouncilEvaluationOutputSchema = z.object({
   scores: z.record(z.string(), zBoundedScore(0, 10)),
   overallScore: zBoundedScore(0, 10),
-  recommendation: z.enum(["STRONG_APPROVE", "APPROVE", "REVISE", "REJECT"]),
+  // .catch("REVISE") — an invalid value here (wrong case, a synonym) used
+  // to crash the whole council evaluation. REVISE is the safe fallback: it
+  // neither auto-approves nor auto-rejects, and routes the idea toward
+  // further (human) review instead.
+  recommendation: z
+    .enum(["STRONG_APPROVE", "APPROVE", "REVISE", "REJECT"])
+    .catch("REVISE"),
   rationale: z.string(),
 });
 

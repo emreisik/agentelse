@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
+import { zLenientArray } from "../lenient-array";
 import { zScoreFraction } from "../score-schema";
 
 // OpenClaw agents actually do the research, but return the result as free
@@ -8,8 +9,13 @@ import { zScoreFraction } from "../score-schema";
 // structured `findings[]`. This prompt is the bridge between the two: it
 // turns the report into readable findings. Without it, research results
 // were silently lost and the constitution was generated saying "Unclear".
+//
+// findings is a zLenientArray: one malformed finding (e.g. an invalid
+// classification value) drops only that finding instead of crashing the
+// whole extraction — a report can produce up to 25 findings, so the odds
+// that one of them is malformed rise with the report's length.
 export const ResearchExtractionOutputSchema = z.object({
-  findings: z.array(
+  findings: zLenientArray(
     z.object({
       statement: z.string(),
       classification: z.enum([

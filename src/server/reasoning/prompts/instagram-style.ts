@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
+import { zLenientArray } from "../lenient-array";
 
 const HEX = /^#[0-9a-fA-F]{3,8}$/;
 
@@ -9,26 +10,48 @@ const ColorSwatchSchema = z.object({
   name: z.string().optional(),
 });
 
+// A JSON Schema array `.max()` isn't provider-enforced any more than the
+// numeric bounds in score-schema.ts are — an enthusiastic model listing a
+// couple more colors/tags than asked for used to crash the whole
+// suggestion. Truncating is strictly better than rejecting: the caller
+// asked for "up to N", so the first N is still a fully valid answer.
+// zLenientArray additionally drops any single malformed swatch (e.g. a
+// non-hex color) instead of failing the whole array.
+function zColorSwatches(max: number) {
+  return zLenientArray(ColorSwatchSchema).transform((swatches) =>
+    swatches.slice(0, max),
+  );
+}
+
 // Deliberately a SUBSET of BrandVisualIdentity's fields — only the ones a
 // design director could actually infer by looking at a handful of post
 // images. Template/logo geometry and alwaysInclude/alwaysAvoid are
 // instructional knobs, not visual observations, so they're left for the
 // user to set by hand in the edit Sheet this suggestion pre-fills.
 export const InstagramStyleSuggestionSchema = z.object({
-  primaryColors: z.array(ColorSwatchSchema).max(4),
-  secondaryColors: z.array(ColorSwatchSchema).max(4),
-  accentColors: z.array(ColorSwatchSchema).max(3),
-  photographyStyle: z.enum([
-    "PHOTOGRAPHIC",
-    "ILLUSTRATED",
-    "THREE_D_RENDER",
-    "FLAT_DESIGN",
-    "MIXED",
-  ]),
+  primaryColors: zColorSwatches(4),
+  secondaryColors: zColorSwatches(4),
+  accentColors: zColorSwatches(3),
+  // .catch("MIXED") — the enum's own designated escape valve for "no
+  // single consistent style," so an invalid value degrades to exactly the
+  // meaning a human would assign it anyway, instead of crashing.
+  photographyStyle: z
+    .enum([
+      "PHOTOGRAPHIC",
+      "ILLUSTRATED",
+      "THREE_D_RENDER",
+      "FLAT_DESIGN",
+      "MIXED",
+    ])
+    .catch("MIXED"),
   styleRefinement: z.string(),
-  moodTags: z.array(z.string()).max(6),
+  moodTags: z.array(z.string()).transform((tags) => tags.slice(0, 6)),
   compositionNotes: z.string(),
-  backgroundTone: z.enum(["LIGHT", "DARK", "BRAND_COLORED", "NO_PREFERENCE"]),
+  // .catch("NO_PREFERENCE") — same rationale as photographyStyle above;
+  // NO_PREFERENCE is already this enum's own "no clear pattern" value.
+  backgroundTone: z
+    .enum(["LIGHT", "DARK", "BRAND_COLORED", "NO_PREFERENCE"])
+    .catch("NO_PREFERENCE"),
 });
 
 export type InstagramStyleSuggestion = z.infer<

@@ -56,13 +56,24 @@ export const ChatTurnOutputSchema = z.object({
   // The reply shown to the user. In the project's language, 2-5 sentences.
   reply: z.string(),
   intentKind: z.enum(["TASK", "ANSWER", "APPROVAL", "UNCLEAR"]),
-  capability: z.enum(CHAT_CAPABILITIES).optional(),
-  platform: z.enum(CHAT_PLATFORMS).optional(),
+  // .catch(undefined) on these four optional enums: a value outside the
+  // enum (wrong case, a synonym, a value the model half-remembers from a
+  // different prompt) used to crash the ENTIRE chat turn — including the
+  // `reply` text the user was about to see — on this codebase's single
+  // most frequently called, most user-visible reasoning call. Degrading to
+  // "field not provided" is exactly the already-safe path chat-service.ts
+  // takes when the model omits the field outright (see its intentKind-
+  // gated guards), so this only removes a crash, not a real capability.
+  capability: z.enum(CHAT_CAPABILITIES).optional().catch(undefined),
+  platform: z.enum(CHAT_PLATFORMS).optional().catch(undefined),
   // A self-contained brief to write onto the task. Instead of copying the
   // user's sentence verbatim, it folds in the context from the chat
   // history — the executing agent doesn't see the chat, only this text.
   taskBrief: z.string().optional(),
-  approvalDecision: z.enum(["APPROVE", "REJECT", "REVISE"]).optional(),
+  approvalDecision: z
+    .enum(["APPROVE", "REJECT", "REVISE"])
+    .optional()
+    .catch(undefined),
 });
 
 export type ChatTurnOutput = z.infer<typeof ChatTurnOutputSchema>;

@@ -14,6 +14,7 @@ import { AgencyDecisionRepository } from "@/server/repositories/agency-decision.
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
 import { IdeaRepository } from "@/server/repositories/idea.repository";
 import { OpportunityRepository } from "@/server/repositories/opportunity.repository";
+import { ProjectGoalRepository } from "@/server/repositories/project-goal.repository";
 import { TaskRepository } from "@/server/repositories/task.repository";
 
 import { resolveWeights, scoreItem } from "./next-best-action";
@@ -184,8 +185,28 @@ export const AgencyDirector = {
       return decision;
     }
 
-    // Execute path: goal linkage is mandatory for autonomous work.
-    const goalIds = opportunity?.goalIds ?? [];
+    // Execute path: goal linkage is mandatory for autonomous work. If the
+    // opportunity itself has no goal (opportunityEvaluationDef's LLM found
+    // no matching ProjectGoal), fall back to the project's own highest-
+    // priority active/approved goal instead of hard-failing — previously
+    // assertGoalsLinked threw here AFTER the AgencyDecision above was
+    // already recorded, so the idea looked "decided" but never got a
+    // WorkPlan/task, and the fingerprint-based cooldown then silently
+    // blocked any retry for policy.taskCooldownHours. A blind default is
+    // still recorded as a real decision (traceable via this rationale),
+    // not a silent no-op. Only genuinely goal-less projects (setup not
+    // finished) still hit the hard failure below.
+    let goalIds = opportunity?.goalIds ?? [];
+    if (goalIds.length === 0) {
+      const fallbackGoals =
+        await ProjectGoalRepository.listActiveOrApproved(projectId);
+      if (fallbackGoals[0]) {
+        goalIds = [fallbackGoals[0].id];
+        console.warn(
+          `[agency-director] idea ${idea.id} (${idea.title}): opportunity had no linked goal, auto-assigned fallback goal ${fallbackGoals[0].id}`,
+        );
+      }
+    }
     GoalEngine.assertGoalsLinked(goalIds, `idea ${idea.title}`);
 
     await IdeaRepository.transition(ideaId, projectId, "APPROVED");

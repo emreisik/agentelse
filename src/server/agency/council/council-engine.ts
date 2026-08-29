@@ -128,13 +128,20 @@ export const CouncilEngine = {
 
     if (combined === "REJECT") {
       await IdeaRepository.transition(idea.id, projectId, "REJECTED");
-    } else if (combined === "REVISE") {
-      // Stays at CONCEPT for a future revision cycle.
-      if (idea.status === "RAW") {
-        await IdeaRepository.transition(idea.id, projectId, "VALIDATED");
-        await IdeaRepository.transition(idea.id, projectId, "CONCEPT");
-      }
     } else {
+      // APPROVE / STRONG_APPROVE / REVISE all advance to SHORTLISTED.
+      // REVISE previously stopped here "for a future revision cycle" that
+      // never existed anywhere in the pipeline (evaluatePendingIdeas only
+      // ever re-scans status:"RAW") — REVISE ideas sat at CONCEPT forever,
+      // which silently blocked draft/creative generation for anything a
+      // council flagged (routine for a regulated vertical like fintech,
+      // where RISK legitimately asks for legal review on most ideas). This
+      // is safe to advance: REVISE's rationale (often compliance concerns)
+      // stays on each CouncilEvaluation.rationale row for whoever reviews
+      // the draft, and publishing is a fully separate, human-triggered,
+      // LEVEL_3_CLIENT-gated flow (execution-policy.ts) independent of idea
+      // status — advancing here only unblocks draft creation, never a
+      // public publish.
       if (idea.status === "RAW") {
         await IdeaRepository.transition(idea.id, projectId, "VALIDATED");
         await IdeaRepository.transition(idea.id, projectId, "CONCEPT");

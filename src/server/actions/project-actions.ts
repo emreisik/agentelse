@@ -107,10 +107,21 @@ const LOGO_MIME_TO_EXT: Record<string, string> = {
 };
 const MAX_LOGO_SIZE = 5 * 1024 * 1024;
 
+// "light" = the light-colored logo variant, shown on dark backgrounds.
+// "dark" = the dark-colored variant, shown on light backgrounds.
+// creative-template.ts picks between BrandDossier.logoAssetId (light) and
+// .darkLogoAssetId (dark) by sampling the generated image's background.
+type LogoVariant = "light" | "dark";
+
+function logoVariantFromForm(formData: FormData): LogoVariant {
+  return formData.get("variant") === "dark" ? "dark" : "light";
+}
+
 export async function uploadLogoAction(formData: FormData) {
   const projectId = String(formData.get("projectId"));
   const file = formData.get("logo");
   if (!(file instanceof File) || file.size === 0) return;
+  const variant = logoVariantFromForm(formData);
 
   const ext = LOGO_MIME_TO_EXT[file.type];
   if (!ext || file.size > MAX_LOGO_SIZE) {
@@ -140,15 +151,16 @@ export async function uploadLogoAction(formData: FormData) {
     },
   });
 
+  const field = variant === "dark" ? "darkLogoAssetId" : "logoAssetId";
   await prisma.brandDossier.upsert({
     where: { brandId: access.defaultBrandId },
     create: {
       workspaceId: access.workspaceId,
       projectId,
       brandId: access.defaultBrandId,
-      logoAssetId: asset.id,
+      [field]: asset.id,
     },
-    update: { logoAssetId: asset.id },
+    update: { [field]: asset.id },
   });
 
   revalidatePath(`/projects/${projectId}`);
@@ -156,6 +168,7 @@ export async function uploadLogoAction(formData: FormData) {
 
 export async function generateLogoAction(formData: FormData) {
   const projectId = String(formData.get("projectId"));
+  const variant = logoVariantFromForm(formData);
   const { userId } = await requireUser();
   const access = await requireProjectAccess(userId, projectId);
 
@@ -166,7 +179,11 @@ export async function generateLogoAction(formData: FormData) {
     }),
   ]);
 
-  const prompt = `A simple, modern, flat-design logo icon for a company called "${project.name}". ${dossier?.positioning ?? ""} Minimalist, vector style, centered on a plain white background, no text.`;
+  const colorInstruction =
+    variant === "dark"
+      ? "The logo mark itself must be dark-colored (black or a dark brand color) so it reads clearly on light backgrounds."
+      : "The logo mark itself must be light-colored (white or a light brand color) so it reads clearly on dark backgrounds.";
+  const prompt = `A simple, modern, flat-design logo icon for a company called "${project.name}". ${dossier?.positioning ?? ""} Minimalist, vector style, centered on a plain white background, no text. ${colorInstruction}`;
 
   const generated = await generateCreativeImage(prompt);
   if (!generated) {
@@ -190,15 +207,16 @@ export async function generateLogoAction(formData: FormData) {
     },
   });
 
+  const field = variant === "dark" ? "darkLogoAssetId" : "logoAssetId";
   await prisma.brandDossier.upsert({
     where: { brandId: access.defaultBrandId },
     create: {
       workspaceId: access.workspaceId,
       projectId,
       brandId: access.defaultBrandId,
-      logoAssetId: asset.id,
+      [field]: asset.id,
     },
-    update: { logoAssetId: asset.id },
+    update: { [field]: asset.id },
   });
 
   revalidatePath(`/projects/${projectId}`);

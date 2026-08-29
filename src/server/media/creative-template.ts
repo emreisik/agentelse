@@ -62,10 +62,20 @@ function extractAccentColorHex(approvedColors: unknown): string | null {
 // Best-effort: if there's nothing to draw, or compositing fails for any
 // reason, the file is left as-is — creative generation must never fail
 // because of visual templating.
+// Luminance threshold (0-255, ITU-R BT.709 weights) below which a sampled
+// region counts as "dark" -> the light logo variant is legible there.
+const DARK_REGION_LUMINANCE_THRESHOLD = 128;
+
 export async function applyBrandTemplate(input: {
   storageKey: string;
   mimeType: string;
-  logoAssetId?: string | null;
+  // Light-colored logo (legible on dark backgrounds) and dark-colored logo
+  // (legible on light backgrounds) — when both are set, the region behind
+  // the logo's placement is sampled for brightness and the matching variant
+  // is picked automatically, no artificial backdrop needed. When only one
+  // is set, that one is always used (today's single-logo behavior).
+  lightLogoAssetId?: string | null;
+  darkLogoAssetId?: string | null;
   // Structured accent colors (role-labeled) from BrandVisualIdentity —
   // used when template.accentBarColorHex isn't explicitly set. Legacy
   // approvedColors (BrandDossier, untyped Json) is the final fallback for
@@ -89,18 +99,26 @@ export async function applyBrandTemplate(input: {
   // Relaxed from the original "no logo -> bail out entirely": a brand with
   // no logo yet can still get a consistent accent-bar treatment. Only skip
   // when there's truly nothing to draw.
-  const hasLogo = Boolean(input.logoAssetId);
+  const hasLogo = Boolean(input.lightLogoAssetId || input.darkLogoAssetId);
   if (!hasLogo && !accentHex) return null;
 
-  let logoAssetStorageKey: string | null = null;
-  if (hasLogo) {
-    const logoAsset = await prisma.asset.findUnique({
-      where: { id: input.logoAssetId! },
-      select: { storageKey: true },
-    });
-    logoAssetStorageKey = logoAsset?.storageKey ?? null;
-  }
-  if (!logoAssetStorageKey && !accentHex) return null;
+  const [lightLogoAsset, darkLogoAsset] = await Promise.all([
+    input.lightLogoAssetId
+      ? prisma.asset.findUnique({
+          where: { id: input.lightLogoAssetId },
+          select: { storageKey: true },
+        })
+      : null,
+    input.darkLogoAssetId
+      ? prisma.asset.findUnique({
+          where: { id: input.darkLogoAssetId },
+          select: { storageKey: true },
+        })
+      : null,
+  ]);
+  const lightLogoStorageKey = lightLogoAsset?.storageKey ?? null;
+  const darkLogoStorageKey = darkLogoAsset?.storageKey ?? null;
+  if (!lightLogoStorageKey && !darkLogoStorageKey && !accentHex) return null;
 
   const baseBuffer = await readAsset(input.storageKey);
   const baseMeta = await sharp(baseBuffer).metadata();
@@ -124,25 +142,23 @@ export async function applyBrandTemplate(input: {
     });
   }
 
-  if (logoAssetStorageKey) {
-    const logoBuffer = await readAsset(logoAssetStorageKey);
+  if (lightLogoStorageKey || darkLogoStorageKey) {
+    // Geometry (size/position) is computed from whichever variant exists —
+    // when both are set they're expected to be the same mark just
+    // recolored, so either's aspect ratio is equivalent for sizing.
+    const referenceStorageKey = lightLogoStorageKey ?? darkLogoStorageKey!;
+    const referenceBuffer = await readAsset(referenceStorageKey);
     const margin = Math.round(width * (cfg.logoMarginPercent / 100));
     const logoWidth = Math.round(width * (cfg.logoSizePercent / 100));
-    const resizedLogo = await sharp(logoBuffer)
+    const referenceResized = await sharp(referenceBuffer)
       .resize({ width: logoWidth, withoutEnlargement: false })
       .toBuffer();
     const logoHeight =
-      (await sharp(resizedLogo).metadata()).height ?? logoWidth;
-
-    const badgePaddingX = Math.round(logoWidth * 0.18);
-    const badgePaddingY = Math.round(logoHeight * 0.18);
-    const badgeWidth = logoWidth + badgePaddingX * 2;
-    const badgeHeight = logoHeight + badgePaddingY * 2;
-    const badgeSvg = `<svg width="${badgeWidth}" height="${badgeHeight}"><rect width="${badgeWidth}" height="${badgeHeight}" rx="${Math.round(badgeHeight * 0.18)}" fill="white" fill-opacity="0.88"/></svg>`;
+      (await sharp(referenceResized).metadata()).height ?? logoWidth;
 
     // Reserve space for the accent bar only when the logo shares its edge
-    // (top badge + top bar, or a bottom-anchored badge + bottom bar) — a
-    // logo on the opposite edge from the bar never needs the offset.
+    // (top-anchored logo + top bar, or bottom-anchored logo + bottom bar) —
+    // a logo on the opposite edge from the bar never needs the offset.
     let left: number;
     let top: number;
     switch (cfg.logoPosition) {
@@ -151,30 +167,65 @@ export async function applyBrandTemplate(input: {
         top = margin + (barOnTop ? barHeight : 0);
         break;
       case "TOP_RIGHT":
-        left = width - margin - badgeWidth;
+        left = width - margin - logoWidth;
         top = margin + (barOnTop ? barHeight : 0);
         break;
       case "BOTTOM_LEFT":
         left = margin;
-        top = height - margin - badgeHeight - (barOnBottom ? barHeight : 0);
+        top = height - margin - logoHeight - (barOnBottom ? barHeight : 0);
         break;
       case "CENTER_BOTTOM":
-        left = Math.round((width - badgeWidth) / 2);
-        top = height - margin - badgeHeight - (barOnBottom ? barHeight : 0);
+        left = Math.round((width - logoWidth) / 2);
+        top = height - margin - logoHeight - (barOnBottom ? barHeight : 0);
         break;
       case "BOTTOM_RIGHT":
       default:
-        left = width - margin - badgeWidth;
-        top = height - margin - badgeHeight - (barOnBottom ? barHeight : 0);
+        left = width - margin - logoWidth;
+        top = height - margin - logoHeight - (barOnBottom ? barHeight : 0);
         break;
     }
 
-    composites.push({ input: Buffer.from(badgeSvg), left, top });
-    composites.push({
-      input: resizedLogo,
-      left: left + badgePaddingX,
-      top: top + badgePaddingY,
-    });
+    // Pick the variant that reads clearly at this exact spot by sampling
+    // the destination region's brightness — light logo for a dark region,
+    // dark logo for a light region. Only one variant present -> always use
+    // it (today's behavior). No backdrop/badge is drawn behind the logo
+    // anymore; this sampling IS the contrast strategy that replaces it.
+    let chosenStorageKey = referenceStorageKey;
+    if (lightLogoStorageKey && darkLogoStorageKey) {
+      const sampleLeft = Math.max(0, Math.min(left, width - 1));
+      const sampleTop = Math.max(0, Math.min(top, height - 1));
+      const sampleWidth = Math.max(1, Math.min(logoWidth, width - sampleLeft));
+      const sampleHeight = Math.max(
+        1,
+        Math.min(logoHeight, height - sampleTop),
+      );
+      const stats = await sharp(baseBuffer)
+        .extract({
+          left: sampleLeft,
+          top: sampleTop,
+          width: sampleWidth,
+          height: sampleHeight,
+        })
+        .stats();
+      const [r, g, b] = stats.channels;
+      const luminance =
+        0.2126 * (r?.mean ?? 255) +
+        0.7152 * (g?.mean ?? 255) +
+        0.0722 * (b?.mean ?? 255);
+      chosenStorageKey =
+        luminance < DARK_REGION_LUMINANCE_THRESHOLD
+          ? lightLogoStorageKey
+          : darkLogoStorageKey;
+    }
+
+    const resizedLogo =
+      chosenStorageKey === referenceStorageKey
+        ? referenceResized
+        : await sharp(await readAsset(chosenStorageKey))
+            .resize({ width: logoWidth, withoutEnlargement: false })
+            .toBuffer();
+
+    composites.push({ input: resizedLogo, left, top });
   }
 
   if (composites.length === 0) return null;

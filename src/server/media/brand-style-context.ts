@@ -51,6 +51,7 @@ export type BrandVisualIdentityContext = {
 
 export type BrandStyleContext = {
   logoAssetId: string | null;
+  darkLogoAssetId: string | null;
   // Legacy BrandDossier fields, passed through as-is for callers that still
   // need creative-prompt-builder.ts's/creative-template.ts's existing
   // defensive summarization (a brand with no BrandVisualIdentity row keeps
@@ -70,6 +71,7 @@ export async function resolveBrandStyleContext(
       where: { brandId },
       select: {
         logoAssetId: true,
+        darkLogoAssetId: true,
         approvedColors: true,
         visualGuidelines: true,
       },
@@ -79,6 +81,7 @@ export async function resolveBrandStyleContext(
 
   return {
     logoAssetId: dossier?.logoAssetId ?? null,
+    darkLogoAssetId: dossier?.darkLogoAssetId ?? null,
     legacyApprovedColors: dossier?.approvedColors ?? null,
     legacyVisualGuidelines: dossier?.visualGuidelines ?? null,
     visualIdentity: identity

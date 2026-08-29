@@ -14,6 +14,7 @@ export type ContextField =
   | "approvedColors"
   | "approvedFonts"
   | "logoAssetId"
+  | "darkLogoAssetId"
   | "products"
   | "services"
   | "toneOfVoice"
@@ -51,6 +52,7 @@ const CAPABILITY_CONTEXT_FIELDS: Partial<
     "approvedColors",
     "approvedFonts",
     "logoAssetId",
+    "darkLogoAssetId",
     "visualIdentity",
     "products",
     "approvedClaims",
@@ -63,6 +65,7 @@ const CAPABILITY_CONTEXT_FIELDS: Partial<
     "visualGuidelines",
     "approvedColors",
     "logoAssetId",
+    "darkLogoAssetId",
     "visualIdentity",
     "products",
     "approvedClaims",

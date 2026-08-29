@@ -22,7 +22,7 @@ export async function BrandLogoCard({
 }) {
   const dossier = await prisma.brandDossier.findUnique({
     where: { brandId },
-    select: { logoAssetId: true },
+    select: { logoAssetId: true, darkLogoAssetId: true },
   });
 
   return (
@@ -34,48 +34,93 @@ export async function BrandLogoCard({
         <CardTitle className="text-base">Logo</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {dossier?.logoAssetId ? (
-          <div className="flex items-center justify-center rounded-xl bg-accent/40 p-4">
-            <Image
-              src={`/api/assets/${dossier.logoAssetId}`}
-              alt="Brand logo"
-              width={128}
-              height={128}
-              unoptimized
-              className="h-32 w-auto object-contain"
-            />
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            No logo yet. You can upload a file or generate one with AI from the
-            brand dossier&apos;s positioning.
-          </p>
-        )}
-
-        <form action={uploadLogoAction} className="space-y-2">
-          <input type="hidden" name="projectId" value={projectId} />
-          <Input
-            type="file"
-            name="logo"
-            accept="image/png,image/jpeg"
-            required
+        <p className="text-xs text-muted-foreground">
+          Upload both a light and a dark variant — generated creatives
+          automatically pick whichever one reads clearly against the background,
+          no artificial backdrop behind the logo.
+        </p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <LogoVariantSlot
+            projectId={projectId}
+            variant="light"
+            label="Light logo"
+            hint="For dark backgrounds"
+            previewBg="bg-neutral-900"
+            assetId={dossier?.logoAssetId ?? null}
           />
-          <p className="text-xs text-muted-foreground">
-            PNG or JPEG, up to 5 MB.
-          </p>
-          <SubmitButton size="sm" variant="outline">
-            Upload
-          </SubmitButton>
-        </form>
-
-        <form action={generateLogoAction}>
-          <input type="hidden" name="projectId" value={projectId} />
-          <SubmitButton size="sm">
-            <Sparkles className="size-4" />
-            Generate with AI
-          </SubmitButton>
-        </form>
+          <LogoVariantSlot
+            projectId={projectId}
+            variant="dark"
+            label="Dark logo"
+            hint="For light backgrounds"
+            previewBg="bg-neutral-100"
+            assetId={dossier?.darkLogoAssetId ?? null}
+          />
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+function LogoVariantSlot({
+  projectId,
+  variant,
+  label,
+  hint,
+  previewBg,
+  assetId,
+}: {
+  projectId: string;
+  variant: "light" | "dark";
+  label: string;
+  hint: string;
+  previewBg: string;
+  assetId: string | null;
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">
+        {label} <span className="text-muted-foreground">— {hint}</span>
+      </p>
+      {assetId ? (
+        <div
+          className={`flex items-center justify-center rounded-xl p-4 ${previewBg}`}
+        >
+          <Image
+            src={`/api/assets/${assetId}`}
+            alt={`${label} preview`}
+            width={96}
+            height={96}
+            unoptimized
+            className="h-24 w-auto object-contain"
+          />
+        </div>
+      ) : (
+        <p className="rounded-xl bg-accent/40 p-4 text-sm text-muted-foreground">
+          No {label.toLowerCase()} yet.
+        </p>
+      )}
+
+      <form action={uploadLogoAction} className="space-y-2">
+        <input type="hidden" name="projectId" value={projectId} />
+        <input type="hidden" name="variant" value={variant} />
+        <Input type="file" name="logo" accept="image/png,image/jpeg" required />
+        <p className="text-xs text-muted-foreground">
+          PNG or JPEG, up to 5 MB.
+        </p>
+        <SubmitButton size="sm" variant="outline">
+          Upload
+        </SubmitButton>
+      </form>
+
+      <form action={generateLogoAction}>
+        <input type="hidden" name="projectId" value={projectId} />
+        <input type="hidden" name="variant" value={variant} />
+        <SubmitButton size="sm">
+          <Sparkles className="size-4" />
+          Generate with AI
+        </SubmitButton>
+      </form>
+    </div>
   );
 }

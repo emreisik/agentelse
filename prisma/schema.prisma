@@ -878,6 +878,10 @@ model BrandDossier {
   approvedColors   Json?
   approvedFonts    Json?
   logoAssetId      String?
+  // Dark-colored variant of logoAssetId (which stays the light/default
+  // logo for backward compat) — creative-template.ts picks between them
+  // based on the sampled brightness of the generated image's logo region.
+  darkLogoAssetId  String?
   // Mirrored from Project — the execution context builder already reads
   // the dossier via brandId, so no separate Project join is needed.
   language         String?

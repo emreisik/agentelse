@@ -39,6 +39,8 @@ export async function buildExecutionContext(
     context.approvedFonts = dossier?.approvedFonts ?? null;
   if (fields.has("logoAssetId"))
     context.logoAssetId = dossier?.logoAssetId ?? null;
+  if (fields.has("darkLogoAssetId"))
+    context.darkLogoAssetId = dossier?.darkLogoAssetId ?? null;
   if (fields.has("products")) context.products = dossier?.products ?? null;
   if (fields.has("services")) context.services = dossier?.services ?? null;
 

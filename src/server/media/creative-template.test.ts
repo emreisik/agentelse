@@ -52,11 +52,11 @@ async function pixelAt(
   return [data[idx]!, data[idx + 1]!, data[idx + 2]!];
 }
 
-// The composited overlays are intentionally semi-transparent (accent bar
-// fill-opacity 0.85, badge 0.88 — see creative-template.ts) so they read as
-// a soft overlay, not a hard block. Over a near-black (10,10,10) base, a
-// pure-channel overlay blends to roughly 0.85*255+0.15*10 ≈ 218, not 255 —
-// this tolerance is sized for that blend, not just JPEG/PNG rounding noise.
+// The accent bar overlay is intentionally semi-transparent (fill-opacity
+// 0.85 — see creative-template.ts) so it reads as a soft overlay, not a hard
+// block. Over a near-black (10,10,10) base, a pure-channel overlay blends to
+// roughly 0.85*255+0.15*10 ≈ 218, not 255 — this tolerance is sized for that
+// blend, not just JPEG/PNG rounding noise.
 function isChannelDominant(actual: number, tolerance = 60): boolean {
   return Math.abs(actual - 0xff) <= tolerance;
 }
@@ -64,23 +64,32 @@ function isChannelDominant(actual: number, tolerance = 60): boolean {
 describe("applyBrandTemplate", () => {
   let baseBuffer: Buffer;
   let logoBuffer: Buffer;
+  let darkLogoBuffer: Buffer;
 
   beforeEach(async () => {
     vi.resetAllMocks();
     baseBuffer = await solidPng(WIDTH, HEIGHT, [10, 10, 10]); // near-black base
-    logoBuffer = await solidPng(60, 60, [0, 200, 0]); // green logo
-    storageMocks.readAsset.mockImplementation(async (key: string) =>
-      key === "logo-key" ? logoBuffer : baseBuffer,
-    );
+    logoBuffer = await solidPng(60, 60, [0, 200, 0]); // green light-variant logo
+    darkLogoBuffer = await solidPng(60, 60, [200, 0, 0]); // red dark-variant logo
+    storageMocks.readAsset.mockImplementation(async (key: string) => {
+      if (key === "logo-key") return logoBuffer;
+      if (key === "dark-logo-key") return darkLogoBuffer;
+      return baseBuffer;
+    });
     storageMocks.overwriteAsset.mockResolvedValue(undefined);
-    prismaMocks.assetFindUnique.mockResolvedValue({ storageKey: "logo-key" });
+    prismaMocks.assetFindUnique.mockImplementation(
+      async ({ where }: { where: { id: string } }) =>
+        where.id === "dark-logo-1"
+          ? { storageKey: "dark-logo-key" }
+          : { storageKey: "logo-key" },
+    );
   });
 
   it("returns null and does not composite when the template is disabled", async () => {
     const result = await applyBrandTemplate({
       storageKey: "base-key",
       mimeType: "image/png",
-      logoAssetId: "logo-1",
+      lightLogoAssetId: "logo-1",
       template: { enabled: false },
     });
     expect(result).toBeNull();
@@ -91,7 +100,7 @@ describe("applyBrandTemplate", () => {
     const result = await applyBrandTemplate({
       storageKey: "base-key",
       mimeType: "image/png",
-      logoAssetId: null,
+      lightLogoAssetId: null,
       template: { accentBarEnabled: false },
     });
     expect(result).toBeNull();
@@ -102,7 +111,7 @@ describe("applyBrandTemplate", () => {
     const result = await applyBrandTemplate({
       storageKey: "base-key",
       mimeType: "image/png",
-      logoAssetId: null,
+      lightLogoAssetId: null,
       accentColors: [{ hex: "#ff0000" }],
       template: { logoPosition: "BOTTOM_RIGHT" },
     });
@@ -119,7 +128,7 @@ describe("applyBrandTemplate", () => {
     const result = await applyBrandTemplate({
       storageKey: "base-key",
       mimeType: "image/png",
-      logoAssetId: null,
+      lightLogoAssetId: null,
       accentColors: [{ hex: "#00ff00" }],
       legacyApprovedColors: ["#0000ff"],
       template: { accentBarColorHex: "#ff0000" },
@@ -136,7 +145,7 @@ describe("applyBrandTemplate", () => {
     const result = await applyBrandTemplate({
       storageKey: "base-key",
       mimeType: "image/png",
-      logoAssetId: null,
+      lightLogoAssetId: null,
       legacyApprovedColors: [{ hex: "#0000ff", name: "Ocean" }],
     });
     expect(result).not.toBeNull();
@@ -147,38 +156,94 @@ describe("applyBrandTemplate", () => {
     expect(g).toBeLessThan(30);
   });
 
-  it("places the logo badge at the corner LogoPosition names, e.g. TOP_LEFT", async () => {
+  it("places the logo at the corner LogoPosition names, e.g. TOP_LEFT", async () => {
     const result = await applyBrandTemplate({
       storageKey: "base-key",
       mimeType: "image/png",
-      logoAssetId: "logo-1",
+      lightLogoAssetId: "logo-1",
       template: { logoPosition: "TOP_LEFT", accentBarEnabled: false },
     });
     expect(result).not.toBeNull();
     const [, outputBuffer] = storageMocks.overwriteAsset.mock.calls[0]!;
-    // Badge+logo start at the ~4%-of-width margin (16px for a 400px
-    // canvas); (40,40) lands inside the logo itself (green), not its white
-    // badge margin — either way, "not the untouched near-black base"
-    // proves something was composited there.
+    // Logo starts right at the ~4%-of-width margin (16px for a 400px
+    // canvas), no badge padding inset anymore; (40,40) lands inside the
+    // logo itself (green) — proves something was composited there.
     const topLeft = await pixelAt(outputBuffer, 40, 40);
     const bottomRight = await pixelAt(outputBuffer, WIDTH - 15, HEIGHT - 15);
     expect(topLeft).not.toEqual([10, 10, 10]);
     expect(bottomRight).toEqual([10, 10, 10]); // untouched near-black base
   });
 
+  it("does not draw a white badge behind the logo anymore", async () => {
+    const result = await applyBrandTemplate({
+      storageKey: "base-key",
+      mimeType: "image/png",
+      lightLogoAssetId: "logo-1",
+      template: { logoPosition: "BOTTOM_RIGHT", accentBarEnabled: false },
+    });
+    expect(result).not.toBeNull();
+    const [, outputBuffer] = storageMocks.overwriteAsset.mock.calls[0]!;
+    // The old implementation drew a ~88%-opaque white badge extending well
+    // past the logo's own footprint (BOTTOM_RIGHT, 400px canvas: logo spans
+    // x/y [320,384), the old badge spanned [296,384)). This point sits
+    // inside where that badge used to extend to but outside the logo
+    // itself — it must be the untouched near-black base now, not a
+    // white/cream blend.
+    const outsideLogoNearCorner = await pixelAt(outputBuffer, 305, 350);
+    expect(outsideLogoNearCorner).toEqual([10, 10, 10]);
+  });
+
+  it("auto-selects the light logo variant over a dark background region when both variants are set", async () => {
+    const result = await applyBrandTemplate({
+      storageKey: "base-key",
+      mimeType: "image/png",
+      lightLogoAssetId: "logo-1",
+      darkLogoAssetId: "dark-logo-1",
+      template: { logoPosition: "BOTTOM_RIGHT", accentBarEnabled: false },
+    });
+    expect(result).not.toBeNull();
+    const [, outputBuffer] = storageMocks.overwriteAsset.mock.calls[0]!;
+    const [r, g] = await pixelAt(outputBuffer, WIDTH - 40, HEIGHT - 40);
+    // Green (light variant) chosen over the near-black base region.
+    expect(isChannelDominant(g)).toBe(true);
+    expect(r).toBeLessThan(60);
+  });
+
+  it("auto-selects the dark logo variant over a light background region when both variants are set", async () => {
+    const lightBase = await solidPng(WIDTH, HEIGHT, [245, 245, 245]);
+    storageMocks.readAsset.mockImplementation(async (key: string) => {
+      if (key === "logo-key") return logoBuffer;
+      if (key === "dark-logo-key") return darkLogoBuffer;
+      return lightBase;
+    });
+    const result = await applyBrandTemplate({
+      storageKey: "base-key",
+      mimeType: "image/png",
+      lightLogoAssetId: "logo-1",
+      darkLogoAssetId: "dark-logo-1",
+      template: { logoPosition: "BOTTOM_RIGHT", accentBarEnabled: false },
+    });
+    expect(result).not.toBeNull();
+    const [, outputBuffer] = storageMocks.overwriteAsset.mock.calls[0]!;
+    const [r, g] = await pixelAt(outputBuffer, WIDTH - 40, HEIGHT - 40);
+    // Red (dark variant) chosen over the near-white base region.
+    expect(isChannelDominant(r)).toBe(true);
+    expect(g).toBeLessThan(60);
+  });
+
   it("does not reserve extra offset for the accent bar when the logo is on the opposite edge (TOP_RIGHT logo, BOTTOM bar)", async () => {
     const result = await applyBrandTemplate({
       storageKey: "base-key",
       mimeType: "image/png",
-      logoAssetId: "logo-1",
+      lightLogoAssetId: "logo-1",
       accentColors: [{ hex: "#ff00ff" }],
       template: { logoPosition: "TOP_RIGHT", accentBarPosition: "BOTTOM" },
     });
     expect(result).not.toBeNull();
     const [, outputBuffer] = storageMocks.overwriteAsset.mock.calls[0]!;
-    // The badge+logo should sit right at the top margin (~4% of height =
-    // 16px for a 400px canvas), not pushed down as if reserving room for
-    // the (unrelated, bottom-edge) accent bar.
+    // The logo should sit right at the top margin (~4% of height = 16px for
+    // a 400px canvas), not pushed down as if reserving room for the
+    // (unrelated, bottom-edge) accent bar.
     const nearTopMargin = await pixelAt(outputBuffer, WIDTH - 40, 40);
     expect(nearTopMargin).not.toEqual([10, 10, 10]);
   });
@@ -187,28 +252,28 @@ describe("applyBrandTemplate", () => {
     const withBar = await applyBrandTemplate({
       storageKey: "base-key",
       mimeType: "image/png",
-      logoAssetId: "logo-1",
+      lightLogoAssetId: "logo-1",
       accentColors: [{ hex: "#ff00ff" }],
       template: { logoPosition: "BOTTOM_RIGHT", accentBarPosition: "BOTTOM" },
     });
     expect(withBar).not.toBeNull();
     const [, outputBuffer] = storageMocks.overwriteAsset.mock.calls[0]!;
-    // Directly above the very bottom edge, away from the badge's
+    // Directly above the very bottom edge, away from the logo's
     // right-anchored horizontal span, should be the accent bar (magenta)
     // — confirms the bar itself renders full-width along the bottom edge.
     const justAboveBottomEdge = await pixelAt(outputBuffer, 10, HEIGHT - 5);
     expect(isChannelDominant(justAboveBottomEdge[0])).toBe(true);
     expect(isChannelDominant(justAboveBottomEdge[2])).toBe(true);
-    // And the badge itself must have been pushed UP off the very bottom
+    // And the logo itself must have been pushed UP off the very bottom
     // edge (not overlapping the bar) — the bottom-right corner pixel,
-    // which would be inside the badge if it weren't offset, should NOT be
-    // badge-white; it should be the accent bar's magenta instead.
+    // which would be inside the logo if it weren't offset, should NOT be
+    // the logo's green; it should be the accent bar's magenta instead.
     const bottomRightCorner = await pixelAt(
       outputBuffer,
       WIDTH - 5,
       HEIGHT - 5,
     );
-    expect(isChannelDominant(bottomRightCorner[2])).toBe(true); // still magenta (bar), not white badge
+    expect(isChannelDominant(bottomRightCorner[2])).toBe(true); // still magenta (bar), not logo green
   });
 
   it("returns null and does not throw when the referenced logo asset no longer exists", async () => {
@@ -216,7 +281,7 @@ describe("applyBrandTemplate", () => {
     const result = await applyBrandTemplate({
       storageKey: "base-key",
       mimeType: "image/png",
-      logoAssetId: "missing-logo",
+      lightLogoAssetId: "missing-logo",
       template: { accentBarEnabled: false },
     });
     expect(result).toBeNull();

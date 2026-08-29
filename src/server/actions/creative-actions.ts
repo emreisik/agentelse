@@ -168,7 +168,8 @@ export async function generateRealCreativeImageAction(
       const templated = await applyBrandTemplate({
         storageKey: generated.storageKey,
         mimeType: generated.mimeType,
-        logoAssetId: brandStyle.logoAssetId,
+        lightLogoAssetId: brandStyle.logoAssetId,
+        darkLogoAssetId: brandStyle.darkLogoAssetId,
         accentColors: brandStyle.visualIdentity?.accentColors,
         legacyApprovedColors: brandStyle.legacyApprovedColors,
         template: brandStyle.visualIdentity?.template ?? undefined,

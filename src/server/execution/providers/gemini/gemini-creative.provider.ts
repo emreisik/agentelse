@@ -117,6 +117,7 @@ export class GeminiCreativeProvider implements ExecutionProvider {
       );
       const brandCtx = (input.brandContext ?? {}) as {
         logoAssetId?: string | null;
+        darkLogoAssetId?: string | null;
         approvedColors?: unknown;
         visualIdentity?: BrandVisualIdentityContext | null;
       };
@@ -159,7 +160,8 @@ export class GeminiCreativeProvider implements ExecutionProvider {
           const templated = await applyBrandTemplate({
             storageKey: image.storageKey,
             mimeType: image.mimeType,
-            logoAssetId: brandCtx.logoAssetId,
+            lightLogoAssetId: brandCtx.logoAssetId,
+            darkLogoAssetId: brandCtx.darkLogoAssetId,
             accentColors: brandCtx.visualIdentity?.accentColors,
             legacyApprovedColors: brandCtx.approvedColors,
             template: brandCtx.visualIdentity?.template ?? undefined,

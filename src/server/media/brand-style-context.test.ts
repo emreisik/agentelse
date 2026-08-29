@@ -25,6 +25,7 @@ describe("resolveBrandStyleContext", () => {
 
     await expect(resolveBrandStyleContext("brand-1")).resolves.toEqual({
       logoAssetId: null,
+      darkLogoAssetId: null,
       legacyApprovedColors: null,
       legacyVisualGuidelines: null,
       visualIdentity: null,
@@ -110,6 +111,7 @@ describe("resolveBrandStyleContext", () => {
       where: { brandId: "brand-42" },
       select: {
         logoAssetId: true,
+        darkLogoAssetId: true,
         approvedColors: true,
         visualGuidelines: true,
       },

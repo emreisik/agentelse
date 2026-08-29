@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
+import { zScoreFraction } from "../score-schema";
 
 // OpenClaw agents actually do the research, but return the result as free
 // text (a markdown report); ResultMaterializer, however, expects a
@@ -20,7 +21,7 @@ export const ResearchExtractionOutputSchema = z.object({
         "RECOMMENDATION",
       ]),
       category: z.string(),
-      confidence: z.number().min(0).max(1),
+      confidence: zScoreFraction(),
       sourceUrl: z.string().optional(),
       // Only meaningful for COMPETITOR_RESEARCH/MONITORING/CHANGE_DETECTION
       // reports — which named company this finding is about. Lets
@@ -52,7 +53,8 @@ export const researchExtractionDef: ReasoningDef<ResearchExtractionOutput> = {
         "Classify honestly: VERIFIED_FACT only when the report cites or shows direct evidence; " +
           "LIKELY_FACT when strongly implied; ASSUMPTION when the researcher inferred it; " +
           "RECOMMENDATION for suggested actions; CONTRADICTION when the report contradicts itself.",
-        "confidence is 0-1. Include sourceUrl only when the report gives an explicit URL.",
+        "confidence is a decimal fraction between 0 and 1 (e.g. 0.8), never a percentage like 80. " +
+          "Include sourceUrl only when the report gives an explicit URL.",
         "If the research capability is about competitors (COMPETITOR_RESEARCH, " +
           "COMPETITOR_MONITORING, COMPETITOR_CHANGE_DETECTION), set competitorName " +
           "to the specific company/brand each finding is about, whenever the report " +

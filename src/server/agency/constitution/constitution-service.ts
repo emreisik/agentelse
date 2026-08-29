@@ -5,6 +5,8 @@ import { languageLabel, countryLabel } from "@/lib/locales";
 import { constitutionSynthesisDef } from "@/server/reasoning/prompts/constitution-synthesis";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { BrandConstitutionRepository } from "@/server/repositories/brand-constitution.repository";
+import { BrandDecisionRepository } from "@/server/repositories/brand-decision.repository";
+import { BrandEvidenceRepository } from "@/server/repositories/brand-evidence.repository";
 import { FindingRepository } from "@/server/repositories/finding.repository";
 
 import { BrandConstitutionPayloadSchema } from "./constitution-schema";
@@ -74,7 +76,35 @@ export const ConstitutionService = {
       isMock,
     });
 
-    return BrandConstitutionRepository.activate(constitution.id, input.brandId);
+    const activated = await BrandConstitutionRepository.activate(
+      constitution.id,
+      input.brandId,
+    );
+
+    const scope = {
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      brandId: input.brandId,
+    };
+
+    await BrandDecisionRepository.record({
+      ...scope,
+      topic: "Brand Constitution",
+      decision: `v${activated.version} activated`,
+      rationale: activated.summary ?? undefined,
+      decidedByType: isMock ? "AI" : "SYSTEM",
+    });
+
+    await BrandEvidenceRepository.linkMany(
+      scope,
+      "BRAND_CONSTITUTION",
+      activated.id,
+      findings
+        .filter((f): f is typeof f & { evidenceId: string } => !!f.evidenceId)
+        .map((f) => f.evidenceId),
+    );
+
+    return activated;
   },
 
   getActive(brandId: string) {

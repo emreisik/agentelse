@@ -22,6 +22,7 @@ import {
 } from "@/server/agency/continuous/continuous-agency-engine";
 import { LearningEngine } from "@/server/agency/learning/learning-engine";
 import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
+import { StrategyEngine } from "@/server/agency/strategy/strategy-service";
 import { MetaAdSetChainRelay } from "@/server/agency/meta-ads/meta-adset-chain-relay";
 import { GoogleAnalyticsScanner } from "@/server/agency/performance/google-analytics-scanner";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
@@ -196,6 +197,13 @@ registerAgencyTickStep({
 registerAgencyTickStep({
   name: "learning",
   run: () => LearningEngine.processCompletedMeasurements(10),
+});
+// Right after learning: brands with fresh BrandLearning entries this same
+// tick (produced by the step above) are picked up immediately, since tick
+// steps run sequentially — see continuous-agency-engine.ts.
+registerAgencyTickStep({
+  name: "strategy-synthesis",
+  run: () => StrategyEngine.resynthesizeDue(5),
 });
 
 registerAgencyTickStep({

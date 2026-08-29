@@ -1,12 +1,13 @@
 import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
+import { zScoreFraction } from "../score-schema";
 
 export const LearningExtractionSchema = z.object({
   learnings: z.array(
     z.object({
       insight: z.string(),
-      confidence: z.number().min(0).max(1),
+      confidence: zScoreFraction(),
     }),
   ),
 });
@@ -23,7 +24,8 @@ export const learningExtractionDef: ReasoningDef<LearningExtractionOutput> = {
       system:
         "You extract durable brand learnings from measurement results — what " +
         "actually worked or failed, phrased so future creative/growth/strategy " +
-        "work can apply it. Only extract learnings the data supports.",
+        "work can apply it. Only extract learnings the data supports. " +
+        "confidence is a decimal fraction between 0 and 1 (e.g. 0.7), never a percentage.",
       user:
         `Executed work:\n${JSON.stringify(context.work ?? {}, null, 2)}\n\n` +
         `Measurement results:\n${JSON.stringify(context.results ?? [], null, 2)}\n\n` +
@@ -32,7 +34,10 @@ export const learningExtractionDef: ReasoningDef<LearningExtractionOutput> = {
   },
 
   buildMock(context) {
-    const work = (context.work ?? {}) as { title?: string; capability?: string };
+    const work = (context.work ?? {}) as {
+      title?: string;
+      capability?: string;
+    };
     const results = (context.results ?? []) as Array<{ label?: string }>;
     return {
       learnings: [

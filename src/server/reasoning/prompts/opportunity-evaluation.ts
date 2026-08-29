@@ -1,16 +1,17 @@
 import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
+import { zScoreFraction } from "../score-schema";
 
 export const OpportunityEvaluationSchema = z.object({
   matters: z.boolean(),
   title: z.string(),
   description: z.string(),
-  valueScore: z.number().min(0).max(1),
-  urgencyScore: z.number().min(0).max(1),
-  confidenceScore: z.number().min(0).max(1),
-  riskScore: z.number().min(0).max(1),
-  evidenceStrength: z.number().min(0).max(1),
+  valueScore: zScoreFraction(),
+  urgencyScore: zScoreFraction(),
+  confidenceScore: zScoreFraction(),
+  riskScore: zScoreFraction(),
+  evidenceStrength: zScoreFraction(),
   goalIndexes: z.array(z.number()),
   timeWindowDays: z.number().nullable(),
   rationale: z.string(),
@@ -32,7 +33,10 @@ export const opportunityEvaluationDef: ReasoningDef<OpportunityEvaluationOutput>
           "You are the opportunity analyst of an AI agency. Given an insight and " +
           "the brand's goals, decide whether this is a real opportunity worth " +
           "acting on. goalIndexes are 0-based indexes into the provided goals " +
-          "array. Set matters=false for insights with no plausible brand action.",
+          "array. Set matters=false for insights with no plausible brand action. " +
+          "valueScore, urgencyScore, confidenceScore, riskScore and evidenceStrength " +
+          "are each a decimal fraction between 0 and 1 (e.g. 0.75) — never a " +
+          "percentage like 75, and never above 1.",
         user:
           `Brand context:\n${JSON.stringify(context.brand ?? {}, null, 2)}\n\n` +
           `Goals:\n${JSON.stringify(context.goals ?? [], null, 2)}\n\n` +
@@ -51,7 +55,10 @@ export const opportunityEvaluationDef: ReasoningDef<OpportunityEvaluationOutput>
       const importance = (insight.importance ?? 60) / 100;
       return {
         matters: importance >= 0.4,
-        title: `Opportunity: ${insight.title ?? "untitled insight"}`.slice(0, 140),
+        title: `Opportunity: ${insight.title ?? "untitled insight"}`.slice(
+          0,
+          140,
+        ),
         description: `Act on: ${insight.summary ?? insight.title ?? "insight"}`,
         valueScore: Math.min(0.95, importance + 0.1),
         urgencyScore: importance >= 0.7 ? 0.8 : 0.5,

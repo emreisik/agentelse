@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ProjectStatus, SetupStage } from "@prisma/client";
+import { ZodError } from "zod";
 
 import { prisma } from "@/lib/prisma";
 import { BaselineAuditService } from "@/server/agency/audits/baseline-audit.service";
@@ -8,6 +9,7 @@ import { ConstitutionService } from "@/server/agency/constitution/constitution-s
 import { DepartmentRouter } from "@/server/agency/departments/department-router";
 import { GoalEngine } from "@/server/agency/goals/goal-engine";
 import { SignalProfileService } from "@/server/agency/signals/signal-profile.service";
+import { StrategyEngine } from "@/server/agency/strategy/strategy-service";
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { provisionOpenClawAgent } from "@/server/execution/providers/openclaw/openclaw-agent-provisioner";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
@@ -53,6 +55,21 @@ export function registerSetupStageRunner(
   runner: StageRunner,
 ): void {
   LATE_STAGE_RUNNERS[stage] = runner;
+}
+
+// A raw ZodError's .message is a JSON-stringified issues array (Zod's
+// default) — that used to land verbatim in the stage record and get shown
+// to the user as-is (e.g. a wall of `{"origin":"number","code":"too_big",...}`
+// for a reasoning-call output that failed schema validation). This collapses
+// it to one readable line per issue; the full error is still logged and
+// re-thrown for server-side diagnostics.
+function formatStageError(error: unknown): string {
+  if (error instanceof ZodError) {
+    return `Validation failed: ${error.issues
+      .map((issue) => `${issue.path.join(".") || "(root)"} — ${issue.message}`)
+      .join("; ")}`;
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 const TERMINAL_TASK_STATUSES = ["COMPLETED", "FAILED", "CANCELLED"] as const;
@@ -370,6 +387,22 @@ export const ProjectSetupOrchestrator = {
             description: intake.description,
             logoAssetIds: intake.assetIds,
           });
+          // Best-effort v1 strategy so a new project never shows an empty
+          // Brand Brain — a failure here must not fail the stage, since the
+          // constitution (this stage's actual deliverable) already
+          // succeeded. Goals don't exist yet at this point in setup
+          // (GOAL_GENERATION runs later); StrategyEngine handles that.
+          try {
+            await StrategyEngine.synthesize({
+              ...scope,
+              brandName: intake.brandName,
+            });
+          } catch (error) {
+            console.error(
+              `[project-setup] strategy synthesis failed for project ${scope.projectId}:`,
+              error instanceof Error ? error.message : error,
+            );
+          }
           // Coarse project status: DISCOVERY -> PROFILE_REVIEW.
           const project = await prisma.project.findUnique({
             where: { id: scope.projectId },
@@ -441,7 +474,7 @@ export const ProjectSetupOrchestrator = {
         scope.projectId,
         stage,
         "FAILED",
-        { error: error instanceof Error ? error.message : String(error) },
+        { error: formatStageError(error) },
       );
       throw error;
     }

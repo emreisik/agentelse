@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import {
   CheckCircle2,
@@ -8,14 +8,18 @@ import {
   CircleAlert,
   Loader2,
   MinusCircle,
+  RotateCw,
   Sparkles,
   XCircle,
 } from "lucide-react";
 import type { SetupStage, SetupStageStatus } from "@prisma/client";
+import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/dates";
+import { retrySetupStageAction } from "@/server/actions/agency-setup-actions";
 import { LiveRefresh } from "@/components/shared/live-refresh";
+import { Button } from "@/components/ui/button";
 import {
   Popover,
   PopoverContent,
@@ -32,9 +36,38 @@ export type SetupStageEntry = {
   completedAt: string | null;
   error: string | null;
   attemptCount: number;
+  attemptsExhausted: boolean;
   link: { href: string; label: string } | null;
   decision: ReactNode | null;
+  projectId: string;
 };
+
+// The manual escape hatch for a FAILED stage — shown regardless of whether
+// automatic (tick-driven) retries are still running or already capped
+// (project-setup-orchestrator.ts's MAX_STAGE_ATTEMPTS), so a user never has
+// to just wait and hope. This is the single most direct answer to "if the
+// end user hits an error here, they leave without using the app."
+function RetryButton({ projectId }: { projectId: string }) {
+  const [isPending, startTransition] = useTransition();
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="h-7 gap-1.5 text-xs"
+      disabled={isPending}
+      onClick={() =>
+        startTransition(async () => {
+          const result = await retrySetupStageAction(projectId);
+          if (!result.ok) toast.error(result.message);
+        })
+      }
+    >
+      <RotateCw className={cn("size-3", isPending && "animate-spin")} />
+      {isPending ? "Retrying…" : "Retry now"}
+    </Button>
+  );
+}
 
 const DOT_TONE: Record<SetupStageStatus, string> = {
   COMPLETED: "border-success bg-success text-success-foreground",
@@ -102,9 +135,19 @@ function StepDot({ entry }: { entry: SetupStageEntry }) {
           {entry.finding ?? entry.hint}
         </p>
         {entry.error ? (
-          <p className="mt-2 text-xs text-destructive">
-            {entry.error} — the system will retry automatically.
-          </p>
+          <div className="mt-2 space-y-1.5">
+            <p className="text-xs text-destructive">
+              {entry.error}
+              {entry.status === "FAILED"
+                ? entry.attemptsExhausted
+                  ? " — automatic retries stopped after several attempts."
+                  : " — the system will keep retrying automatically."
+                : null}
+            </p>
+            {entry.status === "FAILED" ? (
+              <RetryButton projectId={entry.projectId} />
+            ) : null}
+          </div>
         ) : null}
         {entry.completedAt ? (
           <p className="mt-2 text-[11px] text-muted-foreground">
@@ -156,6 +199,13 @@ function SpotlightCard({ entry }: { entry: SetupStageEntry }) {
           <p className="mt-0.5 text-xs text-muted-foreground">
             {isFailed && entry.error ? entry.error : entry.hint}
           </p>
+          {isFailed ? (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {entry.attemptsExhausted
+                ? "Automatic retries stopped after several attempts."
+                : "The system will keep retrying automatically."}
+            </p>
+          ) : null}
           {!isWaiting && !isFailed ? (
             <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-primary/10">
               <div className="h-full w-1/3 animate-[shimmer_1.6s_ease-in-out_infinite] rounded-full bg-primary" />
@@ -163,6 +213,11 @@ function SpotlightCard({ entry }: { entry: SetupStageEntry }) {
           ) : null}
         </div>
       </div>
+      {isFailed ? (
+        <div className="mt-4">
+          <RetryButton projectId={entry.projectId} />
+        </div>
+      ) : null}
       {entry.decision ? <div className="mt-4">{entry.decision}</div> : null}
     </div>
   );

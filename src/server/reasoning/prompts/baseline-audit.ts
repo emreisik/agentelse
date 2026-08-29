@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
+import { zBoundedScore } from "../score-schema";
 
 export const BaselineAuditOutputSchema = z.object({
-  score: z.number().min(0).max(100),
+  score: zBoundedScore(0, 100),
   summary: z.string(),
   strengths: z.array(z.string()),
   weaknesses: z.array(z.string()),

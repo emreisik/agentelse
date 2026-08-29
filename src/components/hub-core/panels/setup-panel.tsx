@@ -24,6 +24,7 @@ import {
   startAgencySetupAction,
   submitSetupDecisionAction,
 } from "@/server/actions/agency-setup-actions";
+import { MAX_STAGE_ATTEMPTS } from "@/server/agency/setup/project-setup-orchestrator";
 import { ActionForm } from "@/components/shared/action-form";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { SubmitButton } from "@/components/shared/submit-button";
@@ -348,8 +349,10 @@ export async function SetupPanel({ projectId }: PanelProps) {
           : null,
         error: record?.error ?? null,
         attemptCount: record?.attemptCount ?? 0,
+        attemptsExhausted: (record?.attemptCount ?? 0) >= MAX_STAGE_ATTEMPTS,
         link: status === "COMPLETED" ? stageLink(stage, projectId) : null,
         decision: status === "WAITING_CLIENT" ? buildDecision(stage) : null,
+        projectId,
       };
     },
   );

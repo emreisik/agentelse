@@ -138,6 +138,7 @@ async function callOpenAI(input: {
   });
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
     let response: Response;
     try {
       response = await fetch(CHAT_COMPLETIONS_URL, {
@@ -150,14 +151,22 @@ async function callOpenAI(input: {
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
     } catch (error) {
-      if (error instanceof Error && error.name === "TimeoutError") {
-        throw new AgentelseError(
-          "TIMEOUT",
-          `OpenAI request timed out after ${FETCH_TIMEOUT_MS}ms`,
-          { retryable: true },
-        );
+      const isTimeout = error instanceof Error && error.name === "TimeoutError";
+      if (isLastAttempt) {
+        if (isTimeout) {
+          throw new AgentelseError(
+            "TIMEOUT",
+            `OpenAI request timed out after ${FETCH_TIMEOUT_MS}ms`,
+            { retryable: true },
+          );
+        }
+        throw error;
       }
-      throw error;
+      // A connection-level failure (timeout, DNS, reset) is exactly as
+      // transient as a 429/5xx — retry it the same way instead of failing
+      // the whole reasoning call on the very first network hiccup.
+      await sleep(RETRY_DELAYS_MS[attempt] ?? 4_000);
+      continue;
     }
 
     if (response.ok) {
@@ -165,7 +174,6 @@ async function callOpenAI(input: {
     }
 
     const payload = (await response.json().catch(() => ({}))) as OpenAIResponse;
-    const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
     if (!isRetryableStatus(response.status) || isLastAttempt) {
       throw new AgentelseError(
         response.status === 429 || response.status >= 500

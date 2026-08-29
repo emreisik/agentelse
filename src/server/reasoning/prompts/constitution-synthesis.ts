@@ -2,6 +2,21 @@ import { z } from "zod";
 
 import type { ReasoningContext, ReasoningDef } from "../types";
 
+// Several sections are legitimately empty for a given brand (buildMock
+// itself returns [] below for forbiddenClaims/customerObjections/
+// legalRestrictions etc. when there's nothing to say) — a model with
+// nothing to say for one is plausible to return null or omit the key
+// entirely instead of `[]`, which a plain `z.array(z.string())` rejects
+// outright. This is the single most expensive reasoning call in the system
+// (32768 tokens, 22 sections) — losing the whole synthesis over one absent
+// array is a much worse failure than defaulting that one section to empty.
+const zLenientStringArray = () =>
+  z
+    .array(z.string())
+    .nullable()
+    .optional()
+    .transform((value) => value ?? []);
+
 // The Brand Constitution payload contract — mirrors constitution-schema.ts's
 // section list. Kept flat string arrays where possible so mock derivation and
 // real extraction share one shape.
@@ -10,25 +25,25 @@ export const ConstitutionOutputSchema = z.object({
   country: z.string(),
   identity: z.string(),
   businessModel: z.string(),
-  products: z.array(z.string()),
-  markets: z.array(z.string()),
-  audiences: z.array(z.string()),
+  products: zLenientStringArray(),
+  markets: zLenientStringArray(),
+  audiences: zLenientStringArray(),
   positioning: z.string(),
   valueProposition: z.string(),
   personality: z.string(),
   toneOfVoice: z.string(),
   visualIdentity: z.string(),
-  approvedClaims: z.array(z.string()),
-  forbiddenClaims: z.array(z.string()),
-  negativeBrief: z.array(z.string()),
-  customerProblems: z.array(z.string()),
-  customerObjections: z.array(z.string()),
-  competitors: z.array(z.string()),
-  differentiators: z.array(z.string()),
-  legalRestrictions: z.array(z.string()),
-  knownFacts: z.array(z.string()),
-  assumptions: z.array(z.string()),
-  openQuestions: z.array(z.string()),
+  approvedClaims: zLenientStringArray(),
+  forbiddenClaims: zLenientStringArray(),
+  negativeBrief: zLenientStringArray(),
+  customerProblems: zLenientStringArray(),
+  customerObjections: zLenientStringArray(),
+  competitors: zLenientStringArray(),
+  differentiators: zLenientStringArray(),
+  legalRestrictions: zLenientStringArray(),
+  knownFacts: zLenientStringArray(),
+  assumptions: zLenientStringArray(),
+  openQuestions: zLenientStringArray(),
 });
 
 export type ConstitutionOutput = z.infer<typeof ConstitutionOutputSchema>;

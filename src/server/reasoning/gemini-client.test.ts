@@ -85,4 +85,42 @@ describe("gemini-client transient error retry", () => {
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("retries a connection-level failure (fetch throwing) and succeeds once it recovers", async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error("fetch failed"))
+      .mockResolvedValueOnce(geminiResponse(200, TEXT_BODY));
+
+    const promise = runGeminiText(CALL_ARGS);
+    await vi.runAllTimersAsync();
+
+    await expect(promise).resolves.toMatchObject({ text: "hello" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after the max attempts on a persistent connection failure", async () => {
+    const networkError = new Error("fetch failed");
+    fetchMock.mockRejectedValue(networkError);
+
+    const promise = runGeminiText(CALL_ARGS);
+    promise.catch(() => {});
+    await vi.runAllTimersAsync();
+
+    await expect(promise).rejects.toBe(networkError);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("retries a request timeout and succeeds once it recovers", async () => {
+    const timeoutError = new Error("The operation was aborted");
+    timeoutError.name = "TimeoutError";
+    fetchMock
+      .mockRejectedValueOnce(timeoutError)
+      .mockResolvedValueOnce(geminiResponse(200, TEXT_BODY));
+
+    const promise = runGeminiText(CALL_ARGS);
+    await vi.runAllTimersAsync();
+
+    await expect(promise).resolves.toMatchObject({ text: "hello" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

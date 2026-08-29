@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
+import { zLenientArray } from "../lenient-array";
 
 export const DepartmentRecommendationSchema = z.object({
-  departments: z.array(
+  departments: zLenientArray(
     z.object({
       department: z.string(),
       mode: z.enum(["OFF", "LISTEN", "SUGGEST", "PREPARE", "EXECUTE"]),

@@ -86,6 +86,16 @@ const MAX_ADVANCE_STEPS_PER_PROJECT = SETUP_STAGE_ORDER.length * 2 + 6;
 // project in this same advanceAll batch.
 const PER_PROJECT_SETUP_BUDGET_MS = 45_000;
 
+// attemptCount was tracked but never capped — a stage whose failure cause is
+// permanent (bad provider config, a persistently invalid LLM response) used
+// to retry identically forever, every tick, silently burning a reasoning
+// budget slot each time with no "give up" state and no user-facing recourse
+// beyond the misleading "the system will retry automatically" message.
+// Mirrors execution-worker.ts's own MAX_ATTEMPTS convention. Automatic
+// (tick-driven) retries stop once this is hit; retryStageNow (a manual,
+// user-initiated retry) is exempt so the user always has a way to try again.
+export const MAX_STAGE_ATTEMPTS = 5;
+
 // Standard browser-profile bundle (mirrors activateProjectAction/seed.ts).
 // Provisioned at INTAKE because deep-discovery research tasks need the
 // PUBLIC_RESEARCH profile long before PROJECT_ACTIVATION.
@@ -285,6 +295,13 @@ export const ProjectSetupOrchestrator = {
     }
 
     if (record.status === "FAILED") {
+      if (record.attemptCount >= MAX_STAGE_ATTEMPTS) {
+        // Automatic retries are capped — stop silently re-burning a
+        // reasoning budget slot every tick on a cause that isn't clearing
+        // on its own. The stage stays FAILED; retryStageNow (manual, from
+        // the setup UI) can still move it.
+        return { stage, status: "FAILED", advanced: false };
+      }
       await SetupStateRepository.transitionStage(projectId, stage, "RUNNING");
       await this.runStage(scope, intake, stage);
       return { stage, status: "RETRYING", advanced: true };
@@ -346,6 +363,30 @@ export const ProjectSetupOrchestrator = {
     }
 
     await this.completeStage(scope, stage);
+  },
+
+  // Manual, user-initiated retry of the current FAILED stage — the escape
+  // hatch for a user who doesn't want to wait for (or has exhausted)
+  // automatic tick-driven retries. Deliberately does NOT check
+  // MAX_STAGE_ATTEMPTS: an automatic cap protects against silently burning
+  // budget forever on a cause that isn't clearing on its own, but a human
+  // explicitly asking to try again should always be able to.
+  async retryStageNow(projectId: string): Promise<void> {
+    const state = await SetupStateRepository.findByProject(projectId);
+    if (!state) return;
+    const stage = state.currentStage;
+    const record = state.stageRecords.find((r) => r.stage === stage);
+    if (!record || record.status !== "FAILED") return;
+
+    const scope: SetupScope = {
+      workspaceId: state.workspaceId,
+      projectId: state.projectId,
+      brandId: state.brandId,
+    };
+    const intake = state.intake as SetupIntake;
+
+    await SetupStateRepository.transitionStage(projectId, stage, "RUNNING");
+    await this.runStage(scope, intake, stage);
   },
 
   // --- stage internals -----------------------------------------------------

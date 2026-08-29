@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
+import { zLenientArray } from "../lenient-array";
 
 export const SignalProfileRecommendationSchema = z.object({
-  profiles: z.array(
+  profiles: zLenientArray(
     z.object({
       category: z.string(),
       intensity: z.enum(["VERY_HIGH", "HIGH", "MEDIUM", "LOW", "OFF"]),

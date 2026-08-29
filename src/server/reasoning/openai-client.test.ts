@@ -131,6 +131,30 @@ describe("openai-client", () => {
     );
   });
 
+  it("retries a connection-level failure (fetch throwing) and succeeds once it recovers", async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error("fetch failed"))
+      .mockResolvedValueOnce(openaiResponse(200, STRUCTURED_BODY));
+
+    const promise = runOpenAIStructured(CALL_ARGS);
+    await vi.runAllTimersAsync();
+
+    await expect(promise).resolves.toMatchObject({ raw: { answer: "hello" } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after the max attempts on a persistent connection failure", async () => {
+    const networkError = new Error("fetch failed");
+    fetchMock.mockRejectedValue(networkError);
+
+    const promise = runOpenAIStructured(CALL_ARGS);
+    promise.catch(() => {});
+    await vi.runAllTimersAsync();
+
+    await expect(promise).rejects.toBe(networkError);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
   it("maps attachments to content parts placed before the user text", async () => {
     fetchMock.mockResolvedValue(openaiResponse(200, STRUCTURED_BODY));
 

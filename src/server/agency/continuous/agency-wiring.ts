@@ -41,9 +41,19 @@ registerSetupStageRunner("INITIAL_OPPORTUNITIES", async (scope) => {
     status: "NEW",
     limit: 10,
   });
+  // Per-item error boundary — one insight's opportunity evaluation failing
+  // (a malformed LLM response, a transient provider error) must not abort
+  // evaluation for the other insights, nor fail this whole setup stage.
   await Promise.all(
     insights.map((insight) =>
-      OpportunityEngine.evaluateInsight(insight.id, scope.projectId),
+      OpportunityEngine.evaluateInsight(insight.id, scope.projectId).catch(
+        (error) => {
+          console.error(
+            `[agency-wiring] evaluateInsight failed for insight ${insight.id}:`,
+            error instanceof Error ? error.message : error,
+          );
+        },
+      ),
     ),
   );
 });
@@ -55,13 +65,25 @@ registerSetupStageRunner("INITIAL_IDEA_PORTFOLIO", async (scope) => {
   );
   // Independent per-opportunity generation — each does its own dedup check
   // scoped to its own opportunityId+lens, no shared mutable state — so
-  // there's no reason for these to run one after another.
+  // there's no reason for these to run one after another. Per-item error
+  // boundary (same pattern as INITIAL_WORK_PLAN's decideOnIdea below): one
+  // opportunity's reasoning call failing must not abort idea generation for
+  // the rest of the batch, nor fail this whole setup stage.
   await Promise.all(
     opportunities.map((opportunity) =>
-      IdeaFoundry.generateForOpportunity(opportunity.id, scope.projectId),
+      IdeaFoundry.generateForOpportunity(opportunity.id, scope.projectId).catch(
+        (error) => {
+          console.error(
+            `[agency-wiring] generateForOpportunity failed for opportunity ${opportunity.id}:`,
+            error instanceof Error ? error.message : error,
+          );
+        },
+      ),
     ),
   );
-  // Council pass over the fresh portfolio (bounded parallel batches).
+  // Council pass over the fresh portfolio (bounded parallel batches). Same
+  // per-item error boundary — one idea's council evaluation failing (e.g. a
+  // malformed LLM response) must not sink the other 4 ideas in its batch.
   const raw = await IdeaRepository.listForProject(scope.projectId, {
     status: "RAW",
     limit: 20,
@@ -69,9 +91,14 @@ registerSetupStageRunner("INITIAL_IDEA_PORTFOLIO", async (scope) => {
   const BATCH = 5;
   for (let i = 0; i < raw.length; i += BATCH) {
     await Promise.all(
-      raw
-        .slice(i, i + BATCH)
-        .map((idea) => CouncilEngine.evaluateIdea(idea.id, scope.projectId)),
+      raw.slice(i, i + BATCH).map((idea) =>
+        CouncilEngine.evaluateIdea(idea.id, scope.projectId).catch((error) => {
+          console.error(
+            `[agency-wiring] evaluateIdea failed for idea ${idea.id} (${idea.title}):`,
+            error instanceof Error ? error.message : error,
+          );
+        }),
+      ),
     );
   }
 });

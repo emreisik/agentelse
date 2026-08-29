@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
+import { zBoundedScore } from "../score-schema";
 
 export const SignalRelevanceSchema = z.object({
-  relevanceScore: z.number().min(0).max(100),
+  relevanceScore: zBoundedScore(0, 100),
   rationale: z.string(),
   shouldPromote: z.boolean(),
 });

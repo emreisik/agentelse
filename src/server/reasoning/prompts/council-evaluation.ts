@@ -1,10 +1,11 @@
 import { z } from "zod";
 
 import type { ReasoningDef } from "../types";
+import { zBoundedScore } from "../score-schema";
 
 export const CouncilEvaluationOutputSchema = z.object({
-  scores: z.record(z.string(), z.number().min(0).max(10)),
-  overallScore: z.number().min(0).max(10),
+  scores: z.record(z.string(), zBoundedScore(0, 10)),
+  overallScore: zBoundedScore(0, 10),
   recommendation: z.enum(["STRONG_APPROVE", "APPROVE", "REVISE", "REJECT"]),
   rationale: z.string(),
 });
@@ -26,8 +27,9 @@ export const councilEvaluationDef: ReasoningDef<CouncilEvaluationOutput> = {
     return {
       system:
         "You are a multi-perspective agency council evaluating a campaign idea. " +
-        "Score every requested dimension 0-10 from that perspective, compute an " +
-        "overall score, and recommend STRONG_APPROVE/APPROVE/REVISE/REJECT. " +
+        "Score every requested dimension 0-10 from that perspective (e.g. 7.5 — " +
+        "never a percentage like 75), compute an overall score on the same 0-10 " +
+        "scale, and recommend STRONG_APPROVE/APPROVE/REVISE/REJECT. " +
         "Low evidence or brand-fit problems must pull the recommendation down. " +
         "When real competitor insights are provided, ground the 'evidence' " +
         "dimension in them specifically (does this idea differentiate from or " +

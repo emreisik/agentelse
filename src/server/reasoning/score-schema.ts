@@ -24,3 +24,29 @@ export function zScoreFraction() {
     })
     .pipe(z.number().min(0).max(1));
 }
+
+// A bounded score field for scales other than 0-1 (0-10 rubrics, 0-100
+// percentages, etc). Two corrections, same rationale as zScoreFraction
+// above: providers don't enforce numeric min/max, so a model can return
+// out-of-range numbers.
+//   - A value strictly between 0 and 1 is essentially never an intentional
+//     near-zero score on a scale that goes well above 1 — it's almost
+//     always the 0-1 fraction convention leaking in from elsewhere in the
+//     same reasoning pass (e.g. 0.72 meant as "72" on a 0-100 scale, or 0.85
+//     meant as "8.5" on a 0-10 scale). Rescaled onto this field's own range
+//     instead of silently kept as a near-zero value that reads as
+//     "irrelevant"/"terrible" when the model meant high.
+//   - Anything else out of range is clamped rather than crashed on: unlike
+//     the 0-1 case, there's no single reliable guess for which OTHER scale
+//     a stray big number came from (a stray 85 on a 0-10 field could be a
+//     /10 slip, a /100 slip, or noise) — clamping is directionally safe
+//     without inventing a specific, possibly-wrong rescaled number.
+export function zBoundedScore(min: number, max: number) {
+  return z
+    .number()
+    .transform((value) => {
+      if (value > 0 && value < 1 && max > 1) return value * max;
+      return Math.min(max, Math.max(min, value));
+    })
+    .pipe(z.number().min(min).max(max));
+}

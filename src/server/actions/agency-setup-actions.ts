@@ -100,3 +100,26 @@ export async function submitSetupDecisionAction(
     };
   }
 }
+
+// Manual retry of the current FAILED setup stage — the escape hatch a user
+// reaches for instead of giving up on the app after hitting an error during
+// onboarding. Exempt from the automatic tick-driven retry cap
+// (project-setup-orchestrator.ts's MAX_STAGE_ATTEMPTS).
+export async function retrySetupStageAction(
+  projectId: string,
+): Promise<ActionResult> {
+  try {
+    const { userId } = await requireUser();
+    await requireProjectAccess(userId, projectId);
+
+    await ProjectSetupOrchestrator.retryStageNow(projectId);
+
+    revalidatePath(`/projects/${projectId}`);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Operation failed",
+    };
+  }
+}

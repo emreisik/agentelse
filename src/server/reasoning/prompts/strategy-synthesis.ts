@@ -47,6 +47,12 @@ export const strategySynthesisDef: ReasoningDef<StrategyOutput> = {
   purpose: "strategy.synthesize",
   schema: StrategyOutputSchema,
   tier: "pro",
+  // constitution-synthesis.ts (the closest sibling prompt — same "brand
+  // strategy synthesizer" persona, same multi-array shape) needed to go all
+  // the way to 32768 after repeatedly hitting MAX_TOKENS truncation on
+  // thinking models (Gemini's thinking tokens count against this budget).
+  // Set proactively here instead of waiting for the same incident to repeat.
+  maxTokens: 16384,
 
   buildPrompt(context) {
     const goalLines = goals(context)

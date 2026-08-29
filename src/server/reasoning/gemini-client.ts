@@ -245,14 +245,29 @@ async function callGemini(input: {
   );
 }
 
-export async function runGeminiStructured(input: {
-  model: string;
-  system: string;
-  user: string;
-  jsonSchema: unknown;
-  maxOutputTokens: number;
-  attachments?: GeminiInlineAttachment[];
-}): Promise<GeminiStructuredResult> {
+// MAX_TOKENS truncation mid-JSON has independently hit council-evaluation.ts
+// (37% of prod calls), baseline-audit.ts (27%), constitution-synthesis.ts,
+// department-recommendation.ts, signal-profile-recommendation.ts, and
+// gemini-creative.provider.ts — five separate prompts, each fixed reactively
+// by hand-raising that one prompt's maxTokens after the fact. Gemini's
+// thinking tokens are deducted from the same budget, so even a small
+// visible-output schema can get cut off on a "thinking" model — no prompt
+// is safe from this by construction. Retrying once with double the budget
+// closes the whole class at the source instead of waiting for the sixth
+// incident to add another one-off token bump.
+const MAX_TOKENS_RETRY_CEILING = 65_536;
+
+export async function runGeminiStructured(
+  input: {
+    model: string;
+    system: string;
+    user: string;
+    jsonSchema: unknown;
+    maxOutputTokens: number;
+    attachments?: GeminiInlineAttachment[];
+  },
+  maxOutputTokens = input.maxOutputTokens,
+): Promise<GeminiStructuredResult> {
   const payload = await callGemini({
     model: input.model,
     system: input.system,
@@ -261,7 +276,7 @@ export async function runGeminiStructured(input: {
     generationConfig: {
       responseMimeType: "application/json",
       responseJsonSchema: input.jsonSchema,
-      maxOutputTokens: input.maxOutputTokens,
+      maxOutputTokens,
     },
   });
 
@@ -276,10 +291,23 @@ export async function runGeminiStructured(input: {
     );
   }
 
-  let raw: unknown;
   try {
-    raw = JSON.parse(text);
+    const raw: unknown = JSON.parse(text);
+    return {
+      raw,
+      inputTokens: payload.usageMetadata?.promptTokenCount,
+      outputTokens: payload.usageMetadata?.candidatesTokenCount,
+    };
   } catch {
+    if (
+      candidate?.finishReason === "MAX_TOKENS" &&
+      maxOutputTokens < MAX_TOKENS_RETRY_CEILING
+    ) {
+      return runGeminiStructured(
+        input,
+        Math.min(maxOutputTokens * 2, MAX_TOKENS_RETRY_CEILING),
+      );
+    }
     // Include the finishReason in the message: if it's MAX_TOKENS, the
     // problem isn't the model's formatting but the response being cut off,
     // and the fix is to increase the prompt's maxTokens. Without
@@ -291,10 +319,4 @@ export async function runGeminiStructured(input: {
       })`,
     );
   }
-
-  return {
-    raw,
-    inputTokens: payload.usageMetadata?.promptTokenCount,
-    outputTokens: payload.usageMetadata?.candidatesTokenCount,
-  };
 }

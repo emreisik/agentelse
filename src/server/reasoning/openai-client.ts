@@ -195,19 +195,27 @@ async function callOpenAI(input: {
   );
 }
 
-export async function runOpenAIStructured(input: {
-  model: string;
-  system: string;
-  user: string;
-  jsonSchema: unknown;
-  maxOutputTokens: number;
-  attachments?: OpenAIInlineAttachment[];
-}): Promise<OpenAIStructuredResult> {
+// Mirrors gemini-client.ts's MAX_TOKENS_RETRY_CEILING — see that comment
+// for the five-incident history this closes at the source instead of
+// requiring a sixth prompt-specific token bump.
+const MAX_TOKENS_RETRY_CEILING = 65_536;
+
+export async function runOpenAIStructured(
+  input: {
+    model: string;
+    system: string;
+    user: string;
+    jsonSchema: unknown;
+    maxOutputTokens: number;
+    attachments?: OpenAIInlineAttachment[];
+  },
+  maxOutputTokens = input.maxOutputTokens,
+): Promise<OpenAIStructuredResult> {
   const payload = await callOpenAI({
     model: input.model,
     system: input.system,
     user: input.user,
-    maxOutputTokens: input.maxOutputTokens,
+    maxOutputTokens,
     attachments: input.attachments,
     responseFormat: {
       type: "json_schema",
@@ -228,10 +236,23 @@ export async function runOpenAIStructured(input: {
     );
   }
 
-  let raw: unknown;
   try {
-    raw = JSON.parse(text);
+    const raw: unknown = JSON.parse(text);
+    return {
+      raw,
+      inputTokens: payload.usage?.prompt_tokens,
+      outputTokens: payload.usage?.completion_tokens,
+    };
   } catch {
+    if (
+      choice?.finish_reason === "length" &&
+      maxOutputTokens < MAX_TOKENS_RETRY_CEILING
+    ) {
+      return runOpenAIStructured(
+        input,
+        Math.min(maxOutputTokens * 2, MAX_TOKENS_RETRY_CEILING),
+      );
+    }
     // Mirrors the Gemini client: finish_reason "length" plays the role of
     // MAX_TOKENS — the output was cut off mid-JSON and the fix is a higher
     // maxTokens on the prompt def, not a formatting change.
@@ -242,10 +263,4 @@ export async function runOpenAIStructured(input: {
       })`,
     );
   }
-
-  return {
-    raw,
-    inputTokens: payload.usage?.prompt_tokens,
-    outputTokens: payload.usage?.completion_tokens,
-  };
 }

@@ -6,7 +6,10 @@ vi.mock("@/lib/env", () => ({
   getEnv: () => ({ GEMINI_API_KEY: "test-key" }),
 }));
 
-import { runGeminiText } from "@/server/reasoning/gemini-client";
+import {
+  runGeminiStructured,
+  runGeminiText,
+} from "@/server/reasoning/gemini-client";
 import { isAgentelseError } from "@/server/security/errors";
 
 function geminiResponse(status: number, body: unknown): Response {
@@ -122,5 +125,69 @@ describe("gemini-client transient error retry", () => {
 
     await expect(promise).resolves.toMatchObject({ text: "hello" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a MAX_TOKENS truncation with double the token budget and succeeds", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        geminiResponse(200, {
+          candidates: [
+            {
+              content: { parts: [{ text: '{"answer":"unfinished' }] },
+              finishReason: "MAX_TOKENS",
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        geminiResponse(200, {
+          candidates: [
+            {
+              content: { parts: [{ text: '{"answer":"done"}' }] },
+              finishReason: "STOP",
+            },
+          ],
+        }),
+      );
+
+    const promise = runGeminiStructured({
+      model: "gemini-test",
+      system: "sys",
+      user: "usr",
+      jsonSchema: { type: "object" },
+      maxOutputTokens: 1000,
+    });
+
+    await expect(promise).resolves.toMatchObject({ raw: { answer: "done" } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondBody = JSON.parse(fetchMock.mock.calls[1]![1]!.body as string);
+    expect(secondBody.generationConfig.maxOutputTokens).toBe(2000);
+  });
+
+  it("does not retry non-JSON output when finishReason isn't MAX_TOKENS", async () => {
+    fetchMock.mockResolvedValue(
+      geminiResponse(200, {
+        candidates: [
+          {
+            content: { parts: [{ text: "not json at all" }] },
+            finishReason: "STOP",
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      runGeminiStructured({
+        model: "gemini-test",
+        system: "sys",
+        user: "usr",
+        jsonSchema: { type: "object" },
+        maxOutputTokens: 1000,
+      }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        isAgentelseError(error) && error.code === "INVALID_PROVIDER_RESULT",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -114,11 +114,11 @@ describe("openai-client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("surfaces the finish_reason when output is cut off mid-JSON", async () => {
+  it("surfaces the finish_reason when non-JSON output isn't a length truncation", async () => {
     fetchMock.mockResolvedValue(
       openaiResponse(200, {
         choices: [
-          { message: { content: '{"answer":"hel' }, finish_reason: "length" },
+          { message: { content: "not json" }, finish_reason: "content_filter" },
         ],
       }),
     );
@@ -127,8 +127,31 @@ describe("openai-client", () => {
       (error: unknown) =>
         isAgentelseError(error) &&
         error.code === "INVALID_PROVIDER_RESULT" &&
+        error.message.includes("content_filter"),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up once the retry ceiling is reached on persistent length truncation", async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        openaiResponse(200, {
+          choices: [{ message: { content: "{" }, finish_reason: "length" }],
+        }),
+      ),
+    );
+
+    await expect(
+      runOpenAIStructured({ ...CALL_ARGS, maxOutputTokens: 40_000 }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        isAgentelseError(error) &&
+        error.code === "INVALID_PROVIDER_RESULT" &&
         error.message.includes("length"),
     );
+    // 40_000 -> 65_536 (capped) is the only doubling step available before
+    // the ceiling stops further retries.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("retries a connection-level failure (fetch throwing) and succeeds once it recovers", async () => {
@@ -153,6 +176,40 @@ describe("openai-client", () => {
 
     await expect(promise).rejects.toBe(networkError);
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("retries a length-truncated response with double the token budget and succeeds", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        openaiResponse(200, {
+          choices: [
+            {
+              message: { content: '{"answer":"unfinis' },
+              finish_reason: "length",
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        openaiResponse(200, {
+          choices: [
+            {
+              message: { content: '{"answer":"done"}' },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+      );
+
+    const promise = runOpenAIStructured({
+      ...CALL_ARGS,
+      maxOutputTokens: 1000,
+    });
+
+    await expect(promise).resolves.toMatchObject({ raw: { answer: "done" } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondBody = JSON.parse(fetchMock.mock.calls[1]![1]!.body as string);
+    expect(secondBody.max_completion_tokens).toBe(2000);
   });
 
   it("maps attachments to content parts placed before the user text", async () => {

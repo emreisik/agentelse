@@ -106,7 +106,18 @@ export class GeminiCreativeProvider implements ExecutionProvider {
         system: buildSystemPrompt(input.brandContext),
         user: brief,
         jsonSchema: z.toJSONSchema(CreativeOutputSchema),
-        maxOutputTokens: 2048,
+        // Was 2048 — the same MAX_TOKENS-truncation-produces-non-JSON-output
+        // failure repeatedly hit council-evaluation.ts (37% of prod calls),
+        // baseline-audit.ts (27%), constitution-synthesis.ts and
+        // department/signal-profile-recommendation.ts (see those files'
+        // comments): Gemini's thinking tokens are deducted from this same
+        // budget, so it can run out well before the visible text does, even
+        // for a 3-field schema. `copy` and `imagePrompt` are both asked to
+        // be substantial ("longer supporting marketing copy", "a concrete,
+        // literal visual description... subject, composition, style,
+        // colours"), which made this call an unmitigated instance of the
+        // same class of bug the reasoning/prompts/* callers already fixed.
+        maxOutputTokens: 8192,
       });
       const parsed = CreativeOutputSchema.parse(raw);
 

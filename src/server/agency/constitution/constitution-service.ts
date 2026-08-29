@@ -9,7 +9,92 @@ import { BrandDecisionRepository } from "@/server/repositories/brand-decision.re
 import { BrandEvidenceRepository } from "@/server/repositories/brand-evidence.repository";
 import { FindingRepository } from "@/server/repositories/finding.repository";
 
-import { BrandConstitutionPayloadSchema } from "./constitution-schema";
+import {
+  BrandConstitutionPayloadSchema,
+  type BrandConstitutionPayload,
+} from "./constitution-schema";
+
+type BrandBrainScope = {
+  workspaceId: string;
+  projectId: string;
+  brandId: string;
+};
+
+// The constitution LLM call already produces knownFacts/assumptions/
+// approvedClaims/negativeBrief/forbiddenClaims as vetted, structured output
+// (constitution-synthesis.ts) — the same content every downstream
+// generation prompt already trusts via ConstitutionService.getBrandContext.
+// This "promotes" it into the dedicated BrandFact/BrandAssumption/
+// ApprovedClaim/NegativeBriefRule tables the Brand Brain UI reads from
+// (schema.prisma's BrandFact comment: "mirrored here when facts are
+// promoted") — previously never implemented, so those sections stayed
+// permanently empty regardless of how many times a brand's constitution
+// synthesized. Re-derived fresh from each new version (delete + recreate,
+// not append) so these tables never drift from the currently-ACTIVE
+// constitution or accumulate stale rows from superseded versions.
+// approvedByUserId/status are deliberately left at their "not yet reviewed"
+// defaults — this promotes the AI's draft, it doesn't fabricate a human
+// approval that never happened.
+async function promoteConstitutionToBrandBrain(
+  scope: BrandBrainScope,
+  payload: BrandConstitutionPayload,
+  constitutionVersion: number,
+): Promise<void> {
+  const { brandId } = scope;
+  await Promise.all([
+    prisma.brandFact.deleteMany({ where: { brandId } }),
+    prisma.brandAssumption.deleteMany({ where: { brandId } }),
+    prisma.approvedClaim.deleteMany({ where: { brandId } }),
+    prisma.negativeBriefRule.deleteMany({ where: { brandId } }),
+  ]);
+
+  const source = `Brand Constitution v${constitutionVersion}`;
+  await Promise.all([
+    payload.knownFacts.length > 0
+      ? prisma.brandFact.createMany({
+          data: payload.knownFacts.map((statement, index) => ({
+            ...scope,
+            category: "constitution",
+            key: `known-fact-${index + 1}`,
+            value: statement,
+            source,
+          })),
+        })
+      : undefined,
+    payload.assumptions.length > 0
+      ? prisma.brandAssumption.createMany({
+          data: payload.assumptions.map((statement) => ({
+            ...scope,
+            statement,
+          })),
+        })
+      : undefined,
+    payload.approvedClaims.length > 0
+      ? prisma.approvedClaim.createMany({
+          data: payload.approvedClaims.map((claim) => ({
+            ...scope,
+            claim,
+          })),
+        })
+      : undefined,
+    payload.negativeBrief.length > 0 || payload.forbiddenClaims.length > 0
+      ? prisma.negativeBriefRule.createMany({
+          data: [
+            ...payload.negativeBrief.map((rule) => ({
+              ...scope,
+              rule,
+              category: "negative-brief",
+            })),
+            ...payload.forbiddenClaims.map((rule) => ({
+              ...scope,
+              rule,
+              category: "forbidden-claim",
+            })),
+          ],
+        })
+      : undefined,
+  ]);
+}
 
 export type SynthesizeInput = {
   workspaceId: string;
@@ -103,6 +188,8 @@ export const ConstitutionService = {
         .filter((f): f is typeof f & { evidenceId: string } => !!f.evidenceId)
         .map((f) => f.evidenceId),
     );
+
+    await promoteConstitutionToBrandBrain(scope, payload, activated.version);
 
     return activated;
   },

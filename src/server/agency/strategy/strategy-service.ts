@@ -99,16 +99,24 @@ export const StrategyEngine = {
     const due: SynthesizeInput[] = [];
     for (const c of activeConstitutions) {
       const latestVersion = await BrandStrategyRepository.getLatest(c.brandId);
-      const hasNewLearning = await prisma.brandLearning.findFirst({
-        where: {
-          brandId: c.brandId,
-          ...(latestVersion
-            ? { createdAt: { gt: latestVersion.createdAt } }
-            : {}),
-        },
-        select: { id: true },
-      });
-      if (!hasNewLearning) continue;
+      // A brand that has NEVER had a strategy version is always due,
+      // regardless of learnings (matches this function's doc comment —
+      // "...or never had one" — which the check below previously didn't
+      // actually implement: it required hasNewLearning even when
+      // latestVersion was null, so a fresh project with an active
+      // Constitution but zero BrandLearning rows could never get its first
+      // strategy version synthesized. Only brands that already HAVE a
+      // version need a fresh learning to justify resynthesizing.
+      if (latestVersion) {
+        const hasNewLearning = await prisma.brandLearning.findFirst({
+          where: {
+            brandId: c.brandId,
+            createdAt: { gt: latestVersion.createdAt },
+          },
+          select: { id: true },
+        });
+        if (!hasNewLearning) continue;
+      }
 
       const brand = await prisma.brand.findUnique({
         where: { id: c.brandId },

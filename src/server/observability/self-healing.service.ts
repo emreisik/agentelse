@@ -6,6 +6,7 @@ import {
   OutboxRepository,
 } from "@/server/repositories/outbox.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
+import { TaskRepository } from "@/server/repositories/task.repository";
 import {
   classifyError,
   isAutoRecoverable,
@@ -57,6 +58,7 @@ export const SelfHealingService = {
       },
       select: {
         id: true,
+        taskId: true,
         workspaceId: true,
         projectId: true,
         capability: true,
@@ -89,6 +91,31 @@ export const SelfHealingService = {
       if (result.count !== 1) continue;
 
       reset += 1;
+
+      // This is a direct DB update, not a provider-poll outcome — it
+      // bypasses execution-service.ts's pollOnce() entirely, which is the
+      // ONLY other place that keeps the parent Task's status in lockstep
+      // with a FAILED job (see pollOnce's taskTargetStatus). Without this,
+      // the ExecutionJob correctly failed but the Task stayed stuck at
+      // RUNNING forever — the exact "still shows Running in the UI"
+      // symptom this function exists to prevent.
+      const task = await prisma.task.findUnique({
+        where: { id: job.taskId },
+        select: { status: true, projectId: true },
+      });
+      if (task && task.status !== "FAILED") {
+        await TaskRepository.transition(
+          job.taskId,
+          task.projectId,
+          "FAILED",
+        ).catch((error) => {
+          console.error(
+            `[self-healing] failed to transition task ${job.taskId} to FAILED after stuck-job reset:`,
+            error instanceof Error ? error.message : error,
+          );
+        });
+      }
+
       await AuditLogRepository.record({
         workspaceId: job.workspaceId,
         projectId: job.projectId,

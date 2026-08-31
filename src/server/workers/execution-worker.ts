@@ -193,6 +193,15 @@ export const ExecutionWorker = {
       } catch (error) {
         if (!isAgentelseError(error)) throw error;
         // Provider hiccup — leave the job RUNNING, the next tick retries.
+        // Logged (previously silent): a job that fails on EVERY poll for
+        // 30 min gets stuck-job-reset by self-healing with only a generic
+        // "not progressed" message — this is the only place the actual
+        // provider error ever surfaces, without it a persistently broken
+        // provider integration was undiagnosable from application logs.
+        console.error(
+          `[execution-worker] pollOnce failed for job ${job.id} (${job.providerId ?? "?"}/${job.capability}):`,
+          error.message,
+        );
       }
     }
     return polled;

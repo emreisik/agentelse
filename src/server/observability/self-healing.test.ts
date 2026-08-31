@@ -14,11 +14,15 @@ const executionJob = {
   findUnique: vi.fn(),
   updateMany: vi.fn(),
 };
+const task = {
+  findUnique: vi.fn(),
+};
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     deadLetterJob,
     executionJob,
+    task,
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         outboxEvent: { create: vi.fn() },
@@ -36,10 +40,16 @@ vi.mock("@/server/repositories/outbox.repository", () => ({
   OutboxRepository: { enqueue: vi.fn().mockResolvedValue(undefined) },
 }));
 
+vi.mock("@/server/repositories/task.repository", () => ({
+  TaskRepository: { transition: vi.fn().mockResolvedValue(undefined) },
+}));
+
 const { SelfHealingService } =
   await import("@/server/observability/self-healing.service");
 const { OutboxRepository } =
   await import("@/server/repositories/outbox.repository");
+const { TaskRepository } =
+  await import("@/server/repositories/task.repository");
 
 function deadLetter(overrides: Record<string, unknown> = {}) {
   return {
@@ -64,6 +74,10 @@ beforeEach(() => {
     workspaceId: "ws-1",
     projectId: "p-1",
     status: "FAILED",
+  });
+  task.findUnique.mockResolvedValue({
+    status: "RUNNING",
+    projectId: "p-1",
   });
 });
 
@@ -137,6 +151,7 @@ describe("resetStuckJobs", () => {
     executionJob.findMany.mockResolvedValue([
       {
         id: "job-9",
+        taskId: "task-9",
         workspaceId: "ws-1",
         projectId: "p-1",
         capability: "WEB_RESEARCH",
@@ -162,6 +177,7 @@ describe("resetStuckJobs", () => {
     executionJob.findMany.mockResolvedValue([
       {
         id: "job-9",
+        taskId: "task-9",
         workspaceId: "ws-1",
         projectId: "p-1",
         capability: "WEB_RESEARCH",
@@ -173,5 +189,50 @@ describe("resetStuckJobs", () => {
     executionJob.updateMany.mockResolvedValue({ count: 0 });
 
     expect(await SelfHealingService.resetStuckJobs(now)).toBe(0);
+    expect(TaskRepository.transition).not.toHaveBeenCalled();
+  });
+
+  it("also transitions the parent Task to FAILED — the job alone getting reset previously left the Task stuck showing RUNNING forever", async () => {
+    executionJob.findMany.mockResolvedValue([
+      {
+        id: "job-9",
+        taskId: "task-9",
+        workspaceId: "ws-1",
+        projectId: "p-1",
+        capability: "WEB_RESEARCH",
+        providerId: "openclaw",
+        updatedAt: new Date("2026-08-08T10:00:00Z"),
+      },
+    ]);
+    executionJob.updateMany.mockResolvedValue({ count: 1 });
+    task.findUnique.mockResolvedValue({ status: "RUNNING", projectId: "p-1" });
+
+    await SelfHealingService.resetStuckJobs(now);
+
+    expect(TaskRepository.transition).toHaveBeenCalledWith(
+      "task-9",
+      "p-1",
+      "FAILED",
+    );
+  });
+
+  it("does not re-transition a Task that's already terminal", async () => {
+    executionJob.findMany.mockResolvedValue([
+      {
+        id: "job-9",
+        taskId: "task-9",
+        workspaceId: "ws-1",
+        projectId: "p-1",
+        capability: "WEB_RESEARCH",
+        providerId: "openclaw",
+        updatedAt: new Date("2026-08-08T10:00:00Z"),
+      },
+    ]);
+    executionJob.updateMany.mockResolvedValue({ count: 1 });
+    task.findUnique.mockResolvedValue({ status: "FAILED", projectId: "p-1" });
+
+    await SelfHealingService.resetStuckJobs(now);
+
+    expect(TaskRepository.transition).not.toHaveBeenCalled();
   });
 });

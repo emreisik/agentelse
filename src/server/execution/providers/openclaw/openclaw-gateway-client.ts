@@ -190,6 +190,16 @@ async function connect(): Promise<WebSocket> {
       // silently stranded every in-flight run for good (see runStates'
       // module comment). Per docs.openclaw.ai/gateway/protocol/handshake's
       // documented connect params for a `role:"operator"` client.
+      //
+      // client.id/client.mode are a const-paired discriminator, not free
+      // text (confirmed in prod logs, 2026-09-08: "invalid connect params:
+      // at /client/id: must be equal to constant; ... /client/mode: must be
+      // equal to constant" — the previous "agentelse"/"operator" values
+      // don't match any of the schema's known pairs). The docs' three known
+      // pairs are cli+operator (human CLI), ios-node+node (mobile), and
+      // gateway-client+backend — the last being explicitly documented as
+      // "trusted local backend clients ... authenticating with the shared
+      // gateway token", which is exactly this server-to-server integration.
       ws.send(
         JSON.stringify({
           type: "req",
@@ -199,10 +209,10 @@ async function connect(): Promise<WebSocket> {
             minProtocol: 4,
             maxProtocol: 4,
             client: {
-              id: "agentelse",
+              id: "gateway-client",
               version: "0.1.0",
               platform: "node",
-              mode: "operator",
+              mode: "backend",
             },
             role: "operator",
             scopes: ["operator.read", "operator.write"],

@@ -181,12 +181,33 @@ async function connect(): Promise<WebSocket> {
           reject(error);
         },
       });
+      // The deployed Gateway now rejects a connect request that omits
+      // minProtocol/maxProtocol/client (confirmed in prod logs, 2026-09-07:
+      // "invalid connect params: must have required property 'minProtocol'
+      // ..."). This app previously only sent `auth`, which is why every
+      // reconnect since has failed — and because `socket` is a singleton
+      // reused for the process lifetime, a single dropped connection
+      // silently stranded every in-flight run for good (see runStates'
+      // module comment). Per docs.openclaw.ai/gateway/protocol/handshake's
+      // documented connect params for a `role:"operator"` client.
       ws.send(
         JSON.stringify({
           type: "req",
           id,
           method: "connect",
-          params: { auth: { token } },
+          params: {
+            minProtocol: 4,
+            maxProtocol: 4,
+            client: {
+              id: "agentelse",
+              version: "0.1.0",
+              platform: "node",
+              mode: "operator",
+            },
+            role: "operator",
+            scopes: ["operator.read", "operator.write"],
+            auth: { token },
+          },
         }),
       );
     });

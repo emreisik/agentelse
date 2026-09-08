@@ -133,10 +133,22 @@ export const ExecutionWorker = {
     };
 
     try {
+      // Always true, not just on event.reclaimed (a lease-expiry reclaim —
+      // rare). A far more common path lands here just as stuck: attempt #1
+      // claims the job (QUEUED -> RUNNING) then provider.execute() throws
+      // before the providerExecutionReference update runs. scheduleRetry
+      // puts the outbox event back at PENDING (reclaimed stays false), so
+      // without this every later attempt hit startExecution's `job.status
+      // !== "QUEUED"` guard and returned the same broken RUNNING/null job
+      // untouched — burning the remaining attempts on the synthetic "still
+      // waiting for a provider reference" error instead of ever retrying
+      // the real provider call, then dead-lettering with that message
+      // instead of the actual failure. Safe unconditionally: on a fresh
+      // QUEUED job the recovery branch's RUNNING check just doesn't fire.
       const job = await ExecutionService.startExecution(
         payload.executionJobId,
         payload.riskLevel as never,
-        { recoverStalledDispatch: event.reclaimed },
+        { recoverStalledDispatch: true },
       );
       if (job.status === "RUNNING" && !job.providerExecutionReference) {
         throw new Error(
@@ -150,6 +162,10 @@ export const ExecutionWorker = {
       );
       return result.count;
     } catch (error) {
+      console.error(
+        `[execution-worker] dispatch failed for job ${payload.executionJobId}:`,
+        error,
+      );
       const attempt = event.attemptCount + 1;
       if (attempt >= MAX_ATTEMPTS) {
         const result = await OutboxRepository.markFailed(

@@ -227,7 +227,7 @@ describe("ExecutionWorker.tick", () => {
     expect(results.sort()).toEqual([0, 1]);
     expect(mocks.executionStart).toHaveBeenCalledTimes(1);
     expect(mocks.executionStart).toHaveBeenCalledWith("job-1", "LOW", {
-      recoverStalledDispatch: false,
+      recoverStalledDispatch: true,
     });
     expect(mocks.markProcessed).toHaveBeenCalledTimes(1);
     expect(mocks.markProcessed).toHaveBeenCalledWith("event-1", claimedUntil);
@@ -375,6 +375,40 @@ describe("ExecutionWorker.tick", () => {
     // Backoff has jitter (+-25%): a range is verified, not the exact value —
     // otherwise jobs that fail at the same time would retry at the same time.
     expectBackoffRetry(1, 4_000, claimedUntil);
+  });
+
+  it("still recovers a stuck job on a normal (non-reclaimed) retry", async () => {
+    // Regression guard: a job left RUNNING with no providerExecutionReference
+    // after provider.execute() throws on attempt #1 must self-heal on later
+    // attempts even though scheduleRetry always leaves the outbox event
+    // non-reclaimed (PENDING, not a stale PROCESSING lease). Passing
+    // recoverStalledDispatch only on event.reclaimed missed this — the far
+    // more common path — leaving the job wedged until it was dead-lettered
+    // with a synthetic error instead of the real provider failure.
+    const claimedUntil = new Date("2026-08-08T00:15:00.000Z");
+    mocks.claimBatch.mockResolvedValue([
+      {
+        id: "event-1",
+        eventType: "execution.dispatch",
+        payload: { executionJobId: "job-1", riskLevel: "LOW" },
+        attemptCount: 1,
+        nextAttemptAt: claimedUntil,
+        reclaimed: false,
+      },
+    ]);
+    mocks.executionStart.mockResolvedValue({
+      id: "job-1",
+      status: "RUNNING",
+      providerExecutionReference: null,
+    });
+
+    await expect(ExecutionWorker.processDispatchQueue()).resolves.toBe(0);
+
+    expect(mocks.executionStart).toHaveBeenCalledWith("job-1", "LOW", {
+      recoverStalledDispatch: true,
+    });
+    expect(mocks.markProcessed).not.toHaveBeenCalled();
+    expectBackoffRetry(2, 8_000, claimedUntil);
   });
 });
 

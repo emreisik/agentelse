@@ -200,13 +200,27 @@ async function connect(): Promise<WebSocket> {
       // gateway-client+backend — the last being explicitly documented as
       // "trusted local backend clients ... authenticating with the shared
       // gateway token", which is exactly this server-to-server integration.
+      //
+      // minProtocol/maxProtocol pinned to exactly 4 got the client.id/mode
+      // pairing above accepted but then failed with the deployed Gateway's
+      // own "protocol mismatch" (confirmed via that Gateway's own logs,
+      // 2026-09-08: "[ws] protocol mismatch ... client=gateway-client
+      // backend v0.1.0" — so the connect params themselves were valid, the
+      // requested version range just didn't overlap what this particular
+      // Gateway build runs; the docs only document "4" as current, with no
+      // version history, so there's no published number to pin to instead).
+      // Declaring the widest plausible range (1..4) is the actual fix:
+      // protocol negotiation exists precisely so a client doesn't have to
+      // know the server's exact version — the server picks the highest
+      // version it also supports inside the offered range. This can only
+      // widen what gets accepted, never narrow it.
       ws.send(
         JSON.stringify({
           type: "req",
           id,
           method: "connect",
           params: {
-            minProtocol: 4,
+            minProtocol: 1,
             maxProtocol: 4,
             client: {
               id: "gateway-client",

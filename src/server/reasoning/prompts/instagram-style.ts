@@ -17,10 +17,14 @@ const ColorSwatchSchema = z.object({
 // asked for "up to N", so the first N is still a fully valid answer.
 // zLenientArray additionally drops any single malformed swatch (e.g. a
 // non-hex color) instead of failing the whole array.
+//
+// The trailing .pipe(z.array(ColorSwatchSchema)) is required, not
+// decorative — see lenient-array.ts's zLenientArray for why a bare
+// .transform() breaks z.toJSONSchema() (thrown on every real call).
 function zColorSwatches(max: number) {
-  return zLenientArray(ColorSwatchSchema).transform((swatches) =>
-    swatches.slice(0, max),
-  );
+  return zLenientArray(ColorSwatchSchema)
+    .transform((swatches) => swatches.slice(0, max))
+    .pipe(z.array(ColorSwatchSchema));
 }
 
 // Deliberately a SUBSET of BrandVisualIdentity's fields — only the ones a
@@ -45,7 +49,11 @@ export const InstagramStyleSuggestionSchema = z.object({
     ])
     .catch("MIXED"),
   styleRefinement: z.string(),
-  moodTags: z.array(z.string()).transform((tags) => tags.slice(0, 6)),
+  // .pipe(z.array(z.string())) for the same reason as zColorSwatches above.
+  moodTags: z
+    .array(z.string())
+    .transform((tags) => tags.slice(0, 6))
+    .pipe(z.array(z.string())),
   compositionNotes: z.string(),
   // .catch("NO_PREFERENCE") — same rationale as photographyStyle above;
   // NO_PREFERENCE is already this enum's own "no clear pattern" value.

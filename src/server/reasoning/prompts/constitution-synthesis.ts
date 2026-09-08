@@ -10,12 +10,20 @@ import type { ReasoningContext, ReasoningDef } from "../types";
 // outright. This is the single most expensive reasoning call in the system
 // (32768 tokens, 22 sections) — losing the whole synthesis over one absent
 // array is a much worse failure than defaulting that one section to empty.
+//
+// The trailing .pipe(z.array(z.string())) is required, not decorative: a
+// bare .transform() has no declared output type, and reasoning-service.ts
+// passes `z.toJSONSchema(def.schema)` to the provider on every REAL call —
+// z.toJSONSchema() throws "Transforms cannot be represented in JSON Schema"
+// on a bare transform. This made EVERY real constitution.synthesize call
+// fail with that exact error (confirmed in prod logs) until this was added.
 const zLenientStringArray = () =>
   z
     .array(z.string())
     .nullable()
     .optional()
-    .transform((value) => value ?? []);
+    .transform((value) => value ?? [])
+    .pipe(z.array(z.string()));
 
 // The Brand Constitution payload contract — mirrors constitution-schema.ts's
 // section list. Kept flat string arrays where possible so mock derivation and

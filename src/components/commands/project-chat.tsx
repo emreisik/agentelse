@@ -283,16 +283,12 @@ export function ProjectChat({
     [],
   );
 
-  const onNew = React.useCallback(
-    async (message: AppendMessage) => {
-      const text = message.content
-        .map((part) => (part.type === "text" ? part.text : ""))
-        .join("")
-        .trim();
-      const files = (message.attachments ?? [])
-        .map((attachment) => attachment.file)
-        .filter((file): file is File => Boolean(file));
-
+  // Shared by onNew (composer send) and onReload (retry) — both just submit
+  // text + files as a new Command; there is no "regenerate in place" concept
+  // server-side, so a retry is a fresh submission, not a mutation of the
+  // failed turn.
+  const sendMessage = React.useCallback(
+    async (text: string, files: File[]) => {
       if (!text && files.length === 0) return;
 
       const key = `local-${crypto.randomUUID()}`;
@@ -356,11 +352,45 @@ export function ProjectChat({
     [projectId, ideaId],
   );
 
+  const onNew = React.useCallback(
+    async (message: AppendMessage) => {
+      const text = message.content
+        .map((part) => (part.type === "text" ? part.text : ""))
+        .join("")
+        .trim();
+      const files = (message.attachments ?? [])
+        .map((attachment) => attachment.file)
+        .filter((file): file is File => Boolean(file));
+      await sendMessage(text, files);
+    },
+    [sendMessage],
+  );
+
+  // "Refresh"/retry on an assistant bubble (thread.tsx's AssistantActionBar)
+  // calls this unconditionally whenever the message isn't running — without
+  // it, assistant-ui throws "Runtime does not support reloading messages."
+  // `parentId` is the stringified index of the preceding message in `messages`
+  // (assistant-ui falls back to array index when convertMessage doesn't set
+  // an id — see fromThreadMessageLike). Attachments aren't retained past the
+  // original send, so a retry only resubmits the original text.
+  const onReload = React.useCallback(
+    async (parentId: string | null) => {
+      const parent = parentId !== null ? messages[Number(parentId)] : undefined;
+      if (!parent || parent.role !== "user") {
+        toast.error("Can't retry this message.");
+        return;
+      }
+      await sendMessage(parent.text, []);
+    },
+    [messages, sendMessage],
+  );
+
   const runtime = useExternalStoreRuntime({
     messages,
     convertMessage,
     isRunning: isSending,
     onNew,
+    onReload,
     adapters: { attachments: attachmentAdapter },
   });
 

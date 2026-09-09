@@ -78,6 +78,11 @@ export async function publishCreativeCore(input: {
       imageUrl,
       caption,
       targetFormat: format === "STORIES" ? "STORIES" : undefined,
+      // Read back by the completion handler below to flip THIS Creative to
+      // PUBLISHED once the post actually goes live — the provider itself
+      // ignores unknown payload fields, confirmed against
+      // meta-api-provider.ts's INSTAGRAM_PUBLISH handling.
+      creativeId,
     },
   });
 
@@ -154,7 +159,10 @@ export async function publishCreativeToSocialCore(input: {
   const version = creative.versions[0];
   const caption = version?.caption || version?.copy || "";
 
-  const payloadExtra: Record<string, unknown> = { caption };
+  // creativeId read back by the same completion handler that watches
+  // INSTAGRAM_PUBLISH (see the module comment on that field above) — flips
+  // this Creative to PUBLISHED once the post actually goes live.
+  const payloadExtra: Record<string, unknown> = { caption, creativeId };
   if (platform === "tiktok") {
     if (!version || !version.asset || version.asset.type !== "VIDEO") {
       return {

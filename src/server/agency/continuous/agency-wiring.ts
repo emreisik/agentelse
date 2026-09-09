@@ -25,6 +25,7 @@ import { MeasurementEngine } from "@/server/agency/measurement/measurement-engin
 import { StrategyEngine } from "@/server/agency/strategy/strategy-service";
 import { MetaAdSetChainRelay } from "@/server/agency/meta-ads/meta-adset-chain-relay";
 import { MetaCampaignChainRelay } from "@/server/agency/meta-ads/meta-campaign-chain-relay";
+import { CreativePublishCompletion } from "@/server/commands/creative-publish-completion";
 import { GoogleAnalyticsScanner } from "@/server/agency/performance/google-analytics-scanner";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
 import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
@@ -211,6 +212,12 @@ registerTaskCompletedHandler(async (taskId) => {
 // the relay just above, which then continues on to the Ad unchanged.
 registerTaskCompletedHandler(async (taskId) => {
   await MetaCampaignChainRelay.onTaskCompleted(taskId);
+});
+// Flips a Creative to PUBLISHED once its publish Task completes (see
+// creative-publish-completion.ts) — applies to every publish path, human
+// or autonomous, not just the ones added above.
+registerTaskCompletedHandler(async (taskId) => {
+  await CreativePublishCompletion.onTaskCompleted(taskId);
 });
 
 // --- Wave 5: measurement + learning wiring ----------------------------------

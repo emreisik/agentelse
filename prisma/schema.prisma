@@ -2670,6 +2670,13 @@ model AutonomyPolicy {
   dailyBudgetUsd    Float?
   taskCooldownHours Int    @default(72)
 
+  // Hard ceiling for a single autonomously-proposed Meta ad campaign's
+  // daily budget (see agency/meta-ads — the LLM-proposed dailyBudgetCents
+  // is clamped to this before the campaign task is ever planned, so an
+  // approver always sees a bounded number regardless of what the model
+  // suggested). Dollars, same unit as dailyBudgetUsd above.
+  maxCampaignDailyBudgetUsd Float @default(10)
+
   scoringWeights    Json?
   approvalOverrides Json?
 

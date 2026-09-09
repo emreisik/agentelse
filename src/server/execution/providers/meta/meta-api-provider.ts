@@ -116,6 +116,23 @@ async function findActiveMetaCredential(projectId: string) {
   return credential;
 }
 
+// Exported so callers deciding WHETHER to even propose Meta ads work (e.g.
+// the autonomous campaign-proposal trigger in approval-decisions.ts) share
+// the exact same "is an ad account actually connected" check canExecute()
+// uses below for META_CAMPAIGN_CREATE/META_ADSET_CREATE, instead of
+// re-deriving it and risking drift. Deliberately narrower than
+// getPublishTargets (meta-connection-status.ts), which only checks the
+// Page/Instagram side used for organic publishing — an ad ACCOUNT is a
+// separate prerequisite Meta requires for any paid campaign/adset/ad write.
+export async function hasActiveMetaAdsAccount(
+  projectId: string,
+): Promise<boolean> {
+  const credential = await findActiveMetaCredential(projectId);
+  if (!credential) return false;
+  const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+  return Boolean(metadata.selectedAdAccountId);
+}
+
 function payloadRecord(payload: unknown): Record<string, unknown> {
   return (payload ?? {}) as Record<string, unknown>;
 }

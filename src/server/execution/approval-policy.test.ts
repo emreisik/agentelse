@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { ApprovalPolicy, isAutoExecutable, maxLevel } from "@/server/execution/approval-policy";
+import {
+  ApprovalPolicy,
+  isAutoExecutable,
+  maxLevel,
+} from "@/server/execution/approval-policy";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
 
 const CAPABILITIES = [
@@ -43,14 +47,27 @@ describe("ApprovalPolicy — legacy parity (the L3 floor never weakens)", () => 
 
   it("publishes resolve to LEVEL_3_CLIENT", () => {
     expect(
-      ApprovalPolicy.resolveLevel("INSTAGRAM_PUBLISH", { createdByType: "USER" }),
-    ).toBe("LEVEL_3_CLIENT");
-    expect(
-      ApprovalPolicy.resolveLevel("WEBSITE_UPDATE", { createdByType: "SYSTEM" }),
+      ApprovalPolicy.resolveLevel("WEBSITE_UPDATE", {
+        createdByType: "SYSTEM",
+      }),
     ).toBe("LEVEL_3_CLIENT");
     expect(
       ApprovalPolicy.resolveLevel("PR_OUTREACH", { createdByType: "SYSTEM" }),
     ).toBe("LEVEL_3_CLIENT");
+  });
+
+  // INSTAGRAM_PUBLISH is deliberately absent from the legacy L3 floor (see
+  // execution-policy.ts) — a Creative already passed its own
+  // CREATIVE_APPROVAL before publishing is ever attempted. It stays
+  // HIGH_RISK though, which is enough on its own to auto-resolve to
+  // LEVEL_2_AGENCY_DIRECTOR (still auto-executable, no human blocks it).
+  it("INSTAGRAM_PUBLISH resolves to LEVEL_2 (HIGH risk, no approval floor) and auto-executes", () => {
+    const level = ApprovalPolicy.resolveLevel("INSTAGRAM_PUBLISH", {
+      createdByType: "SYSTEM",
+      riskLevel: "HIGH",
+    });
+    expect(level).toBe("LEVEL_2_AGENCY_DIRECTOR");
+    expect(isAutoExecutable(level)).toBe(true);
   });
 
   it("ad-budget writes resolve to LEVEL_4_CRITICAL", () => {
@@ -113,9 +130,9 @@ describe("ApprovalPolicy — project overrides", () => {
 
   it("an override can NEVER lower a level", () => {
     expect(
-      ApprovalPolicy.resolveLevel("INSTAGRAM_PUBLISH", {
+      ApprovalPolicy.resolveLevel("WEBSITE_UPDATE", {
         createdByType: "SYSTEM",
-        approvalOverrides: { INSTAGRAM_PUBLISH: "LEVEL_0_AUTO_OBSERVE" },
+        approvalOverrides: { WEBSITE_UPDATE: "LEVEL_0_AUTO_OBSERVE" },
       }),
     ).toBe("LEVEL_3_CLIENT");
   });

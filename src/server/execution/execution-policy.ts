@@ -10,7 +10,14 @@ import type {
 
 const APPROVAL_REQUIRED_CAPABILITIES: ReadonlySet<CapabilityKey> =
   new Set<CapabilityKey>([
-    "INSTAGRAM_PUBLISH",
+    // INSTAGRAM_PUBLISH deliberately absent: publishing only ever happens
+    // for a Creative that already passed its own CREATIVE_APPROVAL gate
+    // (see approval-decisions.ts's auto-publish branch) — requiring a
+    // SECOND approval here just re-asked the same question a human already
+    // answered, and was silently never being answered (13 approved
+    // creatives sat unpublished for 11+ days). Still HIGH_RISK (below) and
+    // still VERIFICATION_REQUIRED — only the pre-execution human gate is
+    // gone, not the risk classification or post-execution check.
     "TIKTOK_PUBLISH",
     "LINKEDIN_PUBLISH",
     "X_PUBLISH",

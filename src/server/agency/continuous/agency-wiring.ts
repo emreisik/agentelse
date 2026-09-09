@@ -24,6 +24,7 @@ import { LearningEngine } from "@/server/agency/learning/learning-engine";
 import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
 import { StrategyEngine } from "@/server/agency/strategy/strategy-service";
 import { MetaAdSetChainRelay } from "@/server/agency/meta-ads/meta-adset-chain-relay";
+import { MetaCampaignChainRelay } from "@/server/agency/meta-ads/meta-campaign-chain-relay";
 import { GoogleAnalyticsScanner } from "@/server/agency/performance/google-analytics-scanner";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
 import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
@@ -204,6 +205,12 @@ registerTaskCompletedHandler(async (taskId) => {
 // Combined AdSet+Ad wizard's second-Task fan-out (see meta-adset-chain-relay.ts).
 registerTaskCompletedHandler(async (taskId) => {
   await MetaAdSetChainRelay.onTaskCompleted(taskId);
+});
+// Autonomous campaign-proposal path's Campaign->AdSet fan-out (see
+// meta-campaign-chain-relay.ts) — one link earlier in the same chain as
+// the relay just above, which then continues on to the Ad unchanged.
+registerTaskCompletedHandler(async (taskId) => {
+  await MetaCampaignChainRelay.onTaskCompleted(taskId);
 });
 
 // --- Wave 5: measurement + learning wiring ----------------------------------

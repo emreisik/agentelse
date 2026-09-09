@@ -4,11 +4,19 @@ import { ExecutionPolicy } from "@/server/execution/execution-policy";
 
 describe("ExecutionPolicy.requiresApproval", () => {
   it("requires approval for publish/account-setup/campaign-write capabilities", () => {
-    expect(ExecutionPolicy.requiresApproval("INSTAGRAM_PUBLISH")).toBe(true);
     expect(ExecutionPolicy.requiresApproval("TIKTOK_PUBLISH")).toBe(true);
     expect(ExecutionPolicy.requiresApproval("SOCIAL_ACCOUNT_SETUP")).toBe(true);
     expect(ExecutionPolicy.requiresApproval("META_CAMPAIGN_CREATE")).toBe(true);
     expect(ExecutionPolicy.requiresApproval("EMAIL_SEND")).toBe(true);
+  });
+
+  // A Creative already passed its own CREATIVE_APPROVAL gate before
+  // publishing is ever attempted (see approval-decisions.ts) — a second
+  // approval here would just re-ask the same question. Still HIGH_RISK and
+  // VERIFICATION_REQUIRED (below), only the pre-execution human gate is
+  // gone.
+  it("does not require approval for INSTAGRAM_PUBLISH — the Creative approval already gated it", () => {
+    expect(ExecutionPolicy.requiresApproval("INSTAGRAM_PUBLISH")).toBe(false);
   });
 
   it("does not require approval for read-only or content-generation capabilities", () => {

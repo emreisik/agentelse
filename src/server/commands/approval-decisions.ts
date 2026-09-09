@@ -90,7 +90,10 @@ async function resolveApprovalChatTarget(
 // publishCreativeCore can genuinely throw, and if that throw were
 // swallowed there instead, neither the publish NOR the fallback ask-flow
 // would run, reproducing the exact bug this closes.
-async function autoPublishCreative(input: {
+// Exported (not just used internally by applyApprovalDecision below) so a
+// one-off backfill for creatives that were APPROVED before this feature
+// existed can reuse the exact same logic instead of duplicating it.
+export async function autoPublishCreative(input: {
   creativeId: string;
   workspaceId: string;
   projectId: string;
@@ -130,7 +133,7 @@ async function autoPublishCreative(input: {
 // connected. Never throws — this runs on applyApprovalDecision's critical
 // path, and every gate below is a legitimate "not applicable, skip
 // quietly" case, not an error.
-async function maybeProposeMetaCampaign(input: {
+export async function maybeProposeMetaCampaign(input: {
   creativeId: string;
   workspaceId: string;
   projectId: string;

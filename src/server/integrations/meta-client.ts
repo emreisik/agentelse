@@ -313,6 +313,13 @@ async function waitForContainerReady(
   );
 }
 
+// Creating the media container makes Instagram synchronously fetch and
+// validate `image_url` before it responds with the creation id — this can
+// take noticeably longer than the default 8s under normal network
+// conditions (same reasoning as IMAGE_UPLOAD_TIMEOUT_MS above), so it gets
+// its own, more generous timeout instead of DEFAULT_TIMEOUT_MS.
+const MEDIA_CONTAINER_CREATE_TIMEOUT_MS = 20_000;
+
 // The two-step Instagram Content Publishing flow: first the media
 // container is created, then we wait for it to be processed, then it's
 // published. imageUrl must be publicly reachable (an R2/asset storage URL
@@ -344,6 +351,7 @@ export async function publishInstagramPost(input: {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(body).toString(),
     },
+    MEDIA_CONTAINER_CREATE_TIMEOUT_MS,
   );
 
   await waitForContainerReady(creation.id, input.pageAccessToken);

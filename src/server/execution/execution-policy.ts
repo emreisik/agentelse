@@ -66,6 +66,29 @@ const BROWSER_PURPOSE_BY_CAPABILITY: Partial<
   COMPETITOR_CHANGE_DETECTION: "PUBLIC_RESEARCH",
   SOCIAL_RESEARCH: "PUBLIC_RESEARCH",
   SOCIAL_PROFILE_AUDIT: "PUBLIC_RESEARCH",
+  // These are all in OpenClawProvider.OWNED_CAPABILITIES (openclaw-provider.ts)
+  // but had been left out of this map — without a mapped purpose,
+  // resolveBrowserProfile() (capability-router.ts) returns no
+  // browserProfileId, so OpenClawProvider.resolveAgentId() falls back to
+  // the shared OPENCLAW_DEFAULT_AGENT_ID instead of the project's own
+  // PUBLIC_RESEARCH agent. Confirmed against production: that shared
+  // default agent is provisioned with a "coding" tools profile (no
+  // browser-control skill), so every SIGNAL_SCAN/MEASUREMENT_CHECK run
+  // sent to it either replies "I don't have this configured", fabricates a
+  // result, or refuses — 200/200 SIGNAL_SCAN and 6/6 MEASUREMENT_CHECK
+  // ExecutionJobs failed over the last 3 days (2026-09-15 incident).
+  BRAND_DISCOVERY: "PUBLIC_RESEARCH",
+  SEO_RESEARCH: "PUBLIC_RESEARCH",
+  PRODUCT_RESEARCH: "PUBLIC_RESEARCH",
+  MEDIA_RESEARCH: "PUBLIC_RESEARCH",
+  CULTURAL_RESEARCH: "PUBLIC_RESEARCH",
+  CREATOR_RESEARCH: "PUBLIC_RESEARCH",
+  PARTNERSHIP_RESEARCH: "PUBLIC_RESEARCH",
+  ADVERTISING_RESEARCH: "PUBLIC_RESEARCH",
+  REVIEW_RESEARCH: "PUBLIC_RESEARCH",
+  TECHNOLOGY_RESEARCH: "PUBLIC_RESEARCH",
+  SIGNAL_SCAN: "PUBLIC_RESEARCH",
+  MEASUREMENT_CHECK: "PUBLIC_RESEARCH",
   INSTAGRAM_PUBLISH: "INSTAGRAM",
   // TIKTOK_PUBLISH/LINKEDIN_PUBLISH/X_PUBLISH deliberately NOT mapped here
   // (unlike INSTAGRAM_PUBLISH, which still needs a placeholder BrowserProfile

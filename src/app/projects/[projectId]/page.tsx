@@ -21,6 +21,7 @@ import {
   type ChatTurn,
 } from "@/components/commands/project-chat";
 import { LiveRefresh } from "@/components/shared/live-refresh";
+import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 import { ownerOfCapability } from "@/server/agency/departments/department-registry";
 import {
   isIdeaEventCardData,
@@ -143,7 +144,7 @@ export default async function ProjectChatPage({
   if (entity) {
     const ideaId = await resolveIdeaId(entity);
     if (ideaId) {
-      const [idea, ideaCommands] = await Promise.all([
+      const [idea, ideaCommands, publishTargets] = await Promise.all([
         prisma.idea.findFirst({
           where: { id: ideaId, projectId },
           select: { title: true },
@@ -163,6 +164,7 @@ export default async function ProjectChatPage({
             createdAt: true,
           },
         }),
+        getPublishTargets(projectId),
       ]);
 
       if (!idea) notFound();
@@ -226,6 +228,7 @@ export default async function ProjectChatPage({
               projectId={projectId}
               projectName={idea.title}
               ideaId={ideaId}
+              publishTargets={publishTargets}
               turns={ideaCommands.reverse().map((command): ChatTurn => ({
                 commandId: command.id,
                 source: command.source as "WEB" | "SYSTEM",
@@ -267,7 +270,7 @@ export default async function ProjectChatPage({
     );
   }
 
-  const [project, chatCommands] = await Promise.all([
+  const [project, chatCommands, publishTargets] = await Promise.all([
     prisma.project.findUnique({
       where: { id: projectId },
       select: { name: true },
@@ -295,6 +298,7 @@ export default async function ProjectChatPage({
         createdAt: true,
       },
     }),
+    getPublishTargets(projectId),
   ]);
 
   if (!project) notFound();
@@ -313,6 +317,7 @@ export default async function ProjectChatPage({
         <ProjectChat
           projectId={projectId}
           projectName={project.name}
+          publishTargets={publishTargets}
           turns={chatCommands.reverse().map((command): ChatTurn => ({
             commandId: command.id,
             source: command.source as "WEB" | "SYSTEM",

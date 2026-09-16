@@ -13,6 +13,7 @@ import { IdeaEventCard } from "@/components/commands/idea-event-card";
 import { DepartmentBadge } from "@/components/shared/department-badge";
 import { isIdeaEventCardData } from "@/types/idea-event-card";
 import { DEPARTMENT_KEY, DEPARTMENT_COLOR } from "@/lib/labels";
+import { shortDate } from "@/lib/dates";
 import {
   Reasoning,
   ReasoningContent,
@@ -78,6 +79,10 @@ export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
   Welcome?: ComponentType | undefined;
+  // Rendered above the composer, always (not just in the empty-state welcome
+  // view) — the chat's integration quick-action shortcuts (see
+  // project-chat.tsx / chat-quick-actions.tsx).
+  QuickActions?: ComponentType | undefined;
   ToolFallback?: ToolCallMessagePartComponent | undefined;
   ToolGroup?:
     ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>> | undefined;
@@ -111,7 +116,9 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
 };
 
 const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
-  const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
+  const { Welcome = ThreadWelcome, QuickActions } = useContext(
+    ThreadComponentsContext,
+  );
 
   return (
     <ThreadPrimitive.Root
@@ -164,6 +171,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
           >
             <ThreadScrollToBottom />
             <ThreadFollowupSuggestions />
+            {QuickActions && <QuickActions />}
             <Composer />
             <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
               <ThreadSuggestions />
@@ -388,6 +396,8 @@ const AssistantMessage: FC = () => {
       : undefined;
   });
 
+  const createdAt = useAuiState((s) => s.message.createdAt);
+
   const ACTION_BAR_PT = "pt-1.5";
   // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
   const ACTION_BAR_HEIGHT = `min-h-7.5 ${ACTION_BAR_PT}`;
@@ -488,10 +498,15 @@ const AssistantMessage: FC = () => {
 
       <div
         data-slot="aui_assistant-message-footer"
-        className={cn("ms-2 flex items-center", ACTION_BAR_HEIGHT)}
+        className={cn("ms-2 flex items-center gap-2", ACTION_BAR_HEIGHT)}
       >
         <BranchPicker />
         <AssistantActionBar />
+        {createdAt && (
+          <span className="text-muted-foreground text-xs">
+            {shortDate(createdAt)}
+          </span>
+        )}
       </div>
     </MessagePrimitive.Root>
   );
@@ -549,6 +564,8 @@ const AssistantActionBar: FC = () => {
 };
 
 const UserMessage: FC = () => {
+  const createdAt = useAuiState((s) => s.message.createdAt);
+
   return (
     <MessagePrimitive.Root
       data-slot="aui_user-message-root"
@@ -565,6 +582,15 @@ const UserMessage: FC = () => {
           <UserActionBar />
         </div>
       </div>
+
+      {createdAt && (
+        <span
+          data-slot="aui_user-message-timestamp"
+          className="text-muted-foreground mt-1 text-end text-xs"
+        >
+          {shortDate(createdAt)}
+        </span>
+      )}
 
       <BranchPicker
         data-slot="aui_user-branch-picker"

@@ -18,8 +18,23 @@ import {
   submitChatMessageAction,
   type ChatMessageResult,
 } from "@/server/actions/command-actions";
+import {
+  submitCreateSocialCreativeQuickActionAction,
+  type QuickActionPlatform,
+} from "@/server/actions/quick-action-actions";
 import { Thread } from "@/components/assistant-ui/thread";
+import { ChatQuickActions } from "@/components/commands/chat-quick-actions";
+import type { PublishTarget } from "@/server/integrations/meta-connection-status";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
+
+// Mirrors quick-action.ts's REQUEST_TEXT exactly — this is only the
+// optimistic local-bubble text shown before the server responds; the
+// actually-submitted request text is generated server-side.
+const QUICK_ACTION_DISPLAY_TEXT: Record<QuickActionPlatform, string> = {
+  instagram: "Create an Instagram post",
+  linkedin: "Create a LinkedIn post",
+  x: "Create an X post",
+};
 
 export type ChatAttachment = {
   assetId: string;
@@ -135,6 +150,7 @@ export function ProjectChat({
   projectName,
   turns,
   ideaId,
+  publishTargets,
 }: {
   projectId: string;
   projectName: string;
@@ -143,6 +159,10 @@ export function ProjectChat({
   // tagged to that idea and the LLM context is scoped to this idea's
   // history (user + pipeline events) (see ChatService.turn ideaId).
   ideaId?: string;
+  // Which social platforms are actually connected for this project (see
+  // getPublishTargets) — drives which "Create {Platform} post" quick-action
+  // buttons appear above the composer (see ChatQuickActions).
+  publishTargets: PublishTarget[];
 }) {
   const [localTurns, setLocalTurns] = React.useState<LocalTurn[]>([]);
   const [isSending, startTransition] = React.useTransition();
@@ -283,42 +303,34 @@ export function ProjectChat({
     [],
   );
 
-  // Shared by onNew (composer send) and onReload (retry) — both just submit
-  // text + files as a new Command; there is no "regenerate in place" concept
-  // server-side, so a retry is a fresh submission, not a mutation of the
-  // failed turn.
-  const sendMessage = React.useCallback(
-    async (text: string, files: File[]) => {
-      if (!text && files.length === 0) return;
-
+  // Shared skeleton for anything that turns into a new Command: push an
+  // optimistic LocalTurn immediately, call the given server action, then
+  // reconcile it to "done"/"error" with the real result. sendMessage
+  // (composer send + onReload retry) and sendQuickAction (the integration
+  // shortcut buttons) both funnel through this — they only differ in which
+  // server action they call and what the displayed request text is.
+  const runTurn = React.useCallback(
+    (
+      displayText: string,
+      attachments: LocalAttachment[],
+      submit: () => Promise<ChatMessageResult>,
+    ) => {
       const key = `local-${crypto.randomUUID()}`;
       setLocalTurns((current) => [
         ...current,
         {
           key,
-          text: text || "(file sent)",
-          attachments: files.map((file) => ({
-            filename: file.name,
-            mimeType: file.type,
-            previewUrl: file.type.startsWith("image/")
-              ? URL.createObjectURL(file)
-              : undefined,
-          })),
+          text: displayText,
+          attachments,
           state: "pending",
         },
       ]);
 
-      await new Promise<void>((resolve) => {
+      return new Promise<void>((resolve) => {
         startTransition(async () => {
-          const formData = new FormData();
-          formData.set("projectId", projectId);
-          if (ideaId) formData.set("ideaId", ideaId);
-          formData.set("text", text);
-          for (const file of files) formData.append("files", file);
-
           let result: ChatMessageResult;
           try {
-            result = await submitChatMessageAction(formData);
+            result = await submit();
           } catch (error) {
             result = {
               ok: false,
@@ -349,7 +361,50 @@ export function ProjectChat({
         });
       });
     },
-    [projectId, ideaId],
+    [],
+  );
+
+  const sendMessage = React.useCallback(
+    (text: string, files: File[]) => {
+      if (!text && files.length === 0) return Promise.resolve();
+
+      return runTurn(
+        text || "(file sent)",
+        files.map((file) => ({
+          filename: file.name,
+          mimeType: file.type,
+          previewUrl: file.type.startsWith("image/")
+            ? URL.createObjectURL(file)
+            : undefined,
+        })),
+        () => {
+          const formData = new FormData();
+          formData.set("projectId", projectId);
+          if (ideaId) formData.set("ideaId", ideaId);
+          formData.set("text", text);
+          for (const file of files) formData.append("files", file);
+          return submitChatMessageAction(formData);
+        },
+      );
+    },
+    [runTurn, projectId, ideaId],
+  );
+
+  // The chat composer's integration quick-action buttons (see
+  // ChatQuickActions) — bypasses the LLM entirely with a precomputed
+  // CREATE_SOCIAL_CREATIVE intent (see quick-action.ts) instead of
+  // pre-filling text for the composer to classify.
+  const sendQuickAction = React.useCallback(
+    (platform: QuickActionPlatform) => {
+      return runTurn(QUICK_ACTION_DISPLAY_TEXT[platform], [], () =>
+        submitCreateSocialCreativeQuickActionAction(
+          projectId,
+          platform,
+          ideaId,
+        ),
+      );
+    },
+    [runTurn, projectId, ideaId],
   );
 
   const onNew = React.useCallback(
@@ -410,9 +465,20 @@ export function ProjectChat({
     [projectName],
   );
 
+  const QuickActions = React.useCallback(
+    () => (
+      <ChatQuickActions
+        targets={publishTargets}
+        disabled={isSending}
+        onSelect={sendQuickAction}
+      />
+    ),
+    [publishTargets, isSending, sendQuickAction],
+  );
+
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <Thread components={{ Welcome }} />
+      <Thread components={{ Welcome, QuickActions }} />
     </AssistantRuntimeProvider>
   );
 }

@@ -53,9 +53,17 @@ async function postTaskChatEvent(task: {
 }) {
   if (ExecutionPolicy.isCreative(task.capability)) return;
   try {
-    const ideaId = await IdeaChatRepository.resolveIdeaIdForTask(task.id);
-    if (!ideaId) return;
-
+    // No `if (!(await resolveIdeaIdForTask(...))) return` here: SYSTEM
+    // tasks with no idea lineage (SIGNAL_SCAN, MEASUREMENT_CHECK — created
+    // directly by signal-universe.ts/measurement-engine.ts, never through
+    // an idea's chat) still got a "running" card posted by
+    // postTaskRunningCard above (execution-service.ts:190, which has no
+    // such guard) into the project's general chat feed (ideaId: null). An
+    // early return here used to leave that card permanently stuck on
+    // "Running" forever, no matter how the task actually resolved —
+    // resolveTaskResultCard/resolvePublishResultCard below already resolve
+    // ideaId themselves and handle null fine (the same general feed the
+    // running card went to), so there was nothing this guard protected.
     const latestJob = await prisma.executionJob.findFirst({
       where: { taskId: task.id },
       orderBy: { createdAt: "desc" },

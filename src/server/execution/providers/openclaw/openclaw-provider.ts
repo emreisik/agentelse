@@ -62,13 +62,68 @@ type StoredRun = { agentId: string; sessionKey: string; runId: string };
 
 const store = new Map<string, StoredRun>();
 
+// Renders one payload field as a "Label: value" line, or null if the field
+// is absent/empty — used below to surface whatever concrete data a
+// capability's planner attached (signal-universe.ts's `sources`,
+// measurement-engine.ts's `postUrl`/`platformPostId`/`campaignId`, etc.)
+// instead of silently dropping it.
+function formatContextLine(label: string, value: unknown): string | null {
+  if (Array.isArray(value)) {
+    const items = value.filter(
+      (item): item is string | number =>
+        typeof item === "string" || typeof item === "number",
+    );
+    return items.length > 0 ? `${label}: ${items.join(", ")}` : null;
+  }
+  if (typeof value === "string")
+    return value.trim() ? `${label}: ${value}` : null;
+  if (typeof value === "number" || typeof value === "boolean")
+    return `${label}: ${value}`;
+  return null;
+}
+
+// Brand Brain's `competitors` context field (context-builder.ts) is a list
+// of Competitor rows ({ name, domain, ... }) — rendered as "Name (domain)".
+function formatCompetitors(brandContext: unknown): string | null {
+  if (!brandContext || typeof brandContext !== "object") return null;
+  const competitors = (brandContext as Record<string, unknown>).competitors;
+  if (!Array.isArray(competitors) || competitors.length === 0) return null;
+  const names = competitors
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const { name, domain } = entry as Record<string, unknown>;
+      if (typeof name !== "string" || !name) return null;
+      return typeof domain === "string" && domain
+        ? `${name} (${domain})`
+        : name;
+    })
+    .filter((name): name is string => Boolean(name));
+  return names.length > 0 ? `Known competitors: ${names.join(", ")}` : null;
+}
+
+// Every field this reads is deliberately explicit rather than a generic
+// dump of the whole payload: `brandContext` in particular can carry large
+// nested objects (brandConstitution, recentApprovedCreatives, ...) that
+// would bloat the prompt unpredictably as ContextPolicy grows — only the
+// specific fields worth surfacing to the agent are pulled out here.
 function buildTaskPrompt(capability: CapabilityKey, payload: unknown): string {
   const input = (payload ?? {}) as Record<string, unknown>;
   const request =
     typeof input.request === "string" ? input.request : JSON.stringify(input);
   const platform =
     typeof input.platform === "string" ? ` Platform: ${input.platform}.` : "";
-  return `[Agentelse task — capability: ${capability}]${platform} ${request}`;
+
+  const contextLines = [
+    formatContextLine("Sources to check", input.sources),
+    formatContextLine("Post URL", input.postUrl),
+    formatContextLine("Platform post ID", input.platformPostId),
+    formatContextLine("Campaign ID", input.campaignId),
+    formatCompetitors(input.brandContext),
+  ].filter((line): line is string => line !== null);
+
+  const context =
+    contextLines.length > 0 ? `\nContext: ${contextLines.join(". ")}.` : "";
+  return `[Agentelse task — capability: ${capability}]${platform} ${request}${context}`;
 }
 
 export class OpenClawProvider implements ExecutionProvider {

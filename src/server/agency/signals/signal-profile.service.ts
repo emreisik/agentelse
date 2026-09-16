@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SignalCategory, SignalIntensity } from "@prisma/client";
 
+import { prisma } from "@/lib/prisma";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { signalProfileRecommendationDef } from "@/server/reasoning/prompts/signal-profile-recommendation";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
@@ -52,19 +53,40 @@ export const SignalProfileService = {
       },
     );
 
-    const byCategory = new Map(
-      output.profiles.map((p) => [p.category, p.intensity]),
-    );
+    const byCategory = new Map(output.profiles.map((p) => [p.category, p]));
+
+    // Real per-project domains, regardless of what (if anything) the LLM
+    // proposed — so the COMPETITOR category's config is populated even when
+    // the model has nothing to ground a source in yet (e.g. right after
+    // setup, before any COMPETITOR_RESEARCH has run).
+    const competitors = await prisma.competitor.findMany({
+      where: { projectId: scope.projectId },
+      select: { name: true, domain: true },
+      take: 20,
+    });
+    const competitorSources = competitors
+      .map((c) => c.domain ?? c.name)
+      .filter((source): source is string => Boolean(source));
 
     return SignalProfileRepository.upsertMany(
       scope,
       ALL_SIGNAL_CATEGORIES.map((category) => {
-        const raw = byCategory.get(category);
+        const recommended = byCategory.get(category);
         const intensity: SignalIntensity =
-          raw && VALID_INTENSITIES.has(raw)
-            ? (raw as SignalIntensity)
+          recommended && VALID_INTENSITIES.has(recommended.intensity)
+            ? recommended.intensity
             : "MEDIUM";
-        return { category, intensity };
+
+        const sources = new Set(recommended?.sources ?? []);
+        if (category === "COMPETITOR") {
+          for (const source of competitorSources) sources.add(source);
+        }
+
+        return {
+          category,
+          intensity,
+          config: sources.size > 0 ? { sources: [...sources] } : undefined,
+        };
       }),
     );
   },

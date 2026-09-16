@@ -69,7 +69,7 @@ export const SignalUniverse = {
     for (const profile of due) {
       const project = await prisma.project.findUnique({
         where: { id: profile.projectId },
-        select: { status: true },
+        select: { status: true, name: true },
       });
       if (project?.status !== "ACTIVE") {
         // Not active — push the scan forward without running it.
@@ -103,12 +103,29 @@ export const SignalUniverse = {
         continue; // Daily cap reached — skip this project this tick.
       }
 
+      // `config` is only ever populated by SignalProfileService.generateForProject
+      // (an LLM recommendation, plus real Competitor domains for the
+      // COMPETITOR category) — absent for a profile predating that, or one
+      // the model couldn't ground a real source in. Falls back to the bare
+      // category name rather than blocking the scan entirely.
+      const sources = Array.isArray(
+        (profile.config as { sources?: unknown } | null)?.sources,
+      )
+        ? (
+            (profile.config as { sources?: unknown }).sources as unknown[]
+          ).filter((s): s is string => typeof s === "string")
+        : [];
+      const request =
+        sources.length > 0
+          ? `Scan ${profile.category} signals for ${project.name}: check ${sources.join(", ")}`
+          : `Scan ${profile.category} signal sources for ${project.name}`;
+
       await TaskPlanner.planForCapability({
         ...scope,
         capability: "SIGNAL_SCAN",
-        request: `Scan ${profile.category} signal sources`,
+        request,
         createdByType: "SYSTEM",
-        payloadExtra: { signalCategory: profile.category },
+        payloadExtra: { signalCategory: profile.category, sources },
       });
 
       await SignalProfileRepository.updateScanTimes(

@@ -81,13 +81,33 @@ describe("OpenClawProvider", () => {
       expect(await provider.canExecute("EMAIL_SEND", context)).toBe(false);
     });
 
-    // BRAND_DISCOVERY isn't in execution-policy.ts's
-    // BROWSER_PURPOSE_BY_CAPABILITY map, so requiresBrowserProfile() is
-    // false for it — unlike WEB_RESEARCH/SOCIAL_RESEARCH/etc, which DO map
-    // to the PUBLIC_RESEARCH purpose and so still require a profile.
+    // TIKTOK_PUBLISH is deliberately absent from execution-policy.ts's
+    // BROWSER_PURPOSE_BY_CAPABILITY map (it routes through TikTokApiProvider's
+    // own OAuth credential instead, see that map's comment) so
+    // requiresBrowserProfile() is false for it — unlike the research family
+    // (WEB_RESEARCH, BRAND_DISCOVERY, SIGNAL_SCAN, etc.), which all map to
+    // the PUBLIC_RESEARCH purpose and so DO require a profile (see the next
+    // test) so their agent resolves to the project's own OpenClaw agent
+    // rather than the shared default.
     it("allows a capability with no static browser-purpose mapping without a profile", async () => {
       const provider = new OpenClawProvider();
-      expect(await provider.canExecute("BRAND_DISCOVERY", context)).toBe(true);
+      expect(await provider.canExecute("TIKTOK_PUBLISH", context)).toBe(true);
+    });
+
+    // BRAND_DISCOVERY (and the rest of the research family) requires a
+    // browser profile precisely so resolveAgentId() routes to the project's
+    // own PUBLIC_RESEARCH agent instead of silently falling back to the
+    // shared OPENCLAW_DEFAULT_AGENT_ID — see execution-policy.ts's
+    // BROWSER_PURPOSE_BY_CAPABILITY comment for the incident this fixed.
+    it("requires a browser profile for the research capability family", async () => {
+      const provider = new OpenClawProvider();
+      expect(await provider.canExecute("BRAND_DISCOVERY", context)).toBe(false);
+      expect(
+        await provider.canExecute("SIGNAL_SCAN", {
+          ...context,
+          browserProfileId: "profile-1",
+        }),
+      ).toBe(true);
     });
 
     // INSTAGRAM_PUBLISH is still mapped to the "INSTAGRAM" browser purpose

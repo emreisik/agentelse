@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { MeasurementCheckStatus } from "@prisma/client";
+import type { MeasurementCheckStatus, SocialPlatform } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { AgentelseError } from "@/server/security/errors";
@@ -14,6 +14,14 @@ export type CreateMeasurementPlanInput = {
   workPlanId?: string;
   ideaId?: string;
   description: string;
+  // The concrete thing this plan measures, pulled forward from the
+  // completed task's ExecutionJob.rawResult (MeasurementEngine.
+  // planForCompletedTask) — absent for capabilities/providers that don't
+  // return one (e.g. WEBSITE_UPDATE, or a provider that never set it).
+  platform?: SocialPlatform;
+  postUrl?: string;
+  platformPostId?: string;
+  campaignId?: string;
   checks: Array<{ label: string; dueAt: Date }>;
 };
 
@@ -28,6 +36,10 @@ export const MeasurementRepository = {
         workPlanId: input.workPlanId,
         ideaId: input.ideaId,
         description: input.description,
+        platform: input.platform,
+        postUrl: input.postUrl,
+        platformPostId: input.platformPostId,
+        campaignId: input.campaignId,
         checks: {
           create: input.checks.map((check) => ({
             workspaceId: input.workspaceId,

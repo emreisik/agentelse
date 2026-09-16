@@ -106,6 +106,10 @@ const CAPABILITY_CONTEXT_FIELDS: Partial<
   ],
   COMPETITOR_RESEARCH: ["positioning", "competitors"],
   COMPETITOR_MONITORING: ["competitors"],
+  // Lets the OpenClaw agent's prompt (buildTaskPrompt in
+  // openclaw-provider.ts) mention known competitors by name/domain instead
+  // of scanning blind — see signal-universe.ts's runDueScans.
+  SIGNAL_SCAN: ["competitors"],
   SOCIAL_ACCOUNT_SETUP: ["positioning", "toneOfVoice", "visualGuidelines"],
   CLAIM_VALIDATION: ["approvedClaims", "negativeBrief"],
   BRAND_SAFETY: ["negativeBrief", "approvedClaims"],

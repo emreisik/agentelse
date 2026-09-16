@@ -2076,6 +2076,11 @@ model ProjectSchedule {
   capability     CapabilityKey
   scheduleType   ScheduleType
   cronExpression String?
+  // IANA zone the cronExpression's clock time is evaluated in (cron-parser
+  // resolves this natively via its bundled luxon dependency, DST included).
+  // Null means UTC — every schedule predating this field keeps running
+  // exactly as before.
+  timezone       String?
 
   configuration Json?
 
@@ -2581,6 +2586,15 @@ model MeasurementPlan {
 
   description String
   status      MeasurementPlanStatus @default(ACTIVE)
+
+  // Captured from the completed publish/campaign task's ExecutionJob.rawResult
+  // (MeasurementEngine.planForCompletedTask — same pull-forward pattern as
+  // MetaCampaignChainRelay) so a MEASUREMENT_CHECK task has a concrete
+  // target to actually check instead of just this plan's internal id.
+  platform       SocialPlatform?
+  postUrl        String?
+  platformPostId String?
+  campaignId     String?
 
   checks MeasurementCheck[]
 

@@ -355,16 +355,49 @@ export const OpenClawGatewayClient = {
     });
   },
 
-  // Synchronous read of whatever this run's latest known state is — never
-  // itself waits on the network. "RUNNING" (pending, not yet timed out) vs
-  // a terminal OpenClawAgentResult once one has arrived via a Gateway event.
-  getRunState(
+  // Polled by ExecutionWorker.pollRunningJobs() every worker tick. Used to
+  // ONLY read the passive `runStates` map (updated by handleMessage's
+  // `event` branch) — but confirmed against docs.openclaw.ai
+  // (gateway/protocol/rpc-talk-config-and-agents: "agent.wait waits for a
+  // run to finish and returns the terminal snapshot when available") that
+  // the `agent` RPC starting a run does NOT itself guarantee a matching
+  // `event` broadcast; the documented way to actually fetch a run's result
+  // is to ask for it via `agent.wait`. Without this, a run could do real,
+  // successful work (confirmed live: real web searches, real findings) and
+  // still show as TIMEOUT forever, because nothing ever asked the Gateway
+  // for the answer — every poll just kept checking an in-memory map events
+  // may never populate.
+  async getRunState(
     runId: string,
     timeoutSeconds: number,
-  ): { kind: "running" } | { kind: "done"; result: OpenClawAgentResult } {
+  ): Promise<
+    { kind: "running" } | { kind: "done"; result: OpenClawAgentResult }
+  > {
     const state = runStates.get(runId);
     if (!state) return { kind: "running" }; // not observed yet — caller retries next poll
     if (state.kind === "done") return state;
+
+    // Short per-poll ask, not a long-hold wait — pollRunningJobs processes
+    // RUNNING jobs sequentially in one worker tick, so this must return
+    // quickly regardless of how the Gateway itself interprets `timeoutMs`.
+    // A miss here (still running, or the RPC itself times out/errors) just
+    // falls through to the elapsed-time check below, exactly as before.
+    try {
+      const payload = await sendRequest(
+        "agent.wait",
+        { runId, timeoutMs: 3_000 },
+        4_000,
+      );
+      const result = parseAgentResultPayload(payload);
+      if (result) {
+        runStates.set(runId, { kind: "done", result });
+        return { kind: "done", result };
+      }
+    } catch {
+      // Gateway unreachable, agent.wait itself unsupported/erroring, or our
+      // own short client-side timeout fired — none of these mean the run
+      // failed, only that we don't have an answer THIS poll.
+    }
 
     if (Date.now() - state.startedAt > timeoutSeconds * 1000) {
       const timedOut: OpenClawAgentResult = {

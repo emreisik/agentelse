@@ -196,7 +196,7 @@ export class OpenClawProvider implements ExecutionProvider {
       };
     }
 
-    const state = OpenClawGatewayClient.getRunState(
+    const state = await OpenClawGatewayClient.getRunState(
       record.runId,
       getEnv().OPENCLAW_TIMEOUT_SECONDS,
     );

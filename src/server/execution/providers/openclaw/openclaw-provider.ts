@@ -123,7 +123,20 @@ function buildTaskPrompt(capability: CapabilityKey, payload: unknown): string {
 
   const context =
     contextLines.length > 0 ? `\nContext: ${contextLines.join(". ")}.` : "";
-  return `[Agentelse task — capability: ${capability}]${platform} ${request}${context}`;
+
+  // Confirmed against production (2026-09-16): given a request with real,
+  // concrete names/sources but no explicit tool-use directive, this agent
+  // answered in ~10s with a plausible-sounding but entirely fabricated
+  // report — no web_search/browser tool call appeared in the Gateway logs
+  // between the request and the reply. Concrete data alone doesn't make it
+  // use its tools; it has to be told to.
+  const directive =
+    "\nUse your web_search/web_fetch/browser tool(s) to actually check the " +
+    "above — do not answer from your own general knowledge. If a source " +
+    "returns nothing or can't be reached, say so plainly rather than " +
+    "inventing a plausible-sounding result.";
+
+  return `[Agentelse task — capability: ${capability}]${platform} ${request}${context}${directive}`;
 }
 
 export class OpenClawProvider implements ExecutionProvider {

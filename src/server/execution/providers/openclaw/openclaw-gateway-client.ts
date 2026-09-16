@@ -380,8 +380,16 @@ export const OpenClawGatewayClient = {
     // Short per-poll ask, not a long-hold wait — pollRunningJobs processes
     // RUNNING jobs sequentially in one worker tick, so this must return
     // quickly regardless of how the Gateway itself interprets `timeoutMs`.
-    // A miss here (still running, or the RPC itself times out/errors) just
-    // falls through to the elapsed-time check below, exactly as before.
+    // Confirmed live (2026-09-16): the Gateway takes our requested
+    // `timeoutMs` at face value and returns a genuine `status: "timeout"`
+    // result the instant it elapses — it is NOT a "still pending, ask
+    // again" signal, it is a real (if premature, from our short ask)
+    // terminal-shaped response. Only `status: "ok"` from THIS call is
+    // trusted as authoritative; a "timeout" here just means our own short
+    // poll window closed before the run did, and falls through to the
+    // elapsed-time check below like any other miss. A genuine `"error"`
+    // status (an actual agent-side failure, not a poll-window artifact)
+    // is still surfaced immediately.
     try {
       const payload = await sendRequest(
         "agent.wait",
@@ -389,7 +397,7 @@ export const OpenClawGatewayClient = {
         4_000,
       );
       const result = parseAgentResultPayload(payload);
-      if (result) {
+      if (result && (result.ok || result.status === "error")) {
         runStates.set(runId, { kind: "done", result });
         return { kind: "done", result };
       }

@@ -17,7 +17,11 @@ import { AgentelseError } from "@/server/security/errors";
 // parse in reasoning-service remains the actual enforcement point.
 
 const CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
-const FETCH_TIMEOUT_MS = 45_000;
+// Kept in sync with gemini-client.ts's FETCH_TIMEOUT_MS — see its comment:
+// a large bespoke generation (e.g. REPORTING) can legitimately take longer
+// than 45s, and 2 minutes is still well inside the worker's 5-minute tick
+// watchdog.
+const FETCH_TIMEOUT_MS = 120_000;
 const MAX_ATTEMPTS = 4;
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
 

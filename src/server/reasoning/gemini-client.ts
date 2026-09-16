@@ -16,7 +16,14 @@ const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 // chain, one hung Gemini call used to be able to wedge the entire
 // background worker permanently (every subsequent tick just re-awaits the
 // same stuck promise). Bounding the request here is the fix.
-const FETCH_TIMEOUT_MS = 45_000;
+// Confirmed in production (2026-09-16): a REPORTING request generating a
+// long bespoke report (multi-section, bilingual, with comparisons and
+// recommendations) legitimately took longer than the original 45s and hit
+// this same timeout as a real failure, not a stalled connection. Raised to
+// 2 minutes — still well inside ExecutionWorker's 5-minute tick watchdog
+// (execution-worker.ts TICK_WATCHDOG_MS), so a genuinely dead connection is
+// still bounded, just with more room for large real generations.
+const FETCH_TIMEOUT_MS = 120_000;
 
 // Gemini returns 429/5xx during transient capacity spikes ("model is
 // currently experiencing high demand") that normally clear within seconds.

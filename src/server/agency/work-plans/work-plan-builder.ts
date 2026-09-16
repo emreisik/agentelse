@@ -183,7 +183,7 @@ export const WorkPlanBuilder = {
     const taskIdByKey = new Map<string, string>();
     for (const node of nodes) {
       // Only the two capabilities that actually generate an AI image read
-      // targetPlatform (see gemini-creative.provider.ts) — scoped narrowly
+      // targetPlatform (see openai-creative.provider.ts) — scoped narrowly
       // so brief/copy/content-plan/etc. task payloads don't carry an
       // unrelated platform field.
       const isCreativeCapability =

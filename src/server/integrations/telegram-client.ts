@@ -1,7 +1,7 @@
 import "server-only";
 
 // A thin, real Telegram Bot API wrapper — no SDK, plain `fetch` (same
-// pattern as gemini-image-client.ts and the OpenClaw clients). No mock:
+// pattern as openai-image-client.ts and the OpenClaw clients). No mock:
 // every call is a real HTTP request, and on failure it throws an error
 // carrying Telegram's own `description` text.
 

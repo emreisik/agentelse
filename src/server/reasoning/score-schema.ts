@@ -2,8 +2,8 @@ import { z } from "zod";
 
 // A 0-1 score field for reasoning-def output schemas. reasoning-service.ts
 // passes `z.toJSONSchema(def.schema)` to the provider as a structured-output
-// constraint, but neither Gemini's nor OpenAI's structured-output modes
-// actually enforce JSON Schema's numeric `minimum`/`maximum` keywords — only
+// constraint, but OpenAI's structured-output mode doesn't actually enforce
+// JSON Schema's numeric `minimum`/`maximum` keywords — only
 // type/required/enum/properties are. A model asked for a "score" with no
 // worked example routinely answers on a 0-100 scale instead, which used to
 // crash the plain `.min(0).max(1)` field at `def.schema.parse(result.raw)`

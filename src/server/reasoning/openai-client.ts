@@ -3,12 +3,11 @@ import "server-only";
 import { getEnv } from "@/lib/env";
 import { AgentelseError } from "@/server/security/errors";
 
-// OpenAI REST client — ReasoningService's optional second backend, mirroring
-// gemini-client.ts one-to-one (same interface, same timeout/retry posture and
-// the same AgentelseError taxonomy) so reasoning-service can switch between
-// the two without the prompt files noticing. No SDK dependency: Chat
-// Completions + `response_format: json_schema`. Validation is still done by
-// the caller's zod schema.
+// OpenAI REST client — the sole LLM backend for ReasoningService (structured
+// reasoning) and the OpenAI execution providers (plain-text/creative task
+// execution). No SDK dependency: Chat Completions, with
+// `response_format: json_schema` for the structured path. Validation of
+// structured output is still done by the caller's zod schema.
 //
 // strict:false is deliberate — strict mode requires every property to be
 // listed in `required` and rejects several shapes that z.toJSONSchema
@@ -17,10 +16,10 @@ import { AgentelseError } from "@/server/security/errors";
 // parse in reasoning-service remains the actual enforcement point.
 
 const CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
-// Kept in sync with gemini-client.ts's FETCH_TIMEOUT_MS — see its comment:
-// a large bespoke generation (e.g. REPORTING) can legitimately take longer
-// than 45s, and 2 minutes is still well inside the worker's 5-minute tick
-// watchdog.
+// Confirmed in production (2026-09-16): a large bespoke generation (e.g.
+// REPORTING) can legitimately take longer than 45s, and 2 minutes is still
+// well inside ExecutionWorker's 5-minute tick watchdog
+// (execution-worker.ts TICK_WATCHDOG_MS).
 const FETCH_TIMEOUT_MS = 120_000;
 const MAX_ATTEMPTS = 4;
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
@@ -199,9 +198,47 @@ async function callOpenAI(input: {
   );
 }
 
-// Mirrors gemini-client.ts's MAX_TOKENS_RETRY_CEILING — see that comment
-// for the five-incident history this closes at the source instead of
-// requiring a sixth prompt-specific token bump.
+// Plain-text generation — for the task execution provider (OpenAiAiProvider).
+// The only difference from the structured call is the absence of
+// response_format: no schema, returns free-form text.
+export async function runOpenAIText(input: {
+  model: string;
+  system: string;
+  user: string;
+  maxOutputTokens: number;
+  attachments?: OpenAIInlineAttachment[];
+}): Promise<{ text: string; inputTokens?: number; outputTokens?: number }> {
+  const payload = await callOpenAI({
+    model: input.model,
+    system: input.system,
+    user: input.user,
+    maxOutputTokens: input.maxOutputTokens,
+    attachments: input.attachments,
+  });
+
+  const choice = payload.choices?.[0];
+  const text = (choice?.message?.content ?? "").trim();
+  if (!text) {
+    throw new AgentelseError(
+      "INVALID_PROVIDER_RESULT",
+      `OpenAI returned no text (finish_reason: ${choice?.finish_reason ?? "none"})`,
+    );
+  }
+
+  return {
+    text,
+    inputTokens: payload.usage?.prompt_tokens,
+    outputTokens: payload.usage?.completion_tokens,
+  };
+}
+
+// MAX_TOKENS truncation mid-JSON has independently hit council-evaluation.ts,
+// baseline-audit.ts, constitution-synthesis.ts, department-recommendation.ts
+// and signal-profile-recommendation.ts (see those files' comments) — five
+// separate prompts, each fixed reactively by hand-raising that one prompt's
+// maxTokens after the fact. Retrying once with double the budget closes the
+// whole class at the source instead of waiting for the sixth incident to
+// add another one-off token bump.
 const MAX_TOKENS_RETRY_CEILING = 65_536;
 
 export async function runOpenAIStructured(
@@ -257,9 +294,9 @@ export async function runOpenAIStructured(
         Math.min(maxOutputTokens * 2, MAX_TOKENS_RETRY_CEILING),
       );
     }
-    // Mirrors the Gemini client: finish_reason "length" plays the role of
-    // MAX_TOKENS — the output was cut off mid-JSON and the fix is a higher
-    // maxTokens on the prompt def, not a formatting change.
+    // Include finish_reason in the message: "length" means the output was
+    // cut off mid-JSON and the fix is a higher maxTokens on the prompt def,
+    // not a formatting change.
     throw new AgentelseError(
       "INVALID_PROVIDER_RESULT",
       `OpenAI returned non-JSON output despite response_format (finish_reason: ${

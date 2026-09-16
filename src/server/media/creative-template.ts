@@ -55,7 +55,7 @@ function extractAccentColorHex(approvedColors: unknown): string | null {
 // onto the generated creative image, in the position/size the brand's
 // Visual Identity settings specify (see BrandVisualIdentity, brand-style-
 // context.ts) — the SAME layout on every single generation regardless of
-// which provider (OpenAI/Gemini/OpenClaw) produced the base image. This is
+// which provider (OpenAI/OpenClaw) produced the base image. This is
 // the one place in the pipeline that GUARANTEES visual consistency; prompt
 // text alone can only nudge a stochastic model, never guarantee it.
 //

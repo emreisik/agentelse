@@ -2,11 +2,13 @@ import type { CreativeContentFormat, SocialPlatform } from "@prisma/client";
 
 // Real 2026 social ad-creative dimensions, per platform AND per content
 // type — post/story/reel are NOT interchangeable (e.g. Instagram feed post
-// is 1080x1350 but Story/Reel is 1080x1920). `aspectRatio` is the exact
-// string Gemini's image models accept in generationConfig.imageConfig;
-// `pixelSize` is what OpenClaw's `--size WxH` flag needs and what
-// creative-image.ts normalizes every generated image to via sharp (Gemini
-// has no width/height parameter — it only takes aspectRatio best-effort).
+// is 1080x1350 but Story/Reel is 1080x1920). `pixelSize` is what both
+// OpenAI's image API and OpenClaw's `--size WxH` flag take, and what
+// creative-image.ts normalizes every generated image to via sharp
+// afterward (best-effort on the provider's side, not a guarantee).
+// `aspectRatio` is kept alongside it purely for display/metadata (e.g. the
+// "N:M" label shown under a generated image, generationMetadata storage) —
+// no generation call consumes it anymore.
 export type { CreativeContentFormat };
 
 export type SafeZone = {

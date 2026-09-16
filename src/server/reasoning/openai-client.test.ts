@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Isolates the tests from whatever OPENAI_API_KEY the real .env happens to
-// have — the client only reads these fields off getEnv(). Same pattern as
-// gemini-client.test.ts.
+// have — the client only reads these fields off getEnv().
 vi.mock("@/lib/env", () => ({
   getEnv: () => ({
     OPENAI_API_KEY: "test-key",
@@ -12,7 +11,10 @@ vi.mock("@/lib/env", () => ({
   }),
 }));
 
-import { runOpenAIStructured } from "@/server/reasoning/openai-client";
+import {
+  runOpenAIStructured,
+  runOpenAIText,
+} from "@/server/reasoning/openai-client";
 import { isAgentelseError } from "@/server/security/errors";
 
 function openaiResponse(status: number, body: unknown): Response {
@@ -230,5 +232,64 @@ describe("openai-client", () => {
     expect(content[0].image_url.url).toBe("data:image/png;base64,aGVsbG8=");
     expect(content[1].type).toBe("file");
     expect(content[2]).toEqual({ type: "text", text: "usr" });
+  });
+});
+
+describe("runOpenAIText", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const TEXT_ARGS = {
+    model: "gpt-test",
+    system: "sys",
+    user: "usr",
+    maxOutputTokens: 100,
+  };
+
+  it("returns trimmed plain text and token usage, without a response_format", async () => {
+    fetchMock.mockResolvedValue(
+      openaiResponse(200, {
+        choices: [
+          { message: { content: "  hello there  " }, finish_reason: "stop" },
+        ],
+        usage: { prompt_tokens: 5, completion_tokens: 3 },
+      }),
+    );
+
+    await expect(runOpenAIText(TEXT_ARGS)).resolves.toEqual({
+      text: "hello there",
+      inputTokens: 5,
+      outputTokens: 3,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(body.response_format).toBeUndefined();
+  });
+
+  it("throws when the model returns no text", async () => {
+    fetchMock.mockResolvedValue(
+      openaiResponse(200, {
+        choices: [
+          { message: { content: "" }, finish_reason: "content_filter" },
+        ],
+      }),
+    );
+
+    await expect(runOpenAIText(TEXT_ARGS)).rejects.toSatisfy(
+      (error: unknown) =>
+        isAgentelseError(error) &&
+        error.code === "INVALID_PROVIDER_RESULT" &&
+        error.message.includes("content_filter"),
+    );
   });
 });

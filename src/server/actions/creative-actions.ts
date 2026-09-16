@@ -147,7 +147,6 @@ export async function generateRealCreativeImageAction(
     const generated = await generateCreativeImage(prompt, {
       baseImage,
       referenceImage: styleImage ?? undefined,
-      aspectRatio: platformFormat.aspectRatio,
       imageSize: platformFormat.pixelSize,
     });
     if (!generated) {
@@ -200,7 +199,7 @@ export async function generateRealCreativeImageAction(
       caption: currentVersion?.caption ?? undefined,
       copy: currentVersion?.copy ?? undefined,
       contentFormat: platformFormat.contentFormat,
-      generationProvider: "gemini-image",
+      generationProvider: generated.provider,
       generationMetadata: {
         prompt,
         mode,
@@ -210,7 +209,7 @@ export async function generateRealCreativeImageAction(
         contentFormat: platformFormat.contentFormat,
         targetWidth: platformFormat.pixelSize.width,
         targetHeight: platformFormat.pixelSize.height,
-        // Which backend actually produced it — if the Gemini call fails,
+        // Which backend actually produced it — if the OpenAI call fails,
         // creative-image.ts silently falls back to OpenClaw (without a
         // logo/text reference); without this field the only way to tell
         // the difference was the server logs.

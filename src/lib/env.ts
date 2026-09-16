@@ -21,7 +21,7 @@ const envSchema = z.object({
   // Gateway RPC equivalent (confirmed: no `infer.*`/`image.*` method exists
   // on the Gateway). Agent listing and provisioning moved to the Gateway
   // (see openclaw-gateway-client.ts). Path to the `openclaw` binary; empty
-  // means "not configured" — this fallback is dormant whenever Gemini
+  // means "not configured" — this fallback is dormant whenever OpenAI
   // (creative-image.ts's primary image provider) is configured.
   OPENCLAW_CLI_PATH: z.string().optional().default(""),
   // Optional: a Node binary compatible with OpenClaw's engine requirement,
@@ -63,58 +63,20 @@ const envSchema = z.object({
     .optional()
     .default("/data/workspace"),
 
-  // Google Gemini — ReasoningService's primary LLM backend. If a key is
-  // set, all reasoning calls go to Gemini; the model alias tracks the
-  // latest stable Pro.
-  GEMINI_API_KEY: z.string().optional().default(""),
-  // NOTE: "gemini-pro-latest" resolves to the latest Pro, and Pro's free
-  // tier limit is only 250 requests/day — the agency loop was burning
-  // through that in hours and hitting 429s. Flash gives 10,000 requests on
-  // the same quota; individual prompts that need quality can opt out via
-  // ReasoningDef.model.
-  GEMINI_MODEL: z.string().optional().default("gemini-3.6-flash"),
+  // OpenAI — the sole LLM backend, both for ReasoningService's structured
+  // calls (see openai-client.ts) and the OpenAI execution providers
+  // (task/creative execution).
+  OPENAI_API_KEY: z.string().optional().default(""),
+  OPENAI_MODEL: z.string().optional().default("gpt-5.6-luna"),
   // Model tiers: prompts select "lite"/"pro" via ReasoningDef.tier, and
   // which model that maps to lives here — so changing a model doesn't
   // require touching prompt files.
-  GEMINI_LITE_MODEL: z.string().optional().default("gemini-3.1-flash-lite"),
-  GEMINI_PRO_MODEL: z.string().optional().default("gemini-3.1-pro-preview"),
-  // Image generation is a separate model family: the response returns
-  // base64 inside `inlineData`. Since creative output goes straight to the
-  // client, quality is the priority — the Pro image model is the default.
-  // A setup that prioritizes speed/cost can switch to
-  // gemini-3.1-flash-image.
-  GEMINI_IMAGE_MODEL: z.string().optional().default("gemini-3-pro-image"),
-
-  // OpenAI — ReasoningService's optional second backend (see
-  // openai-client.ts). Gemini remains the default; REASONING_PROVIDER=openai
-  // switches the structured reasoning path over without touching any prompt
-  // file. Tier mapping mirrors the Gemini one above.
-  OPENAI_API_KEY: z.string().optional().default(""),
-  OPENAI_MODEL: z.string().optional().default("gpt-5.6-luna"),
   OPENAI_LITE_MODEL: z.string().optional().default("gpt-5.4-mini"),
   OPENAI_PRO_MODEL: z.string().optional().default("gpt-5.6-terra"),
-  // Which backend ReasoningService.run uses. Unknown values fall back to
-  // "gemini" via catch() so a typo in the env degrades to the default
-  // instead of crashing the first request.
-  REASONING_PROVIDER: z
-    .enum(["gemini", "openai"])
-    .optional()
-    .default("gemini")
-    .catch("gemini"),
   // gpt-image-2 — see openai-image-client.ts. Separate model slot from
   // OPENAI_MODEL/OPENCLAW_IMAGE_MODEL because it names an image model, not
   // a chat one.
   OPENAI_IMAGE_MODEL: z.string().optional().default("gpt-image-2"),
-  // Which backend creative-image.ts tries first — OpenAI by default; the
-  // other of {openai, gemini} is tried automatically if the primary
-  // isn't configured or fails (see creative-image.ts), so this only
-  // controls ORDER, not exclusivity. Unknown values fall back to "openai"
-  // via catch(), same rationale as REASONING_PROVIDER above.
-  IMAGE_PROVIDER: z
-    .enum(["openai", "gemini"])
-    .optional()
-    .default("openai")
-    .catch("openai"),
 
   R2_ACCOUNT_ID: z.string().optional().default(""),
   R2_ACCESS_KEY_ID: z.string().optional().default(""),
@@ -185,7 +147,6 @@ export function isIntegrationConfigured(
   key:
     | "OPENCLAW"
     | "OPENCLAW_GATEWAY"
-    | "GEMINI"
     | "OPENAI"
     | "R2"
     | "SENTRY"
@@ -202,8 +163,6 @@ export function isIntegrationConfigured(
       return Boolean(env.OPENCLAW_CLI_PATH);
     case "OPENCLAW_GATEWAY":
       return Boolean(env.OPENCLAW_GATEWAY_URL && env.OPENCLAW_GATEWAY_TOKEN);
-    case "GEMINI":
-      return Boolean(env.GEMINI_API_KEY);
     case "OPENAI":
       return Boolean(env.OPENAI_API_KEY);
     case "R2":

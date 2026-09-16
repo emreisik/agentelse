@@ -527,7 +527,7 @@ async function materializeCreativeFromResult(
 ) {
   const result = (rawResult ?? {}) as Record<string, unknown>;
 
-  // If a real image exists (GeminiCreativeProvider -> openclaw infer image
+  // If a real image exists (OpenAiCreativeProvider -> openclaw infer image
   // generate), it's saved; otherwise falls back to the legacy fake placeholder.
   const generatedImage = generatedImageFrom(result.image);
   const platform =

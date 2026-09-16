@@ -5,7 +5,7 @@ import type { BrandVisualIdentityContext } from "@/server/media/brand-style-cont
 // Turns a bare subject description into the structured brief real ad-tool
 // prompt templates converge on (Subject / Style+Lighting / Composition /
 // Brand / Avoid) instead of a single unguided sentence. Two things this
-// buys, backed by 2026 prompting research for Gemini-class image models:
+// buys, backed by 2026 prompting research for modern image models:
 // explicit photography vocabulary pushes output away from the generic
 // "AI-rendered" look, and a natural-language "avoid" block stands in for
 // the negative-prompt field these models don't expose.
@@ -23,8 +23,8 @@ export type CreativePromptInput = {
   contentFormatLabel?: string;
   // Exact target canvas — stated explicitly so the model composes to fill
   // it rather than leaving letterboxing; creative-image.ts still normalizes
-  // the actual output with sharp afterward, since Gemini's aspectRatio
-  // param is best-effort, not a guarantee.
+  // the actual output with sharp afterward, since the requested size is
+  // best-effort, not a guarantee.
   pixelSize?: { width: number; height: number };
   // Approximate top/bottom margin, in px, reserved by the platform's own UI
   // chrome on full-screen vertical formats (Story/Reel/Shorts) — keeps
@@ -38,7 +38,7 @@ export type CreativePromptInput = {
   // brand-logo.ts's loadReferenceImage) — so the style-reference
   // instruction below is only written when an image is actually being
   // attached. Renamed from hasLogoReference: the logo itself is no longer
-  // ever sent to the AI this way (see gemini-creative.provider.ts /
+  // ever sent to the AI this way (see openai-creative.provider.ts /
   // creative-actions.ts) — it's added afterward, guaranteed, by
   // applyBrandTemplate. This slot now carries an optional brand "style
   // board" image instead, which the wording below explicitly must NOT be

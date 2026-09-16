@@ -37,8 +37,9 @@ export async function submitProjectCommandAction(formData: FormData) {
 // Chat screen
 // ---------------------------------------------------------------------------
 
-// Types understood by Gemini's inlineData. Images can also be used as
-// creative editing input; documents only provide context.
+// Types understood by the reasoning backend's inline attachments. Images
+// can also be used as creative editing input; documents only provide
+// context.
 const CHAT_MIME_TO_EXT: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
@@ -101,7 +102,8 @@ export async function submitChatMessageAction(
   const access = await requireProjectAccess(userId, projectId);
 
   // Write files to storage + the Asset table; extract the base64 body from
-  // the same read so it goes to Gemini without a second round-trip.
+  // the same read so it goes to the reasoning backend without a second
+  // round-trip.
   const attachments: CommandAttachment[] = [];
   const attachmentBodies: { mimeType: string; data: string }[] = [];
 

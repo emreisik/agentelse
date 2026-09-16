@@ -3,11 +3,10 @@ import "server-only";
 import type { CapabilityKey, ExecutionProviderType } from "@prisma/client";
 
 import {
-  geminiModel,
-  isGeminiConfigured,
-  runGeminiText,
-  runGeminiWithSearchGrounding,
-} from "@/server/reasoning/gemini-client";
+  isOpenAIConfigured,
+  openaiModelForTier,
+  runOpenAIText,
+} from "@/server/reasoning/openai-client";
 import type {
   ExecutionAcceptedResult,
   ExecutionProvider,
@@ -15,24 +14,18 @@ import type {
   ProviderExecutionStatus,
 } from "@/server/execution/types";
 
-// These need live web facts (brand mentions, competitor sites, SERP
-// signals) a knowledge-cutoff model can't answer from parametric memory
-// alone. Previously OpenClaw-only (a synchronous CLI browser session, tens
-// of seconds to minutes, blocking the dispatch loop) — Gemini's native
-// Google Search grounding tool answers the same class of question with one
-// HTTP call. OpenClaw stays registered right after in provider-registry.ts
-// as a fallback: if GEMINI_API_KEY is unset or ProviderHealthService
-// circuit-breaks Gemini, routing falls through to it unchanged.
-const SEARCH_GROUNDED_CAPABILITIES: ReadonlySet<CapabilityKey> =
-  new Set<CapabilityKey>([
-    "BRAND_DISCOVERY",
-    "WEB_RESEARCH",
-    "COMPETITOR_RESEARCH",
-    "SEO_RESEARCH",
-  ]);
-
 // Text/analysis capabilities — the real "AI thinks" step. Content that
-// produces a visual asset is GeminiCreativeProvider's job instead.
+// produces a visual asset is OpenAiCreativeProvider's job instead.
+//
+// The 4 search-grounded capabilities Gemini used to own here
+// (BRAND_DISCOVERY, WEB_RESEARCH, COMPETITOR_RESEARCH, SEO_RESEARCH) are
+// deliberately NOT included: OpenAI's Chat Completions API (used here) has
+// no built-in web-search tool — that requires OpenAI's separate Responses
+// API. Rather than add a second client for four capabilities, they're left
+// entirely to OpenClawProvider, which already claims all four and, as of
+// this session, does real grounded browsing (tool-use directive, real
+// source data, agent.wait completion detection) — the more reliable path
+// for "needs live web facts" questions anyway.
 const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "MARKET_RESEARCH",
   "TREND_RESEARCH",
@@ -48,7 +41,6 @@ const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "CLAIM_VALIDATION",
   "BRAND_SAFETY",
   "REPORTING",
-  ...SEARCH_GROUNDED_CAPABILITIES,
 ]);
 
 type StoredResult = {
@@ -85,15 +77,12 @@ function buildSystemPrompt(
   ].join("\n\n");
 }
 
-// Real Gemini-backed provider. Inactive (isConfigured: false) until
-// GEMINI_API_KEY is set — CapabilityRouter falls through to MockAiProvider
-// automatically until then, no other code changes needed.
-export class GeminiAiProvider implements ExecutionProvider {
-  readonly key = "gemini-ai";
+export class OpenAiAiProvider implements ExecutionProvider {
+  readonly key = "openai-ai";
   readonly type: ExecutionProviderType = "AI";
 
   get isConfigured(): boolean {
-    return isGeminiConfigured();
+    return isOpenAIConfigured();
   }
 
   async canExecute(capability: CapabilityKey): Promise<boolean> {
@@ -106,11 +95,8 @@ export class GeminiAiProvider implements ExecutionProvider {
       typeof input.request === "string" ? input.request : JSON.stringify(input);
 
     try {
-      const call = SEARCH_GROUNDED_CAPABILITIES.has(request.capability)
-        ? runGeminiWithSearchGrounding
-        : runGeminiText;
-      const { text } = await call({
-        model: geminiModel(),
+      const { text } = await runOpenAIText({
+        model: openaiModelForTier(),
         system: buildSystemPrompt(request.capability, input.brandContext),
         user: requestText,
         maxOutputTokens: 4096,
@@ -133,7 +119,7 @@ export class GeminiAiProvider implements ExecutionProvider {
     if (!record) {
       return {
         status: "FAILED",
-        errorMessage: "Unknown Gemini execution reference",
+        errorMessage: "Unknown OpenAI execution reference",
         isMock: false,
       };
     }

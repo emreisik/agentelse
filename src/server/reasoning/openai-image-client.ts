@@ -3,11 +3,11 @@ import "server-only";
 import { getEnv } from "@/lib/env";
 import { putAsset } from "@/server/storage/asset-storage";
 
-// OpenAI image generation (gpt-image-2 family) — the app's default image
-// provider (see creative-image.ts's IMAGE_PROVIDER-driven priority order).
-// Mirrors gemini-image-client.ts's shape and failure posture: returns null
-// on any failure so callers (creative generation, logo) can complete their
-// work without an image rather than blowing up the whole job.
+// OpenAI image generation (gpt-image-2 family) — the app's primary image
+// provider (see creative-image.ts, which falls back to OpenClaw if this
+// isn't configured or a call fails). Returns null on any failure so callers
+// (creative generation, logo) can complete their work without an image
+// rather than blowing up the whole job.
 //
 // Two distinct HTTP shapes depending on the call:
 // - Text-to-image (no base/reference image): JSON POST to
@@ -24,8 +24,7 @@ const EDITS_URL = "https://api.openai.com/v1/images/edits";
 // Image generation is the slowest call this app makes (high-quality
 // gpt-image-2 renders can take well over a minute) — bounded generously so
 // a hung request doesn't wedge the caller forever (the same class of bug
-// gemini-client.ts's FETCH_TIMEOUT_MS was added to fix; gemini-image-client
-// still lacks one).
+// openai-client.ts's FETCH_TIMEOUT_MS was added to fix).
 const FETCH_TIMEOUT_MS = 120_000;
 
 export type GeneratedCreativeImage = {
@@ -45,10 +44,8 @@ export function openaiImageModel(): string {
 }
 
 // gpt-image-2 takes an exact "WIDTHxHEIGHT" string (multiples of 16,
-// aspect ratio between 1:3 and 3:1, up to ~2048 per side) rather than
-// Gemini's best-effort aspect-ratio hint — so, unlike the Gemini path, the
-// requested size can be derived directly from the platform's target pixel
-// size instead of an aspect-ratio string. normalizeToTarget still resizes
+// aspect ratio between 1:3 and 3:1, up to ~2048 per side), derived directly
+// from the platform's target pixel size. normalizeToTarget still resizes
 // the result to the exact target afterward, so perfect precision here
 // isn't required, just a reasonably close starting point.
 function sizeParam(imageSize?: { width: number; height: number }): string {
@@ -87,8 +84,7 @@ async function storeResult(
 // Returns null on failure — see the module comment. baseImage (edit an
 // existing image per instruction) and referenceImage (generate from
 // scratch but stay faithful to this — e.g. the brand logo) are mutually
-// exclusive, same contract as generateGeminiImage; if both are given,
-// baseImage wins.
+// exclusive; if both are given, baseImage wins.
 export async function generateOpenAIImage(
   prompt: string,
   baseImage?: { data: string; mimeType: string },

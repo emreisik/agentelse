@@ -26,7 +26,7 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const { isIntegrationConfigured } = await import("@/lib/env");
     const summary = (
-      ["R2", "GEMINI", "OPENAI", "OPENCLAW_GATEWAY", "TELEGRAM"] as const
+      ["R2", "OPENAI", "OPENCLAW_GATEWAY", "TELEGRAM"] as const
     )
       .map((key) => `${key}=${isIntegrationConfigured(key) ? "on" : "OFF"}`)
       .join(" ");

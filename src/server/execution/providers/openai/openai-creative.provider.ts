@@ -10,10 +10,10 @@ import { z } from "zod";
 
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import {
-  geminiModel,
-  isGeminiConfigured,
-  runGeminiStructured,
-} from "@/server/reasoning/gemini-client";
+  isOpenAIConfigured,
+  openaiModelForTier,
+  runOpenAIStructured,
+} from "@/server/reasoning/openai-client";
 import {
   generateCreativeImage,
   isCreativeImageConfigured,
@@ -78,17 +78,18 @@ function buildSystemPrompt(brandContext: unknown): string {
   ].join("\n\n");
 }
 
-// Gemini produces both the text and the image (see @/server/media/creative-image
-// for the image path) — a single provider combines the two because the
-// image prompt is generated as part of the creative text. If image
-// generation fails, the job still completes with the text (no asset); the
-// creative flow doesn't fail because of the image.
-export class GeminiCreativeProvider implements ExecutionProvider {
-  readonly key = "gemini-creative";
+// OpenAI produces both the text and the image prompt (see
+// @/server/media/creative-image for the actual image call) — a single
+// provider combines the two because the image prompt is generated as part
+// of the creative text. If image generation fails, the job still completes
+// with the text (no asset); the creative flow doesn't fail because of the
+// image.
+export class OpenAiCreativeProvider implements ExecutionProvider {
+  readonly key = "openai-creative";
   readonly type: ExecutionProviderType = "AI";
 
   get isConfigured(): boolean {
-    return isGeminiConfigured();
+    return isOpenAIConfigured();
   }
 
   async canExecute(capability: CapabilityKey): Promise<boolean> {
@@ -101,22 +102,15 @@ export class GeminiCreativeProvider implements ExecutionProvider {
       typeof input.request === "string" ? input.request : JSON.stringify(input);
 
     try {
-      const { raw } = await runGeminiStructured({
-        model: geminiModel(),
+      const { raw } = await runOpenAIStructured({
+        model: openaiModelForTier(),
         system: buildSystemPrompt(input.brandContext),
         user: brief,
         jsonSchema: z.toJSONSchema(CreativeOutputSchema),
-        // Was 2048 — the same MAX_TOKENS-truncation-produces-non-JSON-output
-        // failure repeatedly hit council-evaluation.ts (37% of prod calls),
-        // baseline-audit.ts (27%), constitution-synthesis.ts and
-        // department/signal-profile-recommendation.ts (see those files'
-        // comments): Gemini's thinking tokens are deducted from this same
-        // budget, so it can run out well before the visible text does, even
-        // for a 3-field schema. `copy` and `imagePrompt` are both asked to
-        // be substantial ("longer supporting marketing copy", "a concrete,
-        // literal visual description... subject, composition, style,
-        // colours"), which made this call an unmitigated instance of the
-        // same class of bug the reasoning/prompts/* callers already fixed.
+        // See gemini-creative.provider.ts's former history (now removed):
+        // a 3-field schema can still be cut off mid-JSON on a small budget
+        // when `copy`/`imagePrompt` are asked to be substantial — 8192
+        // keeps this call out of that failure class from the start.
         maxOutputTokens: 8192,
       });
       const parsed = CreativeOutputSchema.parse(raw);
@@ -154,7 +148,6 @@ export class GeminiCreativeProvider implements ExecutionProvider {
       });
       let image = isCreativeImageConfigured()
         ? ((await generateCreativeImage(finalImagePrompt, {
-            aspectRatio: platformFormat.aspectRatio,
             imageSize: platformFormat.pixelSize,
             referenceImage: styleImage ?? undefined,
           })) ?? undefined)
@@ -180,7 +173,7 @@ export class GeminiCreativeProvider implements ExecutionProvider {
           if (templated) image = { ...image, size: templated.size };
         } catch (error) {
           console.error(
-            "[gemini-creative-provider] applyBrandTemplate failed:",
+            "[openai-creative-provider] applyBrandTemplate failed:",
             error,
           );
         }
@@ -215,7 +208,7 @@ export class GeminiCreativeProvider implements ExecutionProvider {
     if (!record) {
       return {
         status: "FAILED",
-        errorMessage: "Unknown Gemini execution reference",
+        errorMessage: "Unknown OpenAI execution reference",
         isMock: false,
       };
     }

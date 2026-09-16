@@ -25,7 +25,8 @@ export type ChatTurnInput = {
   userId: string;
   message: string;
   attachments?: CommandAttachment[];
-  // Bodies sent to Gemini as inlineData; same order as attachments.
+  // Bodies sent to the reasoning backend as inline attachments; same order
+  // as attachments.
   // Carried separately because the base64 body isn't written to the
   // Command row (it would bloat the JSON) — it's only shown to the model.
   attachmentBodies?: { mimeType: string; data: string }[];
@@ -106,7 +107,7 @@ export const ChatService = {
       // real cause (invalid key, model not found, quota, etc.) is never
       // shown to the user, it would be lost entirely if not logged here.
       console.error(
-        "[chat-service] Gemini reasoning failed, falling back to rule-based intent:",
+        "[chat-service] Reasoning failed, falling back to rule-based intent:",
         error instanceof Error ? error.message : error,
       );
       const fallback = await CommandService.submit({

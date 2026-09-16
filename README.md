@@ -28,7 +28,7 @@ Next.js UI / Server Actions / API
                  |
        CapabilityRouter + ProviderRegistry
           /              |              \
-     OpenClaw         Gemini           Mock fleet
+     OpenClaw         OpenAI           Mock fleet
                  |
     Verification -> Measurement -> Learning
 ```
@@ -85,8 +85,8 @@ src/
     commands/              CommandService, intent routing, and task planning
     context/               Brand context policy and immutable snapshot generation
     execution/              Policy, routing, provider registry, and execution
-      providers/            OpenClaw, Gemini, and mocks for explicit test mode
-    reasoning/              Gemini-backed structured reasoning
+      providers/            OpenClaw, OpenAI, and mocks for explicit test mode
+    reasoning/              OpenAI-backed structured reasoning
     repositories/           Tenant-scoped Prisma data access
     scheduler/              CRON, interval, and one-off project schedulers
     security/               Tenant validation, errors, and temporary secret encryption
@@ -124,10 +124,11 @@ If using Neon, `DATABASE_URL` should be the pooled connection URL and `DIRECT_UR
 Execution providers and Agency OS's internal reasoning calls are separate layers:
 
 - If `OPENCLAW_CLI_PATH` is set, the OpenClaw provider runs through a real `openclaw` CLI process. There is no HTTP-based `OPENCLAW_BASE_URL` integration.
-- `GEMINI_API_KEY` enables the text/analysis and creative copy execution providers.
+- `OPENAI_API_KEY` enables the text/analysis and creative copy execution providers (`OpenAiAiProvider`/`OpenAiCreativeProvider`), and is the sole backend for Agency OS's internal reasoning calls.
+- The 4 search-grounded research capabilities (`BRAND_DISCOVERY`, `WEB_RESEARCH`, `COMPETITOR_RESEARCH`, `SEO_RESEARCH`) are served entirely by OpenClaw's real browser-based research — OpenAI's Chat Completions API has no built-in web-search tool.
 - `AGENTELSE_PROVIDER_MODE=mock` forces the mock provider fleet, for development and testing only.
 - If the provider mode is not `mock`, the registry only considers real providers. If no real provider is configured, the job explicitly fails with `PROVIDER_UNAVAILABLE`; there is no silent mock fallback.
-- Under the `AGENTELSE_REASONING_MODE=auto` default (the only real backend), Gemini is used.
+- Under the `AGENTELSE_REASONING_MODE=auto` default (the only real backend), OpenAI is used.
 - `AGENTELSE_REASONING_MODE=mock` produces deterministic reasoning for test and seed scenarios.
 
 OpenClaw is used in two different ways:
@@ -234,7 +235,7 @@ A worker tick covers the scheduler, outbox dispatch, running job polling, verifi
 
 ## Current limitations
 
-- The Gemini creative provider generates copy and the image prompt; the actual image is generated separately via the OpenClaw image action.
+- The OpenAI creative provider generates copy and the image prompt; the actual image is generated separately (OpenAI's image API primarily, falling back to the OpenClaw image action if that isn't configured or fails).
 - Competitor models exist; the regular research -> snapshot -> diff pipeline is not yet complete.
 - `Skill` and `ProjectSkill` models exist; the skill discovery/review/sandbox/approval pipeline is not yet complete.
 - `SENTRY_DSN` is readable, but there is no direct Sentry bootstrap integration yet.

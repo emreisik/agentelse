@@ -4,9 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { readAsset } from "@/server/storage/asset-storage";
 
 // Converts an Asset to base64 so it can be given to the AI as a visual
-// reference (see referenceImage in gemini-image-client.ts/openai-image-
-// client.ts). The same resolution logic as applyBrandTemplate (creative-
-// template.ts) — find the Asset, read it back via the storage abstraction.
+// reference (see referenceImage in openai-image-client.ts). The same
+// resolution logic as applyBrandTemplate (creative-template.ts) — find the
+// Asset, read it back via the storage abstraction.
 // Best-effort: returns null if assetId is missing, or if the asset/file
 // can't be found/read — it never throws, so the caller never has to wrap
 // it in try/catch.

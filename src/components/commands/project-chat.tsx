@@ -14,27 +14,17 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 
+import type { CapabilityKey, SocialPlatform } from "@prisma/client";
+
 import {
   submitChatMessageAction,
   type ChatMessageResult,
 } from "@/server/actions/command-actions";
-import {
-  submitCreateSocialCreativeQuickActionAction,
-  type QuickActionPlatform,
-} from "@/server/actions/quick-action-actions";
+import { submitComposerShortcutAction } from "@/server/actions/composer-shortcut-actions";
 import { Thread } from "@/components/assistant-ui/thread";
-import { ChatQuickActions } from "@/components/commands/chat-quick-actions";
+import { ComposerPlusMenu } from "@/components/commands/composer-plus-menu";
 import type { PublishTarget } from "@/server/integrations/meta-connection-status";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
-
-// Mirrors quick-action.ts's REQUEST_TEXT exactly — this is only the
-// optimistic local-bubble text shown before the server responds; the
-// actually-submitted request text is generated server-side.
-const QUICK_ACTION_DISPLAY_TEXT: Record<QuickActionPlatform, string> = {
-  instagram: "Create an Instagram post",
-  linkedin: "Create a LinkedIn post",
-  x: "Create an X post",
-};
 
 export type ChatAttachment = {
   assetId: string;
@@ -160,8 +150,9 @@ export function ProjectChat({
   // history (user + pipeline events) (see ChatService.turn ideaId).
   ideaId?: string;
   // Which social platforms are actually connected for this project (see
-  // getPublishTargets) — drives which "Create {Platform} post" quick-action
-  // buttons appear above the composer (see ChatQuickActions).
+  // getPublishTargets) — lets the "+" menu's Instagram/LinkedIn/X items
+  // act as a direct "Create {Platform} post" shortcut instead of a link to
+  // the integrations page (see ComposerPlusMenu).
   publishTargets: PublishTarget[];
 }) {
   const [localTurns, setLocalTurns] = React.useState<LocalTurn[]>([]);
@@ -306,9 +297,9 @@ export function ProjectChat({
   // Shared skeleton for anything that turns into a new Command: push an
   // optimistic LocalTurn immediately, call the given server action, then
   // reconcile it to "done"/"error" with the real result. sendMessage
-  // (composer send + onReload retry) and sendQuickAction (the integration
-  // shortcut buttons) both funnel through this — they only differ in which
-  // server action they call and what the displayed request text is.
+  // (composer send + onReload retry) and sendShortcut (the "+" menu's
+  // shortcuts) both funnel through this — they only differ in which server
+  // action they call and what the displayed request text is.
   const runTurn = React.useCallback(
     (
       displayText: string,
@@ -390,16 +381,22 @@ export function ProjectChat({
     [runTurn, projectId, ideaId],
   );
 
-  // The chat composer's integration quick-action buttons (see
-  // ChatQuickActions) — bypasses the LLM entirely with a precomputed
-  // CREATE_SOCIAL_CREATIVE intent (see quick-action.ts) instead of
-  // pre-filling text for the composer to classify.
-  const sendQuickAction = React.useCallback(
-    (platform: QuickActionPlatform) => {
-      return runTurn(QUICK_ACTION_DISPLAY_TEXT[platform], [], () =>
-        submitCreateSocialCreativeQuickActionAction(
+  // The composer's "+" menu shortcuts (see ComposerPlusMenu /
+  // composer-shortcuts.ts) — bypasses the LLM entirely with a precomputed
+  // CAPABILITY intent (see composer-shortcut.ts) instead of pre-filling
+  // text for the composer to classify.
+  const sendShortcut = React.useCallback(
+    (
+      capability: CapabilityKey,
+      request: string,
+      targetPlatform?: SocialPlatform,
+    ) => {
+      return runTurn(request, [], () =>
+        submitComposerShortcutAction(
           projectId,
-          platform,
+          capability,
+          request,
+          targetPlatform,
           ideaId,
         ),
       );
@@ -465,20 +462,21 @@ export function ProjectChat({
     [projectName],
   );
 
-  const QuickActions = React.useCallback(
+  const PlusMenu = React.useCallback(
     () => (
-      <ChatQuickActions
-        targets={publishTargets}
+      <ComposerPlusMenu
+        projectId={projectId}
+        publishTargets={publishTargets}
         disabled={isSending}
-        onSelect={sendQuickAction}
+        onShortcut={sendShortcut}
       />
     ),
-    [publishTargets, isSending, sendQuickAction],
+    [projectId, publishTargets, isSending, sendShortcut],
   );
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <Thread components={{ Welcome, QuickActions }} />
+      <Thread components={{ Welcome, ComposerPlusMenu: PlusMenu }} />
     </AssistantRuntimeProvider>
   );
 }

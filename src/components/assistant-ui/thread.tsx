@@ -79,10 +79,11 @@ export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
   Welcome?: ComponentType | undefined;
-  // Rendered above the composer, always (not just in the empty-state welcome
-  // view) — the chat's integration quick-action shortcuts (see
-  // project-chat.tsx / chat-quick-actions.tsx).
-  QuickActions?: ComponentType | undefined;
+  // Replaces the default ComposerAddAttachment as the "+" button's content
+  // — the composer's searchable departments/integrations/capability
+  // shortcuts menu (see project-chat.tsx / composer-plus-menu.tsx). Falls
+  // back to plain file-attach-only behavior when not provided.
+  ComposerPlusMenu?: ComponentType | undefined;
   ToolFallback?: ToolCallMessagePartComponent | undefined;
   ToolGroup?:
     ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>> | undefined;
@@ -116,9 +117,7 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
 };
 
 const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
-  const { Welcome = ThreadWelcome, QuickActions } = useContext(
-    ThreadComponentsContext,
-  );
+  const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
 
   return (
     <ThreadPrimitive.Root
@@ -171,7 +170,6 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
           >
             <ThreadScrollToBottom />
             <ThreadFollowupSuggestions />
-            {QuickActions && <QuickActions />}
             <Composer />
             <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
               <ThreadSuggestions />
@@ -276,10 +274,11 @@ const Composer: FC = () => {
 };
 
 const ComposerAction: FC = () => {
+  const { ComposerPlusMenu } = useContext(ThreadComponentsContext);
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       <div className="flex items-center gap-1">
-        <ComposerAddAttachment />
+        {ComposerPlusMenu ? <ComposerPlusMenu /> : <ComposerAddAttachment />}
       </div>
       <div className="flex items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>

@@ -186,6 +186,22 @@ export const SelfHealingService = {
       }
 
       await prisma.$transaction(async (tx) => {
+        // Puts the already-legal FAILED -> QUEUED transition
+        // (state-machine/transitions.ts) to its first actual use: without
+        // this, the outbox event enqueued below gets picked up by
+        // execution-service.ts's startExecution(), which no-ops on
+        // `job.status !== "QUEUED"` because this job's status is still
+        // FAILED — silently burning the requeue attempt without ever
+        // calling the provider again (the job then reads as "auto-healed"
+        // in AuditLog even though nothing was retried). CAS-guarded on the
+        // OLD status, matching execution-job.repository.ts's
+        // claimQueuedForProvider — a job that concurrently left FAILED
+        // (e.g. a human already requeued it) is left alone.
+        await tx.executionJob.updateMany({
+          where: { id: job.id, status: "FAILED" },
+          data: { status: "QUEUED" },
+        });
+
         await OutboxRepository.enqueue(tx, {
           workspaceId: job.workspaceId,
           projectId: job.projectId,

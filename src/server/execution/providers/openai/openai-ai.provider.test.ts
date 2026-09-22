@@ -10,6 +10,19 @@ vi.mock("@/server/reasoning/openai-client", () => ({
   runOpenAIText: openaiMocks.runOpenAIText,
 }));
 
+const prismaMocks = vi.hoisted(() => ({
+  findUniqueExecutionJob: vi.fn(),
+  updateExecutionJob: vi.fn(),
+}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    executionJob: {
+      findUnique: prismaMocks.findUniqueExecutionJob,
+      update: prismaMocks.updateExecutionJob,
+    },
+  },
+}));
+
 import { OpenAiAiProvider } from "@/server/execution/providers/openai/openai-ai.provider";
 import type { ExecutionRequest } from "@/server/execution/types";
 
@@ -38,6 +51,8 @@ describe("OpenAiAiProvider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     openaiMocks.isConfigured = true;
+    prismaMocks.findUniqueExecutionJob.mockResolvedValue(undefined);
+    prismaMocks.updateExecutionJob.mockResolvedValue({});
   });
 
   describe("isConfigured / canExecute", () => {
@@ -109,6 +124,111 @@ describe("OpenAiAiProvider", () => {
       const provider = new OpenAiAiProvider();
       const status = await provider.getStatus("never-executed");
       expect(status.status).toBe("FAILED");
+    });
+  });
+
+  // Audit problem 13: the in-memory `store` Map is process-local — a
+  // Railway redeploy/crash between execute() and the next getStatus() poll
+  // wipes it, and getStatus() used to unconditionally report "Unknown
+  // OpenAI execution reference" for that job even though the OpenAI call
+  // had already completed. execute() now persists the terminal result into
+  // ExecutionJob.rawResult so getStatus() can recover it from Postgres.
+  describe("durable execution state (process restart recovery)", () => {
+    it("persists the completed result to ExecutionJob.rawResult when execute() succeeds", async () => {
+      openaiMocks.runOpenAIText.mockResolvedValue({ text: "the report" });
+
+      const provider = new OpenAiAiProvider();
+      await provider.execute(request("REPORTING"));
+
+      expect(prismaMocks.updateExecutionJob).toHaveBeenCalledWith({
+        where: { id: "job-1" },
+        data: {
+          rawResult: { status: "completed", text: "the report" },
+        },
+      });
+    });
+
+    it("persists the failed result to ExecutionJob.rawResult when execute() throws", async () => {
+      openaiMocks.runOpenAIText.mockRejectedValue(new Error("quota exceeded"));
+
+      const provider = new OpenAiAiProvider();
+      await provider.execute(request("REPORTING"));
+
+      expect(prismaMocks.updateExecutionJob).toHaveBeenCalledWith({
+        where: { id: "job-1" },
+        data: {
+          rawResult: { status: "failed", errorMessage: "quota exceeded" },
+        },
+      });
+    });
+
+    it("merges into any existing rawResult instead of overwriting it", async () => {
+      prismaMocks.findUniqueExecutionJob.mockResolvedValue({
+        rawResult: { keepMe: "already-there" },
+      });
+      openaiMocks.runOpenAIText.mockResolvedValue({ text: "the report" });
+
+      const provider = new OpenAiAiProvider();
+      await provider.execute(request("REPORTING"));
+
+      expect(prismaMocks.updateExecutionJob).toHaveBeenCalledWith({
+        where: { id: "job-1" },
+        data: {
+          rawResult: {
+            keepMe: "already-there",
+            status: "completed",
+            text: "the report",
+          },
+        },
+      });
+    });
+
+    it("recovers a completed result from Postgres when the in-memory store has no entry (simulated process restart)", async () => {
+      prismaMocks.findUniqueExecutionJob.mockResolvedValue({
+        rawResult: { status: "completed", text: "recovered text" },
+      });
+
+      // A fresh provider instance changes nothing here — `store` is a
+      // module-level singleton — but this is deliberately a correlationId
+      // that this test never calls execute() with, so the in-memory Map is
+      // guaranteed to miss exactly like it would after a real restart.
+      const provider = new OpenAiAiProvider();
+      const status = await provider.getStatus("restart-corr-completed");
+
+      expect(status).toEqual({
+        status: "COMPLETED",
+        rawResult: { text: "recovered text" },
+        isMock: false,
+      });
+      expect(prismaMocks.findUniqueExecutionJob).toHaveBeenCalledWith({
+        where: { correlationId: "restart-corr-completed" },
+        select: { rawResult: true },
+      });
+    });
+
+    it("recovers a failed result from Postgres when the in-memory store has no entry (simulated process restart)", async () => {
+      prismaMocks.findUniqueExecutionJob.mockResolvedValue({
+        rawResult: { status: "failed", errorMessage: "boom" },
+      });
+
+      const provider = new OpenAiAiProvider();
+      const status = await provider.getStatus("restart-corr-failed");
+
+      expect(status).toEqual({
+        status: "FAILED",
+        errorMessage: "boom",
+        isMock: false,
+      });
+    });
+
+    it("still returns FAILED for an unknown reference when neither the in-memory store nor Postgres has it", async () => {
+      prismaMocks.findUniqueExecutionJob.mockResolvedValue(null);
+
+      const provider = new OpenAiAiProvider();
+      const status = await provider.getStatus("truly-never-executed");
+
+      expect(status.status).toBe("FAILED");
+      expect(status.errorMessage).toBe("Unknown OpenAI execution reference");
     });
   });
 });

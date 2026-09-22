@@ -2,6 +2,7 @@ import "server-only";
 
 import type { CapabilityKey, ExecutionProviderType } from "@prisma/client";
 
+import { prisma } from "@/lib/prisma";
 import {
   isOpenAIConfigured,
   openaiModelForTier,
@@ -51,6 +52,73 @@ type StoredResult = {
 
 const store = new Map<string, StoredResult>();
 
+// Best-effort durability write: by the time execute() returns, the OpenAI
+// call has already fully resolved (success or failure) — runOpenAIText is
+// awaited in full, never streamed — so this is always the TERMINAL result,
+// not an in-progress snapshot. Persisting it into ExecutionJob.rawResult
+// lets getStatus() recover it (via recoverResultFromRawResult below) if the
+// in-memory `store` is empty after a process restart (Railway redeploy,
+// crash) between execute() returning and the next poll. Reads-then-merges
+// instead of overwriting, since rawResult may already carry other fields.
+async function persistResultToRawResult(
+  executionJobId: string,
+  result: StoredResult,
+): Promise<void> {
+  try {
+    const existing = await prisma.executionJob.findUnique({
+      where: { id: executionJobId },
+      select: { rawResult: true },
+    });
+    const base =
+      existing?.rawResult && typeof existing.rawResult === "object"
+        ? (existing.rawResult as Record<string, unknown>)
+        : {};
+    await prisma.executionJob.update({
+      where: { id: executionJobId },
+      data: { rawResult: { ...base, ...result } as never },
+    });
+  } catch (error) {
+    console.error(
+      "[openai-ai-provider] failed to persist result to rawResult:",
+      error,
+    );
+  }
+}
+
+// Recovers a terminal result from Postgres when `store` has no entry for
+// it — the normal case is a process restart between execute() and the next
+// getStatus() poll. ExecutionJob.correlationId IS the executionReference
+// this provider hands back from execute() (see its return value below), so
+// it's the right unique key to look the job back up by. Re-populates
+// `store` on a hit.
+async function recoverResultFromRawResult(
+  executionReference: string,
+): Promise<StoredResult | undefined> {
+  try {
+    const job = await prisma.executionJob.findUnique({
+      where: { correlationId: executionReference },
+      select: { rawResult: true },
+    });
+    const raw = job?.rawResult;
+    if (!raw || typeof raw !== "object") return undefined;
+    const { status, text, errorMessage } = raw as Record<string, unknown>;
+    if (status !== "completed" && status !== "failed") return undefined;
+    const record: StoredResult = {
+      status,
+      text: typeof text === "string" ? text : undefined,
+      errorMessage: typeof errorMessage === "string" ? errorMessage : undefined,
+    };
+    store.set(executionReference, record);
+    return record;
+  } catch (error) {
+    console.error(
+      "[openai-ai-provider] failed to recover result from rawResult:",
+      error,
+    );
+    return undefined;
+  }
+}
+
 function localeInstruction(brandContext: unknown): string {
   const ctx = (brandContext ?? {}) as { language?: unknown; country?: unknown };
   const language =
@@ -94,6 +162,7 @@ export class OpenAiAiProvider implements ExecutionProvider {
     const requestText =
       typeof input.request === "string" ? input.request : JSON.stringify(input);
 
+    let result: StoredResult;
     try {
       const { text } = await runOpenAIText({
         model: openaiModelForTier(),
@@ -101,13 +170,15 @@ export class OpenAiAiProvider implements ExecutionProvider {
         user: requestText,
         maxOutputTokens: 4096,
       });
-      store.set(request.correlationId, { status: "completed", text });
+      result = { status: "completed", text };
     } catch (error) {
-      store.set(request.correlationId, {
+      result = {
         status: "failed",
         errorMessage: error instanceof Error ? error.message : String(error),
-      });
+      };
     }
+    store.set(request.correlationId, result);
+    await persistResultToRawResult(request.executionJobId, result);
 
     return { executionReference: request.correlationId, isMock: false };
   }
@@ -115,7 +186,9 @@ export class OpenAiAiProvider implements ExecutionProvider {
   async getStatus(
     executionReference: string,
   ): Promise<ProviderExecutionStatus> {
-    const record = store.get(executionReference);
+    const record =
+      store.get(executionReference) ??
+      (await recoverResultFromRawResult(executionReference));
     if (!record) {
       return {
         status: "FAILED",

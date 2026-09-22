@@ -283,6 +283,73 @@ describe("ExecutionWorker.tick", () => {
     expect(mocks.scheduleRetry).not.toHaveBeenCalled();
   });
 
+  // Audit problem 15 (dispatch-time retry loop): previously every error was
+  // treated identically — 5 attempts with backoff before dead-letter, even
+  // for an error that will never succeed on retry (bad credentials, missing
+  // config, budget exhausted). classifyError/isAutoRecoverable now lets a
+  // confidently-permanent AgentelseError skip straight to dead-letter on
+  // attempt 1 instead of wasting 4 more dispatch cycles reaching the same
+  // outcome.
+  it("dead-letters a permanent-class AgentelseError immediately (attempt 1), without going through the retry loop", async () => {
+    const claimedUntil = new Date("2026-08-08T00:15:00.000Z");
+    mocks.claimBatch.mockResolvedValue([
+      {
+        id: "event-1",
+        eventType: "execution.dispatch",
+        payload: { executionJobId: "job-1", riskLevel: "LOW" },
+        attemptCount: 0,
+        nextAttemptAt: claimedUntil,
+        reclaimed: false,
+      },
+    ]);
+    mocks.isAgentelseError.mockReturnValue(true);
+    mocks.executionStart.mockRejectedValue(
+      Object.assign(new Error("permission denied"), {
+        code: "PERMISSION_DENIED",
+        retryable: false,
+      }),
+    );
+
+    await expect(ExecutionWorker.processDispatchQueue()).resolves.toBe(0);
+
+    expect(mocks.markFailed).toHaveBeenCalledWith("event-1", 1, claimedUntil);
+    expect(mocks.deadLetterCreate).toHaveBeenCalledWith({
+      executionJobId: "job-1",
+      reason: "execution.dispatch failed with a non-recoverable error",
+      payload: { executionJobId: "job-1", riskLevel: "LOW" },
+      attempts: 1,
+      lastError: "permission denied",
+    });
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it("still retries a transient AgentelseError (e.g. PROVIDER_RATE_LIMITED) through the normal backoff path instead of dead-lettering early", async () => {
+    const claimedUntil = new Date("2026-08-08T00:15:00.000Z");
+    mocks.claimBatch.mockResolvedValue([
+      {
+        id: "event-1",
+        eventType: "execution.dispatch",
+        payload: { executionJobId: "job-1", riskLevel: "LOW" },
+        attemptCount: 0,
+        nextAttemptAt: claimedUntil,
+        reclaimed: false,
+      },
+    ]);
+    mocks.isAgentelseError.mockReturnValue(true);
+    mocks.executionStart.mockRejectedValue(
+      Object.assign(new Error("rate limit exceeded"), {
+        code: "PROVIDER_RATE_LIMITED",
+        retryable: true,
+      }),
+    );
+
+    await expect(ExecutionWorker.processDispatchQueue()).resolves.toBe(0);
+
+    expectBackoffRetry(1, 4_000, claimedUntil);
+    expect(mocks.markFailed).not.toHaveBeenCalled();
+    expect(mocks.deadLetterCreate).not.toHaveBeenCalled();
+  });
+
   it("resolves a pending verification in only one concurrent worker", async () => {
     const verification = {
       id: "verification-1",

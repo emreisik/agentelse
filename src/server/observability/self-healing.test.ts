@@ -27,6 +27,7 @@ vi.mock("@/lib/prisma", () => ({
       fn({
         outboxEvent: { create: vi.fn() },
         deadLetterJob,
+        executionJob,
       }),
   },
 }));
@@ -75,6 +76,7 @@ beforeEach(() => {
     projectId: "p-1",
     status: "FAILED",
   });
+  executionJob.updateMany.mockResolvedValue({ count: 1 });
   task.findUnique.mockResolvedValue({
     status: "RUNNING",
     projectId: "p-1",
@@ -89,6 +91,25 @@ describe("requeueRecoverableDeadLetters", () => {
 
     expect(result).toEqual({ requeued: 1, skipped: 0 });
     expect(OutboxRepository.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  // Bug A (audit problem 15): requeueRecoverableDeadLetters previously only
+  // created a fresh OutboxEvent and never flipped the ExecutionJob back to
+  // QUEUED. Since execution-service.ts's startExecution() no-ops on
+  // `job.status !== "QUEUED"`, that fresh event was processed as a silent
+  // no-op — the job stayed FAILED forever and the "auto-heal" was a no-op
+  // dressed up as a success. This is the fix: the same transaction that
+  // enqueues the retry must also CAS the job FAILED -> QUEUED.
+  it("also transitions the ExecutionJob back to QUEUED so the requeued outbox event is not silently ignored by startExecution's `job.status !== QUEUED` guard", async () => {
+    deadLetterJob.findMany.mockResolvedValue([deadLetter()]);
+
+    const result = await SelfHealingService.requeueRecoverableDeadLetters();
+
+    expect(result).toEqual({ requeued: 1, skipped: 0 });
+    expect(executionJob.updateMany).toHaveBeenCalledWith({
+      where: { id: "job-1", status: "FAILED" },
+      data: { status: "QUEUED" },
+    });
   });
 
   it("does NOT touch a balance error", async () => {

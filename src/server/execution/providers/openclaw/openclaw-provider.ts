@@ -62,6 +62,76 @@ type StoredRun = { agentId: string; sessionKey: string; runId: string };
 
 const store = new Map<string, StoredRun>();
 
+// Best-effort durability write: mirrors the in-memory `store` entry into
+// ExecutionJob.rawResult (Postgres) the instant a Gateway run is accepted,
+// so getStatus() can re-establish the {agentId, sessionKey, runId} pointer
+// after a process restart wipes `store` (Railway redeploy, crash) — see
+// recoverRunFromRawResult below. Reads-then-merges instead of overwriting,
+// since rawResult may already carry other fields by this point in some
+// paths. A failure here is swallowed: the Gateway run itself has already
+// started regardless of whether this write succeeds.
+async function persistRunToRawResult(
+  executionJobId: string,
+  record: StoredRun,
+): Promise<void> {
+  try {
+    const existing = await prisma.executionJob.findUnique({
+      where: { id: executionJobId },
+      select: { rawResult: true },
+    });
+    const base =
+      existing?.rawResult && typeof existing.rawResult === "object"
+        ? (existing.rawResult as Record<string, unknown>)
+        : {};
+    await prisma.executionJob.update({
+      where: { id: executionJobId },
+      data: { rawResult: { ...base, ...record } as never },
+    });
+  } catch (error) {
+    console.error(
+      "[openclaw-provider] failed to persist run reference to rawResult:",
+      error,
+    );
+  }
+}
+
+// Recovers a run reference from Postgres when `store` has no entry for it —
+// the normal case is a process restart between execute() and the next
+// getStatus() poll. ExecutionJob.correlationId IS the executionReference
+// this provider hands back from execute() (see its return value below), so
+// it's the right unique key to look the job back up by. Re-populates
+// `store` on a hit so the caller can fall straight through to the normal
+// Gateway-polling logic instead of needing a separate code path.
+async function recoverRunFromRawResult(
+  executionReference: string,
+): Promise<StoredRun | undefined> {
+  try {
+    const job = await prisma.executionJob.findUnique({
+      where: { correlationId: executionReference },
+      select: { rawResult: true },
+    });
+    const raw = job?.rawResult;
+    if (!raw || typeof raw !== "object") return undefined;
+    const { agentId, sessionKey, runId } = raw as Record<string, unknown>;
+    if (
+      typeof agentId !== "string" ||
+      typeof sessionKey !== "string" ||
+      typeof runId !== "string"
+    ) {
+      return undefined;
+    }
+    const record: StoredRun = { agentId, sessionKey, runId };
+    store.set(executionReference, record);
+    return record;
+  } catch (error) {
+    console.error(
+      "[openclaw-provider] failed to recover run reference from rawResult:",
+      error,
+    );
+    return undefined;
+  }
+}
+
 // Renders one payload field as a "Label: value" line, or null if the field
 // is absent/empty — used below to surface whatever concrete data a
 // capability's planner attached (signal-universe.ts's `sources`,
@@ -175,11 +245,13 @@ export class OpenClawProvider implements ExecutionProvider {
       idempotencyKey: request.correlationId,
     });
 
-    store.set(request.correlationId, {
+    const record: StoredRun = {
       agentId,
       sessionKey: request.correlationId,
       runId,
-    });
+    };
+    store.set(request.correlationId, record);
+    await persistRunToRawResult(request.executionJobId, record);
 
     return { executionReference: request.correlationId, isMock: false };
   }
@@ -187,7 +259,9 @@ export class OpenClawProvider implements ExecutionProvider {
   async getStatus(
     executionReference: string,
   ): Promise<ProviderExecutionStatus> {
-    const record = store.get(executionReference);
+    const record =
+      store.get(executionReference) ??
+      (await recoverRunFromRawResult(executionReference));
     if (!record) {
       return {
         status: "FAILED",

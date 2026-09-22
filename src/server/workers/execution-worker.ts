@@ -2,6 +2,10 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { isAgentelseError } from "@/server/security/errors";
+import {
+  classifyError,
+  isAutoRecoverable,
+} from "@/server/observability/error-classifier";
 import { ExecutionService } from "@/server/execution/execution-service";
 import {
   OutboxRepository,
@@ -23,6 +27,18 @@ import "@/server/agency/continuous/agency-wiring";
 
 const MAX_ATTEMPTS = 5;
 const BASE_BACKOFF_MS = 2_000;
+// AgentelseError codes that are genuinely permanent — retrying produces the
+// identical error every time, so paying for MAX_ATTEMPTS retries with
+// backoff before dead-lettering is pure waste. Deliberately narrow (auth/
+// config/budget only): anything not in this list — including a merely
+// UNKNOWN-classified error — keeps going through the normal
+// retry-then-dead-letter path below rather than risk short-circuiting a
+// transient failure that would have recovered on retry.
+const PERMANENT_ERROR_CODES = new Set([
+  "PERMISSION_DENIED",
+  "BUDGET_EXCEEDED",
+  "PROVIDER_UNAVAILABLE",
+]);
 // Mirrors AutonomyPolicy.maxConcurrentResearchTasks' default (5,
 // prisma/schema.prisma). Not an exact per-project enforcement — a claimed
 // batch can span multiple projects and that policy is project-scoped — but
@@ -167,7 +183,22 @@ export const ExecutionWorker = {
         error,
       );
       const attempt = event.attemptCount + 1;
-      if (attempt >= MAX_ATTEMPTS) {
+      // A permanent-class failure (auth/config/budget) will produce the
+      // exact same error on every retry — classifyError/isAutoRecoverable
+      // (the same taxonomy self-healing.service.ts already uses for
+      // dead-letter requeue decisions) lets this skip straight to
+      // dead-letter on attempt 1 instead of burning MAX_ATTEMPTS retries
+      // with backoff to reach the identical outcome. Both the error's own
+      // code (against the narrow PERMANENT_ERROR_CODES allowlist) and the
+      // text classifier must agree, and the thrower's own `retryable` flag
+      // is respected — anything ambiguous still goes through the existing
+      // retry-then-dead-letter path unchanged.
+      const isPermanentFailure =
+        isAgentelseError(error) &&
+        !error.retryable &&
+        PERMANENT_ERROR_CODES.has(error.code) &&
+        !isAutoRecoverable(classifyError(error.message));
+      if (attempt >= MAX_ATTEMPTS || isPermanentFailure) {
         const result = await OutboxRepository.markFailed(
           event.id,
           attempt,
@@ -176,7 +207,9 @@ export const ExecutionWorker = {
         if (result.count === 1) {
           await DeadLetterRepository.create({
             executionJobId: payload.executionJobId,
-            reason: "execution.dispatch failed after max attempts",
+            reason: isPermanentFailure
+              ? "execution.dispatch failed with a non-recoverable error"
+              : "execution.dispatch failed after max attempts",
             payload: event.payload,
             attempts: attempt,
             lastError: error instanceof Error ? error.message : String(error),

@@ -16,9 +16,17 @@ vi.mock("@/lib/env", () => ({
 
 const prismaMocks = vi.hoisted(() => ({
   findUniqueProject: vi.fn(),
+  findUniqueExecutionJob: vi.fn(),
+  updateExecutionJob: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({
-  prisma: { project: { findUnique: prismaMocks.findUniqueProject } },
+  prisma: {
+    project: { findUnique: prismaMocks.findUniqueProject },
+    executionJob: {
+      findUnique: prismaMocks.findUniqueExecutionJob,
+      update: prismaMocks.updateExecutionJob,
+    },
+  },
 }));
 
 vi.mock("@/server/repositories/browser-profile.repository", () => ({
@@ -67,6 +75,8 @@ describe("OpenClawProvider", () => {
     vi.clearAllMocks();
     envMocks.gatewayConfigured = true;
     gatewayMocks.listAgentIds.mockResolvedValue(new Set());
+    prismaMocks.findUniqueExecutionJob.mockResolvedValue(undefined);
+    prismaMocks.updateExecutionJob.mockResolvedValue({});
   });
 
   describe("canExecute", () => {
@@ -200,6 +210,112 @@ describe("OpenClawProvider", () => {
       const provider = new OpenClawProvider();
       const status = await provider.getStatus("never-executed");
       expect(status.status).toBe("FAILED");
+    });
+  });
+
+  // Audit problem 13: the in-memory `store` Map (and OpenClawGatewayClient's
+  // own `runStates` Map) are process-local — a Railway redeploy/crash
+  // between execute() and the next getStatus() poll wipes them, and
+  // getStatus() used to unconditionally report "Unknown OpenClaw execution
+  // reference" even though the Gateway itself (a separate long-lived
+  // process) still had the real run in progress or finished. execute() now
+  // persists {agentId, sessionKey, runId} into ExecutionJob.rawResult so
+  // getStatus() can re-attach to the Gateway run from Postgres.
+  describe("durable execution state (process restart recovery)", () => {
+    it("persists the {agentId, sessionKey, runId} triple to ExecutionJob.rawResult on execute()", async () => {
+      gatewayMocks.startAgentRun.mockResolvedValue({ runId: "run-abc" });
+
+      const provider = new OpenClawProvider();
+      await provider.execute({
+        executionJobId: "job-1",
+        correlationId: "corr-1",
+        idempotencyKey: "task-1:WEB_RESEARCH",
+        capability: "WEB_RESEARCH",
+        context,
+        payload: {},
+      });
+
+      expect(prismaMocks.updateExecutionJob).toHaveBeenCalledWith({
+        where: { id: "job-1" },
+        data: {
+          rawResult: {
+            agentId: "hubconnect",
+            sessionKey: "corr-1",
+            runId: "run-abc",
+          },
+        },
+      });
+    });
+
+    it("merges into any existing rawResult instead of overwriting it", async () => {
+      prismaMocks.findUniqueExecutionJob.mockResolvedValue({
+        rawResult: { keepMe: "already-there" },
+      });
+      gatewayMocks.startAgentRun.mockResolvedValue({ runId: "run-abc" });
+
+      const provider = new OpenClawProvider();
+      await provider.execute({
+        executionJobId: "job-1",
+        correlationId: "corr-1",
+        idempotencyKey: "task-1:WEB_RESEARCH",
+        capability: "WEB_RESEARCH",
+        context,
+        payload: {},
+      });
+
+      expect(prismaMocks.updateExecutionJob).toHaveBeenCalledWith({
+        where: { id: "job-1" },
+        data: {
+          rawResult: {
+            keepMe: "already-there",
+            agentId: "hubconnect",
+            sessionKey: "corr-1",
+            runId: "run-abc",
+          },
+        },
+      });
+    });
+
+    it("recovers the run reference from Postgres when the in-memory store has no entry (simulated process restart) and resumes normal Gateway polling", async () => {
+      prismaMocks.findUniqueExecutionJob.mockResolvedValue({
+        rawResult: {
+          agentId: "hubconnect",
+          sessionKey: "restart-corr",
+          runId: "run-restart",
+        },
+      });
+      gatewayMocks.getRunState.mockReturnValue({
+        kind: "done",
+        result: { ok: true, runId: "run-restart", finalText: "done" },
+      });
+
+      // A fresh provider instance changes nothing here — `store` is a
+      // module-level singleton — but this is deliberately a correlationId
+      // that this test never calls execute() with, so the in-memory Map is
+      // guaranteed to miss exactly like it would after a real restart.
+      const provider = new OpenClawProvider();
+      const status = await provider.getStatus("restart-corr");
+
+      expect(status.status).toBe("COMPLETED");
+      expect(prismaMocks.findUniqueExecutionJob).toHaveBeenCalledWith({
+        where: { correlationId: "restart-corr" },
+        select: { rawResult: true },
+      });
+      expect(gatewayMocks.getRunState).toHaveBeenCalledWith(
+        "run-restart",
+        expect.any(Number),
+      );
+    });
+
+    it("still returns FAILED for an unknown reference when neither the in-memory store nor Postgres has it", async () => {
+      prismaMocks.findUniqueExecutionJob.mockResolvedValue(null);
+
+      const provider = new OpenClawProvider();
+      const status = await provider.getStatus("truly-never-executed");
+
+      expect(status.status).toBe("FAILED");
+      expect(status.errorMessage).toBe("Unknown OpenClaw execution reference");
+      expect(gatewayMocks.getRunState).not.toHaveBeenCalled();
     });
   });
 

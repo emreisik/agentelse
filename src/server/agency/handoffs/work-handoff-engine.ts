@@ -13,6 +13,7 @@ import { TaskPlanner } from "@/server/commands/task-planner";
 import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
 import { AgencyDecisionRepository } from "@/server/repositories/agency-decision.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
+import { TaskRepository } from "@/server/repositories/task.repository";
 import { WorkHandoffRepository } from "@/server/repositories/work-handoff.repository";
 import { prisma } from "@/lib/prisma";
 
@@ -37,6 +38,23 @@ async function attemptTaskCreation(
     projectId: handoff.projectId,
     brandId: handoff.brandId,
   };
+
+  // Concurrency backpressure (spec section 37), same cap AgencyDirector.
+  // decideOnIdea now consults: independent of the daily tasksCreated
+  // counter below, this caps how much SYSTEM-created work can be in flight
+  // for the project at once. Checked first so a busy project doesn't also
+  // burn a daily-counter slot for an attempt that's about to be deferred
+  // anyway. Same graceful-defer outcome as the cap-reached catch below —
+  // handoff stays ACCEPTED for progressPending to retry once capacity frees.
+  const policy = await AutonomyPolicyRepository.getOrCreate(scope);
+  if (!policy.unlimitedMode) {
+    const activeSystemTasks = await TaskRepository.countActiveSystemTasks(
+      handoff.projectId,
+    );
+    if (activeSystemTasks >= policy.maxConcurrentSystemTasks) {
+      return null;
+    }
+  }
 
   try {
     await AutonomyPolicyRepository.checkAndIncrement(scope, "tasksCreated");

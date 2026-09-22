@@ -65,10 +65,12 @@ vi.mock("@/server/repositories/project-goal.repository", () => ({
 }));
 
 const findRecentByFingerprint = vi.fn();
+const countActiveSystemTasks = vi.fn();
 
 vi.mock("@/server/repositories/task.repository", () => ({
   TaskRepository: {
     findRecentByFingerprint,
+    countActiveSystemTasks,
   },
 }));
 
@@ -134,9 +136,13 @@ beforeEach(() => {
   getOrCreate.mockResolvedValue({
     taskCooldownHours: 24,
     scoringWeights: null,
+    unlimitedMode: false,
+    maxConcurrentSystemTasks: 15,
   });
   findOpportunityByIdInProject.mockResolvedValue(baseOpportunity);
   findRecentByFingerprint.mockResolvedValue(null);
+  countActiveSystemTasks.mockResolvedValue(0);
+  checkAndIncrement.mockResolvedValue(undefined);
   decisionCreate.mockResolvedValue({ id: "decision-1" });
 });
 
@@ -173,6 +179,37 @@ describe("AgencyDirector.decideOnIdea", () => {
     for (const call of ideaTransition.mock.calls) {
       expect(call[2]).not.toBe("PLANNING");
     }
+  });
+});
+
+describe("AgencyDirector.decideOnIdea (concurrency backpressure, Phase 7)", () => {
+  it("leaves the Idea SHORTLISTED and creates no task when the project is at its concurrent-system-task cap", async () => {
+    countActiveSystemTasks.mockResolvedValue(15);
+
+    const decision = await AgencyDirector.decideOnIdea("idea-1", "proj-1");
+
+    expect(decision).toEqual({ id: "decision-1" });
+    expect(checkAndIncrement).not.toHaveBeenCalled();
+    expect(planForCapability).not.toHaveBeenCalled();
+    for (const call of ideaTransition.mock.calls) {
+      expect(call[2]).not.toBe("PLANNING");
+    }
+  });
+
+  it("skips the concurrency check entirely in unlimitedMode", async () => {
+    getOrCreate.mockResolvedValue({
+      taskCooldownHours: 24,
+      scoringWeights: null,
+      unlimitedMode: true,
+      maxConcurrentSystemTasks: 15,
+    });
+    countActiveSystemTasks.mockResolvedValue(999);
+    planForCapability.mockResolvedValue({ task: { id: "task-1" } });
+
+    await AgencyDirector.decideOnIdea("idea-1", "proj-1");
+
+    expect(countActiveSystemTasks).not.toHaveBeenCalled();
+    expect(planForCapability).toHaveBeenCalled();
   });
 });
 

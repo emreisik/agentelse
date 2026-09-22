@@ -206,6 +206,22 @@ export const AgencyDirector = {
       return decision;
     }
 
+    // Concurrency backpressure (spec section 37): independent of the daily
+    // tasksCreated counter below, this caps how much SYSTEM-created work can
+    // be in flight for the project at once. Checked here — after scoring
+    // and the AgencyDecision is recorded, before either execute path
+    // (CREATE_TASK or CREATE_MULTI_DEPARTMENT_PLAN) commits to new work —
+    // so a busy project's idea is left SHORTLISTED exactly like a BACKLOG
+    // decision, and decideShortlisted naturally re-decides it once older
+    // tasks complete and the cooldown window passes.
+    if (!policy.unlimitedMode) {
+      const activeSystemTasks =
+        await TaskRepository.countActiveSystemTasks(projectId);
+      if (activeSystemTasks >= policy.maxConcurrentSystemTasks) {
+        return decision;
+      }
+    }
+
     // Execute path: goal linkage is mandatory for autonomous work. If the
     // opportunity itself has no goal (opportunityEvaluationDef's LLM found
     // no matching ProjectGoal), fall back to the project's own highest-

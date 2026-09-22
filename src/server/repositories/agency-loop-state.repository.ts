@@ -4,6 +4,25 @@ import type { AgencyLoopStatus, AgencyTriggerType } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
+// Circuit breaker (spec section 37): this many consecutive processed
+// cycles with nothing actionable trips the loop from RUNNING to WAITING.
+// Reset to 0 (and status back to RUNNING) the moment any cycle actually
+// does something — see recordProgress below.
+const NO_PROGRESS_WAITING_THRESHOLD = 5;
+
+// Backoff for the informational nextWakeAt shown once WAITING: 5 minutes at
+// the threshold, doubling per additional no-progress cycle, capped at 2
+// hours. Same "grow the wait, cap it" shape as measurement-engine.ts's
+// check-retry backoff, scaled to loop-level pacing instead of a single
+// check's retries.
+function nextWakeAtForStreak(streak: number): Date {
+  const baseMinutes = 5;
+  const capMinutes = 120;
+  const extraDoublings = streak - NO_PROGRESS_WAITING_THRESHOLD;
+  const minutes = Math.min(baseMinutes * 2 ** extraDoublings, capMinutes);
+  return new Date(Date.now() + minutes * 60_000);
+}
+
 // The shared pause check every autonomous engine should call before
 // creating new work for a project — see AgencyLoopHeartbeat, which keeps
 // AgencyLoopState.status synced from Project.status as the first step of
@@ -80,11 +99,14 @@ export const AgencyLoopStateRepository = {
   },
 
   // A cycle was processed for this project but produced no observable
-  // change (e.g. the trigger's payload had nothing left to act on).
-  // Phase 7's circuit breaker reads consecutiveNoProgressCycles to decide
-  // when to move a project to WAITING.
-  recordNoProgress(projectId: string, triggerType?: AgencyTriggerType) {
-    return prisma.agencyLoopState.update({
+  // change (e.g. the trigger's payload had nothing left to act on). Once
+  // the streak crosses NO_PROGRESS_WAITING_THRESHOLD, the loop is marked
+  // WAITING with a backed-off nextWakeAt — purely informational telemetry
+  // today (the Agency Status UI's future "waiting" indicator; nothing yet
+  // gates actual tick polling on it), reversed the moment recordProgress
+  // next fires (it always resets status to RUNNING).
+  async recordNoProgress(projectId: string, triggerType?: AgencyTriggerType) {
+    const updated = await prisma.agencyLoopState.update({
       where: { projectId },
       data: {
         lastTickAt: new Date(),
@@ -92,6 +114,21 @@ export const AgencyLoopStateRepository = {
         consecutiveNoProgressCycles: { increment: 1 },
       },
     });
+
+    if (
+      updated.status === "RUNNING" &&
+      updated.consecutiveNoProgressCycles >= NO_PROGRESS_WAITING_THRESHOLD
+    ) {
+      return prisma.agencyLoopState.update({
+        where: { projectId },
+        data: {
+          status: "WAITING",
+          nextWakeAt: nextWakeAtForStreak(updated.consecutiveNoProgressCycles),
+        },
+      });
+    }
+
+    return updated;
   },
 
   // Heartbeat only, for a project with no trigger this tick — keeps

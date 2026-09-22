@@ -38,6 +38,13 @@ vi.mock("@/server/repositories/agency-decision.repository", () => ({
 vi.mock("@/server/repositories/autonomy-policy.repository", () => ({
   AutonomyPolicyRepository: {
     checkAndIncrement: vi.fn(),
+    getOrCreate: vi.fn(),
+  },
+}));
+
+vi.mock("@/server/repositories/task.repository", () => ({
+  TaskRepository: {
+    countActiveSystemTasks: vi.fn(),
   },
 }));
 
@@ -66,6 +73,8 @@ const { AutonomyPolicyRepository } =
   await import("@/server/repositories/autonomy-policy.repository");
 const { WorkHandoffRepository } =
   await import("@/server/repositories/work-handoff.repository");
+const { TaskRepository } =
+  await import("@/server/repositories/task.repository");
 
 function makeHandoff(overrides: Record<string, unknown> = {}) {
   return {
@@ -97,6 +106,11 @@ beforeEach(() => {
     undefined as never,
   );
   projectGoal.findMany.mockResolvedValue([{ id: "goal-1" }]);
+  vi.mocked(AutonomyPolicyRepository.getOrCreate).mockResolvedValue({
+    unlimitedMode: false,
+    maxConcurrentSystemTasks: 15,
+  } as never);
+  vi.mocked(TaskRepository.countActiveSystemTasks).mockResolvedValue(0);
 });
 
 describe("WorkHandoffEngine.progressPending", () => {
@@ -275,6 +289,80 @@ describe("WorkHandoffEngine.progressPending (paused-project guard, audit scenari
       expect.anything(),
       expect.anything(),
     );
+  });
+});
+
+describe("WorkHandoffEngine.accept / progressPending (concurrency backpressure, Phase 7)", () => {
+  it("accept() leaves the handoff ACCEPTED with no task when the project is at its concurrent-system-task cap", async () => {
+    const handoff = makeHandoff({ status: "PROPOSED" });
+    vi.mocked(WorkHandoffRepository.findByIdInProject).mockResolvedValue(
+      handoff as never,
+    );
+    vi.mocked(AgencyDecisionRepository.create).mockResolvedValue({
+      id: "decision-9",
+    } as never);
+    vi.mocked(TaskRepository.countActiveSystemTasks).mockResolvedValue(15);
+
+    const result = await WorkHandoffEngine.accept("handoff-1", "proj-1", {
+      capability: "WEBSITE_UPDATE" as never,
+      request: "Deploy the page",
+      goalIds: ["goal-1"],
+    });
+
+    expect(result).toBeNull();
+    expect(AutonomyPolicyRepository.checkAndIncrement).not.toHaveBeenCalled();
+    expect(TaskPlanner.planForCapability).not.toHaveBeenCalled();
+    expect(WorkHandoffRepository.transition).toHaveBeenCalledTimes(1);
+    expect(WorkHandoffRepository.transition).toHaveBeenCalledWith(
+      "handoff-1",
+      "proj-1",
+      "ACCEPTED",
+    );
+  });
+
+  it("progressPending's ACCEPTED retry leaves a capped handoff untouched (no transition, no task)", async () => {
+    const handoff = makeHandoff({ status: "ACCEPTED" });
+    vi.mocked(WorkHandoffRepository.listByStatus).mockImplementation(
+      (status) =>
+        Promise.resolve(status === "ACCEPTED" ? [handoff] : []) as never,
+    );
+    agencyDecision.findFirst.mockResolvedValue({ id: "decision-1" });
+    vi.mocked(TaskRepository.countActiveSystemTasks).mockResolvedValue(15);
+
+    const result = await WorkHandoffEngine.progressPending(10);
+
+    expect(result).toEqual({ retried: 0, expired: 0 });
+    expect(TaskPlanner.planForCapability).not.toHaveBeenCalled();
+    expect(WorkHandoffRepository.transition).not.toHaveBeenCalled();
+  });
+
+  it("skips the concurrency check entirely in unlimitedMode", async () => {
+    const handoff = makeHandoff({ status: "PROPOSED" });
+    vi.mocked(WorkHandoffRepository.findByIdInProject).mockResolvedValue(
+      handoff as never,
+    );
+    vi.mocked(AgencyDecisionRepository.create).mockResolvedValue({
+      id: "decision-9",
+    } as never);
+    vi.mocked(AutonomyPolicyRepository.getOrCreate).mockResolvedValue({
+      unlimitedMode: true,
+      maxConcurrentSystemTasks: 15,
+    } as never);
+    vi.mocked(AutonomyPolicyRepository.checkAndIncrement).mockResolvedValue(
+      undefined as never,
+    );
+    vi.mocked(TaskPlanner.planForCapability).mockResolvedValue({
+      task: { id: "task-9" },
+    } as never);
+
+    await WorkHandoffEngine.accept("handoff-1", "proj-1", {
+      capability: "WEBSITE_UPDATE" as never,
+      request: "Deploy the page",
+      goalIds: ["goal-1"],
+    });
+
+    expect(TaskRepository.countActiveSystemTasks).not.toHaveBeenCalled();
+    expect(TaskPlanner.planForCapability).toHaveBeenCalled();
   });
 });
 

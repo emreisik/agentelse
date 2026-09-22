@@ -6,6 +6,7 @@ import "server-only";
 // Agency OS loop without creating module cycles.
 
 import { CouncilEngine } from "@/server/agency/council/council-engine";
+import { AgencyLoopHeartbeat } from "@/server/agency/continuous/agency-loop-heartbeat";
 import {
   AgencyDirector,
   registerWorkPlanBuilder,
@@ -130,6 +131,15 @@ registerSetupStageRunner("INITIAL_WORK_PLAN", async (scope) => {
 });
 
 // --- Continuous loop steps (spec section 33, pipeline order) ----------------
+
+// First step of every tick, deliberately: keeps AgencyLoopState's PAUSED
+// sync fresh (see agency-loop-heartbeat.ts) before any of the engines below
+// run — a later phase's per-engine pause checks will read state this step
+// just wrote, not state up to one tick stale.
+registerAgencyTickStep({
+  name: "agency-loop-heartbeat",
+  run: () => AgencyLoopHeartbeat.run(50),
+});
 
 registerAgencyTickStep({
   name: "signal-scans",

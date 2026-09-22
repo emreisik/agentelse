@@ -25,6 +25,23 @@ vi.mock("@/server/repositories/audit-log.repository", () => ({
   AuditLogRepository: { record: vi.fn().mockResolvedValue(undefined) },
 }));
 
+const getOrCreate = vi.fn().mockResolvedValue({});
+const recordProgress = vi.fn().mockResolvedValue(undefined);
+const recordNoProgress = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
+  AgencyLoopStateRepository: {
+    getOrCreate,
+    recordProgress,
+    recordNoProgress,
+  },
+}));
+
+const cycleStart = vi.fn().mockResolvedValue({ id: "cycle-1" });
+const cycleComplete = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/server/repositories/agency-cycle.repository", () => ({
+  AgencyCycleRepository: { start: cycleStart, complete: cycleComplete },
+}));
+
 const {
   ContinuousAgencyEngine,
   registerTaskCompletedHandler,
@@ -114,5 +131,61 @@ describe("ContinuousAgencyEngine.processTriggers", () => {
 
     expect(markProcessed).not.toHaveBeenCalled();
     expect(markFailed).toHaveBeenCalledWith("trig-1", "boom");
+  });
+
+  it("records AgencyCycle/AgencyLoopState progress for a task trigger that did work", async () => {
+    claimPending.mockResolvedValue([trigger()]);
+    registerTaskCompletedHandler(vi.fn().mockResolvedValue(undefined));
+
+    await ContinuousAgencyEngine.processTriggers();
+
+    expect(getOrCreate).toHaveBeenCalledWith({
+      workspaceId: "ws-1",
+      projectId: "p-1",
+      brandId: "b-1",
+    });
+    expect(cycleStart).toHaveBeenCalledWith(
+      { workspaceId: "ws-1", projectId: "p-1", brandId: "b-1" },
+      { type: "TASK_COMPLETED", id: "trig-1" },
+    );
+    expect(recordProgress).toHaveBeenCalledWith("p-1", "TASK_COMPLETED");
+    expect(cycleComplete).toHaveBeenCalledWith("cycle-1", "COMPLETED");
+  });
+
+  it("records NOOP when a task trigger has no actionable payload", async () => {
+    claimPending.mockResolvedValue([
+      trigger({ type: "TASK_COMPLETED", payload: {} }),
+    ]);
+
+    await ContinuousAgencyEngine.processTriggers();
+
+    expect(recordNoProgress).toHaveBeenCalledWith("p-1", "TASK_COMPLETED");
+    expect(cycleComplete).toHaveBeenCalledWith("cycle-1", "NOOP");
+  });
+
+  it("records FAILED on the cycle and no-progress on the loop state when a handler throws", async () => {
+    claimPending.mockResolvedValue([trigger({ type: "TASK_FAILED" })]);
+    registerTaskTerminalHandler(vi.fn().mockRejectedValue(new Error("boom")));
+
+    await ContinuousAgencyEngine.processTriggers();
+
+    expect(recordNoProgress).toHaveBeenCalledWith("p-1", "TASK_FAILED");
+    expect(cycleComplete).toHaveBeenCalledWith("cycle-1", "FAILED", {
+      errorCount: 1,
+    });
+  });
+
+  it("does not touch AgencyCycle/AgencyLoopState for non-task trigger types", async () => {
+    claimPending.mockResolvedValue([
+      trigger({ type: "SCHEDULE", payload: {} }),
+    ]);
+
+    await ContinuousAgencyEngine.processTriggers();
+
+    expect(getOrCreate).not.toHaveBeenCalled();
+    expect(cycleStart).not.toHaveBeenCalled();
+    expect(recordProgress).not.toHaveBeenCalled();
+    expect(recordNoProgress).not.toHaveBeenCalled();
+    expect(markProcessed).toHaveBeenCalledWith("trig-1");
   });
 });

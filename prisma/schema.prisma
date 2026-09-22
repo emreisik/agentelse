@@ -2716,6 +2716,87 @@ model AutonomyPolicy {
   @@index([workspaceId])
 }
 
+enum AgencyLoopStatus {
+  RUNNING
+  WAITING
+  BLOCKED
+  PAUSED
+  ERROR
+}
+
+enum AgencyCycleStatus {
+  RUNNING
+  COMPLETED
+  NOOP
+  FAILED
+}
+
+// Control/telemetry state for whether a project's agency loop is actually
+// operating — NOT an alternative task queue (Task/ExecutionJob/AgencyTrigger
+// remain the only work items). One row per project. Previously the only
+// signal of "is this project's agency active" was Project.status, which
+// only one engine (SignalUniverse.runDueScans) ever actually checked — this
+// gives every other engine/the UI a single place to read/set it.
+model AgencyLoopState {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String @unique
+  brandId     String
+
+  status AgencyLoopStatus @default(RUNNING)
+
+  startedAt      DateTime  @default(now())
+  lastTickAt     DateTime?
+  lastProgressAt DateTime?
+  nextWakeAt     DateTime?
+
+  currentPhase    String?
+  lastTriggerType AgencyTriggerType?
+  blockedReason   String?
+
+  consecutiveNoProgressCycles Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+// Append-only per-cycle telemetry — mainly operational/UI support (spec:
+// "why did it wake up, what did it decide, what work did it create"), NOT a
+// duplicate context store. One row per AgencyTrigger processed (triggerType/
+// triggerId identify which); the count fields are best-effort snapshots of
+// what that specific cycle did, distinct from AgencyDailyStat's per-day
+// running totals (tasksCreated etc. there are already wired into
+// AutonomyPolicyRepository.checkAndIncrement).
+model AgencyCycle {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  triggerType AgencyTriggerType?
+  triggerId   String?
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  status      AgencyCycleStatus @default(RUNNING)
+
+  signalsProcessed     Int @default(0)
+  insightsCreated      Int @default(0)
+  opportunitiesCreated Int @default(0)
+  ideasCreated         Int @default(0)
+  decisionsCreated     Int @default(0)
+  tasksCreated         Int @default(0)
+  handoffsCreated      Int @default(0)
+  measurementsCreated  Int @default(0)
+  learningsCreated     Int @default(0)
+
+  errorCount Int @default(0)
+
+  @@index([projectId, startedAt])
+}
+
 model AgencyDailyStat {
   id          String @id @default(cuid())
   workspaceId String

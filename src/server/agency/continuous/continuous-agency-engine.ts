@@ -3,6 +3,8 @@ import "server-only";
 import { ResultMaterializer } from "@/server/agency/intelligence/research-result-materializer";
 import { ProjectSetupOrchestrator } from "@/server/agency/setup/project-setup-orchestrator";
 import { AgencyTriggerRepository } from "@/server/repositories/agency-trigger.repository";
+import { AgencyCycleRepository } from "@/server/repositories/agency-cycle.repository";
+import { AgencyLoopStateRepository } from "@/server/repositories/agency-loop-state.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { isAgentelseError } from "@/server/security/errors";
 
@@ -32,7 +34,34 @@ export const ContinuousAgencyEngine = {
     let processed = 0;
 
     for (const trigger of claimed) {
+      const scope = {
+        workspaceId: trigger.workspaceId,
+        projectId: trigger.projectId,
+        brandId: trigger.brandId,
+      };
+      // AgencyLoopState/AgencyCycle telemetry is scoped to trigger types
+      // that actually run a handler today (TASK_COMPLETED/FAILED/CANCELLED)
+      // — other types (SCHEDULE, USER_COMMAND, etc.) just fall through to
+      // markProcessed with no handler of their own, so recording a "cycle"
+      // for them would overstate what actually happened. See
+      // AgencyLoopState/AgencyCycle's schema comments.
+      const isTaskTrigger =
+        trigger.type === "TASK_COMPLETED" ||
+        trigger.type === "TASK_FAILED" ||
+        trigger.type === "TASK_CANCELLED";
+      let cycle: { id: string } | undefined;
+      if (isTaskTrigger) {
+        await AgencyLoopStateRepository.getOrCreate(scope).catch(
+          () => undefined,
+        );
+        cycle = await AgencyCycleRepository.start(scope, {
+          type: trigger.type,
+          id: trigger.id,
+        }).catch(() => undefined);
+      }
+
       try {
+        let didWork = false;
         if (trigger.type === "TASK_COMPLETED") {
           const payload = (trigger.payload ?? {}) as { taskId?: string };
           if (payload.taskId) {
@@ -40,12 +69,9 @@ export const ContinuousAgencyEngine = {
             // Completed-task fan-outs registered by later waves (work-plan
             // progression, measurement planning) run as extra handlers.
             for (const handler of TASK_COMPLETED_HANDLERS) {
-              await handler(payload.taskId, {
-                workspaceId: trigger.workspaceId,
-                projectId: trigger.projectId,
-                brandId: trigger.brandId,
-              });
+              await handler(payload.taskId, scope);
             }
+            didWork = true;
           }
         } else if (
           trigger.type === "TASK_FAILED" ||
@@ -64,20 +90,48 @@ export const ContinuousAgencyEngine = {
               payload.terminalStatus ??
               (trigger.type === "TASK_FAILED" ? "FAILED" : "CANCELLED");
             for (const handler of TASK_TERMINAL_HANDLERS) {
-              await handler(payload.taskId, status, {
-                workspaceId: trigger.workspaceId,
-                projectId: trigger.projectId,
-                brandId: trigger.brandId,
-              });
+              await handler(payload.taskId, status, scope);
             }
+            didWork = true;
           }
         }
         // Other trigger types currently act as wake-ups: their existence
         // makes this tick run the downstream pipeline steps below.
 
+        if (isTaskTrigger) {
+          await (
+            didWork
+              ? AgencyLoopStateRepository.recordProgress(
+                  trigger.projectId,
+                  trigger.type,
+                )
+              : AgencyLoopStateRepository.recordNoProgress(
+                  trigger.projectId,
+                  trigger.type,
+                )
+          ).catch(() => undefined);
+          if (cycle) {
+            await AgencyCycleRepository.complete(
+              cycle.id,
+              didWork ? "COMPLETED" : "NOOP",
+            ).catch(() => undefined);
+          }
+        }
+
         await AgencyTriggerRepository.markProcessed(trigger.id);
         processed += 1;
       } catch (error) {
+        if (isTaskTrigger) {
+          await AgencyLoopStateRepository.recordNoProgress(
+            trigger.projectId,
+            trigger.type,
+          ).catch(() => undefined);
+          if (cycle) {
+            await AgencyCycleRepository.complete(cycle.id, "FAILED", {
+              errorCount: 1,
+            }).catch(() => undefined);
+          }
+        }
         await AgencyTriggerRepository.markFailed(
           trigger.id,
           error instanceof Error ? error.message : String(error),

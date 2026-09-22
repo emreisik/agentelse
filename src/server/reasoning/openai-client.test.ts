@@ -292,4 +292,45 @@ describe("runOpenAIText", () => {
         error.message.includes("content_filter"),
     );
   });
+
+  it("retries an empty, length-truncated response with double the token budget and succeeds", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        openaiResponse(200, {
+          choices: [{ message: { content: "" }, finish_reason: "length" }],
+        }),
+      )
+      .mockResolvedValueOnce(
+        openaiResponse(200, {
+          choices: [{ message: { content: "hello" }, finish_reason: "stop" }],
+        }),
+      );
+
+    await expect(runOpenAIText(TEXT_ARGS)).resolves.toMatchObject({
+      text: "hello",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondBody = JSON.parse(fetchMock.mock.calls[1]![1]!.body as string);
+    expect(secondBody.max_completion_tokens).toBe(200);
+  });
+
+  it("gives up once the retry ceiling is reached on persistent empty length truncation", async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        openaiResponse(200, {
+          choices: [{ message: { content: "" }, finish_reason: "length" }],
+        }),
+      ),
+    );
+
+    await expect(
+      runOpenAIText({ ...TEXT_ARGS, maxOutputTokens: 40_000 }),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        isAgentelseError(error) &&
+        error.code === "INVALID_PROVIDER_RESULT" &&
+        error.message.includes("length"),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

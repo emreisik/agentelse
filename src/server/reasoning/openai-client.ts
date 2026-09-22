@@ -198,27 +198,56 @@ async function callOpenAI(input: {
   );
 }
 
+// MAX_TOKENS truncation mid-JSON has independently hit council-evaluation.ts,
+// baseline-audit.ts, constitution-synthesis.ts, department-recommendation.ts
+// and signal-profile-recommendation.ts (see those files' comments) — five
+// separate prompts, each fixed reactively by hand-raising that one prompt's
+// maxTokens after the fact. Retrying once with double the budget closes the
+// whole class at the source instead of waiting for the sixth incident to
+// add another one-off token bump.
+const MAX_TOKENS_RETRY_CEILING = 65_536;
+
 // Plain-text generation — for the task execution provider (OpenAiAiProvider).
 // The only difference from the structured call is the absence of
 // response_format: no schema, returns free-form text.
-export async function runOpenAIText(input: {
-  model: string;
-  system: string;
-  user: string;
-  maxOutputTokens: number;
-  attachments?: OpenAIInlineAttachment[];
-}): Promise<{ text: string; inputTokens?: number; outputTokens?: number }> {
+//
+// Reasoning models (e.g. the gpt-5.x family) spend part of
+// max_completion_tokens on invisible reasoning tokens before any visible
+// content — a request with a fixed, shared budget (OpenAiAiProvider uses
+// 4096 for all 14 of its owned capabilities) can burn the whole budget on
+// reasoning and return empty content with finish_reason "length" (observed
+// on MARKET_RESEARCH). Same doubling retry as runOpenAIStructured below,
+// since it's the same underlying failure mode.
+export async function runOpenAIText(
+  input: {
+    model: string;
+    system: string;
+    user: string;
+    maxOutputTokens: number;
+    attachments?: OpenAIInlineAttachment[];
+  },
+  maxOutputTokens = input.maxOutputTokens,
+): Promise<{ text: string; inputTokens?: number; outputTokens?: number }> {
   const payload = await callOpenAI({
     model: input.model,
     system: input.system,
     user: input.user,
-    maxOutputTokens: input.maxOutputTokens,
+    maxOutputTokens,
     attachments: input.attachments,
   });
 
   const choice = payload.choices?.[0];
   const text = (choice?.message?.content ?? "").trim();
   if (!text) {
+    if (
+      choice?.finish_reason === "length" &&
+      maxOutputTokens < MAX_TOKENS_RETRY_CEILING
+    ) {
+      return runOpenAIText(
+        input,
+        Math.min(maxOutputTokens * 2, MAX_TOKENS_RETRY_CEILING),
+      );
+    }
     throw new AgentelseError(
       "INVALID_PROVIDER_RESULT",
       `OpenAI returned no text (finish_reason: ${choice?.finish_reason ?? "none"})`,
@@ -231,15 +260,6 @@ export async function runOpenAIText(input: {
     outputTokens: payload.usage?.completion_tokens,
   };
 }
-
-// MAX_TOKENS truncation mid-JSON has independently hit council-evaluation.ts,
-// baseline-audit.ts, constitution-synthesis.ts, department-recommendation.ts
-// and signal-profile-recommendation.ts (see those files' comments) — five
-// separate prompts, each fixed reactively by hand-raising that one prompt's
-// maxTokens after the fact. Retrying once with double the budget closes the
-// whole class at the source instead of waiting for the sixth incident to
-// add another one-off token bump.
-const MAX_TOKENS_RETRY_CEILING = 65_536;
 
 export async function runOpenAIStructured(
   input: {

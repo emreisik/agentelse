@@ -14,11 +14,13 @@ import { signOutAction } from "@/server/actions/auth-actions";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/shared/theme-toggle";
 import { ProjectSelect } from "@/components/layout/project-select";
+import { AgencyStatusWidget } from "@/components/layout/agency-status-widget";
 import { ProjectToolsMenu } from "@/components/hub-core/project-tools-menu";
 import {
   buildHubHref,
   type PanelKey,
 } from "@/components/hub-core/hub-core-params";
+import type { AgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
 import { cn } from "@/lib/utils";
 
 export function TopBar({
@@ -28,6 +30,7 @@ export function TopBar({
   pendingHumanActions,
   systemErrors,
   toolBadges,
+  agencyStatus,
   displayName,
   workspaceName,
   email,
@@ -38,6 +41,7 @@ export function TopBar({
   pendingHumanActions: number;
   systemErrors: number;
   toolBadges: Partial<Record<PanelKey, number>>;
+  agencyStatus: AgencyStatusSnapshot | null;
   displayName: string | null;
   workspaceName: string | null;
   email: string | null;
@@ -80,6 +84,12 @@ export function TopBar({
         ) : null}
         {activeProject ? (
           <ProjectToolsMenu projectId={activeProject.id} badges={toolBadges} />
+        ) : null}
+        {activeProject ? (
+          <AgencyStatusWidget
+            projectId={activeProject.id}
+            initial={agencyStatus}
+          />
         ) : null}
       </div>
 

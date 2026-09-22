@@ -13,6 +13,7 @@ import {
   DEPARTMENT_COLOR,
   DEPARTMENT_KEY,
   EXECUTION_JOB_STATUS,
+  INTERNAL_CAPABILITIES,
   MEASUREMENT_CHECK_STATUS,
   MEASUREMENT_PLAN_STATUS,
   RISK_LEVEL,
@@ -618,6 +619,7 @@ async function TasksBoard({ projectId }: { projectId: string }) {
     status: task.status,
     priority: task.priority,
     department: task.departmentKey,
+    isInternal: INTERNAL_CAPABILITIES.has(task.capability),
   }));
 
   return (

@@ -7,6 +7,7 @@ import { SidebarNav, type SidebarFlow } from "@/components/layout/sidebar-nav";
 import { SetupProgressWidget } from "@/components/layout/setup-progress-widget";
 import { TopBar } from "@/components/layout/top-bar";
 import type { PanelKey } from "@/components/hub-core/hub-core-params";
+import { getAgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
 
 export type ProjectNavBadges = {
   setupPercent: number | null; // null = activated / no setup
@@ -250,14 +251,21 @@ export async function AppShell({
   showSidebar?: boolean;
 }) {
   const { userId, email } = await requireUser();
-  const {
-    workspace,
-    displayName,
-    pendingApprovals,
-    pendingHumanActions,
-    projectBadges,
-  } = await getSidebarData(userId, projectId);
-  const flows = projectId ? await getSidebarFlows(projectId) : null;
+  const [
+    {
+      workspace,
+      displayName,
+      pendingApprovals,
+      pendingHumanActions,
+      projectBadges,
+    },
+    flows,
+    agencyStatus,
+  ] = await Promise.all([
+    getSidebarData(userId, projectId),
+    projectId ? getSidebarFlows(projectId) : Promise.resolve(null),
+    projectId ? getAgencyStatusSnapshot(projectId) : Promise.resolve(null),
+  ]);
   const sidebarVisible = showSidebar ?? Boolean(projectId);
 
   return (
@@ -287,6 +295,7 @@ export async function AppShell({
           pendingHumanActions={pendingHumanActions}
           systemErrors={projectBadges?.systemErrors ?? 0}
           toolBadges={toolBadgesFrom(projectBadges)}
+          agencyStatus={agencyStatus}
           displayName={displayName}
           workspaceName={workspace?.name ?? null}
           email={email}

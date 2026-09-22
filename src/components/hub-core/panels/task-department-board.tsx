@@ -29,6 +29,11 @@ export type TaskBoardItem = {
   status: TaskStatus;
   priority: TaskPriority;
   department: DepartmentKey | null;
+  // SIGNAL_SCAN / MEASUREMENT_CHECK / VERIFY_EXTERNAL_ACTION — the agency's
+  // own housekeeping capabilities (see INTERNAL_CAPABILITIES). Hidden by
+  // default so the board reads as client-facing work in flight, not
+  // dominated by internal polling/verification tasks.
+  isInternal: boolean;
 };
 
 const departmentPillClasses =
@@ -45,14 +50,23 @@ export function TaskDepartmentBoard({
 }) {
   const [departmentFilter, setDepartmentFilter] =
     useState<DepartmentKey | null>(null);
+  // Default view: collapse the agency's own housekeeping tasks (signal
+  // scans, measurement checks, verification polls) so the board reads as
+  // client-facing work — a toggle reveals them for anyone who wants the
+  // full picture.
+  const [showInternal, setShowInternal] = useState(false);
+  const internalCount = tasks.filter((task) => task.isInternal).length;
+  const visible = showInternal
+    ? tasks
+    : tasks.filter((task) => !task.isInternal);
   const filtered = departmentFilter
-    ? tasks.filter((task) => task.department === departmentFilter)
-    : tasks;
+    ? visible.filter((task) => task.department === departmentFilter)
+    : visible;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      {usedDepartments.length > 0 ? (
-        <div className="flex shrink-0 flex-wrap gap-1.5">
+      {usedDepartments.length > 0 || internalCount > 0 ? (
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => setDepartmentFilter(null)}
@@ -87,6 +101,21 @@ export function TaskDepartmentBoard({
               </button>
             );
           })}
+          {internalCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setShowInternal((v) => !v)}
+              className={cn(
+                "ml-auto flex h-6 items-center gap-1 rounded-4xl px-2.5 text-xs font-medium transition-colors",
+                showInternal
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-muted-foreground hover:bg-accent",
+              )}
+            >
+              {showInternal ? "Hide" : "Show"} internal
+              <span className="tabular-nums opacity-70">{internalCount}</span>
+            </button>
+          ) : null}
         </div>
       ) : null}
 

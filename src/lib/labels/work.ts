@@ -20,6 +20,7 @@ import {
   Radio,
 } from "lucide-react";
 import type {
+  AgencyLoopStatus,
   AgencyTriggerStatus,
   AgencyTriggerType,
   CapabilityKey,
@@ -236,6 +237,26 @@ export const MEASUREMENT_CHECK_STATUS: EnumMap<MeasurementCheckStatus> = {
   FAILED: { label: "Failed", tone: "danger" },
   SKIPPED: { label: "Skipped", tone: "neutral" },
 };
+
+export const AGENCY_LOOP_STATUS: EnumMap<AgencyLoopStatus> = {
+  RUNNING: { label: "Running", tone: "active" },
+  WAITING: { label: "Waiting", tone: "waiting" },
+  BLOCKED: { label: "Blocked", tone: "danger" },
+  PAUSED: { label: "Paused", tone: "neutral" },
+  ERROR: { label: "Error", tone: "danger" },
+};
+
+// Agency-internal housekeeping capabilities (SIGNAL_SCAN's own scans,
+// MEASUREMENT_CHECK's result polling, VERIFY_EXTERNAL_ACTION's outcome
+// checks — see department-registry.ts) — excluded by default from the Work
+// panel's task board and from the Agency Status widget's tasksNow/
+// tasksWaiting counts, so both read as "client-facing work in flight"
+// instead of being dominated by the loop's own bookkeeping.
+export const INTERNAL_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set([
+  "SIGNAL_SCAN",
+  "MEASUREMENT_CHECK",
+  "VERIFY_EXTERNAL_ACTION",
+]);
 
 export const AGENCY_TRIGGER_TYPE: EnumMap<AgencyTriggerType> = {
   SCHEDULE: { label: "Schedule", tone: "neutral" },

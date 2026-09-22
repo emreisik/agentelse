@@ -5,6 +5,7 @@ import type { CapabilityKey, SocialPlatform } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { taskFingerprint } from "@/server/agency/fingerprint";
 import { TaskPlanner } from "@/server/commands/task-planner";
+import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
 import { MeasurementRepository } from "@/server/repositories/measurement.repository";
 
 const SOCIAL_PLATFORMS = new Set<string>([
@@ -121,6 +122,10 @@ export const MeasurementEngine = {
     let started = 0;
 
     for (const check of due) {
+      // Paused-project guard (audit scenario L): silently skip — no
+      // transition, no error — so a resumed project's check is simply
+      // picked up again on a later tick.
+      if (!(await isProjectAgencyActive(check.plan.projectId))) continue;
       // The plan's postUrl/platformPostId/campaignId (captured in
       // planForCompletedTask above from the original publish/campaign
       // task's result) are the actual thing to check. Confirmed in

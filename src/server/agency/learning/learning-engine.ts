@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { learningExtractionDef } from "@/server/reasoning/prompts/learning-extraction";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
+import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
 
 // Measurement results -> BrandLearning entries (spec section 32). Learnings
 // land in the existing Brand Brain model and flow into future execution
@@ -20,6 +21,10 @@ export const LearningEngine = {
 
     let extracted = 0;
     for (const plan of plans) {
+      // Paused-project guard (audit scenario L): silently skip — no
+      // BrandLearning is written, so a resumed project's plan is simply
+      // picked up again on a later tick.
+      if (!(await isProjectAgencyActive(plan.projectId))) continue;
       const existing = await prisma.brandLearning.findFirst({
         where: { sourceType: "MEASUREMENT_PLAN", sourceRef: plan.id },
         select: { id: true },

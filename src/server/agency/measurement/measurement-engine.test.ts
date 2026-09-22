@@ -35,6 +35,12 @@ vi.mock("@/server/repositories/measurement.repository", () => ({
   },
 }));
 
+const isProjectAgencyActive = vi.fn().mockResolvedValue(true);
+
+vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
+  isProjectAgencyActive,
+}));
+
 const { MeasurementEngine } =
   await import("@/server/agency/measurement/measurement-engine");
 const { TaskPlanner } = await import("@/server/commands/task-planner");
@@ -43,6 +49,7 @@ const { MeasurementRepository } =
 
 beforeEach(() => {
   vi.clearAllMocks();
+  isProjectAgencyActive.mockResolvedValue(true);
 });
 
 function dueCheck(overrides: Record<string, unknown> = {}) {
@@ -119,6 +126,58 @@ describe("MeasurementEngine.runDueChecks", () => {
       "check-1",
       "p-1",
       "RUNNING",
+    );
+  });
+});
+
+describe("MeasurementEngine.runDueChecks (paused-project guard, audit scenario L)", () => {
+  it("skips a PAUSED project's due check but still starts one for an ACTIVE project", async () => {
+    const pausedCheck = dueCheck({
+      id: "check-paused",
+      projectId: "proj-paused",
+      plan: {
+        postUrl: "https://instagram.com/p/paused",
+        platformPostId: null,
+        campaignId: null,
+        platform: "INSTAGRAM",
+        projectId: "proj-paused",
+      },
+    });
+    const activeCheck = dueCheck({
+      id: "check-active",
+      projectId: "proj-active",
+      plan: {
+        postUrl: "https://instagram.com/p/active",
+        platformPostId: null,
+        campaignId: null,
+        platform: "INSTAGRAM",
+        projectId: "proj-active",
+      },
+    });
+    vi.mocked(MeasurementRepository.listDueChecks).mockResolvedValue([
+      pausedCheck,
+      activeCheck,
+    ] as never);
+    isProjectAgencyActive.mockImplementation(
+      async (projectId: string) => projectId !== "proj-paused",
+    );
+
+    const started = await MeasurementEngine.runDueChecks();
+
+    expect(isProjectAgencyActive).toHaveBeenCalledWith("proj-paused");
+    expect(isProjectAgencyActive).toHaveBeenCalledWith("proj-active");
+    expect(started).toBe(1);
+    expect(TaskPlanner.planForCapability).toHaveBeenCalledTimes(1);
+    expect(TaskPlanner.planForCapability).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.stringContaining("https://instagram.com/p/active"),
+      }),
+    );
+    expect(MeasurementRepository.transitionCheck).not.toHaveBeenCalledWith(
+      "check-paused",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
     );
   });
 });

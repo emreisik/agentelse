@@ -2,6 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { TaskPlanner } from "@/server/commands/task-planner";
+import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { WorkPlanRepository } from "@/server/repositories/work-plan.repository";
 
@@ -17,6 +18,12 @@ export const WorkPlanProgressor = {
     workPlanId: string,
     projectId: string,
   ): Promise<number> {
+    // Paused-project guard (audit scenario L): an early return, not a loop
+    // `continue` — this is already single-project scoped by the time it's
+    // called (onTaskCompleted/onTaskTerminal resolve projectId first), so
+    // there's no batch to skip within, just the query itself to not run.
+    if (!(await isProjectAgencyActive(projectId))) return 0;
+
     const tasks = await prisma.task.findMany({
       where: { workPlanId, projectId, status: "READY" },
       select: {

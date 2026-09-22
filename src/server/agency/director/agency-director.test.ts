@@ -12,12 +12,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const ideaTransition = vi.fn().mockResolvedValue(undefined);
 const findByIdInProject = vi.fn();
+const listByStatus = vi.fn();
 
 vi.mock("@/server/repositories/idea.repository", () => ({
   IdeaRepository: {
     findByIdInProject,
     transition: ideaTransition,
+    listByStatus,
   },
+}));
+
+const isProjectAgencyActive = vi.fn().mockResolvedValue(true);
+
+vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
+  isProjectAgencyActive,
 }));
 
 const decisionCreate = vi.fn();
@@ -120,6 +128,7 @@ const baseOpportunity = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  isProjectAgencyActive.mockResolvedValue(true);
   findByIdInProject.mockResolvedValue(baseIdea);
   findMostRecentForSubject.mockResolvedValue(null);
   getOrCreate.mockResolvedValue({
@@ -164,5 +173,39 @@ describe("AgencyDirector.decideOnIdea", () => {
     for (const call of ideaTransition.mock.calls) {
       expect(call[2]).not.toBe("PLANNING");
     }
+  });
+});
+
+describe("AgencyDirector.decideShortlisted (paused-project guard, audit scenario L)", () => {
+  it("skips the batch dispatch into decideOnIdea for a PAUSED project's idea but still dispatches an ACTIVE project's idea", async () => {
+    const pausedIdea = {
+      ...baseIdea,
+      id: "idea-paused",
+      projectId: "proj-paused",
+      councilEvaluations: [{ id: "ce-1" }],
+    };
+    const activeIdea = {
+      ...baseIdea,
+      id: "idea-active",
+      projectId: "proj-active",
+      councilEvaluations: [{ id: "ce-2" }],
+    };
+    listByStatus.mockResolvedValue([pausedIdea, activeIdea]);
+    isProjectAgencyActive.mockImplementation(
+      async (projectId: string) => projectId !== "proj-paused",
+    );
+    const decideOnIdea = vi
+      .spyOn(AgencyDirector, "decideOnIdea")
+      .mockResolvedValue({ id: "decision-x" } as never);
+
+    const decided = await AgencyDirector.decideShortlisted(5);
+
+    expect(isProjectAgencyActive).toHaveBeenCalledWith("proj-paused");
+    expect(isProjectAgencyActive).toHaveBeenCalledWith("proj-active");
+    expect(decideOnIdea).not.toHaveBeenCalledWith("idea-paused", "proj-paused");
+    expect(decideOnIdea).toHaveBeenCalledWith("idea-active", "proj-active");
+    expect(decided).toBe(1);
+
+    decideOnIdea.mockRestore();
   });
 });

@@ -10,6 +10,7 @@ import { taskFingerprint } from "@/server/agency/fingerprint";
 import { DepartmentRouter } from "@/server/agency/departments/department-router";
 import { GoalEngine } from "@/server/agency/goals/goal-engine";
 import { TaskPlanner } from "@/server/commands/task-planner";
+import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
 import { AgencyDecisionRepository } from "@/server/repositories/agency-decision.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
 import { IdeaRepository } from "@/server/repositories/idea.repository";
@@ -360,6 +361,11 @@ export const AgencyDirector = {
     let decided = 0;
     for (const idea of ideas) {
       if (idea.councilEvaluations.length === 0) continue;
+      // Paused-project guard (audit scenario L): a PAUSED project's ideas
+      // are skipped silently — no error, no AgencyDecision — so a resumed
+      // project simply picks the idea back up on a later tick instead of
+      // it being treated as a failure.
+      if (!(await isProjectAgencyActive(idea.projectId))) continue;
       // Per-idea error boundary, same as the INITIAL_WORK_PLAN setup-stage
       // runner (agency-wiring.ts): one idea that can't be decided (e.g. its
       // opportunity has no linked ProjectGoal — GoalEngine.assertGoalsLinked)

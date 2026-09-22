@@ -198,21 +198,55 @@ export const ConstitutionService = {
     return BrandConstitutionRepository.getActive(brandId);
   },
 
-  // Compact slice used as `context.brand` in downstream reasoning calls.
+  // Compact slice used as `context.brand` in downstream reasoning calls —
+  // consumed as-is (JSON.stringify'd whole) by opportunity-evaluation,
+  // idea-generation and council-evaluation prompt builders, so any field
+  // added here automatically reaches those LLM calls with no template
+  // changes needed.
   async getBrandContext(brandId: string): Promise<Record<string, unknown>> {
     const active = await BrandConstitutionRepository.getActive(brandId);
-    if (active) return active.payload as Record<string, unknown>;
-    const dossier = await prisma.brandDossier.findUnique({
-      where: { brandId },
-    });
-    return dossier
-      ? {
-          identity: dossier.summary,
-          positioning: dossier.positioning,
-          toneOfVoice: dossier.toneOfVoice,
-          language: dossier.language,
-          country: dossier.country,
-        }
-      : {};
+    let base: Record<string, unknown>;
+    if (active) {
+      base = active.payload as Record<string, unknown>;
+    } else {
+      const dossier = await prisma.brandDossier.findUnique({
+        where: { brandId },
+      });
+      base = dossier
+        ? {
+            identity: dossier.summary,
+            positioning: dossier.positioning,
+            toneOfVoice: dossier.toneOfVoice,
+            language: dossier.language,
+            country: dossier.country,
+          }
+        : {};
+    }
+
+    // Closes the loop from LearningEngine/StrategyEngine (continuous
+    // resynthesis, see strategy-service.ts) back into the reasoning that
+    // decides what to pursue next — previously the refreshed strategy/
+    // learnings only reached the two EXECUTION-prompt capabilities via
+    // context-builder.ts's `strategySummary`/`brandLearnings` fields.
+    // Same query shape/limit/fields as context-builder.ts so the two paths
+    // stay consistent. Additive only: existing fields above are untouched.
+    const [latestStrategy, recentLearnings] = await Promise.all([
+      prisma.brandStrategyVersion.findFirst({
+        where: { brandId },
+        orderBy: { version: "desc" },
+      }),
+      prisma.brandLearning.findMany({
+        where: { brandId },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        select: { insight: true, confidence: true, sourceType: true },
+      }),
+    ]);
+
+    return {
+      ...base,
+      strategySummary: latestStrategy?.summary ?? null,
+      brandLearnings: recentLearnings,
+    };
   },
 };

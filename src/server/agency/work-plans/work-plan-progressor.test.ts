@@ -33,6 +33,11 @@ vi.mock("@/server/repositories/work-plan.repository", () => ({
   },
 }));
 
+const isProjectAgencyActive = vi.fn().mockResolvedValue(true);
+vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
+  isProjectAgencyActive,
+}));
+
 const { WorkPlanProgressor } =
   await import("@/server/agency/work-plans/work-plan-progressor");
 const { TaskRepository } =
@@ -44,6 +49,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   task.findMany.mockResolvedValue([]);
   taskDependency.findMany.mockResolvedValue([]);
+  isProjectAgencyActive.mockResolvedValue(true);
 });
 
 describe("WorkPlanProgressor.onTaskTerminal", () => {
@@ -183,5 +189,20 @@ describe("WorkPlanProgressor.onTaskCompleted (regression — shared reconcilePla
       "p-1",
       "COMPLETED",
     );
+  });
+});
+
+describe("WorkPlanProgressor.dispatchReadyTasks", () => {
+  it("returns 0 and runs no query when the project is paused", async () => {
+    isProjectAgencyActive.mockResolvedValue(false);
+
+    const result = await WorkPlanProgressor.dispatchReadyTasks(
+      "plan-1",
+      "p-paused",
+    );
+
+    expect(result).toBe(0);
+    expect(task.findMany).not.toHaveBeenCalled();
+    expect(isProjectAgencyActive).toHaveBeenCalledWith("p-paused");
   });
 });

@@ -4,6 +4,7 @@ import { opportunityFingerprint } from "@/server/agency/fingerprint";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { opportunityEvaluationDef } from "@/server/reasoning/prompts/opportunity-evaluation";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
+import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
 import { InsightRepository } from "@/server/repositories/insight.repository";
 import { OpportunityRepository } from "@/server/repositories/opportunity.repository";
@@ -126,6 +127,10 @@ export const OpportunityEngine = {
     const insights = await InsightRepository.listByStatus("NEW", limit);
     let created = 0;
     for (const insight of insights) {
+      // Paused project — skip without processing, exactly like
+      // signal-universe.ts's own scan skip. Try again next tick.
+      if (!(await isProjectAgencyActive(insight.projectId))) continue;
+
       try {
         const result = await this.evaluateInsight(
           insight.id,

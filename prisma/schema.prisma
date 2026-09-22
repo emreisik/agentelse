@@ -2697,6 +2697,12 @@ model AutonomyPolicy {
   maxOpenOpportunities       Int @default(30)
   maxActiveIdeas             Int @default(20)
 
+  // Backpressure cap read by AgencyDirector.decideOnIdea and
+  // WorkHandoffEngine.accept via TaskRepository.countActiveSystemTasks —
+  // caps how much SYSTEM-created work can be in flight at once for a
+  // project, independent of the daily counter caps above.
+  maxConcurrentSystemTasks Int @default(15)
+
   dailyBudgetUsd    Float?
   taskCooldownHours Int    @default(72)
 

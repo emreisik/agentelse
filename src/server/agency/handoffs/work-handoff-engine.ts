@@ -10,6 +10,7 @@ import type {
 import { taskFingerprint } from "@/server/agency/fingerprint";
 import { DepartmentRouter } from "@/server/agency/departments/department-router";
 import { TaskPlanner } from "@/server/commands/task-planner";
+import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
 import { AgencyDecisionRepository } from "@/server/repositories/agency-decision.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
 import { WorkHandoffRepository } from "@/server/repositories/work-handoff.repository";
@@ -200,6 +201,10 @@ export const WorkHandoffEngine = {
       limit,
     );
     for (const handoff of accepted) {
+      // Paused-project guard (audit scenario L): silently skip — no
+      // transition, no error — so a resumed project's handoff is simply
+      // picked up again on a later tick.
+      if (!(await isProjectAgencyActive(handoff.projectId))) continue;
       try {
         if (handoff.expiresAt && handoff.expiresAt < now) {
           await WorkHandoffRepository.transition(
@@ -239,6 +244,10 @@ export const WorkHandoffEngine = {
     );
     for (const handoff of proposed) {
       if (!handoff.expiresAt || handoff.expiresAt >= now) continue;
+      // Paused-project guard (audit scenario L): silently skip expiring
+      // this handoff for a paused project — same reasoning as the ACCEPTED
+      // sweep above.
+      if (!(await isProjectAgencyActive(handoff.projectId))) continue;
       try {
         await WorkHandoffRepository.transition(
           handoff.id,

@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { councilEvaluationDef } from "@/server/reasoning/prompts/council-evaluation";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
+import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
 import { IdeaRepository } from "@/server/repositories/idea.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { COUNCIL_RECOMMENDATION, COUNCIL_TYPE } from "@/lib/labels/ideas";
@@ -167,6 +168,9 @@ export const CouncilEngine = {
     let evaluated = 0;
     for (const idea of ideas) {
       if (idea.councilEvaluations.length > 0) continue;
+      // Paused project — skip without processing, exactly like
+      // signal-universe.ts's own scan skip. Try again next tick.
+      if (!(await isProjectAgencyActive(idea.projectId))) continue;
       try {
         await this.evaluateIdea(idea.id, idea.projectId);
         evaluated += 1;

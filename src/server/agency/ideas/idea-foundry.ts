@@ -7,6 +7,7 @@ import { ConstitutionService } from "@/server/agency/constitution/constitution-s
 import { MetaAdsQuery } from "@/server/integrations/meta-ads-query";
 import { ideaGenerationDef } from "@/server/reasoning/prompts/idea-generation";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
+import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
 import { IdeaRepository } from "@/server/repositories/idea.repository";
 import { OpportunityRepository } from "@/server/repositories/opportunity.repository";
@@ -235,6 +236,10 @@ export const IdeaFoundry = {
     });
     let total = 0;
     for (const opportunity of candidates) {
+      // Paused project — skip without processing, exactly like
+      // signal-universe.ts's own scan skip. Try again next tick.
+      if (!(await isProjectAgencyActive(opportunity.projectId))) continue;
+
       // Per-opportunity error boundary: one opportunity that fails to
       // generate an idea must not also block every OTHER project's
       // opportunity in the same batch.

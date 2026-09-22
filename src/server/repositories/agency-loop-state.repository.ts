@@ -4,6 +4,29 @@ import type { AgencyLoopStatus, AgencyTriggerType } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
+// The shared pause check every autonomous engine should call before
+// creating new work for a project — see AgencyLoopHeartbeat, which keeps
+// AgencyLoopState.status synced from Project.status as the first step of
+// every tick, before any other engine runs. Falls back to reading
+// Project.status directly when no AgencyLoopState row exists yet (a
+// brand-new project that hasn't had a heartbeat tick), so the check is
+// correct even before the heartbeat has ever run for it.
+export async function isProjectAgencyActive(
+  projectId: string,
+): Promise<boolean> {
+  const state = await prisma.agencyLoopState.findUnique({
+    where: { projectId },
+    select: { status: true },
+  });
+  if (state) return state.status !== "PAUSED";
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { status: true },
+  });
+  return project?.status !== "PAUSED";
+}
+
 export type AgencyLoopScope = {
   workspaceId: string;
   projectId: string;

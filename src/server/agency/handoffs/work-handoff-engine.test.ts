@@ -49,6 +49,12 @@ vi.mock("@/server/repositories/work-handoff.repository", () => ({
   },
 }));
 
+const isProjectAgencyActive = vi.fn().mockResolvedValue(true);
+
+vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
+  isProjectAgencyActive,
+}));
+
 const { WorkHandoffEngine } =
   await import("@/server/agency/handoffs/work-handoff-engine");
 const { DepartmentRouter } =
@@ -85,6 +91,7 @@ function makeHandoff(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  isProjectAgencyActive.mockResolvedValue(true);
   vi.mocked(DepartmentRouter.allowsTaskCreation).mockResolvedValue(true);
   vi.mocked(WorkHandoffRepository.transition).mockResolvedValue(
     undefined as never,
@@ -179,6 +186,95 @@ describe("WorkHandoffEngine.progressPending", () => {
     expect(result).toEqual({ retried: 0, expired: 0 });
     expect(TaskPlanner.planForCapability).not.toHaveBeenCalled();
     expect(WorkHandoffRepository.transition).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkHandoffEngine.progressPending (paused-project guard, audit scenario L)", () => {
+  it("skips a PAUSED project's ACCEPTED handoff but still resumes an ACTIVE project's handoff", async () => {
+    const pausedHandoff = makeHandoff({
+      id: "handoff-paused",
+      projectId: "proj-paused",
+      status: "ACCEPTED",
+    });
+    const activeHandoff = makeHandoff({
+      id: "handoff-active",
+      projectId: "proj-active",
+      status: "ACCEPTED",
+    });
+    vi.mocked(WorkHandoffRepository.listByStatus).mockImplementation(
+      (status) =>
+        Promise.resolve(
+          status === "ACCEPTED" ? [pausedHandoff, activeHandoff] : [],
+        ) as never,
+    );
+    isProjectAgencyActive.mockImplementation(
+      async (projectId: string) => projectId !== "proj-paused",
+    );
+    agencyDecision.findFirst.mockResolvedValue({ id: "decision-1" });
+    vi.mocked(AutonomyPolicyRepository.checkAndIncrement).mockResolvedValue(
+      undefined as never,
+    );
+    vi.mocked(TaskPlanner.planForCapability).mockResolvedValue({
+      task: { id: "task-1" },
+    } as never);
+
+    const result = await WorkHandoffEngine.progressPending(10);
+
+    expect(isProjectAgencyActive).toHaveBeenCalledWith("proj-paused");
+    expect(isProjectAgencyActive).toHaveBeenCalledWith("proj-active");
+    expect(result).toEqual({ retried: 1, expired: 0 });
+    expect(TaskPlanner.planForCapability).toHaveBeenCalledTimes(1);
+    expect(WorkHandoffRepository.transition).toHaveBeenCalledWith(
+      "handoff-active",
+      "proj-active",
+      "TASK_CREATED",
+      { toTaskId: "task-1", decisionId: "decision-1" },
+    );
+    expect(WorkHandoffRepository.transition).not.toHaveBeenCalledWith(
+      "handoff-paused",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("skips expiring a PAUSED project's PROPOSED handoff but still expires an ACTIVE project's", async () => {
+    const pastDate = new Date(Date.now() - 60_000);
+    const pausedProposed = makeHandoff({
+      id: "handoff-paused",
+      projectId: "proj-paused",
+      status: "PROPOSED",
+      expiresAt: pastDate,
+    });
+    const activeProposed = makeHandoff({
+      id: "handoff-active",
+      projectId: "proj-active",
+      status: "PROPOSED",
+      expiresAt: pastDate,
+    });
+    vi.mocked(WorkHandoffRepository.listByStatus).mockImplementation(
+      (status) =>
+        Promise.resolve(
+          status === "PROPOSED" ? [pausedProposed, activeProposed] : [],
+        ) as never,
+    );
+    isProjectAgencyActive.mockImplementation(
+      async (projectId: string) => projectId !== "proj-paused",
+    );
+
+    const result = await WorkHandoffEngine.progressPending(10);
+
+    expect(result).toEqual({ retried: 0, expired: 1 });
+    expect(WorkHandoffRepository.transition).toHaveBeenCalledWith(
+      "handoff-active",
+      "proj-active",
+      "EXPIRED",
+    );
+    expect(WorkHandoffRepository.transition).not.toHaveBeenCalledWith(
+      "handoff-paused",
+      expect.anything(),
+      expect.anything(),
+    );
   });
 });
 

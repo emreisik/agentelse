@@ -5,6 +5,7 @@ import { ConstitutionService } from "@/server/agency/constitution/constitution-s
 import { insightSynthesisDef } from "@/server/reasoning/prompts/insight-synthesis";
 import { signalRelevanceDef } from "@/server/reasoning/prompts/signal-relevance";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
+import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
 import { FindingRepository } from "@/server/repositories/finding.repository";
 import { InsightRepository } from "@/server/repositories/insight.repository";
 import { SignalRepository } from "@/server/repositories/signal.repository";
@@ -21,6 +22,10 @@ export const IntelligenceEngine = {
     let processed = 0;
 
     for (const signal of signals) {
+      // Paused project — push forward without processing, exactly like
+      // signal-universe.ts's own scan skip. Try again next tick.
+      if (!(await isProjectAgencyActive(signal.projectId))) continue;
+
       const brand = await ConstitutionService.getBrandContext(signal.brandId);
       const { output } = await ReasoningService.run(signalRelevanceDef, {
         workspaceId: signal.workspaceId,
@@ -214,6 +219,15 @@ export const IntelligenceEngine = {
       }
     }
 
-    return [...candidates.values()];
+    // This candidate list is dispatched 1:1 into synthesizeInsights(scope)
+    // by the tick step wiring (agency-wiring.ts), one call per project, with
+    // no further filtering there — so a paused-project candidate must be
+    // dropped here to keep that dispatch from ever seeing it. Same silent
+    // "try again next tick" behavior as signal-universe.ts's own skip.
+    const all = [...candidates.values()];
+    const activeFlags = await Promise.all(
+      all.map((candidate) => isProjectAgencyActive(candidate.projectId)),
+    );
+    return all.filter((_, index) => activeFlags[index]);
   },
 };

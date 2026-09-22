@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -122,11 +123,13 @@ export function AgencyStatusWidget({
         {meta.label}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72">
-        <DropdownMenuLabel className="flex items-center gap-2">
-          <Bot className="size-4 text-muted-foreground" />
-          Agency
-          <StatusBadge meta={meta} className="ml-auto" />
-        </DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="flex items-center gap-2">
+            <Bot className="size-4 text-muted-foreground" />
+            Agency
+            <StatusBadge meta={meta} className="ml-auto" />
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <div className="space-y-2.5 px-2 py-2 text-xs">
           {snapshot.blockedReason ? (

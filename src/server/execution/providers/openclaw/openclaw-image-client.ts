@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import { getEnv, isIntegrationConfigured } from "@/lib/env";
 import { putAsset } from "@/server/storage/asset-storage";
+import type { ImageQuality } from "@/server/reasoning/openai-image-client";
 
 const execFileAsync = promisify(execFile);
 
@@ -57,6 +58,10 @@ export function isOpenClawImageConfigured(): boolean {
 export async function generateCreativeImageAsset(
   prompt: string,
   imageSize?: { width: number; height: number },
+  // Same reasoning as openai-image-client.ts's default: left unset, the
+  // underlying provider falls back to "auto", which loses fine detail
+  // relative to explicitly requesting "high".
+  quality: ImageQuality = "high",
 ): Promise<GeneratedCreativeImage | null> {
   const env = getEnv();
   if (!env.OPENCLAW_CLI_PATH) return null;
@@ -79,6 +84,8 @@ export async function generateCreativeImageAsset(
     env.OPENCLAW_IMAGE_MODEL,
     "--size",
     imageSize ? `${imageSize.width}x${imageSize.height}` : "1024x1024",
+    "--quality",
+    quality,
     "--json",
     "--timeout-ms",
     "60000",

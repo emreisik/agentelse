@@ -19,6 +19,8 @@ import { putAsset } from "@/server/storage/asset-storage";
 // GPT image models always return base64 (b64_json), no separate download
 // step.
 
+export type ImageQuality = "low" | "medium" | "high" | "auto";
+
 const GENERATIONS_URL = "https://api.openai.com/v1/images/generations";
 const EDITS_URL = "https://api.openai.com/v1/images/edits";
 // Image generation is the slowest call this app makes (high-quality
@@ -85,11 +87,19 @@ async function storeResult(
 // existing image per instruction) and referenceImage (generate from
 // scratch but stay faithful to this — e.g. the brand logo) are mutually
 // exclusive; if both are given, baseImage wins.
+//
+// quality defaults to "high": left unset, the API falls back to "auto",
+// which favors speed/cost over fidelity and visibly loses fine detail
+// (small on-screen text, thin linework) compared to ChatGPT's own image
+// tool, which requests "high" by default. Still an explicit parameter —
+// not hardcoded — so a caller can opt a cheaper path (bulk/draft
+// generation) into "medium"/"low" later.
 export async function generateOpenAIImage(
   prompt: string,
   baseImage?: { data: string; mimeType: string },
   imageSize?: { width: number; height: number },
   referenceImage?: { data: string; mimeType: string },
+  quality: ImageQuality = "high",
 ): Promise<GeneratedCreativeImage | null> {
   const env = getEnv();
   if (!env.OPENAI_API_KEY) return null;
@@ -105,6 +115,7 @@ export async function generateOpenAIImage(
       form.set("model", model);
       form.set("prompt", prompt);
       form.set("size", size);
+      form.set("quality", quality);
       const ext = inputImage.mimeType.split("/")[1] ?? "png";
       form.set(
         "image",
@@ -126,7 +137,7 @@ export async function generateOpenAIImage(
           "content-type": "application/json",
           authorization: `Bearer ${env.OPENAI_API_KEY}`,
         },
-        body: JSON.stringify({ model, prompt, size, n: 1 }),
+        body: JSON.stringify({ model, prompt, size, quality, n: 1 }),
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
     }

@@ -60,8 +60,26 @@ describe("openai-image-client", () => {
       model: "gpt-image-2",
       prompt: "a red apple",
       size: "1088x1344", // nearest multiples of 16 to 1080x1350
+      quality: "high",
       n: 1,
     });
+  });
+
+  it("sends an explicit lower quality when the caller overrides the default", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { data: [{ b64_json: ONE_PX_PNG_B64 }] }),
+    );
+
+    await generateOpenAIImage(
+      "a red apple",
+      undefined,
+      { width: 1024, height: 1024 },
+      undefined,
+      "medium",
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(body.quality).toBe("medium");
   });
 
   it("uses the multipart edits endpoint when a base image is given", async () => {
@@ -81,6 +99,7 @@ describe("openai-image-client", () => {
     const form = init.body as FormData;
     expect(form.get("model")).toBe("gpt-image-2");
     expect(form.get("prompt")).toBe("make the sky purple");
+    expect(form.get("quality")).toBe("high");
     expect(form.get("image")).toBeInstanceOf(Blob);
   });
 

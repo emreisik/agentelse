@@ -6,6 +6,7 @@ import {
   generateOpenAIImage,
   isOpenAIImageConfigured,
   type GeneratedCreativeImage as GeneratedByOpenAI,
+  type ImageQuality,
 } from "@/server/reasoning/openai-image-client";
 import {
   generateCreativeImageAsset as generateViaOpenClaw,
@@ -88,6 +89,10 @@ export type GenerateCreativeImageOptions = {
   // on the OpenClaw path — see below.
   referenceImage?: { data: string; mimeType: string };
   imageSize?: { width: number; height: number };
+  // Defaults to "high" in both provider clients if left unset — see
+  // openai-image-client.ts's generateOpenAIImage comment. Exposed here so
+  // a caller can trade fidelity for cost on a bulk/draft generation path.
+  quality?: ImageQuality;
 };
 
 async function tryOpenAI(
@@ -100,6 +105,7 @@ async function tryOpenAI(
     options.baseImage,
     options.imageSize,
     options.referenceImage,
+    options.quality,
   );
 }
 
@@ -116,7 +122,11 @@ export async function generateCreativeImage(
   // such parameter in the CLI) — so a logo/brand reference is only usable
   // on the OpenAI path above, and is silently ignored here.
   if (isOpenClawImageConfigured()) {
-    const viaOpenClaw = await generateViaOpenClaw(prompt, opts.imageSize);
+    const viaOpenClaw = await generateViaOpenClaw(
+      prompt,
+      opts.imageSize,
+      opts.quality,
+    );
     if (viaOpenClaw) return normalizeToTarget(viaOpenClaw, opts.imageSize);
   }
   return null;

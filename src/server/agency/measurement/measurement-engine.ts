@@ -113,6 +113,9 @@ export const MeasurementEngine = {
   },
 
   // Due checks become MEASUREMENT_CHECK tasks through the normal pipeline.
+  // listDueChecks returns both fresh PENDING checks and FAILED->SCHEDULED
+  // retries whose backoff window elapsed (see onCheckTaskTerminal) — both
+  // are handled identically here.
   async runDueChecks(limit = 10): Promise<number> {
     const due = await MeasurementRepository.listDueChecks(limit);
     let started = 0;
@@ -120,14 +123,33 @@ export const MeasurementEngine = {
     for (const check of due) {
       // The plan's postUrl/platformPostId/campaignId (captured in
       // planForCompletedTask above from the original publish/campaign
-      // task's result) are the actual thing to check — falling back to the
-      // internal plan id (meaningless to the checking agent) only when none
-      // of them were ever captured.
+      // task's result) are the actual thing to check. Confirmed in
+      // production (2026-09): when none of them were ever captured (e.g.
+      // WEBSITE_UPDATE, whose provider returns no post/campaign id), the
+      // old fallback asked an agent to "check measurement plan <cuid>" — a
+      // request no provider can act on, which either hallucinated a
+      // plausible-sounding observation or failed outright. Skip honestly
+      // instead of asking for the impossible.
       const target =
         check.plan.postUrl ??
         check.plan.platformPostId ??
-        check.plan.campaignId ??
-        `measurement plan ${check.planId}`;
+        check.plan.campaignId;
+
+      if (!target) {
+        await MeasurementRepository.transitionCheck(
+          check.id,
+          check.projectId,
+          "SKIPPED",
+          {
+            resultSummary: {
+              reason: "NO_MEASURABLE_TARGET",
+              skippedAt: new Date().toISOString(),
+            },
+          },
+        );
+        await MeasurementRepository.completePlanIfDone(check.planId);
+        continue;
+      }
 
       const planned = await TaskPlanner.planForCapability({
         workspaceId: check.workspaceId,
@@ -152,6 +174,9 @@ export const MeasurementEngine = {
         },
       });
 
+      // Legal whether `check` arrived here PENDING (assertTransition treats
+      // an unchanged status as a no-op) or SCHEDULED (a retry) — either way
+      // this just (re)points resultTaskId at the fresh task.
       await MeasurementRepository.transitionCheck(
         check.id,
         check.projectId,
@@ -197,5 +222,52 @@ export const MeasurementEngine = {
       },
     );
     await MeasurementRepository.completePlanIfDone(check.planId);
+  },
+
+  // TASK_FAILED/TASK_CANCELLED fan-out — the symmetric counterpart
+  // onCheckTaskCompleted never had. Without this, a MEASUREMENT_CHECK
+  // task's provider error (a dead post, a rate-limited API, a browser
+  // session failure) left the check at RUNNING forever, which in turn
+  // permanently blocked its MeasurementPlan from reaching COMPLETED
+  // (MeasurementRepository.completePlanIfDone requires every check to be
+  // terminal) and therefore blocked LearningEngine from ever seeing it.
+  // RUNNING can only legally move to COMPLETED or FAILED next (see
+  // MEASUREMENT_CHECK_TRANSITIONS) — a CANCELLED result task is recorded
+  // as FAILED too, there's no separate CANCELLED check status. Retries a
+  // bounded number of times with exponential backoff before giving up.
+  async onCheckTaskTerminal(
+    taskId: string,
+    status: "FAILED" | "CANCELLED",
+  ): Promise<void> {
+    const check = await MeasurementRepository.findCheckByResultTask(taskId);
+    if (!check || check.status !== "RUNNING") return;
+
+    const attemptCount = check.attemptCount + 1;
+    await MeasurementRepository.transitionCheck(
+      check.id,
+      check.projectId,
+      "FAILED",
+      {
+        attemptCount,
+        lastError: `Result task ${taskId} ended ${status}`,
+      },
+    );
+
+    if (attemptCount < check.maxAttempts) {
+      // Same shape as execution-worker.ts's backoffMs, capped at 6h since a
+      // measurement retry is far less urgent than a dispatch retry.
+      const delayMs = Math.min(
+        15 * 60_000 * 2 ** (attemptCount - 1),
+        6 * 3600_000,
+      );
+      await MeasurementRepository.transitionCheck(
+        check.id,
+        check.projectId,
+        "SCHEDULED",
+        { nextAttemptAt: new Date(Date.now() + delayMs) },
+      );
+    } else {
+      await MeasurementRepository.completePlanIfDone(check.planId);
+    }
   },
 };

@@ -2628,6 +2628,16 @@ model MeasurementCheck {
   resultTaskId  String?
   resultSummary Json?
 
+  // Retry bookkeeping — previously a check's result Task ending FAILED left
+  // it stuck at RUNNING forever (no symmetric handler existed for anything
+  // but a COMPLETED result task). attemptCount/maxAttempts bound the retry
+  // loop; nextAttemptAt is when a FAILED->SCHEDULED retry becomes eligible
+  // again (checked alongside dueAt in MeasurementRepository.listDueChecks).
+  attemptCount  Int       @default(0)
+  maxAttempts   Int       @default(3)
+  nextAttemptAt DateTime?
+  lastError     String?
+
   plan MeasurementPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())

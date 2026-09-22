@@ -211,6 +211,14 @@ registerTaskCompletedHandler(async (taskId) => {
 registerTaskTerminalHandler(async (taskId, status) => {
   await WorkPlanProgressor.onTaskTerminal(taskId, status);
 });
+// Resumes handoffs accept() had to strand ACCEPTED (daily task-creation cap
+// hit) or leave PROPOSED past its expiry — see work-handoff-engine.ts's
+// progressPending, which finally gives WorkHandoffRepository.listByStatus
+// the caller it never had.
+registerAgencyTickStep({
+  name: "handoff-progression",
+  run: () => WorkHandoffEngine.progressPending(10),
+});
 // Combined AdSet+Ad wizard's second-Task fan-out (see meta-adset-chain-relay.ts).
 registerTaskCompletedHandler(async (taskId) => {
   await MetaAdSetChainRelay.onTaskCompleted(taskId);
@@ -237,6 +245,14 @@ registerTaskCompletedHandler(async (taskId) => {
 });
 registerTaskCompletedHandler(async (taskId) => {
   await MeasurementEngine.onCheckTaskCompleted(taskId);
+});
+// Symmetric to the COMPLETED handler above — a MEASUREMENT_CHECK task
+// ending FAILED/CANCELLED previously left its MeasurementCheck stuck at
+// RUNNING forever (see measurement-engine.ts's onCheckTaskTerminal), which
+// in turn meant its MeasurementPlan never reached COMPLETED and
+// LearningEngine never saw it.
+registerTaskTerminalHandler(async (taskId, status) => {
+  await MeasurementEngine.onCheckTaskTerminal(taskId, status);
 });
 
 registerAgencyTickStep({

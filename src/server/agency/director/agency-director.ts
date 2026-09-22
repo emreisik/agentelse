@@ -41,6 +41,26 @@ export function registerWorkPlanBuilder(builder: PlanBuilder): void {
   workPlanBuilder = builder;
 }
 
+// IDEA_TRANSITIONS (state-machine/transitions.ts) allows exactly one exit
+// from PLANNING: -> ACTIVE. Nothing ever re-lists or retries a PLANNING
+// idea, and IdeaRepository.countActive() counts PLANNING against the
+// project's maxActiveIdeas cap — so an Idea that reaches PLANNING and then
+// hits a thrown error (autonomy budget cap, work-plan builder failure,
+// planner failure) is stranded there permanently, silently eating a slot
+// forever. The fix is to never move the Idea past SHORTLISTED until the
+// risky operation it's paying for (the plan/task that justifies PLANNING)
+// has actually succeeded — at which point this walks it through
+// APPROVED -> PLANNING -> ACTIVE in one shot, exactly as before.
+async function advanceIdeaToActive(
+  ideaId: string,
+  projectId: string,
+  extra?: { workPlanId?: string },
+): Promise<void> {
+  await IdeaRepository.transition(ideaId, projectId, "APPROVED");
+  await IdeaRepository.transition(ideaId, projectId, "PLANNING");
+  await IdeaRepository.transition(ideaId, projectId, "ACTIVE", extra);
+}
+
 const APPROVE_THRESHOLD = 0.45;
 const BACKLOG_THRESHOLD = 0.3;
 
@@ -209,19 +229,21 @@ export const AgencyDirector = {
     }
     GoalEngine.assertGoalsLinked(goalIds, `idea ${idea.title}`);
 
-    await IdeaRepository.transition(ideaId, projectId, "APPROVED");
-    await IdeaRepository.transition(ideaId, projectId, "PLANNING");
-
     if (decisionType === "CREATE_MULTI_DEPARTMENT_PLAN" && workPlanBuilder) {
+      // Deliberately called while the Idea is still SHORTLISTED (see
+      // advanceIdeaToActive above): if workPlanBuilder throws, the Idea
+      // must not already be at PLANNING, so nothing here catches the
+      // error — it propagates to the caller's own per-idea try/catch
+      // (agency-wiring.ts's INITIAL_WORK_PLAN runner, decideShortlisted
+      // below), leaving the Idea intact and eligible to be re-decided on a
+      // later tick instead of stranded.
       const { workPlanId, taskIds } = await workPlanBuilder({
         ideaId,
         projectId,
         decisionId: decision.id,
         departments,
       });
-      await IdeaRepository.transition(ideaId, projectId, "ACTIVE", {
-        workPlanId,
-      });
+      await advanceIdeaToActive(ideaId, projectId, { workPlanId });
       await AgencyDecisionRepository.create({
         ...scope,
         subjectType: "IDEA",
@@ -270,14 +292,18 @@ export const AgencyDirector = {
       since,
     );
     if (duplicate) {
-      await IdeaRepository.transition(ideaId, projectId, "ACTIVE");
+      await advanceIdeaToActive(ideaId, projectId);
       return decision;
     }
 
     try {
       await AutonomyPolicyRepository.checkAndIncrement(scope, "tasksCreated");
     } catch {
-      return decision; // Cap reached — decision recorded, task deferred.
+      // Cap reached — decision recorded, task deferred. The Idea is still
+      // SHORTLISTED here (advanceIdeaToActive only runs once a task/plan
+      // actually gets created below), so a later tick can re-decide it
+      // instead of it being stranded at PLANNING forever.
+      return decision;
     }
 
     let planned: Awaited<ReturnType<typeof TaskPlanner.planForCapability>>;
@@ -308,13 +334,13 @@ export const AgencyDirector = {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === "P2002"
       ) {
-        await IdeaRepository.transition(ideaId, projectId, "ACTIVE");
+        await advanceIdeaToActive(ideaId, projectId);
         return decision;
       }
       throw error;
     }
 
-    await IdeaRepository.transition(ideaId, projectId, "ACTIVE");
+    await advanceIdeaToActive(ideaId, projectId);
     await AgencyDecisionRepository.create({
       ...scope,
       subjectType: "IDEA",

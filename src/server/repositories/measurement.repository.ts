@@ -61,9 +61,19 @@ export const MeasurementRepository = {
     });
   },
 
+  // Two independent sources of "due": a fresh PENDING check whose dueAt has
+  // arrived, or a FAILED->SCHEDULED retry (see onCheckTaskTerminal) whose
+  // backoff window (nextAttemptAt) has elapsed. runDueChecks treats both
+  // identically — same target resolution, same task creation.
   listDueChecks(limit: number) {
+    const now = new Date();
     return prisma.measurementCheck.findMany({
-      where: { status: "PENDING", dueAt: { lte: new Date() } },
+      where: {
+        OR: [
+          { status: "PENDING", dueAt: { lte: now } },
+          { status: "SCHEDULED", nextAttemptAt: { lte: now } },
+        ],
+      },
       take: limit,
       orderBy: { dueAt: "asc" },
       include: { plan: true },
@@ -81,7 +91,13 @@ export const MeasurementRepository = {
     checkId: string,
     projectId: string,
     to: MeasurementCheckStatus,
-    extra?: { resultTaskId?: string; resultSummary?: unknown },
+    extra?: {
+      resultTaskId?: string;
+      resultSummary?: unknown;
+      attemptCount?: number;
+      nextAttemptAt?: Date | null;
+      lastError?: string;
+    },
   ) {
     const check = await prisma.measurementCheck.findFirst({
       where: { id: checkId, projectId },
@@ -103,6 +119,12 @@ export const MeasurementRepository = {
           extra?.resultSummary === undefined
             ? (check.resultSummary as never)
             : (extra.resultSummary as never),
+        attemptCount: extra?.attemptCount ?? check.attemptCount,
+        nextAttemptAt:
+          extra?.nextAttemptAt === undefined
+            ? check.nextAttemptAt
+            : extra.nextAttemptAt,
+        lastError: extra?.lastError ?? check.lastError,
       },
     });
   },

@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
+import { IdeaRepository } from "@/server/repositories/idea.repository";
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { WorkPlanRepository } from "@/server/repositories/work-plan.repository";
 
@@ -150,4 +151,31 @@ async function reconcilePlan(
     projectId,
     anyFailed ? "FAILED" : "COMPLETED",
   );
+
+  // Audit scenario K: a failed plan must not leave its Idea stranded ACTIVE
+  // forever (permanently occupying a maxActiveIdeas slot, per
+  // IdeaRepository.countActive) with no way back into the loop. ACTIVE ->
+  // ARCHIVED is already a legal IDEA_TRANSITIONS exit — this just makes the
+  // engine actually take it, mirroring the OpportunityEngine.evaluateInsight
+  // ARCHIVED pattern for a "didn't pan out" outcome. IdeaFoundry.
+  // generateForTopOpportunities's candidate query treats an opportunity
+  // whose ideas are all ARCHIVED/REJECTED as eligible again (bounded by
+  // MAX_IDEA_ATTEMPTS_PER_OPPORTUNITY there), so the opportunity gets
+  // another attempt on a later tick instead of being permanently exhausted
+  // by one failed plan. Best-effort: a concurrent transition (idea already
+  // moved on) must not block the plan's own FAILED transition above, which
+  // has already committed.
+  if (anyFailed && plan.ideaId) {
+    try {
+      const idea = await prisma.idea.findUnique({
+        where: { id: plan.ideaId },
+        select: { status: true },
+      });
+      if (idea?.status === "ACTIVE") {
+        await IdeaRepository.transition(plan.ideaId, projectId, "ARCHIVED");
+      }
+    } catch {
+      // Best-effort — see comment above.
+    }
+  }
 }

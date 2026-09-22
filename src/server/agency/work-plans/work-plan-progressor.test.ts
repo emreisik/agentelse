@@ -7,9 +7,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const task = { findUnique: vi.fn(), findMany: vi.fn() };
 const taskDependency = { findMany: vi.fn() };
+const idea = { findUnique: vi.fn() };
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { task, taskDependency },
+  prisma: { task, taskDependency, idea },
 }));
 
 vi.mock("@/server/commands/task-planner", () => ({
@@ -33,6 +34,11 @@ vi.mock("@/server/repositories/work-plan.repository", () => ({
   },
 }));
 
+const ideaTransition = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/server/repositories/idea.repository", () => ({
+  IdeaRepository: { transition: ideaTransition },
+}));
+
 const isProjectAgencyActive = vi.fn().mockResolvedValue(true);
 vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
   isProjectAgencyActive,
@@ -50,6 +56,7 @@ beforeEach(() => {
   task.findMany.mockResolvedValue([]);
   taskDependency.findMany.mockResolvedValue([]);
   isProjectAgencyActive.mockResolvedValue(true);
+  idea.findUnique.mockResolvedValue(null);
 });
 
 describe("WorkPlanProgressor.onTaskTerminal", () => {
@@ -142,6 +149,59 @@ describe("WorkPlanProgressor.onTaskTerminal", () => {
       "p-1",
       "FAILED",
     );
+  });
+
+  it("archives the plan's ACTIVE idea when the plan reaches FAILED (audit scenario K)", async () => {
+    task.findUnique.mockResolvedValue({
+      workPlanId: "plan-1",
+      projectId: "p-1",
+    });
+    vi.mocked(WorkPlanRepository.findByIdInProject).mockResolvedValue({
+      id: "plan-1",
+      status: "IN_PROGRESS",
+      ideaId: "idea-1",
+      tasks: [{ status: "FAILED" }, { status: "COMPLETED" }],
+    } as never);
+    idea.findUnique.mockResolvedValue({ status: "ACTIVE" });
+
+    await WorkPlanProgressor.onTaskTerminal("task-a", "FAILED");
+
+    expect(ideaTransition).toHaveBeenCalledWith("idea-1", "p-1", "ARCHIVED");
+  });
+
+  it("does not archive the idea when the plan COMPLETES (no failure)", async () => {
+    task.findUnique.mockResolvedValue({
+      workPlanId: "plan-1",
+      projectId: "p-1",
+    });
+    vi.mocked(WorkPlanRepository.findByIdInProject).mockResolvedValue({
+      id: "plan-1",
+      status: "IN_PROGRESS",
+      ideaId: "idea-1",
+      tasks: [{ status: "COMPLETED" }, { status: "COMPLETED" }],
+    } as never);
+
+    await WorkPlanProgressor.onTaskCompleted("task-a");
+
+    expect(ideaTransition).not.toHaveBeenCalled();
+  });
+
+  it("does not try to archive an idea that has already moved on from ACTIVE", async () => {
+    task.findUnique.mockResolvedValue({
+      workPlanId: "plan-1",
+      projectId: "p-1",
+    });
+    vi.mocked(WorkPlanRepository.findByIdInProject).mockResolvedValue({
+      id: "plan-1",
+      status: "IN_PROGRESS",
+      ideaId: "idea-1",
+      tasks: [{ status: "FAILED" }, { status: "COMPLETED" }],
+    } as never);
+    idea.findUnique.mockResolvedValue({ status: "MEASURING" });
+
+    await WorkPlanProgressor.onTaskTerminal("task-a", "FAILED");
+
+    expect(ideaTransition).not.toHaveBeenCalled();
   });
 
   it("leaves the plan IN_PROGRESS while any task is still non-terminal", async () => {

@@ -15,6 +15,11 @@ import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 
 import { DEFAULT_LENS_MIX, LENS_DEFINITIONS } from "./creative-lenses";
 
+// Bounds audit scenario K's opportunity retry so a repeatedly-failing
+// concept can't regenerate ideas forever — 3 total attempts (the original
+// plus two retries) before the opportunity is dismissed for good.
+const MAX_IDEA_ATTEMPTS_PER_OPPORTUNITY = 3;
+
 // Also shows what came BEFORE the idea's "zero point" in the chat: writes
 // the Signal(s)/Finding(s)/Insight+Opportunity chain that produced this idea
 // (Opportunity.insightId -> Insight.{signalIds,findingIds}) using their OWN
@@ -229,16 +234,48 @@ export const IdeaFoundry = {
   async generateForTopOpportunities(limit = 3): Promise<number> {
     const { prisma } = await import("@/lib/prisma");
     const candidates = await prisma.opportunity.findMany({
-      where: { status: "EVALUATED", ideas: { none: {} } },
+      where: {
+        status: "EVALUATED",
+        // Eligible for a fresh attempt when it has no idea yet, OR every
+        // idea it already produced ended up ARCHIVED/REJECTED (audit
+        // scenario K: work-plan-progressor.ts's reconcilePlan archives an
+        // idea whose WorkPlan failed — without this, the original
+        // `ideas: { none: {} }` filter permanently excluded that
+        // opportunity from ever getting a retry).
+        ideas: { none: { status: { notIn: ["ARCHIVED", "REJECTED"] } } },
+      },
       orderBy: [{ nbaScore: "desc" }, { createdAt: "asc" }],
       distinct: ["projectId"],
       take: limit,
+      include: { _count: { select: { ideas: true } } },
     });
     let total = 0;
     for (const opportunity of candidates) {
       // Paused project — skip without processing, exactly like
       // signal-universe.ts's own scan skip. Try again next tick.
       if (!(await isProjectAgencyActive(opportunity.projectId))) continue;
+
+      // Retry cap (audit scenario K, "no uncontrolled task generation"): an
+      // opportunity that has already exhausted its attempts is dismissed
+      // outright rather than left to match this query forever with nothing
+      // to show for it — every existing idea is already ARCHIVED/REJECTED
+      // at this point, so DISMISSED is a genuine give-up, not a duplicate
+      // of either.
+      if (opportunity._count.ideas >= MAX_IDEA_ATTEMPTS_PER_OPPORTUNITY) {
+        try {
+          await OpportunityRepository.transition(
+            opportunity.id,
+            opportunity.projectId,
+            "DISMISSED",
+          );
+        } catch (error) {
+          console.error(
+            `[idea-foundry] failed to dismiss exhausted opportunity ${opportunity.id} (${opportunity.title}):`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+        continue;
+      }
 
       // Per-opportunity error boundary: one opportunity that fails to
       // generate an idea must not also block every OTHER project's

@@ -61,24 +61,86 @@ export const WorkPlanProgressor = {
     if (!task?.workPlanId) return;
 
     await this.dispatchReadyTasks(task.workPlanId, task.projectId);
+    await reconcilePlan(task.workPlanId, task.projectId);
+  },
 
-    const plan = await WorkPlanRepository.findByIdInProject(
-      task.workPlanId,
-      task.projectId,
-    );
-    if (!plan || plan.status !== "IN_PROGRESS") return;
+  // TASK_FAILED/TASK_CANCELLED fan-out — the symmetric counterpart
+  // onTaskCompleted never had. Without this, a FAILED dependency left its
+  // dependents READY forever (TaskRepository.dependenciesSatisfied requires
+  // EVERY dependency to be exactly COMPLETED) and a plan with a dead branch
+  // never left IN_PROGRESS. On FAILED, every direct dependent that hasn't
+  // already started is cancelled — its input can now never arrive — which
+  // in turn fires its own TASK_CANCELLED trigger and cascades down the
+  // graph one level at a time, each level driven by a fresh trigger rather
+  // than in-process recursion.
+  async onTaskTerminal(
+    taskId: string,
+    status: "FAILED" | "CANCELLED",
+  ): Promise<void> {
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { workPlanId: true, projectId: true },
+    });
+    if (!task?.workPlanId) return;
 
-    const statuses = plan.tasks.map((t) => t.status);
-    const allTerminal = statuses.every((s) =>
-      ["COMPLETED", "FAILED", "CANCELLED"].includes(s),
-    );
-    if (!allTerminal) return;
+    if (status === "FAILED") {
+      const dependents = await prisma.taskDependency.findMany({
+        where: { dependsOnTaskId: taskId },
+        select: {
+          taskId: true,
+          task: { select: { status: true, projectId: true } },
+        },
+      });
+      for (const dep of dependents) {
+        if (["COMPLETED", "FAILED", "CANCELLED"].includes(dep.task.status)) {
+          continue;
+        }
+        try {
+          await TaskRepository.transition(
+            dep.taskId,
+            dep.task.projectId,
+            "CANCELLED",
+            { failureReason: `Upstream dependency ${taskId} failed` },
+          );
+        } catch {
+          // A concurrent transition (e.g. it was just dispatched) may make
+          // this illegal by the time we get here — best-effort; the
+          // all-terminal check below still resolves the plan once whatever
+          // beat us here reaches its own terminal state.
+        }
+      }
+    }
 
-    const anyFailed = statuses.some((s) => s === "FAILED");
-    await WorkPlanRepository.transition(
-      plan.id,
-      task.projectId,
-      anyFailed ? "FAILED" : "COMPLETED",
-    );
+    await this.dispatchReadyTasks(task.workPlanId, task.projectId);
+    await reconcilePlan(task.workPlanId, task.projectId);
   },
 };
+
+// Shared by onTaskCompleted/onTaskTerminal (previously duplicated inline in
+// each): once every task in an IN_PROGRESS plan has reached a terminal
+// status, the plan itself becomes FAILED if any task FAILED, else COMPLETED
+// — unchanged from the original onTaskCompleted-only logic, just now also
+// reachable from a FAILED/CANCELLED task instead of only a COMPLETED one.
+async function reconcilePlan(
+  workPlanId: string,
+  projectId: string,
+): Promise<void> {
+  const plan = await WorkPlanRepository.findByIdInProject(
+    workPlanId,
+    projectId,
+  );
+  if (!plan || plan.status !== "IN_PROGRESS") return;
+
+  const statuses = plan.tasks.map((t) => t.status);
+  const allTerminal = statuses.every((s) =>
+    ["COMPLETED", "FAILED", "CANCELLED"].includes(s),
+  );
+  if (!allTerminal) return;
+
+  const anyFailed = statuses.some((s) => s === "FAILED");
+  await WorkPlanRepository.transition(
+    plan.id,
+    projectId,
+    anyFailed ? "FAILED" : "COMPLETED",
+  );
+}

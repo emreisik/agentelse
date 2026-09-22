@@ -233,7 +233,12 @@ export const TaskRepository = {
     });
   },
 
-  async transition(taskId: string, projectId: string, to: TaskStatus) {
+  async transition(
+    taskId: string,
+    projectId: string,
+    to: TaskStatus,
+    options?: { failureReason?: string },
+  ) {
     const task = await prisma.task.findFirst({
       where: { id: taskId, projectId },
     });
@@ -270,6 +275,36 @@ export const TaskRepository = {
           type: "TASK_COMPLETED",
           payload: { taskId: task.id, capability: task.capability },
           dedupeKey: `task-completed:${task.id}`,
+        });
+      } catch {
+        // Best-effort — the continuous engine sweeps unmaterialized tasks.
+      }
+    }
+
+    // Symmetric fan-out for FAILED/CANCELLED — previously only COMPLETED
+    // ever reached the loop, so WorkPlanProgressor/MeasurementEngine had no
+    // way to react to a failure: a dependent task's dependenciesSatisfied()
+    // check requires ALL deps COMPLETED, so a FAILED dependency left it
+    // READY forever, and a MEASUREMENT_CHECK's Task failing left the check
+    // stuck RUNNING forever (see WorkPlanProgressor.onTaskTerminal /
+    // MeasurementEngine.onCheckTaskTerminal, registered against these two
+    // trigger types in agency-wiring.ts).
+    if ((to === "FAILED" || to === "CANCELLED") && task.status !== to) {
+      try {
+        await AgencyTriggerRepository.enqueue({
+          workspaceId: task.workspaceId,
+          projectId: task.projectId,
+          brandId: task.brandId,
+          type: to === "FAILED" ? "TASK_FAILED" : "TASK_CANCELLED",
+          payload: {
+            taskId: task.id,
+            capability: task.capability,
+            terminalStatus: to,
+            workPlanId: task.workPlanId ?? undefined,
+            departmentKey: task.departmentKey ?? undefined,
+            failureReason: options?.failureReason,
+          },
+          dedupeKey: `task-${to.toLowerCase()}:${task.id}`,
         });
       } catch {
         // Best-effort — the continuous engine sweeps unmaterialized tasks.

@@ -104,11 +104,9 @@ export const SelfHealingService = {
         select: { status: true, projectId: true },
       });
       if (task && task.status !== "FAILED") {
-        await TaskRepository.transition(
-          job.taskId,
-          task.projectId,
-          "FAILED",
-        ).catch((error) => {
+        await TaskRepository.transition(job.taskId, task.projectId, "FAILED", {
+          failureReason: "Stuck job automatically timed out",
+        }).catch((error) => {
           console.error(
             `[self-healing] failed to transition task ${job.taskId} to FAILED after stuck-job reset:`,
             error instanceof Error ? error.message : error,

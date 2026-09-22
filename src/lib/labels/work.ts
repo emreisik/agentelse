@@ -249,6 +249,8 @@ export const AGENCY_TRIGGER_TYPE: EnumMap<AgencyTriggerType> = {
   TREND_CHANGE: { label: "Trend Change", tone: "active" },
   PERFORMANCE_CHANGE: { label: "Performance Change", tone: "active" },
   TASK_COMPLETED: { label: "Task Completed", tone: "positive" },
+  TASK_FAILED: { label: "Task Failed", tone: "danger" },
+  TASK_CANCELLED: { label: "Task Cancelled", tone: "neutral" },
   CAMPAIGN_COMPLETED: { label: "Campaign Completed", tone: "positive" },
   FOLLOW_UP_DUE: { label: "Follow-up Due", tone: "waiting" },
   PROJECT_GOAL_CHANGED: { label: "Goal Changed", tone: "active" },

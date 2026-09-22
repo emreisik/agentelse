@@ -442,6 +442,9 @@ export const ExecutionService = {
           job.taskId,
           job.projectId,
           taskTargetStatus,
+          taskTargetStatus === "FAILED"
+            ? { failureReason: status.errorMessage ?? undefined }
+            : undefined,
         );
       }
     }

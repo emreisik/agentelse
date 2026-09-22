@@ -213,6 +213,7 @@ describe("resetStuckJobs", () => {
       "task-9",
       "p-1",
       "FAILED",
+      { failureReason: "Stuck job automatically timed out" },
     );
   });
 

@@ -689,6 +689,12 @@ enum AgencyTriggerType {
   TREND_CHANGE
   PERFORMANCE_CHANGE
   TASK_COMPLETED
+  // Symmetric counterparts to TASK_COMPLETED, added so a terminal FAILED/
+  // CANCELLED task becomes observable to the rest of the Agency OS loop —
+  // previously only COMPLETED ever enqueued a trigger, leaving
+  // WorkPlanProgressor/MeasurementEngine unable to react to a failure.
+  TASK_FAILED
+  TASK_CANCELLED
   CAMPAIGN_COMPLETED
   FOLLOW_UP_DUE
   PROJECT_GOAL_CHANGED

@@ -19,6 +19,7 @@ import { registerSetupStageRunner } from "@/server/agency/setup/project-setup-or
 import {
   registerAgencyTickStep,
   registerTaskCompletedHandler,
+  registerTaskTerminalHandler,
 } from "@/server/agency/continuous/continuous-agency-engine";
 import { LearningEngine } from "@/server/agency/learning/learning-engine";
 import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
@@ -202,6 +203,13 @@ registerTaskCompletedHandler(async (taskId) => {
 });
 registerTaskCompletedHandler(async (taskId) => {
   await WorkHandoffEngine.onTaskCompleted(taskId);
+});
+// Symmetric to the COMPLETED path above — a FAILED task's work plan needs
+// to know too (cascade-cancel dependents, resolve the plan to FAILED once
+// every node is terminal), or the plan and any dependent task strand
+// forever (see work-plan-progressor.ts's onTaskTerminal).
+registerTaskTerminalHandler(async (taskId, status) => {
+  await WorkPlanProgressor.onTaskTerminal(taskId, status);
 });
 // Combined AdSet+Ad wizard's second-Task fan-out (see meta-adset-chain-relay.ts).
 registerTaskCompletedHandler(async (taskId) => {

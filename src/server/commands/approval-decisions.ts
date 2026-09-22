@@ -321,6 +321,7 @@ export async function applyApprovalDecision(input: {
         approval.taskId,
         approval.projectId,
         "CANCELLED",
+        { failureReason: "Rejected by approver" },
       );
     }
   }

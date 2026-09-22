@@ -47,6 +47,30 @@ export const ContinuousAgencyEngine = {
               });
             }
           }
+        } else if (
+          trigger.type === "TASK_FAILED" ||
+          trigger.type === "TASK_CANCELLED"
+        ) {
+          // Symmetric to TASK_COMPLETED above, minus ResultMaterializer
+          // (there's no successful result to materialize). No result to
+          // materialize either way — a failed/cancelled task never reaches
+          // pollOnce's "COMPLETED" branch.
+          const payload = (trigger.payload ?? {}) as {
+            taskId?: string;
+            terminalStatus?: "FAILED" | "CANCELLED";
+          };
+          if (payload.taskId) {
+            const status =
+              payload.terminalStatus ??
+              (trigger.type === "TASK_FAILED" ? "FAILED" : "CANCELLED");
+            for (const handler of TASK_TERMINAL_HANDLERS) {
+              await handler(payload.taskId, status, {
+                workspaceId: trigger.workspaceId,
+                projectId: trigger.projectId,
+                brandId: trigger.brandId,
+              });
+            }
+          }
         }
         // Other trigger types currently act as wake-ups: their existence
         // makes this tick run the downstream pipeline steps below.
@@ -111,4 +135,22 @@ export function registerTaskCompletedHandler(
   handler: TaskCompletedHandler,
 ): void {
   TASK_COMPLETED_HANDLERS.push(handler);
+}
+
+// Symmetric to TaskCompletedHandler — fired for a task's TASK_FAILED/
+// TASK_CANCELLED trigger (see task.repository.ts's transition()). This is
+// what lets WorkPlanProgressor/MeasurementEngine react to a failure instead
+// of only ever seeing completions.
+type TaskTerminalHandler = (
+  taskId: string,
+  status: "FAILED" | "CANCELLED",
+  scope: { workspaceId: string; projectId: string; brandId: string },
+) => Promise<void>;
+
+const TASK_TERMINAL_HANDLERS: TaskTerminalHandler[] = [];
+
+export function registerTaskTerminalHandler(
+  handler: TaskTerminalHandler,
+): void {
+  TASK_TERMINAL_HANDLERS.push(handler);
 }

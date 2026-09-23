@@ -29,6 +29,9 @@ export const CommandRepository = {
     projectId?: string;
     brandId?: string;
     ideaId?: string;
+    // A non-idea, non-general conversation scope (e.g. "BRAND_BRAIN") — see
+    // schema.prisma's Command.topic comment.
+    topic?: string;
     source: CommandSource;
     rawText: string;
     parsedIntent?: unknown;

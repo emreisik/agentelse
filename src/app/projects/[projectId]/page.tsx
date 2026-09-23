@@ -281,8 +281,12 @@ export default async function ProjectChatPage({
       // PerformanceOptimizer's rule-based proposals, see
       // idea-chat.repository.ts) posts here instead of a specific idea
       // thread, so its approval/result cards are still visible somewhere.
+      // topic: null excludes scoped threads that aren't this general feed
+      // or an idea's own chat — today just the Brand Brain conversation
+      // (brand-brain-chat-service.ts), which renders on its own panel.
       where: {
         projectId,
+        topic: null,
         OR: [{ source: "WEB" }, { source: "SYSTEM", ideaId: null }],
       },
       orderBy: { createdAt: "desc" },

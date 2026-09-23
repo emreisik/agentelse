@@ -3,11 +3,13 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { languageLabel, countryLabel } from "@/lib/locales";
 import { constitutionSynthesisDef } from "@/server/reasoning/prompts/constitution-synthesis";
+import type { BrandBrainRevision } from "@/server/reasoning/prompts/brand-brain-chat";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { BrandConstitutionRepository } from "@/server/repositories/brand-constitution.repository";
 import { BrandDecisionRepository } from "@/server/repositories/brand-decision.repository";
 import { BrandEvidenceRepository } from "@/server/repositories/brand-evidence.repository";
 import { FindingRepository } from "@/server/repositories/finding.repository";
+import { AgentelseError } from "@/server/security/errors";
 
 import {
   BrandConstitutionPayloadSchema,
@@ -248,5 +250,69 @@ export const ConstitutionService = {
       strategySummary: latestStrategy?.summary ?? null,
       brandLearnings: recentLearnings,
     };
+  },
+
+  // The Brand Brain chat's "Apply" action (brand-brain-chat-service.ts +
+  // applyBrandBrainRevisionAction) — a human-confirmed, conversation-driven
+  // update instead of synthesize()'s Findings-driven one, but reusing every
+  // other step: merge onto the CURRENT active payload (only fields the
+  // chat actually proposed are touched — everything else carries over
+  // unchanged), validate, version, activate, promote to Brand Brain tables.
+  // Same versioned-history guarantee as synthesize(): nothing is destroyed,
+  // a new version is created and the old one is superseded, not overwritten.
+  async applyConversationRevision(input: {
+    workspaceId: string;
+    projectId: string;
+    brandId: string;
+    revision: BrandBrainRevision;
+    summary: string;
+    userId: string;
+  }) {
+    const active = await BrandConstitutionRepository.getActive(input.brandId);
+    if (!active) {
+      throw new AgentelseError(
+        "NOT_FOUND",
+        `No active constitution for brand ${input.brandId} to revise`,
+      );
+    }
+
+    const current = active.payload as BrandConstitutionPayload;
+    const merged: BrandConstitutionPayload = { ...current };
+    for (const [key, value] of Object.entries(input.revision)) {
+      if (value !== null && value !== undefined) {
+        (merged as Record<string, unknown>)[key] = value;
+      }
+    }
+    const payload = BrandConstitutionPayloadSchema.parse(merged);
+
+    const scope = {
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      brandId: input.brandId,
+    };
+
+    const constitution = await BrandConstitutionRepository.createNextVersion({
+      ...scope,
+      payload,
+      summary: payload.identity,
+      isMock: false,
+    });
+    const activated = await BrandConstitutionRepository.activate(
+      constitution.id,
+      input.brandId,
+    );
+
+    await BrandDecisionRepository.record({
+      ...scope,
+      topic: "Brand Constitution",
+      decision: `v${activated.version} activated via Brand Brain chat`,
+      rationale: input.summary,
+      decidedByType: "USER",
+      decidedByUserId: input.userId,
+    });
+
+    await promoteConstitutionToBrandBrain(scope, payload, activated.version);
+
+    return activated;
   },
 };

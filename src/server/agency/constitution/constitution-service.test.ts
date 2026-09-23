@@ -7,10 +7,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // additively, alongside the existing constitution/dossier fields — and
 // never throws when neither exists yet for a brand.
 
-const brandConstitution = { findFirst: vi.fn() };
+const brandConstitution = {
+  findFirst: vi.fn(),
+  create: vi.fn(),
+  updateMany: vi.fn(),
+  update: vi.fn(),
+};
 const brandDossier = { findUnique: vi.fn() };
 const brandStrategyVersion = { findFirst: vi.fn() };
 const brandLearning = { findMany: vi.fn() };
+const brandDecision = { create: vi.fn() };
+const brandFact = { deleteMany: vi.fn(), createMany: vi.fn() };
+const brandAssumption = { deleteMany: vi.fn(), createMany: vi.fn() };
+const approvedClaim = { deleteMany: vi.fn(), createMany: vi.fn() };
+const negativeBriefRule = { deleteMany: vi.fn(), createMany: vi.fn() };
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -18,6 +28,13 @@ vi.mock("@/lib/prisma", () => ({
     brandDossier,
     brandStrategyVersion,
     brandLearning,
+    brandDecision,
+    brandFact,
+    brandAssumption,
+    approvedClaim,
+    negativeBriefRule,
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ brandConstitution }),
   },
 }));
 
@@ -26,6 +43,22 @@ const { ConstitutionService } =
 
 beforeEach(() => {
   vi.clearAllMocks();
+  brandConstitution.create.mockResolvedValue({ id: "constitution-2" });
+  brandConstitution.updateMany.mockResolvedValue({ count: 1 });
+  brandConstitution.update.mockResolvedValue({
+    id: "constitution-2",
+    version: 2,
+  });
+  brandDecision.create.mockResolvedValue(undefined);
+  for (const model of [
+    brandFact,
+    brandAssumption,
+    approvedClaim,
+    negativeBriefRule,
+  ]) {
+    model.deleteMany.mockResolvedValue({ count: 0 });
+    model.createMany.mockResolvedValue({ count: 0 });
+  }
 });
 
 describe("ConstitutionService.getBrandContext", () => {
@@ -118,5 +151,103 @@ describe("ConstitutionService.getBrandContext", () => {
       strategySummary: null,
       brandLearnings: [],
     });
+  });
+});
+
+describe("ConstitutionService.applyConversationRevision", () => {
+  const activePayload = {
+    language: "en",
+    country: "US",
+    identity: "Acme is a premium tools brand",
+    businessModel: "Direct-to-consumer e-commerce",
+    positioning: "Premium DIY tools for professionals",
+    valueProposition: "Professional-grade tools at fair prices",
+    personality: "Confident, reliable, no-nonsense",
+    toneOfVoice: "Confident, technical",
+    visualIdentity: "Bold red and black, industrial typography",
+    knownFacts: ["Founded 2010"],
+    logoAssetIds: [],
+  };
+
+  beforeEach(() => {
+    brandConstitution.findFirst.mockResolvedValue({
+      id: "constitution-1",
+      version: 1,
+      status: "ACTIVE",
+      payload: activePayload,
+    });
+  });
+
+  it("only overrides fields the revision actually proposed, carrying the rest over unchanged", async () => {
+    const activated = await ConstitutionService.applyConversationRevision({
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      brandId: "brand-1",
+      revision: { toneOfVoice: "Warmer, more conversational" },
+      summary: "Shift tone warmer per client feedback",
+      userId: "user-1",
+    });
+
+    expect(brandConstitution.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          payload: expect.objectContaining({
+            // Unchanged fields carry over from the active payload.
+            identity: activePayload.identity,
+            positioning: activePayload.positioning,
+            knownFacts: activePayload.knownFacts,
+            // Only the proposed field actually changed.
+            toneOfVoice: "Warmer, more conversational",
+          }),
+        }),
+      }),
+    );
+    expect(brandDecision.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          rationale: "Shift tone warmer per client feedback",
+          decidedByType: "USER",
+          decidedByUserId: "user-1",
+        }),
+      }),
+    );
+    expect(activated).toEqual({ id: "constitution-2", version: 2 });
+  });
+
+  it("ignores null/undefined fields in the revision instead of clearing them", async () => {
+    await ConstitutionService.applyConversationRevision({
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      brandId: "brand-1",
+      revision: {
+        toneOfVoice: "Warmer",
+        positioning: null,
+        identity: undefined,
+      },
+      summary: "Tone only",
+      userId: "user-1",
+    });
+
+    const payload = brandConstitution.create.mock.calls[0]![0].data.payload;
+    expect(payload.positioning).toBe(activePayload.positioning);
+    expect(payload.identity).toBe(activePayload.identity);
+    expect(payload.toneOfVoice).toBe("Warmer");
+  });
+
+  it("throws when the brand has no active constitution to revise", async () => {
+    brandConstitution.findFirst.mockResolvedValue(null);
+
+    await expect(
+      ConstitutionService.applyConversationRevision({
+        workspaceId: "ws-1",
+        projectId: "proj-1",
+        brandId: "brand-new",
+        revision: { toneOfVoice: "Warmer" },
+        summary: "x",
+        userId: "user-1",
+      }),
+    ).rejects.toThrow(/no active constitution/i);
+
+    expect(brandConstitution.create).not.toHaveBeenCalled();
   });
 });

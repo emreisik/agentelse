@@ -26,6 +26,12 @@ import {
 import { BrandDossierEditSheet } from "@/components/brand/brand-dossier-edit-sheet";
 import { BrandLogoCard } from "@/components/brand/brand-logo-card";
 import { VisualIdentitySection } from "@/components/brand/visual-identity-section";
+import {
+  BrandBrainChat,
+  type BrandBrainChatTurn,
+} from "@/components/brand-brain/brand-brain-chat";
+import { BRAND_BRAIN_TOPIC } from "@/server/commands/brand-brain-chat-service";
+import type { BrandBrainRevision } from "@/server/reasoning/prompts/brand-brain-chat";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -114,8 +120,38 @@ export async function BrandBrainPanel({ projectId, entity }: PanelProps) {
     where: { projectId },
   });
 
+  const brainThreadCommands = await prisma.command.findMany({
+    where: { projectId, topic: BRAND_BRAIN_TOPIC },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: {
+      id: true,
+      source: true,
+      rawText: true,
+      replyText: true,
+      parsedIntent: true,
+    },
+  });
+  const brainThreadTurns: BrandBrainChatTurn[] = brainThreadCommands
+    .reverse()
+    .map((command) => {
+      const parsed = command.parsedIntent as {
+        proposedRevision?: BrandBrainRevision;
+        revisionSummary?: string;
+      } | null;
+      return {
+        commandId: command.id,
+        source: command.source as "WEB" | "SYSTEM",
+        text: command.rawText,
+        reply: command.replyText,
+        proposedRevision: parsed?.proposedRevision ?? null,
+        revisionSummary: parsed?.revisionSummary ?? null,
+      };
+    });
+
   return (
     <div className="space-y-8 py-6">
+      <BrandBrainChat projectId={projectId} initialTurns={brainThreadTurns} />
       <AssetsSection projectId={projectId} brandId={brandId} />
       <Section title="Visual Identity" icon={Palette}>
         <VisualIdentitySection projectId={projectId} brandId={brandId} />

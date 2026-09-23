@@ -60,12 +60,15 @@ export async function generateRealCreativeImageAction(
     typeof contentFormatRaw === "string" && contentFormatRaw
       ? (contentFormatRaw as CreativeContentFormat)
       : undefined;
+  const falModelId =
+    String(formData.get("falModelId") ?? "").trim() || undefined;
   const { userId } = await requireUser();
   return performCreativeRevision({
     creativeId,
     instruction,
     mode,
     contentFormat,
+    falModelId,
     userId,
   });
 }
@@ -105,12 +108,18 @@ export async function performCreativeRevision({
   instruction,
   mode,
   contentFormat,
+  falModelId,
   userId,
 }: {
   creativeId: string;
   instruction: string;
   mode: string;
   contentFormat?: CreativeContentFormat;
+  // A fal-image-models.ts id — only ever set from the Studio form (see
+  // generateRealCreativeImageAction), never from the chat-facing
+  // reviseCreativeAction, which has no model picker and stays on the
+  // default OpenAI -> OpenClaw chain.
+  falModelId?: string;
   userId: string;
 }): Promise<ActionResult> {
   try {
@@ -200,6 +209,7 @@ export async function performCreativeRevision({
       baseImage,
       referenceImage: styleImage ?? undefined,
       imageSize: platformFormat.pixelSize,
+      falModelId,
     });
     if (!generated) {
       return {

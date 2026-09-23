@@ -8,6 +8,7 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 import { isAgentelseError } from "@/server/security/errors";
+import { isFalImageConfigured } from "@/server/reasoning/fal-image-client";
 import { CreativeRepository } from "@/server/repositories/creative.repository";
 import { assignCreativeDateAction } from "@/server/actions/creative-calendar-actions";
 import {
@@ -564,6 +565,7 @@ function CreativeDetailDialog({
         creativeId={creative.id}
         hasImage={hasImage}
         platform={creative.platform}
+        isFalConfigured={isFalImageConfigured()}
       />
     </EntityDialog>
   );

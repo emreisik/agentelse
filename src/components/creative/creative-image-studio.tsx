@@ -8,6 +8,7 @@ import {
   getAvailableContentFormats,
   getCreativePlatformFormat,
 } from "@/lib/creative-platform-format";
+import { FAL_IMAGE_MODELS } from "@/lib/fal-image-models";
 import { generateRealCreativeImageAction } from "@/server/actions/creative-actions";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,10 +32,16 @@ export function CreativeImageStudio({
   creativeId,
   hasImage,
   platform,
+  // Server-computed (getEnv() isn't available client-side) — see
+  // isFalImageConfigured() in fal-image-client.ts. When false, the model
+  // picker below doesn't render at all: zero UI change for a project
+  // without FAL_API_KEY set, same as before this option existed.
+  isFalConfigured = false,
 }: {
   creativeId: string;
   hasImage: boolean;
   platform?: SocialPlatform | null;
+  isFalConfigured?: boolean;
 }) {
   // A platform can carry more than one content-type slot (Instagram Post
   // vs. Story vs. Reel are different pixel targets) — when there's more
@@ -46,6 +53,14 @@ export function CreativeImageStudio({
   >(availableFormats[0]?.contentFormat);
   const format = getCreativePlatformFormat(platform, contentFormat);
   const [instruction, setInstruction] = useState("");
+  // "" means the default (OpenAI -> OpenClaw chain, unchanged behavior) —
+  // only set to a fal-image-models.ts id when the user deliberately picks
+  // one. In edit mode, only models with supportsImageInput can actually do
+  // anything with the existing image, so the list is filtered accordingly.
+  const [falModelId, setFalModelId] = useState("");
+  const falModelChoices = FAL_IMAGE_MODELS.filter(
+    (model) => !hasImage || model.supportsImageInput,
+  );
 
   const [, formAction] = useActionState(
     async (_prev: State, form: FormData) => {
@@ -73,6 +88,9 @@ export function CreativeImageStudio({
       <input type="hidden" name="creativeId" value={creativeId} />
       {contentFormat ? (
         <input type="hidden" name="contentFormat" value={contentFormat} />
+      ) : null}
+      {falModelId ? (
+        <input type="hidden" name="falModelId" value={falModelId} />
       ) : null}
 
       <div className="flex items-center justify-between gap-2">
@@ -118,6 +136,37 @@ export function CreativeImageStudio({
           {format.label} · {format.pixelSize.width} × {format.pixelSize.height}
           px ({format.aspectRatio})
         </p>
+      ) : null}
+
+      {isFalConfigured ? (
+        <label className="block space-y-1">
+          <span className="text-[11px] font-medium text-muted-foreground">
+            Model
+          </span>
+          <Select
+            items={[
+              { value: "", label: "OpenAI (default)" },
+              ...falModelChoices.map((model) => ({
+                value: model.id,
+                label: `${model.label} — ${model.approxPrice}`,
+              })),
+            ]}
+            value={falModelId}
+            onValueChange={(next) => setFalModelId(next ?? "")}
+          >
+            <SelectTrigger size="sm" className="h-7 text-[11px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">OpenAI (default)</SelectItem>
+              {falModelChoices.map((model) => (
+                <SelectItem key={model.id} value={model.id}>
+                  {model.label} — {model.approxPrice}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
       ) : null}
 
       <Textarea

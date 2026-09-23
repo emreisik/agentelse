@@ -9,6 +9,7 @@ import {
   requireProjectAccess,
 } from "@/server/security/tenant-context";
 import { isAgentelseError } from "@/server/security/errors";
+import { isFalImageConfigured } from "@/server/reasoning/fal-image-client";
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionForm } from "@/components/shared/action-form";
 import { CreativeImageStudio } from "@/components/creative/creative-image-studio";
@@ -206,6 +207,7 @@ export default async function CreativeDetailPage({
                         version.asset &&
                         !version.asset.storageKey.startsWith("mock://"),
                       )}
+                      isFalConfigured={isFalImageConfigured()}
                     />
                   ) : null}
 

@@ -78,6 +78,13 @@ const envSchema = z.object({
   // a chat one.
   OPENAI_IMAGE_MODEL: z.string().optional().default("gpt-image-2"),
 
+  // fal.ai — optional additional image-generation provider (see
+  // fal-image-client.ts and fal-image-models.ts). Purely opt-in: the
+  // Image Studio's fal.ai model group only appears when this is set, and
+  // the existing OpenAI -> OpenClaw fallback chain is unaffected when it
+  // isn't.
+  FAL_API_KEY: z.string().optional().default(""),
+
   R2_ACCOUNT_ID: z.string().optional().default(""),
   R2_ACCESS_KEY_ID: z.string().optional().default(""),
   R2_SECRET_ACCESS_KEY: z.string().optional().default(""),
@@ -148,6 +155,7 @@ export function isIntegrationConfigured(
     | "OPENCLAW"
     | "OPENCLAW_GATEWAY"
     | "OPENAI"
+    | "FAL"
     | "R2"
     | "SENTRY"
     | "TELEGRAM"
@@ -165,6 +173,8 @@ export function isIntegrationConfigured(
       return Boolean(env.OPENCLAW_GATEWAY_URL && env.OPENCLAW_GATEWAY_TOKEN);
     case "OPENAI":
       return Boolean(env.OPENAI_API_KEY);
+    case "FAL":
+      return Boolean(env.FAL_API_KEY);
     case "R2":
       return Boolean(
         env.R2_ACCOUNT_ID &&

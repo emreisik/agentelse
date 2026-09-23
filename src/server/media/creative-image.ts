@@ -13,10 +13,15 @@ import {
   isOpenClawImageConfigured,
   type GeneratedCreativeImage as GeneratedByOpenClaw,
 } from "@/server/execution/providers/openclaw/openclaw-image-client";
+import {
+  generateFalImage,
+  type GeneratedFalImage as GeneratedByFal,
+} from "@/server/reasoning/fal-image-client";
+import { findFalImageModel } from "@/lib/fal-image-models";
 import { readAsset, overwriteAsset } from "@/server/storage/asset-storage";
 
 export type GeneratedCreativeImage = (
-  GeneratedByOpenAI | GeneratedByOpenClaw
+  GeneratedByOpenAI | GeneratedByOpenClaw | GeneratedByFal
 ) & {
   // The real, measured pixel size after normalize() below — not what was
   // requested (both backends can drift slightly from the target); this is
@@ -32,7 +37,7 @@ export type GeneratedCreativeImage = (
 // any caller can persist or display it. Without this step the pixel-size
 // note shown under generated images would be a guess, not a fact.
 async function normalizeToTarget(
-  image: GeneratedByOpenAI | GeneratedByOpenClaw,
+  image: GeneratedByOpenAI | GeneratedByOpenClaw | GeneratedByFal,
   target?: { width: number; height: number },
 ): Promise<GeneratedCreativeImage> {
   const buffer = await readAsset(image.storageKey);
@@ -93,7 +98,37 @@ export type GenerateCreativeImageOptions = {
   // openai-image-client.ts's generateOpenAIImage comment. Exposed here so
   // a caller can trade fidelity for cost on a bulk/draft generation path.
   quality?: ImageQuality;
+  // A fal-image-models.ts id, set only when the user explicitly picked a
+  // fal.ai model in the Image Studio. When present it takes over entirely
+  // (see generateCreativeImage below) — deliberately no fallback to
+  // OpenAI/OpenClaw on failure, since silently substituting a different
+  // provider's style for the one the user picked would be more confusing
+  // than just reporting the failure.
+  falModelId?: string;
 };
+
+async function tryFal(
+  prompt: string,
+  options: GenerateCreativeImageOptions,
+): Promise<GeneratedByFal | null> {
+  if (!options.falModelId) return null;
+  const model = findFalImageModel(options.falModelId);
+  if (!model) {
+    console.error(
+      `[creative-image] unknown fal model id: ${options.falModelId}`,
+    );
+    return null;
+  }
+  const inputImage = model.supportsImageInput
+    ? (options.baseImage ?? options.referenceImage)
+    : undefined;
+  return generateFalImage(
+    model.endpointId,
+    prompt,
+    inputImage,
+    options.imageSize,
+  );
+}
 
 async function tryOpenAI(
   prompt: string,
@@ -114,6 +149,11 @@ export async function generateCreativeImage(
   options?: GenerateCreativeImageOptions,
 ): Promise<GeneratedCreativeImage | null> {
   const opts = options ?? {};
+
+  if (opts.falModelId) {
+    const viaFal = await tryFal(prompt, opts);
+    return viaFal ? normalizeToTarget(viaFal, opts.imageSize) : null;
+  }
 
   const image = await tryOpenAI(prompt, opts);
   if (image) return normalizeToTarget(image, opts.imageSize);

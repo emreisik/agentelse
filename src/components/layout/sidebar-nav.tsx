@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
+  CalendarDays,
   ChevronDown,
   ClipboardList,
   Gem,
@@ -134,6 +135,19 @@ export function SidebarNav({
           >
             <Library className="size-4 shrink-0 opacity-80" />
             Library
+          </Link>
+
+          <Link
+            href={`/projects/${activeProjectId}/takvim`}
+            className={cn(
+              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
+              pathname === `/projects/${activeProjectId}/takvim`
+                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                : "hover:bg-sidebar-accent/60",
+            )}
+          >
+            <CalendarDays className="size-4 shrink-0 opacity-80" />
+            Content Calendar
           </Link>
 
           {flows && flows.length > 0 ? (

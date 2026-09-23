@@ -66,6 +66,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Every failure branch below used to log only the HTTP status code — e.g.
+// "[fal-image] result fetch failed: 422" — with no way to tell WHY without
+// reproducing it. fal's error responses (a validation error naming the
+// bad field, a moderation rejection, a per-model input mismatch) are in
+// the body; this logs it (truncated — some error payloads embed the full
+// request echo) instead of throwing it away.
+async function logHttpFailure(
+  prefix: string,
+  response: Response,
+): Promise<void> {
+  const bodyText = await response.text().catch(() => "");
+  console.error(
+    `[fal-image] ${prefix}: ${response.status}`,
+    bodyText.slice(0, 2000),
+  );
+}
+
 async function storeResult(
   result: FalImageResult,
 ): Promise<GeneratedFalImage | null> {
@@ -133,16 +150,15 @@ export async function generateFalImage(
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(TOTAL_TIMEOUT_MS),
     });
+    if (!submitResponse.ok) {
+      await logHttpFailure(`submit failed (${endpointId})`, submitResponse);
+      return null;
+    }
     const submitPayload = (await submitResponse.json()) as FalSubmitResponse;
-    if (
-      !submitResponse.ok ||
-      !submitPayload.status_url ||
-      !submitPayload.response_url
-    ) {
+    if (!submitPayload.status_url || !submitPayload.response_url) {
       console.error(
-        "[fal-image] submit failed:",
-        submitResponse.status,
-        submitPayload.error ?? "",
+        `[fal-image] submit ok but missing status_url/response_url (${endpointId})`,
+        JSON.stringify(submitPayload).slice(0, 2000),
       );
       return null;
     }
@@ -154,9 +170,9 @@ export async function generateFalImage(
         signal: AbortSignal.timeout(30_000),
       });
       if (!statusResponse.ok) {
-        console.error(
-          "[fal-image] status check failed:",
-          statusResponse.status,
+        await logHttpFailure(
+          `status check failed (${endpointId})`,
+          statusResponse,
         );
         return null;
       }
@@ -167,9 +183,9 @@ export async function generateFalImage(
           signal: AbortSignal.timeout(30_000),
         });
         if (!resultResponse.ok) {
-          console.error(
-            "[fal-image] result fetch failed:",
-            resultResponse.status,
+          await logHttpFailure(
+            `result fetch failed (${endpointId})`,
+            resultResponse,
           );
           return null;
         }

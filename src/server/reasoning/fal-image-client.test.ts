@@ -130,6 +130,26 @@ describe("fal-image-client", () => {
     spy.mockRestore();
   });
 
+  it("logs the response body text (not just the status code) on a failure", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, SUBMIT_OK))
+      .mockResolvedValueOnce(jsonResponse(200, { status: "COMPLETED" }))
+      .mockResolvedValueOnce(
+        jsonResponse(422, { detail: [{ msg: "field required: scale" }] }),
+      );
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const promise = generateFalImage("fal-ai/clarity-upscaler", "x");
+    await vi.runAllTimersAsync();
+    await expect(promise).resolves.toBeNull();
+
+    const loggedText = spy.mock.calls.flat().join(" ");
+    expect(loggedText).toContain("422");
+    expect(loggedText).toContain("field required: scale");
+
+    spy.mockRestore();
+  });
+
   it("returns null when the result has no image", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, SUBMIT_OK))

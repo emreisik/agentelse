@@ -17,6 +17,11 @@ import {
 } from "@/server/actions/approval-actions";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { CREATIVE_STATUS, SOCIAL_PLATFORM } from "@/lib/labels";
+import {
+  dayKeyInTimezone,
+  utcToZonedDateTimeLocal,
+  zonedDateTimeToUtc,
+} from "@/lib/timezone";
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionForm } from "@/components/shared/action-form";
 import { EntityDialog } from "@/components/shared/entity-dialog";
@@ -39,73 +44,132 @@ type CalendarCreative = Prisma.CreativeGetPayload<{
 
 // Content calendar (spec: takvim) — day-by-day view over creatives the
 // agency's normal task flow already produced, so their creation date/task
-// is never touched here, only WHICH DAY each is planned to publish on
-// (Creative.scheduledFor) and, via the embedded CreativeImageStudio, quick
-// prompt-driven revision without leaving this page. Same RSC-first,
+// is never touched here, only WHICH DAY+TIME each is planned to publish
+// at (Creative.scheduledFor) and, via the embedded CreativeImageStudio,
+// quick prompt-driven revision without leaving this page. Same RSC-first,
 // searchParam-driven architecture as ads/page.tsx: month navigation via
 // `?month=`, a creative's detail via `?creative=` opening an EntityDialog
 // — no client-side calendar state.
-function dayKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
+//
+// Two different kinds of "date" are in play here, deliberately kept
+// separate: the GRID is pure Gregorian calendar arithmetic (year/month/day
+// integers — "what's the Monday before Oct 1" has no timezone, it's the
+// same answer everywhere on Earth), while each Creative.scheduledFor is a
+// real UTC instant that only becomes a calendar day once you ask "as seen
+// in which timezone" (src/lib/timezone.ts's dayKeyInTimezone). Mixing
+// these up — e.g. computing the grid via Date.UTC and then calling
+// `.getUTCDate()` on it as if that were the project-local day number — is
+// exactly the bug this split avoids: a positive-offset project timezone
+// makes local midnight fall on the PREVIOUS UTC calendar day.
+type GridDay = { year: number; month: number; day: number; key: string };
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+function ymdKey(year: number, month: number, day: number): string {
+  return `${year}-${pad2(month)}-${pad2(day)}`;
+}
+// `month` is 1-indexed throughout this file's calendar math (unlike
+// JS Date's 0-indexed months) — Date.UTC below is used only as a
+// Gregorian calendar calculator (via explicit UTC getters/setters so the
+// runtime's own local TZ never leaks in), never as a real instant.
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+function weekdayMonFirst(year: number, month: number, day: number): number {
+  return (new Date(Date.UTC(year, month - 1, day)).getUTCDay() + 6) % 7;
+}
+function addDays(
+  year: number,
+  month: number,
+  day: number,
+  delta: number,
+): { year: number; month: number; day: number } {
+  const d = new Date(Date.UTC(year, month - 1, day));
+  d.setUTCDate(d.getUTCDate() + delta);
+  return {
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+  };
+}
+function shiftMonthParam(year: number, month: number, delta: number): string {
+  const total = year * 12 + (month - 1) + delta;
+  const y = Math.floor(total / 12);
+  const m = ((total % 12) + 12) % 12;
+  return `${y}-${pad2(m + 1)}`;
 }
 
-// Pure UTC math on purpose — Creative.scheduledFor is a @db.Date column
-// (date-only, no time component), so the grid must bucket by the SAME UTC
-// calendar day it was stored as. Routing this through date-fns's
-// local-timezone-aware helpers (format/startOfWeek/etc.) would silently
-// shift days whenever the server's local TZ isn't UTC — plain Date.UTC
-// arithmetic has no such footgun.
-function monthGrid(monthParam: string | undefined) {
-  const now = new Date();
+function monthGrid(monthParam: string | undefined, timeZone: string) {
+  const todayKey = dayKeyInTimezone(new Date(), timeZone);
+  const [todayYear, todayMonth] = todayKey.split("-").map(Number) as [
+    number,
+    number,
+  ];
   const [yearRaw, monthRaw] = (monthParam ?? "").split("-");
-  const year = Number(yearRaw) || now.getUTCFullYear();
-  const monthIndex = monthRaw ? Number(monthRaw) - 1 : now.getUTCMonth();
+  const year = Number(yearRaw) || todayYear;
+  const month = monthRaw ? Number(monthRaw) : todayMonth;
 
-  const monthStart = new Date(Date.UTC(year, monthIndex, 1));
-  const monthEnd = new Date(Date.UTC(year, monthIndex + 1, 0));
+  const lastDay = daysInMonth(year, month);
+  const gridStartYmd = addDays(
+    year,
+    month,
+    1,
+    -weekdayMonFirst(year, month, 1),
+  );
+  const gridEndYmd = addDays(
+    year,
+    month,
+    lastDay,
+    6 - weekdayMonFirst(year, month, lastDay),
+  );
 
-  // ISO weeks (Monday first): back up to the Monday on/before day 1, and
-  // forward to the Sunday on/after the last day.
-  const startWeekday = (monthStart.getUTCDay() + 6) % 7; // 0 = Monday
-  const gridStart = new Date(monthStart);
-  gridStart.setUTCDate(gridStart.getUTCDate() - startWeekday);
-
-  const endWeekday = (monthEnd.getUTCDay() + 6) % 7;
-  const gridEnd = new Date(monthEnd);
-  gridEnd.setUTCDate(gridEnd.getUTCDate() + (6 - endWeekday));
-
-  const days: Date[] = [];
-  for (
-    let d = new Date(gridStart);
-    d <= gridEnd;
-    d.setUTCDate(d.getUTCDate() + 1)
-  ) {
-    days.push(new Date(d));
+  const days: GridDay[] = [];
+  let cursor = gridStartYmd;
+  for (;;) {
+    days.push({
+      ...cursor,
+      key: ymdKey(cursor.year, cursor.month, cursor.day),
+    });
+    if (
+      cursor.year === gridEndYmd.year &&
+      cursor.month === gridEndYmd.month &&
+      cursor.day === gridEndYmd.day
+    ) {
+      break;
+    }
+    cursor = addDays(cursor.year, cursor.month, cursor.day, 1);
   }
 
   const monthLabel = new Intl.DateTimeFormat("en-US", {
     month: "long",
     year: "numeric",
     timeZone: "UTC",
-  }).format(monthStart);
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
 
-  const prevMonth = new Date(Date.UTC(year, monthIndex - 1, 1));
-  const nextMonth = new Date(Date.UTC(year, monthIndex + 1, 1));
-  const toParam = (d: Date) =>
-    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  // The Prisma query range DOES need real instants (scheduledFor is a
+  // timestamp column) — this is the one place the grid's calendar-only
+  // boundaries get converted, via the project's actual timezone.
+  const rangeFrom = zonedDateTimeToUtc(
+    `${ymdKey(gridStartYmd.year, gridStartYmd.month, gridStartYmd.day)}T00:00`,
+    timeZone,
+  );
+  const rangeTo = zonedDateTimeToUtc(
+    `${ymdKey(gridEndYmd.year, gridEndYmd.month, gridEndYmd.day)}T23:59`,
+    timeZone,
+  );
 
   return {
     year,
-    monthIndex,
-    monthStart,
-    monthEnd,
-    gridStart,
-    gridEnd,
+    month,
     days,
     monthLabel,
-    prevMonthParam: toParam(prevMonth),
-    nextMonthParam: toParam(nextMonth),
-    thisMonthParam: toParam(now),
+    rangeFrom,
+    rangeTo,
+    todayKey,
+    prevMonthParam: shiftMonthParam(year, month, -1),
+    nextMonthParam: shiftMonthParam(year, month, 1),
+    thisMonthParam: shiftMonthParam(todayYear, todayMonth, 0),
   };
 }
 
@@ -138,15 +202,25 @@ export default async function ContentCalendarPage({
   });
   if (!project) notFound();
 
+  // Same "Publishing tab" lookup as settings-panel.tsx/approval-decisions.ts
+  // — the calendar's day boundaries and the datetime-local input both need
+  // to agree with whatever timezone the project's Instagram publish
+  // schedule is configured in.
+  const schedule = await prisma.projectSchedule.findFirst({
+    where: { projectId, capability: "INSTAGRAM_PUBLISH" },
+    select: { timezone: true },
+  });
+  const timezone = schedule?.timezone ?? "Europe/Istanbul";
+
   const monthParam = typeof sp.month === "string" ? sp.month : undefined;
-  const grid = monthGrid(monthParam);
+  const grid = monthGrid(monthParam, timezone);
   const base = `/projects/${projectId}/takvim`;
   const monthHref = (m: string) =>
     m === grid.thisMonthParam ? base : `${base}?month=${m}`;
 
   const creatives = (await CreativeRepository.listForCalendarRange(projectId, {
-    from: grid.gridStart,
-    to: grid.gridEnd,
+    from: grid.rangeFrom,
+    to: grid.rangeTo,
   })) as CalendarCreative[];
 
   const byDay = new Map<string, CalendarCreative[]>();
@@ -156,7 +230,7 @@ export default async function ContentCalendarPage({
       unscheduled.push(creative);
       continue;
     }
-    const key = dayKey(creative.scheduledFor);
+    const key = dayKeyInTimezone(creative.scheduledFor, timezone);
     const bucket = byDay.get(key);
     if (bucket) bucket.push(creative);
     else byDay.set(key, [creative]);
@@ -244,13 +318,12 @@ export default async function ContentCalendarPage({
             </div>
           ))}
           {grid.days.map((day) => {
-            const key = dayKey(day);
-            const items = byDay.get(key) ?? [];
-            const inMonth = day.getUTCMonth() === grid.monthIndex;
-            const isToday = key === dayKey(new Date());
+            const items = byDay.get(day.key) ?? [];
+            const inMonth = day.month === grid.month;
+            const isToday = day.key === grid.todayKey;
             return (
               <DayCell
-                key={key}
+                key={day.key}
                 day={day}
                 items={items}
                 inMonth={inMonth}
@@ -268,6 +341,7 @@ export default async function ContentCalendarPage({
           creative={openCreative}
           pendingApproval={pendingApproval}
           closeHref={closeHref}
+          timezone={timezone}
         />
       ) : null}
     </AppShell>
@@ -293,14 +367,14 @@ function DayCell({
   base,
   monthParam,
 }: {
-  day: Date;
+  day: GridDay;
   items: CalendarCreative[];
   inMonth: boolean;
   isToday: boolean;
   base: string;
   monthParam: string | undefined;
 }) {
-  const dayNumber = day.getUTCDate();
+  const dayNumber = day.day;
   const shown = items.slice(0, 3);
   const overflow = items.length - shown.length;
   return (
@@ -446,10 +520,12 @@ function CreativeDetailDialog({
   creative,
   pendingApproval,
   closeHref,
+  timezone,
 }: {
   creative: CalendarCreative;
   pendingApproval: { id: string } | null;
   closeHref: string;
+  timezone: string;
 }) {
   const version = creative.versions[0];
   const asset = version?.asset;
@@ -459,7 +535,7 @@ function CreativeDetailDialog({
     version?.contentFormat,
   );
   const scheduledValue = creative.scheduledFor
-    ? dayKey(creative.scheduledFor)
+    ? utcToZonedDateTimeLocal(creative.scheduledFor, timezone)
     : "";
 
   return (
@@ -547,10 +623,10 @@ function CreativeDetailDialog({
         <input type="hidden" name="creativeId" value={creative.id} />
         <label className="block flex-1 space-y-1">
           <span className="text-xs font-medium text-muted-foreground">
-            Scheduled day
+            Scheduled day & time ({timezone})
           </span>
           <input
-            type="date"
+            type="datetime-local"
             name="date"
             defaultValue={scheduledValue}
             className="h-8 w-full rounded-md border border-input bg-transparent px-2.5 text-xs"

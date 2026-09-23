@@ -66,7 +66,6 @@ export const SchedulerService = {
           workspaceId: schedule.workspaceId,
           projectId: schedule.projectId,
           brandId: schedule.brandId,
-          timezone: schedule.timezone,
         });
       } else {
         const requestText =

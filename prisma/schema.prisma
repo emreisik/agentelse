@@ -1561,12 +1561,14 @@ model Creative {
   createdByTask Task?             @relation(fields: [createdByTaskId], references: [id], onDelete: SetNull)
   versions      CreativeVersion[] @relation("CreativeVersions")
 
-  // Content calendar's day assignment (spec: takvim). Date-only, same
-  // pattern as AgencyDailyStat.date — no time/timezone ambiguity for grid
-  // bucketing. The actual publish TIME-of-day still comes from the
-  // existing 3-slot ProjectSchedule/cron mechanism; this only says which
-  // calendar day a creative is planned for.
-  scheduledFor DateTime? @db.Date
+  // Content calendar's day+time assignment (spec: takvim) — a specific
+  // publish instant (UTC), not just a day: the calendar UI lets the user
+  // pick both. Converted from/to the project's configured timezone (see
+  // ProjectSchedule.timezone) via src/lib/timezone.ts, since a bare
+  // datetime-local form value has no timezone of its own. The Instagram
+  // publish queue (approval-decisions.ts) treats this as "due" once it's
+  // in the past; unscheduled creatives keep the old FIFO behavior.
+  scheduledFor DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

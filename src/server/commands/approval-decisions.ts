@@ -186,27 +186,19 @@ export async function autoPublishCreative(input: {
 // creative while its task is still pending/running.
 //
 // Ordering: a creative the content calendar (takvim) assigned to a
-// specific day goes out on that day, in day order, ahead of everything
-// unscheduled — a creative scheduled for a FUTURE day is excluded
-// entirely (not just deprioritized) so the calendar's placement is
-// authoritative rather than advisory. Anything with no day assigned falls
-// back to the original oldest-first FIFO, exactly as before the calendar
-// existed. "Today" is computed in the schedule's own timezone (same
-// string scheduler-service.ts's computeNextRunAt already uses for this
-// project) via Intl rather than a date library, since scheduledFor is a
-// plain @db.Date column — no time-of-day component to convert.
-function todayInTimezone(timezone: string | null | undefined): Date {
-  const todayStr = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone ?? "Europe/Istanbul",
-  }).format(new Date());
-  return new Date(todayStr);
-}
-
+// specific day+time goes out at that instant, in schedule order, ahead of
+// everything unscheduled — a creative scheduled for a FUTURE instant is
+// excluded entirely (not just deprioritized) so the calendar's placement
+// is authoritative rather than advisory. Anything with no time assigned
+// falls back to the original oldest-first FIFO, exactly as before the
+// calendar existed. scheduledFor is a real UTC instant (see schema
+// comment), so "due" is a plain instant comparison — no timezone
+// conversion needed here; that only happens where a human enters/reads a
+// wall-clock time (src/lib/timezone.ts, used by the takvim UI/action).
 async function findNextQueuedInstagramCreativeId(
   projectId: string,
-  timezone: string | null | undefined,
 ): Promise<string | null> {
-  const today = todayInTimezone(timezone);
+  const now = new Date();
   const [inFlightTasks, candidates] = await Promise.all([
     prisma.task.findMany({
       where: {
@@ -221,7 +213,7 @@ async function findNextQueuedInstagramCreativeId(
         projectId,
         platform: "INSTAGRAM",
         status: "APPROVED",
-        OR: [{ scheduledFor: null }, { scheduledFor: { lte: today } }],
+        OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }],
       },
       orderBy: [
         { scheduledFor: { sort: "asc", nulls: "last" } },
@@ -253,13 +245,9 @@ export async function publishNextQueuedInstagramCreative(input: {
   workspaceId: string;
   projectId: string;
   brandId: string;
-  timezone?: string | null;
 }): Promise<void> {
   try {
-    const creativeId = await findNextQueuedInstagramCreativeId(
-      input.projectId,
-      input.timezone,
-    );
+    const creativeId = await findNextQueuedInstagramCreativeId(input.projectId);
     if (!creativeId) return;
 
     const result = await publishCreativeCore({

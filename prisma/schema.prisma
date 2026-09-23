@@ -1180,6 +1180,14 @@ model Command {
   // here under the same ideaId — the "everything in one conversation"
   // architecture.
   ideaId      String?
+  // A non-idea, non-project-general conversation scope — currently only
+  // "BRAND_BRAIN" (brand-brain-chat-service.ts), a project-wide but
+  // brand-strategy-focused thread distinct from both an idea's chat and the
+  // general project chat (which explicitly excludes topic != null rows, see
+  // projects/[projectId]/page.tsx, so the two streams never mix). Kept as a
+  // free string rather than an enum so a future second topic doesn't need a
+  // migration.
+  topic       String?
 
   source          CommandSource
   rawText         String
@@ -1201,6 +1209,7 @@ model Command {
   @@index([projectId])
   @@index([createdAt])
   @@index([ideaId])
+  @@index([topic])
 }
 
 model Task {
@@ -1552,6 +1561,13 @@ model Creative {
   createdByTask Task?             @relation(fields: [createdByTaskId], references: [id], onDelete: SetNull)
   versions      CreativeVersion[] @relation("CreativeVersions")
 
+  // Content calendar's day assignment (spec: takvim). Date-only, same
+  // pattern as AgencyDailyStat.date — no time/timezone ambiguity for grid
+  // bucketing. The actual publish TIME-of-day still comes from the
+  // existing 3-slot ProjectSchedule/cron mechanism; this only says which
+  // calendar day a creative is planned for.
+  scheduledFor DateTime? @db.Date
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1559,6 +1575,7 @@ model Creative {
   @@index([projectId])
   @@index([brandId])
   @@index([status])
+  @@index([projectId, scheduledFor])
 }
 
 model CreativeVersion {

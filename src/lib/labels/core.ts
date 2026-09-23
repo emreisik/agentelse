@@ -10,6 +10,7 @@ import type {
   HumanInterventionType,
   ProjectStatus,
   RiskLevel,
+  SocialPlatform,
   TaskPriority,
   TaskStatus,
 } from "@prisma/client";
@@ -190,6 +191,20 @@ export const CREATIVE_STATUS: EnumMap<CreativeStatus> = {
   REJECTED: { label: "Rejected", tone: "danger" },
   PUBLISHED: { label: "Published", tone: "positive" },
   ARCHIVED: { label: "Archived", tone: "neutral" },
+};
+
+// Identity badge, not a status — every platform gets the same neutral tone
+// (see StatusBadge). No brand icons here on purpose: lucide-react ships no
+// Instagram/LinkedIn/YouTube marks (removed for trademark reasons), and
+// this codebase doesn't use brand logos anywhere else either.
+export const SOCIAL_PLATFORM: EnumMap<SocialPlatform> = {
+  INSTAGRAM: { label: "Instagram", tone: "neutral" },
+  TIKTOK: { label: "TikTok", tone: "neutral" },
+  LINKEDIN: { label: "LinkedIn", tone: "neutral" },
+  X: { label: "X", tone: "neutral" },
+  FACEBOOK: { label: "Facebook", tone: "neutral" },
+  YOUTUBE: { label: "YouTube", tone: "neutral" },
+  PINTEREST: { label: "Pinterest", tone: "neutral" },
 };
 
 // Hand-curated English labels for the most visible capabilities; anything

@@ -27,6 +27,48 @@ export const CreativeRepository = {
     });
   },
 
+  // Content calendar's data source (spec: takvim): every creative that
+  // either has a scheduledFor day inside [from, to], OR has no day
+  // assigned yet but is still a live candidate for one (the "Unscheduled"
+  // tray — draft/in-review/approved, platform-bound; a creative with no
+  // platform can't be scheduled to publish anywhere, and
+  // rejected/archived/published ones don't belong in a forward-looking
+  // planning view). Only the latest version + its asset is needed for a
+  // calendar thumbnail, unlike listForProject's full version history.
+  listForCalendarRange(projectId: string, range: { from: Date; to: Date }) {
+    return prisma.creative.findMany({
+      where: {
+        projectId,
+        OR: [
+          { scheduledFor: { gte: range.from, lte: range.to } },
+          {
+            scheduledFor: null,
+            platform: { not: null },
+            status: { in: ["DRAFT", "IN_REVIEW", "APPROVED"] },
+          },
+        ],
+      },
+      include: {
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          include: { asset: true },
+        },
+      },
+      orderBy: [
+        { scheduledFor: { sort: "asc", nulls: "last" } },
+        { createdAt: "asc" },
+      ],
+    });
+  },
+
+  setScheduledFor(id: string, projectId: string, date: Date | null) {
+    return prisma.creative.updateMany({
+      where: { id, projectId },
+      data: { scheduledFor: date },
+    });
+  },
+
   create(input: {
     workspaceId: string;
     projectId: string;

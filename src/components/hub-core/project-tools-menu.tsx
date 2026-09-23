@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  CalendarDays,
   ClipboardCheck,
   Gem,
   LayoutGrid,
@@ -7,7 +8,6 @@ import {
   Lightbulb,
   ListChecks,
   Megaphone,
-  Plug,
   Radio,
   Settings2,
   SlidersHorizontal,
@@ -136,16 +136,16 @@ export function ProjectToolsMenu({
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuItem
+            render={<Link href={`/projects/${projectId}/takvim`} />}
+          >
+            <CalendarDays className="size-4 text-muted-foreground" />
+            Content Calendar
+          </DropdownMenuItem>
+          <DropdownMenuItem
             render={<Link href={`/projects/${projectId}/ads`} />}
           >
             <Megaphone className="size-4 text-muted-foreground" />
             Ads Manager
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            render={<Link href={`/projects/${projectId}/integrations`} />}
-          >
-            <Plug className="size-4 text-muted-foreground" />
-            Integrations
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
+import { TaskRepository } from "@/server/repositories/task.repository";
 import { WorkHandoffRepository } from "@/server/repositories/work-handoff.repository";
 import { WorkPlanRepository } from "@/server/repositories/work-plan.repository";
 import {
@@ -70,6 +71,46 @@ export async function cancelWorkPlanAction(
       action: "work_plan.cancelled",
       entityType: "WorkPlan",
       entityId: workPlanId,
+    });
+    revalidatePath(`/projects/${projectId}`);
+    return { ok: true };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+// Cancel a single Task instead of waiting out a long-running generation —
+// legal from QUEUED/RUNNING/WAITING_* (TASK_TRANSITIONS, transitions.ts)
+// straight into CANCELLED, which fires the same TASK_CANCELLED trigger a
+// system-driven cancellation would (see task.repository.ts's transition()) —
+// WorkPlanProgressor/MeasurementEngine already react to it, no extra
+// cascade code needed here. No provider actually supports aborting an
+// in-flight call (only the mock does — see execution/types.ts's optional
+// cancel()), so the underlying API call keeps running in the background;
+// when its result eventually comes back, execution-service.ts's pollOnce
+// now explicitly skips re-syncing the Task once it's already terminal
+// (added alongside this action) instead of throwing an illegal-transition
+// error trying to move a CANCELLED task to COMPLETED/FAILED.
+export async function cancelTaskAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    const projectId = String(formData.get("projectId"));
+    const taskId = String(formData.get("taskId"));
+    const { userId } = await requireUser();
+    const access = await requireProjectAccess(userId, projectId);
+
+    await TaskRepository.transition(taskId, projectId, "CANCELLED", {
+      failureReason: "Cancelled by user",
+    });
+    await AuditLogRepository.record({
+      workspaceId: access.workspaceId,
+      projectId,
+      actorType: "USER",
+      actorId: userId,
+      action: "task.cancelled",
+      entityType: "Task",
+      entityId: taskId,
     });
     revalidatePath(`/projects/${projectId}`);
     return { ok: true };

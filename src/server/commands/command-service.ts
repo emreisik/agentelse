@@ -16,12 +16,14 @@ import {
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
+import { TaskRepository } from "@/server/repositories/task.repository";
 import {
   parseIntent,
   type ParsedIntent,
 } from "@/server/commands/intent-router";
 import { resolveProjectFromText } from "@/server/commands/project-resolver";
 import { TaskPlanner } from "@/server/commands/task-planner";
+import { performCreativeRevision } from "@/server/actions/creative-actions";
 
 export type SubmitCommandInput = {
   workspaceId: string;
@@ -172,6 +174,77 @@ export const CommandService = {
           input.userId,
           intent.note,
         );
+
+        // Previously REVISION_REQUESTED was recorded and then never
+        // consumed by anything (REVISION_REQUESTED's only legal transition
+        // is -> CANCELLED, transitions.ts) — typing "revize et" in chat did
+        // nothing. This is the fix: actually act on it, using whatever
+        // "redo" primitive fits the approval's entity.
+        if (approval.entityType === "Creative") {
+          // Direct regeneration (same engine as reviseCreativeAction /
+          // creative-card.tsx's Revise button) — far faster than
+          // re-dispatching a whole Task through the queue, and this is
+          // exactly the capability class (image generation) the user
+          // complained is too slow to iterate on today.
+          await performCreativeRevision({
+            creativeId: approval.entityId,
+            instruction: intent.note?.trim() || "",
+            mode: "edit",
+            userId: input.userId,
+          }).catch((error) => {
+            console.error("[command-service] revise (creative) failed:", error);
+          });
+        } else if (approval.taskId) {
+          // No direct "redo" primitive exists for non-creative capabilities
+          // (copy/brief/etc.) — cancel the superseded attempt and create a
+          // fresh task with the feedback folded into the request, same
+          // "cancel + recreate with the same context" shape
+          // WorkHandoffEngine.attemptTaskCreation already uses for its own
+          // retry path.
+          const task = await prisma.task.findUnique({
+            where: { id: approval.taskId },
+            select: {
+              status: true,
+              workspaceId: true,
+              projectId: true,
+              brandId: true,
+              capability: true,
+              departmentKey: true,
+              workPlanId: true,
+              goalIds: true,
+              description: true,
+            },
+          });
+          if (
+            task &&
+            !["COMPLETED", "CANCELLED", "FAILED"].includes(task.status)
+          ) {
+            try {
+              await TaskRepository.transition(
+                approval.taskId,
+                approval.projectId,
+                "CANCELLED",
+                { failureReason: "Superseded by revision request" },
+              );
+              await TaskPlanner.planForCapability({
+                workspaceId: task.workspaceId,
+                projectId: task.projectId,
+                brandId: task.brandId,
+                capability: task.capability,
+                departmentKey: task.departmentKey ?? undefined,
+                workPlanId: task.workPlanId ?? undefined,
+                goalIds: task.goalIds,
+                request: `${task.description ?? ""}\n\nRevision requested: ${
+                  intent.note?.trim() || "please redo this"
+                }`,
+                createdByType: "USER",
+                createdByUserId: input.userId,
+              });
+            } catch (error) {
+              console.error("[command-service] revise (task) failed:", error);
+            }
+          }
+        }
       }
 
       return {

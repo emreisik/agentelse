@@ -17,6 +17,7 @@ import {
   approveIdeaAction,
   archiveIdeaAction,
   rejectIdeaAction,
+  reviseIdeaAction,
 } from "@/server/actions/agency-strategy-actions";
 import { IDEA_TRANSITIONS } from "@/server/state-machine/transitions";
 import { ActionForm } from "@/components/shared/action-form";
@@ -26,6 +27,7 @@ import { ScoreBar } from "@/components/shared/score-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 import { buildHubHref } from "../hub-core-params";
 import { CrossLinkChip } from "../primitives/cross-link-chip";
 import { EntityDetailSheet } from "../primitives/entity-detail-sheet";
@@ -177,6 +179,9 @@ async function IdeaDetail({
   const canApprove = allowedIdeaTransitions.includes("APPROVED");
   const canReject = allowedIdeaTransitions.includes("REJECTED");
   const canArchive = allowedIdeaTransitions.includes("ARCHIVED");
+  // Same gate as Archive — "not working, try a different angle" only makes
+  // sense while the idea hasn't already progressed past being archivable.
+  const canRevise = canArchive;
 
   const fields: FieldSpec[] = [
     { type: "badge", label: "Status", meta: IDEA_STATUS[idea.status] },
@@ -345,6 +350,27 @@ async function IdeaDetail({
           text="Go to work plan"
           sub="plans"
         />
+      ) : null}
+
+      {canRevise ? (
+        <ActionForm
+          action={reviseIdeaAction}
+          successMessage="Idea revised — a new attempt is starting"
+          className="space-y-1.5 border-t border-border pt-3"
+        >
+          <input type="hidden" name="projectId" value={projectId} />
+          <input type="hidden" name="ideaId" value={idea.id} />
+          <div className="flex items-start gap-1.5">
+            <Textarea
+              name="feedback"
+              placeholder="Not quite right — what should change? e.g. 'too generic, lean into the launch angle instead'"
+              className="min-h-16 text-xs"
+            />
+            <SubmitButton variant="secondary" size="xs" className="shrink-0">
+              Revise
+            </SubmitButton>
+          </div>
+        </ActionForm>
       ) : null}
 
       <div className="flex items-center justify-end gap-1.5 border-t border-border pt-3">

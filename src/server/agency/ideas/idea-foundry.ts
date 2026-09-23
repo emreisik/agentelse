@@ -98,7 +98,15 @@ export const IdeaFoundry = {
   async generateForOpportunity(
     opportunityId: string,
     projectId: string,
-    opts?: { lenses?: CreativeLens[] },
+    opts?: {
+      lenses?: CreativeLens[];
+      // User-driven revision (reviseIdeaAction, agency-strategy-actions.ts):
+      // when set, the prompt is told explicitly what was rejected and why,
+      // instead of generating a fresh idea blind to the fact this lens was
+      // already tried and didn't land.
+      feedback?: string;
+      priorIdea?: { title: string; description: string };
+    },
   ): Promise<number> {
     const opportunity = await OpportunityRepository.findByIdInProject(
       opportunityId,
@@ -157,6 +165,9 @@ export const IdeaFoundry = {
           ...(performanceContext ? { performanceContext } : {}),
         },
         lenses,
+        ...(opts?.feedback
+          ? { revision: { priorIdea: opts.priorIdea, feedback: opts.feedback } }
+          : {}),
       },
     });
 

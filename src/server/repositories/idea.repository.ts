@@ -64,10 +64,21 @@ export const IdeaRepository = {
   },
 
   // Soft dedup: same opportunity + lens means the foundry already produced
-  // this angle — skip instead of generating a near-identical idea.
+  // this angle — skip instead of generating a near-identical idea. ARCHIVED/
+  // REJECTED ideas don't count as "already exists" — a revised or
+  // Scenario-K-retried idea for the same lens must still be regeneratable;
+  // without this exclusion, one archived idea for a lens permanently blocks
+  // that lens from ever getting a fresh attempt regardless of how eligible
+  // the parent Opportunity is.
   existsForOpportunityLens(opportunityId: string, lens: CreativeLens) {
     return prisma.idea
-      .count({ where: { opportunityId, lens } })
+      .count({
+        where: {
+          opportunityId,
+          lens,
+          status: { notIn: ["ARCHIVED", "REJECTED"] },
+        },
+      })
       .then((count) => count > 0);
   },
 

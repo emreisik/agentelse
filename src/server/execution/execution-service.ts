@@ -437,7 +437,21 @@ export const ExecutionService = {
 
     if (taskTargetStatus) {
       const task = await prisma.task.findUnique({ where: { id: job.taskId } });
-      if (task && task.status !== taskTargetStatus) {
+      // A task the user cancelled mid-flight (cancelTaskAction,
+      // agency-work-actions.ts) reaches CANCELLED — a terminal status with
+      // no legal exit (TASK_TRANSITIONS) — while its provider call keeps
+      // running in the background (no provider actually supports aborting
+      // one). Without this guard, the result eventually landing here would
+      // call TaskRepository.transition into COMPLETED/FAILED and throw an
+      // illegal-transition error (caught by pollRunningJobs, but noisy and
+      // wrong — the cancellation should just win silently). Any terminal
+      // status here, not only CANCELLED, is excluded for the same reason:
+      // never try to move a task that's already done somewhere else.
+      if (
+        task &&
+        !["COMPLETED", "FAILED", "CANCELLED"].includes(task.status) &&
+        task.status !== taskTargetStatus
+      ) {
         await TaskRepository.transition(
           job.taskId,
           job.projectId,

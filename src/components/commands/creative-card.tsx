@@ -10,10 +10,12 @@ import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   approveApprovalAction,
   rejectApprovalAction,
 } from "@/server/actions/approval-actions";
+import { reviseCreativeAction } from "@/server/actions/creative-actions";
 import {
   getCreativePublishTargetsAction,
   publishCreativeToInstagramAction,
@@ -97,6 +99,32 @@ function CreativeReadyCard({
   const [isPending, startTransition] = useTransition();
   const [localStatus, setLocalStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [showRevise, setShowRevise] = useState(false);
+  const [instruction, setInstruction] = useState("");
+  const [isRevising, startRevising] = useTransition();
+
+  const revise = () => {
+    if (!instruction.trim()) return;
+    setError(undefined);
+    startRevising(async () => {
+      try {
+        const result = await reviseCreativeAction(card.creativeId, instruction);
+        if (result.ok) {
+          setInstruction("");
+          setShowRevise(false);
+          toast.success("Revising — the new version will appear below");
+          router.refresh();
+        } else {
+          setError(result.message);
+          toast.error(result.message);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Action failed";
+        setError(message);
+        toast.error(message);
+      }
+    });
+  };
 
   const src = card.assetId ? `/api/assets/${card.assetId}` : undefined;
   const isImage = card.mimeType?.startsWith("image/") ?? Boolean(src);
@@ -203,6 +231,60 @@ function CreativeReadyCard({
               onClick={() => decide("APPROVED")}
             >
               Approve
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="rounded-full"
+              disabled={isPending}
+              onClick={() => setShowRevise((v) => !v)}
+            >
+              Revise
+            </Button>
+          </div>
+        ) : status !== "IN_REVIEW" ? (
+          // Not currently awaiting a decision (e.g. REJECTED, APPROVED,
+          // PUBLISHED) — still revisable, without exposing Approve/Reject
+          // for a decision that no longer applies to whatever's shown here.
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="-ml-2 rounded-full"
+            disabled={isRevising}
+            onClick={() => setShowRevise((v) => !v)}
+          >
+            Revise
+          </Button>
+        ) : null}
+        {showRevise ? (
+          <div className="flex gap-1.5 pt-0.5">
+            <Input
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              placeholder="What should change? e.g. more vibrant colors"
+              disabled={isRevising}
+              className="h-8 text-xs"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  revise();
+                }
+              }}
+            />
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 shrink-0 rounded-full"
+              disabled={isRevising || !instruction.trim()}
+              onClick={revise}
+            >
+              {isRevising ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                "Go"
+              )}
             </Button>
           </div>
         ) : null}

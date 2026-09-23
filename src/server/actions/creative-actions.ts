@@ -11,6 +11,7 @@ import {
   requireProjectAccess,
 } from "@/server/security/tenant-context";
 import { CreativeRepository } from "@/server/repositories/creative.repository";
+import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { generateCreativeImage } from "@/server/media/creative-image";
@@ -51,17 +52,68 @@ async function readAssetForEditing(
 export async function generateRealCreativeImageAction(
   formData: FormData,
 ): Promise<ActionResult> {
-  try {
-    const creativeId = String(formData.get("creativeId"));
-    const instruction = String(formData.get("instruction") ?? "").trim();
-    const mode = String(formData.get("mode") ?? "new");
-    const contentFormatRaw = formData.get("contentFormat");
-    const contentFormat =
-      typeof contentFormatRaw === "string" && contentFormatRaw
-        ? (contentFormatRaw as CreativeContentFormat)
-        : undefined;
-    const { userId } = await requireUser();
+  const creativeId = String(formData.get("creativeId"));
+  const instruction = String(formData.get("instruction") ?? "").trim();
+  const mode = String(formData.get("mode") ?? "new");
+  const contentFormatRaw = formData.get("contentFormat");
+  const contentFormat =
+    typeof contentFormatRaw === "string" && contentFormatRaw
+      ? (contentFormatRaw as CreativeContentFormat)
+      : undefined;
+  const { userId } = await requireUser();
+  return performCreativeRevision({
+    creativeId,
+    instruction,
+    mode,
+    contentFormat,
+    userId,
+  });
+}
 
+// Chat-facing counterpart to the Creative Image Studio's form: same
+// regeneration engine, reachable directly from CreativeReadyCard
+// (creative-card.tsx) without navigating to /creatives/[id]. Always "edit"
+// mode — revising from chat means "iterate on what's there," never restart
+// from scratch. See performCreativeRevision for the re-approval behavior
+// this shares with the Studio path.
+export async function reviseCreativeAction(
+  creativeId: string,
+  instruction: string,
+): Promise<ActionResult> {
+  const { userId } = await requireUser();
+  return performCreativeRevision({
+    creativeId,
+    instruction: instruction.trim(),
+    mode: "edit",
+    userId,
+  });
+}
+
+// Shared core of generateRealCreativeImageAction/reviseCreativeAction, and
+// also called directly by command-service.ts's "revize et" chat-intent
+// handler — that call site has no HTTP session (CommandService.submit runs
+// for Telegram/System/API actors too), so userId is taken as an explicit
+// param here rather than re-derived via requireUser(); callers that DO have
+// a session resolve it themselves before calling in (see the two exported
+// wrappers above). Every caller reaches the same re-approval behavior below:
+// previously, regenerating a REJECTED/APPROVED creative left its status
+// untouched (a rejected creative stayed rejected forever, with no way back
+// into review) — that's the actual reason "revise" felt broken, not the
+// generation itself, which already worked.
+export async function performCreativeRevision({
+  creativeId,
+  instruction,
+  mode,
+  contentFormat,
+  userId,
+}: {
+  creativeId: string;
+  instruction: string;
+  mode: string;
+  contentFormat?: CreativeContentFormat;
+  userId: string;
+}): Promise<ActionResult> {
+  try {
     const creative = await prisma.creative.findUniqueOrThrow({
       where: { id: creativeId },
       include: { versions: { orderBy: { version: "desc" }, take: 1 } },
@@ -222,6 +274,45 @@ export async function generateRealCreativeImageAction(
           : "Image regenerated",
     });
 
+    // A REJECTED or APPROVED creative had a decision already made against
+    // its previous version — that decision must not silently carry over to
+    // this new one. CREATIVE_TRANSITIONS legally allows both -> DRAFT ->
+    // IN_REVIEW (transitions.ts), but nothing called it before this: a
+    // rejected creative regenerated via the Studio stayed REJECTED forever,
+    // invisible to the Approval Center, with no way back into review. A
+    // fresh Approval row (same shape execution-service.ts's
+    // materializeCreativeFromResult uses for the very first one) re-opens
+    // the decision instead of assuming the old one still applies. PUBLISHED
+    // has no legal path back to IN_REVIEW — a revised published creative
+    // just gets the new version + chat message below, review is skipped.
+    let currentStatus = creative.status;
+    let reopenedApprovalId: string | undefined;
+    if (creative.status === "REJECTED" || creative.status === "APPROVED") {
+      await CreativeRepository.transition(
+        creative.id,
+        creative.projectId,
+        "DRAFT",
+      );
+      await CreativeRepository.transition(
+        creative.id,
+        creative.projectId,
+        "IN_REVIEW",
+      );
+      const reopened = await ApprovalRepository.create({
+        workspaceId: creative.workspaceId,
+        projectId: creative.projectId,
+        brandId: creative.brandId,
+        taskId: creative.createdByTaskId ?? undefined,
+        entityType: "Creative",
+        entityId: creative.id,
+        type: "CREATIVE_APPROVAL",
+        requestedByType: "USER",
+        requestedById: userId,
+      });
+      currentStatus = "IN_REVIEW";
+      reopenedApprovalId = reopened.id;
+    }
+
     await AuditLogRepository.record({
       workspaceId: creative.workspaceId,
       projectId: creative.projectId,
@@ -264,7 +355,8 @@ export async function generateRealCreativeImageAction(
               mimeType: asset.mimeType,
               caption: currentVersion?.caption ?? undefined,
               copy: currentVersion?.copy ?? undefined,
-              status: creative.status,
+              status: currentStatus,
+              approvalId: reopenedApprovalId,
               assetWidth: asset.width ?? undefined,
               assetHeight: asset.height ?? undefined,
               platform: creative.platform,

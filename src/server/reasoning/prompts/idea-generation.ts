@@ -28,6 +28,9 @@ export const ideaGenerationDef: ReasoningDef<IdeaGenerationOutput> = {
   maxTokens: 4096,
 
   buildPrompt(context) {
+    const revision = context.revision as
+      | { priorIdea?: { title: string; description: string }; feedback: string }
+      | undefined;
     return {
       system:
         "You are the Idea Foundry of an AI agency. Given an opportunity, " +
@@ -40,6 +43,14 @@ export const ideaGenerationDef: ReasoningDef<IdeaGenerationOutput> = {
         `Brand context:\n${JSON.stringify(context.brand ?? {}, null, 2)}\n\n` +
         `Opportunity:\n${JSON.stringify(context.opportunity ?? {}, null, 2)}\n\n` +
         `Requested lenses: ${JSON.stringify(context.lenses ?? [])}\n\n` +
+        (revision
+          ? `This is a REVISION — the user rejected a previous idea for this ` +
+            `lens and asked for a materially different direction. ` +
+            `Previous attempt: ${JSON.stringify(revision.priorIdea ?? {})}\n` +
+            `User feedback: ${revision.feedback}\n` +
+            "Generate a new idea for this lens that directly addresses the " +
+            "feedback — do not repeat the previous attempt's core concept.\n\n"
+          : "") +
         "Generate one distinct idea per lens.",
     };
   },

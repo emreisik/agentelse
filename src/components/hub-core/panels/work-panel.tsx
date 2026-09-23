@@ -28,6 +28,7 @@ import {
 import {
   acceptHandoffAction,
   approveWorkPlanAction,
+  cancelTaskAction,
   cancelWorkPlanAction,
   rejectHandoffAction,
 } from "@/server/actions/agency-work-actions";
@@ -67,6 +68,20 @@ import {
 import type { PanelProps } from "./panel-props";
 
 const DONE_TASK_STATUSES: TaskStatus[] = ["COMPLETED"];
+
+// Every status TASK_TRANSITIONS (transitions.ts) legally allows moving to
+// CANCELLED from — DRAFT/COMPLETED/FAILED(handled via its own QUEUED retry,
+// not a user cancel)/CANCELLED itself are excluded.
+const CANCELLABLE_TASK_STATUSES = new Set<TaskStatus>([
+  "READY",
+  "QUEUED",
+  "RUNNING",
+  "WAITING_INPUT",
+  "WAITING_HUMAN",
+  "WAITING_APPROVAL",
+  "WAITING_PROVIDER",
+  "BLOCKED",
+]);
 
 const TAB_LABEL: Record<WorkSubKey, string> = {
   plans: "Plans",
@@ -820,7 +835,7 @@ async function TaskDetail({
         ) : null}
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <StatusBadge meta={TASK_STATUS[task.status]} />
         <StatusBadge meta={TASK_PRIORITY[task.priority]} />
         <StatusBadge meta={RISK_LEVEL[task.riskLevel]} />
@@ -830,6 +845,19 @@ async function TaskDetail({
             accentColor={DEPARTMENT_COLOR[task.departmentKey]}
             showIcon
           />
+        ) : null}
+        {CANCELLABLE_TASK_STATUSES.has(task.status) ? (
+          <ActionForm
+            action={cancelTaskAction}
+            successMessage="Task cancelled"
+            className="ml-auto"
+          >
+            <input type="hidden" name="projectId" value={projectId} />
+            <input type="hidden" name="taskId" value={task.id} />
+            <SubmitButton variant="outline" size="xs">
+              Cancel
+            </SubmitButton>
+          </ActionForm>
         ) : null}
       </div>
 

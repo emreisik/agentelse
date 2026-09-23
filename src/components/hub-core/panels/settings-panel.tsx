@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   Activity,
   ArrowLeft,
+  CalendarClock,
   Gavel,
   Infinity as InfinityIcon,
   ShieldCheck,
@@ -19,6 +20,7 @@ import {
   councilDimensionLabel,
 } from "@/lib/labels";
 import { updateAutonomyPolicyAction } from "@/server/actions/agency-config-actions";
+import { updateInstagramPublishScheduleAction } from "@/server/actions/publish-schedule-actions";
 import { ProjectDeletionService } from "@/server/projects/project-deletion.service";
 import { ActionForm } from "@/components/shared/action-form";
 import { DeleteProjectCard } from "@/components/projects/delete-project-card";
@@ -42,6 +44,7 @@ import type { PanelProps } from "./panel-props";
 
 const SUB_LABEL: Record<SettingsSubKey, string> = {
   autonomy: "Autonomy",
+  publishing: "Publishing",
   decisions: "Decisions",
   activity: "Activity",
   risk: "Danger Zone",
@@ -116,10 +119,14 @@ export async function SettingsPanel({ projectId, sub, entity }: PanelProps) {
             );
           })}
         </div>
-        {activeSub !== "autonomy" ? <LiveRefresh /> : null}
+        {activeSub !== "autonomy" && activeSub !== "publishing" ? (
+          <LiveRefresh />
+        ) : null}
       </div>
 
-      {activeSub === "decisions" ? (
+      {activeSub === "publishing" ? (
+        <PublishingTab projectId={projectId} />
+      ) : activeSub === "decisions" ? (
         <DecisionsTab projectId={projectId} entity={entity} />
       ) : activeSub === "activity" ? (
         <ActivityTab projectId={projectId} />
@@ -298,8 +305,8 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
         <CardHeader>
           <CardTitle className="text-base">NBA Score Weights</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Between 0-1; a field left blank uses the engine&apos;s default. Penalties
-            lower the score.
+            Between 0-1; a field left blank uses the engine&apos;s default.
+            Penalties lower the score.
           </p>
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-4">
@@ -320,6 +327,118 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
               />
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <div className="sticky bottom-4 flex justify-end">
+        <SubmitButton>Save</SubmitButton>
+      </div>
+    </ActionForm>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+// A schedule row's cronExpression is always "M H * * *" (built by
+// updateInstagramPublishScheduleAction) — this reads the HH:mm back out for
+// the time input's defaultValue.
+function cronToTime(cronExpression: string | null): string {
+  if (!cronExpression) return "";
+  const [minute, hour] = cronExpression.split(" ");
+  if (!hour || !minute) return "";
+  return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+}
+
+async function PublishingTab({ projectId }: { projectId: string }) {
+  const [schedules, queuedCount] = await Promise.all([
+    prisma.projectSchedule.findMany({
+      where: { projectId, capability: "INSTAGRAM_PUBLISH" },
+    }),
+    prisma.creative.count({
+      where: { projectId, platform: "INSTAGRAM", status: "APPROVED" },
+    }),
+  ]);
+
+  const bySlot = new Map<number, (typeof schedules)[number]>();
+  for (const schedule of schedules) {
+    const slot = (schedule.configuration as { slot?: unknown } | null)?.slot;
+    if (typeof slot === "number") bySlot.set(slot, schedule);
+  }
+  const enabled = schedules.some((schedule) => schedule.enabled);
+  const timezone = schedules[0]?.timezone ?? "Europe/Istanbul";
+
+  return (
+    <ActionForm
+      action={updateInstagramPublishScheduleAction}
+      successMessage="Publishing schedule updated"
+      className="space-y-4"
+    >
+      <input type="hidden" name="projectId" value={projectId} />
+
+      <Card size="sm">
+        <CardHeader className="flex flex-row items-center gap-2 space-y-0">
+          <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10">
+            <CalendarClock className="size-4 text-primary" />
+          </span>
+          <CardTitle className="text-base">
+            Instagram Publishing Schedule
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="flex items-start gap-3">
+            <Switch
+              key={`publishing-enabled-${enabled}`}
+              id="publishing-enabled"
+              name="enabled"
+              defaultChecked={enabled}
+            />
+            <div className="space-y-1">
+              <Label htmlFor="publishing-enabled">
+                Enable scheduled publishing
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                When on, an approved Instagram creative no longer publishes
+                immediately — it waits in a queue and goes out at the next slot
+                below, oldest approved first. When off, approval publishes
+                immediately, same as today.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            {[1, 2, 3].map((slot) => (
+              <div key={slot} className="space-y-1.5">
+                <Label htmlFor={`publishing-slot${slot}`}>Slot {slot}</Label>
+                <Input
+                  id={`publishing-slot${slot}`}
+                  name={`slot${slot}`}
+                  type="time"
+                  defaultValue={cronToTime(
+                    bySlot.get(slot)?.cronExpression ?? null,
+                  )}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="publishing-timezone">Timezone</Label>
+            <Input
+              id="publishing-timezone"
+              name="timezone"
+              defaultValue={timezone}
+              placeholder="Europe/Istanbul"
+            />
+            <p className="text-xs text-muted-foreground">
+              An IANA zone name (e.g. Europe/Istanbul, UTC) — the slot times
+              above are read in this zone.
+            </p>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            {queuedCount} approved Instagram creative
+            {queuedCount === 1 ? "" : "s"} currently waiting in the queue.
+          </p>
         </CardContent>
       </Card>
 

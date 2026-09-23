@@ -62,23 +62,58 @@ async function resolveApprovalChatTarget(
   }
 
   if (approval.entityType === "Creative") {
-    const creative = await prisma.creative.findUnique({
-      where: { id: approval.entityId },
-      select: { createdByTaskId: true },
-    });
-    if (!creative?.createdByTaskId) return null;
-    const [ideaId, task] = await Promise.all([
-      IdeaChatRepository.resolveIdeaIdForTask(creative.createdByTaskId),
-      prisma.task.findUnique({
-        where: { id: creative.createdByTaskId },
-        select: { title: true },
-      }),
-    ]);
-    if (!ideaId) return null;
-    return { ideaId, title: task?.title ?? "Creative" };
+    return resolveIdeaAndTitleForCreative(approval.entityId);
   }
 
   return null;
+}
+
+// The Creative half of resolveApprovalChatTarget above, factored out so
+// publishNextQueuedInstagramCreative (no Approval row — the scheduler
+// triggered this, not a human decision) can post the same "published" chat
+// message as the immediate-auto-publish path.
+async function resolveIdeaAndTitleForCreative(
+  creativeId: string,
+): Promise<{ ideaId: string | null; title: string } | null> {
+  const creative = await prisma.creative.findUnique({
+    where: { id: creativeId },
+    select: { createdByTaskId: true },
+  });
+  if (!creative?.createdByTaskId) return null;
+  const [ideaId, task] = await Promise.all([
+    IdeaChatRepository.resolveIdeaIdForTask(creative.createdByTaskId),
+    prisma.task.findUnique({
+      where: { id: creative.createdByTaskId },
+      select: { title: true },
+    }),
+  ]);
+  if (!ideaId) return null;
+  return { ideaId, title: task?.title ?? "Creative" };
+}
+
+export type AutoPublishResult = {
+  // PUBLISHED: publishCreativeCore actually submitted the publish command.
+  // QUEUED: this project has a Publishing schedule configured (Settings →
+  // Publishing) — the creative stays APPROVED and will be picked up by
+  // publishNextQueuedInstagramCreative at its next slot, so the caller must
+  // NOT fall back to the "want to share it?" ask-flow.
+  // SKIPPED: not applicable (not Instagram, no Meta connection) or a real
+  // error — the caller's existing ask-flow fallback applies here.
+  status: "PUBLISHED" | "QUEUED" | "SKIPPED";
+  message: string;
+};
+
+// True when this project has at least one enabled Instagram publish
+// schedule (created from Settings → Publishing, src/server/actions/
+// publish-schedule-actions.ts) — in that case approved creatives queue up
+// instead of publishing immediately (see autoPublishCreative below).
+async function isInstagramPublishScheduled(
+  projectId: string,
+): Promise<boolean> {
+  const count = await prisma.projectSchedule.count({
+    where: { projectId, capability: "INSTAGRAM_PUBLISH", enabled: true },
+  });
+  return count > 0;
 }
 
 // Auto-publish: a Creative reaching APPROVED already passed its own human
@@ -97,7 +132,7 @@ export async function autoPublishCreative(input: {
   creativeId: string;
   workspaceId: string;
   projectId: string;
-}): Promise<{ ok: boolean; message: string }> {
+}): Promise<AutoPublishResult> {
   try {
     const creative = await prisma.creative.findUnique({
       where: { id: input.creativeId },
@@ -106,25 +141,154 @@ export async function autoPublishCreative(input: {
     // Only Instagram is autonomously reachable today — TikTok/LinkedIn/X
     // publishing (publishCreativeToSocialCore) stays human-triggered.
     if (creative?.platform !== "INSTAGRAM") {
-      return { ok: false, message: "Not an Instagram creative" };
+      return { status: "SKIPPED", message: "Not an Instagram creative" };
     }
     const targets = await getPublishTargets(input.projectId);
     if (targets.length === 0) {
-      return { ok: false, message: "No connected Meta page/Instagram account" };
+      return {
+        status: "SKIPPED",
+        message: "No connected Meta page/Instagram account",
+      };
     }
-    return await publishCreativeCore({
+    if (await isInstagramPublishScheduled(input.projectId)) {
+      // Leave it APPROVED — publishNextQueuedInstagramCreative finds it via
+      // the same query at the next due slot. No task, no side effect yet.
+      return {
+        status: "QUEUED",
+        message: "Waiting for the next scheduled Instagram slot",
+      };
+    }
+    const result = await publishCreativeCore({
       creativeId: input.creativeId,
       format: "FEED",
       workspaceId: input.workspaceId,
       projectId: input.projectId,
       actorUserId: AUTO_PUBLISH_ACTOR_ID,
     });
+    return {
+      status: result.ok ? "PUBLISHED" : "SKIPPED",
+      message: result.message,
+    };
   } catch (error) {
     console.error("[approval-decisions] auto-publish failed:", error);
     return {
-      ok: false,
+      status: "SKIPPED",
       message: error instanceof Error ? error.message : String(error),
     };
+  }
+}
+
+// Finds the next APPROVED Instagram creative in this project that isn't
+// already mid-flight through a publish task — the "queue" a Publishing
+// schedule releases from one at a time. No dedicated table: an
+// INSTAGRAM_PUBLISH task's payload.creativeId (set by publishCreativeCore)
+// is the only bookkeeping needed to avoid double-submitting the same
+// creative while its task is still pending/running.
+//
+// Ordering: a creative the content calendar (takvim) assigned to a
+// specific day goes out on that day, in day order, ahead of everything
+// unscheduled — a creative scheduled for a FUTURE day is excluded
+// entirely (not just deprioritized) so the calendar's placement is
+// authoritative rather than advisory. Anything with no day assigned falls
+// back to the original oldest-first FIFO, exactly as before the calendar
+// existed. "Today" is computed in the schedule's own timezone (same
+// string scheduler-service.ts's computeNextRunAt already uses for this
+// project) via Intl rather than a date library, since scheduledFor is a
+// plain @db.Date column — no time-of-day component to convert.
+function todayInTimezone(timezone: string | null | undefined): Date {
+  const todayStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone ?? "Europe/Istanbul",
+  }).format(new Date());
+  return new Date(todayStr);
+}
+
+async function findNextQueuedInstagramCreativeId(
+  projectId: string,
+  timezone: string | null | undefined,
+): Promise<string | null> {
+  const today = todayInTimezone(timezone);
+  const [inFlightTasks, candidates] = await Promise.all([
+    prisma.task.findMany({
+      where: {
+        projectId,
+        capability: "INSTAGRAM_PUBLISH",
+        status: { notIn: ["COMPLETED", "FAILED", "CANCELLED"] },
+      },
+      select: { payload: true },
+    }),
+    prisma.creative.findMany({
+      where: {
+        projectId,
+        platform: "INSTAGRAM",
+        status: "APPROVED",
+        OR: [{ scheduledFor: null }, { scheduledFor: { lte: today } }],
+      },
+      orderBy: [
+        { scheduledFor: { sort: "asc", nulls: "last" } },
+        { updatedAt: "asc" },
+      ],
+      select: { id: true },
+    }),
+  ]);
+  const inFlightCreativeIds = new Set(
+    inFlightTasks
+      .map(
+        (task) => (task.payload as { creativeId?: unknown } | null)?.creativeId,
+      )
+      .filter((id): id is string => typeof id === "string"),
+  );
+  return (
+    candidates.find((creative) => !inFlightCreativeIds.has(creative.id))?.id ??
+    null
+  );
+}
+
+// Called by SchedulerService.runDueSchedules when a Publishing-tab schedule
+// (capability INSTAGRAM_PUBLISH, configuration.mode "PUBLISH_NEXT_READY")
+// comes due — mirrors applyApprovalDecision's immediate-publish sequence
+// (publish, then propose a Meta campaign, then post the same confirmation
+// to chat) but for whichever creative is next in the queue rather than the
+// one that was just approved. An empty queue is a normal no-op.
+export async function publishNextQueuedInstagramCreative(input: {
+  workspaceId: string;
+  projectId: string;
+  brandId: string;
+  timezone?: string | null;
+}): Promise<void> {
+  try {
+    const creativeId = await findNextQueuedInstagramCreativeId(
+      input.projectId,
+      input.timezone,
+    );
+    if (!creativeId) return;
+
+    const result = await publishCreativeCore({
+      creativeId,
+      format: "FEED",
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      actorUserId: AUTO_PUBLISH_ACTOR_ID,
+    });
+    if (!result.ok) return;
+
+    await maybeProposeMetaCampaign({
+      creativeId,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      brandId: input.brandId,
+    });
+
+    const target = await resolveIdeaAndTitleForCreative(creativeId);
+    if (target?.ideaId) {
+      await IdeaChatRepository.postSystemMessage({
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        ideaId: target.ideaId,
+        text: `✅ ${target.title} published to Instagram (scheduled slot).`,
+      });
+    }
+  } catch (error) {
+    console.error("[approval-decisions] scheduled publish failed:", error);
   }
 }
 
@@ -330,7 +494,7 @@ export async function applyApprovalDecision(input: {
   // Creative, including ones with no resolvable idea (resolveApprovalChatTarget's
   // Creative branch returns null there, but that's a chat-thread lookup
   // concern, not a reason to skip the actual publish).
-  let autoPublishResult: { ok: boolean; message: string } | null = null;
+  let autoPublishResult: AutoPublishResult | null = null;
   if (approval.entityType === "Creative") {
     await CreativeRepository.transition(
       approval.entityId,
@@ -344,7 +508,7 @@ export async function applyApprovalDecision(input: {
         workspaceId: approval.workspaceId,
         projectId: approval.projectId,
       });
-      if (autoPublishResult.ok) {
+      if (autoPublishResult.status === "PUBLISHED") {
         await maybeProposeMetaCampaign({
           creativeId: approval.entityId,
           workspaceId: approval.workspaceId,
@@ -382,7 +546,7 @@ export async function applyApprovalDecision(input: {
         // updating the same row — the creative-ready card already carries
         // the image/title, this is a distinct follow-up event.
         if (to === "APPROVED") {
-          if (autoPublishResult?.ok) {
+          if (autoPublishResult?.status === "PUBLISHED") {
             // Auto-published above — no question needed, just confirm it
             // happened (this is what used to be a silent "sat there for 11
             // days" gap).
@@ -391,6 +555,18 @@ export async function applyApprovalDecision(input: {
               projectId: approval.projectId,
               ideaId: target.ideaId,
               text: `✅ ${target.title} approved and published to Instagram automatically.`,
+            });
+          } else if (autoPublishResult?.status === "QUEUED") {
+            // A Publishing schedule is active for this project — the
+            // creative stays APPROVED and publishNextQueuedInstagramCreative
+            // will pick it up at the next slot. Deliberately NOT the
+            // ask-flow below: prompting "want to share it?" here would
+            // invite a manual publish that skips the queue entirely.
+            await IdeaChatRepository.postSystemMessage({
+              workspaceId: approval.workspaceId,
+              projectId: approval.projectId,
+              ideaId: target.ideaId,
+              text: `✅ ${target.title} approved — queued for the next scheduled Instagram slot.`,
             });
           } else {
             // Auto-publish didn't apply or failed (not an Instagram

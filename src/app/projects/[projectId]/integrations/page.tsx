@@ -2,7 +2,6 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   BarChart3,
-  Check,
   Image as ImageIcon,
   Plug,
   RefreshCw,
@@ -78,40 +77,40 @@ import { SubmitButton } from "@/components/shared/submit-button";
 import { Input } from "@/components/ui/input";
 import { buttonVariants } from "@/components/ui/button";
 
-const CATEGORIES = {
-  social: {
-    title: "Social Media",
-    // TIKTOK/LINKEDIN/X were deliberately removed from here — they're no
-    // longer BrowserProfile-based placeholders, they now render separately
-    // through real OAuth via TikTokTile/LinkedInTile/XTile (see the
-    // IntegrationSections below). INSTAGRAM stays here — it's still the old
-    // BrowserProfile placeholder, separate from Meta's real OAuth.
-    purposes: ["INSTAGRAM"] as BrowserProfilePurpose[],
-  },
-  reklam: {
-    title: "Advertising",
-    purposes: ["META_ADS", "GOOGLE_ADS"] as BrowserProfilePurpose[],
-  },
-  analitik: {
-    title: "Analytics & Other",
-    purposes: [
-      "GA4",
-      "SEARCH_CONSOLE",
-      "CRM",
-      "EMAIL",
-    ] as BrowserProfilePurpose[],
-  },
-};
-
-const FILTERS = [
-  { key: "tumu", label: "All" },
-  { key: "mesajlasma", label: "Messaging" },
+const CATEGORY_LIST = [
+  { key: "messaging", label: "Messaging" },
   { key: "social", label: "Social Media" },
   { key: "reklam", label: "Advertising" },
-  { key: "analitik", label: "Analytics & Other" },
-  { key: "kurulu", label: "Installed" },
+  { key: "analitik", label: "Analytics" },
+  { key: "other", label: "Other" },
 ] as const;
-type FilterKey = (typeof FILTERS)[number]["key"];
+type CategoryKey = (typeof CATEGORY_LIST)[number]["key"];
+
+// The legacy BrowserProfile-based placeholders this page still shows.
+// TIKTOK/LINKEDIN/X are deliberately NOT here — they're no longer
+// BrowserProfile-based placeholders, they now render separately through
+// real OAuth via TikTokTile/LinkedInTile/XTile below. INSTAGRAM stays
+// here — it's still the old BrowserProfile placeholder, separate from
+// Meta's real OAuth.
+const LEGACY_PURPOSE_CATEGORY: Array<{
+  purpose: BrowserProfilePurpose;
+  category: CategoryKey;
+}> = [
+  { purpose: "INSTAGRAM", category: "social" },
+  { purpose: "META_ADS", category: "reklam" },
+  { purpose: "GOOGLE_ADS", category: "reklam" },
+  { purpose: "GA4", category: "analitik" },
+  { purpose: "SEARCH_CONSOLE", category: "analitik" },
+  { purpose: "CRM", category: "other" },
+  { purpose: "EMAIL", category: "other" },
+];
+
+type FilterKey = "tumu" | "enabled" | CategoryKey;
+const FILTER_KEYS: readonly FilterKey[] = [
+  "tumu",
+  "enabled",
+  ...CATEGORY_LIST.map((c) => c.key),
+];
 
 export default async function EntegrasyonlarPage({
   params,
@@ -178,32 +177,164 @@ export default async function EntegrasyonlarPage({
 
   const filter: FilterKey =
     typeof sp.kategori === "string" &&
-    FILTERS.some((f) => f.key === sp.kategori)
+    FILTER_KEYS.includes(sp.kategori as FilterKey)
       ? (sp.kategori as FilterKey)
       : "tumu";
+  const q = typeof sp.q === "string" ? sp.q.trim().toLowerCase() : "";
   const base = `/projects/${projectId}/integrations`;
-  const closeHref = filter === "tumu" ? base : `${base}?kategori=${filter}`;
+  const kategoriParam = filter === "tumu" ? undefined : filter;
 
-  const showMesajlasma =
-    filter === "tumu" ||
-    filter === "mesajlasma" ||
-    (filter === "kurulu" && telegramConnected);
+  function filterHref(key: FilterKey): string {
+    const params = new URLSearchParams();
+    if (key !== "tumu") params.set("kategori", key);
+    if (q) params.set("q", q);
+    const qs = params.toString();
+    return qs ? `${base}?${qs}` : base;
+  }
+  const closeHref = filterHref(filter);
 
-  const sections =
+  // Every connector (real OAuth + legacy BrowserProfile placeholders)
+  // collected into one list so category/search filtering actually applies
+  // uniformly — previously Telegram/Google/Meta/TikTok/LinkedIn/X ignored
+  // the category filter entirely and always rendered regardless of it.
+  const allConnectors: Array<{
+    key: string;
+    category: CategoryKey;
+    label: string;
+    connected: boolean;
+    node: React.ReactNode;
+  }> = [
+    {
+      key: "telegram",
+      category: "messaging",
+      label: "Telegram",
+      connected: telegramConnected,
+      node: (
+        <TelegramTile
+          key="telegram"
+          base={base}
+          kategori={kategoriParam}
+          credential={telegramCredential}
+        />
+      ),
+    },
+    {
+      key: "google",
+      category: "analitik",
+      label: "Google Analytics & Search Console",
+      connected: googleCredential?.status === "ACTIVE",
+      node: (
+        <GoogleTile
+          key="google"
+          base={base}
+          kategori={kategoriParam}
+          credential={googleCredential}
+        />
+      ),
+    },
+    {
+      key: "meta",
+      category: "social",
+      label: "Instagram & Meta Ads",
+      connected: metaCredential?.status === "ACTIVE",
+      node: (
+        <MetaTile
+          key="meta"
+          base={base}
+          kategori={kategoriParam}
+          credential={metaCredential}
+        />
+      ),
+    },
+    {
+      key: "tiktok",
+      category: "social",
+      label: "TikTok",
+      connected: tiktokCredential?.status === "ACTIVE",
+      node: (
+        <TikTokTile
+          key="tiktok"
+          base={base}
+          kategori={kategoriParam}
+          credential={tiktokCredential}
+        />
+      ),
+    },
+    {
+      key: "linkedin",
+      category: "social",
+      label: "LinkedIn",
+      connected: linkedinCredential?.status === "ACTIVE",
+      node: (
+        <LinkedInTile
+          key="linkedin"
+          base={base}
+          kategori={kategoriParam}
+          credential={linkedinCredential}
+        />
+      ),
+    },
+    {
+      key: "x",
+      category: "social",
+      label: "X",
+      connected: xCredential?.status === "ACTIVE",
+      node: (
+        <XTile
+          key="x"
+          base={base}
+          kategori={kategoriParam}
+          credential={xCredential}
+        />
+      ),
+    },
+    ...LEGACY_PURPOSE_CATEGORY.map(({ purpose, category }) => {
+      const profiles = profilesByPurpose.get(purpose) ?? [];
+      return {
+        key: purpose,
+        category,
+        label: PURPOSE_ICONS[purpose].label,
+        connected: profiles.some((p) => p.status === "READY"),
+        node: (
+          <IntegrationTile
+            key={purpose}
+            base={base}
+            kategori={kategoriParam}
+            purpose={purpose}
+            profiles={profiles}
+          />
+        ),
+      };
+    }),
+  ];
+
+  const categoryFiltered =
     filter === "tumu"
-      ? Object.values(CATEGORIES)
-      : filter === "kurulu"
-        ? [
-            {
-              title: "Installed Integrations",
-              purposes: Object.values(CATEGORIES)
-                .flatMap((c) => c.purposes)
-                .filter((p) => (profilesByPurpose.get(p)?.length ?? 0) > 0),
-            },
-          ]
-        : filter === "mesajlasma"
-          ? []
-          : [CATEGORIES[filter]];
+      ? allConnectors
+      : filter === "enabled"
+        ? allConnectors.filter((c) => c.connected)
+        : allConnectors.filter((c) => c.category === filter);
+  const visibleConnectors = q
+    ? categoryFiltered.filter((c) => c.label.toLowerCase().includes(q))
+    : categoryFiltered;
+
+  const enabledCount = allConnectors.filter((c) => c.connected).length;
+  const totalCount = allConnectors.length;
+  const categoryCounts = CATEGORY_LIST.map((c) => ({
+    ...c,
+    count: allConnectors.filter((row) => row.category === c.key).length,
+  }));
+  const sectionTitle =
+    filter === "tumu"
+      ? "All Connectors"
+      : filter === "enabled"
+        ? "Enabled"
+        : (CATEGORY_LIST.find((c) => c.key === filter)?.label ?? "Connectors");
+
+  const navRowClass =
+    "flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-sm transition-colors hover:bg-muted";
+  const navRowActiveClass = "bg-muted font-medium text-foreground";
+  const navRowInactiveClass = "text-muted-foreground";
 
   const openTelegram = sp.integration === "telegram";
   const openGoogle = sp.integration === "google";
@@ -221,113 +352,110 @@ export default async function EntegrasyonlarPage({
   const xError = typeof sp.xError === "string" ? sp.xError : null;
   const openPurpose =
     typeof sp.integration === "string" &&
-    Object.values(CATEGORIES).some((c) =>
-      c.purposes.includes(sp.integration as BrowserProfilePurpose),
-    )
+    LEGACY_PURPOSE_CATEGORY.some((p) => p.purpose === sp.integration)
       ? (sp.integration as BrowserProfilePurpose)
       : null;
 
   return (
     <AppShell projectId={projectId}>
       <div className="space-y-6 p-6 pb-16">
-        <div>
-          <h1 className="font-heading text-2xl font-semibold tracking-tight">
-            Integrations
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {project.name} — channel and ad account connection status
-          </p>
-          <p className="mt-2 max-w-2xl text-xs text-muted-foreground/80">
-            Most of the channel/ad connections below aren&apos;t a
-            click-to-connect (OAuth) screen: connections are set up manually by
-            an operator through OpenClaw, and here you just view the status and
-            mark it. <strong>Google</strong>, <strong>Meta</strong>,{" "}
-            <strong>TikTok</strong>, <strong>LinkedIn</strong> and{" "}
-            <strong>X</strong> are the exception — you can connect your own
-            account with real OAuth and grant permission for posting and, for
-            Google/Meta, ad campaign management.
-          </p>
-        </div>
+        <div className="flex gap-8">
+          <aside className="w-56 shrink-0 space-y-6">
+            <div>
+              <h1 className="font-heading text-xl font-semibold tracking-tight">
+                Connectors
+              </h1>
+              <p className="text-xs text-muted-foreground">{project.name}</p>
+            </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          {FILTERS.map((f) => (
-            <Link
-              key={f.key}
-              href={f.key === "tumu" ? base : `${base}?kategori=${f.key}`}
-              className={cn(
-                "flex h-8 items-center gap-1 rounded-full px-3.5 text-xs font-medium transition-colors",
-                filter === f.key
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:bg-accent",
-              )}
-            >
-              {f.key === "kurulu" && filter === "kurulu" ? (
-                <Check className="size-3" />
+            <form method="GET" action={base}>
+              {filter !== "tumu" ? (
+                <input type="hidden" name="kategori" value={filter} />
               ) : null}
-              {f.label}
-            </Link>
-          ))}
-        </div>
+              <Input
+                name="q"
+                defaultValue={q}
+                placeholder="Search connectors"
+                className="h-8 text-xs"
+              />
+            </form>
 
-        {showMesajlasma ? (
-          <IntegrationSection title="Messaging">
-            <TelegramTile
-              base={base}
-              kategori={filter === "tumu" ? undefined : filter}
-              credential={telegramCredential}
-            />
-          </IntegrationSection>
-        ) : null}
+            <div className="space-y-0.5">
+              <Link
+                href={filterHref("tumu")}
+                className={cn(
+                  navRowClass,
+                  filter === "tumu" ? navRowActiveClass : navRowInactiveClass,
+                )}
+              >
+                All
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {totalCount}
+                </span>
+              </Link>
+              <Link
+                href={filterHref("enabled")}
+                className={cn(
+                  navRowClass,
+                  filter === "enabled"
+                    ? navRowActiveClass
+                    : navRowInactiveClass,
+                )}
+              >
+                Enabled
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {enabledCount}
+                </span>
+              </Link>
+            </div>
 
-        <IntegrationSection title="Reporting Connection">
-          <GoogleTile
-            base={base}
-            kategori={filter === "tumu" ? undefined : filter}
-            credential={googleCredential}
-          />
-        </IntegrationSection>
-
-        <IntegrationSection title="Meta Connection (Instagram + Ads)">
-          <MetaTile
-            base={base}
-            kategori={filter === "tumu" ? undefined : filter}
-            credential={metaCredential}
-          />
-        </IntegrationSection>
-
-        <IntegrationSection title="TikTok / LinkedIn / X">
-          <TikTokTile
-            base={base}
-            kategori={filter === "tumu" ? undefined : filter}
-            credential={tiktokCredential}
-          />
-          <LinkedInTile
-            base={base}
-            kategori={filter === "tumu" ? undefined : filter}
-            credential={linkedinCredential}
-          />
-          <XTile
-            base={base}
-            kategori={filter === "tumu" ? undefined : filter}
-            credential={xCredential}
-          />
-        </IntegrationSection>
-
-        {sections.map((section) =>
-          section.purposes.length === 0 ? null : (
-            <IntegrationSection key={section.title} title={section.title}>
-              {section.purposes.map((purpose) => (
-                <IntegrationTile
-                  key={purpose}
-                  base={base}
-                  kategori={filter === "tumu" ? undefined : filter}
-                  purpose={purpose}
-                  profiles={profilesByPurpose.get(purpose) ?? []}
-                />
+            <div className="space-y-0.5">
+              <p className="px-2.5 text-[10px] font-semibold tracking-wide text-muted-foreground/70 uppercase">
+                Categories
+              </p>
+              {categoryCounts.map((c) => (
+                <Link
+                  key={c.key}
+                  href={filterHref(c.key)}
+                  className={cn(
+                    navRowClass,
+                    filter === c.key ? navRowActiveClass : navRowInactiveClass,
+                  )}
+                >
+                  {c.label}
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {c.count}
+                  </span>
+                </Link>
               ))}
-            </IntegrationSection>
-          ),
-        )}
+            </div>
+          </aside>
+
+          <div className="min-w-0 flex-1 space-y-6">
+            <p className="max-w-2xl text-xs text-muted-foreground/80">
+              Most of the channel/ad connections below aren&apos;t a
+              click-to-connect (OAuth) screen: connections are set up manually
+              by an operator through OpenClaw, and here you just view the status
+              and mark it. <strong>Google</strong>, <strong>Meta</strong>,{" "}
+              <strong>TikTok</strong>, <strong>LinkedIn</strong> and{" "}
+              <strong>X</strong> are the exception — you can connect your own
+              account with real OAuth and grant permission for posting and, for
+              Google/Meta, ad campaign management.
+            </p>
+
+            {visibleConnectors.length === 0 ? (
+              <EmptyState
+                icon={Plug}
+                title="No connectors found"
+                hint="Try a different search or category."
+              />
+            ) : (
+              <IntegrationSection title={sectionTitle}>
+                {visibleConnectors.map((c) => c.node)}
+              </IntegrationSection>
+            )}
+          </div>
+        </div>
 
         {openPurpose ? (
           <IntegrationDialog
@@ -1337,7 +1465,7 @@ function MetaDialog({
 // TikTok / LinkedIn / X — the same real, IntegrationCredential-based OAuth
 // pattern as Google/Meta (see src/server/integrations/{tiktok,linkedin,x}-
 // client.ts). They replace the old BrowserProfile-based TIKTOK/LINKEDIN/X
-// purposes (see the note in CATEGORIES) — their BrowserProfilePurpose
+// purposes (see the note in LEGACY_PURPOSE_CATEGORY) — their BrowserProfilePurpose
 // counterpart still exists in execution-policy.ts for the OpenClaw
 // fallback, but it's no longer shown as a separate placeholder tile on
 // this page.

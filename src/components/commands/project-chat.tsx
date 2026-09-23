@@ -72,6 +72,7 @@ type LocalTurn = {
   // the server list refresh delivers the persisted copy.
   card?: IdeaEventCardData;
   commandId?: string;
+  createdAt: string;
 };
 
 type FlatMessage =
@@ -80,6 +81,7 @@ type FlatMessage =
       role: "user";
       text: string;
       attachments: (ChatAttachment | LocalAttachment)[];
+      createdAt: string;
     }
   | {
       id: string;
@@ -88,6 +90,7 @@ type FlatMessage =
       card?: IdeaEventCardData;
       departmentKey?: DepartmentKey;
       error?: boolean;
+      createdAt: string;
     };
 
 const CHAT_ACCEPT =
@@ -185,6 +188,7 @@ export function ProjectChat({
             text: turn.reply,
             card: turn.card,
             departmentKey: turn.departmentKey,
+            createdAt: turn.createdAt,
           });
         }
         continue;
@@ -194,6 +198,7 @@ export function ProjectChat({
         role: "user",
         text: turn.text,
         attachments: turn.attachments,
+        createdAt: turn.createdAt,
       });
       if (turn.reply) {
         const note = turn.replyStatus
@@ -211,6 +216,7 @@ export function ProjectChat({
           // DepartmentBadge (department color+icon) rendered by
           // thread.tsx from departmentKey.
           departmentKey: turn.departmentKey,
+          createdAt: turn.createdAt,
         });
       }
     }
@@ -220,12 +226,14 @@ export function ProjectChat({
         role: "user",
         text: turn.text,
         attachments: turn.attachments,
+        createdAt: turn.createdAt,
       });
       if (turn.state === "pending") {
         out.push({
           id: `${turn.key}-a`,
           role: "assistant",
           text: "Thinking…",
+          createdAt: turn.createdAt,
         });
       } else if (turn.reply) {
         out.push({
@@ -234,6 +242,7 @@ export function ProjectChat({
           text: turn.reply,
           card: turn.card,
           error: turn.state === "error",
+          createdAt: turn.createdAt,
         });
       }
     }
@@ -246,6 +255,7 @@ export function ProjectChat({
         return {
           role: "user",
           content: message.text,
+          createdAt: new Date(message.createdAt),
           attachments: message.attachments.map((attachment, index) => {
             const isImage = attachment.mimeType.startsWith("image/");
             const src = attachmentSrc(attachment);
@@ -271,6 +281,7 @@ export function ProjectChat({
         return {
           role: "assistant",
           content: message.card ? [] : message.text,
+          createdAt: new Date(message.createdAt),
           metadata: {
             custom: {
               card: message.card,
@@ -286,6 +297,7 @@ export function ProjectChat({
       return {
         role: "assistant",
         content: message.text,
+        createdAt: new Date(message.createdAt),
         status: message.error
           ? { type: "incomplete", reason: "error" }
           : undefined,
@@ -314,6 +326,7 @@ export function ProjectChat({
           text: displayText,
           attachments,
           state: "pending",
+          createdAt: new Date().toISOString(),
         },
       ]);
 

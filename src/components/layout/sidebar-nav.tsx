@@ -12,6 +12,7 @@ import {
   Lightbulb,
   ListChecks,
   MessageSquarePlus,
+  Plug,
   Sparkles,
 } from "lucide-react";
 
@@ -148,6 +149,19 @@ export function SidebarNav({
           >
             <CalendarDays className="size-4 shrink-0 opacity-80" />
             Content Calendar
+          </Link>
+
+          <Link
+            href={`/projects/${activeProjectId}/integrations`}
+            className={cn(
+              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
+              pathname === `/projects/${activeProjectId}/integrations`
+                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                : "hover:bg-sidebar-accent/60",
+            )}
+          >
+            <Plug className="size-4 shrink-0 opacity-80" />
+            Connectors
           </Link>
 
           {flows && flows.length > 0 ? (

@@ -16,18 +16,28 @@
 import { shouldStartLocalWorker } from "@/lib/local-worker-policy";
 
 export async function register() {
-  // One boot-time snapshot of which integrations THIS process actually
-  // sees. getEnv() reads process.env once and caches it for the process
-  // lifetime, so an env var added in the Railway dashboard while a
-  // container keeps running is invisible until a restart — that's exactly
-  // how creatives silently landed on the ephemeral local disk (and died on
-  // the next redeploy) while the panel showed R2 fully configured. This
-  // line turns that mismatch into something grep-able in the deploy log.
+  // Next.js invokes register() once per runtime the app uses (nodejs AND
+  // edge, e.g. because of middleware) — everything below is Node-only
+  // (Prisma, node:crypto, node:fs, node:child_process transitively via
+  // execution-worker.ts), so it's ALL gated behind this single check.
+  // Next's own bundler dead-code-eliminates the other branch per-runtime
+  // for exactly this pattern (see the instrumentation docs) — leaving the
+  // worker's dynamic import outside this guard, as a bare top-level
+  // statement, made Turbopack statically trace execution-worker.ts's whole
+  // import graph for the Edge compilation target too and spam "Node.js
+  // module ... not supported in the Edge Runtime" warnings for every file
+  // in it, even though shouldStartLocalWorker's own runtime check already
+  // made it a no-op there.
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // One boot-time snapshot of which integrations THIS process actually
+    // sees. getEnv() reads process.env once and caches it for the process
+    // lifetime, so an env var added in the Railway dashboard while a
+    // container keeps running is invisible until a restart — that's exactly
+    // how creatives silently landed on the ephemeral local disk (and died on
+    // the next redeploy) while the panel showed R2 fully configured. This
+    // line turns that mismatch into something grep-able in the deploy log.
     const { isIntegrationConfigured } = await import("@/lib/env");
-    const summary = (
-      ["R2", "OPENAI", "OPENCLAW_GATEWAY", "TELEGRAM"] as const
-    )
+    const summary = (["R2", "OPENAI", "OPENCLAW_GATEWAY", "TELEGRAM"] as const)
       .map((key) => `${key}=${isIntegrationConfigured(key) ? "on" : "OFF"}`)
       .join(" ");
     console.log(`[boot] integrations: ${summary}`);
@@ -36,20 +46,21 @@ export async function register() {
         "[boot] R2 is NOT configured — assets will be written to the ephemeral local disk and will be lost on the next redeploy",
       );
     }
+
+    if (!shouldStartLocalWorker(process.env)) return;
+
+    const { ExecutionWorker } =
+      await import("@/server/workers/execution-worker");
+
+    const TICK_MS = 3_000;
+    setInterval(() => {
+      ExecutionWorker.tick().catch((error) => {
+        console.error("[worker] tick failed", error);
+      });
+    }, TICK_MS);
+
+    console.log(
+      `[worker] local execution worker started (tick every ${TICK_MS}ms)`,
+    );
   }
-
-  if (!shouldStartLocalWorker(process.env)) return;
-
-  const { ExecutionWorker } = await import("@/server/workers/execution-worker");
-
-  const TICK_MS = 3_000;
-  setInterval(() => {
-    ExecutionWorker.tick().catch((error) => {
-      console.error("[worker] tick failed", error);
-    });
-  }, TICK_MS);
-
-  console.log(
-    `[worker] local execution worker started (tick every ${TICK_MS}ms)`,
-  );
 }

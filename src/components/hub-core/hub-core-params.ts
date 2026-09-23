@@ -30,6 +30,7 @@ export type WorkSubKey = (typeof WORK_SUB_KEYS)[number];
 
 export const SETTINGS_SUB_KEYS = [
   "autonomy",
+  "publishing",
   "decisions",
   "activity",
   "risk",

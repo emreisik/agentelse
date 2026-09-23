@@ -1,24 +1,29 @@
 // Curated fal.ai image models offered in the Image Studio's model picker
 // (see creative-image-studio.tsx). fal.ai hosts 50+ image-generation
-// endpoints; listing them all would be unusable. This is a small,
-// named-by-use-case list instead — adding another model later is a line
-// here, not a code change (endpointId is the only thing fal-image-client.ts
-// needs). Prices are approximate (fal's own pricing page is the source of
-// truth) and shown in the picker so the user can make an informed choice —
-// video models are an order of magnitude more expensive than these, which
-// is exactly why this integration is image-only for now.
+// endpoints; listing them all would be unusable. This is a broader,
+// named-by-use-case list — the trending/flagship model per family (FLUX,
+// Google Gemini/Imagen, Seedream, Recraft, Ideogram) plus the editing/
+// background-removal/upscaling specialists — not the full catalog. Adding
+// another model later is a line here, not a code change (endpointId is the
+// only thing fal-image-client.ts needs). Prices are approximate (fal's own
+// pricing page is the source of truth) and shown in the picker so the user
+// can make an informed choice.
+export type FalImageModelCategory =
+  | "Fast"
+  | "Standard"
+  | "Premium"
+  | "Budget"
+  | "Typography"
+  | "Gemini"
+  | "Editing"
+  | "Background removal"
+  | "Upscale";
+
 export type FalImageModel = {
   id: string;
   label: string;
   endpointId: string;
-  category:
-    | "fast"
-    | "standard"
-    | "premium"
-    | "typography"
-    | "editing"
-    | "background-removal"
-    | "upscaling";
+  category: FalImageModelCategory;
   approxPrice: string;
   // Whether this endpoint accepts an input image (edit/image-to-image) —
   // gates which models the Studio offers in "edit this image" mode. See
@@ -29,66 +34,138 @@ export type FalImageModel = {
 export const FAL_IMAGE_MODELS: FalImageModel[] = [
   {
     id: "flux-schnell",
-    label: "FLUX Schnell (fast draft)",
+    label: "FLUX Schnell",
     endpointId: "fal-ai/flux/schnell",
-    category: "fast",
-    approxPrice: "~$0.003/image",
+    category: "Fast",
+    approxPrice: "$0.003/img",
     supportsImageInput: false,
   },
   {
     id: "flux-dev",
-    label: "FLUX Dev (standard)",
+    label: "FLUX Dev",
     endpointId: "fal-ai/flux/dev",
-    category: "standard",
-    approxPrice: "~$0.025/image",
+    category: "Standard",
+    approxPrice: "$0.025/img",
     supportsImageInput: false,
   },
   {
     id: "flux-pro-ultra",
-    label: "FLUX Pro 1.1 Ultra (premium/hero)",
+    label: "FLUX Pro 1.1 Ultra",
     endpointId: "fal-ai/flux-pro/v1.1-ultra",
-    category: "premium",
-    approxPrice: "~$0.06/image",
+    category: "Premium",
+    approxPrice: "$0.06/img",
+    supportsImageInput: false,
+  },
+  {
+    id: "flux-2-pro",
+    label: "FLUX.2 Pro",
+    endpointId: "fal-ai/flux-2-pro",
+    category: "Premium",
+    approxPrice: "$0.03+/img",
+    supportsImageInput: false,
+  },
+  {
+    id: "qwen-image",
+    label: "Qwen Image",
+    endpointId: "fal-ai/qwen-image",
+    category: "Budget",
+    approxPrice: "$0.02/mp",
+    supportsImageInput: false,
+  },
+  {
+    id: "seedream-v4",
+    label: "Seedream V4",
+    endpointId: "bytedance/seedream/v4",
+    category: "Standard",
+    approxPrice: "$0.03/img",
+    supportsImageInput: false,
+  },
+  {
+    id: "imagen3",
+    label: "Google Imagen 3",
+    endpointId: "fal-ai/imagen3",
+    category: "Premium",
+    approxPrice: "$0.05/img",
+    supportsImageInput: false,
+  },
+  {
+    id: "imagen3-fast",
+    label: "Google Imagen 3 Fast",
+    endpointId: "fal-ai/imagen3/fast",
+    category: "Standard",
+    approxPrice: "$0.025/img",
     supportsImageInput: false,
   },
   {
     id: "recraft-v3",
-    label: "Recraft V3 (vector, typography, brand graphics)",
+    label: "Recraft V3",
     endpointId: "fal-ai/recraft/v3/text-to-image",
-    category: "typography",
-    approxPrice: "~$0.04/image",
+    category: "Typography",
+    approxPrice: "$0.04/img",
     supportsImageInput: false,
   },
   {
     id: "ideogram-v3",
-    label: "Ideogram V3 (posters, readable in-image text)",
+    label: "Ideogram V3",
     endpointId: "fal-ai/ideogram/v3",
-    category: "typography",
-    approxPrice: "~$0.03-0.09/image",
+    category: "Typography",
+    approxPrice: "$0.03-0.09/img",
     supportsImageInput: false,
   },
   {
+    id: "gemini-25-flash-image",
+    label: "Gemini 2.5 Flash Image (Nano Banana)",
+    endpointId: "fal-ai/gemini-25-flash-image",
+    category: "Gemini",
+    approxPrice: "$0.039/img",
+    supportsImageInput: false,
+  },
+  {
+    id: "gemini-3-pro-image-preview",
+    label: "Nano Banana Pro (Gemini 3, preview)",
+    endpointId: "fal-ai/gemini-3-pro-image-preview",
+    category: "Gemini",
+    approxPrice: "preview pricing",
+    supportsImageInput: true,
+  },
+  {
     id: "flux-kontext-pro",
-    label: "FLUX Kontext Pro (instruction-based editing)",
+    label: "FLUX Kontext Pro",
     endpointId: "fal-ai/flux-pro/kontext",
-    category: "editing",
-    approxPrice: "~$0.04/image",
+    category: "Editing",
+    approxPrice: "$0.04/img",
+    supportsImageInput: true,
+  },
+  {
+    id: "gemini-25-flash-image-edit",
+    label: "Nano Banana Edit (Gemini 2.5 Flash)",
+    endpointId: "fal-ai/gemini-25-flash-image/edit",
+    category: "Editing",
+    approxPrice: "$0.039/img",
+    supportsImageInput: true,
+  },
+  {
+    id: "flux-pro-fill",
+    label: "FLUX Pro Fill (inpaint)",
+    endpointId: "fal-ai/flux-pro/v1/fill",
+    category: "Editing",
+    approxPrice: "$0.05/mp",
     supportsImageInput: true,
   },
   {
     id: "bria-bg-remove",
-    label: "Bria Background Remove (product cutouts)",
+    label: "Bria Background Remove",
     endpointId: "fal-ai/bria/background/remove",
-    category: "background-removal",
-    approxPrice: "~$0.018/image",
+    category: "Background removal",
+    approxPrice: "$0.018/img",
     supportsImageInput: true,
   },
   {
     id: "clarity-upscaler",
-    label: "Clarity Upscaler (add detail while upscaling)",
+    label: "Clarity Upscaler",
     endpointId: "fal-ai/clarity-upscaler",
-    category: "upscaling",
-    approxPrice: "compute-time billed",
+    category: "Upscale",
+    approxPrice: "compute-billed",
     supportsImageInput: true,
   },
 ];

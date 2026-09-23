@@ -61,6 +61,8 @@ export function CreativeImageStudio({
   const falModelChoices = FAL_IMAGE_MODELS.filter(
     (model) => !hasImage || model.supportsImageInput,
   );
+  const falModelOptionLabel = (model: (typeof FAL_IMAGE_MODELS)[number]) =>
+    `${model.category} · ${model.label} — ${model.approxPrice}`;
 
   const [, formAction] = useActionState(
     async (_prev: State, form: FormData) => {
@@ -148,20 +150,34 @@ export function CreativeImageStudio({
               { value: "", label: "OpenAI (default)" },
               ...falModelChoices.map((model) => ({
                 value: model.id,
-                label: `${model.label} — ${model.approxPrice}`,
+                label: falModelOptionLabel(model),
               })),
             ]}
             value={falModelId}
             onValueChange={(next) => setFalModelId(next ?? "")}
           >
-            <SelectTrigger size="sm" className="h-7 text-[11px]">
+            <SelectTrigger size="sm" className="h-7 w-full text-[11px]">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent>
+            {/* Popup width is decoupled from the (narrow, w-fit) trigger —
+                item text is whitespace-nowrap, so without this override
+                long labels (e.g. "Nano Banana Edit (Gemini 2.5 Flash) —
+                $0.039/img") get clipped to the trigger's width instead of
+                fully readable. alignItemWithTrigger=false: that mode
+                positions the popup assuming it's roughly the trigger's own
+                width (opens with the selected item directly over the
+                trigger, like a native <select>) — with a popup this much
+                wider than the trigger it mispositions, so this falls back
+                to a plain "opens below, left-aligned" dropdown instead. */}
+            <SelectContent
+              className="w-[24rem] max-w-[90vw]"
+              align="start"
+              alignItemWithTrigger={false}
+            >
               <SelectItem value="">OpenAI (default)</SelectItem>
               {falModelChoices.map((model) => (
                 <SelectItem key={model.id} value={model.id}>
-                  {model.label} — {model.approxPrice}
+                  {falModelOptionLabel(model)}
                 </SelectItem>
               ))}
             </SelectContent>

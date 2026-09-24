@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ClipboardList,
   Gem,
+  Grid3x3,
   Library,
   Lightbulb,
   ListChecks,
@@ -149,6 +150,19 @@ export function SidebarNav({
           >
             <CalendarDays className="size-4 shrink-0 opacity-80" />
             Content Calendar
+          </Link>
+
+          <Link
+            href={`/projects/${activeProjectId}/izgara`}
+            className={cn(
+              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
+              pathname === `/projects/${activeProjectId}/izgara`
+                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                : "hover:bg-sidebar-accent/60",
+            )}
+          >
+            <Grid3x3 className="size-4 shrink-0 opacity-80" />
+            Instagram Grid
           </Link>
 
           <Link

@@ -3,6 +3,7 @@ import {
   CalendarDays,
   ClipboardCheck,
   Gem,
+  Grid3x3,
   LayoutGrid,
   Library,
   Lightbulb,
@@ -140,6 +141,12 @@ export function ProjectToolsMenu({
           >
             <CalendarDays className="size-4 text-muted-foreground" />
             Content Calendar
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            render={<Link href={`/projects/${projectId}/izgara`} />}
+          >
+            <Grid3x3 className="size-4 text-muted-foreground" />
+            Instagram Grid
           </DropdownMenuItem>
           <DropdownMenuItem
             render={<Link href={`/projects/${projectId}/ads`} />}

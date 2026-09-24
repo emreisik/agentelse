@@ -69,6 +69,25 @@ export const CreativeRepository = {
     });
   },
 
+  // Instagram Grid Studio's "pending groups" section (spec: izgara) and
+  // scheduleGridSeriesAction's reverse-order math both need every sibling
+  // tile of one split source together — ordered by gridPosition, the
+  // assembled image's reading order (see the schema comment on
+  // Creative.gridPosition), not creation time.
+  listGridGroup(gridGroupId: string, projectId: string) {
+    return prisma.creative.findMany({
+      where: { projectId, gridGroupId },
+      include: {
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          include: { asset: true },
+        },
+      },
+      orderBy: { gridPosition: "asc" },
+    });
+  },
+
   create(input: {
     workspaceId: string;
     projectId: string;
@@ -78,6 +97,8 @@ export const CreativeRepository = {
     title?: string;
     brief?: string;
     createdByTaskId?: string;
+    gridGroupId?: string;
+    gridPosition?: number;
   }) {
     return prisma.creative.create({ data: { ...input, status: "DRAFT" } });
   },

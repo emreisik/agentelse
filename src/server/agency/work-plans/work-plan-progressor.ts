@@ -3,9 +3,24 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
+import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { IdeaRepository } from "@/server/repositories/idea.repository";
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { WorkPlanRepository } from "@/server/repositories/work-plan.repository";
+
+// A WorkPlan node task is created READY-but-undispatched (deferDispatch,
+// see task-planner.ts) and only ever dispatched by: the one-shot root-node
+// call right after plan creation (work-plan-builder.ts), or reactively by
+// onTaskCompleted/onTaskTerminal below when a SIBLING task in the same plan
+// reaches a terminal status. If that one-shot call misses a root node for
+// any transient reason (isProjectAgencyActive was false at that exact
+// moment — project still mid-setup, or briefly PAUSED), nothing ever
+// retries it: no sibling ever completes to fire the reactive path, so the
+// node (and everything depending on it) stays orphaned in READY forever.
+// Confirmed in production: 40 Task rows stuck 147-221 hours, zero
+// ExecutionJobs. sweepOrphanedReadyTasks below is the periodic repair pass
+// neither path provides.
+const STALE_READY_TASK_AFTER_MS = 30 * 60_000;
 
 // Dependency-gated dispatch for WorkPlan node tasks (spec section 26).
 // Tasks are created deferred (READY) regardless of whether their capability
@@ -57,6 +72,68 @@ export const WorkPlanProgressor = {
       dispatched += 1;
     }
     return dispatched;
+  },
+
+  // Periodic repair pass (see the module comment on STALE_READY_TASK_AFTER_MS
+  // above) — finds WorkPlan node tasks that have sat READY for too long
+  // (past any reasonable tick-jitter window) and re-runs dispatchReadyTasks
+  // for their plan. Safe to call repeatedly: dispatchReadyTasks re-queries
+  // status: "READY" fresh every time (an already-dispatched task has moved
+  // off READY, so it simply won't be a candidate again), and
+  // ExecutionService.dispatch()'s idempotencyKey (taskId:capability, unique
+  // constraint) is a second independent guard against a duplicate dispatch.
+  // distinct: ["workPlanId"] + orderBy updatedAt asc gives one candidate
+  // (the oldest-stale) per distinct plan, same pattern as idea-foundry.ts's
+  // generateForTopOpportunities.
+  async sweepOrphanedReadyTasks(limit = 20, now = new Date()): Promise<number> {
+    const cutoff = new Date(now.getTime() - STALE_READY_TASK_AFTER_MS);
+
+    const stale = await prisma.task.findMany({
+      where: {
+        workPlanId: { not: null },
+        status: "READY",
+        updatedAt: { lt: cutoff },
+      },
+      select: {
+        workPlanId: true,
+        projectId: true,
+        workspaceId: true,
+        updatedAt: true,
+      },
+      orderBy: { updatedAt: "asc" },
+      distinct: ["workPlanId"],
+      take: limit,
+    });
+
+    let total = 0;
+    for (const candidate of stale) {
+      if (!candidate.workPlanId) continue;
+      const dispatched = await this.dispatchReadyTasks(
+        candidate.workPlanId,
+        candidate.projectId,
+      );
+      // 0 means either the project is paused, or every READY task in this
+      // plan is still legitimately dependency-blocked — not an error, just
+      // nothing to rescue on this pass.
+      if (dispatched === 0) continue;
+      total += dispatched;
+
+      await AuditLogRepository.record({
+        workspaceId: candidate.workspaceId,
+        projectId: candidate.projectId,
+        actorType: "SYSTEM",
+        action: "self-healing.stale_ready_tasks_rescued",
+        entityType: "WorkPlan",
+        entityId: candidate.workPlanId,
+        metadata: {
+          dispatchedCount: dispatched,
+          staleForMinutes: Math.round(
+            (now.getTime() - candidate.updatedAt.getTime()) / 60_000,
+          ),
+        },
+      }).catch(() => undefined);
+    }
+    return total;
   },
 
   // TASK_COMPLETED fan-out: progress the task's plan, complete the plan when

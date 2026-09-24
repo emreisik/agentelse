@@ -14,6 +14,7 @@ import {
   ERROR_CATEGORY,
   PROVIDER_HEALTH_STATUS,
   RECOVERY_STRATEGY,
+  describeAuditAction,
 } from "@/lib/labels";
 import {
   requireUser,
@@ -309,11 +310,7 @@ export default async function HealthPage() {
                     className="rounded-lg bg-accent/40 px-3 py-2 text-sm"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span>
-                        {entry.action === "self-healing.stuck_job_reset"
-                          ? "Stuck job timed out"
-                          : "Dead letter record re-queued"}
-                      </span>
+                      <span>{describeAuditAction(entry.action)}</span>
                       <span className="text-xs text-muted-foreground">
                         {timeAgo(entry.createdAt)}
                       </span>

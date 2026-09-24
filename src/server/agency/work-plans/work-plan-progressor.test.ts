@@ -44,12 +44,18 @@ vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
   isProjectAgencyActive,
 }));
 
+const auditLogRecord = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/server/repositories/audit-log.repository", () => ({
+  AuditLogRepository: { record: auditLogRecord },
+}));
+
 const { WorkPlanProgressor } =
   await import("@/server/agency/work-plans/work-plan-progressor");
 const { TaskRepository } =
   await import("@/server/repositories/task.repository");
 const { WorkPlanRepository } =
   await import("@/server/repositories/work-plan.repository");
+const { TaskPlanner } = await import("@/server/commands/task-planner");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -264,5 +270,187 @@ describe("WorkPlanProgressor.dispatchReadyTasks", () => {
     expect(result).toBe(0);
     expect(task.findMany).not.toHaveBeenCalled();
     expect(isProjectAgencyActive).toHaveBeenCalledWith("p-paused");
+  });
+});
+
+describe("WorkPlanProgressor.sweepOrphanedReadyTasks", () => {
+  function readyTask(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      id: "task-1",
+      workspaceId: "ws-1",
+      projectId: "p-1",
+      brandId: "b-1",
+      title: "Do the thing",
+      capability: "CREATE_COPY",
+      riskLevel: "LOW",
+      createdByType: "SYSTEM",
+      createdByUserId: null,
+      departmentKey: null,
+      requiresApproval: false,
+      ...overrides,
+    };
+  }
+
+  it("dispatches a stale READY task with satisfied deps and logs one audit entry for the rescued plan", async () => {
+    const now = new Date("2026-09-24T12:00:00.000Z");
+    const staleSince = new Date("2026-09-24T10:00:00.000Z");
+    task.findMany
+      .mockResolvedValueOnce([
+        {
+          workPlanId: "plan-1",
+          projectId: "p-1",
+          workspaceId: "ws-1",
+          updatedAt: staleSince,
+        },
+      ])
+      .mockResolvedValueOnce([readyTask()]);
+
+    const result = await WorkPlanProgressor.sweepOrphanedReadyTasks(20, now);
+
+    expect(result).toBe(1);
+    expect(TaskPlanner.dispatchApprovedTask).toHaveBeenCalledWith(
+      "task-1",
+      "p-1",
+    );
+    expect(auditLogRecord).toHaveBeenCalledTimes(1);
+    expect(auditLogRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws-1",
+        projectId: "p-1",
+        action: "self-healing.stale_ready_tasks_rescued",
+        entityType: "WorkPlan",
+        entityId: "plan-1",
+        metadata: expect.objectContaining({
+          dispatchedCount: 1,
+          staleForMinutes: 120,
+        }),
+      }),
+    );
+  });
+
+  it("does not act when the stale scan finds nothing, and queries with the expected cutoff", async () => {
+    const now = new Date("2026-09-24T12:00:00.000Z");
+
+    const result = await WorkPlanProgressor.sweepOrphanedReadyTasks(20, now);
+
+    expect(result).toBe(0);
+    expect(task.findMany).toHaveBeenCalledTimes(1);
+    expect(task.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          workPlanId: { not: null },
+          status: "READY",
+          updatedAt: { lt: new Date("2026-09-24T11:30:00.000Z") },
+        },
+        distinct: ["workPlanId"],
+        take: 20,
+      }),
+    );
+    expect(TaskRepository.dependenciesSatisfied).not.toHaveBeenCalled();
+    expect(auditLogRecord).not.toHaveBeenCalled();
+  });
+
+  it("skips a stale task in a PAUSED project (no dispatch, no audit log)", async () => {
+    task.findMany.mockResolvedValueOnce([
+      {
+        workPlanId: "plan-1",
+        projectId: "p-paused",
+        workspaceId: "ws-1",
+        updatedAt: new Date("2026-09-24T10:00:00.000Z"),
+      },
+    ]);
+    isProjectAgencyActive.mockResolvedValueOnce(false);
+
+    const result = await WorkPlanProgressor.sweepOrphanedReadyTasks(
+      20,
+      new Date("2026-09-24T12:00:00.000Z"),
+    );
+
+    expect(result).toBe(0);
+    expect(TaskPlanner.dispatchApprovedTask).not.toHaveBeenCalled();
+    expect(TaskPlanner.requestApproval).not.toHaveBeenCalled();
+    expect(auditLogRecord).not.toHaveBeenCalled();
+  });
+
+  it("leaves a task whose dependency isn't satisfied yet alone (dispatchReadyTasks's own gate is not bypassed)", async () => {
+    task.findMany
+      .mockResolvedValueOnce([
+        {
+          workPlanId: "plan-1",
+          projectId: "p-1",
+          workspaceId: "ws-1",
+          updatedAt: new Date("2026-09-24T10:00:00.000Z"),
+        },
+      ])
+      .mockResolvedValueOnce([readyTask()]);
+    vi.mocked(TaskRepository.dependenciesSatisfied).mockResolvedValueOnce(
+      false,
+    );
+
+    const result = await WorkPlanProgressor.sweepOrphanedReadyTasks(
+      20,
+      new Date("2026-09-24T12:00:00.000Z"),
+    );
+
+    expect(result).toBe(0);
+    expect(TaskPlanner.dispatchApprovedTask).not.toHaveBeenCalled();
+    expect(auditLogRecord).not.toHaveBeenCalled();
+  });
+
+  it("parks a requiresApproval stale task via requestApproval instead of dispatching it, and still logs it as rescued", async () => {
+    task.findMany
+      .mockResolvedValueOnce([
+        {
+          workPlanId: "plan-1",
+          projectId: "p-1",
+          workspaceId: "ws-1",
+          updatedAt: new Date("2026-09-24T10:00:00.000Z"),
+        },
+      ])
+      .mockResolvedValueOnce([readyTask({ requiresApproval: true })]);
+
+    const result = await WorkPlanProgressor.sweepOrphanedReadyTasks(
+      20,
+      new Date("2026-09-24T12:00:00.000Z"),
+    );
+
+    expect(result).toBe(1);
+    expect(TaskPlanner.requestApproval).toHaveBeenCalledTimes(1);
+    expect(TaskPlanner.dispatchApprovedTask).not.toHaveBeenCalled();
+    expect(auditLogRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it("processes multiple distinct stale workPlanIds in one sweep and logs one audit entry per rescued plan", async () => {
+    task.findMany
+      .mockResolvedValueOnce([
+        {
+          workPlanId: "plan-1",
+          projectId: "p-1",
+          workspaceId: "ws-1",
+          updatedAt: new Date("2026-09-24T10:00:00.000Z"),
+        },
+        {
+          workPlanId: "plan-2",
+          projectId: "p-2",
+          workspaceId: "ws-2",
+          updatedAt: new Date("2026-09-24T09:00:00.000Z"),
+        },
+      ])
+      .mockResolvedValueOnce([readyTask({ id: "task-1", projectId: "p-1" })])
+      .mockResolvedValueOnce([readyTask({ id: "task-2", projectId: "p-2" })]);
+
+    const result = await WorkPlanProgressor.sweepOrphanedReadyTasks(
+      20,
+      new Date("2026-09-24T12:00:00.000Z"),
+    );
+
+    expect(result).toBe(2);
+    expect(auditLogRecord).toHaveBeenCalledTimes(2);
+    expect(auditLogRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: "plan-1" }),
+    );
+    expect(auditLogRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: "plan-2" }),
+    );
   });
 });

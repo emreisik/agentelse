@@ -229,6 +229,17 @@ registerAgencyTickStep({
   name: "handoff-progression",
   run: () => WorkHandoffEngine.progressPending(10),
 });
+// Self-heals a WorkPlan node task that was created READY (deferDispatch) but
+// never got dispatched by the one-shot root-dispatch call in
+// work-plan-builder.ts or a reactive TASK_COMPLETED/TASK_CANCELLED trigger
+// (e.g. isProjectAgencyActive was transiently false at plan-creation time) —
+// see work-plan-progressor.ts's sweepOrphanedReadyTasks for the staleness/
+// idempotency reasoning. Without this, such a task (and everything depending
+// on it) stays orphaned in READY forever.
+registerAgencyTickStep({
+  name: "work-plan-stale-sweep",
+  run: () => WorkPlanProgressor.sweepOrphanedReadyTasks(20),
+});
 // Combined AdSet+Ad wizard's second-Task fan-out (see meta-adset-chain-relay.ts).
 registerTaskCompletedHandler(async (taskId) => {
   await MetaAdSetChainRelay.onTaskCompleted(taskId);

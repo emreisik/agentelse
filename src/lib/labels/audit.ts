@@ -6,6 +6,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   "agency-setup.started": "Agency setup started",
   "self-healing.stuck_job_reset": "Stuck job auto-recovered",
   "self-healing.dead_letter_requeued": "Failed job requeued",
+  "self-healing.stale_ready_tasks_rescued": "Stale work plan tasks rescued",
   "department.mode_changed": "Department mode changed",
   "signal_profile.intensity_changed": "Signal profile intensity changed",
   "autonomy_policy.updated": "Autonomy policy updated",

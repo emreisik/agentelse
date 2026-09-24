@@ -41,6 +41,112 @@ const ScheduleSchema = z.object({
 // publishNextQueuedInstagramCreative.
 const PUBLISH_QUEUE_MODE = "PUBLISH_NEXT_READY";
 
+// The marker that tells SchedulerService.runDueSchedules to run the fully
+// autonomous weekly Instagram planner — see instagram-week-planner.ts.
+const AUTO_PLAN_GRID_WEEK_MODE = "AUTO_PLAN_GRID_WEEK";
+const AUTO_PLAN_DAY_RE = /^[0-6]$/;
+
+const AutoContentPlanSchema = z.object({
+  projectId: z.string().min(1),
+  enabled: z.boolean(),
+  timezone: z.string().min(1),
+  dayOfWeek: z.string().regex(AUTO_PLAN_DAY_RE, "Invalid day"),
+  time: z.string().regex(TIME_RE, "Use HH:mm"),
+  dailyImageCap: z.coerce.number().int().min(1).max(10),
+});
+
+// Settings → Publishing "Auto content planning" card's action — one
+// ProjectSchedule row (capability CREATE_CONTENT_PLAN, configuration.mode
+// AUTO_PLAN_GRID_WEEK), the same one-row-per-project shape as the
+// Instagram publish schedule but with a single weekly cron instead of up
+// to 3 daily slots. Off by default: creating this action does not create
+// the row until the user explicitly enables and saves.
+export async function updateAutoContentPlanScheduleAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    const projectId = String(formData.get("projectId"));
+    const parsed = AutoContentPlanSchema.parse({
+      projectId,
+      enabled: formData.get("enabled") === "on",
+      timezone: String(formData.get("timezone") ?? "").trim() || "UTC",
+      dayOfWeek: String(formData.get("dayOfWeek") ?? "1"),
+      time: String(formData.get("time") ?? "").trim() || "09:00",
+      dailyImageCap: formData.get("dailyImageCap") ?? 3,
+    });
+
+    const { userId } = await requireUser();
+    const access = await requireProjectAccess(userId, projectId);
+
+    const [hour, minute] = parsed.time.split(":");
+    const cronExpression = `${minute} ${hour} * * ${parsed.dayOfWeek}`;
+    const nextRunAt = computeNextRunAt({
+      scheduleType: "CRON",
+      cronExpression,
+      timezone: parsed.timezone,
+      configuration: null,
+    });
+
+    const existing = await prisma.projectSchedule.findFirst({
+      where: {
+        projectId,
+        capability: "CREATE_CONTENT_PLAN",
+        configuration: { path: ["mode"], equals: AUTO_PLAN_GRID_WEEK_MODE },
+      },
+      select: { id: true },
+    });
+
+    const configuration = {
+      mode: AUTO_PLAN_GRID_WEEK_MODE,
+      dailyImageCap: parsed.dailyImageCap,
+    };
+
+    if (existing) {
+      await prisma.projectSchedule.update({
+        where: { id: existing.id },
+        data: {
+          cronExpression,
+          timezone: parsed.timezone,
+          enabled: parsed.enabled,
+          nextRunAt,
+          configuration,
+        },
+      });
+    } else {
+      await prisma.projectSchedule.create({
+        data: {
+          workspaceId: access.workspaceId,
+          projectId,
+          brandId: access.defaultBrandId,
+          name: "Auto Instagram content planning — weekly",
+          capability: "CREATE_CONTENT_PLAN",
+          scheduleType: "CRON",
+          cronExpression,
+          timezone: parsed.timezone,
+          configuration,
+          enabled: parsed.enabled,
+          nextRunAt,
+        },
+      });
+    }
+
+    await AuditLogRepository.record({
+      workspaceId: access.workspaceId,
+      projectId,
+      actorType: "USER",
+      actorId: userId,
+      action: "auto_content_plan_schedule.updated",
+      entityType: "ProjectSchedule",
+      entityId: projectId,
+    });
+
+    revalidatePath(`/projects/${projectId}`);
+    return { ok: true };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
 export async function updateInstagramPublishScheduleAction(
   formData: FormData,
 ): Promise<ActionResult> {

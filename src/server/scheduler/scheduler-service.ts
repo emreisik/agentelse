@@ -5,6 +5,7 @@ import { CronExpressionParser } from "cron-parser";
 import { prisma } from "@/lib/prisma";
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { publishNextQueuedInstagramCreative } from "@/server/commands/approval-decisions";
+import { planWeeklyInstagramContent } from "@/server/agency/content/instagram-week-planner";
 
 // A ProjectSchedule with capability INSTAGRAM_PUBLISH and this marker in
 // `configuration` doesn't plan a fresh capability run (there's no
@@ -13,6 +14,12 @@ import { publishNextQueuedInstagramCreative } from "@/server/commands/approval-d
 // queue and publishes that. See publishNextQueuedInstagramCreative and the
 // Settings → Publishing tab (settings-panel.tsx) that creates these rows.
 const PUBLISH_QUEUE_MODE = "PUBLISH_NEXT_READY";
+
+// A ProjectSchedule with capability CREATE_CONTENT_PLAN and this marker
+// runs the fully-autonomous weekly Instagram planner instead of a normal
+// capability run — see instagram-week-planner.ts and the Settings ->
+// Publishing "Auto content planning" card (settings-panel.tsx).
+const AUTO_PLAN_GRID_WEEK_MODE = "AUTO_PLAN_GRID_WEEK";
 
 // Exported so the Publishing settings action can compute the same
 // `nextRunAt` immediately on save, instead of waiting for the schedule's
@@ -67,6 +74,20 @@ export const SchedulerService = {
           projectId: schedule.projectId,
           brandId: schedule.brandId,
         });
+      } else if (
+        schedule.capability === "CREATE_CONTENT_PLAN" &&
+        config.mode === AUTO_PLAN_GRID_WEEK_MODE
+      ) {
+        const dailyImageCap =
+          typeof config.dailyImageCap === "number" ? config.dailyImageCap : 3;
+        await planWeeklyInstagramContent(
+          {
+            workspaceId: schedule.workspaceId,
+            projectId: schedule.projectId,
+            brandId: schedule.brandId,
+          },
+          dailyImageCap,
+        );
       } else {
         const requestText =
           typeof config.request === "string" ? config.request : schedule.name;

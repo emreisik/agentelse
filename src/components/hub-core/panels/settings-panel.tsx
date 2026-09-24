@@ -6,6 +6,7 @@ import {
   Gavel,
   Infinity as InfinityIcon,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
@@ -20,7 +21,10 @@ import {
   councilDimensionLabel,
 } from "@/lib/labels";
 import { updateAutonomyPolicyAction } from "@/server/actions/agency-config-actions";
-import { updateInstagramPublishScheduleAction } from "@/server/actions/publish-schedule-actions";
+import {
+  updateAutoContentPlanScheduleAction,
+  updateInstagramPublishScheduleAction,
+} from "@/server/actions/publish-schedule-actions";
 import { ProjectDeletionService } from "@/server/projects/project-deletion.service";
 import { ActionForm } from "@/components/shared/action-form";
 import { DeleteProjectCard } from "@/components/projects/delete-project-card";
@@ -349,15 +353,49 @@ function cronToTime(cronExpression: string | null): string {
   return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
 }
 
+// Same idea as cronToTime, but for the auto content plan's single weekly
+// row ("M H * * D") — also reads the day-of-week field back out.
+function cronToWeekly(cronExpression: string | null): {
+  time: string;
+  day: string;
+} {
+  if (!cronExpression) return { time: "09:00", day: "1" };
+  const [minute, hour, , , dow] = cronExpression.split(" ");
+  if (!hour || !minute) return { time: "09:00", day: "1" };
+  return {
+    time: `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`,
+    day: dow && /^[0-6]$/.test(dow) ? dow : "1",
+  };
+}
+
+const WEEKDAY_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "1", label: "Monday" },
+  { value: "2", label: "Tuesday" },
+  { value: "3", label: "Wednesday" },
+  { value: "4", label: "Thursday" },
+  { value: "5", label: "Friday" },
+  { value: "6", label: "Saturday" },
+  { value: "0", label: "Sunday" },
+];
+
 async function PublishingTab({ projectId }: { projectId: string }) {
-  const [schedules, queuedCount] = await Promise.all([
-    prisma.projectSchedule.findMany({
-      where: { projectId, capability: "INSTAGRAM_PUBLISH" },
-    }),
-    prisma.creative.count({
-      where: { projectId, platform: "INSTAGRAM", status: "APPROVED" },
-    }),
-  ]);
+  const [schedules, queuedCount, autoPlanSchedule, shortlistedCount] =
+    await Promise.all([
+      prisma.projectSchedule.findMany({
+        where: { projectId, capability: "INSTAGRAM_PUBLISH" },
+      }),
+      prisma.creative.count({
+        where: { projectId, platform: "INSTAGRAM", status: "APPROVED" },
+      }),
+      prisma.projectSchedule.findFirst({
+        where: {
+          projectId,
+          capability: "CREATE_CONTENT_PLAN",
+          configuration: { path: ["mode"], equals: "AUTO_PLAN_GRID_WEEK" },
+        },
+      }),
+      prisma.idea.count({ where: { projectId, status: "SHORTLISTED" } }),
+    ]);
 
   const bySlot = new Map<number, (typeof schedules)[number]>();
   for (const schedule of schedules) {
@@ -367,85 +405,189 @@ async function PublishingTab({ projectId }: { projectId: string }) {
   const enabled = schedules.some((schedule) => schedule.enabled);
   const timezone = schedules[0]?.timezone ?? "Europe/Istanbul";
 
-  return (
-    <ActionForm
-      action={updateInstagramPublishScheduleAction}
-      successMessage="Publishing schedule updated"
-      className="space-y-4"
-    >
-      <input type="hidden" name="projectId" value={projectId} />
+  const autoPlanEnabled = autoPlanSchedule?.enabled ?? false;
+  const autoPlanTimezone = autoPlanSchedule?.timezone ?? timezone;
+  const { time: autoPlanTime, day: autoPlanDay } = cronToWeekly(
+    autoPlanSchedule?.cronExpression ?? null,
+  );
+  const autoPlanCapRaw = (
+    autoPlanSchedule?.configuration as { dailyImageCap?: unknown } | null
+  )?.dailyImageCap;
+  const autoPlanCap = typeof autoPlanCapRaw === "number" ? autoPlanCapRaw : 3;
 
-      <Card size="sm">
-        <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-          <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10">
-            <CalendarClock className="size-4 text-primary" />
-          </span>
-          <CardTitle className="text-base">
-            Instagram Publishing Schedule
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="flex items-start gap-3">
-            <Switch
-              key={`publishing-enabled-${enabled}`}
-              id="publishing-enabled"
-              name="enabled"
-              defaultChecked={enabled}
-            />
-            <div className="space-y-1">
-              <Label htmlFor="publishing-enabled">
-                Enable scheduled publishing
-              </Label>
+  return (
+    <div className="space-y-6">
+      <ActionForm
+        action={updateInstagramPublishScheduleAction}
+        successMessage="Publishing schedule updated"
+        className="space-y-4"
+      >
+        <input type="hidden" name="projectId" value={projectId} />
+
+        <Card size="sm">
+          <CardHeader className="flex flex-row items-center gap-2 space-y-0">
+            <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10">
+              <CalendarClock className="size-4 text-primary" />
+            </span>
+            <CardTitle className="text-base">
+              Instagram Publishing Schedule
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="flex items-start gap-3">
+              <Switch
+                key={`publishing-enabled-${enabled}`}
+                id="publishing-enabled"
+                name="enabled"
+                defaultChecked={enabled}
+              />
+              <div className="space-y-1">
+                <Label htmlFor="publishing-enabled">
+                  Enable scheduled publishing
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  When on, an approved Instagram creative no longer publishes
+                  immediately — it waits in a queue and goes out at the next
+                  slot below, oldest approved first. When off, approval
+                  publishes immediately, same as today.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-3">
+              {[1, 2, 3].map((slot) => (
+                <div key={slot} className="space-y-1.5">
+                  <Label htmlFor={`publishing-slot${slot}`}>Slot {slot}</Label>
+                  <Input
+                    id={`publishing-slot${slot}`}
+                    name={`slot${slot}`}
+                    type="time"
+                    defaultValue={cronToTime(
+                      bySlot.get(slot)?.cronExpression ?? null,
+                    )}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="publishing-timezone">Timezone</Label>
+              <Input
+                id="publishing-timezone"
+                name="timezone"
+                defaultValue={timezone}
+                placeholder="Europe/Istanbul"
+              />
               <p className="text-xs text-muted-foreground">
-                When on, an approved Instagram creative no longer publishes
-                immediately — it waits in a queue and goes out at the next slot
-                below, oldest approved first. When off, approval publishes
-                immediately, same as today.
+                An IANA zone name (e.g. Europe/Istanbul, UTC) — the slot times
+                above are read in this zone.
               </p>
             </div>
-          </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
-            {[1, 2, 3].map((slot) => (
-              <div key={slot} className="space-y-1.5">
-                <Label htmlFor={`publishing-slot${slot}`}>Slot {slot}</Label>
+            <p className="text-xs text-muted-foreground">
+              {queuedCount} approved Instagram creative
+              {queuedCount === 1 ? "" : "s"} currently waiting in the queue.
+            </p>
+          </CardContent>
+        </Card>
+
+        <div className="sticky bottom-4 flex justify-end">
+          <SubmitButton>Save</SubmitButton>
+        </div>
+      </ActionForm>
+
+      <ActionForm
+        action={updateAutoContentPlanScheduleAction}
+        successMessage="Auto content planning updated"
+        className="space-y-4"
+      >
+        <input type="hidden" name="projectId" value={projectId} />
+
+        <Card size="sm">
+          <CardHeader className="flex flex-row items-center gap-2 space-y-0">
+            <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10">
+              <Sparkles className="size-4 text-primary" />
+            </span>
+            <CardTitle className="text-base">Auto Content Planning</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="flex items-start gap-3">
+              <Switch
+                key={`auto-plan-enabled-${autoPlanEnabled}`}
+                id="auto-plan-enabled"
+                name="enabled"
+                defaultChecked={autoPlanEnabled}
+              />
+              <div className="space-y-1">
+                <Label htmlFor="auto-plan-enabled">
+                  Plan new Instagram posts automatically, every week
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  When on, once a week the agency turns its own shortlisted
+                  ideas into real images and schedules them — no manual request
+                  needed. Capped at the daily limit below (× 7 days/week).{" "}
+                  {shortlistedCount} idea
+                  {shortlistedCount === 1 ? "" : "s"} currently shortlisted and
+                  eligible.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="auto-plan-day">Day of week</Label>
+                <select
+                  id="auto-plan-day"
+                  name="dayOfWeek"
+                  defaultValue={autoPlanDay}
+                  className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
+                >
+                  {WEEKDAY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="auto-plan-time">Time</Label>
                 <Input
-                  id={`publishing-slot${slot}`}
-                  name={`slot${slot}`}
+                  id="auto-plan-time"
+                  name="time"
                   type="time"
-                  defaultValue={cronToTime(
-                    bySlot.get(slot)?.cronExpression ?? null,
-                  )}
+                  defaultValue={autoPlanTime}
                 />
               </div>
-            ))}
-          </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="auto-plan-cap">Max images/day</Label>
+                <Input
+                  id="auto-plan-cap"
+                  name="dailyImageCap"
+                  type="number"
+                  min={1}
+                  max={10}
+                  defaultValue={autoPlanCap}
+                />
+              </div>
+            </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="publishing-timezone">Timezone</Label>
-            <Input
-              id="publishing-timezone"
-              name="timezone"
-              defaultValue={timezone}
-              placeholder="Europe/Istanbul"
-            />
-            <p className="text-xs text-muted-foreground">
-              An IANA zone name (e.g. Europe/Istanbul, UTC) — the slot times
-              above are read in this zone.
-            </p>
-          </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="auto-plan-timezone">Timezone</Label>
+              <Input
+                id="auto-plan-timezone"
+                name="timezone"
+                defaultValue={autoPlanTimezone}
+                placeholder="Europe/Istanbul"
+              />
+            </div>
+          </CardContent>
+        </Card>
 
-          <p className="text-xs text-muted-foreground">
-            {queuedCount} approved Instagram creative
-            {queuedCount === 1 ? "" : "s"} currently waiting in the queue.
-          </p>
-        </CardContent>
-      </Card>
-
-      <div className="sticky bottom-4 flex justify-end">
-        <SubmitButton>Save</SubmitButton>
-      </div>
-    </ActionForm>
+        <div className="sticky bottom-4 flex justify-end">
+          <SubmitButton>Save</SubmitButton>
+        </div>
+      </ActionForm>
+    </div>
   );
 }
 

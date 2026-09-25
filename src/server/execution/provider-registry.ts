@@ -7,6 +7,7 @@ import { TikTokApiProvider } from "@/server/execution/providers/tiktok/tiktok-ap
 import { LinkedInApiProvider } from "@/server/execution/providers/linkedin/linkedin-api-provider";
 import { XApiProvider } from "@/server/execution/providers/x/x-api-provider";
 import { OpenClawProvider } from "@/server/execution/providers/openclaw/openclaw-provider";
+import { GeminiAiProvider } from "@/server/execution/providers/gemini/gemini-ai.provider";
 import { OpenAiAiProvider } from "@/server/execution/providers/openai/openai-ai.provider";
 import { OpenAiCreativeProvider } from "@/server/execution/providers/openai/openai-creative.provider";
 import { MockOpenClawProvider } from "@/server/execution/providers/mock/mock-openclaw.provider";
@@ -24,14 +25,20 @@ import { MockPublishingProvider } from "@/server/execution/providers/mock/mock-p
 // and google-api-provider.ts canExecute), the real API is preferred over
 // browser automation.
 //
-// OpenAiAiProvider and OpenClawProvider own disjoint capability sets — no
-// fallback relationship between them (unlike the Meta/Google/TikTok/LinkedIn/
-// X providers above, which fall through to OpenClaw when unconfigured).
-// OpenAiAiProvider deliberately does NOT claim the 4 search-grounded
-// research capabilities (BRAND_DISCOVERY, WEB_RESEARCH, COMPETITOR_RESEARCH,
-// SEO_RESEARCH) — OpenAI's Chat Completions API has no built-in web-search
-// tool, so those stay entirely on OpenClawProvider's real browser-based
-// research (see openai-ai.provider.ts for the full rationale).
+// GeminiAiProvider comes before OpenAiAiProvider: both own the same 14
+// text/analysis capabilities, so Gemini is tried first and OpenAI is the
+// automatic fallback when GEMINI_API_KEY is unset or ProviderHealthService
+// circuit-breaks it — CapabilityRouter.route() walks providers in this
+// registration order and picks the first configured + healthy match (see
+// capability-router.ts). GeminiAiProvider additionally owns the 4
+// search-grounded research capabilities (BRAND_DISCOVERY, WEB_RESEARCH,
+// COMPETITOR_RESEARCH, SEO_RESEARCH) via Gemini's native Google Search
+// grounding tool; OpenAiAiProvider deliberately does NOT claim those
+// (OpenAI's Chat Completions API has no built-in web-search tool), so
+// OpenClawProvider — registered right after — is their fallback instead.
+// Image-generation capabilities (CREATE_SOCIAL_CREATIVE/CREATE_AD_CREATIVE)
+// stay OpenAI-only via OpenAiCreativeProvider; there is no Gemini creative
+// provider.
 class ProviderRegistryImpl {
   private readonly providers: ExecutionProvider[] = [
     new MetaApiProvider(),
@@ -39,6 +46,7 @@ class ProviderRegistryImpl {
     new TikTokApiProvider(),
     new LinkedInApiProvider(),
     new XApiProvider(),
+    new GeminiAiProvider(),
     new OpenAiAiProvider(),
     new OpenClawProvider(),
     new OpenAiCreativeProvider(),

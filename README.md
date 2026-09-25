@@ -124,11 +124,12 @@ If using Neon, `DATABASE_URL` should be the pooled connection URL and `DIRECT_UR
 Execution providers and Agency OS's internal reasoning calls are separate layers:
 
 - If `OPENCLAW_CLI_PATH` is set, the OpenClaw provider runs through a real `openclaw` CLI process. There is no HTTP-based `OPENCLAW_BASE_URL` integration.
-- `OPENAI_API_KEY` enables the text/analysis and creative copy execution providers (`OpenAiAiProvider`/`OpenAiCreativeProvider`), and is the sole backend for Agency OS's internal reasoning calls.
-- The 4 search-grounded research capabilities (`BRAND_DISCOVERY`, `WEB_RESEARCH`, `COMPETITOR_RESEARCH`, `SEO_RESEARCH`) are served entirely by OpenClaw's real browser-based research — OpenAI's Chat Completions API has no built-in web-search tool.
+- `GEMINI_API_KEY` enables `GeminiAiProvider`, the default text/analysis execution provider and the default backend for Agency OS's internal reasoning calls (`REASONING_PROVIDER=openai` switches the reasoning side to OpenAI without touching any prompt file).
+- `OPENAI_API_KEY` enables `OpenAiAiProvider`/`OpenAiCreativeProvider` — the automatic fallback for text/analysis when Gemini is unconfigured or circuit-broken, and the sole backend for creative (image) execution.
+- The 4 search-grounded research capabilities (`BRAND_DISCOVERY`, `WEB_RESEARCH`, `COMPETITOR_RESEARCH`, `SEO_RESEARCH`) are served by `GeminiAiProvider`'s native Google Search grounding tool by default, falling back to OpenClaw's real browser-based research when Gemini is unavailable — OpenAI's Chat Completions API has no built-in web-search tool, so `OpenAiAiProvider` never claims these.
 - `AGENTELSE_PROVIDER_MODE=mock` forces the mock provider fleet, for development and testing only.
 - If the provider mode is not `mock`, the registry only considers real providers. If no real provider is configured, the job explicitly fails with `PROVIDER_UNAVAILABLE`; there is no silent mock fallback.
-- Under the `AGENTELSE_REASONING_MODE=auto` default (the only real backend), OpenAI is used.
+- Under the `AGENTELSE_REASONING_MODE=auto` default, Gemini is used; `REASONING_PROVIDER=openai` switches it to OpenAI. A `ReasoningDef.model` pin always wins regardless of `REASONING_PROVIDER` — the backend is inferred from the model name's own family (`gpt-*` → OpenAI, otherwise Gemini).
 - `AGENTELSE_REASONING_MODE=mock` produces deterministic reasoning for test and seed scenarios.
 
 OpenClaw is used in two different ways:

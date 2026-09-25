@@ -55,6 +55,7 @@ import {
 } from "@/server/actions/approval-actions";
 import {
   acceptHandoffAction,
+  cancelTaskAction,
   rejectHandoffAction,
 } from "@/server/actions/agency-work-actions";
 import { submitChatMessageAction } from "@/server/actions/command-actions";
@@ -196,16 +197,7 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
       );
 
     case "task-running":
-      return (
-        <WsEventCard
-          icon={Loader2}
-          iconClassName="animate-spin"
-          title={card.title}
-          tone="special"
-          badgeLabel="Running"
-          department={asDepartmentKey(card.department)}
-        />
-      );
+      return <TaskRunningCard card={card} />;
 
     case "task-result": {
       const tone: WsTone =
@@ -561,6 +553,84 @@ function WsDecisionCard({
       ) : null}
       <div className="flex gap-2">{actions}</div>
     </div>
+  );
+}
+
+// A running task, with a Cancel button — previously view-only in chat,
+// cancellation was only reachable from the Work panel even though the
+// underlying action (cancelTaskAction) already resolves the SAME chat row
+// to a "task-result"/CANCELLED card on its own (TaskRepository.transition
+// calls postTaskChatEvent for every terminal status, cancellation
+// included — see task.repository.ts), so this needed no new server code,
+// only a button. Optimistic: shows "Cancelling…" immediately, then
+// router.refresh() picks up the real resolved card.
+function TaskRunningCard({
+  card,
+}: {
+  card: Extract<IdeaEventCardData, { kind: "task-running" }>;
+}) {
+  const params = useParams<{ projectId?: string }>();
+  const projectId =
+    typeof params?.projectId === "string" ? params.projectId : undefined;
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [cancelling, setCancelling] = useState(false);
+  const [error, setError] = useState<string | undefined>(undefined);
+
+  const cancel = () => {
+    if (!projectId) return;
+    setError(undefined);
+    startTransition(async () => {
+      try {
+        const formData = new FormData();
+        formData.set("projectId", projectId);
+        formData.set("taskId", card.taskId);
+        const result = await cancelTaskAction(formData);
+        if (result.ok) {
+          setCancelling(true);
+          router.refresh();
+        } else {
+          setError(result.message);
+          toast.error(result.message);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Action failed";
+        setError(message);
+        toast.error(message);
+      }
+    });
+  };
+
+  return (
+    <WsEventCard
+      icon={Loader2}
+      iconClassName="animate-spin"
+      title={card.title}
+      tone="special"
+      badgeLabel={cancelling ? "Cancelling…" : "Running"}
+      department={asDepartmentKey(card.department)}
+    >
+      {!cancelling && projectId ? (
+        <div className="mt-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 rounded-full px-2 text-xs"
+            style={{ color: "var(--ws-text-3)" }}
+            disabled={isPending}
+            onClick={cancel}
+          >
+            Cancel
+          </Button>
+          {error ? (
+            <p className="mt-1 text-xs" style={{ color: "#dc2626" }}>
+              {error}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </WsEventCard>
   );
 }
 

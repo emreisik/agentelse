@@ -184,7 +184,7 @@ function timesForDay(cap: number, configured: string[]): string[] {
 // generates, with no manual trigger per post ("otomatik tüm görsellerin
 // olusması gerekıyor ... sürekli olusturdugu fikirlerden yeni poslar
 // planlaması"). Unlike every other image-generation path in this codebase
-// (Creative Image Studio, Instagram Grid Studio), this one runs with no
+// (Creative Image Studio), this one runs with no
 // human action — a ProjectSchedule row (capability CREATE_CONTENT_PLAN,
 // configuration.mode AUTO_PLAN_GRID_WEEK, see scheduler-service.ts) fires
 // it on a weekly cron via SchedulerService.runDueSchedules.

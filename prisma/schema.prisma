@@ -1632,19 +1632,6 @@ model Creative {
   // in the past; unscheduled creatives keep the old FIFO behavior.
   scheduledFor DateTime?
 
-  // Instagram Grid Studio (spec: izgara) — set only for tiles produced by
-  // splitting one source image into a 3x1/3x3 grid-puzzle set (see
-  // creative-grid-split.ts). gridGroupId ties the sibling tiles together;
-  // gridPosition is 1..N in the assembled image's reading order
-  // (left-to-right, top-to-bottom) — NOT a publish-order field. Publish
-  // order is derived from it (reverse: highest position first) only at
-  // scheduling time (creative-grid-actions.ts), then stored the normal
-  // way in scheduledFor above — Instagram's real grid order is entirely
-  // determined by publish time, so nothing here needs to stay in sync
-  // with the publish queue afterward.
-  gridGroupId  String?
-  gridPosition Int?
-
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1653,7 +1640,6 @@ model Creative {
   @@index([brandId])
   @@index([status])
   @@index([projectId, scheduledFor])
-  @@index([projectId, gridGroupId])
 }
 
 model CreativeVersion {

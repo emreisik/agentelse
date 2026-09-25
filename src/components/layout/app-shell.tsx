@@ -298,7 +298,7 @@ export async function AppShell({
       : Promise.resolve(null),
   ]);
   const sidebarVisible = showSidebar ?? Boolean(projectId);
-  // The sidebar is the only place Ideas/Work/Instagram Grid/Connectors/Ads
+  // The sidebar is the only place Ideas/Work/Connectors/Ads
   // Manager/per-idea "Chats" history are reachable from — whenever it's
   // hidden (today: only the Brand Workspace root view; loading.tsx
   // boundaries always pass showSidebar=true and have no projectId yet

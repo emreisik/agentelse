@@ -2,7 +2,6 @@ import Link from "next/link";
 import {
   CalendarDays,
   Compass,
-  Grid3x3,
   Lightbulb,
   Megaphone,
   Plug,
@@ -142,12 +141,6 @@ export function ProjectToolsMenu({
           >
             <CalendarDays className="size-4 text-muted-foreground" />
             Content Calendar
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            render={<Link href={`/projects/${projectId}/izgara`} />}
-          >
-            <Grid3x3 className="size-4 text-muted-foreground" />
-            Instagram Grid
           </DropdownMenuItem>
           <DropdownMenuItem
             render={<Link href={`/projects/${projectId}/ads`} />}

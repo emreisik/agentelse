@@ -1,7 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { Sparkles } from "lucide-react";
+import {
+  CalendarRange,
+  Film,
+  Image as ImageIcon,
+  Megaphone,
+  Sparkles,
+} from "lucide-react";
 import { toast } from "sonner";
 import type { DepartmentKey } from "@prisma/client";
 import {
@@ -25,6 +31,8 @@ import { Thread } from "@/components/assistant-ui/thread";
 import { ComposerPlusMenu } from "@/components/commands/composer-plus-menu";
 import type { PublishTarget } from "@/server/integrations/meta-connection-status";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
+import type { WorkspaceResumeStats } from "@/components/workspace/workspace-right-panel-data";
+import { dayKey, dayLabel } from "@/lib/dates";
 
 export type ChatAttachment = {
   assetId: string;
@@ -50,6 +58,17 @@ export type ChatTurn = {
   // completion) — shown in chat as a colored side stripe matching the
   // department (see thread.tsx AssistantMessage).
   departmentKey?: DepartmentKey;
+  // Only set in the single project-wide chat (see page.tsx) when this turn
+  // belongs to an idea — shown as a small pill in the message header so a
+  // flat, single timeline still shows which initiative each event is part
+  // of (see thread.tsx AssistantMessage). Absent inside an idea's own
+  // thread, where every message already belongs to that one idea.
+  ideaTitle?: string;
+  // Same gate as ideaTitle, but the raw id — used only to place the
+  // #idea-<id> DOM anchor the "Initiatives" sidebar list jumps to (see the
+  // messages useMemo below), independent of whether the title lookup
+  // happened to find a display name.
+  ideaId?: string;
   createdAt: string;
 };
 
@@ -81,6 +100,12 @@ type FlatMessage =
       role: "user";
       text: string;
       attachments: (ChatAttachment | LocalAttachment)[];
+      // DOM id for the "Initiatives" sidebar list / legacy ?entity=
+      // redirect to jump to (see the messages useMemo below and
+      // thread.tsx's UserMessage) — set on whichever FlatMessage is the
+      // FIRST one emitted for a given idea, which can be a user bubble
+      // when the idea's founding message was typed in this same chat.
+      anchorId?: string;
       createdAt: string;
     }
   | {
@@ -89,7 +114,19 @@ type FlatMessage =
       text: string;
       card?: IdeaEventCardData;
       departmentKey?: DepartmentKey;
+      ideaTitle?: string;
+      anchorId?: string;
       error?: boolean;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      role: "assistant";
+      // Synthetic entry, not a real Command row — marks a day boundary in
+      // the single chronological timeline (see the messages useMemo below
+      // and thread.tsx's ThreadMessage, which dispatches this to a plain
+      // <DateDivider> instead of AssistantMessage).
+      dateDivider: string;
       createdAt: string;
     };
 
@@ -102,6 +139,16 @@ const STATUS_NOTE: Record<string, string> = {
   UNCLEAR: "Awaiting clarification",
   ERROR: "Error",
 };
+
+// Brand Workspace composer's persistent quick-action row (pixel spec §15
+// §16) — sent through the exact same path as typing them and pressing
+// enter (no separate shortcut path).
+const QUICK_ACTIONS: { label: string; icon: typeof ImageIcon }[] = [
+  { label: "Create a post", icon: ImageIcon },
+  { label: "Find a Reel idea", icon: Film },
+  { label: "Plan the week", icon: CalendarRange },
+  { label: "Create a campaign", icon: Megaphone },
+];
 
 // assistant-ui's composer immediately treats an added file as
 // "sendable" — the actual upload (Asset record + Gemini payload) happens
@@ -144,6 +191,8 @@ export function ProjectChat({
   turns,
   ideaId,
   publishTargets,
+  userFirstName,
+  resumeStats,
 }: {
   projectId: string;
   projectName: string;
@@ -157,6 +206,11 @@ export function ProjectChat({
   // act as a direct "Create {Platform} post" shortcut instead of a link to
   // the integrations page (see ComposerPlusMenu).
   publishTargets: PublishTarget[];
+  // Only passed on the root (non-idea) chat — the "Good morning, {name}."
+  // greeting + resume card. Absent in an idea thread, where the greeting
+  // doesn't apply.
+  userFirstName?: string | null;
+  resumeStats?: WorkspaceResumeStats;
 }) {
   const [localTurns, setLocalTurns] = React.useState<LocalTurn[]>([]);
   const [isSending, startTransition] = React.useTransition();
@@ -176,7 +230,36 @@ export function ProjectChat({
 
   const messages = React.useMemo<FlatMessage[]>(() => {
     const out: FlatMessage[] = [];
+    // Both loops below feed the same flat, single-chat timeline (turns is
+    // already chronological), so a single running "last day seen" cursor
+    // spans them — a divider must appear even between the last server turn
+    // and the first pending local turn if the calendar day rolled over.
+    let lastDayKey: string | null = null;
+    const maybeDivider = (createdAt: string) => {
+      const key = dayKey(createdAt);
+      if (key === lastDayKey) return;
+      lastDayKey = key;
+      out.push({
+        id: `divider-${key}`,
+        role: "assistant",
+        dateDivider: dayLabel(createdAt),
+        createdAt,
+      });
+    };
+    // The "Initiatives" sidebar list (see sidebar-nav.tsx) and the legacy
+    // ?entity= redirect (page.tsx) both jump to `#idea-<id>` — placed on
+    // whichever FlatMessage is emitted FIRST for that idea, so only one
+    // element per idea ever claims the id (duplicate DOM ids would make
+    // the jump land on the wrong one).
+    const seenIdeaAnchors = new Set<string>();
+    const anchorFor = (ideaId?: string) => {
+      if (!ideaId || seenIdeaAnchors.has(ideaId)) return undefined;
+      seenIdeaAnchors.add(ideaId);
+      return `idea-${ideaId}`;
+    };
+
     for (const turn of turns) {
+      maybeDivider(turn.createdAt);
       if (turn.source === "SYSTEM") {
         // Pipeline event: no user bubble, just an assistant note — if
         // card data is present (creative generation), CreativeCard is
@@ -188,6 +271,8 @@ export function ProjectChat({
             text: turn.reply,
             card: turn.card,
             departmentKey: turn.departmentKey,
+            ideaTitle: turn.ideaTitle,
+            anchorId: anchorFor(turn.ideaId),
             createdAt: turn.createdAt,
           });
         }
@@ -198,6 +283,7 @@ export function ProjectChat({
         role: "user",
         text: turn.text,
         attachments: turn.attachments,
+        anchorId: anchorFor(turn.ideaId),
         createdAt: turn.createdAt,
       });
       if (turn.reply) {
@@ -216,11 +302,13 @@ export function ProjectChat({
           // DepartmentBadge (department color+icon) rendered by
           // thread.tsx from departmentKey.
           departmentKey: turn.departmentKey,
+          ideaTitle: turn.ideaTitle,
           createdAt: turn.createdAt,
         });
       }
     }
     for (const turn of visibleLocal) {
+      maybeDivider(turn.createdAt);
       out.push({
         id: `${turn.key}-u`,
         role: "user",
@@ -256,6 +344,7 @@ export function ProjectChat({
           role: "user",
           content: message.text,
           createdAt: new Date(message.createdAt),
+          metadata: { custom: { anchorId: message.anchorId } },
           attachments: message.attachments.map((attachment, index) => {
             const isImage = attachment.mimeType.startsWith("image/");
             const src = attachmentSrc(attachment);
@@ -270,34 +359,38 @@ export function ProjectChat({
           }),
         };
       }
+      // A synthetic day-boundary marker (see the messages useMemo above) —
+      // rendered by thread.tsx's ThreadMessage as a plain <DateDivider>
+      // instead of AssistantMessage, before the role/isEditing dispatch.
+      if ("dateDivider" in message) {
+        return {
+          role: "assistant",
+          content: [],
+          createdAt: new Date(message.createdAt),
+          metadata: { custom: { dateDivider: message.dateDivider } },
+        };
+      }
+
       // If card data is present (creative generation — loading/ready/
       // failed), the CreativeCard in thread.tsx is rendered via
       // metadata.custom.card instead of plain text (see AssistantMessage);
       // content is left empty so the same info doesn't show up twice
-      // (both as plain text and as a card). departmentKey (whether or not
-      // a card is present) is carried through the same metadata.custom —
-      // thread.tsx renders it as a side stripe.
-      if (message.card || message.departmentKey) {
-        return {
-          role: "assistant",
-          content: message.card ? [] : message.text,
-          createdAt: new Date(message.createdAt),
-          metadata: {
-            custom: {
-              card: message.card,
-              departmentKey: message.departmentKey,
-            },
-          },
-          status: message.error
-            ? { type: "incomplete", reason: "error" }
-            : undefined,
-        };
-      }
-
+      // (both as plain text and as a card). departmentKey and ideaTitle are
+      // carried the same way regardless of whether a card is present —
+      // thread.tsx renders them as a side stripe and a header pill on
+      // every assistant message, plain-text or carded alike.
       return {
         role: "assistant",
-        content: message.text,
+        content: message.card ? [] : message.text,
         createdAt: new Date(message.createdAt),
+        metadata: {
+          custom: {
+            card: message.card,
+            departmentKey: message.departmentKey,
+            ideaTitle: message.ideaTitle,
+            anchorId: message.anchorId,
+          },
+        },
         status: message.error
           ? { type: "incomplete", reason: "error" }
           : undefined,
@@ -459,20 +552,139 @@ export function ProjectChat({
     adapters: { attachments: attachmentAdapter },
   });
 
+  // Deep-link jump for the "Initiatives" sidebar list (see sidebar-nav.tsx)
+  // and the legacy ?entity= redirect (page.tsx) — both land here with a
+  // `#idea-<id>` fragment, matching the anchorId placed in the messages
+  // useMemo above. assistant-ui's own scrollToBottomOnInitialize already
+  // runs on mount; this runs one tick later (and again on hashchange,
+  // since clicking a different sidebar entry while already on this page
+  // doesn't remount it) to override that default and land on the
+  // requested idea instead of the latest message. Best-effort:
+  // fragment-navigation into a nested scrollable container isn't
+  // guaranteed cross-browser, hence a manual scrollIntoView instead of
+  // relying on the native anchor behavior.
+  React.useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const scrollToHash = () => {
+      const hash = window.location.hash;
+      if (hash.length < 2) return;
+      const id = hash.slice(1);
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        document.getElementById(id)?.scrollIntoView({ block: "center" });
+      }, 80);
+    };
+    scrollToHash();
+    window.addEventListener("hashchange", scrollToHash);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("hashchange", scrollToHash);
+    };
+  }, []);
+
+  // Time-of-day greeting — same SSR-safe useSyncExternalStore shape as
+  // workspace-panel-toggle.tsx: the server (and the client's first paint,
+  // which must match it) always sees "Welcome back", then React re-syncs
+  // to the visitor's real local time right after — no hydration mismatch,
+  // no setState-in-effect.
+  const timeGreeting = React.useSyncExternalStore(
+    () => () => {},
+    () => {
+      const hour = new Date().getHours();
+      return hour < 12
+        ? "Good morning"
+        : hour < 18
+          ? "Good afternoon"
+          : "Good evening";
+    },
+    () => "Welcome back",
+  );
+
+  const hasResumeStats =
+    resumeStats &&
+    (resumeStats.drafts > 0 ||
+      resumeStats.pendingApproval > 0 ||
+      resumeStats.approved > 0);
+
   const Welcome = React.useCallback(
-    () => (
-      <div className="mb-6 flex flex-col items-center gap-3 px-4 text-center">
-        <span className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground">
-          <Sparkles className="size-4" />
-        </span>
-        <p className="max-w-sm text-sm text-muted-foreground">
-          Hi! I&apos;m here for {projectName}. Ask for content, ask a question,
-          or give instructions by attaching an image/file — for example
-          &quot;prepare an Instagram post using this image&quot;.
-        </p>
-      </div>
-    ),
-    [projectName],
+    () =>
+      ideaId ? (
+        <div className="mb-6 flex flex-col items-center gap-3 px-4 text-center">
+          <span className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground">
+            <Sparkles className="size-4" />
+          </span>
+          <p className="max-w-sm text-sm text-muted-foreground">
+            Hi! I&apos;m here for {projectName}. Ask for content, ask a
+            question, or give instructions by attaching an image/file — for
+            example &quot;prepare an Instagram post using this image&quot;.
+          </p>
+        </div>
+      ) : (
+        <div className="mb-9 px-1">
+          <div
+            className="text-[13px] font-medium uppercase"
+            style={{ color: "var(--ws-text-3)" }}
+          >
+            {projectName}
+          </div>
+          <h1
+            className="mt-1 text-[28px] leading-[1.15] font-semibold tracking-[-0.03em]"
+            style={{ color: "var(--ws-text)" }}
+          >
+            {userFirstName
+              ? `${timeGreeting}, ${userFirstName}.`
+              : "Your brand workspace."}
+          </h1>
+          <p
+            className="mt-3 max-w-lg text-sm leading-6"
+            style={{ color: "var(--ws-text-2)" }}
+          >
+            Tell Agentelse what you want. It already knows your brand, files and
+            current work.
+          </p>
+
+          {hasResumeStats ? (
+            <div
+              className="mt-5 flex items-center gap-6 rounded-2xl border px-4 py-3.5"
+              style={{
+                borderColor: "var(--ws-border)",
+                background: "var(--ws-surface)",
+              }}
+            >
+              <div>
+                <div
+                  className="text-xs font-medium"
+                  style={{ color: "var(--ws-text)" }}
+                >
+                  Resume where we left off
+                </div>
+                <div
+                  className="text-[11px]"
+                  style={{ color: "var(--ws-text-3)" }}
+                >
+                  {projectName}
+                </div>
+              </div>
+              <div className="ml-auto flex items-center gap-5">
+                <ResumeStat value={resumeStats!.drafts} label="drafts" />
+                <ResumeStat
+                  value={resumeStats!.pendingApproval}
+                  label="pending approval"
+                />
+                <ResumeStat value={resumeStats!.approved} label="approved" />
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ),
+    [
+      ideaId,
+      projectName,
+      userFirstName,
+      timeGreeting,
+      hasResumeStats,
+      resumeStats,
+    ],
   );
 
   const PlusMenu = React.useCallback(
@@ -487,9 +699,78 @@ export function ProjectChat({
     [projectId, publishTargets, isSending, sendShortcut],
   );
 
+  const QuickActions = React.useCallback(
+    () =>
+      ideaId ? null : (
+        <div className="scrollbar-none flex gap-2 overflow-x-auto px-1 pb-1">
+          {QUICK_ACTIONS.map(({ label, icon: Icon }) => (
+            <button
+              key={label}
+              type="button"
+              disabled={isSending}
+              onClick={() => sendMessage(label, [])}
+              className="flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-50"
+              style={{
+                borderColor: "var(--ws-border)",
+                background: "var(--ws-surface)",
+                color: "var(--ws-text-2)",
+              }}
+            >
+              <Icon
+                className="size-3.5"
+                style={{ color: "var(--ws-text-3)" }}
+              />
+              {label}
+            </button>
+          ))}
+        </div>
+      ),
+    [ideaId, isSending, sendMessage],
+  );
+
+  // Replaces the composer's old inert "Automatic" label with something
+  // real: BrandTwin context genuinely is loaded into every chat turn (see
+  // chat-service.ts's buildContext, Phase 5) — this just makes that
+  // already-true fact visible instead of a fake mode toggle.
+  const ContextChip = React.useCallback(
+    () => (
+      <span
+        className="flex items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] select-none"
+        style={{ borderColor: "var(--ws-border)", color: "var(--ws-text-3)" }}
+      >
+        <span className="size-1.5 rounded-full bg-emerald-500" />
+        {projectName} context on
+      </span>
+    ),
+    [projectName],
+  );
+
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <Thread components={{ Welcome, ComposerPlusMenu: PlusMenu }} />
+      <Thread
+        components={{
+          Welcome,
+          ComposerPlusMenu: PlusMenu,
+          QuickActions,
+          ContextChip,
+        }}
+      />
     </AssistantRuntimeProvider>
+  );
+}
+
+function ResumeStat({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="text-center">
+      <div
+        className="text-lg font-semibold"
+        style={{ color: "var(--ws-text)" }}
+      >
+        {value}
+      </div>
+      <div className="text-[10px]" style={{ color: "var(--ws-text-3)" }}>
+        {label}
+      </div>
+    </div>
   );
 }

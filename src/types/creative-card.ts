@@ -16,7 +16,11 @@ export type CreativeCardData =
     }
   | {
       kind: "creative-ready";
-      taskId: string;
+      // Optional: absent for creatives produced by a taskless batch run
+      // (see instagram-week-planner.ts) — there's no loading card to
+      // resolve back to, so those post straight to "ready" via
+      // IdeaChatRepository.postSystemMessage instead of resolveCreativeCard.
+      taskId?: string;
       title: string;
       creativeId: string;
       assetId?: string;
@@ -37,6 +41,15 @@ export type CreativeCardData =
       // ApprovalRepository.create (execution-service.ts
       // materializeCreativeFromResult).
       approvalId?: string;
+      // The CreativeVersion.version this card reflects (see
+      // CreativeRepository.addVersion) — shown as a "vN" badge. Optional:
+      // older persisted cards (written before this field existed) simply
+      // don't show a badge, rather than guessing.
+      versionNumber?: number;
+      // Brand.name, looked up once at card-construction time (Creative has
+      // no brand relation, just a brandId column) — shown as the small
+      // wordmark on the image. Optional for the same reason as above.
+      brandName?: string;
     }
   | {
       kind: "creative-failed";

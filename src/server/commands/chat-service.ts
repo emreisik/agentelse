@@ -18,6 +18,8 @@ import {
   limitNoticeReplyText,
 } from "@/server/commands/limit-notice";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
+import { getBrandTwin } from "@/server/brand-twin/brand-twin";
+import { recordUserDecision } from "@/server/brand-twin/brand-twin-writes";
 
 export type ChatTurnInput = {
   workspaceId: string;
@@ -172,17 +174,109 @@ export const ChatService = {
         // In practice this never happens since knownProjectId is always provided.
         status = "NEEDS_PROJECT";
         break;
+      case "STRATEGIC_IDEA_CREATED":
+        // Deep Path (strategic-request.ts) — single-chat consolidation:
+        // this no longer opens a separate thread, the idea's own pipeline
+        // events (council, work-plan, creative results) now land right
+        // here as they happen.
+        status = "PLANNED";
+        reply +=
+          "\n\nI'll keep working through this right here — I'll post updates as they come in.";
+        break;
+      case "IDEA_CAP_REACHED":
+        status = "ERROR";
+        reply = limitNoticeReplyText({
+          kind: "limit-notice",
+          reason: "active-ideas",
+        });
+        break;
+      case "WEEKLY_PLAN_CREATED":
+        // The batch already ran synchronously by the time this returns —
+        // the real numbers are more useful than whatever the LLM guessed
+        // the outcome would be, so this replaces reply entirely (same
+        // pattern as IDEA_CAP_REACHED above).
+        status = "PLANNED";
+        reply = submission.summary;
+        break;
       default:
         status = turn.intentKind === "UNCLEAR" ? "UNCLEAR" : "ANSWERED";
         break;
     }
 
     await CommandRepository.recordReply(submission.commandId, reply, status);
-    return { commandId: submission.commandId, reply, status };
+
+    // Best-effort, never blocks the reply the client is waiting for: the
+    // client's message itself stated a durable preference/rule (spec:
+    // "More premium." -> CREATIVE_PREFERENCE) — record it once as a
+    // UserDecision so future turns (via BrandTwin.creativePreferences
+    // above) and other surfaces (the Brand Workspace right panel) see it,
+    // instead of it only ever being recoverable by re-reading raw history.
+    if (turn.preference) {
+      await recordUserDecision({
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        brandId: context.brandId,
+        type: turn.preference.type,
+        scope: turn.preference.scope,
+        value: turn.preference.value,
+        rawMessage: input.message,
+        sourceCommandId: submission.commandId,
+        createdByUserId: input.userId,
+      }).catch((error) => {
+        console.error("[chat-service] failed to record user decision:", error);
+      });
+    }
+
+    // A genuine fork worth pickable options (chat-turn.ts's `questions`) —
+    // attach it as a card on this same Command so it renders instead of
+    // (alongside) the plain reply text, and survives reload. Deliberately
+    // NOT routed through CommandService.submit's own attachParsedIntent
+    // (that call only fires for CAPABILITY intents, see its early
+    // UNKNOWN_INTENT return) — this is a second, additive write scoped to
+    // just the `card` key.
+    let card: IdeaEventCardData | undefined;
+    if (turn.questions && turn.questions.length > 0) {
+      card = {
+        kind: "question",
+        questions: turn.questions,
+        projectId: input.projectId,
+        ideaId: input.ideaId,
+      };
+    } else if (submission.status === "IDEA_CAP_REACHED") {
+      // Same card the reasoning-failure catch block above uses for every
+      // other daily-cap hit — reused here so an idea-cap hit from the Deep
+      // Path gets the identical, already-designed "here's why, here's how
+      // to fix it" treatment instead of plain text.
+      card = { kind: "limit-notice", reason: "active-ideas" };
+    }
+    if (card) {
+      await CommandRepository.attachParsedIntent(
+        submission.commandId,
+        { card },
+        input.projectId,
+        context.brandId,
+      ).catch((error) => {
+        console.error("[chat-service] failed to attach card:", error);
+      });
+    }
+
+    return { commandId: submission.commandId, reply, status, card };
   },
 };
 
 function toParsedIntent(turn: ChatTurnOutput, message: string): ParsedIntent {
+  // Deep Path — checked before the single-capability TASK branch below, so
+  // a strategic request never also gets routed as a Fast Path task. Falls
+  // through to that branch (not this one) if `title` is missing, since
+  // createStrategicIdea requires both title and description.
+  if (turn.intentKind === "TASK" && turn.strategic && turn.title) {
+    return {
+      kind: "STRATEGIC_REQUEST",
+      title: turn.title.trim().slice(0, 80),
+      description: turn.taskBrief?.trim() || message,
+      departments: turn.departments,
+    };
+  }
   if (turn.intentKind === "TASK" && turn.capability) {
     return {
       kind: "CAPABILITY",
@@ -203,10 +297,16 @@ function toParsedIntent(turn: ChatTurnOutput, message: string): ParsedIntent {
   return { kind: "UNKNOWN" };
 }
 
-const HISTORY_TURNS = 12;
+// Raised from 12 now that the general/single-chat branch below carries
+// EVERY project pipeline event, not just idea-less ones (see the single-chat
+// consolidation — docs/brand-workspace-migration.md) — a flat 12-row window
+// used to be plenty for one idea's own thread; a merged multi-initiative
+// stream needs more headroom so one idea's burst of activity doesn't starve
+// the LLM's view of everything else going on.
+const HISTORY_TURNS = 36;
 
 async function buildContext(projectId: string, ideaId?: string) {
-  const [project, dossier, constitution, dailyStat, pendingApprovals, recent] =
+  const [project, brandTwin, dailyStat, pendingApprovals, recent] =
     await Promise.all([
       prisma.project.findUniqueOrThrow({
         where: { id: projectId },
@@ -216,18 +316,18 @@ async function buildContext(projectId: string, ideaId?: string) {
           status: true,
           language: true,
           country: true,
-          brands: { where: { isDefault: true }, select: { id: true }, take: 1 },
         },
       }),
-      prisma.brandDossier.findFirst({
-        where: { projectId },
-        select: { summary: true, positioning: true, toneOfVoice: true },
-      }),
-      prisma.brandConstitution.findFirst({
-        where: { projectId, status: "ACTIVE" },
-        orderBy: { version: "desc" },
-        select: { summary: true },
-      }),
+      // BrandTwin (src/server/brand-twin/brand-twin.ts) replaces the old
+      // hand-picked BrandDossier/BrandConstitution subset here — same
+      // composition the Brand Workspace right panel uses, so the chat LLM
+      // sees positioning/audience/markets/voice/negativeRules/currentFocus/
+      // creativePreferences/creativeMemory instead of just
+      // {summary,positioning,toneOfVoice}. This is also step 4 of the spec's
+      // Orchestrator ("retrieve relevant past user decisions") for free —
+      // BrandTwin.creativePreferences already is the brand's recent
+      // UserDecision rows.
+      getBrandTwin(projectId),
       latestDailyStat(projectId),
       prisma.approval.findMany({
         where: { projectId, status: "PENDING" },
@@ -235,22 +335,21 @@ async function buildContext(projectId: string, ideaId?: string) {
         take: 5,
         select: { type: true, entityType: true, createdAt: true },
       }),
-      // In an idea's chat thread, history is ALL messages belonging to that
-      // idea — both what the user wrote (WEB) and the system events written
-      // by the pipeline (SYSTEM: council decision, work plan, task/creative
-      // completion). This way the LLM replies knowing what the pipeline
-      // just did. If there's no ideaId (project-wide chat), WEB messages
-      // plus idea-less SYSTEM events (e.g. PerformanceOptimizer's
-      // rule-based proposals, which have no idea lineage — see
-      // idea-chat.repository.ts) are included, so the LLM can answer things
-      // like "what does that approval card mean" in the general chat too.
+      // In an idea's chat thread (legacy deep-link, see page.tsx), history is
+      // ALL messages belonging to that idea. The project-wide branch (no
+      // ideaId — now the ONE primary chat) includes every WEB message and
+      // every SYSTEM pipeline event project-wide (council decisions, work
+      // plans, task/creative completions — regardless of which idea they
+      // belong to), so the LLM replies knowing everything the pipeline just
+      // did across every initiative, not just idea-less events. `topic: null`
+      // excludes scoped threads that aren't this general feed (today just
+      // the Brand Brain conversation, topic: "BRAND_BRAIN") — this was
+      // previously only enforced at render time (page.tsx), not here, so
+      // Brand Brain turns could leak into the general chat's LLM context.
       prisma.command.findMany({
         where: ideaId
           ? { ideaId, source: { in: ["WEB", "SYSTEM"] } }
-          : {
-              projectId,
-              OR: [{ source: "WEB" }, { source: "SYSTEM", ideaId: null }],
-            },
+          : { projectId, topic: null, source: { in: ["WEB", "SYSTEM"] } },
         orderBy: { createdAt: "desc" },
         take: HISTORY_TURNS,
         select: {
@@ -262,10 +361,10 @@ async function buildContext(projectId: string, ideaId?: string) {
       }),
     ]);
 
-  const brandId = project.brands[0]?.id;
-  if (!brandId) {
+  if (!brandTwin) {
     throw new Error(`Project ${projectId} has no default brand`);
   }
+  const brandId = brandTwin.brandId;
 
   // The newest record comes first; reversed so the chat reads
   // chronologically. SYSTEM-sourced rows have an empty rawText (a pipeline
@@ -297,11 +396,7 @@ async function buildContext(projectId: string, ideaId?: string) {
       language: project.language,
       country: project.country,
     },
-    brand: {
-      summary: constitution?.summary ?? dossier?.summary,
-      positioning: dossier?.positioning,
-      toneOfVoice: dossier?.toneOfVoice,
-    },
+    brand: brandTwin,
     state: dailyStat,
     pending: pendingApprovals.map((approval) => ({
       type: approval.type,

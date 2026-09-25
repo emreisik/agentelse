@@ -48,6 +48,7 @@ import {
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  Asterisk,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -84,6 +85,14 @@ export type ThreadComponents = {
   // shortcuts menu (see project-chat.tsx / composer-plus-menu.tsx). Falls
   // back to plain file-attach-only behavior when not provided.
   ComposerPlusMenu?: ComponentType | undefined;
+  // Persistent quick-start chip row shown above the composer, on every
+  // turn (not just the empty/new-chat state — see ThreadSuggestions below
+  // for that one) — see project-chat.tsx's QuickActions.
+  QuickActions?: ComponentType | undefined;
+  // Replaces the composer's plain "Automatic" label — a real indicator
+  // that brand context is loaded for this turn (see project-chat.tsx's
+  // ContextChip). Falls back to nothing (not a fake claim) when unset.
+  ContextChip?: ComponentType | undefined;
   ToolFallback?: ToolCallMessagePartComponent | undefined;
   ToolGroup?:
     ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>> | undefined;
@@ -117,16 +126,21 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
 };
 
 const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
-  const { Welcome = ThreadWelcome } = useContext(ThreadComponentsContext);
+  const { Welcome = ThreadWelcome, QuickActions } = useContext(
+    ThreadComponentsContext,
+  );
 
   return (
     <ThreadPrimitive.Root
-      className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
+      className="aui-root aui-thread-root @container flex h-full flex-col"
       style={{
-        ["--thread-max-width" as string]: "44rem",
-        ["--composer-bg" as string]:
-          "color-mix(in oklab, var(--color-muted) 30%, var(--color-background))",
-        ["--composer-radius" as string]: "1.5rem",
+        background: "var(--ws-bg)",
+        // Brand Workspace UI direction (docs/brand-workspace-migration.md
+        // §7 §15 §16): conversation column 860px, composer on a plain
+        // surface with its own explicit shadow value below at 22px radius.
+        ["--thread-max-width" as string]: "860px",
+        ["--composer-bg" as string]: "var(--ws-surface)",
+        ["--composer-radius" as string]: "22px",
         ["--composer-padding" as string]: "8px",
       }}
     >
@@ -170,7 +184,15 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
           >
             <ThreadScrollToBottom />
             <ThreadFollowupSuggestions />
+            {QuickActions ? <QuickActions /> : null}
             <Composer />
+            <p
+              className="px-1 text-center text-[10px]"
+              style={{ color: "var(--ws-text-3)" }}
+            >
+              Agentelse uses your Brand Twin and existing workspace context
+              automatically.
+            </p>
             <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
               <ThreadSuggestions />
             </AuiIf>
@@ -184,13 +206,40 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
 const ThreadMessage: FC = () => {
   const { AssistantMessage: AssistantMessageComponent = AssistantMessage } =
     useContext(ThreadComponentsContext);
+  const dateDivider = useAuiState((s) => {
+    const custom = s.message.metadata.custom as { dateDivider?: unknown };
+    return typeof custom.dateDivider === "string"
+      ? custom.dateDivider
+      : undefined;
+  });
   const role = useAuiState((s) => s.message.role);
   const isEditing = useAuiState((s) => s.message.composer.isEditing);
 
+  // A synthetic day-boundary marker (see project-chat.tsx) — checked before
+  // role/isEditing since it changes the whole message chrome (no avatar, no
+  // footer, no action bar), not just the content.
+  if (dateDivider) return <DateDivider label={dateDivider} />;
   if (isEditing) return <EditComposer />;
   if (role === "user") return <UserMessage />;
   return <AssistantMessageComponent />;
 };
+
+const DateDivider: FC<{ label: string }> = ({ label }) => (
+  <div
+    role="separator"
+    aria-label={label}
+    className="my-1 flex items-center gap-3 px-2"
+  >
+    <div className="h-px flex-1" style={{ background: "var(--ws-border)" }} />
+    <span
+      className="text-[11px] font-medium select-none"
+      style={{ color: "var(--ws-text-3)" }}
+    >
+      {label}
+    </span>
+    <div className="h-px flex-1" style={{ background: "var(--ws-border)" }} />
+  </div>
+);
 
 const ThreadScrollToBottom: FC = () => {
   return (
@@ -254,14 +303,14 @@ const Composer: FC = () => {
         render={
           <div
             data-slot="aui_composer-shell"
-            className="border-border/60 data-[dragging=true]:border-ring focus-within:border-border dark:border-muted-foreground/15 dark:focus-within:border-muted-foreground/30 flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] focus-within:shadow-[0_6px_24px_-8px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.05)] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[color-mix(in_oklab,var(--color-accent)_50%,var(--color-background))] dark:shadow-none"
+            className="border-[var(--ws-border)] data-[dragging=true]:border-ring focus-within:border-[var(--ws-border)] flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_8px_35px_rgba(0,0,0,0.05)] transition-[border-color,box-shadow] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[var(--ws-hover)]"
           />
         }
       >
         <ComposerAttachments />
         <ComposerPrimitive.Input
-          placeholder="Type a message or attach a file…"
-          className="aui-composer-input caret-primary placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
+          placeholder="Tell Agentelse what you want…"
+          className="aui-composer-input caret-primary placeholder:text-muted-foreground/80 max-h-32 min-h-14 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
           rows={1}
           autoFocus
           enterKeyHint="send"
@@ -274,11 +323,12 @@ const Composer: FC = () => {
 };
 
 const ComposerAction: FC = () => {
-  const { ComposerPlusMenu } = useContext(ThreadComponentsContext);
+  const { ComposerPlusMenu, ContextChip } = useContext(ThreadComponentsContext);
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1.5">
         {ComposerPlusMenu ? <ComposerPlusMenu /> : <ComposerAddAttachment />}
+        {ContextChip ? <ContextChip /> : null}
       </div>
       <div className="flex items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
@@ -395,6 +445,25 @@ const AssistantMessage: FC = () => {
       : undefined;
   });
 
+  // Read-time idea label (see page.tsx / project-chat.tsx) — the single
+  // project-wide chat is now one flat chronological timeline, so this pill
+  // is the only thing that still shows which initiative a given event
+  // belongs to. Header-level (not card-level) so it covers plain-text
+  // SYSTEM events the same way as carded ones. Absent inside an idea's own
+  // thread, where it would be redundant on every message.
+  const ideaTitle = useAuiState((s) => {
+    const custom = s.message.metadata.custom as { ideaTitle?: unknown };
+    return typeof custom.ideaTitle === "string" ? custom.ideaTitle : undefined;
+  });
+
+  // DOM anchor for the "Initiatives" sidebar list's #idea-<id> deep link
+  // (see project-chat.tsx) — set on whichever message is the first one for
+  // that idea, user or assistant.
+  const anchorId = useAuiState((s) => {
+    const custom = s.message.metadata.custom as { anchorId?: unknown };
+    return typeof custom.anchorId === "string" ? custom.anchorId : undefined;
+  });
+
   const createdAt = useAuiState((s) => s.message.createdAt);
 
   const ACTION_BAR_PT = "pt-1.5";
@@ -403,109 +472,144 @@ const AssistantMessage: FC = () => {
 
   return (
     <MessagePrimitive.Root
+      id={anchorId}
       data-slot="aui_assistant-message-root"
       data-role="assistant"
-      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 pb-7.5 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
+      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 flex items-start gap-3 pb-7.5 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
     >
-      <div
-        data-slot="aui_assistant-message-content"
-        className="text-foreground border-l-[3px] border-l-transparent px-2 leading-relaxed wrap-break-word"
-        style={
-          departmentKey
-            ? { borderLeftColor: DEPARTMENT_COLOR[departmentKey] }
-            : undefined
-        }
+      <span
+        className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg"
+        style={{ background: "var(--ws-accent)" }}
       >
-        {card && <IdeaEventCard card={card} />}
-        <MessagePrimitive.GroupedParts
-          groupBy={groupPartByType({
-            reasoning: ["group-chainOfThought", "group-reasoning"],
-            "tool-call": ["group-chainOfThought", "group-tool"],
-            "standalone-tool-call": [],
-          })}
+        <Asterisk
+          className="size-3.5"
+          style={{ color: "var(--ws-on-accent)" }}
+        />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex items-baseline gap-1.5 px-2">
+          <span
+            className="text-[13px] font-semibold"
+            style={{ color: "var(--ws-text)" }}
+          >
+            Agentelse
+          </span>
+          <span className="text-[11px]" style={{ color: "var(--ws-text-3)" }}>
+            Your creative partner
+          </span>
+          {ideaTitle ? (
+            <span
+              className="ml-0.5 truncate rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
+              style={{
+                borderColor: "var(--ws-border)",
+                color: "var(--ws-text-3)",
+                maxWidth: 180,
+              }}
+            >
+              {ideaTitle}
+            </span>
+          ) : null}
+        </div>
+        <div
+          data-slot="aui_assistant-message-content"
+          className="text-foreground border-l-[3px] border-l-transparent px-2 leading-relaxed wrap-break-word"
+          style={
+            departmentKey
+              ? { borderLeftColor: DEPARTMENT_COLOR[departmentKey] }
+              : undefined
+          }
         >
-          {({ part, children }) => {
-            switch (part.type) {
-              case "group-chainOfThought":
-                return <div data-slot="aui_chain-of-thought">{children}</div>;
-              case "group-tool":
-                if (ToolGroup) {
-                  return <ToolGroup group={part}>{children}</ToolGroup>;
-                }
-                return (
-                  <ToolGroupRoot variant="ghost">
-                    <ToolGroupTrigger
-                      count={part.indices.length}
-                      active={part.status.type === "running"}
-                    />
-                    <ToolGroupContent>{children}</ToolGroupContent>
-                  </ToolGroupRoot>
-                );
-              case "group-reasoning": {
-                if (ReasoningGroup) {
+          {card && <IdeaEventCard card={card} />}
+          <MessagePrimitive.GroupedParts
+            groupBy={groupPartByType({
+              reasoning: ["group-chainOfThought", "group-reasoning"],
+              "tool-call": ["group-chainOfThought", "group-tool"],
+              "standalone-tool-call": [],
+            })}
+          >
+            {({ part, children }) => {
+              switch (part.type) {
+                case "group-chainOfThought":
+                  return <div data-slot="aui_chain-of-thought">{children}</div>;
+                case "group-tool":
+                  if (ToolGroup) {
+                    return <ToolGroup group={part}>{children}</ToolGroup>;
+                  }
                   return (
-                    <ReasoningGroup group={part}>{children}</ReasoningGroup>
+                    <ToolGroupRoot variant="ghost">
+                      <ToolGroupTrigger
+                        count={part.indices.length}
+                        active={part.status.type === "running"}
+                      />
+                      <ToolGroupContent>{children}</ToolGroupContent>
+                    </ToolGroupRoot>
+                  );
+                case "group-reasoning": {
+                  if (ReasoningGroup) {
+                    return (
+                      <ReasoningGroup group={part}>{children}</ReasoningGroup>
+                    );
+                  }
+                  const running = part.status.type === "running";
+                  return (
+                    <ReasoningRoot streaming={running}>
+                      <ReasoningTrigger active={running} />
+                      <ReasoningContent aria-busy={running}>
+                        <ReasoningText>{children}</ReasoningText>
+                      </ReasoningContent>
+                    </ReasoningRoot>
                   );
                 }
-                const running = part.status.type === "running";
-                return (
-                  <ReasoningRoot streaming={running}>
-                    <ReasoningTrigger active={running} />
-                    <ReasoningContent aria-busy={running}>
-                      <ReasoningText>{children}</ReasoningText>
-                    </ReasoningContent>
-                  </ReasoningRoot>
-                );
+                case "text":
+                  return <MarkdownText />;
+                case "reasoning":
+                  return <Reasoning {...part} />;
+                case "tool-call":
+                  return part.toolUI ?? <ToolFallbackComponent {...part} />;
+                case "data":
+                  return part.dataRendererUI;
+                case "indicator":
+                  return (
+                    <span
+                      data-slot="aui_assistant-message-indicator"
+                      className="animate-pulse font-sans"
+                      aria-label="Assistant is typing"
+                    >
+                      {"●"}
+                    </span>
+                  );
+                default:
+                  return null;
               }
-              case "text":
-                return <MarkdownText />;
-              case "reasoning":
-                return <Reasoning {...part} />;
-              case "tool-call":
-                return part.toolUI ?? <ToolFallbackComponent {...part} />;
-              case "data":
-                return part.dataRendererUI;
-              case "indicator":
-                return (
-                  <span
-                    data-slot="aui_assistant-message-indicator"
-                    className="animate-pulse font-sans"
-                    aria-label="Assistant is typing"
-                  >
-                    {"●"}
-                  </span>
-                );
-              default:
-                return null;
-            }
-          }}
-        </MessagePrimitive.GroupedParts>
-        {/* If the card already shows its own department row (see
+            }}
+          </MessagePrimitive.GroupedParts>
+          {/* If the card already shows its own department row (see
             idea-event-card.tsx EventCard), we don't show it AGAIN here —
             only for plain-text events (e.g. "Task created") does the
             department appear here with the SAME icon+color as on the
             departments page. */}
-        {!card && departmentKey ? (
-          <DepartmentBadge
-            department={departmentKey}
-            size="xs"
-            className="mt-1.5"
-          />
-        ) : null}
-        <MessageError />
-      </div>
+          {!card && departmentKey ? (
+            <DepartmentBadge
+              department={departmentKey}
+              size="xs"
+              className="mt-1.5"
+            />
+          ) : null}
+          <MessageError />
+        </div>
 
-      <div
-        data-slot="aui_assistant-message-footer"
-        className={cn("ms-2 flex items-center gap-2", ACTION_BAR_HEIGHT)}
-      >
-        <BranchPicker />
-        <AssistantActionBar />
-        {createdAt && (
-          <span className="text-muted-foreground text-xs">
-            {shortDate(createdAt)}
-          </span>
-        )}
+        <div
+          data-slot="aui_assistant-message-footer"
+          className={cn("ms-2 flex items-center gap-2", ACTION_BAR_HEIGHT)}
+        >
+          <BranchPicker />
+          <AssistantActionBar />
+          {createdAt && (
+            <span className="text-muted-foreground text-xs">
+              {shortDate(createdAt)}
+            </span>
+          )}
+        </div>
       </div>
     </MessagePrimitive.Root>
   );
@@ -564,9 +668,18 @@ const AssistantActionBar: FC = () => {
 
 const UserMessage: FC = () => {
   const createdAt = useAuiState((s) => s.message.createdAt);
+  // DOM anchor for the "Initiatives" sidebar list's #idea-<id> deep link
+  // (see project-chat.tsx AssistantMessage for the fuller comment) — a WEB
+  // turn's user bubble carries it when that message is the idea's founding
+  // one.
+  const anchorId = useAuiState((s) => {
+    const custom = s.message.metadata.custom as { anchorId?: unknown };
+    return typeof custom.anchorId === "string" ? custom.anchorId : undefined;
+  });
 
   return (
     <MessagePrimitive.Root
+      id={anchorId}
       data-slot="aui_user-message-root"
       className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
       data-role="user"
@@ -574,7 +687,10 @@ const UserMessage: FC = () => {
       <UserMessageAttachments />
 
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
-        <div className="aui-user-message-content peer bg-muted text-foreground rounded-xl px-4 py-2 wrap-break-word empty:hidden">
+        <div
+          className="aui-user-message-content peer wrap-break-word rounded-[20px] px-4 py-3 empty:hidden"
+          style={{ background: "var(--ws-surface-2)", color: "var(--ws-text)" }}
+        >
           <MessagePrimitive.Parts />
         </div>
         <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">

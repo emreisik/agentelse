@@ -23,10 +23,13 @@ import {
 import { LiveRefresh } from "@/components/shared/live-refresh";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 import { ownerOfCapability } from "@/server/agency/departments/department-registry";
-import {
-  isIdeaEventCardData,
-  type IdeaEventCardData,
-} from "@/types/idea-event-card";
+import { isIdeaEventCardData } from "@/types/idea-event-card";
+import { getWorkspaceRightPanelData } from "@/components/workspace/workspace-right-panel-data";
+import { WorkspaceRightPanel } from "@/components/workspace/workspace-right-panel";
+import { BrandSummaryPanel } from "@/components/workspace/brand-summary-panel";
+import { OutputsPanel } from "@/components/workspace/outputs-panel";
+import { CalendarPanel } from "@/components/workspace/calendar-panel";
+import { FilesPanel } from "@/components/workspace/files-panel";
 
 // Command.parsedIntent is written as { card: IdeaEventCardData } on rows
 // sourced from SYSTEM (see IdeaChatRepository) — on WEB rows it carries the
@@ -120,6 +123,15 @@ export default async function ProjectChatPage({
   }
 
   const { panel, sub, entity } = parseHubParams(sp);
+  // Widens the general-chat query's date floor instead of the default
+  // recent-window cap — set by the "Initiatives" sidebar list (see
+  // sidebar-nav.tsx) and the legacy ?entity= redirect above, so the
+  // #idea-<id> anchor they link to is guaranteed to be in the fetched
+  // range even if it's older than the default window.
+  const sinceRaw = Array.isArray(sp.since) ? sp.since[0] : sp.since;
+  const sinceDate = sinceRaw ? new Date(sinceRaw) : null;
+  const since =
+    sinceDate && !Number.isNaN(sinceDate.getTime()) ? sinceDate : null;
 
   if (panel) {
     return (
@@ -134,123 +146,28 @@ export default async function ProjectChatPage({
     );
   }
 
-  // When there's no `panel` but an `entity` is selected (a click coming from
-  // the "Chats" list in the sidebar, or from cross-links in the panels) —
-  // this is now that idea's REAL, active chat thread: complete with the
-  // system messages written by the council/work-plan/task/creative-generation
-  // pipeline, and the user can also write new messages from here (see
-  // Command.ideaId). Falls back to the read-only ProjectFlowView for legacy
-  // records that can't be rooted to an idea.
+  // When there's no `panel` but an `entity` is selected — a legacy bare
+  // `?entity=idea:id` link (old bookmark, browser history; the sidebar's
+  // "Initiatives" list now links straight to the anchor below and no
+  // longer produces this URL, see sidebar-nav.tsx). There is no separate
+  // idea thread anymore (see docs/brand-workspace-migration.md single-chat
+  // consolidation) — every idea's events live in the one general chat
+  // below, so this just forwards into it, anchored to where that idea's
+  // conversation starts. `since` guarantees the anchor target is inside
+  // the fetched window even if normal activity since then has pushed it
+  // past the default `take` cap.
   if (entity) {
     const ideaId = await resolveIdeaId(entity);
     if (ideaId) {
-      const [idea, ideaCommands, publishTargets] = await Promise.all([
-        prisma.idea.findFirst({
-          where: { id: ideaId, projectId },
-          select: { title: true },
-        }),
-        prisma.command.findMany({
-          where: { ideaId, source: { in: ["WEB", "SYSTEM"] } },
-          orderBy: { createdAt: "desc" },
-          take: 200,
-          select: {
-            id: true,
-            source: true,
-            rawText: true,
-            replyText: true,
-            replyStatus: true,
-            attachments: true,
-            parsedIntent: true,
-            createdAt: true,
-          },
-        }),
-        getPublishTargets(projectId),
-      ]);
-
-      if (!idea) notFound();
-
-      // Retroactive backfill: find the pending approval for IN_REVIEW creative
-      // cards that don't carry an approvalId (see the cardFromParsedIntent comment).
-      const creativeIdsNeedingApproval = Array.from(
-        new Set(
-          ideaCommands
-            .map((command) => cardFromParsedIntent(command.parsedIntent))
-            .filter(
-              (
-                card,
-              ): card is Extract<
-                IdeaEventCardData,
-                { kind: "creative-ready" }
-              > => {
-                if (!card) return false;
-                return (
-                  card.kind === "creative-ready" &&
-                  card.status === "IN_REVIEW" &&
-                  !card.approvalId
-                );
-              },
-            )
-            .map((card) => card.creativeId),
-        ),
-      );
-      const pendingApprovalByCreativeId = creativeIdsNeedingApproval.length
-        ? new Map(
-            (
-              await prisma.approval.findMany({
-                where: {
-                  entityType: "Creative",
-                  entityId: { in: creativeIdsNeedingApproval },
-                  status: "PENDING",
-                },
-                select: { id: true, entityId: true },
-              })
-            ).map((approval) => [approval.entityId, approval.id]),
-          )
-        : undefined;
-
-      return (
-        <AppShell projectId={projectId}>
-          {/* key={ideaId}: so assistant-ui's ThreadPrimitive.Viewport gets
-              REMOUNTED when switching from one idea to another — this project
-              does the chat-to-chat transition via a Next.js route/searchParam
-              change (assistant-ui's own "threadListItem.switchedTo" event never
-              fires), and without the key, React kept the same Viewport instance
-              and left it at its old scroll position. Remounting refreshes the
-              library's scrollToBottomOnInitialize behavior (see
-              useThreadViewportAutoScroll) every time — the chat always opens at
-              the bottom, on the latest message. */}
-          <div key={ideaId} className="relative h-[calc(100vh-4rem)]">
-            <LiveRefresh
-              intervalMs={7000}
-              className="absolute top-3 right-4 z-10"
-            />
-            <ProjectChat
-              projectId={projectId}
-              projectName={idea.title}
-              ideaId={ideaId}
-              publishTargets={publishTargets}
-              turns={ideaCommands.reverse().map((command): ChatTurn => ({
-                commandId: command.id,
-                source: command.source as "WEB" | "SYSTEM",
-                text: command.rawText,
-                reply: command.replyText,
-                replyStatus: command.replyStatus,
-                attachments: Array.isArray(command.attachments)
-                  ? (command.attachments as ChatAttachment[])
-                  : [],
-                card: cardFromParsedIntent(
-                  command.parsedIntent,
-                  pendingApprovalByCreativeId,
-                ),
-                departmentKey: departmentKeyFromParsedIntent(
-                  command.parsedIntent,
-                ),
-                createdAt: command.createdAt.toISOString(),
-              }))}
-            />
-          </div>
-        </AppShell>
-      );
+      const earliestCommand = await prisma.command.findFirst({
+        where: { ideaId, topic: null, source: { in: ["WEB", "SYSTEM"] } },
+        orderBy: { createdAt: "asc" },
+        select: { createdAt: true },
+      });
+      const since = earliestCommand
+        ? `?since=${encodeURIComponent(earliestCommand.createdAt.toISOString())}`
+        : "";
+      redirect(`/projects/${projectId}${since}#idea-${ideaId}`);
     }
 
     // A task with no idea lineage (e.g. PerformanceOptimizer's rule-based
@@ -263,6 +180,9 @@ export default async function ProjectChatPage({
     if (entity.kind === "task") {
       redirect(`/projects/${projectId}`);
     }
+    // Any other entity kind that can't be rooted to an idea (workPlan-only
+    // orphan records left over from before the single-chat architecture) —
+    // read-only fallback, kept rather than deleted.
     return (
       <AppShell projectId={projectId}>
         <ProjectFlowView projectId={projectId} entity={entity} />
@@ -270,49 +190,119 @@ export default async function ProjectChatPage({
     );
   }
 
-  const [project, chatCommands, publishTargets] = await Promise.all([
-    prisma.project.findUnique({
-      where: { id: projectId },
-      select: { name: true },
-    }),
-    prisma.command.findMany({
-      // WEB (the user's own messages) plus idea-less SYSTEM events — a
-      // system-generated Task with no idea lineage (e.g.
-      // PerformanceOptimizer's rule-based proposals, see
-      // idea-chat.repository.ts) posts here instead of a specific idea
-      // thread, so its approval/result cards are still visible somewhere.
-      // topic: null excludes scoped threads that aren't this general feed
-      // or an idea's own chat — today just the Brand Brain conversation
-      // (brand-brain-chat-service.ts), which renders on its own panel.
-      where: {
-        projectId,
-        topic: null,
-        OR: [{ source: "WEB" }, { source: "SYSTEM", ideaId: null }],
-      },
-      orderBy: { createdAt: "desc" },
-      take: 30,
-      select: {
-        id: true,
-        source: true,
-        rawText: true,
-        replyText: true,
-        replyStatus: true,
-        attachments: true,
-        parsedIntent: true,
-        createdAt: true,
-      },
-    }),
-    getPublishTargets(projectId),
-  ]);
+  const [project, chatCommands, publishTargets, rightPanelData, currentUser] =
+    await Promise.all([
+      prisma.project.findUnique({
+        where: { id: projectId },
+        select: { name: true },
+      }),
+      prisma.command.findMany({
+        // The ONE single chat (see docs/brand-workspace-migration.md,
+        // single-chat consolidation): every WEB message and every SYSTEM
+        // pipeline event project-wide, regardless of which idea (if any)
+        // it belongs to — council decisions, work plans, task/creative
+        // results all land here now, not just idea-less events. topic:
+        // null excludes scoped threads that aren't this general feed —
+        // today just the Brand Brain conversation
+        // (brand-brain-chat-service.ts), which renders on its own panel.
+        where: {
+          projectId,
+          topic: null,
+          source: { in: ["WEB", "SYSTEM"] },
+          ...(since ? { createdAt: { gte: since } } : {}),
+        },
+        orderBy: { createdAt: "desc" },
+        // `since` present: an anchor jump needs every message from that
+        // date forward, not just the most recent 72 — 500 is a sane
+        // ceiling, not a real limit (the Command_projectId_createdAt_idx
+        // index keeps this cheap either way).
+        take: since ? 500 : 72,
+        select: {
+          id: true,
+          source: true,
+          rawText: true,
+          replyText: true,
+          replyStatus: true,
+          attachments: true,
+          parsedIntent: true,
+          createdAt: true,
+          ideaId: true,
+        },
+      }),
+      getPublishTargets(projectId),
+      getWorkspaceRightPanelData(projectId),
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true, email: true },
+      }),
+    ]);
 
   if (!project) notFound();
 
+  // Read-time idea label (see docs/brand-workspace-migration.md single-chat
+  // consolidation) — resolved here instead of at every one of the 10+
+  // postSystemMessage call sites, so the pill just needs the ids the query
+  // already selected above.
+  const ideaIds = Array.from(
+    new Set(
+      chatCommands
+        .map((command) => command.ideaId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const ideaTitleById = ideaIds.length
+    ? new Map(
+        (
+          await prisma.idea.findMany({
+            where: { id: { in: ideaIds } },
+            select: { id: true, title: true },
+          })
+        ).map((idea) => [idea.id, idea.title]),
+      )
+    : new Map<string, string>();
+
+  const firstName = (currentUser?.name ?? currentUser?.email ?? "").split(
+    /[\s@]/,
+  )[0];
+
   return (
-    <AppShell projectId={projectId}>
-      {/* key: see the same explanation above in the idea-specific chat
-          branch — so the Viewport remounts and starts at the bottom when
-          switching from an idea chat to the project-wide chat (or vice
-          versa) too. */}
+    <AppShell
+      projectId={projectId}
+      showSidebar={false}
+      rightPanel={
+        <WorkspaceRightPanel
+          brand={
+            <BrandSummaryPanel
+              projectId={projectId}
+              brand={rightPanelData.brand}
+              website={rightPanelData.website}
+              autopilotMode={rightPanelData.autopilotMode}
+            />
+          }
+          files={
+            <FilesPanel
+              projectId={projectId}
+              assets={rightPanelData.files}
+              autopilotMode={rightPanelData.autopilotMode}
+            />
+          }
+          outputs={
+            <OutputsPanel
+              projectId={projectId}
+              outputs={rightPanelData.outputs}
+              autopilotMode={rightPanelData.autopilotMode}
+            />
+          }
+          calendar={
+            <CalendarPanel
+              projectId={projectId}
+              calendar={rightPanelData.calendar}
+              autopilotMode={rightPanelData.autopilotMode}
+            />
+          }
+        />
+      }
+    >
       <div key="project-general" className="relative h-[calc(100vh-4rem)]">
         <LiveRefresh
           intervalMs={7000}
@@ -321,6 +311,8 @@ export default async function ProjectChatPage({
         <ProjectChat
           projectId={projectId}
           projectName={project.name}
+          userFirstName={firstName || null}
+          resumeStats={rightPanelData.resumeStats}
           publishTargets={publishTargets}
           turns={chatCommands.reverse().map((command): ChatTurn => ({
             commandId: command.id,
@@ -336,6 +328,15 @@ export default async function ProjectChatPage({
             attachments: Array.isArray(command.attachments)
               ? (command.attachments as ChatAttachment[])
               : [],
+            ideaTitle: command.ideaId
+              ? ideaTitleById.get(command.ideaId)
+              : undefined,
+            // Used only to place the #idea-<id> anchor the "Initiatives"
+            // sidebar list and the legacy ?entity= redirect jump to (see
+            // project-chat.tsx) — distinct from ideaTitle above so the
+            // anchor still lands correctly even if the title lookup ever
+            // misses.
+            ideaId: command.ideaId ?? undefined,
             createdAt: command.createdAt.toISOString(),
           }))}
         />

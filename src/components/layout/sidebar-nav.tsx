@@ -12,6 +12,7 @@ import {
   Library,
   Lightbulb,
   ListChecks,
+  Megaphone,
   MessageSquarePlus,
   Plug,
   Sparkles,
@@ -30,6 +31,11 @@ export type SidebarFlow = {
   id: string;
   kind: "idea" | "workPlan" | "task";
   title: string;
+  // Idea flows only — ISO date of that idea's earliest chat message, baked
+  // into the link below as `?since=` so the single project chat's default
+  // recent-window query is guaranteed to include the #idea-<id> anchor
+  // this links to (see page.tsx / app-shell.tsx).
+  since?: string;
 };
 
 const FLOW_ICON = {
@@ -178,6 +184,19 @@ export function SidebarNav({
             Connectors
           </Link>
 
+          <Link
+            href={`/projects/${activeProjectId}/ads`}
+            className={cn(
+              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
+              pathname === `/projects/${activeProjectId}/ads`
+                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                : "hover:bg-sidebar-accent/60",
+            )}
+          >
+            <Megaphone className="size-4 shrink-0 opacity-80" />
+            Ads Manager
+          </Link>
+
           {flows && flows.length > 0 ? (
             <Collapsible
               open={flowsOpen}
@@ -185,7 +204,7 @@ export function SidebarNav({
               className="pt-2"
             >
               <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg px-2.5 py-1 text-[11px] font-semibold tracking-wide text-muted-foreground/70 uppercase transition-colors hover:text-muted-foreground">
-                Chats
+                Initiatives
                 <ChevronDown
                   className={cn(
                     "size-3.5 shrink-0 transition-transform",
@@ -196,18 +215,27 @@ export function SidebarNav({
               <CollapsibleContent className="space-y-0.5 pt-0.5">
                 {flows.map((flow) => {
                   const Icon = FLOW_ICON[flow.kind];
-                  const active = activeEntity === `${flow.kind}:${flow.id}`;
+                  // No separate idea thread anymore — every flow jumps
+                  // into the ONE project chat, anchored to where that
+                  // idea's conversation starts (see page.tsx). Orphan task
+                  // flows have no idea-scoped history to anchor to, so
+                  // they just land on the plain chat. `since` widens the
+                  // chat's default recent-window query so the anchor is
+                  // guaranteed to be inside the fetched range.
+                  const href =
+                    flow.kind === "idea"
+                      ? `/projects/${activeProjectId}${
+                          flow.since
+                            ? `?since=${encodeURIComponent(flow.since)}`
+                            : ""
+                        }#idea-${flow.id}`
+                      : `/projects/${activeProjectId}`;
                   return (
                     <Link
                       key={`${flow.kind}-${flow.id}`}
-                      href={`/projects/${activeProjectId}?entity=${flow.kind}:${flow.id}`}
+                      href={href}
                       scroll={false}
-                      className={cn(
-                        "group flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-                        active
-                          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                          : "hover:bg-sidebar-accent/60",
-                      )}
+                      className="group flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60"
                     >
                       <Icon className="size-4 shrink-0 opacity-70" />
                       <MarqueeText className="flex-1">{flow.title}</MarqueeText>

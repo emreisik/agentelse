@@ -62,9 +62,13 @@ export const IdeaChatRepository = {
   },
 
   // When a creative generation starts, posts a "loading" card to the chat
-  // (like the waiting state ChatGPT shows while generating an image). For
-  // tasks that can't be linked to an idea (ideaId can't be resolved), this
-  // is silently skipped.
+  // (like the waiting state ChatGPT shows while generating an image). Tasks
+  // that can't be linked to an idea (ideaId can't be resolved) still post —
+  // with ideaId: null, landing in the single project-wide chat — same
+  // null-safe pattern as postTaskRunningCard/resolveTaskResultCard below.
+  // Used to silently drop the message entirely when unresolvable, which is
+  // exactly the kind of "invisible content" the single-chat consolidation
+  // exists to fix.
   async postCreativeLoadingCard(input: {
     workspaceId: string;
     projectId: string;
@@ -73,7 +77,6 @@ export const IdeaChatRepository = {
     departmentKey?: DepartmentKey;
   }): Promise<void> {
     const ideaId = await IdeaChatRepository.resolveIdeaIdForTask(input.taskId);
-    if (!ideaId) return;
     await IdeaChatRepository.postSystemMessage({
       workspaceId: input.workspaceId,
       projectId: input.projectId,
@@ -92,7 +95,9 @@ export const IdeaChatRepository = {
   // SAME loading card for that task to the result — so "loading" never
   // stays stuck permanently on page refresh/revisit. If the matching
   // loading card can't be found (e.g. postCreativeLoadingCard failed at the
-  // time), posts a new row instead — best-effort.
+  // time), posts a new row instead — best-effort. ideaId may be null (task
+  // has no idea lineage) — the lookup/post below are both null-safe, same
+  // reasoning as postCreativeLoadingCard above.
   async resolveCreativeCard(input: {
     workspaceId: string;
     projectId: string;
@@ -103,7 +108,6 @@ export const IdeaChatRepository = {
     departmentKey?: DepartmentKey;
   }): Promise<void> {
     const ideaId = await IdeaChatRepository.resolveIdeaIdForTask(input.taskId);
-    if (!ideaId) return;
 
     const existing = await prisma.command.findFirst({
       where: {
@@ -366,7 +370,9 @@ export const IdeaChatRepository = {
   // chat (e.g. a creative created manually outside the chat), this is
   // silently skipped.
   async resolveCreativeApprovalDecision(input: {
-    ideaId: string;
+    // Nullable: an orphan creative (no idea lineage) still gets its
+    // approve/reject decision reflected in the single project-wide chat.
+    ideaId: string | null;
     creativeId: string;
     status: "APPROVED" | "REJECTED";
   }): Promise<void> {

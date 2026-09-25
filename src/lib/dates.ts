@@ -34,3 +34,23 @@ export function smartDate(date: Date | string | null | undefined): string {
     return format(d, "EEEE", { locale: enUS });
   return format(d, "d MMM yyyy", { locale: enUS });
 }
+
+// Day-divider label for the single project chat's chronological timeline
+// (project-chat.tsx) — always date-level, unlike smartDate above which
+// shows a time for today because it answers "when was this modified", not
+// "which day does this divider mark".
+export function dayLabel(date: Date | string): string {
+  const d = new Date(date);
+  if (isToday(d)) return "Today";
+  if (isYesterday(d)) return "Yesterday";
+  if (isThisWeek(d, { weekStartsOn: 1 }))
+    return format(d, "EEEE", { locale: enUS });
+  return format(d, "d MMMM yyyy", { locale: enUS });
+}
+
+// Local-timezone day key (YYYY-MM-DD) for grouping chat turns into day
+// buckets — grouping must follow the viewer's local day boundary, not UTC,
+// so this goes through Date/format rather than slicing the ISO string.
+export function dayKey(date: Date | string): string {
+  return format(new Date(date), "yyyy-MM-dd");
+}

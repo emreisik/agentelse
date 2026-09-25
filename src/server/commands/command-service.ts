@@ -24,6 +24,12 @@ import {
 import { resolveProjectFromText } from "@/server/commands/project-resolver";
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { performCreativeRevision } from "@/server/actions/creative-actions";
+import { createStrategicIdea } from "@/server/commands/strategic-request";
+import {
+  planWeeklyInstagramContent,
+  summarizeWeeklyPlanResult,
+  weeklyPlanConfigFromSchedule,
+} from "@/server/agency/content/instagram-week-planner";
 
 export type SubmitCommandInput = {
   workspaceId: string;
@@ -76,7 +82,21 @@ export type SubmitCommandResult =
   // (budget, targeting, creative) that free text can't reliably carry — see
   // FORM_REQUIRED_CAPABILITIES below. No Task is created; formHref points
   // into the Ads Manager's create dialog instead.
-  | { status: "FORM_REQUIRED"; commandId: string; formHref: string };
+  | { status: "FORM_REQUIRED"; commandId: string; formHref: string }
+  // Deep Path (see strategic-request.ts) — a new Idea was created and the
+  // Command was retroactively linked to its thread.
+  | { status: "STRATEGIC_IDEA_CREATED"; commandId: string; ideaId: string }
+  // Same maxActiveIdeas cap createStrategicIdea checks — chat-service.ts
+  // turns this into the existing limit-notice "active-ideas" card.
+  | { status: "IDEA_CAP_REACHED"; commandId: string }
+  // A chat-triggered "plan this week" (CREATE_CONTENT_PLAN, general chat
+  // only — see the branch below) ran the real batch planner synchronously
+  // and it already finished by the time this returns — summary becomes the
+  // direct reply text (chat-service.ts). The per-idea creative-ready cards
+  // are posted by planWeeklyInstagramContent itself as it runs; its own
+  // end-of-batch summary message is skipped here (skipSummaryMessage) so
+  // it doesn't duplicate this same text right next to it.
+  | { status: "WEEKLY_PLAN_CREATED"; commandId: string; summary: string };
 
 // Capabilities where a chat TASK intent must NOT go straight to
 // TaskPlanner.planForCapability — the parameters they need (ad budget,
@@ -254,7 +274,7 @@ export const CommandService = {
       };
     }
 
-    if (intent.kind !== "CAPABILITY") {
+    if (intent.kind !== "CAPABILITY" && intent.kind !== "STRATEGIC_REQUEST") {
       return { status: "UNKNOWN_INTENT", commandId: command.id };
     }
 
@@ -297,6 +317,26 @@ export const CommandService = {
       brandId,
     );
 
+    if (intent.kind === "STRATEGIC_REQUEST") {
+      const result = await createStrategicIdea(
+        { workspaceId: input.workspaceId, projectId, brandId },
+        {
+          title: intent.title,
+          description: intent.description,
+          departments: intent.departments,
+        },
+      );
+      if (result.status === "CAPPED") {
+        return { status: "IDEA_CAP_REACHED", commandId: command.id };
+      }
+      await CommandRepository.attachIdeaId(command.id, result.ideaId);
+      return {
+        status: "STRATEGIC_IDEA_CREATED",
+        commandId: command.id,
+        ideaId: result.ideaId,
+      };
+    }
+
     if (FORM_REQUIRED_CAPABILITIES.has(intent.capability)) {
       const formHref = adsFormHref(projectId, intent.request);
       if (command.ideaId) {
@@ -315,6 +355,34 @@ export const CommandService = {
         });
       }
       return { status: "FORM_REQUIRED", commandId: command.id, formHref };
+    }
+
+    // Weekly batch content planning triggered directly from chat ("Plan
+    // the week" quick action, or free text) — runs the SAME autonomous
+    // planner the cron path uses (instagram-week-planner.ts), not a
+    // generic text answer describing what a plan might look like.
+    // !command.ideaId: general chat only — an idea's own work-plan content
+    // plan (a single document for ONE idea, work-plan-builder.ts) is a
+    // completely different thing and must not be hijacked by this branch.
+    if (intent.capability === "CREATE_CONTENT_PLAN" && !command.ideaId) {
+      const schedule = await prisma.projectSchedule.findFirst({
+        where: { projectId, capability: "CREATE_CONTENT_PLAN" },
+        select: { configuration: true },
+      });
+      const config = (schedule?.configuration ?? {}) as Record<string, unknown>;
+      const { dailyImageCap, lensMix } = weeklyPlanConfigFromSchedule(config);
+
+      const result = await planWeeklyInstagramContent(
+        { workspaceId: input.workspaceId, projectId, brandId },
+        dailyImageCap,
+        { lensMix, skipSummaryMessage: true },
+      );
+
+      return {
+        status: "WEEKLY_PLAN_CREATED",
+        commandId: command.id,
+        summary: summarizeWeeklyPlanResult(result),
+      };
     }
 
     const attachmentPayloadExtra = input.attachments?.length

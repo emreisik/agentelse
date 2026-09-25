@@ -71,15 +71,22 @@ async function resolveApprovalChatTarget(
 // The Creative half of resolveApprovalChatTarget above, factored out so
 // publishNextQueuedInstagramCreative (no Approval row — the scheduler
 // triggered this, not a human decision) can post the same "published" chat
-// message as the immediate-auto-publish path.
+// message as the immediate-auto-publish path. Mirrors the Task branch's
+// null-safety above it: ideaId may legitimately be null (no idea lineage,
+// or no createdByTaskId at all — e.g. a manually created Studio creative)
+// and the decision still posts into the project's general chat stream.
+// Only a genuinely nonexistent creative is a real "nothing to show" case.
 async function resolveIdeaAndTitleForCreative(
   creativeId: string,
 ): Promise<{ ideaId: string | null; title: string } | null> {
   const creative = await prisma.creative.findUnique({
     where: { id: creativeId },
-    select: { createdByTaskId: true },
+    select: { createdByTaskId: true, title: true },
   });
-  if (!creative?.createdByTaskId) return null;
+  if (!creative) return null;
+  if (!creative.createdByTaskId) {
+    return { ideaId: null, title: creative.title ?? "Creative" };
+  }
   const [ideaId, task] = await Promise.all([
     IdeaChatRepository.resolveIdeaIdForTask(creative.createdByTaskId),
     prisma.task.findUnique({
@@ -87,8 +94,7 @@ async function resolveIdeaAndTitleForCreative(
       select: { title: true },
     }),
   ]);
-  if (!ideaId) return null;
-  return { ideaId, title: task?.title ?? "Creative" };
+  return { ideaId, title: task?.title ?? creative.title ?? "Creative" };
 }
 
 export type AutoPublishResult = {
@@ -515,17 +521,14 @@ export async function applyApprovalDecision(input: {
     const target = await resolveApprovalChatTarget(approval);
     if (target) {
       if (approval.entityType === "Creative") {
-        // Non-null: resolveApprovalChatTarget's Creative branch already
-        // returns null (not a target with a null ideaId) when no idea can
-        // be resolved — unlike the Task branch, creatives are always
-        // idea-scoped (see the function above).
-        const creativeIdeaId = target.ideaId!;
         // Unlike Task, we do NOT convert the card into a generic
         // "approval-decision" card — the creative-ready card already
         // carries the image/title, so only the status field is updated to
-        // avoid losing it (see resolveCreativeApprovalDecision).
+        // avoid losing it (see resolveCreativeApprovalDecision). ideaId may
+        // be null (no idea lineage) — resolveCreativeApprovalDecision and
+        // postSystemMessage below are both null-safe on it.
         await IdeaChatRepository.resolveCreativeApprovalDecision({
-          ideaId: creativeIdeaId,
+          ideaId: target.ideaId,
           creativeId: approval.entityId,
           status: to,
         });

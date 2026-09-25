@@ -722,6 +722,21 @@ enum BrandConstitutionStatus {
   SUPERSEDED
 }
 
+enum LearningPolarity {
+  WORKS
+  AVOID
+}
+
+enum UserDecisionType {
+  CREATIVE_PREFERENCE
+  MARKET_PRIORITY
+  AUTOMATION_PREFERENCE
+  CONTENT_PREFERENCE
+  BRAND_RULE
+  GOAL_CHANGE
+  CLAIM_CONFIRMATION
+}
+
 enum ScheduleType {
   CRON
   INTERVAL
@@ -1095,10 +1110,51 @@ model BrandLearning {
   sourceRef  String?
   confidence Float?
 
+  // Brand Workspace's Creative Memory ("what works" / "avoid" — see
+  // docs/brand-workspace-migration.md §7 Phase 3): WORKS/AVOID lets the
+  // same table serve both sides of that list. A single observation must
+  // not silently become a permanent rule — evidenceCount is incremented
+  // (not a new row inserted) when a materially similar insight is
+  // reobserved, so a learning only counts as reinforced once multiple
+  // evidence points agree.
+  polarity         LearningPolarity @default(WORKS)
+  evidenceCount    Int              @default(1)
+  lastReinforcedAt DateTime?
+
   createdAt DateTime @default(now())
 
   @@index([projectId])
   @@index([brandId])
+}
+
+// Brand Workspace's structured preference/decision log (see docs/
+// brand-workspace-migration.md §7 Phase 3) — captures a user statement like
+// "more premium" as a typed, queryable fact (type/scope/value) instead of
+// leaving it recoverable only by re-reading raw chat history. Deliberately
+// separate from BrandDecision (agency-authored strategic decisions) and
+// AgencyDecision (settings-panel decisions) — this one is always
+// user-authored preference/confirmation, scoped freely (e.g. "BRAND",
+// "CAMPAIGN:<id>") rather than tied to one entity type.
+model UserDecision {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+
+  type  UserDecisionType
+  scope String
+  value Json
+
+  // The message this was derived from is always kept alongside the
+  // structured value — per spec: "Keep the raw conversation message too."
+  rawMessage      String?
+  sourceCommandId String?
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  @@index([projectId])
+  @@index([brandId, type])
 }
 
 model BrandStrategyVersion {
@@ -1210,6 +1266,12 @@ model Command {
   @@index([createdAt])
   @@index([ideaId])
   @@index([topic])
+  // Single-chat consolidation: the general-chat query is no longer narrowed
+  // by ideaId (it now includes every SYSTEM pipeline event project-wide,
+  // not just idea-less ones — see chat-service.ts buildContext / page.tsx),
+  // so it needs its own composite index instead of relying on the
+  // ideaId-narrowed query being naturally selective.
+  @@index([projectId, createdAt])
 }
 
 model Task {
@@ -2127,6 +2189,14 @@ model ProjectSchedule {
   nextRunAt DateTime?
   lastRunAt DateTime?
 
+  // Retry/backoff bookkeeping (docs/brand-workspace-migration.md §7 —
+  // reliability audit concern 8): without these, a schedule that throws
+  // retried on every single worker tick forever, with no cooldown and no
+  // cap. Reset to 0/null on the next successful run; disabled once
+  // consecutiveFailures reaches SchedulerService's MAX_ATTEMPTS.
+  consecutiveFailures Int     @default(0)
+  lastError           String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2749,10 +2819,30 @@ model AutonomyPolicy {
   scoringWeights    Json?
   approvalOverrides Json?
 
+  // The spec's simplified 3-mode trust dial (docs/brand-workspace-migration.md
+  // §7 Phase 7) — deliberately NOT a new parallel approval system: it only
+  // governs whether an autonomously-created Creative (today: only
+  // instagram-week-planner.ts's weekly auto-planner) lands pre-approved or
+  // waits in the SAME IN_REVIEW/Approval flow every human-triggered
+  // creative already goes through. Default AUTOPILOT preserves today's
+  // exact behavior for every existing project (no regression on migrate).
+  autopilotMode AutopilotMode @default(AUTOPILOT)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId])
+}
+
+enum AutopilotMode {
+  // Agentelse creates work; nothing is scheduled until a human reviews it.
+  REVIEW_EVERYTHING
+  // Agentelse creates AND schedules work, but still asks before it's
+  // eligible to publish (lands at IN_REVIEW, pre-scheduled).
+  CREATE_AUTOMATICALLY
+  // Agentelse creates, schedules and publishes within configured caps —
+  // today's existing default behavior.
+  AUTOPILOT
 }
 
 enum AgencyLoopStatus {

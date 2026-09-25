@@ -6,16 +6,26 @@ import { submitProjectCommandAction } from "@/server/actions/command-actions";
 import { assignCreativeDateAction } from "@/server/actions/creative-calendar-actions";
 import { ActionForm } from "@/components/shared/action-form";
 import { SubmitButton } from "@/components/shared/submit-button";
-import { CREATIVE_STATUS, SOCIAL_PLATFORM } from "@/lib/labels";
+import { SOCIAL_PLATFORM } from "@/lib/labels";
 import { utcToZonedDateTimeLocal } from "@/lib/timezone";
-import { AutopilotCard } from "./autopilot-card";
-import type {
-  WorkspaceAutopilotMode,
-  WorkspaceCalendarItem,
-  WorkspaceOutputItem,
+import {
+  WORKSPACE_STATUS_LABEL_TR,
+  type WorkspaceCalendarItem,
+  type WorkspaceOutputItem,
 } from "./workspace-right-panel-data";
 
-const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+// Monday-first, matching buildMonthGrid below — deliberately the same
+// repeated-letter set the spec shows ("P S Ç P C C P"): Pazartesi, Salı,
+// Çarşamba, Perşembe, Cuma, Cumartesi, Pazar.
+const WEEKDAY_LABELS = [
+  "Pazartesi",
+  "Salı",
+  "Çarşamba",
+  "Perşembe",
+  "Cuma",
+  "Cumartesi",
+  "Pazar",
+];
 
 // Grid cells for `month` ("YYYY-MM"), Monday-first — `items`' local dates
 // (already resolved to the project's scheduling timezone by the caller)
@@ -101,7 +111,6 @@ function Thumb({
 export function CalendarPanel({
   projectId,
   calendar,
-  autopilotMode,
   selectedItem,
 }: {
   projectId: string;
@@ -111,7 +120,6 @@ export function CalendarPanel({
     timezone: string;
     month: string;
   };
-  autopilotMode: WorkspaceAutopilotMode;
   selectedItem?: {
     id: string;
     title: string | null;
@@ -146,7 +154,7 @@ export function CalendarPanel({
 
   const monthLabel = new Date(
     `${calendar.month}-01T00:00:00Z`,
-  ).toLocaleDateString("en-US", {
+  ).toLocaleDateString("tr-TR", {
     month: "long",
     year: "numeric",
     timeZone: "UTC",
@@ -162,13 +170,16 @@ export function CalendarPanel({
     <div className="flex flex-col gap-4 px-5 py-5 text-sm">
       <div>
         <div
-          className="text-base font-semibold"
+          className="text-[10px] font-semibold tracking-[0.1em]"
+          style={{ color: "var(--ws-text-3)" }}
+        >
+          MARKANIN RİTMİ
+        </div>
+        <div
+          className="mt-0.5 text-base font-semibold"
           style={{ color: "var(--ws-text)" }}
         >
-          Brand rhythm
-        </div>
-        <div className="mt-0.5 text-xs" style={{ color: "var(--ws-text-3)" }}>
-          Agentelse keeps the plan moving.
+          Her şey zamanında.
         </div>
       </div>
 
@@ -177,7 +188,7 @@ export function CalendarPanel({
           <Link
             href={monthHref(shiftMonth(calendar.month, -1))}
             scroll={false}
-            aria-label="Previous month"
+            aria-label="Önceki ay"
             className="flex size-6 items-center justify-center rounded-full transition-colors hover:bg-[var(--ws-hover)]"
             style={{ color: "var(--ws-text-2)" }}
           >
@@ -192,7 +203,7 @@ export function CalendarPanel({
           <Link
             href={monthHref(shiftMonth(calendar.month, 1))}
             scroll={false}
-            aria-label="Next month"
+            aria-label="Sonraki ay"
             className="flex size-6 items-center justify-center rounded-full transition-colors hover:bg-[var(--ws-hover)]"
             style={{ color: "var(--ws-text-2)" }}
           >
@@ -256,10 +267,10 @@ export function CalendarPanel({
       {calendar.unscheduled.length > 0 ? (
         <div>
           <div
-            className="mb-2 text-[10px] font-semibold tracking-[0.1em] uppercase"
+            className="mb-2 text-[10px] font-semibold tracking-[0.1em]"
             style={{ color: "var(--ws-text-3)" }}
           >
-            Unscheduled ({calendar.unscheduled.length})
+            Planlanmamış ({calendar.unscheduled.length})
           </div>
           <div className="scrollbar-none flex gap-2 overflow-x-auto pb-1">
             {calendar.unscheduled.map((item) => (
@@ -285,10 +296,10 @@ export function CalendarPanel({
 
       <div>
         <div
-          className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.1em] uppercase"
+          className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.1em]"
           style={{ color: "var(--ws-text-3)" }}
         >
-          Planned content
+          Planlanan içerik
           {itemsWithLocalDate.length > 0 ? (
             <span>{itemsWithLocalDate.length}</span>
           ) : null}
@@ -296,7 +307,7 @@ export function CalendarPanel({
 
         {itemsWithLocalDate.length === 0 ? (
           <p className="px-0.5 text-sm" style={{ color: "var(--ws-text-3)" }}>
-            Nothing scheduled this month.
+            Bu ay için planlanan bir şey yok.
           </p>
         ) : (
           <div className="flex flex-col gap-1.5">
@@ -304,11 +315,11 @@ export function CalendarPanel({
               const dayName = new Date(
                 `${localDateTime.slice(0, 10)}T00:00:00Z`,
               )
-                .toLocaleDateString("en-US", {
+                .toLocaleDateString("tr-TR", {
                   weekday: "short",
                   timeZone: "UTC",
                 })
-                .toUpperCase();
+                .toLocaleUpperCase("tr-TR");
               const dayNumber = localDateTime.slice(8, 10);
               const time = localDateTime.slice(11, 16);
               const isSelected = selectedItem?.id === item.id;
@@ -357,7 +368,7 @@ export function CalendarPanel({
                       className="mt-0.5 text-[10px]"
                       style={{ color: "var(--ws-text-3)" }}
                     >
-                      {time} · {CREATIVE_STATUS[item.status].label}
+                      {time} · {WORKSPACE_STATUS_LABEL_TR[item.status]}
                     </div>
                   </div>
                 </Link>
@@ -369,17 +380,15 @@ export function CalendarPanel({
 
       <form action={submitProjectCommandAction}>
         <input type="hidden" name="projectId" value={projectId} />
-        <input type="hidden" name="text" value="Plan this week" />
+        <input type="hidden" name="text" value="Haftayı planla" />
         <button
           type="submit"
           className="w-full rounded-xl border px-3 py-2.5 text-center text-xs font-medium transition-colors hover:bg-[var(--ws-hover)]"
           style={{ borderColor: "var(--ws-border)", color: "var(--ws-text)" }}
         >
-          + Prepare a weekly plan
+          + Haftalık plan hazırla
         </button>
       </form>
-
-      <AutopilotCard projectId={projectId} autopilotMode={autopilotMode} />
     </div>
   );
 }
@@ -427,18 +436,18 @@ function ScheduleQuickEdit({
               className="truncate text-xs font-medium"
               style={{ color: "var(--ws-text)" }}
             >
-              {item.title ?? "Creative"}
+              {item.title ?? "Çıktı"}
             </p>
             <p className="text-[10px]" style={{ color: "var(--ws-text-3)" }}>
               {item.platform ? SOCIAL_PLATFORM[item.platform].label : "—"} ·{" "}
-              {CREATIVE_STATUS[item.status].label}
+              {WORKSPACE_STATUS_LABEL_TR[item.status]}
             </p>
           </div>
         </div>
         <Link
           href={closeHref}
           scroll={false}
-          aria-label="Close"
+          aria-label="Kapat"
           className="flex size-6 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--ws-hover)]"
           style={{ color: "var(--ws-text-3)" }}
         >
@@ -447,7 +456,7 @@ function ScheduleQuickEdit({
       </div>
       <ActionForm
         action={assignCreativeDateAction}
-        successMessage="Schedule updated"
+        successMessage="Takvim güncellendi"
         className="flex items-end gap-1.5"
       >
         <input type="hidden" name="creativeId" value={item.id} />
@@ -456,7 +465,7 @@ function ScheduleQuickEdit({
             className="text-[10px] font-medium"
             style={{ color: "var(--ws-text-3)" }}
           >
-            Day & time ({timezone})
+            Tarih ve saat ({timezone})
           </span>
           <input
             // Keyed on the value itself: this page polls every 7s
@@ -475,7 +484,7 @@ function ScheduleQuickEdit({
           />
         </label>
         <SubmitButton size="sm" variant="outline">
-          Save
+          Kaydet
         </SubmitButton>
       </ActionForm>
     </div>

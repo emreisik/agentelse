@@ -2,7 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 
-import type { AssetType, CreativeContentFormat } from "@prisma/client";
+import type {
+  AssetType,
+  CreativeContentFormat,
+  CreativeStatus,
+  CreativeType,
+  SocialPlatform,
+} from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
@@ -21,6 +27,90 @@ import { loadReferenceImage } from "@/server/media/brand-logo";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import { readAsset } from "@/server/storage/asset-storage";
+
+// Full detail behind one output — powers OutputPreviewDialog (opened from
+// the Outputs/Calendar right-panel tabs, which only carry the thin
+// WorkspaceOutputItem projection) without a second Prisma round trip for
+// the caption/copy/version/brand-name/pending-approval fields the dialog
+// needs but the panel list queries don't select. Read-only; requireProjectAccess
+// is checked against the creative's OWN projectId (like performCreativeRevision
+// below), never a client-supplied one, so a stale/forged id can't leak
+// another tenant's creative.
+export type CreativePreview = {
+  id: string;
+  projectId: string;
+  title: string | null;
+  type: CreativeType;
+  platform: SocialPlatform | null;
+  contentFormat: CreativeContentFormat | null;
+  status: CreativeStatus;
+  assetId: string | null;
+  assetWidth: number | null;
+  assetHeight: number | null;
+  caption: string | null;
+  copy: string | null;
+  versionNumber: number | null;
+  brandName: string | null;
+  approvalId: string | null;
+  scheduledFor: string | null;
+};
+
+export async function getCreativePreviewAction(
+  creativeId: string,
+): Promise<CreativePreview | null> {
+  const { userId } = await requireUser();
+  const creative = await prisma.creative.findUnique({
+    where: { id: creativeId },
+    include: {
+      versions: {
+        orderBy: { version: "desc" },
+        take: 1,
+        include: { asset: true },
+      },
+    },
+  });
+  if (!creative) return null;
+  try {
+    await requireProjectAccess(userId, creative.projectId);
+  } catch {
+    return null;
+  }
+
+  const [brand, pendingApproval] = await Promise.all([
+    prisma.brand.findUnique({
+      where: { id: creative.brandId },
+      select: { name: true },
+    }),
+    prisma.approval.findFirst({
+      where: {
+        entityType: "Creative",
+        entityId: creative.id,
+        status: "PENDING",
+      },
+      select: { id: true },
+    }),
+  ]);
+
+  const version = creative.versions[0];
+  return {
+    id: creative.id,
+    projectId: creative.projectId,
+    title: creative.title,
+    type: creative.type,
+    platform: creative.platform,
+    contentFormat: version?.contentFormat ?? null,
+    status: creative.status,
+    assetId: version?.asset?.id ?? null,
+    assetWidth: version?.asset?.width ?? null,
+    assetHeight: version?.asset?.height ?? null,
+    caption: version?.caption ?? null,
+    copy: version?.copy ?? null,
+    versionNumber: version?.version ?? null,
+    brandName: brand?.name ?? null,
+    approvalId: pendingApproval?.id ?? null,
+    scheduledFor: creative.scheduledFor?.toISOString() ?? null,
+  };
+}
 
 // Manual, opt-in image generation — deliberately outside the
 // Command/Task/ExecutionJob engine (see execution-service.ts). Every real
@@ -118,7 +208,7 @@ export async function performCreativeRevision({
   // A fal-image-models.ts id — only ever set from the Studio form (see
   // generateRealCreativeImageAction), never from the chat-facing
   // reviseCreativeAction, which has no model picker and stays on the
-  // default OpenAI -> OpenClaw chain.
+  // default Gemini -> OpenAI -> OpenClaw chain.
   falModelId?: string;
   userId: string;
 }): Promise<ActionResult> {
@@ -256,33 +346,37 @@ export async function performCreativeRevision({
       },
     });
 
-    await CreativeRepository.addVersion(creative.id, creative.projectId, {
-      assetId: asset.id,
-      caption: currentVersion?.caption ?? undefined,
-      copy: currentVersion?.copy ?? undefined,
-      contentFormat: platformFormat.contentFormat,
-      generationProvider: generated.provider,
-      generationMetadata: {
-        prompt,
-        mode,
-        edited: Boolean(baseImage),
-        aspectRatio: platformFormat.aspectRatio,
-        platform: creative.platform,
+    const newVersion = await CreativeRepository.addVersion(
+      creative.id,
+      creative.projectId,
+      {
+        assetId: asset.id,
+        caption: currentVersion?.caption ?? undefined,
+        copy: currentVersion?.copy ?? undefined,
         contentFormat: platformFormat.contentFormat,
-        targetWidth: platformFormat.pixelSize.width,
-        targetHeight: platformFormat.pixelSize.height,
-        // Which backend actually produced it — if the OpenAI call fails,
-        // creative-image.ts silently falls back to OpenClaw (without a
-        // logo/text reference); without this field the only way to tell
-        // the difference was the server logs.
-        imageProvider: generated.provider,
+        generationProvider: generated.provider,
+        generationMetadata: {
+          prompt,
+          mode,
+          edited: Boolean(baseImage),
+          aspectRatio: platformFormat.aspectRatio,
+          platform: creative.platform,
+          contentFormat: platformFormat.contentFormat,
+          targetWidth: platformFormat.pixelSize.width,
+          targetHeight: platformFormat.pixelSize.height,
+          // Which backend actually produced it — if the OpenAI call fails,
+          // creative-image.ts silently falls back to OpenClaw (without a
+          // logo/text reference); without this field the only way to tell
+          // the difference was the server logs.
+          imageProvider: generated.provider,
+        },
+        revisionReason: baseImage
+          ? `Image edited per instruction: ${instruction.slice(0, 200)}`
+          : instruction
+            ? `Image regenerated per instruction: ${instruction.slice(0, 200)}`
+            : "Image regenerated",
       },
-      revisionReason: baseImage
-        ? `Image edited per instruction: ${instruction.slice(0, 200)}`
-        : instruction
-          ? `Image regenerated per instruction: ${instruction.slice(0, 200)}`
-          : "Image regenerated",
-    });
+    );
 
     // A REJECTED or APPROVED creative had a decision already made against
     // its previous version — that decision must not silently carry over to
@@ -342,11 +436,17 @@ export async function performCreativeRevision({
     // an idea.
     if (creative.createdByTaskId) {
       try {
-        const [ideaId, task] = await Promise.all([
+        const [ideaId, task, brand] = await Promise.all([
           IdeaChatRepository.resolveIdeaIdForTask(creative.createdByTaskId),
           prisma.task.findUnique({
             where: { id: creative.createdByTaskId },
             select: { departmentKey: true },
+          }),
+          // Creative has no brand relation (just a brandId column) — this is
+          // the one extra lookup needed to show the brand's name on the card.
+          prisma.brand.findUnique({
+            where: { id: creative.brandId },
+            select: { name: true },
           }),
         ]);
         if (ideaId) {
@@ -371,6 +471,8 @@ export async function performCreativeRevision({
               assetHeight: asset.height ?? undefined,
               platform: creative.platform,
               contentFormat: platformFormat.contentFormat,
+              versionNumber: newVersion.version,
+              brandName: brand?.name,
             },
             departmentKey: task?.departmentKey ?? undefined,
           });

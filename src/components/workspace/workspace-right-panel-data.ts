@@ -1,10 +1,25 @@
 import "server-only";
 
 import type {
+  CreativeContentFormat,
   CreativeStatus,
   CreativeType,
   SocialPlatform,
 } from "@prisma/client";
+
+// Turkish status words for the Brand Workspace surfaces only (outputs
+// panel, calendar panel, output preview dialog, in-chat creative card) —
+// deliberately NOT touching the shared CREATIVE_STATUS map in lib/labels
+// (used across many still-English legacy screens: /creatives detail,
+// StatusBadge, etc.), same reasoning as dayLabel in lib/dates.ts.
+export const WORKSPACE_STATUS_LABEL_TR: Record<CreativeStatus, string> = {
+  DRAFT: "Taslak",
+  IN_REVIEW: "Onay bekliyor",
+  APPROVED: "Onaylandı",
+  REJECTED: "Reddedildi",
+  PUBLISHED: "Yayınlandı",
+  ARCHIVED: "Arşivlendi",
+};
 
 import { prisma } from "@/lib/prisma";
 import { CreativeRepository } from "@/server/repositories/creative.repository";
@@ -19,6 +34,11 @@ export type WorkspaceOutputItem = {
   title: string | null;
   createdAt: string;
   assetId: string | null;
+  // From the latest CreativeVersion (see toOutputItem) — the real signal
+  // behind the Outputs panel's Post/Story/Reel filter (spec: "Tümü / Post
+  // / Story / Reel / Reklam"), rather than guessing from CreativeType
+  // alone (which has no distinct Story/Reel value).
+  contentFormat: CreativeContentFormat | null;
 };
 
 export type WorkspaceCalendarItem = WorkspaceOutputItem & {
@@ -70,6 +90,7 @@ function toOutputItem(
     title: creative.title,
     createdAt: creative.createdAt.toISOString(),
     assetId: creative.versions[0]?.asset?.id ?? null,
+    contentFormat: creative.versions[0]?.contentFormat ?? null,
   };
 }
 

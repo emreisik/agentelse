@@ -304,33 +304,23 @@ export default async function ProjectChatPage({
       showSidebar={false}
       rightPanel={
         <WorkspaceRightPanel
+          projectId={projectId}
+          autopilotMode={rightPanelData.autopilotMode}
           brand={
             <BrandSummaryPanel
               projectId={projectId}
               brand={rightPanelData.brand}
               website={rightPanelData.website}
-              autopilotMode={rightPanelData.autopilotMode}
             />
           }
           files={
-            <FilesPanel
-              projectId={projectId}
-              assets={rightPanelData.files}
-              autopilotMode={rightPanelData.autopilotMode}
-            />
+            <FilesPanel projectId={projectId} assets={rightPanelData.files} />
           }
-          outputs={
-            <OutputsPanel
-              projectId={projectId}
-              outputs={rightPanelData.outputs}
-              autopilotMode={rightPanelData.autopilotMode}
-            />
-          }
+          outputs={<OutputsPanel outputs={rightPanelData.outputs} />}
           calendar={
             <CalendarPanel
               projectId={projectId}
               calendar={rightPanelData.calendar}
-              autopilotMode={rightPanelData.autopilotMode}
               selectedItem={
                 selectedCalendarItem
                   ? {

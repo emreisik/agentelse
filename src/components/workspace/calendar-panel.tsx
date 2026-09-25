@@ -459,6 +459,14 @@ function ScheduleQuickEdit({
             Day & time ({timezone})
           </span>
           <input
+            // Keyed on the value itself: this page polls every 7s
+            // (LiveRefresh) and this is an uncontrolled input, so without a
+            // key tied to the real value, a background refresh that
+            // changes item.scheduledFor (another tab, another session)
+            // would silently NOT update what's shown here — React only
+            // honors defaultValue on a fresh mount, not on a re-render of
+            // the same element.
+            key={scheduledValue}
             type="datetime-local"
             name="date"
             defaultValue={scheduledValue}

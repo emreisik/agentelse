@@ -326,7 +326,6 @@ export async function AppShell({
       agencyStatus={agencyStatus}
       displayName={displayName}
       email={email}
-      navSheet={navSheet}
     />
   ) : (
     <TopBar

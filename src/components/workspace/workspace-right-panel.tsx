@@ -5,7 +5,6 @@ import {
   BookOpen,
   CalendarDays,
   Layers,
-  PanelRightClose,
   PanelRightOpen,
   Paperclip,
 } from "lucide-react";
@@ -67,7 +66,7 @@ export function WorkspaceRightPanel({
       className="flex min-h-0 flex-1 flex-col"
     >
       <div
-        className="flex h-[55px] shrink-0 items-center justify-between border-b px-3"
+        className="flex h-[55px] shrink-0 items-center border-b px-3"
         style={{ borderColor: "var(--ws-border)" }}
       >
         <TabsList className="w-fit gap-1 bg-transparent p-0">
@@ -104,16 +103,6 @@ export function WorkspaceRightPanel({
             Takvim
           </TabsTrigger>
         </TabsList>
-        {isDesktop ? (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            title="Paneli daralt"
-            onClick={toggle}
-          >
-            <PanelRightClose className="size-4" />
-          </Button>
-        ) : null}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <TabsContent value="brand">{brand}</TabsContent>

@@ -6,7 +6,6 @@ import { PanelRight } from "lucide-react";
 import { buildHubHref } from "@/components/hub-core/hub-core-params";
 import { BrandSwitcher } from "@/components/layout/brand-switcher";
 import { ActiveWorkPopover } from "@/components/layout/active-work-popover";
-import { AgentelseMark } from "@/components/brand/agentelse-mark";
 import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
 import type { AgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
 
@@ -28,7 +27,6 @@ export function WorkspaceTopBar({
   agencyStatus,
   displayName,
   email,
-  navSheet,
 }: {
   projectId: string;
   projectName: string;
@@ -37,7 +35,6 @@ export function WorkspaceTopBar({
   agencyStatus: AgencyStatusSnapshot | null;
   displayName: string | null;
   email: string | null;
-  navSheet?: React.ReactNode;
 }) {
   const { toggle } = useWorkspacePanelToggle();
   const isDev = process.env.NODE_ENV !== "production";
@@ -51,26 +48,11 @@ export function WorkspaceTopBar({
       }}
     >
       <div className="flex min-w-0 items-center gap-2.5">
-        {navSheet}
         <Link
           href="/dashboard"
-          className="flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80"
+          className="flex shrink-0 items-center transition-opacity hover:opacity-80"
         >
-          <span
-            className="flex size-8 items-center justify-center rounded-[10px]"
-            style={{ background: "var(--ws-accent)" }}
-          >
-            <AgentelseMark
-              className="size-4"
-              style={{ color: "var(--ws-on-accent)" }}
-            />
-          </span>
-          <span
-            className="hidden text-[22px] font-semibold tracking-[-0.02em] sm:inline"
-            style={{ color: "var(--ws-text)" }}
-          >
-            agentelse<span style={{ color: "var(--ws-olive)" }}>.</span>
-          </span>
+          <img src="/logo.png" alt="Agentelse" className="h-6 object-contain" />
         </Link>
         <div
           className="hidden h-6 w-px shrink-0 sm:block"

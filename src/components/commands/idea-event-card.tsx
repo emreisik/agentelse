@@ -556,7 +556,7 @@ function WsDecisionCard({
       </div>
       {children}
       {error ? (
-        <p className="text-xs" style={{ color: "#dc2626" }}>
+        <p className="text-xs" style={{ color: "#c0392b" }}>
           {error}
         </p>
       ) : null}
@@ -633,7 +633,7 @@ function TaskRunningCard({
             Cancel
           </Button>
           {error ? (
-            <p className="mt-1 text-xs" style={{ color: "#dc2626" }}>
+            <p className="mt-1 text-xs" style={{ color: "#c0392b" }}>
               {error}
             </p>
           ) : null}
@@ -1266,7 +1266,7 @@ function QuestionCard({
         );
       })}
       {error ? (
-        <p className="text-xs" style={{ color: "#dc2626" }}>
+        <p className="text-xs" style={{ color: "#c0392b" }}>
           {error}
         </p>
       ) : null}

@@ -5,18 +5,20 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   AlertCircle,
+  ArrowUpRight,
   Check,
-  ExternalLink,
   ImageIcon,
   Loader2,
   PenLine,
   Share2,
 } from "lucide-react";
 
-import { CREATIVE_STATUS, stripCapabilityPrefix } from "@/lib/labels/core";
+import { stripCapabilityPrefix } from "@/lib/labels/core";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
 import { WsTag } from "@/components/commands/ws-event-card";
+import { OutputPreviewDialog } from "@/components/workspace/output-preview-dialog";
+import { WORKSPACE_STATUS_LABEL_TR } from "@/components/workspace/workspace-right-panel-data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -63,7 +65,7 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
             style={{ color: "var(--ws-text-3)" }}
           >
             <Loader2 className="size-5 animate-spin" />
-            <span className="text-xs font-medium">Generating image…</span>
+            <span className="text-xs font-medium">Görsel oluşturuluyor…</span>
           </div>
         </div>
         <div className="px-3.5 py-2.5">
@@ -82,11 +84,11 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
     return (
       <div
         className="mt-1 flex w-full max-w-sm items-start gap-3 rounded-2xl border px-4 py-3.5"
-        style={{ borderColor: "#dc262640", background: "#dc262610" }}
+        style={{ borderColor: "#c0392b40", background: "#c0392b10" }}
       >
         <span
           className="flex size-9 shrink-0 items-center justify-center rounded-full"
-          style={{ background: "#dc262620", color: "#dc2626" }}
+          style={{ background: "#c0392b20", color: "#c0392b" }}
         >
           <AlertCircle className="size-4" />
         </span>
@@ -95,13 +97,13 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
             className="truncate text-sm font-medium"
             style={{ color: "var(--ws-text)" }}
           >
-            Image generation failed
+            Görsel oluşturulamadı
           </p>
           <p className="truncate text-xs" style={{ color: "var(--ws-text-3)" }}>
             {stripCapabilityPrefix(card.title)}
           </p>
           {card.message ? (
-            <p className="mt-1 text-xs" style={{ color: "#dc2626" }}>
+            <p className="mt-1 text-xs" style={{ color: "#c0392b" }}>
               {card.message}
             </p>
           ) : null}
@@ -130,8 +132,8 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
             className="text-sm font-medium"
             style={{ color: "var(--ws-text)" }}
           >
-            {stripCapabilityPrefix(card.title)} approved — would you like to
-            share it on social media?
+            {stripCapabilityPrefix(card.title)} onaylandı — sosyal medyada
+            paylaşmak ister misin?
           </p>
         </div>
         <PublishSection creativeId={card.creativeId} />
@@ -157,6 +159,7 @@ function CreativeReadyCard({
   const [showRevise, setShowRevise] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [isRevising, startRevising] = useTransition();
+  const [showPreview, setShowPreview] = useState(false);
 
   const revise = () => {
     if (!instruction.trim()) return;
@@ -167,14 +170,14 @@ function CreativeReadyCard({
         if (result.ok) {
           setInstruction("");
           setShowRevise(false);
-          toast.success("Revising — the new version will appear below");
+          toast.success("Revize ediliyor — yeni versiyon aşağıda görünecek");
           router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Action failed";
+        const message = err instanceof Error ? err.message : "İşlem başarısız";
         setError(message);
         toast.error(message);
       }
@@ -206,33 +209,35 @@ function CreativeReadyCard({
         const result = await action(formData);
         if (result.ok) {
           setLocalStatus(to);
-          toast.success(to === "APPROVED" ? "Approved" : "Rejected");
+          toast.success(to === "APPROVED" ? "Onaylandı" : "Reddedildi");
           router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Action failed";
+        const message = err instanceof Error ? err.message : "İşlem başarısız";
         setError(message);
         toast.error(message);
       }
     });
   };
 
-  const statusMeta = CREATIVE_STATUS[status as keyof typeof CREATIVE_STATUS];
-  const statusLabel = statusMeta?.label ?? status;
+  const statusLabel =
+    WORKSPACE_STATUS_LABEL_TR[
+      status as keyof typeof WORKSPACE_STATUS_LABEL_TR
+    ] ?? status;
   const statusDot =
-    statusMeta?.tone === "positive"
-      ? "var(--ws-accent)"
-      : statusMeta?.tone === "waiting"
-        ? "#d97706"
-        : statusMeta?.tone === "danger"
-          ? "#dc2626"
+    status === "APPROVED" || status === "PUBLISHED"
+      ? "var(--ws-approved)"
+      : status === "IN_REVIEW"
+        ? "var(--ws-pending)"
+        : status === "REJECTED"
+          ? "#c0392b"
           : "var(--ws-text-3)";
   const typeLabel = card.platform
     ? `${format.label} ${format.contentFormatLabel}`
-    : "Image";
+    : "Görsel";
   const displayTitle = card.caption || title;
 
   return (
@@ -243,7 +248,7 @@ function CreativeReadyCard({
         background: "var(--ws-surface)",
       }}
     >
-      <div className="grid sm:grid-cols-2">
+      <div className="grid sm:grid-cols-[39%_61%]">
         <div
           className="relative w-full overflow-hidden"
           style={{ background: "var(--ws-accent)" }}
@@ -289,7 +294,7 @@ function CreativeReadyCard({
               ) : null}
               <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4">
                 <div className="text-[9px] tracking-[0.2em] text-white/80 uppercase">
-                  {card.platform ? format.label : "Creative"}
+                  {card.platform ? format.label : "Çıktı"}
                 </div>
                 <div className="mt-1 font-serif text-lg leading-[1.15] text-white italic">
                   {displayTitle}
@@ -364,7 +369,7 @@ function CreativeReadyCard({
           </div>
 
           {error ? (
-            <p className="mt-2 text-xs" style={{ color: "#dc2626" }}>
+            <p className="mt-2 text-xs" style={{ color: "#c0392b" }}>
               {error}
             </p>
           ) : null}
@@ -383,7 +388,7 @@ function CreativeReadyCard({
                 onClick={() => decide("APPROVED")}
               >
                 <Check className="size-3.5" />
-                Approve
+                Onayla
               </Button>
               <Button
                 type="button"
@@ -398,7 +403,7 @@ function CreativeReadyCard({
                 onClick={() => setShowRevise((v) => !v)}
               >
                 <PenLine className="size-3.5" />
-                Revise
+                Düzenle
               </Button>
               <Button
                 type="button"
@@ -409,7 +414,7 @@ function CreativeReadyCard({
                 disabled={isPending}
                 onClick={() => decide("REJECTED")}
               >
-                Reject
+                Reddet
               </Button>
             </div>
           ) : status !== "IN_REVIEW" ? (
@@ -429,7 +434,7 @@ function CreativeReadyCard({
               onClick={() => setShowRevise((v) => !v)}
             >
               <PenLine className="size-3.5" />
-              Revise
+              Düzenle
             </Button>
           ) : null}
 
@@ -438,7 +443,7 @@ function CreativeReadyCard({
               <Input
                 value={instruction}
                 onChange={(e) => setInstruction(e.target.value)}
-                placeholder="What should change? e.g. more vibrant colors"
+                placeholder="Neyi değiştirelim? Örn. başlığı Türkçe yap…"
                 disabled={isRevising}
                 className="h-8 text-xs"
                 onKeyDown={(e) => {
@@ -462,7 +467,7 @@ function CreativeReadyCard({
                 {isRevising ? (
                   <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  "Go"
+                  "Gönder"
                 )}
               </Button>
             </div>
@@ -485,20 +490,22 @@ function CreativeReadyCard({
         }}
       >
         <span className="flex items-center gap-1">
-          <Check className="size-3" style={{ marginRight: -6 }} />
           <Check className="size-3" />
-          Created from your Brand Twin
+          Marka yönüne uygun
         </span>
-        <a
-          href={`/creatives/${card.creativeId}`}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1 font-medium hover:opacity-70"
+        <button
+          type="button"
+          onClick={() => setShowPreview(true)}
+          className="flex items-center gap-1 font-medium transition-colors hover:opacity-70"
         >
-          View details
-          <ExternalLink className="size-3" />
-        </a>
+          Detayları gör
+          <ArrowUpRight className="size-3" />
+        </button>
       </div>
+      <OutputPreviewDialog
+        creativeId={showPreview ? card.creativeId : null}
+        onOpenChange={setShowPreview}
+      />
     </div>
   );
 }
@@ -539,7 +546,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
   if (targets.length === 0) {
     return (
       <p className="pt-0.5 text-xs" style={{ color: "var(--ws-text-3)" }}>
-        No connected social accounts yet.
+        Henüz bağlı sosyal medya hesabı yok.
       </p>
     );
   }
@@ -586,7 +593,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
       style={{ borderColor: "var(--ws-border)" }}
     >
       <p className="text-xs font-medium" style={{ color: "var(--ws-text-3)" }}>
-        Share on Social Accounts
+        Sosyal hesaplarda paylaş
       </p>
       {targets.map((target) => {
         const rowKey =
@@ -647,7 +654,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
                       ) : (
                         <Share2 className="size-3.5" />
                       )}
-                      {isPublished ? "Sent" : FORMAT_LABEL[format]}
+                      {isPublished ? "Gönderildi" : FORMAT_LABEL[format]}
                     </Button>
                   );
                 })
@@ -672,7 +679,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
                   ) : (
                     <Share2 className="size-3.5" />
                   )}
-                  {publishedKeys.has(target.platform) ? "Sent" : "Share"}
+                  {publishedKeys.has(target.platform) ? "Gönderildi" : "Paylaş"}
                 </Button>
               )}
             </div>

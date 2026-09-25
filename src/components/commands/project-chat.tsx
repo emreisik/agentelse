@@ -34,6 +34,7 @@ import {
 import { submitComposerShortcutAction } from "@/server/actions/composer-shortcut-actions";
 import { Thread } from "@/components/assistant-ui/thread";
 import { ComposerPlusMenu } from "@/components/commands/composer-plus-menu";
+import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
 import type { PublishTarget } from "@/server/integrations/meta-connection-status";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 import type { WorkspaceResumeStats } from "@/components/workspace/workspace-right-panel-data";
@@ -590,21 +591,19 @@ export function ProjectChat({
 
   // Time-of-day greeting — same SSR-safe useSyncExternalStore shape as
   // workspace-panel-toggle.tsx: the server (and the client's first paint,
-  // which must match it) always sees "Welcome back", then React re-syncs
-  // to the visitor's real local time right after — no hydration mismatch,
-  // no setState-in-effect.
+  // which must match it) always sees "Merhaba", then React re-syncs to the
+  // visitor's real local time right after — no hydration mismatch, no
+  // setState-in-effect.
   const timeGreeting = React.useSyncExternalStore(
     () => () => {},
     () => {
       const hour = new Date().getHours();
-      return hour < 12
-        ? "Good morning"
-        : hour < 18
-          ? "Good afternoon"
-          : "Good evening";
+      return hour < 12 ? "Günaydın" : hour < 18 ? "İyi günler" : "İyi akşamlar";
     },
-    () => "Welcome back",
+    () => "Merhaba",
   );
+
+  const { openTab } = useWorkspacePanelToggle();
 
   const hasResumeStats =
     resumeStats &&
@@ -627,57 +626,70 @@ export function ProjectChat({
         </div>
       ) : (
         <div className="mb-9 px-1">
-          <div
-            className="text-[13px] font-medium uppercase"
-            style={{ color: "var(--ws-text-3)" }}
-          >
-            {projectName}
+          <div className="relative">
+            <h1
+              className="max-w-[calc(100%-80px)] text-[29px] leading-[1.15] font-medium sm:text-[35px]"
+              style={{ color: "var(--ws-text)", letterSpacing: "-1.4px" }}
+            >
+              {userFirstName
+                ? `${timeGreeting}, ${userFirstName}`
+                : "Marka çalışma alanın"}
+              <span style={{ color: "var(--ws-olive)" }}>.</span>
+            </h1>
+            <AgentelseMark
+              aria-hidden
+              className="pointer-events-none absolute top-0 right-0 hidden size-14 rotate-12 sm:block"
+              style={{ color: "var(--ws-olive)", opacity: 0.5 }}
+            />
           </div>
-          <h1
-            className="mt-1 text-[28px] leading-[1.15] font-semibold tracking-[-0.03em]"
-            style={{ color: "var(--ws-text)" }}
-          >
-            {userFirstName
-              ? `${timeGreeting}, ${userFirstName}.`
-              : "Your brand workspace."}
-          </h1>
           <p
             className="mt-3 max-w-lg text-sm leading-6"
             style={{ color: "var(--ws-text-2)" }}
           >
-            Tell Agentelse what you want. It already knows your brand, files and
-            current work.
+            Bugün markan için neyi hayata geçirelim?
           </p>
 
           {hasResumeStats ? (
             <div
-              className="mt-5 flex items-center gap-6 rounded-2xl border px-4 py-3.5"
+              className="mt-5 rounded-[13px] border px-4 py-3.5 sm:px-[18px]"
               style={{
                 borderColor: "var(--ws-border)",
-                background: "var(--ws-surface)",
+                background: "var(--ws-surface-2)",
               }}
             >
-              <div>
-                <div
-                  className="text-xs font-medium"
-                  style={{ color: "var(--ws-text)" }}
-                >
-                  Resume where we left off
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                <div>
+                  <div
+                    className="text-xs font-medium"
+                    style={{ color: "var(--ws-text)" }}
+                  >
+                    Kaldığımız yerden.
+                  </div>
+                  <div
+                    className="text-[11px]"
+                    style={{ color: "var(--ws-text-3)" }}
+                  >
+                    {projectName}
+                  </div>
                 </div>
-                <div
-                  className="text-[11px]"
-                  style={{ color: "var(--ws-text-3)" }}
-                >
-                  {projectName}
+                <div className="grid grid-cols-3 items-center gap-2 sm:ml-auto sm:flex sm:gap-0">
+                  <ResumeStat
+                    value={resumeStats!.drafts}
+                    label="hazır taslak"
+                    onClick={() => openTab("outputs")}
+                    divider={false}
+                  />
+                  <ResumeStat
+                    value={resumeStats!.pendingApproval}
+                    label="onayın bekliyor"
+                    onClick={() => openTab("outputs")}
+                  />
+                  <ResumeStat
+                    value={resumeStats!.approved}
+                    label="onaylandı"
+                    onClick={() => openTab("calendar")}
+                  />
                 </div>
-              </div>
-              <div className="ml-auto flex items-center gap-5">
-                <ResumeStat value={resumeStats!.drafts} label="drafts" />
-                <ResumeStat
-                  value={resumeStats!.pendingApproval}
-                  label="pending approval"
-                />
-                <ResumeStat value={resumeStats!.approved} label="approved" />
               </div>
             </div>
           ) : null}
@@ -690,7 +702,28 @@ export function ProjectChat({
       timeGreeting,
       hasResumeStats,
       resumeStats,
+      openTab,
     ],
+  );
+
+  const ContextBar = React.useCallback(
+    () =>
+      ideaId ? null : (
+        <div
+          className="flex h-[43px] shrink-0 items-center justify-between px-5 sm:px-[30px]"
+          style={{ color: "var(--ws-text-3)" }}
+        >
+          <span className="flex items-center gap-1.5 text-[11px] sm:text-xs">
+            <AgentelseMark
+              className="size-3"
+              style={{ color: "var(--ws-olive)" }}
+            />
+            Senin yaratıcı alanın
+          </span>
+          <span className="truncate text-[11px] sm:text-xs">{projectName}</span>
+        </div>
+      ),
+    [ideaId, projectName],
   );
 
   const PlusMenu = React.useCallback(
@@ -715,17 +748,14 @@ export function ProjectChat({
               type="button"
               disabled={isSending}
               onClick={() => sendMessage(label, [])}
-              className="flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-50"
+              className="flex shrink-0 items-center gap-1.5 rounded-[7px] border px-3 py-1.5 text-[11px] font-medium whitespace-nowrap shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-50 sm:text-xs"
               style={{
                 borderColor: "var(--ws-border)",
                 background: "var(--ws-surface)",
                 color: "var(--ws-text-2)",
               }}
             >
-              <Icon
-                className="size-3.5"
-                style={{ color: "var(--ws-text-3)" }}
-              />
+              <Icon className="size-3.5" style={{ color: "var(--ws-olive)" }} />
               {label}
             </button>
           ))}
@@ -737,15 +767,25 @@ export function ProjectChat({
   // Replaces the composer's old inert "Automatic" label with something
   // real: BrandTwin context genuinely is loaded into every chat turn (see
   // chat-service.ts's buildContext, Phase 5) — this just makes that
-  // already-true fact visible instead of a fake mode toggle.
+  // already-true fact visible instead of a fake mode toggle. Spec: "thin
+  // divider, selected brand context, small status dot, bağlamı açık" —
+  // the divider is rendered here (rather than by the composer shell)
+  // since ComposerPlusMenu is optional and this is the only slot that
+  // knows whether it's present.
   const ContextChip = React.useCallback(
     () => (
-      <span
-        className="flex items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] select-none"
-        style={{ borderColor: "var(--ws-border)", color: "var(--ws-text-3)" }}
-      >
-        <span className="size-1.5 rounded-full bg-emerald-500" />
-        {projectName} context on
+      <span className="flex items-center gap-1.5 text-[11px] select-none">
+        <span
+          className="h-4 w-px shrink-0"
+          style={{ background: "var(--ws-border)" }}
+        />
+        <span
+          className="size-1.5 rounded-full"
+          style={{ background: "var(--ws-approved)" }}
+        />
+        <span style={{ color: "var(--ws-text-3)" }}>
+          {projectName} · bağlamı açık
+        </span>
       </span>
     ),
     [projectName],
@@ -756,6 +796,7 @@ export function ProjectChat({
       <Thread
         components={{
           Welcome,
+          ContextBar,
           ComposerPlusMenu: PlusMenu,
           QuickActions,
           ContextChip,
@@ -765,18 +806,43 @@ export function ProjectChat({
   );
 }
 
-function ResumeStat({ value, label }: { value: number; label: string }) {
+function ResumeStat({
+  value,
+  label,
+  onClick,
+  divider = true,
+}: {
+  value: number;
+  label: string;
+  onClick: () => void;
+  divider?: boolean;
+}) {
   return (
-    <div className="text-center">
-      <div
-        className="text-lg font-semibold"
-        style={{ color: "var(--ws-text)" }}
+    <div className="flex items-center">
+      {divider ? (
+        <span
+          className="mr-4 hidden h-8 w-px shrink-0 sm:block"
+          style={{ background: "var(--ws-border)" }}
+        />
+      ) : null}
+      <button
+        type="button"
+        onClick={onClick}
+        className="rounded-lg text-center transition-opacity hover:opacity-70"
       >
-        {value}
-      </div>
-      <div className="text-[10px]" style={{ color: "var(--ws-text-3)" }}>
-        {label}
-      </div>
+        <div
+          className="text-lg font-semibold tabular-nums"
+          style={{ color: "var(--ws-text)" }}
+        >
+          {String(value).padStart(2, "0")}
+        </div>
+        <div
+          className="text-[10px] whitespace-nowrap"
+          style={{ color: "var(--ws-text-3)" }}
+        >
+          {label}
+        </div>
+      </button>
     </div>
   );
 }

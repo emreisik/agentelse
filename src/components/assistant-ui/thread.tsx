@@ -80,6 +80,11 @@ export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
   Welcome?: ComponentType | undefined;
+  // Slim bar above the scrollable conversation, outside it (see ThreadRoot
+  // below) — spec's "context bar": symbol + "Senin yaratıcı alanın" on the
+  // left, date/workspace label on the right (see project-chat.tsx's
+  // ContextBar). Falls back to nothing when unset.
+  ContextBar?: ComponentType | undefined;
   // Replaces the default ComposerAddAttachment as the "+" button's content
   // — the composer's searchable departments/integrations/capability
   // shortcuts menu (see project-chat.tsx / composer-plus-menu.tsx). Falls
@@ -126,9 +131,11 @@ export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
 };
 
 const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
-  const { Welcome = ThreadWelcome, QuickActions } = useContext(
-    ThreadComponentsContext,
-  );
+  const {
+    Welcome = ThreadWelcome,
+    QuickActions,
+    ContextBar,
+  } = useContext(ThreadComponentsContext);
 
   return (
     <ThreadPrimitive.Root
@@ -144,6 +151,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
         ["--composer-padding" as string]: "8px",
       }}
     >
+      {ContextBar ? <ContextBar /> : null}
       {/* turnAnchor's default is "bottom" (classic chat behavior) —
           deliberately left unset. "top" (new message pins at the top and
           the reply grows below — a "live typing" feel) was both

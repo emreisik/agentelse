@@ -13,11 +13,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
+import {
+  useWorkspacePanelToggle,
+  type WorkspacePanelTabKey,
+} from "@/components/workspace/workspace-panel-toggle";
 import { AutopilotCard } from "@/components/workspace/autopilot-card";
 import type { WorkspaceAutopilotMode } from "@/components/workspace/workspace-right-panel-data";
 
-type TabKey = "brand" | "files" | "outputs" | "calendar";
+type TabKey = WorkspacePanelTabKey;
 
 const TAB_TRIGGER_CLASS =
   "h-auto flex-none rounded-[6px] border-none px-3 py-2 text-[11px] font-medium shadow-none";
@@ -37,8 +40,19 @@ export function WorkspaceRightPanel({
   outputs: ReactNode;
   calendar: ReactNode;
 }) {
-  const { collapsed, toggle, isDesktop } = useWorkspacePanelToggle();
-  const [tab, setTab] = useState<TabKey>("brand");
+  const { collapsed, toggle, isDesktop, requestedTab, consumeRequestedTab } =
+    useWorkspacePanelToggle();
+  const [localTab, setLocalTab] = useState<TabKey>("brand");
+  // The Work Summary Strip (project-chat.tsx) asks for a specific tab via
+  // openTab() — derived rather than synced via an effect, so a pending
+  // request always wins until the user explicitly changes tabs (see
+  // handleTabChange below, which consumes it then).
+  const tab = requestedTab ?? localTab;
+
+  function handleTabChange(value: string) {
+    setLocalTab(value as TabKey);
+    if (requestedTab) consumeRequestedTab();
+  }
 
   function tabStyle(key: TabKey): React.CSSProperties {
     return tab === key
@@ -49,7 +63,7 @@ export function WorkspaceRightPanel({
   const tabs = (
     <Tabs
       value={tab}
-      onValueChange={(value) => setTab(value as TabKey)}
+      onValueChange={handleTabChange}
       className="flex min-h-0 flex-1 flex-col"
     >
       <div

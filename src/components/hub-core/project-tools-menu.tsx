@@ -1,20 +1,15 @@
 import Link from "next/link";
 import {
   CalendarDays,
-  ClipboardCheck,
-  Gem,
+  Compass,
   Grid3x3,
-  LayoutGrid,
-  Library,
   Lightbulb,
-  ListChecks,
   Megaphone,
+  Plug,
   Radio,
   Settings2,
   SlidersHorizontal,
-  Sparkles,
   Target,
-  UserRoundCog,
   Users2,
   type LucideIcon,
 } from "lucide-react";
@@ -29,8 +24,21 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { buildHubHref, type PanelKey } from "./hub-core-params";
+import {
+  ADVANCED_PANEL_KEYS,
+  buildHubHref,
+  type PanelKey,
+} from "./hub-core-params";
 import { PANEL_LABEL } from "./lineage-map";
+
+const PANEL_ICON: Record<(typeof ADVANCED_PANEL_KEYS)[number], LucideIcon> = {
+  setup: SlidersHorizontal,
+  departments: Users2,
+  settings: Settings2,
+  signals: Radio,
+  "insights-opportunities": Lightbulb,
+  goals: Target,
+};
 
 const GROUPS: Array<{
   title: string;
@@ -39,36 +47,29 @@ const GROUPS: Array<{
   {
     title: "System",
     items: [
-      { panel: "setup", icon: SlidersHorizontal },
-      { panel: "library", icon: Library },
-      { panel: "departments", icon: Users2 },
-      { panel: "settings", icon: Settings2 },
+      { panel: "setup", icon: PANEL_ICON.setup },
+      { panel: "departments", icon: PANEL_ICON.departments },
+      { panel: "settings", icon: PANEL_ICON.settings },
     ],
   },
   {
     title: "Insight Chain",
     items: [
-      { panel: "brand-brain", icon: Gem },
-      { panel: "signals", icon: Radio },
-      { panel: "insights-opportunities", icon: Lightbulb },
-      { panel: "goals", icon: Target },
-    ],
-  },
-  {
-    title: "Production",
-    items: [
-      { panel: "ideas", icon: Sparkles },
-      { panel: "work", icon: ListChecks },
-      { panel: "approvals", icon: ClipboardCheck },
-      { panel: "human-action", icon: UserRoundCog },
+      { panel: "signals", icon: PANEL_ICON.signals },
+      {
+        panel: "insights-opportunities",
+        icon: PANEL_ICON["insights-opportunities"],
+      },
+      { panel: "goals", icon: PANEL_ICON.goals },
     ],
   },
 ];
 
-// Used to be a "Dashboard" grid dedicated to the project root
-// (dashboard-overview.tsx) — since the project root is now directly the
-// chat, this was moved into a compact dropdown menu accessible from every
-// page within the project.
+// Everything here already has a dedicated sidebar or top-bar entry
+// (Brand Brain, Ideas, Work, Library, Approvals, Human Action) — this menu
+// exists only for ADVANCED_PANEL_KEYS, the panels with no primary entry of
+// their own. Keep the two lists in sync: adding a panel here without also
+// listing it in ADVANCED_PANEL_KEYS (hub-core-params.ts) is a mistake.
 export function ProjectToolsMenu({
   projectId,
   badges,
@@ -89,8 +90,8 @@ export function ProjectToolsMenu({
           />
         }
       >
-        <LayoutGrid className="size-4" />
-        Tools
+        <Compass className="size-4" />
+        Advanced
         {hasAttention ? (
           <span className="absolute top-1 right-1.5 size-1.5 rounded-full bg-warning" />
         ) : null}
@@ -153,6 +154,12 @@ export function ProjectToolsMenu({
           >
             <Megaphone className="size-4 text-muted-foreground" />
             Ads Manager
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            render={<Link href={`/projects/${projectId}/integrations`} />}
+          >
+            <Plug className="size-4 text-muted-foreground" />
+            Connectors
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>

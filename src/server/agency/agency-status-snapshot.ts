@@ -3,8 +3,33 @@ import "server-only";
 import type { AgencyLoopStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { stripCapabilityPrefix } from "@/lib/labels/core";
 import { INTERNAL_CAPABILITIES } from "@/lib/labels/work";
 import { AgencyLoopStateRepository } from "@/server/repositories/agency-loop-state.repository";
+
+// Plain-language status word for the Brand Workspace header's active-work
+// popover — deliberately separate from labels/core.ts's TASK_STATUS (which
+// stays technical, e.g. "Waiting for Approval", for the Work board and other
+// existing screens). This mirrors the product spec's suggested mapping
+// (READY->Preparing, RUNNING->Creating, WAITING_APPROVAL->Needs your
+// approval) without touching the shared label map every other screen reads.
+const ACTIVE_JOB_STATUS_WORD: Record<string, string> = {
+  DRAFT: "Preparing",
+  READY: "Preparing",
+  QUEUED: "Starting",
+  RUNNING: "Creating",
+  VERIFYING: "Final checks",
+  WAITING_INPUT: "Needs info",
+  WAITING_HUMAN: "Needs you",
+  WAITING_APPROVAL: "Needs approval",
+  WAITING_PROVIDER: "Creating",
+};
+
+export type ActiveJob = {
+  id: string;
+  title: string;
+  statusWord: string;
+};
 
 export type AgencyStatusSnapshot = {
   status: AgencyLoopStatus | null;
@@ -15,6 +40,10 @@ export type AgencyStatusSnapshot = {
   consecutiveNoProgressCycles: number;
   tasksNow: number;
   tasksWaiting: number;
+  // Named jobs behind tasksNow/tasksWaiting's counts — for the header's
+  // active-work popover (spec: "October Campaign — Creating" style rows),
+  // not just an aggregate count.
+  activeJobs: ActiveJob[];
   today: {
     tasksCreated: number;
     signalsIngested: number;
@@ -55,7 +84,7 @@ export async function getAgencyStatusSnapshot(
   const loopState = await AgencyLoopStateRepository.getForProject(projectId);
   if (!loopState) return null;
 
-  const [tasksNow, tasksWaiting, dailyStat] = await Promise.all([
+  const [tasksNow, tasksWaiting, activeJobRows, dailyStat] = await Promise.all([
     prisma.task.count({
       where: {
         projectId,
@@ -70,10 +99,29 @@ export async function getAgencyStatusSnapshot(
         capability: { notIn: [...INTERNAL_CAPABILITIES] },
       },
     }),
+    // Named rows behind the two counts above, capped for a popover (not a
+    // full list view) — most-recently-updated first, so a long-idle waiting
+    // task doesn't crowd out what's actually moving right now.
+    prisma.task.findMany({
+      where: {
+        projectId,
+        status: { in: [...NOW_STATUSES, ...WAITING_STATUSES] },
+        capability: { notIn: [...INTERNAL_CAPABILITIES] },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 8,
+      select: { id: true, title: true, status: true },
+    }),
     prisma.agencyDailyStat.findUnique({
       where: { projectId_date: { projectId, date: todayUtc() } },
     }),
   ]);
+
+  const activeJobs: ActiveJob[] = activeJobRows.map((task) => ({
+    id: task.id,
+    title: stripCapabilityPrefix(task.title),
+    statusWord: ACTIVE_JOB_STATUS_WORD[task.status] ?? "In progress",
+  }));
 
   return {
     status: loopState.status,
@@ -84,6 +132,7 @@ export async function getAgencyStatusSnapshot(
     consecutiveNoProgressCycles: loopState.consecutiveNoProgressCycles,
     tasksNow,
     tasksWaiting,
+    activeJobs,
     today: {
       tasksCreated: dailyStat?.tasksCreated ?? 0,
       signalsIngested: dailyStat?.signalsIngested ?? 0,

@@ -20,6 +20,22 @@ export const PANEL_KEYS = [
 
 export type PanelKey = (typeof PANEL_KEYS)[number];
 
+// Panels with no dedicated sidebar/top-bar entry of their own — reachable
+// only through the "Advanced" menu (project-tools-menu.tsx). Single source
+// of truth for that grouping so the sidebar and the menu can't drift apart.
+export const ADVANCED_PANEL_KEYS = [
+  "setup",
+  "signals",
+  "insights-opportunities",
+  "goals",
+  "departments",
+  "settings",
+] as const satisfies readonly PanelKey[];
+
+export function isAdvancedPanel(panel: PanelKey): boolean {
+  return (ADVANCED_PANEL_KEYS as readonly PanelKey[]).includes(panel);
+}
+
 export const WORK_SUB_KEYS = [
   "plans",
   "tasks",
@@ -37,9 +53,21 @@ export const SETTINGS_SUB_KEYS = [
 ] as const;
 export type SettingsSubKey = (typeof SETTINGS_SUB_KEYS)[number];
 
+export const BRAND_BRAIN_SUB_KEYS = [
+  "assets",
+  "visual-identity",
+  "constitution",
+  "strategy",
+  "decisions",
+  "evidence",
+  "learnings",
+] as const;
+export type BrandBrainSubKey = (typeof BRAND_BRAIN_SUB_KEYS)[number];
+
 const SUB_KEYS_BY_PANEL: Partial<Record<PanelKey, readonly string[]>> = {
   work: WORK_SUB_KEYS,
   settings: SETTINGS_SUB_KEYS,
+  "brand-brain": BRAND_BRAIN_SUB_KEYS,
 };
 
 // The single unified param that opens a record's detail — the generalized

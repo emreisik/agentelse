@@ -6,10 +6,11 @@ vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
 }));
 
 const taskCount = vi.fn();
+const taskFindMany = vi.fn().mockResolvedValue([]);
 const dailyStatFindUnique = vi.fn();
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    task: { count: taskCount },
+    task: { count: taskCount, findMany: taskFindMany },
     agencyDailyStat: { findUnique: dailyStatFindUnique },
   },
 }));
@@ -18,6 +19,7 @@ const { getAgencyStatusSnapshot } = await import("./agency-status-snapshot");
 
 beforeEach(() => {
   vi.clearAllMocks();
+  taskFindMany.mockResolvedValue([]);
 });
 
 describe("getAgencyStatusSnapshot", () => {
@@ -53,6 +55,7 @@ describe("getAgencyStatusSnapshot", () => {
       consecutiveNoProgressCycles: 0,
       tasksNow: 3,
       tasksWaiting: 2,
+      activeJobs: [],
       today: {
         tasksCreated: 0,
         signalsIngested: 0,
@@ -119,5 +122,37 @@ describe("getAgencyStatusSnapshot", () => {
       reasoningCostUsd: 3.25,
     });
     expect(snapshot?.consecutiveNoProgressCycles).toBe(6);
+  });
+
+  it("maps active task rows into named jobs with plain-language status words, stripping any legacy capability prefix from the title", async () => {
+    getForProject.mockResolvedValue({
+      status: "RUNNING",
+      lastTickAt: null,
+      lastProgressAt: null,
+      nextWakeAt: null,
+      blockedReason: null,
+      consecutiveNoProgressCycles: 0,
+    });
+    taskCount.mockResolvedValue(0);
+    dailyStatFindUnique.mockResolvedValue(null);
+    taskFindMany.mockResolvedValue([
+      {
+        id: "task-1",
+        title: "CREATE_CAMPAIGN_BRIEF: Russia Wholesale Campaign",
+        status: "RUNNING",
+      },
+      { id: "task-2", title: "Friday Reel", status: "WAITING_APPROVAL" },
+    ]);
+
+    const snapshot = await getAgencyStatusSnapshot("proj-3");
+
+    expect(snapshot?.activeJobs).toEqual([
+      {
+        id: "task-1",
+        title: "Russia Wholesale Campaign",
+        statusWord: "Creating",
+      },
+      { id: "task-2", title: "Friday Reel", statusWord: "Needs approval" },
+    ]);
   });
 });

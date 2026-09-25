@@ -94,7 +94,7 @@ export function ActiveWorkPopover({
             }}
           />
         </span>
-        {activeCount} aktif
+        {activeCount} active
       </PopoverTrigger>
       <PopoverContent
         align="end"
@@ -111,19 +111,19 @@ export function ActiveWorkPopover({
               className="text-sm font-semibold"
               style={{ color: "var(--ws-text)" }}
             >
-              Aktif işler
+              Active work
             </div>
             <div
               className="mt-0.5 text-xs"
               style={{ color: "var(--ws-text-3)" }}
             >
-              Agentelse arka planda çalışmaya devam ediyor.
+              Agentelse keeps working in the background.
             </div>
           </div>
           <button
             type="button"
             onClick={() => setOpen(false)}
-            aria-label="Kapat"
+            aria-label="Close"
             className="rounded-md p-1 transition-colors hover:bg-[var(--ws-hover)]"
             style={{ color: "var(--ws-text-3)" }}
           >
@@ -169,8 +169,8 @@ export function ActiveWorkPopover({
               color: "var(--ws-text-3)",
             }}
           >
-            Şu anda devam eden bir şey yok — Agentelse bir şey başlattığında
-            burada göreceksin.
+            Nothing in progress right now — you&apos;ll see it here the moment
+            Agentelse starts something.
           </div>
         )}
       </PopoverContent>

@@ -140,10 +140,10 @@ const CHAT_ACCEPT =
   "image/png,image/jpeg,image/webp,application/pdf,text/plain,text/csv,text/markdown";
 
 const STATUS_NOTE: Record<string, string> = {
-  PLANNED: "Görev oluşturuldu",
-  APPROVAL_HANDLED: "Onay işlendi",
-  UNCLEAR: "Açıklama bekleniyor",
-  ERROR: "Hata",
+  PLANNED: "Task created",
+  APPROVAL_HANDLED: "Approval processed",
+  UNCLEAR: "Awaiting clarification",
+  ERROR: "Error",
 };
 
 // Brand Workspace composer's persistent quick-action row (docs/
@@ -151,10 +151,10 @@ const STATUS_NOTE: Record<string, string> = {
 // sent through the exact same path as typing them and pressing enter (no
 // separate shortcut path).
 const QUICK_ACTIONS: { label: string; icon: typeof ImageIcon }[] = [
-  { label: "Post hazırla", icon: ImageIcon },
-  { label: "Reel fikri bul", icon: Film },
-  { label: "Haftayı planla", icon: CalendarRange },
-  { label: "Kampanya oluştur", icon: Megaphone },
+  { label: "Create a post", icon: ImageIcon },
+  { label: "Find a Reel idea", icon: Film },
+  { label: "Plan the week", icon: CalendarRange },
+  { label: "Create a campaign", icon: Megaphone },
 ];
 
 // assistant-ui's composer immediately treats an added file as
@@ -439,7 +439,9 @@ export function ProjectChat({
             result = {
               ok: false,
               message:
-                error instanceof Error ? error.message : "Mesaj gönderilemedi",
+                error instanceof Error
+                  ? error.message
+                  : "Failed to send message",
             };
           }
 
@@ -471,7 +473,7 @@ export function ProjectChat({
       if (!text && files.length === 0) return Promise.resolve();
 
       return runTurn(
-        text || "(dosya gönderildi)",
+        text || "(file sent)",
         files.map((file) => ({
           filename: file.name,
           mimeType: file.type,
@@ -542,7 +544,7 @@ export function ProjectChat({
     async (parentId: string | null) => {
       const parent = parentId !== null ? messages[Number(parentId)] : undefined;
       if (!parent || parent.role !== "user") {
-        toast.error("Bu mesaj yeniden gönderilemiyor.");
+        toast.error("Can't retry this message.");
         return;
       }
       await sendMessage(parent.text, []);
@@ -591,16 +593,20 @@ export function ProjectChat({
 
   // Time-of-day greeting — same SSR-safe useSyncExternalStore shape as
   // workspace-panel-toggle.tsx: the server (and the client's first paint,
-  // which must match it) always sees "Merhaba", then React re-syncs to the
-  // visitor's real local time right after — no hydration mismatch, no
+  // which must match it) always sees "Welcome back", then React re-syncs to
+  // the visitor's real local time right after — no hydration mismatch, no
   // setState-in-effect.
   const timeGreeting = React.useSyncExternalStore(
     () => () => {},
     () => {
       const hour = new Date().getHours();
-      return hour < 12 ? "Günaydın" : hour < 18 ? "İyi günler" : "İyi akşamlar";
+      return hour < 12
+        ? "Good morning"
+        : hour < 18
+          ? "Good afternoon"
+          : "Good evening";
     },
-    () => "Merhaba",
+    () => "Welcome back",
   );
 
   const { openTab } = useWorkspacePanelToggle();
@@ -633,7 +639,7 @@ export function ProjectChat({
             >
               {userFirstName
                 ? `${timeGreeting}, ${userFirstName}`
-                : "Marka çalışma alanın"}
+                : "Your brand workspace"}
               <span style={{ color: "var(--ws-olive)" }}>.</span>
             </h1>
             <AgentelseMark
@@ -646,7 +652,7 @@ export function ProjectChat({
             className="mt-3 max-w-lg text-sm leading-6"
             style={{ color: "var(--ws-text-2)" }}
           >
-            Bugün markan için neyi hayata geçirelim?
+            What should we bring to life for your brand today?
           </p>
 
           {hasResumeStats ? (
@@ -663,7 +669,7 @@ export function ProjectChat({
                     className="text-xs font-medium"
                     style={{ color: "var(--ws-text)" }}
                   >
-                    Kaldığımız yerden.
+                    Where we left off.
                   </div>
                   <div
                     className="text-[11px]"
@@ -675,18 +681,18 @@ export function ProjectChat({
                 <div className="grid grid-cols-3 items-center gap-2 sm:ml-auto sm:flex sm:gap-0">
                   <ResumeStat
                     value={resumeStats!.drafts}
-                    label="hazır taslak"
+                    label="ready drafts"
                     onClick={() => openTab("outputs")}
                     divider={false}
                   />
                   <ResumeStat
                     value={resumeStats!.pendingApproval}
-                    label="onayın bekliyor"
+                    label="pending approval"
                     onClick={() => openTab("outputs")}
                   />
                   <ResumeStat
                     value={resumeStats!.approved}
-                    label="onaylandı"
+                    label="approved"
                     onClick={() => openTab("calendar")}
                   />
                 </div>
@@ -704,26 +710,6 @@ export function ProjectChat({
       resumeStats,
       openTab,
     ],
-  );
-
-  const ContextBar = React.useCallback(
-    () =>
-      ideaId ? null : (
-        <div
-          className="flex h-[43px] shrink-0 items-center justify-between px-5 sm:px-[30px]"
-          style={{ color: "var(--ws-text-3)" }}
-        >
-          <span className="flex items-center gap-1.5 text-[11px] sm:text-xs">
-            <AgentelseMark
-              className="size-3"
-              style={{ color: "var(--ws-olive)" }}
-            />
-            Senin yaratıcı alanın
-          </span>
-          <span className="truncate text-[11px] sm:text-xs">{projectName}</span>
-        </div>
-      ),
-    [ideaId, projectName],
   );
 
   const PlusMenu = React.useCallback(
@@ -768,10 +754,10 @@ export function ProjectChat({
   // real: BrandTwin context genuinely is loaded into every chat turn (see
   // chat-service.ts's buildContext, Phase 5) — this just makes that
   // already-true fact visible instead of a fake mode toggle. Spec: "thin
-  // divider, selected brand context, small status dot, bağlamı açık" —
-  // the divider is rendered here (rather than by the composer shell)
-  // since ComposerPlusMenu is optional and this is the only slot that
-  // knows whether it's present.
+  // divider, selected brand context, small status dot, context on" — the
+  // divider is rendered here (rather than by the composer shell) since
+  // ComposerPlusMenu is optional and this is the only slot that knows
+  // whether it's present.
   const ContextChip = React.useCallback(
     () => (
       <span className="flex items-center gap-1.5 text-[11px] select-none">
@@ -784,7 +770,7 @@ export function ProjectChat({
           style={{ background: "var(--ws-approved)" }}
         />
         <span style={{ color: "var(--ws-text-3)" }}>
-          {projectName} · bağlamı açık
+          {projectName} context on
         </span>
       </span>
     ),
@@ -796,7 +782,6 @@ export function ProjectChat({
       <Thread
         components={{
           Welcome,
-          ContextBar,
           ComposerPlusMenu: PlusMenu,
           QuickActions,
           ContextChip,

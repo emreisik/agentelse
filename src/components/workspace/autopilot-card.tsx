@@ -5,11 +5,10 @@ import { buildHubHref } from "@/components/hub-core/hub-core-params";
 import type { WorkspaceAutopilotMode } from "./workspace-right-panel-data";
 
 const AUTOPILOT_NOTE: Record<WorkspaceAutopilotMode, string> = {
-  REVIEW_EVERYTHING: "Review everything — nothing is scheduled automatically.",
-  CREATE_AUTOMATICALLY:
-    "Creates and schedules automatically, asks before publishing.",
-  AUTOPILOT:
-    "Creates, schedules and publishes automatically, within your limits.",
+  REVIEW_EVERYTHING:
+    "You approve everything — nothing is planned automatically.",
+  CREATE_AUTOMATICALLY: "We plan together, you approve.",
+  AUTOPILOT: "Creates, plans, and publishes automatically within your limits.",
 };
 
 // Shown at the bottom of all four right-panel tabs — deliberately reads
@@ -27,7 +26,7 @@ export function AutopilotCard({
     <Link
       href={buildHubHref(projectId, { panel: "settings", sub: "autonomy" })}
       scroll={false}
-      className="mt-1 flex items-center gap-3 rounded-2xl p-3.5 transition-colors hover:bg-[var(--ws-hover)]"
+      className="mt-1 flex items-center gap-2.5 rounded-2xl p-3 transition-colors hover:bg-[var(--ws-hover)]"
       style={{ background: "var(--ws-surface-2)" }}
     >
       <span

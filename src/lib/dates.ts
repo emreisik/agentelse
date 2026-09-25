@@ -5,7 +5,7 @@ import {
   isToday,
   isYesterday,
 } from "date-fns";
-import { enUS, tr } from "date-fns/locale";
+import { enUS } from "date-fns/locale";
 
 // Single point for English-locale date rendering — never call date-fns with
 // a locale inline; use these.
@@ -38,19 +38,14 @@ export function smartDate(date: Date | string | null | undefined): string {
 // Day-divider label for the single project chat's chronological timeline
 // (project-chat.tsx / thread.tsx DateDivider) — always date-level, unlike
 // smartDate above which shows a time for today because it answers "when
-// was this modified", not "which day does this divider mark". Turkish and
-// uppercase per the Brand Workspace copy spec ("──── BUGÜN ────") — this is
-// the only caller of dayLabel in the app (the project chat's own
-// timeline), so localizing it here carries no risk to any other screen,
-// unlike shortDate/timeAgo/smartDate above which stay English-locale for
-// the rest of the (still-English) app.
+// was this modified", not "which day does this divider mark".
 export function dayLabel(date: Date | string): string {
   const d = new Date(date);
-  if (isToday(d)) return "BUGÜN";
-  if (isYesterday(d)) return "DÜN";
+  if (isToday(d)) return "TODAY";
+  if (isYesterday(d)) return "YESTERDAY";
   if (isThisWeek(d, { weekStartsOn: 1 }))
-    return format(d, "EEEE", { locale: tr }).toLocaleUpperCase("tr-TR");
-  return format(d, "d MMMM yyyy", { locale: tr });
+    return format(d, "EEEE", { locale: enUS }).toUpperCase();
+  return format(d, "d MMMM yyyy", { locale: enUS });
 }
 
 // Local-timezone day key (YYYY-MM-DD) for grouping chat turns into day

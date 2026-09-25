@@ -10,7 +10,6 @@ import { TopBar } from "@/components/layout/top-bar";
 import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
 import type { PanelKey } from "@/components/hub-core/hub-core-params";
 import { getAgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
-import { BrandBrainAssistant } from "@/components/brand-brain/brand-brain-assistant";
 import { WorkspaceNavSheet } from "@/components/layout/workspace-nav-sheet";
 import { WorkspacePanelToggleProvider } from "@/components/workspace/workspace-panel-toggle";
 
@@ -282,20 +281,10 @@ export async function AppShell({
     },
     flows,
     agencyStatus,
-    hasBrand,
   ] = await Promise.all([
     getSidebarData(userId, projectId),
     projectId ? getSidebarFlows(projectId) : Promise.resolve(null),
     projectId ? getAgencyStatusSnapshot(projectId) : Promise.resolve(null),
-    // Gates the global Brand Brain Assistant widget below — a cheap
-    // existence check so the FAB never appears on a project that hasn't
-    // finished setup (and has no default Brand yet) to discuss.
-    projectId
-      ? prisma.brand.findFirst({
-          where: { projectId, isDefault: true },
-          select: { id: true },
-        })
-      : Promise.resolve(null),
   ]);
   const sidebarVisible = showSidebar ?? Boolean(projectId);
   // The sidebar is the only place Ideas/Work/Connectors/Ads
@@ -346,10 +335,17 @@ export async function AppShell({
   const body = (
     <div className="flex min-w-0 flex-1 flex-col">
       {header}
-      <div className="flex min-w-0 flex-1 overflow-hidden">
+      <div
+        className="flex min-w-0 flex-1 overflow-hidden"
+        style={isWorkspaceRoot ? { background: "var(--ws-bg)" } : undefined}
+      >
         {/* FAB stack anchors to this wrapper's corner (relative), not the
             viewport (fixed) — so it tracks <main>'s box when a rightPanel
-            pushes it left, with no state shared between the two. */}
+            pushes it left, with no state shared between the two. The
+            --ws-bg background here (not just on <main>) matters now that
+            the right panel floats with margin (workspace-right-panel.tsx):
+            without it, the gap around the floating card would show
+            whatever's behind this row instead of the studio canvas. */}
         <div className="relative min-w-0 flex-1 overflow-hidden">
           <main
             className={cn(
@@ -360,15 +356,12 @@ export async function AppShell({
           >
             {children}
           </main>
-          {projectId && (projectBadges?.setupPercent != null || hasBrand) ? (
+          {projectId && projectBadges?.setupPercent != null ? (
             <div className="absolute right-6 bottom-6 z-50 flex flex-col items-end gap-3">
-              {projectBadges?.setupPercent != null ? (
-                <SetupProgressWidget
-                  projectId={projectId}
-                  initialPercent={projectBadges.setupPercent}
-                />
-              ) : null}
-              {hasBrand ? <BrandBrainAssistant projectId={projectId} /> : null}
+              <SetupProgressWidget
+                projectId={projectId}
+                initialPercent={projectBadges.setupPercent}
+              />
             </div>
           ) : null}
         </div>

@@ -4,25 +4,24 @@ import { useState } from "react";
 import { Check } from "lucide-react";
 import type { CreativeType } from "@prisma/client";
 
-import { SOCIAL_PLATFORM } from "@/lib/labels";
+import { CREATIVE_STATUS, SOCIAL_PLATFORM } from "@/lib/labels";
 import { OutputPreviewDialog } from "@/components/workspace/output-preview-dialog";
-import { WORKSPACE_STATUS_LABEL_TR } from "@/components/workspace/workspace-status-labels";
 import type { WorkspaceOutputItem } from "./workspace-right-panel-data";
 
-// Spec's filter set is "Tümü / Post / Story / Reel / Reklam" — Story/Reel
+// Spec's filter set is "All / Post / Story / Reel / Ads" — Story/Reel
 // come from the latest CreativeVersion's contentFormat (see
-// workspace-right-panel-data.ts toOutputItem), Reklam from CreativeType,
+// workspace-right-panel-data.ts toOutputItem), Ads from CreativeType,
 // and everything else that isn't a Story/Reel/ad falls under Post.
 type FilterKey = "all" | "posts" | "story" | "reel" | "ads";
 
 const AD_TYPES = new Set<CreativeType>(["AD_CREATIVE", "CAMPAIGN_BRIEF"]);
 
 const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: "all", label: "Tümü" },
+  { key: "all", label: "All" },
   { key: "posts", label: "Post" },
   { key: "story", label: "Story" },
   { key: "reel", label: "Reel" },
-  { key: "ads", label: "Reklam" },
+  { key: "ads", label: "Ads" },
 ];
 
 function matchesFilter(output: WorkspaceOutputItem, filter: FilterKey) {
@@ -45,20 +44,20 @@ export function OutputsPanel({ outputs }: { outputs: WorkspaceOutputItem[] }) {
   const filtered = outputs.filter((output) => matchesFilter(output, filter));
 
   return (
-    <div className="flex flex-col gap-4 px-5 py-5 text-sm">
+    <div className="flex flex-col gap-4 px-4 py-4 text-sm">
       <div className="flex items-start justify-between gap-2">
         <div>
           <div
             className="text-[10px] font-semibold tracking-[0.1em]"
             style={{ color: "var(--ws-text-3)" }}
           >
-            FİKİRDEN ÇIKTIYA
+            FROM IDEA TO OUTPUT
           </div>
           <div
             className="mt-0.5 text-base font-semibold"
             style={{ color: "var(--ws-text)" }}
           >
-            Markan için üretildi.
+            Made for your brand.
           </div>
         </div>
         {outputs.length > 0 ? (
@@ -101,12 +100,12 @@ export function OutputsPanel({ outputs }: { outputs: WorkspaceOutputItem[] }) {
       {filtered.length === 0 ? (
         <div className="px-0.5">
           <p className="text-sm" style={{ color: "var(--ws-text)" }}>
-            Bir fikirle başlar.
+            It starts with an idea.
           </p>
           <p className="text-xs" style={{ color: "var(--ws-text-3)" }}>
             {outputs.length === 0
-              ? "Agentelse'e bir şey üretmesini söyle."
-              : "Bu türde henüz çıktı yok."}
+              ? "Ask Agentelse to create something."
+              : "Nothing in this category yet."}
           </p>
         </div>
       ) : (
@@ -138,7 +137,7 @@ export function OutputsPanel({ outputs }: { outputs: WorkspaceOutputItem[] }) {
                     <span
                       className="absolute top-2 right-2 flex size-5 items-center justify-center rounded-full shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
                       style={{ background: "var(--ws-approved)" }}
-                      title={WORKSPACE_STATUS_LABEL_TR[output.status]}
+                      title={CREATIVE_STATUS[output.status].label}
                     >
                       <Check
                         className="size-3"
@@ -161,7 +160,7 @@ export function OutputsPanel({ outputs }: { outputs: WorkspaceOutputItem[] }) {
                     className="truncate text-xs font-medium"
                     style={{ color: "var(--ws-text)" }}
                   >
-                    {output.title ?? "Başlıksız"}
+                    {output.title ?? "Untitled"}
                   </span>
                   <span
                     className="flex items-center gap-1 text-[10px]"
@@ -178,7 +177,7 @@ export function OutputsPanel({ outputs }: { outputs: WorkspaceOutputItem[] }) {
                         }}
                       />
                     ) : null}
-                    {WORKSPACE_STATUS_LABEL_TR[output.status]}
+                    {CREATIVE_STATUS[output.status].label}
                   </span>
                 </div>
               </button>

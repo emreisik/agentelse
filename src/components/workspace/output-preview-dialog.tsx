@@ -19,12 +19,12 @@ import {
   type CreativePreview,
 } from "@/server/actions/creative-actions";
 import { assignCreativeDateAction } from "@/server/actions/creative-calendar-actions";
-import { WORKSPACE_STATUS_LABEL_TR } from "@/components/workspace/workspace-status-labels";
+import { CREATIVE_STATUS } from "@/lib/labels";
 import type { CreativeStatus } from "@prisma/client";
 
 // The spec's "Output Preview Dialog" — the single, shared inline preview
 // for a creative, opened from the Outputs grid, the Calendar list, and
-// (in a later slice) the in-chat CreativeReadyCard's "Detayları gör". A
+// (in a later slice) the in-chat CreativeReadyCard's "View details". A
 // client-side fetch (getCreativePreviewAction) rather than server props:
 // this dialog is mounted once per panel and only needs real data once the
 // user actually opens one, and the panels that trigger it (OutputsPanel,
@@ -89,10 +89,10 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
     return (
       <div className="flex min-h-[200px] flex-col items-center justify-center gap-1 p-8 sm:col-span-2">
         <DialogTitle style={{ color: "var(--ws-text)" }}>
-          Bu çıktı bulunamadı
+          This output couldn&apos;t be found
         </DialogTitle>
         <p className="text-xs" style={{ color: "var(--ws-text-3)" }}>
-          Kaldırılmış veya erişimin olmayan bir çıktı olabilir.
+          It may have been removed, or you may not have access to it.
         </p>
       </div>
     );
@@ -101,7 +101,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
   const status = localStatus ?? data.status;
   const src = data.assetId ? `/api/assets/${data.assetId}` : undefined;
   const format = getCreativePlatformFormat(data.platform, data.contentFormat);
-  const title = data.title ?? "Çıktı";
+  const title = data.title ?? "Output";
   const canDecide = status === "IN_REVIEW" && Boolean(data.approvalId);
 
   const decide = (to: "APPROVED" | "REJECTED") => {
@@ -114,7 +114,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
       const result = await action(formData);
       if (result.ok) {
         setLocalStatus(to);
-        toast.success(to === "APPROVED" ? "Onaylandı" : "Reddedildi");
+        toast.success(to === "APPROVED" ? "Approved" : "Rejected");
         router.refresh();
       } else {
         toast.error(result.message);
@@ -130,7 +130,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
         setInstruction("");
         setShowRevise(false);
         toast.success(
-          "Revize ediliyor — yeni versiyon birazdan sohbette görünecek",
+          "Revising — the new version will appear in the chat shortly",
         );
         router.refresh();
       } else {
@@ -144,8 +144,8 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
     if (!text) return;
     navigator.clipboard
       .writeText(text)
-      .then(() => toast.success("Metin kopyalandı"))
-      .catch(() => toast.error("Kopyalanamadı"));
+      .then(() => toast.success("Copied"))
+      .catch(() => toast.error("Couldn't copy"));
   };
 
   return (
@@ -159,7 +159,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
             className="mb-2 text-[10px] font-medium tracking-wide uppercase"
             style={{ color: "var(--ws-text-3)" }}
           >
-            {src ? "Önizleme" : "Görsel henüz hazır değil"}
+            {src ? "Preview" : "Image not ready yet"}
           </div>
           <div
             className="overflow-hidden rounded-lg"
@@ -182,7 +182,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
           <span className="text-xs" style={{ color: "var(--ws-text-2)" }}>
             {data.platform
               ? `${format.label} · ${format.contentFormatLabel}`
-              : "Görsel"}
+              : "Image"}
           </span>
           {data.versionNumber ? (
             <span
@@ -221,7 +221,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
                       : "var(--ws-text-3)",
             }}
           />
-          {WORKSPACE_STATUS_LABEL_TR[status]}
+          {CREATIVE_STATUS[status].label}
         </div>
 
         {data.copy || data.caption ? (
@@ -231,7 +231,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
                 className="text-[11px] font-medium"
                 style={{ color: "var(--ws-text-3)" }}
               >
-                Paylaşım metni
+                Caption
               </span>
               <button
                 type="button"
@@ -240,7 +240,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
                 style={{ color: "var(--ws-text-2)" }}
               >
                 <Copy className="size-3" />
-                Kopyala
+                Copy
               </button>
             </div>
             <p
@@ -267,7 +267,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
                 onClick={() => decide("APPROVED")}
               >
                 <Check className="size-3.5" />
-                Onayla
+                Approve
               </Button>
               <Button
                 type="button"
@@ -278,7 +278,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
                 disabled={isPending}
                 onClick={() => decide("REJECTED")}
               >
-                Reddet
+                Reject
               </Button>
             </>
           ) : null}
@@ -296,7 +296,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
               onClick={() => setShowRevise((v) => !v)}
             >
               <PenLine className="size-3.5" />
-              Değişiklik iste
+              Request a change
             </Button>
           ) : null}
           {data.assetId ? (
@@ -310,7 +310,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
               }}
             >
               <Download className="size-3.5" />
-              İndir
+              Download
             </a>
           ) : null}
         </div>
@@ -320,7 +320,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
             <Input
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
-              placeholder="Neyi değiştirelim? Örn. başlığı Türkçe yap…"
+              placeholder="What should change? e.g. make the headline punchier…"
               disabled={isRevising}
               className="h-8 text-xs"
               onKeyDown={(e) => {
@@ -344,7 +344,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
               {isRevising ? (
                 <Loader2 className="size-3.5 animate-spin" />
               ) : (
-                "Gönder"
+                "Send"
               )}
             </Button>
           </div>
@@ -362,11 +362,12 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
                 className="text-xs font-medium transition-colors hover:opacity-70"
                 style={{ color: "var(--ws-text-2)" }}
               >
-                {new Date(data.scheduledFor).toLocaleString("tr-TR", {
+                Scheduled for{" "}
+                {new Date(data.scheduledFor).toLocaleString("en-US", {
                   dateStyle: "medium",
                   timeStyle: "short",
                 })}{" "}
-                için planlandı · değiştir
+                · change
               </button>
             ) : (
               <ScheduleForm
@@ -403,7 +404,7 @@ function ScheduleForm({
         startSaving(async () => {
           const result = await assignCreativeDateAction(formData);
           if (result.ok) {
-            toast.success("Takvime eklendi");
+            toast.success("Added to calendar");
             onSaved();
           } else {
             toast.error(result.message);
@@ -417,7 +418,7 @@ function ScheduleForm({
           className="text-[11px] font-medium"
           style={{ color: "var(--ws-text-3)" }}
         >
-          Tarih ve saat
+          Day &amp; time
         </span>
         <input
           type="datetime-local"
@@ -437,7 +438,7 @@ function ScheduleForm({
         {isSaving ? (
           <Loader2 className="size-3.5 animate-spin" />
         ) : (
-          "Takvime ekle"
+          "Add to calendar"
         )}
       </Button>
     </form>

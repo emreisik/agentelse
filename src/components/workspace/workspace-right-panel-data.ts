@@ -7,14 +7,6 @@ import type {
   SocialPlatform,
 } from "@prisma/client";
 
-// Re-exported for existing importers of this file — but see
-// workspace-status-labels.ts's own comment: any "use client" component
-// must import WORKSPACE_STATUS_LABEL_TR directly from THAT module, never
-// from this one, or the "server-only" marker below poisons its client
-// bundle. This file (a Server Component-only data loader) is safe to
-// import it from.
-export { WORKSPACE_STATUS_LABEL_TR } from "./workspace-status-labels";
-
 import { prisma } from "@/lib/prisma";
 import { CreativeRepository } from "@/server/repositories/creative.repository";
 import { getBrandTwin, type BrandTwin } from "@/server/brand-twin/brand-twin";
@@ -29,8 +21,8 @@ export type WorkspaceOutputItem = {
   createdAt: string;
   assetId: string | null;
   // From the latest CreativeVersion (see toOutputItem) — the real signal
-  // behind the Outputs panel's Post/Story/Reel filter (spec: "Tümü / Post
-  // / Story / Reel / Reklam"), rather than guessing from CreativeType
+  // behind the Outputs panel's Post/Story/Reel filter (spec: "All / Post
+  // / Story / Reel / Ad"), rather than guessing from CreativeType
   // alone (which has no distinct Story/Reel value).
   contentFormat: CreativeContentFormat | null;
 };

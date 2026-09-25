@@ -81,7 +81,7 @@ export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
   Welcome?: ComponentType | undefined;
   // Slim bar above the scrollable conversation, outside it (see ThreadRoot
-  // below) — spec's "context bar": symbol + "Senin yaratıcı alanın" on the
+  // below) — spec's "context bar": symbol + "Your creative space" on the
   // left, date/workspace label on the right (see project-chat.tsx's
   // ContextBar). Falls back to nothing when unset.
   ContextBar?: ComponentType | undefined;
@@ -162,7 +162,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
           page to the bottom. */}
       <ThreadPrimitive.Viewport
         data-slot="aui_thread-viewport"
-        className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth"
+        className="relative flex flex-1 flex-col overflow-x-auto overflow-y-auto scroll-smooth"
       >
         <div
           className={cn(
@@ -198,7 +198,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
               className="px-1 text-center text-[10px]"
               style={{ color: "var(--ws-text-3)" }}
             >
-              ✳ Agentelse marka bağlamını otomatik kullanır.
+              ✳ Agentelse automatically uses your brand context.
             </p>
             <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
               <ThreadSuggestions />
@@ -316,12 +316,12 @@ const Composer: FC = () => {
       >
         <ComposerAttachments />
         <ComposerPrimitive.Input
-          placeholder="Aklındaki fikri yaz. Birlikte hayata geçirelim…"
+          placeholder="Write down what's on your mind. Let's bring it to life…"
           className="aui-composer-input caret-primary placeholder:text-muted-foreground/80 max-h-32 min-h-14 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
           rows={2}
           autoFocus
           enterKeyHint="send"
-          aria-label="Mesaj"
+          aria-label="Message"
         />
         <ComposerAction />
       </ComposerPrimitive.AttachmentDropzone>
@@ -378,7 +378,7 @@ const ComposerAction: FC = () => {
           <ComposerPrimitive.Send
             render={
               <TooltipIconButton
-                tooltip="Gönder"
+                tooltip="Send"
                 side="bottom"
                 type="button"
                 variant="default"
@@ -388,7 +388,7 @@ const ComposerAction: FC = () => {
                   background: "var(--ws-accent)",
                   color: "var(--ws-on-accent)",
                 }}
-                aria-label="Gönder"
+                aria-label="Send"
               />
             }
           >
@@ -407,7 +407,7 @@ const ComposerAction: FC = () => {
                   background: "var(--ws-accent)",
                   color: "var(--ws-on-accent)",
                 }}
-                aria-label="Durdur"
+                aria-label="Stop"
               />
             }
           >
@@ -510,7 +510,7 @@ const AssistantMessage: FC = () => {
             Agentelse
           </span>
           <span className="text-[11px]" style={{ color: "var(--ws-text-3)" }}>
-            Yaratıcı partnerin
+            Your creative partner
           </span>
           {ideaTitle ? (
             <span

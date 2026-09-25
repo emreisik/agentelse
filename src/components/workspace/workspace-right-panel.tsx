@@ -1,15 +1,8 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import {
-  BookOpen,
-  CalendarDays,
-  Layers,
-  PanelRightOpen,
-  Paperclip,
-} from "lucide-react";
+import { BookOpen, CalendarDays, Layers, Paperclip } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -22,7 +15,7 @@ import type { WorkspaceAutopilotMode } from "@/components/workspace/workspace-ri
 type TabKey = WorkspacePanelTabKey;
 
 const TAB_TRIGGER_CLASS =
-  "h-auto flex-none rounded-[6px] border-none px-3 py-2 text-[11px] font-medium shadow-none";
+  "h-auto flex-none rounded-[6px] border-none px-2.5 py-1.5 text-[10.5px] font-medium shadow-none";
 
 export function WorkspaceRightPanel({
   projectId,
@@ -66,7 +59,7 @@ export function WorkspaceRightPanel({
       className="flex min-h-0 flex-1 flex-col"
     >
       <div
-        className="flex h-[55px] shrink-0 items-center border-b px-3"
+        className="flex h-[46px] shrink-0 items-center border-b px-2.5"
         style={{ borderColor: "var(--ws-border)" }}
       >
         <TabsList className="w-fit gap-1 bg-transparent p-0">
@@ -76,7 +69,7 @@ export function WorkspaceRightPanel({
             style={tabStyle("brand")}
           >
             <BookOpen className="size-3.5" />
-            Marka
+            Brand
           </TabsTrigger>
           <TabsTrigger
             value="files"
@@ -84,7 +77,7 @@ export function WorkspaceRightPanel({
             style={tabStyle("files")}
           >
             <Paperclip className="size-3.5" />
-            Dosyalar
+            Files
           </TabsTrigger>
           <TabsTrigger
             value="outputs"
@@ -92,7 +85,7 @@ export function WorkspaceRightPanel({
             style={tabStyle("outputs")}
           >
             <Layers className="size-3.5" />
-            Çıktılar
+            Outputs
           </TabsTrigger>
           <TabsTrigger
             value="calendar"
@@ -100,7 +93,7 @@ export function WorkspaceRightPanel({
             style={tabStyle("calendar")}
           >
             <CalendarDays className="size-3.5" />
-            Takvim
+            Calendar
           </TabsTrigger>
         </TabsList>
       </div>
@@ -138,37 +131,27 @@ export function WorkspaceRightPanel({
           className="flex w-[390px] max-w-[90vw] flex-col gap-0 p-0"
           style={{ background: "var(--ws-surface)" }}
         >
-          <SheetTitle className="sr-only">Çalışma alanı paneli</SheetTitle>
+          <SheetTitle className="sr-only">Workspace panel</SheetTitle>
           {tabs}
         </SheetContent>
       </Sheet>
     );
   }
 
+  // Fully hidden when collapsed — no docked strip, no icon of its own. The
+  // header's PanelRight toggle (workspace-top-bar.tsx) is the only way to
+  // reopen it, via the shared useWorkspacePanelToggle context.
   if (collapsed) {
-    return (
-      <div
-        className="flex w-10 shrink-0 flex-col items-center border-l py-3"
-        style={{
-          borderColor: "var(--ws-border)",
-          background: "var(--ws-surface)",
-        }}
-      >
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          title="Paneli aç"
-          onClick={toggle}
-        >
-          <PanelRightOpen className="size-4" />
-        </Button>
-      </div>
-    );
+    return null;
   }
 
+  // Floating card, not a docked sidebar: margin on every side (including
+  // the top/right/bottom against the viewport, and the left against the
+  // conversation column) plus a full rounded border and a soft shadow —
+  // it sits ON the --ws-bg canvas rather than being flush-mounted to it.
   return (
     <aside
-      className="flex w-[367px] shrink-0 flex-col overflow-hidden border-l 2xl:w-[390px]"
+      className="my-3 mr-3 ml-0 flex w-[320px] shrink-0 flex-col overflow-hidden rounded-2xl border shadow-[0_4px_24px_rgba(52,75,29,0.07)] 2xl:w-[340px]"
       style={{
         borderColor: "var(--ws-border)",
         background: "var(--ws-surface)",

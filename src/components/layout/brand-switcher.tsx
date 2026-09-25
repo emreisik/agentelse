@@ -14,7 +14,7 @@ import {
 
 // Brand Workspace header's brand switcher — a dedicated component rather
 // than reusing ProjectSelect's <Select>: this dropdown (grouped label,
-// serif-letter avatar rows, active-brand check, trailing "Marka ekle"
+// serif-letter avatar rows, active-brand check, trailing "Add brand"
 // row) doesn't fit a plain select list, but it's the exact same
 // data/navigation ProjectSelect already uses (projects -> /projects/{id}).
 // --ws-* tokens throughout (globals.css, olive/botanical studio palette) —
@@ -65,13 +65,13 @@ export function BrandSwitcher({
             className="block max-w-36 truncate text-sm font-semibold"
             style={{ color: "var(--ws-text)" }}
           >
-            {active?.name ?? "Marka seç"}
+            {active?.name ?? "Select brand"}
           </span>
           <span
             className="block text-[11px]"
             style={{ color: "var(--ws-text-2)" }}
           >
-            Marka çalışma alanı
+            Brand workspace
           </span>
         </span>
         <ChevronDown
@@ -91,7 +91,7 @@ export function BrandSwitcher({
           className="px-2 pt-1 pb-2 text-[11px] font-semibold tracking-wider"
           style={{ color: "var(--ws-text-3)" }}
         >
-          ÇALIŞMA ALANLARIN
+          YOUR BRANDS
         </div>
         {projects.map((project) => (
           <DropdownMenuItem
@@ -115,7 +115,7 @@ export function BrandSwitcher({
             className="px-2 py-1.5 text-xs"
             style={{ color: "var(--ws-text-3)" }}
           >
-            Henüz marka yok.
+            No brands yet.
           </p>
         ) : null}
         <DropdownMenuSeparator
@@ -128,7 +128,7 @@ export function BrandSwitcher({
           style={{ color: "var(--ws-text-2)" }}
         >
           <Plus className="size-3.5" />
-          Marka ekle
+          Add brand
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

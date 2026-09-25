@@ -1,13 +1,20 @@
 import Link from "next/link";
-import { BadgeCheck, Settings } from "lucide-react";
+import {
+  ArrowUpRight,
+  BadgeCheck,
+  ShieldCheck,
+  Sliders,
+  Sparkle,
+} from "lucide-react";
 
 import { buildHubHref } from "@/components/hub-core/hub-core-params";
+import { BrandVisualIdentityQuickEdit } from "@/components/workspace/brand-visual-identity-quick-edit";
 import type { BrandTwin } from "@/server/brand-twin/brand-twin";
 
 const CONFIDENCE_LABEL: Record<BrandTwin["confidence"], string> = {
-  high: "Marka anlaşıldı",
-  medium: "Hâlâ öğreniyor",
-  low: "Yeni başlıyor",
+  high: "Brand understood",
+  medium: "Still learning",
+  low: "Just getting started",
 };
 
 export function BrandSummaryPanel({
@@ -21,8 +28,8 @@ export function BrandSummaryPanel({
 }) {
   if (!brand) {
     return (
-      <div className="p-5 text-sm" style={{ color: "var(--ws-text-2)" }}>
-        Marka henüz kurulmadı.
+      <div className="p-4 text-sm" style={{ color: "var(--ws-text-2)" }}>
+        Brand not set up yet.
       </div>
     );
   }
@@ -38,35 +45,53 @@ export function BrandSummaryPanel({
         .filter(Boolean)
     : [];
 
+  // personality/toneOfVoice are each a single free-text field, but the AI
+  // often writes them as a comma-separated list of traits in one string
+  // (e.g. "Confident, playful, direct") — split so each trait gets its own
+  // pill instead of one long run-on pill. Deduped since both fields can
+  // repeat a trait.
+  const voiceTags = Array.from(
+    new Set(
+      [brand.voice.personality, brand.voice.toneOfVoice]
+        .filter((v): v is string => Boolean(v))
+        .flatMap((v) => v.split(",").map((s) => s.trim()))
+        .filter(Boolean),
+    ),
+  );
+
   return (
-    <div className="flex flex-col gap-0 px-5 py-5 text-sm">
-      <div className="mb-4 flex items-start justify-between gap-2">
+    <div className="flex flex-col gap-0 px-4 py-4 text-sm">
+      <div className="mb-3.5 flex items-start justify-between gap-2">
         <div>
-          <SectionLabel>MARKANIN ÖZÜ</SectionLabel>
+          <SectionLabel>BRAND ESSENCE</SectionLabel>
           <p
-            className="mt-1 text-lg leading-[1.3] font-semibold tracking-[-0.01em]"
+            className="mt-1 text-base leading-[1.3] font-semibold tracking-[-0.01em]"
             style={{ color: "var(--ws-text)" }}
           >
-            {brand.valueProposition || "Her detayda, sen."}
+            {brand.valueProposition || "You, in every detail."}
           </p>
         </div>
         <Link
           href={buildHubHref(projectId, { panel: "brand-brain" })}
           scroll={false}
-          aria-label="Marka ayarları"
-          className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--ws-hover)]"
-          style={{ color: "var(--ws-text-2)" }}
+          aria-label="Brand settings"
+          className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[10px] border transition-colors hover:bg-[var(--ws-hover)]"
+          style={{ borderColor: "var(--ws-border)", color: "var(--ws-text-2)" }}
         >
-          <Settings className="size-3.5" />
+          <Sliders className="size-3.5" />
         </Link>
       </div>
 
       {/* Brand Book card — spec: dark brand-colored tile, wordmark
           centered, "BRAND BOOK" + position metadata top, category + arrow
           bottom. Falls back to the accent tile when there's no logo yet
-          rather than fabricating one. */}
-      <div
-        className="mb-5 flex aspect-[16/9] w-full flex-col justify-between overflow-hidden rounded-[9px] p-4"
+          rather than fabricating one. The "01 / 26" page counter is static
+          chrome (like the "BRAND BOOK" label itself) — there's no real
+          multi-page brand-book concept in the data model to count. */}
+      <Link
+        href={buildHubHref(projectId, { panel: "brand-brain" })}
+        scroll={false}
+        className="mb-4 flex aspect-[16/9] w-full flex-col justify-between overflow-hidden rounded-[9px] p-3.5 transition-opacity hover:opacity-95"
         style={{ background: "var(--ws-accent)" }}
       >
         <div className="flex items-center justify-between">
@@ -75,6 +100,12 @@ export function BrandSummaryPanel({
             style={{ color: "var(--ws-on-accent)", opacity: 0.7 }}
           >
             BRAND BOOK
+          </span>
+          <span
+            className="text-[9px] tabular-nums"
+            style={{ color: "var(--ws-on-accent)", opacity: 0.7 }}
+          >
+            01 / 26
           </span>
         </div>
         <div className="flex flex-1 items-center justify-center">
@@ -94,15 +125,20 @@ export function BrandSummaryPanel({
             </span>
           )}
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex items-end justify-between">
           <span
             className="text-[10px]"
             style={{ color: "var(--ws-on-accent)", opacity: 0.7 }}
           >
-            {brand.visualDNA.description ? "Görsel kimlik" : "Marka"}
+            {brand.businessModel ??
+              (brand.visualDNA.description ? "Visual identity" : "Brand")}
           </span>
+          <ArrowUpRight
+            className="size-3.5"
+            style={{ color: "var(--ws-on-accent)", opacity: 0.7 }}
+          />
         </div>
-      </div>
+      </Link>
 
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -154,8 +190,21 @@ export function BrandSummaryPanel({
         </p>
       ) : null}
 
+      {brand.isMock ? (
+        <div
+          className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
+          style={{
+            background: "var(--ws-soft-green)",
+            color: "var(--ws-accent)",
+          }}
+        >
+          <ShieldCheck className="size-3" />
+          Sample brand profile
+        </div>
+      ) : null}
+
       {brand.currentFocus ? (
-        <Section title="ŞİMDİKİ ODAK">
+        <Section title="CURRENT FOCUS" dot>
           <div
             className="flex items-start gap-2 rounded-xl border px-3 py-2.5"
             style={{
@@ -163,12 +212,10 @@ export function BrandSummaryPanel({
               background: "var(--ws-soft-green)",
             }}
           >
-            <span
-              className="mt-0.5 text-sm"
+            <Sparkle
+              className="mt-0.5 size-3.5 shrink-0"
               style={{ color: "var(--ws-accent)" }}
-            >
-              ✳
-            </span>
+            />
             <span
               className="text-sm leading-5"
               style={{ color: "var(--ws-text-body)" }}
@@ -179,87 +226,98 @@ export function BrandSummaryPanel({
         </Section>
       ) : null}
 
-      {brand.visualDNA.colors.length > 0 || brand.visualDNA.fonts.length > 0 ? (
-        <Section title="GÖRSEL KİMLİK">
-          <div className="flex flex-col gap-4">
-            {brand.visualDNA.colors.length > 0 ? (
-              <div className="flex flex-wrap gap-3">
-                {brand.visualDNA.colors.map((swatch) => (
-                  <div
-                    key={swatch.hex}
-                    className="flex flex-col items-center gap-1"
+      <Section
+        title="VISUAL IDENTITY"
+        action={
+          <BrandVisualIdentityQuickEdit
+            projectId={projectId}
+            colors={brand.visualDNA.colors}
+            fonts={brand.visualDNA.fonts}
+          />
+        }
+      >
+        <div className="flex flex-col gap-4">
+          {brand.visualDNA.colors.length === 0 &&
+          brand.visualDNA.fonts.length === 0 ? (
+            <p className="text-xs" style={{ color: "var(--ws-text-3)" }}>
+              No colors or fonts added yet — use the pencil icon to add them.
+            </p>
+          ) : null}
+          {brand.visualDNA.colors.length > 0 ? (
+            <div className="flex flex-wrap gap-3">
+              {brand.visualDNA.colors.map((swatch) => (
+                <div
+                  key={swatch.hex}
+                  className="flex flex-col items-center gap-1"
+                >
+                  <span
+                    className="size-9 rounded-lg border"
+                    style={{
+                      backgroundColor: swatch.hex,
+                      borderColor: "var(--ws-border)",
+                    }}
+                  />
+                  <span
+                    className="text-[9px] uppercase"
+                    style={{ color: "var(--ws-text-3)" }}
                   >
-                    <span
-                      className="size-9 rounded-lg border"
-                      style={{
-                        backgroundColor: swatch.hex,
-                        borderColor: "var(--ws-border)",
-                      }}
-                    />
-                    <span
-                      className="text-[9px] uppercase"
-                      style={{ color: "var(--ws-text-3)" }}
-                    >
-                      {swatch.hex}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {brand.visualDNA.fonts.length > 0 ? (
-              <div className="flex items-center gap-3">
-                <span
-                  className="font-serif text-3xl leading-none"
+                    {swatch.hex}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {brand.visualDNA.fonts.length > 0 ? (
+            <div className="flex items-center gap-3">
+              <span
+                className="font-serif text-3xl leading-none"
+                style={{ color: "var(--ws-text)" }}
+              >
+                Aa
+              </span>
+              <div className="min-w-0">
+                <div
+                  className="text-xs font-medium"
                   style={{ color: "var(--ws-text)" }}
                 >
-                  Aa
-                </span>
-                <div className="min-w-0">
-                  <div
-                    className="text-xs font-medium"
-                    style={{ color: "var(--ws-text)" }}
-                  >
-                    {brand.visualDNA.fonts.join(" · ")}
-                  </div>
-                  {creativeDirectionLines.length > 0 ? (
-                    <div
-                      className="text-[11px]"
-                      style={{ color: "var(--ws-text-3)" }}
-                    >
-                      {creativeDirectionLines[0]}
-                    </div>
-                  ) : null}
+                  {brand.visualDNA.fonts.join(" · ")}
                 </div>
+                {creativeDirectionLines.length > 0 ? (
+                  <div
+                    className="text-[11px]"
+                    style={{ color: "var(--ws-text-3)" }}
+                  >
+                    {creativeDirectionLines[0]}
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-            {creativeDirectionLines.length > 0 ? (
-              <div
-                className="flex flex-col gap-1 text-sm leading-6"
-                style={{ color: "var(--ws-text-body)" }}
-              >
-                {creativeDirectionLines.map((line) => (
-                  <span key={line}>{line}</span>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </Section>
-      ) : null}
-
-      {brand.voice.personality || brand.voice.toneOfVoice ? (
-        <Section title="MARKA SESİ">
-          <div className="flex flex-wrap gap-1.5">
-            {[brand.voice.personality, brand.voice.toneOfVoice]
-              .filter((v): v is string => Boolean(v))
-              .map((v) => (
-                <Pill key={v}>{v}</Pill>
+            </div>
+          ) : null}
+          {creativeDirectionLines.length > 0 ? (
+            <div
+              className="flex flex-col gap-1 text-sm leading-6"
+              style={{ color: "var(--ws-text-body)" }}
+            >
+              {creativeDirectionLines.map((line) => (
+                <span key={line}>{line}</span>
               ))}
+            </div>
+          ) : null}
+        </div>
+      </Section>
+
+      {voiceTags.length > 0 ? (
+        <Section title="BRAND VOICE">
+          <div className="flex flex-wrap gap-1.5">
+            {voiceTags.map((tag) => (
+              <Pill key={tag}>{tag}</Pill>
+            ))}
           </div>
         </Section>
       ) : null}
 
       {brand.markets.length > 0 ? (
-        <Section title="HEDEF PAZARLAR">
+        <Section title="TARGET MARKETS">
           <div className="flex flex-col gap-1.5">
             {brand.markets.map((market, index) => (
               <div
@@ -281,7 +339,7 @@ export function BrandSummaryPanel({
       ) : null}
 
       {brand.creativeMemory.works.length > 0 ? (
-        <Section title="İŞE YARAYANLAR">
+        <Section title="WHAT WORKS">
           <ul
             className="space-y-1.5 text-xs"
             style={{ color: "var(--ws-text-2)" }}
@@ -302,7 +360,7 @@ export function BrandSummaryPanel({
       ) : null}
 
       {brand.negativeRules.length > 0 ? (
-        <Section title="ASLA YAPMA">
+        <Section title="NEVER DO">
           <ul
             className="space-y-1.5 text-xs"
             style={{ color: "var(--ws-text-2)" }}
@@ -317,10 +375,10 @@ export function BrandSummaryPanel({
       <Link
         href={buildHubHref(projectId, { panel: "brand-brain" })}
         scroll={false}
-        className="mt-4 rounded-xl border px-3 py-2.5 text-center text-xs font-medium transition-colors hover:bg-[var(--ws-hover)]"
+        className="mt-3.5 rounded-xl border px-3 py-2.5 text-center text-xs font-medium transition-colors hover:bg-[var(--ws-hover)]"
         style={{ borderColor: "var(--ws-border)", color: "var(--ws-text)" }}
       >
-        Marka profilini düzenle ↗
+        Edit brand profile ↗
       </Link>
     </div>
   );
@@ -339,21 +397,34 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function Section({
   title,
+  dot,
+  action,
   children,
 }: {
   title: string;
+  dot?: boolean;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div
-      className="border-t py-[19px] first:border-0"
+      className="border-t py-4 first:border-0"
       style={{ borderColor: "var(--ws-border)" }}
     >
-      <div
-        className="mb-2.5 text-[10px] font-semibold tracking-[0.1em]"
-        style={{ color: "var(--ws-text-3)" }}
-      >
-        {title}
+      <div className="mb-2.5 flex items-center justify-between">
+        <span
+          className="text-[10px] font-semibold tracking-[0.1em]"
+          style={{ color: "var(--ws-text-3)" }}
+        >
+          {title}
+        </span>
+        {action ?? null}
+        {!action && dot ? (
+          <span
+            className="size-1.5 rounded-full"
+            style={{ background: "var(--ws-approved)" }}
+          />
+        ) : null}
       </div>
       {children}
     </div>

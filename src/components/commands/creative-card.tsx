@@ -18,7 +18,7 @@ import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
 import { WsTag } from "@/components/commands/ws-event-card";
 import { OutputPreviewDialog } from "@/components/workspace/output-preview-dialog";
-import { WORKSPACE_STATUS_LABEL_TR } from "@/components/workspace/workspace-status-labels";
+import { CREATIVE_STATUS } from "@/lib/labels";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -65,7 +65,7 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
             style={{ color: "var(--ws-text-3)" }}
           >
             <Loader2 className="size-5 animate-spin" />
-            <span className="text-xs font-medium">Görsel oluşturuluyor…</span>
+            <span className="text-xs font-medium">Generating image…</span>
           </div>
         </div>
         <div className="px-3.5 py-2.5">
@@ -97,7 +97,7 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
             className="truncate text-sm font-medium"
             style={{ color: "var(--ws-text)" }}
           >
-            Görsel oluşturulamadı
+            Image generation failed
           </p>
           <p className="truncate text-xs" style={{ color: "var(--ws-text-3)" }}>
             {stripCapabilityPrefix(card.title)}
@@ -132,8 +132,8 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
             className="text-sm font-medium"
             style={{ color: "var(--ws-text)" }}
           >
-            {stripCapabilityPrefix(card.title)} onaylandı — sosyal medyada
-            paylaşmak ister misin?
+            {stripCapabilityPrefix(card.title)} approved — would you like to
+            share it on social media?
           </p>
         </div>
         <PublishSection creativeId={card.creativeId} />
@@ -170,14 +170,14 @@ function CreativeReadyCard({
         if (result.ok) {
           setInstruction("");
           setShowRevise(false);
-          toast.success("Revize ediliyor — yeni versiyon aşağıda görünecek");
+          toast.success("Revising — the new version will appear below");
           router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "İşlem başarısız";
+        const message = err instanceof Error ? err.message : "Action failed";
         setError(message);
         toast.error(message);
       }
@@ -209,14 +209,14 @@ function CreativeReadyCard({
         const result = await action(formData);
         if (result.ok) {
           setLocalStatus(to);
-          toast.success(to === "APPROVED" ? "Onaylandı" : "Reddedildi");
+          toast.success(to === "APPROVED" ? "Approved" : "Rejected");
           router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "İşlem başarısız";
+        const message = err instanceof Error ? err.message : "Action failed";
         setError(message);
         toast.error(message);
       }
@@ -224,9 +224,7 @@ function CreativeReadyCard({
   };
 
   const statusLabel =
-    WORKSPACE_STATUS_LABEL_TR[
-      status as keyof typeof WORKSPACE_STATUS_LABEL_TR
-    ] ?? status;
+    CREATIVE_STATUS[status as keyof typeof CREATIVE_STATUS]?.label ?? status;
   const statusDot =
     status === "APPROVED" || status === "PUBLISHED"
       ? "var(--ws-approved)"
@@ -237,7 +235,7 @@ function CreativeReadyCard({
           : "var(--ws-text-3)";
   const typeLabel = card.platform
     ? `${format.label} ${format.contentFormatLabel}`
-    : "Görsel";
+    : "Image";
   const displayTitle = card.caption || title;
 
   return (
@@ -294,7 +292,7 @@ function CreativeReadyCard({
               ) : null}
               <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4">
                 <div className="text-[9px] tracking-[0.2em] text-white/80 uppercase">
-                  {card.platform ? format.label : "Çıktı"}
+                  {card.platform ? format.label : "Creative"}
                 </div>
                 <div className="mt-1 font-serif text-lg leading-[1.15] text-white italic">
                   {displayTitle}
@@ -388,7 +386,7 @@ function CreativeReadyCard({
                 onClick={() => decide("APPROVED")}
               >
                 <Check className="size-3.5" />
-                Onayla
+                Approve
               </Button>
               <Button
                 type="button"
@@ -403,7 +401,7 @@ function CreativeReadyCard({
                 onClick={() => setShowRevise((v) => !v)}
               >
                 <PenLine className="size-3.5" />
-                Düzenle
+                Revise
               </Button>
               <Button
                 type="button"
@@ -414,7 +412,7 @@ function CreativeReadyCard({
                 disabled={isPending}
                 onClick={() => decide("REJECTED")}
               >
-                Reddet
+                Reject
               </Button>
             </div>
           ) : status !== "IN_REVIEW" ? (
@@ -434,7 +432,7 @@ function CreativeReadyCard({
               onClick={() => setShowRevise((v) => !v)}
             >
               <PenLine className="size-3.5" />
-              Düzenle
+              Revise
             </Button>
           ) : null}
 
@@ -443,7 +441,7 @@ function CreativeReadyCard({
               <Input
                 value={instruction}
                 onChange={(e) => setInstruction(e.target.value)}
-                placeholder="Neyi değiştirelim? Örn. başlığı Türkçe yap…"
+                placeholder="What should change? e.g. more vibrant colors"
                 disabled={isRevising}
                 className="h-8 text-xs"
                 onKeyDown={(e) => {
@@ -467,7 +465,7 @@ function CreativeReadyCard({
                 {isRevising ? (
                   <Loader2 className="size-3.5 animate-spin" />
                 ) : (
-                  "Gönder"
+                  "Go"
                 )}
               </Button>
             </div>
@@ -491,14 +489,14 @@ function CreativeReadyCard({
       >
         <span className="flex items-center gap-1">
           <Check className="size-3" />
-          Marka yönüne uygun
+          On-brand
         </span>
         <button
           type="button"
           onClick={() => setShowPreview(true)}
           className="flex items-center gap-1 font-medium transition-colors hover:opacity-70"
         >
-          Detayları gör
+          View details
           <ArrowUpRight className="size-3" />
         </button>
       </div>
@@ -546,7 +544,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
   if (targets.length === 0) {
     return (
       <p className="pt-0.5 text-xs" style={{ color: "var(--ws-text-3)" }}>
-        Henüz bağlı sosyal medya hesabı yok.
+        No connected social accounts yet.
       </p>
     );
   }
@@ -593,7 +591,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
       style={{ borderColor: "var(--ws-border)" }}
     >
       <p className="text-xs font-medium" style={{ color: "var(--ws-text-3)" }}>
-        Sosyal hesaplarda paylaş
+        Share on Social Accounts
       </p>
       {targets.map((target) => {
         const rowKey =
@@ -654,7 +652,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
                       ) : (
                         <Share2 className="size-3.5" />
                       )}
-                      {isPublished ? "Gönderildi" : FORMAT_LABEL[format]}
+                      {isPublished ? "Sent" : FORMAT_LABEL[format]}
                     </Button>
                   );
                 })
@@ -679,7 +677,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
                   ) : (
                     <Share2 className="size-3.5" />
                   )}
-                  {publishedKeys.has(target.platform) ? "Gönderildi" : "Paylaş"}
+                  {publishedKeys.has(target.platform) ? "Sent" : "Share"}
                 </Button>
               )}
             </div>

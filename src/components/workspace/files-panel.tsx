@@ -46,30 +46,28 @@ export function FilesPanel({
       try {
         const result = await uploadLibraryAssetAction(formData);
         if (result.ok) {
-          toast.success("Dosya yüklendi");
+          toast.success("File uploaded");
           router.refresh();
         } else {
           toast.error(result.message);
         }
       } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Yükleme başarısız",
-        );
+        toast.error(error instanceof Error ? error.message : "Upload failed");
       }
     });
   }
 
   return (
-    <div className="flex flex-col gap-5 px-5 py-5 text-sm">
+    <div className="flex flex-col gap-4 px-4 py-4 text-sm">
       <div>
         <div
           className="text-base font-semibold"
           style={{ color: "var(--ws-text)" }}
         >
-          İyi işler burada başlar.
+          Good work starts here.
         </div>
         <div className="mt-0.5 text-xs" style={{ color: "var(--ws-text-3)" }}>
-          Görseller, ürünler ve markanı anlatan her şey.
+          Images, products, and everything that tells your brand&apos;s story.
         </div>
       </div>
 
@@ -77,7 +75,7 @@ export function FilesPanel({
         type="button"
         disabled={isPending}
         onClick={() => inputRef.current?.click()}
-        className="flex flex-col items-center gap-1 rounded-2xl border border-dashed py-5 text-center transition-colors disabled:opacity-50"
+        className="flex flex-col items-center gap-1 rounded-2xl border border-dashed py-4 text-center transition-colors disabled:opacity-50"
         style={{ borderColor: "var(--ws-olive)" }}
       >
         <span
@@ -93,10 +91,10 @@ export function FilesPanel({
           className="mt-1.5 text-xs font-medium"
           style={{ color: "var(--ws-text-2)" }}
         >
-          {isPending ? "Yükleniyor…" : "Dosyalarını ekle"}
+          {isPending ? "Uploading…" : "Add your files"}
         </span>
         <span className="text-[10px]" style={{ color: "var(--ws-text-3)" }}>
-          Görsel, PDF veya metin · 20MB&apos;a kadar
+          Image, PDF or text · up to 20MB
         </span>
       </button>
       <input
@@ -148,7 +146,7 @@ export function FilesPanel({
                 href={`/api/assets/${asset.id}`}
                 target="_blank"
                 rel="noreferrer"
-                aria-label={`İndir: ${asset.filename}`}
+                aria-label={`Download ${asset.filename}`}
                 className="shrink-0 transition-colors hover:opacity-70"
                 style={{ color: "var(--ws-text-3)" }}
               >
@@ -161,7 +159,7 @@ export function FilesPanel({
 
       {assets.length === 0 ? (
         <p className="px-1 text-xs" style={{ color: "var(--ws-text-3)" }}>
-          Henüz dosya yok — bir logo, katalog veya referans görsel yükle.
+          No files yet — upload a logo, catalogue or reference image.
         </p>
       ) : null}
     </div>
@@ -194,8 +192,8 @@ function FileTypeIcon({
 // Best-effort semantic grouping from what's already on the Asset record
 // (mime type + filename) — there's no dedicated "category" field on Asset
 // yet (see docs/brand-workspace-migration.md §7 Phase 9 audit), so this
-// approximates the spec's exact 3-group split (Marka / Görseller /
-// Belgeler) instead of building new upload-time classification for it.
+// approximates the spec's exact 3-group split (Brand / Images / Documents)
+// instead of building new upload-time classification for it.
 function groupAssets(
   assets: LibraryAsset[],
 ): { label: string; assets: LibraryAsset[] }[] {
@@ -215,8 +213,8 @@ function groupAssets(
   }
 
   return [
-    { label: "Marka", assets: brand },
-    { label: "Görseller", assets: images },
-    { label: "Belgeler", assets: documents },
+    { label: "Brand", assets: brand },
+    { label: "Images", assets: images },
+    { label: "Documents", assets: documents },
   ].filter((group) => group.assets.length > 0);
 }

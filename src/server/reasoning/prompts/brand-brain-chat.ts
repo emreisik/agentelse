@@ -28,8 +28,28 @@ export const BrandBrainRevisionSchema = z.object({
 
 export type BrandBrainRevision = z.infer<typeof BrandBrainRevisionSchema>;
 
+// Mirrors the shape of the AskUserQuestion tool: a short question plus 2-4
+// concrete, pickable options. Lets the model steer the conversation with
+// clickable choices instead of a vague open-ended question whenever there's
+// a genuine fork (tone, positioning angle, target segment, etc.) — the
+// client picks one, the label becomes their next message.
+const BrandBrainQuestionOptionSchema = z.object({
+  label: z.string(),
+  description: z.string().optional(),
+});
+const BrandBrainQuestionSchema = z.object({
+  question: z.string(),
+  options: z.array(BrandBrainQuestionOptionSchema).min(2).max(4),
+  multiSelect: z.boolean().optional(),
+});
+export type BrandBrainQuestion = z.infer<typeof BrandBrainQuestionSchema>;
+
 export const BrandBrainChatOutputSchema = z.object({
   reply: z.string(),
+  // Only present when the model wants to fork the conversation with
+  // pickable options instead of (or alongside) free narration — see
+  // BrandBrainQuestionSchema above. Usually null.
+  questions: z.array(BrandBrainQuestionSchema).max(2).nullable(),
   // Only present once the conversation has reached a concrete, actionable
   // direction — most turns are pure discussion (null here). Mirrors
   // ExitPlanMode's own shape: narrate/discuss freely, only present a
@@ -68,8 +88,19 @@ export const brandBrainChatDef: ReasoningDef<BrandBrainChatOutput> = {
         "fields that should actually change (omit/null everything else — " +
         "never restate unchanged fields) and revisionSummary to a one or two " +
         "sentence plain-language reason. Otherwise leave both null and just " +
-        "reply. Match the client's own language (reply in Turkish if they " +
-        "write in Turkish).",
+        "reply. " +
+        "Whenever there's a genuine fork in the road — more than one " +
+        "reasonable tone, positioning angle, target segment, claim, etc. — " +
+        "prefer asking via `questions` (1-2 short questions, each with 2-4 " +
+        "concrete pickable options) over a vague open-ended question in " +
+        "`reply`. Ground every option in the brand context given below " +
+        "(its actual sector/industry, positioning, target audience, " +
+        "products) instead of generic textbook options — each option should " +
+        "read like it was written specifically for this brand, not " +
+        "boilerplate. Leave `questions` null on turns where the direction " +
+        "is already clear or you're just answering directly. Match the " +
+        "client's own language (reply in Turkish if they write in Turkish, " +
+        "including the question/option text).",
       user:
         `Current brand context:\n${JSON.stringify(brand(context), null, 2)}\n\n` +
         `Conversation so far:\n${String(context.history ?? "(no prior messages)")}\n\n` +
@@ -85,6 +116,7 @@ export const brandBrainChatDef: ReasoningDef<BrandBrainChatOutput> = {
     // mock-mode branch.
     return {
       reply: "(mock) Got it — tell me more about what you'd like to change.",
+      questions: null,
       proposedRevision: null,
       revisionSummary: null,
     };

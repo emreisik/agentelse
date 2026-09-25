@@ -38,7 +38,7 @@ export function ProjectSelect({
     >
       <SelectTrigger className="h-9 max-w-64 gap-2 rounded-lg border-transparent bg-accent px-3 font-heading text-sm font-semibold text-foreground hover:bg-accent/80 dark:bg-accent/60 dark:hover:bg-accent/80">
         <Building2 className="size-4 shrink-0 text-muted-foreground" />
-        <SelectValue placeholder="Select project" />
+        <SelectValue placeholder="Select brand" />
       </SelectTrigger>
       <SelectContent>
         {projects.map((project) => (

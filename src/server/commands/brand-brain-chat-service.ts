@@ -5,6 +5,7 @@ import { ConstitutionService } from "@/server/agency/constitution/constitution-s
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import {
   brandBrainChatDef,
+  type BrandBrainQuestion,
   type BrandBrainRevision,
 } from "@/server/reasoning/prompts/brand-brain-chat";
 import { CommandRepository } from "@/server/repositories/command.repository";
@@ -23,6 +24,7 @@ const HISTORY_TURNS = 20;
 export type BrandBrainChatTurn = {
   commandId: string;
   reply: string;
+  questions: BrandBrainQuestion[] | null;
   proposedRevision: BrandBrainRevision | null;
   revisionSummary: string | null;
 };
@@ -86,18 +88,21 @@ export const BrandBrainChatService = {
         source: "WEB",
         rawText: input.message,
         createdByUserId: input.userId,
-        parsedIntent: output.proposedRevision
-          ? {
-              proposedRevision: output.proposedRevision,
-              revisionSummary: output.revisionSummary,
-            }
-          : undefined,
+        parsedIntent:
+          output.proposedRevision || output.questions
+            ? {
+                proposedRevision: output.proposedRevision,
+                revisionSummary: output.revisionSummary,
+                questions: output.questions,
+              }
+            : undefined,
       });
       await CommandRepository.recordReply(command.id, output.reply, "ANSWERED");
 
       return {
         commandId: command.id,
         reply: output.reply,
+        questions: output.questions,
         proposedRevision: output.proposedRevision,
         revisionSummary: output.revisionSummary,
       };
@@ -123,6 +128,7 @@ export const BrandBrainChatService = {
       return {
         commandId: command.id,
         reply: replyText,
+        questions: null,
         proposedRevision: null,
         revisionSummary: null,
       };

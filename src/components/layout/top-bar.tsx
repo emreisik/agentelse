@@ -34,6 +34,7 @@ export function TopBar({
   displayName,
   workspaceName,
   email,
+  navSheet,
 }: {
   showLogo: boolean;
   projects: { id: string; name: string; status: string }[];
@@ -45,6 +46,9 @@ export function TopBar({
   displayName: string | null;
   workspaceName: string | null;
   email: string | null;
+  // Brand Workspace shell's "•••" — see workspace-nav-sheet.tsx. undefined
+  // everywhere except the workspace root view.
+  navSheet?: React.ReactNode;
 }) {
   const pathname = usePathname();
   const activeProject = projects.find((project) =>
@@ -76,6 +80,7 @@ export function TopBar({
             />
           </Link>
         ) : null}
+        {navSheet}
         {activeProject ? (
           <ProjectSelect
             projects={projects}

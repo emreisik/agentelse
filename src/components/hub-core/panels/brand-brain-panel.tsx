@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -26,18 +25,18 @@ import {
 import { BrandDossierEditSheet } from "@/components/brand/brand-dossier-edit-sheet";
 import { BrandLogoCard } from "@/components/brand/brand-logo-card";
 import { VisualIdentitySection } from "@/components/brand/visual-identity-section";
-import {
-  BrandBrainChat,
-  type BrandBrainChatTurn,
-} from "@/components/brand-brain/brand-brain-chat";
-import { BRAND_BRAIN_TOPIC } from "@/server/commands/brand-brain-chat-service";
-import type { BrandBrainRevision } from "@/server/reasoning/prompts/brand-brain-chat";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { updateBrandDossierAction } from "@/server/actions/project-actions";
-import { buildHubHref, entityHref } from "../hub-core-params";
+import {
+  BRAND_BRAIN_SUB_KEYS,
+  buildHubHref,
+  entityHref,
+  type BrandBrainSubKey,
+} from "../hub-core-params";
+import { parseColorSwatches, parseFontNames } from "@/lib/color-swatches";
 import { AssetPreview } from "../primitives/asset-preview";
 import { CrossLinkChip } from "../primitives/cross-link-chip";
 import { FieldGrid, type FieldSpec } from "../primitives/field-grid";
@@ -66,12 +65,38 @@ const EVIDENCE_SOURCE_LABEL: Record<EvidenceSourceType, string> = {
   SYSTEM_VERIFICATION: "System Verification",
 };
 
+const BRAND_BRAIN_TAB_LABEL: Record<BrandBrainSubKey, string> = {
+  assets: "Assets",
+  "visual-identity": "Visual Identity",
+  constitution: "Constitution",
+  strategy: "Strategy",
+  decisions: "Decisions",
+  evidence: "Evidence",
+  learnings: "Learnings",
+};
+
+const BRAND_BRAIN_TAB_ICON: Record<BrandBrainSubKey, LucideIcon> = {
+  assets: Gem,
+  "visual-identity": Palette,
+  constitution: BookOpen,
+  strategy: GitBranch,
+  decisions: Gavel,
+  evidence: FileSearch,
+  learnings: GraduationCap,
+};
+
+function isBrandBrainSub(value: string | null): value is BrandBrainSubKey {
+  return !!value && (BRAND_BRAIN_SUB_KEYS as readonly string[]).includes(value);
+}
+
 // The "Brand Brain" node — the codified/reference output layer: constitution,
 // brand assets, strategy versions, decisions, evidence, learnings
-// (the HUB CORE-migrated + expanded version of brand-brain-tab.tsx).
+// (the HUB CORE-migrated + expanded version of brand-brain-tab.tsx). The
+// standing chat now lives in the global floating widget (brand-brain-
+// assistant.tsx, mounted from AppShell) instead of pinned above this panel.
 // `constitution` is the only type in ENTITY_PANEL that belongs to this panel
 // — entity depth only kicks in for that type.
-export async function BrandBrainPanel({ projectId, entity }: PanelProps) {
+export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
   const brand = await prisma.brand.findFirst({
     where: { projectId, isDefault: true },
     select: { id: true },
@@ -99,6 +124,7 @@ export async function BrandBrainPanel({ projectId, entity }: PanelProps) {
         <Link
           href={buildHubHref(projectId, {
             panel: "brand-brain",
+            sub: "constitution",
             entity: null,
           })}
           scroll={false}
@@ -116,92 +142,92 @@ export async function BrandBrainPanel({ projectId, entity }: PanelProps) {
     );
   }
 
-  const learningCount = await prisma.brandLearning.count({
-    where: { projectId },
-  });
+  const activeSub: BrandBrainSubKey = isBrandBrainSub(sub) ? sub : "assets";
 
-  const brainThreadCommands = await prisma.command.findMany({
-    where: { projectId, topic: BRAND_BRAIN_TOPIC },
-    orderBy: { createdAt: "desc" },
-    take: 20,
-    select: {
-      id: true,
-      source: true,
-      rawText: true,
-      replyText: true,
-      parsedIntent: true,
-    },
-  });
-  const brainThreadTurns: BrandBrainChatTurn[] = brainThreadCommands
-    .reverse()
-    .map((command) => {
-      const parsed = command.parsedIntent as {
-        proposedRevision?: BrandBrainRevision;
-        revisionSummary?: string;
-      } | null;
-      return {
-        commandId: command.id,
-        source: command.source as "WEB" | "SYSTEM",
-        text: command.rawText,
-        reply: command.replyText,
-        proposedRevision: parsed?.proposedRevision ?? null,
-        revisionSummary: parsed?.revisionSummary ?? null,
-      };
-    });
+  const [
+    constitutionCount,
+    strategyCount,
+    decisionCount,
+    evidenceCount,
+    learningCount,
+  ] = await Promise.all([
+    prisma.brandConstitution.count({ where: { brandId } }),
+    prisma.brandStrategyVersion.count({ where: { brandId } }),
+    prisma.brandDecision.count({ where: { brandId } }),
+    prisma.brandEvidence.count({ where: { brandId } }),
+    prisma.brandLearning.count({ where: { projectId } }),
+  ]);
+
+  const tabCount: Partial<Record<BrandBrainSubKey, number>> = {
+    constitution: constitutionCount,
+    strategy: strategyCount,
+    decisions: decisionCount,
+    evidence: evidenceCount,
+    learnings: learningCount,
+  };
 
   return (
-    <div className="space-y-8 py-6">
-      <BrandBrainChat projectId={projectId} initialTurns={brainThreadTurns} />
-      <AssetsSection projectId={projectId} brandId={brandId} />
-      <Section title="Visual Identity" icon={Palette}>
+    <div className="space-y-6 py-6">
+      <div className="flex flex-wrap items-center gap-1 border-b border-border">
+        {BRAND_BRAIN_SUB_KEYS.map((key) => {
+          const isActive = key === activeSub;
+          const Icon = BRAND_BRAIN_TAB_ICON[key];
+          const count = tabCount[key];
+          return (
+            <Link
+              key={key}
+              href={buildHubHref(projectId, {
+                panel: "brand-brain",
+                sub: key,
+                entity: null,
+              })}
+              scroll={false}
+              className={cn(
+                "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors",
+                isActive
+                  ? "border-primary font-medium text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Icon className="size-3.5" />
+              {BRAND_BRAIN_TAB_LABEL[key]}
+              {count !== undefined ? (
+                <span
+                  className={cn(
+                    "flex h-4 min-w-4 items-center justify-center rounded-4xl px-1 text-[10px] font-medium tabular-nums",
+                    isActive
+                      ? "bg-primary/15 text-primary"
+                      : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {count}
+                </span>
+              ) : null}
+            </Link>
+          );
+        })}
+      </div>
+
+      {activeSub === "visual-identity" ? (
         <VisualIdentitySection projectId={projectId} brandId={brandId} />
-      </Section>
-      <Section title="Constitution" icon={BookOpen}>
+      ) : activeSub === "constitution" ? (
         <ConstitutionSection
           projectId={projectId}
           brandId={brandId}
           focusedId={null}
         />
-      </Section>
-      <Section title="Strategy Versions" icon={GitBranch}>
+      ) : activeSub === "strategy" ? (
         <StrategyVersionsSection brandId={brandId} />
-      </Section>
-      <Section title="Brand Decisions" icon={Gavel}>
+      ) : activeSub === "decisions" ? (
         <DecisionsSection brandId={brandId} />
-      </Section>
-      <Section title="Evidence" icon={FileSearch}>
+      ) : activeSub === "evidence" ? (
         <EvidenceSection brandId={brandId} />
-      </Section>
-      <Section title={`Learnings (${learningCount})`} icon={GraduationCap}>
+      ) : activeSub === "learnings" ? (
         <LearningsSection projectId={projectId} />
-      </Section>
+      ) : (
+        <AssetsSection projectId={projectId} brandId={brandId} />
+      )}
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-function Section({
-  title,
-  icon: Icon,
-  children,
-}: {
-  title: string;
-  icon?: LucideIcon;
-  children: ReactNode;
-}) {
-  return (
-    <section className="space-y-3">
-      <div className="flex items-center gap-2">
-        {Icon ? (
-          <span className="flex size-6 items-center justify-center rounded-md bg-muted text-muted-foreground">
-            <Icon className="size-3.5" />
-          </span>
-        ) : null}
-        <p className="text-sm font-medium text-foreground">{title}</p>
-      </div>
-      {children}
-    </section>
   );
 }
 
@@ -271,7 +297,7 @@ async function ConstitutionSection({
             href={entityHref(
               projectId,
               { kind: "constitution", id: v.id },
-              undefined,
+              "constitution",
             )}
             scroll={false}
             className={cn(
@@ -414,50 +440,6 @@ function SectionValue({ value }: { value: unknown }) {
 }
 
 // ---------------------------------------------------------------------------
-
-type ColorSwatch = { hex: string; name?: string };
-
-// approvedColors/approvedFonts is still a free-form Json field (see
-// creative-template.ts extractAccentColorHex) — defensively converts a
-// single hex string, a hex array, and a {hex,name} object array into
-// swatches. Data that can't be parsed isn't silently dropped: the caller
-// shows the raw JSON in FieldGrid instead.
-function parseColorSwatches(value: unknown): ColorSwatch[] {
-  const HEX = /^#[0-9a-fA-F]{3,8}$/;
-  const entries = Array.isArray(value) ? value : value ? [value] : [];
-  const swatches: ColorSwatch[] = [];
-  for (const entry of entries) {
-    if (typeof entry === "string" && HEX.test(entry)) {
-      swatches.push({ hex: entry });
-    } else if (entry && typeof entry === "object") {
-      const hex = (entry as Record<string, unknown>).hex;
-      const name = (entry as Record<string, unknown>).name;
-      if (typeof hex === "string" && HEX.test(hex)) {
-        swatches.push({
-          hex,
-          name: typeof name === "string" ? name : undefined,
-        });
-      }
-    }
-  }
-  return swatches;
-}
-
-function parseFontNames(value: unknown): string[] {
-  const entries = Array.isArray(value) ? value : value ? [value] : [];
-  const names: string[] = [];
-  for (const entry of entries) {
-    if (typeof entry === "string" && entry.trim()) {
-      names.push(entry.trim());
-    } else if (entry && typeof entry === "object") {
-      const name =
-        (entry as Record<string, unknown>).name ??
-        (entry as Record<string, unknown>).family;
-      if (typeof name === "string" && name.trim()) names.push(name.trim());
-    }
-  }
-  return names;
-}
 
 function StatTile({ label, value }: { label: string; value: number }) {
   return (

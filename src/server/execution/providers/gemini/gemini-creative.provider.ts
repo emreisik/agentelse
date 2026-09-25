@@ -10,10 +10,10 @@ import { z } from "zod";
 
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import {
-  isOpenAIConfigured,
-  openaiModelForTier,
-  runOpenAIStructured,
-} from "@/server/reasoning/openai-client";
+  geminiModelForTier,
+  isGeminiConfigured,
+  runGeminiStructured,
+} from "@/server/reasoning/gemini-client";
 import {
   generateCreativeImage,
   isCreativeImageConfigured,
@@ -78,18 +78,18 @@ function buildSystemPrompt(brandContext: unknown): string {
   ].join("\n\n");
 }
 
-// OpenAI produces both the text and the image prompt (see
-// @/server/media/creative-image for the actual image call) — a single
-// provider combines the two because the image prompt is generated as part
-// of the creative text. If image generation fails, the job still completes
-// with the text (no asset); the creative flow doesn't fail because of the
-// image.
-export class OpenAiCreativeProvider implements ExecutionProvider {
-  readonly key = "openai-creative";
+// Gemini writes the caption/copy/imagePrompt text (see
+// @/server/media/creative-image for the actual image call, which tries
+// Gemini's own "Nano Banana" image model first too) — a single provider
+// combines the two because the image prompt is generated as part of the
+// creative text. If image generation fails, the job still completes with
+// the text (no asset); the creative flow doesn't fail because of the image.
+export class GeminiCreativeProvider implements ExecutionProvider {
+  readonly key = "gemini-creative";
   readonly type: ExecutionProviderType = "AI";
 
   get isConfigured(): boolean {
-    return isOpenAIConfigured();
+    return isGeminiConfigured();
   }
 
   async canExecute(capability: CapabilityKey): Promise<boolean> {
@@ -102,15 +102,15 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
       typeof input.request === "string" ? input.request : JSON.stringify(input);
 
     try {
-      const { raw } = await runOpenAIStructured({
-        model: openaiModelForTier(),
+      const { raw } = await runGeminiStructured({
+        model: geminiModelForTier(),
         system: buildSystemPrompt(input.brandContext),
         user: brief,
         jsonSchema: z.toJSONSchema(CreativeOutputSchema),
-        // See gemini-creative.provider.ts's former history (now removed):
-        // a 3-field schema can still be cut off mid-JSON on a small budget
+        // A 3-field schema can still be cut off mid-JSON on a small budget
         // when `copy`/`imagePrompt` are asked to be substantial — 8192
-        // keeps this call out of that failure class from the start.
+        // keeps this call out of that failure class from the start (see
+        // gemini-client.ts's own MAX_TOKENS retry, which covers the rest).
         maxOutputTokens: 8192,
       });
       const parsed = CreativeOutputSchema.parse(raw);
@@ -179,7 +179,7 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
           if (templated) image = { ...image, size: templated.size };
         } catch (error) {
           console.error(
-            "[openai-creative-provider] applyBrandTemplate failed:",
+            "[gemini-creative-provider] applyBrandTemplate failed:",
             error,
           );
         }
@@ -214,7 +214,7 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
     if (!record) {
       return {
         status: "FAILED",
-        errorMessage: "Unknown OpenAI execution reference",
+        errorMessage: "Unknown Gemini execution reference",
         isMock: false,
       };
     }

@@ -288,6 +288,7 @@ function toParsedIntent(turn: ChatTurnOutput, message: string): ParsedIntent {
       kind: "CAPABILITY",
       capability: turn.capability,
       targetPlatform: turn.platform,
+      contentFormat: turn.contentFormat,
       request: turn.taskBrief?.trim() || message,
     };
   }

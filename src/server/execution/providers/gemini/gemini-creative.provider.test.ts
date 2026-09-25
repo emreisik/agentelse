@@ -1,34 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const openaiMocks = vi.hoisted(() => ({
+const geminiMocks = vi.hoisted(() => ({
   isConfigured: true,
-  runOpenAIStructured: vi.fn(),
+  runGeminiStructured: vi.fn(),
 }));
-vi.mock("@/server/reasoning/openai-client", () => ({
-  isOpenAIConfigured: () => openaiMocks.isConfigured,
-  openaiModelForTier: () => "gpt-test",
-  runOpenAIStructured: openaiMocks.runOpenAIStructured,
+vi.mock("@/server/reasoning/gemini-client", () => ({
+  isGeminiConfigured: () => geminiMocks.isConfigured,
+  geminiModelForTier: () => "gemini-test",
+  runGeminiStructured: geminiMocks.runGeminiStructured,
 }));
 
 // isCreativeImageConfigured reflects the REAL provider env vars — in this
-// dev checkout those are genuinely configured, so without this mock
-// isCreativeImageConfigured() returns true and execute() attempts a real,
-// billed image-generation call (confirmed: an earlier version of this
-// test file hung for 5s doing exactly that). Force it off so this test
-// suite can never make a real network call no matter the local .env.
+// dev checkout those are genuinely configured, so without this mock a
+// test that reaches execute()'s success path attempts a real, billed
+// image-generation call (confirmed on the sibling openai-creative
+// provider test — see its identical mock for the incident). Force it off
+// so this suite can never make a real network call no matter the local
+// .env.
 vi.mock("@/server/media/creative-image", () => ({
   generateCreativeImage: vi.fn(),
   isCreativeImageConfigured: () => false,
 }));
-// Not exercised when isCreativeImageConfigured() is false (no image means
-// no template compositing — see the provider's `if (image)` guard), but
-// mocked anyway so a future test enabling image generation can't
-// accidentally fall through to the real prisma-backed implementation.
 vi.mock("@/server/media/creative-template", () => ({
   applyBrandTemplate: vi.fn(),
 }));
 
-import { OpenAiCreativeProvider } from "@/server/execution/providers/openai/openai-creative.provider";
+import { GeminiCreativeProvider } from "@/server/execution/providers/gemini/gemini-creative.provider";
 import type { ExecutionRequest } from "@/server/execution/types";
 
 function request(
@@ -52,22 +49,22 @@ function request(
   };
 }
 
-describe("OpenAiCreativeProvider", () => {
+describe("GeminiCreativeProvider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    openaiMocks.isConfigured = true;
+    geminiMocks.isConfigured = true;
   });
 
   describe("isConfigured / canExecute", () => {
-    it("mirrors isOpenAIConfigured", () => {
-      const provider = new OpenAiCreativeProvider();
+    it("mirrors isGeminiConfigured", () => {
+      const provider = new GeminiCreativeProvider();
       expect(provider.isConfigured).toBe(true);
-      openaiMocks.isConfigured = false;
+      geminiMocks.isConfigured = false;
       expect(provider.isConfigured).toBe(false);
     });
 
     it("owns exactly the two creative capabilities", async () => {
-      const provider = new OpenAiCreativeProvider();
+      const provider = new GeminiCreativeProvider();
       expect(await provider.canExecute("CREATE_SOCIAL_CREATIVE")).toBe(true);
       expect(await provider.canExecute("CREATE_AD_CREATIVE")).toBe(true);
       expect(await provider.canExecute("CREATE_COPY")).toBe(false);
@@ -77,11 +74,11 @@ describe("OpenAiCreativeProvider", () => {
 
   describe("execute / getStatus", () => {
     it("reports FAILED with the error message when the structured call throws", async () => {
-      openaiMocks.runOpenAIStructured.mockRejectedValue(
+      geminiMocks.runGeminiStructured.mockRejectedValue(
         new Error("quota exceeded"),
       );
 
-      const provider = new OpenAiCreativeProvider();
+      const provider = new GeminiCreativeProvider();
       await provider.execute(request("CREATE_SOCIAL_CREATIVE"));
 
       const status = await provider.getStatus("corr-1");
@@ -93,19 +90,16 @@ describe("OpenAiCreativeProvider", () => {
     });
 
     it("returns FAILED for an unknown execution reference", async () => {
-      const provider = new OpenAiCreativeProvider();
+      const provider = new GeminiCreativeProvider();
       const status = await provider.getStatus("never-executed");
       expect(status.status).toBe("FAILED");
     });
 
-    // Previously input.contentFormat was never read here at all — every
-    // request, regardless of what the chat message asked for, resolved to
-    // the platform's default format (see intent-router.ts/chat-turn.ts's
-    // matching fix). getCreativePlatformFormat is not mocked here
-    // deliberately — this proves the REAL function resolves "STORY" to a
-    // real FORMAT_MATRIX entry, not just that the input was read.
+    // See the sibling openai-creative.provider.test.ts for the fuller
+    // comment — a chat-requested Story/Reel previously had no way to
+    // reach getCreativePlatformFormat at all, on either creative provider.
     it("resolves a chat-requested contentFormat (Story) instead of the platform default", async () => {
-      openaiMocks.runOpenAIStructured.mockResolvedValue({
+      geminiMocks.runGeminiStructured.mockResolvedValue({
         raw: {
           caption: "caption",
           copy: "copy",
@@ -113,7 +107,7 @@ describe("OpenAiCreativeProvider", () => {
         },
       });
 
-      const provider = new OpenAiCreativeProvider();
+      const provider = new GeminiCreativeProvider();
       await provider.execute(
         request("CREATE_SOCIAL_CREATIVE", {
           request: "a creative brief",

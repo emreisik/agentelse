@@ -1,10 +1,23 @@
-import type { CapabilityKey, SocialPlatform } from "@prisma/client";
+import type {
+  CapabilityKey,
+  CreativeContentFormat,
+  DepartmentKey,
+  SocialPlatform,
+} from "@prisma/client";
 
 export type ParsedIntent =
   | {
       kind: "CAPABILITY";
       capability: CapabilityKey;
       targetPlatform?: SocialPlatform;
+      // Which content-format slot (Story/Reel/Feed square/etc — see
+      // src/lib/creative-platform-format.ts) a CREATE_SOCIAL_CREATIVE
+      // request is for. Omitted = the platform's own default (previously
+      // the ONLY behavior: nothing anywhere set this, so asking chat for
+      // "an Instagram Story" silently produced a square Feed post every
+      // time — see detectContentFormat below and chat-turn.ts's matching
+      // LLM-side field).
+      contentFormat?: CreativeContentFormat;
       request: string;
     }
   | {
@@ -13,6 +26,19 @@ export type ParsedIntent =
       note?: string;
     }
   | { kind: "STATUS_QUERY" }
+  // Deep Path (docs/brand-workspace-migration.md §7 Phase 8, spec: "Fast
+  // Path vs Deep Path") — a broad, multi-part request ("enter the Russia
+  // market", "plan October") that should go through research+planning
+  // instead of a single task. Only ever produced by the LLM chat classifier
+  // (chat-turn.ts's `strategic` field) — the rule-based fallback parser
+  // below never emits this, since that distinction genuinely needs
+  // judgment, not keyword matching.
+  | {
+      kind: "STRATEGIC_REQUEST";
+      title: string;
+      description: string;
+      departments?: DepartmentKey[];
+    }
   | { kind: "UNKNOWN" };
 
 const PLATFORM_KEYWORDS: Record<string, SocialPlatform> = {
@@ -29,6 +55,26 @@ const PLATFORM_KEYWORDS: Record<string, SocialPlatform> = {
 function detectPlatform(text: string): SocialPlatform | undefined {
   for (const [keyword, platform] of Object.entries(PLATFORM_KEYWORDS)) {
     if (text.includes(keyword)) return platform;
+  }
+  return undefined;
+}
+
+// Turkish + English keywords for the two content formats a client is
+// actually likely to name explicitly in a chat message — reel/story are
+// the ones with a clearly different shape (9:16 video/vertical) a client
+// would ask for by name; the rest (square/portrait/landscape feed) are
+// what "a post" already defaults to, so there's no ambiguity worth
+// detecting for those. getCreativePlatformFormat falls back to the
+// platform's default for any format it doesn't recognize, so a false
+// negative here just means "same as before this existed" — never worse.
+const CONTENT_FORMAT_KEYWORDS: [RegExp, CreativeContentFormat][] = [
+  [/\breels?\b/, "REEL"],
+  [/\bstory\b|\bstories\b|hikaye/, "STORY"],
+];
+
+function detectContentFormat(text: string): CreativeContentFormat | undefined {
+  for (const [pattern, format] of CONTENT_FORMAT_KEYWORDS) {
+    if (pattern.test(text)) return format;
   }
   return undefined;
 }
@@ -71,13 +117,14 @@ export function parseIntent(rawText: string): ParsedIntent {
   }
 
   if (
-    /(post|görsel|creative|içerik)/.test(text) &&
+    /(post|görsel|creative|içerik|reels?|hikaye|stories?)/.test(text) &&
     /(hazırla|oluştur|yap)/.test(text)
   ) {
     return {
       kind: "CAPABILITY",
       capability: "CREATE_SOCIAL_CREATIVE",
       targetPlatform: platform,
+      contentFormat: detectContentFormat(text),
       request: rawText,
     };
   }

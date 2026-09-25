@@ -399,6 +399,14 @@ export const CommandService = {
     const attachmentPayloadExtra = input.attachments?.length
       ? { attachmentAssetIds: input.attachments.map((a) => a.assetId) }
       : undefined;
+    // Threads a chat-detected Story/Reel/etc request (intent-router.ts's
+    // rule-based detectContentFormat, or chat-turn.ts's LLM-set field)
+    // through to the creative provider's getCreativePlatformFormat call —
+    // same payload mechanism attachments already use below. Without this,
+    // the intent carried the format but nothing ever read it back out.
+    const contentFormatPayloadExtra = intent.contentFormat
+      ? { contentFormat: intent.contentFormat }
+      : undefined;
 
     const plan = await TaskPlanner.planForCapability({
       workspaceId: input.workspaceId,
@@ -415,8 +423,14 @@ export const CommandService = {
       // provider (e.g. creative image generation) finds the user's
       // reference image here.
       payloadExtra:
-        attachmentPayloadExtra || input.payloadExtra
-          ? { ...attachmentPayloadExtra, ...input.payloadExtra }
+        attachmentPayloadExtra ||
+        contentFormatPayloadExtra ||
+        input.payloadExtra
+          ? {
+              ...attachmentPayloadExtra,
+              ...contentFormatPayloadExtra,
+              ...input.payloadExtra,
+            }
           : undefined,
     });
 

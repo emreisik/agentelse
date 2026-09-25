@@ -34,8 +34,9 @@ const SEARCH_GROUNDED_CAPABILITIES: ReadonlySet<CapabilityKey> =
   ]);
 
 // Text/analysis capabilities — the real "AI thinks" step. Content that
-// produces a visual asset is OpenAiCreativeProvider's job instead (image
-// generation stays OpenAI-only; Gemini isn't in that path).
+// produces a visual asset is GeminiCreativeProvider's job instead (see
+// gemini-creative.provider.ts — Gemini is tried first there too, OpenAI is
+// its fallback).
 const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "MARKET_RESEARCH",
   "TREND_RESEARCH",

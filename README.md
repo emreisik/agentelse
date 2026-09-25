@@ -124,8 +124,8 @@ If using Neon, `DATABASE_URL` should be the pooled connection URL and `DIRECT_UR
 Execution providers and Agency OS's internal reasoning calls are separate layers:
 
 - If `OPENCLAW_CLI_PATH` is set, the OpenClaw provider runs through a real `openclaw` CLI process. There is no HTTP-based `OPENCLAW_BASE_URL` integration.
-- `GEMINI_API_KEY` enables `GeminiAiProvider`, the default text/analysis execution provider and the default backend for Agency OS's internal reasoning calls (`REASONING_PROVIDER=openai` switches the reasoning side to OpenAI without touching any prompt file).
-- `OPENAI_API_KEY` enables `OpenAiAiProvider`/`OpenAiCreativeProvider` — the automatic fallback for text/analysis when Gemini is unconfigured or circuit-broken, and the sole backend for creative (image) execution.
+- `GEMINI_API_KEY` enables `GeminiAiProvider`/`GeminiCreativeProvider` — the default text/analysis and creative (caption/copy + "Nano Banana" image) execution providers, and the default backend for Agency OS's internal reasoning calls (`REASONING_PROVIDER=openai` switches the reasoning side to OpenAI without touching any prompt file).
+- `OPENAI_API_KEY` enables `OpenAiAiProvider`/`OpenAiCreativeProvider` — the automatic fallback for both text/analysis and creative execution when Gemini is unconfigured, circuit-broken, or its call fails (quota, safety refusal, network).
 - The 4 search-grounded research capabilities (`BRAND_DISCOVERY`, `WEB_RESEARCH`, `COMPETITOR_RESEARCH`, `SEO_RESEARCH`) are served by `GeminiAiProvider`'s native Google Search grounding tool by default, falling back to OpenClaw's real browser-based research when Gemini is unavailable — OpenAI's Chat Completions API has no built-in web-search tool, so `OpenAiAiProvider` never claims these.
 - `AGENTELSE_PROVIDER_MODE=mock` forces the mock provider fleet, for development and testing only.
 - If the provider mode is not `mock`, the registry only considers real providers. If no real provider is configured, the job explicitly fails with `PROVIDER_UNAVAILABLE`; there is no silent mock fallback.

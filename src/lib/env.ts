@@ -64,9 +64,15 @@ const envSchema = z.object({
     .default("/data/workspace"),
 
   // Google Gemini — ReasoningService's default LLM backend, and the default
-  // execution provider for text/analysis + search-grounded capabilities
-  // (see gemini-client.ts, gemini-ai.provider.ts). If unset, both layers
-  // fall through to OpenAI automatically.
+  // execution provider for text/analysis, search-grounded, and creative
+  // (caption/copy + "Nano Banana" image) capabilities (see gemini-client.ts,
+  // gemini-ai.provider.ts, gemini-creative.provider.ts). If unset, the
+  // execution-provider layer falls through to OpenAI automatically
+  // (CapabilityRouter skips the unconfigured Gemini provider and picks the
+  // next one in provider-registry.ts). ReasoningService.run() does NOT
+  // auto-reroute the same way — if REASONING_PROVIDER stays "gemini" while
+  // this is unset, it throws PROVIDER_UNAVAILABLE instead of retrying with
+  // OpenAI; set REASONING_PROVIDER=openai explicitly for that path instead.
   GEMINI_API_KEY: z.string().optional().default(""),
   // NOTE: "gemini-pro-latest" resolves to the latest Pro, and Pro's free
   // tier limit is only 250 requests/day — the agency loop was burning
@@ -79,6 +85,12 @@ const envSchema = z.object({
   // require touching prompt files.
   GEMINI_LITE_MODEL: z.string().optional().default("gemini-3.1-flash-lite"),
   GEMINI_PRO_MODEL: z.string().optional().default("gemini-3.1-pro-preview"),
+  // Image generation is a separate model family: the response returns
+  // base64 inside `inlineData`. Since creative output goes straight to the
+  // client, quality is the priority — the Pro image model ("Nano Banana
+  // Pro") is the default. See gemini-image-client.ts / creative-image.ts,
+  // where this is now the first tier tried, OpenAI second.
+  GEMINI_IMAGE_MODEL: z.string().optional().default("gemini-3-pro-image"),
 
   // OpenAI — ReasoningService's fallback backend (see openai-client.ts),
   // and the fallback execution provider when Gemini is unconfigured or
@@ -106,8 +118,8 @@ const envSchema = z.object({
   // fal.ai — optional additional image-generation provider (see
   // fal-image-client.ts and fal-image-models.ts). Purely opt-in: the
   // Image Studio's fal.ai model group only appears when this is set, and
-  // the existing OpenAI -> OpenClaw fallback chain is unaffected when it
-  // isn't.
+  // the existing Gemini -> OpenAI -> OpenClaw fallback chain is unaffected
+  // when it isn't.
   FAL_API_KEY: z.string().optional().default(""),
 
   R2_ACCOUNT_ID: z.string().optional().default(""),

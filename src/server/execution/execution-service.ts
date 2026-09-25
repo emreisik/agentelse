@@ -645,10 +645,18 @@ async function materializeCreativeFromResult(
   // row, so no lingering "loading" ghost remains). Best-effort: if it can't
   // be found/written, creative generation itself is unaffected.
   try {
-    const task = await prisma.task.findUnique({
-      where: { id: job.taskId },
-      select: { title: true, departmentKey: true },
-    });
+    const [task, brand] = await Promise.all([
+      prisma.task.findUnique({
+        where: { id: job.taskId },
+        select: { title: true, departmentKey: true },
+      }),
+      // Creative has no brand relation (just a brandId column) — this is
+      // the one extra lookup needed to show the brand's name on the card.
+      prisma.brand.findUnique({
+        where: { id: job.brandId },
+        select: { name: true },
+      }),
+    ]);
     const title = task?.title ?? "Creative";
     await IdeaChatRepository.resolveCreativeCard({
       workspaceId: job.workspaceId,
@@ -671,6 +679,8 @@ async function materializeCreativeFromResult(
         platform,
         contentFormat,
         approvalId: approval.id,
+        versionNumber: version.version,
+        brandName: brand?.name,
       },
       attachments: asset
         ? [

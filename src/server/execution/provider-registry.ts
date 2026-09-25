@@ -8,6 +8,7 @@ import { LinkedInApiProvider } from "@/server/execution/providers/linkedin/linke
 import { XApiProvider } from "@/server/execution/providers/x/x-api-provider";
 import { OpenClawProvider } from "@/server/execution/providers/openclaw/openclaw-provider";
 import { GeminiAiProvider } from "@/server/execution/providers/gemini/gemini-ai.provider";
+import { GeminiCreativeProvider } from "@/server/execution/providers/gemini/gemini-creative.provider";
 import { OpenAiAiProvider } from "@/server/execution/providers/openai/openai-ai.provider";
 import { OpenAiCreativeProvider } from "@/server/execution/providers/openai/openai-creative.provider";
 import { MockOpenClawProvider } from "@/server/execution/providers/mock/mock-openclaw.provider";
@@ -36,9 +37,10 @@ import { MockPublishingProvider } from "@/server/execution/providers/mock/mock-p
 // grounding tool; OpenAiAiProvider deliberately does NOT claim those
 // (OpenAI's Chat Completions API has no built-in web-search tool), so
 // OpenClawProvider — registered right after — is their fallback instead.
-// Image-generation capabilities (CREATE_SOCIAL_CREATIVE/CREATE_AD_CREATIVE)
-// stay OpenAI-only via OpenAiCreativeProvider; there is no Gemini creative
-// provider.
+// GeminiCreativeProvider comes before OpenAiCreativeProvider for the same
+// reason: both own CREATE_SOCIAL_CREATIVE/CREATE_AD_CREATIVE, Gemini is
+// tried first (its "Nano Banana" model also becomes creative-image.ts's
+// first image-generation tier — see that file), OpenAI is the fallback.
 class ProviderRegistryImpl {
   private readonly providers: ExecutionProvider[] = [
     new MetaApiProvider(),
@@ -49,6 +51,7 @@ class ProviderRegistryImpl {
     new GeminiAiProvider(),
     new OpenAiAiProvider(),
     new OpenClawProvider(),
+    new GeminiCreativeProvider(),
     new OpenAiCreativeProvider(),
     new MockCreativeProvider(),
     new MockPublishingProvider(),

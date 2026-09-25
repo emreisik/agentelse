@@ -50,6 +50,33 @@ describe("CreativeRepository.listForCalendarRange", () => {
   });
 });
 
+describe("CreativeRepository.listRecentForPanel", () => {
+  it("fetches the most recent creatives for the project, latest version+asset only", async () => {
+    findMany.mockResolvedValueOnce([]);
+
+    await CreativeRepository.listRecentForPanel("proj-1");
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+    const call = findMany.mock.calls[0]![0];
+    expect(call.where).toEqual({ projectId: "proj-1" });
+    expect(call.orderBy).toEqual({ createdAt: "desc" });
+    expect(call.take).toBe(24);
+    expect(call.include.versions).toMatchObject({
+      orderBy: { version: "desc" },
+      take: 1,
+      include: { asset: true },
+    });
+  });
+
+  it("respects a custom limit", async () => {
+    findMany.mockResolvedValueOnce([]);
+
+    await CreativeRepository.listRecentForPanel("proj-1", 6);
+
+    expect(findMany.mock.calls[0]![0].take).toBe(6);
+  });
+});
+
 describe("CreativeRepository.setScheduledFor", () => {
   it("scopes the update to the given project and sets scheduledFor", async () => {
     updateMany.mockResolvedValueOnce({ count: 1 });

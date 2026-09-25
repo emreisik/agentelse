@@ -53,10 +53,10 @@ export function CreativeImageStudio({
   >(availableFormats[0]?.contentFormat);
   const format = getCreativePlatformFormat(platform, contentFormat);
   const [instruction, setInstruction] = useState("");
-  // "" means the default (OpenAI -> OpenClaw chain, unchanged behavior) —
-  // only set to a fal-image-models.ts id when the user deliberately picks
-  // one. In edit mode, only models with supportsImageInput can actually do
-  // anything with the existing image, so the list is filtered accordingly.
+  // "" means the default (Gemini -> OpenAI -> OpenClaw chain) — only set to
+  // a fal-image-models.ts id when the user deliberately picks one. In edit
+  // mode, only models with supportsImageInput can actually do anything with
+  // the existing image, so the list is filtered accordingly.
   const [falModelId, setFalModelId] = useState("");
   const falModelChoices = FAL_IMAGE_MODELS.filter(
     (model) => !hasImage || model.supportsImageInput,
@@ -147,7 +147,7 @@ export function CreativeImageStudio({
           </span>
           <Select
             items={[
-              { value: "", label: "OpenAI (default)" },
+              { value: "", label: "Gemini (default)" },
               ...falModelChoices.map((model) => ({
                 value: model.id,
                 label: falModelOptionLabel(model),
@@ -174,7 +174,7 @@ export function CreativeImageStudio({
               align="start"
               alignItemWithTrigger={false}
             >
-              <SelectItem value="">OpenAI (default)</SelectItem>
+              <SelectItem value="">Gemini (default)</SelectItem>
               {falModelChoices.map((model) => (
                 <SelectItem key={model.id} value={model.id}>
                   {falModelOptionLabel(model)}

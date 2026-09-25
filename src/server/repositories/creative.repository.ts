@@ -62,6 +62,26 @@ export const CreativeRepository = {
     });
   },
 
+  // Brand Workspace's Outputs tab (spec: workspace-right-panel) — a flat
+  // "most recent creatives" feed across every status/platform, unlike
+  // listForCalendarRange's forward-looking scheduling window. Same
+  // "latest version + asset only" include shape, since the tab only needs
+  // a thumbnail, not full version history.
+  listRecentForPanel(projectId: string, limit = 24) {
+    return prisma.creative.findMany({
+      where: { projectId },
+      include: {
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          include: { asset: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    });
+  },
+
   setScheduledFor(id: string, projectId: string, date: Date | null) {
     return prisma.creative.updateMany({
       where: { id, projectId },

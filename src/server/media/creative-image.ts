@@ -3,6 +3,11 @@ import "server-only";
 import sharp from "sharp";
 
 import {
+  generateGeminiImage,
+  isGeminiImageConfigured,
+  type GeneratedCreativeImage as GeneratedByGemini,
+} from "@/server/reasoning/gemini-image-client";
+import {
   generateOpenAIImage,
   isOpenAIImageConfigured,
   type GeneratedCreativeImage as GeneratedByOpenAI,
@@ -15,13 +20,14 @@ import {
 } from "@/server/execution/providers/openclaw/openclaw-image-client";
 import {
   generateFalImage,
+  isFalImageConfigured,
   type GeneratedFalImage as GeneratedByFal,
 } from "@/server/reasoning/fal-image-client";
 import { findFalImageModel } from "@/lib/fal-image-models";
 import { readAsset, overwriteAsset } from "@/server/storage/asset-storage";
 
 export type GeneratedCreativeImage = (
-  GeneratedByOpenAI | GeneratedByOpenClaw | GeneratedByFal
+  GeneratedByGemini | GeneratedByOpenAI | GeneratedByOpenClaw | GeneratedByFal
 ) & {
   // The real, measured pixel size after normalize() below — not what was
   // requested (both backends can drift slightly from the target); this is
@@ -30,14 +36,18 @@ export type GeneratedCreativeImage = (
   height: number;
 };
 
-// OpenAI/OpenClaw both write image bytes via putAsset() and return a
+// Gemini/OpenAI/OpenClaw all write image bytes via putAsset() and return a
 // storageKey; this measures the actual result with sharp and, if it doesn't
 // match the platform's target pixel size, resizes it in place (cover +
 // attention-based crop, so the subject isn't naively center-cropped) before
 // any caller can persist or display it. Without this step the pixel-size
 // note shown under generated images would be a guess, not a fact.
 async function normalizeToTarget(
-  image: GeneratedByOpenAI | GeneratedByOpenClaw | GeneratedByFal,
+  image:
+    | GeneratedByGemini
+    | GeneratedByOpenAI
+    | GeneratedByOpenClaw
+    | GeneratedByFal,
   target?: { width: number; height: number },
 ): Promise<GeneratedCreativeImage> {
   const buffer = await readAsset(image.storageKey);
@@ -72,15 +82,47 @@ async function normalizeToTarget(
 
 // The single entry point for image generation. Preference order:
 //
-//   1. OpenAI (gpt-image-2 — see openai-image-client.ts).
-//   2. OpenClaw — `infer image generate`, billing goes to the OpenAI
+//   1. Gemini ("Nano Banana" — see gemini-image-client.ts). Default backend;
+//      falls through automatically when GEMINI_API_KEY is unset or the call
+//      fails (quota, safety refusal, network).
+//   2. OpenAI (gpt-image-2 — see openai-image-client.ts). Fallback when
+//      Gemini isn't configured or its call fails.
+//   3. OpenClaw — `infer image generate`, billing goes to the OpenAI
 //      session configured in OpenClaw (openai/gpt-image-2). Fallback if
-//      OpenAI isn't configured or its call fails (quota, safety refusal,
-//      network) — the creative flow shouldn't get stuck on one provider's
-//      bad day. Last resort: it doesn't support a reference image (see
-//      GenerateCreativeImageOptions).
+//      neither of the above is configured or succeeds — the creative flow
+//      shouldn't get stuck on one provider's bad day. Doesn't support a
+//      reference image (see GenerateCreativeImageOptions).
+//   4. fal.ai (FLUX Schnell — fast/cheap general-purpose, same family the
+//      Image Studio's own "Fast" tier offers) — LAST-RESORT safety net,
+//      only when steps 1-3 all failed/aren't configured. Deliberately last:
+//      the tiers above already converge on Gemini/OpenAI's own model
+//      families, so this is the one tier that's a genuinely different
+//      visual style — reserved for "otherwise the job fails outright"
+//      rather than routine load-balancing. Also has no reference-image
+//      support, so a logo/brand reference is silently dropped here too,
+//      same limitation as the OpenClaw tier.
+const FALLBACK_FAL_ENDPOINT_ID = "fal-ai/flux/schnell";
+
+function tryFalFallback(
+  prompt: string,
+  options: GenerateCreativeImageOptions,
+): Promise<GeneratedByFal | null> {
+  if (!isFalImageConfigured()) return Promise.resolve(null);
+  return generateFalImage(
+    FALLBACK_FAL_ENDPOINT_ID,
+    prompt,
+    undefined,
+    options.imageSize,
+  );
+}
+
 export function isCreativeImageConfigured(): boolean {
-  return isOpenAIImageConfigured() || isOpenClawImageConfigured();
+  return (
+    isGeminiImageConfigured() ||
+    isOpenAIImageConfigured() ||
+    isOpenClawImageConfigured() ||
+    isFalImageConfigured()
+  );
 }
 
 export type GenerateCreativeImageOptions = {
@@ -130,6 +172,19 @@ async function tryFal(
   );
 }
 
+async function tryGemini(
+  prompt: string,
+  options: GenerateCreativeImageOptions,
+): Promise<GeneratedByGemini | null> {
+  if (!isGeminiImageConfigured()) return null;
+  return generateGeminiImage(
+    prompt,
+    options.baseImage,
+    options.imageSize,
+    options.referenceImage,
+  );
+}
+
 async function tryOpenAI(
   prompt: string,
   options: GenerateCreativeImageOptions,
@@ -155,6 +210,9 @@ export async function generateCreativeImage(
     return viaFal ? normalizeToTarget(viaFal, opts.imageSize) : null;
   }
 
+  const viaGemini = await tryGemini(prompt, opts);
+  if (viaGemini) return normalizeToTarget(viaGemini, opts.imageSize);
+
   const image = await tryOpenAI(prompt, opts);
   if (image) return normalizeToTarget(image, opts.imageSize);
 
@@ -169,5 +227,11 @@ export async function generateCreativeImage(
     );
     if (viaOpenClaw) return normalizeToTarget(viaOpenClaw, opts.imageSize);
   }
+
+  // Last resort — see the module comment above (step 3). Only reached once
+  // both the primary and secondary tiers have failed or are unconfigured.
+  const viaFal = await tryFalFallback(prompt, opts);
+  if (viaFal) return normalizeToTarget(viaFal, opts.imageSize);
+
   return null;
 }

@@ -74,6 +74,32 @@ export type IdeaEventCardData =
       permalink?: string;
       errorMessage?: string;
     }
+  // A human-intervention request (HumanInterventionRepository.create,
+  // fired from execution-service.ts whenever a provider reports
+  // WAITING_HUMAN — OTP/MFA/login/captcha/confirmation/manual-browser/
+  // account-selection/file/information/decision) — previously invisible
+  // outside the Human Action Center panel despite being architecturally
+  // central (drives task/job status, the "Needs you" dashboard badge).
+  // Mirrors human-action-panel.tsx's own simplification exactly: every
+  // inputType except MANUAL_BROWSER gets a plain text input + Send
+  // (CHOICE/FILE have no structured options/upload UI anywhere in this
+  // codebase today, chat included); MANUAL_BROWSER gets a disabled "Open
+  // Browser" placeholder + Cancel, same as the panel.
+  | {
+      kind: "human-action-required";
+      requestId: string;
+      title: string;
+      message?: string;
+      interventionType: string;
+      inputType:
+        "TEXT" | "OTP" | "CONFIRM" | "CHOICE" | "MANUAL_BROWSER" | "FILE";
+      // Resolved/cancelled in place (same row) by
+      // HumanInterventionRepository.resolve/transition — so a page
+      // refresh reflects the real outcome instead of reverting to
+      // "pending" (this card's own optimistic client state is only a
+      // preview while that server write is in flight).
+      status: "PENDING" | "RESOLVED" | "CANCELLED" | "EXPIRED";
+    }
   // A cross-department handoff proposal (WorkHandoffEngine.propose) —
   // previously invisible outside the Work panel's Handoffs tab (a silent
   // gap: the receiving department's own agent has to actually accept it
@@ -165,6 +191,7 @@ const EVENT_KINDS = new Set([
   "approval-request",
   "approval-decision",
   "publish-result",
+  "human-action-required",
   "handoff-proposed",
   "limit-notice",
   "ads-form-prompt",

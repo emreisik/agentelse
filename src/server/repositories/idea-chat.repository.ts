@@ -407,6 +407,49 @@ export const IdeaChatRepository = {
     });
   },
 
+  // Updates a "human-action-required" card's status in place (same row) —
+  // called from HumanInterventionRepository.resolve/transition so a page
+  // refresh reflects the real outcome instead of reverting to "pending"
+  // (see idea-event-card.ts's comment on this card kind). ideaId is
+  // nullable the same way resolveCreativeApprovalDecision's is: a
+  // WAITING_HUMAN request with no task lineage still posted into the
+  // project's general chat stream, and still needs to resolve there.
+  async resolveHumanActionCard(input: {
+    ideaId: string | null;
+    requestId: string;
+    status: "RESOLVED" | "CANCELLED" | "EXPIRED";
+  }): Promise<void> {
+    const existing = await prisma.command.findFirst({
+      where: {
+        ideaId: input.ideaId,
+        source: "SYSTEM",
+        parsedIntent: {
+          path: ["card", "requestId"],
+          equals: input.requestId,
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, parsedIntent: true },
+    });
+    if (!existing) return;
+
+    const parsed = existing.parsedIntent as {
+      card?: { kind?: string; [key: string]: unknown };
+      departmentKey?: DepartmentKey;
+    } | null;
+    if (!parsed?.card || parsed.card.kind !== "human-action-required") return;
+
+    await prisma.command.update({
+      where: { id: existing.id },
+      data: {
+        parsedIntent: {
+          card: { ...parsed.card, status: input.status },
+          departmentKey: parsed.departmentKey,
+        } as never,
+      },
+    });
+  },
+
   // Posted instead of a Task/Approval when a chat capability is in
   // FORM_REQUIRED_CAPABILITIES (see command-service.ts) — budget/targeting/
   // creative parameters need a structured form, not free text. No taskId

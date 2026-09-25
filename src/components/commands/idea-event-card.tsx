@@ -33,9 +33,11 @@ import {
 
 import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { DepartmentBadge } from "@/components/shared/department-badge";
 import {
   DEPARTMENT_KEY,
+  HUMAN_INTERVENTION_TYPE,
   RISK_LEVEL,
   stripCapabilityPrefix,
 } from "@/lib/labels";
@@ -58,6 +60,10 @@ import {
   cancelTaskAction,
   rejectHandoffAction,
 } from "@/server/actions/agency-work-actions";
+import {
+  cancelHumanActionAction,
+  resolveHumanActionAction,
+} from "@/server/actions/human-action-actions";
 import { submitChatMessageAction } from "@/server/actions/command-actions";
 
 // Narrows a raw department string (e.g. "BRAND_STRATEGY") to DepartmentKey
@@ -240,6 +246,9 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
 
     case "handoff-proposed":
       return <HandoffProposedCard card={card} />;
+
+    case "human-action-required":
+      return <HumanActionRequiredCard card={card} />;
 
     case "limit-notice":
       return <LimitNoticeCard card={card} />;
@@ -766,6 +775,156 @@ function riskTone(risk: string): WsTone {
   if (risk === "CRITICAL" || risk === "HIGH") return "danger";
   if (risk === "MEDIUM") return "waiting";
   return "neutral";
+}
+
+// A human-intervention request (OTP/MFA/login/captcha/confirmation/manual-
+// browser/etc — see execution-service.ts's WAITING_HUMAN branch),
+// resolvable directly from chat instead of only the Human Action Center
+// panel. Mirrors human-action-panel.tsx's own exact simplification: every
+// inputType except MANUAL_BROWSER gets a plain text input + Send (this
+// codebase has no structured CHOICE-picker or FILE-upload UI anywhere,
+// chat included); MANUAL_BROWSER gets a disabled "Open Browser" + Cancel,
+// same wording as the panel. Once resolved/cancelled, the row itself is
+// updated server-side (HumanInterventionRepository.resolve/transition ->
+// resolveHumanActionCard) — this local `resolved` state is only the
+// optimistic preview while that write is in flight; a real refresh
+// reflects card.status directly.
+function HumanActionRequiredCard({
+  card,
+}: {
+  card: Extract<IdeaEventCardData, { kind: "human-action-required" }>;
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [resolved, setResolved] = useState<"RESOLVED" | "CANCELLED" | null>(
+    null,
+  );
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | undefined>(undefined);
+
+  const typeLabel =
+    HUMAN_INTERVENTION_TYPE[
+      card.interventionType as keyof typeof HUMAN_INTERVENTION_TYPE
+    ]?.label ?? card.interventionType;
+
+  const submit = (
+    action: typeof resolveHumanActionAction | typeof cancelHumanActionAction,
+    outcome: "RESOLVED" | "CANCELLED",
+  ) => {
+    setError(undefined);
+    startTransition(async () => {
+      try {
+        const formData = new FormData();
+        formData.set("requestId", card.requestId);
+        if (action === resolveHumanActionAction) formData.set("value", value);
+        const result = await action(formData);
+        if (result.ok) {
+          setResolved(outcome);
+          toast.success(outcome === "RESOLVED" ? "Response sent" : "Cancelled");
+          router.refresh();
+        } else {
+          setError(result.message);
+          toast.error(result.message);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Action failed";
+        setError(message);
+        toast.error(message);
+      }
+    });
+  };
+
+  const finalStatus =
+    resolved ?? (card.status !== "PENDING" ? card.status : null);
+  if (finalStatus) {
+    const label =
+      finalStatus === "RESOLVED"
+        ? "Resolved"
+        : finalStatus === "CANCELLED"
+          ? "Cancelled"
+          : "Expired";
+    return (
+      <WsEventCard
+        icon={finalStatus === "RESOLVED" ? ShieldCheck : ShieldX}
+        title={card.title}
+        tone={finalStatus === "RESOLVED" ? "positive" : "neutral"}
+        badgeLabel={label}
+      />
+    );
+  }
+
+  return (
+    <WsDecisionCard
+      icon={CircleCheck}
+      eyebrow="Needs your input"
+      title={card.title}
+      badge={<WsStatusPill label={typeLabel} tone="waiting" />}
+      error={error}
+      actions={
+        card.inputType === "MANUAL_BROWSER" ? (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-full"
+              disabled
+              title="Remote browser session connection not yet available"
+            >
+              Open Browser
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="rounded-full"
+              disabled={isPending}
+              onClick={() => submit(cancelHumanActionAction, "CANCELLED")}
+            >
+              Cancel Task
+            </Button>
+          </>
+        ) : (
+          <>
+            <Input
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={
+                card.inputType === "OTP" ? "Enter code" : "Enter value"
+              }
+              className="h-8 max-w-40 text-xs"
+              disabled={isPending}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && value.trim()) {
+                  e.preventDefault();
+                  submit(resolveHumanActionAction, "RESOLVED");
+                }
+              }}
+            />
+            <Button
+              type="button"
+              size="sm"
+              className="rounded-full"
+              style={{
+                background: "var(--ws-accent)",
+                color: "var(--ws-on-accent)",
+              }}
+              disabled={isPending || !value.trim()}
+              onClick={() => submit(resolveHumanActionAction, "RESOLVED")}
+            >
+              Send
+            </Button>
+          </>
+        )
+      }
+    >
+      {card.message ? (
+        <p className="text-sm" style={{ color: "var(--ws-text-2)" }}>
+          {card.message}
+        </p>
+      ) : null}
+    </WsDecisionCard>
+  );
 }
 
 // A cross-department handoff proposal, directly actionable from chat —

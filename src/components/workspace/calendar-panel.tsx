@@ -329,7 +329,7 @@ export function CalendarPanel({
                   key={item.id}
                   href={itemHref(item.id)}
                   scroll={false}
-                  className="flex items-center gap-3 rounded-2xl border p-3 transition-colors hover:bg-[var(--ws-hover)]"
+                  className="flex items-center gap-3 rounded-2xl border p-3 shadow-[0_1px_3px_rgba(52,75,29,0.04)] transition-colors hover:bg-[var(--ws-hover)]"
                   style={{
                     borderColor: isSelected
                       ? "var(--ws-text)"
@@ -371,6 +371,10 @@ export function CalendarPanel({
                       {time} · {WORKSPACE_STATUS_LABEL_TR[item.status]}
                     </div>
                   </div>
+                  <ChevronRight
+                    className="size-3.5 shrink-0"
+                    style={{ color: "var(--ws-text-3)" }}
+                  />
                 </Link>
               );
             })}

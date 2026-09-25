@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { Check } from "lucide-react";
 import type { CreativeType } from "@prisma/client";
 
-import { CREATIVE_STATUS, SOCIAL_PLATFORM } from "@/lib/labels";
+import { SOCIAL_PLATFORM } from "@/lib/labels";
 import { OutputPreviewDialog } from "@/components/workspace/output-preview-dialog";
+import { WORKSPACE_STATUS_LABEL_TR } from "@/components/workspace/workspace-status-labels";
 import type { WorkspaceOutputItem } from "./workspace-right-panel-data";
 
 // Spec's filter set is "Tümü / Post / Story / Reel / Reklam" — Story/Reel
@@ -109,51 +111,79 @@ export function OutputsPanel({ outputs }: { outputs: WorkspaceOutputItem[] }) {
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3">
-          {filtered.map((output) => (
-            <button
-              key={output.id}
-              type="button"
-              onClick={() => setPreviewId(output.id)}
-              className="group flex flex-col overflow-hidden rounded-[10px] border text-left transition-transform hover:-translate-y-0.5"
-              style={{ borderColor: "var(--ws-border)" }}
-            >
-              <div
-                className="aspect-[4/5] w-full overflow-hidden"
-                style={{ background: "var(--ws-surface-2)" }}
+          {filtered.map((output) => {
+            const isDone =
+              output.status === "APPROVED" || output.status === "PUBLISHED";
+            return (
+              <button
+                key={output.id}
+                type="button"
+                onClick={() => setPreviewId(output.id)}
+                className="group flex flex-col overflow-hidden rounded-xl border text-left shadow-[0_1px_3px_rgba(52,75,29,0.04)] transition-transform hover:-translate-y-0.5"
+                style={{ borderColor: "var(--ws-border)" }}
               >
-                {output.assetId ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image can't optimize it
-                  <img
-                    src={`/api/assets/${output.assetId}`}
-                    alt={output.title ?? output.type}
-                    className="size-full object-cover transition-transform group-hover:scale-105"
-                  />
-                ) : null}
-              </div>
-              <div className="flex flex-col gap-0.5 p-3">
-                <span
-                  className="text-[10px] font-medium tracking-wide uppercase"
-                  style={{ color: "var(--ws-text-3)" }}
+                <div
+                  className="relative aspect-[4/5] w-full overflow-hidden"
+                  style={{ background: "var(--ws-surface-2)" }}
                 >
-                  {output.platform
-                    ? SOCIAL_PLATFORM[output.platform].label
-                    : output.type}
-                </span>
-                <span
-                  className="truncate text-xs font-medium"
-                  style={{ color: "var(--ws-text)" }}
-                >
-                  {output.title ?? "Başlıksız"}
-                </span>
-                <span
-                  className="text-[10px]"
-                  style={{ color: "var(--ws-text-3)" }}
-                >
-                  {CREATIVE_STATUS[output.status].label}
-                </span>
-              </div>
-            </button>
-          ))}
+                  {output.assetId ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image can't optimize it
+                    <img
+                      src={`/api/assets/${output.assetId}`}
+                      alt={output.title ?? output.type}
+                      className="size-full object-cover transition-transform group-hover:scale-105"
+                    />
+                  ) : null}
+                  {isDone ? (
+                    <span
+                      className="absolute top-2 right-2 flex size-5 items-center justify-center rounded-full shadow-[0_1px_3px_rgba(0,0,0,0.15)]"
+                      style={{ background: "var(--ws-approved)" }}
+                      title={WORKSPACE_STATUS_LABEL_TR[output.status]}
+                    >
+                      <Check
+                        className="size-3"
+                        style={{ color: "var(--ws-on-accent)" }}
+                        strokeWidth={3}
+                      />
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex flex-col gap-0.5 p-3">
+                  <span
+                    className="text-[10px] font-medium tracking-wide uppercase"
+                    style={{ color: "var(--ws-text-3)" }}
+                  >
+                    {output.platform
+                      ? SOCIAL_PLATFORM[output.platform].label
+                      : output.type}
+                  </span>
+                  <span
+                    className="truncate text-xs font-medium"
+                    style={{ color: "var(--ws-text)" }}
+                  >
+                    {output.title ?? "Başlıksız"}
+                  </span>
+                  <span
+                    className="flex items-center gap-1 text-[10px]"
+                    style={{ color: "var(--ws-text-3)" }}
+                  >
+                    {!isDone ? (
+                      <span
+                        className="size-1.5 shrink-0 rounded-full"
+                        style={{
+                          background:
+                            output.status === "IN_REVIEW"
+                              ? "var(--ws-pending)"
+                              : "var(--ws-text-3)",
+                        }}
+                      />
+                    ) : null}
+                    {WORKSPACE_STATUS_LABEL_TR[output.status]}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
 

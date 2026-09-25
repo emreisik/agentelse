@@ -120,9 +120,57 @@
   --sidebar-accent-foreground: oklch(0.25 0.012 260);
   --sidebar-border: oklch(0.91 0.008 260);
   --sidebar-ring: oklch(0.19 0.014 260 / 35%);
+
+  /* Brand Workspace palette (docs/brand-workspace-migration.md §7 Phase
+     9/10/11) — a separate, exact-hex token set used only by the
+     workspace-root screen's own components (ws-top-bar, ws-right-panel,
+     project-chat, thread's Brand-Workspace-specific bits). Deliberately not
+     merged into --background/--border/etc: those stay the app-wide oklch
+     tokens every other screen already relies on. Phase 11: retthemed from
+     the earlier monochrome palette to the specified olive/botanical studio
+     palette — every component already on --ws-* picks this up automatically,
+     no per-component changes needed for the base retheme. */
+  --ws-bg: #f7f8f4; /* studio */
+  --ws-surface: #ffffff; /* surface */
+  --ws-surface-2: #f0f2e9; /* soft-surface */
+  --ws-hover: #f0f2e9; /* soft-surface, reused as the default hover tint */
+  --ws-border: #e7e9e2; /* border */
+  --ws-text: #292c28; /* ink */
+  --ws-text-body: #33362f; /* ink, slightly softened for long-form body copy */
+  --ws-text-2: #747b70; /* quiet */
+  --ws-text-3: #9aa196; /* a lighter tint of quiet, for the most muted metadata */
+  --ws-accent: #5b7345; /* dark-olive — primary action color */
+  --ws-on-accent: #e6efcc; /* lime — reads clearly on dark-olive */
+  --ws-olive: #7f9162; /* olive — secondary accent (icons, quieter emphasis) */
+  --ws-soft-green: #eef3e4; /* soft-green */
+  --ws-lime: #e6efcc; /* lime */
+  --ws-pending: #b99b4e; /* pending status */
+  --ws-approved: #789956; /* approved status */
 }
 
 .dark {
+  /* No dark variant was specified for the olive studio direction (it's a
+     deliberately light, paper-like aesthetic) — this derives one in the
+     same spirit (dark olive-charcoal ground, lime accent stays legible on
+     both) so the app's existing dark-mode toggle keeps working rather than
+     going unstyled, without contradicting the light palette actually
+     specified. */
+  --ws-bg: #1c1e1a;
+  --ws-surface: #23261f;
+  --ws-surface-2: #2b2f26;
+  --ws-hover: #2b2f26;
+  --ws-border: #383c33;
+  --ws-text: #eef0e8;
+  --ws-text-body: #d8dbd0;
+  --ws-text-2: #a0a696;
+  --ws-text-3: #767c6d;
+  --ws-accent: #a8c17e;
+  --ws-on-accent: #1c1e1a;
+  --ws-olive: #9db47a;
+  --ws-soft-green: #2b2f26;
+  --ws-lime: #3a4030;
+  --ws-pending: #d6b25f;
+  --ws-approved: #8fb36a;
   --background: oklch(0.16 0.012 260);
   --foreground: oklch(0.96 0.006 260);
   --card: oklch(0.205 0.012 260);

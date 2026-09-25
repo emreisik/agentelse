@@ -60,6 +60,20 @@ export const CommandRepository = {
     });
   },
 
+  // A Command is normally created already knowing its ideaId (an idea's own
+  // chat thread) or knowing it has none (general chat) — see the comment on
+  // `create` above. The Deep Path (docs/brand-workspace-migration.md §7
+  // Phase 8) is the one exception: a general-chat message that turns out to
+  // START a brand-new idea, so the idea doesn't exist yet at Command-create
+  // time. This retroactively links the two, so the "Chats" sidebar picks up
+  // the new idea's thread and later replies in it show up here too.
+  attachIdeaId(id: string, ideaId: string) {
+    return prisma.command.update({
+      where: { id },
+      data: { ideaId },
+    });
+  },
+
   recordReply(id: string, replyText: string, replyStatus: CommandReplyStatus) {
     return prisma.command.update({
       where: { id },

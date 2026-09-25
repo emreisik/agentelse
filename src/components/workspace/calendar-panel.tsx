@@ -408,10 +408,7 @@ function ScheduleQuickEdit({
   closeHref: string;
 }) {
   const scheduledValue = item.scheduledFor
-    ? utcToZonedDateTimeLocal(new Date(item.scheduledFor), timezone).slice(
-        0,
-        16,
-      )
+    ? utcToZonedDateTimeLocal(new Date(item.scheduledFor), timezone)
     : "";
 
   return (

@@ -270,7 +270,14 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
 
     case "publish-result": {
       const tone: WsTone = card.status === "COMPLETED" ? "positive" : "danger";
-      const hasDetails = Boolean(card.permalink || card.errorMessage);
+      // postId is written on every successful publish (see
+      // task.repository.ts/execution-service.ts) but nothing populates
+      // permalink today — without postId here, a successful publish
+      // showed nothing beyond the "Published" badge, no reference to the
+      // actual post at all.
+      const hasDetails = Boolean(
+        card.permalink || card.postId || card.errorMessage,
+      );
       return (
         <WsEventCard
           icon={card.status === "COMPLETED" ? Send : XCircle}
@@ -294,6 +301,8 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
                 >
                   {card.permalink}
                 </a>
+              ) : card.postId ? (
+                <p>Post ID: {card.postId}</p>
               ) : null}
               {card.errorMessage ? <p>{card.errorMessage}</p> : null}
             </WsDetailToggle>

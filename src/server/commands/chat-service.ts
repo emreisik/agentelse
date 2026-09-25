@@ -248,6 +248,12 @@ export const ChatService = {
       // Path gets the identical, already-designed "here's why, here's how
       // to fix it" treatment instead of plain text.
       card = { kind: "limit-notice", reason: "active-ideas" };
+    } else if (submission.status === "WEEKLY_PLAN_CREATED") {
+      // Same visual card the cron-triggered path posts (see
+      // instagram-week-planner.ts) — the chat-triggered "Plan this week"
+      // gets the identical mini-grid instead of only the plain-text
+      // summary already set as `reply` above.
+      card = { kind: "content-plan-summary", ...submission.result };
     }
     if (card) {
       await CommandRepository.attachParsedIntent(

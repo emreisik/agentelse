@@ -15,6 +15,7 @@ import { AgencyDecisionRepository } from "@/server/repositories/agency-decision.
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { WorkHandoffRepository } from "@/server/repositories/work-handoff.repository";
+import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { prisma } from "@/lib/prisma";
 
 type AcceptOpts = {
@@ -139,12 +140,38 @@ export const WorkHandoffEngine = {
     payload?: Record<string, unknown>;
     expiresInHours?: number;
   }) {
-    return WorkHandoffRepository.create({
+    const handoff = await WorkHandoffRepository.create({
       ...input,
       expiresAt: input.expiresInHours
         ? new Date(Date.now() + input.expiresInHours * 3600_000)
         : undefined,
     });
+
+    // Single-chat consolidation (docs/brand-workspace-migration.md) — a
+    // proposed handoff previously surfaced nowhere outside the Work
+    // panel's Handoffs tab, silent exactly like the creative-card gaps
+    // Faz 1 closed. Best-effort: the handoff itself is already committed
+    // above, a chat-post failure must not undo or block it.
+    const ideaId = input.workPlanId
+      ? await IdeaChatRepository.resolveIdeaIdForWorkPlan(input.workPlanId)
+      : null;
+    await IdeaChatRepository.postSystemMessage({
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      ideaId,
+      text: `🔀 ${input.fromDepartment.replaceAll("_", " ")} → ${input.toDepartment.replaceAll("_", " ")}: ${input.reason}`,
+      card: {
+        kind: "handoff-proposed",
+        handoffId: handoff.id,
+        fromDepartment: input.fromDepartment,
+        toDepartment: input.toDepartment,
+        reason: input.reason,
+      },
+    }).catch((error) => {
+      console.error("[work-handoff-engine] postSystemMessage failed:", error);
+    });
+
+    return handoff;
   },
 
   // Accepting a handoff = a recorded director-level decision + a task in the

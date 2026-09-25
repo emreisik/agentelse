@@ -398,6 +398,49 @@ describe("ChatService.turn — Deep Path (strategic request)", () => {
       "brand-1",
     );
   });
+
+  it("replaces the reply with the real summary and attaches a content-plan-summary card for WEEKLY_PLAN_CREATED", async () => {
+    run.mockResolvedValue({
+      output: { reply: "Sure, I'll plan your week.", intentKind: "TASK" },
+    });
+    const weeklyResult = {
+      ideasConsidered: 3,
+      imagesGenerated: 3,
+      imagesFailed: 0,
+      scheduled: 3,
+      cappedForToday: false,
+      pendingReview: 0,
+      items: [{ creativeId: "c-1", title: "Idea a" }],
+    };
+    submit.mockResolvedValue({
+      status: "WEEKLY_PLAN_CREATED",
+      commandId: "cmd-plan",
+      summary: "📅 Weekly content plan: 3/3 created, 3 scheduled.",
+      result: weeklyResult,
+    });
+
+    const result = await ChatService.turn({
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      userId: "user-1",
+      message: "plan this week",
+    });
+
+    expect(result.status).toBe("PLANNED");
+    expect(result.reply).toBe(
+      "📅 Weekly content plan: 3/3 created, 3 scheduled.",
+    );
+    expect(result.card).toEqual({
+      kind: "content-plan-summary",
+      ...weeklyResult,
+    });
+    expect(attachParsedIntent).toHaveBeenCalledWith(
+      "cmd-plan",
+      { card: { kind: "content-plan-summary", ...weeklyResult } },
+      "proj-1",
+      "brand-1",
+    );
+  });
 });
 
 describe("ChatService.turn — existing fallback behavior (regression)", () => {

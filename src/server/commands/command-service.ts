@@ -29,6 +29,7 @@ import {
   planWeeklyInstagramContent,
   summarizeWeeklyPlanResult,
   weeklyPlanConfigFromSchedule,
+  type WeeklyPlanResult,
 } from "@/server/agency/content/instagram-week-planner";
 
 export type SubmitCommandInput = {
@@ -92,11 +93,20 @@ export type SubmitCommandResult =
   // A chat-triggered "plan this week" (CREATE_CONTENT_PLAN, general chat
   // only — see the branch below) ran the real batch planner synchronously
   // and it already finished by the time this returns — summary becomes the
-  // direct reply text (chat-service.ts). The per-idea creative-ready cards
-  // are posted by planWeeklyInstagramContent itself as it runs; its own
+  // direct reply text and result (which already carries items, see
+  // WeeklyPlanResult) becomes the SAME visual "content-plan-summary" card
+  // the cron path posts (chat-service.ts attaches it via
+  // CommandRepository.attachParsedIntent, the same mechanism the
+  // `question` card already uses). The per-idea creative-ready cards are
+  // posted by planWeeklyInstagramContent itself as it runs; its own
   // end-of-batch summary message is skipped here (skipSummaryMessage) so
-  // it doesn't duplicate this same text right next to it.
-  | { status: "WEEKLY_PLAN_CREATED"; commandId: string; summary: string };
+  // it doesn't duplicate this same content twice.
+  | {
+      status: "WEEKLY_PLAN_CREATED";
+      commandId: string;
+      summary: string;
+      result: WeeklyPlanResult;
+    };
 
 // Capabilities where a chat TASK intent must NOT go straight to
 // TaskPlanner.planForCapability — the parameters they need (ad budget,
@@ -382,6 +392,7 @@ export const CommandService = {
         status: "WEEKLY_PLAN_CREATED",
         commandId: command.id,
         summary: summarizeWeeklyPlanResult(result),
+        result,
       };
     }
 

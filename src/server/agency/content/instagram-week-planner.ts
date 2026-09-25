@@ -38,6 +38,17 @@ export type WeeklyPlanResult = {
   // project's AutopilotMode isn't AUTOPILOT, or the claim-safety check
   // flagged it. See the main loop below.
   pendingReview: number;
+  // Per-item record for the "content-plan-summary" chat card's visual
+  // grid (idea-event-card.tsx) and for the chat-triggered path's direct
+  // reply (command-service.ts) — every successfully generated creative,
+  // regardless of autopilot mode; scheduledFor is filled in only for the
+  // ones the scheduling pass below actually assigned a slot to.
+  items: {
+    creativeId: string;
+    assetId?: string;
+    title: string;
+    scheduledFor?: string;
+  }[];
 };
 
 // Content-mix quota (spec: ContentProgram, e.g. "40% Product, 25%
@@ -228,6 +239,7 @@ export async function planWeeklyInstagramContent(
     scheduled: 0,
     cappedForToday: false,
     pendingReview: 0,
+    items: [],
   };
   if (ideas.length === 0) return result;
 
@@ -412,6 +424,11 @@ export async function planWeeklyInstagramContent(
       });
 
       if (schedulable) createdCreativeIds.push(creative.id);
+      result.items.push({
+        creativeId: creative.id,
+        assetId: asset.id,
+        title: idea.title,
+      });
       result.imagesGenerated += 1;
     } catch (error) {
       // A cap/budget hit isn't a generation failure — every remaining idea
@@ -453,12 +470,15 @@ export async function planWeeklyInstagramContent(
       );
       for (const time of daySlots) {
         if (index >= createdCreativeIds.length) break;
+        const creativeId = createdCreativeIds[index]!;
         const scheduledFor = zonedDateTimeToUtc(`${dayKey}T${time}`, timezone);
         await CreativeRepository.setScheduledFor(
-          createdCreativeIds[index]!,
+          creativeId,
           projectId,
           scheduledFor,
         );
+        const item = result.items.find((i) => i.creativeId === creativeId);
+        if (item) item.scheduledFor = scheduledFor.toISOString();
         index += 1;
         result.scheduled += 1;
       }
@@ -485,18 +505,30 @@ export async function planWeeklyInstagramContent(
     },
   });
 
-  // One project-wide summary, not per-idea — the individual creative-ready
-  // cards above already cover the per-idea detail. ideaId: null since this
-  // is a batch spanning many ideas, not any single one's event (see
-  // docs/brand-workspace-migration.md single-chat consolidation). Skipped
-  // when the chat-triggered path (command-service.ts) is about to show the
-  // same text as its direct reply — see skipSummaryMessage above.
+  // One project-wide summary card (visual mini-grid, see
+  // idea-event-card.tsx's ContentPlanSummaryCard), not per-idea — the
+  // individual creative-ready cards above already cover the per-idea
+  // detail. ideaId: null since this is a batch spanning many ideas, not
+  // any single one's event (see docs/brand-workspace-migration.md
+  // single-chat consolidation). Skipped when the chat-triggered path
+  // (command-service.ts) is about to show the same text as its direct
+  // reply — see skipSummaryMessage above.
   if (!options?.skipSummaryMessage) {
     await IdeaChatRepository.postSystemMessage({
       workspaceId,
       projectId,
       ideaId: null,
       text: summarizeWeeklyPlanResult(result),
+      card: {
+        kind: "content-plan-summary",
+        ideasConsidered: result.ideasConsidered,
+        imagesGenerated: result.imagesGenerated,
+        imagesFailed: result.imagesFailed,
+        scheduled: result.scheduled,
+        pendingReview: result.pendingReview,
+        cappedForToday: result.cappedForToday,
+        items: result.items,
+      },
     }).catch((error) => {
       console.error(
         "[instagram-week-planner] summary postSystemMessage failed:",

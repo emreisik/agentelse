@@ -114,6 +114,7 @@ beforeEach(() => {
     scheduled: 2,
     cappedForToday: false,
     pendingReview: 0,
+    items: [],
   });
 });
 
@@ -327,6 +328,15 @@ describe("CommandService.submit — CREATE_CONTENT_PLAN (chat-triggered weekly b
       status: "WEEKLY_PLAN_CREATED",
       commandId: "cmd-1",
       summary: "summary: 2 created",
+      result: {
+        ideasConsidered: 2,
+        imagesGenerated: 2,
+        imagesFailed: 0,
+        scheduled: 2,
+        cappedForToday: false,
+        pendingReview: 0,
+        items: [],
+      },
     });
     expect(planForCapability).not.toHaveBeenCalled();
   });

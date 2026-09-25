@@ -225,6 +225,7 @@ describe("planWeeklyInstagramContent", () => {
       scheduled: 0,
       cappedForToday: false,
       pendingReview: 0,
+      items: [],
     });
     expect(generateCreativeImage).not.toHaveBeenCalled();
     expect(auditRecord).not.toHaveBeenCalled();

@@ -6,14 +6,16 @@ import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { DepartmentKey } from "@prisma/client";
 import {
+  CalendarClock,
   CheckCircle2,
-  ChevronRight,
   CircleCheck,
+  CircleSlash,
   ClipboardList,
   Compass,
   FileSearch,
   Gauge,
   Hourglass,
+  ImageIcon,
   KeyRound,
   Lightbulb,
   Loader2,
@@ -21,6 +23,7 @@ import {
   Radio,
   Send,
   Settings2,
+  Share2,
   ShieldCheck,
   ShieldX,
   Sparkles,
@@ -30,15 +33,19 @@ import {
 
 import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { StatusBadge } from "@/components/shared/status-badge";
 import { DepartmentBadge } from "@/components/shared/department-badge";
 import {
-  TONE_CLASSES,
   DEPARTMENT_KEY,
   RISK_LEVEL,
   stripCapabilityPrefix,
-  type StatusTone,
 } from "@/lib/labels";
+import {
+  WsDetailToggle,
+  WsEventCard,
+  WsStatusPill,
+  WsTag,
+  type WsTone,
+} from "@/components/commands/ws-event-card";
 import { CreativeCard } from "@/components/commands/creative-card";
 import { isCreativeCardData } from "@/types/creative-card";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
@@ -46,19 +53,11 @@ import {
   approveApprovalAction,
   rejectApprovalAction,
 } from "@/server/actions/approval-actions";
-
-// Soft color of the card frame based on tone — from the same token family
-// as TONE_CLASSES (oklch --success/--primary/--warning/--destructive/
-// --special), just applied to the card background instead of a badge. NO
-// new color, just reusing the existing semantic palette at the card level.
-const CARD_TONE_CLASSES: Record<StatusTone, string> = {
-  positive: "ring-success/20 bg-success/[0.04]",
-  active: "ring-primary/20 bg-primary/[0.04]",
-  waiting: "ring-warning/20 bg-warning/[0.04]",
-  neutral: "ring-foreground/10 bg-card",
-  danger: "ring-destructive/20 bg-destructive/[0.04]",
-  special: "ring-special/20 bg-special/[0.04]",
-};
+import {
+  acceptHandoffAction,
+  rejectHandoffAction,
+} from "@/server/actions/agency-work-actions";
+import { submitChatMessageAction } from "@/server/actions/command-actions";
 
 // Narrows a raw department string (e.g. "BRAND_STRATEGY") to DepartmentKey
 // if valid — so that EVERYWHERE a department is mentioned in cards, the
@@ -70,94 +69,107 @@ function asDepartmentKey(department?: string): DepartmentKey | undefined {
     : undefined;
 }
 
-// The common render for EVERY pipeline event in an idea's chat — the
-// "golden rule": from the originating signal to the creative generation,
-// everything uses the same card format. The icon + title (+ badge, if any)
-// at the top is ALWAYS visible; long bodies (council rationale, task
-// output text, finding/insight description) are collapsed by default via
-// EventDetailToggle and expand on click.
+// The common render for EVERY pipeline event in the single project chat —
+// the "golden rule": from the originating signal to the creative
+// generation, everything uses the same card format (WsEventCard, see
+// ws-event-card.tsx — the monochrome --ws-* system CreativeReadyCard
+// established, now shared by all 18 card kinds instead of half using a
+// separate oklch tone system). The icon + title (+ badge, if any) at the
+// top is ALWAYS visible; long bodies (council rationale, task output text,
+// finding/insight description) are collapsed by default via
+// WsDetailToggle and expand on click.
 export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
   if (isCreativeCardData(card)) return <CreativeCard card={card} />;
 
   switch (card.kind) {
     case "signal":
       return (
-        <EventCard icon={Radio} title={card.title} tone="special">
+        <WsEventCard icon={Radio} title={card.title} tone="special">
           {card.summary ? (
-            <EventDetailToggle label="Signal details">
+            <WsDetailToggle label="Signal details">
               {card.summary}
-            </EventDetailToggle>
+            </WsDetailToggle>
           ) : null}
-        </EventCard>
+        </WsEventCard>
       );
 
     case "finding":
       return (
-        <EventCard icon={FileSearch} title={card.title} tone="neutral">
-          <EventDetailToggle label="Finding details">
+        <WsEventCard icon={FileSearch} title={card.title} tone="neutral">
+          <WsDetailToggle label="Finding details">
             {card.statement}
-          </EventDetailToggle>
-        </EventCard>
+          </WsDetailToggle>
+        </WsEventCard>
       );
 
     case "insight-opportunity":
       return (
-        <EventCard icon={Sparkles} title={card.title} tone="active">
+        <WsEventCard icon={Sparkles} title={card.title} tone="special">
           {card.summary ? (
-            <p className="text-sm text-muted-foreground">{card.summary}</p>
+            <p className="text-sm" style={{ color: "var(--ws-text-2)" }}>
+              {card.summary}
+            </p>
           ) : null}
           {card.description ? (
-            <EventDetailToggle label="Opportunity details">
+            <WsDetailToggle label="Opportunity details">
               {card.description}
-            </EventDetailToggle>
+            </WsDetailToggle>
           ) : null}
-        </EventCard>
+        </WsEventCard>
       );
 
     case "idea":
       return (
-        <EventCard icon={Lightbulb} title={card.title} tone="active">
-          <p className="text-sm text-muted-foreground">{card.description}</p>
-        </EventCard>
+        <WsEventCard icon={Lightbulb} title={card.title} tone="special">
+          <p className="text-sm" style={{ color: "var(--ws-text-2)" }}>
+            {card.description}
+          </p>
+        </WsEventCard>
       );
 
     case "council": {
-      const tone: StatusTone =
+      const tone: WsTone =
         card.verdict === "REJECT"
           ? "danger"
           : card.verdict === "REVISE"
             ? "waiting"
             : "positive";
       return (
-        <EventCard
+        <WsEventCard
           icon={Compass}
           title="Council review"
           tone={tone}
-          badge={{ label: VERDICT_LABEL[card.verdict] ?? card.verdict, tone }}
+          badgeLabel={VERDICT_LABEL[card.verdict] ?? card.verdict}
         >
-          <EventDetailToggle label="See council rationale">
+          <WsDetailToggle label="See council rationale">
             <div className="space-y-3">
               {card.notes.map((note, index) => (
                 <div key={index}>
-                  <p className="text-sm font-medium text-foreground">
+                  <p
+                    className="text-sm font-medium"
+                    style={{ color: "var(--ws-text)" }}
+                  >
                     {note.council} — {note.verdict}
                   </p>
                   {note.rationale ? (
-                    <p className="mt-0.5 text-sm text-muted-foreground">
+                    <p
+                      className="mt-0.5 text-sm"
+                      style={{ color: "var(--ws-text-2)" }}
+                    >
                       {note.rationale}
                     </p>
                   ) : null}
                 </div>
               ))}
             </div>
-          </EventDetailToggle>
-        </EventCard>
+          </WsDetailToggle>
+        </WsEventCard>
       );
     }
 
     case "work-plan":
       return (
-        <EventCard icon={ClipboardList} title={card.title} tone="active">
+        <WsEventCard icon={ClipboardList} title={card.title} tone="special">
           <ul className="space-y-1.5">
             {card.nodes.map((node, index) => {
               const departmentKey = asDepartmentKey(node.department);
@@ -166,34 +178,37 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
                   {departmentKey ? (
                     <DepartmentBadge department={departmentKey} size="xs" />
                   ) : (
-                    <span className="font-medium text-foreground">
+                    <span
+                      className="font-medium"
+                      style={{ color: "var(--ws-text)" }}
+                    >
                       {node.department}
                     </span>
                   )}
-                  <span className="text-muted-foreground">
+                  <span style={{ color: "var(--ws-text-2)" }}>
                     : {node.request}
                   </span>
                 </li>
               );
             })}
           </ul>
-        </EventCard>
+        </WsEventCard>
       );
 
     case "task-running":
       return (
-        <EventCard
+        <WsEventCard
           icon={Loader2}
           iconClassName="animate-spin"
           title={card.title}
-          tone="active"
-          badge={{ label: "Running", tone: "active" }}
+          tone="special"
+          badgeLabel="Running"
           department={asDepartmentKey(card.department)}
         />
       );
 
     case "task-result": {
-      const tone: StatusTone =
+      const tone: WsTone =
         card.status === "COMPLETED"
           ? "positive"
           : card.status === "CANCELLED"
@@ -203,7 +218,7 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
         card.status === "COMPLETED"
           ? CheckCircle2
           : card.status === "CANCELLED"
-            ? XCircle
+            ? CircleSlash
             : XCircle;
       const badgeLabel =
         card.status === "COMPLETED"
@@ -212,92 +227,110 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
             ? "Cancelled"
             : "Failed";
       return (
-        <EventCard
+        <WsEventCard
           icon={icon}
           title={card.title}
           tone={tone}
-          badge={{ label: badgeLabel, tone }}
+          badgeLabel={badgeLabel}
           department={asDepartmentKey(card.department)}
         >
           {card.resultText ? (
-            <EventDetailToggle label="See generated content">
+            <WsDetailToggle label="See generated content">
               {card.resultText}
-            </EventDetailToggle>
+            </WsDetailToggle>
           ) : null}
-        </EventCard>
+        </WsEventCard>
       );
     }
 
     case "approval-request":
       return <ApprovalRequestCard card={card} />;
 
+    case "handoff-proposed":
+      return <HandoffProposedCard card={card} />;
+
     case "limit-notice":
       return <LimitNoticeCard card={card} />;
 
     case "approval-decision": {
-      const tone: StatusTone =
-        card.decision === "APPROVED" ? "positive" : "danger";
+      const tone: WsTone = card.decision === "APPROVED" ? "positive" : "danger";
       return (
-        <EventCard
+        <WsEventCard
           icon={card.decision === "APPROVED" ? ShieldCheck : ShieldX}
           title={card.title}
           tone={tone}
-          badge={{
-            label: card.decision === "APPROVED" ? "Approved" : "Rejected",
-            tone,
-          }}
+          badgeLabel={card.decision === "APPROVED" ? "Approved" : "Rejected"}
         >
           {card.note ? (
-            <EventDetailToggle label="Note">{card.note}</EventDetailToggle>
+            <WsDetailToggle label="Note">{card.note}</WsDetailToggle>
           ) : null}
-        </EventCard>
+        </WsEventCard>
       );
     }
 
     case "publish-result": {
-      const tone: StatusTone =
-        card.status === "COMPLETED" ? "positive" : "danger";
+      const tone: WsTone = card.status === "COMPLETED" ? "positive" : "danger";
       const hasDetails = Boolean(card.permalink || card.errorMessage);
       return (
-        <EventCard
+        <WsEventCard
           icon={card.status === "COMPLETED" ? Send : XCircle}
           title={card.title}
           tone={tone}
-          badge={{
-            label:
-              card.status === "COMPLETED"
-                ? `${card.platform} — Published`
-                : `${card.platform} — Failed`,
-            tone,
-          }}
+          badgeLabel={
+            card.status === "COMPLETED"
+              ? `${card.platform} — Published`
+              : `${card.platform} — Failed`
+          }
         >
           {hasDetails ? (
-            <EventDetailToggle label="Publish details">
+            <WsDetailToggle label="Publish details">
               {card.permalink ? (
                 <a
                   href={card.permalink}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-primary underline underline-offset-2"
+                  className="underline underline-offset-2"
+                  style={{ color: "var(--ws-text)" }}
                 >
                   {card.permalink}
                 </a>
               ) : null}
               {card.errorMessage ? <p>{card.errorMessage}</p> : null}
-            </EventDetailToggle>
+            </WsDetailToggle>
           ) : null}
-        </EventCard>
+        </WsEventCard>
       );
     }
 
+    case "question":
+      return <QuestionCard card={card} />;
+
+    case "content-plan-summary":
+      return <ContentPlanSummaryCard card={card} />;
+
     case "ads-form-prompt":
       return (
-        <div className="mt-1 w-full max-w-sm space-y-2 rounded-2xl border border-border bg-card p-3.5">
+        <div
+          className="mt-1 w-full max-w-sm space-y-2 rounded-2xl border p-3.5"
+          style={{
+            borderColor: "var(--ws-border)",
+            background: "var(--ws-surface)",
+          }}
+        >
           <div className="flex items-center gap-2">
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Megaphone className="size-3.5" />
+            <span
+              className="flex size-7 shrink-0 items-center justify-center rounded-lg"
+              style={{ background: "var(--ws-hover)" }}
+            >
+              <Megaphone
+                className="size-3.5"
+                style={{ color: "var(--ws-text)" }}
+              />
             </span>
-            <p className="text-sm font-medium text-foreground">
+            <p
+              className="text-sm font-medium"
+              style={{ color: "var(--ws-text)" }}
+            >
               {stripCapabilityPrefix(card.title)} — I&apos;ve opened a form for
               the budget and targeting details.
             </p>
@@ -333,7 +366,7 @@ const LIMIT_NOTICE_COPY: Record<
   LimitNoticeData["reason"],
   {
     icon: typeof Gauge;
-    tone: StatusTone;
+    tone: WsTone;
     title: string;
     description: (card: LimitNoticeData) => string;
     settingsCta: boolean;
@@ -429,26 +462,96 @@ function LimitNoticeCard({ card }: { card: LimitNoticeData }) {
       : undefined;
 
   return (
-    <EventCard
+    <WsEventCard
       icon={copy.icon}
       title={copy.title}
       tone={copy.tone}
-      badge={usage ? { label: usage, tone: copy.tone } : undefined}
+      badgeLabel={usage}
     >
-      <p className="text-sm text-muted-foreground">{copy.description(card)}</p>
+      <p className="text-sm" style={{ color: "var(--ws-text-2)" }}>
+        {copy.description(card)}
+      </p>
       {copy.settingsCta && projectId ? (
         <Link
           href={`/projects/${projectId}?panel=ayarlar&sub=otonomi`}
           className={cn(
             buttonVariants({ size: "sm", variant: "outline" }),
-            "w-fit",
+            "mt-2 w-fit",
           )}
         >
           <Settings2 className="size-3.5" />
           Open autonomy settings
         </Link>
       ) : null}
-    </EventCard>
+    </WsEventCard>
+  );
+}
+
+// Shared shell for the two "waiting for a click" cards below (approval
+// and handoff) — same ring/background, same header row, same optimistic
+// resolved-state swap. Not reused for QuestionCard, whose shape (multiple
+// question groups + one shared Continue button) is genuinely different.
+function WsDecisionCard({
+  icon: Icon,
+  eyebrow,
+  title,
+  department,
+  badge,
+  children,
+  error,
+  actions,
+}: {
+  icon: React.ComponentType<{
+    className?: string;
+    style?: React.CSSProperties;
+  }>;
+  eyebrow: string;
+  title: string;
+  department?: DepartmentKey;
+  badge?: React.ReactNode;
+  children?: React.ReactNode;
+  error?: string;
+  actions: React.ReactNode;
+}) {
+  return (
+    <div
+      className="mt-1 w-full max-w-md space-y-3 rounded-2xl border p-4"
+      style={{
+        borderColor: "var(--ws-border)",
+        background: "var(--ws-surface)",
+      }}
+    >
+      <div className="flex items-start justify-between gap-2.5">
+        <div className="flex items-center gap-2">
+          <Icon
+            className="size-4 shrink-0"
+            style={{ color: "var(--ws-text)" }}
+          />
+          <p
+            className="text-sm font-semibold"
+            style={{ color: "var(--ws-text)" }}
+          >
+            {eyebrow}
+          </p>
+        </div>
+        {badge}
+      </div>
+      <div className="space-y-1">
+        <p className="text-sm font-medium" style={{ color: "var(--ws-text)" }}>
+          {stripCapabilityPrefix(title)}
+        </p>
+        {department ? (
+          <DepartmentBadge department={department} size="xs" />
+        ) : null}
+      </div>
+      {children}
+      {error ? (
+        <p className="text-xs" style={{ color: "#dc2626" }}>
+          {error}
+        </p>
+      ) : null}
+      <div className="flex gap-2">{actions}</div>
+    </div>
   );
 }
 
@@ -499,7 +602,7 @@ function ApprovalRequestCard({
 
   if (decision) {
     return (
-      <EventCard
+      <WsEventCard
         icon={decision === "APPROVED" ? ShieldCheck : ShieldX}
         title={decision === "APPROVED" ? "Approved" : "Rejected"}
         tone={decision === "APPROVED" ? "positive" : "danger"}
@@ -509,154 +612,436 @@ function ApprovalRequestCard({
   }
 
   return (
-    <div
-      className={cn(
-        "mt-1 w-full max-w-md space-y-3 rounded-2xl bg-card p-4 ring-1",
-        CARD_TONE_CLASSES.waiting,
-      )}
+    <WsDecisionCard
+      icon={CircleCheck}
+      eyebrow="Awaiting approval"
+      title={card.title}
+      department={departmentKey}
+      badge={
+        <WsStatusPill
+          label={RISK_LEVEL[card.riskLevel]?.label ?? card.riskLevel}
+          tone={riskTone(card.riskLevel)}
+        />
+      }
+      error={error}
+      actions={
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            disabled={isPending}
+            onClick={() => decide("REJECTED")}
+          >
+            Reject
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={isPending}
+            className="rounded-full"
+            style={{
+              background: "var(--ws-accent)",
+              color: "var(--ws-on-accent)",
+            }}
+            onClick={() => decide("APPROVED")}
+          >
+            Approve
+          </Button>
+        </>
+      }
     >
-      <div className="flex items-start justify-between gap-2.5">
-        <div className="flex items-center gap-2">
-          <CircleCheck className="size-4 shrink-0 text-foreground" />
-          <p className="text-sm font-semibold text-foreground">
-            Awaiting approval
-          </p>
-        </div>
-        <StatusBadge meta={RISK_LEVEL[card.riskLevel]} />
-      </div>
-      <div className="space-y-1">
-        <p className="text-sm font-medium text-foreground">
-          {stripCapabilityPrefix(card.title)}
-        </p>
-        {departmentKey ? (
-          <DepartmentBadge department={departmentKey} size="xs" />
-        ) : null}
-      </div>
       {card.details && card.details.length > 0 ? (
-        <div className="space-y-1 rounded-lg bg-muted/40 p-2.5">
+        <div
+          className="space-y-1 rounded-lg p-2.5"
+          style={{ background: "var(--ws-hover)" }}
+        >
           {card.details.map((detail) => (
             <div
               key={detail.label}
               className="flex items-start justify-between gap-3 text-xs"
             >
-              <span className="shrink-0 text-muted-foreground">
+              <span className="shrink-0" style={{ color: "var(--ws-text-3)" }}>
                 {detail.label}
               </span>
-              <span className="text-right font-medium text-foreground">
+              <span
+                className="text-right font-medium"
+                style={{ color: "var(--ws-text)" }}
+              >
                 {detail.value}
               </span>
             </div>
           ))}
         </div>
       ) : null}
-      <p className="text-sm text-muted-foreground">
+      <p className="text-sm" style={{ color: "var(--ws-text-2)" }}>
         Your approval is required before execution. If rejected, the task will
         be cancelled.
       </p>
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="rounded-full"
-          disabled={isPending}
-          onClick={() => decide("REJECTED")}
-        >
-          Reject
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={isPending}
-          className="rounded-full bg-success text-success-foreground hover:bg-success/90"
-          onClick={() => decide("APPROVED")}
-        >
-          Approve
-        </Button>
-      </div>
-    </div>
+    </WsDecisionCard>
   );
 }
 
-function EventCard({
-  icon: Icon,
-  iconClassName,
-  title,
-  tone = "neutral",
-  badge,
-  department,
-  children,
+function riskTone(risk: string): WsTone {
+  if (risk === "CRITICAL" || risk === "HIGH") return "danger";
+  if (risk === "MEDIUM") return "waiting";
+  return "neutral";
+}
+
+// A cross-department handoff proposal, directly actionable from chat —
+// previously only visible/actionable in the Work panel's Handoffs tab (see
+// idea-event-card.ts's comment on the "handoff-proposed" kind). Mirrors
+// ApprovalRequestCard's exact pattern (optimistic resolved state, same
+// FormData + useTransition shape) since it's the same "waiting for one
+// human click" shape.
+function HandoffProposedCard({
+  card,
 }: {
-  icon: React.ComponentType<{ className?: string }>;
-  iconClassName?: string;
-  title: string;
-  tone?: StatusTone;
-  badge?: { label: string; tone: StatusTone };
-  department?: DepartmentKey;
-  children?: React.ReactNode;
+  card: Extract<IdeaEventCardData, { kind: "handoff-proposed" }>;
 }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [decision, setDecision] = useState<"ACCEPTED" | "REJECTED" | null>(
+    null,
+  );
+  const [error, setError] = useState<string | undefined>(undefined);
+  const fromDept = asDepartmentKey(card.fromDepartment);
+  const toDept = asDepartmentKey(card.toDepartment);
+
+  const decide = (to: "ACCEPTED" | "REJECTED") => {
+    setError(undefined);
+    startTransition(async () => {
+      try {
+        const formData = new FormData();
+        formData.set("handoffId", card.handoffId);
+        const action =
+          to === "ACCEPTED" ? acceptHandoffAction : rejectHandoffAction;
+        const result = await action(formData);
+        if (result.ok) {
+          setDecision(to);
+          toast.success(
+            to === "ACCEPTED" ? "Handoff accepted" : "Handoff rejected",
+          );
+          router.refresh();
+        } else {
+          setError(result.message);
+          toast.error(result.message);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Action failed";
+        setError(message);
+        toast.error(message);
+      }
+    });
+  };
+
+  if (decision) {
+    return (
+      <WsEventCard
+        icon={decision === "ACCEPTED" ? ShieldCheck : ShieldX}
+        title={
+          decision === "ACCEPTED" ? "Handoff accepted" : "Handoff rejected"
+        }
+        tone={decision === "ACCEPTED" ? "positive" : "danger"}
+        department={toDept}
+      />
+    );
+  }
+
+  return (
+    <WsDecisionCard
+      icon={Share2}
+      eyebrow="Cross-department handoff"
+      title={card.reason}
+      error={error}
+      badge={
+        <div className="flex items-center gap-1">
+          {fromDept ? (
+            <DepartmentBadge department={fromDept} size="xs" />
+          ) : null}
+          <span style={{ color: "var(--ws-text-3)" }}>→</span>
+          {toDept ? <DepartmentBadge department={toDept} size="xs" /> : null}
+        </div>
+      }
+      actions={
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            disabled={isPending}
+            onClick={() => decide("REJECTED")}
+          >
+            Reject
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={isPending}
+            className="rounded-full"
+            style={{
+              background: "var(--ws-accent)",
+              color: "var(--ws-on-accent)",
+            }}
+            onClick={() => decide("ACCEPTED")}
+          >
+            Accept
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm" style={{ color: "var(--ws-text-2)" }}>
+        {card.toDepartment.replaceAll("_", " ")} needs to pick this up before
+        work continues.
+      </p>
+    </WsDecisionCard>
+  );
+}
+
+// The weekly batch planner's result (planWeeklyInstagramContent, see
+// instagram-week-planner.ts) — a visual mini-grid of what got scheduled
+// instead of a plain-text-only summary. Each item links straight to its
+// creative on the Content Calendar; the numbers row always shows the
+// batch's real outcome (created/scheduled/pending/failed), never just the
+// happy path.
+function ContentPlanSummaryCard({
+  card,
+}: {
+  card: Extract<IdeaEventCardData, { kind: "content-plan-summary" }>;
+}) {
+  const params = useParams<{ projectId?: string }>();
+  const projectId =
+    typeof params?.projectId === "string" ? params.projectId : undefined;
+
   return (
     <div
-      className={cn(
-        "mt-1 w-full max-w-md space-y-2 rounded-2xl bg-card p-3.5 ring-1",
-        CARD_TONE_CLASSES[tone],
-      )}
+      className="mt-1 w-full max-w-md space-y-3 rounded-2xl border p-3.5"
+      style={{
+        borderColor: "var(--ws-border)",
+        background: "var(--ws-surface)",
+      }}
     >
       <div className="flex items-center gap-2.5">
         <span
-          className={cn(
-            "flex size-7 shrink-0 items-center justify-center rounded-lg",
-            TONE_CLASSES[tone],
-          )}
+          className="flex size-7 shrink-0 items-center justify-center rounded-lg"
+          style={{ background: "var(--ws-hover)" }}
         >
-          <Icon className={cn("size-3.5", iconClassName)} />
+          <CalendarClock
+            className="size-3.5"
+            style={{ color: "var(--ws-text)" }}
+          />
         </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-foreground">
-            {stripCapabilityPrefix(title)}
-          </p>
-          {department ? (
-            <DepartmentBadge
-              department={department}
-              size="xs"
-              className="mt-0.5"
-            />
-          ) : null}
-        </div>
-        {badge ? (
-          <StatusBadge meta={{ label: badge.label, tone: badge.tone }} />
+        <p
+          className="text-sm font-semibold"
+          style={{ color: "var(--ws-text)" }}
+        >
+          Weekly content plan
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        <WsTag>
+          {card.imagesGenerated}/{card.ideasConsidered} created
+        </WsTag>
+        {card.scheduled > 0 ? <WsTag>{card.scheduled} scheduled</WsTag> : null}
+        {card.pendingReview > 0 ? (
+          <WsStatusPill
+            label={`${card.pendingReview} awaiting approval`}
+            tone="waiting"
+          />
+        ) : null}
+        {card.imagesFailed > 0 ? (
+          <WsStatusPill label={`${card.imagesFailed} failed`} tone="danger" />
+        ) : null}
+        {card.cappedForToday ? (
+          <WsStatusPill label="Stopped early — daily cap" tone="waiting" />
         ) : null}
       </div>
-      {children ? <div className="pl-9.5">{children}</div> : null}
+
+      {card.items.length > 0 ? (
+        <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
+          {card.items.map((item) => {
+            const thumb = item.assetId ? (
+              <img
+                src={`/api/assets/${item.assetId}`}
+                alt={item.title}
+                className="size-full object-cover"
+              />
+            ) : (
+              <ImageIcon
+                className="size-4"
+                style={{ color: "var(--ws-on-accent)", opacity: 0.6 }}
+              />
+            );
+            const body = (
+              <div
+                className="flex aspect-square items-center justify-center overflow-hidden rounded-lg"
+                style={{ background: "var(--ws-accent)" }}
+                title={item.title}
+              >
+                {thumb}
+              </div>
+            );
+            return projectId ? (
+              <Link
+                key={item.creativeId}
+                href={`/projects/${projectId}/takvim?creative=${item.creativeId}`}
+              >
+                {body}
+              </Link>
+            ) : (
+              <div key={item.creativeId}>{body}</div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-// For long bodies: collapsed by default, expands on click (modeled after
-// reasoning.tsx's ReasoningTrigger/ReasoningContent pattern — the same
-// chevron-rotate + collapsible-up/down animation classes).
-function EventDetailToggle({
-  label,
-  children,
+// The chat surface's structured fork (chat-turn.ts's `questions` field,
+// spec: "QUESTION CARD") — picking option(s) for every question (single-
+// select behaves like radio buttons — one pick replaces the last; multi-
+// select toggles) and hitting Continue sends the combined answer as the
+// client's next message via the SAME submitChatMessageAction the composer
+// uses (no separate answer-handling action needed), so the model sees a
+// completely normal follow-up message and replies in-thread. One shared
+// Continue button (not one per question) since chat-turn.ts can emit up to
+// 2 questions in the same card and the client should answer both before
+// sending. Reuses ApprovalRequestCard's exact useTransition + imperative
+// FormData pattern above. Simplification (matches brand-brain-assistant.
+// tsx's own note): unlike Brand Brain's FAB, this doesn't track "only the
+// latest turn is interactive" — an old question card stays clickable,
+// which just sends its answer as a new message if used again.
+function QuestionCard({
+  card,
 }: {
-  label: string;
-  children: React.ReactNode;
+  card: Extract<IdeaEventCardData, { kind: "question" }>;
 }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [answered, setAnswered] = useState(false);
+  // groupKey ("q0", "q1", ...) -> selected option label(s)
+  const [selected, setSelected] = useState<Record<string, Set<string>>>({});
+  const [error, setError] = useState<string | undefined>(undefined);
+
+  const allAnswered = card.questions.every(
+    (_, index) => (selected[`q${index}`]?.size ?? 0) > 0,
+  );
+
+  const submit = () => {
+    setError(undefined);
+    startTransition(async () => {
+      try {
+        const text = card.questions
+          .map((q, index) => {
+            const labels = Array.from(selected[`q${index}`] ?? []);
+            return `${q.question} ${labels.join(", ")}`;
+          })
+          .join("\n");
+        const formData = new FormData();
+        formData.set("projectId", card.projectId);
+        formData.set("text", text);
+        if (card.ideaId) formData.set("ideaId", card.ideaId);
+        const result = await submitChatMessageAction(formData);
+        if (result.ok) {
+          setAnswered(true);
+          router.refresh();
+        } else {
+          setError(result.message);
+          toast.error(result.message);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Action failed";
+        setError(message);
+        toast.error(message);
+      }
+    });
+  };
+
+  if (answered) {
+    return <WsEventCard icon={CheckCircle2} title="Answered" tone="positive" />;
+  }
+
   return (
-    <details className="group/detail">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors select-none hover:text-foreground">
-        <ChevronRight
-          className={cn(
-            "size-3.5 shrink-0 transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)]",
-            "group-open/detail:rotate-90",
-          )}
-        />
-        {label}
-      </summary>
-      <div className="mt-1.5 border-l-2 border-border py-1 pl-3 text-sm whitespace-pre-wrap text-muted-foreground">
-        {children}
-      </div>
-    </details>
+    <div className="mt-1 flex w-full max-w-md flex-col gap-3">
+      {card.questions.map((q, questionIndex) => {
+        const groupKey = `q${questionIndex}`;
+        const groupSelected = selected[groupKey] ?? new Set<string>();
+        return (
+          <div
+            key={groupKey}
+            className="space-y-2.5 rounded-2xl border p-3.5"
+            style={{
+              borderColor: "var(--ws-border)",
+              background: "var(--ws-surface)",
+            }}
+          >
+            <p
+              className="text-sm font-medium"
+              style={{ color: "var(--ws-text)" }}
+            >
+              {q.question}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {q.options.map((option) => {
+                const isChecked = groupSelected.has(option.label);
+                return (
+                  <Button
+                    key={option.label}
+                    type="button"
+                    variant={isChecked ? "default" : "outline"}
+                    size="sm"
+                    className="rounded-full"
+                    disabled={isPending}
+                    title={option.description}
+                    style={
+                      isChecked
+                        ? {
+                            background: "var(--ws-accent)",
+                            color: "var(--ws-on-accent)",
+                          }
+                        : undefined
+                    }
+                    onClick={() => {
+                      setSelected((prev) => {
+                        const next = new Set(prev[groupKey] ?? []);
+                        if (q.multiSelect) {
+                          if (next.has(option.label)) next.delete(option.label);
+                          else next.add(option.label);
+                        } else {
+                          next.clear();
+                          next.add(option.label);
+                        }
+                        return { ...prev, [groupKey]: next };
+                      });
+                    }}
+                  >
+                    {option.label}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+      {error ? (
+        <p className="text-xs" style={{ color: "#dc2626" }}>
+          {error}
+        </p>
+      ) : null}
+      <Button
+        type="button"
+        size="sm"
+        className="w-fit self-end rounded-full"
+        disabled={isPending || !allAnswered}
+        style={{ background: "var(--ws-accent)", color: "var(--ws-on-accent)" }}
+        onClick={submit}
+      >
+        Continue
+      </Button>
+    </div>
   );
 }

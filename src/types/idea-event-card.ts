@@ -1,4 +1,5 @@
 import { type CreativeCardData, isCreativeCardData } from "./creative-card";
+import type { ChatQuestion } from "@/server/reasoning/prompts/chat-turn";
 
 // Representation of EVERY pipeline event in an idea's chat (origin
 // signal/finding, insight/opportunity, idea birth, council decision, work
@@ -73,6 +74,21 @@ export type IdeaEventCardData =
       permalink?: string;
       errorMessage?: string;
     }
+  // A cross-department handoff proposal (WorkHandoffEngine.propose) —
+  // previously invisible outside the Work panel's Handoffs tab (a silent
+  // gap: the receiving department's own agent has to actually accept it
+  // before work continues, and nothing surfaced that in chat). Accept
+  // routes through WorkHandoffEngine.accept (department-mode gate,
+  // decision record, task creation) exactly as the Work panel does; Reject
+  // just transitions the handoff to REJECTED — see
+  // agency-work-actions.ts's acceptHandoffAction/rejectHandoffAction.
+  | {
+      kind: "handoff-proposed";
+      handoffId: string;
+      fromDepartment: string;
+      toDepartment: string;
+      reason: string;
+    }
   // A CTA card shown when the chat recognizes a Meta ads request but the
   // parameters (budget, targeting, creative) need to come from a structured
   // form instead of free text — see FORM_REQUIRED_CAPABILITIES in
@@ -102,6 +118,39 @@ export type IdeaEventCardData =
       cap?: number;
       used?: number;
     }
+  // The chat surface's structured "AskUserQuestion"-style fork (see
+  // chat-turn.ts's `questions` field) — clickable options instead of a
+  // vague open-ended reply. `ideaId` is baked in at write time (chat-
+  // service.ts) so the answer round-trips into whichever thread (general
+  // or idea-scoped) the question was asked in.
+  | {
+      kind: "question";
+      questions: ChatQuestion[];
+      projectId: string;
+      ideaId?: string;
+    }
+  // The weekly batch planner's result (planWeeklyInstagramContent) — a
+  // visual mini-grid of what it scheduled, replacing what used to be a
+  // plain-text-only summary (see instagram-week-planner.ts). Posted
+  // project-wide (ideaId: null), not per-idea — the individual
+  // creative-ready cards already cover per-idea detail; this is the
+  // "what did the batch as a whole do" view "tüm planlar listelensin"
+  // asked for.
+  | {
+      kind: "content-plan-summary";
+      ideasConsidered: number;
+      imagesGenerated: number;
+      imagesFailed: number;
+      scheduled: number;
+      pendingReview: number;
+      cappedForToday: boolean;
+      items: {
+        creativeId: string;
+        assetId?: string;
+        title: string;
+        scheduledFor?: string;
+      }[];
+    }
   | CreativeCardData;
 
 const EVENT_KINDS = new Set([
@@ -116,8 +165,11 @@ const EVENT_KINDS = new Set([
   "approval-request",
   "approval-decision",
   "publish-result",
+  "handoff-proposed",
   "limit-notice",
   "ads-form-prompt",
+  "question",
+  "content-plan-summary",
 ]);
 
 export function isIdeaEventCardData(

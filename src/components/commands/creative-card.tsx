@@ -3,12 +3,20 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertCircle, Check, ImageIcon, Loader2, Share2 } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  ExternalLink,
+  ImageIcon,
+  Loader2,
+  PenLine,
+  Share2,
+} from "lucide-react";
 
 import { CREATIVE_STATUS, stripCapabilityPrefix } from "@/lib/labels/core";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
-import { StatusBadge } from "@/components/shared/status-badge";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
+import { WsTag } from "@/components/commands/ws-event-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -32,16 +40,37 @@ import type { CreativeCardData } from "@/types/creative-card";
 export function CreativeCard({ card }: { card: CreativeCardData }) {
   if (card.kind === "creative-loading") {
     return (
-      <div className="mt-1 w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card">
-        <div className="relative aspect-square w-full overflow-hidden bg-muted">
-          <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted via-muted/60 to-muted" />
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+      <div
+        className="mt-1 w-full max-w-sm overflow-hidden rounded-2xl border"
+        style={{
+          borderColor: "var(--ws-border)",
+          background: "var(--ws-surface)",
+        }}
+      >
+        <div
+          className="relative aspect-square w-full overflow-hidden"
+          style={{ background: "var(--ws-hover)" }}
+        >
+          <div
+            className="absolute inset-0 animate-pulse"
+            style={{
+              background:
+                "linear-gradient(135deg, var(--ws-hover), var(--ws-surface-2), var(--ws-hover))",
+            }}
+          />
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-2"
+            style={{ color: "var(--ws-text-3)" }}
+          >
             <Loader2 className="size-5 animate-spin" />
             <span className="text-xs font-medium">Generating image…</span>
           </div>
         </div>
         <div className="px-3.5 py-2.5">
-          <p className="truncate text-sm font-medium text-foreground">
+          <p
+            className="truncate text-sm font-medium"
+            style={{ color: "var(--ws-text)" }}
+          >
             {stripCapabilityPrefix(card.title)}
           </p>
         </div>
@@ -51,17 +80,31 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
 
   if (card.kind === "creative-failed") {
     return (
-      <div className="mt-1 flex w-full max-w-sm items-center gap-3 rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-3.5">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+      <div
+        className="mt-1 flex w-full max-w-sm items-start gap-3 rounded-2xl border px-4 py-3.5"
+        style={{ borderColor: "#dc262640", background: "#dc262610" }}
+      >
+        <span
+          className="flex size-9 shrink-0 items-center justify-center rounded-full"
+          style={{ background: "#dc262620", color: "#dc2626" }}
+        >
           <AlertCircle className="size-4" />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-foreground">
+          <p
+            className="truncate text-sm font-medium"
+            style={{ color: "var(--ws-text)" }}
+          >
             Image generation failed
           </p>
-          <p className="truncate text-xs text-muted-foreground">
+          <p className="truncate text-xs" style={{ color: "var(--ws-text-3)" }}>
             {stripCapabilityPrefix(card.title)}
           </p>
+          {card.message ? (
+            <p className="mt-1 text-xs" style={{ color: "#dc2626" }}>
+              {card.message}
+            </p>
+          ) : null}
         </div>
       </div>
     );
@@ -69,12 +112,24 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
 
   if (card.kind === "publish-prompt") {
     return (
-      <div className="mt-1 w-full max-w-sm space-y-2 rounded-2xl border border-border bg-card p-3.5">
+      <div
+        className="mt-1 w-full max-w-sm space-y-2 rounded-2xl border p-3.5"
+        style={{
+          borderColor: "var(--ws-border)",
+          background: "var(--ws-surface)",
+        }}
+      >
         <div className="flex items-center gap-2">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <Share2 className="size-3.5" />
+          <span
+            className="flex size-7 shrink-0 items-center justify-center rounded-lg"
+            style={{ background: "var(--ws-hover)" }}
+          >
+            <Share2 className="size-3.5" style={{ color: "var(--ws-text)" }} />
           </span>
-          <p className="text-sm font-medium text-foreground">
+          <p
+            className="text-sm font-medium"
+            style={{ color: "var(--ws-text)" }}
+          >
             {stripCapabilityPrefix(card.title)} approved — would you like to
             share it on social media?
           </p>
@@ -165,132 +220,284 @@ function CreativeReadyCard({
     });
   };
 
+  const statusMeta = CREATIVE_STATUS[status as keyof typeof CREATIVE_STATUS];
+  const statusLabel = statusMeta?.label ?? status;
+  const statusDot =
+    statusMeta?.tone === "positive"
+      ? "var(--ws-accent)"
+      : statusMeta?.tone === "waiting"
+        ? "#d97706"
+        : statusMeta?.tone === "danger"
+          ? "#dc2626"
+          : "var(--ws-text-3)";
+  const typeLabel = card.platform
+    ? `${format.label} ${format.contentFormatLabel}`
+    : "Image";
+  const displayTitle = card.caption || title;
+
   return (
-    <div className="mt-1 w-full max-w-sm overflow-hidden rounded-2xl border border-border bg-card">
-      {src && isImage ? (
-        <ImageLightbox
-          src={src}
-          alt={card.caption || title}
-          title={title}
-          className="block"
+    <div
+      className="mt-1 w-full max-w-2xl overflow-hidden rounded-2xl border"
+      style={{
+        borderColor: "var(--ws-border)",
+        background: "var(--ws-surface)",
+      }}
+    >
+      <div className="grid sm:grid-cols-2">
+        <div
+          className="relative w-full overflow-hidden"
+          style={{ background: "var(--ws-accent)" }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it */}
-          <img
-            src={src}
-            alt={card.caption || title}
-            style={{ aspectRatio: `${displayWidth} / ${displayHeight}` }}
-            className="w-full object-cover"
-          />
-        </ImageLightbox>
-      ) : (
-        <div className="flex aspect-square w-full items-center justify-center bg-muted text-muted-foreground">
-          <ImageIcon className="size-6" />
+          {src && isImage ? (
+            <ImageLightbox
+              src={src}
+              alt={displayTitle}
+              title={title}
+              className="block h-full"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it */}
+              <img
+                src={src}
+                alt={displayTitle}
+                style={{ aspectRatio: `${displayWidth} / ${displayHeight}` }}
+                className="w-full object-cover"
+              />
+            </ImageLightbox>
+          ) : (
+            <div
+              className="flex aspect-[4/5] w-full items-center justify-center"
+              style={{ color: "var(--ws-on-accent)", opacity: 0.6 }}
+            >
+              <ImageIcon className="size-6" />
+            </div>
+          )}
+          {src && isImage ? (
+            <>
+              <div
+                className="pointer-events-none absolute inset-0"
+                style={{
+                  background:
+                    "linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0) 45%)",
+                }}
+              />
+              {card.brandName ? (
+                <div className="pointer-events-none absolute inset-x-0 top-0 pt-4 text-center">
+                  <span className="font-serif text-lg tracking-wide text-white italic">
+                    {card.brandName}
+                  </span>
+                </div>
+              ) : null}
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4">
+                <div className="text-[9px] tracking-[0.2em] text-white/80 uppercase">
+                  {card.platform ? format.label : "Creative"}
+                </div>
+                <div className="mt-1 font-serif text-lg leading-[1.15] text-white italic">
+                  {displayTitle}
+                </div>
+              </div>
+            </>
+          ) : null}
         </div>
-      )}
-      <div className="space-y-2 px-4 py-3">
-        <div className="flex items-center justify-between gap-2">
-          <p className="min-w-0 truncate text-sm font-semibold text-foreground">
-            {card.caption || title}
+
+        <div className="flex flex-col p-4">
+          <div className="flex items-center justify-between gap-2">
+            <span
+              className="flex items-center gap-1.5 text-xs"
+              style={{ color: "var(--ws-text-2)" }}
+            >
+              <ImageIcon className="size-3.5" />
+              {typeLabel}
+            </span>
+            {card.versionNumber ? (
+              <span
+                className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                style={{
+                  background: "var(--ws-surface-2)",
+                  color: "var(--ws-text-2)",
+                }}
+              >
+                v{card.versionNumber}
+              </span>
+            ) : null}
+          </div>
+
+          <p
+            className="mt-2 text-lg leading-tight font-semibold"
+            style={{ color: "var(--ws-text)" }}
+          >
+            {displayTitle}
           </p>
-          <StatusBadge
-            meta={CREATIVE_STATUS[status as keyof typeof CREATIVE_STATUS]}
-            fallback={status}
-          />
-        </div>
-        {card.assetWidth && card.assetHeight ? (
-          <p className="text-[11px] text-muted-foreground">
-            {card.assetWidth} × {card.assetHeight} px
-            {card.platform
-              ? ` · ${format.label} · ${format.contentFormatLabel}`
-              : ""}
-          </p>
-        ) : null}
-        {card.copy ? (
-          <p className="text-sm whitespace-pre-line text-muted-foreground">
-            {card.copy}
-          </p>
-        ) : null}
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
-        {canDecide ? (
-          <div className="flex gap-2 pt-0.5">
+
+          {card.copy ? (
+            <p
+              className="mt-1.5 text-sm leading-snug"
+              style={{
+                color: "var(--ws-text-2)",
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+            >
+              {card.copy}
+            </p>
+          ) : null}
+
+          {card.assetWidth && card.assetHeight ? (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <WsTag>
+                {card.assetWidth} × {card.assetHeight}
+              </WsTag>
+              {card.platform ? <WsTag>{format.aspectRatio}</WsTag> : null}
+            </div>
+          ) : null}
+
+          <div
+            className="mt-3 flex items-center gap-1.5 text-xs"
+            style={{ color: "var(--ws-text-2)" }}
+          >
+            <span
+              className="size-1.5 rounded-full"
+              style={{ background: statusDot }}
+            />
+            {statusLabel}
+          </div>
+
+          {error ? (
+            <p className="mt-2 text-xs" style={{ color: "#dc2626" }}>
+              {error}
+            </p>
+          ) : null}
+
+          {canDecide ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                disabled={isPending}
+                className="rounded-[10px]"
+                style={{
+                  background: "var(--ws-accent)",
+                  color: "var(--ws-on-accent)",
+                }}
+                onClick={() => decide("APPROVED")}
+              >
+                <Check className="size-3.5" />
+                Approve
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="rounded-[10px]"
+                style={{
+                  borderColor: "var(--ws-border)",
+                  color: "var(--ws-text)",
+                }}
+                disabled={isPending}
+                onClick={() => setShowRevise((v) => !v)}
+              >
+                <PenLine className="size-3.5" />
+                Revise
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="rounded-[10px]"
+                style={{ color: "var(--ws-text-3)" }}
+                disabled={isPending}
+                onClick={() => decide("REJECTED")}
+              >
+                Reject
+              </Button>
+            </div>
+          ) : status !== "IN_REVIEW" ? (
+            // Not currently awaiting a decision (e.g. REJECTED, APPROVED,
+            // PUBLISHED) — still revisable, without exposing Approve/Reject
+            // for a decision that no longer applies to whatever's shown here.
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="rounded-full"
-              disabled={isPending}
-              onClick={() => decide("REJECTED")}
-            >
-              Reject
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={isPending}
-              className="rounded-full bg-success text-success-foreground hover:bg-success/90"
-              onClick={() => decide("APPROVED")}
-            >
-              Approve
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="rounded-full"
-              disabled={isPending}
+              className="mt-4 w-fit rounded-[10px]"
+              style={{
+                borderColor: "var(--ws-border)",
+                color: "var(--ws-text)",
+              }}
+              disabled={isRevising}
               onClick={() => setShowRevise((v) => !v)}
             >
+              <PenLine className="size-3.5" />
               Revise
             </Button>
-          </div>
-        ) : status !== "IN_REVIEW" ? (
-          // Not currently awaiting a decision (e.g. REJECTED, APPROVED,
-          // PUBLISHED) — still revisable, without exposing Approve/Reject
-          // for a decision that no longer applies to whatever's shown here.
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="-ml-2 rounded-full"
-            disabled={isRevising}
-            onClick={() => setShowRevise((v) => !v)}
-          >
-            Revise
-          </Button>
-        ) : null}
-        {showRevise ? (
-          <div className="flex gap-1.5 pt-0.5">
-            <Input
-              value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
-              placeholder="What should change? e.g. more vibrant colors"
-              disabled={isRevising}
-              className="h-8 text-xs"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  revise();
-                }
-              }}
-            />
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 shrink-0 rounded-full"
-              disabled={isRevising || !instruction.trim()}
-              onClick={revise}
-            >
-              {isRevising ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                "Go"
-              )}
-            </Button>
-          </div>
-        ) : null}
-        {status === "APPROVED" ? (
-          <PublishSection creativeId={card.creativeId} />
-        ) : null}
+          ) : null}
+
+          {showRevise ? (
+            <div className="mt-2 flex gap-1.5">
+              <Input
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                placeholder="What should change? e.g. more vibrant colors"
+                disabled={isRevising}
+                className="h-8 text-xs"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    revise();
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 shrink-0 rounded-[10px]"
+                style={{
+                  background: "var(--ws-accent)",
+                  color: "var(--ws-on-accent)",
+                }}
+                disabled={isRevising || !instruction.trim()}
+                onClick={revise}
+              >
+                {isRevising ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  "Go"
+                )}
+              </Button>
+            </div>
+          ) : null}
+
+          {status === "APPROVED" ? (
+            <div className="mt-3">
+              <PublishSection creativeId={card.creativeId} />
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div
+        className="flex items-center justify-between border-t px-4 py-2.5 text-[11px]"
+        style={{
+          borderColor: "var(--ws-border)",
+          background: "var(--ws-bg)",
+          color: "var(--ws-text-3)",
+        }}
+      >
+        <span className="flex items-center gap-1">
+          <Check className="size-3" style={{ marginRight: -6 }} />
+          <Check className="size-3" />
+          Created from your Brand Twin
+        </span>
+        <a
+          href={`/creatives/${card.creativeId}`}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-1 font-medium hover:opacity-70"
+        >
+          View details
+          <ExternalLink className="size-3" />
+        </a>
       </div>
     </div>
   );
@@ -331,7 +538,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
 
   if (targets.length === 0) {
     return (
-      <p className="pt-0.5 text-xs text-muted-foreground">
+      <p className="pt-0.5 text-xs" style={{ color: "var(--ws-text-3)" }}>
         No connected social accounts yet.
       </p>
     );
@@ -374,8 +581,11 @@ function PublishSection({ creativeId }: { creativeId: string }) {
   };
 
   return (
-    <div className="space-y-1.5 border-t border-border pt-2.5">
-      <p className="text-xs font-medium text-muted-foreground">
+    <div
+      className="space-y-1.5 border-t pt-2.5"
+      style={{ borderColor: "var(--ws-border)" }}
+    >
+      <p className="text-xs font-medium" style={{ color: "var(--ws-text-3)" }}>
         Share on Social Accounts
       </p>
       {targets.map((target) => {
@@ -395,14 +605,21 @@ function PublishSection({ creativeId }: { creativeId: string }) {
         return (
           <div
             key={rowKey}
-            className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2.5 py-1.5"
+            className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5"
+            style={{ background: "var(--ws-hover)" }}
           >
             <div className="min-w-0">
-              <p className="truncate text-xs font-medium text-foreground">
+              <p
+                className="truncate text-xs font-medium"
+                style={{ color: "var(--ws-text)" }}
+              >
                 {title}
               </p>
               {subtitle ? (
-                <p className="truncate text-[11px] text-muted-foreground">
+                <p
+                  className="truncate text-[11px]"
+                  style={{ color: "var(--ws-text-3)" }}
+                >
                   {subtitle}
                 </p>
               ) : null}

@@ -1,0 +1,141 @@
+"use client";
+
+import Link from "next/link";
+import { PanelRight } from "lucide-react";
+
+import { buildHubHref } from "@/components/hub-core/hub-core-params";
+import { BrandSwitcher } from "@/components/layout/brand-switcher";
+import { ActiveWorkPopover } from "@/components/layout/active-work-popover";
+import { AgentelseMark } from "@/components/brand/agentelse-mark";
+import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
+import type { AgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
+
+// The Brand Workspace root screen's header: 72px, dark-olive logo tile +
+// "agentelse." wordmark + brand switcher on the left, active-work + DEMO
+// badge + approvals + panel toggle + account avatar on the right, all on
+// the olive/botanical --ws-* token set (globals.css, Faz 11 retheme) —
+// light/dark resolve automatically through those variables, no dark:
+// pairs needed here. Deliberately a SEPARATE component from TopBar.tsx
+// (used by every other screen — Ideas/Work/Library/Settings/etc, which
+// keep their existing header and existing oklch tokens) rather than a
+// giant conditional branch inside it, so this redesign can't regress any
+// of those screens.
+export function WorkspaceTopBar({
+  projectId,
+  projectName,
+  projects,
+  pendingApprovals,
+  agencyStatus,
+  displayName,
+  email,
+  navSheet,
+}: {
+  projectId: string;
+  projectName: string;
+  projects: { id: string; name: string; status: string }[];
+  pendingApprovals: number;
+  agencyStatus: AgencyStatusSnapshot | null;
+  displayName: string | null;
+  email: string | null;
+  navSheet?: React.ReactNode;
+}) {
+  const { toggle } = useWorkspacePanelToggle();
+  const isDev = process.env.NODE_ENV !== "production";
+
+  return (
+    <header
+      className="flex h-[72px] shrink-0 items-center justify-between border-b px-4 sm:px-7"
+      style={{
+        borderColor: "var(--ws-border)",
+        background: "var(--ws-surface)",
+      }}
+    >
+      <div className="flex min-w-0 items-center gap-2.5">
+        {navSheet}
+        <Link
+          href="/dashboard"
+          className="flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80"
+        >
+          <span
+            className="flex size-8 items-center justify-center rounded-[10px]"
+            style={{ background: "var(--ws-accent)" }}
+          >
+            <AgentelseMark
+              className="size-4"
+              style={{ color: "var(--ws-on-accent)" }}
+            />
+          </span>
+          <span
+            className="hidden text-[22px] font-semibold tracking-[-0.02em] sm:inline"
+            style={{ color: "var(--ws-text)" }}
+          >
+            agentelse<span style={{ color: "var(--ws-olive)" }}>.</span>
+          </span>
+        </Link>
+        <div
+          className="hidden h-6 w-px shrink-0 sm:block"
+          style={{ background: "var(--ws-border)" }}
+        />
+        <BrandSwitcher projects={projects} activeProjectId={projectId} />
+      </div>
+
+      <div className="flex items-center gap-2">
+        <div className="hidden md:block">
+          <ActiveWorkPopover projectId={projectId} initial={agencyStatus} />
+        </div>
+        {isDev ? (
+          <span
+            className="hidden shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide sm:inline-flex"
+            style={{
+              borderColor: "var(--ws-border)",
+              color: "var(--ws-text-3)",
+            }}
+          >
+            DEMO
+          </span>
+        ) : null}
+        <Link
+          href={buildHubHref(projectId, { panel: "approvals" })}
+          scroll={false}
+          className="hidden h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors hover:opacity-85 sm:flex"
+          style={{
+            background: "var(--ws-surface-2)",
+            color: "var(--ws-accent)",
+          }}
+          title={`${projectName} — onay bekleyen çıktılar`}
+        >
+          <span
+            className="size-1.5 shrink-0 rounded-full"
+            style={{ background: "var(--ws-pending)" }}
+          />
+          {pendingApprovals} onay bekliyor
+        </Link>
+        <div
+          className="hidden h-6 w-px shrink-0 sm:block"
+          style={{ background: "var(--ws-border)" }}
+        />
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label="Çalışma alanı panelini aç/kapat"
+          title="Marka / Dosyalar / Çıktılar / Takvim"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--ws-hover)]"
+          style={{ color: "var(--ws-text-2)" }}
+        >
+          <PanelRight className="size-4" />
+        </button>
+        <Link
+          href="/profile"
+          title={displayName ?? email ?? undefined}
+          className="flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-opacity hover:opacity-80"
+          style={{
+            background: "var(--ws-accent)",
+            color: "var(--ws-on-accent)",
+          }}
+        >
+          {(displayName ?? email ?? "?").charAt(0).toUpperCase()}
+        </Link>
+      </div>
+    </header>
+  );
+}

@@ -8,6 +8,7 @@ import {
   Megaphone,
   Sparkles,
 } from "lucide-react";
+import { AgentelseMark } from "@/components/brand/agentelse-mark";
 import { toast } from "sonner";
 import type { DepartmentKey } from "@prisma/client";
 import {
@@ -138,20 +139,21 @@ const CHAT_ACCEPT =
   "image/png,image/jpeg,image/webp,application/pdf,text/plain,text/csv,text/markdown";
 
 const STATUS_NOTE: Record<string, string> = {
-  PLANNED: "Task created",
-  APPROVAL_HANDLED: "Approval processed",
-  UNCLEAR: "Awaiting clarification",
-  ERROR: "Error",
+  PLANNED: "Görev oluşturuldu",
+  APPROVAL_HANDLED: "Onay işlendi",
+  UNCLEAR: "Açıklama bekleniyor",
+  ERROR: "Hata",
 };
 
-// Brand Workspace composer's persistent quick-action row (pixel spec §15
-// §16) — sent through the exact same path as typing them and pressing
-// enter (no separate shortcut path).
+// Brand Workspace composer's persistent quick-action row (docs/
+// brand-workspace-migration.md §16/§17, Faz 11 olive-studio redesign) —
+// sent through the exact same path as typing them and pressing enter (no
+// separate shortcut path).
 const QUICK_ACTIONS: { label: string; icon: typeof ImageIcon }[] = [
-  { label: "Create a post", icon: ImageIcon },
-  { label: "Find a Reel idea", icon: Film },
-  { label: "Plan the week", icon: CalendarRange },
-  { label: "Create a campaign", icon: Megaphone },
+  { label: "Post hazırla", icon: ImageIcon },
+  { label: "Reel fikri bul", icon: Film },
+  { label: "Haftayı planla", icon: CalendarRange },
+  { label: "Kampanya oluştur", icon: Megaphone },
 ];
 
 // assistant-ui's composer immediately treats an added file as
@@ -436,9 +438,7 @@ export function ProjectChat({
             result = {
               ok: false,
               message:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to send message",
+                error instanceof Error ? error.message : "Mesaj gönderilemedi",
             };
           }
 
@@ -470,7 +470,7 @@ export function ProjectChat({
       if (!text && files.length === 0) return Promise.resolve();
 
       return runTurn(
-        text || "(file sent)",
+        text || "(dosya gönderildi)",
         files.map((file) => ({
           filename: file.name,
           mimeType: file.type,
@@ -541,7 +541,7 @@ export function ProjectChat({
     async (parentId: string | null) => {
       const parent = parentId !== null ? messages[Number(parentId)] : undefined;
       if (!parent || parent.role !== "user") {
-        toast.error("Can't retry this message.");
+        toast.error("Bu mesaj yeniden gönderilemiyor.");
         return;
       }
       await sendMessage(parent.text, []);

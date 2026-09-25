@@ -351,7 +351,7 @@ export default async function ProjectChatPage({
         />
       }
     >
-      <div key="project-general" className="relative h-[calc(100vh-4rem)]">
+      <div key="project-general" className="relative h-full">
         <LiveRefresh
           intervalMs={7000}
           className="absolute top-3 right-4 z-10"

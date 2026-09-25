@@ -10,6 +10,7 @@ import {
 import { ThreadFollowupSuggestions } from "@/components/assistant-ui/follow-up-suggestions";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { IdeaEventCard } from "@/components/commands/idea-event-card";
+import { AgentelseMark } from "@/components/brand/agentelse-mark";
 import { DepartmentBadge } from "@/components/shared/department-badge";
 import { isIdeaEventCardData } from "@/types/idea-event-card";
 import { DEPARTMENT_KEY, DEPARTMENT_COLOR } from "@/lib/labels";
@@ -48,7 +49,6 @@ import {
 import {
   ArrowDownIcon,
   ArrowUpIcon,
-  Asterisk,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -190,8 +190,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
               className="px-1 text-center text-[10px]"
               style={{ color: "var(--ws-text-3)" }}
             >
-              Agentelse uses your Brand Twin and existing workspace context
-              automatically.
+              ✳ Agentelse marka bağlamını otomatik kullanır.
             </p>
             <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
               <ThreadSuggestions />
@@ -309,12 +308,12 @@ const Composer: FC = () => {
       >
         <ComposerAttachments />
         <ComposerPrimitive.Input
-          placeholder="Tell Agentelse what you want…"
+          placeholder="Aklındaki fikri yaz. Birlikte hayata geçirelim…"
           className="aui-composer-input caret-primary placeholder:text-muted-foreground/80 max-h-32 min-h-14 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
-          rows={1}
+          rows={2}
           autoFocus
           enterKeyHint="send"
-          aria-label="Message input"
+          aria-label="Mesaj"
         />
         <ComposerAction />
       </ComposerPrimitive.AttachmentDropzone>
@@ -371,13 +370,17 @@ const ComposerAction: FC = () => {
           <ComposerPrimitive.Send
             render={
               <TooltipIconButton
-                tooltip="Send"
+                tooltip="Gönder"
                 side="bottom"
                 type="button"
                 variant="default"
                 size="icon"
-                className="aui-composer-send size-7 rounded-full"
-                aria-label="Send"
+                className="aui-composer-send size-[33px] rounded-[10px]"
+                style={{
+                  background: "var(--ws-accent)",
+                  color: "var(--ws-on-accent)",
+                }}
+                aria-label="Gönder"
               />
             }
           >
@@ -391,8 +394,12 @@ const ComposerAction: FC = () => {
                 type="button"
                 variant="default"
                 size="icon"
-                className="aui-composer-cancel size-7 rounded-full"
-                aria-label="Stop"
+                className="aui-composer-cancel size-[33px] rounded-[10px]"
+                style={{
+                  background: "var(--ws-accent)",
+                  color: "var(--ws-on-accent)",
+                }}
+                aria-label="Durdur"
               />
             }
           >
@@ -481,7 +488,7 @@ const AssistantMessage: FC = () => {
         className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg"
         style={{ background: "var(--ws-accent)" }}
       >
-        <Asterisk
+        <AgentelseMark
           className="size-3.5"
           style={{ color: "var(--ws-on-accent)" }}
         />
@@ -495,7 +502,7 @@ const AssistantMessage: FC = () => {
             Agentelse
           </span>
           <span className="text-[11px]" style={{ color: "var(--ws-text-3)" }}>
-            Your creative partner
+            Yaratıcı partnerin
           </span>
           {ideaTitle ? (
             <span

@@ -63,9 +63,26 @@ const envSchema = z.object({
     .optional()
     .default("/data/workspace"),
 
-  // OpenAI — the sole LLM backend, both for ReasoningService's structured
-  // calls (see openai-client.ts) and the OpenAI execution providers
-  // (task/creative execution).
+  // Google Gemini — ReasoningService's default LLM backend, and the default
+  // execution provider for text/analysis + search-grounded capabilities
+  // (see gemini-client.ts, gemini-ai.provider.ts). If unset, both layers
+  // fall through to OpenAI automatically.
+  GEMINI_API_KEY: z.string().optional().default(""),
+  // NOTE: "gemini-pro-latest" resolves to the latest Pro, and Pro's free
+  // tier limit is only 250 requests/day — the agency loop was burning
+  // through that in hours and hitting 429s. Flash gives 10,000 requests on
+  // the same quota; individual prompts that need quality can opt out via
+  // ReasoningDef.model.
+  GEMINI_MODEL: z.string().optional().default("gemini-3.6-flash"),
+  // Model tiers: prompts select "lite"/"pro" via ReasoningDef.tier, and
+  // which model that maps to lives here — so changing a model doesn't
+  // require touching prompt files.
+  GEMINI_LITE_MODEL: z.string().optional().default("gemini-3.1-flash-lite"),
+  GEMINI_PRO_MODEL: z.string().optional().default("gemini-3.1-pro-preview"),
+
+  // OpenAI — ReasoningService's fallback backend (see openai-client.ts),
+  // and the fallback execution provider when Gemini is unconfigured or
+  // circuit-broken by ProviderHealthService.
   OPENAI_API_KEY: z.string().optional().default(""),
   OPENAI_MODEL: z.string().optional().default("gpt-5.6-luna"),
   // Model tiers: prompts select "lite"/"pro" via ReasoningDef.tier, and
@@ -73,6 +90,14 @@ const envSchema = z.object({
   // require touching prompt files.
   OPENAI_LITE_MODEL: z.string().optional().default("gpt-5.4-mini"),
   OPENAI_PRO_MODEL: z.string().optional().default("gpt-5.6-terra"),
+  // Which backend ReasoningService.run uses. Unknown values fall back to
+  // "gemini" via catch() so a typo in the env degrades to the default
+  // instead of crashing the first request.
+  REASONING_PROVIDER: z
+    .enum(["gemini", "openai"])
+    .optional()
+    .default("gemini")
+    .catch("gemini"),
   // gpt-image-2 — see openai-image-client.ts. Separate model slot from
   // OPENAI_MODEL/OPENCLAW_IMAGE_MODEL because it names an image model, not
   // a chat one.
@@ -154,6 +179,7 @@ export function isIntegrationConfigured(
   key:
     | "OPENCLAW"
     | "OPENCLAW_GATEWAY"
+    | "GEMINI"
     | "OPENAI"
     | "FAL"
     | "R2"
@@ -171,6 +197,8 @@ export function isIntegrationConfigured(
       return Boolean(env.OPENCLAW_CLI_PATH);
     case "OPENCLAW_GATEWAY":
       return Boolean(env.OPENCLAW_GATEWAY_URL && env.OPENCLAW_GATEWAY_TOKEN);
+    case "GEMINI":
+      return Boolean(env.GEMINI_API_KEY);
     case "OPENAI":
       return Boolean(env.OPENAI_API_KEY);
     case "FAL":

@@ -133,6 +133,14 @@ export default async function ProjectChatPage({
   const since =
     sinceDate && !Number.isNaN(sinceDate.getTime()) ? sinceDate : null;
 
+  // Right panel's inline Calendar tab (see calendar-panel.tsx) — its own
+  // month-paging/item-selection params, independent of panel/sub/entity.
+  const calMonthRaw = Array.isArray(sp.calMonth) ? sp.calMonth[0] : sp.calMonth;
+  const calMonth =
+    calMonthRaw && /^\d{4}-\d{2}$/.test(calMonthRaw) ? calMonthRaw : undefined;
+  const calItemRaw = Array.isArray(sp.calItem) ? sp.calItem[0] : sp.calItem;
+  const calItem = typeof calItemRaw === "string" ? calItemRaw : undefined;
+
   if (panel) {
     return (
       <AppShell projectId={projectId}>
@@ -190,52 +198,77 @@ export default async function ProjectChatPage({
     );
   }
 
-  const [project, chatCommands, publishTargets, rightPanelData, currentUser] =
-    await Promise.all([
-      prisma.project.findUnique({
-        where: { id: projectId },
-        select: { name: true },
-      }),
-      prisma.command.findMany({
-        // The ONE single chat (see docs/brand-workspace-migration.md,
-        // single-chat consolidation): every WEB message and every SYSTEM
-        // pipeline event project-wide, regardless of which idea (if any)
-        // it belongs to — council decisions, work plans, task/creative
-        // results all land here now, not just idea-less events. topic:
-        // null excludes scoped threads that aren't this general feed —
-        // today just the Brand Brain conversation
-        // (brand-brain-chat-service.ts), which renders on its own panel.
-        where: {
-          projectId,
-          topic: null,
-          source: { in: ["WEB", "SYSTEM"] },
-          ...(since ? { createdAt: { gte: since } } : {}),
-        },
-        orderBy: { createdAt: "desc" },
-        // `since` present: an anchor jump needs every message from that
-        // date forward, not just the most recent 72 — 500 is a sane
-        // ceiling, not a real limit (the Command_projectId_createdAt_idx
-        // index keeps this cheap either way).
-        take: since ? 500 : 72,
-        select: {
-          id: true,
-          source: true,
-          rawText: true,
-          replyText: true,
-          replyStatus: true,
-          attachments: true,
-          parsedIntent: true,
-          createdAt: true,
-          ideaId: true,
-        },
-      }),
-      getPublishTargets(projectId),
-      getWorkspaceRightPanelData(projectId),
-      prisma.user.findUnique({
-        where: { id: userId },
-        select: { name: true, email: true },
-      }),
-    ]);
+  const [
+    project,
+    chatCommands,
+    publishTargets,
+    rightPanelData,
+    currentUser,
+    selectedCalendarItem,
+  ] = await Promise.all([
+    prisma.project.findUnique({
+      where: { id: projectId },
+      select: { name: true },
+    }),
+    prisma.command.findMany({
+      // The ONE single chat (see docs/brand-workspace-migration.md,
+      // single-chat consolidation): every WEB message and every SYSTEM
+      // pipeline event project-wide, regardless of which idea (if any)
+      // it belongs to — council decisions, work plans, task/creative
+      // results all land here now, not just idea-less events. topic:
+      // null excludes scoped threads that aren't this general feed —
+      // today just the Brand Brain conversation
+      // (brand-brain-chat-service.ts), which renders on its own panel.
+      where: {
+        projectId,
+        topic: null,
+        source: { in: ["WEB", "SYSTEM"] },
+        ...(since ? { createdAt: { gte: since } } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+      // `since` present: an anchor jump needs every message from that
+      // date forward, not just the most recent 72 — 500 is a sane
+      // ceiling, not a real limit (the Command_projectId_createdAt_idx
+      // index keeps this cheap either way).
+      take: since ? 500 : 72,
+      select: {
+        id: true,
+        source: true,
+        rawText: true,
+        replyText: true,
+        replyStatus: true,
+        attachments: true,
+        parsedIntent: true,
+        createdAt: true,
+        ideaId: true,
+      },
+    }),
+    getPublishTargets(projectId),
+    getWorkspaceRightPanelData(projectId, { month: calMonth }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, email: true },
+    }),
+    // Tenant-scoped: findFirst with projectId, not findUnique(id) alone —
+    // calItem is a plain user-suppliable query param.
+    calItem
+      ? prisma.creative.findFirst({
+          where: { id: calItem, projectId },
+          select: {
+            id: true,
+            title: true,
+            platform: true,
+            status: true,
+            scheduledFor: true,
+            versions: {
+              orderBy: { version: "desc" },
+              take: 1,
+              select: { assetId: true },
+            },
+          },
+        })
+      : Promise.resolve(null),
+  ]);
 
   if (!project) notFound();
 
@@ -298,6 +331,21 @@ export default async function ProjectChatPage({
               projectId={projectId}
               calendar={rightPanelData.calendar}
               autopilotMode={rightPanelData.autopilotMode}
+              selectedItem={
+                selectedCalendarItem
+                  ? {
+                      id: selectedCalendarItem.id,
+                      title: selectedCalendarItem.title,
+                      platform: selectedCalendarItem.platform,
+                      status: selectedCalendarItem.status,
+                      assetId:
+                        selectedCalendarItem.versions[0]?.assetId ?? null,
+                      scheduledFor:
+                        selectedCalendarItem.scheduledFor?.toISOString() ??
+                        null,
+                    }
+                  : undefined
+              }
             />
           }
         />

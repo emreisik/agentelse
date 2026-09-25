@@ -122,6 +122,11 @@ const AutonomyPolicySchema = z.object({
     .transform((v) => (v === "" ? null : v)),
   setupAutoApprove: z.coerce.boolean(),
   unlimitedMode: z.coerce.boolean(),
+  autopilotMode: z.enum([
+    "REVIEW_EVERYTHING",
+    "CREATE_AUTOMATICALLY",
+    "AUTOPILOT",
+  ]),
 });
 
 const WEIGHT_KEYS = [
@@ -155,6 +160,7 @@ export async function updateAutonomyPolicyAction(
       dailyBudgetUsd: formData.get("dailyBudgetUsd") ?? "",
       setupAutoApprove: formData.get("setupAutoApprove") === "on",
       unlimitedMode: formData.get("unlimitedMode") === "on",
+      autopilotMode: formData.get("autopilotMode") ?? "AUTOPILOT",
     });
 
     // Scoring weights: only accept known keys, each 0..1.

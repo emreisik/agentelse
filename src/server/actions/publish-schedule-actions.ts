@@ -6,6 +6,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { computeNextRunAt } from "@/server/scheduler/scheduler-service";
+import { DEFAULT_LENS_MIX } from "@/server/agency/ideas/creative-lenses";
+import type { ContentMix } from "@/server/agency/content/instagram-week-planner";
 import {
   requireProjectAccess,
   requireUser,
@@ -53,6 +55,13 @@ const AutoContentPlanSchema = z.object({
   dayOfWeek: z.string().regex(AUTO_PLAN_DAY_RE, "Invalid day"),
   time: z.string().regex(TIME_RE, "Use HH:mm"),
   dailyImageCap: z.coerce.number().int().min(1).max(10),
+  // Content-mix weights (spec: ContentProgram), one per DEFAULT_LENS_MIX
+  // lens — the same 6-lens set idea generation's own diversity default
+  // already uses, rather than exposing all 16 CreativeLens values. All-zero
+  // (the default) means "no mix configured", preserving the original pure
+  // nbaScore-ranked behavior — see instagram-week-planner.ts's
+  // selectIdeasForWeek.
+  lensWeights: z.record(z.string(), z.coerce.number().min(0).max(10)),
 });
 
 // Settings → Publishing "Auto content planning" card's action — one
@@ -66,6 +75,12 @@ export async function updateAutoContentPlanScheduleAction(
 ): Promise<ActionResult> {
   try {
     const projectId = String(formData.get("projectId"));
+    const lensWeights = Object.fromEntries(
+      DEFAULT_LENS_MIX.map((lens) => [
+        lens,
+        formData.get(`lensWeight_${lens}`) ?? 0,
+      ]),
+    );
     const parsed = AutoContentPlanSchema.parse({
       projectId,
       enabled: formData.get("enabled") === "on",
@@ -73,7 +88,11 @@ export async function updateAutoContentPlanScheduleAction(
       dayOfWeek: String(formData.get("dayOfWeek") ?? "1"),
       time: String(formData.get("time") ?? "").trim() || "09:00",
       dailyImageCap: formData.get("dailyImageCap") ?? 3,
+      lensWeights,
     });
+    const lensMix: ContentMix = Object.fromEntries(
+      Object.entries(parsed.lensWeights).filter(([, weight]) => weight > 0),
+    ) as ContentMix;
 
     const { userId } = await requireUser();
     const access = await requireProjectAccess(userId, projectId);
@@ -99,6 +118,7 @@ export async function updateAutoContentPlanScheduleAction(
     const configuration = {
       mode: AUTO_PLAN_GRID_WEEK_MODE,
       dailyImageCap: parsed.dailyImageCap,
+      ...(Object.keys(lensMix).length > 0 ? { lensMix } : {}),
     };
 
     if (existing) {

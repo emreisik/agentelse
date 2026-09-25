@@ -44,6 +44,7 @@ import {
 } from "../hub-core-params";
 import { CrossLinkChip } from "../primitives/cross-link-chip";
 import { FieldGrid, type FieldSpec } from "../primitives/field-grid";
+import { DEFAULT_LENS_MIX } from "@/server/agency/ideas/creative-lenses";
 import type { PanelProps } from "./panel-props";
 
 const SUB_LABEL: Record<SettingsSubKey, string> = {
@@ -145,10 +146,49 @@ export async function SettingsPanel({ projectId, sub, entity }: PanelProps) {
 
 // ---------------------------------------------------------------------------
 
+const AUTOPILOT_MODE_OPTIONS: Array<{
+  value: "REVIEW_EVERYTHING" | "CREATE_AUTOMATICALLY" | "AUTOPILOT";
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: "REVIEW_EVERYTHING",
+    label: "Review everything",
+    hint: "Agentelse creates work; nothing is scheduled until you review it.",
+  },
+  {
+    value: "CREATE_AUTOMATICALLY",
+    label: "Create automatically, ask before publishing",
+    hint: "Agentelse creates and schedules work, but still asks before it can publish.",
+  },
+  {
+    value: "AUTOPILOT",
+    label: "Autopilot",
+    hint: "Agentelse creates, schedules and publishes within the limits below.",
+  },
+];
+
 async function AutonomyTab({ projectId }: { projectId: string }) {
-  const policy = await prisma.autonomyPolicy.findUnique({
-    where: { projectId },
-  });
+  const now = new Date();
+  const monthStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+  );
+  const [policy, monthlySpend] = await Promise.all([
+    prisma.autonomyPolicy.findUnique({ where: { projectId } }),
+    // Read-only visibility only (spec: "AI Budget: this month $18.40/$50")
+    // — reuses the SAME reasoningCostUsd AgencyDailyStat already tracks for
+    // the existing daily budget check (AutonomyPolicyRepository.
+    // checkAndIncrement); no new monthly cap/enforcement mechanism, no
+    // schema change. AgencyDailyStat.reasoningCostUsd is itself a
+    // token-based LLM-call cost estimate, not aggregate provider spend
+    // (image-generation cost isn't tracked anywhere yet — see
+    // docs/brand-workspace-migration.md §7 Phase 6) — this total inherits
+    // that same scope, not a full "everything Agentelse spent."
+    prisma.agencyDailyStat.aggregate({
+      where: { projectId, date: { gte: monthStart } },
+      _sum: { reasoningCostUsd: true },
+    }),
+  ]);
 
   if (!policy) {
     return (
@@ -249,7 +289,10 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
               defaultValue={policy.dailyBudgetUsd ?? ""}
             />
             <p className="text-xs text-muted-foreground">
-              Daily cap on AI reasoning spend
+              Daily cap on AI reasoning spend — this month so far:{" "}
+              <span className="font-medium text-foreground">
+                ${(monthlySpend._sum.reasoningCostUsd ?? 0).toFixed(2)}
+              </span>
             </p>
           </div>
           <div className="flex items-center gap-3 pt-6">
@@ -269,6 +312,40 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
               </p>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle className="text-base">Autopilot</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Only governs autonomously-created content (today: weekly auto
+            content planning below) — human-requested work is unaffected.
+          </p>
+        </CardHeader>
+        <CardContent className="grid gap-2.5">
+          {AUTOPILOT_MODE_OPTIONS.map((option) => (
+            <label
+              key={option.value}
+              className="flex cursor-pointer items-start gap-3 rounded-lg border border-input p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/5"
+            >
+              <input
+                type="radio"
+                name="autopilotMode"
+                value={option.value}
+                defaultChecked={policy.autopilotMode === option.value}
+                className="mt-0.5"
+              />
+              <span className="space-y-0.5">
+                <span className="block text-sm font-medium">
+                  {option.label}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  {option.hint}
+                </span>
+              </span>
+            </label>
+          ))}
         </CardContent>
       </Card>
 
@@ -414,6 +491,12 @@ async function PublishingTab({ projectId }: { projectId: string }) {
     autoPlanSchedule?.configuration as { dailyImageCap?: unknown } | null
   )?.dailyImageCap;
   const autoPlanCap = typeof autoPlanCapRaw === "number" ? autoPlanCapRaw : 3;
+  const autoPlanLensMix =
+    (
+      autoPlanSchedule?.configuration as {
+        lensMix?: Record<string, number>;
+      } | null
+    )?.lensMix ?? {};
 
   return (
     <div className="space-y-6">
@@ -580,6 +663,36 @@ async function PublishingTab({ projectId }: { projectId: string }) {
                 placeholder="Europe/Istanbul"
               />
             </div>
+
+            <div className="space-y-1.5 border-t border-border pt-4">
+              <Label>Content mix (optional)</Label>
+              <p className="text-xs text-muted-foreground">
+                Relative weights — leave all at 0 to keep picking purely by
+                score (default). E.g. Product 3, Brand 1 aims for roughly 3
+                product posts per 1 brand post.
+              </p>
+              <div className="grid grid-cols-2 gap-3 pt-1 sm:grid-cols-3">
+                {DEFAULT_LENS_MIX.map((lens) => (
+                  <div key={lens} className="space-y-1">
+                    <Label
+                      htmlFor={`lens-weight-${lens}`}
+                      className="text-xs font-normal text-muted-foreground"
+                    >
+                      {lens.charAt(0) + lens.slice(1).toLowerCase()}
+                    </Label>
+                    <Input
+                      id={`lens-weight-${lens}`}
+                      name={`lensWeight_${lens}`}
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={1}
+                      defaultValue={autoPlanLensMix[lens] ?? 0}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -592,6 +705,36 @@ async function PublishingTab({ projectId }: { projectId: string }) {
 }
 
 // ---------------------------------------------------------------------------
+
+// AgencyDecision.inputsSnapshot (agency-director.ts) — a free-form JSON
+// snapshot, only one shape of which (the council fan-out on an idea
+// decision) is worth a dedicated render; anything else in there (or on
+// non-IDEA decisions, which don't set this field the same way) is
+// silently ignored rather than guessed at.
+function parseCouncilRecommendations(
+  inputsSnapshot: unknown,
+): { council: string; recommendation: string; overallScore: number | null }[] {
+  if (!inputsSnapshot || typeof inputsSnapshot !== "object") return [];
+  const raw = (inputsSnapshot as { councilRecommendations?: unknown })
+    .councilRecommendations;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((entry): entry is Record<string, unknown> => {
+      return (
+        Boolean(entry) &&
+        typeof entry === "object" &&
+        typeof (entry as { council?: unknown }).council === "string" &&
+        typeof (entry as { recommendation?: unknown }).recommendation ===
+          "string"
+      );
+    })
+    .map((entry) => ({
+      council: entry.council as string,
+      recommendation: entry.recommendation as string,
+      overallScore:
+        typeof entry.overallScore === "number" ? entry.overallScore : null,
+    }));
+}
 
 async function DecisionsTab({
   projectId,
@@ -654,6 +797,14 @@ async function DecisionsTab({
             typeof decision.scoreBreakdown === "object"
               ? (decision.scoreBreakdown as Record<string, unknown>)
               : null;
+          // Written by agency-director.ts on every idea decision
+          // (reject/backlog/create) but never rendered anywhere — the one
+          // place that would show WHY beyond the one-line rationale
+          // string (which council(s) actually recommended what, and at
+          // what confidence).
+          const councilRecommendations = parseCouncilRecommendations(
+            decision.inputsSnapshot,
+          );
           return (
             <div key={decision.id} className="space-y-2 py-3">
               <div className="flex flex-wrap items-center gap-2">
@@ -708,6 +859,30 @@ async function DecisionsTab({
                         />
                       ) : null,
                     )}
+                  </div>
+                ) : null}
+                {councilRecommendations.length > 0 ? (
+                  <div className="mt-2 max-w-md space-y-1">
+                    {councilRecommendations.map((rec, index) => (
+                      <div
+                        key={`${rec.council}-${index}`}
+                        className="flex items-center justify-between gap-3 text-xs"
+                      >
+                        <span className="text-muted-foreground">
+                          {rec.council}
+                        </span>
+                        <span className="flex items-center gap-2">
+                          <span className="font-medium text-foreground">
+                            {rec.recommendation}
+                          </span>
+                          {rec.overallScore != null ? (
+                            <span className="text-muted-foreground">
+                              {Math.round(rec.overallScore * 100) / 100}
+                            </span>
+                          ) : null}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 ) : null}
               </details>

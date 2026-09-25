@@ -3,12 +3,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const prismaMocks = vi.hoisted(() => ({
   credentialFindUnique: vi.fn(),
   assetFindFirst: vi.fn(),
+  executionJobFindUnique: vi.fn(),
+  executionJobUpdate: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     integrationCredential: { findUnique: prismaMocks.credentialFindUnique },
     asset: { findFirst: prismaMocks.assetFindFirst },
+    executionJob: {
+      findUnique: prismaMocks.executionJobFindUnique,
+      update: prismaMocks.executionJobUpdate,
+    },
   },
 }));
 
@@ -359,6 +365,141 @@ describe("MetaApiProvider video ad path", () => {
     const status = await provider.getStatus("corr-1");
     expect(status.status).toBe("FAILED");
     expect(status.errorMessage).toContain("public URL");
+  });
+});
+
+// Restart durability for the video path — see meta-api-provider.ts's
+// persistPendingVideoAdToRawResult/recoverPendingVideoAdFromRawResult/
+// clearPendingVideoAdFromRawResult. Without these, a process restart
+// between "video uploaded" and "ad created" permanently orphaned the
+// pending record (see this file's history / CONCERN 7 in
+// docs/brand-workspace-migration.md).
+describe("MetaApiProvider video ad path — restart durability", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    envMocks.configured = true;
+    prismaMocks.credentialFindUnique.mockResolvedValue(activeCredential);
+    prismaMocks.assetFindFirst.mockImplementation(
+      ({ where }: { where: { id: string } }) => {
+        if (where.id === "video-asset-1") {
+          return Promise.resolve({
+            storageKey: "r2://video.mp4",
+            mimeType: "video/mp4",
+          });
+        }
+        if (where.id === "thumb-asset-1") {
+          return Promise.resolve({ storageKey: "r2://thumb.jpg" });
+        }
+        return Promise.resolve(null);
+      },
+    );
+    storageMocks.readAsset.mockResolvedValue(Buffer.from("video-bytes"));
+    storageMocks.resolveDirectPublicUrl.mockReturnValue(
+      "https://cdn.example.com/thumb.jpg",
+    );
+    metaClientMocks.uploadMetaAdVideo.mockResolvedValue({
+      videoId: "video-1",
+    });
+    metaClientMocks.checkMetaVideoStatus.mockResolvedValue(false);
+    metaClientMocks.createMetaVideoAdCreative.mockResolvedValue({
+      creativeId: "creative-1",
+    });
+    metaClientMocks.createMetaAd.mockResolvedValue({ adId: "ad-1" });
+    prismaMocks.executionJobFindUnique.mockResolvedValue(undefined);
+    prismaMocks.executionJobUpdate.mockResolvedValue({});
+  });
+
+  it("persists the pending video ad to rawResult right after the upload completes", async () => {
+    const provider = new MetaApiProvider();
+    await provider.execute(videoAdRequest());
+
+    expect(prismaMocks.executionJobUpdate).toHaveBeenCalledWith({
+      where: { id: "job-1" },
+      data: {
+        rawResult: {
+          pendingVideoAd: expect.objectContaining({
+            mode: "create",
+            videoId: "video-1",
+            adSetId: "adset-1",
+          }),
+        },
+      },
+    });
+  });
+
+  it("recovers a pending video ad from rawResult when the in-memory map has no entry (simulated restart) and resumes polling to completion", async () => {
+    prismaMocks.executionJobFindUnique.mockImplementation(
+      async (args: { where: { correlationId?: string } }) => {
+        if (args.where.correlationId === "restart-corr") {
+          return {
+            rawResult: {
+              pendingVideoAd: {
+                mode: "create",
+                projectId: "project-1",
+                videoId: "video-recovered",
+                thumbnailUrl: "https://cdn.example.com/thumb.jpg",
+                adSetId: "adset-1",
+                name: "Recovered video ad",
+                message: "Check this out",
+                link: "https://example.com",
+                callToActionType: "LEARN_MORE",
+                status: "PAUSED",
+              },
+            },
+          };
+        }
+        return undefined;
+      },
+    );
+    metaClientMocks.checkMetaVideoStatus.mockResolvedValue(true);
+
+    // A fresh provider instance changes nothing — pendingVideoAds is a
+    // module-level singleton — but "restart-corr" is deliberately a
+    // correlationId this test never calls execute() with, so the in-memory
+    // Map is guaranteed to miss exactly like it would after a real restart.
+    const provider = new MetaApiProvider();
+    const status = await provider.getStatus("restart-corr");
+
+    expect(prismaMocks.executionJobFindUnique).toHaveBeenCalledWith({
+      where: { correlationId: "restart-corr" },
+      select: { rawResult: true },
+    });
+    expect(metaClientMocks.createMetaVideoAdCreative).toHaveBeenCalledWith(
+      expect.objectContaining({ videoId: "video-recovered" }),
+    );
+    expect(status.status).toBe("COMPLETED");
+  });
+
+  it("clears the persisted record before creating the ad, so a crash right after can't replay a duplicate ad on the next recovery", async () => {
+    const provider = new MetaApiProvider();
+    await provider.execute(videoAdRequest());
+    // clearPendingVideoAdFromRawResult only writes when it finds an
+    // existing persisted record to strip from — reflect what
+    // persistPendingVideoAdToRawResult (exercised by execute() above) would
+    // actually have written, same as the real read-merge-write sequence.
+    prismaMocks.executionJobFindUnique.mockResolvedValue({
+      id: "job-1",
+      rawResult: {
+        pendingVideoAd: {
+          mode: "create",
+          videoId: "video-1",
+          adSetId: "adset-1",
+        },
+      },
+    });
+    metaClientMocks.checkMetaVideoStatus.mockResolvedValue(true);
+
+    await provider.getStatus("corr-1");
+
+    // The clear-before-create write strips pendingVideoAd but preserves any
+    // other rawResult fields already there (read-merge-write) — asserting
+    // it was called with a payload that has no pendingVideoAd key is enough
+    // to prove the non-idempotent create calls below it are protected.
+    const clearCall = prismaMocks.executionJobUpdate.mock.calls.find(
+      ([args]) =>
+        args.data?.rawResult && !("pendingVideoAd" in args.data.rawResult),
+    );
+    expect(clearCall).toBeDefined();
   });
 });
 

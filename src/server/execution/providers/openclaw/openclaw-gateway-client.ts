@@ -373,8 +373,21 @@ export const OpenClawGatewayClient = {
   ): Promise<
     { kind: "running" } | { kind: "done"; result: OpenClawAgentResult }
   > {
-    const state = runStates.get(runId);
-    if (!state) return { kind: "running" }; // not observed yet — caller retries next poll
+    let state = runStates.get(runId);
+    if (!state) {
+      // Not "not observed yet" in the normal case — startAgentRun always
+      // pre-seeds runStates before returning (line ~307 below), so a genuine
+      // miss here only happens after a process restart wiped this map (see
+      // openclaw-provider.ts's rawResult-backed recovery, which hands back a
+      // runId this process has never seen). Previously this short-circuited
+      // to "running" forever without ever asking the Gateway — defeating
+      // both the recovery below AND SelfHealingService's stuck-job sweep
+      // (its heartbeat kept refreshing updatedAt on every "still running"
+      // poll). Seed a fresh pending entry instead and fall through to the
+      // same agent.wait ask every other run gets.
+      state = { kind: "pending", startedAt: Date.now() };
+      runStates.set(runId, state);
+    }
     if (state.kind === "done") return state;
 
     // Short per-poll ask, not a long-hold wait — pollRunningJobs processes

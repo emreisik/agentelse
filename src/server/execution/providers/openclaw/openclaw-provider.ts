@@ -285,12 +285,28 @@ export class OpenClawProvider implements ExecutionProvider {
   // reaches a paused browser-control run. Starts a new Gateway run against
   // that session, so the stored runId is updated to the new one; getStatus()
   // picks it up on the next poll exactly like a fresh execute() would.
+  //
+  // Mirrors getStatus()'s rawResult recovery (a restart between the human
+  // answering and this call must not silently drop their answer), AND
+  // re-persists the new runId afterward — without that second write, a
+  // SECOND restart before this follow-up run finishes would recover the
+  // STALE pre-resume runId from rawResult, which getRunState() (now that it
+  // asks the Gateway instead of assuming "running") would resolve to the
+  // abandoned run's own paused state — silently re-prompting the human for
+  // an answer they already gave while the real, actually-in-progress
+  // follow-up run is orphaned and never polled again.
   async resume(
     executionReference: string,
     input: { value: string },
   ): Promise<void> {
-    const record = store.get(executionReference);
-    if (!record) return;
+    let record = store.get(executionReference);
+    if (!record) record = await recoverRunFromRawResult(executionReference);
+    if (!record) {
+      console.error(
+        `[openclaw-provider] resume(): no stored run for ${executionReference} even after rawResult recovery`,
+      );
+      return;
+    }
 
     const { runId } = await OpenClawGatewayClient.sendFollowUp({
       agentId: record.agentId,
@@ -298,7 +314,14 @@ export class OpenClawProvider implements ExecutionProvider {
       message: input.value,
     });
 
-    store.set(executionReference, { ...record, runId });
+    const updated: StoredRun = { ...record, runId };
+    store.set(executionReference, updated);
+
+    const job = await prisma.executionJob.findUnique({
+      where: { correlationId: executionReference },
+      select: { id: true },
+    });
+    if (job) await persistRunToRawResult(job.id, updated);
   }
 
   private async resolveAgentId(

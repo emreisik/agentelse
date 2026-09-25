@@ -422,5 +422,64 @@ describe("OpenClawProvider", () => {
       await provider.resume("never-executed", { value: "x" });
       expect(gatewayMocks.sendFollowUp).not.toHaveBeenCalled();
     });
+
+    it("recovers the run reference from Postgres when the in-memory store has no entry (simulated process restart) and re-persists the new runId", async () => {
+      prismaMocks.findUniqueExecutionJob.mockImplementation(
+        async (args: { where: { correlationId?: string; id?: string } }) => {
+          if (args.where.correlationId === "restart-corr") {
+            return {
+              id: "job-restart",
+              rawResult: {
+                agentId: "hubconnect",
+                sessionKey: "restart-corr",
+                runId: "run-before-restart",
+              },
+            };
+          }
+          if (args.where.id === "job-restart") {
+            return {
+              rawResult: {
+                agentId: "hubconnect",
+                sessionKey: "restart-corr",
+                runId: "run-before-restart",
+              },
+            };
+          }
+          return undefined;
+        },
+      );
+      gatewayMocks.sendFollowUp.mockResolvedValue({
+        runId: "run-after-resume",
+      });
+
+      // A fresh provider instance changes nothing here — `store` is a
+      // module-level singleton — but this correlationId is deliberately one
+      // this test never calls execute() with, guaranteeing an in-memory
+      // miss exactly like a real restart between the human's answer and
+      // this call.
+      const provider = new OpenClawProvider();
+      await provider.resume("restart-corr", { value: "123456" });
+
+      expect(gatewayMocks.sendFollowUp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: "hubconnect",
+          sessionKey: "restart-corr",
+          message: "123456",
+        }),
+      );
+      // The new runId must be written back to rawResult — otherwise a
+      // SECOND restart before this follow-up finishes would recover the
+      // stale pre-resume runId instead (see the comment on resume()).
+      expect(prismaMocks.updateExecutionJob).toHaveBeenCalledWith({
+        where: { id: "job-restart" },
+        data: {
+          rawResult: {
+            agentId: "hubconnect",
+            sessionKey: "restart-corr",
+            runId: "run-after-resume",
+          },
+        },
+      });
+    });
   });
 });

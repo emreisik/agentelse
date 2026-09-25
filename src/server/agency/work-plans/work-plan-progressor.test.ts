@@ -113,7 +113,7 @@ describe("WorkPlanProgressor.onTaskTerminal", () => {
     expect(TaskRepository.transition).not.toHaveBeenCalled();
   });
 
-  it("does not cascade-cancel dependents for a plain CANCELLED terminal (only FAILED cascades)", async () => {
+  it("also cascade-cancels dependents for a plain CANCELLED terminal (e.g. a user-cancelled task)", async () => {
     task.findUnique.mockResolvedValue({
       workPlanId: "plan-1",
       projectId: "p-1",
@@ -124,13 +124,57 @@ describe("WorkPlanProgressor.onTaskTerminal", () => {
     vi.mocked(WorkPlanRepository.findByIdInProject).mockResolvedValue({
       id: "plan-1",
       status: "IN_PROGRESS",
-      tasks: [{ status: "CANCELLED" }],
+      tasks: [{ status: "CANCELLED" }, { status: "CANCELLED" }],
     } as never);
 
     await WorkPlanProgressor.onTaskTerminal("task-a", "CANCELLED");
 
-    expect(taskDependency.findMany).not.toHaveBeenCalled();
-    expect(TaskRepository.transition).not.toHaveBeenCalled();
+    expect(TaskRepository.transition).toHaveBeenCalledWith(
+      "task-b",
+      "p-1",
+      "CANCELLED",
+      { failureReason: "Upstream dependency task-a was cancelled" },
+    );
+  });
+
+  it("cascades a second hop: a FAILED root's cascade-CANCELLED dependent's own trigger cancels ITS dependent too", async () => {
+    // Simulates WorkPlanBuilder's strategy -> middle -> measurement graph:
+    // strategy FAILS, middle cascade-CANCELs (first onTaskTerminal call,
+    // status "FAILED"), middle's own TASK_CANCELLED trigger then fires a
+    // second onTaskTerminal call (status "CANCELLED") that must still reach
+    // measurement, 2 hops from the original failure.
+    task.findUnique.mockResolvedValue({
+      workPlanId: "plan-1",
+      projectId: "p-1",
+    });
+    taskDependency.findMany.mockResolvedValueOnce([
+      { taskId: "middle", task: { status: "READY", projectId: "p-1" } },
+    ]);
+    vi.mocked(WorkPlanRepository.findByIdInProject).mockResolvedValue({
+      id: "plan-1",
+      status: "IN_PROGRESS",
+      tasks: [{ status: "READY" }],
+    } as never);
+
+    await WorkPlanProgressor.onTaskTerminal("strategy", "FAILED");
+    expect(TaskRepository.transition).toHaveBeenCalledWith(
+      "middle",
+      "p-1",
+      "CANCELLED",
+      { failureReason: "Upstream dependency strategy failed" },
+    );
+
+    taskDependency.findMany.mockResolvedValueOnce([
+      { taskId: "measurement", task: { status: "READY", projectId: "p-1" } },
+    ]);
+
+    await WorkPlanProgressor.onTaskTerminal("middle", "CANCELLED");
+    expect(TaskRepository.transition).toHaveBeenCalledWith(
+      "measurement",
+      "p-1",
+      "CANCELLED",
+      { failureReason: "Upstream dependency middle was cancelled" },
+    );
   });
 
   it("transitions the plan to FAILED once every task is terminal and at least one FAILED", async () => {
@@ -155,6 +199,31 @@ describe("WorkPlanProgressor.onTaskTerminal", () => {
       "p-1",
       "FAILED",
     );
+  });
+
+  it("resolves the plan to CANCELLED (not COMPLETED) when its only non-success path was a direct CANCELLED, with zero FAILED tasks", async () => {
+    task.findUnique.mockResolvedValue({
+      workPlanId: "plan-1",
+      projectId: "p-1",
+    });
+    vi.mocked(WorkPlanRepository.findByIdInProject).mockResolvedValue({
+      id: "plan-1",
+      status: "IN_PROGRESS",
+      ideaId: "idea-1",
+      tasks: [{ status: "CANCELLED" }, { status: "COMPLETED" }],
+    } as never);
+    idea.findUnique.mockResolvedValue({ status: "ACTIVE" });
+
+    await WorkPlanProgressor.onTaskTerminal("task-a", "CANCELLED");
+
+    expect(WorkPlanRepository.transition).toHaveBeenCalledWith(
+      "plan-1",
+      "p-1",
+      "CANCELLED",
+    );
+    // Same idea-archival safety net as the FAILED case — a CANCELLED plan
+    // must not strand its ACTIVE idea either (§ audit scenario K).
+    expect(ideaTransition).toHaveBeenCalledWith("idea-1", "p-1", "ARCHIVED");
   });
 
   it("archives the plan's ACTIVE idea when the plan reaches FAILED (audit scenario K)", async () => {

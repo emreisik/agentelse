@@ -108,6 +108,116 @@ type PendingVideoAd =
 
 const pendingVideoAds = new Map<string, PendingVideoAd>();
 
+// Durability for the video-ad async path — same shape as
+// openclaw-provider.ts's persistRunToRawResult/recoverRunFromRawResult
+// (read-merge-write into ExecutionJob.rawResult, best-effort, errors
+// swallowed since the upload itself has already happened regardless).
+// Without this, a restart between "video uploaded" and "creative/ad
+// created" wiped `pendingVideoAds` and the next poll returned a permanent,
+// misleading "Unknown Meta API execution reference" FAILED — even though
+// the video had already uploaded successfully to the ad account.
+async function persistPendingVideoAdToRawResult(
+  executionJobId: string,
+  record: PendingVideoAd,
+): Promise<void> {
+  try {
+    const existing = await prisma.executionJob.findUnique({
+      where: { id: executionJobId },
+      select: { rawResult: true },
+    });
+    const base =
+      existing?.rawResult && typeof existing.rawResult === "object"
+        ? (existing.rawResult as Record<string, unknown>)
+        : {};
+    await prisma.executionJob.update({
+      where: { id: executionJobId },
+      data: { rawResult: { ...base, pendingVideoAd: record } as never },
+    });
+  } catch (error) {
+    console.error(
+      "[meta-api-provider] failed to persist pending video ad to rawResult:",
+      error,
+    );
+  }
+}
+
+function isPendingVideoAd(value: unknown): value is PendingVideoAd {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  if (
+    typeof v.projectId !== "string" ||
+    typeof v.videoId !== "string" ||
+    typeof v.thumbnailUrl !== "string" ||
+    typeof v.message !== "string" ||
+    typeof v.link !== "string" ||
+    typeof v.callToActionType !== "string"
+  ) {
+    return false;
+  }
+  if (v.mode === "create") {
+    return typeof v.adSetId === "string" && typeof v.name === "string";
+  }
+  if (v.mode === "update") {
+    return typeof v.adId === "string";
+  }
+  return false;
+}
+
+// Clears the persisted record at the same moment pendingVideoAds.delete() is
+// called, right before the (non-idempotent) ad-creation calls — see
+// pollVideoAd. Without this, a crash between "video confirmed ready" and
+// "ad-creation call acknowledged" would, on the recovered process's next
+// poll, replay checkMetaVideoStatus -> ready -> createMetaVideoAdCreative/
+// createMetaAd a SECOND time (Meta's ad-creation calls here carry no
+// client-supplied idempotency key), risking a duplicate live ad with real
+// spend. Clearing first means that crash window degrades to today's safe
+// "Unknown execution reference" FAILED instead.
+async function clearPendingVideoAdFromRawResult(
+  executionReference: string,
+): Promise<void> {
+  try {
+    const job = await prisma.executionJob.findUnique({
+      where: { correlationId: executionReference },
+      select: { id: true, rawResult: true },
+    });
+    if (!job || !job.rawResult || typeof job.rawResult !== "object") return;
+    const rest = { ...(job.rawResult as Record<string, unknown>) };
+    delete rest.pendingVideoAd;
+    await prisma.executionJob.update({
+      where: { id: job.id },
+      data: { rawResult: rest as never },
+    });
+  } catch (error) {
+    console.error(
+      "[meta-api-provider] failed to clear pending video ad from rawResult:",
+      error,
+    );
+  }
+}
+
+async function recoverPendingVideoAdFromRawResult(
+  executionReference: string,
+): Promise<PendingVideoAd | undefined> {
+  try {
+    const job = await prisma.executionJob.findUnique({
+      where: { correlationId: executionReference },
+      select: { rawResult: true },
+    });
+    const raw = job?.rawResult;
+    if (!raw || typeof raw !== "object") return undefined;
+    const candidate = (raw as Record<string, unknown>).pendingVideoAd;
+    if (!isPendingVideoAd(candidate)) return undefined;
+    pendingVideoAds.set(executionReference, candidate);
+    return candidate;
+  } catch (error) {
+    console.error(
+      "[meta-api-provider] failed to recover pending video ad from rawResult:",
+      error,
+    );
+    return undefined;
+  }
+}
+
 async function findActiveMetaCredential(projectId: string) {
   const credential = await prisma.integrationCredential.findUnique({
     where: { projectId_provider: { projectId, provider: "meta" } },
@@ -267,7 +377,9 @@ export class MetaApiProvider implements ExecutionProvider {
   async getStatus(
     executionReference: string,
   ): Promise<ProviderExecutionStatus> {
-    const pending = pendingVideoAds.get(executionReference);
+    const pending =
+      pendingVideoAds.get(executionReference) ??
+      (await recoverPendingVideoAdFromRawResult(executionReference));
     if (pending) {
       return this.pollVideoAd(executionReference, pending);
     }
@@ -374,7 +486,7 @@ export class MetaApiProvider implements ExecutionProvider {
         mimeType: videoAsset.mimeType,
       });
       if (isUpdate) {
-        pendingVideoAds.set(request.correlationId, {
+        const record: PendingVideoAd = {
           mode: "update",
           projectId: request.context.projectId,
           videoId,
@@ -385,9 +497,11 @@ export class MetaApiProvider implements ExecutionProvider {
           link,
           callToActionType,
           status,
-        });
+        };
+        pendingVideoAds.set(request.correlationId, record);
+        await persistPendingVideoAdToRawResult(request.executionJobId, record);
       } else {
-        pendingVideoAds.set(request.correlationId, {
+        const record: PendingVideoAd = {
           mode: "create",
           projectId: request.context.projectId,
           videoId,
@@ -398,7 +512,9 @@ export class MetaApiProvider implements ExecutionProvider {
           link,
           callToActionType,
           status: status ?? "PAUSED",
-        });
+        };
+        pendingVideoAds.set(request.correlationId, record);
+        await persistPendingVideoAdToRawResult(request.executionJobId, record);
       }
     } catch (error) {
       fail(
@@ -467,6 +583,11 @@ export class MetaApiProvider implements ExecutionProvider {
     }
 
     pendingVideoAds.delete(executionReference);
+    // Best-effort, before the non-idempotent ad-creation calls below — see
+    // clearPendingVideoAdFromRawResult's comment. A crash after this point
+    // degrades to a safe "Unknown execution reference" FAILED on the next
+    // poll instead of a replayed, potentially duplicate ad creation.
+    await clearPendingVideoAdFromRawResult(executionReference);
     if (!metadata.selectedAdAccountId) {
       return {
         status: "FAILED",

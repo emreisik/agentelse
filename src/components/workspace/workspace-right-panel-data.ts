@@ -7,19 +7,13 @@ import type {
   SocialPlatform,
 } from "@prisma/client";
 
-// Turkish status words for the Brand Workspace surfaces only (outputs
-// panel, calendar panel, output preview dialog, in-chat creative card) —
-// deliberately NOT touching the shared CREATIVE_STATUS map in lib/labels
-// (used across many still-English legacy screens: /creatives detail,
-// StatusBadge, etc.), same reasoning as dayLabel in lib/dates.ts.
-export const WORKSPACE_STATUS_LABEL_TR: Record<CreativeStatus, string> = {
-  DRAFT: "Taslak",
-  IN_REVIEW: "Onay bekliyor",
-  APPROVED: "Onaylandı",
-  REJECTED: "Reddedildi",
-  PUBLISHED: "Yayınlandı",
-  ARCHIVED: "Arşivlendi",
-};
+// Re-exported for existing importers of this file — but see
+// workspace-status-labels.ts's own comment: any "use client" component
+// must import WORKSPACE_STATUS_LABEL_TR directly from THAT module, never
+// from this one, or the "server-only" marker below poisons its client
+// bundle. This file (a Server Component-only data loader) is safe to
+// import it from.
+export { WORKSPACE_STATUS_LABEL_TR } from "./workspace-status-labels";
 
 import { prisma } from "@/lib/prisma";
 import { CreativeRepository } from "@/server/repositories/creative.repository";

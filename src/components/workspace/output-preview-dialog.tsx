@@ -19,7 +19,7 @@ import {
   type CreativePreview,
 } from "@/server/actions/creative-actions";
 import { assignCreativeDateAction } from "@/server/actions/creative-calendar-actions";
-import { WORKSPACE_STATUS_LABEL_TR } from "@/components/workspace/workspace-right-panel-data";
+import { WORKSPACE_STATUS_LABEL_TR } from "@/components/workspace/workspace-status-labels";
 import type { CreativeStatus } from "@prisma/client";
 
 // The spec's "Output Preview Dialog" — the single, shared inline preview

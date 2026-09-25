@@ -18,7 +18,7 @@ import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
 import { WsTag } from "@/components/commands/ws-event-card";
 import { OutputPreviewDialog } from "@/components/workspace/output-preview-dialog";
-import { WORKSPACE_STATUS_LABEL_TR } from "@/components/workspace/workspace-right-panel-data";
+import { WORKSPACE_STATUS_LABEL_TR } from "@/components/workspace/workspace-status-labels";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {

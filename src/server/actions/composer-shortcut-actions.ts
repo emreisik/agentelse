@@ -1,6 +1,10 @@
 "use server";
 
-import type { CapabilityKey, SocialPlatform } from "@prisma/client";
+import type {
+  CapabilityKey,
+  CreativeContentFormat,
+  SocialPlatform,
+} from "@prisma/client";
 
 import {
   requireUser,
@@ -19,6 +23,7 @@ export async function submitComposerShortcutAction(
   request: string,
   targetPlatform?: SocialPlatform,
   ideaId?: string,
+  contentFormat?: CreativeContentFormat,
 ): Promise<ChatMessageResult> {
   const { userId } = await requireUser();
   const access = await requireProjectAccess(userId, projectId);
@@ -27,6 +32,7 @@ export async function submitComposerShortcutAction(
     capability,
     request,
     targetPlatform,
+    contentFormat,
     workspaceId: access.workspaceId,
     projectId,
     ideaId,

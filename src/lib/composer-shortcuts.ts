@@ -1,4 +1,8 @@
-import type { CapabilityKey, SocialPlatform } from "@prisma/client";
+import type {
+  CapabilityKey,
+  CreativeContentFormat,
+  SocialPlatform,
+} from "@prisma/client";
 import type { LucideIcon } from "lucide-react";
 import {
   BadgeCheck,
@@ -55,6 +59,11 @@ export type ComposerShortcut =
       capability: CapabilityKey;
       request: string;
       targetPlatform?: SocialPlatform;
+      // Story/Reel/etc — see intent-router.ts's matching keyword-detection
+      // fix; these shortcuts bypass free text entirely, so a shortcut that
+      // wants a specific format has to set this directly instead of
+      // relying on `request` being re-parsed (it never is, for shortcuts).
+      contentFormat?: CreativeContentFormat;
       // When set, the menu checks getPublishTargets for this platform
       // first — if it isn't connected, the item behaves as "navigate" to
       // the integrations page instead of firing a doomed task (see
@@ -79,8 +88,12 @@ export const DEPARTMENT_SHORTCUTS: ComposerShortcut[] =
 
 // Instagram/LinkedIn/X double as "Create {Platform} post" — the same
 // CREATE_SOCIAL_CREATIVE quick action the old ChatQuickActions pill row
-// offered, now folded in here. TikTok is deliberately absent from that
-// trio: CREATE_SOCIAL_CREATIVE only produces an image, but TIKTOK_PUBLISH
+// offered, now folded in here. Instagram additionally gets dedicated
+// Story/Reel shortcuts (contentFormat set directly, since a shortcut's
+// `request` text is never re-parsed for format keywords the way free
+// text is — see intent-router.ts's detectContentFormat). TikTok is
+// deliberately absent from that trio: CREATE_SOCIAL_CREATIVE only produces
+// an image, but TIKTOK_PUBLISH
 // needs a video asset — a "create" shortcut here would make something that
 // can never actually be published. The remaining integrations have no
 // project-level connection status available cheaply on this component (only
@@ -96,6 +109,28 @@ export const INTEGRATION_SHORTCUTS: ComposerShortcut[] = [
     capability: "CREATE_SOCIAL_CREATIVE",
     request: "Create an Instagram post",
     targetPlatform: "INSTAGRAM",
+    requiresConnectedPlatform: "instagram",
+  },
+  {
+    id: "integration-instagram-story",
+    label: "Create Instagram Story",
+    icon: PURPOSE_ICONS.INSTAGRAM.icon,
+    kind: "capability",
+    capability: "CREATE_SOCIAL_CREATIVE",
+    request: "Create an Instagram Story",
+    targetPlatform: "INSTAGRAM",
+    contentFormat: "STORY",
+    requiresConnectedPlatform: "instagram",
+  },
+  {
+    id: "integration-instagram-reel",
+    label: "Create Instagram Reel",
+    icon: PURPOSE_ICONS.INSTAGRAM.icon,
+    kind: "capability",
+    capability: "CREATE_SOCIAL_CREATIVE",
+    request: "Create an Instagram Reel",
+    targetPlatform: "INSTAGRAM",
+    contentFormat: "REEL",
     requiresConnectedPlatform: "instagram",
   },
   {

@@ -20,7 +20,11 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/react";
 
-import type { CapabilityKey, SocialPlatform } from "@prisma/client";
+import type {
+  CapabilityKey,
+  CreativeContentFormat,
+  SocialPlatform,
+} from "@prisma/client";
 
 import {
   submitChatMessageAction,
@@ -496,6 +500,7 @@ export function ProjectChat({
       capability: CapabilityKey,
       request: string,
       targetPlatform?: SocialPlatform,
+      contentFormat?: CreativeContentFormat,
     ) => {
       return runTurn(request, [], () =>
         submitComposerShortcutAction(
@@ -504,6 +509,7 @@ export function ProjectChat({
           request,
           targetPlatform,
           ideaId,
+          contentFormat,
         ),
       );
     },

@@ -1,6 +1,10 @@
 import "server-only";
 
-import type { CapabilityKey, SocialPlatform } from "@prisma/client";
+import type {
+  CapabilityKey,
+  CreativeContentFormat,
+  SocialPlatform,
+} from "@prisma/client";
 
 import { CommandService } from "@/server/commands/command-service";
 import { CommandRepository } from "@/server/repositories/command.repository";
@@ -15,6 +19,7 @@ export async function submitComposerShortcut(input: {
   capability: CapabilityKey;
   request: string;
   targetPlatform?: SocialPlatform;
+  contentFormat?: CreativeContentFormat;
   workspaceId: string;
   projectId: string;
   ideaId?: string;
@@ -32,6 +37,7 @@ export async function submitComposerShortcut(input: {
       kind: "CAPABILITY",
       capability: input.capability,
       targetPlatform: input.targetPlatform,
+      contentFormat: input.contentFormat,
       request: input.request,
     },
   });

@@ -4,7 +4,11 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { PaperclipIcon, PlusIcon } from "lucide-react";
 import { ComposerPrimitive } from "@assistant-ui/react";
-import type { CapabilityKey, SocialPlatform } from "@prisma/client";
+import type {
+  CapabilityKey,
+  CreativeContentFormat,
+  SocialPlatform,
+} from "@prisma/client";
 
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import {
@@ -52,6 +56,7 @@ export function ComposerPlusMenu({
     capability: CapabilityKey,
     request: string,
     targetPlatform?: SocialPlatform,
+    contentFormat?: CreativeContentFormat,
   ) => void;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -83,7 +88,12 @@ export function ComposerPlusMenu({
       router.push(INTEGRATIONS_HREF(projectId));
       return;
     }
-    onShortcut(shortcut.capability, shortcut.request, shortcut.targetPlatform);
+    onShortcut(
+      shortcut.capability,
+      shortcut.request,
+      shortcut.targetPlatform,
+      shortcut.contentFormat,
+    );
   }
 
   return (

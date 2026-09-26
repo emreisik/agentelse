@@ -7,6 +7,7 @@ import {
   AlertCircle,
   ArrowUpRight,
   Check,
+  Clock,
   ImageIcon,
   Loader2,
   PenLine,
@@ -47,6 +48,7 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
         style={{
           borderColor: "var(--ws-border)",
           background: "var(--ws-surface)",
+          boxShadow: "var(--ws-card-shadow)",
         }}
       >
         <div
@@ -88,6 +90,7 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
           borderColor:
             "color-mix(in oklch, var(--destructive) 25%, transparent)",
           background: "color-mix(in oklch, var(--destructive) 6%, transparent)",
+          boxShadow: "var(--ws-card-shadow)",
         }}
       >
         <span
@@ -127,6 +130,7 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
         style={{
           borderColor: "var(--ws-border)",
           background: "var(--ws-surface)",
+          boxShadow: "var(--ws-card-shadow)",
         }}
       >
         <div className="flex items-center gap-2">
@@ -252,6 +256,7 @@ function CreativeReadyCard({
       style={{
         borderColor: "var(--ws-border)",
         background: "var(--ws-surface)",
+        boxShadow: "var(--ws-card-shadow)",
       }}
     >
       <div className="grid sm:grid-cols-[39%_61%]">
@@ -479,7 +484,43 @@ function CreativeReadyCard({
             </div>
           ) : null}
 
-          {status === "APPROVED" ? (
+          {card.publishState ? (
+            <div
+              className="mt-3 flex items-center gap-1.5 text-xs"
+              style={{
+                color:
+                  card.publishState === "failed"
+                    ? "var(--destructive)"
+                    : "var(--ws-text-2)",
+              }}
+            >
+              {card.publishState === "queued" ? (
+                <>
+                  <Clock className="size-3.5" />
+                  Queued to publish
+                </>
+              ) : card.publishState === "publishing" ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  Publishing…
+                </>
+              ) : card.publishState === "published" ? (
+                <>
+                  <Check className="size-3.5" />
+                  Published
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="size-3.5" />
+                  Failed to publish
+                  {card.publishError ? ` — ${card.publishError}` : ""}
+                </>
+              )}
+            </div>
+          ) : null}
+
+          {status === "APPROVED" &&
+          (!card.publishState || card.publishState === "failed") ? (
             <div className="mt-3">
               <PublishSection creativeId={card.creativeId} />
             </div>
@@ -533,6 +574,7 @@ const PLATFORM_LABEL: Record<"tiktok" | "linkedin" | "x", string> = {
 };
 
 function PublishSection({ creativeId }: { creativeId: string }) {
+  const router = useRouter();
   const [targets, setTargets] = useState<PublishTarget[] | null>(null);
   const [publishedKeys, setPublishedKeys] = useState<Set<string>>(new Set());
   const [pendingKey, setPendingKey] = useState<string | null>(null);
@@ -572,6 +614,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
         if (result.ok) {
           toast.success(result.message);
           setPublishedKeys((prev) => new Set(prev).add(key));
+          router.refresh();
         } else {
           toast.error(result.message);
         }
@@ -586,6 +629,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
         if (result.ok) {
           toast.success(result.message);
           setPublishedKeys((prev) => new Set(prev).add(platform));
+          router.refresh();
         } else {
           toast.error(result.message);
         }

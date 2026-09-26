@@ -50,6 +50,14 @@ export type CreativeCardData =
       // no brand relation, just a brandId column) — shown as the small
       // wordmark on the image. Optional for the same reason as above.
       brandName?: string;
+      // Mirrors the publish pipeline's progress directly onto this SAME
+      // card (see IdeaChatRepository.markCreativePublishState) instead of
+      // that pipeline spawning its own separate chat rows. Absent on older
+      // cards and on any publish not triggered through this card — renders
+      // as no status line, not an error.
+      publishState?: "idle" | "queued" | "publishing" | "published" | "failed";
+      publishError?: string;
+      publishedAt?: string; // ISO
     }
   | {
       kind: "creative-failed";

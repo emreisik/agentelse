@@ -107,6 +107,11 @@ export type AutoPublishResult = {
   // error — the caller's existing ask-flow fallback applies here.
   status: "PUBLISHED" | "QUEUED" | "SKIPPED";
   message: string;
+  // Only meaningful when status is "PUBLISHED" — see
+  // PublishQuickActionResult's own comment. Callers use this to skip a
+  // redundant "published!" chat message when the creative's own card
+  // already shows it.
+  cardUpdated?: boolean;
 };
 
 // True when this project has at least one enabled Instagram publish
@@ -174,6 +179,7 @@ export async function autoPublishCreative(input: {
     return {
       status: result.ok ? "PUBLISHED" : "SKIPPED",
       message: result.message,
+      cardUpdated: result.ok ? result.cardUpdated : undefined,
     };
   } catch (error) {
     console.error("[approval-decisions] auto-publish failed:", error);
@@ -271,6 +277,11 @@ export async function publishNextQueuedInstagramCreative(input: {
       projectId: input.projectId,
       brandId: input.brandId,
     });
+
+    // The creative's own card already shows "Published" via
+    // markCreativePublishState (see publishCreativeCore) when it found a
+    // matching row — only fall back to a plain chat message when it didn't.
+    if (result.cardUpdated) return;
 
     const target = await resolveIdeaAndTitleForCreative(creativeId);
     if (target?.ideaId) {
@@ -540,13 +551,17 @@ export async function applyApprovalDecision(input: {
           if (autoPublishResult?.status === "PUBLISHED") {
             // Auto-published above — no question needed, just confirm it
             // happened (this is what used to be a silent "sat there for 11
-            // days" gap).
-            await IdeaChatRepository.postSystemMessage({
-              workspaceId: approval.workspaceId,
-              projectId: approval.projectId,
-              ideaId: target.ideaId,
-              text: `✅ ${target.title} approved and published to Instagram automatically.`,
-            });
+            // days" gap). Skipped when the creative's own card already
+            // mirrors the publish state (markCreativePublishState) — no
+            // separate row needed on top of it.
+            if (!autoPublishResult.cardUpdated) {
+              await IdeaChatRepository.postSystemMessage({
+                workspaceId: approval.workspaceId,
+                projectId: approval.projectId,
+                ideaId: target.ideaId,
+                text: `✅ ${target.title} approved and published to Instagram automatically.`,
+              });
+            }
           } else if (autoPublishResult?.status === "QUEUED") {
             // A Publishing schedule is active for this project — the
             // creative stays APPROVED and publishNextQueuedInstagramCreative

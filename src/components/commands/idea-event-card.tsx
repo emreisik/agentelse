@@ -325,6 +325,7 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
           style={{
             borderColor: "var(--ws-border)",
             background: "var(--ws-surface)",
+            boxShadow: "var(--ws-card-shadow)",
           }}
         >
           <div className="flex items-center gap-2">
@@ -529,6 +530,7 @@ function WsDecisionCard({
       style={{
         borderColor: "var(--ws-border)",
         background: "var(--ws-surface)",
+        boxShadow: "var(--ws-card-shadow)",
       }}
     >
       <div className="flex items-start justify-between gap-2.5">
@@ -1059,6 +1061,7 @@ function ContentPlanSummaryCard({
       style={{
         borderColor: "var(--ws-border)",
         background: "var(--ws-surface)",
+        boxShadow: "var(--ws-card-shadow)",
       }}
     >
       <div className="flex items-center gap-2.5">
@@ -1214,6 +1217,7 @@ function QuestionCard({
             style={{
               borderColor: "var(--ws-border)",
               background: "var(--ws-surface)",
+              boxShadow: "var(--ws-card-shadow)",
             }}
           >
             <p

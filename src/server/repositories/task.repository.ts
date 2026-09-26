@@ -50,6 +50,7 @@ async function postTaskChatEvent(task: {
   status: "COMPLETED" | "FAILED" | "CANCELLED";
   departmentKey: DepartmentKey | null;
   capability: CapabilityKey;
+  payload?: unknown;
 }) {
   if (ExecutionPolicy.isCreative(task.capability)) return;
   try {
@@ -77,6 +78,29 @@ async function postTaskChatEvent(task: {
         typeof rawResult.postId === "string" ? rawResult.postId : undefined;
       const publishStatus =
         task.status === "COMPLETED" ? "COMPLETED" : "FAILED";
+
+      // Same "mirror onto the creative-ready card instead of a separate
+      // row" treatment as execution-service.ts's non-verification
+      // completion path (see markCreativePublishState) — INSTAGRAM_PUBLISH
+      // completes through THIS function, not that one (see the module
+      // comment above).
+      const publishCreativeId = (task.payload as Record<string, unknown> | null)
+        ?.creativeId as string | undefined;
+      const mirroredOntoCard = publishCreativeId
+        ? await IdeaChatRepository.markCreativePublishState({
+            taskId: task.id,
+            creativeId: publishCreativeId,
+            publishState:
+              publishStatus === "COMPLETED" ? "published" : "failed",
+            publishError:
+              publishStatus === "FAILED"
+                ? (latestJob?.errorMessage ?? undefined)
+                : undefined,
+            publishedAt: publishStatus === "COMPLETED" ? new Date() : undefined,
+          }).catch(() => false)
+        : false;
+      if (mirroredOntoCard) return;
+
       await IdeaChatRepository.resolvePublishResultCard({
         workspaceId: task.workspaceId,
         projectId: task.projectId,
@@ -333,6 +357,7 @@ export const TaskRepository = {
         status: to,
         departmentKey: task.departmentKey,
         capability: task.capability,
+        payload: task.payload,
       });
     }
 
@@ -385,6 +410,7 @@ export const TaskRepository = {
       status: "COMPLETED",
       departmentKey: task.departmentKey,
       capability: task.capability,
+      payload: task.payload,
     });
 
     return true;

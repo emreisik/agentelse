@@ -148,12 +148,18 @@
   --ws-soft-green: var(--muted);
   --ws-pending: var(--warning);
   --ws-approved: var(--success);
+  /* A leaf value, not a var() alias like the rest of --ws-* above — there's
+     no existing dark-aware base token for "the shadow under a card", so
+     .dark below redefines it directly instead. */
+  --ws-card-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 2px 8px -2px rgb(0 0 0 / 0.08);
 }
 
 .dark {
   /* --ws-* tokens themselves aren't redefined here — every one of them
      (see :root above) is a var() alias to one of the tokens below, so they
-     resolve to the dark value automatically once those change. */
+     resolve to the dark value automatically once those change. --ws-card-shadow
+     is the one exception (its own leaf value, see :root's comment on it). */
+  --ws-card-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 4px 12px -2px rgb(0 0 0 / 0.4);
   --background: oklch(0.16 0.012 260);
   --foreground: oklch(0.96 0.006 260);
   --card: oklch(0.205 0.012 260);

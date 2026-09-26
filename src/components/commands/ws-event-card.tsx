@@ -119,6 +119,7 @@ export function WsEventCard({
       style={{
         borderColor: "var(--ws-border)",
         background: "var(--ws-surface)",
+        boxShadow: "var(--ws-card-shadow)",
       }}
     >
       <div className="flex items-center gap-2.5">

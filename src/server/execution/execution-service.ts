@@ -187,18 +187,38 @@ export const ExecutionService = {
           );
         });
       } else {
-        await IdeaChatRepository.postTaskRunningCard({
-          workspaceId: job.workspaceId,
-          projectId: job.projectId,
-          taskId: job.taskId,
-          title: task.title,
-          departmentKey: task.departmentKey ?? undefined,
-        }).catch((error) => {
-          console.error(
-            "[execution-service] postTaskRunningCard failed:",
-            error,
-          );
-        });
+        // A publish job whose creativeId matches a creative-ready card
+        // already in the chat mirrors its progress onto THAT card instead
+        // of spawning its own "Task started" row — see
+        // markCreativePublishState's own comment. Falls through to the
+        // normal running card for every other capability, and for a
+        // publish with no matching card (e.g. a scheduled/cron publish
+        // with nothing currently in the chat window).
+        const publishCreativeId = ExecutionPolicy.isPublish(job.capability)
+          ? ((job.requestPayload as Record<string, unknown> | null)
+              ?.creativeId as string | undefined)
+          : undefined;
+        const mirroredOntoCard = publishCreativeId
+          ? await IdeaChatRepository.markCreativePublishState({
+              taskId: job.taskId,
+              creativeId: publishCreativeId,
+              publishState: "publishing",
+            }).catch(() => false)
+          : false;
+        if (!mirroredOntoCard) {
+          await IdeaChatRepository.postTaskRunningCard({
+            workspaceId: job.workspaceId,
+            projectId: job.projectId,
+            taskId: job.taskId,
+            title: task.title,
+            departmentKey: task.departmentKey ?? undefined,
+          }).catch((error) => {
+            console.error(
+              "[execution-service] postTaskRunningCard failed:",
+              error,
+            );
+          });
+        }
       }
     }
 
@@ -370,42 +390,62 @@ export const ExecutionService = {
       (outcome.jobStatus === "COMPLETED" || outcome.jobStatus === "FAILED") &&
       ExecutionPolicy.isPublish(job.capability)
     ) {
-      const publishedTask = await prisma.task.findUnique({
-        where: { id: job.taskId },
-        select: { title: true, departmentKey: true },
-      });
-      const title = publishedTask?.title ?? "Publish";
-      const platform = PLATFORM_LABEL[job.capability] ?? job.capability;
-      const rawResult = (status.rawResult ?? {}) as Record<string, unknown>;
-      const postId =
-        typeof rawResult.postId === "string" ? rawResult.postId : undefined;
-      await IdeaChatRepository.resolvePublishResultCard({
-        workspaceId: job.workspaceId,
-        projectId: job.projectId,
-        taskId: job.taskId,
-        text:
-          outcome.jobStatus === "COMPLETED"
-            ? `📤 Published on ${platform}: ${title}`
-            : `❌ ${platform} publish failed: ${title}`,
-        card: {
-          kind: "publish-result",
+      const publishCreativeId = (
+        job.requestPayload as Record<string, unknown> | null
+      )?.creativeId as string | undefined;
+      const mirroredOntoCard = publishCreativeId
+        ? await IdeaChatRepository.markCreativePublishState({
+            taskId: job.taskId,
+            creativeId: publishCreativeId,
+            publishState:
+              outcome.jobStatus === "COMPLETED" ? "published" : "failed",
+            publishError:
+              outcome.jobStatus === "FAILED"
+                ? (status.errorMessage ?? undefined)
+                : undefined,
+            publishedAt:
+              outcome.jobStatus === "COMPLETED" ? new Date() : undefined,
+          }).catch(() => false)
+        : false;
+
+      if (!mirroredOntoCard) {
+        const publishedTask = await prisma.task.findUnique({
+          where: { id: job.taskId },
+          select: { title: true, departmentKey: true },
+        });
+        const title = publishedTask?.title ?? "Publish";
+        const platform = PLATFORM_LABEL[job.capability] ?? job.capability;
+        const rawResult = (status.rawResult ?? {}) as Record<string, unknown>;
+        const postId =
+          typeof rawResult.postId === "string" ? rawResult.postId : undefined;
+        await IdeaChatRepository.resolvePublishResultCard({
+          workspaceId: job.workspaceId,
+          projectId: job.projectId,
           taskId: job.taskId,
-          platform,
-          title,
-          status: outcome.jobStatus,
-          postId,
-          errorMessage:
-            outcome.jobStatus === "FAILED"
-              ? (status.errorMessage ?? undefined)
-              : undefined,
-        },
-        departmentKey: publishedTask?.departmentKey ?? undefined,
-      }).catch((error) => {
-        console.error(
-          "[execution-service] resolvePublishResultCard failed:",
-          error,
-        );
-      });
+          text:
+            outcome.jobStatus === "COMPLETED"
+              ? `📤 Published on ${platform}: ${title}`
+              : `❌ ${platform} publish failed: ${title}`,
+          card: {
+            kind: "publish-result",
+            taskId: job.taskId,
+            platform,
+            title,
+            status: outcome.jobStatus,
+            postId,
+            errorMessage:
+              outcome.jobStatus === "FAILED"
+                ? (status.errorMessage ?? undefined)
+                : undefined,
+          },
+          departmentKey: publishedTask?.departmentKey ?? undefined,
+        }).catch((error) => {
+          console.error(
+            "[execution-service] resolvePublishResultCard failed:",
+            error,
+          );
+        });
+      }
     }
 
     if (outcome.jobStatus === "VERIFYING") {

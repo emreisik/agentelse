@@ -25,6 +25,7 @@ import { resolveProjectFromText } from "@/server/commands/project-resolver";
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { performCreativeRevision } from "@/server/actions/creative-actions";
 import { createStrategicIdea } from "@/server/commands/strategic-request";
+import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
 import {
   planWeeklyInstagramContent,
   summarizeWeeklyPlanResult,
@@ -62,6 +63,12 @@ export type SubmitCommandInput = {
   // department name/icon shown on chat cards comes from this field (see
   // idea-event-card.tsx).
   departmentKey?: DepartmentKey;
+  // Passed straight through to Command.topic (see schema.prisma's comment
+  // on that column) — for a caller whose resulting Command row shouldn't
+  // show up as its own bubble in the general chat feed (e.g. a publish
+  // quick-action whose progress is instead mirrored onto an existing
+  // creative-ready card, see publish-creative.ts).
+  topic?: string;
 };
 
 export type SubmitCommandResult =
@@ -106,6 +113,17 @@ export type SubmitCommandResult =
       commandId: string;
       summary: string;
       result: WeeklyPlanResult;
+    }
+  // Chat-triggered on-demand draw from the existing EVALUATED opportunity
+  // backlog (idea generation is no longer continuous/tick-driven — see
+  // idea-foundry.ts/agency-wiring.ts). Each new idea already gets its own
+  // "idea" card posted to its own thread by IdeaFoundry itself
+  // (idea-foundry.ts's postSystemMessage call) — count is only for the
+  // general chat's own plain-text summary reply.
+  | {
+      status: "IDEAS_GENERATED_FROM_OPPORTUNITIES";
+      commandId: string;
+      count: number;
     };
 
 // Capabilities where a chat TASK intent must NOT go straight to
@@ -144,6 +162,7 @@ export const CommandService = {
       projectId: input.knownProjectId,
       ideaId: input.ideaId,
       attachments: input.attachments,
+      topic: input.topic,
     });
 
     const intent = input.intent ?? parseIntent(input.rawText);
@@ -284,7 +303,11 @@ export const CommandService = {
       };
     }
 
-    if (intent.kind !== "CAPABILITY" && intent.kind !== "STRATEGIC_REQUEST") {
+    if (
+      intent.kind !== "CAPABILITY" &&
+      intent.kind !== "STRATEGIC_REQUEST" &&
+      intent.kind !== "GENERATE_IDEAS_FROM_OPPORTUNITIES"
+    ) {
       return { status: "UNKNOWN_INTENT", commandId: command.id };
     }
 
@@ -344,6 +367,22 @@ export const CommandService = {
         status: "STRATEGIC_IDEA_CREATED",
         commandId: command.id,
         ideaId: result.ideaId,
+      };
+    }
+
+    // On-demand draw from the existing EVALUATED opportunity backlog
+    // ("give me some new ideas") — idea generation stopped being
+    // continuous/tick-driven (see agency-wiring.ts), so this is now one of
+    // only two ways new ideas get created (the other being a project's own
+    // GENERATE_IDEAS ProjectSchedule, see scheduler-service.ts).
+    if (intent.kind === "GENERATE_IDEAS_FROM_OPPORTUNITIES") {
+      const count = await IdeaFoundry.generateForTopOpportunities(5, {
+        projectId,
+      });
+      return {
+        status: "IDEAS_GENERATED_FROM_OPPORTUNITIES",
+        commandId: command.id,
+        count,
       };
     }
 

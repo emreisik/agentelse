@@ -8,7 +8,16 @@ import { buildAssetPublicUrl } from "@/server/security/asset-public-link";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 
 export type PublishQuickActionResult =
-  { ok: true; message: string } | { ok: false; message: string };
+  | {
+      ok: true;
+      message: string;
+      // True when the publish progress was mirrored onto an existing
+      // creative-ready card (markCreativePublishState) — callers that would
+      // otherwise post their own "published!" confirmation can skip it when
+      // this is true, since the card already shows the outcome.
+      cardUpdated: boolean;
+    }
+  | { ok: false; message: string };
 
 // The core logic shared by publishCreativeToInstagramAction
 // (src/server/actions/publish-actions.ts, web/session-based) AND the
@@ -68,6 +77,10 @@ export async function publishCreativeCore(input: {
     knownProjectId: projectId,
     ideaId: ideaId ?? undefined,
     departmentKey: "SOCIAL_MEDIA",
+    // Mirrored onto the creative-ready card below instead — this row is
+    // kept off the general chat feed (Command.topic, see schema.prisma) so
+    // the click doesn't also spawn its own bubble.
+    topic: "PUBLISH_RELAY",
     intent: {
       kind: "CAPABILITY",
       capability: "INSTAGRAM_PUBLISH",
@@ -101,7 +114,22 @@ export async function publishCreativeCore(input: {
   if (submission.status !== "PLANNED") {
     return { ok: false, message: "Failed to create the publish request." };
   }
-  return { ok: true, message: reply };
+
+  const cardUpdated = await IdeaChatRepository.markCreativePublishState({
+    taskId: submission.taskId,
+    creativeId,
+    publishState: submission.requiresApproval ? "queued" : "publishing",
+  }).catch(() => false);
+  // No matching creative-ready card to mirror onto (e.g. a taskless/batch
+  // creative) — fall back to a normal, visible chat row instead of a
+  // relay row nobody will ever see.
+  if (!cardUpdated) {
+    await prisma.command
+      .update({ where: { id: submission.commandId }, data: { topic: null } })
+      .catch(() => undefined);
+  }
+
+  return { ok: true, message: reply, cardUpdated };
 }
 
 const SOCIAL_PUBLISH_CONFIG = {
@@ -189,6 +217,9 @@ export async function publishCreativeToSocialCore(input: {
     knownProjectId: projectId,
     ideaId: ideaId ?? undefined,
     departmentKey: "SOCIAL_MEDIA",
+    // Same relay treatment as publishCreativeCore above — mirrored onto
+    // the creative-ready card instead of its own chat bubble.
+    topic: "PUBLISH_RELAY",
     intent: {
       kind: "CAPABILITY",
       capability: config.capability,
@@ -213,5 +244,17 @@ export async function publishCreativeToSocialCore(input: {
   if (submission.status !== "PLANNED") {
     return { ok: false, message: "Failed to create the publish request." };
   }
-  return { ok: true, message: reply };
+
+  const cardUpdated = await IdeaChatRepository.markCreativePublishState({
+    taskId: submission.taskId,
+    creativeId,
+    publishState: submission.requiresApproval ? "queued" : "publishing",
+  }).catch(() => false);
+  if (!cardUpdated) {
+    await prisma.command
+      .update({ where: { id: submission.commandId }, data: { topic: null } })
+      .catch(() => undefined);
+  }
+
+  return { ok: true, message: reply, cardUpdated };
 }

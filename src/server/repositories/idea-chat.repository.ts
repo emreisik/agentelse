@@ -407,6 +407,65 @@ export const IdeaChatRepository = {
     });
   },
 
+  // Mirrors a publish-pipeline transition (queued -> publishing ->
+  // published/failed) onto the SAME creative-ready card the Post/Story
+  // buttons live on, instead of the publish quick-action/task-running/
+  // publish-result/auto-publish-confirmation flow spawning its own
+  // separate rows — the whole point being "one evolving card, not five
+  // chat bubbles for one publish". Same findFirst-by-creativeId pattern as
+  // resolveCreativeApprovalDecision above. Returns false (no-op) when no
+  // matching creative-ready row exists — e.g. a taskless/batch-planned
+  // creative with no card to attach to, or a scheduled/cron publish with
+  // no interactive card currently in the chat window — so every caller can
+  // fall back to its own pre-existing chat message in that case.
+  async markCreativePublishState(input: {
+    taskId: string;
+    creativeId: string;
+    publishState: "queued" | "publishing" | "published" | "failed";
+    publishError?: string;
+    publishedAt?: Date;
+  }): Promise<boolean> {
+    const ideaId = await IdeaChatRepository.resolveIdeaIdForTask(input.taskId);
+    const existing = await prisma.command.findFirst({
+      where: {
+        ideaId,
+        source: "SYSTEM",
+        parsedIntent: {
+          path: ["card", "creativeId"],
+          equals: input.creativeId,
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, parsedIntent: true },
+    });
+    if (!existing) return false;
+
+    const parsed = existing.parsedIntent as {
+      card?: { kind?: string; [key: string]: unknown };
+      departmentKey?: DepartmentKey;
+    } | null;
+    if (!parsed?.card || parsed.card.kind !== "creative-ready") return false;
+
+    await prisma.command.update({
+      where: { id: existing.id },
+      data: {
+        parsedIntent: {
+          card: {
+            ...parsed.card,
+            publishState: input.publishState,
+            publishError: input.publishError,
+            publishedAt: input.publishedAt?.toISOString(),
+            ...(input.publishState === "published"
+              ? { status: "PUBLISHED" }
+              : null),
+          },
+          departmentKey: parsed.departmentKey,
+        } as never,
+      },
+    });
+    return true;
+  },
+
   // Updates a "human-action-required" card's status in place (same row) —
   // called from HumanInterventionRepository.resolve/transition so a page
   // refresh reflects the real outcome instead of reverting to "pending"

@@ -287,32 +287,6 @@ function CreativeReadyCard({
               <ImageIcon className="size-6" />
             </div>
           )}
-          {src && isImage ? (
-            <>
-              <div
-                className="pointer-events-none absolute inset-0"
-                style={{
-                  background:
-                    "linear-gradient(to top, rgba(0,0,0,0.6), rgba(0,0,0,0) 45%)",
-                }}
-              />
-              {card.brandName ? (
-                <div className="pointer-events-none absolute inset-x-0 top-0 pt-4 text-center">
-                  <span className="font-serif text-lg tracking-wide text-white italic">
-                    {card.brandName}
-                  </span>
-                </div>
-              ) : null}
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4">
-                <div className="text-[9px] tracking-[0.2em] text-white/80 uppercase">
-                  {card.platform ? format.label : "Creative"}
-                </div>
-                <div className="mt-1 font-serif text-lg leading-[1.15] text-white italic">
-                  {displayTitle}
-                </div>
-              </div>
-            </>
-          ) : null}
         </div>
 
         <div className="flex flex-col p-4">

@@ -141,7 +141,6 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root @container flex h-full flex-col"
       style={{
-        background: "var(--ws-bg)",
         // Brand Workspace UI direction (docs/brand-workspace-migration.md
         // §7 §15 §16): conversation column 860px, composer on a plain
         // surface with its own explicit shadow value below at 22px radius.

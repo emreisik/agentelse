@@ -1,6 +1,5 @@
 import Link from "next/link";
 
-import { cn } from "@/lib/utils";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/server/security/tenant-context";
 import { PipelineRepository } from "@/server/repositories/pipeline.repository";
@@ -335,25 +334,12 @@ export async function AppShell({
   const body = (
     <div className="flex min-w-0 flex-1 flex-col">
       {header}
-      <div
-        className="flex min-w-0 flex-1 overflow-hidden"
-        style={isWorkspaceRoot ? { background: "var(--ws-bg)" } : undefined}
-      >
+      <div className="flex min-w-0 flex-1 overflow-hidden">
         {/* FAB stack anchors to this wrapper's corner (relative), not the
             viewport (fixed) — so it tracks <main>'s box when a rightPanel
-            pushes it left, with no state shared between the two. The
-            --ws-bg background here (not just on <main>) matters now that
-            the right panel floats with margin (workspace-right-panel.tsx):
-            without it, the gap around the floating card would show
-            whatever's behind this row instead of the studio canvas. */}
+            pushes it left, with no state shared between the two. */}
         <div className="relative min-w-0 flex-1 overflow-hidden">
-          <main
-            className={cn(
-              "h-full overflow-y-auto",
-              !isWorkspaceRoot && "bg-background",
-            )}
-            style={isWorkspaceRoot ? { background: "var(--ws-bg)" } : undefined}
-          >
+          <main className="h-full overflow-y-auto bg-background">
             {children}
           </main>
           {projectId && projectBadges?.setupPercent != null ? (

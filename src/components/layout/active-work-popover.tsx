@@ -85,12 +85,16 @@ export function ActiveWorkPopover({
       >
         <span className="relative flex size-1.5">
           {activeCount > 0 ? (
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+            <span
+              className="absolute inline-flex size-full animate-ping rounded-full opacity-60"
+              style={{ background: "var(--ws-text)" }}
+            />
           ) : null}
           <span
             className="relative inline-flex size-1.5 rounded-full"
             style={{
-              background: activeCount > 0 ? "#10b981" : "var(--ws-text-3)",
+              background:
+                activeCount > 0 ? "var(--ws-text)" : "var(--ws-text-3)",
             }}
           />
         </span>
@@ -154,7 +158,7 @@ export function ActiveWorkPopover({
                 >
                   <span
                     className="size-1.5 rounded-full"
-                    style={{ background: "#3b82f6" }}
+                    style={{ background: "var(--ws-text-3)" }}
                   />
                   {job.statusWord}
                 </span>

@@ -217,7 +217,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
                   : status === "IN_REVIEW"
                     ? "var(--ws-pending)"
                     : status === "REJECTED"
-                      ? "#c0392b"
+                      ? "var(--destructive)"
                       : "var(--ws-text-3)",
             }}
           />

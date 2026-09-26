@@ -17,9 +17,8 @@ import {
 // serif-letter avatar rows, active-brand check, trailing "Add brand"
 // row) doesn't fit a plain select list, but it's the exact same
 // data/navigation ProjectSelect already uses (projects -> /projects/{id}).
-// --ws-* tokens throughout (globals.css, olive/botanical studio palette) —
-// no per-brand color, keeping the switcher itself restrained even though
-// the rest of the workspace now carries an accent. Built on the same
+// --ws-* tokens throughout (globals.css, grayscale, aliased to the app's
+// own tokens) — no per-brand color. Built on the same
 // base-ui DropdownMenu primitive as the rest of the app (focus trap,
 // outside-click, Escape) rather than a hand-rolled popover.
 function Avatar({ name, size = 24 }: { name: string; size?: number }) {

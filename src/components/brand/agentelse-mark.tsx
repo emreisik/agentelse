@@ -1,9 +1,9 @@
 // The Agentelse symbol — a 4-point sparkle (matches the app's icon.png/
 // apple-icon.png favicon glyph) as an inline SVG so it can be recolored per
-// context: soft lime inside the header's dark-olive logo tile, muted olive
-// as the decorative welcome-area mark, dark ink beside assistant messages.
-// currentColor-based — set color via the `className`/`style` the caller
-// passes, same convention as every lucide icon already used in this app.
+// context: the header's logo tile, the decorative welcome-area mark, dark
+// ink beside assistant messages. currentColor-based — set color via the
+// `className`/`style` the caller passes, same convention as every lucide
+// icon already used in this app.
 export function AgentelseMark({
   className,
   style,

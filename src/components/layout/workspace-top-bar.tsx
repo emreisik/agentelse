@@ -9,12 +9,13 @@ import { ActiveWorkPopover } from "@/components/layout/active-work-popover";
 import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
 import type { AgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
 
-// The Brand Workspace root screen's header: 72px, dark-olive logo tile +
-// "agentelse." wordmark + brand switcher on the left, active-work + DEMO
-// badge + approvals + panel toggle + account avatar on the right, all on
-// the olive/botanical --ws-* token set (globals.css, Faz 11 retheme) —
-// light/dark resolve automatically through those variables, no dark:
-// pairs needed here. Deliberately a SEPARATE component from TopBar.tsx
+// The Brand Workspace root screen's header: 72px, logo tile +
+// "agentelse." wordmark + brand switcher on the left, active-work +
+// approvals + panel toggle + account avatar on the right, all on
+// the --ws-* token set (globals.css, Faz 12: grayscale, aliased to the
+// app's own tokens) — light/dark resolve automatically through those
+// variables, no dark: pairs needed here. Deliberately a SEPARATE
+// component from TopBar.tsx
 // (used by every other screen — Ideas/Work/Library/Settings/etc, which
 // keep their existing header and existing oklch tokens) rather than a
 // giant conditional branch inside it, so this redesign can't regress any
@@ -37,7 +38,6 @@ export function WorkspaceTopBar({
   email: string | null;
 }) {
   const { toggle } = useWorkspacePanelToggle();
-  const isDev = process.env.NODE_ENV !== "production";
 
   return (
     <header
@@ -65,17 +65,6 @@ export function WorkspaceTopBar({
         <div className="hidden md:block">
           <ActiveWorkPopover projectId={projectId} initial={agencyStatus} />
         </div>
-        {isDev ? (
-          <span
-            className="hidden shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide sm:inline-flex"
-            style={{
-              borderColor: "var(--ws-border)",
-              color: "var(--ws-text-3)",
-            }}
-          >
-            DEMO
-          </span>
-        ) : null}
         <Link
           href={buildHubHref(projectId, { panel: "approvals" })}
           scroll={false}
@@ -84,13 +73,13 @@ export function WorkspaceTopBar({
             background: "var(--ws-surface-2)",
             color: "var(--ws-accent)",
           }}
-          title={`${projectName} — onay bekleyen çıktılar`}
+          title={`${projectName} — pending approvals`}
         >
           <span
             className="size-1.5 shrink-0 rounded-full"
             style={{ background: "var(--ws-pending)" }}
           />
-          {pendingApprovals} onay bekliyor
+          {pendingApprovals} pending approval{pendingApprovals === 1 ? "" : "s"}
         </Link>
         <div
           className="hidden h-6 w-px shrink-0 sm:block"
@@ -99,8 +88,8 @@ export function WorkspaceTopBar({
         <button
           type="button"
           onClick={toggle}
-          aria-label="Çalışma alanı panelini aç/kapat"
-          title="Marka / Dosyalar / Çıktılar / Takvim"
+          aria-label="Toggle workspace panel"
+          title="Brand / Files / Outputs / Calendar"
           className="flex size-8 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--ws-hover)]"
           style={{ color: "var(--ws-text-2)" }}
         >

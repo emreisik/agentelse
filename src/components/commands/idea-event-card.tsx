@@ -556,7 +556,7 @@ function WsDecisionCard({
       </div>
       {children}
       {error ? (
-        <p className="text-xs" style={{ color: "#c0392b" }}>
+        <p className="text-xs" style={{ color: "var(--destructive)" }}>
           {error}
         </p>
       ) : null}
@@ -633,7 +633,7 @@ function TaskRunningCard({
             Cancel
           </Button>
           {error ? (
-            <p className="mt-1 text-xs" style={{ color: "#c0392b" }}>
+            <p className="mt-1 text-xs" style={{ color: "var(--destructive)" }}>
               {error}
             </p>
           ) : null}
@@ -1149,8 +1149,7 @@ function ContentPlanSummaryCard({
 // Continue button (not one per question) since chat-turn.ts can emit up to
 // 2 questions in the same card and the client should answer both before
 // sending. Reuses ApprovalRequestCard's exact useTransition + imperative
-// FormData pattern above. Simplification (matches brand-brain-assistant.
-// tsx's own note): unlike Brand Brain's FAB, this doesn't track "only the
+// FormData pattern above. Simplification: this doesn't track "only the
 // latest turn is interactive" — an old question card stays clickable,
 // which just sends its answer as a new message if used again.
 function QuestionCard({
@@ -1266,7 +1265,7 @@ function QuestionCard({
         );
       })}
       {error ? (
-        <p className="text-xs" style={{ color: "#c0392b" }}>
+        <p className="text-xs" style={{ color: "var(--destructive)" }}>
           {error}
         </p>
       ) : null}

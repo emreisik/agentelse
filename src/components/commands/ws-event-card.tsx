@@ -8,11 +8,10 @@ import { stripCapabilityPrefix } from "@/lib/labels";
 // Shared visual language for every card the single project chat renders —
 // signal/finding/idea/council/work-plan/task/approval/publish-result/etc.
 // (idea-event-card.tsx) and creative-loading/ready/failed/publish-prompt
-// (creative-card.tsx). Brings all card kinds onto ONE system: the olive
-// studio `--ws-*` workspace-shell tokens (Phase 11 retheme; see
-// globals.css) CreativeReadyCard already established (see
-// creative-card.tsx), instead of half the cards using that and the other
-// half using the separate oklch semantic-tone classes
+// (creative-card.tsx). Brings all card kinds onto ONE system: the
+// `--ws-*` workspace-shell tokens (globals.css) CreativeReadyCard already
+// established (see creative-card.tsx), instead of half the cards using
+// that and the other half using the separate oklch semantic-tone classes
 // (TONE_CLASSES/CARD_TONE_CLASSES in labels/). Color stays reserved for
 // real state (waiting/danger) — department color is a DIFFERENT,
 // deliberate signal (DepartmentBadge) and is untouched by this file.
@@ -20,16 +19,15 @@ export type WsTone = "neutral" | "positive" | "waiting" | "danger" | "special";
 
 // Small status-dot color per tone — the SAME 3-tier convention
 // CreativeReadyCard already uses for its status dot (waiting/danger,
-// everything else = a plain workspace text tone). waiting/positive now
-// use the spec's named --ws-pending/--ws-approved tones instead of ad-hoc
-// hex; danger has no equivalent in the new palette (the spec's examples
-// never show a rejected/error tone), so it keeps a plain, restrained red
-// that reads correctly against both the light studio and dark surfaces.
+// everything else = a plain workspace text tone). All four map onto the
+// app's own semantic tokens (--ws-pending/--ws-approved alias
+// --warning/--success; danger uses --destructive directly) rather than
+// ad-hoc hex, so they stay correct in dark mode too.
 const WS_TONE_DOT: Record<WsTone, string> = {
   neutral: "var(--ws-text-3)",
   positive: "var(--ws-approved)",
   waiting: "var(--ws-pending)",
-  danger: "#c0392b",
+  danger: "var(--destructive)",
   special: "var(--ws-olive)",
 };
 

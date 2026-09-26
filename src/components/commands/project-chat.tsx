@@ -147,9 +147,8 @@ const STATUS_NOTE: Record<string, string> = {
 };
 
 // Brand Workspace composer's persistent quick-action row (docs/
-// brand-workspace-migration.md §16/§17, Faz 11 olive-studio redesign) —
-// sent through the exact same path as typing them and pressing enter (no
-// separate shortcut path).
+// brand-workspace-migration.md §16/§17) — sent through the exact same
+// path as typing them and pressing enter (no separate shortcut path).
 const QUICK_ACTIONS: { label: string; icon: typeof ImageIcon }[] = [
   { label: "Create a post", icon: ImageIcon },
   { label: "Find a Reel idea", icon: Film },

@@ -84,11 +84,19 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
     return (
       <div
         className="mt-1 flex w-full max-w-sm items-start gap-3 rounded-2xl border px-4 py-3.5"
-        style={{ borderColor: "#c0392b40", background: "#c0392b10" }}
+        style={{
+          borderColor:
+            "color-mix(in oklch, var(--destructive) 25%, transparent)",
+          background: "color-mix(in oklch, var(--destructive) 6%, transparent)",
+        }}
       >
         <span
           className="flex size-9 shrink-0 items-center justify-center rounded-full"
-          style={{ background: "#c0392b20", color: "#c0392b" }}
+          style={{
+            background:
+              "color-mix(in oklch, var(--destructive) 12%, transparent)",
+            color: "var(--destructive)",
+          }}
         >
           <AlertCircle className="size-4" />
         </span>
@@ -103,7 +111,7 @@ export function CreativeCard({ card }: { card: CreativeCardData }) {
             {stripCapabilityPrefix(card.title)}
           </p>
           {card.message ? (
-            <p className="mt-1 text-xs" style={{ color: "#c0392b" }}>
+            <p className="mt-1 text-xs" style={{ color: "var(--destructive)" }}>
               {card.message}
             </p>
           ) : null}
@@ -231,7 +239,7 @@ function CreativeReadyCard({
       : status === "IN_REVIEW"
         ? "var(--ws-pending)"
         : status === "REJECTED"
-          ? "#c0392b"
+          ? "var(--destructive)"
           : "var(--ws-text-3)";
   const typeLabel = card.platform
     ? `${format.label} ${format.contentFormatLabel}`
@@ -367,7 +375,7 @@ function CreativeReadyCard({
           </div>
 
           {error ? (
-            <p className="mt-2 text-xs" style={{ color: "#c0392b" }}>
+            <p className="mt-2 text-xs" style={{ color: "var(--destructive)" }}>
               {error}
             </p>
           ) : null}

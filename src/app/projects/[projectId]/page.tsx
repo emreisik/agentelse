@@ -20,7 +20,6 @@ import {
   type ChatAttachment,
   type ChatTurn,
 } from "@/components/commands/project-chat";
-import { LiveRefresh } from "@/components/shared/live-refresh";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 import { ownerOfCapability } from "@/server/agency/departments/department-registry";
 import { isIdeaEventCardData } from "@/types/idea-event-card";
@@ -217,8 +216,8 @@ export default async function ProjectChatPage({
       // it belongs to — council decisions, work plans, task/creative
       // results all land here now, not just idea-less events. topic:
       // null excludes scoped threads that aren't this general feed —
-      // today just the Brand Brain conversation
-      // (brand-brain-chat-service.ts), which renders on its own panel.
+      // e.g. legacy Command rows with topic "BRAND_BRAIN" from the
+      // now-removed Brand Brain chat feature.
       where: {
         projectId,
         topic: null,
@@ -301,7 +300,6 @@ export default async function ProjectChatPage({
   return (
     <AppShell
       projectId={projectId}
-      showSidebar={false}
       rightPanel={
         <WorkspaceRightPanel
           projectId={projectId}
@@ -342,10 +340,6 @@ export default async function ProjectChatPage({
       }
     >
       <div key="project-general" className="relative h-full">
-        <LiveRefresh
-          intervalMs={7000}
-          className="absolute top-3 right-4 z-10"
-        />
         <ProjectChat
           projectId={projectId}
           projectName={project.name}

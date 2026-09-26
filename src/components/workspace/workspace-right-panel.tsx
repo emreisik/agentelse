@@ -118,8 +118,7 @@ export function WorkspaceRightPanel({
 
   // Below the 1024px breakpoint the panel is a right-side drawer (opened by
   // the header's toggle button) instead of pushing the conversation column
-  // narrower — same Sheet primitive WorkspaceNavSheet already uses for the
-  // left nav on the same screen.
+  // narrower.
   if (!isDesktop) {
     return (
       <Sheet

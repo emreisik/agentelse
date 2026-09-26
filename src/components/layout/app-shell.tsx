@@ -9,7 +9,6 @@ import { TopBar } from "@/components/layout/top-bar";
 import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
 import type { PanelKey } from "@/components/hub-core/hub-core-params";
 import { getAgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
-import { WorkspaceNavSheet } from "@/components/layout/workspace-nav-sheet";
 import { WorkspacePanelToggleProvider } from "@/components/workspace/workspace-panel-toggle";
 
 export type ProjectNavBadges = {
@@ -286,22 +285,13 @@ export async function AppShell({
     projectId ? getAgencyStatusSnapshot(projectId) : Promise.resolve(null),
   ]);
   const sidebarVisible = showSidebar ?? Boolean(projectId);
-  // The sidebar is the only place Ideas/Work/Connectors/Ads
-  // Manager/per-idea "Chats" history are reachable from — whenever it's
-  // hidden (today: only the Brand Workspace root view; loading.tsx
-  // boundaries always pass showSidebar=true and have no projectId yet
-  // anyway), surface the same SidebarNav in an on-demand overlay instead
-  // so nothing becomes unreachable.
-  const navSheet =
-    !sidebarVisible && projectId ? (
-      <WorkspaceNavSheet activeProjectId={projectId} flows={flows} />
-    ) : null;
 
-  // The Brand Workspace root view (pixel spec §15) — no docked sidebar AND
-  // a rightPanel — gets its own compact header + shared panel-toggle
-  // context. Every other screen (idea threads, Ideas/Work/Library/Settings/
-  // etc.) renders exactly as before.
-  const isWorkspaceRoot = !sidebarVisible && Boolean(rightPanel);
+  // The Brand Workspace root view (pixel spec §15) gets its own compact
+  // header + shared panel-toggle context — rightPanel alone is a reliable
+  // signal for this (it's only ever passed by that one screen), independent
+  // of sidebar visibility. Every other screen (idea threads,
+  // Ideas/Work/Library/Settings/etc) renders exactly as before.
+  const isWorkspaceRoot = Boolean(rightPanel);
   const projectName =
     workspace?.projects.find((p) => p.id === projectId)?.name ?? "";
 
@@ -314,6 +304,7 @@ export async function AppShell({
       agencyStatus={agencyStatus}
       displayName={displayName}
       email={email}
+      showLogo={!sidebarVisible}
     />
   ) : (
     <TopBar
@@ -327,7 +318,6 @@ export async function AppShell({
       displayName={displayName}
       workspaceName={workspace?.name ?? null}
       email={email}
-      navSheet={navSheet}
     />
   );
 

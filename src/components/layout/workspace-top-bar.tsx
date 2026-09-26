@@ -28,6 +28,7 @@ export function WorkspaceTopBar({
   agencyStatus,
   displayName,
   email,
+  showLogo,
 }: {
   projectId: string;
   projectName: string;
@@ -36,6 +37,9 @@ export function WorkspaceTopBar({
   agencyStatus: AgencyStatusSnapshot | null;
   displayName: string | null;
   email: string | null;
+  // false once the docked SidebarNav (app-shell.tsx) already shows the
+  // logo — avoids rendering it twice side by side.
+  showLogo: boolean;
 }) {
   const { toggle } = useWorkspacePanelToggle();
 
@@ -48,16 +52,24 @@ export function WorkspaceTopBar({
       }}
     >
       <div className="flex min-w-0 items-center gap-2.5">
-        <Link
-          href="/dashboard"
-          className="flex shrink-0 items-center transition-opacity hover:opacity-80"
-        >
-          <img src="/logo.png" alt="Agentelse" className="h-6 object-contain" />
-        </Link>
-        <div
-          className="hidden h-6 w-px shrink-0 sm:block"
-          style={{ background: "var(--ws-border)" }}
-        />
+        {showLogo ? (
+          <>
+            <Link
+              href="/dashboard"
+              className="flex shrink-0 items-center transition-opacity hover:opacity-80"
+            >
+              <img
+                src="/logo.png"
+                alt="Agentelse"
+                className="h-6 object-contain"
+              />
+            </Link>
+            <div
+              className="hidden h-6 w-px shrink-0 sm:block"
+              style={{ background: "var(--ws-border)" }}
+            />
+          </>
+        ) : null}
         <BrandSwitcher projects={projects} activeProjectId={projectId} />
       </div>
 

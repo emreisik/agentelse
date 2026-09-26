@@ -37,9 +37,11 @@ type FlowEvent = {
 };
 
 // Shows the full story of an idea/work item from its creation up to today
-// as a chronological chat-like feed — the full-page view that opens when
-// an entry in the sidebar's "Chats" list is clicked. Read-only: no sending
-// new messages, just a narrative of the history.
+// as a chronological chat-like feed — an isolated, read-only detail view
+// reached on demand (sidebar-nav.tsx's Initiatives list and thread.tsx's
+// idea-title pill both offer it via &thread=1) alongside the single
+// day-grouped chat, which stays the default way of browsing. Read-only: no
+// sending new messages, just a narrative of the history.
 export async function ProjectFlowView({
   projectId,
   entity,
@@ -71,7 +73,11 @@ async function IdeaFlow({
   const idea = await IdeaRepository.findByIdInProject(ideaId, projectId);
   if (!idea) {
     return (
-      <FlowShell projectId={projectId} title="Chat not found">
+      <FlowShell
+        projectId={projectId}
+        title="Chat not found"
+        backHref={`/projects/${projectId}`}
+      >
         <EmptyState
           icon={Lightbulb}
           title="This idea was not found"
@@ -126,6 +132,7 @@ async function IdeaFlow({
       projectId={projectId}
       title={idea.title}
       statusBadge={<StatusBadge meta={IDEA_STATUS[idea.status]} />}
+      backHref={`/projects/${projectId}#idea-${ideaId}`}
     >
       <FlowTimeline events={events} />
     </FlowShell>
@@ -257,22 +264,30 @@ function FlowShell({
   title,
   statusBadge,
   children,
+  // Defaults to the general chat root — IdeaFlow overrides this to the
+  // idea's own #idea-<id> anchor (see sidebar-nav.tsx/thread.tsx's opt-in
+  // &thread=1 links into this view) so "back" returns to where the user
+  // actually was, not the top of the timeline.
+  backHref,
+  backLabel = "Back to chat",
 }: {
   projectId: string;
   title: string;
   statusBadge?: React.ReactNode;
   children: React.ReactNode;
+  backHref?: string;
+  backLabel?: string;
 }) {
   return (
     <div className="h-[calc(100vh-4rem)] overflow-y-auto">
       <div className="mx-auto w-full max-w-3xl px-6 pt-8 pb-16">
         <Link
-          href={`/projects/${projectId}`}
+          href={backHref ?? `/projects/${projectId}`}
           scroll={false}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
-          New chat
+          {backLabel}
         </Link>
         <div className="mt-4 flex flex-wrap items-center gap-2.5">
           <h1 className="font-heading text-2xl font-semibold tracking-tight">

@@ -86,7 +86,7 @@ describe("IdeaChatRepository.markCreativePublishState", () => {
 
     expect(result).toBe(true);
     expect(commandUpdate).toHaveBeenCalledTimes(1);
-    const updateArg = commandUpdate.mock.calls[0][0];
+    const updateArg = commandUpdate.mock.calls[0]![0];
     expect(updateArg.where).toEqual({ id: "cmd-1" });
     expect(updateArg.data.parsedIntent.card).toMatchObject({
       kind: "creative-ready",
@@ -119,7 +119,7 @@ describe("IdeaChatRepository.markCreativePublishState", () => {
     });
 
     expect(result).toBe(true);
-    const updateArg = commandUpdate.mock.calls[0][0];
+    const updateArg = commandUpdate.mock.calls[0]![0];
     expect(updateArg.data.parsedIntent.card.status).toBe("PUBLISHED");
     expect(updateArg.data.parsedIntent.card.publishState).toBe("published");
     expect(updateArg.data.parsedIntent.card.publishedAt).toBe(

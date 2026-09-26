@@ -140,6 +140,15 @@ export default async function ProjectChatPage({
   const calItemRaw = Array.isArray(sp.calItem) ? sp.calItem[0] : sp.calItem;
   const calItem = typeof calItemRaw === "string" ? calItemRaw : undefined;
 
+  // Opt-in escape hatch back to the old, isolated per-idea thread view
+  // (ProjectFlowView/IdeaFlow) — the single day-grouped chat below stays
+  // the default way of browsing an idea's events (see the `entity` branch
+  // right below), this only activates when something explicitly links to
+  // it with &thread=1 (sidebar-nav.tsx's Initiatives list, thread.tsx's
+  // idea-title pill).
+  const wantsThreadView =
+    (Array.isArray(sp.thread) ? sp.thread[0] : sp.thread) === "1";
+
   if (panel) {
     return (
       <AppShell projectId={projectId}>
@@ -153,19 +162,21 @@ export default async function ProjectChatPage({
     );
   }
 
-  // When there's no `panel` but an `entity` is selected — a legacy bare
-  // `?entity=idea:id` link (old bookmark, browser history; the sidebar's
-  // "Initiatives" list now links straight to the anchor below and no
-  // longer produces this URL, see sidebar-nav.tsx). There is no separate
-  // idea thread anymore (see docs/brand-workspace-migration.md single-chat
-  // consolidation) — every idea's events live in the one general chat
-  // below, so this just forwards into it, anchored to where that idea's
-  // conversation starts. `since` guarantees the anchor target is inside
-  // the fetched window even if normal activity since then has pushed it
-  // past the default `take` cap.
+  // When there's no `panel` but an `entity` is selected — a bare
+  // `?entity=idea:id` link (an old bookmark/browser-history entry, or the
+  // sidebar's own on-hover "open detail" affordance with &thread=1). By
+  // default there is no separate idea thread (see
+  // docs/brand-workspace-migration.md single-chat consolidation) — every
+  // idea's events live in the one general chat below, so this forwards
+  // into it, anchored to where that idea's conversation starts. `since`
+  // guarantees the anchor target is inside the fetched window even if
+  // normal activity since then has pushed it past the default `take` cap.
+  // wantsThreadView (&thread=1) is the one opt-in exception: it skips this
+  // redirect and falls through to ProjectFlowView below instead, for
+  // anyone who wants the old isolated per-idea view back.
   if (entity) {
     const ideaId = await resolveIdeaId(entity);
-    if (ideaId) {
+    if (ideaId && !wantsThreadView) {
       const earliestCommand = await prisma.command.findFirst({
         where: { ideaId, topic: null, source: { in: ["WEB", "SYSTEM"] } },
         orderBy: { createdAt: "asc" },
@@ -187,9 +198,12 @@ export default async function ProjectChatPage({
     if (entity.kind === "task") {
       redirect(`/projects/${projectId}`);
     }
-    // Any other entity kind that can't be rooted to an idea (workPlan-only
-    // orphan records left over from before the single-chat architecture) —
-    // read-only fallback, kept rather than deleted.
+    // Reached two ways: (1) an entity kind that can't be rooted to an idea
+    // (workPlan-only orphan records left over from before the single-chat
+    // architecture) — read-only fallback, kept rather than deleted; (2) an
+    // idea entity with wantsThreadView set — the opt-in isolated thread
+    // view (IdeaFlow inside ProjectFlowView already renders idea entities
+    // correctly, no separate component needed for this case).
     return (
       <AppShell projectId={projectId}>
         <ProjectFlowView projectId={projectId} entity={entity} />

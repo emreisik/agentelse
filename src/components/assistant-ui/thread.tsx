@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import type { DepartmentKey } from "@prisma/client";
 
 import {
@@ -470,6 +472,15 @@ const AssistantMessage: FC = () => {
     return typeof custom.ideaTitle === "string" ? custom.ideaTitle : undefined;
   });
 
+  // Alongside ideaTitle — lets the pill below link to the isolated per-idea
+  // thread view (see sidebar-nav.tsx's matching &thread=1 link and
+  // page.tsx's wantsThreadView) instead of only displaying the name.
+  const ideaId = useAuiState((s) => {
+    const custom = s.message.metadata.custom as { ideaId?: unknown };
+    return typeof custom.ideaId === "string" ? custom.ideaId : undefined;
+  });
+  const { projectId } = useParams<{ projectId: string }>();
+
   // DOM anchor for the "Initiatives" sidebar list's #idea-<id> deep link
   // (see project-chat.tsx) — set on whichever message is the first one for
   // that idea, user or assistant.
@@ -512,16 +523,32 @@ const AssistantMessage: FC = () => {
             Your creative partner
           </span>
           {ideaTitle ? (
-            <span
-              className="ml-0.5 truncate rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
-              style={{
-                borderColor: "var(--ws-border)",
-                color: "var(--ws-text-3)",
-                maxWidth: 180,
-              }}
-            >
-              {ideaTitle}
-            </span>
+            ideaId ? (
+              <Link
+                href={`/projects/${projectId}?entity=idea:${ideaId}&thread=1`}
+                scroll={false}
+                title="Open isolated thread view"
+                className="ml-0.5 truncate rounded-full border px-1.5 py-0.5 text-[10px] font-medium transition-colors hover:bg-[var(--ws-hover)]"
+                style={{
+                  borderColor: "var(--ws-border)",
+                  color: "var(--ws-text-3)",
+                  maxWidth: 180,
+                }}
+              >
+                {ideaTitle}
+              </Link>
+            ) : (
+              <span
+                className="ml-0.5 truncate rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
+                style={{
+                  borderColor: "var(--ws-border)",
+                  color: "var(--ws-text-3)",
+                  maxWidth: 180,
+                }}
+              >
+                {ideaTitle}
+              </span>
+            )
           ) : null}
         </div>
         <div

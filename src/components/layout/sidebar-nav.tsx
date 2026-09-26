@@ -7,6 +7,7 @@ import {
   CalendarDays,
   ChevronDown,
   ClipboardList,
+  ExternalLink,
   Gem,
   Library,
   Lightbulb,
@@ -217,15 +218,32 @@ export function SidebarNav({
                         }#idea-${flow.id}`
                       : `/projects/${activeProjectId}`;
                   return (
-                    <Link
+                    <div
                       key={`${flow.kind}-${flow.id}`}
-                      href={href}
-                      scroll={false}
                       className="group flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60"
                     >
-                      <Icon className="size-4 shrink-0 opacity-70" />
-                      <MarqueeText className="flex-1">{flow.title}</MarqueeText>
-                    </Link>
+                      <Link
+                        href={href}
+                        scroll={false}
+                        className="flex min-w-0 flex-1 items-center gap-2"
+                      >
+                        <Icon className="size-4 shrink-0 opacity-70" />
+                        <MarqueeText className="flex-1">
+                          {flow.title}
+                        </MarqueeText>
+                      </Link>
+                      {flow.kind === "idea" ? (
+                        <Link
+                          href={`/projects/${activeProjectId}?entity=idea:${flow.id}&thread=1`}
+                          scroll={false}
+                          title="Open isolated thread view"
+                          aria-label="Open isolated thread view"
+                          className="shrink-0 rounded-md p-1 opacity-0 transition-opacity group-hover:opacity-60 hover:!opacity-100"
+                        >
+                          <ExternalLink className="size-3.5" />
+                        </Link>
+                      ) : null}
+                    </div>
                   );
                 })}
               </CollapsibleContent>

@@ -121,6 +121,10 @@ type FlatMessage =
       card?: IdeaEventCardData;
       departmentKey?: DepartmentKey;
       ideaTitle?: string;
+      // Alongside ideaTitle — lets thread.tsx's idea-title pill link to the
+      // isolated per-idea thread view (?entity=idea:<id>&thread=1), not
+      // just display the name.
+      ideaId?: string;
       anchorId?: string;
       error?: boolean;
       createdAt: string;
@@ -278,6 +282,7 @@ export function ProjectChat({
             card: turn.card,
             departmentKey: turn.departmentKey,
             ideaTitle: turn.ideaTitle,
+            ideaId: turn.ideaId,
             anchorId: anchorFor(turn.ideaId),
             createdAt: turn.createdAt,
           });
@@ -309,6 +314,7 @@ export function ProjectChat({
           // thread.tsx from departmentKey.
           departmentKey: turn.departmentKey,
           ideaTitle: turn.ideaTitle,
+          ideaId: turn.ideaId,
           createdAt: turn.createdAt,
         });
       }
@@ -394,6 +400,7 @@ export function ProjectChat({
             card: message.card,
             departmentKey: message.departmentKey,
             ideaTitle: message.ideaTitle,
+            ideaId: message.ideaId,
             anchorId: message.anchorId,
           },
         },

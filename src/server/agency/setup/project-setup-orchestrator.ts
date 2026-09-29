@@ -31,7 +31,13 @@ import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import {
   DEEP_DISCOVERY_CAPABILITIES,
   DISCOVERY_COMPLETION_RATIO,
+  DISCOVERY_FAILED_MESSAGE,
+  DISCOVERY_STAGE_TIMEOUT_MS,
+  ENRICHMENT_SKIPPED_STAGES,
   discoveryResearchRequest,
+  discoveryVerdict,
+  type DiscoveryVerdict,
+  type SetupMode,
 } from "./setup-stages";
 import { DEMO_POST_STAGES, generateDemoPost } from "./demo-post-generator";
 
@@ -41,6 +47,9 @@ export type SetupIntake = {
   description?: string;
   assetIds?: string[];
   autoApprove?: boolean;
+  // Absent means FULL, the original 12-stage onboarding (also what every setup
+  // stored before modes existed reads as). See setup-stages.ts.
+  mode?: SetupMode;
 };
 
 type SetupScope = {
@@ -77,8 +86,6 @@ function formatStageError(error: unknown): string {
   }
   return error instanceof Error ? error.message : String(error);
 }
-
-const TERMINAL_TASK_STATUSES = ["COMPLETED", "FAILED", "CANCELLED"] as const;
 
 // Each of the 12 linear stages costs at most 2 advance() calls (PENDING ->
 // RUNNING+runStage, then RUNNING -> COMPLETED+pointer move); a FAILED retry
@@ -237,14 +244,33 @@ export const ProjectSetupOrchestrator = {
     }
 
     if (record.status === "PENDING") {
+      // An enrichment skips the stages that only fed the legacy agency
+      // pipeline. SKIPPED counts as done everywhere (the progress widget, the
+      // setup-status route), and the pointer moves on next call, like any
+      // finished stage.
+      if (
+        intake.mode === "ENRICHMENT" &&
+        ENRICHMENT_SKIPPED_STAGES.has(stage)
+      ) {
+        await SetupStateRepository.transitionStage(projectId, stage, "SKIPPED");
+        return { stage, status: "SKIPPED", advanced: true };
+      }
       await SetupStateRepository.transitionStage(projectId, stage, "RUNNING");
       await this.runStage(scope, intake, stage);
       return { stage, status: "RUNNING", advanced: true };
     }
 
     if (record.status === "RUNNING") {
-      const complete = await this.isStageComplete(scope, stage);
-      if (!complete) return { stage, status: "RUNNING", advanced: false };
+      const verdict = await this.stageVerdict(scope, stage);
+      if (verdict === "FAILED") {
+        // Was: stayed RUNNING forever. As FAILED it gets the normal treatment:
+        // automatic retries up to MAX_STAGE_ATTEMPTS, then the manual retry.
+        await SetupStateRepository.transitionStage(projectId, stage, "FAILED", {
+          error: DISCOVERY_FAILED_MESSAGE,
+        });
+        return { stage, status: "FAILED", advanced: true };
+      }
+      if (verdict === "WAIT") return { stage, status: "RUNNING", advanced: false };
 
       const waits = await this.stageWaitsForClient(scope, intake, stage);
       if (waits) {
@@ -498,31 +524,34 @@ export const ProjectSetupOrchestrator = {
     }
   },
 
+  // Whether a RUNNING stage is finished, failed or still going. Every stage
+  // but DEEP_DISCOVERY runs synchronously inside runStage, so by the time it is
+  // RUNNING and read here it is complete.
+  async stageVerdict(
+    scope: SetupScope,
+    stage: SetupStage,
+  ): Promise<DiscoveryVerdict> {
+    if (stage !== "DEEP_DISCOVERY") return "COMPLETE";
+    const tasks = await prisma.task.findMany({
+      where: {
+        projectId: scope.projectId,
+        createdByType: "SYSTEM",
+        capability: { in: DEEP_DISCOVERY_CAPABILITIES },
+      },
+      select: { status: true, createdAt: true },
+    });
+    return discoveryVerdict({
+      tasks,
+      ratio: DISCOVERY_COMPLETION_RATIO,
+      timeoutMs: DISCOVERY_STAGE_TIMEOUT_MS,
+    });
+  },
+
   async isStageComplete(
     scope: SetupScope,
     stage: SetupStage,
   ): Promise<boolean> {
-    if (stage === "DEEP_DISCOVERY") {
-      const tasks = await prisma.task.findMany({
-        where: {
-          projectId: scope.projectId,
-          createdByType: "SYSTEM",
-          capability: { in: DEEP_DISCOVERY_CAPABILITIES },
-        },
-        select: { status: true },
-      });
-      if (tasks.length === 0) return false;
-      const terminal = tasks.filter((t) =>
-        (TERMINAL_TASK_STATUSES as readonly string[]).includes(t.status),
-      );
-      const completed = tasks.filter((t) => t.status === "COMPLETED");
-      return (
-        terminal.length / tasks.length >= DISCOVERY_COMPLETION_RATIO &&
-        completed.length >= 1
-      );
-    }
-    // Every other stage runs synchronously inside runStage.
-    return true;
+    return (await this.stageVerdict(scope, stage)) === "COMPLETE";
   },
 
   async stageWaitsForClient(

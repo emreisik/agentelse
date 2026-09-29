@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
 import { ProjectSetupOrchestrator } from "@/server/agency/setup/project-setup-orchestrator";
+import type { SetupMode } from "@/server/agency/setup/setup-stages";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import {
   requireProjectAccess,
@@ -28,6 +29,9 @@ export async function startAgencySetupForProject(params: {
   domain?: string;
   description?: string;
   autoApprove?: boolean;
+  // Defaults to the full 12-stage onboarding; the chat's optional deep
+  // research passes "ENRICHMENT" (see setup-stages.ts).
+  mode?: SetupMode;
 }): Promise<ActionResult> {
   try {
     if (!params.brandName)
@@ -49,6 +53,7 @@ export async function startAgencySetupForProject(params: {
         domain: params.domain,
         description: params.description,
         autoApprove: params.autoApprove,
+        mode: params.mode,
       },
     );
 

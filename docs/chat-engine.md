@@ -51,14 +51,33 @@ Tanım: `src/server/chat/types.ts`, kodlama/çözme: `sse.ts`. Sunucu her 10 sn'
 
 | Tür      | Tool                                                                                                                  | Not                                                                                               |
 | -------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| iş       | `create_task`, `start_strategic_project`, `generate_ideas_from_opportunities`, `decide_approval`, `start_brand_setup` | Tur başına **en fazla biri** çalışır; hepsi mevcut servisleri (`CommandService.submit` vb.) sarar |
+| iş       | `create_task`, `generate_image`, `start_strategic_project`\*, `generate_ideas_from_opportunities`, `decide_approval`, `start_deep_enrichment` | Tur başına **en fazla biri** çalışır; hepsi mevcut servisleri (`CommandService.submit` vb.) sarar |
 | terminal | `ask_user`, `start_plan_brief`                                                                                        | Turu soru kartıyla / plan sihirbazıyla bitirir                                                    |
 | not      | `remember_preference`, `suggest_replies`, `propose_content_package`                                                   | İş sayılmaz (paket yalnızca kart üretir)                                                          |
 | okuma    | `get_pending_approvals`, `get_recent_tasks`, `get_idea_status`, `get_brand_profile`                                   | Sınırsız; hep turun kendi `projectId`'siyle sorgular                                              |
 
 Kurulum artık ön koşul değil: proje ilk mesajda ya da komutta kendiliğinden `ACTIVE` olur (`src/server/projects/activation.ts`, `ensureProjectActive`). Durum makinesi `CREATED → ACTIVE` geçişine izin vermediği için yasal yolu (`DISCOVERY → PROFILE_REVIEW → ACTIVE`) adım adım yürütür; `PAUSED` ve `CLOSED` kullanıcı kararıdır, asla geri alınmaz.
 
-Tool kısıtı koddadır (`tools.ts`, `phases`) ve iki durumludur: `ACTIVE` hepsi, `ON_HOLD` (duraklatılmış/kapalı proje) yalnızca soru/tercih/okuma. `CommandService`'in `PROJECT_INACTIVE` kapısı yedek olarak durur. 12 aşamalı kurulum (`start_brand_setup`) şimdilik ajana sunulmuyor; isteğe bağlı derin zenginleştirme olarak geri gelecek.
+Tool kısıtı koddadır (`tools.ts`, `phases`) ve iki durumludur: `ACTIVE` hepsi, `ON_HOLD` (duraklatılmış/kapalı proje) yalnızca soru/tercih/okuma. `CommandService`'in `PROJECT_INACTIVE` kapısı yedek olarak durur. Eski onboarding aracı (`start_brand_setup`) kaldırıldı; yerine isteğe bağlı **derin marka araştırması** (`start_deep_enrichment`) geldi.
+
+\* `start_strategic_project` yalnızca `LEGACY_AGENCY_LOOP=on` iken sunulur (planlayan Director artık çalışmıyorsa ajan geniş işi kendisi somut çıktılara böler). `save_idea` her modda vardır.
+
+## Derin marka araştırması (Deep Brand Enrichment)
+
+Müşteri yalnızca kapsamlı bir marka/rakip/pazar analizi isterse ve açıkça onaylarsa başlar; ilk bakış (Quick Discovery) zaten otomatik yapıldığı için marka yeni diye başlatılmaz. Arka planda uzun sürer, araştırma bütçesi harcar ve **hiçbir işi bloklamaz**. Proje başına bir kez çalışır (tekrar istenirse ajan çalıştığını/bittiğini söyler).
+
+`SetupIntake.mode = "ENRICHMENT"` ile mevcut 12 aşamalı makine kullanılır ama yalnızca eski ajans hattına hizmet eden aşamalar `SKIPPED` olur (`ENRICHMENT_SKIPPED_STAGES`, `setup-stages.ts`):
+
+| Çalışır | Atlanır |
+| --- | --- |
+| INTAKE, DEEP_DISCOVERY, BRAND_CONSTITUTION, SIGNAL_PROFILE, GOAL_GENERATION, PROJECT_ACTIVATION | BASELINE_AUDITS, AGENCY_CONFIGURATION, AUTONOMY_CONFIGURATION, INITIAL_OPPORTUNITIES, INITIAL_IDEA_PORTFOLIO, INITIAL_WORK_PLAN |
+
+Önemli davranışlar:
+
+- Derin sentez, Quick Discovery'nin yazdığı v1 taslağını **başlangıç noktası** olarak görür (`previousConstitution`); araştırma zayıf kalsa bile ilk bakışın kurduğu bilgi silinmez.
+- Brand Brain'e yansıtma **merge-aware**dır: yalnızca önceki yansıtmanın yazdığı ve kimsenin dokunmadığı satırlar yenilenir (onaylı iddia, CONFIRMED/REJECTED varsayım, elle eklenen kural/olgu korunur).
+- Deep Discovery'de tüm görevler başarısız olursa aşama artık sonsuza dek RUNNING kalmaz: `FAILED` olur (otomatik en çok 5 deneme, sonra manuel yeniden deneme). Bir görev takılırsa ve en az biri tamamlandıysa 30 dakika sonra eldeki veriyle devam edilir (`discoveryVerdict`).
+- Hedefler, müşteri "otomatik onayla" demedikçe onayını bekler (`WAITING_CLIENT`); ilerleme mevcut kurulum paneli/widget'ında görünür.
 
 Kurulumu atlayan bir projede ilk tarayıcı gerektiren görev (`CapabilityRouter.resolveBrowserProfile`) standart `BrowserProfile` paketini ve projenin OpenClaw ajanını tembel olarak oluşturur (`src/server/projects/browser-profiles.ts`); profil olmadan OpenClaw kamuya açık araştırmayı hiç çalıştıramaz.
 

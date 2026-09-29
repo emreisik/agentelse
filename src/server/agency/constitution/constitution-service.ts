@@ -29,12 +29,27 @@ type BrandBrainScope = {
 // (schema.prisma's BrandFact comment: "mirrored here when facts are
 // promoted") — previously never implemented, so those sections stayed
 // permanently empty regardless of how many times a brand's constitution
-// synthesized. Re-derived fresh from each new version (delete + recreate,
-// not append) so these tables never drift from the currently-ACTIVE
-// constitution or accumulate stale rows from superseded versions.
+// synthesized.
+//
+// Re-derived from each new version, but MERGED with what a person has already
+// decided, not wiped: it used to delete every row of all four tables, so a
+// later version (the deep research rewriting the first-look draft) would have
+// erased any claim a client had approved, any assumption they had confirmed or
+// rejected, and any rule or fact added by hand. Now only the rows a previous
+// promotion wrote and nobody has touched are replaced:
+//  - facts: the ones this function files under the "constitution" category;
+//  - assumptions: those still UNVERIFIED (CONFIRMED / REJECTED are verdicts);
+//  - claims: those nobody approved (approvedByUserId is empty);
+//  - rules: the two categories this function writes.
+// A statement that matches a row that was kept is not written a second time.
 // approvedByUserId/status are deliberately left at their "not yet reviewed"
 // defaults — this promotes the AI's draft, it doesn't fabricate a human
 // approval that never happened.
+const PROMOTED_FACT_CATEGORY = "constitution";
+const PROMOTED_RULE_CATEGORIES = ["negative-brief", "forbidden-claim"];
+
+const normalized = (text: string) => text.trim().toLowerCase();
+
 async function promoteConstitutionToBrandBrain(
   scope: BrandBrainScope,
   payload: BrandConstitutionPayload,
@@ -42,11 +57,50 @@ async function promoteConstitutionToBrandBrain(
 ): Promise<void> {
   const { brandId } = scope;
   await Promise.all([
-    prisma.brandFact.deleteMany({ where: { brandId } }),
-    prisma.brandAssumption.deleteMany({ where: { brandId } }),
-    prisma.approvedClaim.deleteMany({ where: { brandId } }),
-    prisma.negativeBriefRule.deleteMany({ where: { brandId } }),
+    prisma.brandFact.deleteMany({
+      where: { brandId, category: PROMOTED_FACT_CATEGORY },
+    }),
+    prisma.brandAssumption.deleteMany({
+      where: { brandId, status: "UNVERIFIED" },
+    }),
+    prisma.approvedClaim.deleteMany({
+      where: { brandId, approvedByUserId: null },
+    }),
+    prisma.negativeBriefRule.deleteMany({
+      where: { brandId, category: { in: PROMOTED_RULE_CATEGORIES } },
+    }),
   ]);
+
+  // What survived the delete above: a person's decisions and additions.
+  const [keptAssumptions, keptClaims, keptRules] = await Promise.all([
+    prisma.brandAssumption.findMany({
+      where: { brandId },
+      select: { statement: true },
+    }),
+    prisma.approvedClaim.findMany({
+      where: { brandId },
+      select: { claim: true },
+    }),
+    prisma.negativeBriefRule.findMany({
+      where: { brandId },
+      select: { rule: true },
+    }),
+  ]);
+  const notKept = (texts: string[], kept: string[]) => {
+    const taken = new Set(kept.map(normalized));
+    return texts.filter((text) => !taken.has(normalized(text)));
+  };
+  const assumptions = notKept(
+    payload.assumptions,
+    keptAssumptions.map((row) => row.statement),
+  );
+  const claims = notKept(
+    payload.approvedClaims,
+    keptClaims.map((row) => row.claim),
+  );
+  const keptRuleTexts = keptRules.map((row) => row.rule);
+  const negativeRules = notKept(payload.negativeBrief, keptRuleTexts);
+  const forbiddenRules = notKept(payload.forbiddenClaims, keptRuleTexts);
 
   const source = `Brand Constitution v${constitutionVersion}`;
   await Promise.all([
@@ -54,38 +108,32 @@ async function promoteConstitutionToBrandBrain(
       ? prisma.brandFact.createMany({
           data: payload.knownFacts.map((statement, index) => ({
             ...scope,
-            category: "constitution",
+            category: PROMOTED_FACT_CATEGORY,
             key: `known-fact-${index + 1}`,
             value: statement,
             source,
           })),
         })
       : undefined,
-    payload.assumptions.length > 0
+    assumptions.length > 0
       ? prisma.brandAssumption.createMany({
-          data: payload.assumptions.map((statement) => ({
-            ...scope,
-            statement,
-          })),
+          data: assumptions.map((statement) => ({ ...scope, statement })),
         })
       : undefined,
-    payload.approvedClaims.length > 0
+    claims.length > 0
       ? prisma.approvedClaim.createMany({
-          data: payload.approvedClaims.map((claim) => ({
-            ...scope,
-            claim,
-          })),
+          data: claims.map((claim) => ({ ...scope, claim })),
         })
       : undefined,
-    payload.negativeBrief.length > 0 || payload.forbiddenClaims.length > 0
+    negativeRules.length > 0 || forbiddenRules.length > 0
       ? prisma.negativeBriefRule.createMany({
           data: [
-            ...payload.negativeBrief.map((rule) => ({
+            ...negativeRules.map((rule) => ({
               ...scope,
               rule,
               category: "negative-brief",
             })),
-            ...payload.forbiddenClaims.map((rule) => ({
+            ...forbiddenRules.map((rule) => ({
               ...scope,
               rule,
               category: "forbidden-claim",
@@ -117,6 +165,14 @@ export const ConstitutionService = {
       where: { id: input.projectId },
       select: { language: true, country: true },
     });
+    // A version may already exist: the first-look draft Quick Discovery wrote
+    // from the brand's public pages. The research findings alone can be thin
+    // (a few of the six research tasks completed), so the synthesis is handed
+    // that draft to refine instead of starting from nothing and quietly
+    // dropping what the first look had established.
+    const previous = await BrandConstitutionRepository.getActive(
+      input.brandId,
+    );
 
     const { output, isMock } = await ReasoningService.run(
       constitutionSynthesisDef,
@@ -132,6 +188,7 @@ export const ConstitutionService = {
           country: project.country,
           languageName: languageLabel(project.language),
           countryName: countryLabel(project.country),
+          previousConstitution: previous?.payload ?? undefined,
           findings: findings.map((f) => ({
             statement: f.statement,
             classification: f.classification,

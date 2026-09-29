@@ -37,6 +37,8 @@ export type CreateSetupStateInput = {
     description?: string;
     assetIds?: string[];
     autoApprove?: boolean;
+    // Absent on a state created before modes existed: treated as FULL.
+    mode?: "FULL" | "ENRICHMENT";
   };
 };
 

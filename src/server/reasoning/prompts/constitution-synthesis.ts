@@ -66,6 +66,19 @@ function findings(context: ReasoningContext): FindingLike[] {
   return (context.findings as FindingLike[] | undefined) ?? [];
 }
 
+// The active constitution, when one exists, as compact JSON for the prompt.
+// Capped: it only has to remind the model what is already established.
+const PREVIOUS_CONSTITUTION_MAX_CHARS = 8_000;
+
+function previousConstitution(context: ReasoningContext): string | undefined {
+  const previous = context.previousConstitution;
+  if (!previous || typeof previous !== "object") return undefined;
+  const json = JSON.stringify(previous);
+  return json.length > PREVIOUS_CONSTITUTION_MAX_CHARS
+    ? `${json.slice(0, PREVIOUS_CONSTITUTION_MAX_CHARS)}…`
+    : json;
+}
+
 function brandName(context: ReasoningContext): string {
   return (context.brandName as string | undefined) ?? "the brand";
 }
@@ -87,6 +100,7 @@ export const constitutionSynthesisDef: ReasoningDef<ConstitutionOutput> = {
   maxTokens: 32768,
 
   buildPrompt(context) {
+    const previous = previousConstitution(context);
     const lines = findings(context)
       .map((f) => `- [${f.classification}] ${f.statement}`)
       .join("\n");
@@ -102,6 +116,9 @@ export const constitutionSynthesisDef: ReasoningDef<ConstitutionOutput> = {
       user:
         `Brand: ${brandName(context)}\nDomain: ${String(context.domain ?? "unknown")}\n` +
         `Client description: ${String(context.description ?? "-")}\n\n` +
+        (previous
+          ? `An earlier first-draft constitution exists (written from the brand's public pages before this research). Treat it as your starting point: keep what the findings still support, correct what they contradict, and extend it with what the research adds. Do not drop established facts just because the findings do not repeat them, and do not turn its assumptions into facts without a finding that supports them.\nEarlier draft:\n${previous}\n\n`
+          : "") +
         `Research findings:\n${lines}\n\nSynthesize the Brand Constitution.`,
     };
   },

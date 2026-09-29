@@ -62,10 +62,12 @@ describe("toolsForPhase", () => {
   it("offers work tools on an active project, with no onboarding tool in the way", () => {
     expect(names("ACTIVE")).toContain("create_task");
     expect(names("ACTIVE")).toContain("generate_image");
-    // The full 12-stage pipeline is no longer something the agent starts on
-    // its own; setup is not a prerequisite for working.
+    // Setup is not a prerequisite for working. The deep research is an opt-in
+    // the client asks for, and only on a project that can take work.
+    expect(names("ACTIVE")).toContain("start_deep_enrichment");
+    expect(names("ON_HOLD")).not.toContain("start_deep_enrichment");
+    // The old onboarding tool is gone for good.
     expect(names("ACTIVE")).not.toContain("start_brand_setup");
-    expect(names("ON_HOLD")).not.toContain("start_brand_setup");
   });
 
   it("keeps a paused or closed project read-only: it can talk and look things up, never start work", () => {
@@ -83,6 +85,7 @@ describe("toolsForPhase", () => {
       "start_strategic_project",
       "generate_ideas_from_opportunities",
       "decide_approval",
+      "start_deep_enrichment",
       "propose_content_plan",
       "propose_content_package",
     ]) {

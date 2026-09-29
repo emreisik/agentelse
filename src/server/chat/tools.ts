@@ -738,43 +738,70 @@ const rememberPreference = defineTool({
   },
 });
 
-const startBrandSetup = defineTool({
-  name: "start_brand_setup",
-  label: "Starting setup…",
+const startDeepEnrichment = defineTool({
+  name: "start_deep_enrichment",
+  label: "Starting deep brand research…",
   kind: "work",
-  // Not offered for now: setup is no longer a prerequisite for working, and
-  // this starts the FULL 12-stage pipeline (dozens of LLM calls). It comes back
-  // as an opt-in "Deep Brand Enrichment" tool once that pipeline has a mode
-  // that skips the stages only the old orchestrator needed.
-  phases: [],
+  phases: ["ACTIVE"],
   description:
-    "Start the brand's real onboarding pipeline (discovery, brand constitution, goals, first work plan). Call ONLY once brandName is known AND the client has clearly agreed to go ahead. Carry forward what earlier turns established (domain, focus description, whether to proceed automatically).",
+    "Start the OPTIONAL deep brand research in the background: it researches the brand, its market, competitors and customers on the live web, rewrites the brand's profile from what it finds, and proposes business goals. It takes a long time (many minutes) and costs real research budget, and NOTHING depends on it: the client keeps working meanwhile. A first look at the brand was already done automatically, so NEVER start this just because the brand is new. Offer it only when the client asks for a thorough brand analysis or deep competitor / market research, and call it only once they clearly agree. `focus` = what they want the research to concentrate on, in their words (optional). `autoApprove` = true ONLY if the client asks for the proposed goals to be approved automatically; otherwise the goals wait for their approval.",
   schema: z.object({
-    brandName: z.string(),
-    domain: z.string().optional(),
-    description: z.string().optional(),
+    focus: z.string().optional(),
     autoApprove: z.boolean().optional(),
   }),
   async execute(args, ctx) {
-    const brandName = args.brandName.trim();
+    // Already started (or finished) once: one deep research per project. Say
+    // so rather than report a start that did not happen.
+    const existing = await prisma.projectSetupState.findUnique({
+      where: { projectId: ctx.projectId },
+      select: { activatedAt: true },
+    });
+    if (existing) {
+      return {
+        result: {
+          outcome: existing.activatedAt
+            ? "enrichment_already_done"
+            : "enrichment_already_running",
+          note: existing.activatedAt
+            ? "The deep brand research already ran for this project. Say so; do not start it again."
+            : "The deep brand research is already running in the background. Say so; do not start it again.",
+        },
+      };
+    }
+
+    // The brand's name and website come from the project itself, never from
+    // the model: this is a background job that will write to the brand.
+    const [project, brand] = await Promise.all([
+      prisma.project.findUnique({
+        where: { id: ctx.projectId },
+        select: { name: true, domain: true },
+      }),
+      prisma.brand.findUnique({
+        where: { id: ctx.brandId },
+        select: { name: true },
+      }),
+    ]);
+    const brandName = brand?.name?.trim() || project?.name?.trim();
     if (!brandName) {
       return { result: { outcome: "missing_brand_name" } };
     }
+
     const started = await startAgencySetupForProject({
       projectId: ctx.projectId,
       workspaceId: ctx.workspaceId,
       brandId: ctx.brandId,
       userId: ctx.userId,
       brandName,
-      domain: args.domain?.trim() || undefined,
-      description: args.description?.trim() || undefined,
+      domain: project?.domain?.trim() || undefined,
+      description: args.focus?.trim() || undefined,
       autoApprove: args.autoApprove,
+      mode: "ENRICHMENT",
     });
     if (!started.ok) {
       return {
         status: "ERROR",
         result: {
-          outcome: "setup_failed",
+          outcome: "enrichment_failed",
           note: "Tell the client to try again in a moment.",
         },
       };
@@ -784,8 +811,8 @@ const startBrandSetup = defineTool({
       // misleading "Task created" badge (see STATUS_NOTE in project-chat.tsx).
       status: "ANSWERED",
       result: {
-        outcome: "setup_started",
-        note: "Setup just STARTED in the background; NOTHING is done yet. Acknowledge briefly that you are starting. Never say setup is complete and never offer to create work in this reply.",
+        outcome: "enrichment_started",
+        note: "The deep brand research just STARTED in the background and takes a while; NOTHING is done yet. Tell the client briefly that it is running, that they can keep working meanwhile, and that the results will show up in the Brand Brain. Never say it is finished.",
       },
     };
   },
@@ -1324,7 +1351,7 @@ const ALL_TOOLS: readonly ChatTool[] = [
   decideApproval,
   askUser,
   rememberPreference,
-  startBrandSetup,
+  startDeepEnrichment,
   getPendingApprovals,
   getRecentTasks,
   getTaskResult,

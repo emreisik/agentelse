@@ -18,9 +18,21 @@ const brandStrategyVersion = { findFirst: vi.fn() };
 const brandLearning = { findMany: vi.fn() };
 const brandDecision = { create: vi.fn() };
 const brandFact = { deleteMany: vi.fn(), createMany: vi.fn() };
-const brandAssumption = { deleteMany: vi.fn(), createMany: vi.fn() };
-const approvedClaim = { deleteMany: vi.fn(), createMany: vi.fn() };
-const negativeBriefRule = { deleteMany: vi.fn(), createMany: vi.fn() };
+const brandAssumption = {
+  deleteMany: vi.fn(),
+  createMany: vi.fn(),
+  findMany: vi.fn(),
+};
+const approvedClaim = {
+  deleteMany: vi.fn(),
+  createMany: vi.fn(),
+  findMany: vi.fn(),
+};
+const negativeBriefRule = {
+  deleteMany: vi.fn(),
+  createMany: vi.fn(),
+  findMany: vi.fn(),
+};
 const brandEvidence = { createMany: vi.fn() };
 
 vi.mock("@/lib/prisma", () => ({
@@ -60,6 +72,10 @@ beforeEach(() => {
   ]) {
     model.deleteMany.mockResolvedValue({ count: 0 });
     model.createMany.mockResolvedValue({ count: 0 });
+  }
+  // Nothing survives a promotion unless a test says a person left it there.
+  for (const model of [brandAssumption, approvedClaim, negativeBriefRule]) {
+    model.findMany.mockResolvedValue([]);
   }
 });
 
@@ -331,9 +347,6 @@ describe("ConstitutionService.publishVersion", () => {
       evidenceIds: [],
     });
 
-    for (const model of [brandFact, brandAssumption, approvedClaim, negativeBriefRule]) {
-      expect(model.deleteMany).toHaveBeenCalledWith({ where: { brandId: "brand-1" } });
-    }
     expect(brandFact.createMany).toHaveBeenCalledWith({
       data: [
         expect.objectContaining({
@@ -359,5 +372,144 @@ describe("ConstitutionService.publishVersion", () => {
     });
     // Nothing to approve, so no approved claim is invented.
     expect(approvedClaim.createMany).not.toHaveBeenCalled();
+  });
+});
+
+// A new version replaces what the LAST promotion wrote and nobody touched. It
+// must not wipe what a person decided or added (the deep research rewrites the
+// first-look draft; the client's approvals cannot vanish with it).
+describe("ConstitutionService.publishVersion keeps what a person decided", () => {
+  const scope = { workspaceId: "ws-1", projectId: "proj-1", brandId: "brand-1" };
+  const basePayload = {
+    language: "tr",
+    country: "TR",
+    identity: "Acme",
+    businessModel: "",
+    products: [],
+    markets: [],
+    audiences: [],
+    positioning: "",
+    valueProposition: "",
+    personality: "",
+    toneOfVoice: "",
+    visualIdentity: "",
+    approvedClaims: [],
+    forbiddenClaims: [],
+    negativeBrief: [],
+    customerProblems: [],
+    customerObjections: [],
+    competitors: [],
+    differentiators: [],
+    legalRestrictions: [],
+    knownFacts: [],
+    assumptions: [],
+    openQuestions: [],
+    logoAssetIds: [],
+  };
+  const publish = (overrides: Record<string, unknown> = {}) =>
+    ConstitutionService.publishVersion({
+      scope,
+      payload: { ...basePayload, ...overrides },
+      isMock: false,
+      sourceFindingIds: [],
+      evidenceIds: [],
+    });
+
+  beforeEach(() => {
+    brandConstitution.findFirst.mockResolvedValue({ version: 1 });
+    brandConstitution.update.mockResolvedValue({
+      id: "constitution-2",
+      version: 2,
+      summary: "Acme",
+    });
+  });
+
+  it("replaces only the rows a promotion writes and nobody has reviewed", async () => {
+    await publish();
+
+    expect(brandFact.deleteMany).toHaveBeenCalledWith({
+      where: { brandId: "brand-1", category: "constitution" },
+    });
+    // CONFIRMED / REJECTED assumptions are verdicts, not drafts.
+    expect(brandAssumption.deleteMany).toHaveBeenCalledWith({
+      where: { brandId: "brand-1", status: "UNVERIFIED" },
+    });
+    // A claim somebody approved has an approver.
+    expect(approvedClaim.deleteMany).toHaveBeenCalledWith({
+      where: { brandId: "brand-1", approvedByUserId: null },
+    });
+    expect(negativeBriefRule.deleteMany).toHaveBeenCalledWith({
+      where: {
+        brandId: "brand-1",
+        category: { in: ["negative-brief", "forbidden-claim"] },
+      },
+    });
+  });
+
+  it("does not write an assumption again that a person already confirmed or rejected", async () => {
+    brandAssumption.findMany.mockResolvedValue([
+      { statement: "  Bayi ağıyla satıyor " },
+    ]);
+
+    await publish({
+      assumptions: ["bayi ağıyla satıyor", "Yeni bir varsayım"],
+    });
+
+    expect(brandAssumption.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ statement: "Yeni bir varsayım" })],
+    });
+  });
+
+  it("does not duplicate a claim the client already approved", async () => {
+    approvedClaim.findMany.mockResolvedValue([{ claim: "1985'ten beri üretici" }]);
+
+    await publish({
+      approvedClaims: ["1985'ten beri üretici", "İzmir'de üretilir"],
+    });
+
+    expect(approvedClaim.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ claim: "İzmir'de üretilir" })],
+    });
+  });
+
+  it("does not duplicate a rule that is already on record, in either category", async () => {
+    negativeBriefRule.findMany.mockResolvedValue([
+      { rule: "Abartılı vaat verme" },
+      { rule: "sıfır kimyasal" },
+    ]);
+
+    await publish({
+      negativeBrief: ["Abartılı vaat verme", "Rakip adı anma"],
+      forbiddenClaims: ["Sıfır Kimyasal", "Tıbbi iddia"],
+    });
+
+    expect(negativeBriefRule.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          rule: "Rakip adı anma",
+          category: "negative-brief",
+        }),
+        expect.objectContaining({
+          rule: "Tıbbi iddia",
+          category: "forbidden-claim",
+        }),
+      ],
+    });
+  });
+
+  it("writes nothing when every entry is already on record", async () => {
+    approvedClaim.findMany.mockResolvedValue([{ claim: "A" }]);
+    negativeBriefRule.findMany.mockResolvedValue([{ rule: "B" }]);
+    brandAssumption.findMany.mockResolvedValue([{ statement: "C" }]);
+
+    await publish({
+      approvedClaims: ["a"],
+      negativeBrief: ["b"],
+      assumptions: ["c"],
+    });
+
+    expect(approvedClaim.createMany).not.toHaveBeenCalled();
+    expect(negativeBriefRule.createMany).not.toHaveBeenCalled();
+    expect(brandAssumption.createMany).not.toHaveBeenCalled();
   });
 });

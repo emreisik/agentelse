@@ -40,7 +40,7 @@ type NavGroup = { title: string | null; items: NavItem[] };
 // Every entry the header's Advanced menu (project-tools-menu.tsx) offers is
 // listed here too, grouped by what it's for. "Agency Desk" is the project's
 // free-text agency chat (ProjectChat) — everything, decisions included,
-// happens in that one screen (see DecisionsBar).
+// happens in that one screen (pending cards in the chat).
 const GROUPS: NavGroup[] = [
   {
     title: null,

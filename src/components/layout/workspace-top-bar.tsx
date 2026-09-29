@@ -25,6 +25,8 @@ import {
 import { ProjectToolsMenu } from "@/components/hub-core/project-tools-menu";
 import { BrandSwitcher } from "@/components/layout/brand-switcher";
 import { SetupProgressBadge } from "@/components/layout/setup-progress-badge";
+import { OpenAiCreditPill } from "@/components/layout/openai-credit-pill";
+import type { OpenAiCredit } from "@/server/billing/openai-credit";
 import { ActiveWorkPopover } from "@/components/layout/active-work-popover";
 import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
 import {
@@ -89,6 +91,7 @@ export function WorkspaceTopBar({
   email,
   showLogo,
   hasRightPanel,
+  openaiCredit,
 }: {
   projectId?: string;
   projectName: string;
@@ -111,8 +114,9 @@ export function WorkspaceTopBar({
   // Only the project chat root has the Brand/Files/Outputs/Calendar panel
   // (and its toggle context) — elsewhere the toggle would be a dead button.
   hasRightPanel: boolean;
+  openaiCredit: OpenAiCredit | null;
 }) {
-  // Decisions live on the Agency Desk (DecisionsBar) — workspace-wide
+  // Decisions live on the Agency Desk (pending cards in the chat) — workspace-wide
   // pages land on the dashboard's per-project "needs you" queue instead.
   const approvalsHref = projectId ? decisionsHref(projectId) : "/dashboard";
   const humanActionsHref = projectId
@@ -168,6 +172,7 @@ export function WorkspaceTopBar({
             <ActiveWorkPopover projectId={projectId} initial={agencyStatus} />
           </div>
         ) : null}
+        {openaiCredit ? <OpenAiCreditPill initial={openaiCredit} /> : null}
         <div className="hidden items-center gap-0.5 lg:flex">
           <HeaderCount
             href={approvalsHref}

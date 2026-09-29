@@ -1,0 +1,42 @@
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+vi.mock("@/server/execution/provider-registry", () => ({
+  ProviderRegistry: { registered: () => [] },
+}));
+
+const { decayStatus } = await import("./provider-health.service");
+
+describe("decayStatus", () => {
+  it("lets a locked AUTH_REQUIRED provider be retried once the window is empty and it is configured", () => {
+    expect(
+      decayStatus("AUTH_REQUIRED", { jobsInWindow: 0, configured: true }),
+    ).toBe("AVAILABLE");
+  });
+
+  it("keeps AUTH_REQUIRED while there is recent evidence or the provider is unconfigured", () => {
+    expect(
+      decayStatus("AUTH_REQUIRED", { jobsInWindow: 2, configured: true }),
+    ).toBe("AUTH_REQUIRED");
+    expect(
+      decayStatus("AUTH_REQUIRED", { jobsInWindow: 0, configured: false }),
+    ).toBe("AUTH_REQUIRED");
+  });
+
+  it("never decays a deliberately DISABLED provider", () => {
+    expect(
+      decayStatus("DISABLED", { jobsInWindow: 0, configured: true }),
+    ).toBe("DISABLED");
+  });
+
+  it("keeps decaying the transient states exactly as before", () => {
+    for (const status of ["UNAVAILABLE", "DEGRADED", "RATE_LIMITED"] as const) {
+      expect(decayStatus(status)).toBe("AVAILABLE");
+    }
+    expect(decayStatus(undefined)).toBe("AVAILABLE");
+  });
+
+  it("without context, never unlocks AUTH_REQUIRED (safe default)", () => {
+    expect(decayStatus("AUTH_REQUIRED")).toBe("AUTH_REQUIRED");
+  });
+});

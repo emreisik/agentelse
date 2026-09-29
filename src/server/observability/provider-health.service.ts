@@ -41,13 +41,32 @@ export type ProviderHealthSnapshot = {
 // hit this provider in the last WINDOW_MS), we fall back to AVAILABLE and
 // let the next dispatch try again — if the problem is really still there, a
 // fresh failure immediately drops it back to UNAVAILABLE; if it really
-// passed, the provider quietly recovers. Exception: AUTH_REQUIRED/DISABLED
-// require human intervention (key/configuration) and don't fix themselves
-// over time, so they're preserved without decay.
-function decayStatus(
+// passed, the provider quietly recovers.
+//
+// AUTH_REQUIRED (bad key / exhausted balance) used to be preserved forever
+// on the assumption that a human must intervene. But once the key or
+// balance is fixed, nothing tells the breaker: the provider stays locked, no
+// job is ever dispatched to it, and no new sample can ever clear it (seen in
+// production: openai-creative locked for days after a missing key was
+// fixed). So it decays like the others, but more conservatively — only when
+// the window is completely empty (no job of any outcome for the whole
+// WINDOW_MS) AND the provider is configured right now. If the key is still
+// bad, the next attempts fail again and the breaker re-closes as soon as
+// MIN_SAMPLE failures are on record. DISABLED is a deliberate choice, never
+// decays.
+export function decayStatus(
   previous: ProviderHealthStatus | undefined,
+  context: { jobsInWindow: number; configured: boolean } = {
+    jobsInWindow: Number.POSITIVE_INFINITY,
+    configured: false,
+  },
 ): ProviderHealthStatus {
-  if (previous === "AUTH_REQUIRED" || previous === "DISABLED") return previous;
+  if (previous === "DISABLED") return previous;
+  if (previous === "AUTH_REQUIRED") {
+    return context.jobsInWindow === 0 && context.configured
+      ? "AVAILABLE"
+      : previous;
+  }
   return "AVAILABLE";
 }
 
@@ -129,7 +148,10 @@ export const ProviderHealthService = {
       const lastErrorMessage = failures[0]?.errorMessage ?? null;
       const status =
         jobs.length < MIN_SAMPLE
-          ? decayStatus(definition.health?.status)
+          ? decayStatus(definition.health?.status, {
+              jobsInWindow: jobs.length,
+              configured: definition.configured,
+            })
           : statusFromSamples(jobs.length, failures.length, lastErrorMessage);
 
       const previous = definition.health?.status;

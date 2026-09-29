@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { prisma } from "@/lib/prisma";
+import { getOpenAiCredit } from "@/server/billing/openai-credit";
 import { requireUser } from "@/server/security/tenant-context";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { SetupProgressWidget } from "@/components/layout/setup-progress-widget";
@@ -223,6 +224,7 @@ export async function AppShell({
   // One header for every page. Counts are project-scoped inside a project
   // and workspace-wide elsewhere (projectBadges' own approvals/human-action
   // counts are zero without a project, so they can't be used there).
+  const openaiCredit = await getOpenAiCredit().catch(() => null);
   const header = (
     <WorkspaceTopBar
       projectId={projectId}
@@ -246,6 +248,7 @@ export async function AppShell({
       email={email}
       showLogo={!sidebarVisible}
       hasRightPanel={isWorkspaceRoot}
+      openaiCredit={openaiCredit}
     />
   );
 

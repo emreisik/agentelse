@@ -43,6 +43,7 @@ import type {
   CommandReplyStatus,
 } from "@/server/repositories/command.repository";
 import { CHAT_CAPABILITIES, CHAT_PLATFORMS } from "./constants";
+import { SKILL_KEYS, SKILLS, skillCatalog } from "./skills/registry";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 import { activeDeliverables } from "./deliverables";
 import { driveJobInline } from "./inline-job";
@@ -1113,6 +1114,28 @@ const getInsights = defineTool({
   },
 });
 
+const loadSkill = defineTool({
+  name: "load_skill",
+  label: "Loading a skill…",
+  kind: "read",
+  phases: ["ACTIVE"],
+  description: `Load the detailed way of working for one area of the agency's work: ${skillCatalog()}. Returns the steps to follow, the capabilities and tools that belong to the area and the deliverables it produces. Load a skill once per conversation, when you are about to do substantial work in its area and have not read it yet; skip it for simple questions and quick replies.`,
+  schema: z.object({ skill: z.enum(SKILL_KEYS) }),
+  async execute(args) {
+    const skill = SKILLS[args.skill];
+    return {
+      result: {
+        skill: skill.key,
+        name: skill.label,
+        instructions: skill.instructions,
+        capabilities: skill.capabilities,
+        deliverables: skill.deliverables,
+        tools: skill.tools,
+      },
+    };
+  },
+});
+
 const getBrandProfile = defineTool({
   name: "get_brand_profile",
   label: "Reading brand profile…",
@@ -1358,6 +1381,7 @@ const ALL_TOOLS: readonly ChatTool[] = [
   getFindings,
   getSignals,
   getInsights,
+  loadSkill,
   getIdeaStatus,
   getBrandProfile,
   getVisualIdentity,

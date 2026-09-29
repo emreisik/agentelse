@@ -62,6 +62,25 @@ Tool kısıtı koddadır (`tools.ts`, `phases`) ve iki durumludur: `ACTIVE` heps
 
 \* `start_strategic_project` yalnızca `LEGACY_AGENCY_LOOP=on` iken sunulur (planlayan Director artık çalışmıyorsa ajan geniş işi kendisi somut çıktılara böler). `save_idea` her modda vardır.
 
+## Skill'ler (departmanların yerine)
+
+Ajan artık "departmanlar" etrafında örgütlenmez. Bir departman hiçbir zaman yürütme birimi olmadı: `department-registry.ts` ayrı izin, kimlik bilgisi, kuyruk veya güvenlik sınırı olmayan, "hangi capability kime ait" diyen statik bir tablodur. Ajanın o tablodan gerçekten ihtiyacı olan iki şey vardır: alan bilgisi ve o alana ait capability/çıktılar. Bu bir **skill**'dir (`src/server/chat/skills/registry.ts`).
+
+| Skill | Ne için | Capability'ler | Çıktı (paket) |
+| --- | --- | --- | --- |
+| `research` | pazar, rakip, müşteri, web araştırması | COMPETITOR/MARKET/TREND_RESEARCH, CUSTOMER_INTELLIGENCE, PRODUCT/WEB/SOCIAL_RESEARCH, SOCIAL_PROFILE_AUDIT | — |
+| `strategy` | konumlandırma, kampanya yönü, geniş hedefi plana çevirme | CREATE_CAMPAIGN_BRIEF | — |
+| `creative` | görsel post/story/reel kapağı | CREATE_SOCIAL_CREATIVE, CREATE_AD_CREATIVE | `instagram_post` |
+| `content` | caption, e-posta, reel fikri, içerik planı | CREATE_COPY, CREATE_CAPTION, EMAIL_DRAFT, CREATE_CONTENT_PLAN | `reel_idea`, `email_draft` |
+| `ads` | ücretli kampanya ve performans | META_ADS_ANALYSIS, META_CAMPAIGN_CREATE, GOOGLE_ADS_ANALYSIS, ANALYTICS_ANALYSIS, REPORTING | `ad_copy` |
+| `seo` | organik arama, anahtar kelime, makale | SEO_RESEARCH, SEO_ANALYSIS | `seo_article` |
+
+Yayın (`*_PUBLISH`) ve hesap kurulumu (`SOCIAL_ACCOUNT_SETUP`) bir skill'e bağlı değildir; onay akışı ve kanal bağlantıları üzerinden yürür.
+
+- **Alt-ajan yok, devir yok.** Tek ajan, tek döngü. Skill, ajanın `load_skill` aracıyla yüklediği talimat metnidir (adımlar, hangi araç/capability, dürüstlük kuralları). Standart talimatta yalnızca tek satırlık katalog durur; ayrıntı, ajan o alanda gerçek iş yapacağı zaman yüklenir (konuşma başına bir kez; basit sorularda yüklenmez). Bir skill hiçbir zaman sert kuralların üzerine çıkamaz.
+- `skills.test.ts` kaydı üç şeye karşı sabitler: departman tablosu (her capability bir departmana ait olmalı), sohbet capability listesi (yeni bir capability skill'siz eklenirse test kırılır) ve gerçek araç adları (talimatlarda anılan her araç var olmalı, kaldırılmış olan anılmamalı).
+- `department-registry` ve `Task.departmentKey` **silinmedi**: Work paneli, Departments paneli ve içerik paketi kartları hâlâ okuyor. Mod ayarı (`ProjectDepartment.mode`) yürütmeyi etkilemez; UI kararı bekliyor.
+
 ## Derin marka araştırması (Deep Brand Enrichment)
 
 Müşteri yalnızca kapsamlı bir marka/rakip/pazar analizi isterse ve açıkça onaylarsa başlar; ilk bakış (Quick Discovery) zaten otomatik yapıldığı için marka yeni diye başlatılmaz. Arka planda uzun sürer, araştırma bütçesi harcar ve **hiçbir işi bloklamaz**. Proje başına bir kez çalışır (tekrar istenirse ajan çalıştığını/bittiğini söyler).

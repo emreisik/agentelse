@@ -14,6 +14,7 @@ import {
 } from "@/server/security/tenant-context";
 import { ProjectRepository } from "@/server/repositories/project.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
+import { ensureProjectActive } from "@/server/projects/activation";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import { putAsset } from "@/server/storage/asset-storage";
 import { isSupportedLanguage, isSupportedCountry } from "@/lib/locales";
@@ -33,10 +34,10 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-// Creates the Project + default Brand and drops the user into the 12-stage
-// Agency Setup. We don't advance the project status here: the owner of the
-// lifecycle is ProjectSetupOrchestrator (it performs the CREATED -> DISCOVERY
-// transition when setup starts).
+// Creates the Project + default Brand, activates it, and drops the user into
+// the chat. There is no onboarding gate any more: the agent can work right
+// away and learns the brand as it goes (Quick Discovery), while the optional
+// 12-stage deep setup (ProjectSetupOrchestrator) can still be started later.
 export async function createProjectAction(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const domain = String(formData.get("domain") ?? "").trim();
@@ -98,8 +99,14 @@ export async function createProjectAction(formData: FormData) {
     entityId: project.id,
   });
 
-  // Setup intake now happens conversationally in the project chat itself
-  // (see chat-turn.ts's NOT_STARTED phase) instead of the ?panel=setup form.
+  // Best effort: ensureProjectActive also runs on the first chat turn and on
+  // every command, so a failure here just defers activation to then. The
+  // scanners (Meta / Google analytics) only look at ACTIVE projects, which is
+  // why it is done at creation and not left entirely to the first message.
+  await ensureProjectActive(project.id).catch((error) => {
+    console.error("[createProjectAction] ensureProjectActive failed:", error);
+  });
+
   redirect(`/projects/${project.id}`);
 }
 

@@ -13,6 +13,7 @@ import {
   limitNoticeReplyText,
 } from "@/server/commands/limit-notice";
 import { subscribeCreativeProgress } from "@/server/media/creative-progress";
+import { ensureProjectActive } from "@/server/projects/activation";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { isAgentelseError } from "@/server/security/errors";
 
@@ -440,15 +441,14 @@ async function runItem(
 export async function* runContentPackage(
   input: RunContentPackageInput,
 ): AsyncGenerator<ChatStreamEvent> {
-  const project = await prisma.project.findUnique({
-    where: { id: input.projectId },
-    select: { status: true },
-  });
-  if (project?.status !== "ACTIVE") {
+  // A project that has not run setup is activated on the spot; only a project
+  // on hold (PAUSED / CLOSED) is refused. See projects/activation.ts.
+  const activation = await ensureProjectActive(input.projectId);
+  if (!activation.usable) {
     yield {
       type: "error",
-      code: "SETUP_REQUIRED",
-      message: "This project's setup has not finished yet.",
+      code: "PROJECT_INACTIVE",
+      message: "This project is on hold, so no new work can start.",
     };
     return;
   }

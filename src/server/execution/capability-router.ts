@@ -3,6 +3,7 @@ import "server-only";
 import type { BrowserProfilePurpose, CapabilityKey } from "@prisma/client";
 
 import { AgentelseError } from "@/server/security/errors";
+import { ensureStandardBrowserProfilesForProject } from "@/server/projects/browser-profiles";
 import { BrowserProfileRepository } from "@/server/repositories/browser-profile.repository";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
 import { ProviderRegistry } from "@/server/execution/provider-registry";
@@ -51,10 +52,26 @@ export const CapabilityRouter = {
     // (Meta for INSTAGRAM_PUBLISH/META_*, OpenAI for CRM_ANALYSIS/
     // EMAIL_DRAFT). Throwing here used to block those API paths outright,
     // before a provider was ever consulted, and stranded the Task in QUEUED.
-    const profile = await BrowserProfileRepository.findByPurposeInProject(
+    let profile = await BrowserProfileRepository.findByPurposeInProject(
       projectId,
       purpose,
     );
+    if (!profile) {
+      // A project that started working from the chat without running setup
+      // has no profiles at all, and without one OpenClaw cannot serve the
+      // capability. Create the standard bundle (and the project's agent) now,
+      // once; a project that DOES have profiles but not this purpose is left
+      // alone. Soft, like the lookup: a failure just means no profile.
+      const created = await ensureStandardBrowserProfilesForProject(
+        projectId,
+      ).catch(() => false);
+      if (created) {
+        profile = await BrowserProfileRepository.findByPurposeInProject(
+          projectId,
+          purpose,
+        );
+      }
+    }
     return profile?.id;
   },
 

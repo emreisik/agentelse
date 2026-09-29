@@ -21,7 +21,7 @@ Chat iki motordan biriyle çalışır; `CHAT_ENGINE` env'i seçer.
 
 1. Route: oturum, proje erişimi, kullanıcı başı rate limit (20/dk, süreç içi), dosya doğrulama, dosyaları depoya yazma.
 2. `runChatAgent`: **önce** `Command` satırını oluşturur (bağlantı kopsa da mesaj kaybolmaz), `start` olayını yollar.
-3. Bağlam: `buildContext` (marka, durum, bekleyen onaylar, kurulum aşaması, son 36 satır). Geçmiş rol yapılı mesajlara çevrilir; pipeline olayları `developer` mesajı olur. Geçmiş ~100k karakterle sınırlıdır (`trimHistory`); son 2 turdaki görsel/PDF ekleri modele gerçekten yeniden verilir (`history-files.ts`).
+3. Bağlam: `buildContext` (`src/server/chat/context.ts`: marka, durum, bekleyen onaylar, proje durumu, son 36 satır). Bundan önce `ensureProjectActive` çalışır (aşağıya bak). Geçmiş rol yapılı mesajlara çevrilir; pipeline olayları `developer` mesajı olur. Geçmiş ~100k karakterle sınırlıdır (`trimHistory`); son 2 turdaki görsel/PDF ekleri modele gerçekten yeniden verilir (`history-files.ts`).
 4. Döngü (en çok 6 tur): model metin akıtır, gerekirse tool çağırır, sonuç modele döner.
 5. Sonunda cevap ve varsa kart aynı `Command` satırına yazılır; kullanım `ReasoningCall` (`purpose: chat.turn`) ve bütçe sayaçlarına işlenir.
 
@@ -42,7 +42,11 @@ Tanım: `src/server/chat/types.ts`, kodlama/çözme: `sse.ts`. Sunucu her 10 sn'
 | not      | `remember_preference`, `suggest_replies`, `propose_content_package`                                                   | İş sayılmaz (paket yalnızca kart üretir)                                                          |
 | okuma    | `get_pending_approvals`, `get_recent_tasks`, `get_idea_status`, `get_brand_profile`                                   | Sınırsız; hep turun kendi `projectId`'siyle sorgular                                              |
 
-Kurulum aşamasına göre tool kısıtı koddadır (`tools.ts`, `phases`): `NOT_STARTED` yalnızca kurulum/soru/tercih, `IN_PROGRESS` yalnızca okuma/soru/tercih, `ACTIVE` hepsi. `CommandService`'in `SETUP_REQUIRED` kapısı yedek olarak durur.
+Kurulum artık ön koşul değil: proje ilk mesajda ya da komutta kendiliğinden `ACTIVE` olur (`src/server/projects/activation.ts`, `ensureProjectActive`). Durum makinesi `CREATED → ACTIVE` geçişine izin vermediği için yasal yolu (`DISCOVERY → PROFILE_REVIEW → ACTIVE`) adım adım yürütür; `PAUSED` ve `CLOSED` kullanıcı kararıdır, asla geri alınmaz.
+
+Tool kısıtı koddadır (`tools.ts`, `phases`) ve iki durumludur: `ACTIVE` hepsi, `ON_HOLD` (duraklatılmış/kapalı proje) yalnızca soru/tercih/okuma. `CommandService`'in `PROJECT_INACTIVE` kapısı yedek olarak durur. 12 aşamalı kurulum (`start_brand_setup`) şimdilik ajana sunulmuyor; isteğe bağlı derin zenginleştirme olarak geri gelecek.
+
+Kurulumu atlayan bir projede ilk tarayıcı gerektiren görev (`CapabilityRouter.resolveBrowserProfile`) standart `BrowserProfile` paketini ve projenin OpenClaw ajanını tembel olarak oluşturur (`src/server/projects/browser-profiles.ts`); profil olmadan OpenClaw kamuya açık araştırmayı hiç çalıştıramaz.
 
 ## İçerik planlama (sohbet içinde)
 

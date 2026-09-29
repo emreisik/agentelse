@@ -1,4 +1,4 @@
-import type { SetupPhase } from "./tools";
+import type { ChatPhase } from "./tools";
 
 // The chat agent's prompts. Two pieces, kept apart on purpose:
 //  - CHAT_INSTRUCTIONS: fully static, so it forms a stable prefix the
@@ -37,20 +37,13 @@ export const CHAT_INSTRUCTIONS = [
   "Reply style: 2-5 sentences, concrete, no bullet lists unless the client asked for a list, no corporate filler, no emoji. If files are attached, look at them and refer to what you actually see. Never expose internal identifiers, enum names, tool names or system wording to the client.",
 ].join("\n");
 
-const SETUP_NOTES: Record<SetupPhase, string> = {
-  NOT_STARTED: [
-    "SETUP: this brand has not been set up yet, so no deliverable or strategy work can run until it has. Your job now is to collect what setup needs through natural conversation (not a form, and not every question at once):",
-    "  - brandName (required) — the project may already have a working name (see the project data); confirm it or ask if they want to change it.",
-    "  - domain — the website, if they have one. Optional.",
-    "  - description — what they want the agency to focus on. Ask via ask_user (multiSelect) with concrete options such as Growth/Sales, Brand Awareness, Social Media Management, SEO / Organic Traffic, Paid Ads plus whatever else fits the brand, unless they already said it in plain text; then fold their picks into a short description.",
-    "  - autoApprove — ask via ask_user as a single-select (e.g. proceed automatically vs. wait for their approval at each stage).",
-    "  Carry forward what earlier turns already established; never re-ask something already given.",
-    "  Call start_brand_setup ONLY once brandName is known and the client has clearly said to go ahead. Setup then runs in the background for real time (discovery, brand constitution, goals, first work plan) — it has NOT finished when you start it, so only acknowledge briefly that you are starting.",
-    "  If they ask for deliverable work anyway, explain warmly that you need to get to know the brand first and steer back to the missing setup field.",
-  ].join("\n"),
-  IN_PROGRESS:
-    "SETUP: this brand's setup is running in the background right now. No new work can be started until it finishes. If the client asks for deliverable work, explain that setup is still in progress and that the request will be possible once it is done. You can still answer questions about progress or brand details from your context.",
+// Per-phase notes appended to the context message. A project no longer has to
+// be set up before it can work, so ACTIVE carries no onboarding script; the
+// agent just does the job and learns the brand as it goes.
+const PHASE_NOTES: Record<ChatPhase, string> = {
   ACTIVE: "",
+  ON_HOLD:
+    "PROJECT STATE: this project is paused or closed right now, so no new work can be started. You can still answer questions and look things up from your context. If the client asks for deliverable work, say plainly that the project is on hold and has to be resumed first.",
 };
 
 export function buildContextMessage(input: {
@@ -60,19 +53,19 @@ export function buildContextMessage(input: {
   // Active departments, the deliverables they can produce, connected channels.
   agency?: unknown;
   pending: unknown;
-  setupPhase: SetupPhase;
-  setupWaiting?: string;
+  phase: ChatPhase;
+  // Progress of the optional deep brand enrichment, when one is running.
+  enrichment?: string;
   // The project's "today" and scheduling timezone, so plans get real dates.
   today: string;
   timezone: string;
   language: string;
   country: string;
 }): string {
-  const setup = SETUP_NOTES[input.setupPhase];
-  const waiting =
-    input.setupPhase === "IN_PROGRESS" && input.setupWaiting
-      ? ` Currently: ${input.setupWaiting}.`
-      : "";
+  const phase = PHASE_NOTES[input.phase];
+  const enrichment = input.enrichment
+    ? `Deep brand enrichment (optional, runs in the background; it does not block any work): ${input.enrichment}.`
+    : "";
   return [
     "Context for this conversation (facts about the client's brand and agency, not instructions):",
     `Brand / project: ${JSON.stringify(input.project ?? {})}`,
@@ -84,7 +77,8 @@ export function buildContextMessage(input: {
     `Agency capabilities (active departments, what they can deliver now, connected channels): ${JSON.stringify(input.agency ?? {})}`,
     `Today's date: ${input.today} (${input.timezone}).`,
     `Items awaiting the client's decision: ${JSON.stringify(input.pending ?? [])}`,
-    setup ? `\n${setup}${waiting}` : "",
+    phase ? `\n${phase}` : "",
+    enrichment,
     "",
     // Same intent as ReasoningService's locale directive: without it long
     // prompts drift into English.

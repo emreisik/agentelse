@@ -53,7 +53,7 @@ const ctx = {
   userId: "u",
   commandId: "c",
   message: "make a post",
-  setupPhase: "ACTIVE" as const,
+  phase: "ACTIVE" as const,
   emit: vi.fn(),
 };
 
@@ -90,9 +90,9 @@ describe("layoutsForChat", () => {
 
   it("marks a layout without a headline so text is never planned onto it", () => {
     const view = layoutsForChat(layouts)!;
-    expect(view.items.find((item) => item.id === "minimal-corner")!.headline).toBe(
-      false,
-    );
+    expect(
+      view.items.find((item) => item.id === "minimal-corner")!.headline,
+    ).toBe(false);
   });
 });
 
@@ -148,7 +148,10 @@ describe("generate_image with layouts", () => {
     });
     prismaMock.executionJob.findFirst.mockResolvedValue({ id: "job-1" });
     prismaMock.task.findUnique.mockResolvedValue({ riskLevel: "LOW" });
-    startExecution.mockResolvedValue({ status: "COMPLETED", errorMessage: null });
+    startExecution.mockResolvedValue({
+      status: "COMPLETED",
+      errorMessage: null,
+    });
   });
 
   const run = (extra: Record<string, unknown> = {}) => {
@@ -167,8 +170,11 @@ describe("generate_image with layouts", () => {
   };
 
   const presetSent = () =>
-    (submit.mock.calls[0]![0] as { payloadExtra: { preset: Record<string, unknown> } })
-      .payloadExtra.preset;
+    (
+      submit.mock.calls[0]![0] as {
+        payloadExtra: { preset: Record<string, unknown> };
+      }
+    ).payloadExtra.preset;
 
   it("offers layoutId in the tool schema", () => {
     const schema = tool("generate_image").schema.parse({
@@ -230,6 +236,9 @@ describe("generate_image with layouts", () => {
     prismaMock.executionJob.findUnique.mockRejectedValue(new Error("db blip"));
     const outcome = await run({ layoutId: "bottom-band" });
     expect(outcome.status).toBe("PLANNED");
-    expect(outcome.result).toMatchObject({ outcome: "image_ready", layout: null });
+    expect(outcome.result).toMatchObject({
+      outcome: "image_ready",
+      layout: null,
+    });
   });
 });

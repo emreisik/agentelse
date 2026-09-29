@@ -15,7 +15,8 @@ vi.mock("@/server/commands/command-service", () => ({
   CommandService: { submit: vi.fn() },
 }));
 
-const { outcomeFromSubmission, toolsForPhase, toOpenAITools } = await import("./tools");
+const { outcomeFromSubmission, toolsForPhase, toOpenAITools } =
+  await import("./tools");
 
 const planResult = (ideasConsidered: number) => ({
   ideasConsidered,
@@ -53,19 +54,38 @@ describe("outcomeFromSubmission", () => {
 });
 
 describe("toolsForPhase", () => {
-  const names = (phase: "NOT_STARTED" | "IN_PROGRESS" | "ACTIVE") =>
+  const names = (phase: "ACTIVE" | "ON_HOLD") =>
     toolsForPhase(phase).map((t) => t.name);
 
-  it("only offers setup tools before setup, and never work tools mid-setup", () => {
-    expect(names("NOT_STARTED")).toContain("start_brand_setup");
-    expect(names("NOT_STARTED")).not.toContain("create_task");
-    expect(names("IN_PROGRESS")).not.toContain("create_task");
-    expect(names("IN_PROGRESS")).not.toContain("start_brand_setup");
+  it("offers work tools on an active project, with no onboarding tool in the way", () => {
+    expect(names("ACTIVE")).toContain("create_task");
+    expect(names("ACTIVE")).toContain("generate_image");
+    // The full 12-stage pipeline is no longer something the agent starts on
+    // its own; setup is not a prerequisite for working.
+    expect(names("ACTIVE")).not.toContain("start_brand_setup");
+    expect(names("ON_HOLD")).not.toContain("start_brand_setup");
   });
 
-  it("offers work tools but not setup once the brand is active", () => {
-    expect(names("ACTIVE")).toContain("create_task");
-    expect(names("ACTIVE")).not.toContain("start_brand_setup");
+  it("keeps a paused or closed project read-only: it can talk and look things up, never start work", () => {
+    const onHold = names("ON_HOLD");
+    expect(onHold).toEqual(
+      expect.arrayContaining([
+        "ask_user",
+        "remember_preference",
+        "get_brand_profile",
+      ]),
+    );
+    for (const work of [
+      "create_task",
+      "generate_image",
+      "start_strategic_project",
+      "generate_ideas_from_opportunities",
+      "decide_approval",
+      "propose_content_plan",
+      "propose_content_package",
+    ]) {
+      expect(onHold, work).not.toContain(work);
+    }
   });
 });
 
@@ -73,7 +93,10 @@ describe("planning tools", () => {
   it("offers propose_content_plan and steers away from the batch planner", () => {
     const tools = toolsForPhase("ACTIVE");
     expect(tools.map((t) => t.name)).toEqual(
-      expect.arrayContaining(["propose_content_plan", "get_connected_platforms"]),
+      expect.arrayContaining([
+        "propose_content_plan",
+        "get_connected_platforms",
+      ]),
     );
 
     const createTask = toOpenAITools(tools).find(
@@ -101,16 +124,16 @@ describe("planning tools", () => {
       };
     };
     expect(plan.parameters.properties.goal.enum).toContain("leads");
-    expect(plan.parameters.properties.items.items.properties.channel.enum).toEqual(
-      ["instagram", "tiktok", "linkedin", "x", "seo", "ads"],
-    );
+    expect(
+      plan.parameters.properties.items.items.properties.channel.enum,
+    ).toEqual(["instagram", "tiktok", "linkedin", "x", "seo", "ads"]);
   });
 
-  it("does not offer planning before setup is complete", () => {
-    expect(toolsForPhase("NOT_STARTED").map((t) => t.name)).not.toContain(
+  it("does not offer planning on a project that is on hold", () => {
+    expect(toolsForPhase("ON_HOLD").map((t) => t.name)).not.toContain(
       "start_plan_brief",
     );
-    expect(toolsForPhase("NOT_STARTED").map((t) => t.name)).not.toContain(
+    expect(toolsForPhase("ON_HOLD").map((t) => t.name)).not.toContain(
       "propose_content_plan",
     );
   });

@@ -23,6 +23,7 @@ import {
 } from "@/server/commands/intent-router";
 import { resolveProjectFromText } from "@/server/commands/project-resolver";
 import { TaskPlanner } from "@/server/commands/task-planner";
+import { ensureProjectActive } from "@/server/projects/activation";
 import { performCreativeRevision } from "@/server/actions/creative-actions";
 import { createStrategicIdea } from "@/server/commands/strategic-request";
 import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
@@ -91,13 +92,14 @@ export type SubmitCommandResult =
     }
   | { status: "APPROVAL_HANDLED"; commandId: string; approvalId: string }
   | { status: "UNKNOWN_INTENT"; commandId: string }
-  // The brand hasn't finished its 12-stage setup pipeline yet (see
-  // project-setup-orchestrator.ts) — Project.status isn't ACTIVE. No
-  // Task/StrategicIdea/idea-generation is created; chat-service.ts turns
-  // this into an honest "setup is still running" reply. Never returned for
-  // work the setup pipeline itself starts — that goes through
-  // TaskPlanner.planForCapability directly, not through this function.
-  | { status: "SETUP_REQUIRED"; commandId: string }
+  // The project is on hold (PAUSED or CLOSED), so it can't take new work. A
+  // project that simply hasn't run setup is NOT on hold: ensureProjectActive
+  // (projects/activation.ts) activates it on the spot. No
+  // Task/StrategicIdea/idea-generation is created; the chat turns this into an
+  // honest "the project is on hold" reply. Never returned for work the setup
+  // pipeline itself starts — that goes through TaskPlanner.planForCapability
+  // directly, not through this function.
+  | { status: "PROJECT_INACTIVE"; commandId: string }
   // The capability was recognized, but it needs structured parameters
   // (budget, targeting, creative) that free text can't reliably carry — see
   // FORM_REQUIRED_CAPABILITIES below. No Task is created; formHref points
@@ -360,19 +362,18 @@ export const CommandService = {
       brandId = brand.id;
     }
 
-    // Hard gate: nothing user-triggered (chat, composer shortcuts, quick
-    // actions — every caller of this function, see its module comment) may
-    // start real work before the brand's 12-stage setup reaches
-    // PROJECT_ACTIVATION. The setup pipeline itself and the scheduler never
-    // call CommandService — they use TaskPlanner.planForCapability directly
-    // (project-setup-orchestrator.ts, scheduler-service.ts) — so this can't
-    // deadlock the pipeline that's supposed to get the project to ACTIVE.
-    const projectStatus = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: { status: true },
-    });
-    if (projectStatus?.status !== "ACTIVE") {
-      return { status: "SETUP_REQUIRED", commandId: command.id };
+    // Gate: nothing user-triggered (chat, composer shortcuts, quick actions —
+    // every caller of this function, see its module comment) may start real
+    // work on a project that is on hold. It used to also wait for the brand's
+    // 12-stage setup to reach PROJECT_ACTIVATION; that made the client sit
+    // through onboarding before the first answer, so a project that has not
+    // finished (or started) setup is now simply activated here, and PAUSED /
+    // CLOSED are the only ones refused. The setup pipeline itself and the
+    // scheduler never call CommandService — they use
+    // TaskPlanner.planForCapability directly.
+    const activation = await ensureProjectActive(projectId);
+    if (!activation.usable) {
+      return { status: "PROJECT_INACTIVE", commandId: command.id };
     }
 
     await CommandRepository.attachParsedIntent(

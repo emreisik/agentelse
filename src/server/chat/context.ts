@@ -6,6 +6,7 @@ import { getBrandTwin } from "@/server/brand-twin/brand-twin";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 
 import { buildAgencyCapabilities } from "./deliverables";
+import type { ChatPhase } from "./tools";
 
 // Raised from 12 now that the general/single-chat branch below carries
 // EVERY project pipeline event, not just idea-less ones (see the single-chat
@@ -106,6 +107,12 @@ export async function buildContext(projectId: string, ideaId?: string) {
     : setupPhase === "IN_PROGRESS"
       ? "running"
       : undefined;
+  // What the chat AGENT may do. Independent of setup: a project works as soon
+  // as it is ACTIVE (projects/activation.ts activates it before this runs), and
+  // only a paused / closed one is on hold. `setupPhase` above is kept for the
+  // legacy ChatService, which still gates its onboarding on it.
+  const projectPhase: ChatPhase =
+    project.status === "ACTIVE" ? "ACTIVE" : "ON_HOLD";
 
   // The newest record comes first; reversed so the chat reads
   // chronologically. SYSTEM-sourced rows have an empty rawText (a pipeline
@@ -156,6 +163,7 @@ export async function buildContext(projectId: string, ideaId?: string) {
     recent: chronological,
     setupPhase,
     setupWaiting,
+    projectPhase,
   };
 }
 

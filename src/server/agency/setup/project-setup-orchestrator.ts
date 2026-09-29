@@ -15,7 +15,7 @@ import { GoalEngine } from "@/server/agency/goals/goal-engine";
 import { SignalProfileService } from "@/server/agency/signals/signal-profile.service";
 import { StrategyEngine } from "@/server/agency/strategy/strategy-service";
 import { TaskPlanner } from "@/server/commands/task-planner";
-import { provisionOpenClawAgent } from "@/server/execution/providers/openclaw/openclaw-agent-provisioner";
+import { ensureStandardBrowserProfiles } from "@/server/projects/browser-profiles";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
 import { ProjectRepository } from "@/server/repositories/project.repository";
@@ -102,18 +102,6 @@ const PER_PROJECT_SETUP_BUDGET_MS = 45_000;
 // user-initiated retry) is exempt so the user always has a way to try again.
 export const MAX_STAGE_ATTEMPTS = 5;
 
-// Standard browser-profile bundle (mirrors activateProjectAction/seed.ts).
-// Provisioned at INTAKE because deep-discovery research tasks need the
-// PUBLIC_RESEARCH profile long before PROJECT_ACTIVATION.
-const STANDARD_BROWSER_PROFILE_PURPOSES = [
-  "PUBLIC_RESEARCH",
-  "INSTAGRAM",
-  "TIKTOK",
-  "META_ADS",
-  "GOOGLE_ADS",
-  "LINKEDIN",
-] as const;
-
 // Activation used to only transition from PROFILE_REVIEW to ACTIVE. If the
 // project was in a different intermediate status (e.g. NEEDS_INFORMATION
 // left over from the removed legacy wizard), the transition was silently
@@ -156,34 +144,11 @@ export const ProjectSetupOrchestrator = {
       setupAutoApprove: intake.autoApprove ?? false,
     });
 
-    const existingProfiles = await prisma.browserProfile.count({
-      where: { projectId: scope.projectId },
-    });
-    if (existingProfiles === 0) {
-      const projectRow = await prisma.project.findUniqueOrThrow({
-        where: { id: scope.projectId },
-        select: { slug: true },
-      });
-      // Without an OpenClaw agent for the project, profile slugs don't map
-      // to any agent and real browser tasks fail with `Unknown agent id`.
-      // If the agent can't be provisioned, externalProfileId stays empty
-      // and the job falls back to the default agent — setup still proceeds.
-      const externalProfileId =
-        (await provisionOpenClawAgent(projectRow.slug)) ?? undefined;
-
-      await prisma.browserProfile.createMany({
-        data: STANDARD_BROWSER_PROFILE_PURPOSES.map((purpose) => ({
-          workspaceId: scope.workspaceId,
-          projectId: scope.projectId,
-          brandId: scope.brandId,
-          name: `${projectRow.slug}-${purpose.toLowerCase()}`,
-          slug: `${projectRow.slug}-${purpose.toLowerCase()}`,
-          purpose,
-          status: "READY" as const,
-          externalProfileId,
-        })),
-      });
-    }
+    // Provisioned at INTAKE because deep-discovery research tasks need the
+    // PUBLIC_RESEARCH profile long before PROJECT_ACTIVATION. Idempotent: a
+    // project that already got its profiles lazily (capability-router.ts)
+    // keeps them.
+    await ensureStandardBrowserProfiles(scope);
 
     const state = await SetupStateRepository.create({
       ...scope,

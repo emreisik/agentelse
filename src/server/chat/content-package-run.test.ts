@@ -10,13 +10,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const tx = {
   command: { findUnique: vi.fn(), update: vi.fn().mockResolvedValue(undefined) },
 };
-const projectFindUnique = vi.fn();
+// The run's project gate is ensureProjectActive (a project that never ran
+// setup is activated on the spot; only a paused/closed one is refused).
+const ensureProjectActive = vi.fn();
+vi.mock("@/server/projects/activation", () => ({ ensureProjectActive }));
 const commandFindUnique = vi.fn();
 const commandFindFirst = vi.fn();
 const commandUpdate = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    project: { findUnique: projectFindUnique },
     command: {
       findUnique: commandFindUnique,
       findFirst: commandFindFirst,
@@ -90,7 +92,7 @@ const forItem = (events: ChatStreamEvent[], itemId: string) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  projectFindUnique.mockResolvedValue({ status: "ACTIVE" });
+  ensureProjectActive.mockResolvedValue({ status: "ACTIVE", usable: true });
   tx.command.findUnique.mockResolvedValue({
     projectId: "proj-1",
     parsedIntent: pkg("draft"),
@@ -568,17 +570,30 @@ describe("runContentPackage", () => {
     expect((done as { card?: unknown }).card).toBeUndefined();
   });
 
-  it("stops before claiming when the project is not active", async () => {
-    projectFindUnique.mockResolvedValue({ status: "SETUP" });
+  it("stops before claiming when the project is on hold", async () => {
+    ensureProjectActive.mockResolvedValue({ status: "PAUSED", usable: false });
 
     const events = await collect(
       runContentPackage({ ...base, selections: [{ id: "seo" }] }),
     );
 
     expect(events).toEqual([
-      expect.objectContaining({ type: "error", code: "SETUP_REQUIRED" }),
+      expect.objectContaining({ type: "error", code: "PROJECT_INACTIVE" }),
     ]);
     expect(tx.command.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("activates a project that never ran setup instead of refusing the run", async () => {
+    tx.command.findUnique.mockResolvedValue({
+      projectId: "proj-1",
+      parsedIntent: pkg("started"),
+    });
+
+    await collect(runContentPackage({ ...base, selections: [{ id: "seo" }] }));
+
+    expect(ensureProjectActive).toHaveBeenCalledWith("proj-1");
+    // It got as far as claiming the package (here refused as already started).
+    expect(tx.command.findUnique).toHaveBeenCalled();
   });
 
   it("reports a refused claim as an error event", async () => {

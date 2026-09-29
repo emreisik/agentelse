@@ -51,7 +51,11 @@ import {
 
 import type { ChatStreamEvent } from "./types";
 
-export type SetupPhase = "NOT_STARTED" | "IN_PROGRESS" | "ACTIVE";
+// What the chat agent may do on this project right now. ACTIVE is the normal
+// case: a project no longer has to finish setup before it can work (see
+// projects/activation.ts). ON_HOLD is a paused or closed project, where the
+// agent can still talk and look things up but must not start anything.
+export type ChatPhase = "ACTIVE" | "ON_HOLD";
 
 // Everything a tool needs to act on behalf of the current chat turn.
 export type ToolContext = {
@@ -64,7 +68,7 @@ export type ToolContext = {
   commandId: string;
   message: string;
   attachments?: CommandAttachment[];
-  setupPhase: SetupPhase;
+  phase: ChatPhase;
   // Pushes a stream event to the client WHILE the tool is still running
   // (e.g. a preview of an image being generated). The agent loop forwards
   // queued events as they arrive instead of waiting for execute() to return.
@@ -99,11 +103,11 @@ export type ChatTool<TArgs = unknown> = {
   label: string;
   description: string;
   kind: ToolKind;
-  // Setup phases in which the tool is offered. Gating here (not in prompt
-  // prose) means a model that ignores instructions still can't start work on
-  // a brand that has not been set up; CommandService's own SETUP_REQUIRED
-  // gate stays as the backstop.
-  phases: readonly SetupPhase[];
+  // Phases in which the tool is offered. Gating here (not in prompt prose)
+  // means a model that ignores instructions still can't start work on a
+  // paused or closed project; CommandService's own PROJECT_INACTIVE gate
+  // stays as the backstop.
+  phases: readonly ChatPhase[];
   schema: ZodType<TArgs>;
   execute(args: TArgs, ctx: ToolContext): Promise<ToolOutcome>;
 };
@@ -230,11 +234,11 @@ export function outcomeFromSubmission(
               : "There was no evaluated opportunity ready to turn into an idea; new signals are still being scanned.",
         },
       };
-    case "SETUP_REQUIRED":
+    case "PROJECT_INACTIVE":
       return {
         result: {
-          outcome: "blocked_setup_in_progress",
-          note: "The brand's setup is still in progress, so no new work could be started. Say so honestly.",
+          outcome: "blocked_project_on_hold",
+          note: "The project is paused or closed, so no new work could be started. Say so honestly and that it must be resumed first.",
         },
       };
     case "NEEDS_PROJECT":
@@ -541,7 +545,7 @@ const askUser = defineTool({
   name: "ask_user",
   label: "Preparing options…",
   kind: "terminal",
-  phases: ["NOT_STARTED", "IN_PROGRESS", "ACTIVE"],
+  phases: ["ACTIVE", "ON_HOLD"],
   description:
     "Show the client 1-2 questions with 2-4 concrete, clickable options each. Use ONLY on a genuine fork where the answer changes what you would do (which audience, which direction, brand focus during setup). Never for something you could reasonably infer. Ends your turn: write any lead-in sentence BEFORE calling it.",
   schema: z.object({ questions: z.array(QuestionSchema).min(1).max(2) }),
@@ -563,7 +567,7 @@ const rememberPreference = defineTool({
   name: "remember_preference",
   label: "Saving preference…",
   kind: "note",
-  phases: ["NOT_STARTED", "IN_PROGRESS", "ACTIVE"],
+  phases: ["ACTIVE", "ON_HOLD"],
   description:
     'Remember a DURABLE preference or rule the client just stated ("more premium", "focus on Germany now", "never use neon colors") — not a one-off request. `value` is a short string capturing the decision (e.g. "premium_editorial"); `scope` is usually "BRAND" unless clearly limited to one campaign/market.',
   schema: z.object({
@@ -591,7 +595,11 @@ const startBrandSetup = defineTool({
   name: "start_brand_setup",
   label: "Starting setup…",
   kind: "work",
-  phases: ["NOT_STARTED"],
+  // Not offered for now: setup is no longer a prerequisite for working, and
+  // this starts the FULL 12-stage pipeline (dozens of LLM calls). It comes back
+  // as an opt-in "Deep Brand Enrichment" tool once that pipeline has a mode
+  // that skips the stages only the old orchestrator needed.
+  phases: [],
   description:
     "Start the brand's real onboarding pipeline (discovery, brand constitution, goals, first work plan). Call ONLY once brandName is known AND the client has clearly agreed to go ahead. Carry forward what earlier turns established (domain, focus description, whether to proceed automatically).",
   schema: z.object({
@@ -734,7 +742,7 @@ const getBrandProfile = defineTool({
   name: "get_brand_profile",
   label: "Reading brand profile…",
   kind: "read",
-  phases: ["NOT_STARTED", "IN_PROGRESS", "ACTIVE"],
+  phases: ["ACTIVE", "ON_HOLD"],
   description:
     "Fetch the brand's full current profile (identity, positioning, audience, voice, negative rules, current focus, past preferences, what creative has worked). Use when you need brand details beyond the summary in your context.",
   schema: EmptyArgs,
@@ -980,7 +988,7 @@ const ALL_TOOLS: readonly ChatTool[] = [
   suggestReplies,
 ];
 
-export function toolsForPhase(phase: SetupPhase): ChatTool[] {
+export function toolsForPhase(phase: ChatPhase): ChatTool[] {
   return ALL_TOOLS.filter((tool) => tool.phases.includes(phase));
 }
 

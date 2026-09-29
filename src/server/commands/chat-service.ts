@@ -257,15 +257,14 @@ export const ChatService = {
             ? `💡 Generated ${submission.count} new idea${submission.count === 1 ? "" : "s"} from the opportunity backlog — each has its own thread now.`
             : "There's no evaluated opportunity ready to turn into an idea right now. New signals are still being scanned in the background — try again once a few more come in.";
         break;
-      case "SETUP_REQUIRED":
-        // Backstop for when the LLM didn't follow chat-turn.ts's NOT_STARTED/
-        // IN_PROGRESS instructions and set a TASK/STRATEGIC/generate-ideas
-        // intent anyway — CommandService already refused to create any
-        // work, this just makes sure the client sees an honest reply
+      case "PROJECT_INACTIVE":
+        // CommandService refused to create any work because the project is
+        // paused or closed (a project that just hasn't run setup is activated
+        // on the spot). This makes sure the client sees an honest reply
         // instead of one promising work that was never queued.
         status = "ANSWERED";
         reply =
-          "The brand's setup is still in progress, so I can't start new work yet — once it's done I'll be able to take this on.";
+          "This project is on hold right now, so I can't start new work — once it's resumed I'll be able to take this on.";
         break;
       default:
         status = turn.intentKind === "UNCLEAR" ? "UNCLEAR" : "ANSWERED";

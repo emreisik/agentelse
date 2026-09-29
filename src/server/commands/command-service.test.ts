@@ -57,19 +57,19 @@ const approvalFindMany = vi.fn();
 const taskFindUnique = vi.fn();
 const brandFindFirst = vi.fn().mockResolvedValue({ id: "brand-1" });
 const projectScheduleFindFirst = vi.fn().mockResolvedValue(null);
-// Hard gate in CommandService.submit (command-service.ts): every
-// user-triggered call must be past PROJECT_ACTIVATION (status "ACTIVE")
-// before any real work starts — default to ACTIVE so existing tests keep
-// exercising their actual capability logic instead of short-circuiting on
-// SETUP_REQUIRED.
-const projectFindUnique = vi.fn().mockResolvedValue({ status: "ACTIVE" });
+// Gate in CommandService.submit (command-service.ts): every user-triggered
+// call goes through ensureProjectActive, which activates a project that never
+// ran setup and reports a paused/closed one as unusable. Default to usable so
+// existing tests keep exercising their actual capability logic instead of
+// short-circuiting on PROJECT_INACTIVE.
+const ensureProjectActive = vi.fn();
+vi.mock("@/server/projects/activation", () => ({ ensureProjectActive }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     approval: { findMany: approvalFindMany },
     task: { findUnique: taskFindUnique },
     brand: { findFirst: brandFindFirst },
     projectSchedule: { findFirst: projectScheduleFindFirst },
-    project: { findUnique: projectFindUnique },
   },
 }));
 
@@ -114,7 +114,7 @@ beforeEach(() => {
   attachIdeaId.mockResolvedValue(undefined);
   brandFindFirst.mockResolvedValue({ id: "brand-1" });
   projectScheduleFindFirst.mockResolvedValue(null);
-  projectFindUnique.mockResolvedValue({ status: "ACTIVE" });
+  ensureProjectActive.mockResolvedValue({ status: "ACTIVE", usable: true });
   planWeeklyInstagramContent.mockResolvedValue({
     ideasConsidered: 2,
     imagesGenerated: 2,
@@ -123,6 +123,44 @@ beforeEach(() => {
     cappedForToday: false,
     pendingReview: 0,
     items: [],
+  });
+});
+
+describe("CommandService.submit — project gate", () => {
+  const capabilityInput = {
+    workspaceId: "ws-1",
+    source: "WEB" as const,
+    rawText: "write some copy",
+    actorType: "USER" as const,
+    userId: "user-1",
+    knownProjectId: "proj-1",
+    intent: {
+      kind: "CAPABILITY" as const,
+      capability: "CREATE_COPY" as const,
+      request: "write some copy",
+    },
+  };
+
+  it("refuses work on a paused or closed project and creates nothing", async () => {
+    ensureProjectActive.mockResolvedValue({ status: "PAUSED", usable: false });
+
+    const result = await CommandService.submit(capabilityInput);
+
+    expect(result).toEqual({ status: "PROJECT_INACTIVE", commandId: "cmd-1" });
+    expect(planForCapability).not.toHaveBeenCalled();
+    expect(attachParsedIntent).not.toHaveBeenCalled();
+  });
+
+  it("does not ask a project that never ran setup to finish it first", async () => {
+    // ensureProjectActive is what moves a CREATED/DISCOVERY project to ACTIVE;
+    // here it has done so, and the work goes ahead.
+    ensureProjectActive.mockResolvedValue({ status: "ACTIVE", usable: true });
+
+    const result = await CommandService.submit(capabilityInput);
+
+    expect(ensureProjectActive).toHaveBeenCalledWith("proj-1");
+    expect(result.status).not.toBe("PROJECT_INACTIVE");
+    expect(planForCapability).toHaveBeenCalled();
   });
 });
 

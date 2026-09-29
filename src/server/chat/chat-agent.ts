@@ -6,6 +6,7 @@ import {
   limitNoticeReplyText,
 } from "@/server/commands/limit-notice";
 import { getEnv } from "@/lib/env";
+import { ensureProjectActive } from "@/server/projects/activation";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { estimateReasoningCostUsd } from "@/server/reasoning/reasoning-pricing";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
@@ -197,6 +198,14 @@ export async function* runChatAgent(
   }
 
   try {
+    // A project that has not run (or finished) setup is activated here rather
+    // than turned away: buildContext reads the status right after, so this
+    // turn already sees ACTIVE. Paused / closed projects stay as they are and
+    // come back as ON_HOLD (read-only tools). A failure must not take the
+    // whole turn down; the phase then simply reads as ON_HOLD.
+    await ensureProjectActive(input.projectId).catch((error) => {
+      console.error("[chat-agent] ensureProjectActive failed:", error);
+    });
     const context = await buildContext(input.projectId, input.ideaId);
     brandId = context.brandId;
 
@@ -235,7 +244,7 @@ export async function* runChatAgent(
       commandId: command.id,
       message: input.message,
       attachments: input.attachments,
-      setupPhase: context.setupPhase,
+      phase: context.projectPhase,
       // Events a running tool wants the client to see NOW (image previews).
       // Drained by the tool loop below while execute() is still pending.
       emit: (event) => {
@@ -243,7 +252,7 @@ export async function* runChatAgent(
         wakeStream?.();
       },
     };
-    const tools = toolsForPhase(context.setupPhase);
+    const tools = toolsForPhase(context.projectPhase);
     const toolMap = new Map(tools.map((tool) => [tool.name, tool]));
     const { CHAT_REASONING_EFFORT, CHAT_WEB_SEARCH } = getEnv();
     const openaiTools = [
@@ -270,8 +279,8 @@ export async function* runChatAgent(
           state: context.state,
           agency: context.agency,
           pending: context.pending,
-          setupPhase: context.setupPhase,
-          setupWaiting: context.setupWaiting,
+          phase: context.projectPhase,
+          enrichment: context.setupWaiting,
           today: todayInTimezone(timezone),
           timezone,
           language: context.project.language || "tr",

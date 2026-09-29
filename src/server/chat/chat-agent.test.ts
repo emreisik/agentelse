@@ -72,6 +72,9 @@ vi.mock("@/server/integrations/channel-connections", () => ({
 const buildContext = vi.fn();
 vi.mock("@/server/chat/context", () => ({ buildContext }));
 
+const ensureProjectActive = vi.fn();
+vi.mock("@/server/projects/activation", () => ({ ensureProjectActive }));
+
 const submit = vi.fn();
 vi.mock("@/server/commands/command-service", () => ({
   CommandService: { submit },
@@ -186,7 +189,7 @@ const baseInput = {
   message: "Bir instagram postu hazırla",
 };
 
-function context(setupPhase: "NOT_STARTED" | "IN_PROGRESS" | "ACTIVE") {
+function context(projectPhase: "ACTIVE" | "ON_HOLD") {
   return {
     brandId: "brand-1",
     project: {
@@ -200,7 +203,7 @@ function context(setupPhase: "NOT_STARTED" | "IN_PROGRESS" | "ACTIVE") {
     pending: [],
     history: "",
     recent: [],
-    setupPhase,
+    projectPhase,
     setupWaiting: undefined,
   };
 }
@@ -212,6 +215,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   for (const key of Object.keys(envOverrides)) delete envOverrides[key];
   buildContext.mockResolvedValue(context("ACTIVE"));
+  ensureProjectActive.mockResolvedValue({ status: "ACTIVE", usable: true });
   commandCreate.mockResolvedValue({ id: "cmd-1" });
   checkAndIncrement.mockResolvedValue(undefined);
 });
@@ -340,8 +344,8 @@ describe("runChatAgent", () => {
     expect(JSON.stringify(outputs.at(-1))).toContain("Only one action");
   });
 
-  it("only offers tools allowed in the current setup phase", async () => {
-    buildContext.mockResolvedValue(context("NOT_STARTED"));
+  it("only offers read-only tools on a project that is on hold", async () => {
+    buildContext.mockResolvedValue(context("ON_HOLD"));
     const { model, requests } = scriptedModel([
       {
         calls: [
@@ -351,14 +355,45 @@ describe("runChatAgent", () => {
           },
         ],
       },
-      { text: ["Önce markayı tanımam gerekiyor."] },
+      { text: ["Proje şu an duraklatılmış."] },
     ]);
     await collect(runChatAgent(baseInput, { model }));
 
     const offered = requests[0]!.tools.map((t) => (t as { name: string }).name);
-    expect(offered).toContain("start_brand_setup");
+    expect(offered).toContain("get_brand_profile");
     expect(offered).not.toContain("create_task");
+    expect(offered).not.toContain("generate_image");
     expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("activates the project before loading the context, so a project that never ran setup can work on its first message", async () => {
+    const order: string[] = [];
+    ensureProjectActive.mockImplementation(async () => {
+      order.push("ensureProjectActive");
+      return { status: "ACTIVE", usable: true };
+    });
+    buildContext.mockImplementation(async () => {
+      order.push("buildContext");
+      return context("ACTIVE");
+    });
+    const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+    await collect(runChatAgent(baseInput, { model }));
+
+    expect(ensureProjectActive).toHaveBeenCalledWith("proj-1");
+    expect(order).toEqual(["ensureProjectActive", "buildContext"]);
+    const offered = requests[0]!.tools.map((t) => (t as { name: string }).name);
+    expect(offered).toContain("create_task");
+  });
+
+  it("still answers when activation itself fails", async () => {
+    ensureProjectActive.mockRejectedValue(new Error("db hiccup"));
+    const { model } = scriptedModel([{ text: ["Merhaba"] }]);
+
+    const events = await collect(runChatAgent(baseInput, { model }));
+
+    expect(text(events)).toBe("Merhaba");
+    expect(events.some((e) => e.type === "error")).toBe(false);
   });
 
   it("ends the turn with a persisted question card on ask_user", async () => {

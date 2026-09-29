@@ -194,7 +194,7 @@ const CHAT_ACCEPT =
 // broke halfway, whose items may still be working on the server).
 const NOT_STARTED_ERROR_CODES: ReadonlySet<string> = new Set([
   "PACKAGE",
-  "SETUP_REQUIRED",
+  "PROJECT_INACTIVE",
   "HTTP",
   "SESSION",
 ]);

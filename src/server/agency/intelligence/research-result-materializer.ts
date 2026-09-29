@@ -18,6 +18,44 @@ const COMPETITOR_CAPABILITIES: ReadonlySet<string> = new Set([
   "COMPETITOR_CHANGE_DETECTION",
 ]);
 
+// Capabilities whose output IS the deliverable: copy the agency wrote for the
+// client, a brief, a plan, a report, a publish or ad action. They used to be
+// mined for "findings" like any research report, which cost an LLM call per
+// task and filed the agency's own writing back as research evidence that
+// insight synthesis then read as facts about the market. Anything not listed
+// here (every research and scan capability, and any capability added later)
+// is still mined.
+const DELIVERABLE_CAPABILITIES: ReadonlySet<string> = new Set([
+  "CREATE_SOCIAL_CREATIVE",
+  "CREATE_AD_CREATIVE",
+  "CREATE_COPY",
+  "CREATE_CAPTION",
+  "CREATE_CAMPAIGN_BRIEF",
+  "CREATE_CONTENT_PLAN",
+  "EMAIL_DRAFT",
+  "EMAIL_SEND",
+  "REPORTING",
+  "INSTAGRAM_PUBLISH",
+  "TIKTOK_PUBLISH",
+  "LINKEDIN_PUBLISH",
+  "X_PUBLISH",
+  "META_CAMPAIGN_CREATE",
+  "META_CAMPAIGN_UPDATE",
+  "META_ADSET_CREATE",
+  "META_ADSET_UPDATE",
+  "META_AD_CREATE",
+  "META_AD_UPDATE",
+  "GOOGLE_ADS_CAMPAIGN_CREATE",
+  "WEBSITE_UPDATE",
+  "PR_OUTREACH",
+]);
+
+// Whether a completed task's free-text report should be turned into findings
+// with an LLM call.
+export function shouldExtractFindings(capability: string): boolean {
+  return !DELIVERABLE_CAPABILITIES.has(capability);
+}
+
 const VALID_CLASSIFICATIONS: ReadonlySet<string> = new Set([
   "VERIFIED_FACT",
   "LIKELY_FACT",
@@ -125,7 +163,7 @@ export const ResultMaterializer = {
     // but there is text, we convert the report into findings — without this
     // step, the entire research would silently vanish and the rest of the
     // chain would run on empty data.
-    if (rawFindings.length === 0) {
+    if (rawFindings.length === 0 && shouldExtractFindings(task.capability)) {
       const report = extractReportText(raw);
       if (report) {
         rawFindings = await extractFindingsFromReport(

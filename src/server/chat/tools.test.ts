@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/server/integrations/meta-connection-status", () => ({
@@ -14,6 +14,8 @@ vi.mock("@/server/actions/agency-setup-actions", () => ({
 vi.mock("@/server/commands/command-service", () => ({
   CommandService: { submit: vi.fn() },
 }));
+const saveIdea = vi.hoisted(() => vi.fn());
+vi.mock("@/server/commands/strategic-request", () => ({ saveIdea }));
 
 const { outcomeFromSubmission, toolsForPhase, toOpenAITools } =
   await import("./tools");
@@ -136,5 +138,110 @@ describe("planning tools", () => {
     expect(toolsForPhase("ON_HOLD").map((t) => t.name)).not.toContain(
       "propose_content_plan",
     );
+  });
+});
+
+describe("legacy-loop gating of start_strategic_project", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    delete process.env.LEGACY_AGENCY_LOOP;
+  });
+  const names = () => toolsForPhase("ACTIVE").map((t) => t.name);
+
+  it("is offered while the legacy loop is fully on (the default)", () => {
+    delete process.env.LEGACY_AGENCY_LOOP;
+    expect(names()).toContain("start_strategic_project");
+  });
+
+  it.each(["drain", "off"])(
+    "is withdrawn in %s mode, because the Director that plans it is no longer running",
+    (mode) => {
+      vi.stubEnv("LEGACY_AGENCY_LOOP", mode);
+      expect(names()).not.toContain("start_strategic_project");
+      // Everything the agent can do on its own is still there.
+      expect(names()).toEqual(
+        expect.arrayContaining([
+          "create_task",
+          "generate_image",
+          "save_idea",
+          "generate_ideas_from_opportunities",
+        ]),
+      );
+    },
+  );
+
+  it("offers save_idea in every mode", () => {
+    for (const mode of ["on", "drain", "off"]) {
+      vi.stubEnv("LEGACY_AGENCY_LOOP", mode);
+      expect(names()).toContain("save_idea");
+    }
+  });
+});
+
+describe("save_idea", () => {
+  const ctx = {
+    workspaceId: "w",
+    projectId: "p",
+    brandId: "b",
+    userId: "u",
+    commandId: "c",
+    message: "keep that one",
+    phase: "ACTIVE" as const,
+    emit: vi.fn(),
+  };
+  const tool = () =>
+    toolsForPhase("ACTIVE").find((candidate) => candidate.name === "save_idea")!;
+
+  it("is a note, so it never uses up the turn's one work action", () => {
+    expect(tool().kind).toBe("note");
+  });
+
+  it("saves the idea for this project and says nothing was produced", async () => {
+    saveIdea.mockResolvedValue({ status: "CREATED", ideaId: "idea-1" });
+
+    const outcome = await tool().execute(
+      { title: "  Autumn series ", description: " Weekly recipes. ", lens: "CONTENT" },
+      ctx,
+    );
+
+    expect(saveIdea).toHaveBeenCalledWith(
+      { workspaceId: "w", projectId: "p", brandId: "b" },
+      { title: "Autumn series", description: "Weekly recipes.", lens: "CONTENT" },
+    );
+    expect(outcome.result).toMatchObject({ outcome: "idea_saved" });
+    expect(JSON.stringify(outcome.result)).toContain("do not claim any work");
+  });
+
+  it("reports the active-ideas cap instead of pretending it saved", async () => {
+    saveIdea.mockResolvedValue({ status: "CAPPED" });
+
+    const outcome = await tool().execute(
+      { title: "One more", description: "…" },
+      ctx,
+    );
+
+    expect(outcome.status).toBe("ERROR");
+    expect(outcome.result).toMatchObject({ outcome: "blocked_idea_cap" });
+  });
+
+  it("validates its input", () => {
+    const schema = tool().schema;
+    expect(schema.safeParse({ title: "", description: "x" }).success).toBe(false);
+    expect(schema.safeParse({ title: "x".repeat(121), description: "x" }).success).toBe(false);
+    // An unknown lens degrades to "no lens" instead of failing the call.
+    expect(
+      schema.safeParse({ title: "x", description: "y", lens: "NOT_A_LENS" }),
+    ).toMatchObject({ success: true, data: { lens: undefined } });
+  });
+});
+
+describe("empty idea backlog", () => {
+  it("points the agent at proposing and saving ideas itself", () => {
+    const outcome = outcomeFromSubmission({
+      status: "IDEAS_GENERATED_FROM_OPPORTUNITIES",
+      commandId: "c",
+      count: 0,
+    });
+    expect(JSON.stringify(outcome.result)).toContain("save_idea");
   });
 });

@@ -38,6 +38,14 @@ export type CreateCouncilEvaluationInput = {
   isMock?: boolean;
 };
 
+// Where each pre-shortlist status has to go next to reach SHORTLISTED.
+const PROMOTION_PATH: Partial<Record<IdeaStatus, IdeaStatus[]>> = {
+  RAW: ["VALIDATED", "CONCEPT", "SHORTLISTED"],
+  RESEARCHING: ["VALIDATED", "CONCEPT", "SHORTLISTED"],
+  VALIDATED: ["CONCEPT", "SHORTLISTED"],
+  CONCEPT: ["SHORTLISTED"],
+};
+
 export const IdeaRepository = {
   create(input: CreateIdeaInput) {
     return prisma.idea.create({
@@ -176,6 +184,33 @@ export const IdeaRepository = {
         workPlanId: extra?.workPlanId ?? idea.workPlanId,
       },
     });
+  },
+
+  // The LLM-free path to SHORTLISTED that the Council pass takes for every idea
+  // it does not reject (council-engine.ts): RAW -> VALIDATED -> CONCEPT ->
+  // SHORTLISTED, each step through the state machine. Idempotent: an idea that
+  // is already SHORTLISTED or further along, or REJECTED / ARCHIVED, is left
+  // exactly as it is. Returns the idea's status afterwards.
+  async promoteToShortlist(
+    ideaId: string,
+    projectId: string,
+  ): Promise<IdeaStatus> {
+    const idea = await prisma.idea.findFirst({
+      where: { id: ideaId, projectId },
+      select: { status: true },
+    });
+    if (!idea) {
+      throw new AgentelseError(
+        "NOT_FOUND",
+        `Idea ${ideaId} not found in project ${projectId}`,
+      );
+    }
+    const steps = PROMOTION_PATH[idea.status];
+    if (!steps) return idea.status;
+    for (const to of steps) {
+      await IdeaRepository.transition(ideaId, projectId, to);
+    }
+    return "SHORTLISTED";
   },
 
   addCouncilEvaluation(input: CreateCouncilEvaluationInput) {

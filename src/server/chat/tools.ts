@@ -4,6 +4,7 @@ import { z, type ZodType } from "zod";
 import type { Tool } from "openai/resources/responses/responses";
 import {
   CreativeContentFormat,
+  CreativeLens,
   DepartmentKey,
   UserDecisionType,
 } from "@prisma/client";
@@ -11,6 +12,8 @@ import {
 import { prisma } from "@/lib/prisma";
 import { getBrandTwin } from "@/server/brand-twin/brand-twin";
 import { extractResultText } from "@/lib/execution-result-text";
+import { isLegacyUnitEnabled } from "@/server/agency/legacy-loop";
+import { saveIdea } from "@/server/commands/strategic-request";
 import { describeLayout, type LayoutTemplates } from "@/lib/layout-templates";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import { readLayoutMeta } from "@/server/media/creative-layout";
@@ -109,6 +112,10 @@ export type ChatTool<TArgs = unknown> = {
   // paused or closed project; CommandService's own PROJECT_INACTIVE gate
   // stays as the backstop.
   phases: readonly ChatPhase[];
+  // Offered only while the legacy agency loop is fully on (LEGACY_AGENCY_LOOP,
+  // legacy-loop.ts): the tool hands work to a stage of that loop (the Director)
+  // that is no longer running once the loop is wound down.
+  legacyLoop?: boolean;
   schema: ZodType<TArgs>;
   execute(args: TArgs, ctx: ToolContext): Promise<ToolOutcome>;
 };
@@ -232,7 +239,7 @@ export function outcomeFromSubmission(
           note:
             submission.count > 0
               ? "Each new idea already has its own thread."
-              : "There was no evaluated opportunity ready to turn into an idea; new signals are still being scanned.",
+              : "There was no evaluated opportunity ready to turn into an idea. Propose a few concrete ideas yourself from the brand profile and its current focus, and save the ones the client picks with save_idea.",
         },
       };
     case "PROJECT_INACTIVE":
@@ -585,6 +592,7 @@ const startStrategicProject = defineTool({
   label: "Starting project…",
   kind: "work",
   phases: ["ACTIVE"],
+  legacyLoop: true,
   description:
     "Start a broad, multi-part piece of work that needs research AND planning AND several outputs (entering a new market, a full campaign, a multi-week content plan, a product launch). NOT for a single deliverable — use create_task for that. `title` is a short name (max 80 chars), `brief` the self-contained description. Set `departments` only when the request clearly spans more than one function.",
   schema: z.object({
@@ -603,6 +611,46 @@ const startStrategicProject = defineTool({
       departments: args.departments,
     });
     return outcomeFromSubmission(submission);
+  },
+});
+
+const saveIdeaTool = defineTool({
+  name: "save_idea",
+  label: "Saving idea…",
+  kind: "note",
+  phases: ["ACTIVE"],
+  description:
+    "Put ONE idea on the client's record: a concept or direction worth keeping that came up in the conversation (a campaign angle, a content series, a product story). It joins the Ideas list with its own thread. This only saves it: nothing is produced, scheduled or published, so say so and never claim work has started. `title` is short (max 120 chars); `description` explains the idea concretely enough to act on later, tied to this brand. `lens` is the angle it comes from, only when it is obvious. Use it for ideas the client liked or asked you to keep, not for every thought.",
+  schema: z.object({
+    title: z.string().min(1).max(120),
+    description: z.string().min(1).max(2000),
+    lens: z.nativeEnum(CreativeLens).optional().catch(undefined),
+  }),
+  async execute(args, ctx) {
+    const saved = await saveIdea(
+      {
+        workspaceId: ctx.workspaceId,
+        projectId: ctx.projectId,
+        brandId: ctx.brandId,
+      },
+      {
+        title: args.title.trim(),
+        description: args.description.trim(),
+        lens: args.lens,
+      },
+    );
+    if (saved.status === "CAPPED") {
+      return outcomeFromSubmission({
+        status: "IDEA_CAP_REACHED",
+        commandId: ctx.commandId,
+      });
+    }
+    return {
+      result: {
+        outcome: "idea_saved",
+        note: "The idea is saved to the Ideas list with its own thread. Tell the client in one sentence; do not claim any work has started on it.",
+      },
+    };
   },
 });
 
@@ -1272,6 +1320,7 @@ const ALL_TOOLS: readonly ChatTool[] = [
   generateImage,
   startStrategicProject,
   generateIdeas,
+  saveIdeaTool,
   decideApproval,
   askUser,
   rememberPreference,
@@ -1293,7 +1342,12 @@ const ALL_TOOLS: readonly ChatTool[] = [
 ];
 
 export function toolsForPhase(phase: ChatPhase): ChatTool[] {
-  return ALL_TOOLS.filter((tool) => tool.phases.includes(phase));
+  // Read per call, not cached: LEGACY_AGENCY_LOOP is an operator switch.
+  const legacyLoopOn = isLegacyUnitEnabled("director-decisions");
+  return ALL_TOOLS.filter(
+    (tool) =>
+      tool.phases.includes(phase) && (legacyLoopOn || !tool.legacyLoop),
+  );
 }
 
 // OpenAI function-tool definition. strict:false for the same reason as the

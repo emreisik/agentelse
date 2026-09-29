@@ -17,6 +17,7 @@ import {
   FOCUS_LENS_MIX,
   isAgencyFocusMode,
 } from "@/server/agency/agency-focus";
+import { shortlistIfCouncilOff } from "./council-lite";
 import { DEFAULT_LENS_MIX, LENS_DEFINITIONS } from "./creative-lenses";
 
 // Bounds audit scenario K's opportunity retry so a repeatedly-failing
@@ -138,8 +139,7 @@ export const IdeaFoundry = {
     if (!policy.unlimitedMode && activeIdeas >= policy.maxActiveIdeas) return 0;
 
     const requestedLenses =
-      opts?.lenses ??
-      (isAgencyFocusMode() ? FOCUS_LENS_MIX : DEFAULT_LENS_MIX);
+      opts?.lenses ?? (isAgencyFocusMode() ? FOCUS_LENS_MIX : DEFAULT_LENS_MIX);
     const lenses: CreativeLens[] = [];
     for (const lens of requestedLenses) {
       const exists = await IdeaRepository.existsForOpportunityLens(
@@ -200,6 +200,9 @@ export const IdeaFoundry = {
         isMock,
       });
       created += 1;
+      // With the LLM Council wound down (LEGACY_AGENCY_LOOP=drain|off) the
+      // idea is shortlisted right here; a no-op while the loop is fully on.
+      await shortlistIfCouncilOff(createdIdea.id, projectId);
 
       if (opts?.postToChat !== false) {
         // Write what came BEFORE the idea's "zero point" in the chat (Signal/

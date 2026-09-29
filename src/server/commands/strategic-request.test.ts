@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Deep Path bridge (docs/brand-workspace-migration.md §7 Phase 8): a
 // chat-classified "strategic" request must respect the SAME maxActiveIdeas
@@ -9,8 +9,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const ideaCreate = vi.fn();
 const ideaCountActive = vi.fn();
+const promoteToShortlist = vi.fn();
 vi.mock("@/server/repositories/idea.repository", () => ({
-  IdeaRepository: { create: ideaCreate, countActive: ideaCountActive },
+  IdeaRepository: {
+    create: ideaCreate,
+    countActive: ideaCountActive,
+    promoteToShortlist,
+  },
 }));
 
 const postSystemMessage = vi.fn().mockResolvedValue(undefined);
@@ -24,7 +29,7 @@ vi.mock("@/server/repositories/autonomy-policy.repository", () => ({
   AutonomyPolicyRepository: { getOrCreate, checkAndIncrement },
 }));
 
-const { createStrategicIdea } = await import("./strategic-request");
+const { createStrategicIdea, saveIdea } = await import("./strategic-request");
 
 const scope = { workspaceId: "ws-1", projectId: "proj-1", brandId: "brand-1" };
 
@@ -32,6 +37,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   postSystemMessage.mockResolvedValue(undefined);
   checkAndIncrement.mockResolvedValue(undefined);
+  promoteToShortlist.mockResolvedValue("SHORTLISTED");
+  delete process.env.LEGACY_AGENCY_LOOP;
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("createStrategicIdea", () => {
@@ -146,5 +157,82 @@ describe("createStrategicIdea", () => {
     });
 
     expect(result).toEqual({ status: "CREATED", ideaId: "idea-5" });
+  });
+});
+
+describe("saveIdea", () => {
+  it("records the idea with its lens and announces it as saved, not as a project", async () => {
+    getOrCreate.mockResolvedValue({ unlimitedMode: false, maxActiveIdeas: 5 });
+    ideaCountActive.mockResolvedValue(0);
+    ideaCreate.mockResolvedValue({ id: "idea-9" });
+
+    const result = await saveIdea(scope, {
+      title: "Autumn recipe series",
+      description: "Weekly seasonal recipes shot in the customer's kitchen.",
+      lens: "CONTENT",
+    });
+
+    expect(result).toEqual({ status: "CREATED", ideaId: "idea-9" });
+    expect(ideaCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Autumn recipe series",
+        lens: "CONTENT",
+        concept: undefined,
+      }),
+    );
+    expect(postSystemMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ideaId: "idea-9",
+        text: expect.stringContaining("Idea saved"),
+      }),
+    );
+  });
+
+  it("respects the same active-ideas cap and creates nothing past it", async () => {
+    getOrCreate.mockResolvedValue({ unlimitedMode: false, maxActiveIdeas: 2 });
+    ideaCountActive.mockResolvedValue(2);
+
+    const result = await saveIdea(scope, { title: "One more", description: "…" });
+
+    expect(result).toEqual({ status: "CAPPED" });
+    expect(ideaCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("shortlisting when the Council is off", () => {
+  beforeEach(() => {
+    getOrCreate.mockResolvedValue({ unlimitedMode: false, maxActiveIdeas: 5 });
+    ideaCountActive.mockResolvedValue(0);
+    ideaCreate.mockResolvedValue({ id: "idea-7" });
+  });
+
+  it("leaves the idea RAW for the Council while the legacy loop is on", async () => {
+    await createStrategicIdea(scope, { title: "Big", description: "…" });
+    await saveIdea(scope, { title: "Small", description: "…" });
+
+    expect(promoteToShortlist).not.toHaveBeenCalled();
+  });
+
+  it.each(["drain", "off"])(
+    "shortlists both kinds of idea straight away in %s mode",
+    async (mode) => {
+      vi.stubEnv("LEGACY_AGENCY_LOOP", mode);
+
+      await createStrategicIdea(scope, { title: "Big", description: "…" });
+      await saveIdea(scope, { title: "Small", description: "…" });
+
+      expect(promoteToShortlist).toHaveBeenCalledTimes(2);
+      expect(promoteToShortlist).toHaveBeenCalledWith("idea-7", "proj-1");
+    },
+  );
+
+  it("still creates the idea when the promotion fails", async () => {
+    vi.stubEnv("LEGACY_AGENCY_LOOP", "off");
+    promoteToShortlist.mockRejectedValue(new Error("db blip"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await saveIdea(scope, { title: "Small", description: "…" });
+
+    expect(result).toEqual({ status: "CREATED", ideaId: "idea-7" });
   });
 });

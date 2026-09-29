@@ -1,7 +1,8 @@
 import "server-only";
 
-import type { DepartmentKey } from "@prisma/client";
+import type { CreativeLens, DepartmentKey } from "@prisma/client";
 
+import { shortlistIfCouncilOff } from "@/server/agency/ideas/council-lite";
 import { IdeaRepository } from "@/server/repositories/idea.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
@@ -51,6 +52,46 @@ export async function createStrategicIdea(
     departments?: DepartmentKey[];
   },
 ): Promise<StrategicRequestResult> {
+  return createIdea(scope, {
+    title: input.title,
+    description: input.description,
+    concept:
+      input.departments && input.departments.length > 0
+        ? { departmentsInvolved: input.departments }
+        : undefined,
+    announce: (title, description) =>
+      `This looked like a bigger initiative, so I started a dedicated thread for it: **${title}**\n\n${description}`,
+  });
+}
+
+// An idea the chat agent puts on the record itself, straight from the
+// conversation: a concept the client liked, a direction worth keeping. Same
+// entity and the same safety gates as a strategic request or an autonomously
+// generated idea (it shows up in the Ideas panel with its own thread), but no
+// department plan is attached, and nothing here decides to execute it.
+export async function saveIdea(
+  scope: StrategicRequestScope,
+  input: { title: string; description: string; lens?: CreativeLens },
+): Promise<StrategicRequestResult> {
+  return createIdea(scope, {
+    title: input.title,
+    description: input.description,
+    lens: input.lens,
+    announce: (title, description) =>
+      `💡 Idea saved: **${title}**\n\n${description}`,
+  });
+}
+
+async function createIdea(
+  scope: StrategicRequestScope,
+  input: {
+    title: string;
+    description: string;
+    lens?: CreativeLens;
+    concept?: unknown;
+    announce: (title: string, description: string) => string;
+  },
+): Promise<StrategicRequestResult> {
   const policy = await AutonomyPolicyRepository.getOrCreate(scope);
   const activeIdeas = await IdeaRepository.countActive(scope.projectId);
   if (!policy.unlimitedMode && activeIdeas >= policy.maxActiveIdeas) {
@@ -61,10 +102,8 @@ export async function createStrategicIdea(
     ...scope,
     title: input.title,
     description: input.description,
-    concept:
-      input.departments && input.departments.length > 0
-        ? { departmentsInvolved: input.departments }
-        : undefined,
+    lens: input.lens,
+    concept: input.concept,
   });
 
   await AutonomyPolicyRepository.checkAndIncrement(
@@ -73,6 +112,11 @@ export async function createStrategicIdea(
     1,
   ).catch(() => undefined);
 
+  // With the LLM Council wound down the idea is shortlisted here instead of
+  // waiting for a pass that will not come (council-lite.ts). A no-op while the
+  // legacy loop is fully on.
+  await shortlistIfCouncilOff(idea.id, scope.projectId);
+
   // Zero point of the idea's own chat thread — same convention
   // idea-foundry.ts uses for autonomously-generated ideas, so this reads
   // identically to one in the "Chats" sidebar / project-flow-view.
@@ -80,7 +124,7 @@ export async function createStrategicIdea(
     workspaceId: scope.workspaceId,
     projectId: scope.projectId,
     ideaId: idea.id,
-    text: `This looked like a bigger initiative, so I started a dedicated thread for it: **${input.title}**\n\n${input.description}`,
+    text: input.announce(input.title, input.description),
     card: {
       kind: "idea",
       title: input.title,

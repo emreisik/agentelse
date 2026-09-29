@@ -12,11 +12,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-// Brand Workspace header's brand switcher — a dedicated component rather
-// than reusing ProjectSelect's <Select>: this dropdown (grouped label,
-// serif-letter avatar rows, active-brand check, trailing "Add brand"
-// row) doesn't fit a plain select list, but it's the exact same
-// data/navigation ProjectSelect already uses (projects -> /projects/{id}).
+// The header's brand switcher (projects -> /projects/{id}) — grouped label,
+// serif-letter avatar rows, active-brand check and a trailing "Add brand"
+// row, which a plain <Select> list couldn't express.
 // --ws-* tokens throughout (globals.css, grayscale, aliased to the app's
 // own tokens) — no per-brand color. Built on the same
 // base-ui DropdownMenu primitive as the rest of the app (focus trap,
@@ -43,7 +41,9 @@ export function BrandSwitcher({
   activeProjectId,
 }: {
   projects: { id: string; name: string; status: string }[];
-  activeProjectId: string;
+  // Undefined on workspace-wide pages (dashboard, approvals, health...) —
+  // the trigger then reads "Select brand" and the list works as a jump-in.
+  activeProjectId?: string;
 }) {
   const router = useRouter();
   const active = projects.find((p) => p.id === activeProjectId);
@@ -54,7 +54,10 @@ export function BrandSwitcher({
         render={
           <button
             type="button"
-            className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-[var(--ws-hover)]"
+            // min-w-28 = 74px of fixed parts (avatar, chevron, padding) +
+            // ~38px of the name — a floor so neighbours can't squeeze it
+            // into an unreadable sliver.
+            className="flex min-w-28 items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-[var(--ws-hover)]"
           />
         }
       >
@@ -67,7 +70,7 @@ export function BrandSwitcher({
             {active?.name ?? "Select brand"}
           </span>
           <span
-            className="block text-[11px]"
+            className="block truncate text-[11px]"
             style={{ color: "var(--ws-text-2)" }}
           >
             Brand workspace

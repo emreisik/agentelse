@@ -2,35 +2,36 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   BarChart3,
-  Image as ImageIcon,
   Plug,
   RefreshCw,
+  Search,
   Send,
   type LucideIcon,
 } from "lucide-react";
-import type {
-  BrowserProfile,
-  BrowserProfilePurpose,
-  IntegrationCredential,
-} from "@prisma/client";
+import type { IntegrationCredential } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/dates";
 import { isIntegrationConfigured } from "@/lib/env";
-import { BROWSER_PROFILE_STATUS } from "@/lib/labels";
 import { PURPOSE_ICONS } from "@/features/dashboard/purpose-icons";
-import { BROWSER_PROFILE_TRANSITIONS } from "@/server/state-machine/transitions";
-import type { GoogleCredentialMetadata } from "@/server/integrations/google-client";
-import type { MetaCredentialMetadata } from "@/server/integrations/meta-client";
+import {
+  GOOGLE_PROVIDER,
+  GOOGLE_SERVICE_LABEL,
+  type GoogleAnalyticsMetadata,
+  type GoogleSearchConsoleMetadata,
+  type GoogleService,
+} from "@/server/integrations/google-client";
+import {
+  META_PROVIDER,
+  META_SERVICE_LABEL,
+  type MetaAdsMetadata,
+  type MetaInstagramMetadata,
+  type MetaService,
+} from "@/server/integrations/meta-client";
 import type { TikTokCredentialMetadata } from "@/server/integrations/tiktok-client";
 import type { LinkedInCredentialMetadata } from "@/server/integrations/linkedin-client";
 import type { XCredentialMetadata } from "@/server/integrations/x-client";
-import {
-  addIntegrationAction,
-  disableIntegrationAction,
-  markIntegrationConnectedAction,
-} from "@/server/actions/integration-actions";
 import {
   disconnectTelegramAction,
   sendTelegramTestMessageAction,
@@ -77,33 +78,20 @@ import { SubmitButton } from "@/components/shared/submit-button";
 import { Input } from "@/components/ui/input";
 import { buttonVariants } from "@/components/ui/button";
 
+// Only connectors backed by a real, working connection (OAuth / Bot API)
+// are listed. The old BrowserProfile-based placeholders (Instagram, Meta
+// Ads, Google Ads, GA4, Search Console, CRM, Email) were removed from this
+// page: they had no real integration behind them — an operator just
+// "marked" them connected — and several duplicated real OAuth connectors.
+// The BrowserProfile rows themselves still exist where execution needs
+// them (e.g. INSTAGRAM for INSTAGRAM_PUBLISH).
 const CATEGORY_LIST = [
   { key: "messaging", label: "Messaging" },
   { key: "social", label: "Social Media" },
   { key: "reklam", label: "Advertising" },
   { key: "analitik", label: "Analytics" },
-  { key: "other", label: "Other" },
 ] as const;
 type CategoryKey = (typeof CATEGORY_LIST)[number]["key"];
-
-// The legacy BrowserProfile-based placeholders this page still shows.
-// TIKTOK/LINKEDIN/X are deliberately NOT here — they're no longer
-// BrowserProfile-based placeholders, they now render separately through
-// real OAuth via TikTokTile/LinkedInTile/XTile below. INSTAGRAM stays
-// here — it's still the old BrowserProfile placeholder, separate from
-// Meta's real OAuth.
-const LEGACY_PURPOSE_CATEGORY: Array<{
-  purpose: BrowserProfilePurpose;
-  category: CategoryKey;
-}> = [
-  { purpose: "INSTAGRAM", category: "social" },
-  { purpose: "META_ADS", category: "reklam" },
-  { purpose: "GOOGLE_ADS", category: "reklam" },
-  { purpose: "GA4", category: "analitik" },
-  { purpose: "SEARCH_CONSOLE", category: "analitik" },
-  { purpose: "CRM", category: "other" },
-  { purpose: "EMAIL", category: "other" },
-];
 
 type FilterKey = "tumu" | "enabled" | CategoryKey;
 const FILTER_KEYS: readonly FilterKey[] = [
@@ -136,26 +124,29 @@ export default async function EntegrasyonlarPage({
   if (!project) notFound();
 
   const [
-    allProfiles,
     telegramCredential,
-    googleCredential,
-    metaCredential,
+    analyticsCredential,
+    searchConsoleCredential,
+    instagramCredential,
+    metaAdsCredential,
     tiktokCredential,
     linkedinCredential,
     xCredential,
   ] = await Promise.all([
-    prisma.browserProfile.findMany({
-      where: { projectId },
-      orderBy: { createdAt: "asc" },
-    }),
     prisma.integrationCredential.findFirst({
       where: { projectId, provider: "telegram" },
     }),
     prisma.integrationCredential.findFirst({
-      where: { projectId, provider: "google" },
+      where: { projectId, provider: GOOGLE_PROVIDER.analytics },
     }),
     prisma.integrationCredential.findFirst({
-      where: { projectId, provider: "meta" },
+      where: { projectId, provider: GOOGLE_PROVIDER.search_console },
+    }),
+    prisma.integrationCredential.findFirst({
+      where: { projectId, provider: META_PROVIDER.instagram },
+    }),
+    prisma.integrationCredential.findFirst({
+      where: { projectId, provider: META_PROVIDER.ads },
     }),
     prisma.integrationCredential.findFirst({
       where: { projectId, provider: "tiktok" },
@@ -167,12 +158,6 @@ export default async function EntegrasyonlarPage({
       where: { projectId, provider: "x" },
     }),
   ]);
-  const profilesByPurpose = new Map<BrowserProfilePurpose, BrowserProfile[]>();
-  for (const profile of allProfiles) {
-    const list = profilesByPurpose.get(profile.purpose) ?? [];
-    list.push(profile);
-    profilesByPurpose.set(profile.purpose, list);
-  }
   const telegramConnected = telegramCredential?.status === "ACTIVE";
 
   const filter: FilterKey =
@@ -193,10 +178,8 @@ export default async function EntegrasyonlarPage({
   }
   const closeHref = filterHref(filter);
 
-  // Every connector (real OAuth + legacy BrowserProfile placeholders)
-  // collected into one list so category/search filtering actually applies
-  // uniformly — previously Telegram/Google/Meta/TikTok/LinkedIn/X ignored
-  // the category filter entirely and always rendered regardless of it.
+  // Every connector collected into one list so category/search filtering
+  // applies uniformly.
   const allConnectors: Array<{
     key: string;
     category: CategoryKey;
@@ -219,30 +202,62 @@ export default async function EntegrasyonlarPage({
       ),
     },
     {
-      key: "google",
+      key: GOOGLE_PROVIDER.analytics,
       category: "analitik",
-      label: "Google Analytics & Search Console",
-      connected: googleCredential?.status === "ACTIVE",
+      label: GOOGLE_SERVICE_LABEL.analytics,
+      connected: analyticsCredential?.status === "ACTIVE",
       node: (
         <GoogleTile
-          key="google"
+          key={GOOGLE_PROVIDER.analytics}
+          service="analytics"
           base={base}
           kategori={kategoriParam}
-          credential={googleCredential}
+          credential={analyticsCredential}
         />
       ),
     },
     {
-      key: "meta",
-      category: "social",
-      label: "Instagram & Meta Ads",
-      connected: metaCredential?.status === "ACTIVE",
+      key: GOOGLE_PROVIDER.search_console,
+      category: "analitik",
+      label: GOOGLE_SERVICE_LABEL.search_console,
+      connected: searchConsoleCredential?.status === "ACTIVE",
       node: (
-        <MetaTile
-          key="meta"
+        <GoogleTile
+          key={GOOGLE_PROVIDER.search_console}
+          service="search_console"
           base={base}
           kategori={kategoriParam}
-          credential={metaCredential}
+          credential={searchConsoleCredential}
+        />
+      ),
+    },
+    {
+      key: META_PROVIDER.instagram,
+      category: "social",
+      label: META_SERVICE_LABEL.instagram,
+      connected: instagramCredential?.status === "ACTIVE",
+      node: (
+        <MetaTile
+          key={META_PROVIDER.instagram}
+          service="instagram"
+          base={base}
+          kategori={kategoriParam}
+          credential={instagramCredential}
+        />
+      ),
+    },
+    {
+      key: META_PROVIDER.ads,
+      category: "reklam",
+      label: META_SERVICE_LABEL.ads,
+      connected: metaAdsCredential?.status === "ACTIVE",
+      node: (
+        <MetaTile
+          key={META_PROVIDER.ads}
+          service="ads"
+          base={base}
+          kategori={kategoriParam}
+          credential={metaAdsCredential}
         />
       ),
     },
@@ -288,24 +303,6 @@ export default async function EntegrasyonlarPage({
         />
       ),
     },
-    ...LEGACY_PURPOSE_CATEGORY.map(({ purpose, category }) => {
-      const profiles = profilesByPurpose.get(purpose) ?? [];
-      return {
-        key: purpose,
-        category,
-        label: PURPOSE_ICONS[purpose].label,
-        connected: profiles.some((p) => p.status === "READY"),
-        node: (
-          <IntegrationTile
-            key={purpose}
-            base={base}
-            kategori={kategoriParam}
-            purpose={purpose}
-            profiles={profiles}
-          />
-        ),
-      };
-    }),
   ];
 
   const categoryFiltered =
@@ -337,8 +334,18 @@ export default async function EntegrasyonlarPage({
   const navRowInactiveClass = "text-muted-foreground";
 
   const openTelegram = sp.integration === "telegram";
-  const openGoogle = sp.integration === "google";
-  const openMeta = sp.integration === "meta";
+  const openGoogleService: GoogleService | null =
+    sp.integration === GOOGLE_PROVIDER.analytics
+      ? "analytics"
+      : sp.integration === GOOGLE_PROVIDER.search_console
+        ? "search_console"
+        : null;
+  const openMetaService: MetaService | null =
+    sp.integration === META_PROVIDER.instagram
+      ? "instagram"
+      : sp.integration === META_PROVIDER.ads
+        ? "ads"
+        : null;
   const openTikTok = sp.integration === "tiktok";
   const openLinkedIn = sp.integration === "linkedin";
   const openX = sp.integration === "x";
@@ -350,11 +357,6 @@ export default async function EntegrasyonlarPage({
   const linkedinError =
     typeof sp.linkedinError === "string" ? sp.linkedinError : null;
   const xError = typeof sp.xError === "string" ? sp.xError : null;
-  const openPurpose =
-    typeof sp.integration === "string" &&
-    LEGACY_PURPOSE_CATEGORY.some((p) => p.purpose === sp.integration)
-      ? (sp.integration as BrowserProfilePurpose)
-      : null;
 
   return (
     <AppShell projectId={projectId}>
@@ -433,14 +435,10 @@ export default async function EntegrasyonlarPage({
 
           <div className="min-w-0 flex-1 space-y-6">
             <p className="max-w-2xl text-xs text-muted-foreground/80">
-              Most of the channel/ad connections below aren&apos;t a
-              click-to-connect (OAuth) screen: connections are set up manually
-              by an operator through OpenClaw, and here you just view the status
-              and mark it. <strong>Google</strong>, <strong>Meta</strong>,{" "}
-              <strong>TikTok</strong>, <strong>LinkedIn</strong> and{" "}
-              <strong>X</strong> are the exception — you can connect your own
-              account with real OAuth and grant permission for posting and, for
-              Google/Meta, ad campaign management.
+              Every connector here is a real connection: you sign in with your
+              own account (OAuth) or bot token and grant permission directly.
+              Google Analytics and Search Console are connected separately, so
+              each can use a different Google account.
             </p>
 
             {visibleConnectors.length === 0 ? (
@@ -457,15 +455,6 @@ export default async function EntegrasyonlarPage({
           </div>
         </div>
 
-        {openPurpose ? (
-          <IntegrationDialog
-            projectId={projectId}
-            purpose={openPurpose}
-            profiles={profilesByPurpose.get(openPurpose) ?? []}
-            closeHref={closeHref}
-          />
-        ) : null}
-
         {openTelegram ? (
           <TelegramDialog
             projectId={projectId}
@@ -474,19 +463,29 @@ export default async function EntegrasyonlarPage({
           />
         ) : null}
 
-        {openGoogle ? (
+        {openGoogleService ? (
           <GoogleDialog
+            service={openGoogleService}
             projectId={projectId}
-            credential={googleCredential}
+            credential={
+              openGoogleService === "analytics"
+                ? analyticsCredential
+                : searchConsoleCredential
+            }
             closeHref={closeHref}
             googleError={googleError}
           />
         ) : null}
 
-        {openMeta ? (
+        {openMetaService ? (
           <MetaDialog
+            service={openMetaService}
             projectId={projectId}
-            credential={metaCredential}
+            credential={
+              openMetaService === "instagram"
+                ? instagramCredential
+                : metaAdsCredential
+            }
             closeHref={closeHref}
             metaError={metaError}
           />
@@ -526,33 +525,6 @@ export default async function EntegrasyonlarPage({
 // ---------------------------------------------------------------------------
 
 type ConnectionTone = "positive" | "waiting" | "neutral";
-
-function summarize(profiles: BrowserProfile[]): {
-  label: string;
-  subtitle: string;
-  tone: ConnectionTone;
-} {
-  if (profiles.length === 0) {
-    return {
-      label: "Not connected",
-      subtitle: "Not added yet",
-      tone: "neutral",
-    };
-  }
-  const connected = profiles.filter((p) => p.status === "READY").length;
-  if (connected > 0) {
-    return {
-      label: `${connected} connected`,
-      subtitle: `${profiles.length} accounts registered`,
-      tone: "positive",
-    };
-  }
-  return {
-    label: "Not connected",
-    subtitle: "Set up, not yet connected",
-    tone: "waiting",
-  };
-}
 
 // Shared card for the Integrations page — a neutral (colorless) icon badge,
 // status badge on top, title + short description below. A single, clean
@@ -606,170 +578,6 @@ function IntegrationSection({
         {children}
       </div>
     </section>
-  );
-}
-
-function IntegrationTile({
-  base,
-  kategori,
-  purpose,
-  profiles,
-}: {
-  base: string;
-  kategori: string | undefined;
-  purpose: BrowserProfilePurpose;
-  profiles: BrowserProfile[];
-}) {
-  const meta = PURPOSE_ICONS[purpose];
-  const summary = summarize(profiles);
-  const params = new URLSearchParams({ integration: purpose });
-  if (kategori) params.set("kategori", kategori);
-
-  return (
-    <IntegrationRow
-      href={`${base}?${params.toString()}`}
-      icon={meta.icon}
-      title={meta.label}
-      subtitle={summary.subtitle}
-      badge={{ label: summary.label, tone: summary.tone }}
-    />
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-function IntegrationDialog({
-  projectId,
-  purpose,
-  profiles,
-  closeHref,
-}: {
-  projectId: string;
-  purpose: BrowserProfilePurpose;
-  profiles: BrowserProfile[];
-  closeHref: string;
-}) {
-  const meta = PURPOSE_ICONS[purpose];
-  const Icon = meta.icon;
-
-  return (
-    <EntityDialog
-      closeHref={closeHref}
-      title={meta.label}
-      header={
-        <div className="flex items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-            <Icon className="size-4" />
-          </span>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold">{meta.label}</p>
-            <p className="text-xs text-muted-foreground">
-              Add a connection, manage its status
-            </p>
-          </div>
-        </div>
-      }
-      size="md"
-      bodyClassName="space-y-4 overflow-y-auto p-4"
-    >
-      <div className="space-y-2">
-        <p className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-          Connected accounts
-        </p>
-        {profiles.length === 0 ? (
-          <EmptyState
-            icon={Plug}
-            title="Not added yet"
-            hint="Enter a name below to open a new connection record."
-            className="py-8"
-          />
-        ) : (
-          <div className="space-y-1.5">
-            {profiles.map((profile) => (
-              <IntegrationProfileRow
-                key={profile.id}
-                projectId={projectId}
-                profile={profile}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      <ActionForm
-        action={addIntegrationAction}
-        successMessage={`${meta.label} added`}
-        className="flex items-center gap-1.5 border-t border-foreground/10 pt-4"
-      >
-        <input type="hidden" name="projectId" value={projectId} />
-        <input type="hidden" name="purpose" value={purpose} />
-        <Input
-          name="name"
-          placeholder={`${meta.label} account name`}
-          className="h-8 flex-1 text-xs"
-        />
-        <SubmitButton size="xs">+ Add New Connection</SubmitButton>
-      </ActionForm>
-    </EntityDialog>
-  );
-}
-
-function IntegrationProfileRow({
-  projectId,
-  profile,
-}: {
-  projectId: string;
-  profile: BrowserProfile;
-}) {
-  const transitions = BROWSER_PROFILE_TRANSITIONS[profile.status];
-  const canDisable =
-    profile.status !== "DISABLED" && transitions.includes("DISABLED");
-  const canMarkConnected =
-    profile.status !== "READY" && transitions.includes("READY");
-  const markConnectedLabel =
-    profile.status === "DISABLED" ? "Reactivate" : "Mark as Connected";
-
-  return (
-    <div className="space-y-2 rounded-lg p-3 ring-1 ring-foreground/10">
-      <div className="flex items-center justify-between gap-2">
-        <p className="min-w-0 truncate text-sm font-medium">{profile.name}</p>
-        <StatusBadge meta={BROWSER_PROFILE_STATUS[profile.status]} />
-      </div>
-      <p className="text-[11px] text-muted-foreground">
-        {profile.lastUsedAt
-          ? `Last used: ${timeAgo(profile.lastUsedAt)}`
-          : `Connected on: ${timeAgo(profile.createdAt)}`}
-        {profile.lastHealthCheckAt
-          ? ` · Last checked: ${timeAgo(profile.lastHealthCheckAt)}`
-          : ""}
-      </p>
-      {canDisable || canMarkConnected ? (
-        <div className="flex items-center justify-end gap-1.5">
-          {canDisable ? (
-            <ActionForm
-              action={disableIntegrationAction}
-              successMessage="Disabled"
-            >
-              <input type="hidden" name="projectId" value={projectId} />
-              <input type="hidden" name="profileId" value={profile.id} />
-              <SubmitButton variant="outline" size="xs">
-                Disable
-              </SubmitButton>
-            </ActionForm>
-          ) : null}
-          {canMarkConnected ? (
-            <ActionForm
-              action={markIntegrationConnectedAction}
-              successMessage="Marked as connected"
-            >
-              <input type="hidden" name="projectId" value={projectId} />
-              <input type="hidden" name="profileId" value={profile.id} />
-              <SubmitButton size="xs">{markConnectedLabel}</SubmitButton>
-            </ActionForm>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -938,11 +746,11 @@ function TelegramDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Google — a real OAuth connection based on IntegrationCredential
-// (provider: "google") (GA4 + Search Console in a single grant). This is a
-// completely separate mechanism from the BrowserProfile-based "GA4"/
-// "SEARCH_CONSOLE" purposes above — those are OpenClaw's browser profiles,
-// this is real, read-only API access.
+// Google — two separate real OAuth connections based on IntegrationCredential:
+// Google Analytics (provider: "google_analytics") and Google Search Console
+// (provider: "google_search_console"). Each has its own grant with only its
+// own read-only scope, so they can use different Google accounts and be
+// disconnected independently.
 
 const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   denied: "Google permission was denied.",
@@ -954,6 +762,28 @@ const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
     "The connection request expired or is invalid, please try again.",
   unauthorized: "Your session has expired, please sign in again and retry.",
 };
+
+const GOOGLE_SERVICE_UI: Record<
+  GoogleService,
+  { icon: LucideIcon; description: string; emptyHint: string }
+> = {
+  analytics: {
+    icon: BarChart3,
+    description: "Read-only access to GA4 traffic data",
+    emptyHint:
+      "Connect with your Google account, then select the GA4 property to track.",
+  },
+  search_console: {
+    icon: Search,
+    description: "Read-only access to Search Console queries",
+    emptyHint:
+      "Connect with your Google account, then select the Search Console site to track.",
+  },
+};
+
+function googleStartHref(projectId: string, service: GoogleService): string {
+  return `/api/integrations/google/start?projectId=${projectId}&service=${service}`;
+}
 
 // The raw Search Console `siteUrl` looks technical (sc-domain:example.com
 // or https://example.com/) — we show a clean domain in the selection list
@@ -980,30 +810,33 @@ function formatSearchConsoleSite(siteUrl: string): {
 }
 
 function GoogleTile({
+  service,
   base,
   kategori,
   credential,
 }: {
+  service: GoogleService;
   base: string;
   kategori: string | undefined;
   credential: IntegrationCredential | null;
 }) {
   const connected = credential?.status === "ACTIVE";
   const expired = credential?.status === "EXPIRED";
-  const params = new URLSearchParams({ integration: "google" });
+  const params = new URLSearchParams({ integration: GOOGLE_PROVIDER[service] });
   if (kategori) params.set("kategori", kategori);
+  const ui = GOOGLE_SERVICE_UI[service];
 
   return (
     <IntegrationRow
       href={`${base}?${params.toString()}`}
-      icon={BarChart3}
-      title="Google Analytics & Search Console"
+      icon={ui.icon}
+      title={GOOGLE_SERVICE_LABEL[service]}
       subtitle={
         connected
           ? (credential.accountLabel ?? "Connected")
           : expired
             ? "Needs reconnection"
-            : "Access to GA4 and Search Console data"
+            : ui.description
       }
       badge={
         connected
@@ -1017,37 +850,38 @@ function GoogleTile({
 }
 
 function GoogleDialog({
+  service,
   projectId,
   credential,
   closeHref,
   googleError,
 }: {
+  service: GoogleService;
   projectId: string;
   credential: IntegrationCredential | null;
   closeHref: string;
   googleError: string | null;
 }) {
-  const metadata = (credential?.metadata ?? {}) as GoogleCredentialMetadata;
   const connected = credential?.status === "ACTIVE";
   const expired = credential?.status === "EXPIRED";
   const configured = isIntegrationConfigured("GOOGLE");
+  const title = GOOGLE_SERVICE_LABEL[service];
+  const ui = GOOGLE_SERVICE_UI[service];
+  const Icon = ui.icon;
+  const hiddenFields = { projectId, service };
 
   return (
     <EntityDialog
       closeHref={closeHref}
-      title="Google Analytics & Search Console"
+      title={title}
       header={
         <div className="flex items-center gap-2.5">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-            <BarChart3 className="size-4" />
+            <Icon className="size-4" />
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-semibold">
-              Google Analytics & Search Console
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Read-only access to GA4 and Search Console
-            </p>
+            <p className="text-sm font-semibold">{title}</p>
+            <p className="text-xs text-muted-foreground">{ui.description}</p>
           </div>
         </div>
       }
@@ -1082,23 +916,26 @@ function GoogleDialog({
             // dialog (cross-origin) — a plain <a> does a full page
             // navigation and bypasses this entirely.
             <a
-              href={`/api/integrations/google/start?projectId=${projectId}`}
+              href={googleStartHref(projectId, service)}
               className={cn(buttonVariants({ size: "xs" }))}
             >
               Reconnect
             </a>
           ) : (
             <>
-              <div className="space-y-3">
+              <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
-                    Property / Site Selection
+                  <span className="text-[11px] font-medium text-muted-foreground">
+                    {service === "analytics"
+                      ? "GA4 Property"
+                      : "Search Console Site"}
                   </span>
                   <ActionForm
                     action={refreshGoogleListsAction}
                     successMessage="List updated"
                   >
                     <input type="hidden" name="projectId" value={projectId} />
+                    <input type="hidden" name="service" value={service} />
                     <SubmitButton
                       variant="ghost"
                       size="icon-xs"
@@ -1108,74 +945,29 @@ function GoogleDialog({
                     </SubmitButton>
                   </ActionForm>
                 </div>
-                <div className="space-y-1">
-                  <span className="text-[11px] font-medium text-muted-foreground">
-                    GA4 Property
-                  </span>
-                  {metadata.ga4Properties.length > 0 ? (
-                    <SearchableSelect
-                      value={metadata.selectedGa4PropertyId ?? ""}
-                      placeholder="Select a property…"
-                      searchPlaceholder="Search properties…"
-                      options={metadata.ga4Properties.map((p) => ({
-                        value: p.propertyId,
-                        label: p.propertyName,
-                        hint: p.accountName || undefined,
-                      }))}
-                      action={selectGa4PropertyAction}
-                      hiddenFields={{ projectId }}
-                      fieldName="propertyId"
-                      successMessage="GA4 property updated"
-                    />
-                  ) : (
-                    <p className="text-[11px] text-muted-foreground">
-                      {metadata.ga4ListError ?? "No accessible property found"}
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-1">
-                  <span className="text-[11px] font-medium text-muted-foreground">
-                    Search Console Site
-                  </span>
-                  {metadata.searchConsoleSites.length > 0 ? (
-                    <SearchableSelect
-                      value={metadata.selectedSearchConsoleSite ?? ""}
-                      placeholder="Select a site…"
-                      searchPlaceholder="Search sites…"
-                      options={metadata.searchConsoleSites.map((s) => ({
-                        value: s.siteUrl,
-                        ...formatSearchConsoleSite(s.siteUrl),
-                      }))}
-                      action={selectSearchConsoleSiteAction}
-                      hiddenFields={{ projectId }}
-                      fieldName="siteUrl"
-                      successMessage="Search Console site updated"
-                    />
-                  ) : (
-                    <p className="text-[11px] text-muted-foreground">
-                      {metadata.gscListError ?? "No accessible site found"}
-                    </p>
-                  )}
-                </div>
+                {service === "analytics" ? (
+                  <Ga4PropertySelect
+                    metadata={credential.metadata as GoogleAnalyticsMetadata}
+                    hiddenFields={hiddenFields}
+                  />
+                ) : (
+                  <SearchConsoleSiteSelect
+                    metadata={
+                      credential.metadata as GoogleSearchConsoleMetadata
+                    }
+                    hiddenFields={hiddenFields}
+                  />
+                )}
               </div>
 
-              {metadata.lastTestResult ? (
-                <p className="text-[11px] text-muted-foreground">
-                  Last test ({timeAgo(metadata.lastTestResult.testedAt)}):{" "}
-                  {metadata.lastTestResult.error
-                    ? metadata.lastTestResult.error
-                    : [
-                        metadata.lastTestResult.ga4ActiveUsers !== undefined
-                          ? `GA4: ${metadata.lastTestResult.ga4ActiveUsers} users (7d)`
-                          : null,
-                        metadata.lastTestResult.gscClicks !== undefined
-                          ? `GSC: ${metadata.lastTestResult.gscClicks} clicks / ${metadata.lastTestResult.gscImpressions} impressions (7d)`
-                          : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                </p>
-              ) : null}
+              <GoogleLastTestResult
+                service={service}
+                metadata={
+                  credential.metadata as
+                    | GoogleAnalyticsMetadata
+                    | GoogleSearchConsoleMetadata
+                }
+              />
 
               <div className="flex items-center justify-end gap-1.5">
                 <ActionForm
@@ -1183,6 +975,7 @@ function GoogleDialog({
                   successMessage="Disconnected"
                 >
                   <input type="hidden" name="projectId" value={projectId} />
+                  <input type="hidden" name="service" value={service} />
                   <SubmitButton variant="outline" size="xs">
                     Disconnect
                   </SubmitButton>
@@ -1192,6 +985,7 @@ function GoogleDialog({
                   successMessage="Test successful"
                 >
                   <input type="hidden" name="projectId" value={projectId} />
+                  <input type="hidden" name="service" value={service} />
                   <SubmitButton size="xs">Run Test</SubmitButton>
                 </ActionForm>
               </div>
@@ -1200,16 +994,16 @@ function GoogleDialog({
         </div>
       ) : (
         <EmptyState
-          icon={BarChart3}
+          icon={Icon}
           title="Not connected yet"
-          hint="Connect with your Google account, then select your GA4 property and Search Console site."
+          hint={ui.emptyHint}
           className="py-8"
         >
           {/* Plain <a>: see the note above "Reconnect" — <Link>'s RSC-fetch
               navigation throws a CORS error on the cross-origin OAuth
               redirect. */}
           <a
-            href={`/api/integrations/google/start?projectId=${projectId}`}
+            href={googleStartHref(projectId, service)}
             className={cn(
               buttonVariants({ size: "xs" }),
               !configured && "pointer-events-none opacity-50",
@@ -1224,12 +1018,107 @@ function GoogleDialog({
   );
 }
 
+function Ga4PropertySelect({
+  metadata,
+  hiddenFields,
+}: {
+  metadata: GoogleAnalyticsMetadata;
+  hiddenFields: Record<string, string>;
+}) {
+  const properties = metadata.ga4Properties ?? [];
+  if (properties.length === 0) {
+    return (
+      <p className="text-[11px] text-muted-foreground">
+        {metadata.ga4ListError ?? "No accessible property found"}
+      </p>
+    );
+  }
+  return (
+    <SearchableSelect
+      value={metadata.selectedGa4PropertyId ?? ""}
+      placeholder="Select a property…"
+      searchPlaceholder="Search properties…"
+      options={properties.map((p) => ({
+        value: p.propertyId,
+        label: p.propertyName,
+        hint: p.accountName || undefined,
+      }))}
+      action={selectGa4PropertyAction}
+      hiddenFields={hiddenFields}
+      fieldName="propertyId"
+      successMessage="GA4 property updated"
+    />
+  );
+}
+
+function SearchConsoleSiteSelect({
+  metadata,
+  hiddenFields,
+}: {
+  metadata: GoogleSearchConsoleMetadata;
+  hiddenFields: Record<string, string>;
+}) {
+  const sites = metadata.searchConsoleSites ?? [];
+  if (sites.length === 0) {
+    return (
+      <p className="text-[11px] text-muted-foreground">
+        {metadata.gscListError ?? "No accessible site found"}
+      </p>
+    );
+  }
+  return (
+    <SearchableSelect
+      value={metadata.selectedSearchConsoleSite ?? ""}
+      placeholder="Select a site…"
+      searchPlaceholder="Search sites…"
+      options={sites.map((s) => ({
+        value: s.siteUrl,
+        ...formatSearchConsoleSite(s.siteUrl),
+      }))}
+      action={selectSearchConsoleSiteAction}
+      hiddenFields={hiddenFields}
+      fieldName="siteUrl"
+      successMessage="Search Console site updated"
+    />
+  );
+}
+
+function GoogleLastTestResult({
+  service,
+  metadata,
+}: {
+  service: GoogleService;
+  metadata: GoogleAnalyticsMetadata | GoogleSearchConsoleMetadata;
+}) {
+  const result = metadata.lastTestResult;
+  if (!result) return null;
+
+  let summary: string;
+  if (result.error) {
+    summary = result.error;
+  } else if (service === "analytics") {
+    const ga = result as NonNullable<GoogleAnalyticsMetadata["lastTestResult"]>;
+    summary = `GA4: ${ga.ga4ActiveUsers ?? 0} users (7d)`;
+  } else {
+    const gsc = result as NonNullable<
+      GoogleSearchConsoleMetadata["lastTestResult"]
+    >;
+    summary = `${gsc.gscClicks ?? 0} clicks / ${gsc.gscImpressions ?? 0} impressions (7d)`;
+  }
+
+  return (
+    <p className="text-[11px] text-muted-foreground">
+      Last test ({timeAgo(result.testedAt)}): {summary}
+    </p>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Meta — a real OAuth connection based on IntegrationCredential
-// (provider: "meta") (Instagram Content Publishing + Marketing API in a
-// single grant). This is a completely separate mechanism from the
-// BrowserProfile-based "INSTAGRAM"/"META_ADS" purposes above — those are
-// OpenClaw's browser profiles, this is real Graph/Marketing API access.
+// Meta — two separate real OAuth connections based on IntegrationCredential:
+// Instagram (provider: "instagram", Content Publishing) and Meta Ads
+// (provider: "meta_ads", Marketing API). Each has its own grant with only
+// the permissions that service needs, so they can use different Facebook
+// accounts and be disconnected independently.
 
 const META_ERROR_MESSAGES: Record<string, string> = {
   denied: "Meta permission was denied.",
@@ -1241,31 +1130,56 @@ const META_ERROR_MESSAGES: Record<string, string> = {
   unauthorized: "Your session has expired, please sign in again and retry.",
 };
 
+const META_SERVICE_UI: Record<
+  MetaService,
+  { icon: LucideIcon; description: string; emptyHint: string }
+> = {
+  instagram: {
+    icon: PURPOSE_ICONS.INSTAGRAM.icon,
+    description: "Publish posts and stories to Instagram",
+    emptyHint:
+      "Connect your Facebook account, then choose the Page linked to your Instagram Business account.",
+  },
+  ads: {
+    icon: PURPOSE_ICONS.META_ADS.icon,
+    description: "Manage Meta ad campaigns and read performance",
+    emptyHint:
+      "Connect your Facebook account, then choose your ad account and the Page your ads run as.",
+  },
+};
+
+function metaStartHref(projectId: string, service: MetaService): string {
+  return `/api/integrations/meta/start?projectId=${projectId}&service=${service}`;
+}
+
 function MetaTile({
+  service,
   base,
   kategori,
   credential,
 }: {
+  service: MetaService;
   base: string;
   kategori: string | undefined;
   credential: IntegrationCredential | null;
 }) {
   const connected = credential?.status === "ACTIVE";
   const expired = credential?.status === "EXPIRED";
-  const params = new URLSearchParams({ integration: "meta" });
+  const params = new URLSearchParams({ integration: META_PROVIDER[service] });
   if (kategori) params.set("kategori", kategori);
+  const ui = META_SERVICE_UI[service];
 
   return (
     <IntegrationRow
       href={`${base}?${params.toString()}`}
-      icon={ImageIcon}
-      title="Instagram & Meta Ads"
+      icon={ui.icon}
+      title={META_SERVICE_LABEL[service]}
       subtitle={
         connected
           ? (credential.accountLabel ?? "Connected")
           : expired
             ? "Needs reconnection"
-            : "Posting and ad campaign management"
+            : ui.description
       }
       badge={
         connected
@@ -1279,35 +1193,42 @@ function MetaTile({
 }
 
 function MetaDialog({
+  service,
   projectId,
   credential,
   closeHref,
   metaError,
 }: {
+  service: MetaService;
   projectId: string;
   credential: IntegrationCredential | null;
   closeHref: string;
   metaError: string | null;
 }) {
-  const metadata = (credential?.metadata ?? {}) as MetaCredentialMetadata;
   const connected = credential?.status === "ACTIVE";
   const expired = credential?.status === "EXPIRED";
   const configured = isIntegrationConfigured("META");
+  const title = META_SERVICE_LABEL[service];
+  const ui = META_SERVICE_UI[service];
+  const Icon = ui.icon;
+  const hiddenFields = { projectId, service };
+  const metadata = (credential?.metadata ?? {}) as
+    | MetaInstagramMetadata
+    | MetaAdsMetadata;
+  const adsMetadata = metadata as MetaAdsMetadata;
 
   return (
     <EntityDialog
       closeHref={closeHref}
-      title="Instagram & Meta Ads"
+      title={title}
       header={
         <div className="flex items-center gap-2.5">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-            <ImageIcon className="size-4" />
+            <Icon className="size-4" />
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-semibold">Instagram & Meta Ads</p>
-            <p className="text-xs text-muted-foreground">
-              Access for Instagram publishing and ad campaign management
-            </p>
+            <p className="text-sm font-semibold">{title}</p>
+            <p className="text-xs text-muted-foreground">{ui.description}</p>
           </div>
         </div>
       }
@@ -1341,7 +1262,7 @@ function MetaDialog({
             // navigation triggers a CORS error against Meta's (cross-origin)
             // OAuth dialog.
             <a
-              href={`/api/integrations/meta/start?projectId=${projectId}`}
+              href={metaStartHref(projectId, service)}
               className={cn(buttonVariants({ size: "xs" }))}
             >
               Reconnect
@@ -1351,9 +1272,11 @@ function MetaDialog({
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] text-muted-foreground">
-                    Facebook Page (Instagram)
+                    {service === "instagram"
+                      ? "Facebook Page (Instagram)"
+                      : "Facebook Page (ads run as)"}
                   </span>
-                  {metadata.pages.length > 0 ? (
+                  {(metadata.pages ?? []).length > 0 ? (
                     <ModeSwitcher
                       value={metadata.selectedPageId ?? ""}
                       options={metadata.pages.map((p) => ({
@@ -1363,7 +1286,7 @@ function MetaDialog({
                           : p.pageName,
                       }))}
                       action={selectMetaPageAction}
-                      hiddenFields={{ projectId }}
+                      hiddenFields={hiddenFields}
                       fieldName="pageId"
                       successMessage="Page updated"
                     />
@@ -1373,48 +1296,34 @@ function MetaDialog({
                     </span>
                   )}
                 </div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-muted-foreground">
-                    Ad Account
-                  </span>
-                  {metadata.adAccounts.length > 0 ? (
-                    <ModeSwitcher
-                      value={metadata.selectedAdAccountId ?? ""}
-                      options={metadata.adAccounts.map((a) => ({
-                        value: a.adAccountId,
-                        label: a.adAccountName,
-                      }))}
-                      action={selectMetaAdAccountAction}
-                      hiddenFields={{ projectId }}
-                      fieldName="adAccountId"
-                      successMessage="Ad account updated"
-                    />
-                  ) : (
+                {service === "ads" ? (
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] text-muted-foreground">
-                      {metadata.adAccountsListError ??
-                        "No accessible ad account found"}
+                      Ad Account
                     </span>
-                  )}
-                </div>
+                    {(adsMetadata.adAccounts ?? []).length > 0 ? (
+                      <ModeSwitcher
+                        value={adsMetadata.selectedAdAccountId ?? ""}
+                        options={adsMetadata.adAccounts.map((a) => ({
+                          value: a.adAccountId,
+                          label: a.adAccountName,
+                        }))}
+                        action={selectMetaAdAccountAction}
+                        hiddenFields={hiddenFields}
+                        fieldName="adAccountId"
+                        successMessage="Ad account updated"
+                      />
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground">
+                        {adsMetadata.adAccountsListError ??
+                          "No accessible ad account found"}
+                      </span>
+                    )}
+                  </div>
+                ) : null}
               </div>
 
-              {metadata.lastTestResult ? (
-                <p className="text-[11px] text-muted-foreground">
-                  Last test ({timeAgo(metadata.lastTestResult.testedAt)}):{" "}
-                  {metadata.lastTestResult.error
-                    ? metadata.lastTestResult.error
-                    : [
-                        metadata.lastTestResult.igUsername
-                          ? `IG: @${metadata.lastTestResult.igUsername}`
-                          : null,
-                        metadata.lastTestResult.adAccountSpend !== undefined
-                          ? `Spend (7d): ${metadata.lastTestResult.adAccountSpend}`
-                          : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                </p>
-              ) : null}
+              <MetaLastTestResult service={service} metadata={metadata} />
 
               <div className="flex items-center justify-end gap-1.5">
                 <ActionForm
@@ -1422,6 +1331,7 @@ function MetaDialog({
                   successMessage="Disconnected"
                 >
                   <input type="hidden" name="projectId" value={projectId} />
+                  <input type="hidden" name="service" value={service} />
                   <SubmitButton variant="outline" size="xs">
                     Disconnect
                   </SubmitButton>
@@ -1431,6 +1341,7 @@ function MetaDialog({
                   successMessage="Test successful"
                 >
                   <input type="hidden" name="projectId" value={projectId} />
+                  <input type="hidden" name="service" value={service} />
                   <SubmitButton size="xs">Test</SubmitButton>
                 </ActionForm>
               </div>
@@ -1439,14 +1350,14 @@ function MetaDialog({
         </div>
       ) : (
         <EmptyState
-          icon={ImageIcon}
+          icon={Icon}
           title="Not connected yet"
-          hint="Connect your Meta account, then choose your Page and ad account."
+          hint={ui.emptyHint}
           className="py-8"
         >
           {/* Plain <a>: see the note in the Google block. */}
           <a
-            href={`/api/integrations/meta/start?projectId=${projectId}`}
+            href={metaStartHref(projectId, service)}
             className={cn(
               buttonVariants({ size: "xs" }),
               !configured && "pointer-events-none opacity-50",
@@ -1458,6 +1369,34 @@ function MetaDialog({
         </EmptyState>
       )}
     </EntityDialog>
+  );
+}
+
+function MetaLastTestResult({
+  service,
+  metadata,
+}: {
+  service: MetaService;
+  metadata: MetaInstagramMetadata | MetaAdsMetadata;
+}) {
+  const result = metadata.lastTestResult;
+  if (!result) return null;
+
+  let summary: string;
+  if (result.error) {
+    summary = result.error;
+  } else if (service === "instagram") {
+    const ig = result as NonNullable<MetaInstagramMetadata["lastTestResult"]>;
+    summary = ig.igUsername ? `IG: @${ig.igUsername}` : "OK";
+  } else {
+    const ads = result as NonNullable<MetaAdsMetadata["lastTestResult"]>;
+    summary = `Spend (7d): ${ads.adAccountSpend ?? 0}`;
+  }
+
+  return (
+    <p className="text-[11px] text-muted-foreground">
+      Last test ({timeAgo(result.testedAt)}): {summary}
+    </p>
   );
 }
 

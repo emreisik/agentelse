@@ -106,6 +106,46 @@ function backoffMs(attempt: number): number {
   return Math.max(BASE_BACKOFF_MS, Math.round(base + jitter));
 }
 
+// A dead-lettered dispatch (no provider, missing config, max attempts) used
+// to leave its ExecutionJob and Task parked in QUEUED forever: nothing ever
+// retried them, and because QUEUED isn't terminal, WorkPlanProgressor never
+// cascade-cancelled their dependents, so one unexecutable node (e.g.
+// WEBSITE_UPDATE, GOOGLE_ADS_CAMPAIGN_CREATE) stranded the whole plan.
+// Failing both here fires the normal TASK_FAILED trigger instead.
+// Best-effort: a failure here must not break the dispatch loop.
+async function failDeadLetteredDispatch(
+  executionJobId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    const job = await prisma.executionJob.findUnique({
+      where: { id: executionJobId },
+      select: { status: true, projectId: true, taskId: true },
+    });
+    if (!job || !["QUEUED", "RUNNING"].includes(job.status)) return;
+    await ExecutionJobRepository.transition(
+      executionJobId,
+      job.projectId,
+      "FAILED",
+      { errorCode: "DISPATCH_DEAD_LETTERED", errorMessage: reason },
+    );
+    const task = await prisma.task.findUnique({
+      where: { id: job.taskId },
+      select: { status: true },
+    });
+    if (task && ["QUEUED", "RUNNING"].includes(task.status)) {
+      await TaskRepository.transition(job.taskId, job.projectId, "FAILED", {
+        failureReason: reason,
+      });
+    }
+  } catch (error) {
+    console.error(
+      `[execution-worker] could not fail dead-lettered job ${executionJobId}:`,
+      error,
+    );
+  }
+}
+
 // This is the entire "queue" — no Redis/Docker, just PostgreSQL rows polled
 // on an interval (spec section 50). Swapping to a different queue later
 // only touches this file, never ExecutionService or domain callers.
@@ -214,6 +254,10 @@ export const ExecutionWorker = {
             attempts: attempt,
             lastError: error instanceof Error ? error.message : String(error),
           });
+          await failDeadLetteredDispatch(
+            payload.executionJobId,
+            error instanceof Error ? error.message : String(error),
+          );
         }
       } else {
         await OutboxRepository.scheduleRetry(

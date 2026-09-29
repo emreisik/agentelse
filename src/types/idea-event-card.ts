@@ -10,6 +10,8 @@ import type { ChatQuestion } from "@/server/reasoning/prompts/chat-turn";
 // component instead of plain text. Long bodies (council rationale, task
 // result text, finding/insight description) are shown collapsed by default,
 // in an area that expands on click.
+export type ApprovalCategory = "spend" | "publish" | "action";
+
 export type IdeaEventCardData =
   | { kind: "signal"; title: string; summary?: string }
   | { kind: "finding"; title: string; statement: string }
@@ -56,6 +58,11 @@ export type IdeaEventCardData =
       // for ordinary human-requested/creative approvals, which have
       // nothing structured to show beyond the title.
       details?: { label: string; value: string }[];
+      // What kind of decision this is, so the card can say it plainly —
+      // "spend" (campaign/ad set/budget writes: real money), "publish"
+      // (goes live on a social account), "action" (anything else). Absent
+      // on cards written before this field existed → rendered as "action".
+      category?: ApprovalCategory;
     }
   | {
       kind: "approval-decision";

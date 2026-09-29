@@ -34,7 +34,7 @@ export async function approveApprovalAction(
       actorType: "USER",
     });
 
-    revalidatePath("/approvals");
+    revalidatePath(`/projects/${approval.projectId}`);
     revalidatePath("/dashboard");
     return { ok: true };
   } catch (error) {
@@ -60,7 +60,7 @@ export async function rejectApprovalAction(
       actorType: "USER",
     });
 
-    revalidatePath("/approvals");
+    revalidatePath(`/projects/${approval.projectId}`);
     revalidatePath("/dashboard");
     return { ok: true };
   } catch (error) {

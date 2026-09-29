@@ -14,7 +14,6 @@ import { GoalsPanel } from "./panels/goals-panel";
 import { IdeasPanel } from "./panels/ideas-panel";
 import { WorkPanel } from "./panels/work-panel";
 import { DepartmentsPanel } from "./panels/departments-panel";
-import { ApprovalsPanel } from "./panels/approvals-panel";
 import { HumanActionPanel } from "./panels/human-action-panel";
 import { SettingsPanel } from "./panels/settings-panel";
 import type { PanelProps } from "./panels/panel-props";
@@ -31,7 +30,6 @@ const PANEL_COMPONENT: Record<
   ideas: IdeasPanel,
   work: WorkPanel,
   departments: DepartmentsPanel,
-  approvals: ApprovalsPanel,
   "human-action": HumanActionPanel,
   settings: SettingsPanel,
   library: LibraryPanel,
@@ -73,7 +71,9 @@ export async function PanelShell({
   return (
     <div
       className={cn(
-        "h-[calc(100vh-4rem)]",
+        // Fills AppShell's <main> (h-full) — not a viewport calc tied to
+        // the header height, which drifted the moment the header changed.
+        "h-full",
         isBoard ? "flex flex-col overflow-hidden" : "overflow-y-auto",
       )}
     >
@@ -93,12 +93,18 @@ export async function PanelShell({
           <ArrowLeft className="size-4" />
           Back to chat
         </Link>
-        <h1 className="mt-4 shrink-0 font-heading text-2xl font-semibold tracking-tight">
-          {PANEL_LABEL[panel]}
-        </h1>
-        <div className="shrink-0">
-          <HubBreadcrumb projectId={projectId} panel={panel} />
-        </div>
+        {panel !== "work" && (
+          <>
+            <h1 className="mt-4 shrink-0 font-heading text-2xl font-semibold tracking-tight">
+              {PANEL_LABEL[panel]}
+            </h1>
+            {panel !== "ideas" && (
+              <div className="shrink-0">
+                <HubBreadcrumb projectId={projectId} panel={panel} />
+              </div>
+            )}
+          </>
+        )}
         <div className={cn("mt-6", isBoard && "flex min-h-0 flex-1 flex-col")}>
           <Panel projectId={projectId} entity={entity} sub={sub} />
         </div>

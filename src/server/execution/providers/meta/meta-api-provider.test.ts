@@ -872,3 +872,54 @@ describe("MetaApiProvider updateAd reusing an existing video", () => {
     expect(metaClientMocks.createMetaVideoAdCreative).not.toHaveBeenCalled();
   });
 });
+
+describe("MetaApiProvider credential routing", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    envMocks.configured = true;
+  });
+
+  it("reads the instagram credential for INSTAGRAM_PUBLISH", async () => {
+    prismaMocks.credentialFindUnique.mockResolvedValue(null);
+    await new MetaApiProvider().canExecute("INSTAGRAM_PUBLISH", context);
+    expect(prismaMocks.credentialFindUnique).toHaveBeenCalledWith({
+      where: {
+        projectId_provider: { projectId: "project-1", provider: "instagram" },
+      },
+    });
+  });
+
+  it("reads the meta_ads credential for every ads capability", async () => {
+    prismaMocks.credentialFindUnique.mockResolvedValue(null);
+    const provider = new MetaApiProvider();
+    for (const capability of [
+      "META_ADS_ANALYSIS",
+      "META_CAMPAIGN_CREATE",
+      "META_AD_CREATE",
+    ] as const) {
+      prismaMocks.credentialFindUnique.mockClear();
+      await provider.canExecute(capability, context);
+      expect(prismaMocks.credentialFindUnique).toHaveBeenCalledWith({
+        where: {
+          projectId_provider: { projectId: "project-1", provider: "meta_ads" },
+        },
+      });
+    }
+  });
+
+  it("does not let an ads credential enable Instagram publishing", async () => {
+    // An ads-shaped credential has no Instagram-linked Page selected.
+    prismaMocks.credentialFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      metadata: {
+        pages: [{ pageId: "1", pageName: "P" }],
+        selectedPageId: "1",
+        adAccounts: [],
+        selectedAdAccountId: "act_1",
+      },
+    });
+    expect(
+      await new MetaApiProvider().canExecute("INSTAGRAM_PUBLISH", context),
+    ).toBe(false);
+  });
+});

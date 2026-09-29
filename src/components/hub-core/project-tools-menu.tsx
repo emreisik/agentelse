@@ -13,7 +13,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -76,26 +75,46 @@ export function ProjectToolsMenu({
   projectId: string;
   badges: Partial<Record<PanelKey, number>>;
 }) {
-  const hasAttention = Object.values(badges).some((count) => (count ?? 0) > 0);
+  // Only the panels this menu actually lists — `badges` also carries keys
+  // (work, human-action...) with their own header/sidebar entry, and a dot
+  // for those would point at nothing inside this menu.
+  const hasAttention = GROUPS.some((group) =>
+    group.items.some((item) => (badges[item.panel] ?? 0) > 0),
+  );
 
+  // Header (workspace-top-bar.tsx) trigger in the --ws-* pill language; the
+  // label collapses to the icon below 2xl so the header never overflows (xl
+  // is a 1280px viewport, but with the docked sidebar the header is only
+  // 1024px wide there), the title keeps it discoverable.
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button
-            variant="ghost"
-            size="sm"
-            className="relative gap-1.5 text-muted-foreground"
+          <button
+            type="button"
+            title="Advanced"
+            className="relative flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors hover:bg-[var(--ws-hover)]"
+            style={{ color: "var(--ws-text-2)" }}
           />
         }
       >
         <Compass className="size-4" />
-        Advanced
+        <span className="hidden 2xl:inline">Advanced</span>
         {hasAttention ? (
-          <span className="absolute top-1 right-1.5 size-1.5 rounded-full bg-warning" />
+          <span
+            className="absolute top-1 right-1 size-1.5 rounded-full"
+            style={{ background: "var(--ws-pending)" }}
+          />
         ) : null}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
+      <DropdownMenuContent
+        align="start"
+        className="w-64 rounded-[14px] border p-2 shadow-lg"
+        style={{
+          borderColor: "var(--ws-border)",
+          background: "var(--ws-surface)",
+        }}
+      >
         {GROUPS.map((group, index) => (
           <div key={group.title}>
             {index > 0 ? <DropdownMenuSeparator /> : null}

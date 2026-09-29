@@ -28,6 +28,7 @@ import {
   ShieldX,
   Sparkles,
   Timer,
+  Wallet,
   XCircle,
 } from "lucide-react";
 
@@ -51,7 +52,10 @@ import {
 } from "@/components/commands/ws-event-card";
 import { CreativeCard } from "@/components/commands/creative-card";
 import { isCreativeCardData } from "@/types/creative-card";
-import type { IdeaEventCardData } from "@/types/idea-event-card";
+import type {
+  ApprovalCategory,
+  IdeaEventCardData,
+} from "@/types/idea-event-card";
 import {
   approveApprovalAction,
   rejectApprovalAction,
@@ -651,7 +655,7 @@ function TaskRunningCard({
 
 // A directly clickable Approve/Reject card shown in chat while a task is
 // awaiting approval — the decision can be made here without navigating to
-// a separate Approvals panel. After the decision, the server (see
+// a separate panel (the Agency Desk's DecisionsBar renders this same card). After the decision, the server (see
 // resolveApprovalDecisionCard) updates the SAME row to an
 // "approval-decision" card; router.refresh() fetches that updated state.
 // In between, an optimistic result state is shown briefly while waiting
@@ -705,10 +709,12 @@ function ApprovalRequestCard({
     );
   }
 
+  const copy = APPROVAL_CATEGORY_COPY[card.category ?? "action"];
+
   return (
     <WsDecisionCard
-      icon={CircleCheck}
-      eyebrow="Awaiting approval"
+      icon={copy.icon}
+      eyebrow={copy.eyebrow}
       title={card.title}
       department={departmentKey}
       badge={
@@ -741,7 +747,7 @@ function ApprovalRequestCard({
             }}
             onClick={() => decide("APPROVED")}
           >
-            Approve
+            {copy.approveLabel}
           </Button>
         </>
       }
@@ -770,12 +776,46 @@ function ApprovalRequestCard({
         </div>
       ) : null}
       <p className="text-sm" style={{ color: "var(--ws-text-2)" }}>
-        Your approval is required before execution. If rejected, the task will
-        be cancelled.
+        {copy.description}
       </p>
     </WsDecisionCard>
   );
 }
+
+// Says in plain words what approving actually does — spend (real budget)
+// is the one decision that must always stop and ask; see
+// approval-details.ts approvalCategory.
+const APPROVAL_CATEGORY_COPY: Record<
+  ApprovalCategory,
+  {
+    icon: typeof CircleCheck;
+    eyebrow: string;
+    approveLabel: string;
+    description: string;
+  }
+> = {
+  spend: {
+    icon: Wallet,
+    eyebrow: "Spend approval",
+    approveLabel: "Approve spend",
+    description:
+      "This uses real budget on your ad account. Nothing runs until you approve; if rejected, it's cancelled.",
+  },
+  publish: {
+    icon: Send,
+    eyebrow: "Ready to publish",
+    approveLabel: "Publish",
+    description:
+      "Goes live on your connected account once approved. If rejected, it's cancelled.",
+  },
+  action: {
+    icon: CircleCheck,
+    eyebrow: "Awaiting approval",
+    approveLabel: "Approve",
+    description:
+      "Your approval is required before execution. If rejected, the task will be cancelled.",
+  },
+};
 
 function riskTone(risk: string): WsTone {
   if (risk === "CRITICAL" || risk === "HIGH") return "danger";

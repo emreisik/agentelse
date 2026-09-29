@@ -9,12 +9,19 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 import {
+  GOOGLE_PROVIDER,
+  GOOGLE_SERVICE_LABEL,
   GoogleApiError,
+  fetchGa4PropertyList,
   fetchGa4Report,
-  fetchGoogleLists,
   fetchSearchConsoleReport,
-  reconcileGoogleSelection,
-  type GoogleCredentialMetadata,
+  fetchSearchConsoleSiteList,
+  parseGoogleService,
+  reconcileGa4Selection,
+  reconcileSearchConsoleSelection,
+  type GoogleAnalyticsMetadata,
+  type GoogleSearchConsoleMetadata,
+  type GoogleService,
 } from "@/server/integrations/google-client";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
 
@@ -37,10 +44,30 @@ function fail(error: unknown): ActionResult {
   return { ok: false, message: describeGoogleError(error) };
 }
 
-function loadCredential(projectId: string) {
+function notFound(service: GoogleService): ActionResult {
+  return {
+    ok: false,
+    message: `${GOOGLE_SERVICE_LABEL[service]} connection not found`,
+  };
+}
+
+function loadCredential(projectId: string, service: GoogleService) {
   return prisma.integrationCredential.findUnique({
-    where: { projectId_provider: { projectId, provider: "google" } },
+    where: {
+      projectId_provider: { projectId, provider: GOOGLE_PROVIDER[service] },
+    },
   });
+}
+
+// Every action carries `projectId` + `service` in its form; access is
+// verified before anything is read.
+async function resolveScope(formData: FormData) {
+  const projectId = String(formData.get("projectId"));
+  const service = parseGoogleService(formData.get("service"));
+  if (!service) throw new Error("Invalid Google service");
+  const { userId } = await requireUser();
+  const access = await requireProjectAccess(userId, projectId);
+  return { projectId, service, userId, access };
 }
 
 export async function selectGa4PropertyAction(
@@ -52,12 +79,10 @@ export async function selectGa4PropertyAction(
     const { userId } = await requireUser();
     await requireProjectAccess(userId, projectId);
 
-    const credential = await loadCredential(projectId);
-    if (!credential) {
-      return { ok: false, message: "Google connection not found" };
-    }
+    const credential = await loadCredential(projectId, "analytics");
+    if (!credential) return notFound("analytics");
 
-    const metadata = (credential.metadata ?? {}) as GoogleCredentialMetadata;
+    const metadata = (credential.metadata ?? {}) as GoogleAnalyticsMetadata;
     const property = metadata.ga4Properties?.find(
       (p) => p.propertyId === propertyId,
     );
@@ -65,7 +90,7 @@ export async function selectGa4PropertyAction(
       return { ok: false, message: "Invalid GA4 property selection" };
     }
 
-    const nextMetadata: GoogleCredentialMetadata = {
+    const nextMetadata: GoogleAnalyticsMetadata = {
       ...metadata,
       selectedGa4PropertyId: property.propertyId,
       selectedGa4PropertyName: property.propertyName,
@@ -91,12 +116,10 @@ export async function selectSearchConsoleSiteAction(
     const { userId } = await requireUser();
     await requireProjectAccess(userId, projectId);
 
-    const credential = await loadCredential(projectId);
-    if (!credential) {
-      return { ok: false, message: "Google connection not found" };
-    }
+    const credential = await loadCredential(projectId, "search_console");
+    if (!credential) return notFound("search_console");
 
-    const metadata = (credential.metadata ?? {}) as GoogleCredentialMetadata;
+    const metadata = (credential.metadata ?? {}) as GoogleSearchConsoleMetadata;
     const site = metadata.searchConsoleSites?.find(
       (s) => s.siteUrl === siteUrl,
     );
@@ -104,7 +127,7 @@ export async function selectSearchConsoleSiteAction(
       return { ok: false, message: "Invalid Search Console site selection" };
     }
 
-    const nextMetadata: GoogleCredentialMetadata = {
+    const nextMetadata: GoogleSearchConsoleMetadata = {
       ...metadata,
       selectedSearchConsoleSite: site.siteUrl,
     };
@@ -126,65 +149,64 @@ export async function testGoogleConnectionAction(
   formData: FormData,
 ): Promise<ActionResult> {
   try {
-    const projectId = String(formData.get("projectId"));
-    const { userId } = await requireUser();
-    await requireProjectAccess(userId, projectId);
+    const { projectId, service } = await resolveScope(formData);
 
-    const credential = await loadCredential(projectId);
-    if (!credential) {
-      return { ok: false, message: "Google connection not found" };
-    }
+    const credential = await loadCredential(projectId, service);
+    if (!credential) return notFound(service);
 
-    const metadata = (credential.metadata ?? {}) as GoogleCredentialMetadata;
-    if (
-      !metadata.selectedGa4PropertyId &&
-      !metadata.selectedSearchConsoleSite
-    ) {
-      return {
-        ok: false,
-        message: "Select a GA4 property or Search Console site first",
+    let testError: string | undefined;
+    let nextMetadata: GoogleAnalyticsMetadata | GoogleSearchConsoleMetadata;
+
+    if (service === "analytics") {
+      const metadata = (credential.metadata ?? {}) as GoogleAnalyticsMetadata;
+      if (!metadata.selectedGa4PropertyId) {
+        return { ok: false, message: "Select a GA4 property first" };
+      }
+      const accessToken = await getFreshGoogleAccessToken(credential);
+      const result: NonNullable<GoogleAnalyticsMetadata["lastTestResult"]> = {
+        testedAt: new Date().toISOString(),
       };
-    }
-
-    const accessToken = await getFreshGoogleAccessToken(credential);
-
-    const lastTestResult: NonNullable<
-      GoogleCredentialMetadata["lastTestResult"]
-    > = { testedAt: new Date().toISOString() };
-    try {
-      if (metadata.selectedGa4PropertyId) {
+      try {
         const ga4 = await fetchGa4Report(
           accessToken,
           metadata.selectedGa4PropertyId,
         );
-        lastTestResult.ga4ActiveUsers = ga4.activeUsers;
+        result.ga4ActiveUsers = ga4.activeUsers;
+      } catch (error) {
+        result.error = describeGoogleError(error);
       }
-      if (metadata.selectedSearchConsoleSite) {
+      testError = result.error;
+      nextMetadata = { ...metadata, lastTestResult: result };
+    } else {
+      const metadata = (credential.metadata ??
+        {}) as GoogleSearchConsoleMetadata;
+      if (!metadata.selectedSearchConsoleSite) {
+        return { ok: false, message: "Select a Search Console site first" };
+      }
+      const accessToken = await getFreshGoogleAccessToken(credential);
+      const result: NonNullable<GoogleSearchConsoleMetadata["lastTestResult"]> =
+        { testedAt: new Date().toISOString() };
+      try {
         const gsc = await fetchSearchConsoleReport(
           accessToken,
           metadata.selectedSearchConsoleSite,
         );
-        lastTestResult.gscClicks = gsc.clicks;
-        lastTestResult.gscImpressions = gsc.impressions;
+        result.gscClicks = gsc.clicks;
+        result.gscImpressions = gsc.impressions;
+      } catch (error) {
+        result.error = describeGoogleError(error);
       }
-    } catch (error) {
-      lastTestResult.error = describeGoogleError(error);
+      testError = result.error;
+      nextMetadata = { ...metadata, lastTestResult: result };
     }
 
-    const nextMetadata: GoogleCredentialMetadata = {
-      ...metadata,
-      lastTestResult,
-    };
     await prisma.integrationCredential.update({
       where: { id: credential.id },
       data: { metadata: nextMetadata, status: "ACTIVE" },
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);
-    if (lastTestResult.error) {
-      return { ok: false, message: lastTestResult.error };
-    }
-    return { ok: true };
+    return testError ? { ok: false, message: testError } : { ok: true };
   } catch (error) {
     return fail(error);
   }
@@ -198,40 +220,45 @@ export async function refreshGoogleListsAction(
   formData: FormData,
 ): Promise<ActionResult> {
   try {
-    const projectId = String(formData.get("projectId"));
-    const { userId } = await requireUser();
-    await requireProjectAccess(userId, projectId);
+    const { projectId, service } = await resolveScope(formData);
 
-    const credential = await loadCredential(projectId);
-    if (!credential) {
-      return { ok: false, message: "Google connection not found" };
-    }
+    const credential = await loadCredential(projectId, service);
+    if (!credential) return notFound(service);
 
     const accessToken = await getFreshGoogleAccessToken(credential);
-    const existingMetadata = (credential.metadata ??
-      {}) as GoogleCredentialMetadata;
-    const lists = await fetchGoogleLists(accessToken);
 
-    const nextMetadata: GoogleCredentialMetadata = {
-      ...existingMetadata,
-      ...lists,
-      ...reconcileGoogleSelection(existingMetadata, lists),
-    };
+    let listError: string | undefined;
+    let nextMetadata: GoogleAnalyticsMetadata | GoogleSearchConsoleMetadata;
+    if (service === "analytics") {
+      const existing = (credential.metadata ?? {}) as GoogleAnalyticsMetadata;
+      const lists = await fetchGa4PropertyList(accessToken);
+      listError = lists.ga4ListError;
+      nextMetadata = {
+        ...existing,
+        ga4ListError: undefined,
+        ...lists,
+        ...reconcileGa4Selection(existing, lists),
+      };
+    } else {
+      const existing = (credential.metadata ??
+        {}) as GoogleSearchConsoleMetadata;
+      const lists = await fetchSearchConsoleSiteList(accessToken);
+      listError = lists.gscListError;
+      nextMetadata = {
+        ...existing,
+        gscListError: undefined,
+        ...lists,
+        ...reconcileSearchConsoleSelection(existing, lists),
+      };
+    }
+
     await prisma.integrationCredential.update({
       where: { id: credential.id },
       data: { metadata: nextMetadata, status: "ACTIVE" },
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);
-    if (lists.ga4ListError || lists.gscListError) {
-      return {
-        ok: false,
-        message: [lists.ga4ListError, lists.gscListError]
-          .filter(Boolean)
-          .join(" · "),
-      };
-    }
-    return { ok: true };
+    return listError ? { ok: false, message: listError } : { ok: true };
   } catch (error) {
     return fail(error);
   }
@@ -241,11 +268,9 @@ export async function disconnectGoogleAction(
   formData: FormData,
 ): Promise<ActionResult> {
   try {
-    const projectId = String(formData.get("projectId"));
-    const { userId } = await requireUser();
-    const access = await requireProjectAccess(userId, projectId);
+    const { projectId, service, userId, access } = await resolveScope(formData);
 
-    const credential = await loadCredential(projectId);
+    const credential = await loadCredential(projectId, service);
     if (!credential) return { ok: true };
 
     await prisma.integrationCredential.update({
@@ -261,7 +286,7 @@ export async function disconnectGoogleAction(
       action: "integration_credential.disconnected",
       entityType: "IntegrationCredential",
       entityId: credential.id,
-      metadata: { provider: "google" },
+      metadata: { provider: GOOGLE_PROVIDER[service] },
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);

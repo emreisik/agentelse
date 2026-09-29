@@ -1,19 +1,19 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
-// The Brand Workspace root chat's loading boundary — deliberately NOT
-// built on AppShell like every other route's loading.tsx (see those
-// files, e.g. isler/loading.tsx): AppShell's workspace-root branch
-// renders WorkspaceTopBar, which requires a real projectId — a value
-// loading.tsx boundaries never receive (per Next.js, they render with no
-// route params). A hand-rolled skeleton that approximates the real
-// shell's shape (docked left sidebar, 72px header, right panel) avoids
-// both the crash and a jarring flash of a different layout while the
-// real page resolves its data.
+// The loading boundary for everything under a project — the chat root and,
+// since the redirect-only legacy segments (ayarlar, fikirler, isler...) have
+// no loading file of their own anymore, those too. Deliberately NOT built on
+// AppShell: loading.tsx boundaries never receive route params, so an
+// AppShell here would render the shared header in workspace mode ("Select
+// brand", workspace-wide counts, no project tools) and then switch to the
+// project header once the real page lands. A hand-rolled skeleton that
+// approximates the real shell's shape (docked left sidebar, 72px header,
+// right panel) avoids that flash.
 export default function Loading() {
   return (
     <div className="flex h-screen overflow-hidden">
       <div className="flex h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar">
-        <div className="flex items-center border-b border-sidebar-border px-4 py-4">
+        <div className="flex h-[72px] shrink-0 items-center border-b border-sidebar-border px-[22px]">
           <Skeleton className="h-7 w-28" />
         </div>
         <div className="flex flex-col gap-2 p-3">

@@ -16,15 +16,21 @@ import { FindingWriter } from "./finding-writer";
 // INSIGHT (spec section 17). Dedup already happened at ingest (fingerprint
 // unique); this engine scores NEW signals and synthesizes insights from
 // promoted ones.
+const SCORING_CONCURRENCY = 5;
+
 export const IntelligenceEngine = {
   async processNewSignals(limit = 20): Promise<number> {
     const signals = await SignalRepository.listByStatus("NEW", limit);
     let processed = 0;
 
-    for (const signal of signals) {
+    // One independent LLM relevance call per signal — scored in bounded
+    // parallel chunks instead of strictly one after another (20 sequential
+    // calls used to dominate the tick). A thrown error (e.g.
+    // BUDGET_EXCEEDED) still ends the step like before.
+    const scoreOne = async (signal: (typeof signals)[number]) => {
       // Paused project — push forward without processing, exactly like
       // signal-universe.ts's own scan skip. Try again next tick.
-      if (!(await isProjectAgencyActive(signal.projectId))) continue;
+      if (!(await isProjectAgencyActive(signal.projectId))) return;
 
       const brand = await ConstitutionService.getBrandContext(signal.brandId);
       const { output } = await ReasoningService.run(signalRelevanceDef, {
@@ -81,6 +87,12 @@ export const IntelligenceEngine = {
         );
       }
       processed += 1;
+    };
+
+    for (let i = 0; i < signals.length; i += SCORING_CONCURRENCY) {
+      await Promise.all(
+        signals.slice(i, i + SCORING_CONCURRENCY).map(scoreOne),
+      );
     }
 
     return processed;

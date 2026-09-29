@@ -102,14 +102,19 @@ const envSchema = z.object({
   // require touching prompt files.
   OPENAI_LITE_MODEL: z.string().optional().default("gpt-5.4-mini"),
   OPENAI_PRO_MODEL: z.string().optional().default("gpt-5.6-terra"),
-  // Which backend ReasoningService.run uses. Unknown values fall back to
-  // "gemini" via catch() so a typo in the env degrades to the default
-  // instead of crashing the first request.
+  // Which backend ReasoningService.run uses. Default is "openai" — Gemini's
+  // billing account (the GCP project behind GEMINI_API_KEY) hit a dunning
+  // block (403 "Lightning dunning decision is deny"), so every Gemini call
+  // was failing outright; OpenAI is the one actually configured/working
+  // backend. Unknown values fall back to the same default via catch() so a
+  // typo in the env degrades gracefully instead of crashing the first
+  // request. Flip back to "gemini" (or set REASONING_PROVIDER=gemini in the
+  // environment) once that GCP project's billing is resolved.
   REASONING_PROVIDER: z
     .enum(["gemini", "openai"])
     .optional()
-    .default("gemini")
-    .catch("gemini"),
+    .default("openai")
+    .catch("openai"),
   // gpt-image-2 — see openai-image-client.ts. Separate model slot from
   // OPENAI_MODEL/OPENCLAW_IMAGE_MODEL because it names an image model, not
   // a chat one.

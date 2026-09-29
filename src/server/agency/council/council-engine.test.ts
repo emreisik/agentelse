@@ -5,13 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // other autonomous engine's batch loop now follows (see agency-director.ts,
 // opportunity-engine.ts, idea-foundry.ts).
 
-const listByStatus = vi.fn();
+const listByStatusPerProject = vi.fn();
 const findByIdInProject = vi.fn();
 const addCouncilEvaluation = vi.fn().mockResolvedValue(undefined);
 const ideaTransition = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/server/repositories/idea.repository", () => ({
   IdeaRepository: {
-    listByStatus,
+    listByStatusPerProject,
     findByIdInProject,
     addCouncilEvaluation,
     transition: ideaTransition,
@@ -74,7 +74,7 @@ describe("CouncilEngine.evaluatePendingIdeas (paused-project guard, audit scenar
       title: "Active idea",
       councilEvaluations: [],
     };
-    listByStatus.mockResolvedValue([pausedIdea, activeIdea]);
+    listByStatusPerProject.mockResolvedValue([[pausedIdea], [activeIdea]]);
     isProjectAgencyActive.mockImplementation(
       async (projectId: string) => projectId !== "proj-paused",
     );

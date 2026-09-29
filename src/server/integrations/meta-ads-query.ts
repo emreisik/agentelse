@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/server/security/crypto";
 import {
+  META_PROVIDER,
   fetchMetaLevelInsights,
   listMetaAdSets,
   listMetaAds,
@@ -10,7 +11,7 @@ import {
   type MetaAdSetSummary,
   type MetaAdSummary,
   type MetaCampaignSummary,
-  type MetaCredentialMetadata,
+  type MetaAdsMetadata,
   type MetaInsightsRow,
 } from "@/server/integrations/meta-client";
 
@@ -48,12 +49,12 @@ async function resolveConnection(
   projectId: string,
 ): Promise<MetaAdsConnectionState> {
   const credential = await prisma.integrationCredential.findUnique({
-    where: { projectId_provider: { projectId, provider: "meta" } },
+    where: { projectId_provider: { projectId, provider: META_PROVIDER.ads } },
   });
   if (!credential || credential.status !== "ACTIVE") {
     return { status: "NOT_CONNECTED" };
   }
-  const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+  const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
   if (!metadata.selectedAdAccountId) {
     return { status: "NO_AD_ACCOUNT" };
   }

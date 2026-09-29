@@ -279,7 +279,7 @@ function FlowShell({
   backLabel?: string;
 }) {
   return (
-    <div className="h-[calc(100vh-4rem)] overflow-y-auto">
+    <div className="h-full overflow-y-auto">
       <div className="mx-auto w-full max-w-3xl px-6 pt-8 pb-16">
         <Link
           href={backHref ?? `/projects/${projectId}`}

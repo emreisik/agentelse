@@ -382,7 +382,7 @@ export async function performCreativeRevision({
     // this new one. CREATIVE_TRANSITIONS legally allows both -> DRAFT ->
     // IN_REVIEW (transitions.ts), but nothing called it before this: a
     // rejected creative regenerated via the Studio stayed REJECTED forever,
-    // invisible to the Approval Center, with no way back into review. A
+    // invisible to the Agency Desk decisions, with no way back into review. A
     // fresh Approval row (same shape execution-service.ts's
     // materializeCreativeFromResult uses for the very first one) re-opens
     // the decision instead of assuming the old one still applies. PUBLISHED

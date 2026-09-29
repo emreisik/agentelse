@@ -46,7 +46,7 @@ const WorkspacePanelToggleContext = createContext<PanelToggleState | null>(
 );
 
 // Same SSR-safe useSyncExternalStore shape as workspace-right-panel.tsx's
-// original useStoredCollapsed / theme-toggle.tsx's useMounted: the server
+// original useStoredCollapsed: the server
 // (and the client's first hydration pass, which must match it) always sees
 // the getServerSnapshot value, then React re-syncs to the real live value
 // right after — no hydration-mismatch warning, no setState-in-effect.

@@ -5,6 +5,7 @@ import "server-only";
 // Imported once by ExecutionWorker so a single import activates the full
 // Agency OS loop without creating module cycles.
 
+import { isAgencyFocusMode } from "@/server/agency/agency-focus";
 import { CouncilEngine } from "@/server/agency/council/council-engine";
 import { AgencyLoopHeartbeat } from "@/server/agency/continuous/agency-loop-heartbeat";
 import {
@@ -174,9 +175,10 @@ registerAgencyTickStep({
   name: "insight-synthesis",
   run: async () => {
     const projects = await IntelligenceEngine.projectsNeedingInsights(5);
-    for (const scope of projects) {
-      await IntelligenceEngine.synthesizeInsights(scope);
-    }
+    // One LLM call per project, independent of each other — in parallel.
+    await Promise.all(
+      projects.map((scope) => IntelligenceEngine.synthesizeInsights(scope)),
+    );
     return projects.length;
   },
 });
@@ -264,6 +266,9 @@ registerTaskCompletedHandler(async (taskId) => {
 // Externally visible completed work gets a measurement plan; completed
 // MEASUREMENT_CHECK tasks store their observation on the check.
 registerTaskCompletedHandler(async (taskId) => {
+  // Focus mode turns the measurement loop off (agency-focus.ts) — don't
+  // pile up plans whose checks would all fire at once when it's re-enabled.
+  if (isAgencyFocusMode()) return;
   await MeasurementEngine.planForCompletedTask(taskId);
 });
 registerTaskCompletedHandler(async (taskId) => {

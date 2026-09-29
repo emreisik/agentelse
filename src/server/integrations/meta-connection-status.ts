@@ -1,14 +1,17 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import type { MetaCredentialMetadata } from "@/server/integrations/meta-client";
+import {
+  META_PROVIDER,
+  type MetaInstagramMetadata,
+} from "@/server/integrations/meta-client";
 
 // Which of a project's accounts with a real OAuth connection can actually
 // be published to — the SINGLE source of data that the "Share on Social
 // Accounts" section on the creative card (see creative-card.tsx) lists
 // (for Instagram, the metadata.pages matching logic is the same as
 // canExecute() in meta-api-provider.ts). Instagram requires being linked
-// to a selected Meta Page; TikTok/LinkedIn/X have no extra selection step
+// to a selected Page (Instagram integration); TikTok/LinkedIn/X have no extra selection step
 // — a single ACTIVE IntegrationCredential is enough (see
 // getSimpleCredentialTarget).
 export type PublishTarget =
@@ -26,11 +29,13 @@ async function getInstagramTargets(
   projectId: string,
 ): Promise<PublishTarget[]> {
   const credential = await prisma.integrationCredential.findUnique({
-    where: { projectId_provider: { projectId, provider: "meta" } },
+    where: {
+      projectId_provider: { projectId, provider: META_PROVIDER.instagram },
+    },
   });
   if (!credential || credential.status !== "ACTIVE") return [];
 
-  const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+  const metadata = (credential.metadata ?? {}) as MetaInstagramMetadata;
   const page = metadata.pages?.find(
     (p) => p.pageId === metadata.selectedPageId,
   );

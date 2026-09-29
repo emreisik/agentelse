@@ -7,8 +7,6 @@ import { TikTokApiProvider } from "@/server/execution/providers/tiktok/tiktok-ap
 import { LinkedInApiProvider } from "@/server/execution/providers/linkedin/linkedin-api-provider";
 import { XApiProvider } from "@/server/execution/providers/x/x-api-provider";
 import { OpenClawProvider } from "@/server/execution/providers/openclaw/openclaw-provider";
-import { GeminiAiProvider } from "@/server/execution/providers/gemini/gemini-ai.provider";
-import { GeminiCreativeProvider } from "@/server/execution/providers/gemini/gemini-creative.provider";
 import { OpenAiAiProvider } from "@/server/execution/providers/openai/openai-ai.provider";
 import { OpenAiCreativeProvider } from "@/server/execution/providers/openai/openai-creative.provider";
 import { MockOpenClawProvider } from "@/server/execution/providers/mock/mock-openclaw.provider";
@@ -26,21 +24,24 @@ import { MockPublishingProvider } from "@/server/execution/providers/mock/mock-p
 // and google-api-provider.ts canExecute), the real API is preferred over
 // browser automation.
 //
-// GeminiAiProvider comes before OpenAiAiProvider: both own the same 14
-// text/analysis capabilities, so Gemini is tried first and OpenAI is the
-// automatic fallback when GEMINI_API_KEY is unset or ProviderHealthService
-// circuit-breaks it — CapabilityRouter.route() walks providers in this
-// registration order and picks the first configured + healthy match (see
-// capability-router.ts). GeminiAiProvider additionally owns the 4
-// search-grounded research capabilities (BRAND_DISCOVERY, WEB_RESEARCH,
-// COMPETITOR_RESEARCH, SEO_RESEARCH) via Gemini's native Google Search
-// grounding tool; OpenAiAiProvider deliberately does NOT claim those
-// (OpenAI's Chat Completions API has no built-in web-search tool), so
-// OpenClawProvider — registered right after — is their fallback instead.
-// GeminiCreativeProvider comes before OpenAiCreativeProvider for the same
-// reason: both own CREATE_SOCIAL_CREATIVE/CREATE_AD_CREATIVE, Gemini is
-// tried first (its "Nano Banana" model also becomes creative-image.ts's
-// first image-generation tier — see that file), OpenAI is the fallback.
+// GeminiAiProvider/GeminiCreativeProvider are deliberately NOT registered
+// right now — the GCP project behind GEMINI_API_KEY hit a billing dunning
+// block (403 "Lightning dunning decision is deny"), so every Gemini call
+// (text AND image) was failing outright, and neither gemini-ai.provider.ts
+// nor gemini-creative.provider.ts has an internal fallback of its own (each
+// calls its Gemini backend directly with no try/catch around it) — a single
+// bad call there fails the whole task, it doesn't hand off to OpenAI. Rather
+// than wait for ProviderHealthService's circuit breaker to notice (it needs
+// a failure RATE within a window, not just one bad call) OpenAiAiProvider/
+// OpenAiCreativeProvider are the only real text/creative providers for now.
+// The 4 search-grounded research capabilities Gemini owned exclusively
+// (BRAND_DISCOVERY, WEB_RESEARCH, COMPETITOR_RESEARCH, SEO_RESEARCH —
+// OpenAiAiProvider deliberately doesn't claim those, OpenAI's Chat
+// Completions API has no built-in web-search tool) now fall to
+// OpenClawProvider, exactly the fallback this file already documented for
+// "Gemini unconfigured". Once that GCP project's billing is resolved,
+// re-add `new GeminiAiProvider()` and `new GeminiCreativeProvider()` before
+// their OpenAI counterparts below (see the two `import`s removed above too).
 class ProviderRegistryImpl {
   private readonly providers: ExecutionProvider[] = [
     new MetaApiProvider(),
@@ -48,10 +49,8 @@ class ProviderRegistryImpl {
     new TikTokApiProvider(),
     new LinkedInApiProvider(),
     new XApiProvider(),
-    new GeminiAiProvider(),
     new OpenAiAiProvider(),
     new OpenClawProvider(),
-    new GeminiCreativeProvider(),
     new OpenAiCreativeProvider(),
     new MockCreativeProvider(),
     new MockPublishingProvider(),

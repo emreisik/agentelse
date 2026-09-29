@@ -2,6 +2,10 @@ import "server-only";
 
 import type { SignalCategory, SignalIntensity } from "@prisma/client";
 
+import {
+  FOCUS_SIGNAL_CATEGORIES,
+  isAgencyFocusMode,
+} from "@/server/agency/agency-focus";
 import { prisma } from "@/lib/prisma";
 
 export type SignalProfileInput = {
@@ -55,6 +59,10 @@ export const SignalProfileRepository = {
       where: {
         intensity: { not: "OFF" },
         nextScanAt: { lte: new Date() },
+        // Focus mode (agency-focus.ts): only social/ads categories scan.
+        ...(isAgencyFocusMode()
+          ? { category: { in: [...FOCUS_SIGNAL_CATEGORIES] } }
+          : {}),
       },
       take: limit,
       orderBy: { nextScanAt: "asc" },

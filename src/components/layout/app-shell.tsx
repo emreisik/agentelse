@@ -2,10 +2,8 @@ import Link from "next/link";
 
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/server/security/tenant-context";
-import { PipelineRepository } from "@/server/repositories/pipeline.repository";
-import { SidebarNav, type SidebarFlow } from "@/components/layout/sidebar-nav";
+import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { SetupProgressWidget } from "@/components/layout/setup-progress-widget";
-import { TopBar } from "@/components/layout/top-bar";
 import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
 import type { PanelKey } from "@/components/hub-core/hub-core-params";
 import { getAgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
@@ -180,110 +178,19 @@ function toolBadgesFrom(
   const islerBadge =
     projectBadges.proposedHandoffs + projectBadges.awaitingPlans;
   if (islerBadge > 0) badges.work = islerBadge;
-  if (projectBadges.pendingApprovals > 0) {
-    badges.approvals = projectBadges.pendingApprovals;
-  }
   if (projectBadges.pendingHumanActions > 0) {
     badges["human-action"] = projectBadges.pendingHumanActions;
   }
   return badges;
 }
 
-// The "Initiatives" list in the sidebar — the flow kanban's old data source
-// (PipelineRepository, untouched) turns into clickable entries here that
-// jump to where that idea's conversation lives inside the single project
-// chat (see page.tsx / sidebar-nav.tsx — there's no separate idea thread
-// anymore). To avoid clutter, ONLY cards that are rooted in an idea are
-// listed (the work plan/tasks a given idea produces are already shown
-// merged inside the same "chat" in project-flow-view.tsx) — standalone
-// tasks/work plans with no idea don't get their own row here, to avoid
-// crowding (they're still reachable from Tools → Work). If the same idea
-// matches multiple cards (e.g. an idea plus its matched workPlan card),
-// they collapse into a single entry.
-//
-// Sort order is "most recently active on top": the Idea/WorkPlan row's own
-// updatedAt (e.g. a status change) alone isn't enough — in the "everything
-// in one chat" architecture, the real activity accumulates as Command rows
-// (user messages, council/work-plan/task-creative system messages), and
-// those don't touch the Idea row. So we also fetch the latest Command time
-// for each idea and use whichever of the two is more recent. The EARLIEST
-// Command time is fetched too — it becomes each idea's `since`, so the
-// single chat's default recent-window query is guaranteed to include the
-// point this idea's conversation starts (see page.tsx's `?since=`).
-async function getSidebarFlows(projectId: string): Promise<SidebarFlow[]> {
-  const cards = await PipelineRepository.listCards(projectId);
-  const byIdea = new Map<string, { title: string; updatedAt: Date }>();
-  // Orphan (idea-less) task cards with an open approval — e.g.
-  // PerformanceOptimizer's rule-based proposals, which bypass Idea/Council
-  // entirely (see performance-optimizer.ts) and so never get an idea row.
-  // Gated on openApprovalCount > 0 rather than listing every orphan task:
-  // that's the one signal that actually means "needs your attention now,"
-  // and keeps this from flooding the sidebar with routine completed/running
-  // system tasks that already show up in the Work panel.
-  const orphanTaskFlows: SidebarFlow[] = [];
-  for (const card of cards) {
-    if (card.kind === "task" && !card.ideaId && card.openApprovalCount > 0) {
-      orphanTaskFlows.push({ id: card.id, kind: "task", title: card.title });
-    }
-    if (!card.ideaId) continue;
-    const existing = byIdea.get(card.ideaId);
-    if (!existing || card.updatedAt > existing.updatedAt) {
-      byIdea.set(card.ideaId, { title: card.title, updatedAt: card.updatedAt });
-    }
-  }
-
-  const ideaIds = Array.from(byIdea.keys());
-  const activityByIdea = ideaIds.length
-    ? await prisma.command.groupBy({
-        by: ["ideaId"],
-        where: { ideaId: { in: ideaIds } },
-        _max: { createdAt: true },
-        _min: { createdAt: true },
-      })
-    : [];
-  const validActivityRows = activityByIdea.filter(
-    (row): row is typeof row & { ideaId: string } => Boolean(row.ideaId),
-  );
-  const lastActivityMap = new Map(
-    validActivityRows.map((row) => [row.ideaId, row._max.createdAt]),
-  );
-  const earliestActivityMap = new Map(
-    validActivityRows.map((row) => [row.ideaId, row._min.createdAt]),
-  );
-
-  const ideaFlows: SidebarFlow[] = Array.from(byIdea.entries())
-    .map(([ideaId, { title, updatedAt }]) => {
-      const lastCommandAt = lastActivityMap.get(ideaId);
-      const lastActivityAt =
-        lastCommandAt && lastCommandAt > updatedAt ? lastCommandAt : updatedAt;
-      return { ideaId, title, lastActivityAt };
-    })
-    .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
-    .map(({ ideaId, title }) => ({
-      id: ideaId,
-      kind: "idea" as const,
-      title,
-      since: earliestActivityMap.get(ideaId)?.toISOString(),
-    }));
-
-  // Orphan tasks awaiting approval surface first — they need attention now,
-  // unlike idea threads which are just recent conversation history.
-  return [...orphanTaskFlows, ...ideaFlows];
-}
-
 export async function AppShell({
   children,
   projectId,
-  showSidebar,
   rightPanel,
 }: {
   children: React.ReactNode;
   projectId?: string;
-  // Project route segments render this shell from a loading.tsx boundary,
-  // which (per Next.js) never receives params — so it can't pass projectId
-  // yet. Those pass showSidebar explicitly instead of relying on the
-  // projectId-presence default below.
-  showSidebar?: boolean;
   // Brand Workspace shell (docs/brand-workspace-migration.md §7) — the
   // right panel's data (Brand/Files/Outputs/Calendar) lives outside what
   // this shell already fetches, so it's the caller's job. undefined at
@@ -300,49 +207,45 @@ export async function AppShell({
       pendingHumanActions,
       projectBadges,
     },
-    flows,
     agencyStatus,
   ] = await Promise.all([
     getSidebarData(userId, projectId),
-    projectId ? getSidebarFlows(projectId) : Promise.resolve(null),
     projectId ? getAgencyStatusSnapshot(projectId) : Promise.resolve(null),
   ]);
-  const sidebarVisible = showSidebar ?? Boolean(projectId);
+  const sidebarVisible = Boolean(projectId);
 
-  // The Brand Workspace root view (pixel spec §15) gets its own compact
-  // header + shared panel-toggle context — rightPanel alone is a reliable
-  // signal for this (it's only ever passed by that one screen), independent
-  // of sidebar visibility. Every other screen (idea threads,
-  // Ideas/Work/Library/Settings/etc) renders exactly as before.
+  // Only the project chat root passes a right panel (pixel spec §15) — it
+  // alone gets the panel-toggle context and the header's toggle button.
   const isWorkspaceRoot = Boolean(rightPanel);
   const projectName =
     workspace?.projects.find((p) => p.id === projectId)?.name ?? "";
 
-  const header = isWorkspaceRoot ? (
+  // One header for every page. Counts are project-scoped inside a project
+  // and workspace-wide elsewhere (projectBadges' own approvals/human-action
+  // counts are zero without a project, so they can't be used there).
+  const header = (
     <WorkspaceTopBar
-      projectId={projectId!}
+      projectId={projectId}
       projectName={projectName}
       projects={workspace?.projects ?? []}
-      pendingApprovals={projectBadges?.pendingApprovals ?? 0}
+      counts={{
+        approvals: projectId
+          ? (projectBadges?.pendingApprovals ?? 0)
+          : pendingApprovals,
+        humanActions: projectId
+          ? (projectBadges?.pendingHumanActions ?? 0)
+          : pendingHumanActions,
+        errors: projectBadges?.systemErrors ?? 0,
+      }}
+      toolBadges={toolBadgesFrom(projectBadges)}
       setupPercent={projectBadges?.setupPercent ?? null}
       setupStageLabel={projectBadges?.setupStageLabel ?? null}
       agencyStatus={agencyStatus}
       displayName={displayName}
-      email={email}
-      showLogo={!sidebarVisible}
-    />
-  ) : (
-    <TopBar
-      showLogo={!sidebarVisible}
-      projects={workspace?.projects ?? []}
-      pendingApprovals={pendingApprovals}
-      pendingHumanActions={pendingHumanActions}
-      systemErrors={projectBadges?.systemErrors ?? 0}
-      toolBadges={toolBadgesFrom(projectBadges)}
-      agencyStatus={agencyStatus}
-      displayName={displayName}
       workspaceName={workspace?.name ?? null}
       email={email}
+      showLogo={!sidebarVisible}
+      hasRightPanel={isWorkspaceRoot}
     />
   );
 
@@ -375,9 +278,12 @@ export async function AppShell({
     <div className="flex h-screen overflow-hidden">
       {sidebarVisible ? (
         <aside className="flex h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar">
+          {/* Same 72px as WorkspaceTopBar so the two bottom borders form one
+              continuous line; 22px = SidebarNav's px-3 + item px-2.5, which
+              puts the wordmark on the nav icons' column. */}
           <Link
             href="/dashboard"
-            className="flex items-center border-b border-sidebar-border px-4 py-4 transition-opacity hover:opacity-80"
+            className="flex h-[72px] shrink-0 items-center border-b border-sidebar-border px-[22px] transition-opacity hover:opacity-80"
           >
             <img
               src="/logo.png"
@@ -386,7 +292,10 @@ export async function AppShell({
             />
           </Link>
 
-          <SidebarNav activeProjectId={projectId} flows={flows} />
+          <SidebarNav
+            activeProjectId={projectId}
+            toolBadges={toolBadgesFrom(projectBadges)}
+          />
         </aside>
       ) : null}
 

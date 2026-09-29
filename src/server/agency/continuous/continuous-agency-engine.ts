@@ -1,5 +1,9 @@
 import "server-only";
 
+import {
+  FOCUS_DISABLED_TICK_STEPS,
+  isAgencyFocusMode,
+} from "@/server/agency/agency-focus";
 import { ResultMaterializer } from "@/server/agency/intelligence/research-result-materializer";
 import { ProjectSetupOrchestrator } from "@/server/agency/setup/project-setup-orchestrator";
 import { AgencyTriggerRepository } from "@/server/repositories/agency-trigger.repository";
@@ -146,7 +150,11 @@ export const ContinuousAgencyEngine = {
     const steps: TickStep[] = [
       { name: "triggers", run: () => this.processTriggers(20) },
       { name: "setup", run: () => ProjectSetupOrchestrator.advanceAll(5) },
-      ...EXTRA_STEPS,
+      // Focus mode (agency-focus.ts) skips steps outside social/ads work.
+      ...EXTRA_STEPS.filter(
+        (step) =>
+          !isAgencyFocusMode() || !FOCUS_DISABLED_TICK_STEPS.has(step.name),
+      ),
     ];
 
     for (const step of steps) {

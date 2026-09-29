@@ -1,93 +1,50 @@
 import Link from "next/link";
-import { startOfMonth, subDays, format } from "date-fns";
-import {
-  Activity,
-  CheckCircle2,
-  ClipboardCheck,
-  FolderKanban,
-  Plus,
-  UserRoundCog,
-  Wallet,
-} from "lucide-react";
+import { startOfMonth, subDays } from "date-fns";
+import { ChevronRight, Plus } from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
+import { PROJECT_STATUS } from "@/lib/labels";
+import type { StatusTone } from "@/lib/labels";
 import {
   requireUser,
   requireWorkspaceMembership,
 } from "@/server/security/tenant-context";
 import { AppShell } from "@/components/layout/app-shell";
-import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { StatCard } from "@/components/dashboard/stat-card";
 import { DashboardCommandBar } from "@/components/dashboard/dashboard-command-bar";
-import { ProjectOverviewCard } from "@/components/dashboard/project-overview-card";
-import { TasksTable } from "@/components/dashboard/tasks-table";
-import { ApprovalsPanel } from "@/components/dashboard/approvals-panel";
-import { OpsPanel } from "@/components/dashboard/ops-panel";
-import { OpportunitiesPanel } from "@/components/dashboard/opportunities-panel";
-import { ActivityFeed } from "@/components/dashboard/activity-feed";
+import { DashboardGreeting } from "@/components/dashboard/dashboard-greeting";
 
-function computeHealth(rows: { status: string; completedAt: Date | null }[]) {
-  const completed = rows.filter((r) => r.status === "COMPLETED").length;
-  const failed = rows.filter((r) => r.status === "FAILED").length;
-  const total = completed + failed;
-  const healthPercent =
-    total === 0 ? null : Math.round((completed / total) * 100);
+const TONE_DOT: Record<StatusTone, string> = {
+  positive: "var(--ws-approved)",
+  active: "var(--ws-accent)",
+  waiting: "var(--ws-pending)",
+  danger: "var(--destructive)",
+  neutral: "var(--ws-text-3)",
+  special: "var(--ws-text-3)",
+};
 
-  const sevenDaysAgo = subDays(new Date(), 7);
-  const recent = rows.filter(
-    (r) => r.completedAt && r.completedAt >= sevenDaysAgo,
-  );
-  const byDay = new Map<string, { completed: number; failed: number }>();
-  for (const row of recent) {
-    const day = format(row.completedAt!, "MM-dd");
-    const bucket = byDay.get(day) ?? { completed: 0, failed: 0 };
-    if (row.status === "COMPLETED") bucket.completed += 1;
-    else bucket.failed += 1;
-    byDay.set(day, bucket);
-  }
-  const sparkline = Array.from(byDay.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([day, bucket]) => ({
-      day,
-      rate: Math.round(
-        (bucket.completed / (bucket.completed + bucket.failed)) * 100,
-      ),
-    }));
-
-  return { healthPercent, sparkline };
+function countByProject(rows: { projectId: string; _count: number }[]) {
+  return new Map(rows.map((row) => [row.projectId, row._count]));
 }
 
 async function getDashboardData(workspaceId: string) {
   const monthStart = startOfMonth(new Date());
   const thirtyDaysAgo = subDays(new Date(), 30);
 
-  const projects = await prisma.project.findMany({
-    where: { workspaceId },
-    orderBy: { name: "asc" },
-  });
-  const projectIds = projects.map((p) => p.id);
-  const projectNameById = new Map(projects.map((p) => [p.id, p.name]));
-
   const [
+    projects,
     runningAgents,
-    waitingApprovals,
-    humanActionsRequired,
     monthlyJobs,
     tasksCompletedThisMonth,
-    recentTasks,
-    pendingApprovals,
-    browserProfiles,
-    pendingHumanActions,
-    opportunities,
-    auditLogs,
+    approvalsByProject,
+    humanActionsByProject,
     healthRows,
   ] = await Promise.all([
-    prisma.executionJob.count({ where: { workspaceId, status: "RUNNING" } }),
-    prisma.approval.count({ where: { workspaceId, status: "PENDING" } }),
-    prisma.humanInterventionRequest.count({
-      where: { workspaceId, status: "PENDING" },
+    prisma.project.findMany({
+      where: { workspaceId },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, status: true, domain: true },
     }),
+    prisma.executionJob.count({ where: { workspaceId, status: "RUNNING" } }),
     prisma.executionJob.findMany({
       where: { workspaceId, createdAt: { gte: monthStart } },
       select: { actualCost: true, estimatedCost: true },
@@ -99,278 +56,347 @@ async function getDashboardData(workspaceId: string) {
         completedAt: { gte: monthStart },
       },
     }),
-    prisma.task.findMany({
-      where: { workspaceId },
-      orderBy: { updatedAt: "desc" },
-      take: 8,
-    }),
-    prisma.approval.findMany({
+    prisma.approval.groupBy({
+      by: ["projectId"],
       where: { workspaceId, status: "PENDING" },
-      orderBy: { createdAt: "desc" },
-      take: 4,
+      _count: true,
     }),
-    prisma.browserProfile.findMany({
-      where: { workspaceId },
-      orderBy: { updatedAt: "desc" },
-    }),
-    prisma.humanInterventionRequest.findMany({
+    prisma.humanInterventionRequest.groupBy({
+      by: ["projectId"],
       where: { workspaceId, status: "PENDING" },
-      orderBy: { createdAt: "desc" },
-      take: 3,
+      _count: true,
     }),
-    prisma.opportunity.findMany({
-      where: { workspaceId, status: { in: ["NEW", "REVIEWING"] } },
-      orderBy: { createdAt: "desc" },
-      take: 4,
-    }),
-    prisma.auditLog.findMany({
-      where: { workspaceId },
-      orderBy: { createdAt: "desc" },
-      take: 8,
-    }),
-    prisma.task.findMany({
+    prisma.task.groupBy({
+      by: ["projectId", "status"],
       where: {
         workspaceId,
         status: { in: ["COMPLETED", "FAILED"] },
         completedAt: { gte: thirtyDaysAgo },
       },
-      select: { projectId: true, status: true, completedAt: true },
+      _count: true,
     }),
   ]);
 
-  const monthlyCost = monthlyJobs.reduce(
-    (sum, job) => sum + (job.actualCost ?? job.estimatedCost ?? 0),
+  const approvalCounts = countByProject(approvalsByProject);
+  const humanActionCounts = countByProject(humanActionsByProject);
+
+  // Success rate of finished tasks over the last 30 days; null when the
+  // project hasn't finished anything yet (shown as "—", not 0%).
+  const healthByProject = new Map<string, number>();
+  for (const project of projects) {
+    const rows = healthRows.filter((r) => r.projectId === project.id);
+    const completed = rows.find((r) => r.status === "COMPLETED")?._count ?? 0;
+    const total = rows.reduce((sum, r) => sum + r._count, 0);
+    if (total > 0) {
+      healthByProject.set(project.id, Math.round((completed / total) * 100));
+    }
+  }
+
+  const totalApprovals = approvalsByProject.reduce((s, r) => s + r._count, 0);
+  const totalHumanActions = humanActionsByProject.reduce(
+    (s, r) => s + r._count,
     0,
   );
 
-  const browserProfilesByProject = new Map<string, typeof browserProfiles>();
-  for (const profile of browserProfiles) {
-    const list = browserProfilesByProject.get(profile.projectId) ?? [];
-    list.push(profile);
-    browserProfilesByProject.set(profile.projectId, list);
-  }
-
-  const healthRowsByProject = new Map<string, typeof healthRows>();
-  for (const row of healthRows) {
-    const list = healthRowsByProject.get(row.projectId) ?? [];
-    list.push(row);
-    healthRowsByProject.set(row.projectId, list);
-  }
-
-  const actorIds = Array.from(
-    new Set(
-      auditLogs
-        .filter((log) => log.actorType === "USER" && log.actorId)
-        .map((log) => log.actorId as string),
-    ),
-  );
-  const users = actorIds.length
-    ? await prisma.user.findMany({
-        where: { id: { in: actorIds } },
-        select: { id: true, name: true, email: true },
-      })
-    : [];
-  const userById = new Map(users.map((u) => [u.id, u]));
-
   return {
-    projects,
-    projectNameById,
-    projectIds,
+    projects: projects.map((project) => ({
+      ...project,
+      waiting:
+        (approvalCounts.get(project.id) ?? 0) +
+        (humanActionCounts.get(project.id) ?? 0),
+      health: healthByProject.get(project.id) ?? null,
+    })),
     stats: {
       activeProjects: projects.filter((p) => p.status === "ACTIVE").length,
       runningAgents,
-      waitingApprovals,
-      humanActionsRequired,
-      monthlyCost,
+      waitingOnYou: totalApprovals + totalHumanActions,
       tasksCompletedThisMonth,
+      monthlyCost: monthlyJobs.reduce(
+        (sum, job) => sum + (job.actualCost ?? job.estimatedCost ?? 0),
+        0,
+      ),
     },
-    recentTasks,
-    pendingApprovals,
-    browserProfilesByProject,
-    browserProfilesPreview: browserProfiles.slice(0, 5),
-    pendingHumanActions,
-    opportunities,
-    activities: auditLogs.map((log) => ({
-      id: log.id,
-      action: log.action,
-      entityType: log.entityType,
-      projectName: log.projectId
-        ? (projectNameById.get(log.projectId) ?? null)
-        : null,
-      createdAt: log.createdAt,
-      actorLabel:
-        log.actorType === "USER" && log.actorId
-          ? (userById.get(log.actorId)?.name ??
-            userById.get(log.actorId)?.email ??
-            "a user")
-          : log.actorType === "SYSTEM"
-            ? "system"
-            : "agent",
-    })),
-    healthRowsByProject,
   };
 }
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
+  maximumFractionDigits: 0,
 });
 
 export default async function DashboardPage() {
   const { userId } = await requireUser();
   const { workspaceId } = await requireWorkspaceMembership(userId);
-  const data = await getDashboardData(workspaceId);
+  const [data, currentUser] = await Promise.all([
+    getDashboardData(workspaceId),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, email: true },
+    }),
+  ]);
+
+  const firstName =
+    (currentUser?.name ?? currentUser?.email ?? "").split(/[\s@]/)[0] || null;
+  const { stats } = data;
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-5xl px-6 py-10 md:py-14">
-        <div className="mb-10 flex flex-col items-center gap-5 text-center">
-          <div>
-            <h1 className="font-heading text-3xl font-semibold tracking-tight md:text-4xl">
-              What would you like to do today?
-            </h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Agency-wide operations overview
-            </p>
-          </div>
-          <div className="w-full max-w-xl">
-            <DashboardCommandBar
-              projects={data.projects.map((project) => ({
-                id: project.id,
-                name: project.name,
-                status: project.status,
-              }))}
-            />
-          </div>
-        </div>
+      <div className="mx-auto flex w-full max-w-[860px] flex-col gap-8 px-4 py-10 md:py-14">
+        <DashboardGreeting
+          firstName={firstName}
+          subtitle={
+            stats.waitingOnYou > 0
+              ? `${stats.waitingOnYou} ${stats.waitingOnYou === 1 ? "thing needs" : "things need"} your attention across your brands.`
+              : "Everything is moving. Nothing is waiting on you."
+          }
+        />
 
-        <div className="mx-auto grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-3">
-          <StatCard
-            label="Active projects"
-            value={data.stats.activeProjects}
-            href="#"
-            icon={FolderKanban}
+        <div className="flex flex-col gap-3">
+          <DashboardCommandBar
+            projects={data.projects.map((project) => ({
+              id: project.id,
+              name: project.name,
+              status: project.status,
+            }))}
           />
-          <StatCard
-            label="Running agents"
-            value={data.stats.runningAgents}
-            href="#"
-            icon={Activity}
-          />
-          <StatCard
-            label="Pending approvals"
-            value={data.stats.waitingApprovals}
-            href="/approvals"
-            icon={ClipboardCheck}
-          />
-          <StatCard
-            label="Human actions"
-            value={data.stats.humanActionsRequired}
-            href="/human-actions"
-            icon={UserRoundCog}
-          />
-          <StatCard
-            label="Monthly cost"
-            value={currencyFormatter.format(data.stats.monthlyCost)}
-            href="#"
-            icon={Wallet}
-          />
-          <StatCard
-            label="Completed tasks"
-            value={data.stats.tasksCompletedThisMonth}
-            href="#"
-            icon={CheckCircle2}
-          />
-        </div>
 
-        <Tabs defaultValue="projeler" className="mt-14">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <TabsList>
-              <TabsTrigger value="projeler">Projects</TabsTrigger>
-              <TabsTrigger value="gorevler">Tasks</TabsTrigger>
-              <TabsTrigger value="onaylar">Approvals &amp; Actions</TabsTrigger>
-              <TabsTrigger value="aktivite">Activity</TabsTrigger>
-            </TabsList>
-            <Button
-              render={<Link href="/projects/new" />}
-              nativeButton={false}
-              variant="ghost"
-              size="sm"
-            >
-              <Plus className="size-4" />
-              New Project
-            </Button>
-          </div>
-
-          <TabsContent value="projeler" className="mt-4">
-            {data.projects.length > 0 ? (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {data.projects.map((project) => {
-                  const purposes = Array.from(
-                    new Set(
-                      (data.browserProfilesByProject.get(project.id) ?? []).map(
-                        (p) => p.purpose,
-                      ),
-                    ),
-                  );
-                  const { healthPercent, sparkline } = computeHealth(
-                    data.healthRowsByProject.get(project.id) ?? [],
-                  );
-                  return (
-                    <ProjectOverviewCard
-                      key={project.id}
-                      project={project}
-                      purposes={purposes}
-                      healthPercent={healthPercent}
-                      sparkline={sparkline}
-                    />
-                  );
-                })}
+          {/* Same "Where we left off" strip as the project chat, scoped to
+              the whole workspace. */}
+          <div
+            className="rounded-[13px] border px-4 py-3.5 sm:px-[18px]"
+            style={{
+              borderColor: "var(--ws-border)",
+              background: "var(--ws-surface-2)",
+            }}
+          >
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+              <div>
+                <div
+                  className="text-xs font-medium"
+                  style={{ color: "var(--ws-text)" }}
+                >
+                  Across your agency.
+                </div>
+                <div
+                  className="text-[11px]"
+                  style={{ color: "var(--ws-text-3)" }}
+                >
+                  {currencyFormatter.format(stats.monthlyCost)} spent this month
+                </div>
               </div>
-            ) : (
-              <p className="py-10 text-center text-sm text-muted-foreground">
-                No projects yet.
-              </p>
-            )}
-          </TabsContent>
-
-          <TabsContent value="gorevler" className="mt-4">
-            <TasksTable
-              tasks={data.recentTasks.map((task) => ({
-                id: task.id,
-                title: task.title,
-                projectId: task.projectId,
-                projectName: data.projectNameById.get(task.projectId) ?? "—",
-                capability: task.capability,
-                status: task.status,
-                updatedAt: task.updatedAt,
-              }))}
-            />
-          </TabsContent>
-
-          <TabsContent value="onaylar" className="mt-4">
-            <div className="grid gap-4 lg:grid-cols-3">
-              <ApprovalsPanel
-                approvals={data.pendingApprovals}
-                projectNameById={data.projectNameById}
-              />
-              <OpsPanel
-                browserProfiles={data.browserProfilesPreview}
-                humanActions={data.pendingHumanActions}
-                projectNameById={data.projectNameById}
-              />
-              <OpportunitiesPanel
-                opportunities={data.opportunities}
-                projectNameById={data.projectNameById}
-              />
+              <div className="grid grid-cols-4 items-center gap-2 sm:ml-auto sm:flex sm:gap-0">
+                <Stat
+                  value={stats.activeProjects}
+                  label="active brands"
+                  divider={false}
+                />
+                <Stat value={stats.runningAgents} label="running now" />
+                <Stat
+                  value={stats.waitingOnYou}
+                  label="waiting on you"
+                  href="/approvals"
+                  highlight={stats.waitingOnYou > 0}
+                />
+                <Stat
+                  value={stats.tasksCompletedThisMonth}
+                  label="done this month"
+                />
+              </div>
             </div>
-          </TabsContent>
+          </div>
+        </div>
 
-          <TabsContent value="aktivite" className="mt-4">
-            <ActivityFeed activities={data.activities} />
-          </TabsContent>
-        </Tabs>
+        <section className="flex flex-col gap-2.5">
+          <SectionHeader title="YOUR BRANDS">
+            <Link
+              href="/projects/new"
+              className="flex items-center gap-1 text-[11px] font-medium transition-opacity hover:opacity-70"
+              style={{ color: "var(--ws-text-2)" }}
+            >
+              <Plus className="size-3.5" />
+              New brand
+            </Link>
+          </SectionHeader>
+          <Surface>
+            {data.projects.length === 0 ? (
+              <EmptyRow text="No brands yet. Create one to get started." />
+            ) : (
+              data.projects.map((project) => {
+                const status = PROJECT_STATUS[project.status];
+                return (
+                  <Link
+                    key={project.id}
+                    href={`/projects/${project.id}`}
+                    className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-[var(--ws-hover)]"
+                  >
+                    <span
+                      className="flex size-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold uppercase"
+                      style={{
+                        background: "var(--ws-soft-green)",
+                        color: "var(--ws-accent)",
+                      }}
+                    >
+                      {project.name.charAt(0)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div
+                        className="truncate text-sm font-medium"
+                        style={{ color: "var(--ws-text)" }}
+                      >
+                        {project.name}
+                      </div>
+                      <div
+                        className="flex items-center gap-1.5 text-[11px]"
+                        style={{ color: "var(--ws-text-3)" }}
+                      >
+                        <span
+                          className="size-1.5 shrink-0 rounded-full"
+                          style={{ background: TONE_DOT[status.tone] }}
+                        />
+                        {status.label}
+                        {project.domain ? (
+                          <span className="truncate">· {project.domain}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    {project.waiting > 0 ? (
+                      <span
+                        className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                        style={{
+                          background:
+                            "color-mix(in oklch, var(--ws-pending) 15%, transparent)",
+                          color: "var(--ws-pending)",
+                        }}
+                      >
+                        {project.waiting} waiting
+                      </span>
+                    ) : null}
+                    <div
+                      className="hidden w-14 shrink-0 text-right sm:block"
+                      title="Task success rate, last 30 days"
+                    >
+                      <div
+                        className="text-sm font-semibold tabular-nums"
+                        style={{ color: "var(--ws-text)" }}
+                      >
+                        {project.health === null ? "—" : `${project.health}%`}
+                      </div>
+                      <div
+                        className="text-[10px]"
+                        style={{ color: "var(--ws-text-3)" }}
+                      >
+                        health
+                      </div>
+                    </div>
+                    <ChevronRight
+                      className="size-4 shrink-0 transition-transform group-hover:translate-x-0.5"
+                      style={{ color: "var(--ws-text-3)" }}
+                    />
+                  </Link>
+                );
+              })
+            )}
+          </Surface>
+        </section>
       </div>
     </AppShell>
+  );
+}
+
+function SectionHeader({
+  title,
+  children,
+}: {
+  title: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between px-1">
+      <span
+        className="text-[10px] font-semibold tracking-[0.1em]"
+        style={{ color: "var(--ws-text-3)" }}
+      >
+        {title}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+function Surface({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="divide-y divide-[var(--ws-border)] overflow-hidden rounded-2xl border"
+      style={{
+        borderColor: "var(--ws-border)",
+        background: "var(--ws-surface)",
+        boxShadow: "var(--ws-card-shadow)",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function EmptyRow({ text }: { text: string }) {
+  return (
+    <p className="px-4 py-3.5 text-xs" style={{ color: "var(--ws-text-3)" }}>
+      {text}
+    </p>
+  );
+}
+
+// Mirrors ResumeStat in project-chat.tsx — the workspace view links out
+// instead of switching a right-panel tab.
+function Stat({
+  value,
+  label,
+  href,
+  divider = true,
+  highlight = false,
+}: {
+  value: number;
+  label: string;
+  href?: string;
+  divider?: boolean;
+  highlight?: boolean;
+}) {
+  const body = (
+    <>
+      <div
+        className="text-lg font-semibold tabular-nums"
+        style={{ color: highlight ? "var(--ws-pending)" : "var(--ws-text)" }}
+      >
+        {String(value).padStart(2, "0")}
+      </div>
+      <div
+        className="text-[10px] whitespace-nowrap"
+        style={{ color: "var(--ws-text-3)" }}
+      >
+        {label}
+      </div>
+    </>
+  );
+
+  return (
+    <div className="flex items-center">
+      {divider ? (
+        <span
+          className="mx-4 hidden h-8 w-px shrink-0 sm:block"
+          style={{ background: "var(--ws-border)" }}
+        />
+      ) : null}
+      {href ? (
+        <Link
+          href={href}
+          className="rounded-lg text-center transition-opacity hover:opacity-70"
+        >
+          {body}
+        </Link>
+      ) : (
+        <div className="text-center">{body}</div>
+      )}
+    </div>
   );
 }

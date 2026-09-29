@@ -11,23 +11,59 @@ const GRAPH_API_VERSION = "v26.0";
 const AUTHORIZE_URL = `https://www.facebook.com/${GRAPH_API_VERSION}/dialog/oauth`;
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
-const SCOPES = [
-  "pages_show_list",
-  "pages_manage_posts",
-  "pages_read_engagement",
-  "instagram_basic",
-  "instagram_content_publish",
-  "ads_management",
-  "ads_read",
-  "business_management",
-];
-
 const DEFAULT_TIMEOUT_MS = 8_000;
 
-// The shape of IntegrationCredential.metadata (provider: "meta") — the
-// callback route writes it when establishing the connection, meta-actions.ts
-// updates selection/test results, and the integrations page and
-// MetaApiProvider read it directly.
+// Instagram and Meta Ads are two independent integrations: each has its own
+// OAuth grant (only the scopes that service needs), its own long-lived token
+// and its own IntegrationCredential row — so they can be connected from
+// different Facebook accounts and disconnected separately. Both share the
+// same Meta app and the same registered redirect URI; the service travels
+// in the signed OAuth state.
+export const META_SERVICES = ["instagram", "ads"] as const;
+export type MetaService = (typeof META_SERVICES)[number];
+
+export const META_PROVIDER = {
+  instagram: "instagram",
+  ads: "meta_ads",
+} as const satisfies Record<MetaService, string>;
+
+export const META_SERVICE_LABEL: Record<MetaService, string> = {
+  instagram: "Instagram",
+  ads: "Meta Ads",
+};
+
+// business_management is on both: Pages owned by a Business Portfolio only
+// show up in /me/accounts with it, and Instagram accounts are usually linked
+// through those Pages.
+const SCOPES: Record<MetaService, string[]> = {
+  instagram: [
+    "pages_show_list",
+    "pages_manage_posts",
+    "pages_read_engagement",
+    "instagram_basic",
+    "instagram_content_publish",
+    "business_management",
+  ],
+  ads: [
+    "pages_show_list",
+    "pages_manage_posts",
+    "pages_read_engagement",
+    "ads_management",
+    "ads_read",
+    "business_management",
+  ],
+};
+
+export function parseMetaService(value: unknown): MetaService | null {
+  return META_SERVICES.includes(value as MetaService)
+    ? (value as MetaService)
+    : null;
+}
+
+// The shapes of IntegrationCredential.metadata for provider "instagram" and
+// "meta_ads" — the callback route writes them when establishing the
+// connection, meta-actions.ts updates selection/test results, and the
+// integrations page and MetaApiProvider read them directly.
 //
 // NOTE: We DELIBERATELY do not store the Page Access Token here — it's just
 // as sensitive a secret as the user token, and metadata is an unencrypted
@@ -47,9 +83,29 @@ export type MetaAdAccount = {
   currency: string;
 };
 
-export type MetaCredentialMetadata = {
+type MetaConnectionInfo = {
   connectedName?: string;
   longLivedTokenExpiresAt?: string;
+};
+
+// provider "instagram": `pages` only lists Pages that have a linked
+// Instagram Business account — that is what publishing needs.
+export type MetaInstagramMetadata = MetaConnectionInfo & {
+  pages: MetaPage[];
+  pagesListError?: string;
+  selectedPageId?: string;
+  selectedPageName?: string;
+  lastTestResult?: {
+    testedAt: string;
+    igUsername?: string;
+    error?: string;
+  };
+};
+
+// provider "meta_ads": `pages` is every managed Page — the selected one is
+// the identity ads run as (AdCreative object_story_spec), and it does not
+// need a linked Instagram account.
+export type MetaAdsMetadata = MetaConnectionInfo & {
   pages: MetaPage[];
   pagesListError?: string;
   adAccounts: MetaAdAccount[];
@@ -61,7 +117,6 @@ export type MetaCredentialMetadata = {
   lastTestResult?: {
     testedAt: string;
     adAccountSpend?: number;
-    igUsername?: string;
     error?: string;
   };
   // Bookkeeping for MetaPerformanceScanner's due-scan check (see
@@ -147,13 +202,16 @@ async function request<T>(
   return body as T;
 }
 
-export function buildMetaAuthorizeUrl(state: string): string {
+export function buildMetaAuthorizeUrl(
+  state: string,
+  service: MetaService,
+): string {
   const env = getEnv();
   const params = new URLSearchParams({
     client_id: env.META_APP_ID,
     redirect_uri: redirectUri(),
     response_type: "code",
-    scope: SCOPES.join(","),
+    scope: SCOPES[service].join(","),
     state,
   });
   return `${AUTHORIZE_URL}?${params.toString()}`;
@@ -266,6 +324,86 @@ export async function listAdAccounts(
     adAccountName: account.name ?? account.id,
     currency: account.currency ?? "USD",
   }));
+}
+
+// List fetches never throw — if a permission wasn't granted for a Page/ad
+// account, the error message goes into the *ListError field and the
+// connection is still established. Used by the OAuth callback.
+async function safeList<T>(
+  promise: Promise<T[]>,
+  fallbackMessage: string,
+): Promise<{ items: T[]; error?: string }> {
+  try {
+    return { items: await promise };
+  } catch (error) {
+    return {
+      items: [],
+      error: error instanceof Error ? error.message : fallbackMessage,
+    };
+  }
+}
+
+// `onlyWithInstagram` is what the Instagram integration wants: publishing
+// needs a Page with a linked Instagram Business account, so other Pages
+// would just be selectable dead ends.
+export async function fetchMetaPageList(
+  accessToken: string,
+  options: { onlyWithInstagram: boolean },
+): Promise<Pick<MetaAdsMetadata, "pages" | "pagesListError">> {
+  const result = await safeList(
+    listManagedPages(accessToken),
+    "Failed to fetch Page list",
+  );
+  const pages = options.onlyWithInstagram
+    ? result.items.filter((p) => p.instagramBusinessAccountId)
+    : result.items;
+  return {
+    pages,
+    pagesListError:
+      result.error ??
+      (options.onlyWithInstagram && pages.length === 0
+        ? "No Page with a linked Instagram Business account found"
+        : undefined),
+  };
+}
+
+export async function fetchMetaAdAccountList(
+  accessToken: string,
+): Promise<Pick<MetaAdsMetadata, "adAccounts" | "adAccountsListError">> {
+  const result = await safeList(
+    listAdAccounts(accessToken),
+    "Failed to fetch ad account list",
+  );
+  return { adAccounts: result.items, adAccountsListError: result.error };
+}
+
+// When a fresh list is fetched (reconnect), the previous selection is kept
+// if it's still in the list, otherwise it's cleared — so the user never sees
+// a Page/ad account as "selected" that they no longer have access to.
+export function reconcilePageSelection(
+  existing: { selectedPageId?: string; selectedPageName?: string },
+  pages: MetaPage[],
+): { selectedPageId?: string; selectedPageName?: string } {
+  const keep =
+    existing.selectedPageId &&
+    pages.some((p) => p.pageId === existing.selectedPageId);
+  return {
+    selectedPageId: keep ? existing.selectedPageId : undefined,
+    selectedPageName: keep ? existing.selectedPageName : undefined,
+  };
+}
+
+export function reconcileAdAccountSelection(
+  existing: { selectedAdAccountId?: string; selectedAdAccountName?: string },
+  adAccounts: MetaAdAccount[],
+): { selectedAdAccountId?: string; selectedAdAccountName?: string } {
+  const keep =
+    existing.selectedAdAccountId &&
+    adAccounts.some((a) => a.adAccountId === existing.selectedAdAccountId);
+  return {
+    selectedAdAccountId: keep ? existing.selectedAdAccountId : undefined,
+    selectedAdAccountName: keep ? existing.selectedAdAccountName : undefined,
+  };
 }
 
 // A one-off test call that proves the connection actually works, without

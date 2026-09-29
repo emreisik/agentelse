@@ -5,7 +5,10 @@ import type { DepartmentKey, RiskLevel } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { CommandAttachment } from "./command.repository";
 import type { CreativeCardData } from "@/types/creative-card";
-import type { IdeaEventCardData } from "@/types/idea-event-card";
+import type {
+  ApprovalCategory,
+  IdeaEventCardData,
+} from "@/types/idea-event-card";
 
 // System messages the agency pipeline (council evaluation, conversion to a
 // work plan, task/creative completion) writes to an idea's chat thread —
@@ -289,6 +292,7 @@ export const IdeaChatRepository = {
     // a performance-driven budget cut) — see approval-details.ts. Absent
     // for ordinary approvals, which render exactly as before.
     details?: { label: string; value: string }[];
+    category?: ApprovalCategory;
   }): Promise<void> {
     const ideaId = await IdeaChatRepository.resolveIdeaIdForTask(input.taskId);
     await IdeaChatRepository.postSystemMessage({
@@ -304,6 +308,7 @@ export const IdeaChatRepository = {
         riskLevel: input.riskLevel,
         department: input.departmentKey ?? undefined,
         details: input.details,
+        category: input.category,
       },
       departmentKey: input.departmentKey,
     });

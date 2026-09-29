@@ -62,11 +62,14 @@ export function BrandSummaryPanel({
   return (
     <div className="flex flex-col gap-0 px-4 py-4 text-sm">
       <div className="mb-3.5 flex items-start justify-between gap-2">
-        <div>
+        <div className="min-w-0">
           <SectionLabel>BRAND ESSENCE</SectionLabel>
+          {/* A glanceable summary, not the full text — Brand Brain (the
+              sliders button) has it in full; the title shows it on hover. */}
           <p
-            className="mt-1 text-base leading-[1.3] font-semibold tracking-[-0.01em]"
+            className="mt-1 line-clamp-3 text-base leading-[1.3] font-semibold tracking-[-0.01em]"
             style={{ color: "var(--ws-text)" }}
+            title={brand.valueProposition || undefined}
           >
             {brand.valueProposition || "You, in every detail."}
           </p>
@@ -82,16 +85,16 @@ export function BrandSummaryPanel({
         </Link>
       </div>
 
-      {/* Brand Book card — spec: dark brand-colored tile, wordmark
-          centered, "BRAND BOOK" + position metadata top, category + arrow
-          bottom. Falls back to the accent tile when there's no logo yet
-          rather than fabricating one. The "01 / 26" page counter is static
-          chrome (like the "BRAND BOOK" label itself) — there's no real
-          multi-page brand-book concept in the data model to count. */}
+      {/* Brand Book card — a logo tile only: dark brand-colored, wordmark
+          centered, "BRAND BOOK" + arrow on top. No body text (the business
+          model used to render here as a full paragraph and swamp the logo)
+          and no fake "01 / 26" page counter — the data model has no
+          multi-page brand book to count. Falls back to the brand name in
+          serif when there's no logo yet rather than fabricating one. */}
       <Link
         href={buildHubHref(projectId, { panel: "brand-brain" })}
         scroll={false}
-        className="mb-4 flex aspect-[16/9] w-full flex-col justify-between overflow-hidden rounded-[9px] p-3.5 transition-opacity hover:opacity-95"
+        className="mb-4 flex aspect-[16/9] w-full flex-col overflow-hidden rounded-[9px] p-3.5 transition-opacity hover:opacity-95"
         style={{ background: "var(--ws-accent)" }}
       >
         <div className="flex items-center justify-between">
@@ -101,14 +104,12 @@ export function BrandSummaryPanel({
           >
             BRAND BOOK
           </span>
-          <span
-            className="text-[9px] tabular-nums"
+          <ArrowUpRight
+            className="size-3.5"
             style={{ color: "var(--ws-on-accent)", opacity: 0.7 }}
-          >
-            01 / 26
-          </span>
+          />
         </div>
-        <div className="flex flex-1 items-center justify-center">
+        <div className="flex min-h-0 flex-1 items-center justify-center">
           {brand.visualDNA.logoAssetId ? (
             // eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image can't optimize it
             <img
@@ -124,19 +125,6 @@ export function BrandSummaryPanel({
               {brand.name}
             </span>
           )}
-        </div>
-        <div className="flex items-end justify-between">
-          <span
-            className="text-[10px]"
-            style={{ color: "var(--ws-on-accent)", opacity: 0.7 }}
-          >
-            {brand.businessModel ??
-              (brand.visualDNA.description ? "Visual identity" : "Brand")}
-          </span>
-          <ArrowUpRight
-            className="size-3.5"
-            style={{ color: "var(--ws-on-accent)", opacity: 0.7 }}
-          />
         </div>
       </Link>
 
@@ -180,15 +168,6 @@ export function BrandSummaryPanel({
           )}
         </div>
       </div>
-
-      {brand.positioning ? (
-        <p
-          className="mt-2 text-sm leading-6"
-          style={{ color: "var(--ws-text-2)" }}
-        >
-          {brand.positioning}
-        </p>
-      ) : null}
 
       {brand.isMock ? (
         <div
@@ -267,6 +246,8 @@ export function BrandSummaryPanel({
               ))}
             </div>
           ) : null}
+          {/* One caption line of creative direction, not the whole list —
+              the full visualDNA description lives in Brand Brain. */}
           {brand.visualDNA.fonts.length > 0 ? (
             <div className="flex items-center gap-3">
               <span
@@ -277,14 +258,14 @@ export function BrandSummaryPanel({
               </span>
               <div className="min-w-0">
                 <div
-                  className="text-xs font-medium"
+                  className="truncate text-xs font-medium"
                   style={{ color: "var(--ws-text)" }}
                 >
                   {brand.visualDNA.fonts.join(" · ")}
                 </div>
-                {creativeDirectionLines.length > 0 ? (
+                {creativeDirectionLines[0] ? (
                   <div
-                    className="text-[11px]"
+                    className="truncate text-[11px]"
                     style={{ color: "var(--ws-text-3)" }}
                   >
                     {creativeDirectionLines[0]}
@@ -292,16 +273,13 @@ export function BrandSummaryPanel({
                 ) : null}
               </div>
             </div>
-          ) : null}
-          {creativeDirectionLines.length > 0 ? (
-            <div
-              className="flex flex-col gap-1 text-sm leading-6"
-              style={{ color: "var(--ws-text-body)" }}
+          ) : creativeDirectionLines[0] ? (
+            <p
+              className="truncate text-[11px]"
+              style={{ color: "var(--ws-text-3)" }}
             >
-              {creativeDirectionLines.map((line) => (
-                <span key={line}>{line}</span>
-              ))}
-            </div>
+              {creativeDirectionLines[0]}
+            </p>
           ) : null}
         </div>
       </Section>
@@ -309,7 +287,7 @@ export function BrandSummaryPanel({
       {voiceTags.length > 0 ? (
         <Section title="BRAND VOICE">
           <div className="flex flex-wrap gap-1.5">
-            {voiceTags.map((tag) => (
+            {voiceTags.slice(0, 6).map((tag) => (
               <Pill key={tag}>{tag}</Pill>
             ))}
           </div>
@@ -344,7 +322,7 @@ export function BrandSummaryPanel({
             className="space-y-1.5 text-xs"
             style={{ color: "var(--ws-text-2)" }}
           >
-            {brand.creativeMemory.works.slice(0, 5).map((item) => (
+            {brand.creativeMemory.works.slice(0, 3).map((item) => (
               <li key={item.insight} className="flex items-start gap-1.5">
                 <span
                   className="mt-0.5"
@@ -352,7 +330,9 @@ export function BrandSummaryPanel({
                 >
                   ✓
                 </span>
-                <span>{item.insight}</span>
+                <span className="line-clamp-2" title={item.insight}>
+                  {item.insight}
+                </span>
               </li>
             ))}
           </ul>
@@ -365,8 +345,10 @@ export function BrandSummaryPanel({
             className="space-y-1.5 text-xs"
             style={{ color: "var(--ws-text-2)" }}
           >
-            {brand.negativeRules.slice(0, 5).map((rule) => (
-              <li key={rule}>{rule}</li>
+            {brand.negativeRules.slice(0, 3).map((rule) => (
+              <li key={rule} className="line-clamp-2" title={rule}>
+                {rule}
+              </li>
             ))}
           </ul>
         </Section>

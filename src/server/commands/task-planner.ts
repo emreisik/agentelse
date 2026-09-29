@@ -18,7 +18,10 @@ import {
   isAutoExecutable,
   maxLevel,
 } from "@/server/execution/approval-policy";
-import { buildApprovalDetails } from "@/server/execution/approval-details";
+import {
+  approvalCategory,
+  buildApprovalDetails,
+} from "@/server/execution/approval-details";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
 import { ExecutionService } from "@/server/execution/execution-service";
 
@@ -46,6 +49,13 @@ export type PlanCapabilityInput = {
   // dependencies complete.
   deferDispatch?: boolean;
   payloadExtra?: Record<string, unknown>;
+  // The content this publish carries was already approved by a person
+  // (its Creative is APPROVED — see publish-creative.ts). Approving the
+  // creative IS the publish decision in the calendar model, so a
+  // *_PUBLISH task built from it must not park for a second approval.
+  // Only lowers the plain L3 publish floor; spend (L4) and any explicit
+  // per-project override still apply.
+  contentApproved?: boolean;
 };
 
 // Turns a single resolved capability into a Task, and either dispatches it
@@ -67,9 +77,16 @@ export const TaskPlanner = {
       approvalOverrides: input.approvalOverrides,
     });
     // Caller-supplied level may only RAISE strictness, never lower it.
-    const level = input.approvalLevel
+    const requestedLevel = input.approvalLevel
       ? maxLevel(resolvedLevel, input.approvalLevel)
       : resolvedLevel;
+    const level =
+      input.contentApproved &&
+      input.capability.endsWith("_PUBLISH") &&
+      requestedLevel === "LEVEL_3_CLIENT" &&
+      !input.approvalOverrides?.[input.capability]
+        ? "LEVEL_2_AGENCY_DIRECTOR"
+        : requestedLevel;
     const requiresApproval = !isAutoExecutable(level);
     const requiresVerification = ExecutionPolicy.requiresVerification(
       input.capability,
@@ -162,16 +179,25 @@ export const TaskPlanner = {
 
     await TaskRepository.transition(task.id, projectId, "QUEUED");
 
-    return ExecutionService.dispatch({
-      workspaceId: task.workspaceId,
-      projectId: task.projectId,
-      brandId: task.brandId,
-      taskId: task.id,
-      capability: task.capability,
-      riskLevel: task.riskLevel,
-      contextSnapshotId: snapshot.id,
-      payload: task.payload ?? { request: task.description ?? "" },
-    });
+    try {
+      return await ExecutionService.dispatch({
+        workspaceId: task.workspaceId,
+        projectId: task.projectId,
+        brandId: task.brandId,
+        taskId: task.id,
+        capability: task.capability,
+        riskLevel: task.riskLevel,
+        contextSnapshotId: snapshot.id,
+        payload: task.payload ?? { request: task.description ?? "" },
+      });
+    } catch (error) {
+      // No ExecutionJob was created, so nothing would ever move this task
+      // out of QUEUED again — fail it so its work plan can cascade/resolve.
+      await TaskRepository.transition(task.id, projectId, "FAILED", {
+        failureReason: error instanceof Error ? error.message : String(error),
+      }).catch(() => undefined);
+      throw error;
+    }
   },
 
   // Parks a task behind an Approval and posts the chat card. Shared by the
@@ -235,6 +261,7 @@ export const TaskPlanner = {
       riskLevel: task.riskLevel,
       departmentKey: task.departmentKey ?? undefined,
       details: buildApprovalDetails(task.capability, task.payload),
+      category: approvalCategory(approval.type, approval.level),
     }).catch((error) => {
       console.error("[task-planner] postApprovalRequestCard failed:", error);
     });

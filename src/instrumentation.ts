@@ -13,7 +13,10 @@
 // dev process did exactly that for ~40 hours, processing real user creative
 // jobs with stale pre-fix code and writing the images to its own disk — see
 // local-worker-policy.ts's comment for the incident this closed.
-import { shouldStartLocalWorker } from "@/lib/local-worker-policy";
+import {
+  shouldStartLocalWorker,
+  shouldStartProductionWorker,
+} from "@/lib/local-worker-policy";
 
 export async function register() {
   // Next.js invokes register() once per runtime the app uses (nodejs AND
@@ -49,12 +52,16 @@ export async function register() {
       );
     }
 
-    if (!shouldStartLocalWorker(process.env)) return;
+    const isDevWorker = shouldStartLocalWorker(process.env);
+    if (!isDevWorker && !shouldStartProductionWorker(process.env)) return;
 
     const { ExecutionWorker } =
       await import("@/server/workers/execution-worker");
 
-    const TICK_MS = 3_000;
+    // Production ticks a bit slower than dev: a tick that's still running
+    // just coalesces the next one (ExecutionWorker.tick's activeTick), so
+    // this is the idle poll latency, not a throughput cap.
+    const TICK_MS = isDevWorker ? 3_000 : 10_000;
     setInterval(() => {
       ExecutionWorker.tick().catch((error) => {
         console.error("[worker] tick failed", error);
@@ -62,7 +69,7 @@ export async function register() {
     }, TICK_MS);
 
     console.log(
-      `[worker] local execution worker started (tick every ${TICK_MS}ms)`,
+      `[worker] ${isDevWorker ? "local" : "in-process production"} execution worker started (tick every ${TICK_MS}ms)`,
     );
   }
 }

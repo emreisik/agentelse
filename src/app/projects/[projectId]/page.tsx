@@ -9,12 +9,11 @@ import {
 } from "@/server/security/tenant-context";
 import { AppShell } from "@/components/layout/app-shell";
 import {
+  entityHref,
   parseHubParams,
-  type EntityRef,
 } from "@/components/hub-core/hub-core-params";
 import { PanelShell } from "@/components/hub-core/panel-shell";
 import { ProjectFlowView } from "@/components/hub-core/project-flow-view";
-import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import {
   ProjectChat,
   type ChatAttachment,
@@ -29,6 +28,7 @@ import { BrandSummaryPanel } from "@/components/workspace/brand-summary-panel";
 import { OutputsPanel } from "@/components/workspace/outputs-panel";
 import { CalendarPanel } from "@/components/workspace/calendar-panel";
 import { FilesPanel } from "@/components/workspace/files-panel";
+import { getPendingDecisions } from "@/server/agency/pending-decisions";
 
 // Command.parsedIntent is written as { card: IdeaEventCardData } on rows
 // sourced from SYSTEM (see IdeaChatRepository) — on WEB rows it carries the
@@ -81,27 +81,10 @@ function departmentKeyFromParsedIntent(
   return undefined;
 }
 
-// Resolves which idea's chat thread an entity link (the "Chats" list in the
-// sidebar, or cross-links in the panels) belongs to.
-// idea → itself; workPlan/task → the idea at their root (a plain-field
-// relation, see WorkPlan.ideaId / Task.workPlanId). Returns null if not
-// found: this falls back to the read-only ProjectFlowView for idea-less
-// records left over from before the "everything in one chat" architecture.
-async function resolveIdeaId(entity: EntityRef): Promise<string | null> {
-  if (entity.kind === "idea") return entity.id;
-  if (entity.kind === "workPlan") {
-    return IdeaChatRepository.resolveIdeaIdForWorkPlan(entity.id);
-  }
-  if (entity.kind === "task") {
-    return IdeaChatRepository.resolveIdeaIdForTask(entity.id);
-  }
-  return null;
-}
-
 // Root of the in-project experience — now the project chat itself (like
 // ChatGPT's main screen: the left sidebar lists projects/chats, clicking a
 // project opens its chat). Modules like Departments/Work/Signals are reached
-// from the Tools menu in the TopBar; when a panel is selected
+// from the header's Advanced menu and the sidebar; when a panel is selected
 // (`?panel=&sub=&entity=`, see hub-core-params.ts) that panel is rendered as
 // full-page content IN PLACE OF the chat — not a modal.
 export default async function ProjectChatPage({
@@ -122,16 +105,6 @@ export default async function ProjectChatPage({
   }
 
   const { panel, sub, entity } = parseHubParams(sp);
-  // Widens the general-chat query's date floor instead of the default
-  // recent-window cap — set by the "Initiatives" sidebar list (see
-  // sidebar-nav.tsx) and the legacy ?entity= redirect above, so the
-  // #idea-<id> anchor they link to is guaranteed to be in the fetched
-  // range even if it's older than the default window.
-  const sinceRaw = Array.isArray(sp.since) ? sp.since[0] : sp.since;
-  const sinceDate = sinceRaw ? new Date(sinceRaw) : null;
-  const since =
-    sinceDate && !Number.isNaN(sinceDate.getTime()) ? sinceDate : null;
-
   // Right panel's inline Calendar tab (see calendar-panel.tsx) — its own
   // month-paging/item-selection params, independent of panel/sub/entity.
   const calMonthRaw = Array.isArray(sp.calMonth) ? sp.calMonth[0] : sp.calMonth;
@@ -140,12 +113,9 @@ export default async function ProjectChatPage({
   const calItemRaw = Array.isArray(sp.calItem) ? sp.calItem[0] : sp.calItem;
   const calItem = typeof calItemRaw === "string" ? calItemRaw : undefined;
 
-  // Opt-in escape hatch back to the old, isolated per-idea thread view
-  // (ProjectFlowView/IdeaFlow) — the single day-grouped chat below stays
-  // the default way of browsing an idea's events (see the `entity` branch
-  // right below), this only activates when something explicitly links to
-  // it with &thread=1 (sidebar-nav.tsx's Initiatives list, thread.tsx's
-  // idea-title pill).
+  // Opt-in escape hatch to the old, isolated per-idea thread view
+  // (ProjectFlowView/IdeaFlow) — only used when something explicitly links
+  // to it with &thread=1 (see the `entity` branch below).
   const wantsThreadView =
     (Array.isArray(sp.thread) ? sp.thread[0] : sp.thread) === "1";
 
@@ -162,48 +132,13 @@ export default async function ProjectChatPage({
     );
   }
 
-  // When there's no `panel` but an `entity` is selected — a bare
-  // `?entity=idea:id` link (an old bookmark/browser-history entry, or the
-  // sidebar's own on-hover "open detail" affordance with &thread=1). By
-  // default there is no separate idea thread (see
-  // docs/brand-workspace-migration.md single-chat consolidation) — every
-  // idea's events live in the one general chat below, so this forwards
-  // into it, anchored to where that idea's conversation starts. `since`
-  // guarantees the anchor target is inside the fetched window even if
-  // normal activity since then has pushed it past the default `take` cap.
-  // wantsThreadView (&thread=1) is the one opt-in exception: it skips this
-  // redirect and falls through to ProjectFlowView below instead, for
-  // anyone who wants the old isolated per-idea view back.
+  // A bare `?entity=kind:id` link (no `panel`) — an old bookmark or a
+  // cross-link. Idea/work pipeline events no longer live in the general
+  // chat (it only shows the user's own requests), so this forwards to the
+  // panel that owns the record instead. &thread=1 is the opt-in exception:
+  // it falls through to the isolated, read-only ProjectFlowView below.
   if (entity) {
-    const ideaId = await resolveIdeaId(entity);
-    if (ideaId && !wantsThreadView) {
-      const earliestCommand = await prisma.command.findFirst({
-        where: { ideaId, topic: null, source: { in: ["WEB", "SYSTEM"] } },
-        orderBy: { createdAt: "asc" },
-        select: { createdAt: true },
-      });
-      const since = earliestCommand
-        ? `?since=${encodeURIComponent(earliestCommand.createdAt.toISOString())}`
-        : "";
-      redirect(`/projects/${projectId}${since}#idea-${ideaId}`);
-    }
-
-    // A task with no idea lineage (e.g. PerformanceOptimizer's rule-based
-    // proposals — see idea-chat.repository.ts) has nowhere else to show its
-    // approval card: ProjectFlowView's TaskFlow is read-only (no Approve/
-    // Reject buttons), and the card itself only ever posts to the general
-    // chat (see chat-service.ts / the general-chat query above). Sending
-    // the user there directly avoids the dead end a sidebar click on an
-    // orphan task's "needs approval" entry would otherwise land on.
-    if (entity.kind === "task") {
-      redirect(`/projects/${projectId}`);
-    }
-    // Reached two ways: (1) an entity kind that can't be rooted to an idea
-    // (workPlan-only orphan records left over from before the single-chat
-    // architecture) — read-only fallback, kept rather than deleted; (2) an
-    // idea entity with wantsThreadView set — the opt-in isolated thread
-    // view (IdeaFlow inside ProjectFlowView already renders idea entities
-    // correctly, no separate component needed for this case).
+    if (!wantsThreadView) redirect(entityHref(projectId, entity));
     return (
       <AppShell projectId={projectId}>
         <ProjectFlowView projectId={projectId} entity={entity} />
@@ -218,32 +153,27 @@ export default async function ProjectChatPage({
     rightPanelData,
     currentUser,
     selectedCalendarItem,
+    decisions,
   ] = await Promise.all([
     prisma.project.findUnique({
       where: { id: projectId },
       select: { name: true },
     }),
     prisma.command.findMany({
-      // The ONE single chat (see docs/brand-workspace-migration.md,
-      // single-chat consolidation): every WEB message and every SYSTEM
-      // pipeline event project-wide, regardless of which idea (if any)
-      // it belongs to — council decisions, work plans, task/creative
-      // results all land here now, not just idea-less events. topic:
-      // null excludes scoped threads that aren't this general feed —
-      // e.g. legacy Command rows with topic "BRAND_BRAIN" from the
-      // now-removed Brand Brain chat feature.
+      // The Agency Desk only shows the user's own planning/requests and the
+      // assistant's replies to them — SYSTEM pipeline events (ideas,
+      // council, work plans, task/creative results, reports) live in the
+      // Ideas/Work panels, not here. ideaId: null drops messages typed
+      // inside an idea's isolated thread; topic: null drops legacy scoped
+      // threads (e.g. "BRAND_BRAIN" from the removed Brand Brain chat).
       where: {
         projectId,
         topic: null,
-        source: { in: ["WEB", "SYSTEM"] },
-        ...(since ? { createdAt: { gte: since } } : {}),
+        ideaId: null,
+        source: "WEB",
       },
       orderBy: { createdAt: "desc" },
-      // `since` present: an anchor jump needs every message from that
-      // date forward, not just the most recent 72 — 500 is a sane
-      // ceiling, not a real limit (the Command_projectId_createdAt_idx
-      // index keeps this cheap either way).
-      take: since ? 500 : 72,
+      take: 72,
       select: {
         id: true,
         source: true,
@@ -253,7 +183,6 @@ export default async function ProjectChatPage({
         attachments: true,
         parsedIntent: true,
         createdAt: true,
-        ideaId: true,
       },
     }),
     getPublishTargets(projectId),
@@ -281,31 +210,10 @@ export default async function ProjectChatPage({
           },
         })
       : Promise.resolve(null),
+    getPendingDecisions(projectId),
   ]);
 
   if (!project) notFound();
-
-  // Read-time idea label (see docs/brand-workspace-migration.md single-chat
-  // consolidation) — resolved here instead of at every one of the 10+
-  // postSystemMessage call sites, so the pill just needs the ids the query
-  // already selected above.
-  const ideaIds = Array.from(
-    new Set(
-      chatCommands
-        .map((command) => command.ideaId)
-        .filter((id): id is string => Boolean(id)),
-    ),
-  );
-  const ideaTitleById = ideaIds.length
-    ? new Map(
-        (
-          await prisma.idea.findMany({
-            where: { id: { in: ideaIds } },
-            select: { id: true, title: true },
-          })
-        ).map((idea) => [idea.id, idea.title]),
-      )
-    : new Map<string, string>();
 
   const firstName = (currentUser?.name ?? currentUser?.email ?? "").split(
     /[\s@]/,
@@ -358,8 +266,8 @@ export default async function ProjectChatPage({
           projectId={projectId}
           projectName={project.name}
           userFirstName={firstName || null}
-          resumeStats={rightPanelData.resumeStats}
           publishTargets={publishTargets}
+          decisions={decisions}
           turns={chatCommands.reverse().map((command): ChatTurn => ({
             commandId: command.id,
             source: command.source as "WEB" | "SYSTEM",
@@ -374,15 +282,6 @@ export default async function ProjectChatPage({
             attachments: Array.isArray(command.attachments)
               ? (command.attachments as ChatAttachment[])
               : [],
-            ideaTitle: command.ideaId
-              ? ideaTitleById.get(command.ideaId)
-              : undefined,
-            // Used only to place the #idea-<id> anchor the "Initiatives"
-            // sidebar list and the legacy ?entity= redirect jump to (see
-            // project-chat.tsx) — distinct from ideaTitle above so the
-            // anchor still lands correctly even if the title lookup ever
-            // misses.
-            ideaId: command.ideaId ?? undefined,
             createdAt: command.createdAt.toISOString(),
           }))}
         />

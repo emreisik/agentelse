@@ -2,6 +2,7 @@ import "server-only";
 
 import type { DepartmentKey } from "@prisma/client";
 
+import { isDepartmentInFocus } from "@/server/agency/agency-focus";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { baselineAuditDef } from "@/server/reasoning/prompts/baseline-audit";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
@@ -76,9 +77,11 @@ export const BaselineAuditService = {
     // stage practically never finished, wasting 19 calls on every round.
     const audits: Audit[] = [];
     const failed: Array<(typeof AUDIT_DEPARTMENTS)[number]> = [];
+    // Focus mode (agency-focus.ts) audits only social/ads departments.
+    const departments = AUDIT_DEPARTMENTS.filter(isDepartmentInFocus);
     const BATCH = 5;
-    for (let i = 0; i < AUDIT_DEPARTMENTS.length; i += BATCH) {
-      const chunk = AUDIT_DEPARTMENTS.slice(i, i + BATCH);
+    for (let i = 0; i < departments.length; i += BATCH) {
+      const chunk = departments.slice(i, i + BATCH);
       const results = await Promise.allSettled(chunk.map(auditOne));
       results.forEach((result, index) => {
         if (result.status === "fulfilled") audits.push(result.value);
@@ -100,7 +103,7 @@ export const BaselineAuditService = {
     // drop the stage to FAILED so it shows up in System Health.
     if (audits.length === 0) {
       throw new Error(
-        `Failed to generate a baseline audit for any department (${AUDIT_DEPARTMENTS.length} attempts)`,
+        `Failed to generate a baseline audit for any department (${departments.length} attempts)`,
       );
     }
 

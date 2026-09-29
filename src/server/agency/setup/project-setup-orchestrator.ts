@@ -4,6 +4,10 @@ import type { ProjectStatus, SetupStage } from "@prisma/client";
 import { ZodError } from "zod";
 
 import { prisma } from "@/lib/prisma";
+import {
+  FOCUS_EXCLUDED_DISCOVERY,
+  isAgencyFocusMode,
+} from "@/server/agency/agency-focus";
 import { BaselineAuditService } from "@/server/agency/audits/baseline-audit.service";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { DepartmentRouter } from "@/server/agency/departments/department-router";
@@ -402,7 +406,13 @@ export const ProjectSetupOrchestrator = {
       switch (stage) {
         case "DEEP_DISCOVERY": {
           const policy = await AutonomyPolicyRepository.getOrCreate(scope);
-          const wave = DEEP_DISCOVERY_CAPABILITIES.slice(
+          // Focus mode (agency-focus.ts) drops non-social/ads research.
+          const capabilities = isAgencyFocusMode()
+            ? DEEP_DISCOVERY_CAPABILITIES.filter(
+                (capability) => !FOCUS_EXCLUDED_DISCOVERY.has(capability),
+              )
+            : DEEP_DISCOVERY_CAPABILITIES;
+          const wave = capabilities.slice(
             0,
             Math.max(policy.maxConcurrentResearchTasks, 1) * 3,
           );

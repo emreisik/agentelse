@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
+import type { AgencyLoopStatus } from "@prisma/client";
 
+import { timeAgo } from "@/lib/dates";
+import { AGENCY_LOOP_STATUS } from "@/lib/labels/work";
 import {
   Popover,
   PopoverContent,
@@ -12,15 +15,36 @@ import type { AgencyStatusSnapshot } from "@/server/agency/agency-status-snapsho
 
 const POLL_MS = 10_000;
 
-// Brand Workspace header's "N active" pill + popover — a named-jobs view
-// of the same AgencyStatusSnapshot AgencyStatusWidget already polls (that
-// widget stays untouched, used on every OTHER screen); this is the
-// workspace-root-only presentation, with real per-job rows instead of
-// just aggregate counts (see agency-status-snapshot.ts's `activeJobs`
-// field). Chrome uses the monochrome --ws-* tokens; the status dots stay
-// semantic color (emerald/blue) per the design direction — small status
-// indicators are the one place color is allowed in an otherwise
-// monochrome UI.
+// Status dots are the one place color is allowed in the otherwise
+// monochrome --ws-* chrome.
+const STATUS_DOT: Record<AgencyLoopStatus, string> = {
+  RUNNING: "var(--ws-text)",
+  WAITING: "var(--ws-pending)",
+  BLOCKED: "var(--destructive)",
+  PAUSED: "var(--ws-text-3)",
+  ERROR: "var(--destructive)",
+};
+
+// Nothing is progressing in these, so the loop state matters more than a
+// job count on the trigger.
+const HALTED: ReadonlySet<AgencyLoopStatus> = new Set([
+  "PAUSED",
+  "BLOCKED",
+  "ERROR",
+]);
+
+const currency = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+// The header's agency readout: loop status, blocked reason, now/waiting
+// counts, named active jobs, last progress / next wake and today's totals
+// (incl. AI cost) — everything the old header's separate "● Running"
+// dropdown showed, folded into this one "N active" pill. Polls the same
+// lightweight JSON route instead of a full router.refresh().
 export function ActiveWorkPopover({
   projectId,
   initial,
@@ -66,7 +90,24 @@ export function ActiveWorkPopover({
     };
   }, [projectId]);
 
+  const status = snapshot?.status ?? null;
   const activeCount = snapshot?.tasksNow ?? 0;
+  const halted = status !== null && HALTED.has(status);
+  const dotColor = status
+    ? STATUS_DOT[status]
+    : activeCount > 0
+      ? "var(--ws-text)"
+      : "var(--ws-text-3)";
+  // The loop state wins whenever it says more than a job count would: halted,
+  // or nothing client-facing in flight (a RUNNING loop busy with internal
+  // scans used to read as an idle "0 active" — the retired widget always
+  // showed "Running"/"Waiting").
+  const statusLabel = status ? AGENCY_LOOP_STATUS[status].label : null;
+  const triggerLabel =
+    statusLabel && (halted || activeCount === 0)
+      ? statusLabel
+      : `${activeCount} active`;
+  const pinging = status === "RUNNING" || (status === null && activeCount > 0);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -74,7 +115,10 @@ export function ActiveWorkPopover({
         render={
           <button
             type="button"
-            className="flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)]"
+            title={
+              status ? `Agency: ${AGENCY_LOOP_STATUS[status].label}` : undefined
+            }
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)]"
             style={{
               borderColor: "var(--ws-border)",
               background: "var(--ws-surface)",
@@ -84,38 +128,55 @@ export function ActiveWorkPopover({
         }
       >
         <span className="relative flex size-1.5">
-          {activeCount > 0 ? (
+          {pinging ? (
             <span
               className="absolute inline-flex size-full animate-ping rounded-full opacity-60"
-              style={{ background: "var(--ws-text)" }}
+              style={{ background: dotColor }}
             />
           ) : null}
           <span
             className="relative inline-flex size-1.5 rounded-full"
-            style={{
-              background:
-                activeCount > 0 ? "var(--ws-text)" : "var(--ws-text-3)",
-            }}
+            style={{ background: dotColor }}
           />
         </span>
-        {activeCount} active
+        {triggerLabel}
       </PopoverTrigger>
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="w-80 max-w-[90vw] gap-0 rounded-2xl border p-4 shadow-lg"
+        // Capped to the space Base UI measures under the trigger, like
+        // DropdownMenuContent — this popup now carries the status readout
+        // and today's totals too, so it can outgrow a short viewport.
+        className="max-h-(--available-height) w-80 max-w-[90vw] gap-0 overflow-x-hidden overflow-y-auto rounded-2xl border p-4 shadow-lg"
         style={{
           borderColor: "var(--ws-border)",
           background: "var(--ws-surface)",
         }}
       >
         <div className="mb-3 flex items-start justify-between gap-2">
-          <div>
-            <div
-              className="text-sm font-semibold"
-              style={{ color: "var(--ws-text)" }}
-            >
-              Active work
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span
+                className="text-sm font-semibold"
+                style={{ color: "var(--ws-text)" }}
+              >
+                Active work
+              </span>
+              {status ? (
+                <span
+                  className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium"
+                  style={{
+                    borderColor: "var(--ws-border)",
+                    color: "var(--ws-text-2)",
+                  }}
+                >
+                  <span
+                    className="size-1.5 rounded-full"
+                    style={{ background: STATUS_DOT[status] }}
+                  />
+                  {AGENCY_LOOP_STATUS[status].label}
+                </span>
+              ) : null}
             </div>
             <div
               className="mt-0.5 text-xs"
@@ -134,6 +195,19 @@ export function ActiveWorkPopover({
             <X className="size-3.5" />
           </button>
         </div>
+
+        {snapshot?.blockedReason ? (
+          <p className="mb-3 text-xs" style={{ color: "var(--destructive)" }}>
+            {snapshot.blockedReason}
+          </p>
+        ) : null}
+
+        {snapshot ? (
+          <div className="mb-3 grid grid-cols-2 gap-2">
+            <StatCell label="Now" value={snapshot.tasksNow} />
+            <StatCell label="Waiting" value={snapshot.tasksWaiting} />
+          </div>
+        ) : null}
 
         {snapshot && snapshot.activeJobs.length > 0 ? (
           <div
@@ -177,7 +251,88 @@ export function ActiveWorkPopover({
             Agentelse starts something.
           </div>
         )}
+
+        {snapshot ? (
+          <div
+            className="mt-3 space-y-3 border-t pt-3 text-xs"
+            style={{ borderColor: "var(--ws-border)" }}
+          >
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+              <DetailRow
+                label="Last progress"
+                value={timeAgo(snapshot.lastProgressAt)}
+              />
+              <DetailRow
+                label="Next wake"
+                value={snapshot.nextWakeAt ? timeAgo(snapshot.nextWakeAt) : "—"}
+              />
+            </div>
+            <div>
+              <p
+                className="mb-1 font-medium"
+                style={{ color: "var(--ws-text)" }}
+              >
+                Today
+              </p>
+              <div className="grid grid-cols-2 gap-x-2 gap-y-1 tabular-nums">
+                <DetailRow
+                  label="Signals"
+                  value={String(snapshot.today.signalsIngested)}
+                />
+                <DetailRow
+                  label="Opportunities"
+                  value={String(snapshot.today.opportunitiesCreated)}
+                />
+                <DetailRow
+                  label="Ideas"
+                  value={String(snapshot.today.ideasCreated)}
+                />
+                <DetailRow
+                  label="Tasks"
+                  value={String(snapshot.today.tasksCreated)}
+                />
+                <DetailRow
+                  label="AI cost"
+                  value={currency.format(snapshot.today.reasoningCostUsd)}
+                />
+              </div>
+            </div>
+          </div>
+        ) : null}
       </PopoverContent>
     </Popover>
+  );
+}
+
+function StatCell({ label, value }: { label: string; value: number }) {
+  return (
+    <div
+      className="rounded-xl px-2.5 py-1.5"
+      style={{ background: "var(--ws-surface-2)" }}
+    >
+      <div
+        className="text-[10px] tracking-wide uppercase"
+        style={{ color: "var(--ws-text-3)" }}
+      >
+        {label}
+      </div>
+      <div
+        className="text-base font-semibold tabular-nums"
+        style={{ color: "var(--ws-text)" }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <>
+      <span style={{ color: "var(--ws-text-3)" }}>{label}</span>
+      <span className="text-right" style={{ color: "var(--ws-text)" }}>
+        {value}
+      </span>
+    </>
   );
 }

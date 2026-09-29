@@ -69,6 +69,8 @@ export type SubmitCommandInput = {
   // quick-action whose progress is instead mirrored onto an existing
   // creative-ready card, see publish-creative.ts).
   topic?: string;
+  // Passed through to TaskPlanner.planForCapability — see its comment.
+  contentApproved?: boolean;
 };
 
 export type SubmitCommandResult =
@@ -480,6 +482,7 @@ export const CommandService = {
       createdByType: input.actorType,
       createdByUserId: input.userId,
       departmentKey: input.departmentKey,
+      contentApproved: input.contentApproved,
       // Attachments are carried into the task's payload: the execution
       // provider (e.g. creative image generation) finds the user's
       // reference image here.

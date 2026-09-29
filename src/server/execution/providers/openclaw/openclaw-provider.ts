@@ -54,7 +54,10 @@ const OPENCLAW_CAPABILITIES: ReadonlySet<CapabilityKey> =
     "X_PUBLISH",
     "META_ADS_ANALYSIS",
     "GOOGLE_ADS_ANALYSIS",
-    "ANALYTICS_ANALYSIS",
+    // ANALYTICS_ANALYSIS is intentionally absent: without a GA4 browser
+    // profile OpenClaw falls back to the shared default agent, which has no
+    // browser access and fabricates numbers. Only GoogleApiProvider (real
+    // GA4/Search Console data) serves it.
     "VERIFY_EXTERNAL_ACTION",
   ]);
 

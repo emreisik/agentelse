@@ -21,9 +21,10 @@ import {
   MetaAdsQuery,
   type DatePreset,
 } from "@/server/integrations/meta-ads-query";
-import type {
-  MetaCredentialMetadata,
-  MetaInsightsRow,
+import {
+  META_PROVIDER,
+  type MetaAdsMetadata,
+  type MetaInsightsRow,
 } from "@/server/integrations/meta-client";
 import { createMetaAdAction } from "@/server/actions/meta-ads-actions";
 import { AppShell } from "@/components/layout/app-shell";
@@ -103,7 +104,7 @@ export default async function AdsPage({
             className="py-16"
           >
             <Link
-              href={`/projects/${projectId}/integrations?integration=meta`}
+              href={`/projects/${projectId}/integrations?integration=meta_ads`}
               className={cn(buttonVariants({ size: "sm" }))}
             >
               Go to Integrations
@@ -115,9 +116,11 @@ export default async function AdsPage({
   }
 
   const credential = await prisma.integrationCredential.findUnique({
-    where: { projectId_provider: { projectId, provider: "meta" } },
+    where: {
+      projectId_provider: { projectId, provider: META_PROVIDER.ads },
+    },
   });
-  const metadata = (credential?.metadata ?? {}) as MetaCredentialMetadata;
+  const metadata = (credential?.metadata ?? {}) as MetaAdsMetadata;
   const currency =
     metadata.adAccounts?.find((a) => a.adAccountId === connection.adAccountId)
       ?.currency ?? "USD";

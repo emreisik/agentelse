@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 
 import { appUrl } from "@/lib/app-url";
 import { isIntegrationConfigured } from "@/lib/env";
-import { buildGoogleAuthorizeUrl } from "@/server/integrations/google-client";
+import {
+  GOOGLE_PROVIDER,
+  buildGoogleAuthorizeUrl,
+  parseGoogleService,
+} from "@/server/integrations/google-client";
 import { signOAuthState } from "@/server/security/oauth-state";
 import { isAgentelseError } from "@/server/security/errors";
 import {
@@ -11,13 +15,16 @@ import {
 } from "@/server/security/tenant-context";
 
 // The initial step that redirects to Google's own consent screen — see
-// callback/route.ts for the return trip.
+// callback/route.ts for the return trip. `service` picks which of the two
+// separate Google integrations (analytics / search_console) is being
+// connected; only that service's scope is requested.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");
-  if (!projectId) {
+  const service = parseGoogleService(searchParams.get("service"));
+  if (!projectId || !service) {
     return NextResponse.json(
-      { error: "projectId is required" },
+      { error: "projectId and a valid service are required" },
       { status: 400 },
     );
   }
@@ -41,11 +48,11 @@ export async function GET(request: Request) {
   if (!isIntegrationConfigured("GOOGLE")) {
     return NextResponse.redirect(
       appUrl(
-        `/projects/${projectId}/integrations?integration=google&googleError=not_configured`,
+        `/projects/${projectId}/integrations?integration=${GOOGLE_PROVIDER[service]}&googleError=not_configured`,
       ),
     );
   }
 
-  const state = signOAuthState({ projectId, userId });
-  return NextResponse.redirect(buildGoogleAuthorizeUrl(state));
+  const state = signOAuthState({ projectId, userId, service });
+  return NextResponse.redirect(buildGoogleAuthorizeUrl(state, service));
 }

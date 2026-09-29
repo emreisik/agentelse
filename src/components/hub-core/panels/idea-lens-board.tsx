@@ -50,12 +50,6 @@ export type IdeaBoardItem = {
   }>;
 };
 
-// The department color is now carried as a solid label below the title
-// rather than a stripe on the card edge — for a single strong color accent
-// similar to category tags on a Jira board.
-const departmentPillClasses =
-  "inline-flex w-fit items-center rounded-sm px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase text-[var(--dept-badge-foreground)]";
-
 export function IdeaLensBoard({
   projectId,
   ideas,
@@ -71,7 +65,7 @@ export function IdeaLensBoard({
     : ideas;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       {usedLenses.length > 0 ? (
         <div className="flex shrink-0 flex-wrap gap-1.5">
           <button
@@ -111,18 +105,15 @@ export function IdeaLensBoard({
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 gap-4 overflow-x-auto overflow-y-hidden no-scrollbar">
+      <div className="no-scrollbar min-h-0 flex-1 space-y-5 overflow-y-auto pb-2">
         {IDEA_BOARD_COLUMNS.map((column) => {
           const columnIdeas = filtered.filter((idea) =>
             column.statuses.includes(idea.status),
           );
           if (columnIdeas.length === 0) return null;
           return (
-            <div
-              key={column.key}
-              className="flex h-full min-h-0 min-w-64 flex-1 flex-col overflow-hidden"
-            >
-              <div className="flex shrink-0 items-baseline gap-1.5 px-1 pb-2.5">
+            <section key={column.key}>
+              <div className="mb-1.5 flex items-baseline gap-1.5 border-b border-border/60 px-1 pb-1.5">
                 <h3 className="text-[11px] font-bold tracking-wide text-muted-foreground uppercase">
                   {column.label}
                 </h3>
@@ -130,9 +121,12 @@ export function IdeaLensBoard({
                   {columnIdeas.length}
                 </span>
               </div>
-              <div className="flex-1 min-h-0 space-y-2 overflow-y-auto px-3 py-2">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-1.5">
                 {columnIdeas.map((idea) => {
                   const lensMeta = idea.lens ? CREATIVE_LENS[idea.lens] : null;
+                  const deptColor = idea.department
+                    ? DEPARTMENT_COLOR[idea.department]
+                    : undefined;
                   return (
                     <Link
                       key={idea.id}
@@ -142,7 +136,9 @@ export function IdeaLensBoard({
                         undefined,
                       )}
                       scroll={false}
-                      className="block rounded-lg bg-card p-3 shadow-xs ring-1 ring-border transition-colors hover:bg-muted/40"
+                      title={lensMeta ? `${lensMeta.label} lens` : undefined}
+                      className="block h-full rounded-md border-l-[3px] bg-card px-2.5 py-1.5 shadow-xs ring-1 ring-border transition-colors hover:bg-muted/40"
+                      style={{ borderLeftColor: deptColor ?? "transparent" }}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <p className="line-clamp-2 min-w-0 text-xs leading-snug font-medium">
@@ -155,35 +151,24 @@ export function IdeaLensBoard({
                           />
                         ) : null}
                       </div>
-                      {idea.department ? (
-                        <span
-                          className={cn(departmentPillClasses, "mt-1.5")}
-                          style={{
-                            backgroundColor: DEPARTMENT_COLOR[idea.department],
-                          }}
-                          title={DEPARTMENT_KEY[idea.department].label}
-                        >
-                          {DEPARTMENT_KEY[idea.department].label.replace(
-                            / Team$/,
-                            "",
-                          )}
-                        </span>
-                      ) : null}
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1">
-                          {lensMeta ? (
-                            <StatusBadge
-                              meta={lensMeta}
-                              className="h-4 px-1.5 text-[10px]"
-                              showIcon
-                            />
-                          ) : null}
-                          <StatusBadge
-                            meta={IDEA_STATUS[idea.status]}
-                            className="h-4 px-1.5 text-[10px]"
-                          />
-                        </div>
-                        <div className="flex items-center gap-1">
+                      <div className="mt-1 flex items-center gap-1.5">
+                        <StatusBadge
+                          meta={IDEA_STATUS[idea.status]}
+                          className="h-4 shrink-0 px-1.5 text-[10px]"
+                        />
+                        {idea.department ? (
+                          <span
+                            className="min-w-0 truncate text-[10px] font-semibold"
+                            style={{ color: deptColor }}
+                            title={DEPARTMENT_KEY[idea.department].label}
+                          >
+                            {DEPARTMENT_KEY[idea.department].label.replace(
+                              / Team$/,
+                              "",
+                            )}
+                          </span>
+                        ) : null}
+                        <div className="ml-auto flex shrink-0 items-center gap-1">
                           {idea.councilDots.map((evaluation) => (
                             <span
                               key={evaluation.id}
@@ -210,7 +195,7 @@ export function IdeaLensBoard({
                   );
                 })}
               </div>
-            </div>
+            </section>
           );
         })}
       </div>

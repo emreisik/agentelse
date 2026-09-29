@@ -59,55 +59,63 @@ export const CouncilEngine = {
       },
     });
 
-    const recommendations: CouncilRecommendation[] = [];
+    // Council members are independent reviews of the same idea — run them
+    // in parallel (was a sequential for/await: 2 back-to-back LLM calls per
+    // idea). Results are consumed in `councils` order, so the combined
+    // verdict and the chat card read exactly as before.
+    const results = await Promise.all(
+      councils.map(async (councilType) => {
+        const definition = COUNCILS[councilType];
+        const { output, isMock, reasoningCallId } = await ReasoningService.run(
+          councilEvaluationDef,
+          {
+            ...scope,
+            context: {
+              councilType,
+              dimensions: definition.dimensions,
+              brand,
+              competitorInsights: competitorInsights.map((i) => ({
+                competitor: i.competitor.name,
+                insight: i.insight,
+                confidence: i.confidence,
+              })),
+              idea: {
+                title: idea.title,
+                description: idea.description,
+                lens: idea.lens,
+                concept: idea.concept,
+              },
+            },
+          },
+        );
+
+        await IdeaRepository.addCouncilEvaluation({
+          ...scope,
+          ideaId: idea.id,
+          councilType,
+          scores: output.scores,
+          overallScore: output.overallScore,
+          recommendation: output.recommendation,
+          rationale: output.rationale,
+          reasoningCallId,
+          isMock,
+        });
+        return { councilType, output };
+      }),
+    );
+
+    const recommendations: CouncilRecommendation[] = results.map(
+      ({ output }) => output.recommendation,
+    );
     const evaluationNotes: {
       council: string;
       verdict: string;
       rationale?: string;
-    }[] = [];
-    for (const councilType of councils) {
-      const definition = COUNCILS[councilType];
-      const { output, isMock, reasoningCallId } = await ReasoningService.run(
-        councilEvaluationDef,
-        {
-          ...scope,
-          context: {
-            councilType,
-            dimensions: definition.dimensions,
-            brand,
-            competitorInsights: competitorInsights.map((i) => ({
-              competitor: i.competitor.name,
-              insight: i.insight,
-              confidence: i.confidence,
-            })),
-            idea: {
-              title: idea.title,
-              description: idea.description,
-              lens: idea.lens,
-              concept: idea.concept,
-            },
-          },
-        },
-      );
-
-      await IdeaRepository.addCouncilEvaluation({
-        ...scope,
-        ideaId: idea.id,
-        councilType,
-        scores: output.scores,
-        overallScore: output.overallScore,
-        recommendation: output.recommendation,
-        rationale: output.rationale,
-        reasoningCallId,
-        isMock,
-      });
-      recommendations.push(output.recommendation);
-      evaluationNotes.push({
-        council: COUNCIL_TYPE[councilType].label,
-        verdict: COUNCIL_RECOMMENDATION[output.recommendation].label,
-        rationale: output.rationale || undefined,
-      });
-    }
+    }[] = results.map(({ councilType, output }) => ({
+      council: COUNCIL_TYPE[councilType].label,
+      verdict: COUNCIL_RECOMMENDATION[output.recommendation].label,
+      rationale: output.rationale || undefined,
+    }));
 
     // Combined verdict: any REJECT kills; any REVISE holds; otherwise the
     // idea advances to SHORTLISTED for the director.
@@ -171,24 +179,37 @@ export const CouncilEngine = {
   // boundary: listByStatus spreads its `limit` slots across distinct
   // projects, so one idea that fails to evaluate must not also block every
   // OTHER project's idea in the same batch.
-  async evaluatePendingIdeas(limit = 5): Promise<number> {
-    const ideas = await IdeaRepository.listByStatus("RAW", limit);
-    let evaluated = 0;
-    for (const idea of ideas) {
-      if (idea.councilEvaluations.length > 0) continue;
-      // Paused project — skip without processing, exactly like
-      // signal-universe.ts's own scan skip. Try again next tick.
-      if (!(await isProjectAgencyActive(idea.projectId))) continue;
-      try {
-        await this.evaluateIdea(idea.id, idea.projectId);
-        evaluated += 1;
-      } catch (error) {
-        console.error(
-          `[council-engine] evaluateIdea failed for idea ${idea.id} (${idea.title}):`,
-          error instanceof Error ? error.message : error,
-        );
-      }
-    }
+  async evaluatePendingIdeas(limit = 5, perProject = 3): Promise<number> {
+    // Up to `perProject` RAW ideas from each of `limit` projects. Projects
+    // run in parallel (independent budgets/brands); ideas within one project
+    // stay sequential so each project has at most one council (2 parallel
+    // LLM calls) in flight — bounded provider concurrency.
+    const groups = await IdeaRepository.listByStatusPerProject("RAW", {
+      projects: limit,
+      perProject,
+    });
+    const counts = await Promise.all(
+      groups.map(async (ideas) => {
+        let evaluated = 0;
+        for (const idea of ideas) {
+          if (idea.councilEvaluations.length > 0) continue;
+          // Paused project — skip without processing, exactly like
+          // signal-universe.ts's own scan skip. Try again next tick.
+          if (!(await isProjectAgencyActive(idea.projectId))) break;
+          try {
+            await this.evaluateIdea(idea.id, idea.projectId);
+            evaluated += 1;
+          } catch (error) {
+            console.error(
+              `[council-engine] evaluateIdea failed for idea ${idea.id} (${idea.title}):`,
+              error instanceof Error ? error.message : error,
+            );
+          }
+        }
+        return evaluated;
+      }),
+    );
+    const evaluated = counts.reduce((sum, n) => sum + n, 0);
     return evaluated;
   },
 };

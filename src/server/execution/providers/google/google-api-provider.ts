@@ -5,9 +5,11 @@ import type { CapabilityKey, ExecutionProviderType } from "@prisma/client";
 import { isIntegrationConfigured } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import {
+  GOOGLE_PROVIDER,
   fetchGa4Report,
   fetchSearchConsoleReport,
-  type GoogleCredentialMetadata,
+  type GoogleAnalyticsMetadata,
+  type GoogleSearchConsoleMetadata,
 } from "@/server/integrations/google-client";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
 import type {
@@ -18,11 +20,11 @@ import type {
   ProviderExecutionStatus,
 } from "@/server/execution/types";
 
-// The real GA4 Data API + Search Console API — used instead of
-// OpenClawProvider's browser automation whenever the project has a Google
-// account connected via OAuth with a selected property/site. Registered
-// before OpenClawProvider in provider-registry.ts: the real API is always
-// preferred over screen scraping (same pattern as meta-api-provider.ts).
+// The real GA4 Data API + Search Console API — the only provider for
+// ANALYTICS_ANALYSIS. Google Analytics and Search Console are separate
+// integrations (separate OAuth grants/credentials); this runs whenever at
+// least one of them is connected with a selected property/site, and reports
+// on whichever are available.
 const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "ANALYTICS_ANALYSIS",
 ]);
@@ -39,12 +41,43 @@ type StoredResult = {
 
 const store = new Map<string, StoredResult>();
 
-async function findActiveGoogleCredential(projectId: string) {
-  const credential = await prisma.integrationCredential.findUnique({
-    where: { projectId_provider: { projectId, provider: "google" } },
+type ActiveGoogleConnections = {
+  analytics: {
+    credential: { id: string; encryptedSecret: string };
+    propertyId: string;
+  } | null;
+  searchConsole: {
+    credential: { id: string; encryptedSecret: string };
+    siteUrl: string;
+  } | null;
+};
+
+// Loads both Google integrations for the project and keeps only those that
+// are ACTIVE and have a property/site selected.
+async function findActiveGoogleConnections(
+  projectId: string,
+): Promise<ActiveGoogleConnections> {
+  const credentials = await prisma.integrationCredential.findMany({
+    where: {
+      projectId,
+      provider: {
+        in: [GOOGLE_PROVIDER.analytics, GOOGLE_PROVIDER.search_console],
+      },
+      status: "ACTIVE",
+    },
   });
-  if (!credential || credential.status !== "ACTIVE") return null;
-  return credential;
+  const ga = credentials.find((c) => c.provider === GOOGLE_PROVIDER.analytics);
+  const gsc = credentials.find(
+    (c) => c.provider === GOOGLE_PROVIDER.search_console,
+  );
+  const propertyId = (ga?.metadata as GoogleAnalyticsMetadata | null)
+    ?.selectedGa4PropertyId;
+  const siteUrl = (gsc?.metadata as GoogleSearchConsoleMetadata | null)
+    ?.selectedSearchConsoleSite;
+  return {
+    analytics: ga && propertyId ? { credential: ga, propertyId } : null,
+    searchConsole: gsc && siteUrl ? { credential: gsc, siteUrl } : null,
+  };
 }
 
 export class GoogleApiProvider implements ExecutionProvider {
@@ -62,13 +95,8 @@ export class GoogleApiProvider implements ExecutionProvider {
     if (!this.isConfigured) return false;
     if (!OWNED_CAPABILITIES.has(capability)) return false;
 
-    const credential = await findActiveGoogleCredential(context.projectId);
-    if (!credential) return false;
-
-    const metadata = (credential.metadata ?? {}) as GoogleCredentialMetadata;
-    return Boolean(
-      metadata.selectedGa4PropertyId || metadata.selectedSearchConsoleSite,
-    );
+    const connections = await findActiveGoogleConnections(context.projectId);
+    return Boolean(connections.analytics || connections.searchConsole);
   }
 
   // Google API calls are synchronous and return within seconds — we follow
@@ -97,17 +125,37 @@ export class GoogleApiProvider implements ExecutionProvider {
   private async runCapability(
     request: ExecutionRequest,
   ): Promise<StoredResult> {
-    const credential = await findActiveGoogleCredential(
+    const { analytics, searchConsole } = await findActiveGoogleConnections(
       request.context.projectId,
     );
-    if (!credential) {
-      return { status: "FAILED", errorMessage: "Google connection not found" };
+    if (!analytics && !searchConsole) {
+      return {
+        status: "FAILED",
+        errorMessage:
+          "No Google Analytics property or Search Console site connected",
+      };
     }
-    const metadata = (credential.metadata ?? {}) as GoogleCredentialMetadata;
 
     try {
-      const accessToken = await getFreshGoogleAccessToken(credential);
-      return await this.analyzeAnalytics(accessToken, metadata);
+      // Each integration has its own refresh token — two separate grants,
+      // possibly from different Google accounts.
+      const [ga4, gsc] = await Promise.all([
+        analytics
+          ? getFreshGoogleAccessToken(analytics.credential).then((token) =>
+              fetchGa4Report(token, analytics.propertyId, REPORT_WINDOW_DAYS),
+            )
+          : Promise.resolve(null),
+        searchConsole
+          ? getFreshGoogleAccessToken(searchConsole.credential).then((token) =>
+              fetchSearchConsoleReport(
+                token,
+                searchConsole.siteUrl,
+                REPORT_WINDOW_DAYS,
+              ),
+            )
+          : Promise.resolve(null),
+      ]);
+      return summarize(ga4, gsc);
     } catch (error) {
       return {
         status: "FAILED",
@@ -115,56 +163,32 @@ export class GoogleApiProvider implements ExecutionProvider {
       };
     }
   }
+}
 
-  private async analyzeAnalytics(
-    accessToken: string,
-    metadata: GoogleCredentialMetadata,
-  ): Promise<StoredResult> {
-    const [ga4, searchConsole] = await Promise.all([
-      metadata.selectedGa4PropertyId
-        ? fetchGa4Report(
-            accessToken,
-            metadata.selectedGa4PropertyId,
-            REPORT_WINDOW_DAYS,
-          )
-        : Promise.resolve(null),
-      metadata.selectedSearchConsoleSite
-        ? fetchSearchConsoleReport(
-            accessToken,
-            metadata.selectedSearchConsoleSite,
-            REPORT_WINDOW_DAYS,
-          )
-        : Promise.resolve(null),
-    ]);
-
-    if (!ga4 && !searchConsole) {
-      return {
-        status: "FAILED",
-        errorMessage: "No GA4 property or Search Console site selected",
-      };
-    }
-
-    const parts: string[] = [];
-    if (ga4) {
-      parts.push(
-        `GA4: ${ga4.activeUsers} users, ${ga4.sessions} sessions (${REPORT_WINDOW_DAYS}d)`,
-      );
-    }
-    if (searchConsole) {
-      parts.push(
-        `Search Console: ${searchConsole.clicks} clicks / ${searchConsole.impressions} impressions, ` +
-          `avg. position ${searchConsole.position.toFixed(1)} (${REPORT_WINDOW_DAYS}d)`,
-      );
-    }
-
-    return {
-      status: "COMPLETED",
-      rawResult: {
-        text: parts.join(" · "),
-        windowDays: REPORT_WINDOW_DAYS,
-        ga4,
-        searchConsole,
-      },
-    };
+function summarize(
+  ga4: Awaited<ReturnType<typeof fetchGa4Report>> | null,
+  searchConsole: Awaited<ReturnType<typeof fetchSearchConsoleReport>> | null,
+): StoredResult {
+  const parts: string[] = [];
+  if (ga4) {
+    parts.push(
+      `GA4: ${ga4.activeUsers} users, ${ga4.sessions} sessions (${REPORT_WINDOW_DAYS}d)`,
+    );
   }
+  if (searchConsole) {
+    parts.push(
+      `Search Console: ${searchConsole.clicks} clicks / ${searchConsole.impressions} impressions, ` +
+        `avg. position ${searchConsole.position.toFixed(1)} (${REPORT_WINDOW_DAYS}d)`,
+    );
+  }
+
+  return {
+    status: "COMPLETED",
+    rawResult: {
+      text: parts.join(" · "),
+      windowDays: REPORT_WINDOW_DAYS,
+      ga4,
+      searchConsole,
+    },
+  };
 }

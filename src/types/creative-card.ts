@@ -58,6 +58,12 @@ export type CreativeCardData =
       publishState?: "idle" | "queued" | "publishing" | "published" | "failed";
       publishError?: string;
       publishedAt?: string; // ISO
+      // What approving does for THIS project right now — "calendar": a
+      // Publishing schedule is active, so it takes the next calendar slot;
+      // "publish": no schedule, so it goes out immediately (see
+      // approval-decisions.ts autoPublishCreative). Only set by the Agency
+      // Desk's decisions tray (pending-decisions.ts); absent → plain "Approve".
+      approveIntent?: "calendar" | "publish";
     }
   | {
       kind: "creative-failed";

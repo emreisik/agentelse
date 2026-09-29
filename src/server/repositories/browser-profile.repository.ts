@@ -24,20 +24,11 @@ export const BrowserProfileRepository = {
   // The one function that must never be bypassed: resolves a browser profile
   // strictly within `projectId`, so a BityPay execution can never be routed
   // to `biduniq-instagram` even if a bug upstream leaks the wrong slug/id.
-  async requireByPurposeInProject(
+  findByPurposeInProject(
     projectId: string,
     purpose: BrowserProfilePurpose,
   ) {
-    const profile = await prisma.browserProfile.findFirst({
-      where: { projectId, purpose },
-    });
-    if (!profile) {
-      throw new AgentelseError(
-        "BROWSER_PROFILE_MISMATCH",
-        `No browser profile with purpose ${purpose} in project ${projectId}`,
-      );
-    }
-    return profile;
+    return prisma.browserProfile.findFirst({ where: { projectId, purpose } });
   },
 
   create(input: {

@@ -11,10 +11,11 @@ import {
   type ScanSnapshot,
 } from "./meta-performance-rules";
 import {
+  META_PROVIDER,
   fetchMetaLevelInsights,
   listMetaAdSets,
   listMetaCampaigns,
-  type MetaCredentialMetadata,
+  type MetaAdsMetadata,
 } from "@/server/integrations/meta-client";
 
 const SCAN_INTERVAL_MS = 7 * 3600_000; // 6-8h band, see jitterMinutes below
@@ -39,7 +40,7 @@ function jitterMs(credentialId: string): number {
 }
 
 function isDue(
-  metadata: MetaCredentialMetadata,
+  metadata: MetaAdsMetadata,
   credentialId: string,
 ): boolean {
   if (!metadata.lastAdsPerformanceScanAt) return true;
@@ -61,7 +62,7 @@ function isDue(
 export const MetaPerformanceScanner = {
   async runDueScans(limit = MAX_CREDENTIALS_PER_TICK_DEFAULT): Promise<number> {
     const candidates = await prisma.integrationCredential.findMany({
-      where: { provider: "meta", status: "ACTIVE" },
+      where: { provider: META_PROVIDER.ads, status: "ACTIVE" },
       // Over-fetch a bit since not every ACTIVE credential is due — filtered
       // in memory below (metadata is unstructured JSON, can't push the due
       // check into the WHERE clause).
@@ -72,7 +73,7 @@ export const MetaPerformanceScanner = {
     let scanned = 0;
     for (const credential of candidates) {
       if (scanned >= limit) break;
-      const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+      const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
       if (!metadata.selectedAdAccountId) continue;
       if (!isDue(metadata, credential.id)) continue;
 
@@ -124,7 +125,7 @@ async function scanOneCredential(
     brandId: string;
     encryptedSecret: string;
   },
-  metadata: MetaCredentialMetadata,
+  metadata: MetaAdsMetadata,
 ): Promise<void> {
   const accessToken = decryptSecret(credential.encryptedSecret);
   const adAccountId = metadata.selectedAdAccountId!;

@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const prismaMocks = vi.hoisted(() => ({
-  findUnique: vi.fn(),
+  findMany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { integrationCredential: { findUnique: prismaMocks.findUnique } },
+  prisma: { integrationCredential: { findMany: prismaMocks.findMany } },
 }));
 
 const envMocks = vi.hoisted(() => ({ configured: true }));
@@ -25,6 +25,28 @@ const context: ExecutionPolicyContext = {
   riskLevel: "LOW",
 };
 
+// findMany is already filtered to ACTIVE rows by the provider's query, so
+// the mocks only return what an ACTIVE-filtered query would.
+function analyticsRow(metadata: Record<string, unknown>) {
+  return {
+    id: "cred-ga",
+    provider: "google_analytics",
+    encryptedSecret: "x",
+    status: "ACTIVE",
+    metadata: { ga4Properties: [], ...metadata },
+  };
+}
+
+function searchConsoleRow(metadata: Record<string, unknown>) {
+  return {
+    id: "cred-gsc",
+    provider: "google_search_console",
+    encryptedSecret: "x",
+    status: "ACTIVE",
+    metadata: { searchConsoleSites: [], ...metadata },
+  };
+}
+
 describe("GoogleApiProvider.canExecute", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -37,68 +59,70 @@ describe("GoogleApiProvider.canExecute", () => {
     expect(await provider.canExecute("ANALYTICS_ANALYSIS", context)).toBe(
       false,
     );
-    expect(prismaMocks.findUnique).not.toHaveBeenCalled();
+    expect(prismaMocks.findMany).not.toHaveBeenCalled();
   });
 
   it("returns false for a capability it does not own", async () => {
     const provider = new GoogleApiProvider();
     expect(await provider.canExecute("WEB_RESEARCH", context)).toBe(false);
-    expect(prismaMocks.findUnique).not.toHaveBeenCalled();
+    expect(prismaMocks.findMany).not.toHaveBeenCalled();
+  });
+
+  it("queries only ACTIVE Google Analytics / Search Console credentials", async () => {
+    prismaMocks.findMany.mockResolvedValue([]);
+    const provider = new GoogleApiProvider();
+    await provider.canExecute("ANALYTICS_ANALYSIS", context);
+    expect(prismaMocks.findMany).toHaveBeenCalledWith({
+      where: {
+        projectId: "project-1",
+        provider: { in: ["google_analytics", "google_search_console"] },
+        status: "ACTIVE",
+      },
+    });
   });
 
   it("returns false when no active Google credential exists for the project", async () => {
-    prismaMocks.findUnique.mockResolvedValue(null);
+    prismaMocks.findMany.mockResolvedValue([]);
     const provider = new GoogleApiProvider();
     expect(await provider.canExecute("ANALYTICS_ANALYSIS", context)).toBe(
       false,
     );
   });
 
-  it("returns false when the credential is not ACTIVE", async () => {
-    prismaMocks.findUnique.mockResolvedValue({
-      status: "EXPIRED",
-      metadata: { selectedGa4PropertyId: "123" },
-    });
+  it("returns false when connected but nothing is selected", async () => {
+    prismaMocks.findMany.mockResolvedValue([
+      analyticsRow({}),
+      searchConsoleRow({}),
+    ]);
     const provider = new GoogleApiProvider();
     expect(await provider.canExecute("ANALYTICS_ANALYSIS", context)).toBe(
       false,
     );
   });
 
-  it("returns false when neither a GA4 property nor a Search Console site is selected", async () => {
-    prismaMocks.findUnique.mockResolvedValue({
-      status: "ACTIVE",
-      metadata: { ga4Properties: [], searchConsoleSites: [] },
-    });
-    const provider = new GoogleApiProvider();
-    expect(await provider.canExecute("ANALYTICS_ANALYSIS", context)).toBe(
-      false,
-    );
-  });
-
-  it("allows ANALYTICS_ANALYSIS once a GA4 property is selected", async () => {
-    prismaMocks.findUnique.mockResolvedValue({
-      status: "ACTIVE",
-      metadata: {
-        ga4Properties: [],
-        searchConsoleSites: [],
-        selectedGa4PropertyId: "123",
-      },
-    });
+  it("allows ANALYTICS_ANALYSIS with only Google Analytics connected", async () => {
+    prismaMocks.findMany.mockResolvedValue([
+      analyticsRow({ selectedGa4PropertyId: "123" }),
+    ]);
     const provider = new GoogleApiProvider();
     expect(await provider.canExecute("ANALYTICS_ANALYSIS", context)).toBe(true);
   });
 
-  it("allows ANALYTICS_ANALYSIS once a Search Console site is selected", async () => {
-    prismaMocks.findUnique.mockResolvedValue({
-      status: "ACTIVE",
-      metadata: {
-        ga4Properties: [],
-        searchConsoleSites: [],
-        selectedSearchConsoleSite: "sc-domain:example.com",
-      },
-    });
+  it("allows ANALYTICS_ANALYSIS with only Search Console connected", async () => {
+    prismaMocks.findMany.mockResolvedValue([
+      searchConsoleRow({ selectedSearchConsoleSite: "sc-domain:example.com" }),
+    ]);
     const provider = new GoogleApiProvider();
     expect(await provider.canExecute("ANALYTICS_ANALYSIS", context)).toBe(true);
+  });
+
+  it("ignores a Search Console selection stored on the analytics row", async () => {
+    prismaMocks.findMany.mockResolvedValue([
+      analyticsRow({ selectedSearchConsoleSite: "sc-domain:example.com" }),
+    ]);
+    const provider = new GoogleApiProvider();
+    expect(await provider.canExecute("ANALYTICS_ANALYSIS", context)).toBe(
+      false,
+    );
   });
 });

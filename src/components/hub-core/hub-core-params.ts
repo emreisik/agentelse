@@ -12,13 +12,19 @@ export const PANEL_KEYS = [
   "ideas",
   "work",
   "departments",
-  "approvals",
   "human-action",
   "settings",
   "library",
 ] as const;
 
 export type PanelKey = (typeof PANEL_KEYS)[number];
+
+// Pending approvals are decided only on the Agency Desk (the project's
+// root chat) — its DecisionsBar opens expanded on this link. Replaces the
+// removed "approvals" panel / /approvals page.
+export function decisionsHref(projectId: string): string {
+  return `/projects/${projectId}?decisions=open`;
+}
 
 // Panels with no dedicated sidebar/top-bar entry of their own — reachable
 // only through the "Advanced" menu (project-tools-menu.tsx). Single source
@@ -55,6 +61,7 @@ export type SettingsSubKey = (typeof SETTINGS_SUB_KEYS)[number];
 
 export const BRAND_BRAIN_SUB_KEYS = [
   "assets",
+  "rules",
   "visual-identity",
   "constitution",
   "strategy",

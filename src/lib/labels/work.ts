@@ -99,33 +99,30 @@ export const ALL_DEPARTMENT_KEYS_UI = Object.keys(
 ) as DepartmentKey[];
 
 // Department "team color" identity — a separate visual channel independent
-// of StatusTone (see StatusBadge accentColor). The 19 departments are
-// grouped into 4 colorblind-safe categorical families; the department's
-// full identity is always carried by the icon + "X Team" label, color is
-// only for quick visual scanning.
+// of StatusTone (see StatusBadge accentColor). Each of the 19 departments has
+// its own hue (--dept-* in globals.css); the department's full identity is
+// still carried by the icon + "X Team" label, color is only for quick
+// visual scanning.
 export const DEPARTMENT_COLOR: Record<DepartmentKey, string> = {
-  BRAND_STRATEGY: "var(--dept-strategy)",
-  PARTNERSHIPS: "var(--dept-strategy)",
-  PR_MEDIA: "var(--dept-strategy)",
-  EVENTS: "var(--dept-strategy)",
-  OFFLINE_MEDIA: "var(--dept-strategy)",
-
-  MARKET_INTELLIGENCE: "var(--dept-intel)",
-  CUSTOMER_INTELLIGENCE: "var(--dept-intel)",
-  COMPETITOR_INTELLIGENCE: "var(--dept-intel)",
-
-  CREATIVE: "var(--dept-creative)",
-  ART_DIRECTION: "var(--dept-creative)",
-  COPY_CONTENT: "var(--dept-creative)",
-  SOCIAL_MEDIA: "var(--dept-creative)",
-  INFLUENCER_CREATOR: "var(--dept-creative)",
-
-  SEO: "var(--dept-growth)",
-  PERFORMANCE_MARKETING: "var(--dept-growth)",
-  DATA_ANALYTICS: "var(--dept-growth)",
-  GROWTH: "var(--dept-growth)",
-  CRM_LIFECYCLE: "var(--dept-growth)",
-  WEB_PRODUCT: "var(--dept-growth)",
+  BRAND_STRATEGY: "var(--dept-brand-strategy)",
+  MARKET_INTELLIGENCE: "var(--dept-market-intel)",
+  CUSTOMER_INTELLIGENCE: "var(--dept-customer-intel)",
+  COMPETITOR_INTELLIGENCE: "var(--dept-competitor-intel)",
+  CREATIVE: "var(--dept-creative-team)",
+  ART_DIRECTION: "var(--dept-art-direction)",
+  COPY_CONTENT: "var(--dept-copy-content)",
+  SOCIAL_MEDIA: "var(--dept-social-media)",
+  SEO: "var(--dept-seo)",
+  PERFORMANCE_MARKETING: "var(--dept-performance)",
+  DATA_ANALYTICS: "var(--dept-data-analytics)",
+  GROWTH: "var(--dept-growth-team)",
+  PR_MEDIA: "var(--dept-pr-media)",
+  INFLUENCER_CREATOR: "var(--dept-influencer)",
+  PARTNERSHIPS: "var(--dept-partnerships)",
+  CRM_LIFECYCLE: "var(--dept-crm)",
+  WEB_PRODUCT: "var(--dept-web-product)",
+  EVENTS: "var(--dept-events)",
+  OFFLINE_MEDIA: "var(--dept-offline-media)",
 };
 
 export const DEPARTMENT_MODE: EnumMap<DepartmentMode> = {

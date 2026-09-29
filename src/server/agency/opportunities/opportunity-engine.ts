@@ -126,10 +126,12 @@ export const OpportunityEngine = {
   async evaluatePromotedInsights(limit = 10): Promise<number> {
     const insights = await InsightRepository.listByStatus("NEW", limit);
     let created = 0;
-    for (const insight of insights) {
+    // Independent per-insight LLM evaluations — bounded parallel chunks
+    // instead of one after another.
+    const evaluateOne = async (insight: (typeof insights)[number]) => {
       // Paused project — skip without processing, exactly like
       // signal-universe.ts's own scan skip. Try again next tick.
-      if (!(await isProjectAgencyActive(insight.projectId))) continue;
+      if (!(await isProjectAgencyActive(insight.projectId))) return;
 
       try {
         const result = await this.evaluateInsight(
@@ -143,6 +145,9 @@ export const OpportunityEngine = {
           error instanceof Error ? error.message : error,
         );
       }
+    };
+    for (let i = 0; i < insights.length; i += 5) {
+      await Promise.all(insights.slice(i, i + 5).map(evaluateOne));
     }
     return created;
   },

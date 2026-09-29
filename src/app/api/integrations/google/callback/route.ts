@@ -10,25 +10,67 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 import {
+  GOOGLE_PROVIDER,
+  GOOGLE_SERVICE_LABEL,
   exchangeGoogleAuthCode,
+  fetchGa4PropertyList,
   fetchGoogleAccountEmail,
-  fetchGoogleLists,
-  reconcileGoogleSelection,
-  type GoogleCredentialMetadata,
+  fetchSearchConsoleSiteList,
+  parseGoogleService,
+  reconcileGa4Selection,
+  reconcileSearchConsoleSelection,
+  type GoogleAnalyticsMetadata,
+  type GoogleSearchConsoleMetadata,
+  type GoogleService,
 } from "@/server/integrations/google-client";
 
-function redirectToEntegrasyonlar(projectId: string, googleError?: string) {
+function redirectToIntegrations(
+  projectId: string,
+  service: GoogleService,
+  googleError?: string,
+) {
   const url = appUrl(`/projects/${projectId}/integrations`);
-  url.searchParams.set("integration", "google");
+  url.searchParams.set("integration", GOOGLE_PROVIDER[service]);
   if (googleError) url.searchParams.set("googleError", googleError);
   return NextResponse.redirect(url);
 }
 
+// Builds the service's metadata from a fresh list fetch, keeping the
+// previous selection if it's still accessible. Scan bookkeeping from the
+// existing row is carried over so a reconnect doesn't reset the scanner.
+async function buildMetadata(
+  service: GoogleService,
+  accessToken: string,
+  connectedEmail: string | null,
+  existing: Record<string, unknown>,
+): Promise<GoogleAnalyticsMetadata | GoogleSearchConsoleMetadata> {
+  if (service === "analytics") {
+    const previous = existing as Partial<GoogleAnalyticsMetadata>;
+    const lists = await fetchGa4PropertyList(accessToken);
+    return {
+      ...previous,
+      connectedEmail: connectedEmail ?? undefined,
+      ga4ListError: undefined,
+      ...lists,
+      ...reconcileGa4Selection(previous, lists),
+    };
+  }
+  const previous = existing as Partial<GoogleSearchConsoleMetadata>;
+  const lists = await fetchSearchConsoleSiteList(accessToken);
+  return {
+    ...previous,
+    connectedEmail: connectedEmail ?? undefined,
+    gscListError: undefined,
+    ...lists,
+    ...reconcileSearchConsoleSelection(previous, lists),
+  };
+}
+
 // Return from Google's consent screen — exchanges the code for a token,
-// lists accessible GA4 properties + Search Console sites, and establishes
-// the connection. Except for the one case where we don't know the
-// projectId (when the state can't be verified), all errors redirect back
-// to the integrations page.
+// lists the service's accessible GA4 properties or Search Console sites,
+// and establishes that service's connection. Except for the one case where
+// we don't know the projectId/service (when the state can't be verified),
+// all errors redirect back to the integrations page.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
@@ -36,30 +78,31 @@ export async function GET(request: Request) {
   const stateParam = searchParams.get("state");
 
   const state = stateParam ? verifyOAuthState(stateParam) : null;
-  if (!state) {
+  const service = parseGoogleService(state?.service);
+  if (!state || !service) {
     return NextResponse.redirect(
       appUrl("/dashboard?googleError=state_invalid"),
     );
   }
 
   if (error === "access_denied") {
-    return redirectToEntegrasyonlar(state.projectId, "denied");
+    return redirectToIntegrations(state.projectId, service, "denied");
   }
   if (!code) {
-    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
+    return redirectToIntegrations(state.projectId, service, "exchange_failed");
   }
 
   let userId: string;
   try {
     ({ userId } = await requireUser());
   } catch {
-    return redirectToEntegrasyonlar(state.projectId, "unauthorized");
+    return redirectToIntegrations(state.projectId, service, "unauthorized");
   }
   // The signed state carries which user initiated the flow — we don't
   // proceed if the current session belongs to a different user (e.g. the
   // connection link was shared).
   if (userId !== state.userId) {
-    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
+    return redirectToIntegrations(state.projectId, service, "state_invalid");
   }
 
   let access: {
@@ -70,57 +113,50 @@ export async function GET(request: Request) {
   try {
     access = await requireProjectAccess(userId, state.projectId);
   } catch {
-    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
+    return redirectToIntegrations(state.projectId, service, "state_invalid");
   }
 
   let tokens: Awaited<ReturnType<typeof exchangeGoogleAuthCode>>;
   try {
     tokens = await exchangeGoogleAuthCode(code);
   } catch {
-    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
+    return redirectToIntegrations(state.projectId, service, "exchange_failed");
   }
   if (!tokens.refreshToken) {
-    return redirectToEntegrasyonlar(state.projectId, "no_refresh_token");
+    return redirectToIntegrations(state.projectId, service, "no_refresh_token");
   }
 
-  // Even if one of the property/site lists fails (e.g. that API isn't
-  // enabled on the GCP project), the connection is still established — the
-  // error message is stored in the metadata and shown in the dialog.
-  const [connectedEmail, lists] = await Promise.all([
-    fetchGoogleAccountEmail(tokens.accessToken),
-    fetchGoogleLists(tokens.accessToken),
-  ]);
-
+  const provider = GOOGLE_PROVIDER[service];
   const existing = await prisma.integrationCredential.findUnique({
-    where: {
-      projectId_provider: { projectId: state.projectId, provider: "google" },
-    },
+    where: { projectId_provider: { projectId: state.projectId, provider } },
   });
-  const existingMetadata = (existing?.metadata ??
-    {}) as GoogleCredentialMetadata;
 
-  const metadata: GoogleCredentialMetadata = {
-    connectedEmail: connectedEmail ?? undefined,
-    ...lists,
-    ...reconcileGoogleSelection(existingMetadata, lists),
-  };
+  // Even if the property/site list fails (e.g. that API isn't enabled on
+  // the GCP project), the connection is still established — the error
+  // message is stored in the metadata and shown in the dialog.
+  const connectedEmail = await fetchGoogleAccountEmail(tokens.accessToken);
+  const metadata = await buildMetadata(
+    service,
+    tokens.accessToken,
+    connectedEmail,
+    (existing?.metadata ?? {}) as Record<string, unknown>,
+  );
+  const accountLabel = connectedEmail ?? GOOGLE_SERVICE_LABEL[service];
 
   const credential = await prisma.integrationCredential.upsert({
-    where: {
-      projectId_provider: { projectId: state.projectId, provider: "google" },
-    },
+    where: { projectId_provider: { projectId: state.projectId, provider } },
     create: {
       workspaceId: access.workspaceId,
       projectId: state.projectId,
       brandId: access.defaultBrandId,
-      provider: "google",
-      accountLabel: connectedEmail ?? "Google",
+      provider,
+      accountLabel,
       encryptedSecret: encryptSecret(tokens.refreshToken),
       metadata,
       status: "ACTIVE",
     },
     update: {
-      accountLabel: connectedEmail ?? "Google",
+      accountLabel,
       encryptedSecret: encryptSecret(tokens.refreshToken),
       metadata,
       status: "ACTIVE",
@@ -135,8 +171,8 @@ export async function GET(request: Request) {
     action: "integration_credential.connected",
     entityType: "IntegrationCredential",
     entityId: credential.id,
-    metadata: { provider: "google" },
+    metadata: { provider },
   });
 
-  return redirectToEntegrasyonlar(state.projectId);
+  return redirectToIntegrations(state.projectId, service);
 }

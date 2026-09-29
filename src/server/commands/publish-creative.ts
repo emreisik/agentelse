@@ -71,6 +71,9 @@ export async function publishCreativeCore(input: {
   const submission = await CommandService.submit({
     workspaceId,
     source: "WEB",
+    // An APPROVED creative already had its human decision — publishing
+    // it doesn't ask again (see TaskPlanner contentApproved).
+    contentApproved: creative.status === "APPROVED",
     rawText: `Publish on Instagram (${formatLabel}): ${title}`,
     actorType: "USER",
     userId: actorUserId,
@@ -211,6 +214,9 @@ export async function publishCreativeToSocialCore(input: {
   const submission = await CommandService.submit({
     workspaceId,
     source: "WEB",
+    // An APPROVED creative already had its human decision — publishing
+    // it doesn't ask again (see TaskPlanner contentApproved).
+    contentApproved: creative.status === "APPROVED",
     rawText: `Publish on ${config.label}: ${title}`,
     actorType: "USER",
     userId: actorUserId,

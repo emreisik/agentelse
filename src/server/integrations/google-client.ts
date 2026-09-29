@@ -3,7 +3,7 @@ import "server-only";
 // A thin, real Google REST API wrapper — no SDK, plain `fetch` (same
 // pattern as telegram-client.ts). The OAuth authorization-code flow + the
 // minimum surface of the GA4 (Analytics Admin/Data API) + Search Console
-// API needed for this integration.
+// API needed for these integrations.
 
 import { getEnv } from "@/lib/env";
 
@@ -15,44 +15,84 @@ const ANALYTICS_DATA_BASE = "https://analyticsdata.googleapis.com/v1beta";
 const SEARCH_CONSOLE_BASE =
   "https://searchconsole.googleapis.com/webmasters/v3";
 
-const SCOPES = [
-  "https://www.googleapis.com/auth/analytics.readonly",
-  "https://www.googleapis.com/auth/webmasters.readonly",
-  "https://www.googleapis.com/auth/userinfo.email",
-];
-
 const DEFAULT_TIMEOUT_MS = 8_000;
 
-// The shape of IntegrationCredential.metadata (provider: "google") — the
-// callback route writes it when establishing the connection, google-actions.ts
-// updates selection/test results, and the integrations page reads it directly.
-export type GoogleCredentialMetadata = {
+// Google Analytics and Search Console are two independent integrations:
+// each has its own OAuth grant (only its own scope), its own refresh token
+// and its own IntegrationCredential row — so they can be connected from
+// different Google accounts and disconnected separately. Both share the
+// same GCP OAuth client and the same registered redirect URI; the service
+// travels in the signed OAuth state.
+export const GOOGLE_SERVICES = ["analytics", "search_console"] as const;
+export type GoogleService = (typeof GOOGLE_SERVICES)[number];
+
+export const GOOGLE_PROVIDER = {
+  analytics: "google_analytics",
+  search_console: "google_search_console",
+} as const satisfies Record<GoogleService, string>;
+
+export const GOOGLE_SERVICE_LABEL: Record<GoogleService, string> = {
+  analytics: "Google Analytics",
+  search_console: "Google Search Console",
+};
+
+const SCOPES: Record<GoogleService, string[]> = {
+  analytics: [
+    "https://www.googleapis.com/auth/analytics.readonly",
+    "https://www.googleapis.com/auth/userinfo.email",
+  ],
+  search_console: [
+    "https://www.googleapis.com/auth/webmasters.readonly",
+    "https://www.googleapis.com/auth/userinfo.email",
+  ],
+};
+
+export function parseGoogleService(value: unknown): GoogleService | null {
+  return GOOGLE_SERVICES.includes(value as GoogleService)
+    ? (value as GoogleService)
+    : null;
+}
+
+// Bookkeeping for GoogleAnalyticsScanner's due-scan check (see
+// google-analytics-scanner.ts) — same pattern as Meta's
+// lastAdsPerformanceScanAt/adsPerformanceScanFailureCount in
+// meta-client.ts's MetaAdsMetadata.
+type GoogleScanBookkeeping = {
+  lastAnalyticsScanAt?: string;
+  analyticsScanFailureCount?: number;
+};
+
+// IntegrationCredential.metadata for provider "google_analytics".
+export type GoogleAnalyticsMetadata = GoogleScanBookkeeping & {
   connectedEmail?: string;
   ga4Properties: Ga4Property[];
   ga4ListError?: string;
-  searchConsoleSites: SearchConsoleSite[];
-  gscListError?: string;
   selectedGa4PropertyId?: string;
   selectedGa4PropertyName?: string;
-  selectedSearchConsoleSite?: string;
   lastTestResult?: {
     testedAt: string;
     ga4ActiveUsers?: number;
-    gscClicks?: number;
-    gscImpressions?: number;
     error?: string;
   };
-  // Bookkeeping for GoogleAnalyticsScanner's due-scan check (see
-  // google-analytics-scanner.ts) — same pattern as Meta's
-  // lastAdsPerformanceScanAt/adsPerformanceScanFailureCount in
-  // meta-client.ts's MetaCredentialMetadata.
-  lastAnalyticsScanAt?: string;
-  analyticsScanFailureCount?: number;
   // One-deep snapshot of the last scan's GA4 aggregate — powers
   // seo-rules.ts's evaluateTrafficFinding the same way Meta's
   // previousScanSnapshot powers evaluateTrendFinding.
   previousAnalyticsSnapshot?: {
     ga4?: { activeUsers: number; sessions: number };
+  };
+};
+
+// IntegrationCredential.metadata for provider "google_search_console".
+export type GoogleSearchConsoleMetadata = GoogleScanBookkeeping & {
+  connectedEmail?: string;
+  searchConsoleSites: SearchConsoleSite[];
+  gscListError?: string;
+  selectedSearchConsoleSite?: string;
+  lastTestResult?: {
+    testedAt: string;
+    gscClicks?: number;
+    gscImpressions?: number;
+    error?: string;
   };
 };
 
@@ -118,7 +158,10 @@ async function request<T>(
   return body as T;
 }
 
-export function buildGoogleAuthorizeUrl(state: string): string {
+export function buildGoogleAuthorizeUrl(
+  state: string,
+  service: GoogleService,
+): string {
   const env = getEnv();
   const params = new URLSearchParams({
     client_id: env.GOOGLE_OAUTH_CLIENT_ID,
@@ -126,8 +169,9 @@ export function buildGoogleAuthorizeUrl(state: string): string {
     response_type: "code",
     access_type: "offline",
     prompt: "consent",
-    include_granted_scopes: "true",
-    scope: SCOPES.join(" "),
+    // No include_granted_scopes: each service's token must carry only its
+    // own scope, otherwise the two integrations would silently merge again.
+    scope: SCOPES[service].join(" "),
     state,
   });
   return `${AUTHORIZE_URL}?${params.toString()}`;
@@ -401,80 +445,79 @@ export async function fetchSearchConsoleQueryRows(
   }));
 }
 
-export type GoogleLists = {
-  ga4Properties: Ga4Property[];
-  ga4ListError?: string;
-  searchConsoleSites: SearchConsoleSite[];
-  gscListError?: string;
-};
-
-// Fetches the GA4 property + Search Console site lists in parallel; if one
-// fails (e.g. that API isn't enabled in this GCP project), the other is
-// unaffected — the error message is written to the corresponding *ListError
-// field. Both the OAuth callback (initial connection) and
-// refreshGoogleListsAction (manual refresh) use this function.
-export async function fetchGoogleLists(
+// List fetches never throw — if the API isn't enabled in the GCP project
+// (or access is missing), the error message goes into the *ListError field
+// and the connection is still established. Used by both the OAuth callback
+// (initial connection) and refreshGoogleListsAction (manual refresh).
+export async function fetchGa4PropertyList(
   accessToken: string,
-): Promise<GoogleLists> {
-  const [ga4, gsc] = await Promise.all([
-    listGa4Properties(accessToken).then(
-      (items) => ({ items, error: undefined as string | undefined }),
-      (error) => ({
-        items: [] as Ga4Property[],
-        error:
-          error instanceof Error
-            ? error.message
-            : "Could not fetch the GA4 property list",
-      }),
-    ),
-    listSearchConsoleSites(accessToken).then(
-      (items) => ({ items, error: undefined as string | undefined }),
-      (error) => ({
-        items: [] as SearchConsoleSite[],
-        error:
-          error instanceof Error
-            ? error.message
-            : "Could not fetch the Search Console site list",
-      }),
-    ),
-  ]);
-  return {
-    ga4Properties: ga4.items,
-    ga4ListError: ga4.error,
-    searchConsoleSites: gsc.items,
-    gscListError: gsc.error,
-  };
+): Promise<Pick<GoogleAnalyticsMetadata, "ga4Properties" | "ga4ListError">> {
+  try {
+    return { ga4Properties: await listGa4Properties(accessToken) };
+  } catch (error) {
+    return {
+      ga4Properties: [],
+      ga4ListError:
+        error instanceof Error
+          ? error.message
+          : "Could not fetch the GA4 property list",
+    };
+  }
+}
+
+export async function fetchSearchConsoleSiteList(
+  accessToken: string,
+): Promise<
+  Pick<GoogleSearchConsoleMetadata, "searchConsoleSites" | "gscListError">
+> {
+  try {
+    return { searchConsoleSites: await listSearchConsoleSites(accessToken) };
+  } catch (error) {
+    return {
+      searchConsoleSites: [],
+      gscListError:
+        error instanceof Error
+          ? error.message
+          : "Could not fetch the Search Console site list",
+    };
+  }
 }
 
 // When a fresh list is fetched, the previous selection is kept if it's
 // still in the list, otherwise (the property/site was deleted or access
 // was revoked) it's cleared — so the user never sees a property as
 // "selected" that they no longer have access to.
-export function reconcileGoogleSelection(
-  existing: GoogleCredentialMetadata,
-  fresh: GoogleLists,
+export function reconcileGa4Selection(
+  existing: Partial<GoogleAnalyticsMetadata>,
+  fresh: Pick<GoogleAnalyticsMetadata, "ga4Properties">,
 ): Pick<
-  GoogleCredentialMetadata,
-  | "selectedGa4PropertyId"
-  | "selectedGa4PropertyName"
-  | "selectedSearchConsoleSite"
+  GoogleAnalyticsMetadata,
+  "selectedGa4PropertyId" | "selectedGa4PropertyName"
 > {
-  const keepGa4 =
+  const keep =
     existing.selectedGa4PropertyId &&
     fresh.ga4Properties.some(
       (p) => p.propertyId === existing.selectedGa4PropertyId,
     );
-  const keepGsc =
+  return {
+    selectedGa4PropertyId: keep ? existing.selectedGa4PropertyId : undefined,
+    selectedGa4PropertyName: keep
+      ? existing.selectedGa4PropertyName
+      : undefined,
+  };
+}
+
+export function reconcileSearchConsoleSelection(
+  existing: Partial<GoogleSearchConsoleMetadata>,
+  fresh: Pick<GoogleSearchConsoleMetadata, "searchConsoleSites">,
+): Pick<GoogleSearchConsoleMetadata, "selectedSearchConsoleSite"> {
+  const keep =
     existing.selectedSearchConsoleSite &&
     fresh.searchConsoleSites.some(
       (s) => s.siteUrl === existing.selectedSearchConsoleSite,
     );
   return {
-    selectedGa4PropertyId: keepGa4 ? existing.selectedGa4PropertyId : undefined,
-    selectedGa4PropertyName: keepGa4
-      ? existing.selectedGa4PropertyName
-      : undefined,
-    selectedSearchConsoleSite: keepGsc
+    selectedSearchConsoleSite: keep
       ? existing.selectedSearchConsoleSite
       : undefined,
   };

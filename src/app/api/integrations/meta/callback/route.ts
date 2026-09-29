@@ -10,41 +10,73 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 import {
+  META_PROVIDER,
+  META_SERVICE_LABEL,
   exchangeForLongLivedToken,
   exchangeMetaAuthCode,
   fetchMetaAccountName,
-  listAdAccounts,
-  listManagedPages,
-  type MetaCredentialMetadata,
+  fetchMetaAdAccountList,
+  fetchMetaPageList,
+  parseMetaService,
+  reconcileAdAccountSelection,
+  reconcilePageSelection,
+  type MetaAdsMetadata,
+  type MetaInstagramMetadata,
+  type MetaService,
 } from "@/server/integrations/meta-client";
 
-type ListOutcome<T> = { items: T[]; error?: string };
-
-async function safeList<T>(
-  promise: Promise<T[]>,
-  fallbackMessage: string,
-): Promise<ListOutcome<T>> {
-  try {
-    return { items: await promise };
-  } catch (error) {
-    return {
-      items: [],
-      error: error instanceof Error ? error.message : fallbackMessage,
-    };
-  }
-}
-
-function redirectToEntegrasyonlar(projectId: string, metaError?: string) {
+function redirectToIntegrations(
+  projectId: string,
+  service: MetaService,
+  metaError?: string,
+) {
   const url = appUrl(`/projects/${projectId}/integrations`);
-  url.searchParams.set("integration", "meta");
+  url.searchParams.set("integration", META_PROVIDER[service]);
   if (metaError) url.searchParams.set("metaError", metaError);
   return NextResponse.redirect(url);
 }
 
+// Builds the service's metadata from fresh list fetches, keeping previous
+// selections that are still accessible. Scan bookkeeping and snapshots from
+// the existing row are carried over so a reconnect doesn't reset the
+// scanner.
+async function buildMetadata(
+  service: MetaService,
+  accessToken: string,
+  connection: { connectedName?: string; longLivedTokenExpiresAt: string },
+  existing: Record<string, unknown>,
+): Promise<MetaInstagramMetadata | MetaAdsMetadata> {
+  if (service === "instagram") {
+    const previous = existing as Partial<MetaInstagramMetadata>;
+    const pages = await fetchMetaPageList(accessToken, {
+      onlyWithInstagram: true,
+    });
+    return {
+      ...previous,
+      ...connection,
+      ...pages,
+      ...reconcilePageSelection(previous, pages.pages),
+    };
+  }
+  const previous = existing as Partial<MetaAdsMetadata>;
+  const [pages, adAccounts] = await Promise.all([
+    fetchMetaPageList(accessToken, { onlyWithInstagram: false }),
+    fetchMetaAdAccountList(accessToken),
+  ]);
+  return {
+    ...previous,
+    ...connection,
+    ...pages,
+    ...adAccounts,
+    ...reconcilePageSelection(previous, pages.pages),
+    ...reconcileAdAccountSelection(previous, adAccounts.adAccounts),
+  };
+}
+
 // Return from Meta's consent screen — exchanges the code for a long-lived
-// token, lists managed Pages (along with their linked Instagram Business
-// accounts) and ad accounts, and establishes the connection. Same skeleton
-// as google/callback/route.ts.
+// token, lists what the service needs (Pages with a linked Instagram
+// Business account, or ad accounts + Pages) and establishes that service's
+// connection. Same skeleton as google/callback/route.ts.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
@@ -52,27 +84,28 @@ export async function GET(request: Request) {
   const stateParam = searchParams.get("state");
 
   const state = stateParam ? verifyOAuthState(stateParam) : null;
-  if (!state) {
+  const service = parseMetaService(state?.service);
+  if (!state || !service) {
     return NextResponse.redirect(appUrl("/dashboard?metaError=state_invalid"));
   }
 
   if (error === "access_denied") {
-    return redirectToEntegrasyonlar(state.projectId, "denied");
+    return redirectToIntegrations(state.projectId, service, "denied");
   }
   if (!code) {
-    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
+    return redirectToIntegrations(state.projectId, service, "exchange_failed");
   }
 
   let userId: string;
   try {
     ({ userId } = await requireUser());
   } catch {
-    return redirectToEntegrasyonlar(state.projectId, "unauthorized");
+    return redirectToIntegrations(state.projectId, service, "unauthorized");
   }
   // The signed state carries which user initiated the flow — we don't
   // proceed if the current session belongs to a different user.
   if (userId !== state.userId) {
-    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
+    return redirectToIntegrations(state.projectId, service, "state_invalid");
   }
 
   let access: {
@@ -83,7 +116,7 @@ export async function GET(request: Request) {
   try {
     access = await requireProjectAccess(userId, state.projectId);
   } catch {
-    return redirectToEntegrasyonlar(state.projectId, "state_invalid");
+    return redirectToIntegrations(state.projectId, service, "state_invalid");
   }
 
   let longLivedToken: { accessToken: string; expiresIn: number };
@@ -91,79 +124,45 @@ export async function GET(request: Request) {
     const shortLived = await exchangeMetaAuthCode(code);
     longLivedToken = await exchangeForLongLivedToken(shortLived.accessToken);
   } catch {
-    return redirectToEntegrasyonlar(state.projectId, "exchange_failed");
+    return redirectToIntegrations(state.projectId, service, "exchange_failed");
   }
 
-  // Even if one of the Page/ad account lists fails (e.g. permission wasn't
-  // granted for that Page), the connection is still established — the error
-  // message is stored in the metadata and shown in the dialog.
-  const [connectedName, pages, adAccounts] = await Promise.all([
-    fetchMetaAccountName(longLivedToken.accessToken),
-    safeList(
-      listManagedPages(longLivedToken.accessToken),
-      "Failed to fetch Page list",
-    ),
-    safeList(
-      listAdAccounts(longLivedToken.accessToken),
-      "Failed to fetch ad account list",
-    ),
-  ]);
-
+  const provider = META_PROVIDER[service];
   const existing = await prisma.integrationCredential.findUnique({
-    where: {
-      projectId_provider: { projectId: state.projectId, provider: "meta" },
-    },
+    where: { projectId_provider: { projectId: state.projectId, provider } },
   });
-  const existingMetadata = (existing?.metadata ?? {}) as MetaCredentialMetadata;
 
-  const keepPageSelection =
-    existingMetadata.selectedPageId &&
-    pages.items.some((p) => p.pageId === existingMetadata.selectedPageId);
-  const keepAdAccountSelection =
-    existingMetadata.selectedAdAccountId &&
-    adAccounts.items.some(
-      (a) => a.adAccountId === existingMetadata.selectedAdAccountId,
-    );
-
-  const metadata: MetaCredentialMetadata = {
-    connectedName: connectedName ?? undefined,
-    longLivedTokenExpiresAt: new Date(
-      Date.now() + longLivedToken.expiresIn * 1000,
-    ).toISOString(),
-    pages: pages.items,
-    pagesListError: pages.error,
-    adAccounts: adAccounts.items,
-    adAccountsListError: adAccounts.error,
-    selectedPageId: keepPageSelection
-      ? existingMetadata.selectedPageId
-      : undefined,
-    selectedPageName: keepPageSelection
-      ? existingMetadata.selectedPageName
-      : undefined,
-    selectedAdAccountId: keepAdAccountSelection
-      ? existingMetadata.selectedAdAccountId
-      : undefined,
-    selectedAdAccountName: keepAdAccountSelection
-      ? existingMetadata.selectedAdAccountName
-      : undefined,
-  };
+  // Even if a list fails (e.g. permission wasn't granted for that Page), the
+  // connection is still established — the error message is stored in the
+  // metadata and shown in the dialog.
+  const connectedName = await fetchMetaAccountName(longLivedToken.accessToken);
+  const metadata = await buildMetadata(
+    service,
+    longLivedToken.accessToken,
+    {
+      connectedName: connectedName ?? undefined,
+      longLivedTokenExpiresAt: new Date(
+        Date.now() + longLivedToken.expiresIn * 1000,
+      ).toISOString(),
+    },
+    (existing?.metadata ?? {}) as Record<string, unknown>,
+  );
+  const accountLabel = connectedName ?? META_SERVICE_LABEL[service];
 
   const credential = await prisma.integrationCredential.upsert({
-    where: {
-      projectId_provider: { projectId: state.projectId, provider: "meta" },
-    },
+    where: { projectId_provider: { projectId: state.projectId, provider } },
     create: {
       workspaceId: access.workspaceId,
       projectId: state.projectId,
       brandId: access.defaultBrandId,
-      provider: "meta",
-      accountLabel: connectedName ?? "Meta",
+      provider,
+      accountLabel,
       encryptedSecret: encryptSecret(longLivedToken.accessToken),
       metadata,
       status: "ACTIVE",
     },
     update: {
-      accountLabel: connectedName ?? "Meta",
+      accountLabel,
       encryptedSecret: encryptSecret(longLivedToken.accessToken),
       metadata,
       status: "ACTIVE",
@@ -178,8 +177,8 @@ export async function GET(request: Request) {
     action: "integration_credential.connected",
     entityType: "IntegrationCredential",
     entityId: credential.id,
-    metadata: { provider: "meta" },
+    metadata: { provider },
   });
 
-  return redirectToEntegrasyonlar(state.projectId);
+  return redirectToIntegrations(state.projectId, service);
 }

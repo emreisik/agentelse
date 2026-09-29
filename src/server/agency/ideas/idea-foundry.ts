@@ -13,6 +13,10 @@ import { IdeaRepository } from "@/server/repositories/idea.repository";
 import { OpportunityRepository } from "@/server/repositories/opportunity.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 
+import {
+  FOCUS_LENS_MIX,
+  isAgencyFocusMode,
+} from "@/server/agency/agency-focus";
 import { DEFAULT_LENS_MIX, LENS_DEFINITIONS } from "./creative-lenses";
 
 // Bounds audit scenario K's opportunity retry so a repeatedly-failing
@@ -133,7 +137,9 @@ export const IdeaFoundry = {
     const activeIdeas = await IdeaRepository.countActive(projectId);
     if (!policy.unlimitedMode && activeIdeas >= policy.maxActiveIdeas) return 0;
 
-    const requestedLenses = opts?.lenses ?? DEFAULT_LENS_MIX;
+    const requestedLenses =
+      opts?.lenses ??
+      (isAgencyFocusMode() ? FOCUS_LENS_MIX : DEFAULT_LENS_MIX);
     const lenses: CreativeLens[] = [];
     for (const lens of requestedLenses) {
       const exists = await IdeaRepository.existsForOpportunityLens(

@@ -44,11 +44,18 @@ export const CapabilityRouter = {
 
     if (!purpose) return undefined;
 
-    const profile = await BrowserProfileRepository.requireByPurposeInProject(
+    // Soft lookup, still strictly project-scoped: a missing profile only
+    // means the browser (OpenClaw) path can't serve this capability —
+    // OpenClawProvider.canExecute rejects profile-bound capabilities without
+    // a browserProfileId, so route() falls through to the API providers
+    // (Meta for INSTAGRAM_PUBLISH/META_*, OpenAI for CRM_ANALYSIS/
+    // EMAIL_DRAFT). Throwing here used to block those API paths outright,
+    // before a provider was ever consulted, and stranded the Task in QUEUED.
+    const profile = await BrowserProfileRepository.findByPurposeInProject(
       projectId,
       purpose,
     );
-    return profile.id;
+    return profile?.id;
   },
 
   // Walks the provider registry in preference order and returns the first

@@ -1,4 +1,26 @@
-import type { CapabilityKey } from "@prisma/client";
+import type {
+  ApprovalLevel,
+  ApprovalType,
+  CapabilityKey,
+} from "@prisma/client";
+
+import type { ApprovalCategory } from "@/types/idea-event-card";
+
+// Plain-language bucket for a pending approval, shown on its chat card —
+// campaign/budget writes are "spend" (real money, the one thing that must
+// always stop and ask), social posts are "publish", everything else
+// "action". LEVEL_4_CRITICAL is budget-adjacent by definition (see
+// approval-policy.ts LEVEL_4_CAPABILITIES).
+export function approvalCategory(
+  type: ApprovalType,
+  level: ApprovalLevel | null | undefined,
+): ApprovalCategory {
+  if (type === "CAMPAIGN_APPROVAL" || level === "LEVEL_4_CRITICAL") {
+    return "spend";
+  }
+  if (type === "PUBLISH_APPROVAL") return "publish";
+  return "action";
+}
 
 // Pure formatting — turns a Task's payload into human-readable rows for
 // the approval-request chat card (see idea-event-card.tsx). Returns

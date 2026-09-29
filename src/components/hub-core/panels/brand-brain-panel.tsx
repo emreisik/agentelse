@@ -9,6 +9,7 @@ import {
   GitBranch,
   GraduationCap,
   Palette,
+  ShieldCheck,
   Type as FontIcon,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -67,6 +68,7 @@ const EVIDENCE_SOURCE_LABEL: Record<EvidenceSourceType, string> = {
 
 const BRAND_BRAIN_TAB_LABEL: Record<BrandBrainSubKey, string> = {
   assets: "Assets",
+  rules: "Rules & Knowledge",
   "visual-identity": "Visual Identity",
   constitution: "Constitution",
   strategy: "Strategy",
@@ -77,6 +79,7 @@ const BRAND_BRAIN_TAB_LABEL: Record<BrandBrainSubKey, string> = {
 
 const BRAND_BRAIN_TAB_ICON: Record<BrandBrainSubKey, LucideIcon> = {
   assets: Gem,
+  rules: ShieldCheck,
   "visual-identity": Palette,
   constitution: BookOpen,
   strategy: GitBranch,
@@ -150,15 +153,22 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
     decisionCount,
     evidenceCount,
     learningCount,
+    knowledge,
   ] = await Promise.all([
     prisma.brandConstitution.count({ where: { brandId } }),
     prisma.brandStrategyVersion.count({ where: { brandId } }),
     prisma.brandDecision.count({ where: { brandId } }),
     prisma.brandEvidence.count({ where: { brandId } }),
     prisma.brandLearning.count({ where: { projectId } }),
+    countBrandKnowledge(brandId),
   ]);
 
   const tabCount: Partial<Record<BrandBrainSubKey, number>> = {
+    rules:
+      knowledge.negativeRules +
+      knowledge.claims +
+      knowledge.facts +
+      knowledge.assumptions,
     constitution: constitutionCount,
     strategy: strategyCount,
     decisions: decisionCount,
@@ -224,8 +234,14 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
         <EvidenceSection brandId={brandId} />
       ) : activeSub === "learnings" ? (
         <LearningsSection projectId={projectId} />
+      ) : activeSub === "rules" ? (
+        <RulesSection brandId={brandId} knowledge={knowledge} />
       ) : (
-        <AssetsSection projectId={projectId} brandId={brandId} />
+        <AssetsSection
+          projectId={projectId}
+          brandId={brandId}
+          knowledge={knowledge}
+        />
       )}
     </div>
   );
@@ -441,46 +457,71 @@ function SectionValue({ value }: { value: unknown }) {
 
 // ---------------------------------------------------------------------------
 
-function StatTile({ label, value }: { label: string; value: number }) {
+type BrandKnowledgeCounts = {
+  negativeRules: number;
+  claims: number;
+  facts: number;
+  assumptions: number;
+};
+
+// Counts only — the lists themselves live on the Rules & Knowledge tab so
+// they don't stretch the Assets overview. Same filters RulesSection uses.
+async function countBrandKnowledge(
+  brandId: string,
+): Promise<BrandKnowledgeCounts> {
+  const [negativeRules, claims, facts, assumptions] = await Promise.all([
+    prisma.negativeBriefRule.count({ where: { brandId, active: true } }),
+    prisma.approvedClaim.count({ where: { brandId, active: true } }),
+    prisma.brandFact.count({ where: { brandId } }),
+    prisma.brandAssumption.count({ where: { brandId } }),
+  ]);
+  return { negativeRules, claims, facts, assumptions };
+}
+
+// Rules & Knowledge group anchors — the Assets chips deep-link to them.
+const KNOWLEDGE_GROUP_ID = {
+  negativeRules: "never-do",
+  claims: "approved-claims",
+  facts: "brand-facts",
+  assumptions: "assumptions",
+} as const;
+
+function KnowledgeChip({
+  projectId,
+  group,
+  label,
+  value,
+}: {
+  projectId: string;
+  group: keyof typeof KNOWLEDGE_GROUP_ID;
+  label: string;
+  value: number;
+}) {
   return (
-    <div className="rounded-lg bg-background/70 px-3 py-2 ring-1 ring-foreground/10">
-      <p className="font-heading text-lg leading-none font-semibold tabular-nums">
-        {value}
-      </p>
-      <p className="mt-1 text-[11px] text-muted-foreground">{label}</p>
-    </div>
+    <Link
+      href={`${buildHubHref(projectId, {
+        panel: "brand-brain",
+        sub: "rules",
+        entity: null,
+      })}#${KNOWLEDGE_GROUP_ID[group]}`}
+      className="inline-flex items-center gap-1.5 rounded-full bg-background/70 px-2.5 py-1 text-xs ring-1 ring-foreground/10 transition-colors hover:bg-background"
+    >
+      <span className="font-semibold tabular-nums">{value}</span>
+      <span className="text-muted-foreground">{label}</span>
+    </Link>
   );
 }
 
 async function AssetsSection({
   projectId,
   brandId,
+  knowledge,
 }: {
   projectId: string;
   brandId: string;
+  knowledge: BrandKnowledgeCounts;
 }) {
-  const [dossier, facts, assumptions, claims, negativeRules] =
-    await Promise.all([
-      prisma.brandDossier.findUnique({ where: { brandId } }),
-      prisma.brandFact.findMany({
-        where: { brandId },
-        take: 50,
-        orderBy: { createdAt: "desc" },
-      }),
-      prisma.brandAssumption.findMany({
-        where: { brandId },
-        take: 50,
-        orderBy: { createdAt: "desc" },
-      }),
-      prisma.approvedClaim.findMany({
-        where: { brandId, active: true },
-        orderBy: { approvedAt: "desc" },
-      }),
-      prisma.negativeBriefRule.findMany({
-        where: { brandId, active: true },
-        orderBy: { createdAt: "desc" },
-      }),
-    ]);
+  const dossier = await prisma.brandDossier.findUnique({ where: { brandId } });
 
   let strategyVersionLabel: string | null = null;
   if (dossier?.currentStrategyVersionId) {
@@ -578,11 +619,31 @@ async function AssetsSection({
               </p>
             ) : null}
 
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <StatTile label="Brand Facts" value={facts.length} />
-              <StatTile label="Approved Claims" value={claims.length} />
-              <StatTile label="Assumptions" value={assumptions.length} />
-              <StatTile label="Negative Rules" value={negativeRules.length} />
+            <div className="flex flex-wrap gap-1.5">
+              <KnowledgeChip
+                projectId={projectId}
+                group="negativeRules"
+                label="never-do rules"
+                value={knowledge.negativeRules}
+              />
+              <KnowledgeChip
+                projectId={projectId}
+                group="claims"
+                label="approved claims"
+                value={knowledge.claims}
+              />
+              <KnowledgeChip
+                projectId={projectId}
+                group="facts"
+                label="brand facts"
+                value={knowledge.facts}
+              />
+              <KnowledgeChip
+                projectId={projectId}
+                group="assumptions"
+                label="assumptions"
+                value={knowledge.assumptions}
+              />
             </div>
           </div>
         </div>
@@ -655,164 +716,261 @@ async function AssetsSection({
         ) : null}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-            <CardTitle className="text-base">Brand Dossier</CardTitle>
-            <BrandDossierEditSheet
-              projectId={projectId}
-              dossier={{
-                summary: dossier?.summary ?? null,
-                positioning: dossier?.positioning ?? null,
-                toneOfVoice: dossier?.toneOfVoice ?? null,
-                language: dossier?.language ?? null,
-                country: dossier?.country ?? null,
-                targetAudiences: dossier?.targetAudiences ?? null,
-                markets: dossier?.markets ?? null,
-                products: dossier?.products ?? null,
-                services: dossier?.services ?? null,
-                visualGuidelines: dossier?.visualGuidelines ?? null,
-              }}
-              action={updateBrandDossierAction}
-            />
-          </CardHeader>
-          <CardContent>
-            {dossier ? (
-              <FieldGrid fields={dossierFields} />
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Brand dossier hasn&apos;t been created yet.
-              </p>
-            )}
-          </CardContent>
-        </Card>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+          <CardTitle className="text-base">Brand Dossier</CardTitle>
+          <BrandDossierEditSheet
+            projectId={projectId}
+            dossier={{
+              summary: dossier?.summary ?? null,
+              positioning: dossier?.positioning ?? null,
+              toneOfVoice: dossier?.toneOfVoice ?? null,
+              language: dossier?.language ?? null,
+              country: dossier?.country ?? null,
+              targetAudiences: dossier?.targetAudiences ?? null,
+              markets: dossier?.markets ?? null,
+              products: dossier?.products ?? null,
+              services: dossier?.services ?? null,
+              visualGuidelines: dossier?.visualGuidelines ?? null,
+            }}
+            action={updateBrandDossierAction}
+          />
+        </CardHeader>
+        <CardContent>
+          {dossier ? (
+            <FieldGrid fields={dossierFields} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Brand dossier hasn&apos;t been created yet.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              Negative Brief Rules ({negativeRules.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {negativeRules.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No rules.</p>
-            ) : (
-              <ul className="space-y-2 text-sm">
-                {negativeRules.map((rule) => (
-                  <li key={rule.id} className="space-y-0.5">
-                    <div className="flex gap-2">
-                      <span className="mt-1.5 size-1 shrink-0 rounded-full bg-destructive/60" />
-                      <span>{rule.rule}</span>
-                    </div>
-                    <p className="pl-3 text-[11px] text-muted-foreground">
-                      {rule.category ? `${rule.category} · ` : ""}
-                      {timeAgo(rule.createdAt)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+// ---------------------------------------------------------------------------
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              Brand Facts ({facts.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {facts.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No records.</p>
-            ) : (
-              <div className="space-y-2.5 text-sm">
-                {facts.map((fact) => (
-                  <div
-                    key={fact.id}
-                    className="space-y-1 border-b border-border/40 pb-2 last:border-0 last:pb-0"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="text-xs text-muted-foreground">
-                        {fact.category} · {fact.key}
-                      </span>
-                      <span className="min-w-0 text-right text-xs">
-                        {typeof fact.value === "string"
-                          ? fact.value
-                          : JSON.stringify(fact.value)}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {fact.classification ? (
-                        <StatusBadge
-                          meta={FACT_CLASSIFICATION[fact.classification]}
-                          className="h-4 px-1.5 text-[10px]"
-                        />
-                      ) : null}
-                      {fact.source ? (
-                        <span className="text-[10px] text-muted-foreground">
-                          Source: {fact.source}
-                        </span>
-                      ) : null}
-                      {fact.confidence !== null ? (
-                        <span className="text-[10px] text-muted-foreground">
-                          Confidence: {Math.round(fact.confidence * 100)}%
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
+const KNOWLEDGE_LIST_LIMIT = 50;
+
+// The brand's working rules and raw knowledge, split off the Assets tab so
+// the overview stays short. Never-do rules and approved claims are sent to
+// the creative engine as hard constraints on every generation; facts and
+// assumptions feed the constitution. Each group starts collapsed with its
+// count — the Assets chips deep-link to one via its id.
+async function RulesSection({
+  brandId,
+  knowledge,
+}: {
+  brandId: string;
+  knowledge: BrandKnowledgeCounts;
+}) {
+  const [negativeRules, claims, facts, assumptions] = await Promise.all([
+    prisma.negativeBriefRule.findMany({
+      where: { brandId, active: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.approvedClaim.findMany({
+      where: { brandId, active: true },
+      orderBy: { approvedAt: "desc" },
+    }),
+    prisma.brandFact.findMany({
+      where: { brandId },
+      take: KNOWLEDGE_LIST_LIMIT,
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.brandAssumption.findMany({
+      where: { brandId },
+      take: KNOWLEDGE_LIST_LIMIT,
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-8 items-center justify-center rounded-lg bg-foreground text-background">
+          <ShieldCheck className="size-4" />
+        </span>
+        <div>
+          <p className="font-heading text-base font-semibold tracking-tight text-foreground">
+            Rules & Knowledge
+          </p>
+          <p className="text-xs text-muted-foreground">
+            What the AI works from — never-do rules and approved claims are
+            enforced on every creative
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <KnowledgeGroup
+          id={KNOWLEDGE_GROUP_ID.negativeRules}
+          title="Never do"
+          count={knowledge.negativeRules}
+          empty="No rules."
+        >
+          <ul className="space-y-2 text-sm">
+            {negativeRules.map((rule) => (
+              <li key={rule.id} className="space-y-0.5">
+                <div className="flex gap-2">
+                  <span className="mt-1.5 size-1 shrink-0 rounded-full bg-destructive/60" />
+                  <span>{rule.rule}</span>
+                </div>
+                <p className="pl-3 text-[11px] text-muted-foreground">
+                  {rule.category ? `${rule.category} · ` : ""}
+                  {timeAgo(rule.createdAt)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </KnowledgeGroup>
+
+        <KnowledgeGroup
+          id={KNOWLEDGE_GROUP_ID.claims}
+          title="Approved claims"
+          count={knowledge.claims}
+          empty="No approved claims."
+        >
+          <div className="space-y-2.5">
+            {claims.map((claim) => (
+              <div key={claim.id} className="space-y-0.5">
+                <div className="flex items-center gap-2 text-sm">
+                  <StatusBadge
+                    meta={{ label: "Claim", tone: "positive" }}
+                    className="h-4 px-1.5 text-[10px]"
+                  />
+                  <span className="min-w-0">{claim.claim}</span>
+                </div>
+                <p className="pl-1 text-[11px] text-muted-foreground">
+                  {claim.category ? `${claim.category} · ` : ""}
+                  approved {timeAgo(claim.approvedAt)}
+                </p>
               </div>
-            )}
-          </CardContent>
-        </Card>
+            ))}
+          </div>
+        </KnowledgeGroup>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              Approved Claims ({claims.length}) & Assumptions (
-              {assumptions.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {claims.length === 0 && assumptions.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No records.</p>
-            ) : (
-              <>
-                {claims.map((claim) => (
-                  <div key={claim.id} className="space-y-0.5">
-                    <div className="flex items-center gap-2 text-sm">
-                      <StatusBadge
-                        meta={{ label: "Claim", tone: "positive" }}
-                        className="h-4 px-1.5 text-[10px]"
-                      />
-                      <span className="min-w-0">{claim.claim}</span>
-                    </div>
-                    <p className="pl-1 text-[11px] text-muted-foreground">
-                      {claim.category ? `${claim.category} · ` : ""}
-                      approved {timeAgo(claim.approvedAt)}
-                    </p>
-                  </div>
-                ))}
-                {assumptions.map((assumption) => (
-                  <div key={assumption.id} className="space-y-0.5">
-                    <div className="flex items-center gap-2 text-sm">
-                      <StatusBadge
-                        meta={{ label: assumption.status, tone: "waiting" }}
-                        className="h-4 px-1.5 text-[10px]"
-                      />
-                      <span className="min-w-0">{assumption.statement}</span>
-                    </div>
-                    <p className="pl-1 text-[11px] text-muted-foreground">
-                      {timeAgo(assumption.createdAt)}
-                    </p>
-                  </div>
-                ))}
-              </>
-            )}
-          </CardContent>
-        </Card>
+        <KnowledgeGroup
+          id={KNOWLEDGE_GROUP_ID.facts}
+          title="Brand facts"
+          count={knowledge.facts}
+          shown={facts.length}
+          empty="No facts yet."
+        >
+          <div className="space-y-2.5 text-sm">
+            {facts.map((fact) => (
+              <div
+                key={fact.id}
+                className="space-y-1 border-b border-border/40 pb-2 last:border-0 last:pb-0"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-xs text-muted-foreground">
+                    {fact.category} · {fact.key}
+                  </span>
+                  <span className="min-w-0 text-right text-xs">
+                    {typeof fact.value === "string"
+                      ? fact.value
+                      : JSON.stringify(fact.value)}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {fact.classification ? (
+                    <StatusBadge
+                      meta={FACT_CLASSIFICATION[fact.classification]}
+                      className="h-4 px-1.5 text-[10px]"
+                    />
+                  ) : null}
+                  {fact.source ? (
+                    <span className="text-[10px] text-muted-foreground">
+                      Source: {fact.source}
+                    </span>
+                  ) : null}
+                  {fact.confidence !== null ? (
+                    <span className="text-[10px] text-muted-foreground">
+                      Confidence: {Math.round(fact.confidence * 100)}%
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </KnowledgeGroup>
+
+        <KnowledgeGroup
+          id={KNOWLEDGE_GROUP_ID.assumptions}
+          title="Assumptions"
+          count={knowledge.assumptions}
+          shown={assumptions.length}
+          empty="No assumptions."
+        >
+          <div className="space-y-2.5">
+            {assumptions.map((assumption) => (
+              <div key={assumption.id} className="space-y-0.5">
+                <div className="flex items-center gap-2 text-sm">
+                  <StatusBadge
+                    meta={{ label: assumption.status, tone: "waiting" }}
+                    className="h-4 px-1.5 text-[10px]"
+                  />
+                  <span className="min-w-0">{assumption.statement}</span>
+                </div>
+                <p className="pl-1 text-[11px] text-muted-foreground">
+                  {timeAgo(assumption.createdAt)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </KnowledgeGroup>
       </div>
     </section>
+  );
+}
+
+// Same collapsed-by-default <details> look as the constitution's Source
+// Findings, with the count up front so the page reads as a short index.
+function KnowledgeGroup({
+  id,
+  title,
+  count,
+  shown,
+  empty,
+  children,
+}: {
+  id: string;
+  title: string;
+  count: number;
+  shown?: number;
+  empty: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <details
+      id={id}
+      className="group/knowledge scroll-mt-4 rounded-lg border border-border bg-secondary/40"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 select-none">
+        <span className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
+          <span className="flex h-5 min-w-5 items-center justify-center rounded-md bg-muted px-1 text-[10px] font-semibold text-muted-foreground tabular-nums">
+            {count}
+          </span>
+          {title}
+        </span>
+        <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open/knowledge:rotate-180" />
+      </summary>
+      <div className="border-t border-border px-3 py-3">
+        {count === 0 ? (
+          <p className="text-sm text-muted-foreground">{empty}</p>
+        ) : (
+          children
+        )}
+        {shown !== undefined && shown < count ? (
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            Showing the latest {shown} of {count}.
+          </p>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

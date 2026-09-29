@@ -7,6 +7,7 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { isDepartmentInFocus } from "@/server/agency/agency-focus";
 import { taskFingerprint } from "@/server/agency/fingerprint";
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { IdeaRepository } from "@/server/repositories/idea.repository";
@@ -84,7 +85,10 @@ export function buildCampaignNodes(
   title: string,
   departments: DepartmentKey[],
 ): PlanNode[] {
-  const wanted = new Set(departments);
+  // Focus mode (agency-focus.ts) keeps only social/ads departments — the
+  // rest either have no real executor (WEBSITE_UPDATE, PR_OUTREACH) or
+  // aren't part of the current goal, and used to strand the plan.
+  const wanted = new Set(departments.filter(isDepartmentInFocus));
   // Strategy always leads; analytics always closes.
   wanted.add("BRAND_STRATEGY");
   wanted.add("DATA_ANALYTICS");

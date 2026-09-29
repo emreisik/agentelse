@@ -90,11 +90,11 @@ const BROWSER_PURPOSE_BY_CAPABILITY: Partial<
   SIGNAL_SCAN: "PUBLIC_RESEARCH",
   MEASUREMENT_CHECK: "PUBLIC_RESEARCH",
   INSTAGRAM_PUBLISH: "INSTAGRAM",
-  // TIKTOK_PUBLISH/LINKEDIN_PUBLISH/X_PUBLISH deliberately NOT mapped here
-  // (unlike INSTAGRAM_PUBLISH, which still needs a placeholder BrowserProfile
-  // because capability-router.ts's resolveBrowserProfile() runs unconditionally
-  // at ExecutionService.dispatch() time, BEFORE provider selection — see
-  // execution-service.ts). TikTok/LinkedIn/X now route exclusively through
+  // TIKTOK_PUBLISH/LINKEDIN_PUBLISH/X_PUBLISH deliberately NOT mapped here.
+  // (A missing profile no longer throws — resolveBrowserProfile() in
+  // capability-router.ts now returns undefined and lets route() fall through
+  // to the API providers — but mapping them would still steer a fallback to
+  // OpenClaw browser automation they can't use.) TikTok/LinkedIn/X now route exclusively through
   // TikTokApiProvider/LinkedInApiProvider/XApiProvider, which resolve their
   // own IntegrationCredential directly and never touch BrowserProfile; the
   // integrations page also no longer offers any way to create a BrowserProfile
@@ -112,7 +112,12 @@ const BROWSER_PURPOSE_BY_CAPABILITY: Partial<
   META_AD_UPDATE: "META_ADS",
   GOOGLE_ADS_ANALYSIS: "GOOGLE_ADS",
   GOOGLE_ADS_CAMPAIGN_CREATE: "GOOGLE_ADS",
-  ANALYTICS_ANALYSIS: "GA4",
+  // ANALYTICS_ANALYSIS deliberately NOT mapped (same reason as TikTok/
+  // LinkedIn/X above): it runs only through GoogleApiProvider, which reads
+  // the Google Analytics / Search Console IntegrationCredentials directly.
+  // The GA4 BrowserProfile it used to map to is never provisioned, so the
+  // mapping made every ANALYTICS_ANALYSIS dispatch throw
+  // BROWSER_PROFILE_MISMATCH before GoogleApiProvider was ever consulted.
   CRM_ANALYSIS: "CRM",
   EMAIL_DRAFT: "EMAIL",
   EMAIL_SEND: "EMAIL",

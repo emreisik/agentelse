@@ -10,11 +10,16 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 import {
+  META_PROVIDER,
+  META_SERVICE_LABEL,
   MetaApiError,
   fetchMetaAdsInsights,
   fetchPageAccessToken,
+  parseMetaService,
   verifyInstagramAccess,
-  type MetaCredentialMetadata,
+  type MetaAdsMetadata,
+  type MetaInstagramMetadata,
+  type MetaService,
 } from "@/server/integrations/meta-client";
 
 export type ActionResult = { ok: true } | { ok: false; message: string };
@@ -36,40 +41,63 @@ function fail(error: unknown): ActionResult {
   return { ok: false, message: describeMetaError(error) };
 }
 
-function loadCredential(projectId: string) {
+function notFound(service: MetaService): ActionResult {
+  return {
+    ok: false,
+    message: `${META_SERVICE_LABEL[service]} connection not found`,
+  };
+}
+
+function loadCredential(projectId: string, service: MetaService) {
   return prisma.integrationCredential.findUnique({
-    where: { projectId_provider: { projectId, provider: "meta" } },
+    where: {
+      projectId_provider: { projectId, provider: META_PROVIDER[service] },
+    },
   });
 }
 
+// Every action carries `projectId` (+ `service` where the action is shared
+// by both integrations) in its form; access is verified before anything is
+// read.
+async function resolveScope(formData: FormData, fixedService?: MetaService) {
+  const projectId = String(formData.get("projectId"));
+  const service = fixedService ?? parseMetaService(formData.get("service"));
+  if (!service) throw new Error("Invalid Meta service");
+  const { userId } = await requireUser();
+  const access = await requireProjectAccess(userId, projectId);
+  return { projectId, service, userId, access };
+}
+
+// Both integrations pick a Page: Instagram needs one with a linked
+// Instagram Business account (its list is already filtered to those), Meta
+// Ads uses it as the identity ads run as.
 export async function selectMetaPageAction(
   formData: FormData,
 ): Promise<ActionResult> {
   try {
-    const projectId = String(formData.get("projectId"));
+    const { projectId, service } = await resolveScope(formData);
     const pageId = String(formData.get("pageId") ?? "").trim();
-    const { userId } = await requireUser();
-    await requireProjectAccess(userId, projectId);
 
-    const credential = await loadCredential(projectId);
-    if (!credential) {
-      return { ok: false, message: "Meta connection not found" };
-    }
+    const credential = await loadCredential(projectId, service);
+    if (!credential) return notFound(service);
 
-    const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+    const metadata = (credential.metadata ?? {}) as
+      | MetaInstagramMetadata
+      | MetaAdsMetadata;
     const page = metadata.pages?.find((p) => p.pageId === pageId);
     if (!page) {
       return { ok: false, message: "Invalid Page selection" };
     }
 
-    const nextMetadata: MetaCredentialMetadata = {
-      ...metadata,
-      selectedPageId: page.pageId,
-      selectedPageName: page.pageName,
-    };
     await prisma.integrationCredential.update({
       where: { id: credential.id },
-      data: { metadata: nextMetadata },
+      data: {
+        metadata: {
+          ...metadata,
+          selectedPageId: page.pageId,
+          selectedPageName: page.pageName,
+        },
+      },
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);
@@ -83,17 +111,13 @@ export async function selectMetaAdAccountAction(
   formData: FormData,
 ): Promise<ActionResult> {
   try {
-    const projectId = String(formData.get("projectId"));
+    const { projectId } = await resolveScope(formData, "ads");
     const adAccountId = String(formData.get("adAccountId") ?? "").trim();
-    const { userId } = await requireUser();
-    await requireProjectAccess(userId, projectId);
 
-    const credential = await loadCredential(projectId);
-    if (!credential) {
-      return { ok: false, message: "Meta connection not found" };
-    }
+    const credential = await loadCredential(projectId, "ads");
+    if (!credential) return notFound("ads");
 
-    const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+    const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
     const account = metadata.adAccounts?.find(
       (a) => a.adAccountId === adAccountId,
     );
@@ -101,7 +125,7 @@ export async function selectMetaAdAccountAction(
       return { ok: false, message: "Invalid ad account selection" };
     }
 
-    const nextMetadata: MetaCredentialMetadata = {
+    const nextMetadata: MetaAdsMetadata = {
       ...metadata,
       selectedAdAccountId: account.adAccountId,
       selectedAdAccountName: account.adAccountName,
@@ -125,48 +149,52 @@ export async function testMetaConnectionAction(
   formData: FormData,
 ): Promise<ActionResult> {
   try {
-    const projectId = String(formData.get("projectId"));
-    const { userId } = await requireUser();
-    await requireProjectAccess(userId, projectId);
+    const { projectId, service } = await resolveScope(formData);
 
-    const credential = await loadCredential(projectId);
-    if (!credential) {
-      return { ok: false, message: "Meta connection not found" };
-    }
-
-    const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
-    if (!metadata.selectedPageId && !metadata.selectedAdAccountId) {
-      return {
-        ok: false,
-        message: "Select a Page or ad account first",
-      };
-    }
+    const credential = await loadCredential(projectId, service);
+    if (!credential) return notFound(service);
 
     const accessToken = decryptSecret(credential.encryptedSecret);
-    const lastTestResult: NonNullable<
-      MetaCredentialMetadata["lastTestResult"]
-    > = { testedAt: new Date().toISOString() };
+    let testedAt = new Date().toISOString();
+    let testError: string | undefined;
+    let nextMetadata: MetaInstagramMetadata | MetaAdsMetadata;
 
     try {
-      const page = metadata.pages?.find(
-        (p) => p.pageId === metadata.selectedPageId,
-      );
-      if (page?.instagramBusinessAccountId) {
+      if (service === "instagram") {
+        const metadata = (credential.metadata ?? {}) as MetaInstagramMetadata;
+        const page = metadata.pages?.find(
+          (p) => p.pageId === metadata.selectedPageId,
+        );
+        if (!page?.instagramBusinessAccountId) {
+          return {
+            ok: false,
+            message: "Select a Page with a linked Instagram account first",
+          };
+        }
         const pageAccessToken = await fetchPageAccessToken(
           page.pageId,
           accessToken,
         );
-        lastTestResult.igUsername = await verifyInstagramAccess(
+        const igUsername = await verifyInstagramAccess(
           page.instagramBusinessAccountId,
           pageAccessToken,
         );
-      }
-      if (metadata.selectedAdAccountId) {
+        testedAt = new Date().toISOString();
+        nextMetadata = { ...metadata, lastTestResult: { testedAt, igUsername } };
+      } else {
+        const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
+        if (!metadata.selectedAdAccountId) {
+          return { ok: false, message: "Select an ad account first" };
+        }
         const insights = await fetchMetaAdsInsights({
           adAccountId: metadata.selectedAdAccountId,
           accessToken,
         });
-        lastTestResult.adAccountSpend = insights.spend;
+        testedAt = new Date().toISOString();
+        nextMetadata = {
+          ...metadata,
+          lastTestResult: { testedAt, adAccountSpend: insights.spend },
+        };
       }
     } catch (error) {
       if (error instanceof MetaApiError && error.metaErrorCode === 190) {
@@ -175,26 +203,26 @@ export async function testMetaConnectionAction(
           data: { status: "EXPIRED" },
         });
       }
-      lastTestResult.error = describeMetaError(error);
+      testError = describeMetaError(error);
+      nextMetadata = {
+        ...((credential.metadata ?? {}) as MetaInstagramMetadata &
+          MetaAdsMetadata),
+        lastTestResult: { testedAt, error: testError },
+      };
     }
 
-    const nextMetadata: MetaCredentialMetadata = {
-      ...metadata,
-      lastTestResult,
-    };
     await prisma.integrationCredential.update({
       where: { id: credential.id },
       data: {
         metadata: nextMetadata,
-        status: lastTestResult.error ? credential.status : "ACTIVE",
+        // An expired token stays EXPIRED; any other failure leaves the
+        // status as it was.
+        ...(testError ? {} : { status: "ACTIVE" as const }),
       },
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);
-    if (lastTestResult.error) {
-      return { ok: false, message: lastTestResult.error };
-    }
-    return { ok: true };
+    return testError ? { ok: false, message: testError } : { ok: true };
   } catch (error) {
     return fail(error);
   }
@@ -204,11 +232,10 @@ export async function disconnectMetaAction(
   formData: FormData,
 ): Promise<ActionResult> {
   try {
-    const projectId = String(formData.get("projectId"));
-    const { userId } = await requireUser();
-    const access = await requireProjectAccess(userId, projectId);
+    const { projectId, service, userId, access } =
+      await resolveScope(formData);
 
-    const credential = await loadCredential(projectId);
+    const credential = await loadCredential(projectId, service);
     if (!credential) return { ok: true };
 
     await prisma.integrationCredential.update({
@@ -224,7 +251,7 @@ export async function disconnectMetaAction(
       action: "integration_credential.disconnected",
       entityType: "IntegrationCredential",
       entityId: credential.id,
-      metadata: { provider: "meta" },
+      metadata: { provider: META_PROVIDER[service] },
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);

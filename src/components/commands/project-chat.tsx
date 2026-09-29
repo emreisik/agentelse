@@ -37,6 +37,8 @@ import { ComposerPlusMenu } from "@/components/commands/composer-plus-menu";
 import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
 import type { PublishTarget } from "@/server/integrations/meta-connection-status";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
+import type { PendingDecision } from "@/server/agency/pending-decisions";
+import { DecisionsBar } from "@/components/commands/decisions-bar";
 import type { WorkspaceResumeStats } from "@/components/workspace/workspace-right-panel-data";
 import { dayKey, dayLabel } from "@/lib/dates";
 
@@ -203,6 +205,7 @@ export function ProjectChat({
   publishTargets,
   userFirstName,
   resumeStats,
+  decisions,
 }: {
   projectId: string;
   projectName: string;
@@ -221,6 +224,10 @@ export function ProjectChat({
   // doesn't apply.
   userFirstName?: string | null;
   resumeStats?: WorkspaceResumeStats;
+  // Pending approvals rebuilt as decision cards (see
+  // pending-decisions.ts) — only on the root Agency Desk; rendered as
+  // the DecisionsBar above the conversation.
+  decisions?: PendingDecision[];
 }) {
   const [localTurns, setLocalTurns] = React.useState<LocalTurn[]>([]);
   const [isSending, startTransition] = React.useTransition();
@@ -783,6 +790,11 @@ export function ProjectChat({
     [projectName],
   );
 
+  const DecisionsContextBar = React.useCallback(
+    () => <DecisionsBar decisions={decisions ?? []} />,
+    [decisions],
+  );
+
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <Thread
@@ -791,6 +803,7 @@ export function ProjectChat({
           ComposerPlusMenu: PlusMenu,
           QuickActions,
           ContextChip,
+          ContextBar: decisions ? DecisionsContextBar : undefined,
         }}
       />
     </AssistantRuntimeProvider>

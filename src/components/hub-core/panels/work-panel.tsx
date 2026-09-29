@@ -83,13 +83,6 @@ const CANCELLABLE_TASK_STATUSES = new Set<TaskStatus>([
   "BLOCKED",
 ]);
 
-const TAB_LABEL: Record<WorkSubKey, string> = {
-  plans: "Plans",
-  tasks: "Tasks",
-  cycles: "Handoffs",
-  measurements: "Measurements",
-};
-
 function isWorkSub(value: string | null): value is WorkSubKey {
   return !!value && (WORK_SUB_KEYS as readonly string[]).includes(value);
 }
@@ -102,21 +95,7 @@ function isWorkSub(value: string | null): value is WorkSubKey {
 // (workPlan/task/handoff/measurementPlan — see ENTITY_PANEL), the full
 // detail is rendered instead of the list.
 export async function WorkPanel({ projectId, entity, sub }: PanelProps) {
-  const activeSub: WorkSubKey = isWorkSub(sub) ? sub : "plans";
-
-  const [planCount, taskCount, handoffCount, measurementCount] =
-    await Promise.all([
-      prisma.workPlan.count({ where: { projectId } }),
-      prisma.task.count({ where: { projectId } }),
-      prisma.workHandoff.count({ where: { projectId } }),
-      prisma.measurementPlan.count({ where: { projectId } }),
-    ]);
-  const tabCount: Record<WorkSubKey, number> = {
-    plans: planCount,
-    tasks: taskCount,
-    cycles: handoffCount,
-    measurements: measurementCount,
-  };
+  const activeSub: WorkSubKey = isWorkSub(sub) ? sub : "tasks";
 
   const ownedEntity =
     entity &&
@@ -129,41 +108,6 @@ export async function WorkPanel({ projectId, entity, sub }: PanelProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-6 pt-6">
-      <div className="flex shrink-0 items-center gap-1 border-b border-border">
-        {WORK_SUB_KEYS.map((key) => {
-          const isActive = key === activeSub && !ownedEntity;
-          return (
-            <Link
-              key={key}
-              href={buildHubHref(projectId, {
-                panel: "work",
-                sub: key,
-                entity: null,
-              })}
-              scroll={false}
-              className={cn(
-                "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors",
-                isActive
-                  ? "border-primary font-medium text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {TAB_LABEL[key]}
-              <span
-                className={cn(
-                  "flex h-4 min-w-4 items-center justify-center rounded-4xl px-1 text-[10px] font-medium tabular-nums",
-                  isActive
-                    ? "bg-primary/15 text-primary"
-                    : "bg-muted text-muted-foreground",
-                )}
-              >
-                {tabCount[key]}
-              </span>
-            </Link>
-          );
-        })}
-      </div>
-
       <div className="min-h-0 flex-1 pb-6">
         {activeSub === "tasks" ? (
           <TasksBoard projectId={projectId} />

@@ -36,7 +36,10 @@ export function SetupProgressBadge({
       href={buildHubHref(projectId, { panel: "setup" })}
       scroll={false}
       title={`Setting up your agency — ${stageLabel ?? ""} (${percent}%)`}
-      className="flex h-8 min-w-0 shrink-0 items-center gap-2 rounded-full border px-3 text-xs font-medium shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)]"
+      // Deliberately NOT shrink-0: beside the brand switcher and the
+      // Advanced button it is the item that gives way first (stage label
+      // ellipsizes; dot and % stay), instead of crushing the brand name.
+      className="flex h-8 min-w-0 items-center gap-2 overflow-hidden rounded-full border px-3 text-xs font-medium shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)]"
       style={{
         borderColor: "var(--ws-border)",
         background: "var(--ws-surface)",

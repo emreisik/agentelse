@@ -6,11 +6,13 @@ import { toast } from "sonner";
 import {
   AlertCircle,
   ArrowUpRight,
+  CalendarPlus,
   Check,
   Clock,
   ImageIcon,
   Loader2,
   PenLine,
+  Send,
   Share2,
 } from "lucide-react";
 
@@ -221,7 +223,15 @@ function CreativeReadyCard({
         const result = await action(formData);
         if (result.ok) {
           setLocalStatus(to);
-          toast.success(to === "APPROVED" ? "Approved" : "Rejected");
+          toast.success(
+            to === "REJECTED"
+              ? "Rejected"
+              : card.approveIntent === "calendar"
+                ? "Added to the next calendar slot"
+                : card.approveIntent === "publish"
+                  ? "Approved — publishing now"
+                  : "Approved",
+          );
           router.refresh();
         } else {
           setError(result.message);
@@ -372,8 +382,18 @@ function CreativeReadyCard({
                 }}
                 onClick={() => decide("APPROVED")}
               >
-                <Check className="size-3.5" />
-                Approve
+                {card.approveIntent === "calendar" ? (
+                  <CalendarPlus className="size-3.5" />
+                ) : card.approveIntent === "publish" ? (
+                  <Send className="size-3.5" />
+                ) : (
+                  <Check className="size-3.5" />
+                )}
+                {card.approveIntent === "calendar"
+                  ? "Add to calendar"
+                  : card.approveIntent === "publish"
+                    ? "Approve & publish"
+                    : "Approve"}
               </Button>
               <Button
                 type="button"

@@ -97,18 +97,34 @@ export const IdeaRepository = {
     });
   },
 
-  // distinct: one idea per project, so a project with an old backlog can't
-  // starve every other project out of its `limit` slots each tick (see
-  // idea-foundry.ts generateForTopOpportunities for the incident this
-  // pattern was copied from fixing).
-  listByStatus(status: IdeaStatus, limit: number) {
-    return prisma.idea.findMany({
+  // Oldest-first ideas in `status`, up to `perProject` from each of up to
+  // `projects` distinct projects (distinct, so a project with an old backlog
+  // can't starve the others). The previous one-idea-per-project listing
+  // capped every project at ONE idea per tick, which at the production tick cadence (~5 min) meant
+  // one council review / director decision per project per tick — and a
+  // director idea sitting in its BACKLOG cooldown held that single slot.
+  async listByStatusPerProject(
+    status: IdeaStatus,
+    opts: { projects: number; perProject: number },
+  ) {
+    const projects = await prisma.idea.findMany({
       where: { status },
-      take: limit,
       distinct: ["projectId"],
       orderBy: { createdAt: "asc" },
-      include: { councilEvaluations: true },
+      take: opts.projects,
+      select: { projectId: true },
     });
+    const perProject = await Promise.all(
+      projects.map(({ projectId }) =>
+        prisma.idea.findMany({
+          where: { status, projectId },
+          orderBy: { createdAt: "asc" },
+          take: opts.perProject,
+          include: { councilEvaluations: true },
+        }),
+      ),
+    );
+    return perProject;
   },
 
   countActive(projectId: string) {

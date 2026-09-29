@@ -18,7 +18,6 @@ export const PANEL_LABEL: Record<PanelKey, string> = {
   ideas: "Ideas",
   work: "Work",
   departments: "Departments",
-  approvals: "Approval Center",
   "human-action": "Human Action Center",
   settings: "Settings",
   library: "Library",
@@ -54,10 +53,8 @@ export const LINEAGE: Record<PanelKey, LineageEdge[]> = {
   work: [
     { panel: "ideas", relation: "fedBy" },
     { panel: "departments", relation: "relatesTo" },
-    { panel: "approvals", relation: "feeds" },
   ],
   departments: [{ panel: "work", relation: "relatesTo" }],
-  approvals: [{ panel: "work", relation: "fedBy" }],
   "human-action": [{ panel: "work", relation: "relatesTo" }],
   settings: [],
   library: [],

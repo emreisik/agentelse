@@ -17,6 +17,10 @@ type OAuthStatePayload = {
   // Only filled in by providers that require PKCE (TikTok, X) — see
   // pkce.ts. Google/Meta/LinkedIn never send this field.
   codeVerifier?: string;
+  // Only filled in by Google — which of the two Google integrations
+  // (analytics / search_console) this grant is for, since both share one
+  // callback URL. See google-client.ts's GOOGLE_SERVICES.
+  service?: string;
 };
 
 function sign(payloadB64: string): string {
@@ -26,7 +30,10 @@ function sign(payloadB64: string): string {
 }
 
 export function signOAuthState(
-  input: Pick<OAuthStatePayload, "projectId" | "userId" | "codeVerifier">,
+  input: Pick<
+    OAuthStatePayload,
+    "projectId" | "userId" | "codeVerifier" | "service"
+  >,
 ): string {
   const payload: OAuthStatePayload = { ...input, issuedAt: Date.now() };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -35,7 +42,10 @@ export function signOAuthState(
 
 export function verifyOAuthState(
   token: string,
-): Pick<OAuthStatePayload, "projectId" | "userId" | "codeVerifier"> | null {
+): Pick<
+    OAuthStatePayload,
+    "projectId" | "userId" | "codeVerifier" | "service"
+  > | null {
   const [payloadB64, sig] = token.split(".");
   if (!payloadB64 || !sig) return null;
 
@@ -60,7 +70,8 @@ export function verifyOAuthState(
     typeof payload.userId !== "string" ||
     typeof payload.issuedAt !== "number" ||
     (payload.codeVerifier !== undefined &&
-      typeof payload.codeVerifier !== "string")
+      typeof payload.codeVerifier !== "string") ||
+    (payload.service !== undefined && typeof payload.service !== "string")
   ) {
     return null;
   }
@@ -70,5 +81,6 @@ export function verifyOAuthState(
     projectId: payload.projectId,
     userId: payload.userId,
     codeVerifier: payload.codeVerifier,
+    service: payload.service,
   };
 }

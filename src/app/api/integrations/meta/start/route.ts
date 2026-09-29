@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 
 import { appUrl } from "@/lib/app-url";
 import { isIntegrationConfigured } from "@/lib/env";
-import { buildMetaAuthorizeUrl } from "@/server/integrations/meta-client";
+import {
+  META_PROVIDER,
+  buildMetaAuthorizeUrl,
+  parseMetaService,
+} from "@/server/integrations/meta-client";
 import { signOAuthState } from "@/server/security/oauth-state";
 import { isAgentelseError } from "@/server/security/errors";
 import {
@@ -12,13 +16,16 @@ import {
 
 // The initial step that redirects to Meta's own consent screen — see
 // callback/route.ts for the return trip. Same pattern as
-// google/start/route.ts.
+// google/start/route.ts: `service` picks which of the two separate Meta
+// integrations (instagram / ads) is being connected; only that service's
+// scopes are requested.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");
-  if (!projectId) {
+  const service = parseMetaService(searchParams.get("service"));
+  if (!projectId || !service) {
     return NextResponse.json(
-      { error: "projectId is required" },
+      { error: "projectId and a valid service are required" },
       { status: 400 },
     );
   }
@@ -42,11 +49,11 @@ export async function GET(request: Request) {
   if (!isIntegrationConfigured("META")) {
     return NextResponse.redirect(
       appUrl(
-        `/projects/${projectId}/integrations?integration=meta&metaError=not_configured`,
+        `/projects/${projectId}/integrations?integration=${META_PROVIDER[service]}&metaError=not_configured`,
       ),
     );
   }
 
-  const state = signOAuthState({ projectId, userId });
-  return NextResponse.redirect(buildMetaAuthorizeUrl(state));
+  const state = signOAuthState({ projectId, userId, service });
+  return NextResponse.redirect(buildMetaAuthorizeUrl(state, service));
 }

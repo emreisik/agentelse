@@ -662,8 +662,8 @@ async function materializeCreativeFromResult(
     data: { currentVersionId: version.id },
   });
 
-  // A Creative reaching IN_REVIEW is exactly what the Approval Center's
-  // "Creative approvals" section is for (spec sections 28/66) — without
+  // A Creative reaching IN_REVIEW is exactly what the Agency Desk's
+  // decisions tray (DecisionsBar) is for (spec sections 28/66) — without
   // this, generated creatives were invisible outside the project page.
   // Routed through ApprovalRepository.create (not a direct prisma call) so
   // this also gets the same Telegram notification every other approval does.

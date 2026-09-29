@@ -1,14 +1,18 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { decryptSecret } from "@/server/security/crypto";
 import { SignalUniverse } from "@/server/agency/signals/signal-universe";
 import { evaluateSeoFindings } from "./seo-rules";
 import {
+  GOOGLE_PROVIDER,
   fetchGa4Report,
   fetchSearchConsoleQueryRows,
-  type GoogleCredentialMetadata,
+  type GoogleAnalyticsMetadata,
+  type GoogleSearchConsoleMetadata,
 } from "@/server/integrations/google-client";
+import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
+
+type ScanMetadata = GoogleAnalyticsMetadata | GoogleSearchConsoleMetadata;
 
 // Mirrors meta-performance-scanner.ts's structure exactly (isDue/jitter/
 // backoff, per-credential isolation, snapshot-on-metadata). SEO signals move
@@ -27,7 +31,7 @@ function jitterMs(credentialId: string): number {
 }
 
 function isDue(
-  metadata: GoogleCredentialMetadata,
+  metadata: ScanMetadata,
   credentialId: string,
 ): boolean {
   if (!metadata.lastAnalyticsScanAt) return true;
@@ -43,7 +47,8 @@ function isDue(
 }
 
 // Agency tick step (registered in agency-wiring.ts) — scans due Google
-// connections (GA4 + Search Console) and feeds SEO findings into the same
+// Analytics and Search Console connections (two separate integrations, each
+// scanned on its own credential/schedule) and feeds SEO findings into the same
 // Signal -> Insight -> Opportunity -> Idea funnel every other signal source
 // uses. Unlike Meta's scanner, there's no Track 2 bypass here: content ideas
 // aren't urgent the way "pause a burning campaign" is, so they go through
@@ -51,7 +56,12 @@ function isDue(
 export const GoogleAnalyticsScanner = {
   async runDueScans(limit = MAX_CREDENTIALS_PER_TICK_DEFAULT): Promise<number> {
     const candidates = await prisma.integrationCredential.findMany({
-      where: { provider: "google", status: "ACTIVE" },
+      where: {
+        provider: {
+          in: [GOOGLE_PROVIDER.analytics, GOOGLE_PROVIDER.search_console],
+        },
+        status: "ACTIVE",
+      },
       take: limit * 4,
       orderBy: { updatedAt: "asc" },
     });
@@ -59,13 +69,8 @@ export const GoogleAnalyticsScanner = {
     let scanned = 0;
     for (const credential of candidates) {
       if (scanned >= limit) break;
-      const metadata = (credential.metadata ?? {}) as GoogleCredentialMetadata;
-      if (
-        !metadata.selectedGa4PropertyId &&
-        !metadata.selectedSearchConsoleSite
-      ) {
-        continue;
-      }
+      const metadata = (credential.metadata ?? {}) as ScanMetadata;
+      if (!hasSelection(credential.provider, metadata)) continue;
       if (!isDue(metadata, credential.id)) continue;
 
       const project = await prisma.project.findUnique({
@@ -99,42 +104,59 @@ export const GoogleAnalyticsScanner = {
   },
 };
 
+function hasSelection(provider: string, metadata: ScanMetadata): boolean {
+  return provider === GOOGLE_PROVIDER.analytics
+    ? Boolean((metadata as GoogleAnalyticsMetadata).selectedGa4PropertyId)
+    : Boolean(
+        (metadata as GoogleSearchConsoleMetadata).selectedSearchConsoleSite,
+      );
+}
+
 async function scanOneCredential(
   credential: {
     id: string;
+    provider: string;
     workspaceId: string;
     projectId: string;
     brandId: string;
     encryptedSecret: string;
   },
-  metadata: GoogleCredentialMetadata,
+  metadata: ScanMetadata,
 ): Promise<void> {
-  const accessToken = decryptSecret(credential.encryptedSecret);
+  // The stored secret is the refresh token — it must be exchanged for an
+  // access token before any API call (using it directly returns 401).
+  const accessToken = await getFreshGoogleAccessToken(credential);
   const scope = {
     workspaceId: credential.workspaceId,
     projectId: credential.projectId,
     brandId: credential.brandId,
   };
 
-  const ga4Current = metadata.selectedGa4PropertyId
-    ? await fetchGa4Report(accessToken, metadata.selectedGa4PropertyId, 7)
-    : undefined;
+  const isAnalytics = credential.provider === GOOGLE_PROVIDER.analytics;
+  const gaMetadata = metadata as GoogleAnalyticsMetadata;
+  const gscMetadata = metadata as GoogleSearchConsoleMetadata;
 
-  const gscRows = metadata.selectedSearchConsoleSite
-    ? await fetchSearchConsoleQueryRows(
-        accessToken,
-        metadata.selectedSearchConsoleSite,
-        ["query"],
-        28,
-        25,
-      )
-    : [];
+  const ga4Current =
+    isAnalytics && gaMetadata.selectedGa4PropertyId
+      ? await fetchGa4Report(accessToken, gaMetadata.selectedGa4PropertyId, 7)
+      : undefined;
+
+  const gscRows =
+    !isAnalytics && gscMetadata.selectedSearchConsoleSite
+      ? await fetchSearchConsoleQueryRows(
+          accessToken,
+          gscMetadata.selectedSearchConsoleSite,
+          ["query"],
+          28,
+          25,
+        )
+      : [];
 
   const findings = evaluateSeoFindings({
     ga4: ga4Current
       ? {
           current: ga4Current,
-          previous: metadata.previousAnalyticsSnapshot?.ga4,
+          previous: gaMetadata.previousAnalyticsSnapshot?.ga4,
         }
       : undefined,
     gscRows,
@@ -159,7 +181,9 @@ async function scanOneCredential(
         ...metadata,
         lastAnalyticsScanAt: new Date().toISOString(),
         analyticsScanFailureCount: 0,
-        previousAnalyticsSnapshot: { ga4: ga4Current },
+        ...(isAnalytics
+          ? { previousAnalyticsSnapshot: { ga4: ga4Current } }
+          : {}),
       } as never,
     },
   });

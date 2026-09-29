@@ -10,6 +10,8 @@ import {
   resolveDirectPublicUrl,
 } from "@/server/storage/asset-storage";
 import {
+  META_PROVIDER,
+  META_SERVICE_LABEL,
   checkMetaVideoStatus,
   createMetaAd,
   createMetaAdCreative,
@@ -25,7 +27,9 @@ import {
   uploadMetaAdImage,
   uploadMetaAdVideo,
   type MetaAdSetTargeting,
-  type MetaCredentialMetadata,
+  type MetaAdsMetadata,
+  type MetaInstagramMetadata,
+  type MetaService,
 } from "@/server/integrations/meta-client";
 import {
   DATE_PRESETS,
@@ -218,12 +222,24 @@ async function recoverPendingVideoAdFromRawResult(
   }
 }
 
-async function findActiveMetaCredential(projectId: string) {
+// Instagram and Meta Ads are separate integrations with separate
+// credentials: INSTAGRAM_PUBLISH reads the "instagram" one, every other
+// capability here (campaigns/adsets/ads/analysis) reads "meta_ads".
+async function findActiveMetaCredential(
+  projectId: string,
+  service: MetaService,
+) {
   const credential = await prisma.integrationCredential.findUnique({
-    where: { projectId_provider: { projectId, provider: "meta" } },
+    where: {
+      projectId_provider: { projectId, provider: META_PROVIDER[service] },
+    },
   });
   if (!credential || credential.status !== "ACTIVE") return null;
   return credential;
+}
+
+function serviceFor(capability: CapabilityKey): MetaService {
+  return capability === "INSTAGRAM_PUBLISH" ? "instagram" : "ads";
 }
 
 // Exported so callers deciding WHETHER to even propose Meta ads work (e.g.
@@ -237,9 +253,9 @@ async function findActiveMetaCredential(projectId: string) {
 export async function hasActiveMetaAdsAccount(
   projectId: string,
 ): Promise<boolean> {
-  const credential = await findActiveMetaCredential(projectId);
+  const credential = await findActiveMetaCredential(projectId, "ads");
   if (!credential) return false;
-  const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+  const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
   return Boolean(metadata.selectedAdAccountId);
 }
 
@@ -308,16 +324,20 @@ export class MetaApiProvider implements ExecutionProvider {
     if (!this.isConfigured) return false;
     if (!OWNED_CAPABILITIES.has(capability)) return false;
 
-    const credential = await findActiveMetaCredential(context.projectId);
+    const credential = await findActiveMetaCredential(
+      context.projectId,
+      serviceFor(capability),
+    );
     if (!credential) return false;
 
-    const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
     if (capability === "INSTAGRAM_PUBLISH") {
-      const page = metadata.pages?.find(
-        (p) => p.pageId === metadata.selectedPageId,
+      const igMetadata = (credential.metadata ?? {}) as MetaInstagramMetadata;
+      const page = igMetadata.pages?.find(
+        (p) => p.pageId === igMetadata.selectedPageId,
       );
       return Boolean(page?.instagramBusinessAccountId);
     }
+    const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
     if (capability === "META_AD_CREATE") {
       // createAd() always needs a selected Facebook Page to build the
       // AdCreative's object_story_spec — unlike INSTAGRAM_PUBLISH, it
@@ -410,9 +430,10 @@ export class MetaApiProvider implements ExecutionProvider {
 
     const credential = await findActiveMetaCredential(
       request.context.projectId,
+      "ads",
     );
-    if (!credential) return fail("Meta connection not found");
-    const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+    if (!credential) return fail("Meta Ads connection not found");
+    const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
     if (!metadata.selectedAdAccountId) return fail("No ad account selected");
     const accessToken = decryptSecret(credential.encryptedSecret);
 
@@ -541,19 +562,22 @@ export class MetaApiProvider implements ExecutionProvider {
     // — resolvePendingVerifications, the Agency OS loop — since
     // pollRunningJobs() isn't wrapped in tick()'s isolate() helper the way
     // the earlier stages are).
-    let metadata: MetaCredentialMetadata;
+    let metadata: MetaAdsMetadata;
     let accessToken: string;
     try {
-      const credential = await findActiveMetaCredential(pending.projectId);
+      const credential = await findActiveMetaCredential(
+        pending.projectId,
+        "ads",
+      );
       if (!credential) {
         pendingVideoAds.delete(executionReference);
         return {
           status: "FAILED",
-          errorMessage: "Meta connection not found",
+          errorMessage: "Meta Ads connection not found",
           isMock: false,
         };
       }
-      metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+      metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
       accessToken = decryptSecret(credential.encryptedSecret);
     } catch (error) {
       pendingVideoAds.delete(executionReference);
@@ -664,20 +688,29 @@ export class MetaApiProvider implements ExecutionProvider {
   private async runCapability(
     request: ExecutionRequest,
   ): Promise<StoredResult> {
+    const service = serviceFor(request.capability);
     const credential = await findActiveMetaCredential(
       request.context.projectId,
+      service,
     );
     if (!credential) {
-      return { status: "FAILED", errorMessage: "Meta connection not found" };
+      return {
+        status: "FAILED",
+        errorMessage: `${META_SERVICE_LABEL[service]} connection not found`,
+      };
     }
-    const metadata = (credential.metadata ?? {}) as MetaCredentialMetadata;
+    const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
     const accessToken = decryptSecret(credential.encryptedSecret);
     const payload = payloadRecord(request.payload);
 
     try {
       switch (request.capability) {
         case "INSTAGRAM_PUBLISH":
-          return await this.publishInstagram(metadata, accessToken, payload);
+          return await this.publishInstagram(
+            credential.metadata as MetaInstagramMetadata,
+            accessToken,
+            payload,
+          );
         case "META_ADS_ANALYSIS":
           return await this.analyzeAds(metadata, accessToken, payload);
         case "META_CAMPAIGN_CREATE":
@@ -718,7 +751,7 @@ export class MetaApiProvider implements ExecutionProvider {
   }
 
   private async publishInstagram(
-    metadata: MetaCredentialMetadata,
+    metadata: MetaInstagramMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
   ): Promise<StoredResult> {
@@ -770,7 +803,7 @@ export class MetaApiProvider implements ExecutionProvider {
   // uses) so this and the page can never drift out of sync on what
   // "performance" means.
   private async analyzeAds(
-    metadata: MetaCredentialMetadata,
+    metadata: MetaAdsMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
   ): Promise<StoredResult> {
@@ -821,7 +854,7 @@ export class MetaApiProvider implements ExecutionProvider {
   }
 
   private async createCampaign(
-    metadata: MetaCredentialMetadata,
+    metadata: MetaAdsMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
   ): Promise<StoredResult> {
@@ -922,7 +955,7 @@ export class MetaApiProvider implements ExecutionProvider {
   }
 
   private async createAdSet(
-    metadata: MetaCredentialMetadata,
+    metadata: MetaAdsMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
   ): Promise<StoredResult> {
@@ -985,7 +1018,7 @@ export class MetaApiProvider implements ExecutionProvider {
   // VIDEO never reaches here (see execute()'s special case above, since a
   // video ad can't resolve synchronously).
   private async createAd(
-    metadata: MetaCredentialMetadata,
+    metadata: MetaAdsMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
     projectId: string,
@@ -1100,7 +1133,7 @@ export class MetaApiProvider implements ExecutionProvider {
   // cards, so the extra latency here is bounded and not worth the added
   // complexity of a bounded-concurrency helper for this one call site).
   private async createCarouselAd(
-    metadata: MetaCredentialMetadata,
+    metadata: MetaAdsMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
     projectId: string,
@@ -1235,7 +1268,7 @@ export class MetaApiProvider implements ExecutionProvider {
   // meta-client.ts) and the ad is pointed at it; VIDEO never reaches here
   // (see execute()'s special case above).
   private async updateAd(
-    metadata: MetaCredentialMetadata,
+    metadata: MetaAdsMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
     projectId: string,
@@ -1460,7 +1493,7 @@ export class MetaApiProvider implements ExecutionProvider {
   // (new upload or reused hash) per card — mirrors createCarouselAd's
   // sequential-not-parallel reasoning above.
   private async updateCarouselAd(
-    metadata: MetaCredentialMetadata,
+    metadata: MetaAdsMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
     projectId: string,

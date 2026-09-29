@@ -372,31 +372,44 @@ export const AgencyDirector = {
   },
 
   // Batch pass: shortlisted ideas that already have council evaluations.
-  async decideShortlisted(limit = 5): Promise<number> {
-    const ideas = await IdeaRepository.listByStatus("SHORTLISTED", limit);
+  async decideShortlisted(
+    limit = 5,
+    perProject = 2,
+    candidatesPerProject = 10,
+  ): Promise<number> {
+    // Walks several SHORTLISTED candidates per project (oldest first) and
+    // stops after `perProject` real decisions. An idea still inside its
+    // BACKLOG cooldown returns null from decideOnIdea and is simply skipped,
+    // so it no longer holds its project's only slot for up to 72h.
+    const groups = await IdeaRepository.listByStatusPerProject("SHORTLISTED", {
+      projects: limit,
+      perProject: candidatesPerProject,
+    });
     let decided = 0;
-    for (const idea of ideas) {
-      if (idea.councilEvaluations.length === 0) continue;
-      // Paused-project guard (audit scenario L): a PAUSED project's ideas
-      // are skipped silently — no error, no AgencyDecision — so a resumed
-      // project simply picks the idea back up on a later tick instead of
-      // it being treated as a failure.
-      if (!(await isProjectAgencyActive(idea.projectId))) continue;
-      // Per-idea error boundary, same as the INITIAL_WORK_PLAN setup-stage
-      // runner (agency-wiring.ts): one idea that can't be decided (e.g. its
-      // opportunity has no linked ProjectGoal — GoalEngine.assertGoalsLinked)
-      // must not abort the whole batch. Since listByStatus now spreads its
-      // `limit` slots across distinct projects, one bad idea here would
-      // otherwise also block every OTHER project's idea in the same batch,
-      // not just its own.
-      try {
-        const result = await this.decideOnIdea(idea.id, idea.projectId);
-        if (result) decided += 1;
-      } catch (error) {
-        console.error(
-          `[agency-director] decideOnIdea failed for idea ${idea.id} (${idea.title}):`,
-          error instanceof Error ? error.message : error,
-        );
+    for (const ideas of groups) {
+      let decidedHere = 0;
+      for (const idea of ideas) {
+        if (decidedHere >= perProject) break;
+        if (idea.councilEvaluations.length === 0) continue;
+        // Paused-project guard (audit scenario L): a PAUSED project's ideas
+        // are skipped silently — no error, no AgencyDecision — so a resumed
+        // project simply picks the idea back up on a later tick.
+        if (!(await isProjectAgencyActive(idea.projectId))) break;
+        // Per-idea error boundary: one idea that can't be decided (e.g. its
+        // opportunity has no linked ProjectGoal — GoalEngine.assertGoalsLinked)
+        // must not abort the rest of the batch.
+        try {
+          const result = await this.decideOnIdea(idea.id, idea.projectId);
+          if (result) {
+            decided += 1;
+            decidedHere += 1;
+          }
+        } catch (error) {
+          console.error(
+            `[agency-director] decideOnIdea failed for idea ${idea.id} (${idea.title}):`,
+            error instanceof Error ? error.message : error,
+          );
+        }
       }
     }
     return decided;

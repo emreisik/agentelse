@@ -12,13 +12,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const ideaTransition = vi.fn().mockResolvedValue(undefined);
 const findByIdInProject = vi.fn();
-const listByStatus = vi.fn();
+const listByStatusPerProject = vi.fn();
 
 vi.mock("@/server/repositories/idea.repository", () => ({
   IdeaRepository: {
     findByIdInProject,
     transition: ideaTransition,
-    listByStatus,
+    listByStatusPerProject,
   },
 }));
 
@@ -227,7 +227,7 @@ describe("AgencyDirector.decideShortlisted (paused-project guard, audit scenario
       projectId: "proj-active",
       councilEvaluations: [{ id: "ce-2" }],
     };
-    listByStatus.mockResolvedValue([pausedIdea, activeIdea]);
+    listByStatusPerProject.mockResolvedValue([[pausedIdea], [activeIdea]]);
     isProjectAgencyActive.mockImplementation(
       async (projectId: string) => projectId !== "proj-paused",
     );

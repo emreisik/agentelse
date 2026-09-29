@@ -61,15 +61,25 @@ export const WorkPlanProgressor = {
     for (const task of tasks) {
       const satisfied = await TaskRepository.dependenciesSatisfied(task.id);
       if (!satisfied) continue;
-      if (task.requiresApproval) {
-        // Dependency just cleared — only now is it safe to surface the
-        // approval card (see task-planner.ts's deferDispatch branch for why
-        // this can't happen at plan-creation time).
-        await TaskPlanner.requestApproval(task);
-      } else {
-        await TaskPlanner.dispatchApprovedTask(task.id, projectId);
+      // Per-task isolation: one node failing to dispatch used to throw out
+      // of this loop and leave every other READY node in the plan
+      // undispatched for this pass.
+      try {
+        if (task.requiresApproval) {
+          // Dependency just cleared — only now is it safe to surface the
+          // approval card (see task-planner.ts's deferDispatch branch for
+          // why this can't happen at plan-creation time).
+          await TaskPlanner.requestApproval(task);
+        } else {
+          await TaskPlanner.dispatchApprovedTask(task.id, projectId);
+        }
+        dispatched += 1;
+      } catch (error) {
+        console.error(
+          `[work-plan-progressor] dispatch failed for task ${task.id} (${task.capability}):`,
+          error,
+        );
       }
-      dispatched += 1;
     }
     return dispatched;
   },

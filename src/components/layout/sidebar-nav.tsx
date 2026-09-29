@@ -1,62 +1,103 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   CalendarDays,
-  ChevronDown,
-  ClipboardList,
-  ExternalLink,
   Gem,
-  Library,
   Lightbulb,
+  Library,
   ListChecks,
   Megaphone,
-  MessageSquarePlus,
+  MessagesSquare,
   Plug,
+  Radio,
+  Settings2,
+  SlidersHorizontal,
   Sparkles,
+  Target,
+  Users2,
+  type LucideIcon,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { buildHubHref } from "@/components/hub-core/hub-core-params";
-import { MarqueeText } from "@/components/shared/marquee-text";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+  buildHubHref,
+  type PanelKey,
+} from "@/components/hub-core/hub-core-params";
 
-export type SidebarFlow = {
-  id: string;
-  kind: "idea" | "workPlan" | "task";
-  title: string;
-  // Idea flows only — ISO date of that idea's earliest chat message, baked
-  // into the link below as `?since=` so the single project chat's default
-  // recent-window query is guaranteed to include the #idea-<id> anchor
-  // this links to (see page.tsx / app-shell.tsx).
-  since?: string;
-};
+type NavItem = {
+  label: string;
+  icon: LucideIcon;
+} & (
+  | { panel: PanelKey; sub?: string }
+  | { route: "takvim" | "integrations" | "ads" }
+  | { home: true }
+);
 
-const FLOW_ICON = {
-  idea: Lightbulb,
-  workPlan: ClipboardList,
-  task: ListChecks,
-};
+type NavGroup = { title: string | null; items: NavItem[] };
 
-// Same logic as ChatGPT's chat history: a compact project selector
-// (ProjectSelect) up top, and below it the selected project's "flows" —
-// each one the start-to-finish story of an idea/work item, listed as
-// individual chat entries. Clicking one opens that flow's full history as
-// chat bubbles (see /projects/[projectId]/page.tsx +
-// project-flow-view.tsx). "New chat" takes you to the project's free-text
-// agency chat (the existing ProjectChat).
+// Every entry the header's Advanced menu (project-tools-menu.tsx) offers is
+// listed here too, grouped by what it's for. "Agency Desk" is the project's
+// free-text agency chat (ProjectChat) — everything, decisions included,
+// happens in that one screen (see DecisionsBar).
+const GROUPS: NavGroup[] = [
+  {
+    title: null,
+    items: [{ label: "Agency Desk", icon: MessagesSquare, home: true }],
+  },
+  {
+    title: "Create",
+    items: [
+      { label: "Brand Brain", icon: Gem, panel: "brand-brain" },
+      { label: "Ideas", icon: Sparkles, panel: "ideas" },
+      { label: "Work", icon: ListChecks, panel: "work", sub: "tasks" },
+      { label: "Library", icon: Library, panel: "library" },
+      { label: "Content Calendar", icon: CalendarDays, route: "takvim" },
+    ],
+  },
+  {
+    title: "Insights",
+    items: [
+      { label: "Signals", icon: Radio, panel: "signals" },
+      {
+        label: "Insights & Opportunities",
+        icon: Lightbulb,
+        panel: "insights-opportunities",
+      },
+      { label: "Goals", icon: Target, panel: "goals" },
+    ],
+  },
+  {
+    title: "Channels",
+    items: [
+      { label: "Ads Manager", icon: Megaphone, route: "ads" },
+      { label: "Connectors", icon: Plug, route: "integrations" },
+    ],
+  },
+  {
+    title: "System",
+    items: [
+      { label: "Setup", icon: SlidersHorizontal, panel: "setup" },
+      { label: "Departments", icon: Users2, panel: "departments" },
+      { label: "Settings", icon: Settings2, panel: "settings" },
+    ],
+  },
+];
+
+const ITEM_CLASS =
+  "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors";
+const ACTIVE_CLASS =
+  "bg-sidebar-accent font-medium text-sidebar-accent-foreground";
+
+// Same logic as ChatGPT's chat history: the project is picked in the
+// header's brand switcher, and this lists the selected project's nav links.
 export function SidebarNav({
   activeProjectId,
-  flows,
+  toolBadges = {},
 }: {
   activeProjectId?: string;
-  flows?: SidebarFlow[] | null;
+  toolBadges?: Partial<Record<PanelKey, number>>;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -67,190 +108,62 @@ export function SidebarNav({
     !activeEntity &&
     !activePanel &&
     pathname === `/projects/${activeProjectId}`;
-  const [flowsOpen, setFlowsOpen] = useState(true);
+
+  if (!activeProjectId) {
+    return <nav className="flex flex-1 flex-col px-3 py-3 text-sm" />;
+  }
 
   return (
-    <nav className="flex flex-1 flex-col overflow-y-auto px-3 py-3 text-sm">
-      {activeProjectId ? (
-        <div className="space-y-0.5">
-          <Link
-            href={`/projects/${activeProjectId}`}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              isPlainChat
-                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent/60",
-            )}
-          >
-            <MessageSquarePlus className="size-4 shrink-0 opacity-80" />
-            New chat
-          </Link>
-
-          <Link
-            href={buildHubHref(activeProjectId, { panel: "brand-brain" })}
-            scroll={false}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              activePanel === "brand-brain"
-                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent/60",
-            )}
-          >
-            <Gem className="size-4 shrink-0 opacity-80" />
-            Brand Brain
-          </Link>
-
-          <Link
-            href={buildHubHref(activeProjectId, { panel: "ideas" })}
-            scroll={false}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              activePanel === "ideas"
-                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent/60",
-            )}
-          >
-            <Sparkles className="size-4 shrink-0 opacity-80" />
-            Ideas
-          </Link>
-
-          <Link
-            href={buildHubHref(activeProjectId, {
-              panel: "work",
-              sub: "tasks",
-            })}
-            scroll={false}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              activePanel === "work"
-                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent/60",
-            )}
-          >
-            <ListChecks className="size-4 shrink-0 opacity-80" />
-            Work
-          </Link>
-
-          <Link
-            href={buildHubHref(activeProjectId, { panel: "library" })}
-            scroll={false}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              activePanel === "library"
-                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent/60",
-            )}
-          >
-            <Library className="size-4 shrink-0 opacity-80" />
-            Library
-          </Link>
-
-          <Link
-            href={`/projects/${activeProjectId}/takvim`}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              pathname === `/projects/${activeProjectId}/takvim`
-                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent/60",
-            )}
-          >
-            <CalendarDays className="size-4 shrink-0 opacity-80" />
-            Content Calendar
-          </Link>
-
-          <Link
-            href={`/projects/${activeProjectId}/integrations`}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              pathname === `/projects/${activeProjectId}/integrations`
-                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent/60",
-            )}
-          >
-            <Plug className="size-4 shrink-0 opacity-80" />
-            Connectors
-          </Link>
-
-          <Link
-            href={`/projects/${activeProjectId}/ads`}
-            className={cn(
-              "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors",
-              pathname === `/projects/${activeProjectId}/ads`
-                ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent/60",
-            )}
-          >
-            <Megaphone className="size-4 shrink-0 opacity-80" />
-            Ads Manager
-          </Link>
-
-          {flows && flows.length > 0 ? (
-            <Collapsible
-              open={flowsOpen}
-              onOpenChange={setFlowsOpen}
-              className="pt-2"
-            >
-              <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg px-2.5 py-1 text-[11px] font-semibold tracking-wide text-muted-foreground/70 uppercase transition-colors hover:text-muted-foreground">
-                Initiatives
-                <ChevronDown
-                  className={cn(
-                    "size-3.5 shrink-0 transition-transform",
-                    !flowsOpen && "-rotate-90",
-                  )}
-                />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="space-y-0.5 pt-0.5">
-                {flows.map((flow) => {
-                  const Icon = FLOW_ICON[flow.kind];
-                  // No separate idea thread anymore — every flow jumps
-                  // into the ONE project chat, anchored to where that
-                  // idea's conversation starts (see page.tsx). Orphan task
-                  // flows have no idea-scoped history to anchor to, so
-                  // they just land on the plain chat. `since` widens the
-                  // chat's default recent-window query so the anchor is
-                  // guaranteed to be inside the fetched range.
-                  const href =
-                    flow.kind === "idea"
-                      ? `/projects/${activeProjectId}${
-                          flow.since
-                            ? `?since=${encodeURIComponent(flow.since)}`
-                            : ""
-                        }#idea-${flow.id}`
-                      : `/projects/${activeProjectId}`;
-                  return (
-                    <div
-                      key={`${flow.kind}-${flow.id}`}
-                      className="group flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60"
-                    >
-                      <Link
-                        href={href}
-                        scroll={false}
-                        className="flex min-w-0 flex-1 items-center gap-2"
-                      >
-                        <Icon className="size-4 shrink-0 opacity-70" />
-                        <MarqueeText className="flex-1">
-                          {flow.title}
-                        </MarqueeText>
-                      </Link>
-                      {flow.kind === "idea" ? (
-                        <Link
-                          href={`/projects/${activeProjectId}?entity=idea:${flow.id}&thread=1`}
-                          scroll={false}
-                          title="Open isolated thread view"
-                          aria-label="Open isolated thread view"
-                          className="shrink-0 rounded-md p-1 opacity-0 transition-opacity group-hover:opacity-60 hover:!opacity-100"
-                        >
-                          <ExternalLink className="size-3.5" />
-                        </Link>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </CollapsibleContent>
-            </Collapsible>
+    <nav className="flex flex-1 flex-col gap-4 overflow-y-auto px-3 py-3 text-sm">
+      {GROUPS.map((group, index) => (
+        <div key={group.title ?? index} className="space-y-0.5">
+          {group.title ? (
+            <div className="px-2.5 pb-1 text-[10px] font-semibold tracking-[0.1em] text-sidebar-foreground/45 uppercase">
+              {group.title}
+            </div>
           ) : null}
+          {group.items.map((item) => {
+            const Icon = item.icon;
+            let href: string;
+            let active: boolean;
+            let badge = 0;
+            if ("panel" in item) {
+              href = buildHubHref(activeProjectId, {
+                panel: item.panel,
+                sub: item.sub ?? null,
+                entity: null,
+              });
+              active = activePanel === item.panel;
+              badge = toolBadges[item.panel] ?? 0;
+            } else if ("route" in item) {
+              href = `/projects/${activeProjectId}/${item.route}`;
+              active = pathname === href;
+            } else {
+              href = `/projects/${activeProjectId}`;
+              active = isPlainChat;
+            }
+            return (
+              <Link
+                key={item.label}
+                href={href}
+                scroll={"panel" in item ? false : undefined}
+                className={cn(
+                  ITEM_CLASS,
+                  active ? ACTIVE_CLASS : "hover:bg-sidebar-accent/60",
+                )}
+              >
+                <Icon className="size-4 shrink-0 opacity-80" />
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {badge > 0 ? (
+                  <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-warning/15 px-1 text-[10px] font-semibold tabular-nums text-warning">
+                    {badge}
+                  </span>
+                ) : null}
+              </Link>
+            );
+          })}
         </div>
-      ) : null}
+      ))}
     </nav>
   );
 }

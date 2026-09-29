@@ -19,8 +19,7 @@ import type { PanelProps } from "./panel-props";
 // Formerly lived under /human-actions (a workspace-wide page OUTSIDE the
 // project context, with no projectId filter at all) as the Human Action
 // Center — now a panel opened from each project's own Tools menu, showing
-// ONLY that project's pending requests (see the same transformation in
-// approvals-panel.tsx).
+// ONLY that project's pending requests.
 export async function HumanActionPanel({ projectId }: PanelProps) {
   const requests = await prisma.humanInterventionRequest.findMany({
     where: { projectId, status: "PENDING" },

@@ -28,7 +28,9 @@ import { AgentelseError } from "@/server/security/errors";
 const TASK_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   DRAFT: ["READY", "CANCELLED"],
   READY: ["QUEUED", "WAITING_APPROVAL", "BLOCKED", "CANCELLED"],
-  QUEUED: ["RUNNING", "BLOCKED", "CANCELLED"],
+  // QUEUED -> FAILED: a dispatch that dead-letters before any provider
+  // claimed it (e.g. PROVIDER_UNAVAILABLE) — see execution-worker.ts.
+  QUEUED: ["RUNNING", "FAILED", "BLOCKED", "CANCELLED"],
   RUNNING: [
     "WAITING_INPUT",
     "WAITING_HUMAN",
@@ -55,7 +57,7 @@ const EXECUTION_JOB_TRANSITIONS: Record<
   ExecutionJobStatus,
   ExecutionJobStatus[]
 > = {
-  QUEUED: ["RUNNING", "CANCELLED"],
+  QUEUED: ["RUNNING", "FAILED", "CANCELLED"],
   RUNNING: [
     "WAITING_HUMAN",
     "WAITING_PROVIDER",

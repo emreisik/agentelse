@@ -3,7 +3,6 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
-  ClipboardCheck,
   FolderKanban,
   HeartPulse,
   Plus,
@@ -19,7 +18,6 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
-  CommandShortcut,
 } from "@/components/ui/command";
 import { cn, statusBadgeVariant } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -40,7 +38,7 @@ type ProjectItem = { id: string; name: string; status: string };
 
 // The large, ChatGPT-style "search/command" bar on the dashboard — clicking
 // it opens a cmdk-based command palette: search across projects or jump
-// with one keystroke to frequently used actions (new project, approvals,
+// with one keystroke to frequently used actions (new project,
 // human actions, system health). Also opens with Cmd/Ctrl+K.
 export function DashboardCommandBar({ projects }: { projects: ProjectItem[] }) {
   const [open, setOpen] = React.useState(false);
@@ -119,11 +117,6 @@ export function DashboardCommandBar({ projects }: { projects: ProjectItem[] }) {
             >
               <Plus className="text-muted-foreground" />
               Create new project
-            </CommandItem>
-            <CommandItem value="approvals" onSelect={() => go("/approvals")}>
-              <ClipboardCheck className="text-muted-foreground" />
-              View approvals
-              <CommandShortcut>Approvals</CommandShortcut>
             </CommandItem>
             <CommandItem
               value="human actions"

@@ -177,12 +177,23 @@ async function tryGemini(
   options: GenerateCreativeImageOptions,
 ): Promise<GeneratedByGemini | null> {
   if (!isGeminiImageConfigured()) return null;
-  return generateGeminiImage(
-    prompt,
-    options.baseImage,
-    options.imageSize,
-    options.referenceImage,
-  );
+  // Catches an actual call failure (quota, safety refusal, network, a
+  // billing block on the underlying GCP project — a real 403 seen in
+  // production), not just "unconfigured" — without this, a thrown error
+  // here propagated straight out of generateCreativeImage() and the OpenAI/
+  // OpenClaw/fal tiers below were never even attempted, contradicting this
+  // module's own documented "falls through... or the call fails" behavior.
+  try {
+    return await generateGeminiImage(
+      prompt,
+      options.baseImage,
+      options.imageSize,
+      options.referenceImage,
+    );
+  } catch (error) {
+    console.error("[creative-image] Gemini image generation failed:", error);
+    return null;
+  }
 }
 
 async function tryOpenAI(
@@ -190,13 +201,18 @@ async function tryOpenAI(
   options: GenerateCreativeImageOptions,
 ): Promise<GeneratedByOpenAI | null> {
   if (!isOpenAIImageConfigured()) return null;
-  return generateOpenAIImage(
-    prompt,
-    options.baseImage,
-    options.imageSize,
-    options.referenceImage,
-    options.quality,
-  );
+  try {
+    return await generateOpenAIImage(
+      prompt,
+      options.baseImage,
+      options.imageSize,
+      options.referenceImage,
+      options.quality,
+    );
+  } catch (error) {
+    console.error("[creative-image] OpenAI image generation failed:", error);
+    return null;
+  }
 }
 
 export async function generateCreativeImage(
@@ -220,18 +236,32 @@ export async function generateCreativeImage(
   // such parameter in the CLI) — so a logo/brand reference is only usable
   // on the OpenAI path above, and is silently ignored here.
   if (isOpenClawImageConfigured()) {
-    const viaOpenClaw = await generateViaOpenClaw(
-      prompt,
-      opts.imageSize,
-      opts.quality,
-    );
-    if (viaOpenClaw) return normalizeToTarget(viaOpenClaw, opts.imageSize);
+    try {
+      const viaOpenClaw = await generateViaOpenClaw(
+        prompt,
+        opts.imageSize,
+        opts.quality,
+      );
+      if (viaOpenClaw) return normalizeToTarget(viaOpenClaw, opts.imageSize);
+    } catch (error) {
+      console.error(
+        "[creative-image] OpenClaw image generation failed:",
+        error,
+      );
+    }
   }
 
-  // Last resort — see the module comment above (step 3). Only reached once
-  // both the primary and secondary tiers have failed or are unconfigured.
-  const viaFal = await tryFalFallback(prompt, opts);
-  if (viaFal) return normalizeToTarget(viaFal, opts.imageSize);
+  // Last resort — see the module comment above (step 4). Only reached once
+  // every earlier tier has failed or is unconfigured — caught too, so a
+  // failure here degrades to "no image" (the creative still completes with
+  // just caption/copy, see the calling providers) instead of failing the
+  // whole task.
+  try {
+    const viaFal = await tryFalFallback(prompt, opts);
+    if (viaFal) return normalizeToTarget(viaFal, opts.imageSize);
+  } catch (error) {
+    console.error("[creative-image] fal.ai fallback failed:", error);
+  }
 
   return null;
 }

@@ -6,6 +6,7 @@ import { getBrandTwin } from "@/server/brand-twin/brand-twin";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 
 import { buildAgencyCapabilities } from "./deliverables";
+import { TASK_RESULTS_IN_HISTORY, taskResultOf } from "./history";
 import type { ChatPhase } from "./tools";
 
 // Raised from 12 now that the general/single-chat branch below carries
@@ -75,6 +76,9 @@ export async function buildContext(projectId: string, ideaId?: string) {
           rawText: true,
           replyText: true,
           attachments: true,
+          // Only read for the finished-task result text (taskResultOf); it is
+          // not passed on as-is.
+          parsedIntent: true,
         },
       }),
       // Drives the NOT_STARTED/IN_PROGRESS/ACTIVE gate (see chat-turn.ts and
@@ -135,6 +139,24 @@ export async function buildContext(projectId: string, ideaId?: string) {
     })
     .join("\n");
 
+  // The agent's role-tagged history (chat-agent.ts). Same rows, but a finished
+  // task's SYSTEM row also carries what the task produced, for the newest few:
+  // without it the agent only saw "Task completed" and could neither quote nor
+  // adjust its own work. Older results stay behind get_task_result.
+  // Walked newest-first so the budget of results goes to the latest ones.
+  let resultsLeft = TASK_RESULTS_IN_HISTORY;
+  const agentHistory = [...chronological]
+    .reverse()
+    .map(({ parsedIntent, ...row }) => {
+      const resultText =
+        resultsLeft > 0 && row.source === "SYSTEM"
+          ? taskResultOf(parsedIntent)
+          : undefined;
+      if (resultText) resultsLeft -= 1;
+      return { ...row, resultText };
+    })
+    .reverse();
+
   // What the agency can hand the client right now (active departments'
   // deliverables + connected channels) — the chat agent proposes only these.
   const connectedTargets = await getPublishTargets(projectId).catch(() => []);
@@ -160,7 +182,7 @@ export async function buildContext(projectId: string, ideaId?: string) {
       waitingSince: approval.createdAt.toISOString(),
     })),
     history,
-    recent: chronological,
+    recent: agentHistory,
     setupPhase,
     setupWaiting,
     projectPhase,

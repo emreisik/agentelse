@@ -55,15 +55,22 @@ function priceFor(model: string): ModelPrice {
   return FALLBACK;
 }
 
+// OpenAI bills each web_search tool call on top of tokens (list price, USD per
+// 1K calls: platform.openai.com/docs/pricing). Overstated on purpose, like the
+// model fallbacks above: the budget cap should trip early, not late.
+const WEB_SEARCH_USD_PER_CALL = 0.01;
+
 export function estimateReasoningCostUsd(input: {
   model: string;
   inputTokens?: number;
   outputTokens?: number;
+  webSearchCalls?: number;
 }): number {
   const price = priceFor(input.model);
   const inputCost =
     ((input.inputTokens ?? 0) / 1_000_000) * price.inputPerMillion;
   const outputCost =
     ((input.outputTokens ?? 0) / 1_000_000) * price.outputPerMillion;
-  return inputCost + outputCost;
+  const searchCost = (input.webSearchCalls ?? 0) * WEB_SEARCH_USD_PER_CALL;
+  return inputCost + outputCost + searchCost;
 }

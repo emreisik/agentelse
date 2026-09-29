@@ -6,6 +6,7 @@ import {
   limitNoticeReplyText,
 } from "@/server/commands/limit-notice";
 import { getEnv } from "@/lib/env";
+import { QuickDiscoveryService } from "@/server/brand/quick-discovery";
 import { ensureProjectActive } from "@/server/projects/activation";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { estimateReasoningCostUsd } from "@/server/reasoning/reasoning-pricing";
@@ -44,6 +45,10 @@ import type { ChatModel, ChatModelEvent, ChatStreamEvent } from "./types";
 // is one round (plain answer) or two (tool call, then the wrap-up sentence).
 // Read tools spend rounds too, so leave room for a lookup or two.
 const MAX_ROUNDS = 6;
+
+// How long the first reply waits for the brand scan (site pages + a few web
+// searches + one model call). Past this the reply goes ahead without it.
+const QUICK_DISCOVERY_WAIT_MS = 75_000;
 const MAX_OUTPUT_TOKENS = 8192;
 // ~25k tokens of prior conversation; the rest of the window is left for the
 // brand context, attachments, tool round trips and the reply.
@@ -206,6 +211,37 @@ export async function* runChatAgent(
     await ensureProjectActive(input.projectId).catch((error) => {
       console.error("[chat-agent] ensureProjectActive failed:", error);
     });
+
+    // First conversation with a brand the agency knows nothing about yet:
+    // read its public website (and a little of the web) before answering, so
+    // this very reply is written by someone who knows what the brand is. The
+    // client sees it happen; it is bounded, and if it does not finish in time
+    // the turn goes on without it and the scan completes in the background.
+    let brandScan: "completed" | "unavailable" | undefined;
+    const discovery = await QuickDiscoveryService.claim(input.projectId).catch(
+      (error) => {
+        console.error("[chat-agent] quick discovery claim failed:", error);
+        return null;
+      },
+    );
+    if (discovery) {
+      yield {
+        type: "tool.start",
+        name: "quick_discovery",
+        label: "Getting to know your brand…",
+      };
+      const scan = await QuickDiscoveryService.runWithin(
+        discovery,
+        QUICK_DISCOVERY_WAIT_MS,
+      );
+      brandScan = scan.status === "DONE" ? "completed" : "unavailable";
+      yield {
+        type: "tool.end",
+        name: "quick_discovery",
+        ok: scan.status === "DONE",
+      };
+    }
+
     const context = await buildContext(input.projectId, input.ideaId);
     brandId = context.brandId;
 
@@ -281,6 +317,7 @@ export async function* runChatAgent(
           pending: context.pending,
           phase: context.projectPhase,
           enrichment: context.setupWaiting,
+          brandScan,
           today: todayInTimezone(timezone),
           timezone,
           language: context.project.language || "tr",

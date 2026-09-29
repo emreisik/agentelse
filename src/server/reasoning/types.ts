@@ -19,6 +19,10 @@ export type ReasoningDef<TOut> = {
   // Escape hatch to bypass the tier and pin a specific model.
   model?: string;
   maxTokens?: number;
+  // The model may search the live web while answering (OpenAI backend only;
+  // costs a per-search fee on top of tokens). Ignored on other backends and in
+  // mock mode, where buildMock stands in.
+  webSearch?: boolean;
 };
 
 export type ReasoningInput = {

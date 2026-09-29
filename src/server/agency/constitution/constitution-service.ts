@@ -151,31 +151,53 @@ export const ConstitutionService = {
       logoAssetIds: input.logoAssetIds ?? [],
     });
 
+    return ConstitutionService.publishVersion({
+      scope: {
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        brandId: input.brandId,
+      },
+      payload,
+      isMock,
+      sourceFindingIds: findings.map((f) => f.id),
+      evidenceIds: findings
+        .filter((f): f is typeof f & { evidenceId: string } => !!f.evidenceId)
+        .map((f) => f.evidenceId),
+    });
+  },
+
+  // Stores a payload as the brand's next constitution version, activates it
+  // and mirrors it into the Brand Brain tables. Shared by the deep synthesis
+  // above (built from stored findings) and Quick Discovery (built from the
+  // brand's public pages), so both are versioned, audited and read the same
+  // way. `note` only shows up in the decision log entry.
+  async publishVersion(input: {
+    scope: BrandBrainScope;
+    payload: BrandConstitutionPayload;
+    isMock: boolean;
+    sourceFindingIds: string[];
+    evidenceIds: string[];
+    note?: string;
+  }) {
+    const { scope, payload, isMock } = input;
+
     const constitution = await BrandConstitutionRepository.createNextVersion({
-      workspaceId: input.workspaceId,
-      projectId: input.projectId,
-      brandId: input.brandId,
+      ...scope,
       payload,
       summary: payload.identity,
-      sourceFindingIds: findings.map((f) => f.id),
+      sourceFindingIds: input.sourceFindingIds,
       isMock,
     });
 
     const activated = await BrandConstitutionRepository.activate(
       constitution.id,
-      input.brandId,
+      scope.brandId,
     );
-
-    const scope = {
-      workspaceId: input.workspaceId,
-      projectId: input.projectId,
-      brandId: input.brandId,
-    };
 
     await BrandDecisionRepository.record({
       ...scope,
       topic: "Brand Constitution",
-      decision: `v${activated.version} activated`,
+      decision: `v${activated.version} activated${input.note ? ` (${input.note})` : ""}`,
       rationale: activated.summary ?? undefined,
       decidedByType: isMock ? "AI" : "SYSTEM",
     });
@@ -184,9 +206,7 @@ export const ConstitutionService = {
       scope,
       "BRAND_CONSTITUTION",
       activated.id,
-      findings
-        .filter((f): f is typeof f & { evidenceId: string } => !!f.evidenceId)
-        .map((f) => f.evidenceId),
+      input.evidenceIds,
     );
 
     await promoteConstitutionToBrandBrain(scope, payload, activated.version);

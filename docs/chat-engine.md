@@ -25,6 +25,20 @@ Chat iki motordan biriyle çalışır; `CHAT_ENGINE` env'i seçer.
 4. Döngü (en çok 6 tur): model metin akıtır, gerekirse tool çağırır, sonuç modele döner.
 5. Sonunda cevap ve varsa kart aynı `Command` satırına yazılır; kullanım `ReasoningCall` (`purpose: chat.turn`) ve bütçe sayaçlarına işlenir.
 
+## İlk marka taraması (Quick Discovery)
+
+Marka Çekirdeği (aktif `BrandConstitution`) olmayan bir projede **ilk sohbet turu**, cevaptan önce markayı tanır (`src/server/brand/quick-discovery.ts`). Uzun bir onboarding yoktur; müşteri ilk mesajını yazar, arada canlı bir "Getting to know your brand…" göstergesi görür.
+
+1. `QuickDiscoveryService.claim`: yalnızca gerçek modda (mock'ta asla), `ACTIVE` bir projede, aktif constitution yokken ve son 10 dakikada başlamış bir tarama yokken çalışır. `brand.quick_discovery.started` audit kaydı hem tekrarı hem de art arda başarısız denemeleri engeller.
+2. Site: `safeFetch` (SSRF korumalı) ile ana sayfa ve en çok 2 ilgili sayfa (hakkımızda, ürünler/hizmetler, fiyat) okunur; metin `htmlToText` ile çıkarılır. Her sayfa `Evidence` olarak saklanır (`sourceUrl`, `contentHash`, `accessedAt`); 7 günden yeni okunmuş sayfa yeniden indirilmez.
+3. Tek yapılandırılmış model çağrısı (`quickDiscoveryDef`, OpenAI'ın barındırılan `web_search` aracıyla) `ConstitutionOutput` şeklinde çıktı verir. Çağrı `ReasoningService` üzerinden gider: bütçe kapısı, `ReasoningCall`, audit ve arama ücreti maliyete girer.
+4. Sonuç `ConstitutionService.publishVersion` ile **v1** olarak aktifleşir; `BrandDossier`'in yalnızca **boş** sütunları doldurulur (müşterinin yazdığına dokunulmaz).
+5. Cevap en çok 75 saniye beklenir. Süre dolarsa tur taramasız devam eder, tarama arka planda biter ve marka sonraki turda bilinir. Model, tur bağlamında taramanın bitip bitmediğini ("ilk taslak" / "bitmedi, marka hakkında az şey biliyorsun") öğrenir.
+
+Güvenlik kuralları: sayfa metni ve arama sonuçları **güvenilmeyen veri** olarak verilir; `approvedClaims` her zaman boştur (müşteri onaylamadan hiçbir iddia "onaylı" olmaz); kaynaksız "kesin bilgi" yazılmaz (`knownFacts` kaynak URL taşır, çıkarımlar `assumptions`'a gider). 12 aşamalı derin kurulum sonradan v2'yi bunun üzerine yazar.
+
+Yalnızca agent motorunda çalışır (`CHAT_ENGINE=agent`); legacy motor kendi intake akışını sürdürür.
+
 ## SSE olayları
 
 `start` · `text.delta` · `tool.start` · `tool.end` · `card` · `suggestions` · `done` · `error`

@@ -36,6 +36,9 @@ export type OpenAIStructuredResult = {
   raw: unknown;
   inputTokens?: number;
   outputTokens?: number;
+  // Only set by the web-search variant (openai-search-client.ts): each search
+  // is billed on top of tokens.
+  webSearchCalls?: number;
 };
 
 export type OpenAIInlineAttachment = { mimeType: string; data: string };

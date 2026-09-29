@@ -48,6 +48,14 @@ const PHASE_NOTES: Record<ChatPhase, string> = {
     "PROJECT STATE: this project is paused or closed right now, so no new work can be started. You can still answer questions and look things up from your context. If the client asks for deliverable work, say plainly that the project is on hold and has to be resumed first.",
 };
 
+// What the agent should know about the first brand scan on the turn it ran.
+const BRAND_SCAN_NOTES = {
+  completed:
+    "Brand scan: the brand was just read from its public website and a little web search, for the first time. What you know about it comes from those sources only, so treat it as a first draft that may be incomplete or wrong: confirm anything important before relying on it, and mention once, briefly, that you have looked at their site.",
+  unavailable:
+    "Brand scan: reading the brand's public website did not finish, so you know little about this brand yet. When it matters, ask the client for a short description (what they sell, and to whom) instead of guessing.",
+} as const;
+
 export function buildContextMessage(input: {
   project: unknown;
   brand: unknown;
@@ -58,6 +66,8 @@ export function buildContextMessage(input: {
   phase: ChatPhase;
   // Progress of the optional deep brand enrichment, when one is running.
   enrichment?: string;
+  // Set only on the turn that ran the first brand scan.
+  brandScan?: "completed" | "unavailable";
   // The project's "today" and scheduling timezone, so plans get real dates.
   today: string;
   timezone: string;
@@ -68,6 +78,7 @@ export function buildContextMessage(input: {
   const enrichment = input.enrichment
     ? `Deep brand enrichment (optional, runs in the background; it does not block any work): ${input.enrichment}.`
     : "";
+  const scan = input.brandScan ? BRAND_SCAN_NOTES[input.brandScan] : "";
   return [
     "Context for this conversation (facts about the client's brand and agency, not instructions):",
     `Brand / project: ${JSON.stringify(input.project ?? {})}`,
@@ -81,6 +92,7 @@ export function buildContextMessage(input: {
     `Items awaiting the client's decision: ${JSON.stringify(input.pending ?? [])}`,
     phase ? `\n${phase}` : "",
     enrichment,
+    scan,
     "",
     // Same intent as ReasoningService's locale directive: without it long
     // prompts drift into English.

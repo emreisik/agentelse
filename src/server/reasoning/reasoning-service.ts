@@ -13,6 +13,7 @@ import {
   openaiModelForTier,
   runOpenAIStructured,
 } from "@/server/reasoning/openai-client";
+import { runOpenAIStructuredWithSearch } from "@/server/reasoning/openai-search-client";
 import { prisma } from "@/lib/prisma";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
@@ -118,6 +119,7 @@ export const ReasoningService = {
       let output: TOut;
       let inputTokens: number | undefined;
       let outputTokens: number | undefined;
+      let webSearchCalls: number | undefined;
 
       if (mock) {
         output = def.schema.parse(def.buildMock(input.context));
@@ -134,8 +136,14 @@ export const ReasoningService = {
         }
         const prompt = def.buildPrompt(input.context);
         const directive = await localeDirective(input.projectId);
+        // Live web search is an OpenAI Responses feature; a def that asks for
+        // it on another backend simply runs without.
         const runStructured =
-          backend === "openai" ? runOpenAIStructured : runGeminiStructured;
+          backend === "openai"
+            ? def.webSearch
+              ? runOpenAIStructuredWithSearch
+              : runOpenAIStructured
+            : runGeminiStructured;
         const result = await runStructured({
           model,
           system: `${directive}\n\n${prompt.system}`,
@@ -150,6 +158,7 @@ export const ReasoningService = {
         output = def.schema.parse(result.raw);
         inputTokens = result.inputTokens;
         outputTokens = result.outputTokens;
+        webSearchCalls = (result as { webSearchCalls?: number }).webSearchCalls;
       }
 
       // Cost is calculated per call and written to both the record itself
@@ -157,7 +166,12 @@ export const ReasoningService = {
       // spending for the dailyBudgetUsd cap to work.
       const costUsd = mock
         ? 0
-        : estimateReasoningCostUsd({ model, inputTokens, outputTokens });
+        : estimateReasoningCostUsd({
+            model,
+            inputTokens,
+            outputTokens,
+            webSearchCalls,
+          });
 
       const call = await ReasoningCallRepository.record({
         workspaceId: input.workspaceId,
@@ -194,7 +208,11 @@ export const ReasoningService = {
         action: `reasoning.${def.purpose}`,
         entityType: "ReasoningCall",
         entityId: call.id,
-        metadata: { isMock: mock, model },
+        metadata: {
+          isMock: mock,
+          model,
+          ...(webSearchCalls ? { webSearchCalls } : {}),
+        },
       });
 
       return { output, isMock: mock, reasoningCallId: call.id };

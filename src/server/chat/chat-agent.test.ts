@@ -75,6 +75,17 @@ vi.mock("@/server/chat/context", () => ({ buildContext }));
 const ensureProjectActive = vi.fn();
 vi.mock("@/server/projects/activation", () => ({ ensureProjectActive }));
 
+// The first-conversation brand scan. Off by default (a brand the agency
+// already knows); the tests for it arm claim() explicitly.
+const claimQuickDiscovery = vi.fn();
+const runQuickDiscovery = vi.fn();
+vi.mock("@/server/brand/quick-discovery", () => ({
+  QuickDiscoveryService: {
+    claim: claimQuickDiscovery,
+    runWithin: runQuickDiscovery,
+  },
+}));
+
 const submit = vi.fn();
 vi.mock("@/server/commands/command-service", () => ({
   CommandService: { submit },
@@ -216,6 +227,8 @@ beforeEach(() => {
   for (const key of Object.keys(envOverrides)) delete envOverrides[key];
   buildContext.mockResolvedValue(context("ACTIVE"));
   ensureProjectActive.mockResolvedValue({ status: "ACTIVE", usable: true });
+  claimQuickDiscovery.mockResolvedValue(null);
+  runQuickDiscovery.mockResolvedValue({ status: "DONE", version: 1, pages: 2 });
   commandCreate.mockResolvedValue({ id: "cmd-1" });
   checkAndIncrement.mockResolvedValue(undefined);
 });
@@ -384,6 +397,101 @@ describe("runChatAgent", () => {
     expect(order).toEqual(["ensureProjectActive", "buildContext"]);
     const offered = requests[0]!.tools.map((t) => (t as { name: string }).name);
     expect(offered).toContain("create_task");
+  });
+
+  describe("first brand scan", () => {
+    const target = {
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      brandId: "brand-1",
+      brandName: "Acme",
+      domain: "acme.com.tr",
+      language: "tr",
+      country: "TR",
+    };
+    const developerNote = (requests: { input: unknown[] }[]) =>
+      String((requests[0]!.input[0] as { content: string }).content);
+
+    it("does not scan a brand the agency already knows", async () => {
+      const { model } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(runQuickDiscovery).not.toHaveBeenCalled();
+      expect(events.some((e) => e.type === "tool.start")).toBe(false);
+    });
+
+    it("reads the brand before answering, showing progress, and tells the model it is a first draft", async () => {
+      claimQuickDiscovery.mockResolvedValue(target);
+      const order: string[] = [];
+      runQuickDiscovery.mockImplementation(async () => {
+        order.push("scan");
+        return { status: "DONE", version: 1, pages: 2 };
+      });
+      buildContext.mockImplementation(async () => {
+        order.push("buildContext");
+        return context("ACTIVE");
+      });
+      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      // Scanned first, THEN the context was loaded, so the brand profile the
+      // model sees already contains what the scan learned.
+      expect(order).toEqual(["scan", "buildContext"]);
+      expect(runQuickDiscovery).toHaveBeenCalledWith(target, 75_000);
+      const types = events.map((e) => e.type);
+      expect(types.indexOf("tool.start")).toBeLessThan(types.indexOf("text.delta"));
+      expect(events).toContainEqual({
+        type: "tool.start",
+        name: "quick_discovery",
+        label: "Getting to know your brand…",
+      });
+      expect(events).toContainEqual({
+        type: "tool.end",
+        name: "quick_discovery",
+        ok: true,
+      });
+      expect(developerNote(requests)).toContain("first draft");
+    });
+
+    it.each([
+      ["failed", { status: "FAILED", message: "site down" }],
+      ["still running", { status: "PENDING" }],
+    ])("goes on without the scan when it %s, and says the brand is barely known", async (_label, outcome) => {
+      claimQuickDiscovery.mockResolvedValue(target);
+      runQuickDiscovery.mockResolvedValue(outcome);
+      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(text(events)).toBe("Merhaba");
+      expect(events).toContainEqual({
+        type: "tool.end",
+        name: "quick_discovery",
+        ok: false,
+      });
+      expect(developerNote(requests)).toContain("did not finish");
+      expect(developerNote(requests)).not.toContain("first draft");
+    });
+
+    it("does not let a broken claim take the turn down", async () => {
+      claimQuickDiscovery.mockRejectedValue(new Error("db hiccup"));
+      const { model } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(text(events)).toBe("Merhaba");
+      expect(events.some((e) => e.type === "error")).toBe(false);
+    });
+
+    it("says nothing about a scan on ordinary turns", async () => {
+      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(developerNote(requests)).not.toContain("Brand scan");
+    });
   });
 
   it("still answers when activation itself fails", async () => {

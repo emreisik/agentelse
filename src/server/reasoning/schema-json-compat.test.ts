@@ -17,6 +17,7 @@ import { instagramStyleDef } from "./prompts/instagram-style";
 import { measurementAnalysisDef } from "./prompts/measurement-analysis";
 import { strategySynthesisDef } from "./prompts/strategy-synthesis";
 import { metaCampaignBriefDef } from "./prompts/meta-campaign-brief";
+import { quickDiscoveryDef } from "./prompts/quick-discovery";
 
 // reasoning-service.ts calls z.toJSONSchema(def.schema) on EVERY real
 // (non-mock) call, before the model is ever reached — a schema containing a
@@ -45,6 +46,7 @@ const DEFS: Record<string, { schema: z.ZodType }> = {
   measurementAnalysisDef,
   strategySynthesisDef,
   metaCampaignBriefDef,
+  quickDiscoveryDef,
 };
 
 describe("reasoning def schemas are representable as JSON Schema", () => {

@@ -16,6 +16,7 @@ import { publishCreativeCore } from "@/server/commands/publish-creative";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 import { hasActiveMetaAdsAccount } from "@/server/execution/providers/meta/meta-api-provider";
 import { taskFingerprint } from "@/server/agency/fingerprint";
+import { MemoryService } from "@/server/memory/memory-service";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { metaCampaignBriefDef } from "@/server/reasoning/prompts/meta-campaign-brief";
 
@@ -506,6 +507,18 @@ export async function applyApprovalDecision(input: {
       approval.projectId,
       to === "APPROVED" ? "APPROVED" : "REJECTED",
     );
+    // What the client just decided about a finished piece is a signal about
+    // their taste. Kept as a tentative memory, never a rule after one decision
+    // (MemoryService.rememberCreativeReaction never throws).
+    await MemoryService.rememberCreativeReaction({
+      scope: {
+        workspaceId: approval.workspaceId,
+        projectId: approval.projectId,
+        brandId: approval.brandId,
+      },
+      creativeId: approval.entityId,
+      outcome: to,
+    });
 
     if (to === "APPROVED") {
       autoPublishResult = await autoPublishCreative({

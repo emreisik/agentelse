@@ -73,6 +73,11 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+const rememberCreativeReaction = vi.fn();
+vi.mock("@/server/memory/memory-service", () => ({
+  MemoryService: { rememberCreativeReaction },
+}));
+
 const planWeeklyInstagramContent = vi.fn();
 vi.mock("@/server/agency/content/instagram-week-planner", () => ({
   planWeeklyInstagramContent,
@@ -115,6 +120,7 @@ beforeEach(() => {
   brandFindFirst.mockResolvedValue({ id: "brand-1" });
   projectScheduleFindFirst.mockResolvedValue(null);
   ensureProjectActive.mockResolvedValue({ status: "ACTIVE", usable: true });
+  rememberCreativeReaction.mockResolvedValue(null);
   planWeeklyInstagramContent.mockResolvedValue({
     ideasConsidered: 2,
     imagesGenerated: 2,
@@ -162,6 +168,93 @@ describe("CommandService.submit — project gate", () => {
     expect(result.status).not.toBe("PROJECT_INACTIVE");
     expect(planForCapability).toHaveBeenCalled();
   });
+});
+
+describe("CommandService.submit — learning from creative decisions", () => {
+  const creativeApproval = {
+    id: "appr-1",
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    brandId: "brand-1",
+    taskId: null,
+    entityType: "Creative",
+    entityId: "creative-1",
+  };
+  const decide = (
+    decision: "APPROVE" | "REJECT" | "REVISE",
+    note?: string,
+  ) => ({
+    ...baseInput(""),
+    rawText: decision,
+    intent: { kind: "APPROVAL_DECISION" as const, decision, note },
+  });
+  const scope = { workspaceId: "ws-1", projectId: "proj-1", brandId: "brand-1" };
+
+  beforeEach(() => {
+    approvalFindMany.mockResolvedValue([creativeApproval]);
+  });
+
+  it("remembers an approved creative as a reaction of the client's", async () => {
+    await CommandService.submit(decide("APPROVE"));
+
+    expect(rememberCreativeReaction).toHaveBeenCalledWith({
+      scope,
+      creativeId: "creative-1",
+      outcome: "APPROVED",
+      note: undefined,
+    });
+  });
+
+  it("remembers a rejected creative", async () => {
+    await CommandService.submit(decide("REJECT"));
+
+    expect(rememberCreativeReaction).toHaveBeenCalledWith({
+      scope,
+      creativeId: "creative-1",
+      outcome: "REJECTED",
+      note: undefined,
+    });
+  });
+
+  it("remembers what the client asked to change, with their words", async () => {
+    await CommandService.submit(decide("REVISE", "less busy background"));
+
+    expect(rememberCreativeReaction).toHaveBeenCalledWith({
+      scope,
+      creativeId: "creative-1",
+      outcome: "REVISION_REQUESTED",
+      note: "less busy background",
+    });
+  });
+
+  it("records the decision first, so learning can never stand in its way", async () => {
+    const order: string[] = [];
+    approvalDecide.mockImplementation(async () => {
+      order.push("decide");
+    });
+    rememberCreativeReaction.mockImplementation(async () => {
+      order.push("learn");
+      return null;
+    });
+
+    await CommandService.submit(decide("APPROVE"));
+
+    expect(order).toEqual(["decide", "learn"]);
+  });
+
+  it.each(["APPROVE", "REJECT", "REVISE"] as const)(
+    "learns nothing from a %s on something that is not a creative",
+    async (kind) => {
+      approvalFindMany.mockResolvedValue([
+        { ...creativeApproval, entityType: "Task", entityId: "task-9", taskId: "task-9" },
+      ]);
+      taskFindUnique.mockResolvedValue({ status: "COMPLETED" });
+
+      await CommandService.submit(decide(kind, "note"));
+
+      expect(rememberCreativeReaction).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("CommandService.submit — APPROVAL_DECISION REVISE", () => {

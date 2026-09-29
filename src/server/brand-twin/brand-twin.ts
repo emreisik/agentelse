@@ -94,9 +94,46 @@ export type BrandTwin = {
   updatedAt: string | null;
 };
 
+// Brand Core, the part of the twin that says who the brand IS (the versioned
+// constitution plus dossier, visual identity and current focus), without the
+// memory of what the client asked for and how past work landed. The chat agent
+// gets memory separately, filtered to the message at hand (MemoryService.recall),
+// so it is not handed the whole store on every turn.
+export type BrandCore = Omit<BrandTwin, "creativePreferences" | "creativeMemory">;
+
+export function brandCoreOf(twin: BrandTwin): BrandCore {
+  const { creativePreferences, creativeMemory, ...core } = twin;
+  void creativePreferences;
+  void creativeMemory;
+  return core;
+}
+
+// The one constitution version every reader agrees on. Idea generation, the
+// council and the strategy read the ACTIVE version (ConstitutionService.
+// getBrandContext); the twin used to read "the newest, whatever its status",
+// so the chat and the pipeline could describe the same brand from different
+// versions. Only when nothing is active yet (a setup that never finished
+// activating one) does it fall back to the newest draft, so a brand that only
+// has a draft still shows what is known instead of nothing.
+async function currentConstitution(brandId: string) {
+  const active = await prisma.brandConstitution.findFirst({
+    where: { brandId, status: "ACTIVE" },
+    orderBy: { version: "desc" },
+  });
+  if (active) return active;
+  return prisma.brandConstitution.findFirst({
+    where: { brandId },
+    orderBy: { version: "desc" },
+  });
+}
+
 export async function getBrandTwin(
   projectId: string,
+  // memory: false skips the two memory queries and leaves creativePreferences /
+  // creativeMemory empty, for callers that recall memory themselves.
+  options: { memory?: boolean } = {},
 ): Promise<BrandTwin | null> {
+  const withMemory = options.memory !== false;
   const brand = await prisma.brand.findFirst({
     where: { projectId, isDefault: true },
   });
@@ -110,30 +147,27 @@ export async function getBrandTwin(
     preferences,
     learnings,
   ] = await Promise.all([
-    // Latest version regardless of status (not just ACTIVE): during
-    // setup, a brand may only have a DRAFT constitution for a while —
-    // BrandTwin should reflect the most current understanding available,
-    // not withhold it until a human/agency step promotes it to ACTIVE.
-    prisma.brandConstitution.findFirst({
-      where: { brandId: brand.id },
-      orderBy: { version: "desc" },
-    }),
+    currentConstitution(brand.id),
     prisma.brandDossier.findUnique({ where: { brandId: brand.id } }),
     prisma.brandVisualIdentity.findUnique({ where: { brandId: brand.id } }),
     prisma.projectGoal.findFirst({
       where: { projectId, status: "ACTIVE" },
       orderBy: { priority: "asc" },
     }),
-    prisma.userDecision.findMany({
-      where: { brandId: brand.id },
-      orderBy: { createdAt: "desc" },
-      take: 20,
-    }),
-    prisma.brandLearning.findMany({
-      where: { brandId: brand.id },
-      orderBy: { evidenceCount: "desc" },
-      take: 40,
-    }),
+    withMemory
+      ? prisma.userDecision.findMany({
+          where: { brandId: brand.id },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        })
+      : Promise.resolve([]),
+    withMemory
+      ? prisma.brandLearning.findMany({
+          where: { brandId: brand.id },
+          orderBy: { evidenceCount: "desc" },
+          take: 40,
+        })
+      : Promise.resolve([]),
   ]);
 
   // BrandVisualIdentity (role-split primary/secondary/accent, edited via

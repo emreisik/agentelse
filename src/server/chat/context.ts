@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { SETUP_STAGE } from "@/lib/labels";
 import { getBrandTwin } from "@/server/brand-twin/brand-twin";
+import { MemoryService } from "@/server/memory/memory-service";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 
 import { buildAgencyCapabilities } from "./deliverables";
@@ -22,7 +23,31 @@ const HISTORY_TURNS = 36;
 // in the legacy service) so the agent engine has no dependency on it. The
 // agent also uses `recent` to build real role-tagged history messages
 // instead of the flattened `history` string.
-export async function buildContext(projectId: string, ideaId?: string) {
+// What the client has been asking about lately, for choosing which memories
+// matter: their last few messages (the newest is this turn's own, which the
+// agent has already saved). A short "yes, go ahead" carries no topic by
+// itself, so the messages before it supply one.
+function recentUserText(
+  rows: readonly { source: string; rawText: string }[],
+): string {
+  return rows
+    .filter((row) => row.source === "WEB" && row.rawText.trim())
+    .slice(-3)
+    .map((row) => row.rawText.trim())
+    .join("\n")
+    .slice(-1_200);
+}
+
+// options.recall: the streaming agent asks for Brand Memory to be recalled for
+// this conversation (only what matters, MemoryService.recall) instead of the
+// store's newest entries riding along inside the brand profile. The legacy
+// ChatService leaves it off and gets the profile exactly as before.
+export async function buildContext(
+  projectId: string,
+  ideaId?: string,
+  options: { recall?: boolean } = {},
+) {
+  const recall = options.recall === true;
   const [project, brandTwin, dailyStat, pendingApprovals, recent, setupState] =
     await Promise.all([
       prisma.project.findUniqueOrThrow({
@@ -44,7 +69,9 @@ export async function buildContext(projectId: string, ideaId?: string) {
       // Orchestrator ("retrieve relevant past user decisions") for free —
       // BrandTwin.creativePreferences already is the brand's recent
       // UserDecision rows.
-      getBrandTwin(projectId),
+      recall
+        ? getBrandTwin(projectId, { memory: false })
+        : getBrandTwin(projectId),
       latestDailyStat(projectId),
       prisma.approval.findMany({
         where: { projectId, status: "PENDING" },
@@ -143,6 +170,10 @@ export async function buildContext(projectId: string, ideaId?: string) {
   // task's SYSTEM row also carries what the task produced, for the newest few:
   // without it the agent only saw "Task completed" and could neither quote nor
   // adjust its own work. Older results stay behind get_task_result.
+  const memory = recall
+    ? await MemoryService.recall(brandId, recentUserText(chronological))
+    : null;
+
   // Walked newest-first so the budget of results goes to the latest ones.
   let resultsLeft = TASK_RESULTS_IN_HISTORY;
   const agentHistory = [...chronological]
@@ -175,6 +206,8 @@ export async function buildContext(projectId: string, ideaId?: string) {
       country: project.country,
     },
     brand: brandTwin,
+    // Brand Memory recalled for this conversation (agent only; null otherwise).
+    memory,
     state: dailyStat,
     pending: pendingApprovals.map((approval) => ({
       type: approval.type,

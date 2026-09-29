@@ -23,6 +23,7 @@ import {
 } from "@/server/commands/intent-router";
 import { resolveProjectFromText } from "@/server/commands/project-resolver";
 import { TaskPlanner } from "@/server/commands/task-planner";
+import { MemoryService } from "@/server/memory/memory-service";
 import { ensureProjectActive } from "@/server/projects/activation";
 import { performCreativeRevision } from "@/server/actions/creative-actions";
 import { createStrategicIdea } from "@/server/commands/strategic-request";
@@ -214,6 +215,25 @@ export const CommandService = {
         );
       }
 
+      // A decision about a finished creative is a signal about the client's
+      // taste (kept as a tentative memory, never a rule after one decision).
+      const reactToCreative = (
+        outcome: "APPROVED" | "REJECTED" | "REVISION_REQUESTED",
+        note?: string,
+      ) =>
+        approval.entityType === "Creative"
+          ? MemoryService.rememberCreativeReaction({
+              scope: {
+                workspaceId: approval.workspaceId,
+                projectId: approval.projectId,
+                brandId: approval.brandId,
+              },
+              creativeId: approval.entityId,
+              outcome,
+              note,
+            })
+          : undefined;
+
       if (intent.decision === "APPROVE") {
         await ApprovalRepository.decide(
           approval.id,
@@ -227,6 +247,7 @@ export const CommandService = {
             approval.projectId,
           );
         }
+        await reactToCreative("APPROVED");
       } else if (intent.decision === "REJECT") {
         await ApprovalRepository.decide(
           approval.id,
@@ -234,6 +255,7 @@ export const CommandService = {
           "REJECTED",
           input.userId,
         );
+        await reactToCreative("REJECTED");
       } else {
         await ApprovalRepository.decide(
           approval.id,
@@ -242,6 +264,7 @@ export const CommandService = {
           input.userId,
           intent.note,
         );
+        await reactToCreative("REVISION_REQUESTED", intent.note);
 
         // Previously REVISION_REQUESTED was recorded and then never
         // consumed by anything (REVISION_REQUESTED's only legal transition

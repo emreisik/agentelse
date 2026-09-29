@@ -25,7 +25,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-const { getBrandTwin } = await import("./brand-twin");
+const { brandCoreOf, getBrandTwin } = await import("./brand-twin");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -222,5 +222,127 @@ describe("getBrandTwin", () => {
     const twin = await getBrandTwin("proj-1");
 
     expect(twin!.visualDNA.colors).toEqual([{ hex: "#dead00" }]);
+  });
+});
+
+describe("getBrandTwin: which constitution version it describes", () => {
+  const constitution = (status: string, version: number) => ({
+    version,
+    status,
+    isMock: false,
+    sourceFindingIds: [],
+    updatedAt: new Date("2026-09-20T00:00:00Z"),
+    payload: { identity: `identity v${version}` },
+  });
+
+  beforeEach(() => {
+    brandFindFirst.mockResolvedValue({ id: "brand-1", name: "Brand" });
+    brandDossierFindUnique.mockResolvedValue(null);
+    brandVisualIdentityFindUnique.mockResolvedValue(null);
+    projectGoalFindFirst.mockResolvedValue(null);
+    userDecisionFindMany.mockResolvedValue([]);
+    brandLearningFindMany.mockResolvedValue([]);
+  });
+
+  it("asks for the ACTIVE version first, the one idea generation and the council read", async () => {
+    brandConstitutionFindFirst.mockResolvedValueOnce(constitution("ACTIVE", 2));
+
+    const twin = await getBrandTwin("proj-1");
+
+    expect(brandConstitutionFindFirst).toHaveBeenCalledTimes(1);
+    expect(brandConstitutionFindFirst).toHaveBeenCalledWith({
+      where: { brandId: "brand-1", status: "ACTIVE" },
+      orderBy: { version: "desc" },
+    });
+    expect(twin!.version).toBe(2);
+    expect(twin!.confidence).toBe("high");
+  });
+
+  it("does not describe a newer draft while an older version is the active one", async () => {
+    // Only the ACTIVE lookup is made when there is an active version, so a
+    // half-written newer DRAFT can never win over it.
+    brandConstitutionFindFirst.mockResolvedValueOnce(constitution("ACTIVE", 1));
+
+    const twin = await getBrandTwin("proj-1");
+
+    expect(twin!.version).toBe(1);
+    expect(brandConstitutionFindFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the newest version when none is active yet, at medium confidence", async () => {
+    brandConstitutionFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(constitution("DRAFT", 3));
+
+    const twin = await getBrandTwin("proj-1");
+
+    expect(brandConstitutionFindFirst).toHaveBeenCalledTimes(2);
+    expect(brandConstitutionFindFirst).toHaveBeenLastCalledWith({
+      where: { brandId: "brand-1" },
+      orderBy: { version: "desc" },
+    });
+    expect(twin!.version).toBe(3);
+    expect(twin!.confidence).toBe("medium");
+  });
+});
+
+describe("getBrandTwin: memory on demand", () => {
+  beforeEach(() => {
+    brandFindFirst.mockResolvedValue({ id: "brand-1", name: "Brand" });
+    brandConstitutionFindFirst.mockResolvedValue(null);
+    brandDossierFindUnique.mockResolvedValue(null);
+    brandVisualIdentityFindUnique.mockResolvedValue(null);
+    projectGoalFindFirst.mockResolvedValue(null);
+    userDecisionFindMany.mockResolvedValue([
+      {
+        id: "d1",
+        type: "CREATIVE_PREFERENCE",
+        scope: "BRAND",
+        value: "premium",
+        rawMessage: null,
+        createdAt: new Date(),
+      },
+    ]);
+    brandLearningFindMany.mockResolvedValue([
+      { insight: "Editorial works", polarity: "WORKS", evidenceCount: 2 },
+    ]);
+  });
+
+  it("reads the stored preferences and learnings by default", async () => {
+    const twin = await getBrandTwin("proj-1");
+
+    expect(userDecisionFindMany).toHaveBeenCalledTimes(1);
+    expect(brandLearningFindMany).toHaveBeenCalledTimes(1);
+    expect(twin!.creativePreferences).toHaveLength(1);
+    expect(twin!.creativeMemory.works).toHaveLength(1);
+  });
+
+  it("skips both memory queries when the caller recalls memory itself", async () => {
+    const twin = await getBrandTwin("proj-1", { memory: false });
+
+    expect(userDecisionFindMany).not.toHaveBeenCalled();
+    expect(brandLearningFindMany).not.toHaveBeenCalled();
+    expect(twin!.creativePreferences).toEqual([]);
+    expect(twin!.creativeMemory).toEqual({ works: [], avoid: [] });
+  });
+});
+
+describe("brandCoreOf", () => {
+  it("drops the memory and keeps who the brand is", async () => {
+    brandFindFirst.mockResolvedValue({ id: "brand-1", name: "Brand" });
+    brandConstitutionFindFirst.mockResolvedValue(null);
+    brandDossierFindUnique.mockResolvedValue(null);
+    brandVisualIdentityFindUnique.mockResolvedValue(null);
+    projectGoalFindFirst.mockResolvedValue(null);
+    userDecisionFindMany.mockResolvedValue([]);
+    brandLearningFindMany.mockResolvedValue([]);
+
+    const core = brandCoreOf((await getBrandTwin("proj-1"))!);
+
+    expect(core).not.toHaveProperty("creativePreferences");
+    expect(core).not.toHaveProperty("creativeMemory");
+    expect(core).toMatchObject({ brandId: "brand-1", name: "Brand" });
+    expect(core).toHaveProperty("negativeRules");
+    expect(core).toHaveProperty("currentFocus");
   });
 });

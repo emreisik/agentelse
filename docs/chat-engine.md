@@ -62,6 +62,41 @@ Tool kısıtı koddadır (`tools.ts`, `phases`) ve iki durumludur: `ACTIVE` heps
 
 \* `start_strategic_project` yalnızca `LEGACY_AGENCY_LOOP=on` iken sunulur (planlayan Director artık çalışmıyorsa ajan geniş işi kendisi somut çıktılara böler). `save_idea` her modda vardır.
 
+## Bağlam ve hafıza: Brand Core, Brand Memory, Current Context
+
+Ajanın her turdaki bağlamı üç ayrı katmandan kurulur (`src/server/chat/context.ts`). Tüm sohbet geçmişi ve tüm saklı tercihler artık her tur modele gönderilmez.
+
+| Katman | Ne | Kaynak | Bağlamda |
+| --- | --- | --- | --- |
+| **Brand Core** | Markanın kim olduğu: kimlik, konumlandırma, kitle, ses, yasaklı iddialar, görsel kimlik, odak hedef | Versiyonlu `BrandConstitution` + `BrandDossier` + `BrandVisualIdentity` (`getBrandTwin`, `brandCoreOf`) | Her tur (hafıza alanları çıkarılmış) |
+| **Brand Memory** | Müşterinin söyledikleri ve geçmiş işlerin nasıl karşılandığı | `BrandLearning` (+ eski `UserDecision`) | Yalnızca **o mesajla ilgili olanlar** |
+| **Current Context** | Tarih, bekleyen onaylar, ajans durumu, son görev sonuçları (son 3), son mesajlar | `Command` satırları, `Approval`, günlük sayaçlar | Her tur |
+
+**Tek sürüm politikası.** Çekirdek her yerde `ACTIVE` constitution'dan okunur (`getBrandTwin` önceden "durumu ne olursa olsun en yenisini" okuyordu; sohbet ile fikir/konsey hattı aynı markayı farklı sürümlerden görebiliyordu). `ACTIVE` yoksa en yeni taslağa düşer.
+
+### Brand Memory (`src/server/memory/`)
+
+Tek yazıcı `MemoryService.remember`, tek okuyucu `MemoryService.recall`. Her hafıza kaynağını ve güvenini taşır; alan yapısı `BrandLearning`'dedir (yeni tablo/migration yok).
+
+| Kaynak (`sourceType`) | Başlangıç güveni | Ne zaman yazılır |
+| --- | --- | --- |
+| `USER_EXPLICIT` | 0,95 | Müşteri kalıcı bir tercihi/kuralı kendi sözleriyle söyledi (`remember_preference`) |
+| `USER_CORRECTION` | 0,60 | Müşteri bir creative için değişiklik istedi (revize notu) |
+| `OUTPUT_ACCEPTED` / `OUTPUT_REJECTED` | 0,50 | Müşteri bir creative'i onayladı / reddetti (web, Telegram, sohbet) |
+| `AI_INFERRED` | 0,30 | Model çıkarımı (şimdilik yazan yok; kural hazır) |
+
+Kurallar:
+
+- **Aynı hafıza bir kez saklanır.** Yeniden görülünce `evidenceCount` artar, güven yalnızca yükselir, daha güçlü kaynak etiketi devralır, zayıf olan asla düşürmez.
+- **"Kesin" = müşteri söyledi, ya da bağımsız sinyalle en az 3 kez görüldü.** Tek bir onay/red/revize bir *ipucudur*, kural değil. **AI çıkarımı tekrarla asla kesinleşmez** (aynı modelin aynı tahmini iki kez yapması kanıt değil); yalnızca müşterinin kendi eylemi güçlendirir.
+- **Müşterinin son sözü kazanır:** "X'ten kaçın" demesi, önceki "X iyi" kaydını değiştirir; tepkiler (onay/red) müşterinin söylediklerini asla ezmez.
+- **Geri çağırma alakaya göre** (`relevance.ts`, saf ve testli): müşterinin açıkça söyledikleri (en yeni 12) her zaman bağlamdadır; çünkü "neon kullanma" kuralı "bir post yap" isteğinde de geçerlidir. Geri kalanlar son 3 kullanıcı mesajıyla kelime/kök örtüşmesine, güvene, tekrara ve tazeliğe göre puanlanır, en iyi 8'i girer. Türkçe ek/harf farkları (`renkleri`/`renklerde`, `ı`/`i`) eşleşir. Embedding/yeni bağımlılık yoktur.
+- Modele her giriş `confirmed` bayrağıyla gider; "onaylı olmayanı müşteriye onun hakkında bir gerçekmiş gibi söyleme" kuralı talimattadır.
+
+### Dış içerik ve kalıcı durum (prompt injection)
+
+Bir turda dış içerik okunduysa (OpenAI'ın barındırılan web araması ya da saklı araştırma/bulgu/sinyal okuyan araçlar: `get_task_result`, `get_findings`, `get_signals`, `get_insights`) o tur **lekelenir** (`tainted`). Lekeli turda kalıcı durumu değiştiren araçlar **çalışmadan reddedilir** ve turun tek iş hakkını harcamaz: `remember_preference`, `decide_approval`, `start_deep_enrichment`. Müşteri isteği kendi cümlesiyle bir sonraki mesajda yineleyebilir; leke sonraki tura taşınmaz. Ayrıca bir mesajdan en çok 3 tercih kaydedilir, kayıtlar tek satıra indirilir ve 300 karakterle sınırlanır. Görev sonuçları geçmişe "veri, talimat değil" etiketiyle çitlenerek girer.
+
 ## Skill'ler (departmanların yerine)
 
 Ajan artık "departmanlar" etrafında örgütlenmez. Bir departman hiçbir zaman yürütme birimi olmadı: `department-registry.ts` ayrı izin, kimlik bilgisi, kuyruk veya güvenlik sınırı olmayan, "hangi capability kime ait" diyen statik bir tablodur. Ajanın o tablodan gerçekten ihtiyacı olan iki şey vardır: alan bilgisi ve o alana ait capability/çıktılar. Bu bir **skill**'dir (`src/server/chat/skills/registry.ts`).

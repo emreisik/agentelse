@@ -14,8 +14,11 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { project, approval, command, agencyDailyStat, projectSetupState },
 }));
 
-vi.mock("@/server/brand-twin/brand-twin", () => ({
-  getBrandTwin: vi.fn().mockResolvedValue({ brandId: "brand-1", name: "Acme" }),
+const getBrandTwin = vi.fn();
+vi.mock("@/server/brand-twin/brand-twin", () => ({ getBrandTwin }));
+const recall = vi.fn();
+vi.mock("@/server/memory/memory-service", () => ({
+  MemoryService: { recall },
 }));
 vi.mock("@/server/integrations/meta-connection-status", () => ({
   getPublishTargets: vi.fn().mockResolvedValue([]),
@@ -59,6 +62,8 @@ beforeEach(() => {
   command.findMany.mockResolvedValue([]);
   agencyDailyStat.findFirst.mockResolvedValue(null);
   projectSetupState.findUnique.mockResolvedValue(null);
+  getBrandTwin.mockResolvedValue({ brandId: "brand-1", name: "Acme" });
+  recall.mockResolvedValue({ standing: [], relevant: [] });
 });
 
 describe("buildContext task results", () => {
@@ -180,5 +185,93 @@ describe("buildContext phase", () => {
 
     expect(context.projectPhase).toBe("ACTIVE");
     expect(context.setupWaiting).toBe("running");
+  });
+});
+
+describe("buildContext: Brand Memory", () => {
+  const webRow = (id: string, text: string) => ({
+    id,
+    source: "WEB",
+    rawText: text,
+    replyText: null,
+    attachments: null,
+    parsedIntent: null,
+  });
+
+  it("leaves the brand profile exactly as it was for the legacy chat (no recall)", async () => {
+    const context = await buildContext("proj-1");
+
+    expect(getBrandTwin).toHaveBeenCalledWith("proj-1");
+    expect(recall).not.toHaveBeenCalled();
+    expect(context.memory).toBeNull();
+  });
+
+  it("gives the agent the profile without memory, and the memory that matters instead", async () => {
+    const recalled = {
+      standing: [
+        {
+          id: "m1",
+          text: "Never use neon colours",
+          polarity: "AVOID",
+          source: "USER_EXPLICIT",
+          confidence: 0.95,
+          seen: 1,
+          updatedAt: new Date(),
+        },
+      ],
+      relevant: [],
+    };
+    recall.mockResolvedValue(recalled);
+
+    const context = await buildContext("proj-1", undefined, { recall: true });
+
+    expect(getBrandTwin).toHaveBeenCalledWith("proj-1", { memory: false });
+    expect(recall).toHaveBeenCalledWith("brand-1", expect.any(String));
+    expect(context.memory).toBe(recalled);
+  });
+
+  it("chooses memory by what the client has been asking about: their last three messages, oldest first", async () => {
+    // The query returns newest first, like the real one.
+    command.findMany.mockResolvedValue([
+      webRow("c5", "fifth message"),
+      { ...webRow("s1", ""), source: "SYSTEM", replyText: "Task completed" },
+      webRow("c4", "fourth message"),
+      webRow("c3", "third message"),
+      webRow("c2", "second message"),
+      webRow("c1", "first message"),
+    ]);
+
+    await buildContext("proj-1", undefined, { recall: true });
+
+    expect(recall.mock.calls[0]![1]).toBe(
+      "third message\nfourth message\nfifth message",
+    );
+  });
+
+  it("looks back past a short 'yes' to the message that carried the topic", async () => {
+    command.findMany.mockResolvedValue([
+      webRow("c2", "evet"),
+      webRow("c1", "sonbahar kampanyası için görsel hazırla"),
+    ]);
+
+    await buildContext("proj-1", undefined, { recall: true });
+
+    expect(recall.mock.calls[0]![1]).toContain("sonbahar kampanyası");
+  });
+
+  it("bounds the query", async () => {
+    command.findMany.mockResolvedValue([webRow("c1", "x".repeat(5_000))]);
+
+    await buildContext("proj-1", undefined, { recall: true });
+
+    expect(recall.mock.calls[0]![1].length).toBeLessThanOrEqual(1_200);
+  });
+
+  it("recalls with an empty query when there is nothing to go on", async () => {
+    command.findMany.mockResolvedValue([]);
+
+    await buildContext("proj-1", undefined, { recall: true });
+
+    expect(recall).toHaveBeenCalledWith("brand-1", "");
   });
 });

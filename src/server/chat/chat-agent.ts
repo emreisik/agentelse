@@ -6,7 +6,9 @@ import {
   limitNoticeReplyText,
 } from "@/server/commands/limit-notice";
 import { getEnv } from "@/lib/env";
+import { brandCoreOf } from "@/server/brand-twin/brand-twin";
 import { QuickDiscoveryService } from "@/server/brand/quick-discovery";
+import { memoryForPrompt } from "@/server/memory/relevance";
 import { ensureProjectActive } from "@/server/projects/activation";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { estimateReasoningCostUsd } from "@/server/reasoning/reasoning-pricing";
@@ -242,7 +244,9 @@ export async function* runChatAgent(
       };
     }
 
-    const context = await buildContext(input.projectId, input.ideaId);
+    const context = await buildContext(input.projectId, input.ideaId, {
+      recall: true,
+    });
     brandId = context.brandId;
 
     // Budget gate first, exactly like ReasoningService.run: a runaway loop is
@@ -311,7 +315,9 @@ export async function* runChatAgent(
         role: "developer" as const,
         content: buildContextMessage({
           project: context.project,
-          brand: context.brand,
+          // Brand Core, and (separately) the memory that matters right now.
+          brand: brandCoreOf(context.brand),
+          memory: context.memory ? memoryForPrompt(context.memory) : undefined,
           state: context.state,
           agency: context.agency,
           pending: context.pending,
@@ -367,6 +373,11 @@ export async function* runChatAgent(
       if (completed.functionCalls.length === 0) break;
 
       conversation.push(...completed.output);
+      // OpenAI's hosted search ran inside the model turn: everything it
+      // brought back is outside content.
+      if (completed.output.some((item) => item.type === "web_search_call")) {
+        toolCtx.tainted = true;
+      }
 
       for (const call of completed.functionCalls) {
         const tool = toolMap.get(call.name);
@@ -376,6 +387,14 @@ export async function* runChatAgent(
         if (!tool) {
           result = {
             error: `Unknown or currently unavailable tool "${call.name}".`,
+          };
+        } else if (tool.sensitive && toolCtx.tainted) {
+          // This turn already read content from outside the conversation, and
+          // this tool changes lasting state. Refused without running, and
+          // without using up the turn's one work action.
+          result = {
+            outcome: "blocked_external_content",
+            note: "Not done: this message already used content from outside the conversation (a web search or stored research), and this action changes something lasting. Ask the client to confirm it in their own words in their next message.",
           };
         } else if (tool.kind !== "note" && tool.kind !== "read" && workDone) {
           // The one-work-per-turn invariant: a second work/terminal call
@@ -432,6 +451,7 @@ export async function* runChatAgent(
               if (run.failed) throw run.error;
               outcome = run.value!;
               result = outcome.result;
+              if (tool.external) toolCtx.tainted = true;
             } catch (error) {
               ok = false;
               // PROVIDER_UNAVAILABLE from INSIDE a tool is not "the chat has

@@ -37,6 +37,7 @@ vi.mock("@/lib/prisma", () => ({
     command: { findMany: commandFindMany, update: commandUpdate },
     approval: { findMany: vi.fn().mockResolvedValue([]) },
     idea: { findMany: vi.fn().mockResolvedValue([]) },
+    finding: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 const startExecution = vi.fn();
@@ -57,7 +58,9 @@ vi.mock("@/server/integrations/meta-connection-status", () => ({
     .fn()
     .mockResolvedValue([{ platform: "instagram", accountLabel: "@acme" }]),
 }));
-vi.mock("@/server/brand-twin/brand-twin", () => ({
+vi.mock("@/server/brand-twin/brand-twin", async (importOriginal) => ({
+  // brandCoreOf is a pure helper the agent uses; keep the real one.
+  ...(await importOriginal<typeof import("@/server/brand-twin/brand-twin")>()),
   getBrandTwin: vi
     .fn()
     .mockResolvedValue({ name: "Acme", currentFocus: { title: "Kommo CRM" } }),
@@ -93,6 +96,10 @@ vi.mock("@/server/commands/command-service", () => ({
 
 vi.mock("@/server/actions/agency-setup-actions", () => ({
   startAgencySetupForProject: vi.fn().mockResolvedValue({ ok: true }),
+}));
+const rememberMemory = vi.fn();
+vi.mock("@/server/memory/memory-service", () => ({
+  MemoryService: { remember: rememberMemory },
 }));
 const recordUserDecision = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/server/brand-twin/brand-twin-writes", () => ({
@@ -143,6 +150,8 @@ type Round = {
   calls?: { name: string; args: unknown }[];
   fail?: Error;
   hang?: boolean;
+  // Raw output items of the model turn, e.g. a hosted web_search_call.
+  output?: unknown[];
 };
 
 function scriptedModel(rounds: Round[]) {
@@ -167,7 +176,7 @@ function scriptedModel(rounds: Round[]) {
       }
       yield {
         type: "completed",
-        output: [],
+        output: (round.output ?? []) as never,
         functionCalls: (round.calls ?? []).map((call, i) => ({
           callId: `call-${index}-${i}`,
           name: call.name,
@@ -228,6 +237,8 @@ beforeEach(() => {
   buildContext.mockResolvedValue(context("ACTIVE"));
   ensureProjectActive.mockResolvedValue({ status: "ACTIVE", usable: true });
   claimQuickDiscovery.mockResolvedValue(null);
+  rememberMemory.mockResolvedValue({ status: "CREATED", id: "m1", superseded: 0 });
+  recordUserDecision.mockResolvedValue({ id: "dec-1" });
   runQuickDiscovery.mockResolvedValue({ status: "DONE", version: 1, pages: 2 });
   commandCreate.mockResolvedValue({ id: "cmd-1" });
   checkAndIncrement.mockResolvedValue(undefined);
@@ -397,6 +408,273 @@ describe("runChatAgent", () => {
     expect(order).toEqual(["ensureProjectActive", "buildContext"]);
     const offered = requests[0]!.tools.map((t) => (t as { name: string }).name);
     expect(offered).toContain("create_task");
+  });
+
+  describe("brand memory", () => {
+    const developerNote = (requests: { input: unknown[] }[]) =>
+      String((requests[0]!.input[0] as { content: string }).content);
+
+    it("asks for memory to be recalled for this conversation", async () => {
+      const { model } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(buildContext).toHaveBeenCalledWith("proj-1", undefined, {
+        recall: true,
+      });
+    });
+
+    it("puts the recalled memory in front of the model, with what is safe to state as fact", async () => {
+      buildContext.mockResolvedValue({
+        ...context("ACTIVE"),
+        memory: {
+          standing: [
+            {
+              id: "m1",
+              text: "Never use neon colours",
+              polarity: "AVOID",
+              source: "USER_EXPLICIT",
+              confidence: 0.95,
+              seen: 1,
+              updatedAt: new Date(),
+            },
+          ],
+          relevant: [
+            {
+              id: "m2",
+              text: "Client approved a warm autumn post",
+              polarity: "WORKS",
+              source: "OUTPUT_ACCEPTED",
+              confidence: 0.5,
+              seen: 1,
+              updatedAt: new Date(),
+            },
+          ],
+        },
+      });
+      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      const note = developerNote(requests);
+      expect(note).toContain(
+        '{"text":"Never use neon colours","avoid":true,"confirmed":true}',
+      );
+      expect(note).toContain(
+        '{"text":"Client approved a warm autumn post","confirmed":false}',
+      );
+    });
+
+    it("does not repeat the memory inside the brand profile", async () => {
+      buildContext.mockResolvedValue({
+        ...context("ACTIVE"),
+        brand: {
+          name: "Acme",
+          identity: "Boya üreticisi",
+          creativePreferences: [{ value: "everything the client ever said" }],
+          creativeMemory: { works: [{ insight: "old learning" }], avoid: [] },
+        },
+      });
+      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      const note = developerNote(requests);
+      expect(note).toContain("Boya üreticisi");
+      expect(note).not.toContain("creativePreferences");
+      expect(note).not.toContain("creativeMemory");
+      expect(note).not.toContain("everything the client ever said");
+    });
+
+    it("says nothing about memory when nothing has been recorded", async () => {
+      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(developerNote(requests)).not.toContain("Brand memory");
+    });
+  });
+
+  describe("content from outside the conversation", () => {
+    const rememberCall = {
+      name: "remember_preference",
+      args: {
+        type: "CREATIVE_PREFERENCE",
+        scope: "BRAND",
+        value: "Never use neon colours",
+        avoid: true,
+      },
+    };
+    const lastToolOutput = (requests: { input: unknown[] }[]) =>
+      JSON.stringify(
+        requests
+          .at(-1)!
+          .input.filter(
+            (item) =>
+              typeof item === "object" &&
+              item !== null &&
+              "type" in item &&
+              item.type === "function_call_output",
+          )
+          .at(-1),
+      );
+
+    it("saves a preference the client stated: the record, and the memory as their own word", async () => {
+      const { model } = scriptedModel([
+        { calls: [rememberCall] },
+        { text: ["Not aldım."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(recordUserDecision).toHaveBeenCalledWith(
+        expect.objectContaining({
+          value: "Never use neon colours",
+          rawMessage: baseInput.message,
+          sourceCommandId: "cmd-1",
+        }),
+      );
+      expect(rememberMemory).toHaveBeenCalledWith({
+        scope: {
+          workspaceId: "ws-1",
+          projectId: "proj-1",
+          brandId: "brand-1",
+        },
+        insight: "Never use neon colours",
+        polarity: "AVOID",
+        source: "USER_EXPLICIT",
+        sourceRef: "dec-1",
+      });
+    });
+
+    it("refuses to save a preference once a web search ran in the same message", async () => {
+      const { model, requests } = scriptedModel([
+        { output: [{ type: "web_search_call" }], calls: [rememberCall] },
+        { text: ["Bunu senin onayın olmadan kaydetmedim."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(recordUserDecision).not.toHaveBeenCalled();
+      expect(rememberMemory).not.toHaveBeenCalled();
+      expect(lastToolOutput(requests)).toContain("blocked_external_content");
+    });
+
+    it("refuses after stored research was read earlier in the same message, even across model rounds", async () => {
+      const { model, requests } = scriptedModel([
+        { calls: [{ name: "get_findings", args: {} }] },
+        { calls: [rememberCall] },
+        { text: ["Kaydetmedim."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(recordUserDecision).not.toHaveBeenCalled();
+      expect(rememberMemory).not.toHaveBeenCalled();
+      expect(lastToolOutput(requests)).toContain("blocked_external_content");
+    });
+
+    it("refuses when the read and the save come in the same model round", async () => {
+      const { model } = scriptedModel([
+        { calls: [{ name: "get_findings", args: {} }, rememberCall] },
+        { text: ["Kaydetmedim."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(rememberMemory).not.toHaveBeenCalled();
+    });
+
+    it("does not carry the suspicion over to the client's next message", async () => {
+      const first = scriptedModel([
+        { output: [{ type: "web_search_call" }], calls: [rememberCall] },
+        { text: ["Kaydetmedim."] },
+      ]);
+      await collect(runChatAgent(baseInput, { model: first.model }));
+      expect(rememberMemory).not.toHaveBeenCalled();
+
+      commandCreate.mockResolvedValue({ id: "cmd-2" });
+      const second = scriptedModel([
+        { calls: [rememberCall] },
+        { text: ["Kaydettim."] },
+      ]);
+      await collect(
+        runChatAgent(
+          { ...baseInput, message: "Evet, neon renkleri asla kullanma." },
+          { model: second.model },
+        ),
+      );
+
+      expect(rememberMemory).toHaveBeenCalledTimes(1);
+    });
+
+    it("also refuses to decide an approval on the strength of outside content", async () => {
+      const { model, requests } = scriptedModel([
+        {
+          output: [{ type: "web_search_call" }],
+          calls: [{ name: "decide_approval", args: { decision: "APPROVE" } }],
+        },
+        { text: ["Onaylamadım."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(submit).not.toHaveBeenCalled();
+      expect(lastToolOutput(requests)).toContain("blocked_external_content");
+    });
+
+    it("does not spend the turn's one work action on a refused call", async () => {
+      submit.mockResolvedValue({
+        status: "PLANNED",
+        commandId: "cmd-1",
+        taskId: "t-1",
+        dispatched: false,
+        requiresApproval: false,
+      });
+      const { model } = scriptedModel([
+        {
+          output: [{ type: "web_search_call" }],
+          calls: [{ name: "decide_approval", args: { decision: "APPROVE" } }],
+        },
+        {
+          calls: [
+            {
+              name: "create_task",
+              args: { capability: "COMPETITOR_RESEARCH", taskBrief: "x" },
+            },
+          ],
+        },
+        { text: ["Araştırmayı başlattım."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      // The approval never ran, and the task that followed did.
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: expect.objectContaining({ kind: "CAPABILITY" }),
+        }),
+      );
+    });
+
+    it("lets at most three preferences be saved from one message", async () => {
+      const call = (value: string) => ({
+        name: "remember_preference",
+        args: { type: "CREATIVE_PREFERENCE", scope: "BRAND", value },
+      });
+      const { model, requests } = scriptedModel([
+        {
+          calls: [call("a rule"), call("b rule"), call("c rule"), call("d rule")],
+        },
+        { text: ["Üçünü kaydettim."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(rememberMemory).toHaveBeenCalledTimes(3);
+      expect(lastToolOutput(requests)).toContain("too_many_in_one_message");
+    });
   });
 
   describe("first brand scan", () => {

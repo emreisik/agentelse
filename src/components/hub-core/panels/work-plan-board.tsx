@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { WorkPlanStatus, WorkPlanType } from "@prisma/client";
 
 import { cn } from "@/lib/utils";
@@ -40,6 +40,7 @@ export function WorkPlanBoard({
   plans: WorkPlanBoardItem[];
   usedTypes: Array<{ planType: WorkPlanType; count: number }>;
 }) {
+  const router = useRouter();
   const [typeFilter, setTypeFilter] = useState<WorkPlanType | null>(null);
   const filtered = typeFilter
     ? plans.filter((plan) => plan.planType === typeFilter)
@@ -108,16 +109,23 @@ export function WorkPlanBoard({
                     plan.totalTasks > 0
                       ? (plan.doneTasks / plan.totalTasks) * 100
                       : 0;
+                  const href = buildHubHref(projectId, {
+                    panel: "work",
+                    sub: "plans",
+                    entity: { kind: "workPlan", id: plan.id },
+                  });
                   return (
-                    <Link
+                    <div
                       key={plan.id}
-                      href={buildHubHref(projectId, {
-                        panel: "work",
-                        sub: "plans",
-                        entity: { kind: "workPlan", id: plan.id },
-                      })}
-                      scroll={false}
-                      className="block rounded-lg bg-card p-3 shadow-xs ring-1 ring-border transition-colors hover:bg-muted/40"
+                      role="link"
+                      tabIndex={0}
+                      onClick={() => router.push(href, { scroll: false })}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          router.push(href, { scroll: false });
+                        }
+                      }}
+                      className="block cursor-pointer rounded-lg bg-card p-3 shadow-xs ring-1 ring-border transition-colors hover:bg-muted/40"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <p className="line-clamp-2 min-w-0 text-xs leading-snug font-medium">
@@ -138,7 +146,10 @@ export function WorkPlanBoard({
                           </span>
                         </div>
                       ) : null}
-                      <div className="mt-2 flex flex-wrap items-center gap-1">
+                      <div
+                        className="mt-2 flex flex-wrap items-center gap-1"
+                        onClick={(event) => event.stopPropagation()}
+                      >
                         <StatusBadge
                           meta={WORK_PLAN_TYPE[plan.planType]}
                           className="h-4 px-1.5 text-[10px]"
@@ -168,7 +179,7 @@ export function WorkPlanBoard({
                       <p className="mt-1.5 text-[10px] text-muted-foreground">
                         {timeAgo(plan.createdAt)}
                       </p>
-                    </Link>
+                    </div>
                   );
                 })}
               </div>

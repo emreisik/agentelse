@@ -68,14 +68,16 @@ export function DashboardCommandBar({ projects }: { projects: ProjectItem[] }) {
         type="button"
         onClick={() => setOpen(true)}
         className={cn(
-          "flex h-14 w-full items-center gap-3 rounded-2xl border border-border bg-card px-5 text-left shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-muted/30 dark:shadow-none",
+          "flex h-14 w-full items-center gap-3 rounded-full border border-border bg-card py-2 pr-3 pl-2 text-left shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-muted/30 dark:shadow-none",
         )}
       >
-        <Search className="size-4.5 shrink-0 text-muted-foreground" />
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-full border border-border">
+          <Search className="size-4 text-muted-foreground" />
+        </span>
         <span className="flex-1 truncate text-sm text-muted-foreground">
           Search a project or run an action…
         </span>
-        <kbd className="hidden shrink-0 items-center gap-0.5 rounded-md border border-border bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground sm:flex">
+        <kbd className="hidden shrink-0 items-center gap-0.5 rounded-full border border-border bg-muted px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground sm:flex">
           <span className="text-xs">⌘</span>K
         </kbd>
       </button>

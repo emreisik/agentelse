@@ -75,14 +75,14 @@ registerSetupStageRunner("INITIAL_IDEA_PORTFOLIO", async (scope) => {
   // the rest of the batch, nor fail this whole setup stage.
   await Promise.all(
     opportunities.map((opportunity) =>
-      IdeaFoundry.generateForOpportunity(opportunity.id, scope.projectId).catch(
-        (error) => {
-          console.error(
-            `[agency-wiring] generateForOpportunity failed for opportunity ${opportunity.id}:`,
-            error instanceof Error ? error.message : error,
-          );
-        },
-      ),
+      IdeaFoundry.generateForOpportunity(opportunity.id, scope.projectId, {
+        postToChat: false,
+      }).catch((error) => {
+        console.error(
+          `[agency-wiring] generateForOpportunity failed for opportunity ${opportunity.id}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }),
     ),
   );
   // Council pass over the fresh portfolio (bounded parallel batches). Same
@@ -96,7 +96,9 @@ registerSetupStageRunner("INITIAL_IDEA_PORTFOLIO", async (scope) => {
   for (let i = 0; i < raw.length; i += BATCH) {
     await Promise.all(
       raw.slice(i, i + BATCH).map((idea) =>
-        CouncilEngine.evaluateIdea(idea.id, scope.projectId).catch((error) => {
+        CouncilEngine.evaluateIdea(idea.id, scope.projectId, {
+          postToChat: false,
+        }).catch((error) => {
           console.error(
             `[agency-wiring] evaluateIdea failed for idea ${idea.id} (${idea.title}):`,
             error instanceof Error ? error.message : error,
@@ -182,17 +184,17 @@ registerAgencyTickStep({
   name: "opportunity-evaluation",
   run: () => OpportunityEngine.evaluatePromotedInsights(10),
 });
-registerAgencyTickStep({
-  name: "idea-generation",
-  // 3 was too tight now that generateForTopOpportunities spreads its slots
-  // across distinct projects (see idea-foundry.ts): with only a handful of
-  // projects ever competing at once, a small limit still let one or two
-  // old, large backlogs occupy most of the slots every tick and left
-  // whichever project ranked last (newest createdAt) waiting indefinitely.
-  // 10 matches opportunity-evaluation's limit just below, the structurally
-  // closest sibling step (also one LLM call per candidate).
-  run: () => IdeaFoundry.generateForTopOpportunities(10),
-});
+// No "idea-generation" tick step anymore — turning an EVALUATED opportunity
+// into an Idea is now on-demand only: a chat request
+// (GENERATE_IDEAS_FROM_OPPORTUNITIES, command-service.ts) or a project's own
+// weekly/monthly ProjectSchedule (capability GENERATE_IDEAS,
+// scheduler-service.ts), both calling IdeaFoundry.generateForTopOpportunities
+// directly. Signal scanning and opportunity evaluation above keep running
+// continuously so there's always a ready, evaluated backlog when one of
+// those triggers fires — only the final conversion step stopped being
+// tick-driven. IdeaFoundry.generateForOpportunity (singular) is still used,
+// unconditionally, by INITIAL_IDEA_PORTFOLIO above — that's a one-time
+// onboarding step, not the recurring generation this removal targets.
 registerAgencyTickStep({
   name: "council-evaluation",
   run: () => CouncilEngine.evaluatePendingIdeas(5),

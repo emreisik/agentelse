@@ -235,6 +235,7 @@ const CAPABILITY_LABELS: Partial<Record<CapabilityKey, string>> = {
   CREATE_CAPTION: "Caption Writing",
   CREATE_CAMPAIGN_BRIEF: "Campaign Brief",
   CREATE_CONTENT_PLAN: "Content Plan",
+  GENERATE_IDEAS: "Idea Generation",
   INSTAGRAM_PUBLISH: "Instagram Publish",
   TIKTOK_PUBLISH: "TikTok Publish",
   LINKEDIN_PUBLISH: "LinkedIn Publish",

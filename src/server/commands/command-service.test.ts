@@ -57,12 +57,19 @@ const approvalFindMany = vi.fn();
 const taskFindUnique = vi.fn();
 const brandFindFirst = vi.fn().mockResolvedValue({ id: "brand-1" });
 const projectScheduleFindFirst = vi.fn().mockResolvedValue(null);
+// Hard gate in CommandService.submit (command-service.ts): every
+// user-triggered call must be past PROJECT_ACTIVATION (status "ACTIVE")
+// before any real work starts — default to ACTIVE so existing tests keep
+// exercising their actual capability logic instead of short-circuiting on
+// SETUP_REQUIRED.
+const projectFindUnique = vi.fn().mockResolvedValue({ status: "ACTIVE" });
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     approval: { findMany: approvalFindMany },
     task: { findUnique: taskFindUnique },
     brand: { findFirst: brandFindFirst },
     projectSchedule: { findFirst: projectScheduleFindFirst },
+    project: { findUnique: projectFindUnique },
   },
 }));
 
@@ -107,6 +114,7 @@ beforeEach(() => {
   attachIdeaId.mockResolvedValue(undefined);
   brandFindFirst.mockResolvedValue({ id: "brand-1" });
   projectScheduleFindFirst.mockResolvedValue(null);
+  projectFindUnique.mockResolvedValue({ status: "ACTIVE" });
   planWeeklyInstagramContent.mockResolvedValue({
     ideasConsidered: 2,
     imagesGenerated: 2,

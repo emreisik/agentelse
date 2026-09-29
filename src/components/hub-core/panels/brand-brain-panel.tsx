@@ -91,11 +91,11 @@ function isBrandBrainSub(value: string | null): value is BrandBrainSubKey {
 
 // The "Brand Brain" node — the codified/reference output layer: constitution,
 // brand assets, strategy versions, decisions, evidence, learnings
-// (the HUB CORE-migrated + expanded version of brand-brain-tab.tsx). The
-// standing chat now lives in the global floating widget (brand-brain-
-// assistant.tsx, mounted from AppShell) instead of pinned above this panel.
-// `constitution` is the only type in ENTITY_PANEL that belongs to this panel
-// — entity depth only kicks in for that type.
+// (the HUB CORE-migrated + expanded version of brand-brain-tab.tsx). Purely
+// read-only/dashboard — editing goes through BrandDossierEditSheet and the
+// Visual Identity forms, not a chat (the chat-based revision flow was
+// removed). `constitution` is the only type in ENTITY_PANEL that belongs to
+// this panel — entity depth only kicks in for that type.
 export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
   const brand = await prisma.brand.findFirst({
     where: { projectId, isDefault: true },

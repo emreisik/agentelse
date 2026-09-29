@@ -22,12 +22,14 @@ import {
 } from "@/server/repositories/setup-state.repository";
 import { SignalProfileRepository } from "@/server/repositories/signal-profile.repository";
 import { nextScanAt } from "@/server/agency/signals/scan-cadence";
+import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 
 import {
   DEEP_DISCOVERY_CAPABILITIES,
   DISCOVERY_COMPLETION_RATIO,
   discoveryResearchRequest,
 } from "./setup-stages";
+import { DEMO_POST_STAGES, generateDemoPost } from "./demo-post-generator";
 
 export type SetupIntake = {
   brandName: string;
@@ -285,7 +287,7 @@ export const ProjectSetupOrchestrator = {
         return { stage, status: "WAITING_CLIENT", advanced: true };
       }
 
-      await this.completeStage(scope, stage);
+      await this.completeStage(scope, stage, intake);
       return { stage, status: "COMPLETED", advanced: true };
     }
 
@@ -362,7 +364,7 @@ export const ProjectSetupOrchestrator = {
       await GoalEngine.approveAll(projectId, "USER", decision.approvedByUserId);
     }
 
-    await this.completeStage(scope, stage);
+    await this.completeStage(scope, stage, state.intake as SetupIntake);
   },
 
   // Manual, user-initiated retry of the current FAILED stage — the escape
@@ -569,7 +571,11 @@ export const ProjectSetupOrchestrator = {
     return true;
   },
 
-  async completeStage(scope: SetupScope, stage: SetupStage): Promise<void> {
+  async completeStage(
+    scope: SetupScope,
+    stage: SetupStage,
+    intake: SetupIntake,
+  ): Promise<void> {
     await SetupStateRepository.transitionStage(
       scope.projectId,
       stage,
@@ -590,5 +596,28 @@ export const ProjectSetupOrchestrator = {
       entityType: "ProjectSetupState",
       entityId: scope.projectId,
     });
+
+    // Best-effort demo-post preview (see demo-post-generator.ts) — awaited
+    // (not detached) so it isn't dropped if this runs inside a short-lived
+    // worker tick, but wrapped in try/catch so a failure here can never
+    // affect the real setup pipeline, which has already fully committed by
+    // this point.
+    if (DEMO_POST_STAGES.includes(stage)) {
+      try {
+        const item = await generateDemoPost(scope, stage, intake);
+        if (item) {
+          await IdeaChatRepository.appendSetupDemoPost({
+            workspaceId: scope.workspaceId,
+            projectId: scope.projectId,
+            item,
+          });
+        }
+      } catch (error) {
+        console.error(
+          "[project-setup-orchestrator] demo post generation failed:",
+          error,
+        );
+      }
+    }
   },
 };

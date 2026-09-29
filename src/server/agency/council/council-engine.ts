@@ -20,6 +20,12 @@ export const CouncilEngine = {
   async evaluateIdea(
     ideaId: string,
     projectId: string,
+    // False only for INITIAL_IDEA_PORTFOLIO (agency-wiring.ts), this
+    // function's sole caller today — the one-time onboarding batch
+    // shouldn't post "council review" cards into a brand-new project's
+    // chat. Evaluation itself (scores, recommendation, the idea's status
+    // transition below) is unaffected; only the chat message is skipped.
+    opts?: { postToChat?: boolean },
   ): Promise<{
     recommendation: CouncilRecommendation | null;
   }> {
@@ -113,19 +119,21 @@ export const CouncilEngine = {
           ? "STRONG_APPROVE"
           : "APPROVE";
 
-    await IdeaChatRepository.postSystemMessage({
-      workspaceId: scope.workspaceId,
-      projectId: scope.projectId,
-      ideaId: idea.id,
-      text: `🧭 Council evaluation completed — result: **${COUNCIL_RECOMMENDATION[combined].label}**`,
-      card: {
-        kind: "council",
-        verdict: combined,
-        notes: evaluationNotes,
-      },
-    }).catch((error) => {
-      console.error("[council-engine] postSystemMessage failed:", error);
-    });
+    if (opts?.postToChat !== false) {
+      await IdeaChatRepository.postSystemMessage({
+        workspaceId: scope.workspaceId,
+        projectId: scope.projectId,
+        ideaId: idea.id,
+        text: `🧭 Council evaluation completed — result: **${COUNCIL_RECOMMENDATION[combined].label}**`,
+        card: {
+          kind: "council",
+          verdict: combined,
+          notes: evaluationNotes,
+        },
+      }).catch((error) => {
+        console.error("[council-engine] postSystemMessage failed:", error);
+      });
+    }
 
     if (combined === "REJECT") {
       await IdeaRepository.transition(idea.id, projectId, "REJECTED");

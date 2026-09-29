@@ -13,8 +13,9 @@ const project = { findUniqueOrThrow: vi.fn() };
 const approval = { findMany: vi.fn() };
 const command = { findMany: vi.fn() };
 const agencyDailyStat = { findFirst: vi.fn() };
+const projectSetupState = { findUnique: vi.fn() };
 vi.mock("@/lib/prisma", () => ({
-  prisma: { project, approval, command, agencyDailyStat },
+  prisma: { project, approval, command, agencyDailyStat, projectSetupState },
 }));
 
 const getBrandTwin = vi.fn();
@@ -53,6 +54,15 @@ vi.mock("@/server/commands/limit-notice", () => ({
   limitNoticeReplyText: vi.fn().mockReturnValue("limited"),
 }));
 
+// A "use server" Next.js action — pulls in next-auth -> next/server
+// transitively, which breaks under Vitest's plain Node ESM resolution
+// (unrelated to the real app, which resolves it fine through Next's own
+// bundler). Mocked purely so this suite can load; none of these tests
+// exercise the NOT_STARTED conversational-setup-intake branch that calls it.
+vi.mock("@/server/actions/agency-setup-actions", () => ({
+  startAgencySetupForProject: vi.fn(),
+}));
+
 const { ChatService } = await import("./chat-service");
 
 const brandTwin = {
@@ -78,6 +88,13 @@ beforeEach(() => {
   approval.findMany.mockResolvedValue([]);
   command.findMany.mockResolvedValue([]);
   agencyDailyStat.findFirst.mockResolvedValue(null);
+  // ACTIVE by default (setupPhase gate, chat-service.ts) — matches these
+  // tests' assumption of an already-set-up project; the NOT_STARTED
+  // conversational-setup-intake branch isn't exercised by this suite.
+  projectSetupState.findUnique.mockResolvedValue({
+    activatedAt: new Date("2026-01-01T00:00:00Z"),
+    stageRecords: [],
+  });
   submit.mockResolvedValue({
     status: "UNKNOWN_INTENT",
     commandId: "cmd-1",

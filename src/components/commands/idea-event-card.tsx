@@ -39,6 +39,7 @@ import {
   DEPARTMENT_KEY,
   HUMAN_INTERVENTION_TYPE,
   RISK_LEVEL,
+  SOCIAL_PLATFORM,
   stripCapabilityPrefix,
 } from "@/lib/labels";
 import {
@@ -317,6 +318,9 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
 
     case "content-plan-summary":
       return <ContentPlanSummaryCard card={card} />;
+
+    case "setup-demo-carousel":
+      return <SetupDemoCarouselCard card={card} />;
 
     case "ads-form-prompt":
       return (
@@ -1138,6 +1142,82 @@ function ContentPlanSummaryCard({
           })}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// Cycling through the app's existing validated 4-color categorical family
+// (globals.css's --dept-* tokens, same ones DepartmentBadge uses) instead of
+// inventing a new palette — these mockup tiles need SOME color to read as
+// "a post preview" (unlike the rest of this file's deliberately monochrome
+// --ws-* system, see ws-event-card.tsx's module comment), so borrowing an
+// already-approved set is safer than a new one.
+const DEMO_ACCENTS = [
+  "var(--dept-strategy)",
+  "var(--dept-intel)",
+  "var(--dept-creative)",
+  "var(--dept-growth)",
+];
+
+// Setup's "here's what we're finding" preview (see demo-post-generator.ts)
+// — a horizontally scrolling row of quick mockup post tiles, ONE evolving
+// card that gains a tile per completed setup stage (IdeaChatRepository.
+// appendSetupDemoPost) rather than a new message each time. No brand-logo
+// icons for the platform tag (see SOCIAL_PLATFORM's comment in labels/
+// core.ts — none exist in this codebase, on purpose), plain text instead.
+function SetupDemoCarouselCard({
+  card,
+}: {
+  card: Extract<IdeaEventCardData, { kind: "setup-demo-carousel" }>;
+}) {
+  return (
+    <div
+      className="mt-1 w-full max-w-md space-y-3 rounded-2xl border p-3.5"
+      style={{
+        borderColor: "var(--ws-border)",
+        background: "var(--ws-surface)",
+        boxShadow: "var(--ws-card-shadow)",
+      }}
+    >
+      <div className="flex items-center gap-2.5">
+        <span
+          className="flex size-7 shrink-0 items-center justify-center rounded-lg"
+          style={{ background: "var(--ws-hover)" }}
+        >
+          <Sparkles className="size-3.5" style={{ color: "var(--ws-text)" }} />
+        </span>
+        <p
+          className="text-sm font-semibold"
+          style={{ color: "var(--ws-text)" }}
+        >
+          A few post ideas, already taking shape
+        </p>
+      </div>
+
+      <div className="-mx-3.5 flex snap-x snap-mandatory gap-2 overflow-x-auto px-3.5 pb-0.5 no-scrollbar">
+        {card.items.map((item) => (
+          <div
+            key={item.stage}
+            title={item.caption}
+            className="flex aspect-[4/5] w-32 shrink-0 snap-start flex-col justify-between rounded-xl p-2.5"
+            style={{
+              background: DEMO_ACCENTS[item.accentIndex % DEMO_ACCENTS.length],
+            }}
+          >
+            <div className="flex items-center justify-between gap-1">
+              <span className="truncate text-[9px] font-semibold tracking-wide text-white/75 uppercase">
+                {SOCIAL_PLATFORM[item.platform].label}
+              </span>
+              <span className="shrink-0 rounded-full bg-black/20 px-1.5 py-0.5 text-[8px] font-bold tracking-wide text-white/90 uppercase">
+                Demo
+              </span>
+            </div>
+            <p className="line-clamp-3 text-[11px] leading-snug font-semibold text-white">
+              {item.headline}
+            </p>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

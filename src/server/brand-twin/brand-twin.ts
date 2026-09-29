@@ -48,6 +48,11 @@ export type BrandTwin = {
   name: string;
   version: number | null;
   confidence: BrandTwinConfidence;
+  // Direct pass-through of the active constitution's own isMock flag — used
+  // to show the "sample brand profile" badge in the UI. Distinct from
+  // `confidence`, which also drops to "low" for a real brand with no
+  // constitution yet; that case should NOT be labelled as demo data.
+  isMock: boolean;
 
   identity: string | null;
   businessModel: string | null;
@@ -97,32 +102,58 @@ export async function getBrandTwin(
   });
   if (!brand) return null;
 
-  const [constitution, dossier, currentFocusGoal, preferences, learnings] =
-    await Promise.all([
-      // Latest version regardless of status (not just ACTIVE): during
-      // setup, a brand may only have a DRAFT constitution for a while —
-      // BrandTwin should reflect the most current understanding available,
-      // not withhold it until a human/agency step promotes it to ACTIVE.
-      prisma.brandConstitution.findFirst({
-        where: { brandId: brand.id },
-        orderBy: { version: "desc" },
-      }),
-      prisma.brandDossier.findUnique({ where: { brandId: brand.id } }),
-      prisma.projectGoal.findFirst({
-        where: { projectId, status: "ACTIVE" },
-        orderBy: { priority: "asc" },
-      }),
-      prisma.userDecision.findMany({
-        where: { brandId: brand.id },
-        orderBy: { createdAt: "desc" },
-        take: 20,
-      }),
-      prisma.brandLearning.findMany({
-        where: { brandId: brand.id },
-        orderBy: { evidenceCount: "desc" },
-        take: 40,
-      }),
-    ]);
+  const [
+    constitution,
+    dossier,
+    visualIdentity,
+    currentFocusGoal,
+    preferences,
+    learnings,
+  ] = await Promise.all([
+    // Latest version regardless of status (not just ACTIVE): during
+    // setup, a brand may only have a DRAFT constitution for a while —
+    // BrandTwin should reflect the most current understanding available,
+    // not withhold it until a human/agency step promotes it to ACTIVE.
+    prisma.brandConstitution.findFirst({
+      where: { brandId: brand.id },
+      orderBy: { version: "desc" },
+    }),
+    prisma.brandDossier.findUnique({ where: { brandId: brand.id } }),
+    prisma.brandVisualIdentity.findUnique({ where: { brandId: brand.id } }),
+    prisma.projectGoal.findFirst({
+      where: { projectId, status: "ACTIVE" },
+      orderBy: { priority: "asc" },
+    }),
+    prisma.userDecision.findMany({
+      where: { brandId: brand.id },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
+    prisma.brandLearning.findMany({
+      where: { brandId: brand.id },
+      orderBy: { evidenceCount: "desc" },
+      take: 40,
+    }),
+  ]);
+
+  // BrandVisualIdentity (role-split primary/secondary/accent, edited via
+  // the Visual Identity dialog, live-read by generation) is the real
+  // source of truth for colors — BrandDossier.approvedColors never got an
+  // edit UI and is a dead legacy fallback (see its own schema comment).
+  // Merge role groups in display priority order and dedupe by hex so the
+  // same swatch never appears twice if it's listed in more than one role.
+  const visualIdentityColors = [
+    ...parseColorSwatches(visualIdentity?.primaryColors),
+    ...parseColorSwatches(visualIdentity?.secondaryColors),
+    ...parseColorSwatches(visualIdentity?.accentColors),
+  ];
+  const seenHexes = new Set<string>();
+  const dedupedVisualIdentityColors = visualIdentityColors.filter((c) => {
+    const key = c.hex.toLowerCase();
+    if (seenHexes.has(key)) return false;
+    seenHexes.add(key);
+    return true;
+  });
 
   const payload = constitution
     ? safeParseConstitution(constitution.payload)
@@ -142,6 +173,7 @@ export async function getBrandTwin(
     name: brand.name,
     version: constitution?.version ?? null,
     confidence,
+    isMock: constitution?.isMock ?? false,
 
     identity: payload?.identity ?? null,
     businessModel: payload?.businessModel ?? null,
@@ -157,7 +189,10 @@ export async function getBrandTwin(
     },
     visualDNA: {
       description: payload?.visualIdentity ?? null,
-      colors: parseColorSwatches(dossier?.approvedColors),
+      colors:
+        dedupedVisualIdentityColors.length > 0
+          ? dedupedVisualIdentityColors
+          : parseColorSwatches(dossier?.approvedColors),
       fonts: parseFontNames(dossier?.approvedFonts),
       logoAssetId: dossier?.logoAssetId ?? null,
     },

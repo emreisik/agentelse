@@ -98,7 +98,9 @@ export async function createProjectAction(formData: FormData) {
     entityId: project.id,
   });
 
-  redirect(`/projects/${project.id}?panel=setup`);
+  // Setup intake now happens conversationally in the project chat itself
+  // (see chat-turn.ts's NOT_STARTED phase) instead of the ?panel=setup form.
+  redirect(`/projects/${project.id}`);
 }
 
 const LOGO_MIME_TO_EXT: Record<string, string> = {
@@ -312,6 +314,58 @@ export async function updateBrandDossierAction(
       actorType: "USER",
       actorId: userId,
       action: "brand_dossier.updated",
+      entityType: "BrandDossier",
+      entityId: access.defaultBrandId,
+    });
+
+    revalidatePath(`/projects/${projectId}`);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Operation failed",
+    };
+  }
+}
+
+// Quick inline edit target (the workspace "Marka" panel's compact
+// typography popover) — separate from updateBrandDossierAction above for
+// the same reason updateVisualIdentityColorsAction is separate from
+// updateBrandVisualIdentityAction: that action always upserts every
+// dossier text field at once, so a partial submit would blank out
+// summary/positioning/toneOfVoice/etc. This one touches ONLY
+// approvedFonts (a real partial Prisma update).
+export async function updateApprovedFontsAction(
+  projectId: string,
+  fonts: string[],
+): Promise<ActionResult> {
+  try {
+    const { userId } = await requireUser();
+    const access = await requireProjectAccess(userId, projectId);
+
+    const cleaned = fonts
+      .map((f) => f.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+
+    await prisma.brandDossier.upsert({
+      where: { brandId: access.defaultBrandId },
+      create: {
+        workspaceId: access.workspaceId,
+        projectId,
+        brandId: access.defaultBrandId,
+        approvedFonts: cleaned,
+      },
+      update: { approvedFonts: cleaned },
+    });
+
+    await AuditLogRepository.record({
+      workspaceId: access.workspaceId,
+      projectId,
+      brandId: access.defaultBrandId,
+      actorType: "USER",
+      actorId: userId,
+      action: "brand_dossier.fonts_updated",
       entityType: "BrandDossier",
       entityId: access.defaultBrandId,
     });

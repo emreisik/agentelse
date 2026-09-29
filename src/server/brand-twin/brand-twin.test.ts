@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const brandFindFirst = vi.fn();
 const brandConstitutionFindFirst = vi.fn();
 const brandDossierFindUnique = vi.fn();
+const brandVisualIdentityFindUnique = vi.fn();
 const projectGoalFindFirst = vi.fn();
 const userDecisionFindMany = vi.fn();
 const brandLearningFindMany = vi.fn();
@@ -17,6 +18,7 @@ vi.mock("@/lib/prisma", () => ({
     brand: { findFirst: brandFindFirst },
     brandConstitution: { findFirst: brandConstitutionFindFirst },
     brandDossier: { findUnique: brandDossierFindUnique },
+    brandVisualIdentity: { findUnique: brandVisualIdentityFindUnique },
     projectGoal: { findFirst: projectGoalFindFirst },
     userDecision: { findMany: userDecisionFindMany },
     brandLearning: { findMany: brandLearningFindMany },
@@ -177,5 +179,48 @@ describe("getBrandTwin", () => {
     const twin = await getBrandTwin("proj-1");
 
     expect(twin!.confidence).toBe("low");
+  });
+
+  it("prefers BrandVisualIdentity's role-split colors over BrandDossier.approvedColors when both exist", async () => {
+    brandFindFirst.mockResolvedValueOnce({ id: "brand-1", name: "Brand" });
+    brandConstitutionFindFirst.mockResolvedValueOnce(null);
+    brandDossierFindUnique.mockResolvedValueOnce({
+      approvedColors: ["#dead00"],
+      approvedFonts: ["Inter"],
+      logoAssetId: null,
+    });
+    brandVisualIdentityFindUnique.mockResolvedValueOnce({
+      primaryColors: [{ hex: "#111111", name: "Ink" }],
+      secondaryColors: [{ hex: "#eeeeee" }],
+      accentColors: [{ hex: "#111111" }], // duplicate of primary — should dedupe
+    });
+    projectGoalFindFirst.mockResolvedValueOnce(null);
+    userDecisionFindMany.mockResolvedValueOnce([]);
+    brandLearningFindMany.mockResolvedValueOnce([]);
+
+    const twin = await getBrandTwin("proj-1");
+
+    expect(twin!.visualDNA.colors).toEqual([
+      { hex: "#111111", name: "Ink" },
+      { hex: "#eeeeee" },
+    ]);
+  });
+
+  it("falls back to BrandDossier.approvedColors when there's no BrandVisualIdentity row", async () => {
+    brandFindFirst.mockResolvedValueOnce({ id: "brand-1", name: "Brand" });
+    brandConstitutionFindFirst.mockResolvedValueOnce(null);
+    brandDossierFindUnique.mockResolvedValueOnce({
+      approvedColors: ["#dead00"],
+      approvedFonts: [],
+      logoAssetId: null,
+    });
+    brandVisualIdentityFindUnique.mockResolvedValueOnce(null);
+    projectGoalFindFirst.mockResolvedValueOnce(null);
+    userDecisionFindMany.mockResolvedValueOnce([]);
+    brandLearningFindMany.mockResolvedValueOnce([]);
+
+    const twin = await getBrandTwin("proj-1");
+
+    expect(twin!.visualDNA.colors).toEqual([{ hex: "#dead00" }]);
   });
 });

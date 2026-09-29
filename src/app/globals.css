@@ -74,6 +74,19 @@
     transform: translateX(200%);
     }
   }
+  /* A moving multi-hue sweep (setup-progress-card.tsx) — evokes active AI
+     processing/scanning rather than a flat "in progress" bar. Cycles
+     through the existing --special/--chart-3/--dept-intel accents (already
+     validated together, see validate_palette.js) instead of introducing new
+     colors. */
+  @keyframes ai-scan {
+  0% {
+    background-position: 0% 50%;
+    }
+  100% {
+    background-position: 200% 50%;
+    }
+  }
 }
 
 :root {

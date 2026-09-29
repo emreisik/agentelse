@@ -130,6 +130,15 @@ export const ChatTurnOutputSchema = z.object({
   // WorkPlan in the existing autonomous pipeline instead of a single task
   // (see strategic-request.ts's module comment). Omit rather than guess.
   departments: z.array(z.nativeEnum(DepartmentKey)).optional().catch(undefined),
+  // Sibling of `strategic`, mutually exclusive with it: the client wants
+  // fresh ideas pulled from the agency's EXISTING, already-evaluated
+  // opportunity backlog ("give me some new ideas", "fırsatlardan fikir
+  // üret") rather than a brand-new research/strategy thread. Idea
+  // generation is on-demand-only now (no more continuous background
+  // generation — see idea-foundry.ts/agency-wiring.ts), so this is the
+  // chat-triggered way to draw from that backlog. See
+  // command-service.ts's GENERATE_IDEAS_FROM_OPPORTUNITIES handling.
+  generateIdeasFromOpportunities: z.boolean().optional().catch(undefined),
   approvalDecision: z
     .enum(["APPROVE", "REJECT", "REVISE"])
     .optional()
@@ -141,6 +150,24 @@ export const ChatTurnOutputSchema = z.object({
   // Usually absent. Present only when the client's message itself states a
   // durable preference/rule (not a one-off request) worth remembering.
   preference: ChatPreferenceSchema.optional().catch(undefined),
+  // Set ONLY while context.setupPhase is "NOT_STARTED" (see chat-service.ts)
+  // — the conversational replacement for the old setup form
+  // (agency-setup-actions.ts's startAgencySetupAction). Fill in whichever of
+  // brandName/domain/description/autoApprove the client has given so far
+  // (across turns — carry forward what earlier turns already established,
+  // don't lose it). Set `ready: true` only once brandName is known AND the
+  // client has clearly agreed to start — chat-service.ts then starts the
+  // real 12-stage setup pipeline from these fields.
+  setupIntake: z
+    .object({
+      brandName: z.string().optional(),
+      domain: z.string().optional(),
+      description: z.string().optional(),
+      autoApprove: z.boolean().optional(),
+      ready: z.boolean().optional(),
+    })
+    .optional()
+    .catch(undefined),
 });
 
 export type ChatTurnOutput = z.infer<typeof ChatTurnOutputSchema>;
@@ -153,15 +180,40 @@ export const chatTurnDef: ReasoningDef<ChatTurnOutput> = {
   maxTokens: 2048,
 
   buildPrompt(context) {
+    const setupPhase = context.setupPhase;
+    const setupBlock =
+      setupPhase === "NOT_STARTED"
+        ? [
+            "",
+            "SETUP: this brand has not been set up yet — no capability/task/strategic/idea work can run until it has. Your job right now is to collect what the setup pipeline needs, through natural conversation (not a form, don't dump every question at once):",
+            "  - brandName (required) — the project may already have a working name (see Brand / project below); just confirm it or ask if they want to change it.",
+            "  - domain (a website, if they have one) — optional.",
+            "  - description — what they want the agency to focus on. Ask this as a `questions` entry (multiSelect: true) with concrete options like Growth/Sales, Brand Awareness, Social Media Management, SEO / Organic Traffic, Paid Ads — plus whatever else fits the brand — rather than an open-ended question; once they pick, fold their picks into a short `description` string. Skip the question only if they already stated their focus in plain text.",
+            '  - autoApprove — ask this as a single-select `questions` entry too (e.g. "Proceed automatically" vs "Wait for my approval at each stage") instead of asking in prose.',
+            "  Never set intentKind to TASK with strategic/generateIdeasFromOpportunities, or a capability — there is no brand profile yet to do that work against. If the client asks for deliverable work anyway, explain warmly that you need to get to know the brand first, and steer back to the missing setup field(s).",
+            "  Fill `setupIntake` with whatever fields are known so far (carry forward earlier turns' answers, don't ask again for something already given). Set `setupIntake.ready: true` ONLY once brandName is known and the client has clearly said to go ahead — that starts the real setup pipeline in the background (it takes real time: discovery, then the brand constitution, goals, the first work plan). It has NOT finished the moment you set ready — never say setup is done or offer to create work in the same reply; a short acknowledgement that you're starting it is enough (your `reply` on this turn is not shown to the client verbatim, so keep it brief either way).",
+          ].join("\n")
+        : setupPhase === "IN_PROGRESS"
+          ? [
+              "",
+              `SETUP: this brand's setup is running in the background right now${
+                context.setupWaiting
+                  ? ` (currently: ${String(context.setupWaiting)})`
+                  : ""
+              }. No new capability/task/strategic/idea work can be started until it finishes. If the client asks for deliverable work, explain that setup is still in progress and that request will be possible once it's done — don't set intentKind to TASK with a capability/strategic/generateIdeasFromOpportunities. You can still answer questions about progress or brand details from the context you have.`,
+            ].join("\n")
+          : "";
     return {
       system: [
         "You are the account director of an autonomous AI marketing agency, talking to the client in a chat window.",
         "You have two jobs on every message: (1) write a genuine, useful reply, (2) decide what the message is.",
+        setupBlock,
         "",
         "intentKind:",
         '- TASK: the client wants work produced or research done. Set `capability` to the single best match and `taskBrief` to a self-contained brief that a worker who cannot see this chat could execute. Set `platform` only when a specific channel is named or clearly implied. For CREATE_SOCIAL_CREATIVE, set `contentFormat` ONLY when the client names a distinct format (e.g. "a story", "a reel", "hikaye", "a square post") — leave it unset for a plain "post"/"content" request, which uses the platform\'s own default.',
         "  - Most TASKs are a single deliverable (one post, one research note, one piece of copy) — leave `strategic` unset for these, exactly like today.",
         '  - Set `strategic: true` ONLY when the request is genuinely broad and multi-part — entering a new market, a full campaign, a multi-week content plan, something that obviously needs research AND planning AND multiple outputs, not one thing. Examples: "enter the German market", "build our October campaign", "plan a product launch". When true, also set `title` (a short name for it, <=80 chars) and, if the request clearly spans more than one function, `departments` (e.g. research + creative + paid media). When unsure, leave `strategic` unset — the single-task path is the safe default.',
+        '  - Set `generateIdeasFromOpportunities: true` ONLY when the client is asking for fresh ideas drawn from the agency\'s own existing research/backlog ("give me some new ideas", "what should we create next", "fırsatlardan fikir üret") — NOT a request for a specific single deliverable (that\'s a normal TASK) and NOT broad enough to need new research of its own (that\'s `strategic`). Never set this together with `strategic` or `capability`.',
         "- ANSWER: the client is asking a question, giving context, or making small talk. Answer it from the context you were given. Never invent numbers, competitors or facts that are not in the context — say what you do not know.",
         "- APPROVAL: the client is approving, rejecting or asking to revise something that is waiting for their decision. Set `approvalDecision`.",
         "- UNCLEAR: you genuinely cannot tell what is wanted. Prefer `questions` (below) over a vague open-ended `reply` whenever there's a concrete, nameable fork; fall back to asking ONE specific question in `reply` only when even the shape of the fork isn't clear.",

@@ -291,7 +291,6 @@ export async function performCreativeRevision({
           contentFormatLabel: platformFormat.contentFormatLabel,
           pixelSize: platformFormat.pixelSize,
           safeZone: platformFormat.safeZone,
-          caption: currentVersion?.caption ?? creative.title ?? undefined,
           hasStyleReference: Boolean(styleImage),
         });
 

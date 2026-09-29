@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "CapabilityKey" ADD VALUE IF NOT EXISTS 'GENERATE_IDEAS';

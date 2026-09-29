@@ -171,7 +171,22 @@
       "Bash(node -e \"console.log\\(Object.keys\\(require\\('/Users/emre/Desktop/SASS-PROJELER/hubconnect/node_modules/lucide-react'\\)\\).filter\\(k=>/instagram|share/i.test\\(k\\)\\)\\)\")",
       "Bash(/opt/homebrew/opt/node@24/bin/node /opt/homebrew/bin/openclaw gateway call health --json)",
       "Bash(curl -s -m 15 -A facebookexternalhit/1.1 https://www.instagram.com/p/DWm8OQKlKvC/ -o /private/tmp/claude-501/-Users-emre-Desktop-SASS-PROJELER-hubconnect/e8a520a4-0ccd-4200-b336-5821642ca877/scratchpad/ig_post.html)",
-      "WebFetch(domain:scontent.cdninstagram.com)"
+      "WebFetch(domain:scontent.cdninstagram.com)",
+      "Bash(tee /tmp/hubconnect-build.log)",
+      "Bash(curl -s -X POST http://localhost:3000/api/cron/worker*)",
+      "Bash(git fetch *)",
+      "Bash(npx prettier *)",
+      "Bash(awk 'NR<=438 && /^  async |^async function/{name=$0; line=NR} END{}' src/server/execution/execution-service.ts)",
+      "Bash(rm -f __TRACKED_VAR__/sidebar-nav-full-current.tsx.bak __TRACKED_VAR__/sidebar-nav-head.tsx __TRACKED_VAR__/sidebar-nav-mine-only.tsx)",
+      "WebFetch(domain:backboard.railway.com)",
+      "Bash(git status *)",
+      "WebFetch(domain:agentelse.ai)",
+      "Bash(node -e \"console.log\\(Object.keys\\(require\\('lucide-react'\\)\\).filter\\(k => /HelpCircle|MessageCircleQuestion/i.test\\(k\\)\\)\\)\")",
+      "Bash(curl -s -b /tmp/none \"http://localhost:3000/projects/cmud9hjs9043es63vxmji91l7\" -w \"\\\\nHTTP_STATUS:%{http_code}\\\\n\")",
+      "Bash(curl -s -o /dev/null -w \"login: %{http_code}\\\\n\" http://localhost:3000/login)",
+      "Bash(curl -s -o /dev/null -w \"panel=setup: %{http_code}\\\\n\" \"http://localhost:3000/projects/test-id?panel=setup\")",
+      "Bash(curl -s -o /dev/null -w \"panel=brand-brain: %{http_code}\\\\n\" \"http://localhost:3000/projects/test-id?panel=brand-brain&sub=visual-identity\")",
+      "Bash(curl -sv http://localhost:3000/ --max-time 10)"
     ],
     "defaultMode": "bypassPermissions",
     "additionalDirectories": [

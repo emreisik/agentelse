@@ -466,6 +466,61 @@ export const IdeaChatRepository = {
     return true;
   },
 
+  // Appends one demo-post item to the project's single setup carousel card
+  // (see demo-post-generator.ts) — same "one evolving card" shape as
+  // markCreativePublishState above, keyed by card kind instead of a
+  // creativeId since there's exactly one carousel per project, not one per
+  // entity. Called from project-setup-orchestrator.ts's completeStage as
+  // each stage finishes; deduped by stage so a retried/re-run stage never
+  // adds a second tile for the same stage.
+  async appendSetupDemoPost(input: {
+    workspaceId: string;
+    projectId: string;
+    item: Extract<
+      IdeaEventCardData,
+      { kind: "setup-demo-carousel" }
+    >["items"][number];
+  }): Promise<void> {
+    const existing = await prisma.command.findFirst({
+      where: {
+        projectId: input.projectId,
+        ideaId: null,
+        source: "SYSTEM",
+        parsedIntent: { path: ["card", "kind"], equals: "setup-demo-carousel" },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, parsedIntent: true },
+    });
+
+    if (!existing) {
+      await IdeaChatRepository.postSystemMessage({
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        ideaId: null,
+        text: "",
+        card: { kind: "setup-demo-carousel", items: [input.item] },
+      });
+      return;
+    }
+
+    const parsed = existing.parsedIntent as {
+      card?: { kind?: string; items?: { stage?: string }[] };
+    } | null;
+    const items = parsed?.card?.items ?? [];
+    if (items.some((existingItem) => existingItem.stage === input.item.stage)) {
+      return;
+    }
+
+    await prisma.command.update({
+      where: { id: existing.id },
+      data: {
+        parsedIntent: {
+          card: { kind: "setup-demo-carousel", items: [...items, input.item] },
+        } as never,
+      },
+    });
+  },
+
   // Updates a "human-action-required" card's status in place (same row) —
   // called from HumanInterventionRepository.resolve/transition so a page
   // refresh reflects the real outcome instead of reverting to "pending"

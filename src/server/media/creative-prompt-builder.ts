@@ -30,10 +30,6 @@ export type CreativePromptInput = {
   // chrome on full-screen vertical formats (Story/Reel/Shorts) — keeps
   // critical subject matter and on-image text out of that band.
   safeZone?: { top?: number; bottom?: number };
-  // The headline text to render on the image — if given, a "render this
-  // text" instruction is added to the composition; if omitted, it can
-  // stay textless as before.
-  caption?: string;
   // True if the caller is actually passing a referenceImage (see
   // brand-logo.ts's loadReferenceImage) — so the style-reference
   // instruction below is only written when an image is actually being
@@ -56,9 +52,12 @@ const STYLE_AND_LIGHTING =
   "subject. Clean, intentional, on-brand — not a generic AI-rendered look.";
 
 const AVOID =
-  "Avoid: airbrushed skin, plastic/waxy texture, over-smoothed CGI look, " +
+  "Avoid: any text, words, letters, numbers, or typography anywhere in the " +
+  "image (no headlines, captions, logos, or watermarks — the image must be " +
+  "completely textless; captions are added separately, outside the image), " +
+  "airbrushed skin, plastic/waxy texture, over-smoothed CGI look, " +
   "perfectly symmetrical artificial composition, glossy 3D-render sheen, " +
-  "stock-photo watermarks, distorted text, extra or malformed limbs. " +
+  "stock-photo watermarks, extra or malformed limbs. " +
   "Prefer: visible natural texture, subtle imperfections, natural " +
   "asymmetry, candid unposed framing, faint natural film grain.";
 
@@ -255,7 +254,6 @@ export function buildCreativePrompt({
   contentFormatLabel,
   pixelSize,
   safeZone,
-  caption,
   hasStyleReference,
 }: CreativePromptInput): string {
   const { brandLine, styleAddition, avoidAddition, compositionAddition } =
@@ -280,11 +278,6 @@ export function buildCreativePrompt({
       .join(" and ");
     compositionParts.push(
       `This is a full-screen vertical format: keep all critical subject matter and any on-image text out of ${zones}, reserved for the platform's own UI overlays (profile icon, captions, controls).`,
-    );
-  }
-  if (caption?.trim()) {
-    compositionParts.push(
-      `Include the headline text: "${caption.trim()}" — rendered legibly, in a style consistent with the brand tone.`,
     );
   }
   if (hasStyleReference) {

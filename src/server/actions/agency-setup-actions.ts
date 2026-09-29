@@ -12,51 +12,57 @@ import {
 
 export type ActionResult = { ok: true } | { ok: false; message: string };
 
-// Entry point for the 12-stage Agency OS Setup Mode (spec section 5). The
-// client provides only brand name + domain + free-text description (+ any
-// uploaded asset ids); everything else is researched. Progression happens on
-// worker ticks; this action only starts the machine.
-export async function startAgencySetupAction(
-  formData: FormData,
-): Promise<ActionResult> {
+// Shared core of the 12-stage Agency OS Setup Mode (spec section 5) start —
+// used by both the form-based startAgencySetupAction (below) and the chat
+// surface's conversational intake (chat-service.ts), which already has
+// workspaceId/brandId/userId resolved and no FormData to build. Everything
+// beyond brand name + domain + free-text description (+ any uploaded asset
+// ids) is researched; progression happens on worker ticks, this only starts
+// the machine.
+export async function startAgencySetupForProject(params: {
+  projectId: string;
+  workspaceId: string;
+  brandId: string;
+  userId: string;
+  brandName: string;
+  domain?: string;
+  description?: string;
+  autoApprove?: boolean;
+}): Promise<ActionResult> {
   try {
-    const projectId = String(formData.get("projectId"));
-    const brandName = String(formData.get("brandName") ?? "").trim();
-    const domain = String(formData.get("domain") ?? "").trim() || undefined;
-    const description =
-      String(formData.get("description") ?? "").trim() || undefined;
-    const autoApprove = formData.get("autoApprove") === "true";
-
-    const { userId } = await requireUser();
-    const access = await requireProjectAccess(userId, projectId);
-
-    if (!brandName) return { ok: false, message: "Brand name is required" };
+    if (!params.brandName)
+      return { ok: false, message: "Brand name is required" };
 
     const existing = await prisma.projectSetupState.findUnique({
-      where: { projectId },
+      where: { projectId: params.projectId },
     });
     if (existing) return { ok: true };
 
     const state = await ProjectSetupOrchestrator.start(
       {
-        workspaceId: access.workspaceId,
-        projectId,
-        brandId: access.defaultBrandId,
+        workspaceId: params.workspaceId,
+        projectId: params.projectId,
+        brandId: params.brandId,
       },
-      { brandName, domain, description, autoApprove },
+      {
+        brandName: params.brandName,
+        domain: params.domain,
+        description: params.description,
+        autoApprove: params.autoApprove,
+      },
     );
 
     await AuditLogRepository.record({
-      workspaceId: access.workspaceId,
-      projectId,
+      workspaceId: params.workspaceId,
+      projectId: params.projectId,
       actorType: "USER",
-      actorId: userId,
+      actorId: params.userId,
       action: "agency-setup.started",
       entityType: "ProjectSetupState",
       entityId: state.id,
     });
 
-    revalidatePath(`/projects/${projectId}`);
+    revalidatePath(`/projects/${params.projectId}`);
     return { ok: true };
   } catch (error) {
     return {
@@ -64,6 +70,33 @@ export async function startAgencySetupAction(
       message: error instanceof Error ? error.message : "Operation failed",
     };
   }
+}
+
+// Entry point for the setup form (setup-panel.tsx) — thin FormData wrapper
+// around startAgencySetupForProject above.
+export async function startAgencySetupAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  const projectId = String(formData.get("projectId"));
+  const brandName = String(formData.get("brandName") ?? "").trim();
+  const domain = String(formData.get("domain") ?? "").trim() || undefined;
+  const description =
+    String(formData.get("description") ?? "").trim() || undefined;
+  const autoApprove = formData.get("autoApprove") === "true";
+
+  const { userId } = await requireUser();
+  const access = await requireProjectAccess(userId, projectId);
+
+  return startAgencySetupForProject({
+    projectId,
+    workspaceId: access.workspaceId,
+    brandId: access.defaultBrandId,
+    userId,
+    brandName,
+    domain,
+    description,
+    autoApprove,
+  });
 }
 
 // Client decision for stages parked WAITING_CLIENT (goal approval, initial

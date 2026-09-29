@@ -16,8 +16,49 @@ vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
 }));
 
 const opportunityTransition = vi.fn().mockResolvedValue(undefined);
+const opportunityFindByIdInProject = vi.fn();
 vi.mock("@/server/repositories/opportunity.repository", () => ({
-  OpportunityRepository: { transition: opportunityTransition },
+  OpportunityRepository: {
+    transition: opportunityTransition,
+    findByIdInProject: opportunityFindByIdInProject,
+  },
+}));
+
+const getBrandContext = vi.fn().mockResolvedValue({});
+vi.mock("@/server/agency/constitution/constitution-service", () => ({
+  ConstitutionService: { getBrandContext },
+}));
+
+const reasoningRun = vi.fn();
+vi.mock("@/server/reasoning/reasoning-service", () => ({
+  ReasoningService: { run: reasoningRun },
+}));
+
+const ideaCountActive = vi.fn().mockResolvedValue(0);
+const ideaExistsForOpportunityLens = vi.fn().mockResolvedValue(false);
+const ideaCreate = vi.fn();
+vi.mock("@/server/repositories/idea.repository", () => ({
+  IdeaRepository: {
+    countActive: ideaCountActive,
+    existsForOpportunityLens: ideaExistsForOpportunityLens,
+    create: ideaCreate,
+  },
+}));
+
+const autonomyGetOrCreate = vi
+  .fn()
+  .mockResolvedValue({ unlimitedMode: false, maxActiveIdeas: 20 });
+const autonomyCheckAndIncrement = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/server/repositories/autonomy-policy.repository", () => ({
+  AutonomyPolicyRepository: {
+    getOrCreate: autonomyGetOrCreate,
+    checkAndIncrement: autonomyCheckAndIncrement,
+  },
+}));
+
+const postSystemMessage = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/server/repositories/idea-chat.repository", () => ({
+  IdeaChatRepository: { postSystemMessage },
 }));
 
 const { IdeaFoundry } = await import("@/server/agency/ideas/idea-foundry");
@@ -130,5 +171,70 @@ describe("IdeaFoundry.generateForTopOpportunities (opportunity retry cap, audit 
     expect(total).toBe(1);
 
     generateForOpportunity.mockRestore();
+  });
+});
+
+// { postToChat: false } (agency-wiring.ts's INITIAL_IDEA_PORTFOLIO, the
+// one-time onboarding batch) must still create the Idea row but skip the
+// chat message — every other caller (default, postToChat unset) keeps
+// posting to chat exactly as before.
+describe("IdeaFoundry.generateForOpportunity (postToChat option)", () => {
+  function setUpOneIdeaGeneration() {
+    opportunityFindByIdInProject.mockResolvedValue({
+      id: "opp-1",
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      brandId: "brand-1",
+      insightId: null,
+      category: "OTHER",
+      status: "RAW",
+      title: "An opportunity",
+      description: "desc",
+      createdAt: new Date(),
+    });
+    reasoningRun.mockResolvedValue({
+      output: {
+        ideas: [
+          {
+            lens: "BRAND",
+            title: "A new idea",
+            description: "Idea description",
+            concept: {},
+          },
+        ],
+      },
+      isMock: false,
+    });
+    ideaCreate.mockResolvedValue({ id: "idea-1" });
+  }
+
+  it("posts the idea to chat by default (no opts)", async () => {
+    setUpOneIdeaGeneration();
+
+    const created = await IdeaFoundry.generateForOpportunity(
+      "opp-1",
+      "proj-1",
+      { lenses: ["BRAND"] },
+    );
+
+    expect(created).toBe(1);
+    expect(ideaCreate).toHaveBeenCalled();
+    expect(postSystemMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ ideaId: "idea-1" }),
+    );
+  });
+
+  it("still creates the idea but skips the chat message when postToChat is false", async () => {
+    setUpOneIdeaGeneration();
+
+    const created = await IdeaFoundry.generateForOpportunity(
+      "opp-1",
+      "proj-1",
+      { lenses: ["BRAND"], postToChat: false },
+    );
+
+    expect(created).toBe(1);
+    expect(ideaCreate).toHaveBeenCalled();
+    expect(postSystemMessage).not.toHaveBeenCalled();
   });
 });

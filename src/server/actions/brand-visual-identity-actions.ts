@@ -209,6 +209,61 @@ export async function updateBrandVisualIdentityAction(
   }
 }
 
+// Quick inline edit target (the workspace "Marka" panel's compact color
+// popover) — deliberately a SEPARATE, narrow action from
+// updateBrandVisualIdentityAction above. That action always upserts the
+// FULL 17-field record (`update: data`), so a caller that only sends a
+// couple of fields would silently blank out everything else (photography
+// style, mood tags, template config, ...). This one does a real partial
+// Prisma update touching ONLY primaryColors, so quick edits can never
+// clobber settings made via the full Visual Identity dialog.
+// Secondary/accent colors (set via that dialog) stay untouched and keep
+// showing up merged in the panel's flat swatch list (see brand-twin.ts).
+export async function updateVisualIdentityColorsAction(
+  projectId: string,
+  colors: { hex: string; name?: string }[],
+): Promise<ActionResult> {
+  try {
+    const { userId } = await requireUser();
+    const access = await requireProjectAccess(userId, projectId);
+
+    const parsed = z.array(ColorSwatchSchema).max(12).safeParse(colors);
+    if (!parsed.success) {
+      return { ok: false, message: "Invalid color list" };
+    }
+
+    await prisma.brandVisualIdentity.upsert({
+      where: { brandId: access.defaultBrandId },
+      create: {
+        workspaceId: access.workspaceId,
+        projectId,
+        brandId: access.defaultBrandId,
+        primaryColors: parsed.data,
+      },
+      update: { primaryColors: parsed.data },
+    });
+
+    await AuditLogRepository.record({
+      workspaceId: access.workspaceId,
+      projectId,
+      brandId: access.defaultBrandId,
+      actorType: "USER",
+      actorId: userId,
+      action: "brand_visual_identity.colors_updated",
+      entityType: "BrandVisualIdentity",
+      entityId: access.defaultBrandId,
+    });
+
+    revalidatePath(`/projects/${projectId}`);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Operation failed",
+    };
+  }
+}
+
 const STYLE_REFERENCE_MIME_TO_EXT: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",

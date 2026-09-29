@@ -10,9 +10,15 @@ import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
 import type { PanelKey } from "@/components/hub-core/hub-core-params";
 import { getAgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
 import { WorkspacePanelToggleProvider } from "@/components/workspace/workspace-panel-toggle";
+import { SETUP_STAGE, SETUP_STAGE_ORDER_UI } from "@/lib/labels";
 
 export type ProjectNavBadges = {
   setupPercent: number | null; // null = activated / no setup
+  // The stage currently WAITING_CLIENT/RUNNING/FAILED, or the next PENDING
+  // one if none of those — so there's always something to show while setup
+  // is running, even in the brief lull between one stage completing and the
+  // next tick picking up the following one. Null alongside setupPercent.
+  setupStageLabel: string | null;
   setupWaitingClient: number;
   pendingApprovals: number;
   pendingHumanActions: number;
@@ -77,6 +83,7 @@ async function getSidebarData(userId: string, projectId?: string) {
 
 const EMPTY_PROJECT_BADGES: ProjectNavBadges = {
   setupPercent: null,
+  setupStageLabel: null,
   setupWaitingClient: 0,
   pendingApprovals: 0,
   pendingHumanActions: 0,
@@ -101,7 +108,7 @@ async function getProjectBadges(
   ] = await Promise.all([
     prisma.projectSetupState.findUnique({
       where: { projectId },
-      include: { stageRecords: { select: { status: true } } },
+      include: { stageRecords: { select: { stage: true, status: true } } },
     }),
     prisma.approval.count({ where: { projectId, status: "PENDING" } }),
     prisma.humanInterventionRequest.count({
@@ -115,6 +122,7 @@ async function getProjectBadges(
   ]);
 
   let setupPercent: number | null = null;
+  let setupStageLabel: string | null = null;
   let setupWaitingClient = 0;
   if (setupState && !setupState.activatedAt) {
     const total = setupState.stageRecords.length || 12;
@@ -125,10 +133,25 @@ async function getProjectBadges(
     setupWaitingClient = setupState.stageRecords.filter(
       (r) => r.status === "WAITING_CLIENT",
     ).length;
+
+    const statusByStage = new Map(
+      setupState.stageRecords.map((r) => [r.stage, r.status]),
+    );
+    const ordered = SETUP_STAGE_ORDER_UI.map((stage) => ({
+      stage,
+      status: statusByStage.get(stage) ?? "PENDING",
+    }));
+    const current =
+      ordered.find((s) => s.status === "WAITING_CLIENT") ??
+      ordered.find((s) => s.status === "RUNNING") ??
+      ordered.find((s) => s.status === "FAILED") ??
+      ordered.find((s) => s.status === "PENDING");
+    setupStageLabel = current ? SETUP_STAGE[current.stage].label : null;
   }
 
   return {
     setupPercent,
+    setupStageLabel,
     setupWaitingClient,
     pendingApprovals,
     pendingHumanActions,
@@ -301,6 +324,8 @@ export async function AppShell({
       projectName={projectName}
       projects={workspace?.projects ?? []}
       pendingApprovals={projectBadges?.pendingApprovals ?? 0}
+      setupPercent={projectBadges?.setupPercent ?? null}
+      setupStageLabel={projectBadges?.setupStageLabel ?? null}
       agencyStatus={agencyStatus}
       displayName={displayName}
       email={email}

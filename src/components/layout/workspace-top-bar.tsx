@@ -5,6 +5,7 @@ import { PanelRight } from "lucide-react";
 
 import { buildHubHref } from "@/components/hub-core/hub-core-params";
 import { BrandSwitcher } from "@/components/layout/brand-switcher";
+import { SetupProgressBadge } from "@/components/layout/setup-progress-badge";
 import { ActiveWorkPopover } from "@/components/layout/active-work-popover";
 import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
 import type { AgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
@@ -25,6 +26,8 @@ export function WorkspaceTopBar({
   projectName,
   projects,
   pendingApprovals,
+  setupPercent,
+  setupStageLabel,
   agencyStatus,
   displayName,
   email,
@@ -34,6 +37,10 @@ export function WorkspaceTopBar({
   projectName: string;
   projects: { id: string; name: string; status: string }[];
   pendingApprovals: number;
+  // null once setup has activated (or never started) — see
+  // ProjectNavBadges.setupPercent/setupStageLabel in app-shell.tsx.
+  setupPercent: number | null;
+  setupStageLabel: string | null;
   agencyStatus: AgencyStatusSnapshot | null;
   displayName: string | null;
   email: string | null;
@@ -71,6 +78,13 @@ export function WorkspaceTopBar({
           </>
         ) : null}
         <BrandSwitcher projects={projects} activeProjectId={projectId} />
+        {setupPercent != null ? (
+          <SetupProgressBadge
+            projectId={projectId}
+            percent={setupPercent}
+            stageLabel={setupStageLabel}
+          />
+        ) : null}
       </div>
 
       <div className="flex items-center gap-2">

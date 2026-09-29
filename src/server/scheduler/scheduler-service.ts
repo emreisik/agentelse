@@ -10,6 +10,7 @@ import {
   weeklyPlanConfigFromSchedule,
 } from "@/server/agency/content/instagram-week-planner";
 import { DeadLetterRepository } from "@/server/repositories/dead-letter.repository";
+import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
 
 // Same constants/shape as execution-worker.ts's own retry/backoff (not
 // imported from there: execution-worker.ts already imports SchedulerService,
@@ -114,6 +115,17 @@ export const SchedulerService = {
             dailyImageCap,
             { lensMix },
           );
+        } else if (schedule.capability === "GENERATE_IDEAS") {
+          // Settings → Autonomy "Idea generation frequency" card
+          // (publish-schedule-actions.ts's updateIdeaGenerationScheduleAction)
+          // — the explicit weekly/monthly replacement for what used to be a
+          // continuous tick step (see agency-wiring.ts). An empty
+          // EVALUATED-opportunity backlog is a normal, silent no-op, same as
+          // the publish-queue/content-plan branches above.
+          const limit = typeof config.limit === "number" ? config.limit : 5;
+          await IdeaFoundry.generateForTopOpportunities(limit, {
+            projectId: schedule.projectId,
+          });
         } else {
           const requestText =
             typeof config.request === "string" ? config.request : schedule.name;

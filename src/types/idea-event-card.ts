@@ -177,6 +177,28 @@ export type IdeaEventCardData =
         scheduledFor?: string;
       }[];
     }
+  // Setup's own "here's what we're finding" preview — a horizontally
+  // scrolling row of quick, no-image-generation mockup posts, one per
+  // setup stage that produced something concrete (signals, brand
+  // constitution, goals, opportunities, ideas, work plan — see
+  // demo-post-generator.ts's DEMO_POST_STAGES). ONE evolving card per
+  // project (same pattern as markCreativePublishState's creative-ready
+  // card): each newly completed stage appends an item in place rather than
+  // posting a new message, so the client always finds a single up-to-date
+  // carousel instead of a growing pile of near-duplicate messages. Posted
+  // project-wide (ideaId: null) — setup isn't scoped to any one idea.
+  | {
+      kind: "setup-demo-carousel";
+      items: {
+        id: string;
+        stage: string;
+        headline: string;
+        caption: string;
+        platform: "INSTAGRAM" | "TIKTOK" | "LINKEDIN";
+        accentIndex: number;
+        createdAt: string;
+      }[];
+    }
   | CreativeCardData;
 
 const EVENT_KINDS = new Set([
@@ -197,6 +219,7 @@ const EVENT_KINDS = new Set([
   "ads-form-prompt",
   "question",
   "content-plan-summary",
+  "setup-demo-carousel",
 ]);
 
 export function isIdeaEventCardData(

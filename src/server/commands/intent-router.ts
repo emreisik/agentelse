@@ -39,6 +39,13 @@ export type ParsedIntent =
       description: string;
       departments?: DepartmentKey[];
     }
+  // Sibling of STRATEGIC_REQUEST, mutually exclusive with it: draws fresh
+  // ideas from the agency's existing EVALUATED opportunity backlog instead
+  // of starting new research (see chat-turn.ts's
+  // `generateIdeasFromOpportunities` field and command-service.ts). Only
+  // ever produced by the LLM chat classifier, same reasoning as
+  // STRATEGIC_REQUEST above.
+  | { kind: "GENERATE_IDEAS_FROM_OPPORTUNITIES" }
   | { kind: "UNKNOWN" };
 
 const PLATFORM_KEYWORDS: Record<string, SocialPlatform> = {

@@ -6,13 +6,50 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // opportunity-engine.ts, idea-foundry.ts).
 
 const listByStatus = vi.fn();
+const findByIdInProject = vi.fn();
+const addCouncilEvaluation = vi.fn().mockResolvedValue(undefined);
+const ideaTransition = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/server/repositories/idea.repository", () => ({
-  IdeaRepository: { listByStatus },
+  IdeaRepository: {
+    listByStatus,
+    findByIdInProject,
+    addCouncilEvaluation,
+    transition: ideaTransition,
+  },
 }));
 
 const isProjectAgencyActive = vi.fn().mockResolvedValue(true);
 vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
   isProjectAgencyActive,
+}));
+
+const competitorInsightFindMany = vi.fn().mockResolvedValue([]);
+vi.mock("@/lib/prisma", () => ({
+  prisma: { competitorInsight: { findMany: competitorInsightFindMany } },
+}));
+
+const getBrandContext = vi.fn().mockResolvedValue({});
+vi.mock("@/server/agency/constitution/constitution-service", () => ({
+  ConstitutionService: { getBrandContext },
+}));
+
+const reasoningRun = vi.fn().mockResolvedValue({
+  output: {
+    scores: {},
+    overallScore: 5,
+    recommendation: "APPROVE",
+    rationale: "",
+  },
+  isMock: false,
+  reasoningCallId: "call-1",
+});
+vi.mock("@/server/reasoning/reasoning-service", () => ({
+  ReasoningService: { run: reasoningRun },
+}));
+
+const postSystemMessage = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/server/repositories/idea-chat.repository", () => ({
+  IdeaChatRepository: { postSystemMessage },
 }));
 
 const { CouncilEngine } =
@@ -54,5 +91,48 @@ describe("CouncilEngine.evaluatePendingIdeas (paused-project guard, audit scenar
     expect(evaluated).toBe(1);
 
     evaluateIdea.mockRestore();
+  });
+});
+
+// { postToChat: false } (agency-wiring.ts's INITIAL_IDEA_PORTFOLIO, this
+// function's sole caller today) must still record the council evaluation
+// and the idea's status transition but skip the chat message — the default
+// (postToChat unset) keeps posting to chat exactly as before.
+describe("CouncilEngine.evaluateIdea (postToChat option)", () => {
+  function setUpEvaluation() {
+    findByIdInProject.mockResolvedValue({
+      id: "idea-1",
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      brandId: "brand-1",
+      lens: "BRAND",
+      title: "An idea",
+      description: "desc",
+      concept: {},
+    });
+  }
+
+  it("posts the council verdict to chat by default (no opts)", async () => {
+    setUpEvaluation();
+
+    const result = await CouncilEngine.evaluateIdea("idea-1", "proj-1");
+
+    expect(result.recommendation).toBe("APPROVE");
+    expect(addCouncilEvaluation).toHaveBeenCalled();
+    expect(postSystemMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ ideaId: "idea-1" }),
+    );
+  });
+
+  it("still records the evaluation but skips the chat message when postToChat is false", async () => {
+    setUpEvaluation();
+
+    const result = await CouncilEngine.evaluateIdea("idea-1", "proj-1", {
+      postToChat: false,
+    });
+
+    expect(result.recommendation).toBe("APPROVE");
+    expect(addCouncilEvaluation).toHaveBeenCalled();
+    expect(postSystemMessage).not.toHaveBeenCalled();
   });
 });

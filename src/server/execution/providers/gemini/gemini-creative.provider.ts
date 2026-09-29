@@ -149,7 +149,6 @@ export class GeminiCreativeProvider implements ExecutionProvider {
         contentFormatLabel: platformFormat.contentFormatLabel,
         pixelSize: platformFormat.pixelSize,
         safeZone: platformFormat.safeZone,
-        caption: parsed.caption,
         hasStyleReference: Boolean(styleImage),
       });
       let image = isCreativeImageConfigured()

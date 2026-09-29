@@ -106,6 +106,15 @@ export const IdeaFoundry = {
       // already tried and didn't land.
       feedback?: string;
       priorIdea?: { title: string; description: string };
+      // False only for INITIAL_IDEA_PORTFOLIO (agency-wiring.ts) — the
+      // one-time onboarding batch shouldn't flood a brand-new project's chat
+      // with "idea generated" cards before the client has even seen the
+      // place. Idea/Opportunity records, council eligibility and the
+      // ACCEPTED transition below are all unaffected; only the chat
+      // messages (this idea's own card and its origin lineage) are skipped.
+      // Every other caller (the chat "generate ideas" command, the
+      // scheduled weekly run) keeps the default (post to chat).
+      postToChat?: boolean;
     },
   ): Promise<number> {
     const opportunity = await OpportunityRepository.findByIdInProject(
@@ -186,32 +195,34 @@ export const IdeaFoundry = {
       });
       created += 1;
 
-      // Write what came BEFORE the idea's "zero point" in the chat (Signal/
-      // Finding/Insight+Opportunity, with their own real timestamps) BEFORE
-      // the idea message, so the chat opens in chronological order. Best-effort.
-      await postOriginLineage(scope, opportunity, createdIdea.id).catch(
-        (error) => {
-          console.error("[idea-foundry] postOriginLineage failed:", error);
-        },
-      );
+      if (opts?.postToChat !== false) {
+        // Write what came BEFORE the idea's "zero point" in the chat (Signal/
+        // Finding/Insight+Opportunity, with their own real timestamps) BEFORE
+        // the idea message, so the chat opens in chronological order. Best-effort.
+        await postOriginLineage(scope, opportunity, createdIdea.id).catch(
+          (error) => {
+            console.error("[idea-foundry] postOriginLineage failed:", error);
+          },
+        );
 
-      // This is the zero point of the idea's chat thread: every subsequent
-      // pipeline step (council, work plan, task/creative) accumulates under
-      // the same ideaId as a continuation of this message. Even if the
-      // write fails, the idea-creation flow must not stop.
-      await IdeaChatRepository.postSystemMessage({
-        workspaceId: scope.workspaceId,
-        projectId: scope.projectId,
-        ideaId: createdIdea.id,
-        text: `💡 New idea generated: **${idea.title}**\n\n${idea.description}`,
-        card: {
-          kind: "idea",
-          title: idea.title,
-          description: idea.description,
-        },
-      }).catch((error) => {
-        console.error("[idea-foundry] postSystemMessage failed:", error);
-      });
+        // This is the zero point of the idea's chat thread: every subsequent
+        // pipeline step (council, work plan, task/creative) accumulates under
+        // the same ideaId as a continuation of this message. Even if the
+        // write fails, the idea-creation flow must not stop.
+        await IdeaChatRepository.postSystemMessage({
+          workspaceId: scope.workspaceId,
+          projectId: scope.projectId,
+          ideaId: createdIdea.id,
+          text: `💡 New idea generated: **${idea.title}**\n\n${idea.description}`,
+          card: {
+            kind: "idea",
+            title: idea.title,
+            description: idea.description,
+          },
+        }).catch((error) => {
+          console.error("[idea-foundry] postSystemMessage failed:", error);
+        });
+      }
     }
 
     if (created > 0) {
@@ -242,11 +253,22 @@ export const IdeaFoundry = {
   // one, from ever getting an idea generated. `distinct: ["projectId"]`
   // picks at most one candidate per project instead, so `limit` slots are
   // spread fairly across whichever projects actually have a backlog.
-  async generateForTopOpportunities(limit = 3): Promise<number> {
+  async generateForTopOpportunities(
+    limit = 3,
+    // projectId: on-demand callers (a chat request, a project's own
+    // weekly/monthly GENERATE_IDEAS schedule — see command-service.ts,
+    // scheduler-service.ts) scope this to their one project. Without it,
+    // `distinct: ["projectId"]` below would collapse every result down to
+    // at most 1 row regardless of `limit`, since a single-project query has
+    // only one distinct projectId to begin with — so it's dropped in that
+    // case rather than left in place.
+    opts?: { projectId?: string },
+  ): Promise<number> {
     const { prisma } = await import("@/lib/prisma");
     const candidates = await prisma.opportunity.findMany({
       where: {
         status: "EVALUATED",
+        ...(opts?.projectId ? { projectId: opts.projectId } : {}),
         // Eligible for a fresh attempt when it has no idea yet, OR every
         // idea it already produced ended up ARCHIVED/REJECTED (audit
         // scenario K: work-plan-progressor.ts's reconcilePlan archives an
@@ -256,7 +278,7 @@ export const IdeaFoundry = {
         ideas: { none: { status: { notIn: ["ARCHIVED", "REJECTED"] } } },
       },
       orderBy: [{ nbaScore: "desc" }, { createdAt: "asc" }],
-      distinct: ["projectId"],
+      ...(opts?.projectId ? {} : { distinct: ["projectId"] }),
       take: limit,
       include: { _count: { select: { ideas: true } } },
     });

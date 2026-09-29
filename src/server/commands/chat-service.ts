@@ -20,6 +20,8 @@ import {
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 import { getBrandTwin } from "@/server/brand-twin/brand-twin";
 import { recordUserDecision } from "@/server/brand-twin/brand-twin-writes";
+import { startAgencySetupForProject } from "@/server/actions/agency-setup-actions";
+import { SETUP_STAGE } from "@/lib/labels";
 
 export type ChatTurnInput = {
   workspaceId: string;
@@ -76,6 +78,8 @@ export const ChatService = {
             mimeType: attachment.mimeType,
           })),
           message: input.message,
+          setupPhase: context.setupPhase,
+          setupWaiting: context.setupWaiting,
         },
       });
       turn = result.output;
@@ -130,6 +134,52 @@ export const ChatService = {
         fallback.status === "PLANNED" ? "PLANNED" : "ERROR";
       await CommandRepository.recordReply(fallback.commandId, reply, status);
       return { commandId: fallback.commandId, reply, status };
+    }
+
+    // Conversational setup intake (see chat-turn.ts's NOT_STARTED block):
+    // once the LLM has brandName and the client agreed to proceed, start the
+    // real 12-stage pipeline right here instead of routing this turn through
+    // CommandService — collecting brand info isn't a capability/task, it's
+    // what unlocks them. Recorded as a plain Command (no intent to attach).
+    if (
+      context.setupPhase === "NOT_STARTED" &&
+      turn.setupIntake?.ready &&
+      turn.setupIntake.brandName?.trim()
+    ) {
+      const command = await CommandRepository.create({
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        brandId: context.brandId,
+        ideaId: input.ideaId,
+        source: "WEB",
+        rawText: input.message,
+        createdByUserId: input.userId,
+        attachments: input.attachments,
+      });
+      const result = await startAgencySetupForProject({
+        projectId: input.projectId,
+        workspaceId: input.workspaceId,
+        brandId: context.brandId,
+        userId: input.userId,
+        brandName: turn.setupIntake.brandName.trim(),
+        domain: turn.setupIntake.domain?.trim() || undefined,
+        description: turn.setupIntake.description?.trim() || undefined,
+        autoApprove: turn.setupIntake.autoApprove,
+      });
+      // Always the canned text below, never turn.reply verbatim: this is a
+      // state transition (setup just STARTED, nothing is done yet) and the
+      // model has been observed claiming setup was already complete and
+      // offering to create work right away — both wrong at this point and
+      // exactly what the gate above exists to prevent. status "ANSWERED"
+      // (not "PLANNED") since no Task was created — see STATUS_NOTE in
+      // project-chat.tsx, which would otherwise show a misleading
+      // "Task created" badge on this message.
+      const reply = result.ok
+        ? "Got it — starting setup now. I'll work through discovery, the brand constitution, goals and the first work plan in the background, and let you know here as it progresses."
+        : "Got it, but I couldn't start setup just now — please try again in a moment.";
+      const status: CommandReplyStatus = result.ok ? "ANSWERED" : "ERROR";
+      await CommandRepository.recordReply(command.id, reply, status);
+      return { commandId: command.id, reply, status };
     }
 
     // Convert the LLM's decision into the intent CommandService understands.
@@ -197,6 +247,27 @@ export const ChatService = {
         // pattern as IDEA_CAP_REACHED above).
         status = "PLANNED";
         reply = submission.summary;
+        break;
+      case "IDEAS_GENERATED_FROM_OPPORTUNITIES":
+        // Same reasoning as WEEKLY_PLAN_CREATED above: the real count is
+        // more useful than whatever the LLM's reply guessed. Each new idea
+        // already gets its own "idea" card posted to its own thread by
+        // IdeaFoundry itself, so this is only the general chat's summary.
+        status = "PLANNED";
+        reply =
+          submission.count > 0
+            ? `💡 Generated ${submission.count} new idea${submission.count === 1 ? "" : "s"} from the opportunity backlog — each has its own thread now.`
+            : "There's no evaluated opportunity ready to turn into an idea right now. New signals are still being scanned in the background — try again once a few more come in.";
+        break;
+      case "SETUP_REQUIRED":
+        // Backstop for when the LLM didn't follow chat-turn.ts's NOT_STARTED/
+        // IN_PROGRESS instructions and set a TASK/STRATEGIC/generate-ideas
+        // intent anyway — CommandService already refused to create any
+        // work, this just makes sure the client sees an honest reply
+        // instead of one promising work that was never queued.
+        status = "ANSWERED";
+        reply =
+          "The brand's setup is still in progress, so I can't start new work yet — once it's done I'll be able to take this on.";
         break;
       default:
         status = turn.intentKind === "UNCLEAR" ? "UNCLEAR" : "ANSWERED";
@@ -271,6 +342,13 @@ export const ChatService = {
 };
 
 function toParsedIntent(turn: ChatTurnOutput, message: string): ParsedIntent {
+  // Checked before STRATEGIC_REQUEST below: a request for fresh ideas drawn
+  // from the existing opportunity backlog must never be mistaken for a
+  // brand-new research/strategy thread, even if the LLM sets both flags by
+  // mistake (they're documented as mutually exclusive in chat-turn.ts).
+  if (turn.intentKind === "TASK" && turn.generateIdeasFromOpportunities) {
+    return { kind: "GENERATE_IDEAS_FROM_OPPORTUNITIES" };
+  }
   // Deep Path — checked before the single-capability TASK branch below, so
   // a strategic request never also gets routed as a Fast Path task. Falls
   // through to that branch (not this one) if `title` is missing, since
@@ -313,7 +391,7 @@ function toParsedIntent(turn: ChatTurnOutput, message: string): ParsedIntent {
 const HISTORY_TURNS = 36;
 
 async function buildContext(projectId: string, ideaId?: string) {
-  const [project, brandTwin, dailyStat, pendingApprovals, recent] =
+  const [project, brandTwin, dailyStat, pendingApprovals, recent, setupState] =
     await Promise.all([
       prisma.project.findUniqueOrThrow({
         where: { id: projectId },
@@ -349,10 +427,11 @@ async function buildContext(projectId: string, ideaId?: string) {
       // plans, task/creative completions — regardless of which idea they
       // belong to), so the LLM replies knowing everything the pipeline just
       // did across every initiative, not just idea-less events. `topic: null`
-      // excludes scoped threads that aren't this general feed (today just
-      // the Brand Brain conversation, topic: "BRAND_BRAIN") — this was
-      // previously only enforced at render time (page.tsx), not here, so
-      // Brand Brain turns could leak into the general chat's LLM context.
+      // excludes scoped threads that aren't this general feed — e.g. legacy
+      // Command rows with topic "BRAND_BRAIN" from the now-removed Brand
+      // Brain chat feature. This was previously only enforced at render time
+      // (page.tsx), not here, so those turns could leak into the general
+      // chat's LLM context.
       prisma.command.findMany({
         where: ideaId
           ? { ideaId, source: { in: ["WEB", "SYSTEM"] } }
@@ -366,12 +445,36 @@ async function buildContext(projectId: string, ideaId?: string) {
           attachments: true,
         },
       }),
+      // Drives the NOT_STARTED/IN_PROGRESS/ACTIVE gate (see chat-turn.ts and
+      // command-service.ts) — null means setup was never started at all.
+      prisma.projectSetupState.findUnique({
+        where: { projectId },
+        select: {
+          activatedAt: true,
+          stageRecords: {
+            where: { status: "WAITING_CLIENT" },
+            select: { stage: true },
+            take: 1,
+          },
+        },
+      }),
     ]);
 
   if (!brandTwin) {
     throw new Error(`Project ${projectId} has no default brand`);
   }
   const brandId = brandTwin.brandId;
+
+  const setupPhase = !setupState
+    ? ("NOT_STARTED" as const)
+    : setupState.activatedAt
+      ? ("ACTIVE" as const)
+      : ("IN_PROGRESS" as const);
+  const setupWaiting = setupState?.stageRecords[0]
+    ? `waiting on your decision for ${SETUP_STAGE[setupState.stageRecords[0].stage].label}`
+    : setupPhase === "IN_PROGRESS"
+      ? "running"
+      : undefined;
 
   // The newest record comes first; reversed so the chat reads
   // chronologically. SYSTEM-sourced rows have an empty rawText (a pipeline
@@ -411,6 +514,8 @@ async function buildContext(projectId: string, ideaId?: string) {
       waitingSince: approval.createdAt.toISOString(),
     })),
     history,
+    setupPhase,
+    setupWaiting,
   };
 }
 

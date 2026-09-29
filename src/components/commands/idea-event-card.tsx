@@ -17,6 +17,7 @@ import {
   Hourglass,
   ImageIcon,
   KeyRound,
+  Layers,
   Lightbulb,
   Loader2,
   Megaphone,
@@ -51,6 +52,14 @@ import {
   type WsTone,
 } from "@/components/commands/ws-event-card";
 import { CreativeCard } from "@/components/commands/creative-card";
+import { ContentPlanCard } from "@/components/commands/content-plan-card";
+import { PlanBriefWizard } from "@/components/commands/plan-brief-wizard";
+import { useChatPackage } from "@/components/commands/chat-package-context";
+import {
+  DELIVERABLES,
+  INSTAGRAM_POST_FORMATS,
+  type DeliverableKey,
+} from "@/server/chat/deliverables";
 import { isCreativeCardData } from "@/types/creative-card";
 import type {
   ApprovalCategory,
@@ -90,7 +99,15 @@ function asDepartmentKey(department?: string): DepartmentKey | undefined {
 // top is ALWAYS visible; long bodies (council rationale, task output text,
 // finding/insight description) are collapsed by default via
 // WsDetailToggle and expand on click.
-export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
+export function IdeaEventCard({
+  card,
+  commandId,
+}: {
+  card: IdeaEventCardData;
+  // The chat Command row this card is stored on — only cards with their own
+  // actions on that row (content-plan-draft's Save) need it.
+  commandId?: string;
+}) {
   if (isCreativeCardData(card)) return <CreativeCard card={card} />;
 
   switch (card.kind) {
@@ -238,7 +255,10 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
           department={asDepartmentKey(card.department)}
         >
           {card.resultText ? (
-            <WsDetailToggle label="See generated content">
+            <WsDetailToggle
+              label={card.expanded ? "Generated content" : "See generated content"}
+              defaultOpen={card.expanded}
+            >
               {card.resultText}
             </WsDetailToggle>
           ) : null}
@@ -322,6 +342,24 @@ export function IdeaEventCard({ card }: { card: IdeaEventCardData }) {
 
     case "content-plan-summary":
       return <ContentPlanSummaryCard card={card} />;
+
+    case "content-plan-draft":
+      return <ContentPlanCard card={card} commandId={commandId} />;
+
+    case "plan-brief":
+      return <PlanBriefWizard card={card} />;
+
+    case "content-package":
+      // Keyed by the package: assistant-ui keys messages by position, so
+      // without this a card would inherit another package's ticks when the
+      // list shifts under it.
+      return (
+        <ContentPackageCard
+          key={commandId ?? card.topic}
+          card={card}
+          commandId={commandId}
+        />
+      );
 
     case "setup-demo-carousel":
       return <SetupDemoCarouselCard card={card} />;
@@ -655,7 +693,7 @@ function TaskRunningCard({
 
 // A directly clickable Approve/Reject card shown in chat while a task is
 // awaiting approval — the decision can be made here without navigating to
-// a separate panel (the Agency Desk's DecisionsBar renders this same card). After the decision, the server (see
+// a separate panel (pending ones are appended to the Agency Desk chat as this same card). After the decision, the server (see
 // resolveApprovalDecisionCard) updates the SAME row to an
 // "approval-decision" card; router.refresh() fetches that updated state.
 // In between, an optimistic result state is shown briefly while waiting
@@ -1180,6 +1218,224 @@ function ContentPlanSummaryCard({
               <div key={item.creativeId}>{body}</div>
             );
           })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const PACKAGE_FORMAT_LABEL: Record<string, string> = {
+  FEED_PORTRAIT: "Post 3:4",
+  STORY: "Story 9:16",
+  REEL: "Reel 9:16",
+  FEED_SQUARE: "Square 1:1",
+};
+
+// Topic-driven package: tick what you want, pick the format for image
+// items, and one button starts everything — each ticked deliverable then
+// shows up in the chat right away and is produced live (the chat provides
+// the run, see startContentPackage in project-chat.tsx).
+function ContentPackageCard({
+  card,
+  commandId,
+}: {
+  card: Extract<IdeaEventCardData, { kind: "content-package" }>;
+  commandId?: string;
+}) {
+  const chatPackage = useChatPackage();
+  const startPackage = chatPackage?.start;
+  // The press itself lives in the chat (see chat-package-context.tsx).
+  const run = commandId ? chatPackage?.runs[commandId] : undefined;
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(card.items.map((item) => item.id)),
+  );
+  const [formats, setFormats] = useState<Record<string, string>>({});
+  const pending = run?.phase === "running";
+  // Pressed here (before the stored card catches up) or already started.
+  const started = card.state === "started" || run !== undefined;
+  const open = card.state === "draft" && run === undefined;
+  // What a started package was begun with (the stored card once it has caught
+  // up, the press itself until then).
+  const startedIds =
+    card.state === "started" ? card.startedItemIds : run?.itemIds;
+  const startedCount =
+    card.state === "started"
+      ? (card.startedCount ?? card.items.length)
+      : (run?.itemIds.length ?? 0);
+
+  // An item the client left out: unticked on an open card, or not among the
+  // ones the started package was begun with.
+  const skipped = (id: string, checked: boolean) =>
+    open ? !checked : startedIds ? !startedIds.includes(id) : false;
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const start = () => {
+    if (!commandId || !startPackage || selected.size === 0) return;
+    const items = card.items
+      .filter((item) => selected.has(item.id))
+      .map((item) => {
+        const deliverable = DELIVERABLES[item.deliverable as DeliverableKey];
+        return {
+          id: item.id,
+          title: item.title,
+          label: deliverable?.label ?? item.deliverable,
+          department: deliverable?.department,
+          image: Boolean(deliverable?.needsFormat),
+          contentFormat: formats[item.id] ?? item.contentFormat,
+        };
+      });
+    void startPackage({ commandId, items });
+  };
+
+  return (
+    <div
+      className="mt-1 w-full max-w-lg space-y-3 rounded-2xl border p-3.5"
+      style={{
+        borderColor: "var(--ws-border)",
+        background: "var(--ws-surface)",
+        boxShadow: "var(--ws-card-shadow)",
+        opacity: card.state === "superseded" ? 0.6 : 1,
+      }}
+    >
+      <div className="flex items-center gap-2.5">
+        <span
+          className="flex size-7 shrink-0 items-center justify-center rounded-lg"
+          style={{ background: "var(--ws-hover)" }}
+        >
+          <Layers className="size-3.5" style={{ color: "var(--ws-text)" }} />
+        </span>
+        <p
+          className="min-w-0 flex-1 truncate text-sm font-semibold"
+          style={{ color: "var(--ws-text)" }}
+        >
+          {card.topic}
+        </p>
+        {started ? (
+          <WsStatusPill label={`${startedCount} started`} tone="positive" />
+        ) : card.state === "superseded" ? (
+          <WsStatusPill label="Replaced by a newer version" tone="waiting" />
+        ) : (
+          <WsTag>{card.items.length} pieces</WsTag>
+        )}
+      </div>
+
+      <ul className="space-y-2">
+        {card.items.map((item) => {
+          const deliverable = DELIVERABLES[item.deliverable as DeliverableKey];
+          const checked = selected.has(item.id);
+          const format = formats[item.id] ?? item.contentFormat;
+          return (
+            <li
+              key={item.id}
+              className="rounded-xl border p-2.5"
+              style={{
+                borderColor: "var(--ws-border)",
+                opacity: skipped(item.id, checked) ? 0.55 : 1,
+              }}
+            >
+              <label
+                className={cn(
+                  "flex items-start gap-2.5",
+                  open && "cursor-pointer",
+                )}
+              >
+                {open ? (
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={pending}
+                    onChange={() => toggle(item.id)}
+                    className="mt-1 size-4 shrink-0 accent-[var(--ws-accent)]"
+                  />
+                ) : null}
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    {deliverable ? (
+                      <DepartmentBadge
+                        department={deliverable.department}
+                        size="xs"
+                      />
+                    ) : null}
+                    <WsTag>{deliverable?.label ?? item.deliverable}</WsTag>
+                  </span>
+                  <span
+                    className="mt-1 block text-sm font-medium"
+                    style={{ color: "var(--ws-text)" }}
+                  >
+                    {item.title}
+                  </span>
+                  <span
+                    className="mt-0.5 block text-xs leading-relaxed"
+                    style={{ color: "var(--ws-text-2)" }}
+                  >
+                    {item.angle}
+                  </span>
+                </span>
+              </label>
+              {item.contentFormat ? (
+                open ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5 pl-[26px]">
+                    {INSTAGRAM_POST_FORMATS.map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        disabled={pending}
+                        onClick={() =>
+                          setFormats((prev) => ({ ...prev, [item.id]: value }))
+                        }
+                        className="rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors"
+                        style={{
+                          borderColor: "var(--ws-border)",
+                          background:
+                            format === value
+                              ? "var(--ws-accent)"
+                              : "transparent",
+                          color:
+                            format === value
+                              ? "var(--ws-on-accent)"
+                              : "var(--ws-text-2)",
+                        }}
+                      >
+                        {PACKAGE_FORMAT_LABEL[value]}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-2 pl-0">
+                    <WsTag>
+                      {PACKAGE_FORMAT_LABEL[item.contentFormat] ??
+                        item.contentFormat}
+                    </WsTag>
+                  </div>
+                )
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+
+      {open ? (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+            Untick what you don&apos;t need, or ask me to change something.
+          </p>
+          <Button
+            size="sm"
+            onClick={start}
+            disabled={
+              pending || !commandId || !startPackage || selected.size === 0
+            }
+          >
+            {pending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            Create selected ({selected.size})
+          </Button>
         </div>
       ) : null}
     </div>

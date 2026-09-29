@@ -46,6 +46,9 @@ export type SubmitCommandInput = {
   // Set when a message is sent from an idea's own chat thread — the
   // Command gets tagged with this idea (see Command.ideaId).
   ideaId?: string;
+  // An already-created Command row for this turn (streaming chat engine) —
+  // submit skips its own CommandRepository.create and works on this row.
+  existingCommandId?: string;
   // Files coming from the chat surface. Saved on the command itself and
   // carried into the resulting task's payload as asset ids.
   attachments?: CommandAttachment[];
@@ -163,16 +166,21 @@ function adsFormHref(projectId: string, brief: string): string {
 // channel).
 export const CommandService = {
   async submit(input: SubmitCommandInput): Promise<SubmitCommandResult> {
-    const command = await CommandRepository.create({
-      workspaceId: input.workspaceId,
-      source: input.source,
-      rawText: input.rawText,
-      createdByUserId: input.userId,
-      projectId: input.knownProjectId,
-      ideaId: input.ideaId,
-      attachments: input.attachments,
-      topic: input.topic,
-    });
+    // The streaming chat engine records the Command before the first token
+    // (so a dropped connection never loses the message) and passes its id
+    // here — reuse that row instead of creating a second one for the turn.
+    const command = input.existingCommandId
+      ? { id: input.existingCommandId, ideaId: input.ideaId ?? null }
+      : await CommandRepository.create({
+          workspaceId: input.workspaceId,
+          source: input.source,
+          rawText: input.rawText,
+          createdByUserId: input.userId,
+          projectId: input.knownProjectId,
+          ideaId: input.ideaId,
+          attachments: input.attachments,
+          topic: input.topic,
+        });
 
     const intent = input.intent ?? parseIntent(input.rawText);
 

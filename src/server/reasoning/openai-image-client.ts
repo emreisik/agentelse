@@ -1,5 +1,7 @@
 import "server-only";
 
+import OpenAI from "openai";
+
 import { getEnv } from "@/lib/env";
 import { putAsset } from "@/server/storage/asset-storage";
 
@@ -36,6 +38,24 @@ export type GeneratedCreativeImage = {
   size: number;
   provider: "openai";
 };
+
+// A partial (in-progress) preview streamed while the final image renders.
+export type ImagePartial = { index: number; b64: string };
+
+let sdkClient: OpenAI | undefined;
+
+// Only the streaming text-to-image path uses the SDK (it parses the SSE for
+// us); the non-streaming and edit paths below keep their plain fetch calls.
+// No SDK retries: a retried streaming request would re-bill a render the
+// caller already saw start.
+function getSdkClient(apiKey: string): OpenAI {
+  sdkClient ??= new OpenAI({
+    apiKey,
+    timeout: FETCH_TIMEOUT_MS,
+    maxRetries: 0,
+  });
+  return sdkClient;
+}
 
 export function isOpenAIImageConfigured(): boolean {
   return Boolean(getEnv().OPENAI_API_KEY);
@@ -100,6 +120,11 @@ export async function generateOpenAIImage(
   imageSize?: { width: number; height: number },
   referenceImage?: { data: string; mimeType: string },
   quality: ImageQuality = "high",
+  // When given (text-to-image only), the render is streamed and each partial
+  // preview is handed to this callback as it arrives — the ChatGPT-style
+  // "image sharpens in place" experience. Any streaming failure falls back
+  // to the plain single request below.
+  onPartial?: (partial: ImagePartial) => void,
 ): Promise<GeneratedCreativeImage | null> {
   const env = getEnv();
   if (!env.OPENAI_API_KEY) return null;
@@ -107,6 +132,15 @@ export async function generateOpenAIImage(
   const model = env.OPENAI_IMAGE_MODEL;
   const size = sizeParam(imageSize);
   const inputImage = baseImage ?? referenceImage;
+
+  if (onPartial && !inputImage) {
+    const streamed = await streamOpenAIImage(
+      env.OPENAI_API_KEY,
+      { model, prompt, size, quality },
+      onPartial,
+    );
+    if (streamed) return streamed;
+  }
 
   try {
     let response: Response;
@@ -154,6 +188,44 @@ export async function generateOpenAIImage(
     return await storeResult(payload, inputImage ? "edit" : "generate");
   } catch (error) {
     console.error("[openai-image] generation failed", error);
+    return null;
+  }
+}
+
+// Text-to-image with partial previews. Returns null on any failure so the
+// caller can fall back to the non-streaming request (a stream that dies
+// halfway leaves nothing usable, unlike the final `completed` event).
+async function streamOpenAIImage(
+  apiKey: string,
+  params: { model: string; prompt: string; size: string; quality: ImageQuality },
+  onPartial: (partial: ImagePartial) => void,
+): Promise<GeneratedCreativeImage | null> {
+  try {
+    const stream = await getSdkClient(apiKey).images.generate({
+      model: params.model,
+      prompt: params.prompt,
+      size: params.size as never,
+      quality: params.quality,
+      n: 1,
+      stream: true,
+      partial_images: 2,
+    });
+
+    let finalB64: string | undefined;
+    for await (const event of stream) {
+      if (event.type === "image_generation.partial_image") {
+        onPartial({ index: event.partial_image_index, b64: event.b64_json });
+      } else if (event.type === "image_generation.completed") {
+        finalB64 = event.b64_json;
+      }
+    }
+    if (!finalB64) {
+      console.error("[openai-image] stream ended without a final image");
+      return null;
+    }
+    return await storeResult({ data: [{ b64_json: finalB64 }] }, "stream");
+  } catch (error) {
+    console.error("[openai-image] streaming generation failed", error);
     return null;
   }
 }

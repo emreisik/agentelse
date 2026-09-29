@@ -1,0 +1,74 @@
+import "server-only";
+
+import { prisma } from "@/lib/prisma";
+import { readAsset } from "@/server/storage/asset-storage";
+
+import type { HistoryRow } from "./history";
+
+// Files the client attached in RECENT turns, loaded back so a follow-up like
+// "make the logo bigger" still lets the model see the logo instead of only its
+// filename. Bounded on purpose: images and PDFs only, the last few turns, a
+// handful of files — each one costs input tokens on every later turn.
+const MAX_ROWS = 2;
+const MAX_FILES = 3;
+const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
+
+export type HistoryFile = { mimeType: string; data: string };
+
+type StoredAttachment = { assetId?: string; mimeType?: string };
+
+function isVisual(mimeType: string | undefined): boolean {
+  return Boolean(
+    mimeType &&
+      (mimeType.startsWith("image/") || mimeType === "application/pdf"),
+  );
+}
+
+export async function loadRecentHistoryFiles(
+  rows: readonly HistoryRow[],
+  excludeId: string,
+  projectId: string,
+): Promise<Map<string, HistoryFile>> {
+  const wanted: string[] = [];
+  let rowsUsed = 0;
+
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const row = rows[i]!;
+    if (row.id === excludeId || row.source !== "WEB") continue;
+    if (!Array.isArray(row.attachments)) continue;
+    const ids = (row.attachments as StoredAttachment[]).flatMap((a) =>
+      a.assetId && isVisual(a.mimeType) ? [a.assetId] : [],
+    );
+    if (ids.length === 0) continue;
+    wanted.push(...ids);
+    rowsUsed += 1;
+    if (rowsUsed >= MAX_ROWS || wanted.length >= MAX_FILES) break;
+  }
+  if (wanted.length === 0) return new Map();
+
+  // Scoped to the project: an assetId stored on a Command is a soft
+  // reference, never trusted to point inside this tenant on its own.
+  const assets = await prisma.asset.findMany({
+    where: { id: { in: wanted.slice(0, MAX_FILES) }, projectId },
+    select: { id: true, storageKey: true, mimeType: true },
+  });
+
+  const files = new Map<string, HistoryFile>();
+  let totalBytes = 0;
+  for (const asset of assets) {
+    try {
+      const buffer = await readAsset(asset.storageKey);
+      totalBytes += buffer.length;
+      if (totalBytes > MAX_TOTAL_BYTES) break;
+      files.set(asset.id, {
+        mimeType: asset.mimeType,
+        data: buffer.toString("base64"),
+      });
+    } catch (error) {
+      // A missing file must not fail the turn; the model still sees the
+      // "[attached: name]" note from the history text.
+      console.error("[chat-history-files] could not read asset", asset.id, error);
+    }
+  }
+  return files;
+}

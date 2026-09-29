@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { AgentelseMark } from "@/components/brand/agentelse-mark";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 import type { DepartmentKey } from "@prisma/client";
 import {
   AssistantRuntimeProvider,
@@ -32,13 +33,31 @@ import {
   type ChatMessageResult,
 } from "@/server/actions/command-actions";
 import { submitComposerShortcutAction } from "@/server/actions/composer-shortcut-actions";
+import { createSseParser } from "@/server/chat/sse";
+import type { ImageGenState } from "@/lib/image-progress";
+import type { ChatStreamEvent } from "@/server/chat/types";
 import { Thread } from "@/components/assistant-ui/thread";
 import { ComposerPlusMenu } from "@/components/commands/composer-plus-menu";
+import { ChatSendProvider } from "@/components/commands/chat-send-context";
+import {
+  ChatPackageProvider,
+  type PackageRunItem,
+  type PackageRun,
+} from "@/components/commands/chat-package-context";
+import {
+  failPendingItems,
+  finalTaskIds,
+  isLocalItemSuperseded,
+  isServerRowHidden,
+  localItemTaskIds,
+  needsProgressPoll,
+  PROGRESS_POLL_MS,
+  reduceItemEvent,
+} from "@/components/commands/package-run";
+import { stripPlanBriefMarker } from "@/lib/plan-brief";
 import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
 import type { PublishTarget } from "@/server/integrations/meta-connection-status";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
-import type { PendingDecision } from "@/server/agency/pending-decisions";
-import { DecisionsBar } from "@/components/commands/decisions-bar";
 import type { WorkspaceResumeStats } from "@/components/workspace/workspace-right-panel-data";
 import { dayKey, dayLabel } from "@/lib/dates";
 
@@ -99,6 +118,24 @@ type LocalTurn = {
   // the server list refresh delivers the persisted copy.
   card?: IdeaEventCardData;
   commandId?: string;
+  // Streaming engine only: the reply as it arrives, and the label of the
+  // tool currently running ("Creating task…") while the model waits on it.
+  streamText?: string;
+  toolLabel?: string;
+  // Latest streamed preview (data URL) of the image being generated.
+  previewUrl?: string;
+  // Milestones of the image render in progress (drives the 0-100% bar).
+  imageGen?: ImageGenState;
+  // Content-package item (see startContentPackage): one assistant-only
+  // message per ticked deliverable — no user bubble — driven by the item.*
+  // events of the package run (package-run.ts).
+  itemId?: string;
+  itemTitle?: string;
+  itemLabel?: string;
+  // Set once the item's task exists; ties the local message to its
+  // persisted chat row so the two never show at once.
+  taskId?: string;
+  department?: DepartmentKey;
   createdAt: string;
 };
 
@@ -129,6 +166,14 @@ type FlatMessage =
       ideaId?: string;
       anchorId?: string;
       error?: boolean;
+      // True while the reply is still arriving (streaming engine).
+      streaming?: boolean;
+      // Live preview of an image still rendering (streaming engine).
+      previewUrl?: string;
+      imageGen?: ImageGenState;
+      // The Command row behind this message (cards with their own actions,
+      // e.g. a content plan's Save button, act on it).
+      commandId?: string;
       createdAt: string;
     }
   | {
@@ -144,6 +189,15 @@ type FlatMessage =
 
 const CHAT_ACCEPT =
   "image/png,image/jpeg,image/webp,application/pdf,text/plain,text/csv,text/markdown";
+
+// Package-run errors that mean nothing was started (as opposed to a run that
+// broke halfway, whose items may still be working on the server).
+const NOT_STARTED_ERROR_CODES: ReadonlySet<string> = new Set([
+  "PACKAGE",
+  "SETUP_REQUIRED",
+  "HTTP",
+  "SESSION",
+]);
 
 const STATUS_NOTE: Record<string, string> = {
   PLANNED: "Task created",
@@ -205,7 +259,7 @@ export function ProjectChat({
   publishTargets,
   userFirstName,
   resumeStats,
-  decisions,
+  chatEngine = "legacy",
 }: {
   projectId: string;
   projectName: string;
@@ -224,13 +278,24 @@ export function ProjectChat({
   // doesn't apply.
   userFirstName?: string | null;
   resumeStats?: WorkspaceResumeStats;
-  // Pending approvals rebuilt as decision cards (see
-  // pending-decisions.ts) — only on the root Agency Desk; rendered as
-  // the DecisionsBar above the conversation.
-  decisions?: PendingDecision[];
+  // "agent" streams replies from /api/projects/[id]/chat (SSE, tool calling,
+  // real Stop); "legacy" uses the blocking Server Action (see CHAT_ENGINE).
+  chatEngine?: "agent" | "legacy";
 }) {
+  const router = useRouter();
   const [localTurns, setLocalTurns] = React.useState<LocalTurn[]>([]);
-  const [isSending, startTransition] = React.useTransition();
+  const [isActionSending, startTransition] = React.useTransition();
+  // Key of the local turn whose SSE stream is open, and the controller that
+  // Stop aborts. Ref for the controller (no re-render needed to abort).
+  const [streamingKey, setStreamingKey] = React.useState<string | null>(null);
+  const abortRef = React.useRef<AbortController | null>(null);
+  // Follow-up prompts from the last finished reply (suggest_replies tool).
+  const [suggestions, setSuggestions] = React.useState<string[]>([]);
+  const isSending = isActionSending || streamingKey !== null;
+  // Content-package runs pressed in this session (see chat-package-context.tsx).
+  const [packageRuns, setPackageRuns] = React.useState<
+    Record<string, PackageRun>
+  >({});
   const attachmentAdapter = React.useMemo(
     () => new ProjectChatAttachmentAdapter(),
     [],
@@ -241,9 +306,26 @@ export function ProjectChat({
     () => new Set(turns.map((turn) => turn.commandId)),
     [turns],
   );
-  const visibleLocal = localTurns.filter(
-    (turn) => !turn.commandId || !serverIds.has(turn.commandId),
+  // Content-package items: the live local message gives way to the persisted
+  // row of its task only once that row is final (see package-run.ts).
+  const finalServerTaskIds = React.useMemo(
+    () => finalTaskIds(turns.map((turn) => turn.card)),
+    [turns],
   );
+  const visibleLocal = localTurns.filter((turn) => {
+    // A settled turn gives way to its persisted row. One that is still
+    // streaming stays: its row exists from the first token but only holds the
+    // client's message, so dropping the turn on a mid-stream page refresh
+    // would blank the reply that is being written.
+    if (
+      turn.state !== "pending" &&
+      turn.commandId &&
+      serverIds.has(turn.commandId)
+    ) {
+      return false;
+    }
+    return !isLocalItemSuperseded(turn, finalServerTaskIds);
+  });
 
   const messages = React.useMemo<FlatMessage[]>(() => {
     const out: FlatMessage[] = [];
@@ -275,7 +357,11 @@ export function ProjectChat({
       return `idea-${ideaId}`;
     };
 
+    // A content-package item is shown live from its local message; the
+    // persisted "running" row of the same task stays hidden until it is final.
+    const liveTaskIds = localItemTaskIds(visibleLocal);
     for (const turn of turns) {
+      if (isServerRowHidden(turn.card, liveTaskIds)) continue;
       maybeDivider(turn.createdAt);
       if (turn.source === "SYSTEM") {
         // Pipeline event: no user bubble, just an assistant note — if
@@ -286,6 +372,7 @@ export function ProjectChat({
             id: `${turn.commandId}-a`,
             role: "assistant",
             text: turn.reply,
+            commandId: turn.commandId,
             card: turn.card,
             departmentKey: turn.departmentKey,
             ideaTitle: turn.ideaTitle,
@@ -311,6 +398,7 @@ export function ProjectChat({
         out.push({
           id: `${turn.commandId}-a`,
           role: "assistant",
+          commandId: turn.commandId,
           text: note ? `${turn.reply}\n\n*${note}*` : turn.reply,
           // A user turn can also carry a card reply (limit-notice) — when
           // present it replaces the plain text, same as SYSTEM events.
@@ -328,18 +416,60 @@ export function ProjectChat({
     }
     for (const turn of visibleLocal) {
       maybeDivider(turn.createdAt);
-      out.push({
-        id: `${turn.key}-u`,
-        role: "user",
-        text: turn.text,
-        attachments: turn.attachments,
-        createdAt: turn.createdAt,
-      });
+      if (turn.itemId !== undefined) {
+        if (turn.state === "pending") {
+          const heading = turn.itemLabel
+            ? `**${turn.itemLabel}** — ${turn.itemTitle ?? ""}`
+            : (turn.itemTitle ?? "");
+          out.push({
+            id: `${turn.key}-a`,
+            role: "assistant",
+            text: `${heading}\n\n*${turn.imageGen ? "Generating image…" : "Writing…"}*`,
+            previewUrl: turn.previewUrl,
+            imageGen: turn.imageGen,
+            card: turn.card,
+            departmentKey: turn.department,
+            createdAt: turn.createdAt,
+          });
+        } else if (turn.reply) {
+          out.push({
+            id: `${turn.key}-a`,
+            role: "assistant",
+            text: turn.reply,
+            commandId: turn.commandId,
+            card: turn.card,
+            departmentKey: turn.department,
+            error: turn.state === "error",
+            createdAt: turn.createdAt,
+          });
+        }
+        continue;
+      }
+      // The server list already shows the client's message once the turn's
+      // row exists (a streaming turn's row exists from the first token).
+      if (!(turn.commandId !== undefined && serverIds.has(turn.commandId))) {
+        out.push({
+          id: `${turn.key}-u`,
+          role: "user",
+          text: turn.text,
+          attachments: turn.attachments,
+          createdAt: turn.createdAt,
+        });
+      }
       if (turn.state === "pending") {
+        const streamed = turn.streamText ?? "";
+        const text = streamed
+          ? turn.toolLabel
+            ? `${streamed}\n\n*${turn.toolLabel}*`
+            : streamed
+          : (turn.toolLabel ?? "Thinking…");
         out.push({
           id: `${turn.key}-a`,
           role: "assistant",
-          text: "Thinking…",
+          text,
+          streaming: true,
+          previewUrl: turn.previewUrl,
+          imageGen: turn.imageGen,
           createdAt: turn.createdAt,
         });
       } else if (turn.reply) {
@@ -347,6 +477,7 @@ export function ProjectChat({
           id: `${turn.key}-a`,
           role: "assistant",
           text: turn.reply,
+          commandId: turn.commandId,
           card: turn.card,
           error: turn.state === "error",
           createdAt: turn.createdAt,
@@ -354,14 +485,14 @@ export function ProjectChat({
       }
     }
     return out;
-  }, [turns, visibleLocal]);
+  }, [turns, visibleLocal, serverIds]);
 
   const convertMessage = React.useCallback(
     (message: FlatMessage): ThreadMessageLike => {
       if (message.role === "user") {
         return {
           role: "user",
-          content: message.text,
+          content: stripPlanBriefMarker(message.text),
           createdAt: new Date(message.createdAt),
           metadata: { custom: { anchorId: message.anchorId } },
           attachments: message.attachments.map((attachment, index) => {
@@ -400,11 +531,22 @@ export function ProjectChat({
       // every assistant message, plain-text or carded alike.
       return {
         role: "assistant",
-        content: message.card ? [] : message.text,
+        // A plan/package card is a companion to the assistant's words (why
+        // this plan, what to do next), not a replacement for them.
+        content:
+          message.card &&
+          message.card.kind !== "content-plan-draft" &&
+          message.card.kind !== "plan-brief" &&
+          message.card.kind !== "content-package"
+            ? []
+            : message.text,
         createdAt: new Date(message.createdAt),
         metadata: {
           custom: {
             card: message.card,
+            commandId: message.commandId,
+            previewUrl: message.previewUrl,
+            imageGen: message.imageGen,
             departmentKey: message.departmentKey,
             ideaTitle: message.ideaTitle,
             ideaId: message.ideaId,
@@ -413,7 +555,9 @@ export function ProjectChat({
         },
         status: message.error
           ? { type: "incomplete", reason: "error" }
-          : undefined,
+          : message.streaming
+            ? { type: "running" }
+            : undefined,
       };
     },
     [],
@@ -481,9 +625,213 @@ export function ProjectChat({
     [],
   );
 
+  // Streaming counterpart of runTurn (CHAT_ENGINE=agent): POSTs the message to
+  // the SSE route and folds each ChatStreamEvent into the same optimistic
+  // LocalTurn, so the reply grows token by token. Stop aborts the fetch, which
+  // aborts the model stream on the server; the server keeps and persists the
+  // partial reply either way.
+  const runStreamingTurn = React.useCallback(
+    async (text: string, files: File[]) => {
+      const key = `local-${crypto.randomUUID()}`;
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setLocalTurns((current) => [
+        ...current,
+        {
+          key,
+          text: text || "(file sent)",
+          attachments: files.map((file) => ({
+            filename: file.name,
+            mimeType: file.type,
+            previewUrl: file.type.startsWith("image/")
+              ? URL.createObjectURL(file)
+              : undefined,
+          })),
+          state: "pending",
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      setStreamingKey(key);
+      setSuggestions([]);
+
+      const patch = (update: (turn: LocalTurn) => LocalTurn) =>
+        setLocalTurns((current) =>
+          current.map((turn) => (turn.key === key ? update(turn) : turn)),
+        );
+
+      let streamed = "";
+      let finished = false;
+      const apply = (event: ChatStreamEvent) => {
+        switch (event.type) {
+          case "start":
+            patch((turn) => ({ ...turn, commandId: event.commandId }));
+            break;
+          case "text.delta":
+            streamed += event.text;
+            patch((turn) => ({ ...turn, streamText: streamed }));
+            break;
+          case "tool.start":
+            patch((turn) => ({
+              ...turn,
+              toolLabel: event.label,
+              imageGen:
+                event.name === "generate_image"
+                  ? { startedAt: Date.now(), partials: 0, done: false }
+                  : turn.imageGen,
+            }));
+            break;
+          case "tool.end":
+            patch((turn) => ({
+              ...turn,
+              toolLabel: undefined,
+              // A finished render stays on screen at 100% while the model
+              // wraps up; the "done" event below clears it for the card.
+              imageGen:
+                event.name === "generate_image" && turn.imageGen
+                  ? event.ok
+                    ? { ...turn.imageGen, done: true }
+                    : undefined
+                  : turn.imageGen,
+              previewUrl:
+                event.name === "generate_image" && event.ok
+                  ? turn.previewUrl
+                  : undefined,
+            }));
+            break;
+          case "image.partial":
+            patch((turn) => ({
+              ...turn,
+              previewUrl: event.dataUrl,
+              imageGen: {
+                startedAt: turn.imageGen?.startedAt ?? Date.now(),
+                partials: Math.max(turn.imageGen?.partials ?? 0, event.index + 1),
+                done: false,
+              },
+            }));
+            break;
+          case "card":
+            patch((turn) => ({ ...turn, card: event.card }));
+            break;
+          case "suggestions":
+            setSuggestions(event.items);
+            break;
+          case "done":
+            finished = true;
+            patch((turn) => ({
+              ...turn,
+              state: "done",
+              reply: event.reply,
+              card: event.card ?? turn.card,
+              commandId: event.commandId,
+              streamText: undefined,
+              toolLabel: undefined,
+              previewUrl: undefined,
+              imageGen: undefined,
+            }));
+            break;
+          case "error":
+            finished = true;
+            patch((turn) => ({
+              ...turn,
+              state: "error",
+              // Keep whatever the client already read if the stream died
+              // halfway; the error itself is surfaced as a toast.
+              reply: streamed || event.message,
+              card: event.card ?? turn.card,
+              streamText: undefined,
+              toolLabel: undefined,
+              previewUrl: undefined,
+              imageGen: undefined,
+            }));
+            if (!event.card) toast.error(event.message);
+            break;
+        }
+      };
+
+      try {
+        const formData = new FormData();
+        formData.set("text", text);
+        if (ideaId) formData.set("ideaId", ideaId);
+        for (const file of files) formData.append("files", file);
+
+        const response = await fetch(`/api/projects/${projectId}/chat`, {
+          method: "POST",
+          body: formData,
+          signal: controller.signal,
+        });
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!response.ok || !response.body) {
+          let message = "Failed to send message";
+          try {
+            const data = (await response.json()) as { error?: string };
+            if (data.error) message = data.error;
+          } catch {
+            // Non-JSON error body: keep the generic message.
+          }
+          apply({ type: "error", code: "HTTP", message });
+          return;
+        }
+        if (!contentType.includes("text/event-stream")) {
+          // A signed-out session is redirected to the login page (HTML).
+          apply({
+            type: "error",
+            code: "SESSION",
+            message: "Your session has expired. Please sign in again.",
+          });
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        const parse = createSseParser();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          for (const event of parse(decoder.decode(value, { stream: true }))) {
+            apply(event);
+          }
+        }
+        if (!finished) {
+          apply({
+            type: "error",
+            code: "CLOSED",
+            message: "The connection closed before the reply finished.",
+          });
+        }
+      } catch (error) {
+        if (controller.signal.aborted) {
+          patch((turn) => ({
+            ...turn,
+            state: "done",
+            reply: streamed || "(stopped)",
+            streamText: undefined,
+            toolLabel: undefined,
+            previewUrl: undefined,
+            imageGen: undefined,
+          }));
+        } else {
+          apply({
+            type: "error",
+            code: "NETWORK",
+            message:
+              error instanceof Error ? error.message : "Failed to send message",
+          });
+        }
+      } finally {
+        abortRef.current = null;
+        setStreamingKey(null);
+        // Pulls the persisted Command rows; the local copy drops itself once
+        // its commandId shows up in the server list.
+        router.refresh();
+      }
+    },
+    [projectId, ideaId, router],
+  );
+
   const sendMessage = React.useCallback(
     (text: string, files: File[]) => {
       if (!text && files.length === 0) return Promise.resolve();
+      if (chatEngine === "agent") return runStreamingTurn(text, files);
 
       return runTurn(
         text || "(file sent)",
@@ -504,7 +852,7 @@ export function ProjectChat({
         },
       );
     },
-    [runTurn, projectId, ideaId],
+    [runTurn, runStreamingTurn, chatEngine, projectId, ideaId],
   );
 
   // The composer's "+" menu shortcuts (see ComposerPlusMenu /
@@ -551,8 +899,8 @@ export function ProjectChat({
   // it, assistant-ui throws "Runtime does not support reloading messages."
   // `parentId` is the stringified index of the preceding message in `messages`
   // (assistant-ui falls back to array index when convertMessage doesn't set
-  // an id — see fromThreadMessageLike). Attachments aren't retained past the
-  // original send, so a retry only resubmits the original text.
+  // an id — see fromThreadMessageLike). Stored attachments are fetched back
+  // from the asset store so the retry carries the same files, not just text.
   const onReload = React.useCallback(
     async (parentId: string | null) => {
       const parent = parentId !== null ? messages[Number(parentId)] : undefined;
@@ -560,7 +908,22 @@ export function ProjectChat({
         toast.error("Can't retry this message.");
         return;
       }
-      await sendMessage(parent.text, []);
+      const files: File[] = [];
+      for (const attachment of parent.attachments) {
+        if (!("assetId" in attachment)) continue;
+        try {
+          const response = await fetch(`/api/assets/${attachment.assetId}`);
+          if (!response.ok) throw new Error(String(response.status));
+          files.push(
+            new File([await response.blob()], attachment.filename, {
+              type: attachment.mimeType,
+            }),
+          );
+        } catch {
+          toast.error(`Couldn't re-attach ${attachment.filename}.`);
+        }
+      }
+      await sendMessage(parent.text, files);
     },
     [messages, sendMessage],
   );
@@ -569,8 +932,14 @@ export function ProjectChat({
     messages,
     convertMessage,
     isRunning: isSending,
+    suggestions: suggestions.map((prompt) => ({ prompt })),
     onNew,
     onReload,
+    // Stop: aborts the SSE fetch, which aborts the model stream server-side.
+    // A no-op on the legacy blocking path (nothing to abort).
+    onCancel: async () => {
+      abortRef.current?.abort();
+    },
     adapters: { attachments: attachmentAdapter },
   });
 
@@ -790,22 +1159,208 @@ export function ProjectChat({
     [projectName],
   );
 
-  const DecisionsContextBar = React.useCallback(
-    () => <DecisionsBar decisions={decisions ?? []} />,
-    [decisions],
+  // "Create selected" on a content-package card: every ticked deliverable
+  // shows up as its own assistant message at once and is produced live —
+  // images sharpen in place, text shows a running card — from the tagged
+  // item.* events of the package route. Independent of the chat turn stream
+  // (the composer stays usable), so several items run side by side.
+  const startContentPackage = React.useCallback(
+    async ({
+      commandId,
+      items,
+    }: {
+      commandId: string;
+      items: PackageRunItem[];
+    }): Promise<{ ok: boolean }> => {
+      const runKey = `pkg-${commandId}`;
+      const inRun = (turn: LocalTurn) =>
+        turn.itemId !== undefined && turn.key.startsWith(`${runKey}:`);
+      const createdAt = new Date().toISOString();
+      const itemIds = items.map((item) => item.id);
+      setPackageRuns((current) => ({
+        ...current,
+        [commandId]: { phase: "running", itemIds },
+      }));
+      const startedAt = Date.now();
+      setLocalTurns((current) => [
+        // A retry after a refused run replaces that run's earlier messages.
+        ...current.filter((turn) => !inRun(turn)),
+        ...items.map(
+          (item): LocalTurn => ({
+            key: `${runKey}:${item.id}`,
+            text: item.title,
+            attachments: [],
+            state: "pending",
+            createdAt,
+            itemId: item.id,
+            itemTitle: item.title,
+            itemLabel: item.label,
+            department: item.department,
+            imageGen: item.image
+              ? { startedAt, partials: 0, done: false }
+              : undefined,
+          }),
+        ),
+      ]);
+
+      let started = 0;
+      let finished = false;
+      // Any item event means the package was claimed and is running on the
+      // server, even if the connection later drops before package.done.
+      let claimed = false;
+      const settle = (message: string) =>
+        setLocalTurns((current) => failPendingItems(current, inRun, message));
+      // The run never started (claim refused, request rejected): its
+      // placeholder messages have nothing to report, the toast says why.
+      const withdraw = () =>
+        setLocalTurns((current) => current.filter((turn) => !inRun(turn)));
+      const apply = (event: ChatStreamEvent) => {
+        switch (event.type) {
+          case "item.start":
+          case "item.partial":
+          case "item.done":
+            claimed = true;
+            setLocalTurns((current) =>
+              current.map((turn) =>
+                inRun(turn) ? reduceItemEvent(turn, event) : turn,
+              ),
+            );
+            break;
+          case "package.done":
+            finished = true;
+            started = event.started;
+            // Every item that ran has reported by now; one still waiting was
+            // skipped when the package was claimed.
+            settle("This one was not started.");
+            if (event.started === 0) {
+              toast.error("Could not start the package. Try again.");
+            } else if (event.failed > 0) {
+              toast.error(
+                `${event.failed} of ${items.length} could not be made.`,
+              );
+            }
+            break;
+          case "error":
+            finished = true;
+            if (NOT_STARTED_ERROR_CODES.has(event.code)) withdraw();
+            else settle(event.message);
+            toast.error(event.message);
+            break;
+        }
+      };
+
+      try {
+        const response = await fetch(
+          `/api/projects/${projectId}/chat/package`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              commandId,
+              selections: items.map((item) => ({
+                id: item.id,
+                contentFormat: item.contentFormat,
+              })),
+            }),
+          },
+        );
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!response.ok || !response.body) {
+          let message = "Could not start the package.";
+          try {
+            const data = (await response.json()) as { error?: string };
+            if (data.error) message = data.error;
+          } catch {
+            // Non-JSON error body: keep the generic message.
+          }
+          apply({ type: "error", code: "HTTP", message });
+        } else if (!contentType.includes("text/event-stream")) {
+          // A signed-out session is redirected to the login page (HTML).
+          apply({
+            type: "error",
+            code: "SESSION",
+            message: "Your session has expired. Please sign in again.",
+          });
+        } else {
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          const parse = createSseParser();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            for (const event of parse(decoder.decode(value, { stream: true }))) {
+              apply(event);
+            }
+          }
+          if (!finished) {
+            // The run keeps going on the server; its cards land in the chat
+            // with the refresh below.
+            settle("The connection dropped — this keeps running in the background.");
+          }
+        }
+      } catch (error) {
+        settle(
+          error instanceof Error ? error.message : "Could not start the package.",
+        );
+      } finally {
+        setPackageRuns((current) => {
+          const next = { ...current };
+          // A refused run (nothing started) reopens the card for another try.
+          if (started > 0 || claimed) {
+            next[commandId] = { phase: "started", itemIds };
+          } else delete next[commandId];
+          return next;
+        });
+        // Pulls the persisted chat rows; each local item message drops
+        // itself once its own row arrives.
+        router.refresh();
+      }
+      return { ok: started > 0 || claimed };
+    },
+    [projectId, router],
+  );
+
+  const chatPackage = React.useMemo(
+    () => ({ start: startContentPackage, runs: packageRuns }),
+    [startContentPackage, packageRuns],
+  );
+
+  // A content-package piece whose live stream is gone (page reload, dropped
+  // connection) is still being made on the server. Keep pulling the page while
+  // the persisted chat shows work in flight (needsProgressPoll) and nothing
+  // live is driving it — neither a package run nor a streaming chat turn.
+  const hasLiveItemRun = localTurns.some(
+    (turn) => turn.itemId !== undefined && turn.state === "pending",
+  );
+  const isStreaming = streamingKey !== null;
+  React.useEffect(() => {
+    if (hasLiveItemRun || isStreaming) return undefined;
+    if (!needsProgressPoll(turns, Date.now())) return undefined;
+    const timer = setInterval(() => {
+      if (!document.hidden) router.refresh();
+    }, PROGRESS_POLL_MS);
+    return () => clearInterval(timer);
+  }, [turns, hasLiveItemRun, isStreaming, router]);
+
+  const sendFromCard = React.useCallback(
+    (text: string) => sendMessage(text, []),
+    [sendMessage],
   );
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <Thread
-        components={{
-          Welcome,
-          ComposerPlusMenu: PlusMenu,
-          QuickActions,
-          ContextChip,
-          ContextBar: decisions ? DecisionsContextBar : undefined,
-        }}
-      />
+      <ChatSendProvider value={sendFromCard}>
+        <ChatPackageProvider value={chatPackage}>
+          <Thread
+            components={{
+              Welcome,
+              ComposerPlusMenu: PlusMenu,
+              QuickActions,
+              ContextChip,
+            }}
+          />
+        </ChatPackageProvider>
+      </ChatSendProvider>
     </AssistantRuntimeProvider>
   );
 }

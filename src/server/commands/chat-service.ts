@@ -22,6 +22,8 @@ import { getBrandTwin } from "@/server/brand-twin/brand-twin";
 import { recordUserDecision } from "@/server/brand-twin/brand-twin-writes";
 import { startAgencySetupForProject } from "@/server/actions/agency-setup-actions";
 import { SETUP_STAGE } from "@/lib/labels";
+import { getPublishTargets } from "@/server/integrations/meta-connection-status";
+import { buildAgencyCapabilities } from "@/server/chat/deliverables";
 
 export type ChatTurnInput = {
   workspaceId: string;
@@ -390,7 +392,10 @@ function toParsedIntent(turn: ChatTurnOutput, message: string): ParsedIntent {
 // the LLM's view of everything else going on.
 const HISTORY_TURNS = 36;
 
-async function buildContext(projectId: string, ideaId?: string) {
+// Exported for the streaming agent engine (src/server/chat/), which shares
+// the exact same context loading; it also uses `recent` to build real
+// role-tagged history messages instead of the flattened `history` string.
+export async function buildContext(projectId: string, ideaId?: string) {
   const [project, brandTwin, dailyStat, pendingApprovals, recent, setupState] =
     await Promise.all([
       prisma.project.findUniqueOrThrow({
@@ -439,6 +444,7 @@ async function buildContext(projectId: string, ideaId?: string) {
         orderBy: { createdAt: "desc" },
         take: HISTORY_TURNS,
         select: {
+          id: true,
           source: true,
           rawText: true,
           replyText: true,
@@ -480,8 +486,8 @@ async function buildContext(projectId: string, ideaId?: string) {
   // chronologically. SYSTEM-sourced rows have an empty rawText (a pipeline
   // event, not a user message) — the "Client:" line is skipped and only the
   // event note is written.
-  const history = recent
-    .reverse()
+  const chronological = [...recent].reverse();
+  const history = chronological
     .flatMap((command) => {
       const attachmentNote = Array.isArray(command.attachments)
         ? ` [attached: ${(command.attachments as { filename?: string }[])
@@ -497,8 +503,16 @@ async function buildContext(projectId: string, ideaId?: string) {
     })
     .join("\n");
 
+  // What the agency can hand the client right now (active departments'
+  // deliverables + connected channels) — the chat agent proposes only these.
+  const connectedTargets = await getPublishTargets(projectId).catch(() => []);
+  const agency = buildAgencyCapabilities([
+    ...new Set(connectedTargets.map((t) => t.platform)),
+  ]);
+
   return {
     brandId,
+    agency,
     project: {
       name: project.name,
       domain: project.domain,
@@ -514,6 +528,7 @@ async function buildContext(projectId: string, ideaId?: string) {
       waitingSince: approval.createdAt.toISOString(),
     })),
     history,
+    recent: chronological,
     setupPhase,
     setupWaiting,
   };

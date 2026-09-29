@@ -90,6 +90,39 @@ export const OutboxRepository = {
     return claimed;
   },
 
+  // A chat turn that drives its own execution job (see inline-job.ts) takes
+  // that job's dispatch event out of the worker's hands. Without this the
+  // event stays PENDING while the job sits at RUNNING with no provider
+  // reference (the OpenAI providers do their whole generation inside
+  // execute()), and the worker's stalled-dispatch recovery would reset the job
+  // to QUEUED and run the provider a second time — double spend.
+  //  "claimed": the event was PENDING and is now PROCESSED; this caller owns it.
+  //  "worker":  the worker holds it (PROCESSING); the job must NOT be started.
+  //  "none":    no live dispatch event (already processed, or never enqueued).
+  async claimDispatchForInline(
+    executionJobId: string,
+  ): Promise<"claimed" | "worker" | "none"> {
+    const claimed = await prisma.outboxEvent.updateMany({
+      where: {
+        executionJobId,
+        eventType: OUTBOX_EVENT_TYPES.EXECUTION_DISPATCH,
+        status: "PENDING",
+      },
+      data: { status: "PROCESSED", processedAt: new Date() },
+    });
+    if (claimed.count > 0) return "claimed";
+
+    const held = await prisma.outboxEvent.findFirst({
+      where: {
+        executionJobId,
+        eventType: OUTBOX_EVENT_TYPES.EXECUTION_DISPATCH,
+        status: "PROCESSING",
+      },
+      select: { id: true },
+    });
+    return held ? "worker" : "none";
+  },
+
   markProcessed(id: string, claimedUntil: Date) {
     return prisma.outboxEvent.updateMany({
       where: { id, status: "PROCESSING", nextAttemptAt: claimedUntil },

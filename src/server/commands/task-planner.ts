@@ -33,6 +33,10 @@ export type PlanCapabilityInput = {
   capability: CapabilityKey;
   targetPlatform?: SocialPlatform;
   request: string;
+  // Short display title (chat cards, task lists). Defaults to the first 80
+  // characters of `request`, which reads badly when the request is a long
+  // structured brief.
+  title?: string;
   createdByType: ActorType;
   createdByUserId?: string;
   // Agency OS optional fields — legacy callers omit all of these and get
@@ -97,7 +101,7 @@ export const TaskPlanner = {
       projectId: input.projectId,
       brandId: input.brandId,
       commandId: input.commandId,
-      title: input.request.slice(0, 80),
+      title: (input.title ?? input.request).slice(0, 80),
       description: input.request,
       payload: {
         request: input.request,

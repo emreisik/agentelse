@@ -20,10 +20,10 @@ export const PANEL_KEYS = [
 export type PanelKey = (typeof PANEL_KEYS)[number];
 
 // Pending approvals are decided only on the Agency Desk (the project's
-// root chat) — its DecisionsBar opens expanded on this link. Replaces the
-// removed "approvals" panel / /approvals page.
+// root chat) — they sit at the bottom of the conversation as chat cards.
+// Replaces the removed "approvals" panel / /approvals page.
 export function decisionsHref(projectId: string): string {
-  return `/projects/${projectId}?decisions=open`;
+  return `/projects/${projectId}`;
 }
 
 // Panels with no dedicated sidebar/top-bar entry of their own — reachable

@@ -96,6 +96,15 @@ const envSchema = z.object({
   // and the fallback execution provider when Gemini is unconfigured or
   // circuit-broken by ProviderHealthService.
   OPENAI_API_KEY: z.string().optional().default(""),
+  // OpenAI has no balance API for regular keys. The header shows
+  // OPENAI_CREDIT_BALANCE (USD, as of OPENAI_CREDIT_BALANCE_AS_OF) minus the
+  // cost of every OpenAI ReasoningCall recorded since then. After topping up,
+  // set both to the new balance and the moment you read it.
+  OPENAI_CREDIT_BALANCE: z.string().optional().default("9.88"),
+  OPENAI_CREDIT_BALANCE_AS_OF: z
+    .string()
+    .optional()
+    .default("2026-09-29T16:17:00Z"),
   OPENAI_MODEL: z.string().optional().default("gpt-5.6-luna"),
   // Model tiers: prompts select "lite"/"pro" via ReasoningDef.tier, and
   // which model that maps to lives here — so changing a model doesn't
@@ -115,6 +124,30 @@ const envSchema = z.object({
     .optional()
     .default("openai")
     .catch("openai"),
+  // Chat engine (src/server/chat/): "agent" is the streaming tool-calling
+  // loop on the OpenAI Responses API; "legacy" is the one-shot JSON
+  // ChatService kept until the agent path is proven. Unknown values fall
+  // back to "legacy" so a typo can't silently switch engines.
+  CHAT_ENGINE: z
+    .enum(["agent", "legacy"])
+    .optional()
+    .default("legacy")
+    .catch("legacy"),
+  // Empty means "use OPENAI_MODEL" — the chat is no longer on the lite tier.
+  CHAT_MODEL: z.string().optional().default(""),
+  CHAT_REASONING_EFFORT: z
+    .enum(["minimal", "low", "medium", "high"])
+    .optional()
+    .default("low")
+    .catch("low"),
+  // OpenAI's hosted web_search tool for the chat agent. Off by default: it
+  // adds per-call search fees and lets the model reach outside the brand's
+  // own data, so it is an explicit opt-in.
+  CHAT_WEB_SEARCH: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((value) => value === "true"),
   // gpt-image-2 — see openai-image-client.ts. Separate model slot from
   // OPENAI_MODEL/OPENCLAW_IMAGE_MODEL because it names an image model, not
   // a chat one.

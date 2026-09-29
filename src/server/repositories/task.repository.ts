@@ -15,7 +15,10 @@ import { ExecutionPolicy } from "@/server/execution/execution-policy";
 import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 import { notifyProjectTelegram } from "@/server/notifications/project-telegram-notifier";
-import { extractResultText } from "@/lib/execution-result-text";
+import {
+  extractResultText,
+  shouldExpandTaskResult,
+} from "@/lib/execution-result-text";
 import { PLATFORM_LABEL } from "@/lib/labels";
 
 // When a task completes/fails/is cancelled, if that task is linked to an
@@ -51,6 +54,7 @@ async function postTaskChatEvent(task: {
   departmentKey: DepartmentKey | null;
   capability: CapabilityKey;
   payload?: unknown;
+  createdByType?: ActorType;
 }) {
   if (ExecutionPolicy.isCreative(task.capability)) return;
   try {
@@ -148,6 +152,7 @@ async function postTaskChatEvent(task: {
         department: task.departmentKey ?? undefined,
         status: task.status,
         resultText,
+        expanded: shouldExpandTaskResult(task.capability, task.createdByType),
       },
       departmentKey: task.departmentKey ?? undefined,
     });
@@ -358,6 +363,7 @@ export const TaskRepository = {
         departmentKey: task.departmentKey,
         capability: task.capability,
         payload: task.payload,
+        createdByType: task.createdByType,
       });
     }
 
@@ -411,6 +417,7 @@ export const TaskRepository = {
       departmentKey: task.departmentKey,
       capability: task.capability,
       payload: task.payload,
+      createdByType: task.createdByType,
     });
 
     return true;

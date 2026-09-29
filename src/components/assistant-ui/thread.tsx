@@ -10,6 +10,8 @@ import {
   UserMessageAttachments,
 } from "@/components/assistant-ui/attachment";
 import { ThreadFollowupSuggestions } from "@/components/assistant-ui/follow-up-suggestions";
+import { ImageGenerationPreview } from "@/components/assistant-ui/image-generation-preview";
+import type { ImageGenState } from "@/lib/image-progress";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { IdeaEventCard } from "@/components/commands/idea-event-card";
 import { AgentelseMark } from "@/components/brand/agentelse-mark";
@@ -155,12 +157,12 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
       {ContextBar ? <ContextBar /> : null}
       {/* turnAnchor's default is "bottom" (classic chat behavior) —
           deliberately left unset. "top" (new message pins at the top and
-          the reply grows below — a "live typing" feel) was both
-          unnecessary (our messages don't stream token by token, they
-          arrive as a whole block) and, in assistant-ui, made autoScroll
-          default to false, causing new system messages brought by
-          LiveRefresh (task/approval/creative cards) to never scroll the
-          page to the bottom. */}
+          the reply grows below) made autoScroll default to false in
+          assistant-ui, causing new system messages brought by LiveRefresh
+          (task/approval/creative cards) to never scroll the page to the
+          bottom. This holds for streamed replies (CHAT_ENGINE=agent) too:
+          following the growing text with the default bottom anchor is
+          what we want. */}
       <ThreadPrimitive.Viewport
         data-slot="aui_thread-viewport"
         className="relative flex flex-1 flex-col overflow-x-auto overflow-y-auto scroll-smooth"
@@ -447,6 +449,26 @@ const AssistantMessage: FC = () => {
     return isIdeaEventCardData(custom.card) ? custom.card : undefined;
   });
 
+  // Streamed preview + progress of an image still rendering
+  // (CHAT_ENGINE=agent's generate_image): sharpens in place with a 0-100%
+  // bar until the finished card replaces it.
+  const previewUrl = useAuiState((s) => {
+    const custom = s.message.metadata.custom as { previewUrl?: unknown };
+    return typeof custom.previewUrl === "string" ? custom.previewUrl : undefined;
+  });
+  const imageGen = useAuiState((s) => {
+    const custom = s.message.metadata.custom as { imageGen?: unknown };
+    const value = custom.imageGen as Partial<ImageGenState> | undefined;
+    return value && typeof value.startedAt === "number"
+      ? (value as ImageGenState)
+      : undefined;
+  });
+
+  const commandId = useAuiState((s) => {
+    const custom = s.message.metadata.custom as { commandId?: unknown };
+    return typeof custom.commandId === "string" ? custom.commandId : undefined;
+  });
+
   // For event messages tied to a SINGLE department (task/creative
   // completion — see IdeaChatRepository.postSystemMessage),
   // metadata.custom.departmentKey is set — for quick visual scanning, a
@@ -560,7 +582,10 @@ const AssistantMessage: FC = () => {
               : undefined
           }
         >
-          {card && <IdeaEventCard card={card} />}
+          {imageGen && (
+            <ImageGenerationPreview state={imageGen} previewUrl={previewUrl} />
+          )}
+          {card && <IdeaEventCard card={card} commandId={commandId} />}
           <MessagePrimitive.GroupedParts
             groupBy={groupPartByType({
               reasoning: ["group-chainOfThought", "group-reasoning"],

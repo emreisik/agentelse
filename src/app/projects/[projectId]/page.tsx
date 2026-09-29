@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import type { DepartmentKey } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { getEnv } from "@/lib/env";
 import { DEPARTMENT_KEY } from "@/lib/labels";
 import {
   requireProjectAccess,
@@ -29,6 +30,20 @@ import { OutputsPanel } from "@/components/workspace/outputs-panel";
 import { CalendarPanel } from "@/components/workspace/calendar-panel";
 import { FilesPanel } from "@/components/workspace/files-panel";
 import { getPendingDecisions } from "@/server/agency/pending-decisions";
+
+// Card kinds a content-package task leaves in the chat over its life: the
+// in-progress card, then its result or failure. creative-ready is also in the
+// general creatives query (which only keeps the newest 40) — listing it here
+// keeps a package's image from dropping out of the chat when older ones pile
+// up, or when its row flips from loading to ready between the two queries.
+// Rows matched by both queries are merged by id.
+const PACKAGE_ROW_KINDS = [
+  "creative-loading",
+  "creative-ready",
+  "creative-failed",
+  "task-running",
+  "task-result",
+] as const;
 
 // Command.parsedIntent is written as { card: IdeaEventCardData } on rows
 // sourced from SYSTEM (see IdeaChatRepository) — on WEB rows it carries the
@@ -219,6 +234,167 @@ export default async function ProjectChatPage({
     /[\s@]/,
   )[0];
 
+  // Every creative the pipeline ever produced stays in the conversation as
+  // the same creative-ready card (SYSTEM rows, whichever idea they belong
+  // to — the rest of the pipeline noise stays out of this chat). The
+  // stored card is kept current by IdeaChatRepository (status, publish
+  // state), so history and new creatives look and behave identically.
+  const creativeCommands = await prisma.command.findMany({
+    where: {
+      projectId,
+      topic: null,
+      source: "SYSTEM",
+      parsedIntent: { path: ["card", "kind"], equals: "creative-ready" },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 40,
+    select: {
+      id: true,
+      source: true,
+      rawText: true,
+      replyText: true,
+      replyStatus: true,
+      attachments: true,
+      parsedIntent: true,
+      createdAt: true,
+    },
+  });
+
+  // creativeId → open approval, to (re)attach Approve/Reject to the newest
+  // card of a creative that is still awaiting a decision.
+  const pendingApprovalByCreativeId = new Map(
+    decisions.flatMap((d) =>
+      d.card.kind === "creative-ready"
+        ? [[d.card.creativeId, d.approvalId] as const]
+        : [],
+    ),
+  );
+  // A revision posts a NEW card and leaves the earlier version's card
+  // untouched — only the newest card per creative may keep a live decision.
+  const newestCardByCreativeId = new Map<string, string>();
+  for (const command of creativeCommands) {
+    const card = cardFromParsedIntent(command.parsedIntent);
+    if (card?.kind === "creative-ready" && !newestCardByCreativeId.has(card.creativeId)) {
+      newestCardByCreativeId.set(card.creativeId, command.id);
+    }
+  }
+
+  // Everything a content package's tasks post to the chat — the running /
+  // loading card while a piece is being made, then its result (SEO article,
+  // Reel script...) or failure — is pulled into the conversation, so a piece
+  // is visible from the moment it starts, also after a reload.
+  const packageCommandIds = chatCommands
+    .filter(
+      (command) =>
+        cardFromParsedIntent(command.parsedIntent)?.kind === "content-package",
+    )
+    .map((command) => command.id);
+  const packageTaskIds = packageCommandIds.length
+    ? (
+        await prisma.task.findMany({
+          where: { projectId, commandId: { in: packageCommandIds } },
+          select: { id: true },
+        })
+      ).map((task) => task.id)
+    : [];
+  const packageRowCommands = packageTaskIds.length
+    ? await prisma.command.findMany({
+        where: {
+          projectId,
+          topic: null,
+          source: "SYSTEM",
+          AND: [
+            {
+              OR: PACKAGE_ROW_KINDS.map((kind) => ({
+                parsedIntent: { path: ["card", "kind"], equals: kind },
+              })),
+            },
+            {
+              OR: packageTaskIds.map((taskId) => ({
+                parsedIntent: { path: ["card", "taskId"], equals: taskId },
+              })),
+            },
+          ],
+        },
+        select: {
+          id: true,
+          source: true,
+          rawText: true,
+          replyText: true,
+          replyStatus: true,
+          attachments: true,
+          parsedIntent: true,
+          createdAt: true,
+        },
+      })
+    : [];
+
+  // A creative's card can match both queries — one row, one message.
+  const rowsById = new Map(
+    [...chatCommands, ...creativeCommands, ...packageRowCommands].map(
+      (command) => [command.id, command] as const,
+    ),
+  );
+  const chatTurns = [...rowsById.values()]
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    .map((command): ChatTurn => {
+      let card = cardFromParsedIntent(
+        command.parsedIntent,
+        pendingApprovalByCreativeId,
+      );
+      if (
+        card?.kind === "creative-ready" &&
+        card.status === "IN_REVIEW" &&
+        newestCardByCreativeId.get(card.creativeId) !== command.id
+      ) {
+        card = { ...card, status: "ARCHIVED", approvalId: undefined };
+      }
+      return {
+        commandId: command.id,
+        source: command.source as "WEB" | "SYSTEM",
+        text: command.rawText,
+        reply: command.replyText,
+        replyStatus: command.replyStatus,
+        departmentKey: departmentKeyFromParsedIntent(command.parsedIntent),
+        // Limit-notice cards are also written to WEB-sourced rows (see
+        // chat-service.ts) — without this, the card would only show
+        // until the next refresh, then fall back to plain text.
+        card,
+        attachments: Array.isArray(command.attachments)
+          ? (command.attachments as ChatAttachment[])
+          : [],
+        createdAt: command.createdAt.toISOString(),
+      };
+    });
+
+  // Pending approvals are decided inside the conversation. A creative that
+  // already has its card above is decided there; anything else (task
+  // approvals, creatives with no chat card) is appended at the bottom as
+  // the same card, rebuilt from the records. Oldest first; a decided one
+  // drops out on router.refresh().
+  const shownApprovalIds = new Set(
+    chatTurns.flatMap((t) =>
+      t.card && "approvalId" in t.card && t.card.approvalId
+        ? [t.card.approvalId]
+        : [],
+    ),
+  );
+  const decisionTurns = decisions
+    .filter((d) => !shownApprovalIds.has(d.approvalId))
+    .map(
+      (d): ChatTurn => ({
+        commandId: `decision-${d.approvalId}`,
+        source: "SYSTEM",
+        text: "",
+        reply: "Waiting for your decision",
+        replyStatus: null,
+        card: d.card,
+        attachments: [],
+        createdAt: d.createdAt,
+      }),
+    );
+  const turns = [...chatTurns, ...decisionTurns];
+
   return (
     <AppShell
       projectId={projectId}
@@ -231,6 +407,7 @@ export default async function ProjectChatPage({
               projectId={projectId}
               brand={rightPanelData.brand}
               website={rightPanelData.website}
+              kit={rightPanelData.brandKit}
             />
           }
           files={
@@ -264,26 +441,11 @@ export default async function ProjectChatPage({
       <div key="project-general" className="relative h-full">
         <ProjectChat
           projectId={projectId}
+          chatEngine={getEnv().CHAT_ENGINE}
           projectName={project.name}
           userFirstName={firstName || null}
           publishTargets={publishTargets}
-          decisions={decisions}
-          turns={chatCommands.reverse().map((command): ChatTurn => ({
-            commandId: command.id,
-            source: command.source as "WEB" | "SYSTEM",
-            text: command.rawText,
-            reply: command.replyText,
-            replyStatus: command.replyStatus,
-            departmentKey: departmentKeyFromParsedIntent(command.parsedIntent),
-            // Limit-notice cards are also written to WEB-sourced rows (see
-            // chat-service.ts) — without this, the card would only show
-            // until the next refresh, then fall back to plain text.
-            card: cardFromParsedIntent(command.parsedIntent),
-            attachments: Array.isArray(command.attachments)
-              ? (command.attachments as ChatAttachment[])
-              : [],
-            createdAt: command.createdAt.toISOString(),
-          }))}
+          turns={turns}
         />
       </div>
     </AppShell>

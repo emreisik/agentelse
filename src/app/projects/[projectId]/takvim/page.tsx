@@ -16,6 +16,13 @@ import {
   rejectApprovalAction,
 } from "@/server/actions/approval-actions";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
+import {
+  CHANNELS,
+  CHANNEL_KEYS,
+  isChannelKey,
+  resolveFormat,
+  type ChannelKey,
+} from "@/lib/content-channels";
 import { CREATIVE_STATUS, SOCIAL_PLATFORM } from "@/lib/labels";
 import {
   dayKeyInTimezone,
@@ -27,6 +34,10 @@ import { ActionForm } from "@/components/shared/action-form";
 import { EntityDialog } from "@/components/shared/entity-dialog";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
 import { StatusBadge } from "@/components/shared/status-badge";
+import {
+  ChannelBadge,
+  FormatGlyphIcon,
+} from "@/components/commands/channel-badge";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { CreativeImageStudio } from "@/components/creative/creative-image-studio";
 import { Card, CardContent } from "@/components/ui/card";
@@ -213,15 +224,41 @@ export default async function ContentCalendarPage({
   const timezone = schedule?.timezone ?? "Europe/Istanbul";
 
   const monthParam = typeof sp.month === "string" ? sp.month : undefined;
+  const channelParam: ChannelKey | undefined =
+    typeof sp.channel === "string" && isChannelKey(sp.channel)
+      ? sp.channel
+      : undefined;
   const grid = monthGrid(monthParam, timezone);
   const base = `/projects/${projectId}/takvim`;
   const monthHref = (m: string) =>
-    m === grid.thisMonthParam ? base : `${base}?month=${m}`;
+    calendarHref(base, {
+      month: m === grid.thisMonthParam ? undefined : m,
+      channel: channelParam,
+    });
 
-  const creatives = (await CreativeRepository.listForCalendarRange(projectId, {
-    from: grid.rangeFrom,
-    to: grid.rangeTo,
-  })) as CalendarCreative[];
+  const allCreatives = (await CreativeRepository.listForCalendarRange(
+    projectId,
+    {
+      from: grid.rangeFrom,
+      to: grid.rangeTo,
+    },
+  )) as CalendarCreative[];
+
+  // Channel filter chips: only the channels that have something in view, in
+  // catalog order. Creatives made outside a plan carry no channel and show
+  // under "All" only.
+  const channelCounts = new Map<ChannelKey, number>();
+  for (const creative of allCreatives) {
+    if (isChannelKey(creative.channel)) {
+      channelCounts.set(
+        creative.channel,
+        (channelCounts.get(creative.channel) ?? 0) + 1,
+      );
+    }
+  }
+  const creatives = channelParam
+    ? allCreatives.filter((creative) => creative.channel === channelParam)
+    : allCreatives;
 
   const byDay = new Map<string, CalendarCreative[]>();
   const unscheduled: CalendarCreative[] = [];
@@ -259,10 +296,11 @@ export default async function ContentCalendarPage({
       });
     }
   }
-  const closeHref =
-    monthParam && monthParam !== grid.thisMonthParam
-      ? `${base}?month=${monthParam}`
-      : base;
+  const closeHref = calendarHref(base, {
+    month:
+      monthParam && monthParam !== grid.thisMonthParam ? monthParam : undefined,
+    channel: channelParam,
+  });
 
   return (
     <AppShell projectId={projectId}>
@@ -302,10 +340,43 @@ export default async function ContentCalendarPage({
           </div>
         </div>
 
+        {channelCounts.size > 0 ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <ChannelFilterChip
+              href={calendarHref(base, {
+                month:
+                  monthParam && monthParam !== grid.thisMonthParam
+                    ? monthParam
+                    : undefined,
+              })}
+              active={!channelParam}
+              label="All"
+            />
+            {CHANNEL_KEYS.filter((key) => channelCounts.has(key)).map(
+              (key) => (
+                <ChannelFilterChip
+                  key={key}
+                  href={calendarHref(base, {
+                    month:
+                      monthParam && monthParam !== grid.thisMonthParam
+                        ? monthParam
+                        : undefined,
+                    channel: key,
+                  })}
+                  active={channelParam === key}
+                  label={`${CHANNELS[key].label} · ${channelCounts.get(key)}`}
+                  channel={key}
+                />
+              ),
+            )}
+          </div>
+        ) : null}
+
         <UnscheduledTray
           creatives={unscheduled}
           base={base}
           monthParam={monthParam}
+          channelParam={channelParam}
         />
 
         <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-border bg-border">
@@ -330,6 +401,7 @@ export default async function ContentCalendarPage({
                 isToday={isToday}
                 base={base}
                 monthParam={monthParam}
+                channelParam={channelParam}
               />
             );
           })}
@@ -348,15 +420,74 @@ export default async function ContentCalendarPage({
   );
 }
 
+// The calendar's own searchParams (month, channel filter, open creative) in
+// one place, so navigating never drops the others.
+function calendarHref(
+  base: string,
+  params: { month?: string; channel?: ChannelKey; creative?: string },
+) {
+  const search = new URLSearchParams();
+  if (params.month) search.set("month", params.month);
+  if (params.channel) search.set("channel", params.channel);
+  if (params.creative) search.set("creative", params.creative);
+  const query = search.toString();
+  return query ? `${base}?${query}` : base;
+}
+
 function creativeHref(
   base: string,
   monthParam: string | undefined,
   creativeId: string,
+  channelParam: ChannelKey | undefined,
 ) {
-  const params = new URLSearchParams();
-  if (monthParam) params.set("month", monthParam);
-  params.set("creative", creativeId);
-  return `${base}?${params.toString()}`;
+  return calendarHref(base, {
+    month: monthParam,
+    channel: channelParam,
+    creative: creativeId,
+  });
+}
+
+function ChannelFilterChip({
+  href,
+  active,
+  label,
+  channel,
+}: {
+  href: string;
+  active: boolean;
+  label: string;
+  channel?: ChannelKey;
+}) {
+  return (
+    <Link
+      href={href}
+      scroll={false}
+      aria-current={active ? "true" : undefined}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+        active
+          ? "border-foreground bg-foreground text-background"
+          : "border-border text-muted-foreground hover:bg-accent",
+      )}
+    >
+      {channel ? <ChannelBadge channel={channel} className="h-4 min-w-4 text-[9px]" /> : null}
+      {label}
+    </Link>
+  );
+}
+
+// "Instagram · Carousel" for a planned piece, the plain platform name for
+// anything made outside a plan.
+function creativeLabel(creative: CalendarCreative): string {
+  if (isChannelKey(creative.channel)) {
+    const format = creative.formatKey
+      ? resolveFormat(creative.channel, creative.formatKey)
+      : undefined;
+    return format
+      ? `${CHANNELS[creative.channel].label} · ${format.label}`
+      : CHANNELS[creative.channel].label;
+  }
+  return creative.platform ? SOCIAL_PLATFORM[creative.platform].label : "—";
 }
 
 function DayCell({
@@ -366,6 +497,7 @@ function DayCell({
   isToday,
   base,
   monthParam,
+  channelParam,
 }: {
   day: GridDay;
   items: CalendarCreative[];
@@ -373,6 +505,7 @@ function DayCell({
   isToday: boolean;
   base: string;
   monthParam: string | undefined;
+  channelParam: ChannelKey | undefined;
 }) {
   const dayNumber = day.day;
   const shown = items.slice(0, 3);
@@ -401,7 +534,7 @@ function DayCell({
           <CreativeThumb
             key={creative.id}
             creative={creative}
-            href={creativeHref(base, monthParam, creative.id)}
+            href={creativeHref(base, monthParam, creative.id, channelParam)}
           />
         ))}
         {overflow > 0 ? (
@@ -428,6 +561,7 @@ function CreativeThumb({
     <Link
       href={href}
       scroll={false}
+      title={creative.title ?? undefined}
       className="flex items-center gap-1 rounded-md px-1 py-0.5 text-left ring-1 ring-foreground/10 transition-colors hover:bg-accent"
     >
       {hasImage && asset ? (
@@ -437,13 +571,15 @@ function CreativeThumb({
           alt=""
           className="size-6 shrink-0 rounded object-cover"
         />
+      ) : isChannelKey(creative.channel) ? (
+        <ChannelBadge channel={creative.channel} className="size-6" />
       ) : (
         <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
           <ImageOff className="size-3" />
         </span>
       )}
       <span className="min-w-0 flex-1 truncate text-[11px]">
-        {creative.platform ? SOCIAL_PLATFORM[creative.platform].label : "—"}
+        {creativeLabel(creative)}
       </span>
       <span
         className={cn(
@@ -463,10 +599,12 @@ function UnscheduledTray({
   creatives,
   base,
   monthParam,
+  channelParam,
 }: {
   creatives: CalendarCreative[];
   base: string;
   monthParam: string | undefined;
+  channelParam: ChannelKey | undefined;
 }) {
   if (creatives.length === 0) return null;
   return (
@@ -485,7 +623,7 @@ function UnscheduledTray({
             return (
               <Link
                 key={creative.id}
-                href={creativeHref(base, monthParam, creative.id)}
+                href={creativeHref(base, monthParam, creative.id, channelParam)}
                 scroll={false}
                 className="flex shrink-0 flex-col items-center gap-1"
                 title={creative.title ?? undefined}
@@ -503,9 +641,7 @@ function UnscheduledTray({
                   </span>
                 )}
                 <span className="max-w-14 truncate text-[10px] text-muted-foreground">
-                  {creative.platform
-                    ? SOCIAL_PLATFORM[creative.platform].label
-                    : "—"}
+                  {creativeLabel(creative)}
                 </span>
               </Link>
             );
@@ -550,7 +686,18 @@ function CreativeDetailDialog({
           meta={CREATIVE_STATUS[creative.status]}
           fallback={creative.status}
         />
-        {creative.platform ? (
+        {isChannelKey(creative.channel) ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+            <ChannelBadge channel={creative.channel} />
+            {creativeLabel(creative)}
+            {creative.formatKey &&
+            resolveFormat(creative.channel, creative.formatKey) ? (
+              <FormatGlyphIcon
+                glyph={resolveFormat(creative.channel, creative.formatKey)!.glyph}
+              />
+            ) : null}
+          </span>
+        ) : creative.platform ? (
           <StatusBadge
             meta={SOCIAL_PLATFORM[creative.platform]}
             fallback={creative.platform}

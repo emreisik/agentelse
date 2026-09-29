@@ -1,5 +1,6 @@
 import { type CreativeCardData, isCreativeCardData } from "./creative-card";
 import type { ChatQuestion } from "@/server/reasoning/prompts/chat-turn";
+import type { ChannelConnections } from "@/lib/content-channels";
 
 // Representation of EVERY pipeline event in an idea's chat (origin
 // signal/finding, insight/opportunity, idea birth, council decision, work
@@ -45,6 +46,9 @@ export type IdeaEventCardData =
       department?: string;
       status: "COMPLETED" | "FAILED" | "CANCELLED";
       resultText?: string;
+      // The result IS the deliverable the client asked for (an article, a
+      // Reel script, ad copy...) — shown open instead of behind a toggle.
+      expanded?: boolean;
     }
   | {
       kind: "approval-request";
@@ -184,6 +188,79 @@ export type IdeaEventCardData =
         scheduledFor?: string;
       }[];
     }
+  // A content plan the chat agent drafted in conversation (propose_content_
+  // plan, src/server/chat/tools.ts) — day-by-day slots, NOT yet stored on the
+  // calendar. "Save plan" (saveContentPlanAction) turns the slots into dated
+  // DRAFT creatives (no image yet) and flips `state` to "saved"; a newer
+  // proposal in the same project flips older open drafts to "superseded".
+  // `date`/`time` are wall-clock in `timezone`, exactly as the calendar
+  // reads them.
+  | {
+      kind: "content-plan-draft";
+      title: string;
+      timezone: string;
+      state: "draft" | "saved" | "superseded";
+      // What the plan is for (a PLAN_GOALS value) and, per channel, whether
+      // it can publish right now — a snapshot taken when the plan was drawn.
+      // Absent on plans drafted before channels existed.
+      goal?: string;
+      connections?: ChannelConnections;
+      items: {
+        date: string;
+        time: string;
+        // Absent for channels that are not a social platform (Blog/SEO, Ads).
+        platform?: string;
+        // Free text on plans drafted before channels existed.
+        format?: string;
+        // Catalog keys (src/lib/content-channels.ts).
+        channel?: string;
+        formatKey?: string;
+        topic: string;
+        captionIdea: string;
+      }[];
+      savedCreativeIds?: string[];
+    }
+  // The plan wizard (start_plan_brief): a step-by-step card that collects
+  // goal, channels, formats and rhythm, then sends them back as ONE chat
+  // message (plan-brief.ts) so the agent drafts exactly what was picked.
+  // `connections` is the live publish status the channel step shows.
+  | {
+      kind: "plan-brief";
+      projectId: string;
+      ideaId?: string;
+      // The project's "today" (YYYY-MM-DD, its scheduling timezone): the
+      // start-date choices are computed from it.
+      today: string;
+      connections: ChannelConnections;
+      // Prefilled from the brand's current focus; the client can edit it.
+      theme?: string;
+    }
+  // The agency's answer to a topic-only request: a package of deliverables
+  // from the active departments, each with a topic-specific angle. The client
+  // ticks what they want and starts production with ONE click (see
+  // startContentPackageAction) — `state` flips to "started" so it can't run
+  // twice; a newer proposal flips older open ones to "superseded".
+  | {
+      kind: "content-package";
+      topic: string;
+      state: "draft" | "started" | "superseded";
+      items: {
+        id: string;
+        // A DELIVERABLE_KEYS value (src/server/chat/deliverables.ts).
+        deliverable: string;
+        title: string;
+        angle: string;
+        // Only for Instagram post items — a CreativeContentFormat value.
+        contentFormat?: string;
+      }[];
+      startedCount?: number;
+      // Which items the client ticked when they started it (the rest were
+      // skipped) — set together with `state: "started"`.
+      startedItemIds?: string[];
+      // When it was started (ISO) — lets the chat tell a package that is
+      // still spinning up from a long-finished one.
+      startedAt?: string;
+    }
   // Setup's own "here's what we're finding" preview — a horizontally
   // scrolling row of quick, no-image-generation mockup posts, one per
   // setup stage that produced something concrete (signals, brand
@@ -226,6 +303,9 @@ const EVENT_KINDS = new Set([
   "ads-form-prompt",
   "question",
   "content-plan-summary",
+  "content-plan-draft",
+  "plan-brief",
+  "content-package",
   "setup-demo-carousel",
 ]);
 

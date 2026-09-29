@@ -160,12 +160,14 @@ export function WsEventCard({
 export function WsDetailToggle({
   label,
   children,
+  defaultOpen = false,
 }: {
   label: string;
   children: React.ReactNode;
+  defaultOpen?: boolean;
 }) {
   return (
-    <details className="group/detail">
+    <details className="group/detail" open={defaultOpen || undefined}>
       <summary
         className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs font-medium transition-colors select-none"
         style={{ color: "var(--ws-text-3)" }}

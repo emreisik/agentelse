@@ -10,6 +10,10 @@ import { z } from "zod";
 
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import {
+  emitCreativeProgress,
+  hasCreativeProgressListener,
+} from "@/server/media/creative-progress";
+import {
   isOpenAIConfigured,
   openaiModelForTier,
   runOpenAIStructured,
@@ -19,6 +23,10 @@ import {
   isCreativeImageConfigured,
   type GeneratedCreativeImage,
 } from "@/server/media/creative-image";
+import {
+  planCreativeLayout,
+  safeZonePercent,
+} from "@/server/media/creative-layout";
 import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
 import { loadReferenceImage } from "@/server/media/brand-logo";
 import { applyBrandTemplate } from "@/server/media/creative-template";
@@ -41,6 +49,29 @@ const CreativeOutputSchema = z.object({
   imagePrompt: z.string(),
 });
 
+// The chat's inline generation (generate_image) has the conversation model
+// write the copy and image prompt itself — it already holds the brand
+// context — so the provider can skip its own text LLM round trip (5-30 s).
+const PresetSchema = z.object({
+  caption: z.string(),
+  copy: z.string(),
+  imagePrompt: z.string().min(1),
+  // One of the brand's post layouts (src/lib/layout-templates.ts) picked in
+  // the chat. Absent or unknown = the brand's default for this format.
+  layoutId: z.string().max(40).optional(),
+  // Only when the client chose text on the image: one headline, rendered by
+  // the image model (see creative-prompt-builder.ts's TYPOGRAPHY block).
+  // The brand logo is NOT part of this — applyBrandTemplate adds it below.
+  overlay: z
+    .object({
+      headline: z.string().min(1),
+      highlight: z.string().optional(),
+    })
+    .optional(),
+});
+
+const QUALITIES = new Set(["low", "medium", "high"]);
+
 type StoredResult = {
   status: "completed" | "failed";
   caption?: string;
@@ -49,6 +80,8 @@ type StoredResult = {
   platform?: SocialPlatform;
   aspectRatio?: string;
   contentFormat?: CreativeContentFormat;
+  // Which post layout laid this out (null: the brand's base template).
+  layoutTemplate?: { id: string; name: string } | null;
   errorMessage?: string;
 };
 
@@ -102,18 +135,31 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
       typeof input.request === "string" ? input.request : JSON.stringify(input);
 
     try {
-      const { raw } = await runOpenAIStructured({
-        model: openaiModelForTier(),
-        system: buildSystemPrompt(input.brandContext),
-        user: brief,
-        jsonSchema: z.toJSONSchema(CreativeOutputSchema),
-        // See gemini-creative.provider.ts's former history (now removed):
-        // a 3-field schema can still be cut off mid-JSON on a small budget
-        // when `copy`/`imagePrompt` are asked to be substantial — 8192
-        // keeps this call out of that failure class from the start.
-        maxOutputTokens: 8192,
-      });
-      const parsed = CreativeOutputSchema.parse(raw);
+      const preset = PresetSchema.safeParse(input.preset);
+      const parsed = preset.success
+        ? preset.data
+        : CreativeOutputSchema.parse(
+            (
+              await runOpenAIStructured({
+                model: openaiModelForTier(),
+                system: buildSystemPrompt(input.brandContext),
+                user: brief,
+                jsonSchema: z.toJSONSchema(CreativeOutputSchema),
+                // See gemini-creative.provider.ts's former history (now
+                // removed): a 3-field schema can still be cut off mid-JSON
+                // on a small budget when `copy`/`imagePrompt` are asked to
+                // be substantial — 8192 keeps this call out of that failure
+                // class from the start.
+                maxOutputTokens: 8192,
+              })
+            ).raw,
+          );
+      const quality =
+        typeof input.quality === "string" && QUALITIES.has(input.quality)
+          ? (input.quality as "low" | "medium" | "high")
+          : undefined;
+      const streamed = hasCreativeProgressListener(request.executionJobId);
+      const overlay = preset.success ? preset.data.overlay : undefined;
 
       const platformFormat = getCreativePlatformFormat(
         typeof input.platform === "string"
@@ -142,6 +188,17 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
       const styleImage = await loadReferenceImage(
         brandCtx.visualIdentity?.referenceImageAssetId,
       );
+      // Which post layout applies (the chat's pick, else the brand's
+      // default for this format) and what it means for the prompt and for
+      // the compositing below. No saved layouts = the brand's base template,
+      // exactly as before layouts existed.
+      const layoutPlan = planCreativeLayout({
+        visualIdentity: brandCtx.visualIdentity,
+        hasLogo: Boolean(brandCtx.logoAssetId || brandCtx.darkLogoAssetId),
+        requestedId: preset.success ? preset.data.layoutId : null,
+        pixelSize: platformFormat.pixelSize,
+        hasHeadline: Boolean(overlay),
+      });
       const finalImagePrompt = buildCreativePrompt({
         subject: parsed.imagePrompt,
         brandContext: input.brandContext,
@@ -150,11 +207,37 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         pixelSize: platformFormat.pixelSize,
         safeZone: platformFormat.safeZone,
         hasStyleReference: Boolean(styleImage),
+        reservedZones: layoutPlan.reservedZones,
+        layoutComposition: layoutPlan.composition,
+        typography: overlay
+          ? {
+              ...overlay,
+              // The brand's own first accent colour, when configured, so the
+              // highlighted words match the palette.
+              accentHex: brandCtx.visualIdentity?.accentColors?.[0]?.hex,
+              placement: layoutPlan.headlinePlacement,
+            }
+          : undefined,
       });
       let image = isCreativeImageConfigured()
         ? ((await generateCreativeImage(finalImagePrompt, {
             imageSize: platformFormat.pixelSize,
             referenceImage: styleImage ?? undefined,
+            // Absent for worker-driven jobs: unchanged behavior ("high").
+            quality,
+            // Somebody is watching this render live (inline chat
+            // generation): stream previews and don't detour via Gemini.
+            ...(streamed
+              ? {
+                  skipGemini: true,
+                  onPartial: (partial: { index: number; b64: string }) =>
+                    emitCreativeProgress(request.executionJobId, {
+                      type: "partial",
+                      index: partial.index,
+                      dataUrl: `data:image/png;base64,${partial.b64}`,
+                    }),
+                }
+              : {}),
           })) ?? undefined)
         : undefined;
 
@@ -173,7 +256,14 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
             darkLogoAssetId: brandCtx.darkLogoAssetId,
             accentColors: brandCtx.visualIdentity?.accentColors,
             legacyApprovedColors: brandCtx.approvedColors,
-            template: brandCtx.visualIdentity?.template ?? undefined,
+            template: layoutPlan.template,
+            // Story / Reel: keep a corner logo out of the app's own UI bands.
+            // Only with a saved layout: brands without one keep their exact
+            // previous compositing.
+            safeZone: layoutPlan.layout
+              ? safeZonePercent(platformFormat.safeZone, platformFormat.pixelSize)
+              : undefined,
+            trimLogo: Boolean(layoutPlan.layout),
           });
           if (templated) image = { ...image, size: templated.size };
         } catch (error) {
@@ -195,6 +285,7 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
             : undefined,
         aspectRatio: platformFormat.aspectRatio,
         contentFormat: platformFormat.contentFormat,
+        layoutTemplate: layoutPlan.meta,
       });
     } catch (error) {
       store.set(request.correlationId, {
@@ -233,6 +324,7 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         platform: record.platform,
         aspectRatio: record.aspectRatio,
         contentFormat: record.contentFormat,
+        layoutTemplate: record.layoutTemplate ?? null,
       },
       isMock: false,
     };

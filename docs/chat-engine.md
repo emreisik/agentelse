@@ -1,0 +1,106 @@
+# Chat motoru (streaming ajan)
+
+Chat iki motordan biriyle çalışır; `CHAT_ENGINE` env'i seçer.
+
+| Değer                 | Motor                                                                                                      | Not                                                |
+| --------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `legacy` (varsayılan) | `ChatService.turn` (`src/server/commands/chat-service.ts`): tek seferlik JSON sınıflandırma, Server Action | Yeni motor doğrulanana kadar silinmez              |
+| `agent`               | `runChatAgent` (`src/server/chat/`): OpenAI Responses API, token akışı, tool çağırma                       | Route: `POST /api/projects/[projectId]/chat` (SSE) |
+
+## Env değişkenleri
+
+| Değişken                | Varsayılan | Açıklama                                                                                                                                                           |
+| ----------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `CHAT_ENGINE`           | `legacy`   | `agent` \| `legacy`. Geçersiz değer `legacy`'ye düşer.                                                                                                             |
+| `CHAT_MODEL`            | boş        | Boşsa `OPENAI_MODEL`. Chat artık `lite` katmanında değil.                                                                                                          |
+| `CHAT_REASONING_EFFORT` | `low`      | `minimal` \| `low` \| `medium` \| `high`. Yalnızca `gpt-5*` / `o*` modellerine gönderilir.                                                                         |
+| `CHAT_WEB_SEARCH`       | `false`    | OpenAI'ın yerleşik `web_search` tool'unu açar (arama başına ücret).                                                                                                |
+| `OPENAI_API_KEY`        | -          | Zorunlu. Eksik/geçersiz/kotası bitmiş anahtar `provider-unconfigured` kartı olarak görünür; gerçek neden sunucu logunda `[chat-agent] blocked (...)` satırındadır. |
+
+## Akış
+
+1. Route: oturum, proje erişimi, kullanıcı başı rate limit (20/dk, süreç içi), dosya doğrulama, dosyaları depoya yazma.
+2. `runChatAgent`: **önce** `Command` satırını oluşturur (bağlantı kopsa da mesaj kaybolmaz), `start` olayını yollar.
+3. Bağlam: `buildContext` (marka, durum, bekleyen onaylar, kurulum aşaması, son 36 satır). Geçmiş rol yapılı mesajlara çevrilir; pipeline olayları `developer` mesajı olur. Geçmiş ~100k karakterle sınırlıdır (`trimHistory`); son 2 turdaki görsel/PDF ekleri modele gerçekten yeniden verilir (`history-files.ts`).
+4. Döngü (en çok 6 tur): model metin akıtır, gerekirse tool çağırır, sonuç modele döner.
+5. Sonunda cevap ve varsa kart aynı `Command` satırına yazılır; kullanım `ReasoningCall` (`purpose: chat.turn`) ve bütçe sayaçlarına işlenir.
+
+## SSE olayları
+
+`start` · `text.delta` · `tool.start` · `tool.end` · `card` · `suggestions` · `done` · `error`
+
+İçerik paketi koşusu (`POST …/chat/package`) aynı formatı kullanır, ek olarak: `item.start` · `item.partial` · `item.done` · `package.done` (bkz. "İçerik paketi").
+
+Tanım: `src/server/chat/types.ts`, kodlama/çözme: `sse.ts`. Sunucu her 10 sn'de `: ping` yorumu yollar (proxy zaman aşımına karşı).
+
+## Tool'lar
+
+| Tür      | Tool                                                                                                                  | Not                                                                                               |
+| -------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| iş       | `create_task`, `start_strategic_project`, `generate_ideas_from_opportunities`, `decide_approval`, `start_brand_setup` | Tur başına **en fazla biri** çalışır; hepsi mevcut servisleri (`CommandService.submit` vb.) sarar |
+| terminal | `ask_user`, `start_plan_brief`                                                                                        | Turu soru kartıyla / plan sihirbazıyla bitirir                                                    |
+| not      | `remember_preference`, `suggest_replies`, `propose_content_package`                                                   | İş sayılmaz (paket yalnızca kart üretir)                                                          |
+| okuma    | `get_pending_approvals`, `get_recent_tasks`, `get_idea_status`, `get_brand_profile`                                   | Sınırsız; hep turun kendi `projectId`'siyle sorgular                                              |
+
+Kurulum aşamasına göre tool kısıtı koddadır (`tools.ts`, `phases`): `NOT_STARTED` yalnızca kurulum/soru/tercih, `IN_PROGRESS` yalnızca okuma/soru/tercih, `ACTIVE` hepsi. `CommandService`'in `SETUP_REQUIRED` kapısı yedek olarak durur.
+
+## İçerik planlama (sohbet içinde)
+
+"Haftayı planla" gibi istekler görev olarak kuyruğa alınmaz (`create_task` artık `CREATE_CONTENT_PLAN` sunmaz; eski shortlist tabanlı planlayıcı yalnızca cron'da). Model müşteriyi sohbetle sorgulamaz; belirsizliği **sihirbaz** giderir. Akış:
+
+1. Müşteri plan ister ama amaç, kanal ve adedi vermemişse model `start_plan_brief` çağırır: `plan-brief` kartı (`plan-brief-wizard.tsx`) açılır. Adımlar: **Amaç** (awareness / leads / sales / engagement / traffic) → **Mecralar** (Instagram, TikTok, LinkedIn, X, Blog/SEO, Ads; her birinin bağlantı durumu görünür, bağlı sosyal hesaplar önceden seçilir) → **Format** (yalnızca seçilen kanalda birden fazla format varsa) → **Tempo** (haftalık adet, süre, başlangıç, opsiyonel tema).
+2. Cevap tek sohbet mesajı olarak gider (`serializePlanBrief`, `src/lib/plan-brief.ts`): okunur bir cümle + makine satırı `[Plan brief] goal=…; channels=instagram:carousel+reel,seo:article; perWeek=…; weeks=…; start=…`. Balonda makine satırı gizlenir (`stripPlanBriefMarker`). Kart mesajı, composer'ın kullandığı aynı yoldan gönderir (`chat-send-context.tsx`; agent motorunda SSE).
+3. `propose_content_plan` tek çağrıda tüm planı verir: `goal`, ve her öğede gerçek tarih (`YYYY-MM-DD`, bugünden itibaren, en çok 60 gün), saat (varsayılan 10:00), `channel` + `formatKey` (`src/lib/content-channels.ts` kataloğu), konu, caption fikri; en çok 30 öğe. Ek model çağrısı yoktur. Sunucu tarihleri proje saat diliminde, kanal/format uyumunu ve mesajdaki brief'e uyumu (`validatePlanAgainstBrief`: yalnız seçilen kanal ve formatlar, en çok `perWeek × weeks` öğe, başlangıçtan önce değil, her kanal kapsanır) doğrular; hata modele geri döner. Eski `platform` + serbest metin `format` hâlâ kabul edilir ve kataloğa çevrilir.
+4. Plan sohbette `content-plan-draft` kartı olur (`content-plan-card.tsx`): kanal chip'leri (bağlantı noktası, bağlı değilse "Connect" linki) + **Week | List** sekmeleri; henüz kaydedilmemiştir. Kanal bağlantısı plan çizildiği andaki anlık görüntüdür (`getChannelConnections`). Değişiklik istenirse model planın tamamını yeniden önerir; eski açık taslaklar `superseded` olur.
+5. **Save to calendar** `saveContentPlanAction`: her öğeyi `Creative` `DRAFT` olarak yazar (`channel`, `formatKey`, `goal`, `planId` = planı çizen Command; SEO → `COPY`, reklam → `CAMPAIGN_BRIEF`, sosyal → `SOCIAL_POST`). **Görsel üretilmez.** Serializable transaction, çift tıklama çift kayıt üretmez.
+
+Yayın modu formata bağlıdır (katalogda `publish`): `auto` (bağlı hesap API'siyle: Instagram post/story, LinkedIn, X), `manual` (carousel, reel, TikTok, thread, blog makalesi: müşteri yayınlar), `approval` (reklam: harcama, hep onaya düşer, otomatik yayınlanmaz). Bağlı olmayan kanalın `auto` formatı kartta `manual` görünür.
+
+Takvim (`/projects/[id]/takvim`) kanal rozetini ve `?channel=` filtresini gösterir.
+
+## Sohbet içinde görsel üretimi
+
+`generate_image` görseli worker kuyruğunu beklemeden, sohbet turunun içinde üretir. Eski hat (Task → ExecutionJob → provider → Asset/Creative/onay/kart) aynen kullanılır; değişen üç şey vardır:
+
+1. **Hemen başlar.** Tool görevi planlar, sonra `driveJobInline` (`src/server/chat/inline-job.ts`) ile işi kendisi sürer (worker'ın 10 sn'lik tick'ini beklemez). Önce işin outbox `execution.dispatch` olayını alır (`OutboxRepository.claimDispatchForInline`, PENDING → PROCESSED): olay PENDING kalsaydı worker, OpenAI provider'ları üretimin tamamını `execute()` içinde yaptığı için referanssız RUNNING görünen işi "takılmış" sayıp sıfırlar ve **ikinci kez üretirdi** (çift harcama). Sonra `startExecution` işi CAS ile sahiplenir. Olayı worker zaten almışsa iş ona bırakılır, tool yalnızca tamamlanmasını bekler.
+2. **Metin LLM'i atlanır.** `imagePrompt`, `caption` ve `copy`'yi sohbet modeli yazar (marka bağlamı zaten onda) ve payload'da `preset` olarak provider'a gider. Worker yolunda (`preset` yok) provider eskisi gibi kendi LLM çağrısını yapar.
+3. **Önizleme akar.** Bir izleyici varken (`creative-progress.ts`) `gpt-image-2` `stream: true, partial_images: 2` ile çağrılır; ara görüntüler `image.partial` SSE olayı olarak gelir, bitince mevcut `creative-ready` kartı düşer. Akış başarısız olursa tek istekli yola düşülür. Referans/base görselli (edit) render'lar akıtılmaz. İzleyici varken Gemini katmanı da atlanır.
+
+**Tasarımı ne belirler:** kod hiçbir sahne, renk veya stil dayatmaz. Tasarım (1) markanın Visual Identity'sinden (ana/ikincil/vurgu renkleri, fotoğraf stili, mood, kompozisyon notları, her zaman ekle/kaçın, stil referans görseli) ve (2) sohbette müşterinin seçtiklerinden gelir. Model önce `get_visual_identity` ile kimliği okur; brief tasarımı açık bırakıyorsa (ne söylesin, görünüm, görselde yazı olsun mu, format) tek bir `ask_user` turuyla, seçenekleri o markanın kimliğinden türeterek sorar; brief netse doğrudan üretir. Logo ve renk şeridi yapay zekâya çizdirilmez: `applyBrandTemplate` markanın ayarladığı konumda piksel-hassas ekler. Görselde yazı yalnızca müşteri isterse (`headline`, isteğe bağlı `highlight`) çizilir; logo köşesi ve renk şeridi alanı yazıdan boş bırakılır. Aksi halde görsel yazısız kalır.
+
+**Post layout'ları:** marka Brand sekmesinde layout kaydettiyse `get_visual_identity` bunları (`layouts`: id, ad, uygun formatlar, başlık var mı) döner ve `generate_image` isteğe bağlı `layoutId` alır. Model belirgin olanı kendisi seçer (yazı isteniyorsa başlıklı bir layout), birden çoğu uyuyorsa tek `ask_user` turunda seçenek olarak sorabilir; `layoutId` yoksa formata uygun olan/varsayılan uygulanır. Tool sonucu **gerçekten kullanılan** layout'u (işin `rawResult`'ından okunur) modele bildirir; bilinmeyen id sessizce varsayılana düşmez, model bunu müşteriye söyler. Ayrıntı: [brand-kit.md](./brand-kit.md).
+
+Kalite: sohbette varsayılan `draft` = `medium`; kullanıcı açıkça yayına hazır/en yüksek kalite isterse `final` = `high`. Varolan bir görselin yüksek kaliteli sürümü ayrı bir üretimdir (yeni creative), mevcut olanı yerinde değiştirmez.
+
+## İçerik paketi (konu → paket → canlı üretim)
+
+Müşteri çıktı türü söylemeden bir konu/hedef yazınca ("Kommo CRM sağlık turizmi") model soru sormaz: bağlamındaki **ajans yetenekleri** (aktif departmanlar, üretebildikleri çıktılar, bağlı kanallar; `deliverables.ts` kataloğu + `agency-focus.ts`) ile aynı yanıtta `propose_content_package` çağırır. Sonuç `content-package` kartıdır: 1-5 parça (Instagram post, SEO yazısı, Reel fikri, reklam metni, e-posta), her biri departman rozeti, başlık ve markaya/konuya özel tek cümlelik açıyla. Görsel parçada format (Post 3:4 / Story / Reel / Kare) kartta seçilir. Sunucu pasif departman çıktısını ve formatsız görseli reddeder (hata modele döner); yeni öneri eski açık paketleri `superseded` yapar.
+
+**"Create selected (n)" işi hemen ve sohbette başlatır.** Kart seçilenleri sohbete verir (`chat-package-context.tsx`); sohbet her parça için anında kendi assistant mesajını açar (kullanıcı balonu yok) ve `POST /api/projects/[id]/chat/package` (SSE) akışını okur:
+
+1. Sunucu (`content-package-run.ts`) kartı Serializable transaction'da `draft → started` yapar (çift tıklama çift iş üretmez; yarışı kaybeden P2034 alırsa "already being started" der), sonra seçilen parçaları **aynı anda** çalıştırır. Her parça bölümünün görevidir (`TaskPlanner.planForCapability`, `commandId` = paketin Command satırı) ve `generate_image` gibi `driveJobInline` ile sürülür (dispatch olayını önce alır; worker aynı işi çift çalıştıramaz). Görsel parçalar `generate_image` gibi taslak (`medium`) kalitede çizilir; art arda yüksek kaliteli render'lar görsel çağrısının zaman sınırına dayanır. İş bitince kartın `startedCount`/`startedItemIds` alanları yalnızca gerçekten görevi açılanları listeler.
+2. Olaylar parça kimliğiyle etiketlidir: `item.start` (görev var; metin parçası "running" kartına döner), `item.partial` (görsel önizleme, `gpt-image-2` akışı, `creative-progress.ts`), `item.done` (son kart + kalıcı sohbet satırının id'si), `package.done`. Bir parçanın hatası ötekileri durdurmaz; tanınan bütçe/kota hataları `limit-notice` kartı olur. Hiçbir görev açılamazsa kart yeniden `draft` olur.
+3. Kalıcılık: yürütme hattı zaten her görev için tek bir SYSTEM satırı yazar ("loading/running" → yerinde "creative-ready / task-result / failed"). Sohbet sayfası paketin görevlerinin satırlarını da yükler (`page.tsx`, `PACKAGE_ROW_KINDS`; creative-ready de dahil, genel creative sorgusunun 40 satır sınırına takılmasın diye); yenilemeden sonra yerel mesaj, görevinin satırı **final** olunca düşer (`package-run.ts`), o zamana dek satırın "running" hali gizlenir. İstemci koparsa iş sunucuda biter; canlı akış yokken sayfa, süren iş görünüyorsa (taze bir "generating/running" satırı ya da satırı henüz açılmamış, 2 dk'dan genç bir paket) 6 sn'de bir kendini yeniler (`needsProgressPoll`). Kartın "basıldı" durumu sohbette tutulur (`chat-package-context.tsx`) ve kart paket kimliğiyle anahtarlanır: assistant-ui mesajları konuma göre anahtarladığı için liste kayınca kart başka paketin durumunu devralmasın.
+4. Yazı çıktıları (`CREATE_COPY`, `CREATE_CAPTION`, `EMAIL_DRAFT`) müşterinin istediği görevlerde (`createdByType = USER`) `task-result` kartında **açık** gelir (`expanded`, `shouldExpandTaskResult`); araştırma ve otonom iş planı çıktıları eskisi gibi kapalı.
+
+Not: metin sağlayıcısı (`openai-ai.provider.ts`) yanıtı bir bütün olarak döndürür; yazı parçaları token token akmaz, "running" kartı sonra sonuç kartı gelir.
+
+## Hata davranışı
+
+- Tanınan engeller (bütçe, kota, anahtar yok, oran sınırı, zaman aşımı): `limit-notice` kartı, yedeğe düşülmez.
+- Model hiçbir şey üretmeden ve hiçbir iş kuyruğa girmeden düşerse: eski kural tabanlı `parseIntent` yedeği.
+- Bir tool çalıştıktan veya metin akıtıldıktan sonra hata: yedeğe **düşülmez** (çift iş / çelişen metin olmasın), yalnızca dürüst hata.
+- Kullanıcı Stop'a basarsa: istek iptal olur, o ana kadarki metin kaydedilir.
+
+## Bilinen sınırlar
+
+- Inline çalıştırma (`generate_image`, içerik paketi) işin dispatch olayını tükettiği için, süreç ölürse (redeploy) o iş worker tarafından yeniden denenmez: RUNNING kalan işi self-healing 30 dk sonra düşürür; olayı aldıktan ama işi sahiplenmeden (yüzlerce ms) ölürse iş QUEUED kalır ve elle iptal edilmelidir. Worker'ın "takılmış dispatch" kurtarması yaşı olmayan RUNNING işi sıfırladığı için olay tüketilmeden inline iş güvenle sürülemez.
+- İçerik paketi: kart `started` olduktan sonra, ilk görev açılmadan (~1 sn) sunucu ölürse kart "started" kalır ve yeniden denenemez (müşteri ajandan yeni paket ister). Görevi açılamayan tek tek parçalar da karttan yeniden denenmez; sohbette hata mesajı olarak görünür.
+- Konuşma özeti yok: eski turlar `trimHistory` ile atılır; eski bilgiye okuma tool'larıyla ulaşılır. Kalıcı özet için ek LLM çağrısı ve saklama alanı (şema) gerekir.
+- Rate limit süreç içidir; birden çok instance'ta paylaşılmaz. Asıl harcama sınırı projenin günlük `AutonomyPolicy` bütçesidir.
+- Tool izi (hangi tool çağrıldı) kalıcı değildir; yalnızca canlı akışta görünür.
+- Edit, yeni mesaj olarak gider (dal geçmişi tutulmaz); BranchPicker tek dalda gizlidir.
+
+## Test
+
+`src/server/chat/*.test.ts` ve `src/app/api/projects/[projectId]/chat/route.test.ts` (sahte model/SDK, DB'siz). Canlı OpenAI ile uçtan uca test elle yapılır.

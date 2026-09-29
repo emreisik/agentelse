@@ -8,6 +8,8 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { buildBrandKit, type BrandKit } from "@/lib/brand-kit";
+import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import { CreativeRepository } from "@/server/repositories/creative.repository";
 import { getBrandTwin, type BrandTwin } from "@/server/brand-twin/brand-twin";
 import type { LibraryAsset } from "@/components/hub-core/panels/library-browser";
@@ -46,6 +48,9 @@ export type WorkspaceResumeStats = {
 
 export type WorkspaceRightPanelData = {
   brand: BrandTwin | null;
+  // Everything visual about the brand for the Brand tab (logos in both
+  // variants, role-labelled palette, fonts, style, post template).
+  brandKit: BrandKit | null;
   website: string | null;
   autopilotMode: WorkspaceAutopilotMode;
   resumeStats: WorkspaceResumeStats;
@@ -62,6 +67,17 @@ export type WorkspaceRightPanelData = {
     month: string; // "YYYY-MM", the range `items` was fetched for
   };
 };
+
+// The brand's structured style data (both logo variants, role-split colours,
+// photography style, template). BrandTwin deliberately carries only a flat
+// summary of this, so the Brand tab reads it directly.
+async function loadBrandStyle(projectId: string) {
+  const brand = await prisma.brand.findFirst({
+    where: { projectId, isDefault: true },
+    select: { id: true },
+  });
+  return brand ? resolveBrandStyleContext(brand.id) : null;
+}
 
 function toOutputItem(
   creative: Awaited<
@@ -110,6 +126,7 @@ export async function getWorkspaceRightPanelData(
     schedule,
     policy,
     statusCounts,
+    brandStyle,
   ] = await Promise.all([
     getBrandTwin(projectId),
     prisma.project.findUnique({
@@ -151,6 +168,7 @@ export async function getWorkspaceRightPanelData(
       where: { projectId },
       _count: { _all: true },
     }),
+    loadBrandStyle(projectId),
   ]);
 
   const countFor = (statuses: CreativeStatus[]) =>
@@ -158,8 +176,19 @@ export async function getWorkspaceRightPanelData(
       .filter((row) => statuses.includes(row.status))
       .reduce((sum, row) => sum + row._count._all, 0);
 
+  const brandKit = brand
+    ? buildBrandKit({
+        legacyColors: brand.visualDNA.colors,
+        fonts: brand.visualDNA.fonts,
+        logoAssetId: brandStyle?.logoAssetId ?? brand.visualDNA.logoAssetId,
+        darkLogoAssetId: brandStyle?.darkLogoAssetId ?? null,
+        identity: brandStyle?.visualIdentity ?? null,
+      })
+    : null;
+
   return {
     brand,
+    brandKit,
     website: project?.domain ?? null,
     autopilotMode: policy?.autopilotMode ?? "AUTOPILOT",
     resumeStats: {

@@ -6,6 +6,14 @@ import { prisma } from "@/lib/prisma";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { dayKeyInTimezone, zonedDateTimeToUtc } from "@/lib/timezone";
 import { generateCreativeImage } from "@/server/media/creative-image";
+import { loadReferenceImage } from "@/server/media/brand-logo";
+import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
+import {
+  planCreativeLayout,
+  safeZonePercent,
+} from "@/server/media/creative-layout";
+import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
+import { applyBrandTemplate } from "@/server/media/creative-template";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { CreativeRepository } from "@/server/repositories/creative.repository";
@@ -261,6 +269,30 @@ export async function planWeeklyInstagramContent(
   const schedulable = autonomyPolicy.autopilotMode !== "REVIEW_EVERYTHING";
   const createdCreativeIds: string[] = [];
 
+  // The brand's look — logo, palette, style and saved post layouts — read once
+  // for the whole batch, like the context above. Best-effort: without it a
+  // post is made from the idea alone, as this planner always did.
+  const brandStyle = await resolveBrandStyleContext(brandId).catch((error) => {
+    console.error(
+      "[instagram-week-planner] brand style unavailable, generating without it:",
+      error,
+    );
+    return null;
+  });
+  const styleImage = brandStyle
+    ? await loadReferenceImage(
+        brandStyle.visualIdentity?.referenceImageAssetId ?? undefined,
+      ).catch(() => null)
+    : null;
+  // Every post of the batch has the same format and no on-image headline, so
+  // one layout decision covers them all (the brand's default for the format).
+  const layoutPlan = planCreativeLayout({
+    visualIdentity: brandStyle?.visualIdentity,
+    hasLogo: Boolean(brandStyle?.logoAssetId || brandStyle?.darkLogoAssetId),
+    pixelSize: format.pixelSize,
+    hasHeadline: false,
+  });
+
   // Best-effort per idea — one failed generation (provider outage, content
   // policy rejection) must not stop the rest of the week's batch, same
   // pattern as IdeaFoundry.generateForTopOpportunities.
@@ -285,13 +317,58 @@ export async function planWeeklyInstagramContent(
         1,
       );
 
-      const prompt = `${idea.title}: ${idea.description}`;
+      const subject = `${idea.title}: ${idea.description}`;
+      const prompt = brandStyle
+        ? buildCreativePrompt({
+            subject,
+            brandContext: {
+              visualGuidelines: brandStyle.legacyVisualGuidelines,
+              approvedColors: brandStyle.legacyApprovedColors,
+              visualIdentity: brandStyle.visualIdentity,
+            },
+            platformLabel: format.label,
+            contentFormatLabel: format.contentFormatLabel,
+            pixelSize: format.pixelSize,
+            safeZone: format.safeZone,
+            hasStyleReference: Boolean(styleImage),
+            reservedZones: layoutPlan.reservedZones,
+            layoutComposition: layoutPlan.composition,
+          })
+        : subject;
       const generated = await generateCreativeImage(prompt, {
         imageSize: format.pixelSize,
+        referenceImage: styleImage ?? undefined,
       });
       if (!generated) {
         result.imagesFailed += 1;
         continue;
+      }
+
+      // The brand's logo and colour bar / band, composited for real (prompt
+      // text alone only nudges the model) in the position its post layout
+      // says. Best-effort: a failure keeps the raw image and the post.
+      if (brandStyle) {
+        try {
+          const templated = await applyBrandTemplate({
+            storageKey: generated.storageKey,
+            mimeType: generated.mimeType,
+            lightLogoAssetId: brandStyle.logoAssetId,
+            darkLogoAssetId: brandStyle.darkLogoAssetId,
+            accentColors: brandStyle.visualIdentity?.accentColors,
+            legacyApprovedColors: brandStyle.legacyApprovedColors,
+            template: layoutPlan.template,
+            safeZone: layoutPlan.layout
+              ? safeZonePercent(format.safeZone, format.pixelSize)
+              : undefined,
+            trimLogo: Boolean(layoutPlan.layout),
+          });
+          if (templated) generated.size = templated.size;
+        } catch (error) {
+          console.error(
+            `[instagram-week-planner] applyBrandTemplate failed for idea ${idea.id}:`,
+            error,
+          );
+        }
       }
 
       const asset = await prisma.asset.create({
@@ -329,6 +406,7 @@ export async function planWeeklyInstagramContent(
             prompt,
             source: "auto_weekly_plan",
             ideaId: idea.id,
+            layoutTemplate: layoutPlan.meta,
           },
         },
       );

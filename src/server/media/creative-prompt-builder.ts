@@ -40,6 +40,29 @@ export type CreativePromptInput = {
   // board" image instead, which the wording below explicitly must NOT be
   // copied for its literal subject/logo content — only style/palette/mood.
   hasStyleReference?: boolean;
+  // Areas the brand's compositing will cover afterwards (logo, colour bar or
+  // band): key subject matter and any text stay out of them.
+  reservedZones?: string;
+  // Scene guidance from the chosen post layout ("keep the upper third calm...").
+  layoutComposition?: string;
+  // Headline mode (chat's generate_image, only when the client wants text
+  // on the image): the model renders that one headline itself instead of
+  // producing a textless photo. Absent = the classic textless behavior.
+  typography?: CreativeTypography;
+};
+
+export type CreativeTypography = {
+  // The on-image line the client asked for, brand language. Rendered
+  // exactly, character for character (Turkish diacritics included).
+  headline: string;
+  // Words of the headline set in the accent colour.
+  highlight?: string;
+  // Accent colour hex from the brand's visual identity, when configured.
+  accentHex?: string;
+  // How the headline is set and where it goes, from the chosen post layout
+  // ("large, centered, at most 3 lines, placed in the upper third...").
+  // Absent = a generic "calm area of the scene".
+  placement?: string;
 };
 
 // Global baseline — applies to every generation regardless of brand. A
@@ -51,15 +74,54 @@ const STYLE_AND_LIGHTING =
   "photographic, illustrated, or a stylish mix, whichever best fits the " +
   "subject. Clean, intentional, on-brand — not a generic AI-rendered look.";
 
-const AVOID =
-  "Avoid: any text, words, letters, numbers, or typography anywhere in the " +
+// Textless baseline vs. editorial mode: the only difference is who owns the
+// words. Everything else in the avoid list applies to both.
+const AVOID_TEXTLESS =
+  "any text, words, letters, numbers, or typography anywhere in the " +
   "image (no headlines, captions, logos, or watermarks — the image must be " +
-  "completely textless; captions are added separately, outside the image), " +
+  "completely textless; captions are added separately, outside the image), ";
+
+const AVOID_EDITORIAL_TEXT =
+  "any text other than the headline specified in " +
+  "TYPOGRAPHY — no extra words, no gibberish or pseudo-text anywhere (screens, " +
+  "signs and UI mockups use abstract bars and lines instead of writing), " +
+  "no extra logos or watermarks, ";
+
+const AVOID_REST =
   "airbrushed skin, plastic/waxy texture, over-smoothed CGI look, " +
   "perfectly symmetrical artificial composition, glossy 3D-render sheen, " +
   "stock-photo watermarks, extra or malformed limbs. " +
   "Prefer: visible natural texture, subtle imperfections, natural " +
   "asymmetry, candid unposed framing, faint natural film grain.";
+
+// Typography mode only changes WHO owns the words and how much finish the
+// image needs — never the look. The look (palette, photography style, mood,
+// composition, always-include / always-avoid) comes from the brand's own
+// Visual Identity through the BRAND / STYLE sections below and from what the
+// client chose in conversation; nothing here prescribes a scene, a setting or
+// a colour.
+const EDITORIAL_BASELINE =
+  "Art-directed, high-finish marketing image with ONE clear focal idea and a " +
+  "confident, uncluttered composition. Follow the BRAND section for palette, " +
+  "photography style, mood and rules — those take precedence over any " +
+  "generic taste. Crisp, professional, not a generic AI-rendered look.";
+
+function typographyBlock(t: CreativeTypography, reservedZones?: string): string {
+  const accent = t.accentHex
+    ? `the brand accent colour ${t.accentHex}`
+    : "the brand's accent colour from the BRAND section";
+  const parts = [
+    "Render exactly this text, character for character, correctly spelled with every diacritic (ş ğ ı İ ö ü ç etc.), perfectly sharp and legible. It is the ONLY text in the image.",
+    `HEADLINE: "${t.headline}" — set in a refined typeface that suits the brand's tone (from the BRAND section), high contrast against its background, at most 3-4 lines, generous margins${t.highlight ? `; set the words "${t.highlight}" in ${accent}` : ""}.`,
+    t.placement
+      ? `Set the headline ${t.placement}. Keep that area calm (deepen it with a subtle natural gradient if needed) so contrast is strong.`
+      : "Place it on a calm area of the scene (deepen that area with a subtle natural gradient if needed) so contrast is strong.",
+    reservedZones
+      ? `Keep text and busy detail out of: ${reservedZones}`
+      : "",
+  ];
+  return parts.filter(Boolean).join(" ");
+}
 
 const PHOTOGRAPHY_STYLE_PHRASE: Record<string, string> = {
   PHOTOGRAPHIC: "Photographic, camera-realistic imagery.",
@@ -255,6 +317,9 @@ export function buildCreativePrompt({
   pixelSize,
   safeZone,
   hasStyleReference,
+  reservedZones,
+  layoutComposition,
+  typography,
 }: CreativePromptInput): string {
   const { brandLine, styleAddition, avoidAddition, compositionAddition } =
     extractBrandStyle(brandContext);
@@ -286,13 +351,24 @@ export function buildCreativePrompt({
     );
   }
   if (compositionAddition) compositionParts.push(compositionAddition);
+  if (layoutComposition) compositionParts.push(layoutComposition);
+  if (reservedZones) {
+    compositionParts.push(
+      `Keep the main subject clear of these areas, which are covered afterwards: ${reservedZones}`,
+    );
+  }
+
+  const avoid = `Avoid: ${typography ? AVOID_EDITORIAL_TEXT : AVOID_TEXTLESS}${AVOID_REST}`;
 
   return [
     `SUBJECT: ${subject}`,
-    `STYLE & LIGHTING: ${[STYLE_AND_LIGHTING, styleAddition].filter(Boolean).join(" ")}`,
+    `STYLE & LIGHTING: ${[typography ? EDITORIAL_BASELINE : STYLE_AND_LIGHTING, styleAddition].filter(Boolean).join(" ")}`,
     `COMPOSITION: ${compositionParts.join(" ")}`,
+    typography
+      ? `TYPOGRAPHY: ${typographyBlock(typography, reservedZones)}`
+      : null,
     brandLine ? `BRAND: ${brandLine}` : null,
-    `AVOID: ${[AVOID, avoidAddition].filter(Boolean).join(" ")}`,
+    `AVOID: ${[avoid, avoidAddition].filter(Boolean).join(" ")}`,
   ]
     .filter((section): section is string => Boolean(section))
     .join("\n\n");

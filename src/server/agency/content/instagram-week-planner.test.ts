@@ -34,6 +34,18 @@ vi.mock("@/server/media/creative-image", () => ({
   generateCreativeImage,
 }));
 
+// The brand's look (logo, palette, saved post layouts). The default below is a
+// brand with no visual identity; tests swap it to exercise layouts.
+const resolveBrandStyleContext = vi.fn();
+vi.mock("@/server/media/brand-style-context", () => ({
+  resolveBrandStyleContext,
+}));
+const applyBrandTemplate = vi.fn();
+vi.mock("@/server/media/creative-template", () => ({ applyBrandTemplate }));
+vi.mock("@/server/media/brand-logo", () => ({
+  loadReferenceImage: vi.fn().mockResolvedValue(null),
+}));
+
 const checkAndIncrement = vi.fn();
 const getOrCreate = vi.fn();
 vi.mock("@/server/repositories/autonomy-policy.repository", () => ({
@@ -108,12 +120,22 @@ function generatedImage(id: string) {
   };
 }
 
+const BARE_BRAND_STYLE = {
+  logoAssetId: null,
+  darkLogoAssetId: null,
+  legacyApprovedColors: null,
+  legacyVisualGuidelines: null,
+  visualIdentity: null,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   scheduleFindMany.mockResolvedValue([]);
   checkAndIncrement.mockResolvedValue(undefined);
   getOrCreate.mockResolvedValue({ autopilotMode: "AUTOPILOT" });
   getBrandTwin.mockResolvedValue(null);
+  resolveBrandStyleContext.mockResolvedValue(BARE_BRAND_STYLE);
+  applyBrandTemplate.mockResolvedValue(null);
   brandFindUnique.mockResolvedValue({ name: "Acme" });
   reasoningRun.mockResolvedValue({ output: { safe: true } });
   approvalCreate.mockResolvedValue({ id: "approval-1" });
@@ -523,5 +545,115 @@ describe("selectIdeasForWeek — content mix", () => {
     });
 
     expect(result.map((i) => i.id).sort()).toEqual(["b1", "p1"]);
+  });
+});
+
+// The planner used to make every post from the bare idea text and add no logo
+// or colour bar at all. It now reads the brand's look once per batch, lets the
+// brand's post layout decide where the logo / bar go, and stays best-effort:
+// nothing about the brand's look may cost a post.
+describe("planWeeklyInstagramContent — brand look and post layouts", () => {
+  const brandWithLayouts = async () => {
+    const { DEFAULT_KIT_TEMPLATE } = await import("@/lib/brand-kit");
+    const { buildPresetLayouts } = await import("@/lib/layout-templates");
+    return {
+      logoAssetId: "logo-light",
+      darkLogoAssetId: null,
+      legacyApprovedColors: null,
+      legacyVisualGuidelines: null,
+      visualIdentity: {
+        primaryColors: [{ hex: "#0b1f3a" }],
+        secondaryColors: [{ hex: "#0d9488" }],
+        accentColors: [{ hex: "#2dd4bf" }],
+        photographyStyle: null,
+        styleRefinement: null,
+        moodTags: [],
+        compositionNotes: null,
+        backgroundTone: null,
+        alwaysInclude: [],
+        alwaysAvoid: [],
+        referenceImageAssetId: null,
+        layoutTemplates: buildPresetLayouts(DEFAULT_KIT_TEMPLATE),
+        template: { ...DEFAULT_KIT_TEMPLATE },
+      },
+    };
+  };
+
+  it("builds the prompt from the brand's identity and lays the post out with its default layout", async () => {
+    resolveBrandStyleContext.mockResolvedValue(await brandWithLayouts());
+    ideaFindMany.mockResolvedValueOnce([idea("a")]);
+    generateCreativeImage.mockResolvedValueOnce(generatedImage("a"));
+
+    const result = await planWeeklyInstagramContent(SCOPE, 3);
+    expect(result.imagesGenerated).toBe(1);
+
+    const prompt = generateCreativeImage.mock.calls[0]![0] as string;
+    expect(prompt).toContain("Idea a: Description a");
+    expect(prompt).toContain("#0b1f3a"); // the brand's palette, not the model's
+    expect(prompt).toContain("thin band along the bottom edge"); // areas the bar will cover
+
+    expect(applyBrandTemplate).toHaveBeenCalledTimes(1);
+    expect(applyBrandTemplate.mock.calls[0]![0]).toMatchObject({
+      storageKey: "mock://a",
+      lightLogoAssetId: "logo-light",
+      template: { enabled: true, logoPosition: "BOTTOM_RIGHT", accentBarEnabled: true },
+      trimLogo: true,
+    });
+
+    expect(creativeAddVersion).toHaveBeenCalledWith(
+      "creative-Idea a",
+      "p-1",
+      expect.objectContaining({
+        generationMetadata: expect.objectContaining({
+          source: "auto_weekly_plan",
+          layoutTemplate: { id: "classic", name: "Classic" },
+        }),
+      }),
+    );
+  });
+
+  it("uses the size the compositing produced", async () => {
+    resolveBrandStyleContext.mockResolvedValue(await brandWithLayouts());
+    applyBrandTemplate.mockResolvedValue({ size: 4321 });
+    ideaFindMany.mockResolvedValueOnce([idea("a")]);
+    generateCreativeImage.mockResolvedValueOnce(generatedImage("a"));
+
+    await planWeeklyInstagramContent(SCOPE, 3);
+
+    expect(assetCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ size: 4321 }),
+    });
+  });
+
+  it("makes the post from the idea alone when the brand's look cannot be read", async () => {
+    resolveBrandStyleContext.mockRejectedValue(new Error("db blip"));
+    ideaFindMany.mockResolvedValueOnce([idea("a")]);
+    generateCreativeImage.mockResolvedValueOnce(generatedImage("a"));
+
+    const result = await planWeeklyInstagramContent(SCOPE, 3);
+
+    expect(result.imagesGenerated).toBe(1);
+    expect(generateCreativeImage.mock.calls[0]![0]).toBe("Idea a: Description a");
+    expect(applyBrandTemplate).not.toHaveBeenCalled();
+    expect(creativeAddVersion).toHaveBeenCalledWith(
+      "creative-Idea a",
+      "p-1",
+      expect.objectContaining({
+        generationMetadata: expect.objectContaining({ layoutTemplate: null }),
+      }),
+    );
+  });
+
+  it("keeps the post when compositing the logo fails", async () => {
+    resolveBrandStyleContext.mockResolvedValue(await brandWithLayouts());
+    applyBrandTemplate.mockRejectedValue(new Error("sharp exploded"));
+    ideaFindMany.mockResolvedValueOnce([idea("a")]);
+    generateCreativeImage.mockResolvedValueOnce(generatedImage("a"));
+
+    const result = await planWeeklyInstagramContent(SCOPE, 3);
+
+    expect(result.imagesGenerated).toBe(1);
+    expect(result.imagesFailed).toBe(0);
+    expect(ideaTransition).toHaveBeenCalledWith("a", "p-1", "MEASURING");
   });
 });

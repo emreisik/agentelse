@@ -23,6 +23,13 @@ import type { CreativeContentFormat, SocialPlatform } from "@prisma/client";
 
 type State = { ok: true } | { ok: false; message: string } | null;
 
+// A saved post layout the picker can offer (see the Brand tab's layouts).
+export type StudioLayoutOption = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
 // For regenerating a creative's image or editing the existing image with
 // an instruction. Both modes share the same form; the difference is the
 // submitted `mode` field: "edit" feeds the existing image to the model as
@@ -37,11 +44,17 @@ export function CreativeImageStudio({
   // picker below doesn't render at all: zero UI change for a project
   // without FAL_API_KEY set, same as before this option existed.
   isFalConfigured = false,
+  // The brand's saved post layouts and the one the current version was made
+  // with. Empty = the brand has none: no picker, posts compose as before.
+  layouts = [],
+  currentLayoutId = null,
 }: {
   creativeId: string;
   hasImage: boolean;
   platform?: SocialPlatform | null;
   isFalConfigured?: boolean;
+  layouts?: StudioLayoutOption[];
+  currentLayoutId?: string | null;
 }) {
   // A platform can carry more than one content-type slot (Instagram Post
   // vs. Story vs. Reel are different pixel targets) — when there's more
@@ -63,6 +76,15 @@ export function CreativeImageStudio({
   );
   const falModelOptionLabel = (model: (typeof FAL_IMAGE_MODELS)[number]) =>
     `${model.category} · ${model.label} — ${model.approxPrice}`;
+  // "" = keep the version's own layout (or the brand's default for the
+  // format). Only a from-scratch render can switch layout: an edit builds on
+  // pixels that already carry the current one.
+  const [layoutId, setLayoutId] = useState("");
+  const currentLayout = layouts.find((layout) => layout.id === currentLayoutId);
+  const keepLayoutLabel = currentLayout
+    ? `Keep current (${currentLayout.name})`
+    : "Brand default";
+  const pickedLayout = layouts.find((layout) => layout.id === layoutId);
 
   const [, formAction] = useActionState(
     async (_prev: State, form: FormData) => {
@@ -93,6 +115,9 @@ export function CreativeImageStudio({
       ) : null}
       {falModelId ? (
         <input type="hidden" name="falModelId" value={falModelId} />
+      ) : null}
+      {layoutId ? (
+        <input type="hidden" name="layoutId" value={layoutId} />
       ) : null}
 
       <div className="flex items-center justify-between gap-2">
@@ -182,6 +207,43 @@ export function CreativeImageStudio({
               ))}
             </SelectContent>
           </Select>
+        </label>
+      ) : null}
+
+      {layouts.length > 0 ? (
+        <label className="block space-y-1">
+          <span className="text-[11px] font-medium text-muted-foreground">
+            Post layout
+          </span>
+          <Select
+            items={[
+              { value: "", label: keepLayoutLabel },
+              ...layouts.map((layout) => ({
+                value: layout.id,
+                label: layout.name,
+              })),
+            ]}
+            value={layoutId}
+            onValueChange={(next) => setLayoutId(next ?? "")}
+          >
+            <SelectTrigger size="sm" className="h-7 w-full text-[11px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start" alignItemWithTrigger={false}>
+              <SelectItem value="">{keepLayoutLabel}</SelectItem>
+              {layouts.map((layout) => (
+                <SelectItem key={layout.id} value={layout.id}>
+                  {layout.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span className="block text-[11px] text-muted-foreground">
+            {pickedLayout?.description ||
+              "Where the logo, the color bar and any headline go."}{" "}
+            Used when generating from scratch; editing keeps the image&apos;s own
+            layout.
+          </span>
         </label>
       ) : null}
 

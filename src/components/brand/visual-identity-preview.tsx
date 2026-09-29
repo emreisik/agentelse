@@ -32,7 +32,11 @@ export function VisualIdentityPreview({
   accentBarColorHex,
   accentBarHeightPercent,
   accentBarPosition,
+  label = "Live preview",
 }: {
+  // Caption above the canvas; null hides it (when the surrounding UI
+  // already says what the preview is).
+  label?: string | null;
   logoUrl: string | null;
   primaryColors: ColorSwatchValue[];
   secondaryColors: ColorSwatchValue[];
@@ -62,7 +66,9 @@ export function VisualIdentityPreview({
 
   return (
     <div className="space-y-1.5">
-      <p className="text-xs font-medium text-foreground">Live preview</p>
+      {label ? (
+        <p className="text-xs font-medium text-foreground">{label}</p>
+      ) : null}
       <div
         className="relative aspect-[4/5] w-full overflow-hidden rounded-xl ring-1 ring-foreground/10"
         style={{

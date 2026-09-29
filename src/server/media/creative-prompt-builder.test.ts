@@ -132,3 +132,49 @@ describe("buildCreativePrompt", () => {
     expect(prompt).toContain("no glitter effects");
   });
 });
+
+describe("buildCreativePrompt with a post layout", () => {
+  it("adds the layout's scene guidance and the areas compositing will cover", () => {
+    const prompt = buildCreativePrompt({
+      subject: "A calm clinic reception",
+      layoutComposition: "Keep the upper third calm and low-detail.",
+      reservedZones:
+        "the bottom 13% of the frame (a solid brand-color band is added there).",
+    });
+    expect(prompt).toContain("Keep the upper third calm and low-detail.");
+    expect(prompt).toContain(
+      "Keep the main subject clear of these areas, which are covered afterwards: the bottom 13% of the frame",
+    );
+    // Still a textless image.
+    expect(prompt).toContain("completely textless");
+    expect(prompt).not.toContain("TYPOGRAPHY:");
+  });
+
+  it("places the headline where the layout says and keeps text out of covered areas", () => {
+    const prompt = buildCreativePrompt({
+      subject: "A calm clinic reception",
+      reservedZones: "the bottom-right corner (the brand logo is added there).",
+      typography: {
+        headline: "Klinik siteniz ilk soruları yanıtlıyor mu?",
+        highlight: "ilk soruları",
+        placement: "large, centered, at most 3 lines, placed in the upper third of the frame",
+      },
+    });
+    expect(prompt).toContain("TYPOGRAPHY:");
+    expect(prompt).toContain(
+      "Set the headline large, centered, at most 3 lines, placed in the upper third of the frame.",
+    );
+    expect(prompt).toContain(
+      "Keep text and busy detail out of: the bottom-right corner",
+    );
+    expect(prompt).not.toContain("Place it on a calm area of the scene");
+  });
+
+  it("keeps the generic wording when no layout gives a placement", () => {
+    const prompt = buildCreativePrompt({
+      subject: "s",
+      typography: { headline: "Hello" },
+    });
+    expect(prompt).toContain("Place it on a calm area of the scene");
+  });
+});

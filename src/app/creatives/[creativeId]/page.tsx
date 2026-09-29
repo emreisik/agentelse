@@ -10,6 +10,8 @@ import {
 } from "@/server/security/tenant-context";
 import { isAgentelseError } from "@/server/security/errors";
 import { isFalImageConfigured } from "@/server/reasoning/fal-image-client";
+import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
+import { readLayoutMeta } from "@/server/media/creative-layout";
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionForm } from "@/components/shared/action-form";
 import { CreativeImageStudio } from "@/components/creative/creative-image-studio";
@@ -51,7 +53,7 @@ export default async function CreativeDetailPage({
     throw error;
   }
 
-  const [project, pendingApproval] = await Promise.all([
+  const [project, pendingApproval, brandStyle] = await Promise.all([
     prisma.project.findUniqueOrThrow({ where: { id: creative.projectId } }),
     prisma.approval.findFirst({
       where: {
@@ -60,7 +62,19 @@ export default async function CreativeDetailPage({
         status: "PENDING",
       },
     }),
+    resolveBrandStyleContext(creative.brandId),
   ]);
+  // The brand's saved post layouts for the Studio's layout picker, and the
+  // one the newest version was laid out with.
+  const layoutOptions = (
+    brandStyle.visualIdentity?.layoutTemplates?.items ?? []
+  ).map(({ id, name, description }) => ({
+    id,
+    name,
+    description: description || undefined,
+  }));
+  const currentLayoutId =
+    readLayoutMeta(creative.versions[0]?.generationMetadata)?.id ?? null;
 
   return (
     <AppShell projectId={project.id}>
@@ -208,6 +222,8 @@ export default async function CreativeDetailPage({
                         !version.asset.storageKey.startsWith("mock://"),
                       )}
                       isFalConfigured={isFalImageConfigured()}
+                      layouts={layoutOptions}
+                      currentLayoutId={currentLayoutId}
                     />
                   ) : null}
 

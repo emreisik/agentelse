@@ -140,6 +140,13 @@ export type GenerateCreativeImageOptions = {
   // openai-image-client.ts's generateOpenAIImage comment. Exposed here so
   // a caller can trade fidelity for cost on a bulk/draft generation path.
   quality?: ImageQuality;
+  // Streamed in-progress previews (OpenAI text-to-image only) — see
+  // generateOpenAIImage. Ignored by every other tier.
+  onPartial?: (partial: { index: number; b64: string }) => void;
+  // Skip the Gemini tier. The chat's inline generation is OpenAI-only; a
+  // Gemini attempt (fails fast on a billing block, but can also run to its
+  // full timeout) would only delay the render the client is watching.
+  skipGemini?: boolean;
   // A fal-image-models.ts id, set only when the user explicitly picked a
   // fal.ai model in the Image Studio. When present it takes over entirely
   // (see generateCreativeImage below) — deliberately no fallback to
@@ -208,6 +215,7 @@ async function tryOpenAI(
       options.imageSize,
       options.referenceImage,
       options.quality,
+      options.onPartial,
     );
   } catch (error) {
     console.error("[creative-image] OpenAI image generation failed:", error);
@@ -226,7 +234,7 @@ export async function generateCreativeImage(
     return viaFal ? normalizeToTarget(viaFal, opts.imageSize) : null;
   }
 
-  const viaGemini = await tryGemini(prompt, opts);
+  const viaGemini = opts.skipGemini ? null : await tryGemini(prompt, opts);
   if (viaGemini) return normalizeToTarget(viaGemini, opts.imageSize);
 
   const image = await tryOpenAI(prompt, opts);

@@ -23,6 +23,11 @@ import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
 import { applyBrandTemplate } from "@/server/media/creative-template";
+import {
+  planCreativeLayout,
+  revisionLayoutRequest,
+  safeZonePercent,
+} from "@/server/media/creative-layout";
 import { loadReferenceImage } from "@/server/media/brand-logo";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
@@ -152,6 +157,8 @@ export async function generateRealCreativeImageAction(
       : undefined;
   const falModelId =
     String(formData.get("falModelId") ?? "").trim() || undefined;
+  // "" = keep the creative's current layout (or the brand's default).
+  const layoutId = String(formData.get("layoutId") ?? "").trim() || undefined;
   const { userId } = await requireUser();
   return performCreativeRevision({
     creativeId,
@@ -159,6 +166,7 @@ export async function generateRealCreativeImageAction(
     mode,
     contentFormat,
     falModelId,
+    layoutId,
     userId,
   });
 }
@@ -199,6 +207,7 @@ export async function performCreativeRevision({
   mode,
   contentFormat,
   falModelId,
+  layoutId,
   userId,
 }: {
   creativeId: string;
@@ -210,6 +219,9 @@ export async function performCreativeRevision({
   // reviseCreativeAction, which has no model picker and stays on the
   // default Gemini -> OpenAI -> OpenClaw chain.
   falModelId?: string;
+  // A saved post layout id — only set from the Studio picker, and only
+  // honoured when rendering from scratch (see revisionLayoutRequest).
+  layoutId?: string;
   userId: string;
 }): Promise<ActionResult> {
   try {
@@ -274,6 +286,30 @@ export async function performCreativeRevision({
           brandStyle.visualIdentity?.referenceImageAssetId ?? undefined,
         );
 
+    // Which post layout this revision uses. Editing keeps the layout the image
+    // already carries (its logo and band are baked into the pixels being
+    // edited and are drawn again below, so any other layout would stack a
+    // second logo / band on top); a fresh render keeps it unless the Studio
+    // picker chose another or the format changed shape. See
+    // revisionLayoutRequest.
+    const identity = brandStyle.visualIdentity;
+    const revisionLayout = revisionLayoutRequest({
+      mode: baseImage ? "edit" : "new",
+      chosenId: layoutId,
+      previous: currentVersion?.generationMetadata,
+      pixelSize: platformFormat.pixelSize,
+    });
+    const layoutPlan = planCreativeLayout({
+      visualIdentity:
+        revisionLayout.keepLegacy && identity
+          ? { ...identity, layoutTemplates: null }
+          : identity,
+      hasLogo: Boolean(brandStyle.logoAssetId || brandStyle.darkLogoAssetId),
+      requestedId: revisionLayout.requestedId,
+      pixelSize: platformFormat.pixelSize,
+      hasHeadline: false,
+    });
+
     const prompt = baseImage
       ? instruction ||
         "Improve the overall visual quality while keeping the composition."
@@ -292,6 +328,8 @@ export async function performCreativeRevision({
           pixelSize: platformFormat.pixelSize,
           safeZone: platformFormat.safeZone,
           hasStyleReference: Boolean(styleImage),
+          reservedZones: layoutPlan.reservedZones,
+          layoutComposition: layoutPlan.composition,
         });
 
     const generated = await generateCreativeImage(prompt, {
@@ -322,7 +360,13 @@ export async function performCreativeRevision({
         darkLogoAssetId: brandStyle.darkLogoAssetId,
         accentColors: brandStyle.visualIdentity?.accentColors,
         legacyApprovedColors: brandStyle.legacyApprovedColors,
-        template: brandStyle.visualIdentity?.template ?? undefined,
+        template: layoutPlan.template,
+        // Story / Reel: keep a corner logo out of the app's own UI bands.
+        // Only with a saved layout, so everything else composes as before.
+        safeZone: layoutPlan.layout
+          ? safeZonePercent(platformFormat.safeZone, platformFormat.pixelSize)
+          : undefined,
+        trimLogo: Boolean(layoutPlan.layout),
       });
       if (templated) generated.size = templated.size;
     } catch (error) {
@@ -368,6 +412,9 @@ export async function performCreativeRevision({
           // logo/text reference); without this field the only way to tell
           // the difference was the server logs.
           imageProvider: generated.provider,
+          // Which saved post layout the image was laid out with (null =
+          // none): the next revision reads it back to stay consistent.
+          layoutTemplate: layoutPlan.meta,
         },
         revisionReason: baseImage
           ? `Image edited per instruction: ${instruction.slice(0, 200)}`

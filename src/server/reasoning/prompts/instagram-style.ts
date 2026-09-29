@@ -21,7 +21,7 @@ const ColorSwatchSchema = z.object({
 // The trailing .pipe(z.array(ColorSwatchSchema)) is required, not
 // decorative — see lenient-array.ts's zLenientArray for why a bare
 // .transform() breaks z.toJSONSchema() (thrown on every real call).
-function zColorSwatches(max: number) {
+export function zColorSwatches(max: number) {
   return zLenientArray(ColorSwatchSchema)
     .transform((swatches) => swatches.slice(0, max))
     .pipe(z.array(ColorSwatchSchema));

@@ -2,6 +2,10 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { parseColorSwatches, type ColorSwatch } from "@/lib/color-swatches";
+import {
+  parseLayoutTemplates,
+  type LayoutTemplates,
+} from "@/lib/layout-templates";
 import type {
   LogoPositionValue,
   AccentBarPositionValue,
@@ -37,6 +41,10 @@ export type BrandVisualIdentityContext = {
   alwaysInclude: string[];
   alwaysAvoid: string[];
   referenceImageAssetId: string | null;
+  // The brand's named post layouts, or null when it has none (then `template`
+  // below is the only layout, as it always was). Optional so existing callers
+  // and fixtures need no change.
+  layoutTemplates?: LayoutTemplates | null;
   template: {
     enabled: boolean;
     logoPosition: LogoPositionValue;
@@ -97,6 +105,7 @@ export async function resolveBrandStyleContext(
           alwaysInclude: identity.alwaysInclude,
           alwaysAvoid: identity.alwaysAvoid,
           referenceImageAssetId: identity.referenceImageAssetId,
+          layoutTemplates: parseLayoutTemplates(identity.layoutTemplates),
           template: {
             enabled: identity.templateEnabled,
             logoPosition: identity.logoPosition,

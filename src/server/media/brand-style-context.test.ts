@@ -88,6 +88,9 @@ describe("resolveBrandStyleContext", () => {
       alwaysInclude: ["always show the product from a 3/4 angle"],
       alwaysAvoid: ["no stock-photo clichés"],
       referenceImageAssetId: "asset-2",
+      // A brand that never saved layouts reads as null (its template above
+      // then applies, exactly as before layouts existed).
+      layoutTemplates: null,
       template: {
         enabled: true,
         logoPosition: "TOP_RIGHT",
@@ -99,6 +102,49 @@ describe("resolveBrandStyleContext", () => {
         accentBarPosition: "BOTTOM",
       },
     });
+  });
+
+  it("reads saved layouts, tolerating a corrupt one, and treats junk as none", async () => {
+    const { buildPresetLayouts } = await import("@/lib/layout-templates");
+    const { DEFAULT_KIT_TEMPLATE } = await import("@/lib/brand-kit");
+    const layouts = buildPresetLayouts(DEFAULT_KIT_TEMPLATE);
+    const identity = {
+      primaryColors: [],
+      secondaryColors: [],
+      accentColors: [],
+      photographyStyle: null,
+      styleRefinement: null,
+      moodTags: [],
+      compositionNotes: null,
+      backgroundTone: null,
+      alwaysInclude: [],
+      alwaysAvoid: [],
+      referenceImageAssetId: null,
+      templateEnabled: true,
+      logoPosition: "BOTTOM_RIGHT",
+      logoSizePercent: 16,
+      logoMarginPercent: 4,
+      accentBarEnabled: true,
+      accentBarColorHex: null,
+      accentBarHeightPercent: 5,
+      accentBarPosition: "BOTTOM",
+    };
+    prismaMocks.dossierFindUnique.mockResolvedValue(null);
+
+    prismaMocks.identityFindUnique.mockResolvedValue({
+      ...identity,
+      layoutTemplates: { ...layouts, items: [{ id: "BAD" }, ...layouts.items] },
+    });
+    const parsed = (await resolveBrandStyleContext("b")).visualIdentity!;
+    expect(parsed.layoutTemplates!.items.map((i) => i.id)).toEqual(
+      layouts.items.map((i) => i.id),
+    );
+
+    prismaMocks.identityFindUnique.mockResolvedValue({
+      ...identity,
+      layoutTemplates: "not layouts",
+    });
+    expect((await resolveBrandStyleContext("b")).visualIdentity!.layoutTemplates).toBeNull();
   });
 
   it("queries both tables in parallel, keyed by the same brandId", async () => {

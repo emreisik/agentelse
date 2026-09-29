@@ -997,6 +997,12 @@ model BrandVisualIdentity {
   accentBarHeightPercent Int               @default(5)
   accentBarPosition      AccentBarPosition @default(BOTTOM)
 
+  // Named post layouts (src/lib/layout-templates.ts): {version:1, defaultId,
+  // items[]}, each with logo / bar / headline placement. Validated in the
+  // app (parseLayoutTemplates), so new layout options need no migration.
+  // Null = the brand has none and the columns above apply, exactly as before.
+  layoutTemplates Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1633,6 +1639,18 @@ model Creative {
   // in the past; unscheduled creatives keep the old FIFO behavior.
   scheduledFor DateTime?
 
+  // Where and in what shape this piece is meant to go out, set when it
+  // comes from a content plan (src/lib/content-channels.ts holds the
+  // catalog: channel "instagram", formatKey "instagram.carousel"). Plain
+  // strings validated in the app so new channels need no migration; null on
+  // everything created outside a plan. `planId` groups the items saved from
+  // one plan (the chat Command that drafted it); `goal` is the plan's
+  // purpose (awareness/leads/sales/engagement/traffic).
+  channel   String?
+  formatKey String?
+  goal      String?
+  planId    String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1641,6 +1659,8 @@ model Creative {
   @@index([brandId])
   @@index([status])
   @@index([projectId, scheduledFor])
+  @@index([projectId, channel])
+  @@index([planId])
 }
 
 model CreativeVersion {

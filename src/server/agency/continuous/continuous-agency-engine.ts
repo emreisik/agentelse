@@ -4,6 +4,7 @@ import {
   FOCUS_DISABLED_TICK_STEPS,
   isAgencyFocusMode,
 } from "@/server/agency/agency-focus";
+import { isLegacyUnitEnabled } from "@/server/agency/legacy-loop";
 import { ResultMaterializer } from "@/server/agency/intelligence/research-result-materializer";
 import { ProjectSetupOrchestrator } from "@/server/agency/setup/project-setup-orchestrator";
 import { AgencyTriggerRepository } from "@/server/repositories/agency-trigger.repository";
@@ -30,6 +31,68 @@ const EXTRA_STEPS: TickStep[] = [];
 
 export function registerAgencyTickStep(step: TickStep): void {
   EXTRA_STEPS.push(step);
+}
+
+type TriggerRef = {
+  id: string;
+  workspaceId: string;
+  projectId: string;
+  brandId: string;
+  type: string;
+};
+
+// Runs ONE unit of trigger work (the result materializer or a registered
+// handler) so its failure cannot keep the units after it from running. They
+// used to share one try/catch: a throwing legacy handler (say, work-plan
+// progression) stopped every handler registered after it, including the real
+// product ones (a published Creative never flipped to PUBLISHED, the Meta ad
+// chain never continued). The failure is still collected so the trigger is
+// marked FAILED and audited, exactly as before.
+async function runIsolated(
+  name: string,
+  trigger: TriggerRef,
+  taskId: string,
+  failures: unknown[],
+  run: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await run();
+  } catch (error) {
+    failures.push(error);
+    try {
+      await AuditLogRepository.record({
+        workspaceId: trigger.workspaceId,
+        projectId: trigger.projectId,
+        brandId: trigger.brandId,
+        actorType: "SYSTEM",
+        action: `agency.trigger.handler_failed.${name}`,
+        entityType: "AgencyTrigger",
+        entityId: trigger.id,
+        metadata: {
+          triggerType: trigger.type,
+          taskId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    } catch {
+      // Audit failure must never break the trigger loop.
+    }
+  }
+}
+
+// One failure keeps its own message (the trigger row shows it); several are
+// joined so none is lost.
+function combineFailures(failures: unknown[]): Error {
+  if (failures.length === 1 && failures[0] instanceof Error) {
+    return failures[0];
+  }
+  return new Error(
+    failures
+      .map((failure) =>
+        failure instanceof Error ? failure.message : String(failure),
+      )
+      .join("; "),
+  );
 }
 
 export const ContinuousAgencyEngine = {
@@ -66,14 +129,29 @@ export const ContinuousAgencyEngine = {
 
       try {
         let didWork = false;
+        const failures: unknown[] = [];
         if (trigger.type === "TASK_COMPLETED") {
           const payload = (trigger.payload ?? {}) as { taskId?: string };
           if (payload.taskId) {
-            await ResultMaterializer.materializeTask(payload.taskId);
+            const taskId = payload.taskId;
+            await runIsolated(
+              "result-materializer",
+              trigger,
+              taskId,
+              failures,
+              () => ResultMaterializer.materializeTask(taskId),
+            );
             // Completed-task fan-outs registered by later waves (work-plan
             // progression, measurement planning) run as extra handlers.
             for (const handler of TASK_COMPLETED_HANDLERS) {
-              await handler(payload.taskId, scope);
+              if (handler.name && !isLegacyUnitEnabled(handler.name)) continue;
+              await runIsolated(
+                handler.name ?? "task-completed",
+                trigger,
+                taskId,
+                failures,
+                () => handler.run(taskId, scope),
+              );
             }
             didWork = true;
           }
@@ -90,17 +168,30 @@ export const ContinuousAgencyEngine = {
             terminalStatus?: "FAILED" | "CANCELLED";
           };
           if (payload.taskId) {
+            const taskId = payload.taskId;
             const status =
               payload.terminalStatus ??
               (trigger.type === "TASK_FAILED" ? "FAILED" : "CANCELLED");
             for (const handler of TASK_TERMINAL_HANDLERS) {
-              await handler(payload.taskId, status, scope);
+              if (handler.name && !isLegacyUnitEnabled(handler.name)) continue;
+              await runIsolated(
+                handler.name ?? "task-terminal",
+                trigger,
+                taskId,
+                failures,
+                () => handler.run(taskId, status, scope),
+              );
             }
             didWork = true;
           }
         }
         // Other trigger types currently act as wake-ups: their existence
         // makes this tick run the downstream pipeline steps below.
+
+        // Every unit above ran; now surface what failed so the trigger is
+        // marked FAILED and its cycle recorded as FAILED (the catch below)
+        // instead of being reported processed.
+        if (failures.length > 0) throw combineFailures(failures);
 
         if (isTaskTrigger) {
           await (
@@ -150,10 +241,12 @@ export const ContinuousAgencyEngine = {
     const steps: TickStep[] = [
       { name: "triggers", run: () => this.processTriggers(20) },
       { name: "setup", run: () => ProjectSetupOrchestrator.advanceAll(5) },
-      // Focus mode (agency-focus.ts) skips steps outside social/ads work.
+      // Focus mode (agency-focus.ts) skips steps outside social/ads work;
+      // LEGACY_AGENCY_LOOP (legacy-loop.ts) winds down the old pipeline steps.
       ...EXTRA_STEPS.filter(
         (step) =>
-          !isAgencyFocusMode() || !FOCUS_DISABLED_TICK_STEPS.has(step.name),
+          isLegacyUnitEnabled(step.name) &&
+          (!isAgencyFocusMode() || !FOCUS_DISABLED_TICK_STEPS.has(step.name)),
       ),
     ];
 
@@ -191,12 +284,16 @@ type TaskCompletedHandler = (
   scope: { workspaceId: string; projectId: string; brandId: string },
 ) => Promise<void>;
 
-const TASK_COMPLETED_HANDLERS: TaskCompletedHandler[] = [];
+// `name` identifies the handler for LEGACY_AGENCY_LOOP gating (legacy-loop.ts)
+// and for its audit trail when it fails. Unnamed handlers always run.
+const TASK_COMPLETED_HANDLERS: { name?: string; run: TaskCompletedHandler }[] =
+  [];
 
 export function registerTaskCompletedHandler(
   handler: TaskCompletedHandler,
+  name?: string,
 ): void {
-  TASK_COMPLETED_HANDLERS.push(handler);
+  TASK_COMPLETED_HANDLERS.push({ name, run: handler });
 }
 
 // Symmetric to TaskCompletedHandler — fired for a task's TASK_FAILED/
@@ -209,10 +306,12 @@ type TaskTerminalHandler = (
   scope: { workspaceId: string; projectId: string; brandId: string },
 ) => Promise<void>;
 
-const TASK_TERMINAL_HANDLERS: TaskTerminalHandler[] = [];
+const TASK_TERMINAL_HANDLERS: { name?: string; run: TaskTerminalHandler }[] =
+  [];
 
 export function registerTaskTerminalHandler(
   handler: TaskTerminalHandler,
+  name?: string,
 ): void {
-  TASK_TERMINAL_HANDLERS.push(handler);
+  TASK_TERMINAL_HANDLERS.push({ name, run: handler });
 }

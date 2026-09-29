@@ -212,19 +212,22 @@ registerAgencyTickStep({
 registerWorkPlanBuilder((input) => WorkPlanBuilder.buildForIdea(input));
 
 // Completed tasks progress their work plan and close out their handoff.
+// Handler names below are what LEGACY_AGENCY_LOOP (legacy-loop.ts) gates on and
+// what the audit trail shows when one fails; the unlisted ones are real product
+// features and always run.
 registerTaskCompletedHandler(async (taskId) => {
   await WorkPlanProgressor.onTaskCompleted(taskId);
-});
+}, "work-plan-progression");
 registerTaskCompletedHandler(async (taskId) => {
   await WorkHandoffEngine.onTaskCompleted(taskId);
-});
+}, "handoff-close-out");
 // Symmetric to the COMPLETED path above — a FAILED task's work plan needs
 // to know too (cascade-cancel dependents, resolve the plan to FAILED once
 // every node is terminal), or the plan and any dependent task strand
 // forever (see work-plan-progressor.ts's onTaskTerminal).
 registerTaskTerminalHandler(async (taskId, status) => {
   await WorkPlanProgressor.onTaskTerminal(taskId, status);
-});
+}, "work-plan-terminal");
 // Resumes handoffs accept() had to strand ACCEPTED (daily task-creation cap
 // hit) or leave PROPOSED past its expiry — see work-handoff-engine.ts's
 // progressPending, which finally gives WorkHandoffRepository.listByStatus
@@ -247,19 +250,19 @@ registerAgencyTickStep({
 // Combined AdSet+Ad wizard's second-Task fan-out (see meta-adset-chain-relay.ts).
 registerTaskCompletedHandler(async (taskId) => {
   await MetaAdSetChainRelay.onTaskCompleted(taskId);
-});
+}, "meta-adset-chain");
 // Autonomous campaign-proposal path's Campaign->AdSet fan-out (see
 // meta-campaign-chain-relay.ts) — one link earlier in the same chain as
 // the relay just above, which then continues on to the Ad unchanged.
 registerTaskCompletedHandler(async (taskId) => {
   await MetaCampaignChainRelay.onTaskCompleted(taskId);
-});
+}, "meta-campaign-chain");
 // Flips a Creative to PUBLISHED once its publish Task completes (see
 // creative-publish-completion.ts) — applies to every publish path, human
 // or autonomous, not just the ones added above.
 registerTaskCompletedHandler(async (taskId) => {
   await CreativePublishCompletion.onTaskCompleted(taskId);
-});
+}, "creative-publish-completion");
 
 // --- Wave 5: measurement + learning wiring ----------------------------------
 
@@ -270,10 +273,10 @@ registerTaskCompletedHandler(async (taskId) => {
   // pile up plans whose checks would all fire at once when it's re-enabled.
   if (isAgencyFocusMode()) return;
   await MeasurementEngine.planForCompletedTask(taskId);
-});
+}, "measurement-planning");
 registerTaskCompletedHandler(async (taskId) => {
   await MeasurementEngine.onCheckTaskCompleted(taskId);
-});
+}, "measurement-check-result");
 // Symmetric to the COMPLETED handler above — a MEASUREMENT_CHECK task
 // ending FAILED/CANCELLED previously left its MeasurementCheck stuck at
 // RUNNING forever (see measurement-engine.ts's onCheckTaskTerminal), which
@@ -281,7 +284,7 @@ registerTaskCompletedHandler(async (taskId) => {
 // LearningEngine never saw it.
 registerTaskTerminalHandler(async (taskId, status) => {
   await MeasurementEngine.onCheckTaskTerminal(taskId, status);
-});
+}, "measurement-check-terminal");
 
 registerAgencyTickStep({
   name: "measurement-checks",

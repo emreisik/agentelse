@@ -1,6 +1,5 @@
 import "server-only";
 
-import { buildContext } from "@/server/commands/chat-service";
 import { CommandService } from "@/server/commands/command-service";
 import {
   limitNoticeFromError,
@@ -21,6 +20,7 @@ import { AgentelseError, isAgentelseError } from "@/server/security/errors";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 import { buildHistoryInput, buildUserInput, trimHistory } from "./history";
+import { buildContext } from "./context";
 import { getProjectTimezone, todayInTimezone } from "./content-plan";
 import { loadRecentHistoryFiles } from "./history-files";
 import { createMockChatModel } from "./mock-chat-model";

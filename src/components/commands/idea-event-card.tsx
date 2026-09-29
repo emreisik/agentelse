@@ -79,6 +79,7 @@ import {
   resolveHumanActionAction,
 } from "@/server/actions/human-action-actions";
 import { submitChatMessageAction } from "@/server/actions/command-actions";
+import { useChatSend } from "@/components/commands/chat-send-context";
 
 // Narrows a raw department string (e.g. "BRAND_STRATEGY") to DepartmentKey
 // if valid — so that EVERYWHERE a department is mentioned in cards, the
@@ -256,7 +257,9 @@ export function IdeaEventCard({
         >
           {card.resultText ? (
             <WsDetailToggle
-              label={card.expanded ? "Generated content" : "See generated content"}
+              label={
+                card.expanded ? "Generated content" : "See generated content"
+              }
               defaultOpen={card.expanded}
             >
               {card.resultText}
@@ -1537,6 +1540,11 @@ function QuestionCard({
   card: Extract<IdeaEventCardData, { kind: "question" }>;
 }) {
   const router = useRouter();
+  // The composer's own send path: the streaming agent turn under
+  // CHAT_ENGINE=agent, the blocking action otherwise. Answering through it
+  // keeps the reply in the engine that asked; the raw action below is only the
+  // fallback for a card rendered outside the project chat (no provider).
+  const send = useChatSend();
   const [isPending, startTransition] = useTransition();
   const [answered, setAnswered] = useState(false);
   // groupKey ("q0", "q1", ...) -> selected option label(s)
@@ -1557,6 +1565,11 @@ function QuestionCard({
             return `${q.question} ${labels.join(", ")}`;
           })
           .join("\n");
+        if (send) {
+          await send(text);
+          setAnswered(true);
+          return;
+        }
         const formData = new FormData();
         formData.set("projectId", card.projectId);
         formData.set("text", text);

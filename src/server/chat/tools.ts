@@ -38,10 +38,7 @@ import type {
   CommandAttachment,
   CommandReplyStatus,
 } from "@/server/repositories/command.repository";
-import {
-  CHAT_CAPABILITIES,
-  CHAT_PLATFORMS,
-} from "@/server/reasoning/prompts/chat-turn";
+import { CHAT_CAPABILITIES, CHAT_PLATFORMS } from "./constants";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 import { activeDeliverables } from "./deliverables";
 import { driveJobInline } from "./inline-job";

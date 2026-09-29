@@ -1,5 +1,5 @@
 import { type CreativeCardData, isCreativeCardData } from "./creative-card";
-import type { ChatQuestion } from "@/server/reasoning/prompts/chat-turn";
+import type { ChatQuestion } from "@/server/chat/constants";
 import type { ChannelConnections } from "@/lib/content-channels";
 
 // Representation of EVERY pipeline event in an idea's chat (origin

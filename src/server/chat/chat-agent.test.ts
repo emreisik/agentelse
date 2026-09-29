@@ -70,7 +70,7 @@ vi.mock("@/server/integrations/channel-connections", () => ({
 }));
 
 const buildContext = vi.fn();
-vi.mock("@/server/commands/chat-service", () => ({ buildContext }));
+vi.mock("@/server/chat/context", () => ({ buildContext }));
 
 const submit = vi.fn();
 vi.mock("@/server/commands/command-service", () => ({
@@ -189,7 +189,12 @@ const baseInput = {
 function context(setupPhase: "NOT_STARTED" | "IN_PROGRESS" | "ACTIVE") {
   return {
     brandId: "brand-1",
-    project: { name: "Acme", language: "tr", country: "TR", domain: "https://www.acme.com.tr/" },
+    project: {
+      name: "Acme",
+      language: "tr",
+      country: "TR",
+      domain: "https://www.acme.com.tr/",
+    },
     brand: { name: "Acme" },
     state: null,
     pending: [],
@@ -447,7 +452,6 @@ describe("runChatAgent", () => {
     expect(events.at(-1)).toMatchObject({ type: "error", code: "FAILED" });
   });
 
-
   it("lets read tools run freely without using up the one work action", async () => {
     taskFindMany.mockResolvedValue([
       {
@@ -518,16 +522,22 @@ describe("runChatAgent", () => {
   it("offers the hosted web_search tool only when enabled", async () => {
     const off = scriptedModel([{ text: ["a"] }]);
     await collect(runChatAgent(baseInput, { model: off.model }));
-    expect(off.requests[0]!.tools.some((t) => t.type === "web_search")).toBe(false);
+    expect(off.requests[0]!.tools.some((t) => t.type === "web_search")).toBe(
+      false,
+    );
 
     envOverrides.CHAT_WEB_SEARCH = true;
     const on = scriptedModel([{ text: ["b"] }]);
     await collect(runChatAgent(baseInput, { model: on.model }));
-    expect(on.requests[0]!.tools.some((t) => t.type === "web_search")).toBe(true);
+    expect(on.requests[0]!.tools.some((t) => t.type === "web_search")).toBe(
+      true,
+    );
   });
 
   it("drafts a plan card that keeps the model's words and replaces older drafts", async () => {
-    const day = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
+    const day = new Date(Date.now() + 2 * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
     const plan = {
       title: "Bu hafta",
       items: [
@@ -541,13 +551,20 @@ describe("runChatAgent", () => {
       ],
     };
     const { model } = scriptedModel([
-      { text: ["Planı çıkardım."], calls: [{ name: "propose_content_plan", args: plan }] },
+      {
+        text: ["Planı çıkardım."],
+        calls: [{ name: "propose_content_plan", args: plan }],
+      },
       { text: ["Kaydedebilir ya da değişiklik isteyebilirsin."] },
     ]);
     const events = await collect(runChatAgent(baseInput, { model }));
 
     expect(events.find((e) => e.type === "card")).toMatchObject({
-      card: { kind: "content-plan-draft", state: "draft", items: [{ time: "10:00" }] },
+      card: {
+        kind: "content-plan-draft",
+        state: "draft",
+        items: [{ time: "10:00" }],
+      },
     });
     // Older open drafts are looked up (and replaced) for this project only.
     expect(commandFindMany).toHaveBeenCalledWith(
@@ -597,7 +614,10 @@ describe("runChatAgent", () => {
 
   it("opens the planning wizard with live connections and the brand focus", async () => {
     const { model } = scriptedModel([
-      { text: ["Planı birkaç tıkla netleştirelim."], calls: [{ name: "start_plan_brief", args: {} }] },
+      {
+        text: ["Planı birkaç tıkla netleştirelim."],
+        calls: [{ name: "start_plan_brief", args: {} }],
+      },
     ]);
     const events = await collect(
       runChatAgent({ ...baseInput, message: "haftalık plan yap" }, { model }),
@@ -645,10 +665,15 @@ describe("runChatAgent", () => {
       { text: ["Brief'e uyuyorum."] },
     ]);
     const strayEvents = await collect(
-      runChatAgent({ ...baseInput, message: briefMessage }, { model: stray.model }),
+      runChatAgent(
+        { ...baseInput, message: briefMessage },
+        { model: stray.model },
+      ),
     );
     expect(strayEvents.some((e) => e.type === "card")).toBe(false);
-    expect(JSON.stringify(stray.requests[1]!.input)).toContain("not in the client's brief");
+    expect(JSON.stringify(stray.requests[1]!.input)).toContain(
+      "not in the client's brief",
+    );
 
     // A plan that follows it becomes the card, tagged with goal + connections.
     const ok = scriptedModel([
@@ -656,21 +681,33 @@ describe("runChatAgent", () => {
         calls: [
           {
             name: "propose_content_plan",
-            args: { title: "Plan", items: [item("instagram", "instagram.carousel")] },
+            args: {
+              title: "Plan",
+              items: [item("instagram", "instagram.carousel")],
+            },
           },
         ],
       },
       { text: ["Hazır."] },
     ]);
     const okEvents = await collect(
-      runChatAgent({ ...baseInput, message: briefMessage }, { model: ok.model }),
+      runChatAgent(
+        { ...baseInput, message: briefMessage },
+        { model: ok.model },
+      ),
     );
     expect(okEvents.find((e) => e.type === "card")).toMatchObject({
       card: {
         kind: "content-plan-draft",
         goal: "leads",
         connections: { instagram: { connected: true } },
-        items: [{ channel: "instagram", formatKey: "instagram.carousel", platform: "INSTAGRAM" }],
+        items: [
+          {
+            channel: "instagram",
+            formatKey: "instagram.carousel",
+            platform: "INSTAGRAM",
+          },
+        ],
       },
     });
   });
@@ -679,18 +716,36 @@ describe("runChatAgent", () => {
     const pkg = {
       topic: "Kommo CRM sağlık turizmi",
       items: [
-        { id: "post", deliverable: "instagram_post", title: "Hasta yolculuğu tek ekranda", angle: "Dağınık WhatsApp yazışmalarını CRM'e topla", contentFormat: "FEED_PORTRAIT" },
-        { id: "seo", deliverable: "seo_article", title: "Sağlık turizmi için CRM seçimi", angle: "Yurt dışı hasta talebini takip et" },
+        {
+          id: "post",
+          deliverable: "instagram_post",
+          title: "Hasta yolculuğu tek ekranda",
+          angle: "Dağınık WhatsApp yazışmalarını CRM'e topla",
+          contentFormat: "FEED_PORTRAIT",
+        },
+        {
+          id: "seo",
+          deliverable: "seo_article",
+          title: "Sağlık turizmi için CRM seçimi",
+          angle: "Yurt dışı hasta talebini takip et",
+        },
       ],
     };
     const { model } = scriptedModel([
-      { text: ["Üç parçalık bir paket hazırladım."], calls: [{ name: "propose_content_package", args: pkg }] },
+      {
+        text: ["Üç parçalık bir paket hazırladım."],
+        calls: [{ name: "propose_content_package", args: pkg }],
+      },
       { text: ["İstemediğini işaretten çıkarabilirsin."] },
     ]);
     const events = await collect(runChatAgent(baseInput, { model }));
 
     expect(events.find((e) => e.type === "card")).toMatchObject({
-      card: { kind: "content-package", state: "draft", items: [{ id: "post" }, { id: "seo" }] },
+      card: {
+        kind: "content-package",
+        state: "draft",
+        items: [{ id: "post" }, { id: "seo" }],
+      },
     });
     // Proposing is not a work action: nothing was queued.
     expect(submit).not.toHaveBeenCalled();
@@ -704,7 +759,14 @@ describe("runChatAgent", () => {
             name: "propose_content_package",
             args: {
               topic: "x",
-              items: [{ id: "post", deliverable: "instagram_post", title: "t", angle: "a" }],
+              items: [
+                {
+                  id: "post",
+                  deliverable: "instagram_post",
+                  title: "t",
+                  angle: "a",
+                },
+              ],
             },
           },
         ],
@@ -718,7 +780,8 @@ describe("runChatAgent", () => {
   });
 
   it("renders an image inline: previews stream while the job runs, then the turn wraps up", async () => {
-    const { emitCreativeProgress } = await import("@/server/media/creative-progress");
+    const { emitCreativeProgress } =
+      await import("@/server/media/creative-progress");
     submit.mockResolvedValue({
       status: "PLANNED",
       commandId: "cmd-1",
@@ -730,9 +793,17 @@ describe("runChatAgent", () => {
     taskFindUnique.mockResolvedValue({ riskLevel: "LOW" });
     startExecution.mockImplementation(async () => {
       // The provider (same process) publishes previews while it renders.
-      emitCreativeProgress("job-9", { type: "partial", index: 0, dataUrl: "data:image/png;base64,AAA" });
+      emitCreativeProgress("job-9", {
+        type: "partial",
+        index: 0,
+        dataUrl: "data:image/png;base64,AAA",
+      });
       await new Promise((resolve) => setTimeout(resolve, 5));
-      emitCreativeProgress("job-9", { type: "partial", index: 1, dataUrl: "data:image/png;base64,BBB" });
+      emitCreativeProgress("job-9", {
+        type: "partial",
+        index: 1,
+        dataUrl: "data:image/png;base64,BBB",
+      });
       return { status: "COMPLETED", errorMessage: null };
     });
 
@@ -782,8 +853,12 @@ describe("runChatAgent", () => {
     const types = events.map((e) => e.type);
     const partials = events.filter((e) => e.type === "image.partial");
     expect(partials).toHaveLength(2);
-    expect(types.indexOf("image.partial")).toBeGreaterThan(types.indexOf("tool.start"));
-    expect(types.lastIndexOf("image.partial")).toBeLessThan(types.indexOf("tool.end"));
+    expect(types.indexOf("image.partial")).toBeGreaterThan(
+      types.indexOf("tool.start"),
+    );
+    expect(types.lastIndexOf("image.partial")).toBeLessThan(
+      types.indexOf("tool.end"),
+    );
     expect(events.at(-1)).toMatchObject({ type: "done", status: "PLANNED" });
   });
 
@@ -798,13 +873,21 @@ describe("runChatAgent", () => {
     jobFindFirst.mockResolvedValue({ id: "job-9" });
     taskFindUnique.mockResolvedValue({ riskLevel: "LOW" });
     claimDispatchForInline.mockResolvedValueOnce("worker");
-    jobFindUniqueOrThrow.mockResolvedValue({ status: "COMPLETED", errorMessage: null });
+    jobFindUniqueOrThrow.mockResolvedValue({
+      status: "COMPLETED",
+      errorMessage: null,
+    });
     const { model } = scriptedModel([
       {
         calls: [
           {
             name: "generate_image",
-            args: { imagePrompt: "x", caption: "c", copy: "d", contentFormat: "FEED_PORTRAIT" },
+            args: {
+              imagePrompt: "x",
+              caption: "c",
+              copy: "d",
+              contentFormat: "FEED_PORTRAIT",
+            },
           },
         ],
       },
@@ -819,7 +902,14 @@ describe("runChatAgent", () => {
 
   it("never renders an Instagram creative before the client picked a format", async () => {
     const { model } = scriptedModel([
-      { calls: [{ name: "generate_image", args: { imagePrompt: "x", caption: "c", copy: "d" } }] },
+      {
+        calls: [
+          {
+            name: "generate_image",
+            args: { imagePrompt: "x", caption: "c", copy: "d" },
+          },
+        ],
+      },
       { text: ["Önce formatı seçelim."] },
     ]);
     const events = await collect(runChatAgent(baseInput, { model }));
@@ -840,9 +930,24 @@ describe("runChatAgent", () => {
     });
     jobFindFirst.mockResolvedValue({ id: "job-9" });
     taskFindUnique.mockResolvedValue({ riskLevel: "LOW" });
-    startExecution.mockResolvedValue({ status: "COMPLETED", errorMessage: null });
+    startExecution.mockResolvedValue({
+      status: "COMPLETED",
+      errorMessage: null,
+    });
     const { model } = scriptedModel([
-      { calls: [{ name: "generate_image", args: { imagePrompt: "x", caption: "c", copy: "d", contentFormat: "FEED_PORTRAIT" } }] },
+      {
+        calls: [
+          {
+            name: "generate_image",
+            args: {
+              imagePrompt: "x",
+              caption: "c",
+              copy: "d",
+              contentFormat: "FEED_PORTRAIT",
+            },
+          },
+        ],
+      },
       { text: ["Tamam."] },
     ]);
     await collect(runChatAgent(baseInput, { model }));
@@ -897,13 +1002,23 @@ describe("runChatAgent", () => {
     });
     jobFindFirst.mockResolvedValue({ id: "job-9" });
     taskFindUnique.mockResolvedValue({ riskLevel: "LOW" });
-    startExecution.mockResolvedValue({ status: "COMPLETED", errorMessage: null });
+    startExecution.mockResolvedValue({
+      status: "COMPLETED",
+      errorMessage: null,
+    });
     const { model } = scriptedModel([
       {
         calls: [
           {
             name: "generate_image",
-            args: { imagePrompt: "x", headline: "h", caption: "c", copy: "d", quality: "final", contentFormat: "FEED_PORTRAIT" },
+            args: {
+              imagePrompt: "x",
+              headline: "h",
+              caption: "c",
+              copy: "d",
+              quality: "final",
+              contentFormat: "FEED_PORTRAIT",
+            },
           },
         ],
       },
@@ -926,7 +1041,20 @@ describe("runChatAgent", () => {
     );
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { model, requests } = scriptedModel([
-      { calls: [{ name: "generate_image", args: { imagePrompt: "x", headline: "h", caption: "c", copy: "d", contentFormat: "FEED_PORTRAIT" } }] },
+      {
+        calls: [
+          {
+            name: "generate_image",
+            args: {
+              imagePrompt: "x",
+              headline: "h",
+              caption: "c",
+              copy: "d",
+              contentFormat: "FEED_PORTRAIT",
+            },
+          },
+        ],
+      },
       { text: ["Şu an çalıştıramadım."] },
     ]);
     const events = await collect(runChatAgent(baseInput, { model }));
@@ -934,7 +1062,9 @@ describe("runChatAgent", () => {
     // No misleading "AI provider isn't configured" card...
     expect(events.some((e) => e.type === "card")).toBe(false);
     // ...the model is told what really happened, and the turn ends as an error.
-    expect(JSON.stringify(requests[1]!.input)).toContain("temporarily unavailable");
+    expect(JSON.stringify(requests[1]!.input)).toContain(
+      "temporarily unavailable",
+    );
     expect(events.at(-1)).toMatchObject({ type: "done", status: "ERROR" });
   });
 
@@ -948,9 +1078,25 @@ describe("runChatAgent", () => {
     });
     jobFindFirst.mockResolvedValue({ id: "job-9" });
     taskFindUnique.mockResolvedValue({ riskLevel: "LOW" });
-    startExecution.mockResolvedValue({ status: "FAILED", errorMessage: "content policy" });
+    startExecution.mockResolvedValue({
+      status: "FAILED",
+      errorMessage: "content policy",
+    });
     const { model, requests } = scriptedModel([
-      { calls: [{ name: "generate_image", args: { imagePrompt: "x", headline: "h", caption: "c", copy: "d", contentFormat: "FEED_PORTRAIT" } }] },
+      {
+        calls: [
+          {
+            name: "generate_image",
+            args: {
+              imagePrompt: "x",
+              headline: "h",
+              caption: "c",
+              copy: "d",
+              contentFormat: "FEED_PORTRAIT",
+            },
+          },
+        ],
+      },
       { text: ["Görsel üretilemedi."] },
     ]);
     const events = await collect(runChatAgent(baseInput, { model }));

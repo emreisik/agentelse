@@ -704,7 +704,10 @@ export function ProjectChat({
               previewUrl: event.dataUrl,
               imageGen: {
                 startedAt: turn.imageGen?.startedAt ?? Date.now(),
-                partials: Math.max(turn.imageGen?.partials ?? 0, event.index + 1),
+                partials: Math.max(
+                  turn.imageGen?.partials ?? 0,
+                  event.index + 1,
+                ),
                 done: false,
               },
             }));
@@ -866,6 +869,14 @@ export function ProjectChat({
       targetPlatform?: SocialPlatform,
       contentFormat?: CreativeContentFormat,
     ) => {
+      // "Create a content plan" under the agent engine goes through the chat,
+      // not the shortcut bypass: the agent opens the plan-brief wizard (goal,
+      // channels, rhythm) and drafts a plan the client saves to the calendar.
+      // The bypass would run the old weekly planner inside the request and
+      // start generating images straight from a menu click.
+      if (chatEngine === "agent" && capability === "CREATE_CONTENT_PLAN") {
+        return sendMessage(request, []);
+      }
       return runTurn(request, [], () =>
         submitComposerShortcutAction(
           projectId,
@@ -877,7 +888,7 @@ export function ProjectChat({
         ),
       );
     },
-    [runTurn, projectId, ideaId],
+    [runTurn, sendMessage, chatEngine, projectId, ideaId],
   );
 
   const onNew = React.useCallback(
@@ -1185,22 +1196,20 @@ export function ProjectChat({
       setLocalTurns((current) => [
         // A retry after a refused run replaces that run's earlier messages.
         ...current.filter((turn) => !inRun(turn)),
-        ...items.map(
-          (item): LocalTurn => ({
-            key: `${runKey}:${item.id}`,
-            text: item.title,
-            attachments: [],
-            state: "pending",
-            createdAt,
-            itemId: item.id,
-            itemTitle: item.title,
-            itemLabel: item.label,
-            department: item.department,
-            imageGen: item.image
-              ? { startedAt, partials: 0, done: false }
-              : undefined,
-          }),
-        ),
+        ...items.map((item): LocalTurn => ({
+          key: `${runKey}:${item.id}`,
+          text: item.title,
+          attachments: [],
+          state: "pending",
+          createdAt,
+          itemId: item.id,
+          itemTitle: item.title,
+          itemLabel: item.label,
+          department: item.department,
+          imageGen: item.image
+            ? { startedAt, partials: 0, done: false }
+            : undefined,
+        })),
       ]);
 
       let started = 0;
@@ -1288,19 +1297,25 @@ export function ProjectChat({
           for (;;) {
             const { done, value } = await reader.read();
             if (done) break;
-            for (const event of parse(decoder.decode(value, { stream: true }))) {
+            for (const event of parse(
+              decoder.decode(value, { stream: true }),
+            )) {
               apply(event);
             }
           }
           if (!finished) {
             // The run keeps going on the server; its cards land in the chat
             // with the refresh below.
-            settle("The connection dropped — this keeps running in the background.");
+            settle(
+              "The connection dropped — this keeps running in the background.",
+            );
           }
         }
       } catch (error) {
         settle(
-          error instanceof Error ? error.message : "Could not start the package.",
+          error instanceof Error
+            ? error.message
+            : "Could not start the package.",
         );
       } finally {
         setPackageRuns((current) => {

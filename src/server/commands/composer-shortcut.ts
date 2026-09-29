@@ -42,6 +42,23 @@ export async function submitComposerShortcut(input: {
     },
   });
 
+  // CREATE_CONTENT_PLAN in general chat runs the weekly planner inside
+  // CommandService.submit and reports it as WEEKLY_PLAN_CREATED. The work has
+  // already happened, so it is a success, not the "couldn't start" error below.
+  if (submission.status === "WEEKLY_PLAN_CREATED") {
+    await CommandRepository.recordReply(
+      submission.commandId,
+      submission.summary,
+      "PLANNED",
+    );
+    return {
+      ok: true,
+      commandId: submission.commandId,
+      reply: submission.summary,
+      attachments: [],
+    };
+  }
+
   if (submission.status !== "PLANNED") {
     const message =
       "Couldn't start this — please try describing it in chat instead.";

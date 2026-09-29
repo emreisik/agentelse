@@ -12,7 +12,7 @@ import {
   resolveFormat,
   type ChannelConnections,
 } from "@/lib/content-channels";
-import { CHAT_PLATFORMS } from "@/server/reasoning/prompts/chat-turn";
+import { CHAT_PLATFORMS } from "./constants";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 // Conversation-driven content planning: the model drafts the plan itself (in
@@ -53,7 +53,8 @@ export const PlanItemSchema = z
     captionIdea: z.string().min(1),
   })
   .refine((item) => (item.channel && item.formatKey) || item.platform, {
-    message: "Each item needs `channel` and `formatKey` (or a legacy `platform`).",
+    message:
+      "Each item needs `channel` and `formatKey` (or a legacy `platform`).",
   });
 
 export const ContentPlanArgsSchema = z.object({

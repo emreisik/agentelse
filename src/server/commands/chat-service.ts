@@ -7,6 +7,10 @@ import {
 } from "@/server/reasoning/prompts/chat-turn";
 import { CommandService } from "@/server/commands/command-service";
 import {
+  needsInputReply,
+  platformQuestionCard,
+} from "@/server/commands/needs-input";
+import {
   CommandRepository,
   type CommandAttachment,
   type CommandReplyStatus,
@@ -257,6 +261,13 @@ export const ChatService = {
             ? `💡 Generated ${submission.count} new idea${submission.count === 1 ? "" : "s"} from the opportunity backlog — each has its own thread now.`
             : "There's no evaluated opportunity ready to turn into an idea right now. New signals are still being scanned in the background — try again once a few more come in.";
         break;
+      case "NEEDS_INPUT":
+        // Nothing was created or approved: a promise of work written before the
+        // platform was known would be false, so the reply is replaced by the
+        // question (the buttons come as the card below).
+        status = "ANSWERED";
+        reply = needsInputReply(submission);
+        break;
       case "PROJECT_INACTIVE":
         // CommandService refused to create any work because the project is
         // paused or closed (a project that just hasn't run setup is activated
@@ -310,6 +321,12 @@ export const ChatService = {
         projectId: input.projectId,
         ideaId: input.ideaId,
       };
+    } else if (submission.status === "NEEDS_INPUT" && !submission.approvalId) {
+      card = platformQuestionCard({
+        projectId: input.projectId,
+        ideaId: input.ideaId,
+        missing: submission,
+      });
     } else if (submission.status === "IDEA_CAP_REACHED") {
       // Same card the reasoning-failure catch block above uses for every
       // other daily-cap hit — reused here so an idea-cap hit from the Deep

@@ -4,6 +4,12 @@ import type {
   CapabilityKey,
 } from "@prisma/client";
 
+import {
+  accountSetupPlatformName,
+  isAccountSetupPlatform,
+  missingCapabilityInput,
+  missingInputAdvice,
+} from "@/server/execution/capability-input";
 import type { ApprovalCategory } from "@/types/idea-event-card";
 
 // Plain-language bucket for a pending approval, shown on its chat card —
@@ -31,6 +37,37 @@ export function buildApprovalDetails(
   capability: CapabilityKey,
   payload: unknown,
 ): { label: string; value: string }[] | undefined {
+  // Opening a new social account is High Risk and the task's title is only the
+  // first 80 characters of whatever was asked, which says nothing about what
+  // approving does. Say it.
+  if (capability === "SOCIAL_ACCOUNT_SETUP") {
+    const platform = (payload as { platform?: unknown } | null)?.platform;
+    if (isAccountSetupPlatform(platform)) {
+      return [
+        { label: "Platform", value: accountSetupPlatformName(platform) },
+        {
+          label: "What happens",
+          value: `A browser agent opens a new ${accountSetupPlatformName(platform)} account for the brand. You may be asked for a verification code along the way.`,
+        },
+      ];
+    }
+    // A task from before the platform check existed. Approving it is refused
+    // (approval-decisions.ts); the card says why instead of promising work.
+    const missing = missingCapabilityInput(capability, { platform });
+    return [
+      {
+        label: "Platform",
+        value:
+          missing?.problem === "unsupported"
+            ? `${missing.got} (not supported)`
+            : "Not chosen",
+      },
+      {
+        label: "What happens",
+        value: missing ? missingInputAdvice(missing) : "This task cannot run.",
+      },
+    ];
+  }
   if (
     capability !== "META_CAMPAIGN_UPDATE" &&
     capability !== "META_ADSET_UPDATE" &&

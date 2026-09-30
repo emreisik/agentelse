@@ -3,6 +3,10 @@ import "server-only";
 import type { BrowserProfilePurpose, CapabilityKey } from "@prisma/client";
 
 import { AgentelseError } from "@/server/security/errors";
+import {
+  missingCapabilityInput,
+  missingInputMessage,
+} from "@/server/execution/capability-input";
 import { ensureStandardBrowserProfilesForProject } from "@/server/projects/browser-profiles";
 import { BrowserProfileRepository } from "@/server/repositories/browser-profile.repository";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
@@ -32,15 +36,19 @@ export const CapabilityRouter = {
     let purpose = ExecutionPolicy.staticBrowserPurpose(capability);
 
     if (!purpose && capability === "SOCIAL_ACCOUNT_SETUP") {
-      const platform = (payload as Record<string, unknown> | undefined)
-        ?.platform;
-      if (typeof platform !== "string") {
+      // The same rule every door applies before a task is created or approved
+      // (capability-input.ts); reaching it here means one of them was bypassed.
+      const missing = missingCapabilityInput(
+        capability,
+        (payload as Record<string, unknown> | undefined) ?? {},
+      );
+      if (missing) {
         throw new AgentelseError(
-          "ELEMENT_NOT_FOUND",
-          "SOCIAL_ACCOUNT_SETUP requires a `platform` field in the request payload",
+          "INVALID_INPUT",
+          missingInputMessage(capability, missing),
         );
       }
-      purpose = platform as BrowserProfilePurpose;
+      purpose = (payload as { platform: BrowserProfilePurpose }).platform;
     }
 
     if (!purpose) return undefined;

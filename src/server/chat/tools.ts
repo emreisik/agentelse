@@ -44,6 +44,8 @@ import type {
   CommandReplyStatus,
 } from "@/server/repositories/command.repository";
 import { CHAT_CAPABILITIES, CHAT_PLATFORMS } from "./constants";
+import { missingCapabilityInput } from "@/server/execution/capability-input";
+import { platformQuestionCard } from "@/server/commands/needs-input";
 import { SKILL_KEYS, SKILLS, skillCatalog } from "./skills/registry";
 import { startWorkSession, updateWorkSession } from "./work-session-tools";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
@@ -278,6 +280,18 @@ export function outcomeFromSubmission(
           note: "The project is paused or closed, so no new work could be started. Say so honestly and that it must be resumed first.",
         },
       };
+    case "NEEDS_INPUT":
+      return {
+        status: "ANSWERED",
+        result: {
+          outcome: "needs_input",
+          field: submission.field,
+          allowed: submission.allowed,
+          note: submission.approvalId
+            ? "Nothing was approved: that task cannot run because it does not say which platform the new account is for. Tell the client honestly, and that they can reject it and ask again naming the platform."
+            : "Nothing was created: the platform is missing. Ask the client which platform it is for and call create_task again with it.",
+        },
+      };
     case "NEEDS_PROJECT":
       return { status: "NEEDS_PROJECT", result: { outcome: "needs_project" } };
     case "UNKNOWN_INTENT":
@@ -441,7 +455,7 @@ const createTask = defineTool({
   kind: "work",
   phases: ["ACTIVE"],
   description:
-    "Run ONE single deliverable or research job (NEVER a post/story/ad image — that is generate_image; one research note, one piece of copy, one analysis). Copy, captions, briefs, emails, reports and analyses are produced right away and their result appears in this chat; research that needs the live web is queued and posts its result here when it is done. `taskBrief` must be self-contained: the worker cannot see this chat. Set `platform` only when a channel is named or clearly implied. Use start_strategic_project instead when the request is broad and multi-part.",
+    "Run ONE single deliverable or research job (NEVER a post/story/ad image — that is generate_image; one research note, one piece of copy, one analysis). Copy, captions, briefs, emails, reports and analyses are produced right away and their result appears in this chat; research that needs the live web is queued and posts its result here when it is done. `taskBrief` must be self-contained: the worker cannot see this chat. Set `platform` only when a channel is named or clearly implied. SOCIAL_ACCOUNT_SETUP is the one exception and means something narrow: a browser agent opens a NEW account on Instagram, TikTok or LinkedIn, so it always needs `platform` and the client's approval; use it only when the client asks for a new account to be created. Planning, organising or managing their social media is NOT that: propose a content plan (start_plan_brief) or ask what they want. Use start_strategic_project instead when the request is broad and multi-part.",
   schema: z.object({
     capability: z.enum(TASK_CAPABILITIES),
     taskBrief: z.string(),
@@ -449,6 +463,26 @@ const createTask = defineTool({
     contentFormat: z.nativeEnum(CreativeContentFormat).optional(),
   }),
   async execute(args, ctx) {
+    // A capability that cannot run without a platform is never created without
+    // one: the client is asked with buttons, before any task or approval exists
+    // (it used to reach an approval card and fail after they clicked Approve).
+    const missing = missingCapabilityInput(args.capability, {
+      platform: args.platform,
+    });
+    if (missing) {
+      return {
+        status: "ANSWERED",
+        card: platformQuestionCard({
+          projectId: ctx.projectId,
+          ideaId: ctx.ideaId,
+          missing,
+        }),
+        result: {
+          outcome: "platform_question_shown",
+          note: "Nothing was created. The client sees buttons for the platform (Instagram, TikTok, LinkedIn). Say in one short sentence that you need the platform first; when they answer, call create_task again with that platform.",
+        },
+      };
+    }
     const submission = await submitIntent(ctx, {
       kind: "CAPABILITY",
       capability: args.capability,

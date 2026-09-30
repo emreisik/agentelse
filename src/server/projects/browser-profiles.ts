@@ -2,6 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { provisionOpenClawAgent } from "@/server/execution/providers/openclaw/openclaw-agent-provisioner";
+import { STANDARD_BROWSER_PROFILE_PURPOSES } from "@/server/projects/standard-browser-profiles";
 
 // Standard browser-profile bundle (mirrors activateProjectAction/seed.ts).
 // Deep-discovery and every public-web research task needs the PUBLIC_RESEARCH
@@ -9,15 +10,6 @@ import { provisionOpenClawAgent } from "@/server/execution/providers/openclaw/op
 // all (OpenClawProvider.canExecute), and a task that resolved no profile falls
 // back to the shared default agent, which has no browser skill (the
 // 2026-09-15 SIGNAL_SCAN incident, see execution-policy.ts).
-const STANDARD_BROWSER_PROFILE_PURPOSES = [
-  "PUBLIC_RESEARCH",
-  "INSTAGRAM",
-  "TIKTOK",
-  "META_ADS",
-  "GOOGLE_ADS",
-  "LINKEDIN",
-] as const;
-
 type ProjectScope = {
   workspaceId: string;
   projectId: string;

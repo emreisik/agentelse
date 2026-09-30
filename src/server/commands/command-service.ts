@@ -23,6 +23,8 @@ import {
 } from "@/server/commands/intent-router";
 import { resolveProjectFromText } from "@/server/commands/project-resolver";
 import { TaskPlanner } from "@/server/commands/task-planner";
+import type { NeedsInput } from "@/server/commands/needs-input";
+import { missingCapabilityInput } from "@/server/execution/capability-input";
 import { MemoryService } from "@/server/memory/memory-service";
 import { ensureProjectActive } from "@/server/projects/activation";
 import { performCreativeRevision } from "@/server/actions/creative-actions";
@@ -106,6 +108,13 @@ export type SubmitCommandResult =
   // FORM_REQUIRED_CAPABILITIES below. No Task is created; formHref points
   // into the Ads Manager's create dialog instead.
   | { status: "FORM_REQUIRED"; commandId: string; formHref: string }
+  // The capability needs an input free text did not carry (SOCIAL_ACCOUNT_SETUP
+  // needs the platform to open the account on, see execution/capability-input.ts).
+  // No Task or Approval exists: creating one used to be found out only after a
+  // person had approved it. With approvalId set it is the other way round: the
+  // task already exists and its approval was NOT consumed. Callers ask for the
+  // input (needs-input.ts) instead of promising work.
+  | ({ status: "NEEDS_INPUT"; commandId: string } & NeedsInput)
   // Deep Path (see strategic-request.ts) — a new Idea was created and the
   // Command was retroactively linked to its thread.
   | { status: "STRATEGIC_IDEA_CREATED"; commandId: string; ideaId: string }
@@ -235,6 +244,22 @@ export const CommandService = {
           : undefined;
 
       if (intent.decision === "APPROVE") {
+        // A task that can never run is not approved into a failure: check first,
+        // while the approval can still be rejected.
+        if (approval.taskId) {
+          const missing = await TaskPlanner.missingInputFor(
+            approval.taskId,
+            approval.projectId,
+          );
+          if (missing) {
+            return {
+              status: "NEEDS_INPUT",
+              commandId: command.id,
+              approvalId: approval.id,
+              ...missing,
+            };
+          }
+        }
         await ApprovalRepository.decide(
           approval.id,
           approval.projectId,
@@ -460,6 +485,15 @@ export const CommandService = {
         });
       }
       return { status: "FORM_REQUIRED", commandId: command.id, formHref };
+    }
+
+    // Asked for here, before any Task or Approval exists. `payloadExtra` wins
+    // over the intent's platform exactly as it does in the task payload.
+    const missing = missingCapabilityInput(intent.capability, {
+      platform: input.payloadExtra?.platform ?? intent.targetPlatform,
+    });
+    if (missing) {
+      return { status: "NEEDS_INPUT", commandId: command.id, ...missing };
     }
 
     // Weekly batch content planning triggered directly from chat ("Plan

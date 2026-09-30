@@ -44,8 +44,11 @@ vi.mock("@/server/repositories/task.repository", () => ({
 }));
 
 const planForCapability = vi.fn().mockResolvedValue({ task: { id: "t-2" } });
+const dispatchApprovedTask = vi.fn();
+// What a task waiting for approval still lacks (null: nothing, it can run).
+const missingInputFor = vi.fn().mockResolvedValue(null);
 vi.mock("@/server/commands/task-planner", () => ({
-  TaskPlanner: { planForCapability, dispatchApprovedTask: vi.fn() },
+  TaskPlanner: { planForCapability, dispatchApprovedTask, missingInputFor },
 }));
 
 const performCreativeRevision = vi.fn().mockResolvedValue({ ok: true });
@@ -121,6 +124,7 @@ beforeEach(() => {
   projectScheduleFindFirst.mockResolvedValue(null);
   ensureProjectActive.mockResolvedValue({ status: "ACTIVE", usable: true });
   rememberCreativeReaction.mockResolvedValue(null);
+  missingInputFor.mockResolvedValue(null);
   planWeeklyInstagramContent.mockResolvedValue({
     ideasConsidered: 2,
     imagesGenerated: 2,
@@ -503,5 +507,178 @@ describe("CommandService.submit — CREATE_CONTENT_PLAN (chat-triggered weekly b
     expect(planForCapability).toHaveBeenCalledWith(
       expect.objectContaining({ capability: "CREATE_CONTENT_PLAN" }),
     );
+  });
+});
+
+// A capability that needs an input free text does not carry (a new social
+// account needs the platform to open it on) is asked for BEFORE any Task or
+// Approval exists. It used to be created, parked behind an approval, and only
+// found unrunnable by the router after the client had clicked Approve.
+describe("CommandService.submit — inputs a capability cannot run without", () => {
+  const accountSetup = (
+    overrides: {
+      targetPlatform?: "INSTAGRAM" | "TIKTOK" | "FACEBOOK";
+      payloadExtra?: Record<string, unknown>;
+    } = {},
+  ) => ({
+    workspaceId: "ws-1",
+    source: "WEB" as const,
+    rawText: "set up an account",
+    actorType: "USER" as const,
+    userId: "user-1",
+    knownProjectId: "proj-1",
+    payloadExtra: overrides.payloadExtra,
+    intent: {
+      kind: "CAPABILITY" as const,
+      capability: "SOCIAL_ACCOUNT_SETUP" as const,
+      targetPlatform: overrides.targetPlatform,
+      request: "set up an account",
+    },
+  });
+
+  it("asks for the platform and creates nothing when there is none", async () => {
+    const result = await CommandService.submit(accountSetup());
+
+    expect(result).toMatchObject({
+      status: "NEEDS_INPUT",
+      commandId: "cmd-1",
+      field: "platform",
+      problem: "missing",
+      allowed: ["INSTAGRAM", "TIKTOK", "LINKEDIN"],
+    });
+    expect(result).not.toHaveProperty("approvalId");
+    expect(planForCapability).not.toHaveBeenCalled();
+  });
+
+  it("asks again when the platform is one an account cannot be set up on", async () => {
+    const result = await CommandService.submit(
+      accountSetup({ targetPlatform: "FACEBOOK" }),
+    );
+
+    expect(result).toMatchObject({
+      status: "NEEDS_INPUT",
+      problem: "unsupported",
+      got: "FACEBOOK",
+    });
+    expect(planForCapability).not.toHaveBeenCalled();
+  });
+
+  it("plans it when the platform is given", async () => {
+    const result = await CommandService.submit(
+      accountSetup({ targetPlatform: "INSTAGRAM" }),
+    );
+
+    expect(result.status).toBe("PLANNED");
+    expect(planForCapability).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capability: "SOCIAL_ACCOUNT_SETUP",
+        targetPlatform: "INSTAGRAM",
+      }),
+    );
+  });
+
+  it("takes the platform from the explicit payload the way the task will", async () => {
+    // payloadExtra wins over the intent in the task payload, so it must here.
+    const fromPayload = await CommandService.submit(
+      accountSetup({ payloadExtra: { platform: "TIKTOK" } }),
+    );
+    expect(fromPayload.status).toBe("PLANNED");
+
+    const overridden = await CommandService.submit(
+      accountSetup({
+        targetPlatform: "INSTAGRAM",
+        payloadExtra: { platform: "FACEBOOK" },
+      }),
+    );
+    expect(overridden).toMatchObject({
+      status: "NEEDS_INPUT",
+      problem: "unsupported",
+      got: "FACEBOOK",
+    });
+  });
+
+  it("leaves every other capability alone", async () => {
+    const result = await CommandService.submit({
+      ...accountSetup(),
+      intent: {
+        kind: "CAPABILITY" as const,
+        capability: "CREATE_COPY" as const,
+        request: "write some copy",
+      },
+    });
+
+    expect(result.status).toBe("PLANNED");
+  });
+
+  it("checks after the project gate, so an on-hold project is still just on hold", async () => {
+    ensureProjectActive.mockResolvedValue({ status: "PAUSED", usable: false });
+
+    const result = await CommandService.submit(accountSetup());
+
+    expect(result.status).toBe("PROJECT_INACTIVE");
+  });
+
+  describe("approving in chat a task that cannot run", () => {
+    const taskApproval = {
+      id: "appr-9",
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      brandId: "brand-1",
+      taskId: "task-9",
+      entityType: "Task",
+      entityId: "task-9",
+    };
+    const approve = () => ({
+      ...baseInput(""),
+      rawText: "onayla",
+      intent: { kind: "APPROVAL_DECISION" as const, decision: "APPROVE" as const },
+    });
+
+    beforeEach(() => {
+      approvalFindMany.mockResolvedValue([taskApproval]);
+    });
+
+    it("does not consume the approval, and says what is missing", async () => {
+      missingInputFor.mockResolvedValue({
+        field: "platform",
+        problem: "missing",
+        allowed: ["INSTAGRAM", "TIKTOK", "LINKEDIN"],
+      });
+
+      const result = await CommandService.submit(approve());
+
+      expect(result).toMatchObject({
+        status: "NEEDS_INPUT",
+        approvalId: "appr-9",
+        problem: "missing",
+      });
+      expect(approvalDecide).not.toHaveBeenCalled();
+      expect(dispatchApprovedTask).not.toHaveBeenCalled();
+    });
+
+    it("approves and dispatches as before when nothing is missing", async () => {
+      const result = await CommandService.submit(approve());
+
+      expect(result.status).toBe("APPROVAL_HANDLED");
+      expect(missingInputFor).toHaveBeenCalledWith("task-9", "proj-1");
+      expect(approvalDecide).toHaveBeenCalled();
+      expect(dispatchApprovedTask).toHaveBeenCalledWith("task-9", "proj-1");
+    });
+
+    it("still lets the client reject it", async () => {
+      missingInputFor.mockResolvedValue({
+        field: "platform",
+        problem: "missing",
+        allowed: ["INSTAGRAM", "TIKTOK", "LINKEDIN"],
+      });
+
+      const result = await CommandService.submit({
+        ...approve(),
+        intent: { kind: "APPROVAL_DECISION" as const, decision: "REJECT" as const },
+      });
+
+      expect(result.status).toBe("APPROVAL_HANDLED");
+      expect(approvalDecide).toHaveBeenCalled();
+    });
   });
 });

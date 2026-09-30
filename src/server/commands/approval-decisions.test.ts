@@ -28,8 +28,10 @@ vi.mock("@/server/repositories/task.repository", () => ({
   TaskRepository: { transition: taskTransition },
 }));
 const dispatchApprovedTask = vi.fn();
+// What a task waiting for approval still lacks (null: nothing, it can run).
+const missingInputFor = vi.fn();
 vi.mock("@/server/commands/task-planner", () => ({
-  TaskPlanner: { dispatchApprovedTask },
+  TaskPlanner: { dispatchApprovedTask, missingInputFor },
 }));
 vi.mock("@/server/repositories/audit-log.repository", () => ({
   AuditLogRepository: { record: vi.fn().mockResolvedValue(undefined) },
@@ -92,6 +94,7 @@ const scope = { workspaceId: "ws-1", projectId: "proj-1", brandId: "brand-1" };
 beforeEach(() => {
   vi.clearAllMocks();
   decide.mockResolvedValue(undefined);
+  missingInputFor.mockResolvedValue(null);
   creativeTransition.mockResolvedValue(undefined);
   rememberCreativeReaction.mockResolvedValue(null);
   // Not an Instagram creative: auto-publish is skipped without side effects.
@@ -211,5 +214,111 @@ describe("applyApprovalDecision: learning from a creative", () => {
       "proj-1",
       "APPROVED",
     );
+  });
+});
+
+// A task that can never run must not be approved into a failure. Approving is
+// terminal, and the dispatch that follows would fail for good: the client was
+// left with a dead task and an approval card whose buttons no longer worked.
+describe("applyApprovalDecision: a task that cannot run", () => {
+  const taskApproval = () =>
+    approval({ entityType: "Task", entityId: "task-1", taskId: "task-1" });
+  const platformMissing = {
+    field: "platform",
+    problem: "missing",
+    allowed: ["INSTAGRAM", "TIKTOK", "LINKEDIN"],
+  };
+
+  it("refuses to approve it, in words the client can act on", async () => {
+    missingInputFor.mockResolvedValue(platformMissing);
+
+    const attempt = applyApprovalDecision({
+      approval: taskApproval(),
+      to: "APPROVED",
+      reviewedByUserId: "user-1",
+      actorType: "USER",
+    });
+
+    await expect(attempt).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: expect.stringContaining("Reject it and ask again"),
+    });
+    await expect(attempt).rejects.toThrow(/Instagram, TikTok or LinkedIn/);
+  });
+
+  it("leaves the approval undecided and starts nothing", async () => {
+    missingInputFor.mockResolvedValue(platformMissing);
+
+    await applyApprovalDecision({
+      approval: taskApproval(),
+      to: "APPROVED",
+      reviewedByUserId: "user-1",
+      actorType: "USER",
+    }).catch(() => undefined);
+
+    expect(decide).not.toHaveBeenCalled();
+    expect(dispatchApprovedTask).not.toHaveBeenCalled();
+    expect(taskTransition).not.toHaveBeenCalled();
+  });
+
+  it("looks at the task before the decision is written, not after", async () => {
+    const order: string[] = [];
+    missingInputFor.mockImplementation(async () => {
+      order.push("check");
+      return null;
+    });
+    decide.mockImplementation(async () => {
+      order.push("decide");
+    });
+
+    await applyApprovalDecision({
+      approval: taskApproval(),
+      to: "APPROVED",
+      reviewedByUserId: "user-1",
+      actorType: "USER",
+    });
+
+    expect(order).toEqual(["check", "decide"]);
+    expect(missingInputFor).toHaveBeenCalledWith("task-1", "proj-1");
+  });
+
+  it("approves and dispatches a task that can run, as before", async () => {
+    await applyApprovalDecision({
+      approval: taskApproval(),
+      to: "APPROVED",
+      reviewedByUserId: "user-1",
+      actorType: "USER",
+    });
+
+    expect(decide).toHaveBeenCalledWith("appr-1", "proj-1", "APPROVED", "user-1");
+    expect(dispatchApprovedTask).toHaveBeenCalledWith("task-1", "proj-1");
+  });
+
+  it("still lets the client reject it", async () => {
+    missingInputFor.mockResolvedValue(platformMissing);
+
+    await applyApprovalDecision({
+      approval: taskApproval(),
+      to: "REJECTED",
+      reviewedByUserId: "user-1",
+      actorType: "USER",
+    });
+
+    expect(decide).toHaveBeenCalledWith("appr-1", "proj-1", "REJECTED", "user-1");
+    expect(taskTransition).toHaveBeenCalledWith("task-1", "proj-1", "CANCELLED", {
+      failureReason: "Rejected by approver",
+    });
+    expect(missingInputFor).not.toHaveBeenCalled();
+  });
+
+  it("does not look at a creative's approval at all", async () => {
+    await applyApprovalDecision({
+      approval: approval(),
+      to: "APPROVED",
+      reviewedByUserId: "user-1",
+      actorType: "USER",
+    });
+
+    expect(missingInputFor).not.toHaveBeenCalled();
   });
 });

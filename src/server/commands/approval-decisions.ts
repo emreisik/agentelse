@@ -7,6 +7,8 @@ import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { CreativeRepository } from "@/server/repositories/creative.repository";
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { TaskPlanner } from "@/server/commands/task-planner";
+import { AgentelseError } from "@/server/security/errors";
+import { missingInputAdvice } from "@/server/execution/capability-input";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { IdeaRepository } from "@/server/repositories/idea.repository";
@@ -472,6 +474,22 @@ export async function applyApprovalDecision(input: {
   actorType: ActorType;
 }): Promise<void> {
   const { approval, to, reviewedByUserId, actorType } = input;
+
+  // A task that can never run is not approved into a failure. Approving is
+  // terminal (the approval cannot be decided again), and the dispatch that
+  // follows would fail for good, leaving a dead task and buttons that no longer
+  // work. So the task is checked first: on a miss the approval stays PENDING and
+  // the client can still reject it. This also covers approvals created before
+  // the platform check existed.
+  if (to === "APPROVED" && approval.entityType === "Task" && approval.taskId) {
+    const missing = await TaskPlanner.missingInputFor(
+      approval.taskId,
+      approval.projectId,
+    );
+    if (missing) {
+      throw new AgentelseError("INVALID_INPUT", missingInputAdvice(missing));
+    }
+  }
 
   await ApprovalRepository.decide(
     approval.id,

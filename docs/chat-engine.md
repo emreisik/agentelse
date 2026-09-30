@@ -62,6 +62,19 @@ Tool kısıtı koddadır (`tools.ts`, `phases`) ve iki durumludur: `ACTIVE` heps
 
 \* `start_strategic_project` yalnızca `LEGACY_AGENCY_LOOP=on` iken sunulur (planlayan Director artık çalışmıyorsa ajan geniş işi kendisi somut çıktılara böler). `save_idea` her modda vardır.
 
+### Girdisi eksik iş açılmaz (yeni hesap: platform)
+
+`SOCIAL_ACCOUNT_SETUP` dar bir şeydir: bir tarayıcı ajanı **yeni** bir Instagram / TikTok / LinkedIn hesabı açar (yüksek risk, müşteri onayı). Platform olmadan çalışamaz ve yalnızca standart tarayıcı profil paketinde profili olan platformlarda çalışabilir (X'in profili hiç oluşmaz, bu yüzden düğme olarak sunulmaz; liste `capability-input.ts`'te derleme zamanında pakete bağlıdır); eskiden görev ve onay kartı yine de oluşuyor, hata ancak müşteri Approve'a bastıktan sonra çıkıyordu (onay tüketilmiş, görev `FAILED`, kart ölü düğmelerle kalıyordu). Şimdi kural tek yerde (`src/server/execution/capability-input.ts`, saf) ve hem görev **açılmadan önce** hem onay **verilmeden önce** uygulanır:
+
+- `create_task`: platform yoksa (ya da hesap açılamayan bir platformsa: Facebook, YouTube, Pinterest, X) görev açmaz; 3 platform düğmeli bir soru kartı gösterir (`platform_question_shown`). Cevap sıradan bir mesajdır, ajan aynı araçla platformu vererek yeniden çağırır.
+- `CommandService.submit` (legacy sınıflandırıcı, composer kısayolu, hızlı eylemler): `NEEDS_INPUT` döner, hiçbir Task/Approval oluşmaz. Legacy sohbet ve "+" menüsü kısayolu aynı soruyu düğmeyle sorar (`src/server/commands/needs-input.ts`).
+- Onay: `applyApprovalDecision` (web ve Telegram) ve sohbette "onayla" (`CommandService`), görevi **onay tüketilmeden önce** kontrol eder. Çalışamayacak görev onaylanmaz, onay `PENDING` kalır ve Reject hâlâ çalışır (bu, veritabanında zaten bekleyen eski onayları da kurtarır). Hata kodu `INVALID_INPUT`; mesaj müşteriye eyleme dönük söylenir, Telegram aynı metni gösterir.
+- Router (`CapabilityRouter.resolveBrowserProfile`) aynı kuralı kullanır; buraya ulaşan bir görev, kapılardan birinin atlandığını gösterir.
+- Onay kartı artık ne olacağını söyler: "Platform", "What happens" satırları (`buildApprovalDetails`).
+- `create_task` açıklaması bu yeteneğin ne olduğunu ve **planlama / yönetim için olmadığını** söyler. "Sosyal medya yönetimini planla" gibi istekler artık bir hesap-açma görevi değil, içerik planı ya da soru olmalı.
+
+Aynı sınıftan bilinen açık: `INSTAGRAM/TIKTOK/LINKEDIN/X_PUBLISH` yetenekleri `create_task`'tan serbest metinle açılabiliyor ve bağlı hesapta `imageUrl` / `videoUrl` / `caption` eksikliğiyle başarısız oluyor. Sahip kararı bekliyor (menüden çıkarmak ya da "yayın bitmiş bir creative kartından" demek).
+
 ## Bağlam ve hafıza: Brand Core, Brand Memory, Current Context
 
 Ajanın her turdaki bağlamı üç ayrı katmandan kurulur (`src/server/chat/context.ts`). Tüm sohbet geçmişi ve tüm saklı tercihler artık her tur modele gönderilmez.

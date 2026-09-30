@@ -8,6 +8,10 @@ import type {
 
 import { CommandService } from "@/server/commands/command-service";
 import { CommandRepository } from "@/server/repositories/command.repository";
+import {
+  needsInputReply,
+  platformQuestionCard,
+} from "@/server/commands/needs-input";
 import type { ChatMessageResult } from "@/server/actions/command-actions";
 
 // The composer "+" menu's capability shortcuts (see
@@ -56,6 +60,39 @@ export async function submitComposerShortcut(input: {
       commandId: submission.commandId,
       reply: submission.summary,
       attachments: [],
+    };
+  }
+
+  // The shortcut cannot say which platform an account is for (its request is a
+  // fixed sentence), so ask with buttons: the card is stored on this row and
+  // the chat shows it on the refresh that follows. Answering it is an ordinary
+  // chat message, which knows the platform.
+  if (submission.status === "NEEDS_INPUT") {
+    const reply = needsInputReply(submission);
+    await CommandRepository.recordReply(submission.commandId, reply, "ANSWERED");
+    const card = submission.approvalId
+      ? undefined
+      : platformQuestionCard({
+          projectId: input.projectId,
+          ideaId: input.ideaId,
+          missing: submission,
+        });
+    if (card) {
+      await CommandRepository.attachParsedIntent(
+        submission.commandId,
+        { card },
+        input.projectId,
+      );
+    }
+    // Returned as well as stored: the client renders result.card at once, and
+    // this action does not revalidate the page, so without it the buttons
+    // would only appear after the next refresh.
+    return {
+      ok: true,
+      commandId: submission.commandId,
+      reply,
+      attachments: [],
+      card,
     };
   }
 

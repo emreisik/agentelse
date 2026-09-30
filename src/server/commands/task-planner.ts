@@ -23,6 +23,7 @@ import {
   buildApprovalDetails,
 } from "@/server/execution/approval-details";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
+import { missingCapabilityInput } from "@/server/execution/capability-input";
 import { ExecutionService } from "@/server/execution/execution-service";
 
 export type PlanCapabilityInput = {
@@ -166,6 +167,19 @@ export const TaskPlanner = {
     });
 
     return { task, dispatched: true as const, job, level };
+  },
+
+  // What a task waiting for approval still lacks to be runnable (see
+  // capability-input.ts), or null. Asked BEFORE an approval is consumed:
+  // approving is terminal, so a task that can never run must not be approved
+  // into a failure the client can neither retry nor reject.
+  async missingInputFor(taskId: string, projectId: string) {
+    const task = await TaskRepository.findByIdInProject(taskId, projectId);
+    if (!task) return null;
+    const payload = (task.payload ?? {}) as { platform?: unknown };
+    return missingCapabilityInput(task.capability, {
+      platform: payload.platform,
+    });
   },
 
   // Called once an Approval tied to a WAITING_APPROVAL task is APPROVED —

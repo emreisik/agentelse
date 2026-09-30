@@ -122,8 +122,13 @@ async function processCredential(
         text: action === "approve" ? "✅ Approved" : "❌ Rejected",
       }).catch(() => {});
     } catch (error) {
+      // INVALID_INPUT carries its own plain-language reason (the task cannot
+      // run as written); every other AgentelseError here means the approval
+      // was already decided.
       const message = isAgentelseError(error)
-        ? "This approval can no longer be decided (it has probably already been decided)"
+        ? error.code === "INVALID_INPUT"
+          ? error.message
+          : "This approval can no longer be decided (it has probably already been decided)"
         : "The action failed";
       await telegramAnswerCallbackQuery(token, cq.id, {
         text: message,

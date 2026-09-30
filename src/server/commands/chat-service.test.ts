@@ -460,6 +460,80 @@ describe("ChatService.turn — Deep Path (strategic request)", () => {
   });
 });
 
+describe("ChatService.turn — a task that lacks an input", () => {
+  const turn = () =>
+    ChatService.turn({
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      userId: "user-1",
+      message: "sosyal medya yönetimi kurulumunu planla",
+      ideaId: "idea-1",
+    });
+
+  beforeEach(() => {
+    run.mockResolvedValue({
+      output: {
+        reply: "Tamam, hesabı açıyorum, onayınıza gelecek.",
+        intentKind: "TASK",
+        capability: "SOCIAL_ACCOUNT_SETUP",
+        taskBrief: "Set up social media",
+      },
+    });
+  });
+
+  it("asks which platform with buttons instead of promising work that would fail", async () => {
+    submit.mockResolvedValue({
+      status: "NEEDS_INPUT",
+      commandId: "cmd-needs",
+      field: "platform",
+      problem: "missing",
+      allowed: ["INSTAGRAM", "TIKTOK", "LINKEDIN"],
+    });
+
+    const result = await turn();
+
+    // The model's own reply promised a task and an approval; neither exists.
+    expect(result.reply).toBe(
+      "Which platform should the new account be for? Instagram, TikTok or LinkedIn?",
+    );
+    expect(result.status).toBe("ANSWERED");
+    expect(result.card).toMatchObject({
+      kind: "question",
+      projectId: "proj-1",
+      ideaId: "idea-1",
+    });
+    expect(attachParsedIntent).toHaveBeenCalledWith(
+      "cmd-needs",
+      { card: result.card },
+      "proj-1",
+      "brand-1",
+    );
+    expect(recordReply).toHaveBeenCalledWith(
+      "cmd-needs",
+      result.reply,
+      "ANSWERED",
+    );
+  });
+
+  it("tells the client to reject the approval when the task already exists", async () => {
+    submit.mockResolvedValue({
+      status: "NEEDS_INPUT",
+      commandId: "cmd-needs",
+      approvalId: "appr-1",
+      field: "platform",
+      problem: "missing",
+      allowed: ["INSTAGRAM", "TIKTOK", "LINKEDIN"],
+    });
+
+    const result = await turn();
+
+    expect(result.reply).toContain("Reject it and ask again");
+    // Nothing to answer with a button: no question card.
+    expect(result.card).toBeUndefined();
+    expect(attachParsedIntent).not.toHaveBeenCalled();
+  });
+});
+
 describe("ChatService.turn — existing fallback behavior (regression)", () => {
   it("falls back to the rule-based parser and still records the message when reasoning throws", async () => {
     run.mockRejectedValue(new Error("provider exploded"));

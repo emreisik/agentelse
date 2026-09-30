@@ -20,6 +20,9 @@ export const ERROR_CODES = [
   "INVALID_STATE_TRANSITION",
   "BUDGET_EXCEEDED",
   "DUPLICATE",
+  // The request cannot run as stated: a required input is missing or not
+  // supported (see execution/capability-input.ts). Not retryable.
+  "INVALID_INPUT",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

@@ -162,9 +162,7 @@ async function getProjectBadges(
 
 // projectBadges already carries the counts that overlap with the panels in
 // the Tools menu (setup/goals/work/approvals/human-action) — instead of
-// firing a separate query, we derive from the same data (see the badges
-// calculation in getHubSummary in hub-core.repository.ts for the identical
-// logic).
+// firing a separate query, we derive from the same data.
 function toolBadgesFrom(
   projectBadges: ProjectNavBadges | null,
 ): Partial<Record<PanelKey, number>> {

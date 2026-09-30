@@ -14,7 +14,6 @@ import { departmentRecommendationDef } from "./prompts/department-recommendation
 import { signalProfileRecommendationDef } from "./prompts/signal-profile-recommendation";
 import { chatTurnDef } from "./prompts/chat-turn";
 import { instagramStyleDef } from "./prompts/instagram-style";
-import { measurementAnalysisDef } from "./prompts/measurement-analysis";
 import { strategySynthesisDef } from "./prompts/strategy-synthesis";
 import { metaCampaignBriefDef } from "./prompts/meta-campaign-brief";
 import { quickDiscoveryDef } from "./prompts/quick-discovery";
@@ -43,7 +42,6 @@ const DEFS: Record<string, { schema: z.ZodType }> = {
   signalProfileRecommendationDef,
   chatTurnDef,
   instagramStyleDef,
-  measurementAnalysisDef,
   strategySynthesisDef,
   metaCampaignBriefDef,
   quickDiscoveryDef,

@@ -23,7 +23,6 @@ export function isPublicPath(pathname: string): boolean {
     // an external scheduler (no session cookie) can call it. Without a
     // valid CRON_SECRET bearer token the route returns its own 401.
     pathname.startsWith("/api/cron/") ||
-    pathname === "/api/debug/headers" ||
     pathname === "/icon" ||
     pathname === "/apple-icon"
   );

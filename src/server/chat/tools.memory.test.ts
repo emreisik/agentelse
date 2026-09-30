@@ -76,7 +76,29 @@ describe("which tools the injection protection covers", () => {
         .filter((candidate) => candidate.sensitive)
         .map((candidate) => candidate.name)
         .sort(),
-    ).toEqual(["decide_approval", "remember_preference", "start_deep_enrichment"]);
+    ).toEqual([
+      "decide_approval",
+      "remember_preference",
+      "start_deep_enrichment",
+      // The goal and steps are read back on later messages, so a plan written
+      // after outside content was read could carry text from a page.
+      "start_work_session",
+    ]);
+  });
+
+  it("makes exactly a decision and a long paid job 'first action only'", () => {
+    expect(
+      allTools()
+        .filter((candidate) => candidate.decisive)
+        .map((candidate) => candidate.name)
+        .sort(),
+    ).toEqual(["decide_approval", "start_deep_enrichment"]);
+  });
+
+  it("only ever marks work tools as decisive: a note or a lookup cannot decide anything", () => {
+    for (const candidate of allTools().filter((c) => c.decisive)) {
+      expect(candidate.kind, candidate.name).toBe("work");
+    }
   });
 
   it("never makes a tool both a reader of outside content and a changer of state", () => {

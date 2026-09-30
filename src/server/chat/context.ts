@@ -5,6 +5,7 @@ import { SETUP_STAGE } from "@/lib/labels";
 import { getBrandTwin } from "@/server/brand-twin/brand-twin";
 import { MemoryService } from "@/server/memory/memory-service";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
+import { WorkSessionService } from "@/server/work-session/work-session-service";
 
 import { buildAgencyCapabilities } from "./deliverables";
 import { TASK_RESULTS_IN_HISTORY, taskResultOf } from "./history";
@@ -42,86 +43,103 @@ function recentUserText(
 // this conversation (only what matters, MemoryService.recall) instead of the
 // store's newest entries riding along inside the brand profile. The legacy
 // ChatService leaves it off and gets the profile exactly as before.
+// options.session: also load the project's live work session (agent only), so
+// a message that continues it starts from its checkpoint.
 export async function buildContext(
   projectId: string,
   ideaId?: string,
-  options: { recall?: boolean } = {},
+  options: { recall?: boolean; session?: boolean } = {},
 ) {
   const recall = options.recall === true;
-  const [project, brandTwin, dailyStat, pendingApprovals, recent, setupState] =
-    await Promise.all([
-      prisma.project.findUniqueOrThrow({
-        where: { id: projectId },
-        select: {
-          name: true,
-          domain: true,
-          status: true,
-          language: true,
-          country: true,
+  const [
+    project,
+    brandTwin,
+    dailyStat,
+    pendingApprovals,
+    recent,
+    setupState,
+    workSession,
+  ] = await Promise.all([
+    prisma.project.findUniqueOrThrow({
+      where: { id: projectId },
+      select: {
+        name: true,
+        domain: true,
+        status: true,
+        language: true,
+        country: true,
+      },
+    }),
+    // BrandTwin (src/server/brand-twin/brand-twin.ts) replaces the old
+    // hand-picked BrandDossier/BrandConstitution subset here — same
+    // composition the Brand Workspace right panel uses, so the chat LLM
+    // sees positioning/audience/markets/voice/negativeRules/currentFocus/
+    // creativePreferences/creativeMemory instead of just
+    // {summary,positioning,toneOfVoice}. This is also step 4 of the spec's
+    // Orchestrator ("retrieve relevant past user decisions") for free —
+    // BrandTwin.creativePreferences already is the brand's recent
+    // UserDecision rows.
+    recall
+      ? getBrandTwin(projectId, { memory: false })
+      : getBrandTwin(projectId),
+    latestDailyStat(projectId),
+    prisma.approval.findMany({
+      where: { projectId, status: "PENDING" },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: { type: true, entityType: true, createdAt: true },
+    }),
+    // In an idea's chat thread (legacy deep-link, see page.tsx), history is
+    // ALL messages belonging to that idea. The project-wide branch (no
+    // ideaId — now the ONE primary chat) includes every WEB message and
+    // every SYSTEM pipeline event project-wide (council decisions, work
+    // plans, task/creative completions — regardless of which idea they
+    // belong to), so the LLM replies knowing everything the pipeline just
+    // did across every initiative, not just idea-less events. `topic: null`
+    // excludes scoped threads that aren't this general feed — e.g. legacy
+    // Command rows with topic "BRAND_BRAIN" from the now-removed Brand
+    // Brain chat feature. This was previously only enforced at render time
+    // (page.tsx), not here, so those turns could leak into the general
+    // chat's LLM context.
+    prisma.command.findMany({
+      where: ideaId
+        ? { ideaId, source: { in: ["WEB", "SYSTEM"] } }
+        : { projectId, topic: null, source: { in: ["WEB", "SYSTEM"] } },
+      orderBy: { createdAt: "desc" },
+      take: HISTORY_TURNS,
+      select: {
+        id: true,
+        source: true,
+        rawText: true,
+        replyText: true,
+        attachments: true,
+        // Only read for the finished-task result text (taskResultOf); it is
+        // not passed on as-is.
+        parsedIntent: true,
+      },
+    }),
+    // Drives the NOT_STARTED/IN_PROGRESS/ACTIVE gate (see chat-turn.ts and
+    // command-service.ts) — null means setup was never started at all.
+    prisma.projectSetupState.findUnique({
+      where: { projectId },
+      select: {
+        activatedAt: true,
+        stageRecords: {
+          where: { status: "WAITING_CLIENT" },
+          select: { stage: true },
+          take: 1,
         },
-      }),
-      // BrandTwin (src/server/brand-twin/brand-twin.ts) replaces the old
-      // hand-picked BrandDossier/BrandConstitution subset here — same
-      // composition the Brand Workspace right panel uses, so the chat LLM
-      // sees positioning/audience/markets/voice/negativeRules/currentFocus/
-      // creativePreferences/creativeMemory instead of just
-      // {summary,positioning,toneOfVoice}. This is also step 4 of the spec's
-      // Orchestrator ("retrieve relevant past user decisions") for free —
-      // BrandTwin.creativePreferences already is the brand's recent
-      // UserDecision rows.
-      recall
-        ? getBrandTwin(projectId, { memory: false })
-        : getBrandTwin(projectId),
-      latestDailyStat(projectId),
-      prisma.approval.findMany({
-        where: { projectId, status: "PENDING" },
-        orderBy: { createdAt: "desc" },
-        take: 5,
-        select: { type: true, entityType: true, createdAt: true },
-      }),
-      // In an idea's chat thread (legacy deep-link, see page.tsx), history is
-      // ALL messages belonging to that idea. The project-wide branch (no
-      // ideaId — now the ONE primary chat) includes every WEB message and
-      // every SYSTEM pipeline event project-wide (council decisions, work
-      // plans, task/creative completions — regardless of which idea they
-      // belong to), so the LLM replies knowing everything the pipeline just
-      // did across every initiative, not just idea-less events. `topic: null`
-      // excludes scoped threads that aren't this general feed — e.g. legacy
-      // Command rows with topic "BRAND_BRAIN" from the now-removed Brand
-      // Brain chat feature. This was previously only enforced at render time
-      // (page.tsx), not here, so those turns could leak into the general
-      // chat's LLM context.
-      prisma.command.findMany({
-        where: ideaId
-          ? { ideaId, source: { in: ["WEB", "SYSTEM"] } }
-          : { projectId, topic: null, source: { in: ["WEB", "SYSTEM"] } },
-        orderBy: { createdAt: "desc" },
-        take: HISTORY_TURNS,
-        select: {
-          id: true,
-          source: true,
-          rawText: true,
-          replyText: true,
-          attachments: true,
-          // Only read for the finished-task result text (taskResultOf); it is
-          // not passed on as-is.
-          parsedIntent: true,
-        },
-      }),
-      // Drives the NOT_STARTED/IN_PROGRESS/ACTIVE gate (see chat-turn.ts and
-      // command-service.ts) — null means setup was never started at all.
-      prisma.projectSetupState.findUnique({
-        where: { projectId },
-        select: {
-          activatedAt: true,
-          stageRecords: {
-            where: { status: "WAITING_CLIENT" },
-            select: { stage: true },
-            take: 1,
-          },
-        },
-      }),
-    ]);
+      },
+    }),
+    // The work session this message may be continuing (agent only). An
+    // optional extra: if the lookup fails the message goes on without it.
+    options.session === true
+      ? WorkSessionService.getLive(projectId).catch((error) => {
+          console.error("[chat-context] work session lookup failed:", error);
+          return null;
+        })
+      : Promise.resolve(null),
+  ]);
 
   if (!brandTwin) {
     throw new Error(`Project ${projectId} has no default brand`);
@@ -208,6 +226,8 @@ export async function buildContext(
     brand: brandTwin,
     // Brand Memory recalled for this conversation (agent only; null otherwise).
     memory,
+    // The project's live work session, when there is one (agent only).
+    workSession,
     state: dailyStat,
     pending: pendingApprovals.map((approval) => ({
       type: approval.type,

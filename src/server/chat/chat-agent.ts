@@ -21,6 +21,12 @@ import {
 } from "@/server/repositories/command.repository";
 import { ReasoningCallRepository } from "@/server/repositories/reasoning-call.repository";
 import { AgentelseError, isAgentelseError } from "@/server/security/errors";
+import {
+  SESSION_LIMITS,
+  remainingBudgetUsd,
+  sessionForPrompt,
+} from "@/server/work-session/session";
+import { WorkSessionService } from "@/server/work-session/work-session-service";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 import { buildHistoryInput, buildUserInput, trimHistory } from "./history";
@@ -35,18 +41,20 @@ import {
 } from "./openai-chat-client";
 import { buildContextMessage, CHAT_INSTRUCTIONS } from "./prompt";
 import {
+  RunGuard,
+  STOP_NOTICES,
+  canonicalJson,
+  type StopReason,
+} from "./run-guard";
+import {
   toOpenAITools,
   toolsForPhase,
   type ChatTool,
+  type SessionHandle,
   type ToolContext,
   type ToolOutcome,
 } from "./tools";
 import type { ChatModel, ChatModelEvent, ChatStreamEvent } from "./types";
-
-// Upper bound on model<->tool round trips within one chat turn. A normal turn
-// is one round (plain answer) or two (tool call, then the wrap-up sentence).
-// Read tools spend rounds too, so leave room for a lookup or two.
-const MAX_ROUNDS = 6;
 
 // How long the first reply waits for the brand scan (site pages + a few web
 // searches + one model call). Past this the reply goes ahead without it.
@@ -123,7 +131,13 @@ export async function* runChatAgent(
   const appended: string[] = [];
   let status: CommandReplyStatus = "ANSWERED";
   let card: IdeaEventCardData | undefined;
-  let workDone = false;
+  // What this message may do (rounds, work actions, cost...) and what it has
+  // done so far; see run-guard.ts. Widened when the message belongs to a work
+  // session.
+  const guard = new RunGuard();
+  // The work session this message belongs to: loaded with the context, or
+  // opened by start_work_session. Its spend is charged to it at the end.
+  const sessionRef: SessionHandle = {};
   let suggestionItems: string[] | undefined;
   let inputTokens = 0;
   let outputTokens = 0;
@@ -131,6 +145,16 @@ export async function* runChatAgent(
   let brandId: string | undefined;
   let settled = false;
   const modelName = ReasoningService.isMockMode() ? "mock" : chatModelName();
+
+  // What the model calls of this message have cost so far.
+  const turnCostUsd = () =>
+    modelName === "mock"
+      ? 0
+      : estimateReasoningCostUsd({
+          model: modelName,
+          inputTokens,
+          outputTokens,
+        });
 
   const replyText = () =>
     [...replyParts, inFlight.trim(), ...appended]
@@ -143,18 +167,21 @@ export async function* runChatAgent(
   async function recordUsage(ok: boolean, errorMessage?: string) {
     if (!modelRan || !brandId) return;
     const mock = modelName === "mock";
-    const costUsd = mock
-      ? 0
-      : estimateReasoningCostUsd({
-          model: modelName,
-          inputTokens,
-          outputTokens,
-        });
+    const costUsd = turnCostUsd();
     const scope = {
       workspaceId: input.workspaceId,
       projectId: input.projectId,
       brandId,
     };
+    // The work session this message belonged to is charged for it (its own
+    // ceiling, on top of the daily counters below).
+    if (sessionRef.id) {
+      await WorkSessionService.addSpend(scope, sessionRef.id, costUsd).catch(
+        (error) => {
+          console.error("[chat-agent] failed to record session spend:", error);
+        },
+      );
+    }
     try {
       const call = await ReasoningCallRepository.record({
         ...scope,
@@ -246,20 +273,24 @@ export async function* runChatAgent(
 
     const context = await buildContext(input.projectId, input.ideaId, {
       recall: true,
+      session: true,
     });
     brandId = context.brandId;
+    const scope = {
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      brandId: context.brandId,
+    };
+    // A message that continues a live work session runs under its allowance.
+    if (context.workSession) {
+      sessionRef.id = context.workSession.id;
+      guard.enterSession(remainingBudgetUsd(context.workSession.session));
+    }
 
     // Budget gate first, exactly like ReasoningService.run: a runaway loop is
     // caught by the same per-project daily counters. Throws BUDGET_EXCEEDED,
     // handled below as a limit-notice card.
-    await AutonomyPolicyRepository.checkAndIncrement(
-      {
-        workspaceId: input.workspaceId,
-        projectId: input.projectId,
-        brandId: context.brandId,
-      },
-      "reasoningCalls",
-    );
+    await AutonomyPolicyRepository.checkAndIncrement(scope, "reasoningCalls");
 
     const mock = ReasoningService.isMockMode();
     if (!mock && !isChatModelConfigured()) {
@@ -285,6 +316,7 @@ export async function* runChatAgent(
       message: input.message,
       attachments: input.attachments,
       phase: context.projectPhase,
+      session: sessionRef,
       // Events a running tool wants the client to see NOW (image previews).
       // Drained by the tool loop below while execute() is still pending.
       emit: (event) => {
@@ -321,6 +353,9 @@ export async function* runChatAgent(
           state: context.state,
           agency: context.agency,
           pending: context.pending,
+          workSession: context.workSession
+            ? sessionForPrompt(context.workSession.session)
+            : undefined,
           phase: context.projectPhase,
           enrichment: context.setupWaiting,
           brandScan,
@@ -338,8 +373,73 @@ export async function* runChatAgent(
     ];
 
     let terminated = false;
+    let stopReason: StopReason | undefined;
 
-    for (let round = 0; round < MAX_ROUNDS && !terminated; round += 1) {
+    // Decides whether a tool call the model made may run, and with what
+    // arguments; otherwise what the model is told instead. The order matters:
+    // an unavailable tool, a sensitive one after outside content, no action
+    // left, unparsable arguments, and only then the checks that need the
+    // arguments (a repeat, a decision that is not first).
+    const admitCall = (call: {
+      name: string;
+      arguments: string;
+    }): { refused: unknown } | { tool: ChatTool; args: unknown } => {
+      const tool = toolMap.get(call.name);
+      if (!tool) {
+        return {
+          refused: {
+            error: `Unknown or currently unavailable tool "${call.name}".`,
+          },
+        };
+      }
+      if (tool.sensitive && toolCtx.tainted) {
+        // This turn already read content from outside the conversation, and
+        // this tool changes lasting state. Refused without running, and
+        // without using up the turn's one work action.
+        return {
+          refused: {
+            outcome: "blocked_external_content",
+            note: "Not done: this message already used content from outside the conversation (a web search or stored research), and this action changes something lasting. Ask the client to confirm it in their own words in their next message.",
+          },
+        };
+      }
+      // The one-work-per-turn invariant (larger inside a work session): a work
+      // call past the allowance never executes, so a turn can't create
+      // duplicate tasks.
+      const noAction = guard.slotBlock(tool);
+      if (noAction) return { refused: { error: noAction } };
+      const parsed = parseArgs(tool, call.arguments);
+      if (!parsed.ok) return { refused: { error: parsed.error } };
+      // Reserves the action before it runs: even if the tool throws halfway,
+      // the work may already exist, so it still counts.
+      const denied = guard.admit(tool, canonicalJson(parsed.value));
+      if (denied) return { refused: { error: denied } };
+      return { tool, args: parsed.value };
+    };
+
+    for (let round = 0; !terminated; round += 1) {
+      const early = guard.beforeRound(round);
+      if (early) {
+        stopReason = early;
+        break;
+      }
+      if (round > 0 && guard.inSession) {
+        // Every further round of a work session's message is another model
+        // call; it counts on the project's daily limit like the first one.
+        try {
+          await AutonomyPolicyRepository.checkAndIncrement(
+            scope,
+            "reasoningCalls",
+          );
+        } catch (error) {
+          if (isAgentelseError(error) && error.code === "BUDGET_EXCEEDED") {
+            stopReason = "daily";
+            break;
+          }
+          throw error;
+        }
+      }
+
       modelRan = true;
       inFlight = "";
       let completed: Extract<ChatModelEvent, { type: "completed" }> | undefined;
@@ -372,6 +472,17 @@ export async function* runChatAgent(
       outputTokens += completed.outputTokens ?? 0;
       if (completed.functionCalls.length === 0) break;
 
+      // A work session's message that has used up its cost or context
+      // allowance stops here, before the calls of this round run.
+      const stop = guard.afterRound({
+        roundInputTokens: completed.inputTokens ?? 0,
+        turnCostUsd: turnCostUsd(),
+      });
+      if (stop) {
+        stopReason = stop;
+        break;
+      }
+
       conversation.push(...completed.output);
       // OpenAI's hosted search ran inside the model turn: everything it
       // brought back is outside content.
@@ -380,130 +491,111 @@ export async function* runChatAgent(
       }
 
       for (const call of completed.functionCalls) {
-        const tool = toolMap.get(call.name);
+        const gate = admitCall(call);
         let result: unknown;
         let outcome: ToolOutcome | undefined;
 
-        if (!tool) {
-          result = {
-            error: `Unknown or currently unavailable tool "${call.name}".`,
-          };
-        } else if (tool.sensitive && toolCtx.tainted) {
-          // This turn already read content from outside the conversation, and
-          // this tool changes lasting state. Refused without running, and
-          // without using up the turn's one work action.
-          result = {
-            outcome: "blocked_external_content",
-            note: "Not done: this message already used content from outside the conversation (a web search or stored research), and this action changes something lasting. Ask the client to confirm it in their own words in their next message.",
-          };
-        } else if (tool.kind !== "note" && tool.kind !== "read" && workDone) {
-          // The one-work-per-turn invariant: a second work/terminal call
-          // never executes, so a turn can't create duplicate tasks.
-          result = {
-            error:
-              "Only one action per message is allowed and it already ran. Explain the outcome to the client; they can ask for the rest in a follow-up.",
-          };
+        if ("refused" in gate) {
+          result = gate.refused;
         } else {
-          const parsed = parseArgs(tool, call.arguments);
-          if (!parsed.ok) {
-            result = { error: parsed.error };
-          } else {
-            yield { type: "tool.start", name: tool.name, label: tool.label };
-            // Set BEFORE executing: even if the tool throws halfway, the
-            // work may already exist, so nothing else may run this turn.
-            if (tool.kind !== "note" && tool.kind !== "read") workDone = true;
-            let ok = true;
-            try {
-              // Run the tool, but keep forwarding events it emits while it
-              // works (an image render takes a minute; the client should
-              // watch it sharpen, not stare at a spinner).
-              const run: {
-                done: boolean;
-                failed: boolean;
-                value?: ToolOutcome;
-                error?: unknown;
-              } = { done: false, failed: false };
-              tool.execute(parsed.value, toolCtx).then(
-                (value) => {
-                  run.value = value;
-                  run.done = true;
-                  wakeStream?.();
-                },
-                (error: unknown) => {
-                  run.error = error;
-                  run.failed = true;
-                  run.done = true;
-                  wakeStream?.();
-                },
-              );
-              while (!run.done) {
-                while (streamQueue.length) yield streamQueue.shift()!;
-                if (run.done) break;
-                await new Promise<void>((resolve) => {
-                  wakeStream = resolve;
-                  // Re-check after registering: an event or completion may
-                  // have landed between the checks above and this line.
-                  if (streamQueue.length || run.done) resolve();
-                });
-                wakeStream = undefined;
-              }
+          const { tool, args } = gate;
+          yield { type: "tool.start", name: tool.name, label: tool.label };
+          let ok = true;
+          try {
+            // Run the tool, but keep forwarding events it emits while it
+            // works (an image render takes a minute; the client should
+            // watch it sharpen, not stare at a spinner).
+            const run: {
+              done: boolean;
+              failed: boolean;
+              value?: ToolOutcome;
+              error?: unknown;
+            } = { done: false, failed: false };
+            tool.execute(args, toolCtx).then(
+              (value) => {
+                run.value = value;
+                run.done = true;
+                wakeStream?.();
+              },
+              (error: unknown) => {
+                run.error = error;
+                run.failed = true;
+                run.done = true;
+                wakeStream?.();
+              },
+            );
+            while (!run.done) {
               while (streamQueue.length) yield streamQueue.shift()!;
-              if (run.failed) throw run.error;
-              outcome = run.value!;
+              if (run.done) break;
+              await new Promise<void>((resolve) => {
+                wakeStream = resolve;
+                // Re-check after registering: an event or completion may
+                // have landed between the checks above and this line.
+                if (streamQueue.length || run.done) resolve();
+              });
+              wakeStream = undefined;
+            }
+            while (streamQueue.length) yield streamQueue.shift()!;
+            if (run.failed) throw run.error;
+            outcome = run.value!;
+            result = outcome.result;
+            if (tool.external) toolCtx.tainted = true;
+          } catch (error) {
+            ok = false;
+            // PROVIDER_UNAVAILABLE from INSIDE a tool is not "the chat has
+            // no API key" (that is the chat model's own failure, handled
+            // in the outer catch): it is typically the execution router
+            // refusing a circuit-broken provider (e.g. openai-creative).
+            // The limit card would blame a missing key and hide the
+            // real cause, so such errors are reported as tool failures.
+            const notice =
+              isAgentelseError(error) && error.code === "PROVIDER_UNAVAILABLE"
+                ? null
+                : limitNoticeFromError(error);
+            if (notice) {
+              console.error(
+                `[chat-agent] tool ${tool.name} blocked (${notice.reason}):`,
+                error instanceof Error ? error.message : error,
+              );
+              outcome = {
+                status: "ERROR",
+                card: notice,
+                result: {
+                  outcome: "blocked",
+                  explanation: limitNoticeReplyText(notice),
+                },
+              };
               result = outcome.result;
-              if (tool.external) toolCtx.tainted = true;
-            } catch (error) {
-              ok = false;
-              // PROVIDER_UNAVAILABLE from INSIDE a tool is not "the chat has
-              // no API key" (that is the chat model's own failure, handled
-              // in the outer catch): it is typically the execution router
-              // refusing a circuit-broken provider (e.g. openai-creative).
-              // The limit card would blame a missing key and hide the
-              // real cause, so such errors are reported as tool failures.
-              const notice =
-                isAgentelseError(error) && error.code === "PROVIDER_UNAVAILABLE"
-                  ? null
-                  : limitNoticeFromError(error);
-              if (notice) {
-                console.error(
-                  `[chat-agent] tool ${tool.name} blocked (${notice.reason}):`,
-                  error instanceof Error ? error.message : error,
-                );
-                outcome = {
-                  status: "ERROR",
-                  card: notice,
-                  result: {
-                    outcome: "blocked",
-                    explanation: limitNoticeReplyText(notice),
-                  },
-                };
-                result = outcome.result;
-              } else {
-                console.error(
-                  `[chat-agent] tool ${tool.name} failed:`,
-                  error instanceof Error ? error.message : error,
-                );
-                result = {
-                  error:
-                    isAgentelseError(error) &&
-                    error.code === "PROVIDER_UNAVAILABLE"
-                      ? "The service that runs this action is temporarily unavailable on our side. Tell the client honestly that it could not run right now (not a problem with their request) and that it needs a fix on the server; do not blame their API key."
-                      : "The action failed. Tell the client honestly and suggest trying again shortly.",
-                };
-                status = "ERROR";
-              }
+            } else {
+              console.error(
+                `[chat-agent] tool ${tool.name} failed:`,
+                error instanceof Error ? error.message : error,
+              );
+              result = {
+                error:
+                  isAgentelseError(error) &&
+                  error.code === "PROVIDER_UNAVAILABLE"
+                    ? "The service that runs this action is temporarily unavailable on our side. Tell the client honestly that it could not run right now (not a problem with their request) and that it needs a fix on the server; do not blame their API key."
+                    : "The action failed. Tell the client honestly and suggest trying again shortly.",
+              };
+              status = "ERROR";
             }
-            yield { type: "tool.end", name: tool.name, ok };
-            if (outcome?.status) status = outcome.status;
-            if (outcome?.card) {
-              card = outcome.card;
-              yield { type: "card", card: outcome.card };
-            }
-            if (outcome?.appendReply) appended.push(outcome.appendReply);
-            if (outcome?.suggestions?.length && !card) {
-              suggestionItems = outcome.suggestions;
-            }
-            if (tool.kind === "terminal") terminated = true;
+          }
+          yield { type: "tool.end", name: tool.name, ok };
+          if (outcome?.status) status = outcome.status;
+          if (outcome?.card) {
+            card = outcome.card;
+            yield { type: "card", card: outcome.card };
+          }
+          if (outcome?.appendReply) appended.push(outcome.appendReply);
+          if (outcome?.suggestions?.length && !card) {
+            suggestionItems = outcome.suggestions;
+          }
+          if (tool.kind === "terminal") terminated = true;
+          // start_work_session opened (or found) a session: from here on this
+          // message runs under its allowance.
+          if (sessionRef.id && !guard.inSession) {
+            guard.enterSession(SESSION_LIMITS.maxSpendUsd);
           }
         }
 
@@ -514,6 +606,10 @@ export async function* runChatAgent(
         });
       }
     }
+
+    // A work session's message that was cut short says why, and how to go on.
+    // (An ordinary message that ran out of rounds stays silent, as before.)
+    if (stopReason && guard.inSession) appended.push(STOP_NOTICES[stopReason]);
 
     // Deterministic text the app owns (approval note, form link) goes after
     // the model's own words; streamed so the client shows what is persisted.
@@ -532,7 +628,7 @@ export async function* runChatAgent(
 
     // Every turn that never went through CommandService.submit still owes
     // the "command.received" audit row submit would have written.
-    if (!workDone) {
+    if (guard.workActions === 0) {
       await AuditLogRepository.record({
         workspaceId: input.workspaceId,
         projectId: input.projectId,
@@ -600,7 +696,7 @@ export async function* runChatAgent(
     // the message isn't wasted. After any tool ran we must NOT do this
     // (duplicate work), and after text streamed the fallback text would
     // contradict what the client already read.
-    if (!workDone && !replyText()) {
+    if (guard.workActions === 0 && !replyText()) {
       try {
         const fallback = await CommandService.submit({
           workspaceId: input.workspaceId,

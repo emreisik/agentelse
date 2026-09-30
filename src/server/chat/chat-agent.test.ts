@@ -101,6 +101,17 @@ const rememberMemory = vi.fn();
 vi.mock("@/server/memory/memory-service", () => ({
   MemoryService: { remember: rememberMemory },
 }));
+const startSession = vi.fn();
+const updateSession = vi.fn();
+const addSessionSpend = vi.fn();
+vi.mock("@/server/work-session/work-session-service", () => ({
+  WorkSessionService: {
+    start: startSession,
+    update: updateSession,
+    addSpend: addSessionSpend,
+    getLive: vi.fn(),
+  },
+}));
 const recordUserDecision = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/server/brand-twin/brand-twin-writes", () => ({
   recordUserDecision,
@@ -138,6 +149,7 @@ const { runChatAgent } = await import("./chat-agent");
 const { AgentelseError } = await import("@/server/security/errors");
 const { serializePlanBrief } = await import("@/lib/plan-brief");
 
+import { createSession, type WorkSession } from "@/server/work-session/session";
 import type {
   ChatModel,
   ChatModelEvent,
@@ -152,6 +164,9 @@ type Round = {
   hang?: boolean;
   // Raw output items of the model turn, e.g. a hosted web_search_call.
   output?: unknown[];
+  // Token usage this round reports (default 100 in / 20 out).
+  inputTokens?: number;
+  outputTokens?: number;
 };
 
 function scriptedModel(rounds: Round[]) {
@@ -182,8 +197,8 @@ function scriptedModel(rounds: Round[]) {
           name: call.name,
           arguments: JSON.stringify(call.args),
         })),
-        inputTokens: 100,
-        outputTokens: 20,
+        inputTokens: round.inputTokens ?? 100,
+        outputTokens: round.outputTokens ?? 20,
       };
     },
   };
@@ -242,6 +257,7 @@ beforeEach(() => {
   runQuickDiscovery.mockResolvedValue({ status: "DONE", version: 1, pages: 2 });
   commandCreate.mockResolvedValue({ id: "cmd-1" });
   checkAndIncrement.mockResolvedValue(undefined);
+  addSessionSpend.mockResolvedValue(undefined);
 });
 
 describe("runChatAgent", () => {
@@ -421,6 +437,7 @@ describe("runChatAgent", () => {
 
       expect(buildContext).toHaveBeenCalledWith("proj-1", undefined, {
         recall: true,
+        session: true,
       });
     });
 
@@ -1544,6 +1561,553 @@ describe("runChatAgent", () => {
       "cmd-1",
       "Yarım kalan",
       "ANSWERED",
+    );
+  });
+});
+
+// A work session lets one message carry several steps: a larger, still bounded
+// allowance (actions, rounds, cost, size, time), the same approvals and gates as
+// outside a session, and the message's spend charged to the session.
+describe("runChatAgent: work sessions", () => {
+  const T0 = new Date("2026-09-30T10:00:00.000Z");
+  const liveSession = (overrides: Partial<WorkSession> = {}): WorkSession => {
+    const created = createSession(
+      { goal: "Autumn campaign", steps: ["Research", "Write", "Render"] },
+      T0,
+      "rev-1",
+    );
+    if (!created.ok) throw new Error(created.error);
+    return { ...created.session, ...overrides };
+  };
+  // The project already has a live session when the client's message arrives.
+  const withLiveSession = (overrides: Partial<WorkSession> = {}) =>
+    buildContext.mockResolvedValue({
+      ...context("ACTIVE"),
+      workSession: { id: "cmd-s1", session: liveSession(overrides) },
+    });
+
+  const startCall = {
+    name: "start_work_session",
+    args: { goal: "Autumn campaign", steps: ["Research", "Write", "Render"] },
+  };
+  // Research that needs the live web is queued, never run inside the message,
+  // so these tests stay clear of the inline text path (and of mocks earlier
+  // tests leave behind for it).
+  const task = (n: number) => ({
+    name: "create_task",
+    args: { capability: "COMPETITOR_RESEARCH", taskBrief: `piece ${n}` },
+  });
+  const planned = (n = 1) => ({
+    status: "PLANNED",
+    commandId: "cmd-1",
+    taskId: `t-${n}`,
+    dispatched: true,
+    requiresApproval: false,
+  });
+  const lookups = (count: number): Round[] =>
+    Array.from({ length: count }, () => ({
+      calls: [{ name: "get_pending_approvals", args: {} }],
+    }));
+
+  // What the model was told about the calls it made, in order.
+  const toolOutputs = (requests: ChatModelRequest[]) =>
+    requests
+      .at(-1)!
+      .input.filter((item) => "type" in item && item.type === "function_call_output")
+      .map((item) => JSON.parse((item as unknown as { output: string }).output));
+  const reply = (events: ChatStreamEvent[]) => {
+    const done = events.at(-1);
+    return done?.type === "done" ? done.reply : "";
+  };
+  const developerNote = (requests: ChatModelRequest[]) =>
+    String((requests[0]!.input[0] as { content: string }).content);
+
+  beforeEach(() => {
+    startSession.mockResolvedValue({
+      status: "STARTED",
+      id: "cmd-s1",
+      session: liveSession(),
+    });
+    updateSession.mockResolvedValue({
+      status: "UPDATED",
+      session: liveSession(),
+      ended: null,
+      ignored: [],
+    });
+  });
+
+  describe("what a message may do", () => {
+    it("carries several actions once it has opened a session", async () => {
+      submit.mockResolvedValue(planned());
+      const { model, requests } = scriptedModel([
+        { text: ["Plan hazır."], calls: [startCall] },
+        { calls: [task(1)] },
+        { calls: [task(2)] },
+        { calls: [task(3)] },
+        { text: ["Hepsi hazır."] },
+      ]);
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(startSession).toHaveBeenCalledTimes(1);
+      expect(submit).toHaveBeenCalledTimes(3);
+      expect(JSON.stringify(toolOutputs(requests))).not.toContain(
+        "Only one action",
+      );
+      expect(events.at(-1)).toMatchObject({ type: "done", status: "PLANNED" });
+    });
+
+    it("gives a message that continues an open session its allowance from the start", async () => {
+      withLiveSession();
+      submit.mockResolvedValue(planned());
+      const { model } = scriptedModel([
+        { calls: [task(1), task(2)] },
+        { text: ["Devam ettim."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(startSession).not.toHaveBeenCalled();
+      expect(submit).toHaveBeenCalledTimes(2);
+    });
+
+    it("still stops at its action limit", async () => {
+      withLiveSession();
+      submit.mockResolvedValue(planned());
+      const { model, requests } = scriptedModel([
+        {
+          calls: Array.from({ length: 8 }, (_, i) => task(i + 1)),
+        },
+        { text: ["Bir kısmı hazır."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      // Six actions run; the seventh and eighth are turned back.
+      expect(submit).toHaveBeenCalledTimes(6);
+      expect(JSON.stringify(toolOutputs(requests))).toContain(
+        "limit of 6 actions",
+      );
+    });
+
+    it("does not run the exact same action twice", async () => {
+      withLiveSession();
+      submit.mockResolvedValue(planned());
+      const { model, requests } = scriptedModel([
+        { calls: [task(1), task(1)] },
+        { text: ["Tamam."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(toolOutputs(requests))).toContain(
+        "already ran in this message",
+      );
+    });
+
+    it("is unchanged for an ordinary message: still one action", async () => {
+      submit.mockResolvedValue(planned());
+      const { model, requests } = scriptedModel([
+        { calls: [task(1), task(2)] },
+        { text: ["Tamam."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(toolOutputs(requests))).toContain(
+        "Only one action per message",
+      );
+    });
+
+    it("keeps looking things up as often as it needs", async () => {
+      withLiveSession();
+      submit.mockResolvedValue(planned());
+      const { model } = scriptedModel([
+        { calls: [task(1)] },
+        { calls: [{ name: "get_pending_approvals", args: {} }] },
+        { calls: [{ name: "get_pending_approvals", args: {} }] },
+        { calls: [task(2)] },
+        { text: ["Tamam."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(submit).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("decisions on the client's behalf", () => {
+    it("are not made after other work in the same message", async () => {
+      withLiveSession();
+      submit.mockResolvedValue(planned());
+      const { model, requests } = scriptedModel([
+        {
+          calls: [task(1), { name: "decide_approval", args: { decision: "APPROVE" } }],
+        },
+        { text: ["Onaylamadım."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      // Only the task reached CommandService; the approval never did.
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(submit.mock.calls[0]![0].intent.kind).toBe("CAPABILITY");
+      expect(JSON.stringify(toolOutputs(requests))).toContain("first action");
+    });
+
+    it("can come first, with the work after it", async () => {
+      withLiveSession();
+      submit
+        .mockResolvedValueOnce({
+          status: "APPROVAL_HANDLED",
+          commandId: "cmd-1",
+          approvalId: "a-1",
+        })
+        .mockResolvedValueOnce(planned());
+      const { model } = scriptedModel([
+        {
+          calls: [{ name: "decide_approval", args: { decision: "APPROVE" } }, task(1)],
+        },
+        { text: ["Onayladım, devam ettim."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(submit).toHaveBeenCalledTimes(2);
+      expect(submit.mock.calls[0]![0].intent.kind).toBe("APPROVAL_DECISION");
+    });
+
+    it("cannot start a long paid job after other work either", async () => {
+      withLiveSession();
+      submit.mockResolvedValue(planned());
+      const { model, requests } = scriptedModel([
+        { calls: [task(1), { name: "start_deep_enrichment", args: {} }] },
+        { text: ["Başlatmadım."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(JSON.stringify(toolOutputs(requests))).toContain("first action");
+    });
+  });
+
+  describe("model rounds", () => {
+    it("an ordinary message stops after six, without a word about it", async () => {
+      const { model, requests } = scriptedModel(lookups(9));
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(requests).toHaveLength(6);
+      expect(reply(events)).not.toContain("I stopped here");
+    });
+
+    it("a session message goes on much longer", async () => {
+      withLiveSession();
+      const { model, requests } = scriptedModel([
+        ...lookups(11),
+        { text: ["Hepsi bitti."] },
+      ]);
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(requests).toHaveLength(12);
+      expect(reply(events)).toBe("Hepsi bitti.");
+    });
+
+    it("but not forever: it stops at its round limit and says how to go on", async () => {
+      withLiveSession();
+      const { model, requests } = scriptedModel(lookups(40));
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(requests).toHaveLength(24);
+      expect(reply(events)).toContain("step limit");
+      expect(reply(events)).toContain("continue");
+      expect(events.at(-1)).toMatchObject({ type: "done" });
+    });
+
+    it("counts every extra round on the project's daily limit", async () => {
+      withLiveSession();
+      const { model } = scriptedModel([...lookups(3), { text: ["Bitti."] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      // The gate for the message, then one per extra round (three).
+      const rounds = checkAndIncrement.mock.calls.filter(
+        (call) => call[1] === "reasoningCalls" && call[2] === undefined,
+      );
+      expect(rounds).toHaveLength(4);
+    });
+
+    it("ends with the daily limit as a plain notice, not an error", async () => {
+      withLiveSession();
+      checkAndIncrement
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(
+          new AgentelseError("BUDGET_EXCEEDED", "cap", {
+            meta: { limit: "maxReasoningCallsPerDay" },
+          }),
+        );
+      const { model, requests } = scriptedModel(lookups(6));
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(requests).toHaveLength(2);
+      expect(reply(events)).toContain("today's AI limit");
+      expect(events.some((e) => e.type === "error")).toBe(false);
+    });
+  });
+
+  describe("cost and size", () => {
+    it("stops before the next action once the message has cost its ceiling", async () => {
+      withLiveSession();
+      submit.mockResolvedValue(planned());
+      const { model } = scriptedModel([
+        {
+          text: ["Başlıyorum."],
+          calls: [task(1)],
+          // $2 at this model's price, over the $1.50 ceiling of one message.
+          inputTokens: 2_000_000,
+          outputTokens: 0,
+        },
+        { text: ["never reached"] },
+      ]);
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(submit).not.toHaveBeenCalled();
+      expect(reply(events)).toContain("Başlıyorum.");
+      expect(reply(events)).toContain("cost limit");
+      expect(reply(events)).toContain("continue");
+    });
+
+    it("names the session's budget when that is what ran out", async () => {
+      withLiveSession({ spentUsd: 4.95 });
+      submit.mockResolvedValue(planned());
+      const { model } = scriptedModel([
+        { calls: [task(1)], inputTokens: 200_000, outputTokens: 0 },
+      ]);
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(submit).not.toHaveBeenCalled();
+      expect(reply(events)).toContain("session's budget is used up");
+    });
+
+    it("stops when the conversation has grown too large to resend", async () => {
+      withLiveSession();
+      submit.mockResolvedValue(planned());
+      const { model } = scriptedModel([
+        { calls: [task(1)], inputTokens: 150_000, outputTokens: 0 },
+      ]);
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(submit).not.toHaveBeenCalled();
+      expect(reply(events)).toContain("grown too long");
+    });
+
+    it("does not cut a final answer short: a message that is done is done", async () => {
+      withLiveSession();
+      const { model } = scriptedModel([
+        { text: ["Hepsi hazır."], inputTokens: 2_000_000, outputTokens: 0 },
+      ]);
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(reply(events)).toBe("Hepsi hazır.");
+    });
+
+    it("puts no ceiling on an ordinary message", async () => {
+      submit.mockResolvedValue(planned());
+      const { model } = scriptedModel([
+        { calls: [task(1)], inputTokens: 5_000_000, outputTokens: 0 },
+        { text: ["Kuyrukta."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(submit).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("the session's spend", () => {
+    it("is charged to the session the message continued", async () => {
+      withLiveSession();
+      const { model } = scriptedModel([
+        { text: ["Tamam."], inputTokens: 1_000_000, outputTokens: 100_000 },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      // $1 per million in, $6 per million out at this model's price.
+      expect(addSessionSpend).toHaveBeenCalledWith(
+        { workspaceId: "ws-1", projectId: "proj-1", brandId: "brand-1" },
+        "cmd-s1",
+        expect.closeTo(1.6, 5),
+      );
+    });
+
+    it("is charged to a session the message opened", async () => {
+      const { model } = scriptedModel([
+        { calls: [startCall] },
+        { text: ["Plan hazır."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(addSessionSpend).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "proj-1" }),
+        "cmd-s1",
+        expect.any(Number),
+      );
+    });
+
+    it("is still charged when the client stops the message", async () => {
+      withLiveSession();
+      const controller = new AbortController();
+      const { model } = scriptedModel([{ text: ["Yarım "], hang: true }]);
+      for await (const event of runChatAgent(
+        { ...baseInput, signal: controller.signal },
+        { model },
+      )) {
+        if (event.type === "text.delta") controller.abort();
+      }
+
+      expect(addSessionSpend).toHaveBeenCalledWith(
+        expect.anything(),
+        "cmd-s1",
+        expect.any(Number),
+      );
+    });
+
+    it("is not charged anywhere when there is no session", async () => {
+      const { model } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(addSessionSpend).not.toHaveBeenCalled();
+    });
+
+    it("never gets in the way of the reply if charging fails", async () => {
+      withLiveSession();
+      addSessionSpend.mockRejectedValue(new Error("db down"));
+      const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { model } = scriptedModel([{ text: ["Tamam."] }]);
+
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(events.at(-1)).toMatchObject({ type: "done", reply: "Tamam." });
+      spy.mockRestore();
+    });
+  });
+
+  describe("outside content", () => {
+    it("keeps a session from being planned after a web search", async () => {
+      const { model, requests } = scriptedModel([
+        { output: [{ type: "web_search_call" }], calls: [startCall] },
+        { text: ["Planı senin sözlerinle yapalım."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(startSession).not.toHaveBeenCalled();
+      expect(JSON.stringify(toolOutputs(requests))).toContain(
+        "blocked_external_content",
+      );
+    });
+
+    it("lets a session already open keep track of progress", async () => {
+      withLiveSession();
+      const { model, requests } = scriptedModel([
+        {
+          output: [{ type: "web_search_call" }],
+          calls: [
+            {
+              name: "update_work_session",
+              args: { stepId: "s1", status: "DONE", note: "from the web" },
+            },
+          ],
+        },
+        { text: ["Not aldım."] },
+      ]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      // Reaches the store, told that this message may not write words.
+      expect(updateSession).toHaveBeenCalledTimes(1);
+      expect(updateSession.mock.calls[0]![2]).toMatchObject({ freeText: false });
+      expect(JSON.stringify(toolOutputs(requests))).not.toContain(
+        "blocked_external_content",
+      );
+    });
+  });
+
+  describe("what the model is told", () => {
+    it("shows the open session's goal and steps, as data", async () => {
+      withLiveSession();
+      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      const note = developerNote(requests);
+      expect(note).toContain("Open work session");
+      expect(note).toContain('"goal":"Autumn campaign"');
+      expect(note).toContain('"title":"Research"');
+      expect(note).not.toContain("rev-1");
+    });
+
+    it("says nothing about a session when there is none", async () => {
+      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(developerNote(requests)).not.toContain("Open work session");
+    });
+
+    it("offers the two session tools while the project is active, and neither on hold", async () => {
+      const active = scriptedModel([{ text: ["a"] }]);
+      await collect(runChatAgent(baseInput, { model: active.model }));
+      const offered = (active.requests[0]!.tools as { name?: string }[]).map(
+        (t) => t.name,
+      );
+      expect(offered).toEqual(
+        expect.arrayContaining(["start_work_session", "update_work_session"]),
+      );
+
+      buildContext.mockResolvedValue(context("ON_HOLD"));
+      commandCreate.mockResolvedValue({ id: "cmd-2" });
+      const hold = scriptedModel([{ text: ["b"] }]);
+      await collect(runChatAgent(baseInput, { model: hold.model }));
+      const heldOffered = (hold.requests[0]!.tools as { name?: string }[]).map(
+        (t) => t.name,
+      );
+      expect(heldOffered).not.toContain("start_work_session");
+      expect(heldOffered).not.toContain("update_work_session");
+    });
+  });
+
+  it("counts a message that only kept the checkpoint as a received command", async () => {
+    withLiveSession();
+    const { model } = scriptedModel([
+      {
+        calls: [
+          {
+            name: "update_work_session",
+            args: { stepId: "s1", status: "IN_PROGRESS" },
+          },
+        ],
+      },
+      { text: ["Başladım."] },
+    ]);
+
+    await collect(runChatAgent(baseInput, { model }));
+
+    expect(auditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "command.received" }),
     );
   });
 });

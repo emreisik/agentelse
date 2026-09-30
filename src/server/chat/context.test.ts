@@ -20,6 +20,10 @@ const recall = vi.fn();
 vi.mock("@/server/memory/memory-service", () => ({
   MemoryService: { recall },
 }));
+const getLiveSession = vi.fn();
+vi.mock("@/server/work-session/work-session-service", () => ({
+  WorkSessionService: { getLive: getLiveSession },
+}));
 vi.mock("@/server/integrations/meta-connection-status", () => ({
   getPublishTargets: vi.fn().mockResolvedValue([]),
 }));
@@ -64,6 +68,7 @@ beforeEach(() => {
   projectSetupState.findUnique.mockResolvedValue(null);
   getBrandTwin.mockResolvedValue({ brandId: "brand-1", name: "Acme" });
   recall.mockResolvedValue({ standing: [], relevant: [] });
+  getLiveSession.mockResolvedValue(null);
 });
 
 describe("buildContext task results", () => {
@@ -273,5 +278,52 @@ describe("buildContext: Brand Memory", () => {
     await buildContext("proj-1", undefined, { recall: true });
 
     expect(recall).toHaveBeenCalledWith("brand-1", "");
+  });
+});
+
+describe("buildContext: work session", () => {
+  const live = { id: "cmd-s1", session: { goal: "Autumn campaign" } };
+
+  it("hands the agent the project's live session", async () => {
+    getLiveSession.mockResolvedValue(live);
+
+    const context = await buildContext("proj-1", undefined, { session: true });
+
+    expect(getLiveSession).toHaveBeenCalledWith("proj-1");
+    expect(context.workSession).toBe(live);
+  });
+
+  it("is null when there is no live session", async () => {
+    const context = await buildContext("proj-1", undefined, { session: true });
+
+    expect(context.workSession).toBeNull();
+  });
+
+  it("leaves the legacy chat alone: no lookup, nothing added", async () => {
+    getLiveSession.mockResolvedValue(live);
+
+    const context = await buildContext("proj-1");
+
+    expect(getLiveSession).not.toHaveBeenCalled();
+    expect(context.workSession).toBeNull();
+  });
+
+  it("does not take the message down if the lookup fails", async () => {
+    getLiveSession.mockRejectedValue(new Error("db hiccup"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const context = await buildContext("proj-1", undefined, { session: true });
+
+    expect(context.workSession).toBeNull();
+    spy.mockRestore();
+  });
+
+  it("is independent of memory recall", async () => {
+    getLiveSession.mockResolvedValue(live);
+
+    const context = await buildContext("proj-1", undefined, { recall: true });
+
+    expect(getLiveSession).not.toHaveBeenCalled();
+    expect(context.workSession).toBeNull();
   });
 });

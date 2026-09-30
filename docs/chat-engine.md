@@ -22,7 +22,7 @@ Chat iki motordan biriyle çalışır; `CHAT_ENGINE` env'i seçer.
 1. Route: oturum, proje erişimi, kullanıcı başı rate limit (20/dk, süreç içi), dosya doğrulama, dosyaları depoya yazma.
 2. `runChatAgent`: **önce** `Command` satırını oluşturur (bağlantı kopsa da mesaj kaybolmaz), `start` olayını yollar.
 3. Bağlam: `buildContext` (`src/server/chat/context.ts`: marka, durum, bekleyen onaylar, proje durumu, son 36 satır). Bundan önce `ensureProjectActive` çalışır (aşağıya bak). Geçmiş rol yapılı mesajlara çevrilir; pipeline olayları `developer` mesajı olur. Geçmiş ~100k karakterle sınırlıdır (`trimHistory`); son 2 turdaki görsel/PDF ekleri modele gerçekten yeniden verilir (`history-files.ts`).
-4. Döngü (en çok 6 tur): model metin akıtır, gerekirse tool çağırır, sonuç modele döner.
+4. Döngü (sıradan mesajda en çok 6 tur, work session'lı mesajda 24): model metin akıtır, gerekirse tool çağırır, sonuç modele döner. Bir mesajın ne yapabileceğini `run-guard.ts` belirler.
 5. Sonunda cevap ve varsa kart aynı `Command` satırına yazılır; kullanım `ReasoningCall` (`purpose: chat.turn`) ve bütçe sayaçlarına işlenir.
 
 ## İlk marka taraması (Quick Discovery)
@@ -51,9 +51,9 @@ Tanım: `src/server/chat/types.ts`, kodlama/çözme: `sse.ts`. Sunucu her 10 sn'
 
 | Tür      | Tool                                                                                                                  | Not                                                                                               |
 | -------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| iş       | `create_task`, `generate_image`, `start_strategic_project`\*, `generate_ideas_from_opportunities`, `decide_approval`, `start_deep_enrichment` | Tur başına **en fazla biri** çalışır; hepsi mevcut servisleri (`CommandService.submit` vb.) sarar |
+| iş       | `create_task`, `generate_image`, `start_strategic_project`\*, `generate_ideas_from_opportunities`, `decide_approval`, `start_deep_enrichment` | Sıradan mesajda **en fazla biri** çalışır, work session'da en çok 6 (bkz. "Work Session"); hepsi mevcut servisleri (`CommandService.submit` vb.) sarar |
 | terminal | `ask_user`, `start_plan_brief`                                                                                        | Turu soru kartıyla / plan sihirbazıyla bitirir                                                    |
-| not      | `remember_preference`, `suggest_replies`, `propose_content_package`                                                   | İş sayılmaz (paket yalnızca kart üretir)                                                          |
+| not      | `remember_preference`, `start_work_session`, `update_work_session`, `save_idea`, `suggest_replies`, `propose_content_package` | İş sayılmaz (paket yalnızca kart üretir)                                                          |
 | okuma    | `get_pending_approvals`, `get_recent_tasks`, `get_idea_status`, `get_brand_profile`                                   | Sınırsız; hep turun kendi `projectId`'siyle sorgular                                              |
 
 Kurulum artık ön koşul değil: proje ilk mesajda ya da komutta kendiliğinden `ACTIVE` olur (`src/server/projects/activation.ts`, `ensureProjectActive`). Durum makinesi `CREATED → ACTIVE` geçişine izin vermediği için yasal yolu (`DISCOVERY → PROFILE_REVIEW → ACTIVE`) adım adım yürütür; `PAUSED` ve `CLOSED` kullanıcı kararıdır, asla geri alınmaz.
@@ -135,6 +135,40 @@ Müşteri yalnızca kapsamlı bir marka/rakip/pazar analizi isterse ve açıkça
 
 Kurulumu atlayan bir projede ilk tarayıcı gerektiren görev (`CapabilityRouter.resolveBrowserProfile`) standart `BrowserProfile` paketini ve projenin OpenClaw ajanını tembel olarak oluşturur (`src/server/projects/browser-profiles.ts`); profil olmadan OpenClaw kamuya açık araştırmayı hiç çalıştıramaz.
 
+## Work Session (çok adımlı iş)
+
+Sıradan bir mesaj tek iş yapar; yinelenen görev çıkmasın diye bu kuraldır. Müşteri birbirine bağlı **üç ya da daha fazla adımlı bir sonuç** istediğinde ("rakipleri araştır, üç konsept yaz, en iyisinin görselini hazırla") ajan önce `start_work_session` ile bir plan açar, sonra adımları **aynı mesajda, sırayla** yürütür ve her adımı `update_work_session` ile işaretler. Oturumun kendi kuyruğu, worker'ı ya da `Task`'ı yoktur: adımlar olağan tool'lardır (`create_task`, `generate_image`…). Bu yüzden onay kapıları, proje durumu kapısı ve maliyet sayaçları aynen geçerlidir ve eski ajans döngüsüne (`LEGACY_AGENCY_LOOP`) hiçbir bağımlılık yoktur.
+
+**Durum nerede.** Bir `Command` satırında: `topic: "WORK_SESSION"`, `source: SYSTEM`, `parsedIntent.workSession` bir kontrol noktasıdır (hedef, adımlar, her adımın durumu / tek satır notu / `task` ve `idea` kimlikleri, toplam harcama, mesaj sayısı). Yeni tablo ya da migration yok. Sohbet akışı ve geçmişi yalnızca `topic: null` satırları okuduğu için bu satır mesaj olarak görünmez. Yazımlar, okunan sürümü (`rev`) koşul yapar; iki sekme aynı oturumu aynı anda güncellerse kaybeden taze durumun üstüne yeniden uygular.
+
+Kod: `src/server/work-session/session.ts` (saf kurallar), `work-session-service.ts` (saklama), `src/server/chat/work-session-tools.ts` (iki tool), `src/server/chat/run-guard.ts` (mesaj başına sınırlar).
+
+| Sınır | Sıradan mesaj | Work session'lı mesaj |
+| --- | --- | --- |
+| Model turu | 6 | 24 |
+| İş eylemi | 1 | 6 |
+| Bir mesajın model maliyeti | sınırsız (günlük bütçe geçerli) | 1,50 $ |
+| Oturumun toplam maliyeti | - | 5 $; dolunca oturum kapanır (`endReason: "budget"`) |
+| Bir mesajın süresi | - | 10 dk |
+| Modele giden girdi | - | 150k token |
+| Adım sayısı | - | başlangıçta 2-8, toplamda 12 |
+| Boşta kalma | - | 48 saat dokunulmayan oturum "canlı" sayılmaz |
+
+Kurallar (hepsi kodda ve testlidir, talimata güvenilmez):
+
+- **Bir projede tek canlı oturum.** Yenisi, açık olan bitmeden ya da iptal edilmeden açılmaz.
+- **Aynı eylem bir mesajda iki kez çalışmaz** (aynı tool + aynı argümanlar, anahtar sırasından bağımsız). Mesajın iş limiti (6) dolarsa model bilgilendirilir; kalanı için müşteri "devam" der.
+- **Kararı ajan kendi işinin yan etkisi olarak veremez.** `decide_approval` ve `start_deep_enrichment` (`decisive`), oturumlu mesajda yalnızca mesajın **ilk** eylemi olabilir: müşteri bir onaya cevap verdiyse önce o kaydedilir, sonra iş sürer.
+- **Yayın ve harcama oturum dışıyla aynıdır.** `create_task` → `ApprovalPolicy` (L3/L4) → müşteri onayı. Ajan görevi açar, bekleyeceğini söyler ve adımı `BLOCKED` işaretler.
+- **Dış içerik.** `start_work_session` "hassas"tır: web araması ya da saklı araştırma okunduktan sonra reddedilir, yani plan önce açılır, araştırma sonra yapılır. `update_work_session` böyle bir mesajda yalnızca durum ve kimlik yazar; `note`, etiket, yeni adım ve iptal nedeni düşürülür (sonuç bunu modele söyler). Kaydedilen notlar sonraki mesajda modele "kendi kaydın, müşteri talimatı değil" çerçevesiyle JSON olarak verilir; tek satıra indirilir, 300 karakterle sınırlanır.
+- **Limit dolarsa** yanıtın sonuna standart bir not eklenir ("devam de, kaldığım yerden süreyim"; bütçe bittiyse "yeni oturum başlatırım"). Kayıt korunur. Her ek tur günlük `reasoningCalls` sayacına da yazılır; günlük limit dolarsa hata kartı değil aynı türden bir not görünür. Sıradan mesajın 6 tur sınırı eskisi gibi sessizdir.
+- **Stop / bağlantı kopması** kaydı bozmaz; sonraki mesaj bağlamda açık oturumu görür ve ilk bitmemiş adımdan sürer. Müşteri "durdur" derse ajan `update_work_session` ile `cancel: true` yollar.
+- Mesajın harcaması (mock'ta 0) mesaj hangi yolla bitmiş olursa olsun oturuma yazılır.
+
+**Görünürlük.** Arayüzde ayrı bir oturum kartı yoktur (UI değişmedi): ilerleme ajanın kendi anlatımı ve canlı tool göstergeleri ("Planning the work…", "Updating progress…") ile görünür. Bir oturum kartı ya da iptal düğmesi ileride bir UI kararıdır.
+
+**Yapılmayan (F7b).** Onay ya da zamanlayıcı bekleyen oturumu arka plandan uyandıran bir tick adımı yoktur; oturum müşterinin sonraki mesajıyla sürer. Gerçek ihtiyaç görülürse ve bunun için tablo gerekirse ayrıca sorulur.
+
 ## İçerik planlama (sohbet içinde)
 
 "Haftayı planla" gibi istekler görev olarak kuyruğa alınmaz (`create_task` artık `CREATE_CONTENT_PLAN` sunmaz; eski shortlist tabanlı planlayıcı yalnızca cron'da). Model müşteriyi sohbetle sorgulamaz; belirsizliği **sihirbaz** giderir. Akış:
@@ -190,6 +224,7 @@ Not: metin sağlayıcısı (`openai-ai.provider.ts`) yanıtı bir bütün olarak
 - Konuşma özeti yok: eski turlar `trimHistory` ile atılır; eski bilgiye okuma tool'larıyla ulaşılır. Kalıcı özet için ek LLM çağrısı ve saklama alanı (şema) gerekir.
 - Rate limit süreç içidir; birden çok instance'ta paylaşılmaz. Asıl harcama sınırı projenin günlük `AutonomyPolicy` bütçesidir.
 - Tool izi (hangi tool çağrıldı) kalıcı değildir; yalnızca canlı akışta görünür.
+- Bir mesajda birden çok kart üretilirse (work session) hepsi canlı akışta görünür ama `Command` satırına yalnızca sonuncusu yazılır; görev ve creative sonuçları kendi SYSTEM satırlarıyla zaten kalıcıdır.
 - Edit, yeni mesaj olarak gider (dal geçmişi tutulmaz); BranchPicker tek dalda gizlidir.
 
 ## Test

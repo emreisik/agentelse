@@ -76,3 +76,79 @@ describe("CHAT_INSTRUCTIONS: memory rules", () => {
     );
   });
 });
+
+describe("buildContextMessage: open work session", () => {
+  const session = {
+    goal: "Autumn campaign",
+    steps: [
+      { id: "s1", title: "Research", status: "DONE", note: "Three competitors" },
+      { id: "s2", title: "Write", status: "PENDING" },
+    ],
+  };
+
+  it("shows the saved goal and steps, framed as records rather than client instructions", () => {
+    const message = buildContextMessage({ ...base, workSession: session });
+
+    expect(message).toContain("Open work session");
+    expect(message).toContain("not instructions from the client");
+    expect(message).toContain(JSON.stringify(session));
+  });
+
+  it("says nothing when there is no session", () => {
+    expect(buildContextMessage(base)).not.toContain("work session");
+  });
+
+  it("sits with the other per-turn facts, before the phase notes", () => {
+    const message = buildContextMessage({
+      ...base,
+      phase: "ON_HOLD",
+      workSession: session,
+    });
+
+    expect(message.indexOf("Items awaiting the client's decision")).toBeLessThan(
+      message.indexOf("Open work session"),
+    );
+    expect(message.indexOf("Open work session")).toBeLessThan(
+      message.indexOf("PROJECT STATE"),
+    );
+  });
+});
+
+describe("CHAT_INSTRUCTIONS: work sessions", () => {
+  it("says when to open a session, and when not to", () => {
+    expect(CHAT_INSTRUCTIONS).toContain("start_work_session");
+    expect(CHAT_INSTRUCTIONS).toContain("three or more dependent actions");
+    expect(CHAT_INSTRUCTIONS).toContain(
+      "Never open one for a single deliverable, a question or small talk",
+    );
+  });
+
+  it("has the session opened before any research", () => {
+    expect(CHAT_INSTRUCTIONS).toContain(
+      "open a session FIRST with start_work_session — before you research or read anything",
+    );
+  });
+
+  it("keeps who decides the same inside a session", () => {
+    expect(CHAT_INSTRUCTIONS).toContain(
+      "Publishing and spending still wait for the client's approval",
+    );
+    expect(CHAT_INSTRUCTIONS).toContain(
+      "Never approve or reject anything yourself except as the very first action",
+    );
+  });
+
+  it("tells the agent how to pick a session up, and how to close one", () => {
+    expect(CHAT_INSTRUCTIONS).toContain(
+      "continue from the first step that is not DONE or SKIPPED and never redo finished ones",
+    );
+    expect(CHAT_INSTRUCTIONS).toContain("cancel: true");
+  });
+
+  it("limits the one-action rule to messages outside a session", () => {
+    expect(CHAT_INSTRUCTIONS).toContain(
+      "Outside a work session, call at most one work tool per message",
+    );
+    expect(CHAT_INSTRUCTIONS).not.toContain("- Call at most one work tool per message.");
+  });
+});

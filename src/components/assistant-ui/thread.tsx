@@ -67,6 +67,7 @@ import {
 import {
   createContext,
   useContext,
+  useState,
   type ComponentType,
   type FC,
   type PropsWithChildren,
@@ -111,9 +112,14 @@ export type ThreadComponents = {
 
 export type ThreadProps = {
   components?: ThreadComponents | undefined;
+  // Read at mount only: assistant-ui re-focuses whenever this changes, so
+  // callers must pass a latched value. Default keeps today's autofocus.
+  autoFocusComposer?: boolean | undefined;
 };
 
 const EMPTY_COMPONENTS: ThreadComponents = {};
+
+const ComposerAutoFocusContext = createContext<boolean>(true);
 
 const ThreadComponentsContext =
   createContext<ThreadComponents>(EMPTY_COMPONENTS);
@@ -124,12 +130,18 @@ const isNewChatView = (s: AssistantState) =>
   s.thread.messages.length === 0 &&
   (!s.thread.isLoading || s.threads.isLoading);
 
-export const Thread: FC<ThreadProps> = ({ components = EMPTY_COMPONENTS }) => {
+export const Thread: FC<ThreadProps> = ({
+  components = EMPTY_COMPONENTS,
+  autoFocusComposer = true,
+}) => {
   const isEmpty = useAuiState(isNewChatView);
+  const [autoFocus] = useState(autoFocusComposer);
 
   return (
     <ThreadComponentsContext.Provider value={components}>
-      <ThreadRoot isEmpty={isEmpty} />
+      <ComposerAutoFocusContext.Provider value={autoFocus}>
+        <ThreadRoot isEmpty={isEmpty} />
+      </ComposerAutoFocusContext.Provider>
     </ThreadComponentsContext.Provider>
   );
 };
@@ -307,6 +319,7 @@ const ThreadSuggestionItem: FC = () => {
 };
 
 const Composer: FC = () => {
+  const autoFocus = useContext(ComposerAutoFocusContext);
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <ComposerPrimitive.AttachmentDropzone
@@ -322,7 +335,7 @@ const Composer: FC = () => {
           placeholder="Write down what's on your mind. Let's bring it to life…"
           className="aui-composer-input caret-primary placeholder:text-muted-foreground/80 max-h-32 min-h-14 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
           rows={2}
-          autoFocus
+          autoFocus={autoFocus}
           enterKeyHint="send"
           aria-label="Message"
         />
@@ -454,7 +467,9 @@ const AssistantMessage: FC = () => {
   // bar until the finished card replaces it.
   const previewUrl = useAuiState((s) => {
     const custom = s.message.metadata.custom as { previewUrl?: unknown };
-    return typeof custom.previewUrl === "string" ? custom.previewUrl : undefined;
+    return typeof custom.previewUrl === "string"
+      ? custom.previewUrl
+      : undefined;
   });
   const imageGen = useAuiState((s) => {
     const custom = s.message.metadata.custom as { imageGen?: unknown };

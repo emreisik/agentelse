@@ -34,10 +34,13 @@ Yeni davranışların korumaları mutasyonla sınandı (ilgili satırı kaldır,
 
 ## Çalışma zamanı bayrakları
 
-| Env                  | Varsayılan | Etki                                                                                                                                                         |
-| -------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `CHAT_ENGINE`        | `legacy`   | `agent` yeni motoru açar. Quick Discovery, skill'ler, hafıza, Work Session yalnız `agent` motorunda çalışır.                                                 |
-| `LEGACY_AGENCY_LOOP` | `on`       | `drain`: yeni legacy iş üreten 4 tick adımı kapanır. `off`: açık satırları bitiren 10 birim de kapanır. Sayım sorguları ve sıra `legacy-loop-rollout.md`'de. |
+| Env                           | Varsayılan | Etki                                                                                                                                                                                       |
+| ----------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `CHAT_ENGINE`                 | `legacy`   | `agent` yeni motoru açar. Quick Discovery, skill'ler, hafıza, Work Session yalnız `agent` motorunda çalışır.                                                                               |
+| `LEGACY_AGENCY_LOOP`          | `on`       | `drain`: yeni legacy iş üreten 4 tick adımı kapanır. `off`: açık satırları bitiren 10 birim de kapanır. Sayım sorguları ve sıra `legacy-loop-rollout.md`'de.                               |
+| `GUIDED_SETUP`                | `false`    | Butonlu kurulum sheet'inin ana anahtarı. Kapalıyken her yüzey yok, `/projects/new` dört adımlı sihirbaz, ajan istemleri ve Quick Discovery HEAD ile aynı. Ayrıntı: `docs/guided-setup.md`. |
+| `GUIDED_SETUP_DISCOVERY`      | `false`    | Yalnızca sheet'in ücretli "Get ideas" adımı (`false` \| `true` \| çalışma alanı kimlikleri). B1 gelene kadar kapalı kalır.                                                                 |
+| `GUIDED_SETUP_DISCOVERY_CAPS` | boş        | 5/10/20 (kullanıcı/çalışma alanı/genel, 24 s) tavanlarını yalnızca düşürür; çalıştırma sayısını sınırlar, doları değil.                                                                    |
 
 **Bayrağa bağlı olmayan** (deploy edilince herkes için geçerli) değişiklikler: kurulum artık işin kapısı değil (yalnız `PAUSED`/`CLOSED` projeler iş başlatamaz), trigger işleyicileri birbirinden izole (bir işleyicinin hatası diğerlerini durdurmuyordu), `ResultMaterializer`'ın ek LLM çıkarımı yalnız araştırma capability'lerinde, constitution → Brand Brain aktarımı müşterinin onayladığı satırları silmiyor, `BrandTwin` her yerde ACTIVE constitution'ı okuyor, keşif aşamaları takılırsa zaman aşımına düşüyor, `BrowserProfile`'lar ilk ihtiyaçta tembel oluşuyor.
 
@@ -92,7 +95,7 @@ Her biri için import grafı, docs, scripts, prisma ve `package.json` taranıp s
 | `hub-core/primitives/entity-badge-row.tsx`, `shared/detail-row.tsx`, `shared/marquee-text.tsx`, `shared/section-tabs.tsx` | Import yok                                                                     |
 | `app/api/debug/headers/route.ts`                                                                                          | "Geçici, sonra kaldır" yorumu; production'da zaten 404                         |
 
-Ayrıca: `start_brand_setup` tool'u (yerine `start_deep_enrichment`), sabit `MAX_ROUNDS` (yerine `run-guard.ts`).
+Ayrıca: `start_brand_setup` tool'u (yerine `start_deep_enrichment`), sabit `MAX_ROUNDS` (yerine `run-guard.ts`); Settings → Autonomy'deki **"Idea Generation Frequency"** kartı, `updateIdeaGenerationScheduleAction` ve scheduler'ın `GENERATE_IDEAS` dalı. Fikir üretimi yalnızca sohbetten istenince çalışır; takvim/plan akışı (`content-plan`) fikir havuzunu hiç kullanmıyor. Önceden bu kartı açmış bir proje varsa satırı ilk vadesinde kapatılır (`lastError`'da "Retired" yazar), görev olarak planlanmaz. `Capability.GENERATE_IDEAS` enum değeri migration gerektireceği için durur.
 
 **Rotalar:** yalnızca `/api/debug/headers` kalktı; sayfa rotaları ve navigasyon aynı. **Prompt'lar:** `measurement.analyze` silindi, `brand.quickDiscovery` eklendi, ajan talimatı genişledi (skill'ler, hafıza, Work Session). **Worker / cron:** hiçbiri silinmedi; GitHub cron'u ve `/api/cron/worker` aynı. **DB:** hiçbir tablo, sütun ya da enum düşürülmedi; bu refactor **yeni migration eklemedi** (F0'daki iki eklemeli migration önceden yazılmış işti).
 

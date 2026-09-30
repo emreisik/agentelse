@@ -26,6 +26,10 @@ import { ExecutionJobRepository } from "@/server/repositories/execution-job.repo
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
+import {
+  claimPlanCreative,
+  releasePlanCreative,
+} from "@/server/execution/plan-creative-link";
 import { ProviderRegistry } from "@/server/execution/provider-registry";
 import type { ExecutionPolicyContext } from "@/server/execution/types";
 
@@ -627,40 +631,65 @@ async function materializeCreativeFromResult(
         })
       : undefined;
 
-  const creative = await prisma.creative.create({
-    data: {
-      workspaceId: job.workspaceId,
-      projectId: job.projectId,
-      brandId: job.brandId,
-      type:
-        job.capability === "CREATE_AD_CREATIVE" ? "AD_CREATIVE" : "SOCIAL_POST",
-      status: "IN_REVIEW",
-      createdByTaskId: job.taskId,
-      // Only set when the task's payload actually carried a targetPlatform
-      // (see task-planner.ts) — most idea->WorkPlan-generated tasks don't
-      // yet, so this is often null here; regenerating later then falls back
-      // to the generic 1:1 format instead of the original platform's.
-      platform,
-    },
+  // A job made for a content-plan slot (Task.payload.planCreativeId) fills
+  // that slot's empty DRAFT Creative instead of creating a second one, so the
+  // calendar entry keeps its channel, plan and planned time.
+  const planSlot = await claimPlanCreative({
+    taskId: job.taskId,
+    projectId: job.projectId,
   });
+  const creative = planSlot
+    ? { id: planSlot.id }
+    : await prisma.creative.create({
+        data: {
+          workspaceId: job.workspaceId,
+          projectId: job.projectId,
+          brandId: job.brandId,
+          type:
+            job.capability === "CREATE_AD_CREATIVE"
+              ? "AD_CREATIVE"
+              : "SOCIAL_POST",
+          status: "IN_REVIEW",
+          createdByTaskId: job.taskId,
+          // Only set when the task's payload actually carried a targetPlatform
+          // (see task-planner.ts) — most idea->WorkPlan-generated tasks don't
+          // yet, so this is often null here; regenerating later then falls back
+          // to the generic 1:1 format instead of the original platform's.
+          platform,
+        },
+      });
 
-  const version = await prisma.creativeVersion.create({
-    data: {
-      creativeId: creative.id,
-      version: 1,
-      assetId: asset?.id,
-      caption: typeof result.caption === "string" ? result.caption : undefined,
-      copy: typeof result.copy === "string" ? result.copy : undefined,
-      contentFormat,
-      generationProvider: job.providerId ?? "unknown",
-      generationMetadata: result as never,
-    },
-  });
+  let version: { id: string; version: number };
+  try {
+    version = await prisma.creativeVersion.create({
+      data: {
+        creativeId: creative.id,
+        version: 1,
+        assetId: asset?.id,
+        caption:
+          typeof result.caption === "string" ? result.caption : undefined,
+        copy: typeof result.copy === "string" ? result.copy : undefined,
+        contentFormat,
+        generationProvider: job.providerId ?? "unknown",
+        generationMetadata: result as never,
+      },
+    });
 
-  await prisma.creative.update({
-    where: { id: creative.id },
-    data: { currentVersionId: version.id },
-  });
+    await prisma.creative.update({
+      where: { id: creative.id },
+      data: {
+        currentVersionId: version.id,
+        // A slot already knows its platform from its channel; only fill it in
+        // when the job found out one the slot lacks.
+        ...(planSlot && !planSlot.platform && platform ? { platform } : {}),
+      },
+    });
+  } catch (error) {
+    // The slot was taken but could not be filled: give it back, so it reads
+    // as a failed slot again and not as "in review" with nothing in it.
+    if (planSlot) await releasePlanCreative(planSlot.id).catch(() => undefined);
+    throw error;
+  }
 
   // A Creative reaching IN_REVIEW is exactly what the Agency Desk's
   // decisions cards in the Agency Desk chat are for (spec sections 28/66) — without
@@ -716,7 +745,9 @@ async function materializeCreativeFromResult(
         status: "IN_REVIEW",
         assetWidth: asset?.width ?? undefined,
         assetHeight: asset?.height ?? undefined,
-        platform,
+        // A plan slot knows its platform even when the job's result did not
+        // say (the card sizes and labels the piece by it).
+        platform: platform ?? planSlot?.platform ?? undefined,
         contentFormat,
         approvalId: approval.id,
         versionNumber: version.version,

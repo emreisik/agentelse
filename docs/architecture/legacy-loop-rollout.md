@@ -9,6 +9,7 @@ Bu belge, sadeleştirme çalışmasının canlıya nasıl alınacağını anlat�
 - Branch'te iki **eklemeli** migration var (`20260930000000_add_creative_plan_fields`, `20260930100000_add_brand_layout_templates`: nullable kolonlar, indeks). `railway.json` başlangıç komutu `prisma migrate deploy` çalıştırdığı için deploy edildiğinde otomatik uygulanırlar. Yıkıcı bir migration yoktur; bu çalışma **yeni migration eklemedi**.
 - CI (`.github/workflows/ci.yml`) tek gerçek doğrulamadır: disposable Postgres, DB entegrasyon testleri ve `next build` orada koşar (bu makinede `next build` Turbopack hatası veriyor, yerelde doğrulanamadı).
 - Kod ile birlikte **hiçbir env değişmez**: `CHAT_ENGINE` varsayılanı hâlâ `legacy`, `LEGACY_AGENCY_LOOP` varsayılanı `on`.
+- Guided setup (`docs/guided-setup.md`) `GUIDED_SETUP` ile varsayılan **kapalıdır**, yani "hiçbir env değişmez" doğru kalır. Açmadan önce `LEGACY_AGENCY_LOOP=drain` (veya `off`) **kontrol edilen bir kapıdır**: sheet'in hedef yazımı, döngü `on` iken Director'ın bekleyen fikirlere göre iş yapmasına yol açabilir. Döngü `on`, autopilot AUTOPILOT ve bir hesap bağlıyken sheet hedefi yine de yalnızca **öneri** (PROPOSED) olarak kaydeder; `drain`/`off` bu önlemi gereksiz kılar.
 
 ## 1. Agent motorunu aç
 
@@ -28,19 +29,19 @@ Maliyet notu: Quick Discovery proje başına bir kez, ~1 model çağrısı + bir
 
 Üç değer, `process.env`'den her çağrıda okunur (yeniden başlatmak yeter):
 
-| Değer | Ne olur |
-| --- | --- |
-| `on` (varsayılan) | Her şey eskisi gibi çalışır. |
-| `drain` | **Jeneratörler** yeni iş üretmeyi bırakır; **drainer**'lar açık kalanları bitirmeye devam eder. |
-| `off` | İkisi de kapalı. Yalnızca açık satır kalmadığında. |
+| Değer             | Ne olur                                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| `on` (varsayılan) | Her şey eskisi gibi çalışır.                                                                    |
+| `drain`           | **Jeneratörler** yeni iş üretmeyi bırakır; **drainer**'lar açık kalanları bitirmeye devam eder. |
+| `off`             | İkisi de kapalı. Yalnızca açık satır kalmadığında.                                              |
 
 Birimler (adla süzülür, `src/server/agency/legacy-loop.ts`):
 
-| Grup | Birimler | `drain` | `off` |
-| --- | --- | --- | --- |
-| Jeneratör | `signal-scans`, `council-evaluation`, `director-decisions`, `measurement-planning` (işleyici) | kapalı | kapalı |
-| Drainer | `handoff-progression`, `work-plan-stale-sweep`, `measurement-checks`, `learning`, `strategy-synthesis`, `work-plan-progression`, `work-plan-terminal`, `handoff-close-out`, `measurement-check-result`, `measurement-check-terminal` | **açık** | kapalı |
-| Her zaman açık | `agency-loop-heartbeat`, `meta-ads-performance-scan`, `google-analytics-scan`, `signal-processing`, `insight-synthesis`, `opportunity-evaluation`, `telegram-approval-polling`, `creative-publish-completion`, `meta-adset-chain`, `meta-campaign-chain` | açık | açık |
+| Grup           | Birimler                                                                                                                                                                                                                                                 | `drain`  | `off`  |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------ |
+| Jeneratör      | `signal-scans`, `council-evaluation`, `director-decisions`, `measurement-planning` (işleyici)                                                                                                                                                            | kapalı   | kapalı |
+| Drainer        | `handoff-progression`, `work-plan-stale-sweep`, `measurement-checks`, `learning`, `strategy-synthesis`, `work-plan-progression`, `work-plan-terminal`, `handoff-close-out`, `measurement-check-result`, `measurement-check-terminal`                     | **açık** | kapalı |
+| Her zaman açık | `agency-loop-heartbeat`, `meta-ads-performance-scan`, `google-analytics-scan`, `signal-processing`, `insight-synthesis`, `opportunity-evaluation`, `telegram-approval-polling`, `creative-publish-completion`, `meta-adset-chain`, `meta-campaign-chain` | açık     | açık   |
 
 Yani hiçbir modda kapanmayanlar gerçek ürün özellikleridir: yayın tamamlama (Creative → PUBLISHED), Meta reklam zinciri, metrik tarayıcıları, Telegram onayları ve signal → insight → opportunity zekâsı.
 
@@ -118,14 +119,14 @@ ORDER BY calls DESC;
 
 ## 4. `off`'tan sonra ne bayatlar
 
-| Yüzey | Durum |
-| --- | --- |
+| Yüzey                                        | Durum                                                                                              |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | Signals / Insights / Opportunities panelleri | Meta, GA ve webhook sinyalleri gelir ve işlenir; genel OpenClaw taraması zaten sinyal üretmiyordu. |
-| Ideas | `save_idea` ve isteğe bağlı üretim, council-lite ile `SHORTLISTED`. Onay çalışır. |
-| Autopilot (Auto content planning) | Çalışır; Meta Track 2 etkilenmez. |
-| Work / Handoff / Measurement panelleri | Yeni satır yok; mevcutlar `drain` ile bittikten sonra arşiv niteliğinde. |
-| Brand Brain strategy sekmesi | v1'den sonra yenilenmez; `BrandLearning` artık ajanın hafızasından beslenir. |
-| Header "active work" göstergesi | Heartbeat açık kalır; fikir/sinyal sayaçları 0 kalabilir. |
+| Ideas                                        | `save_idea` ve isteğe bağlı üretim, council-lite ile `SHORTLISTED`. Onay çalışır.                  |
+| Autopilot (Auto content planning)            | Çalışır; Meta Track 2 etkilenmez.                                                                  |
+| Work / Handoff / Measurement panelleri       | Yeni satır yok; mevcutlar `drain` ile bittikten sonra arşiv niteliğinde.                           |
+| Brand Brain strategy sekmesi                 | v1'den sonra yenilenmez; `BrandLearning` artık ajanın hafızasından beslenir.                       |
+| Header "active work" göstergesi              | Heartbeat açık kalır; fikir/sinyal sayaçları 0 kalabilir.                                          |
 
 Setup aşamaları (`INITIAL_*`) tick adımlarından bağımsızdır; bayrak onlara uygulanmaz. Derin marka araştırması bunları zaten atlar.
 

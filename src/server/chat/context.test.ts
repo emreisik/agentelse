@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const project = { findUniqueOrThrow: vi.fn() };
 const approval = { findMany: vi.fn() };
-const command = { findMany: vi.fn() };
+const command = { findMany: vi.fn(), findUnique: vi.fn() };
 const agencyDailyStat = { findFirst: vi.fn() };
 const projectSetupState = { findUnique: vi.fn() };
 vi.mock("@/lib/prisma", () => ({
@@ -32,6 +32,7 @@ vi.mock("./deliverables", () => ({
 }));
 
 const { buildContext } = await import("./context");
+const { newSession } = await import("@/server/guided-setup/session");
 
 const taskRow = (id: string, resultText: string | null, title = id) => ({
   id,
@@ -325,5 +326,172 @@ describe("buildContext: work session", () => {
 
     expect(getLiveSession).not.toHaveBeenCalled();
     expect(context.workSession).toBeNull();
+  });
+});
+
+describe("buildContext: legacy setup gate (guided setup stand-down)", () => {
+  // Real session records, so the fixtures cannot drift from the schema.
+  const openRecord = newSession({
+    rev: "rev-001",
+    editRev: "edit-001",
+    nowMs: 1_000,
+    userId: "user-1",
+    seedFirst: false,
+    staticFirst: false,
+  });
+  const appliedSession = {
+    parsedIntent: {
+      guidedSetup: {
+        ...openRecord,
+        status: "DONE",
+        applied: {
+          atMs: 2_000,
+          editRev: "edit-001",
+          parts: [],
+          goalMode: null,
+          receiptId: null,
+        },
+      },
+    },
+  };
+  const brand = (confidence: string) => ({
+    brandId: "brand-1",
+    name: "Acme",
+    confidence,
+  });
+
+  it("changes nothing without the option: NOT_STARTED, no intake in the select, no session lookup", async () => {
+    getBrandTwin.mockResolvedValue(brand("medium"));
+    projectSetupState.findUnique.mockResolvedValue(null);
+
+    const context = await buildContext("proj-1");
+
+    expect(context.setupPhase).toBe("NOT_STARTED");
+    const select = projectSetupState.findUnique.mock.calls[0]?.[0]?.select;
+    expect(select).not.toHaveProperty("intake");
+    expect(Object.keys(select)).toEqual(["activatedAt", "stageRecords"]);
+    expect(command.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("also ignores legacyGate: false", async () => {
+    projectSetupState.findUnique.mockResolvedValue({
+      activatedAt: null,
+      stageRecords: [],
+    });
+    getBrandTwin.mockResolvedValue(brand("high"));
+
+    const context = await buildContext("proj-1", undefined, {
+      legacyGate: false,
+    });
+
+    expect(context.setupPhase).toBe("IN_PROGRESS");
+    expect(
+      projectSetupState.findUnique.mock.calls[0]?.[0]?.select,
+    ).not.toHaveProperty("intake");
+  });
+
+  it("selects intake when the gate is on", async () => {
+    await buildContext("proj-1", undefined, { legacyGate: true });
+
+    expect(projectSetupState.findUnique.mock.calls[0]?.[0]?.select).toEqual(
+      expect.objectContaining({ intake: true }),
+    );
+  });
+
+  it("an unactivated ENRICHMENT run is ACTIVE, yet setupWaiting still says running", async () => {
+    projectSetupState.findUnique.mockResolvedValue({
+      activatedAt: null,
+      intake: { mode: "ENRICHMENT" },
+      stageRecords: [],
+    });
+
+    const context = await buildContext("proj-1", undefined, {
+      legacyGate: true,
+    });
+
+    expect(context.setupPhase).toBe("ACTIVE");
+    expect(context.setupWaiting).toBe("running");
+    expect(command.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("an unactivated FULL run keeps blocking", async () => {
+    projectSetupState.findUnique.mockResolvedValue({
+      activatedAt: null,
+      intake: { mode: "FULL" },
+      stageRecords: [],
+    });
+
+    const context = await buildContext("proj-1", undefined, {
+      legacyGate: true,
+    });
+
+    expect(context.setupPhase).toBe("IN_PROGRESS");
+  });
+
+  it("a high-confidence profile is ACTIVE without reading the session row", async () => {
+    getBrandTwin.mockResolvedValue(brand("high"));
+
+    const context = await buildContext("proj-1", undefined, {
+      legacyGate: true,
+    });
+
+    expect(context.setupPhase).toBe("ACTIVE");
+    expect(command.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("a guided-only (medium) profile with an applied session is ACTIVE", async () => {
+    getBrandTwin.mockResolvedValue(brand("medium"));
+    command.findUnique.mockResolvedValue(appliedSession);
+
+    const context = await buildContext("proj-1", undefined, {
+      legacyGate: true,
+    });
+
+    expect(context.setupPhase).toBe("ACTIVE");
+    expect(command.findUnique).toHaveBeenCalledTimes(1);
+    expect(command.findUnique).toHaveBeenCalledWith({
+      where: { id: "gs_proj-1" },
+      select: { parsedIntent: true },
+    });
+  });
+
+  it("stays NOT_STARTED for a medium profile whose session is not applied, missing or unreadable", async () => {
+    getBrandTwin.mockResolvedValue(brand("medium"));
+    const notApplied = { parsedIntent: { guidedSetup: openRecord } };
+    for (const row of [notApplied, null, { parsedIntent: null }]) {
+      command.findUnique.mockResolvedValueOnce(row);
+      const context = await buildContext("proj-1", undefined, {
+        legacyGate: true,
+      });
+      expect(context.setupPhase).toBe("NOT_STARTED");
+    }
+  });
+
+  it("a failed session lookup reads as not applied instead of failing the chat", async () => {
+    getBrandTwin.mockResolvedValue(brand("medium"));
+    command.findUnique.mockRejectedValue(new Error("db down"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const context = await buildContext("proj-1", undefined, {
+      legacyGate: true,
+    });
+
+    expect(context.setupPhase).toBe("NOT_STARTED");
+    spy.mockRestore();
+  });
+
+  it("an activated row needs no lookup", async () => {
+    projectSetupState.findUnique.mockResolvedValue({
+      activatedAt: new Date("2026-01-01T00:00:00Z"),
+      intake: {},
+      stageRecords: [],
+    });
+
+    const context = await buildContext("proj-1", undefined, {
+      legacyGate: true,
+    });
+
+    expect(context.setupPhase).toBe("ACTIVE");
+    expect(command.findUnique).not.toHaveBeenCalled();
   });
 });

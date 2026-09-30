@@ -52,7 +52,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-const { ConstitutionService } =
+const { ConstitutionService, ConstitutionConflictError } =
   await import("@/server/agency/constitution/constitution-service");
 
 beforeEach(() => {
@@ -176,7 +176,11 @@ describe("ConstitutionService.getBrandContext", () => {
 // the deep synthesis and Quick Discovery both go through it, so they are
 // versioned, audited and mirrored into the Brand Brain identically.
 describe("ConstitutionService.publishVersion", () => {
-  const scope = { workspaceId: "ws-1", projectId: "proj-1", brandId: "brand-1" };
+  const scope = {
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    brandId: "brand-1",
+  };
   const payload = {
     language: "tr",
     country: "TR",
@@ -299,6 +303,138 @@ describe("ConstitutionService.publishVersion", () => {
     });
   });
 
+  // G27: a person's Approve is a USER decision, everything else stays as it was.
+  it("records a USER decision with the user's id when decidedBy is given", async () => {
+    await ConstitutionService.publishVersion({
+      scope,
+      payload,
+      isMock: false,
+      sourceFindingIds: [],
+      evidenceIds: [],
+      note: "guided setup",
+      decidedBy: { type: "USER", userId: "user-7" },
+    });
+
+    expect(brandDecision.create).toHaveBeenCalledWith({
+      data: {
+        ...scope,
+        topic: "Brand Constitution",
+        decision: "v2 activated (guided setup)",
+        rationale: payload.identity,
+        decidedByType: "USER",
+        decidedByUserId: "user-7",
+      },
+    });
+  });
+
+  it("keeps SYSTEM (or AI for a mock run) and no user id when decidedBy is absent", async () => {
+    await ConstitutionService.publishVersion({
+      scope,
+      payload,
+      isMock: false,
+      sourceFindingIds: [],
+      evidenceIds: [],
+    });
+
+    const { data } = brandDecision.create.mock.calls[0]![0] as {
+      data: Record<string, unknown>;
+    };
+    expect(data.decidedByType).toBe("SYSTEM");
+    expect(data).not.toHaveProperty("decidedByUserId");
+  });
+
+  // G63 (service half): the pinned ACTIVE version is checked before anything
+  // is created.
+  describe("ifActiveVersion", () => {
+    // getActive looks for status ACTIVE; createNextVersion asks for the latest.
+    const activeIs = (version: number | null) =>
+      brandConstitution.findFirst.mockImplementation(
+        async (args: { where: { status?: string } }) =>
+          args.where.status === "ACTIVE"
+            ? version === null
+              ? null
+              : { version }
+            : { version: version ?? 0 },
+      );
+    const input = {
+      scope,
+      payload,
+      isMock: false,
+      sourceFindingIds: [],
+      evidenceIds: [],
+    };
+
+    it("throws ConstitutionConflictError and creates nothing when the ACTIVE version differs", async () => {
+      activeIs(3);
+
+      const attempt = ConstitutionService.publishVersion({
+        ...input,
+        ifActiveVersion: 2,
+      });
+
+      await expect(attempt).rejects.toBeInstanceOf(ConstitutionConflictError);
+      await expect(attempt).rejects.toMatchObject({ code: "CONFLICT" });
+      expect(brandConstitution.create).not.toHaveBeenCalled();
+      expect(brandConstitution.updateMany).not.toHaveBeenCalled();
+      expect(brandDecision.create).not.toHaveBeenCalled();
+    });
+
+    it("throws when null was expected but a version is ACTIVE", async () => {
+      activeIs(1);
+
+      await expect(
+        ConstitutionService.publishVersion({ ...input, ifActiveVersion: null }),
+      ).rejects.toBeInstanceOf(ConstitutionConflictError);
+      expect(brandConstitution.create).not.toHaveBeenCalled();
+    });
+
+    it("throws when a version was expected but nothing is ACTIVE", async () => {
+      activeIs(null);
+
+      await expect(
+        ConstitutionService.publishVersion({ ...input, ifActiveVersion: 1 }),
+      ).rejects.toBeInstanceOf(ConstitutionConflictError);
+      expect(brandConstitution.create).not.toHaveBeenCalled();
+    });
+
+    it("publishes when the ACTIVE version matches", async () => {
+      activeIs(1);
+
+      await ConstitutionService.publishVersion({
+        ...input,
+        ifActiveVersion: 1,
+      });
+
+      expect(brandConstitution.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ version: 2 }),
+      });
+    });
+
+    it("publishes over nothing when null was expected and nothing is ACTIVE", async () => {
+      activeIs(null);
+
+      await ConstitutionService.publishVersion({
+        ...input,
+        ifActiveVersion: null,
+      });
+
+      expect(brandConstitution.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ version: 1 }),
+      });
+    });
+
+    it("does not look at the ACTIVE version at all when the option is undefined", async () => {
+      await ConstitutionService.publishVersion(input);
+
+      expect(brandConstitution.findFirst).toHaveBeenCalledTimes(1);
+      expect(brandConstitution.findFirst).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: "ACTIVE" }),
+        }),
+      );
+    });
+  });
+
   it("ties the evidence it was built from to the new version, once each", async () => {
     await ConstitutionService.publishVersion({
       scope,
@@ -379,7 +515,11 @@ describe("ConstitutionService.publishVersion", () => {
 // must not wipe what a person decided or added (the deep research rewrites the
 // first-look draft; the client's approvals cannot vanish with it).
 describe("ConstitutionService.publishVersion keeps what a person decided", () => {
-  const scope = { workspaceId: "ws-1", projectId: "proj-1", brandId: "brand-1" };
+  const scope = {
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    brandId: "brand-1",
+  };
   const basePayload = {
     language: "tr",
     country: "TR",
@@ -461,7 +601,9 @@ describe("ConstitutionService.publishVersion keeps what a person decided", () =>
   });
 
   it("does not duplicate a claim the client already approved", async () => {
-    approvedClaim.findMany.mockResolvedValue([{ claim: "1985'ten beri üretici" }]);
+    approvedClaim.findMany.mockResolvedValue([
+      { claim: "1985'ten beri üretici" },
+    ]);
 
     await publish({
       approvedClaims: ["1985'ten beri üretici", "İzmir'de üretilir"],

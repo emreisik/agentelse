@@ -186,9 +186,10 @@ type PollableTurn = {
 };
 
 // Whether the persisted chat still has package work in flight that nothing
-// live is showing: a fresh "generating"/"running" row, or a package that was
-// just started but has fewer task rows than items so far (the running row is
-// only posted once the job actually starts, a moment after the click).
+// live is showing: a fresh "generating"/"running" row, or a package (or plan
+// production) that was just started but has fewer task rows than items so far
+// (the running row is only posted once the job actually starts, a moment
+// after the click).
 export function needsProgressPoll(
   turns: readonly PollableTurn[],
   now: number,
@@ -205,11 +206,9 @@ export function needsProgressPoll(
   }
 
   return turns.some((turn) => {
-    const card = turn.card;
-    if (card?.kind !== "content-package" || card.state !== "started") {
-      return false;
-    }
-    const startedAt = card.startedAt ? Date.parse(card.startedAt) : NaN;
+    const run = startedRunOf(turn.card);
+    if (!run) return false;
+    const { startedAt, count } = run;
     if (Number.isNaN(startedAt) || now - startedAt > FRESH_START_MAX_AGE_MS) {
       return false;
     }
@@ -219,6 +218,29 @@ export function needsProgressPoll(
         taskIdOfCard(other.card) !== undefined &&
         Date.parse(other.createdAt) >= startedAt - CLOCK_SKEW_MS,
     ).length;
-    return rows < (card.startedCount ?? card.items.length);
+    return rows < count;
   });
+}
+
+// A run that was just claimed on a card: a content package that was started,
+// or a saved content plan whose production is running.
+function startedRunOf(
+  card: IdeaEventCardData | undefined,
+): { startedAt: number; count: number } | null {
+  if (card?.kind === "content-package" && card.state === "started") {
+    return {
+      startedAt: card.startedAt ? Date.parse(card.startedAt) : NaN,
+      count: card.startedCount ?? card.items.length,
+    };
+  }
+  if (
+    card?.kind === "content-plan-draft" &&
+    card.production?.state === "running"
+  ) {
+    return {
+      startedAt: Date.parse(card.production.startedAt),
+      count: card.production.creativeIds.length,
+    };
+  }
+  return null;
 }

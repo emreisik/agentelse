@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { getEnv } from "@/lib/env";
 import {
   requireUser,
   requireProjectAccess,
@@ -81,6 +82,7 @@ export async function submitChatMessageAction(
       attachments,
       attachmentBodies,
       ideaId: typeof ideaId === "string" && ideaId ? ideaId : undefined,
+      guidedSetup: getEnv().GUIDED_SETUP,
     });
 
     revalidatePath(`/projects/${projectId}`);

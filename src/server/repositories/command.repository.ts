@@ -25,6 +25,9 @@ export type CommandReplyStatus =
 
 export const CommandRepository = {
   create(input: {
+    // Optional caller-chosen primary key: a deterministic id makes the insert
+    // an idempotent "create if absent" (a duplicate raises P2002).
+    id?: string;
     workspaceId: string;
     projectId?: string;
     brandId?: string;

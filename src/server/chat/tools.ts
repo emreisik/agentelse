@@ -31,6 +31,7 @@ import {
   validatePlanChannels,
   validatePlanDates,
 } from "./content-plan";
+import { loadPlanContinuation } from "@/server/agency/journey/continuation";
 import { startAgencySetupForProject } from "@/server/actions/agency-setup-actions";
 import { recordUserDecision } from "@/server/brand-twin/brand-twin-writes";
 import {
@@ -134,6 +135,9 @@ export type ChatTool<TArgs = unknown> = {
   // legacy-loop.ts): the tool hands work to a stage of that loop (the Director)
   // that is no longer running once the loop is wound down.
   legacyLoop?: boolean;
+  // Offered only while GUIDED_SETUP is on; toolsForPhase drops it unless the
+  // caller passes { guidedSetup: true }, so the default tool set is unchanged.
+  requiresGuidedSetup?: boolean;
   // The tool hands the model content from outside the conversation (research
   // results, findings, signals). Once it has run, the turn is tainted.
   external?: boolean;
@@ -1315,8 +1319,49 @@ const startPlanBrief = defineTool({
         today: todayInTimezone(timezone),
         connections,
         theme: twin?.currentFocus?.title,
+        continuation: (await loadPlanContinuation(ctx.projectId)) ?? undefined,
       },
       result: { outcome: "wizard_shown" },
+    };
+  },
+});
+
+const startGuidedSetup = defineTool({
+  // Never "start_brand_setup": tools.test.ts and skills.test.ts pin that name as removed.
+  name: "start_guided_setup",
+  label: "Opening guided setup…",
+  kind: "terminal",
+  // Not ON_HOLD: the final step of the setup writes brand state.
+  phases: ["ACTIVE"],
+  requiresGuidedSetup: true,
+  description:
+    'Open the guided setup: a bottom sheet with a few tap-only questions (goal, channels, what the business does, audience, voice) that the client approves at the end. Use it when the client wants their brand or social media SET UP or onboarded for the first time ("kurulum", "kurulumunu planla", "setup", "onboard my brand", "get started") and has not just done it. Never queue that as a task and never ask its questions yourself in chat. It is not for one specific deliverable and not for a content plan (use start_plan_brief). Ends your turn: write ONE short lead-in sentence BEFORE calling it.',
+  // No free text from the model: a tainted turn has no channel into the UI.
+  schema: EmptyArgs,
+  async execute(_args, ctx) {
+    // Idea threads never mount the sheet host.
+    if (ctx.ideaId) {
+      return {
+        status: "ANSWERED",
+        result: {
+          outcome: "not_available",
+          note: "Guided setup only opens in the project's main chat.",
+        },
+      };
+    }
+    return {
+      // ANSWERED, not PLANNED: PLANNED renders a "Task created" note.
+      status: "ANSWERED",
+      card: {
+        kind: "guided-setup",
+        projectId: ctx.projectId,
+        state: "open",
+        sourceCommandId: ctx.commandId,
+      },
+      result: {
+        outcome: "guided_setup_shown",
+        note: "The client sees a step-by-step setup with buttons. Your turn ends here.",
+      },
     };
   },
 });
@@ -1506,17 +1551,23 @@ const ALL_TOOLS: readonly ChatTool[] = [
   getVisualIdentity,
   getConnectedPlatforms,
   startPlanBrief,
+  startGuidedSetup,
   proposeContentPlan,
   proposeContentPackage,
   suggestReplies,
 ];
 
-export function toolsForPhase(phase: ChatPhase): ChatTool[] {
+export function toolsForPhase(
+  phase: ChatPhase,
+  options: { guidedSetup?: boolean } = {},
+): ChatTool[] {
   // Read per call, not cached: LEGACY_AGENCY_LOOP is an operator switch.
   const legacyLoopOn = isLegacyUnitEnabled("director-decisions");
   return ALL_TOOLS.filter(
     (tool) =>
-      tool.phases.includes(phase) && (legacyLoopOn || !tool.legacyLoop),
+      tool.phases.includes(phase) &&
+      (legacyLoopOn || !tool.legacyLoop) &&
+      (options.guidedSetup === true || !tool.requiresGuidedSetup),
   );
 }
 

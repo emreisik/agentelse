@@ -19,22 +19,18 @@ export const PANEL_KEYS = [
 
 export type PanelKey = (typeof PANEL_KEYS)[number];
 
-// Pending approvals are decided only on the Agency Desk (the project's
-// root chat) — they sit at the bottom of the conversation as chat cards.
-// Replaces the removed "approvals" panel / /approvals page.
-export function decisionsHref(projectId: string): string {
-  return `/projects/${projectId}`;
-}
-
-// Panels with no dedicated sidebar/top-bar entry of their own — reachable
-// only through the "Advanced" menu (project-tools-menu.tsx). Single source
+// Panels with no primary sidebar entry of their own (Agency Desk, Brand Brain,
+// Ideas, Work, Library) — the "Advanced" menu (project-tools-menu.tsx) offers
+// them, and the sidebar lists them again under System/Insights. Single source
 // of truth for that grouping so the sidebar and the menu can't drift apart.
+// (Pending decisions have no panel: they are cards in the Agency Desk chat.)
 export const ADVANCED_PANEL_KEYS = [
   "setup",
   "signals",
   "insights-opportunities",
   "goals",
   "departments",
+  "human-action",
   "settings",
 ] as const satisfies readonly PanelKey[];
 

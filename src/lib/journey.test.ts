@@ -1,0 +1,94 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  NEXT_STEP_KINDS,
+  addDaysKey,
+  nextStepHref,
+  publishesItself,
+  selectProductionBatch,
+  type NextStep,
+  type NextStepAction,
+} from "./journey";
+
+const step = (action: NextStepAction): NextStep => ({
+  key: "k",
+  tone: "next",
+  label: "L",
+  title: "T",
+  action,
+});
+
+describe("addDaysKey", () => {
+  it("crosses month and year ends", () => {
+    expect(addDaysKey("2026-10-31", 1)).toBe("2026-11-01");
+    expect(addDaysKey("2026-12-31", 1)).toBe("2027-01-01");
+    expect(addDaysKey("2026-03-01", -1)).toBe("2026-02-28");
+  });
+});
+
+describe("publishesItself", () => {
+  const item = { publish: "auto" as const, channel: "instagram" as const, platform: "INSTAGRAM" };
+
+  it("only a connected Instagram piece in an auto format publishes itself", () => {
+    expect(publishesItself(item, { instagram: { connected: true } })).toBe(true);
+    expect(publishesItself(item, { instagram: { connected: false } })).toBe(false);
+    expect(publishesItself(item, {})).toBe(false);
+    expect(
+      publishesItself({ ...item, publish: "manual" }, { instagram: { connected: true } }),
+    ).toBe(false);
+  });
+
+  it("LinkedIn and X are the client's to post whatever the catalog says", () => {
+    expect(
+      publishesItself(
+        { publish: "auto", channel: "linkedin", platform: "LINKEDIN" },
+        { linkedin: { connected: true } },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("nextStepHref", () => {
+  it("sends review to the piece and connect to the integrations page", () => {
+    expect(
+      nextStepHref("p1", step({ kind: "review_queue", creativeId: "c9", count: 2 })),
+    ).toBe("/projects/p1/takvim?creative=c9");
+    expect(
+      nextStepHref("p1", step({ kind: "connect_channel", channel: "instagram" })),
+    ).toBe("/projects/p1/integrations");
+  });
+
+  it("sends everything the chat runs to the chat, which runs it once on landing", () => {
+    expect(
+      nextStepHref("p1", step({ kind: "produce_plan", planId: "x", count: 3 })),
+    ).toBe("/projects/p1?next=produce_plan");
+    expect(
+      nextStepHref("p1", step({ kind: "plan_next", afterDate: "2026-10-12" })),
+    ).toBe("/projects/p1?next=plan_next");
+    expect(nextStepHref("p1", step({ kind: "show_results", count: 1 }))).toBe(
+      "/projects/p1?next=show_results",
+    );
+  });
+
+  it("every step kind the chat lands on is one the chat knows", () => {
+    const kinds: NextStepAction["kind"][] = [
+      "produce_plan",
+      "review_queue",
+      "connect_channel",
+      "enable_scheduled_publish",
+      "publish_manual",
+      "plan_next",
+      "show_results",
+    ];
+    expect([...NEXT_STEP_KINDS].sort()).toEqual([...kinds].sort());
+  });
+});
+
+describe("selectProductionBatch", () => {
+  it("is what plan-progress re-exports, so the card and the server agree", async () => {
+    const { selectProductionBatch: fromServer } = await import(
+      "@/server/agency/journey/plan-progress"
+    );
+    expect(fromServer).toBe(selectProductionBatch);
+  });
+});

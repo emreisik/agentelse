@@ -24,13 +24,22 @@ type StartContentPackage = (input: {
   items: PackageRunItem[];
 }) => Promise<{ ok: boolean }>;
 
-// A package pressed in this session: still running, or done, and which items
-// were ticked.
+// Produces the nearest week of a saved plan's calendar slots. The server picks
+// the pieces (plan-run.ts) and announces them, so there is nothing to pass but
+// the plan. Same contract as StartContentPackage.
+type StartContentPlan = (input: {
+  commandId: string;
+}) => Promise<{ ok: boolean }>;
+
+// A package or plan pressed in this session: still running, or done, and which
+// items were ticked (a plan's pieces are only known once the server announces
+// them).
 export type PackageRun = { phase: "running" | "started"; itemIds: string[] };
 
 type ChatPackage = {
   start: StartContentPackage;
-  // The runs pressed in this session, by package (Command) id. Held by the
+  startPlan: StartContentPlan;
+  // The runs pressed in this session, by package/plan (Command) id. Held by the
   // chat, not by the card: assistant-ui keys messages by position, so a card
   // remounts (and would forget it was pressed) whenever the list shifts.
   runs: Readonly<Record<string, PackageRun>>;

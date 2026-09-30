@@ -24,6 +24,8 @@ import {
   type ChannelKey,
 } from "@/lib/content-channels";
 import { CREATIVE_STATUS, SOCIAL_PLATFORM } from "@/lib/labels";
+import { nextStepHref, type NextStep } from "@/lib/journey";
+import { loadNextSteps } from "@/server/agency/journey/snapshot";
 import {
   dayKeyInTimezone,
   utcToZonedDateTimeLocal,
@@ -236,13 +238,14 @@ export default async function ContentCalendarPage({
       channel: channelParam,
     });
 
-  const allCreatives = (await CreativeRepository.listForCalendarRange(
-    projectId,
-    {
+  const [allCreatives, nextSteps] = await Promise.all([
+    CreativeRepository.listForCalendarRange(projectId, {
       from: grid.rangeFrom,
       to: grid.rangeTo,
-    },
-  )) as CalendarCreative[];
+    }) as Promise<CalendarCreative[]>,
+    // What to do next on the content plan (the same answer the chat bar gives).
+    loadNextSteps(projectId),
+  ]);
 
   // Channel filter chips: only the channels that have something in view, in
   // catalog order. Creatives made outside a plan carry no channel and show
@@ -339,6 +342,10 @@ export default async function ContentCalendarPage({
             </Link>
           </div>
         </div>
+
+        {nextSteps[0] ? (
+          <NextStepBanner projectId={projectId} step={nextSteps[0]} />
+        ) : null}
 
         {channelCounts.size > 0 ? (
           <div className="flex flex-wrap items-center gap-1.5">
@@ -445,6 +452,42 @@ function creativeHref(
     channel: channelParam,
     creative: creativeId,
   });
+}
+
+// The one thing to do next on the plan, with the button that does it (the chat
+// runs the steps that need it). Same source as the chat's "next step" bar.
+function NextStepBanner({
+  projectId,
+  step,
+}: {
+  projectId: string;
+  step: NextStep;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3",
+        step.tone === "blocker" ? "border-destructive/40" : "border-border",
+      )}
+    >
+      <p className="flex min-w-0 items-center gap-2 text-sm">
+        <span
+          aria-hidden
+          className={cn(
+            "size-2 shrink-0 rounded-full",
+            step.tone === "blocker" ? "bg-destructive" : "bg-success",
+          )}
+        />
+        <span className="min-w-0">{step.title}</span>
+      </p>
+      <Link
+        href={nextStepHref(projectId, step)}
+        className={buttonVariants({ size: "sm" })}
+      >
+        {step.label}
+      </Link>
+    </div>
+  );
 }
 
 function ChannelFilterChip({
@@ -557,11 +600,17 @@ function CreativeThumb({
   const version = creative.versions[0];
   const asset = version?.asset;
   const hasImage = Boolean(asset && !asset.storageKey.startsWith("mock://"));
+  // A plan slot nothing has been made for yet.
+  const needsContent = creative.status === "DRAFT" && !creative.currentVersionId;
   return (
     <Link
       href={href}
       scroll={false}
-      title={creative.title ?? undefined}
+      title={
+        needsContent
+          ? `${creative.title ?? "Planned piece"} · needs content`
+          : (creative.title ?? undefined)
+      }
       className="flex items-center gap-1 rounded-md px-1 py-0.5 text-left ring-1 ring-foreground/10 transition-colors hover:bg-accent"
     >
       {hasImage && asset ? (
@@ -584,11 +633,13 @@ function CreativeThumb({
       <span
         className={cn(
           "size-1.5 shrink-0 rounded-full",
-          creative.status === "APPROVED" || creative.status === "PUBLISHED"
-            ? "bg-success"
-            : creative.status === "REJECTED"
-              ? "bg-destructive"
-              : "bg-warning",
+          needsContent
+            ? "bg-muted-foreground/40"
+            : creative.status === "APPROVED" || creative.status === "PUBLISHED"
+              ? "bg-success"
+              : creative.status === "REJECTED"
+                ? "bg-destructive"
+                : "bg-warning",
         )}
       />
     </Link>

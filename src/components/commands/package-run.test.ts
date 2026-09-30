@@ -257,6 +257,43 @@ describe("needsProgressPoll", () => {
     expect(needsProgressPoll([started({ startedAt: iso(3 * 60_000) })], NOW)).toBe(false);
   });
 
+  it("polls right after a saved plan started producing, until every piece has a row", () => {
+    const plan = (over: Record<string, unknown> = {}) =>
+      ({
+        source: "WEB",
+        createdAt: iso(60 * 60_000),
+        card: {
+          kind: "content-plan-draft",
+          title: "p",
+          timezone: "UTC",
+          state: "saved",
+          items: [],
+          production: {
+            state: "running",
+            creativeIds: ["a", "b"],
+            startedAt: iso(20_000),
+          },
+          ...over,
+        },
+      }) as never;
+    expect(needsProgressPoll([plan()], NOW)).toBe(true);
+    expect(needsProgressPoll([plan(), row(10_000)], NOW)).toBe(true);
+    expect(needsProgressPoll([plan(), row(10_000), row(9_000)], NOW)).toBe(false);
+    // A finished production, or one claimed long ago, is not in flight.
+    expect(
+      needsProgressPoll(
+        [plan({ production: { state: "done", creativeIds: ["a"], startedAt: iso(20_000) } })],
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      needsProgressPoll(
+        [plan({ production: { state: "running", creativeIds: ["a"], startedAt: iso(3 * 60_000) } })],
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
   it("ignores drafts and packages without a start time", () => {
     expect(needsProgressPoll([started({ state: "draft" })], NOW)).toBe(false);
     expect(needsProgressPoll([started({ startedAt: undefined })], NOW)).toBe(false);

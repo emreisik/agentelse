@@ -230,7 +230,9 @@ function CreativeReadyCard({
                 ? "Added to the next calendar slot"
                 : card.approveIntent === "publish"
                   ? "Approved — publishing now"
-                  : "Approved",
+                  : card.approveIntent === "planned"
+                    ? "Approved — it goes out at its planned time"
+                    : "Approved",
           );
           router.refresh();
         } else {
@@ -262,7 +264,9 @@ function CreativeReadyCard({
 
   return (
     <div
-      className="mt-1 w-full max-w-2xl overflow-hidden rounded-2xl border"
+      // The "next step" bar scrolls to a piece waiting for review by this id.
+      data-creative-id={card.creativeId}
+      className="mt-1 w-full max-w-2xl overflow-hidden rounded-2xl border transition-shadow"
       style={{
         borderColor: "var(--ws-border)",
         background: "var(--ws-surface)",

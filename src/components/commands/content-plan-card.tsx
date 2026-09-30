@@ -9,11 +9,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useChatPackage } from "@/components/commands/chat-package-context";
 import { WsStatusPill, WsTag } from "@/components/commands/ws-event-card";
 import {
   ChannelBadge,
@@ -30,19 +32,49 @@ import {
   type PublishMode,
 } from "@/lib/content-channels";
 import {
+  STAGE_LABEL,
   buildWeeks,
+  countStages,
   planChannels,
   publishSummary,
+  stageSummary,
   toViewItems,
   type PlanViewItem,
 } from "@/lib/content-plan-view";
+import { selectProductionBatch, type PlanItemStage } from "@/lib/journey";
 import { SOCIAL_PLATFORM } from "@/lib/labels";
 import { saveContentPlanAction } from "@/server/actions/content-plan-actions";
+import { approvePlanItemsAction } from "@/server/actions/plan-progress-actions";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 type PlanCard = Extract<IdeaEventCardData, { kind: "content-plan-draft" }>;
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+
+// The dot on a saved piece: one colour per stage, the same ones the status
+// line under the plan uses.
+const STAGE_COLOR: Record<PlanItemStage, string> = {
+  PLANNED: "var(--ws-text-3)",
+  PRODUCING: "var(--ws-olive)",
+  FAILED: "var(--destructive)",
+  IN_REVIEW: "var(--ws-accent)",
+  REJECTED: "var(--destructive)",
+  APPROVED: "var(--ws-approved)",
+  PUBLISHED: "var(--ws-approved)",
+};
+
+function StageDot({ stage }: { stage: PlanItemStage }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "size-1.5 shrink-0 rounded-full",
+        stage === "PRODUCING" && "animate-pulse",
+      )}
+      style={{ background: STAGE_COLOR[stage] }}
+    />
+  );
+}
 
 function formatDay(date: string): string {
   return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB", {
@@ -123,14 +155,15 @@ export function ContentPlanCard({
   const params = useParams<{ projectId?: string }>();
   const projectId =
     typeof params?.projectId === "string" ? params.projectId : undefined;
+  const chatPackage = useChatPackage();
   const [pending, startTransition] = useTransition();
   const [tab, setTab] = useState<"week" | "list">("week");
   const [selected, setSelected] = useState(0);
   const [weekIndex, setWeekIndex] = useState(0);
 
   const items = useMemo(
-    () => toViewItems(card.items, card.connections),
-    [card.items, card.connections],
+    () => toViewItems(card.items, card.connections, card.slots),
+    [card.items, card.connections, card.slots],
   );
   const weeks = useMemo(() => buildWeeks(items), [items]);
   const channels = useMemo(() => planChannels(items), [items]);
@@ -141,13 +174,41 @@ export function ContentPlanCard({
     ? `/projects/${projectId}/integrations`
     : undefined;
 
-  const save = () => {
+  // "Save & produce" saves the plan and then produces its nearest week right
+  // here in the chat; "Save only" just writes the calendar.
+  const save = (produce: boolean) => {
     if (!commandId) return;
     startTransition(async () => {
       const result = await saveContentPlanAction(commandId);
+      if (!result.ok) {
+        toast.error(result.message);
+        router.refresh();
+        return;
+      }
+      toast.success(
+        `Plan saved (${result.saved ?? card.items.length} posts).`,
+      );
+      router.refresh();
+      // The run streams for a while: start it without holding this
+      // transition (the chat shows each piece live).
+      if (produce && chatPackage) void chatPackage.startPlan({ commandId });
+    });
+  };
+
+  const produce = () => {
+    if (!commandId || !chatPackage) return;
+    void chatPackage.startPlan({ commandId });
+  };
+
+  const approveAll = () => {
+    if (!commandId) return;
+    startTransition(async () => {
+      const result = await approvePlanItemsAction(commandId);
       if (result.ok) {
         toast.success(
-          `Plan saved (${result.saved ?? card.items.length} posts).`,
+          result.failed > 0
+            ? `${result.approved} approved, ${result.failed} could not be.`
+            : `${result.approved} approved.`,
         );
       } else {
         toast.error(result.message);
@@ -155,6 +216,40 @@ export function ContentPlanCard({
       router.refresh();
     });
   };
+
+  // What one click can produce: the nearest week of the slots with no content.
+  const producible = useMemo(
+    () =>
+      selectProductionBatch(
+        items.flatMap((item) =>
+          item.slot
+            ? [
+                {
+                  id: item.slot.id,
+                  planId: "plan",
+                  stage: item.slot.stage,
+                  date: item.date,
+                },
+              ]
+            : [],
+        ),
+      ).length,
+    [items],
+  );
+  const stageCounts = useMemo(() => countStages(items), [items]);
+  const producing = chatPackage?.runs[commandId ?? ""]?.phase === "running";
+  const draftBatch = useMemo(
+    () =>
+      selectProductionBatch(
+        items.map((item) => ({
+          id: String(item.index),
+          planId: "plan",
+          stage: "PLANNED" as const,
+          date: item.date,
+        })),
+      ).length,
+    [items],
+  );
 
   const goToWeek = (next: number) => {
     const bounded = Math.max(0, Math.min(weeks.length - 1, next));
@@ -328,7 +423,7 @@ export function ContentPlanCard({
                             onClick={() => setSelected(item.index)}
                             aria-label={`${item.topic}, ${formatDay(item.date)} ${item.time}`}
                             aria-pressed={selected === item.index}
-                            className="flex items-center justify-center gap-0.5 rounded-md border px-0.5 py-0.5 transition-colors"
+                            className="relative flex items-center justify-center gap-0.5 rounded-md border px-0.5 py-0.5 transition-colors"
                             style={{
                               borderColor:
                                 selected === item.index
@@ -356,6 +451,11 @@ export function ContentPlanCard({
                                 className="size-3"
                               />
                             ) : null}
+                            {item.slot ? (
+                              <span className="absolute -top-0.5 -right-0.5">
+                                <StageDot stage={item.slot.stage} />
+                              </span>
+                            ) : null}
                           </button>
                         ))}
                       </div>
@@ -363,7 +463,9 @@ export function ContentPlanCard({
                   );
                 })}
               </div>
-              {current ? <PlanItemDetail item={current} /> : null}
+              {current ? (
+                <PlanItemDetail item={current} projectId={projectId} />
+              ) : null}
             </>
           ) : null}
         </TabsContent>
@@ -398,10 +500,15 @@ export function ContentPlanCard({
                   >
                     {item.topic}
                   </span>
+                  {item.slot ? <StageDot stage={item.slot.stage} /> : null}
                 </button>
                 {selected === item.index ? (
                   <div className="px-1.5 pb-1.5">
-                    <PlanItemDetail item={item} compact />
+                    <PlanItemDetail
+                      item={item}
+                      projectId={projectId}
+                      compact
+                    />
                   </div>
                 ) : null}
               </li>
@@ -411,24 +518,77 @@ export function ContentPlanCard({
       </Tabs>
 
       {open ? (
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
             {summaryText(items) || "Ask me to change anything, or save it."}
           </p>
-          <Button size="sm" onClick={save} disabled={pending || !commandId}>
-            {pending ? <Loader2 className="size-3.5 animate-spin" /> : null}
-            Save to calendar
-          </Button>
+          <span className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => save(false)}
+              disabled={pending || !commandId}
+            >
+              Save only
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => save(true)}
+              disabled={pending || !commandId || !chatPackage}
+            >
+              {pending ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="size-3.5" />
+              )}
+              Save &amp; produce{draftBatch > 0 ? ` (${draftBatch})` : ""}
+            </Button>
+          </span>
         </div>
       ) : null}
 
-      {card.state === "saved" && projectId ? (
-        <Link
-          href={`/projects/${projectId}/takvim`}
-          className={buttonVariants({ variant: "outline", size: "sm" })}
-        >
-          Open calendar
-        </Link>
+      {card.state === "saved" ? (
+        <div className="space-y-2">
+          {card.slots && stageSummary(items) ? (
+            <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+              {stageSummary(items)}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {card.slots && stageCounts.IN_REVIEW > 0 ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={approveAll}
+                disabled={pending}
+              >
+                Approve all ({stageCounts.IN_REVIEW})
+              </Button>
+            ) : null}
+            {card.slots && producible > 0 && chatPackage ? (
+              <Button
+                size="sm"
+                onClick={produce}
+                disabled={pending || producing}
+              >
+                {producing ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="size-3.5" />
+                )}
+                {stageCounts.FAILED > 0 ? "Try again" : "Produce"} ({producible})
+              </Button>
+            ) : null}
+            {projectId ? (
+              <Link
+                href={`/projects/${projectId}/takvim`}
+                className={buttonVariants({ variant: "outline", size: "sm" })}
+              >
+                Open calendar
+              </Link>
+            ) : null}
+          </div>
+        </div>
       ) : null}
     </div>
   );
@@ -437,9 +597,11 @@ export function ContentPlanCard({
 // The selected piece: where it goes, what it is about, what happens to it.
 function PlanItemDetail({
   item,
+  projectId,
   compact = false,
 }: {
   item: PlanViewItem;
+  projectId?: string;
   compact?: boolean;
 }) {
   const channelLabel = item.channel
@@ -480,6 +642,34 @@ function PlanItemDetail({
       >
         {item.captionIdea}
       </p>
+      {item.slot ? (
+        <div className="mt-2 flex items-center gap-2">
+          {item.slot.assetId ? (
+            // eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it
+            <img
+              src={`/api/assets/${item.slot.assetId}`}
+              alt=""
+              className="size-12 shrink-0 rounded-md object-cover"
+            />
+          ) : null}
+          <span
+            className="flex items-center gap-1.5 text-xs"
+            style={{ color: "var(--ws-text-2)" }}
+          >
+            <StageDot stage={item.slot.stage} />
+            {STAGE_LABEL[item.slot.stage]}
+          </span>
+          {projectId && item.slot.stage !== "PLANNED" ? (
+            <Link
+              href={`/projects/${projectId}/takvim?creative=${item.slot.id}`}
+              className="ml-auto text-xs underline underline-offset-2"
+              style={{ color: "var(--ws-text-2)" }}
+            >
+              Open
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -5,7 +5,6 @@ import {
   CalendarClock,
   Gavel,
   Infinity as InfinityIcon,
-  Lightbulb,
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
@@ -24,7 +23,6 @@ import {
 import { updateAutonomyPolicyAction } from "@/server/actions/agency-config-actions";
 import {
   updateAutoContentPlanScheduleAction,
-  updateIdeaGenerationScheduleAction,
   updateInstagramPublishScheduleAction,
 } from "@/server/actions/publish-schedule-actions";
 import { ProjectDeletionService } from "@/server/projects/project-deletion.service";
@@ -175,33 +173,22 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
   const monthStart = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
   );
-  const [policy, monthlySpend, ideaGenSchedule, evaluatedOpportunityCount] =
-    await Promise.all([
-      prisma.autonomyPolicy.findUnique({ where: { projectId } }),
-      // Read-only visibility only (spec: "AI Budget: this month $18.40/$50")
-      // — reuses the SAME reasoningCostUsd AgencyDailyStat already tracks for
-      // the existing daily budget check (AutonomyPolicyRepository.
-      // checkAndIncrement); no new monthly cap/enforcement mechanism, no
-      // schema change. AgencyDailyStat.reasoningCostUsd is itself a
-      // token-based LLM-call cost estimate, not aggregate provider spend
-      // (image-generation cost isn't tracked anywhere yet — see
-      // docs/brand-workspace-migration.md §7 Phase 6) — this total inherits
-      // that same scope, not a full "everything Agentelse spent."
-      prisma.agencyDailyStat.aggregate({
-        where: { projectId, date: { gte: monthStart } },
-        _sum: { reasoningCostUsd: true },
-      }),
-      prisma.projectSchedule.findFirst({
-        where: { projectId, capability: "GENERATE_IDEAS" },
-      }),
-      // Signal scanning + opportunity evaluation keep running in the
-      // background even though idea generation itself stopped being
-      // continuous (see agency-wiring.ts) — this surfaces the backlog so
-      // the user can see what a manual/scheduled generate would draw from.
-      prisma.opportunity.count({
-        where: { projectId, status: "EVALUATED" },
-      }),
-    ]);
+  const [policy, monthlySpend] = await Promise.all([
+    prisma.autonomyPolicy.findUnique({ where: { projectId } }),
+    // Read-only visibility only (spec: "AI Budget: this month $18.40/$50")
+    // — reuses the SAME reasoningCostUsd AgencyDailyStat already tracks for
+    // the existing daily budget check (AutonomyPolicyRepository.
+    // checkAndIncrement); no new monthly cap/enforcement mechanism, no
+    // schema change. AgencyDailyStat.reasoningCostUsd is itself a
+    // token-based LLM-call cost estimate, not aggregate provider spend
+    // (image-generation cost isn't tracked anywhere yet — see
+    // docs/brand-workspace-migration.md §7 Phase 6) — this total inherits
+    // that same scope, not a full "everything Agentelse spent."
+    prisma.agencyDailyStat.aggregate({
+      where: { projectId, date: { gte: monthStart } },
+      _sum: { reasoningCostUsd: true },
+    }),
+  ]);
 
   if (!policy) {
     return (
@@ -261,22 +248,6 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
       hint: "The time to wait before the same work item can be recreated",
     },
   ];
-
-  const ideaGenEnabled = ideaGenSchedule?.enabled ?? false;
-  const ideaGenConfig = (ideaGenSchedule?.configuration ?? {}) as {
-    cadence?: string;
-    dayOfWeek?: string;
-    dayOfMonth?: number;
-    limit?: number;
-  };
-  const ideaGenCadence =
-    ideaGenConfig.cadence === "MONTHLY" ? "MONTHLY" : "WEEKLY";
-  const ideaGenDayOfWeek = ideaGenConfig.dayOfWeek ?? "1";
-  const ideaGenDayOfMonth = ideaGenConfig.dayOfMonth ?? 1;
-  const ideaGenTime =
-    cronToTime(ideaGenSchedule?.cronExpression ?? null) || "09:00";
-  const ideaGenTimezone = ideaGenSchedule?.timezone ?? "Europe/Istanbul";
-  const ideaGenLimit = ideaGenConfig.limit ?? 5;
 
   return (
     <div className="space-y-6">
@@ -447,135 +418,6 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
           <SubmitButton>Save</SubmitButton>
         </div>
       </ActionForm>
-
-      <ActionForm
-        action={updateIdeaGenerationScheduleAction}
-        successMessage="Idea generation schedule updated"
-        className="space-y-4"
-      >
-        <input type="hidden" name="projectId" value={projectId} />
-
-        <Card size="sm">
-          <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-            <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10">
-              <Lightbulb className="size-4 text-primary" />
-            </span>
-            <CardTitle className="text-base">
-              Idea Generation Frequency
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="flex items-start gap-3">
-              <Switch
-                key={`idea-gen-enabled-${ideaGenEnabled}`}
-                id="idea-gen-enabled"
-                name="enabled"
-                defaultChecked={ideaGenEnabled}
-              />
-              <div className="space-y-1">
-                <Label htmlFor="idea-gen-enabled">
-                  Turn evaluated opportunities into new ideas on a schedule
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Idea generation is on-demand only otherwise — ask for ideas
-                  from chat any time. Turn this on for a predictable
-                  weekly/monthly rhythm instead of an ad-hoc request every time.{" "}
-                  {evaluatedOpportunityCount} evaluated opportunit
-                  {evaluatedOpportunityCount === 1 ? "y" : "ies"} currently
-                  waiting to become ideas.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="idea-gen-cadence">Cadence</Label>
-                <select
-                  id="idea-gen-cadence"
-                  name="cadence"
-                  defaultValue={ideaGenCadence}
-                  className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
-                >
-                  <option value="WEEKLY">Weekly</option>
-                  <option value="MONTHLY">Monthly</option>
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="idea-gen-day-of-week">Day of week</Label>
-                <select
-                  id="idea-gen-day-of-week"
-                  name="dayOfWeek"
-                  defaultValue={ideaGenDayOfWeek}
-                  className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
-                >
-                  {WEEKDAY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-muted-foreground">
-                  Used when cadence is Weekly.
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="idea-gen-day-of-month">Day of month</Label>
-                <select
-                  id="idea-gen-day-of-month"
-                  name="dayOfMonth"
-                  defaultValue={String(ideaGenDayOfMonth)}
-                  className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
-                >
-                  {MONTHDAY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-muted-foreground">
-                  Used when cadence is Monthly.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="idea-gen-time">Time</Label>
-                <Input
-                  id="idea-gen-time"
-                  name="time"
-                  type="time"
-                  defaultValue={ideaGenTime}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="idea-gen-limit">Ideas per run</Label>
-                <Input
-                  id="idea-gen-limit"
-                  name="limit"
-                  type="number"
-                  min={1}
-                  max={10}
-                  defaultValue={ideaGenLimit}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="idea-gen-timezone">Timezone</Label>
-                <Input
-                  id="idea-gen-timezone"
-                  name="timezone"
-                  defaultValue={ideaGenTimezone}
-                  placeholder="Europe/Istanbul"
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="sticky bottom-4 flex justify-end">
-          <SubmitButton>Save</SubmitButton>
-        </div>
-      </ActionForm>
     </div>
   );
 }
@@ -616,14 +458,6 @@ const WEEKDAY_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "6", label: "Saturday" },
   { value: "0", label: "Sunday" },
 ];
-
-// Capped at 28 (not 29-31) — a cron day-of-month past what a given month
-// has just silently never fires that month, a confusing gap the UI avoids
-// by never offering those values (see updateIdeaGenerationScheduleAction).
-const MONTHDAY_OPTIONS: Array<{ value: string; label: string }> = Array.from(
-  { length: 28 },
-  (_, index) => ({ value: String(index + 1), label: String(index + 1) }),
-);
 
 async function PublishingTab({ projectId }: { projectId: string }) {
   const [schedules, queuedCount, autoPlanSchedule, shortlistedCount] =

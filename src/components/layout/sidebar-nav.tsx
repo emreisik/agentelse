@@ -16,6 +16,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Target,
+  UserRoundCog,
   Users2,
   type LucideIcon,
 } from "lucide-react";
@@ -80,6 +81,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { label: "Setup", icon: SlidersHorizontal, panel: "setup" },
       { label: "Departments", icon: Users2, panel: "departments" },
+      { label: "Human Action", icon: UserRoundCog, panel: "human-action" },
       { label: "Settings", icon: Settings2, panel: "settings" },
     ],
   },

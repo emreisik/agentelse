@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { AgentelseMark } from "@/components/brand/agentelse-mark";
 import { toast } from "sonner";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import type { DepartmentKey } from "@prisma/client";
 import {
@@ -57,9 +58,46 @@ import {
 import { stripPlanBriefMarker } from "@/lib/plan-brief";
 import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
 import type { PublishTarget } from "@/server/integrations/meta-connection-status";
-import type { IdeaEventCardData } from "@/types/idea-event-card";
+import {
+  CARDS_THAT_KEEP_TEXT,
+  type IdeaEventCardData,
+} from "@/types/idea-event-card";
+import { composerAutoFocus } from "@/components/guide/composer-autofocus";
+import { GuidedSetupBoundary } from "@/components/guide/guided-setup-boundary";
+import {
+  NextStepsBar,
+  useRunNextStep,
+} from "@/components/commands/next-steps-bar";
+import { ManualPublishDialog } from "@/components/commands/manual-publish-dialog";
+import { PlanResultsDialog } from "@/components/commands/plan-results-dialog";
+import { NEXT_STEP_KINDS, type NextStep } from "@/lib/journey";
+import {
+  buildGuidedSetupApi,
+  GuidedSetupProvider,
+  type GuidedSetupApi,
+} from "@/components/guide/guided-setup-context";
+import {
+  ConnectedGuidedSetupChip,
+  ConnectedGuidedSetupWelcomeCard,
+} from "@/components/guide/guided-setup-entry";
+import {
+  GUIDE_PARAM,
+  type GuidedSetupHost,
+  type GuidedSetupSummary,
+} from "@/lib/guided-setup/contract";
 import type { WorkspaceResumeStats } from "@/components/workspace/workspace-right-panel-data";
 import { dayKey, dayLabel } from "@/lib/dates";
+
+// The sheet, its panel, reducer and the sanitizer regexes load on demand, and
+// only when a host exists (the entry components above stay static and tiny).
+// Nothing is prerendered: the Drawer is a client-only overlay.
+const GuidedSetupSheet = dynamic(
+  () =>
+    import("@/components/guide/guided-setup-sheet").then(
+      (mod) => mod.GuidedSetupSheet,
+    ),
+  { ssr: false },
+);
 
 export type ChatAttachment = {
   assetId: string;
@@ -194,6 +232,7 @@ const CHAT_ACCEPT =
 // broke halfway, whose items may still be working on the server).
 const NOT_STARTED_ERROR_CODES: ReadonlySet<string> = new Set([
   "PACKAGE",
+  "PLAN",
   "PROJECT_INACTIVE",
   "HTTP",
   "SESSION",
@@ -260,6 +299,9 @@ export function ProjectChat({
   userFirstName,
   resumeStats,
   chatEngine = "legacy",
+  guidedSetup,
+  nextSteps,
+  autoNext,
 }: {
   projectId: string;
   projectName: string;
@@ -281,8 +323,49 @@ export function ProjectChat({
   // "agent" streams replies from /api/projects/[id]/chat (SSE, tool calling,
   // real Stop); "legacy" uses the blocking Server Action (see CHAT_ENGINE).
   chatEngine?: "agent" | "legacy";
+  // Only passed by the project page when GUIDED_SETUP is on (and loadGuidedHost
+  // did not fail). Ignored in an idea thread: the sheet never mounts there.
+  guidedSetup?: GuidedSetupHost;
+  // What to do next on the project's content plan, worked out by the server
+  // from the records (journey/next-steps.ts). Empty/absent: the default
+  // shortcuts show instead. Ignored in an idea thread.
+  nextSteps?: NextStep[];
+  // `?next=<kind>` on the URL (the calendar's banner): run that step once on
+  // landing. Latched at mount, like `?guide=setup`.
+  autoNext?: string;
 }) {
   const router = useRouter();
+  // The sheet crashed (e.g. its lazy chunk failed to load): every entry hides
+  // as with the flag off instead of greying out over a sheet that is gone.
+  const [guidedBroken, setGuidedBroken] = React.useState(false);
+  // The feature needs a host and the root chat.
+  const guidedEnabled = Boolean(guidedSetup) && !ideaId && !guidedBroken;
+  // ?guide=setup was on the URL at mount. Latched: the page recomputes
+  // `requested` on every server render, but only the landing may auto-open.
+  const [requestedAtMount] = React.useState(
+    () => guidedEnabled && Boolean(guidedSetup?.requested),
+  );
+  // The composer autofocus is latched ONCE: a live value would flip on the
+  // first router.refresh() and focus the composer over an open sheet (or open
+  // the phone keyboard over the receipt after Approve).
+  const [quietComposer] = React.useState(
+    () =>
+      !composerAutoFocus({
+        requested: Boolean(guidedSetup?.requested),
+        coarsePointer:
+          typeof window !== "undefined" &&
+          window.matchMedia("(pointer: coarse)").matches,
+        hasHost: Boolean(guidedSetup),
+      }),
+  );
+  const [guidedOpen, setGuidedOpen] = React.useState(requestedAtMount);
+
+  // Mirror of guidedOpen for the idempotency check in open() (handlers only).
+  const guidedOpenRef = React.useRef(requestedAtMount);
+  const guidedOpenerRef = React.useRef<HTMLElement | null>(null);
+  const [guidedSeed, setGuidedSeed] = React.useState<string | undefined>();
+  const [guidedSummary, setGuidedSummary] =
+    React.useState<GuidedSetupSummary | null>(null);
   const [localTurns, setLocalTurns] = React.useState<LocalTurn[]>([]);
   const [isActionSending, startTransition] = React.useTransition();
   // Key of the local turn whose SSE stream is open, and the controller that
@@ -300,6 +383,65 @@ export function ProjectChat({
     () => new ProjectChatAttachmentAdapter(),
     [],
   );
+
+  // One open(): every entry point (URL, stream card, Welcome card, chip, "+"
+  // menu, card launcher) calls it, and it is idempotent. Event handlers only.
+  const openGuided = React.useCallback<GuidedSetupApi["open"]>((_source, opts) => {
+    if (guidedOpenRef.current) return;
+    guidedOpenRef.current = true;
+    // Where focus returns when the sheet closes.
+    guidedOpenerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setGuidedSeed(opts?.seedCommandId);
+    setGuidedOpen(true);
+  }, []);
+  const closeGuided = React.useCallback(() => {
+    guidedOpenRef.current = false;
+    setGuidedOpen(false);
+  }, []);
+  const failGuided = React.useCallback(() => {
+    guidedOpenRef.current = false;
+    setGuidedOpen(false);
+    setGuidedBroken(true);
+  }, []);
+  const liveGuidedSummary = guidedSummary ?? guidedSetup?.summary ?? null;
+  const guidedApi = React.useMemo(
+    () =>
+      guidedEnabled && liveGuidedSummary
+        ? buildGuidedSetupApi({
+            isOpen: guidedOpen,
+            open: openGuided,
+            close: closeGuided,
+            summary: liveGuidedSummary,
+            canDraftPlan: chatEngine === "agent",
+          })
+        : null,
+    [
+      guidedEnabled,
+      guidedOpen,
+      openGuided,
+      closeGuided,
+      liveGuidedSummary,
+      chatEngine,
+    ],
+  );
+
+  // Drop ?guide=setup once it has been acted on, so a reload or a shared link
+  // does not reopen the sheet. replaceState integrates with the Next router; no
+  // state is set here.
+  React.useEffect(() => {
+    if (!requestedAtMount) return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(GUIDE_PARAM)) return;
+    url.searchParams.delete(GUIDE_PARAM);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, [requestedAtMount]);
 
   // Drop local copies of turns once they land in the server list.
   const serverIds = React.useMemo(
@@ -534,10 +676,7 @@ export function ProjectChat({
         // A plan/package card is a companion to the assistant's words (why
         // this plan, what to do next), not a replacement for them.
         content:
-          message.card &&
-          message.card.kind !== "content-plan-draft" &&
-          message.card.kind !== "plan-brief" &&
-          message.card.kind !== "content-package"
+          message.card && !CARDS_THAT_KEEP_TEXT.has(message.card.kind)
             ? []
             : message.text,
         createdAt: new Date(message.createdAt),
@@ -661,6 +800,8 @@ export function ProjectChat({
 
       let streamed = "";
       let finished = false;
+      // `done` repeats the card: open the sheet once per turn.
+      let openedGuided = false;
       const apply = (event: ChatStreamEvent) => {
         switch (event.type) {
           case "start":
@@ -714,6 +855,17 @@ export function ProjectChat({
             break;
           case "card":
             patch((turn) => ({ ...turn, card: event.card }));
+            if (
+              guidedEnabled &&
+              !openedGuided &&
+              event.card.kind === "guided-setup" &&
+              event.card.state === "open"
+            ) {
+              openedGuided = true;
+              openGuided("stream", {
+                seedCommandId: event.card.sourceCommandId,
+              });
+            }
             break;
           case "suggestions":
             setSuggestions(event.items);
@@ -828,7 +980,7 @@ export function ProjectChat({
         router.refresh();
       }
     },
-    [projectId, ideaId, router],
+    [projectId, ideaId, router, guidedEnabled, openGuided],
   );
 
   const sendMessage = React.useCallback(
@@ -1092,10 +1244,19 @@ export function ProjectChat({
               </div>
             </div>
           ) : null}
+
+          {/* Flag off: no wrapper at all (the markup stays as before).
+              empty:hidden keeps the gap away when the card renders nothing. */}
+          {guidedEnabled ? (
+            <div className="mt-5 empty:hidden">
+              <ConnectedGuidedSetupWelcomeCard projectName={projectName} />
+            </div>
+          ) : null}
         </div>
       ),
     [
       ideaId,
+      guidedEnabled,
       projectName,
       userFirstName,
       timeGreeting,
@@ -1115,32 +1276,6 @@ export function ProjectChat({
       />
     ),
     [projectId, publishTargets, isSending, sendShortcut],
-  );
-
-  const QuickActions = React.useCallback(
-    () =>
-      ideaId ? null : (
-        <div className="scrollbar-none flex gap-2 overflow-x-auto px-1 pb-1">
-          {QUICK_ACTIONS.map(({ label, icon: Icon }) => (
-            <button
-              key={label}
-              type="button"
-              disabled={isSending}
-              onClick={() => sendMessage(label, [])}
-              className="flex shrink-0 items-center gap-1.5 rounded-[7px] border px-3 py-1.5 text-[11px] font-medium whitespace-nowrap shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-50 sm:text-xs"
-              style={{
-                borderColor: "var(--ws-border)",
-                background: "var(--ws-surface)",
-                color: "var(--ws-text-2)",
-              }}
-            >
-              <Icon className="size-3.5" style={{ color: "var(--ws-olive)" }} />
-              {label}
-            </button>
-          ))}
-        </div>
-      ),
-    [ideaId, isSending, sendMessage],
   );
 
   // Replaces the composer's old inert "Automatic" label with something
@@ -1170,51 +1305,64 @@ export function ProjectChat({
     [projectName],
   );
 
-  // "Create selected" on a content-package card: every ticked deliverable
-  // shows up as its own assistant message at once and is produced live —
-  // images sharpen in place, text shows a running card — from the tagged
-  // item.* events of the package route. Independent of the chat turn stream
-  // (the composer stays usable), so several items run side by side.
-  const startContentPackage = React.useCallback(
+  // A live production run pressed on a card: every piece shows up as its own
+  // assistant message and is produced live — images sharpen in place, text
+  // shows a running card — from the tagged item.* events of the run's route.
+  // Independent of the chat turn stream (the composer stays usable), so several
+  // items run side by side. A content package knows its pieces up front (the
+  // ticked items); a content plan lets the server pick them (the nearest week)
+  // and announces them first with run.items.
+  const runProduction = React.useCallback(
     async ({
       commandId,
-      items,
+      endpoint,
+      body,
+      items: knownItems,
+      noun,
     }: {
       commandId: string;
-      items: PackageRunItem[];
+      endpoint: string;
+      body: unknown;
+      items?: PackageRunItem[];
+      noun: "package" | "plan";
     }): Promise<{ ok: boolean }> => {
-      const runKey = `pkg-${commandId}`;
+      const runKey = `${noun === "plan" ? "plan" : "pkg"}-${commandId}`;
       const inRun = (turn: LocalTurn) =>
         turn.itemId !== undefined && turn.key.startsWith(`${runKey}:`);
-      const createdAt = new Date().toISOString();
-      const itemIds = items.map((item) => item.id);
-      setPackageRuns((current) => ({
-        ...current,
-        [commandId]: { phase: "running", itemIds },
-      }));
+      const notStarted = `Could not start the ${noun === "plan" ? "production" : "package"}.`;
+      let itemIds: string[] = [];
       const startedAt = Date.now();
-      setLocalTurns((current) => [
-        // A retry after a refused run replaces that run's earlier messages.
-        ...current.filter((turn) => !inRun(turn)),
-        ...items.map((item): LocalTurn => ({
-          key: `${runKey}:${item.id}`,
-          text: item.title,
-          attachments: [],
-          state: "pending",
-          createdAt,
-          itemId: item.id,
-          itemTitle: item.title,
-          itemLabel: item.label,
-          department: item.department,
-          imageGen: item.image
-            ? { startedAt, partials: 0, done: false }
-            : undefined,
-        })),
-      ]);
+      const openItems = (items: PackageRunItem[]) => {
+        const createdAt = new Date().toISOString();
+        itemIds = items.map((item) => item.id);
+        setPackageRuns((current) => ({
+          ...current,
+          [commandId]: { phase: "running", itemIds },
+        }));
+        setLocalTurns((current) => [
+          // A retry after a refused run replaces that run's earlier messages.
+          ...current.filter((turn) => !inRun(turn)),
+          ...items.map((item): LocalTurn => ({
+            key: `${runKey}:${item.id}`,
+            text: item.title,
+            attachments: [],
+            state: "pending",
+            createdAt,
+            itemId: item.id,
+            itemTitle: item.title,
+            itemLabel: item.label,
+            department: item.department,
+            imageGen: item.image
+              ? { startedAt, partials: 0, done: false }
+              : undefined,
+          })),
+        ]);
+      };
+      openItems(knownItems ?? []);
 
       let started = 0;
       let finished = false;
-      // Any item event means the package was claimed and is running on the
+      // Any item event means the run was claimed and is running on the
       // server, even if the connection later drops before package.done.
       let claimed = false;
       const settle = (message: string) =>
@@ -1225,6 +1373,18 @@ export function ProjectChat({
         setLocalTurns((current) => current.filter((turn) => !inRun(turn)));
       const apply = (event: ChatStreamEvent) => {
         switch (event.type) {
+          case "run.items":
+            claimed = true;
+            openItems(
+              event.items.map((item) => ({
+                id: item.id,
+                title: item.title,
+                label: item.label,
+                department: item.department as DepartmentKey | undefined,
+                image: item.image,
+              })),
+            );
+            break;
           case "item.start":
           case "item.partial":
           case "item.done":
@@ -1239,13 +1399,13 @@ export function ProjectChat({
             finished = true;
             started = event.started;
             // Every item that ran has reported by now; one still waiting was
-            // skipped when the package was claimed.
+            // skipped when the run was claimed.
             settle("This one was not started.");
             if (event.started === 0) {
-              toast.error("Could not start the package. Try again.");
+              toast.error(`${notStarted} Try again.`);
             } else if (event.failed > 0) {
               toast.error(
-                `${event.failed} of ${items.length} could not be made.`,
+                `${event.failed} of ${itemIds.length} could not be made.`,
               );
             }
             break;
@@ -1259,23 +1419,14 @@ export function ProjectChat({
       };
 
       try {
-        const response = await fetch(
-          `/api/projects/${projectId}/chat/package`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              commandId,
-              selections: items.map((item) => ({
-                id: item.id,
-                contentFormat: item.contentFormat,
-              })),
-            }),
-          },
-        );
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
         const contentType = response.headers.get("content-type") ?? "";
         if (!response.ok || !response.body) {
-          let message = "Could not start the package.";
+          let message = notStarted;
           try {
             const data = (await response.json()) as { error?: string };
             if (data.error) message = data.error;
@@ -1312,11 +1463,7 @@ export function ProjectChat({
           }
         }
       } catch (error) {
-        settle(
-          error instanceof Error
-            ? error.message
-            : "Could not start the package.",
-        );
+        settle(error instanceof Error ? error.message : notStarted);
       } finally {
         setPackageRuns((current) => {
           const next = { ...current };
@@ -1332,12 +1479,147 @@ export function ProjectChat({
       }
       return { ok: started > 0 || claimed };
     },
-    [projectId, router],
+    [router],
+  );
+
+  // "Create selected" on a content-package card.
+  const startContentPackage = React.useCallback(
+    ({
+      commandId,
+      items,
+    }: {
+      commandId: string;
+      items: PackageRunItem[];
+    }) =>
+      runProduction({
+        commandId,
+        endpoint: `/api/projects/${projectId}/chat/package`,
+        body: {
+          commandId,
+          selections: items.map((item) => ({
+            id: item.id,
+            contentFormat: item.contentFormat,
+          })),
+        },
+        items,
+        noun: "package",
+      }),
+    [projectId, runProduction],
+  );
+
+  // "Save & produce" / "Produce" on a saved content-plan card, and the "next
+  // step" bar: the nearest week of the plan's empty slots.
+  const startContentPlan = React.useCallback(
+    ({ commandId }: { commandId: string }) =>
+      runProduction({
+        commandId,
+        endpoint: `/api/projects/${projectId}/chat/plan`,
+        body: { commandId },
+        noun: "plan",
+      }),
+    [projectId, runProduction],
+  );
+
+  const {
+    run: runNextStep,
+    pending: nextStepPending,
+    manual: manualPublish,
+    closeManual,
+    results: showResults,
+    closeResults,
+  } = useRunNextStep({
+    projectId,
+    onProducePlan: (planId) => void startContentPlan({ commandId: planId }),
+    onSend: (text) => void sendMessage(text, []),
+  });
+  // A `?next=` landing runs its step once, then drops the parameter so a
+  // refresh does not run it again.
+  const autoNextDone = React.useRef(false);
+  React.useEffect(() => {
+    if (autoNextDone.current || !autoNext) return;
+    autoNextDone.current = true;
+    router.replace(`/projects/${projectId}`, { scroll: false });
+    const kind = NEXT_STEP_KINDS.find((candidate) => candidate === autoNext);
+    const step = nextSteps?.find((candidate) => candidate.action.kind === kind);
+    if (step) runNextStep(step);
+  }, [autoNext, nextSteps, projectId, router, runNextStep]);
+  const hasRunningRun = Object.values(packageRuns).some(
+    (run) => run.phase === "running",
+  );
+  const hasNextSteps = (nextSteps?.length ?? 0) > 0;
+  const QuickActions = React.useCallback(
+    () =>
+      ideaId ? null : (
+        <>
+          <ConnectedGuidedSetupChip projectId={projectId} />
+          {nextSteps && hasNextSteps ? (
+            <NextStepsBar
+              steps={nextSteps}
+              disabled={isSending || hasRunningRun || nextStepPending}
+              onAct={runNextStep}
+            />
+          ) : null}
+          {manualPublish ? (
+            <ManualPublishDialog
+              projectId={projectId}
+              creativeIds={manualPublish}
+              onClose={closeManual}
+            />
+          ) : null}
+          {showResults ? (
+            <PlanResultsDialog
+              projectId={projectId}
+              onClose={closeResults}
+              onPlanNext={() => void sendMessage("Plan the next two weeks.", [])}
+            />
+          ) : null}
+          {hasNextSteps ? null : (
+          <div className="scrollbar-none flex gap-2 overflow-x-auto px-1 pb-1">
+            {QUICK_ACTIONS.map(({ label, icon: Icon }) => (
+              <button
+                key={label}
+                type="button"
+                disabled={isSending}
+                onClick={() => sendMessage(label, [])}
+                className="flex shrink-0 items-center gap-1.5 rounded-[7px] border px-3 py-1.5 text-[11px] font-medium whitespace-nowrap shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-50 sm:text-xs"
+                style={{
+                  borderColor: "var(--ws-border)",
+                  background: "var(--ws-surface)",
+                  color: "var(--ws-text-2)",
+                }}
+              >
+                <Icon className="size-3.5" style={{ color: "var(--ws-olive)" }} />
+                {label}
+              </button>
+            ))}
+          </div>
+          )}
+        </>
+      ),
+    [
+      ideaId,
+      projectId,
+      isSending,
+      sendMessage,
+      nextSteps,
+      hasNextSteps,
+      hasRunningRun,
+      runNextStep,
+      nextStepPending,
+      manualPublish,
+      closeManual,
+      showResults,
+      closeResults,
+    ],
   );
 
   const chatPackage = React.useMemo(
-    () => ({ start: startContentPackage, runs: packageRuns }),
-    [startContentPackage, packageRuns],
+    () => ({
+      start: startContentPackage,
+      startPlan: startContentPlan,
+      runs: packageRuns,
+    }),
+    [startContentPackage, startContentPlan, packageRuns],
   );
 
   // A content-package piece whose live stream is gone (page reload, dropped
@@ -1366,14 +1648,31 @@ export function ProjectChat({
     <AssistantRuntimeProvider runtime={runtime}>
       <ChatSendProvider value={sendFromCard}>
         <ChatPackageProvider value={chatPackage}>
-          <Thread
-            components={{
-              Welcome,
-              ComposerPlusMenu: PlusMenu,
-              QuickActions,
-              ContextChip,
-            }}
-          />
+          <GuidedSetupProvider value={guidedApi}>
+            <Thread
+              autoFocusComposer={!quietComposer}
+              components={{
+                Welcome,
+                ComposerPlusMenu: PlusMenu,
+                QuickActions,
+                ContextChip,
+              }}
+            />
+            {guidedEnabled && guidedSetup ? (
+              <GuidedSetupBoundary onError={failGuided}>
+                <GuidedSetupSheet
+                  projectId={projectId}
+                  brandName={projectName}
+                  languageCode={guidedSetup.languageCode}
+                  chatEngine={chatEngine}
+                  host={guidedSetup}
+                  seedCommandId={guidedSeed}
+                  openerRef={guidedOpenerRef}
+                  onSummary={setGuidedSummary}
+                />
+              </GuidedSetupBoundary>
+            ) : null}
+          </GuidedSetupProvider>
         </ChatPackageProvider>
       </ChatSendProvider>
     </AssistantRuntimeProvider>

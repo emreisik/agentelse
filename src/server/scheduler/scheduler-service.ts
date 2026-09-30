@@ -10,7 +10,6 @@ import {
   weeklyPlanConfigFromSchedule,
 } from "@/server/agency/content/instagram-week-planner";
 import { DeadLetterRepository } from "@/server/repositories/dead-letter.repository";
-import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
 
 // Same constants/shape as execution-worker.ts's own retry/backoff (not
 // imported from there: execution-worker.ts already imports SchedulerService,
@@ -38,6 +37,15 @@ const PUBLISH_QUEUE_MODE = "PUBLISH_NEXT_READY";
 // capability run — see instagram-week-planner.ts and the Settings ->
 // Publishing "Auto content planning" card (settings-panel.tsx).
 const AUTO_PLAN_GRID_WEEK_MODE = "AUTO_PLAN_GRID_WEEK";
+
+// The Settings "Idea Generation Frequency" card is gone: turning an evaluated
+// opportunity into ideas is on demand only (a chat request). A row it left
+// behind (capability GENERATE_IDEAS) must neither run nor fall through to the
+// generic capability planner below, so the first time it comes due it is just
+// switched off. The enum value stays: dropping it would need a migration.
+const RETIRED_IDEA_GENERATION_CAPABILITY = "GENERATE_IDEAS";
+const RETIRED_IDEA_GENERATION_NOTE =
+  "Retired: ideas are generated on demand from chat, not on a schedule.";
 
 // Exported so the Publishing settings action can compute the same
 // `nextRunAt` immediately on save, instead of waiting for the schedule's
@@ -88,6 +96,14 @@ export const SchedulerService = {
       // unordered batch never got a chance to run that tick either. Each
       // schedule now succeeds or fails independently.
       try {
+        if (schedule.capability === RETIRED_IDEA_GENERATION_CAPABILITY) {
+          await prisma.projectSchedule.update({
+            where: { id: schedule.id },
+            data: { enabled: false, lastError: RETIRED_IDEA_GENERATION_NOTE },
+          });
+          continue;
+        }
+
         if (
           schedule.capability === "INSTAGRAM_PUBLISH" &&
           config.mode === PUBLISH_QUEUE_MODE
@@ -115,17 +131,6 @@ export const SchedulerService = {
             dailyImageCap,
             { lensMix },
           );
-        } else if (schedule.capability === "GENERATE_IDEAS") {
-          // Settings → Autonomy "Idea generation frequency" card
-          // (publish-schedule-actions.ts's updateIdeaGenerationScheduleAction)
-          // — the explicit weekly/monthly replacement for what used to be a
-          // continuous tick step (see agency-wiring.ts). An empty
-          // EVALUATED-opportunity backlog is a normal, silent no-op, same as
-          // the publish-queue/content-plan branches above.
-          const limit = typeof config.limit === "number" ? config.limit : 5;
-          await IdeaFoundry.generateForTopOpportunities(limit, {
-            projectId: schedule.projectId,
-          });
         } else {
           const requestText =
             typeof config.request === "string" ? config.request : schedule.name;

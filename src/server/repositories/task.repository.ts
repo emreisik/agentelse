@@ -12,6 +12,10 @@ import { prisma } from "@/lib/prisma";
 import { AgencyTriggerRepository } from "@/server/repositories/agency-trigger.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
+import {
+  fillPlanCreativeWithText,
+  planCreativeIdOf,
+} from "@/server/execution/plan-creative-link";
 import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 import { notifyProjectTelegram } from "@/server/notifications/project-telegram-notifier";
@@ -156,6 +160,24 @@ async function postTaskChatEvent(task: {
       },
       departmentKey: task.departmentKey ?? undefined,
     });
+
+    // A text piece made for a content-plan slot (Task.payload.planCreativeId)
+    // also fills that slot and opens its approval, so it goes through review
+    // and publishing like the image pieces. Separate from the card above: a
+    // failure here must not undo the card the client already sees.
+    if (
+      task.status === "COMPLETED" &&
+      resultText &&
+      planCreativeIdOf(task.payload)
+    ) {
+      await fillPlanCreativeWithText({
+        taskId: task.id,
+        projectId: task.projectId,
+        text: resultText,
+      }).catch((error) => {
+        console.error("[task.repository] fillPlanCreativeWithText failed:", error);
+      });
+    }
   } catch (error) {
     console.error("[task.repository] postTaskChatEvent failed:", error);
   }

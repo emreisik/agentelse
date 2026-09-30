@@ -1,6 +1,8 @@
 import { type CreativeCardData, isCreativeCardData } from "./creative-card";
 import type { ChatQuestion } from "@/server/chat/constants";
 import type { ChannelConnections } from "@/lib/content-channels";
+import type { GuidedSetupCardData } from "@/lib/guided-setup/contract";
+import type { PlanItemStage } from "@/lib/journey";
 
 // Representation of EVERY pipeline event in an idea's chat (origin
 // signal/finding, insight/opportunity, idea birth, council decision, work
@@ -219,6 +221,22 @@ export type IdeaEventCardData =
         captionIdea: string;
       }[];
       savedCreativeIds?: string[];
+      // Production of the saved slots (plan-run.ts): set when a run is claimed
+      // so a double click or a second tab cannot start the same pieces twice.
+      // A "running" claim older than the run time limit counts as abandoned.
+      production?: {
+        state: "running" | "done";
+        // The slots (Creative ids) the current/last run took.
+        creativeIds: string[];
+        startedAt: string;
+        finishedAt?: string;
+      };
+      // Where each saved slot stands right now, aligned with `items` (same
+      // index). Filled in from the records when the page renders (journey/
+      // plan-progress.ts), never stored: a saved card is a plan, its progress
+      // is whatever the calendar says today.
+      // null = a slot whose piece is gone (archived or deleted).
+      slots?: ({ id: string; stage: PlanItemStage; assetId?: string } | null)[];
     }
   // The plan wizard (start_plan_brief): a step-by-step card that collects
   // goal, channels, formats and rhythm, then sends them back as ONE chat
@@ -234,6 +252,14 @@ export type IdeaEventCardData =
       connections: ChannelConnections;
       // Prefilled from the brand's current focus; the client can edit it.
       theme?: string;
+      // What the next plan inherits from the last one (journey/continuation.ts):
+      // the goal, the channels with their formats, and a start date right after
+      // the last planned piece. Absent on the first plan.
+      continuation?: {
+        goal?: string;
+        formats?: Partial<Record<string, string[]>>;
+        continueFrom?: string;
+      };
     }
   // The agency's answer to a topic-only request: a package of deliverables
   // from the active departments, each with a topic-specific angle. The client
@@ -283,6 +309,7 @@ export type IdeaEventCardData =
         createdAt: string;
       }[];
     }
+  | GuidedSetupCardData
   | CreativeCardData;
 
 const EVENT_KINDS = new Set([
@@ -307,6 +334,16 @@ const EVENT_KINDS = new Set([
   "plan-brief",
   "content-package",
   "setup-demo-carousel",
+  "guided-setup",
+]);
+
+// Cards whose message keeps the model's lead-in sentence above them (the chat
+// hides the text of every other card kind).
+export const CARDS_THAT_KEEP_TEXT: ReadonlySet<string> = new Set([
+  "content-plan-draft",
+  "plan-brief",
+  "content-package",
+  "guided-setup",
 ]);
 
 export function isIdeaEventCardData(

@@ -54,6 +54,7 @@ import {
 import { CreativeCard } from "@/components/commands/creative-card";
 import { ContentPlanCard } from "@/components/commands/content-plan-card";
 import { PlanBriefWizard } from "@/components/commands/plan-brief-wizard";
+import { GuidedSetupCard } from "@/components/commands/guided-setup-card";
 import { useChatPackage } from "@/components/commands/chat-package-context";
 import {
   DELIVERABLES,
@@ -366,6 +367,9 @@ export function IdeaEventCard({
 
     case "setup-demo-carousel":
       return <SetupDemoCarouselCard card={card} />;
+
+    case "guided-setup":
+      return <GuidedSetupCard card={card} commandId={commandId} />;
 
     case "ads-form-prompt":
       return (

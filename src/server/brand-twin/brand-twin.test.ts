@@ -26,6 +26,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 const { brandCoreOf, getBrandTwin } = await import("./brand-twin");
+const { thinConstitution } = await import("@/server/brand/constitution-merge");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -256,6 +257,17 @@ describe("getBrandTwin: which constitution version it describes", () => {
     });
     expect(twin!.version).toBe(2);
     expect(twin!.confidence).toBe("high");
+  });
+
+  it("G74: a guided-only ACTIVE non-mock constitution reads medium, not high", async () => {
+    brandConstitutionFindFirst.mockResolvedValueOnce({
+      ...constitution("ACTIVE", 1),
+      payload: thinConstitution({ language: "en", country: "TR" }),
+    });
+
+    const twin = await getBrandTwin("proj-1");
+
+    expect(twin!.confidence).toBe("medium");
   });
 
   it("does not describe a newer draft while an older version is the active one", async () => {

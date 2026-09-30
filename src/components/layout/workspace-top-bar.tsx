@@ -4,7 +4,6 @@ import { useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import {
-  ClipboardCheck,
   HeartPulse,
   LogOut,
   Moon,
@@ -12,16 +11,11 @@ import {
   Plus,
   Sun,
   UserRound,
-  UserRoundCog,
   type LucideIcon,
 } from "lucide-react";
 
 import { signOutAction } from "@/server/actions/auth-actions";
-import {
-  buildHubHref,
-  decisionsHref,
-  type PanelKey,
-} from "@/components/hub-core/hub-core-params";
+import type { PanelKey } from "@/components/hub-core/hub-core-params";
 import { ProjectToolsMenu } from "@/components/hub-core/project-tools-menu";
 import { BrandSwitcher } from "@/components/layout/brand-switcher";
 import { SetupProgressBadge } from "@/components/layout/setup-progress-badge";
@@ -40,13 +34,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { AgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
 
+// The header only carries what is not a chat matter: pending decisions are
+// cards in the Agency Desk chat, and human actions live in the sidebar /
+// Advanced menu (with their own badge) — so a system-error count is all that
+// is left to count here.
 export type HeaderCounts = {
-  approvals: number;
-  humanActions: number;
   errors: number;
 };
 
-// Tailwind's `lg` — the header's counters and "+" button only fit from here
+// Tailwind's `lg` — the header's counter and "+" button only fit from here
 // up (the docked 256px sidebar eats into the width), below it they move into
 // the account menu instead of disappearing. In rem, exactly like Tailwind v4's
 // `--breakpoint-lg: 64rem`: a px value here drifts from the `lg:` classes
@@ -74,12 +70,11 @@ function plural(count: number, one: string, many: string): string {
 // project chat, its ?panel= hub panels, project sub-pages and workspace-wide
 // pages alike): 72px, --ws-* tokens (globals.css — grayscale, aliased to the
 // app's own tokens, so light/dark resolve without dark: pairs). Carries
-// everything the retired TopBar had — brand switcher, Advanced tools,
-// agency status, approvals / human actions / errors, New project, profile,
-// theme, sign out. Project-only pieces render only when projectId is set.
+// what is left of the retired TopBar — brand switcher, Advanced tools,
+// agency status, errors, New project, profile, theme, sign out. Project-only
+// pieces render only when projectId is set.
 export function WorkspaceTopBar({
   projectId,
-  projectName,
   projects,
   counts,
   toolBadges,
@@ -94,10 +89,8 @@ export function WorkspaceTopBar({
   openaiCredit,
 }: {
   projectId?: string;
-  projectName: string;
   projects: { id: string; name: string; status: string }[];
-  // Project-scoped inside a project, workspace-wide elsewhere — resolved in
-  // app-shell.tsx, the same split the old TopBar made.
+  // Resolved in app-shell.tsx.
   counts: HeaderCounts;
   toolBadges: Partial<Record<PanelKey, number>>;
   // null once setup has activated (or never started) — see
@@ -116,13 +109,6 @@ export function WorkspaceTopBar({
   hasRightPanel: boolean;
   openaiCredit: OpenAiCredit | null;
 }) {
-  // Decisions live on the Agency Desk (pending cards in the chat) — workspace-wide
-  // pages land on the dashboard's per-project "needs you" queue instead.
-  const approvalsHref = projectId ? decisionsHref(projectId) : "/dashboard";
-  const humanActionsHref = projectId
-    ? buildHubHref(projectId, { panel: "human-action" })
-    : "/human-actions";
-
   return (
     <header
       className="flex h-[72px] shrink-0 items-center justify-between gap-3 border-b px-4 sm:px-7"
@@ -175,36 +161,6 @@ export function WorkspaceTopBar({
         {openaiCredit ? <OpenAiCreditPill initial={openaiCredit} /> : null}
         <div className="hidden items-center gap-0.5 lg:flex">
           <HeaderCount
-            href={approvalsHref}
-            icon={ClipboardCheck}
-            count={counts.approvals}
-            one="decision"
-            many="decisions"
-            title={
-              projectId
-                ? `${projectName} — ${plural(counts.approvals, "decision waiting", "decisions waiting")}`
-                : plural(
-                    counts.approvals,
-                    "decision waiting",
-                    "decisions waiting",
-                  )
-            }
-            attention={counts.approvals > 0 ? "pending" : null}
-          />
-          <HeaderCount
-            href={humanActionsHref}
-            icon={UserRoundCog}
-            count={counts.humanActions}
-            one="action"
-            many="actions"
-            title={plural(
-              counts.humanActions,
-              "action waiting on you",
-              "actions waiting on you",
-            )}
-            attention={counts.humanActions > 0 ? "pending" : null}
-          />
-          <HeaderCount
             href="/health"
             icon={HeartPulse}
             count={counts.errors}
@@ -240,8 +196,6 @@ export function WorkspaceTopBar({
           workspaceName={workspaceName}
           email={email}
           counts={counts}
-          approvalsHref={approvalsHref}
-          humanActionsHref={humanActionsHref}
         />
       </div>
     </header>
@@ -315,28 +269,24 @@ function PanelToggleButton() {
 }
 
 // Profile identity, theme and sign-out behind the avatar — plus, below lg,
-// the counters and New project the header itself has no room for.
+// the error counter and New project the header itself has no room for.
 function AccountMenu({
   displayName,
   workspaceName,
   email,
   counts,
-  approvalsHref,
-  humanActionsHref,
 }: {
   displayName: string | null;
   workspaceName: string | null;
   email: string | null;
   counts: HeaderCounts;
-  approvalsHref: string;
-  humanActionsHref: string;
 }) {
   const { resolvedTheme, setTheme } = useTheme();
   const isWide = useIsWide();
   const [signingOut, startSignOut] = useTransition();
   const dark = resolvedTheme === "dark";
   const itemStyle = { color: "var(--ws-text)" };
-  const waiting = counts.approvals + counts.humanActions + counts.errors;
+  const waiting = counts.errors;
 
   return (
     <DropdownMenu>
@@ -402,20 +352,6 @@ function AccountMenu({
         {isWide ? null : (
           <>
             <DropdownMenuGroup>
-              <DropdownMenuItem
-                render={<Link href={approvalsHref} />}
-                style={itemStyle}
-              >
-                <ClipboardCheck />
-                {plural(counts.approvals, "decision", "decisions")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                render={<Link href={humanActionsHref} />}
-                style={itemStyle}
-              >
-                <UserRoundCog />
-                {plural(counts.humanActions, "action", "actions")}
-              </DropdownMenuItem>
               <DropdownMenuItem
                 render={<Link href="/health" />}
                 style={itemStyle}

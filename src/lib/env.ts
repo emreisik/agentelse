@@ -148,6 +148,25 @@ const envSchema = z.object({
     .optional()
     .default("false")
     .transform((value) => value === "true"),
+  // Guided setup (src/server/guided-setup/, docs/guided-setup.md): the bottom
+  // sheet that sets a brand up by tapping. Server-only (never NEXT_PUBLIC_:
+  // those are inlined at build time and frozen) and off by default, so a deploy
+  // changes nothing until the owner turns it on. Only the literal "true"
+  // enables; a typo reads as off.
+  GUIDED_SETUP: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((value) => value === "true"),
+  // The one paid step of the sheet ("Get ideas": a Quick Discovery run with web
+  // search). Needs GUIDED_SETUP as well. Kept apart because the hosted-search
+  // path has not run live yet and it spends a shared prepaid credit.
+  // Raw string on purpose: "false" | "true" | a comma-separated list of
+  // workspace ids (canary), parsed by parseDiscoveryScope. A typo reads as off.
+  GUIDED_SETUP_DISCOVERY: z.string().optional().default("false"),
+  // Optional "user,workspace,global" run caps per 24 h, parsed by
+  // parseDiscoveryCaps. It can only lower the documented ceilings.
+  GUIDED_SETUP_DISCOVERY_CAPS: z.string().optional().default(""),
   // gpt-image-2 — see openai-image-client.ts. Separate model slot from
   // OPENAI_MODEL/OPENCLAW_IMAGE_MODEL because it names an image model, not
   // a chat one.

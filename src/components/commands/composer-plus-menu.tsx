@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { PaperclipIcon, PlusIcon } from "lucide-react";
+import { ClipboardListIcon, PaperclipIcon, PlusIcon } from "lucide-react";
 import { ComposerPrimitive } from "@assistant-ui/react";
 import type {
   CapabilityKey,
@@ -10,6 +10,7 @@ import type {
   SocialPlatform,
 } from "@prisma/client";
 
+import { useGuidedSetup } from "@/components/guide/guided-setup-context";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import {
   Popover,
@@ -61,6 +62,8 @@ export function ComposerPlusMenu({
 }) {
   const [open, setOpen] = React.useState(false);
   const router = useRouter();
+  // Null outside the root chat or with GUIDED_SETUP off: no Setup group.
+  const guided = useGuidedSetup();
   // ComposerPrimitive.AddAttachment owns its own click handler (opens the
   // native file picker) and can't take an onClick of its own — so the real
   // control stays mounted (hidden) and the menu item just clicks it via
@@ -128,6 +131,25 @@ export function ComposerPlusMenu({
             <CommandInput placeholder="Search shortcuts…" />
             <CommandList className="max-h-96">
               <CommandEmpty>No shortcuts found.</CommandEmpty>
+              {guided ? (
+                <>
+                  <CommandGroup heading="Setup">
+                    <CommandItem
+                      value={guided.entry.label}
+                      onSelect={() => {
+                        // Close first; the sheet opens a frame later so the
+                        // popover's own focus return cannot race it.
+                        setOpen(false);
+                        requestAnimationFrame(() => guided.open("menu"));
+                      }}
+                    >
+                      <ClipboardListIcon className="size-4" />
+                      {guided.entry.label}
+                    </CommandItem>
+                  </CommandGroup>
+                  <CommandSeparator />
+                </>
+              ) : null}
               <CommandGroup heading="Add">
                 <CommandItem
                   value="Add photos and files"

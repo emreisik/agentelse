@@ -63,7 +63,9 @@ export type CreativeCardData =
       // "publish": no schedule, so it goes out immediately (see
       // approval-decisions.ts autoPublishCreative). Only set by the Agency
       // Desk's decisions tray (pending-decisions.ts); absent → plain "Approve".
-      approveIntent?: "calendar" | "publish";
+      // "planned": the piece has its own planned time (a content-plan slot), so
+      // approving keeps it for that time instead of posting now.
+      approveIntent?: "calendar" | "publish" | "planned";
     }
   | {
       kind: "creative-failed";

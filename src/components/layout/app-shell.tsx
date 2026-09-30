@@ -19,7 +19,6 @@ export type ProjectNavBadges = {
   // next tick picking up the following one. Null alongside setupPercent.
   setupStageLabel: string | null;
   setupWaitingClient: number;
-  pendingApprovals: number;
   pendingHumanActions: number;
   proposedGoals: number;
   proposedHandoffs: number;
@@ -41,24 +40,11 @@ async function getSidebarData(userId: string, projectId?: string) {
     return {
       workspace: null,
       displayName,
-      pendingApprovals: 0,
-      pendingHumanActions: 0,
       projectBadges: null as ProjectNavBadges | null,
     };
   }
 
-  const [
-    pendingApprovals,
-    pendingHumanActions,
-    openDeadLetters,
-    projectSpecific,
-  ] = await Promise.all([
-    prisma.approval.count({
-      where: { workspaceId: workspace.id, status: "PENDING" },
-    }),
-    prisma.humanInterventionRequest.count({
-      where: { workspaceId: workspace.id, status: "PENDING" },
-    }),
+  const [openDeadLetters, projectSpecific] = await Promise.all([
     // System Health badge: an unresolved dead-letter record = an
     // unaddressed error. Must be shown even without a project context, so
     // it's read at the shell level.
@@ -74,8 +60,6 @@ async function getSidebarData(userId: string, projectId?: string) {
   return {
     workspace,
     displayName,
-    pendingApprovals,
-    pendingHumanActions,
     projectBadges,
   };
 }
@@ -84,7 +68,6 @@ const EMPTY_PROJECT_BADGES: ProjectNavBadges = {
   setupPercent: null,
   setupStageLabel: null,
   setupWaitingClient: 0,
-  pendingApprovals: 0,
   pendingHumanActions: 0,
   proposedGoals: 0,
   proposedHandoffs: 0,
@@ -92,14 +75,14 @@ const EMPTY_PROJECT_BADGES: ProjectNavBadges = {
   systemErrors: 0,
 };
 
-// Project-context sidebar badge data: setup progress, waiting decisions,
-// pending approvals/human-actions/goals/handoffs/plans — one Promise.all.
+// Project-context sidebar badge data: setup progress, pending
+// human-actions/goals/handoffs/plans — one Promise.all. (Pending decisions are
+// cards in the Agency Desk chat, so they have no badge here.)
 async function getProjectBadges(
   projectId: string,
 ): Promise<Omit<ProjectNavBadges, "systemErrors">> {
   const [
     setupState,
-    pendingApprovals,
     pendingHumanActions,
     proposedGoals,
     proposedHandoffs,
@@ -109,7 +92,6 @@ async function getProjectBadges(
       where: { projectId },
       include: { stageRecords: { select: { stage: true, status: true } } },
     }),
-    prisma.approval.count({ where: { projectId, status: "PENDING" } }),
     prisma.humanInterventionRequest.count({
       where: { projectId, status: "PENDING" },
     }),
@@ -152,7 +134,6 @@ async function getProjectBadges(
     setupPercent,
     setupStageLabel,
     setupWaitingClient,
-    pendingApprovals,
     pendingHumanActions,
     proposedGoals,
     proposedHandoffs,
@@ -161,7 +142,7 @@ async function getProjectBadges(
 }
 
 // projectBadges already carries the counts that overlap with the panels in
-// the Tools menu (setup/goals/work/approvals/human-action) — instead of
+// the Tools menu and sidebar (setup/goals/work/human-action) — instead of
 // firing a separate query, we derive from the same data.
 function toolBadgesFrom(
   projectBadges: ProjectNavBadges | null,
@@ -198,45 +179,25 @@ export async function AppShell({
   rightPanel?: React.ReactNode;
 }) {
   const { userId, email } = await requireUser();
-  const [
-    {
-      workspace,
-      displayName,
-      pendingApprovals,
-      pendingHumanActions,
-      projectBadges,
-    },
-    agencyStatus,
-  ] = await Promise.all([
-    getSidebarData(userId, projectId),
-    projectId ? getAgencyStatusSnapshot(projectId) : Promise.resolve(null),
-  ]);
+  const [{ workspace, displayName, projectBadges }, agencyStatus] =
+    await Promise.all([
+      getSidebarData(userId, projectId),
+      projectId ? getAgencyStatusSnapshot(projectId) : Promise.resolve(null),
+    ]);
   const sidebarVisible = Boolean(projectId);
 
   // Only the project chat root passes a right panel (pixel spec §15) — it
   // alone gets the panel-toggle context and the header's toggle button.
   const isWorkspaceRoot = Boolean(rightPanel);
-  const projectName =
-    workspace?.projects.find((p) => p.id === projectId)?.name ?? "";
 
-  // One header for every page. Counts are project-scoped inside a project
-  // and workspace-wide elsewhere (projectBadges' own approvals/human-action
-  // counts are zero without a project, so they can't be used there).
+  // One header for every page. Its one counter, open system errors, is
+  // workspace-wide (dead letters), so it is the same with or without a project.
   const openaiCredit = await getOpenAiCredit().catch(() => null);
   const header = (
     <WorkspaceTopBar
       projectId={projectId}
-      projectName={projectName}
       projects={workspace?.projects ?? []}
-      counts={{
-        approvals: projectId
-          ? (projectBadges?.pendingApprovals ?? 0)
-          : pendingApprovals,
-        humanActions: projectId
-          ? (projectBadges?.pendingHumanActions ?? 0)
-          : pendingHumanActions,
-        errors: projectBadges?.systemErrors ?? 0,
-      }}
+      counts={{ errors: projectBadges?.systemErrors ?? 0 }}
       toolBadges={toolBadgesFrom(projectBadges)}
       setupPercent={projectBadges?.setupPercent ?? null}
       setupStageLabel={projectBadges?.setupStageLabel ?? null}

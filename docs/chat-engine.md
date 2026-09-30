@@ -9,13 +9,16 @@ Chat iki motordan biriyle çalışır; `CHAT_ENGINE` env'i seçer.
 
 ## Env değişkenleri
 
-| Değişken                | Varsayılan | Açıklama                                                                                                                                                           |
-| ----------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `CHAT_ENGINE`           | `legacy`   | `agent` \| `legacy`. Geçersiz değer `legacy`'ye düşer.                                                                                                             |
-| `CHAT_MODEL`            | boş        | Boşsa `OPENAI_MODEL`. Chat artık `lite` katmanında değil.                                                                                                          |
-| `CHAT_REASONING_EFFORT` | `low`      | `minimal` \| `low` \| `medium` \| `high`. Yalnızca `gpt-5*` / `o*` modellerine gönderilir.                                                                         |
-| `CHAT_WEB_SEARCH`       | `false`    | OpenAI'ın yerleşik `web_search` tool'unu açar (arama başına ücret).                                                                                                |
-| `OPENAI_API_KEY`        | -          | Zorunlu. Eksik/geçersiz/kotası bitmiş anahtar `provider-unconfigured` kartı olarak görünür; gerçek neden sunucu logunda `[chat-agent] blocked (...)` satırındadır. |
+| Değişken                      | Varsayılan | Açıklama                                                                                                                                                           |
+| ----------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `CHAT_ENGINE`                 | `legacy`   | `agent` \| `legacy`. Geçersiz değer `legacy`'ye düşer.                                                                                                             |
+| `CHAT_MODEL`                  | boş        | Boşsa `OPENAI_MODEL`. Chat artık `lite` katmanında değil.                                                                                                          |
+| `CHAT_REASONING_EFFORT`       | `low`      | `minimal` \| `low` \| `medium` \| `high`. Yalnızca `gpt-5*` / `o*` modellerine gönderilir.                                                                         |
+| `CHAT_WEB_SEARCH`             | `false`    | OpenAI'ın yerleşik `web_search` tool'unu açar (arama başına ücret).                                                                                                |
+| `GUIDED_SETUP`                | `false`    | Butonlu kurulum sheet'inin ana anahtarı; kapalıyken `start_guided_setup` kayıtlı değildir ve istemler bayt bayt aynıdır. Ayrıntı: `docs/guided-setup.md`.          |
+| `GUIDED_SETUP_DISCOVERY`      | `false`    | Yalnızca sheet'in ücretli "Get ideas" adımı: `false` \| `true` \| virgüllü çalışma alanı kimlikleri. Ajanın ilk tur Quick Discovery'sini saymaz, durdurmaz.        |
+| `GUIDED_SETUP_DISCOVERY_CAPS` | boş        | `"kullanıcı,çalışma alanı,genel"` 24 saatte; 5/10/20 tavanlarını yalnızca düşürür. Çalıştırma sayısını sınırlar, doları değil.                                     |
+| `OPENAI_API_KEY`              | -          | Zorunlu. Eksik/geçersiz/kotası bitmiş anahtar `provider-unconfigured` kartı olarak görünür; gerçek neden sunucu logunda `[chat-agent] blocked (...)` satırındadır. |
 
 ## Akış
 
@@ -43,20 +46,22 @@ Yalnızca agent motorunda çalışır (`CHAT_ENGINE=agent`); legacy motor kendi 
 
 `start` · `text.delta` · `tool.start` · `tool.end` · `card` · `suggestions` · `done` · `error`
 
-İçerik paketi koşusu (`POST …/chat/package`) aynı formatı kullanır, ek olarak: `item.start` · `item.partial` · `item.done` · `package.done` (bkz. "İçerik paketi").
+İçerik paketi koşusu (`POST …/chat/package`) aynı formatı kullanır, ek olarak: `item.start` · `item.partial` · `item.done` · `package.done` (bkz. "İçerik paketi"). Kaydedilmiş planın üretimi (`POST …/chat/plan`) bunlara ek olarak sunucunun seçtiği parçaları önce `run.items` ile duyurur (bkz. [content-journey.md](./content-journey.md)).
 
 Tanım: `src/server/chat/types.ts`, kodlama/çözme: `sse.ts`. Sunucu her 10 sn'de `: ping` yorumu yollar (proxy zaman aşımına karşı).
 
 ## Tool'lar
 
-| Tür      | Tool                                                                                                                  | Not                                                                                               |
-| -------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Tür      | Tool                                                                                                                                          | Not                                                                                                                                                    |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | iş       | `create_task`, `generate_image`, `start_strategic_project`\*, `generate_ideas_from_opportunities`, `decide_approval`, `start_deep_enrichment` | Sıradan mesajda **en fazla biri** çalışır, work session'da en çok 6 (bkz. "Work Session"); hepsi mevcut servisleri (`CommandService.submit` vb.) sarar |
-| terminal | `ask_user`, `start_plan_brief`                                                                                        | Turu soru kartıyla / plan sihirbazıyla bitirir                                                    |
-| not      | `remember_preference`, `start_work_session`, `update_work_session`, `save_idea`, `suggest_replies`, `propose_content_package` | İş sayılmaz (paket yalnızca kart üretir)                                                          |
-| okuma    | `get_pending_approvals`, `get_recent_tasks`, `get_idea_status`, `get_brand_profile`                                   | Sınırsız; hep turun kendi `projectId`'siyle sorgular                                              |
+| terminal | `ask_user`, `start_plan_brief`, `start_guided_setup`\*\* | Turu soru kartıyla / plan sihirbazıyla / kurulum kartıyla bitirir. \*\* Yalnızca `GUIDED_SETUP` açıkken kayıtlı, argümansız, yalnızca `ACTIVE` fazda |
+| not      | `remember_preference`, `start_work_session`, `update_work_session`, `save_idea`, `suggest_replies`, `propose_content_package`                 | İş sayılmaz (paket yalnızca kart üretir)                                                                                                               |
+| okuma    | `get_pending_approvals`, `get_recent_tasks`, `get_idea_status`, `get_brand_profile`                                                           | Sınırsız; hep turun kendi `projectId`'siyle sorgular                                                                                                   |
 
 Kurulum artık ön koşul değil: proje ilk mesajda ya da komutta kendiliğinden `ACTIVE` olur (`src/server/projects/activation.ts`, `ensureProjectActive`). Durum makinesi `CREATED → ACTIVE` geçişine izin vermediği için yasal yolu (`DISCOVERY → PROFILE_REVIEW → ACTIVE`) adım adım yürütür; `PAUSED` ve `CLOSED` kullanıcı kararıdır, asla geri alınmaz.
+
+**Kurulum (guided setup).** `GUIDED_SETUP=true` iken kurulum/onboarding/"kurulum" isteğinde ajan tek cümlelik girişten sonra `start_guided_setup` çağırır: sohbette soru sormaz, `create_task` ile kuyruğa atmaz. Araç `guided-setup` kartı döndürür; kart akışta ilk kez `open` geldiğinde alttaki sheet'i açar (geçmişten yüklenen kart açmaz). Sheet iki motorda da aynı çalışır; sohbete yalnızca Approve'dan sonra, bir şey değiştiyse tek makbuz kartı düşer. Oturum durumu iki `Command` satırıdır (`topic` `GUIDED_SETUP` ve `GUIDED_SETUP_IDEAS`, migration yok; Work Session ile aynı yöntem). Ayrıntı: `docs/guided-setup.md`.
 
 Tool kısıtı koddadır (`tools.ts`, `phases`) ve iki durumludur: `ACTIVE` hepsi, `ON_HOLD` (duraklatılmış/kapalı proje) yalnızca soru/tercih/okuma. `CommandService`'in `PROJECT_INACTIVE` kapısı yedek olarak durur. Eski onboarding aracı (`start_brand_setup`) kaldırıldı; yerine isteğe bağlı **derin marka araştırması** (`start_deep_enrichment`) geldi.
 
@@ -79,11 +84,11 @@ Aynı sınıftan bilinen açık: `INSTAGRAM/TIKTOK/LINKEDIN/X_PUBLISH` yetenekle
 
 Ajanın her turdaki bağlamı üç ayrı katmandan kurulur (`src/server/chat/context.ts`). Tüm sohbet geçmişi ve tüm saklı tercihler artık her tur modele gönderilmez.
 
-| Katman | Ne | Kaynak | Bağlamda |
-| --- | --- | --- | --- |
-| **Brand Core** | Markanın kim olduğu: kimlik, konumlandırma, kitle, ses, yasaklı iddialar, görsel kimlik, odak hedef | Versiyonlu `BrandConstitution` + `BrandDossier` + `BrandVisualIdentity` (`getBrandTwin`, `brandCoreOf`) | Her tur (hafıza alanları çıkarılmış) |
-| **Brand Memory** | Müşterinin söyledikleri ve geçmiş işlerin nasıl karşılandığı | `BrandLearning` (+ eski `UserDecision`) | Yalnızca **o mesajla ilgili olanlar** |
-| **Current Context** | Tarih, bekleyen onaylar, ajans durumu, son görev sonuçları (son 3), son mesajlar | `Command` satırları, `Approval`, günlük sayaçlar | Her tur |
+| Katman              | Ne                                                                                                  | Kaynak                                                                                                  | Bağlamda                              |
+| ------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| **Brand Core**      | Markanın kim olduğu: kimlik, konumlandırma, kitle, ses, yasaklı iddialar, görsel kimlik, odak hedef | Versiyonlu `BrandConstitution` + `BrandDossier` + `BrandVisualIdentity` (`getBrandTwin`, `brandCoreOf`) | Her tur (hafıza alanları çıkarılmış)  |
+| **Brand Memory**    | Müşterinin söyledikleri ve geçmiş işlerin nasıl karşılandığı                                        | `BrandLearning` (+ eski `UserDecision`)                                                                 | Yalnızca **o mesajla ilgili olanlar** |
+| **Current Context** | Tarih, bekleyen onaylar, ajans durumu, son görev sonuçları (son 3), son mesajlar                    | `Command` satırları, `Approval`, günlük sayaçlar                                                        | Her tur                               |
 
 **Tek sürüm politikası.** Çekirdek her yerde `ACTIVE` constitution'dan okunur (`getBrandTwin` önceden "durumu ne olursa olsun en yenisini" okuyordu; sohbet ile fikir/konsey hattı aynı markayı farklı sürümlerden görebiliyordu). `ACTIVE` yoksa en yeni taslağa düşer.
 
@@ -91,17 +96,17 @@ Ajanın her turdaki bağlamı üç ayrı katmandan kurulur (`src/server/chat/con
 
 Tek yazıcı `MemoryService.remember`, tek okuyucu `MemoryService.recall`. Her hafıza kaynağını ve güvenini taşır; alan yapısı `BrandLearning`'dedir (yeni tablo/migration yok).
 
-| Kaynak (`sourceType`) | Başlangıç güveni | Ne zaman yazılır |
-| --- | --- | --- |
-| `USER_EXPLICIT` | 0,95 | Müşteri kalıcı bir tercihi/kuralı kendi sözleriyle söyledi (`remember_preference`) |
-| `USER_CORRECTION` | 0,60 | Müşteri bir creative için değişiklik istedi (revize notu) |
-| `OUTPUT_ACCEPTED` / `OUTPUT_REJECTED` | 0,50 | Müşteri bir creative'i onayladı / reddetti (web, Telegram, sohbet) |
-| `AI_INFERRED` | 0,30 | Model çıkarımı (şimdilik yazan yok; kural hazır) |
+| Kaynak (`sourceType`)                 | Başlangıç güveni | Ne zaman yazılır                                                                   |
+| ------------------------------------- | ---------------- | ---------------------------------------------------------------------------------- |
+| `USER_EXPLICIT`                       | 0,95             | Müşteri kalıcı bir tercihi/kuralı kendi sözleriyle söyledi (`remember_preference`) |
+| `USER_CORRECTION`                     | 0,60             | Müşteri bir creative için değişiklik istedi (revize notu)                          |
+| `OUTPUT_ACCEPTED` / `OUTPUT_REJECTED` | 0,50             | Müşteri bir creative'i onayladı / reddetti (web, Telegram, sohbet)                 |
+| `AI_INFERRED`                         | 0,30             | Model çıkarımı (şimdilik yazan yok; kural hazır)                                   |
 
 Kurallar:
 
 - **Aynı hafıza bir kez saklanır.** Yeniden görülünce `evidenceCount` artar, güven yalnızca yükselir, daha güçlü kaynak etiketi devralır, zayıf olan asla düşürmez.
-- **"Kesin" = müşteri söyledi, ya da bağımsız sinyalle en az 3 kez görüldü.** Tek bir onay/red/revize bir *ipucudur*, kural değil. **AI çıkarımı tekrarla asla kesinleşmez** (aynı modelin aynı tahmini iki kez yapması kanıt değil); yalnızca müşterinin kendi eylemi güçlendirir.
+- **"Kesin" = müşteri söyledi, ya da bağımsız sinyalle en az 3 kez görüldü.** Tek bir onay/red/revize bir _ipucudur_, kural değil. **AI çıkarımı tekrarla asla kesinleşmez** (aynı modelin aynı tahmini iki kez yapması kanıt değil); yalnızca müşterinin kendi eylemi güçlendirir.
 - **Müşterinin son sözü kazanır:** "X'ten kaçın" demesi, önceki "X iyi" kaydını değiştirir; tepkiler (onay/red) müşterinin söylediklerini asla ezmez.
 - **Geri çağırma alakaya göre** (`relevance.ts`, saf ve testli): müşterinin açıkça söyledikleri (en yeni 12) her zaman bağlamdadır; çünkü "neon kullanma" kuralı "bir post yap" isteğinde de geçerlidir. Geri kalanlar son 3 kullanıcı mesajıyla kelime/kök örtüşmesine, güvene, tekrara ve tazeliğe göre puanlanır, en iyi 8'i girer. Türkçe ek/harf farkları (`renkleri`/`renklerde`, `ı`/`i`) eşleşir. Embedding/yeni bağımlılık yoktur.
 - Modele her giriş `confirmed` bayrağıyla gider; "onaylı olmayanı müşteriye onun hakkında bir gerçekmiş gibi söyleme" kuralı talimattadır.
@@ -114,14 +119,14 @@ Bir turda dış içerik okunduysa (OpenAI'ın barındırılan web araması ya da
 
 Ajan artık "departmanlar" etrafında örgütlenmez. Bir departman hiçbir zaman yürütme birimi olmadı: `department-registry.ts` ayrı izin, kimlik bilgisi, kuyruk veya güvenlik sınırı olmayan, "hangi capability kime ait" diyen statik bir tablodur. Ajanın o tablodan gerçekten ihtiyacı olan iki şey vardır: alan bilgisi ve o alana ait capability/çıktılar. Bu bir **skill**'dir (`src/server/chat/skills/registry.ts`).
 
-| Skill | Ne için | Capability'ler | Çıktı (paket) |
-| --- | --- | --- | --- |
-| `research` | pazar, rakip, müşteri, web araştırması | COMPETITOR/MARKET/TREND_RESEARCH, CUSTOMER_INTELLIGENCE, PRODUCT/WEB/SOCIAL_RESEARCH, SOCIAL_PROFILE_AUDIT | — |
-| `strategy` | konumlandırma, kampanya yönü, geniş hedefi plana çevirme | CREATE_CAMPAIGN_BRIEF | — |
-| `creative` | görsel post/story/reel kapağı | CREATE_SOCIAL_CREATIVE, CREATE_AD_CREATIVE | `instagram_post` |
-| `content` | caption, e-posta, reel fikri, içerik planı | CREATE_COPY, CREATE_CAPTION, EMAIL_DRAFT, CREATE_CONTENT_PLAN | `reel_idea`, `email_draft` |
-| `ads` | ücretli kampanya ve performans | META_ADS_ANALYSIS, META_CAMPAIGN_CREATE, GOOGLE_ADS_ANALYSIS, ANALYTICS_ANALYSIS, REPORTING | `ad_copy` |
-| `seo` | organik arama, anahtar kelime, makale | SEO_RESEARCH, SEO_ANALYSIS | `seo_article` |
+| Skill      | Ne için                                                  | Capability'ler                                                                                             | Çıktı (paket)              |
+| ---------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `research` | pazar, rakip, müşteri, web araştırması                   | COMPETITOR/MARKET/TREND_RESEARCH, CUSTOMER_INTELLIGENCE, PRODUCT/WEB/SOCIAL_RESEARCH, SOCIAL_PROFILE_AUDIT | —                          |
+| `strategy` | konumlandırma, kampanya yönü, geniş hedefi plana çevirme | CREATE_CAMPAIGN_BRIEF                                                                                      | —                          |
+| `creative` | görsel post/story/reel kapağı                            | CREATE_SOCIAL_CREATIVE, CREATE_AD_CREATIVE                                                                 | `instagram_post`           |
+| `content`  | caption, e-posta, reel fikri, içerik planı               | CREATE_COPY, CREATE_CAPTION, EMAIL_DRAFT, CREATE_CONTENT_PLAN                                              | `reel_idea`, `email_draft` |
+| `ads`      | ücretli kampanya ve performans                           | META_ADS_ANALYSIS, META_CAMPAIGN_CREATE, GOOGLE_ADS_ANALYSIS, ANALYTICS_ANALYSIS, REPORTING                | `ad_copy`                  |
+| `seo`      | organik arama, anahtar kelime, makale                    | SEO_RESEARCH, SEO_ANALYSIS                                                                                 | `seo_article`              |
 
 Yayın (`*_PUBLISH`) ve hesap kurulumu (`SOCIAL_ACCOUNT_SETUP`) bir skill'e bağlı değildir; onay akışı ve kanal bağlantıları üzerinden yürür.
 
@@ -135,8 +140,8 @@ Müşteri yalnızca kapsamlı bir marka/rakip/pazar analizi isterse ve açıkça
 
 `SetupIntake.mode = "ENRICHMENT"` ile mevcut 12 aşamalı makine kullanılır ama yalnızca eski ajans hattına hizmet eden aşamalar `SKIPPED` olur (`ENRICHMENT_SKIPPED_STAGES`, `setup-stages.ts`):
 
-| Çalışır | Atlanır |
-| --- | --- |
+| Çalışır                                                                                         | Atlanır                                                                                                                         |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | INTAKE, DEEP_DISCOVERY, BRAND_CONSTITUTION, SIGNAL_PROFILE, GOAL_GENERATION, PROJECT_ACTIVATION | BASELINE_AUDITS, AGENCY_CONFIGURATION, AUTONOMY_CONFIGURATION, INITIAL_OPPORTUNITIES, INITIAL_IDEA_PORTFOLIO, INITIAL_WORK_PLAN |
 
 Önemli davranışlar:
@@ -156,16 +161,16 @@ Sıradan bir mesaj tek iş yapar; yinelenen görev çıkmasın diye bu kuraldır
 
 Kod: `src/server/work-session/session.ts` (saf kurallar), `work-session-service.ts` (saklama), `src/server/chat/work-session-tools.ts` (iki tool), `src/server/chat/run-guard.ts` (mesaj başına sınırlar).
 
-| Sınır | Sıradan mesaj | Work session'lı mesaj |
-| --- | --- | --- |
-| Model turu | 6 | 24 |
-| İş eylemi | 1 | 6 |
-| Bir mesajın model maliyeti | sınırsız (günlük bütçe geçerli) | 1,50 $ |
-| Oturumun toplam maliyeti | - | 5 $; dolunca oturum kapanır (`endReason: "budget"`) |
-| Bir mesajın süresi | - | 10 dk |
-| Modele giden girdi | - | 150k token |
-| Adım sayısı | - | başlangıçta 2-8, toplamda 12 |
-| Boşta kalma | - | 48 saat dokunulmayan oturum "canlı" sayılmaz |
+| Sınır                      | Sıradan mesaj                   | Work session'lı mesaj                               |
+| -------------------------- | ------------------------------- | --------------------------------------------------- |
+| Model turu                 | 6                               | 24                                                  |
+| İş eylemi                  | 1                               | 6                                                   |
+| Bir mesajın model maliyeti | sınırsız (günlük bütçe geçerli) | 1,50 $                                              |
+| Oturumun toplam maliyeti   | -                               | 5 $; dolunca oturum kapanır (`endReason: "budget"`) |
+| Bir mesajın süresi         | -                               | 10 dk                                               |
+| Modele giden girdi         | -                               | 150k token                                          |
+| Adım sayısı                | -                               | başlangıçta 2-8, toplamda 12                        |
+| Boşta kalma                | -                               | 48 saat dokunulmayan oturum "canlı" sayılmaz        |
 
 Kurallar (hepsi kodda ve testlidir, talimata güvenilmez):
 
@@ -195,6 +200,8 @@ Kurallar (hepsi kodda ve testlidir, talimata güvenilmez):
 Yayın modu formata bağlıdır (katalogda `publish`): `auto` (bağlı hesap API'siyle: Instagram post/story, LinkedIn, X), `manual` (carousel, reel, TikTok, thread, blog makalesi: müşteri yayınlar), `approval` (reklam: harcama, hep onaya düşer, otomatik yayınlanmaz). Bağlı olmayan kanalın `auto` formatı kartta `manual` görünür.
 
 Takvim (`/projects/[id]/takvim`) kanal rozetini ve `?channel=` filtresini gösterir.
+
+Kaydedildikten sonraki süreç (üret → incele → yayınla → ölç, "sıradaki adım" şeridi): [content-journey.md](./content-journey.md).
 
 ## Sohbet içinde görsel üretimi
 

@@ -453,9 +453,9 @@ export const CommandService = {
 
     // On-demand draw from the existing EVALUATED opportunity backlog
     // ("give me some new ideas") — idea generation stopped being
-    // continuous/tick-driven (see agency-wiring.ts), so this is now one of
-    // only two ways new ideas get created (the other being a project's own
-    // GENERATE_IDEAS ProjectSchedule, see scheduler-service.ts).
+    // continuous/tick-driven (see agency-wiring.ts) and has no schedule
+    // either, so a chat request is the way new ideas get made from the
+    // backlog (besides the agent's own save_idea).
     if (intent.kind === "GENERATE_IDEAS_FROM_OPPORTUNITIES") {
       const count = await IdeaFoundry.generateForTopOpportunities(5, {
         projectId,

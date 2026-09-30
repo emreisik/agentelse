@@ -75,6 +75,11 @@ vi.mock("@/server/integrations/channel-connections", () => ({
 const buildContext = vi.fn();
 vi.mock("@/server/chat/context", () => ({ buildContext }));
 
+// The next-step engine reads the calendar; its own suites cover it. Here only
+// what the agent does with its answer matters.
+const loadNextSteps = vi.fn();
+vi.mock("@/server/agency/journey/snapshot", () => ({ loadNextSteps }));
+
 const ensureProjectActive = vi.fn();
 vi.mock("@/server/projects/activation", () => ({ ensureProjectActive }));
 
@@ -251,6 +256,7 @@ beforeEach(() => {
   for (const key of Object.keys(envOverrides)) delete envOverrides[key];
   buildContext.mockResolvedValue(context("ACTIVE"));
   ensureProjectActive.mockResolvedValue({ status: "ACTIVE", usable: true });
+  loadNextSteps.mockResolvedValue([]);
   claimQuickDiscovery.mockResolvedValue(null);
   rememberMemory.mockResolvedValue({ status: "CREATED", id: "m1", superseded: 0 });
   recordUserDecision.mockResolvedValue({ id: "dec-1" });
@@ -424,6 +430,35 @@ describe("runChatAgent", () => {
     expect(order).toEqual(["ensureProjectActive", "buildContext"]);
     const offered = requests[0]!.tools.map((t) => (t as { name: string }).name);
     expect(offered).toContain("create_task");
+  });
+
+  describe("next steps", () => {
+    const developerNote = (requests: { input: unknown[] }[]) =>
+      String((requests[0]!.input[0] as { content: string }).content);
+
+    it("tells the model what is waiting on the client's plan, in the same words the screen shows", async () => {
+      loadNextSteps.mockResolvedValue([
+        { key: "review", title: "3 pieces are ready for your decision." },
+        { key: "produce", title: "4 planned pieces have no content yet." },
+      ]);
+      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      const note = developerNote(requests);
+      expect(note).toContain("Next steps on the client's content plan");
+      expect(note).toContain("3 pieces are ready for your decision.");
+      expect(note).toContain("4 planned pieces have no content yet.");
+    });
+
+    it("says nothing when there is nothing to do next", async () => {
+      loadNextSteps.mockResolvedValue([]);
+      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      expect(developerNote(requests)).not.toContain("Next steps on the client's content plan");
+    });
   });
 
   describe("brand memory", () => {
@@ -1071,6 +1106,81 @@ describe("runChatAgent", () => {
     });
     expect(events.at(-1)).toMatchObject({ type: "done", status: "ANSWERED" });
     expect(submit).not.toHaveBeenCalled();
+  });
+
+  describe("guided setup (GUIDED_SETUP)", () => {
+    const toolNames = (requests: { tools: unknown[] }[]) =>
+      requests[0]!.tools.map((t) => (t as { name?: string }).name);
+
+    it("opens the guided-setup card in one model request and stores it on the command", async () => {
+      envOverrides.GUIDED_SETUP = true;
+      const { model, requests } = scriptedModel([
+        {
+          text: ["Markanı birkaç butonla kuralım."],
+          calls: [{ name: "start_guided_setup", args: {} }],
+        },
+      ]);
+      const events = await collect(
+        runChatAgent({ ...baseInput, message: "kurulumunu planla" }, { model }),
+      );
+
+      const card = {
+        kind: "guided-setup",
+        projectId: "proj-1",
+        state: "open",
+        sourceCommandId: "cmd-1",
+      };
+      expect(events.find((e) => e.type === "card")).toMatchObject({ card });
+      expect(events.at(-1)).toMatchObject({ type: "done", status: "ANSWERED" });
+      expect(requests).toHaveLength(1);
+      expect(attachParsedIntent).toHaveBeenCalledWith(
+        "cmd-1",
+        { card: expect.objectContaining(card) },
+        "proj-1",
+        "brand-1",
+      );
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it("offers the tool, the note and the hardened scan only with the flag on", async () => {
+      envOverrides.GUIDED_SETUP = true;
+      const on = scriptedModel([{ text: ["Merhaba"] }]);
+      await collect(runChatAgent(baseInput, { model: on.model }));
+
+      expect(toolNames(on.requests)).toContain("start_guided_setup");
+      expect(
+        String((on.requests[0]!.input[0] as { content: string }).content),
+      ).toContain("Guided setup: you have the tool start_guided_setup");
+      expect(claimQuickDiscovery).toHaveBeenLastCalledWith("proj-1", {
+        guided: true,
+      });
+    });
+
+    it("keeps the note out of a paused project, where the tool is not offered", async () => {
+      envOverrides.GUIDED_SETUP = true;
+      buildContext.mockResolvedValue(context("ON_HOLD"));
+      const held = scriptedModel([{ text: ["Merhaba"] }]);
+      await collect(runChatAgent(baseInput, { model: held.model }));
+
+      expect(toolNames(held.requests)).not.toContain("start_guided_setup");
+      expect(
+        String((held.requests[0]!.input[0] as { content: string }).content),
+      ).not.toContain("start_guided_setup");
+    });
+
+    it("keeps the tool, the note and the old scan out with the flag off", async () => {
+      envOverrides.GUIDED_SETUP = false;
+      const off = scriptedModel([{ text: ["Merhaba"] }]);
+      await collect(runChatAgent(baseInput, { model: off.model }));
+
+      expect(toolNames(off.requests)).not.toContain("start_guided_setup");
+      expect(
+        String((off.requests[0]!.input[0] as { content: string }).content),
+      ).not.toContain("start_guided_setup");
+      expect(claimQuickDiscovery).toHaveBeenLastCalledWith("proj-1", {
+        guided: false,
+      });
+    });
   });
 
   it("holds the plan to the wizard's brief and shows connections on the card", async () => {

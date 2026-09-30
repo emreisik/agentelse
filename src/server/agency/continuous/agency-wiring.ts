@@ -188,15 +188,16 @@ registerAgencyTickStep({
 });
 // No "idea-generation" tick step anymore — turning an EVALUATED opportunity
 // into an Idea is now on-demand only: a chat request
-// (GENERATE_IDEAS_FROM_OPPORTUNITIES, command-service.ts) or a project's own
-// weekly/monthly ProjectSchedule (capability GENERATE_IDEAS,
-// scheduler-service.ts), both calling IdeaFoundry.generateForTopOpportunities
-// directly. Signal scanning and opportunity evaluation above keep running
-// continuously so there's always a ready, evaluated backlog when one of
-// those triggers fires — only the final conversion step stopped being
-// tick-driven. IdeaFoundry.generateForOpportunity (singular) is still used,
-// unconditionally, by INITIAL_IDEA_PORTFOLIO above — that's a one-time
-// onboarding step, not the recurring generation this removal targets.
+// (GENERATE_IDEAS_FROM_OPPORTUNITIES, command-service.ts) calling
+// IdeaFoundry.generateForTopOpportunities directly. It has no schedule either:
+// the old weekly/monthly GENERATE_IDEAS ProjectSchedule was retired
+// (scheduler-service.ts switches a leftover row off). Signal scanning and
+// opportunity evaluation above keep running continuously so there's always a
+// ready, evaluated backlog when that request comes — only the final
+// conversion step stopped being tick-driven. IdeaFoundry.generateForOpportunity
+// (singular) is still used, unconditionally, by INITIAL_IDEA_PORTFOLIO above —
+// that's a one-time onboarding step, not the recurring generation this removal
+// targets.
 registerAgencyTickStep({
   name: "council-evaluation",
   run: () => CouncilEngine.evaluatePendingIdeas(5),

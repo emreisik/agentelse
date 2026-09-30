@@ -7,8 +7,15 @@ import { MemoryService } from "@/server/memory/memory-service";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 import { WorkSessionService } from "@/server/work-session/work-session-service";
 
+import { sessionRowId } from "@/lib/guided-setup/contract";
+import { parseSession } from "@/server/guided-setup/session";
+
 import { buildAgencyCapabilities } from "./deliverables";
 import { TASK_RESULTS_IN_HISTORY, taskResultOf } from "./history";
+import {
+  needsGuidedAppliedLookup,
+  resolveLegacySetupPhase,
+} from "./legacy-setup-gate";
 import type { ChatPhase } from "./tools";
 
 // Raised from 12 now that the general/single-chat branch below carries
@@ -45,12 +52,17 @@ function recentUserText(
 // ChatService leaves it off and gets the profile exactly as before.
 // options.session: also load the project's live work session (agent only), so
 // a message that continues it starts from its checkpoint.
+// options.legacyGate: guided setup is on, so the legacy onboarding gate
+// (`setupPhase`) also stands down for a project that already has a profile,
+// an applied guided session or a deep-research run (legacy-setup-gate.ts).
+// Off, the setup-state query and the phase are exactly what they were.
 export async function buildContext(
   projectId: string,
   ideaId?: string,
-  options: { recall?: boolean; session?: boolean } = {},
+  options: { recall?: boolean; session?: boolean; legacyGate?: boolean } = {},
 ) {
   const recall = options.recall === true;
+  const legacyGate = options.legacyGate === true;
   const [
     project,
     brandTwin,
@@ -124,6 +136,8 @@ export async function buildContext(
       where: { projectId },
       select: {
         activatedAt: true,
+        // Only the gate reads the run mode; a flag-off query stays as it was.
+        ...(legacyGate ? { intake: true } : {}),
         stageRecords: {
           where: { status: "WAITING_CLIENT" },
           select: { stage: true },
@@ -146,14 +160,39 @@ export async function buildContext(
   }
   const brandId = brandTwin.brandId;
 
-  const setupPhase = !setupState
+  const rawSetupPhase = !setupState
     ? ("NOT_STARTED" as const)
     : setupState.activatedAt
       ? ("ACTIVE" as const)
       : ("IN_PROGRESS" as const);
+  let setupPhase: "NOT_STARTED" | "IN_PROGRESS" | "ACTIVE" = rawSetupPhase;
+  if (legacyGate) {
+    const gate = {
+      enabled: true,
+      row: setupState
+        ? {
+            activatedAt: setupState.activatedAt,
+            mode: intakeMode(
+              "intake" in setupState ? setupState.intake : undefined,
+            ),
+          }
+        : null,
+      // A guided-only profile reads "medium", so it is found through
+      // guidedApplied below instead.
+      profileReady: brandTwin.confidence === "high",
+    };
+    setupPhase = resolveLegacySetupPhase({
+      ...gate,
+      guidedApplied: needsGuidedAppliedLookup(gate)
+        ? await readGuidedApplied(projectId)
+        : false,
+    });
+  }
+  // The RAW phase on purpose: a deep-research run still reports "running" as
+  // information even when it no longer blocks the chat.
   const setupWaiting = setupState?.stageRecords[0]
     ? `waiting on your decision for ${SETUP_STAGE[setupState.stageRecords[0].stage].label}`
-    : setupPhase === "IN_PROGRESS"
+    : rawSetupPhase === "IN_PROGRESS"
       ? "running"
       : undefined;
   // What the chat AGENT may do. Independent of setup: a project works as soon
@@ -240,6 +279,28 @@ export async function buildContext(
     setupWaiting,
     projectPhase,
   };
+}
+
+// ProjectSetupState.intake is Json; only its run mode matters here.
+function intakeMode(intake: unknown): string | null {
+  if (typeof intake !== "object" || intake === null) return null;
+  const mode = (intake as { mode?: unknown }).mode;
+  return typeof mode === "string" ? mode : null;
+}
+
+// One primary-key read of the guided session row. A failed read is "not
+// applied": the gate then keeps today's behaviour instead of failing the chat.
+async function readGuidedApplied(projectId: string): Promise<boolean> {
+  try {
+    const row = await prisma.command.findUnique({
+      where: { id: sessionRowId(projectId) },
+      select: { parsedIntent: true },
+    });
+    return parseSession(row)?.applied != null;
+  } catch (error) {
+    console.error("[chat-context] guided session lookup failed:", error);
+    return false;
+  }
 }
 
 async function latestDailyStat(projectId: string) {

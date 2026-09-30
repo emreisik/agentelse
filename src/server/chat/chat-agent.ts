@@ -30,6 +30,7 @@ import { WorkSessionService } from "@/server/work-session/work-session-service";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 import { buildHistoryInput, buildUserInput, trimHistory } from "./history";
+import { loadNextSteps } from "@/server/agency/journey/snapshot";
 import { buildContext } from "./context";
 import { getProjectTimezone, todayInTimezone } from "./content-plan";
 import { loadRecentHistoryFiles } from "./history-files";
@@ -247,12 +248,15 @@ export async function* runChatAgent(
     // client sees it happen; it is bounded, and if it does not finish in time
     // the turn goes on without it and the scan completes in the background.
     let brandScan: "completed" | "unavailable" | undefined;
-    const discovery = await QuickDiscoveryService.claim(input.projectId).catch(
-      (error) => {
-        console.error("[chat-agent] quick discovery claim failed:", error);
-        return null;
-      },
-    );
+    const { CHAT_REASONING_EFFORT, CHAT_WEB_SEARCH, GUIDED_SETUP } = getEnv();
+    // The hardened scan (fence, scrub, late-landing merge) only while the
+    // feature is on; with it off the call is exactly what it always was.
+    const discovery = await QuickDiscoveryService.claim(input.projectId, {
+      guided: GUIDED_SETUP,
+    }).catch((error) => {
+      console.error("[chat-agent] quick discovery claim failed:", error);
+      return null;
+    });
     if (discovery) {
       yield {
         type: "tool.start",
@@ -324,9 +328,10 @@ export async function* runChatAgent(
         wakeStream?.();
       },
     };
-    const tools = toolsForPhase(context.projectPhase);
+    const tools = toolsForPhase(context.projectPhase, {
+      guidedSetup: GUIDED_SETUP,
+    });
     const toolMap = new Map(tools.map((tool) => [tool.name, tool]));
-    const { CHAT_REASONING_EFFORT, CHAT_WEB_SEARCH } = getEnv();
     const openaiTools = [
       ...toOpenAITools(tools),
       // Hosted tool: OpenAI runs the search itself, results just flow into
@@ -341,6 +346,9 @@ export async function* runChatAgent(
     ).catch(() => new Map());
 
     const timezone = await getProjectTimezone(input.projectId);
+    // What is waiting on the client's content plan (never throws: [] when
+    // there is nothing or the read failed).
+    const nextSteps = await loadNextSteps(input.projectId);
 
     const conversation = [
       {
@@ -359,6 +367,9 @@ export async function* runChatAgent(
           phase: context.projectPhase,
           enrichment: context.setupWaiting,
           brandScan,
+          // The note only where the tool is really offered (not ON_HOLD).
+          guidedSetup: tools.some((tool) => tool.name === "start_guided_setup"),
+          nextSteps: nextSteps.map((step) => step.title),
           today: todayInTimezone(timezone),
           timezone,
           language: context.project.language || "tr",

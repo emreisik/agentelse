@@ -9,6 +9,7 @@ import {
   Settings2,
   SlidersHorizontal,
   Target,
+  UserRoundCog,
   Users2,
   type LucideIcon,
 } from "lucide-react";
@@ -32,6 +33,7 @@ import { PANEL_LABEL } from "./lineage-map";
 const PANEL_ICON: Record<(typeof ADVANCED_PANEL_KEYS)[number], LucideIcon> = {
   setup: SlidersHorizontal,
   departments: Users2,
+  "human-action": UserRoundCog,
   settings: Settings2,
   signals: Radio,
   "insights-opportunities": Lightbulb,
@@ -47,6 +49,7 @@ const GROUPS: Array<{
     items: [
       { panel: "setup", icon: PANEL_ICON.setup },
       { panel: "departments", icon: PANEL_ICON.departments },
+      { panel: "human-action", icon: PANEL_ICON["human-action"] },
       { panel: "settings", icon: PANEL_ICON.settings },
     ],
   },
@@ -63,11 +66,11 @@ const GROUPS: Array<{
   },
 ];
 
-// Everything here already has a dedicated sidebar or top-bar entry
-// (Brand Brain, Ideas, Work, Library, Approvals, Human Action) — this menu
-// exists only for ADVANCED_PANEL_KEYS, the panels with no primary entry of
-// their own. Keep the two lists in sync: adding a panel here without also
-// listing it in ADVANCED_PANEL_KEYS (hub-core-params.ts) is a mistake.
+// Everything here already has a dedicated sidebar entry (Brand Brain, Ideas,
+// Work, Library) — this menu exists only for ADVANCED_PANEL_KEYS, the panels
+// with no primary entry of their own. Keep the two lists in sync: adding a
+// panel here without also listing it in ADVANCED_PANEL_KEYS
+// (hub-core-params.ts) is a mistake.
 export function ProjectToolsMenu({
   projectId,
   badges,
@@ -76,8 +79,8 @@ export function ProjectToolsMenu({
   badges: Partial<Record<PanelKey, number>>;
 }) {
   // Only the panels this menu actually lists — `badges` also carries keys
-  // (work, human-action...) with their own header/sidebar entry, and a dot
-  // for those would point at nothing inside this menu.
+  // (work...) with their own sidebar entry, and a dot for those would point
+  // at nothing inside this menu.
   const hasAttention = GROUPS.some((group) =>
     group.items.some((item) => (badges[item.panel] ?? 0) > 0),
   );

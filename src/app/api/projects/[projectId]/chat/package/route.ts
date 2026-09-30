@@ -1,12 +1,10 @@
-import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { isRateLimited } from "@/lib/rate-limit";
 import { runContentPackage } from "@/server/chat/content-package-run";
 import { MAX_PACKAGE_ITEMS } from "@/server/chat/content-package";
-import { encodeSseEvent } from "@/server/chat/sse";
-import type { ChatStreamEvent } from "@/server/chat/types";
+import { sseRunResponse } from "@/server/chat/run-response";
 import { isAgentelseError } from "@/server/security/errors";
 import {
   requireProjectAccess,
@@ -18,8 +16,6 @@ import {
 // package.done variants of ChatStreamEvent — see src/server/chat/types.ts),
 // so the chat can show each piece being made live. Same wire format and
 // keep-alive as the chat turn route next door.
-
-const HEARTBEAT_MS = 10_000;
 
 // A package is a deliberate click, not typing: a tight per-user cap is only a
 // runaway-client guard (the claim itself already makes a package run once).
@@ -76,69 +72,18 @@ export async function POST(
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  const encoder = new TextEncoder();
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
-  let closed = false;
-
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const write = (chunk: string) => {
-        if (closed) return;
-        try {
-          controller.enqueue(encoder.encode(chunk));
-        } catch {
-          // The client went away; the run keeps going so every claimed item
-          // finishes and persists its card.
-          closed = true;
-        }
-      };
-      const send = (event: ChatStreamEvent) => write(encodeSseEvent(event));
-
-      heartbeat = setInterval(() => write(": ping\n\n"), HEARTBEAT_MS);
-
-      try {
-        for await (const event of runContentPackage({
-          workspaceId: access.workspaceId,
-          projectId,
-          brandId: access.defaultBrandId,
-          userId,
-          commandId: body.commandId,
-          selections: body.selections,
-        })) {
-          send(event);
-        }
-        revalidatePath(`/projects/${projectId}`);
-      } catch (error) {
-        console.error("[package-route] run crashed:", error);
-        send({
-          type: "error",
-          code: "FAILED",
-          message:
-            error instanceof Error ? error.message : "Could not start the package",
-        });
-      } finally {
-        clearInterval(heartbeat);
-        if (!closed) {
-          closed = true;
-          try {
-            controller.close();
-          } catch {
-            // Already closed by a client cancel.
-          }
-        }
-      }
-    },
-    cancel() {
-      closed = true;
-      clearInterval(heartbeat);
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      "X-Accel-Buffering": "no",
-    },
+  return sseRunResponse({
+    projectId,
+    logTag: "package-route",
+    failureMessage: "Could not start the package",
+    run: () =>
+      runContentPackage({
+        workspaceId: access.workspaceId,
+        projectId,
+        brandId: access.defaultBrandId,
+        userId,
+        commandId: body.commandId,
+        selections: body.selections,
+      }),
   });
 }

@@ -264,9 +264,8 @@ export const IdeaFoundry = {
   // spread fairly across whichever projects actually have a backlog.
   async generateForTopOpportunities(
     limit = 3,
-    // projectId: on-demand callers (a chat request, a project's own
-    // weekly/monthly GENERATE_IDEAS schedule — see command-service.ts,
-    // scheduler-service.ts) scope this to their one project. Without it,
+    // projectId: the on-demand caller (a chat request, see
+    // command-service.ts) scopes this to its one project. Without it,
     // `distinct: ["projectId"]` below would collapse every result down to
     // at most 1 row regardless of `limit`, since a single-project query has
     // only one distinct projectId to begin with — so it's dropped in that

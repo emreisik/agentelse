@@ -40,6 +40,9 @@ export type ChatTurnInput = {
   // Command gets tagged with this idea AND the history context
   // (buildContext) is scoped to this idea's thread instead of project-wide.
   ideaId?: string;
+  // GUIDED_SETUP, read at the edge (command-actions.ts): the legacy onboarding
+  // gate then stands down for a project the guided sheet has set up.
+  guidedSetup?: boolean;
 };
 
 export type ChatTurnResult = {
@@ -60,7 +63,9 @@ export type ChatTurnResult = {
 // from the database exactly as it was.
 export const ChatService = {
   async turn(input: ChatTurnInput): Promise<ChatTurnResult> {
-    const context = await buildContext(input.projectId, input.ideaId);
+    const context = await buildContext(input.projectId, input.ideaId, {
+      legacyGate: input.guidedSetup === true,
+    });
 
     let turn: ChatTurnOutput;
     try {

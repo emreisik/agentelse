@@ -25,6 +25,15 @@ export const AuditLogRepository = {
     });
   },
 
+  // Converts a row to another action (a released discovery reservation stops
+  // counting as "started"). Replaces the metadata: the caller passes the full set.
+  reclassify(id: string, action: string, metadata: Record<string, unknown>) {
+    return prisma.auditLog.update({
+      where: { id },
+      data: { action, metadata: metadata as never },
+    });
+  },
+
   listForProject(projectId: string, limit = 100) {
     return prisma.auditLog.findMany({
       where: { projectId },

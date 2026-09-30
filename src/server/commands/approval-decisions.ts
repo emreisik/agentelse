@@ -17,6 +17,7 @@ import { sendPublishPromptToTelegram } from "@/server/notifications/telegram-app
 import { publishCreativeCore } from "@/server/commands/publish-creative";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 import { hasActiveMetaAdsAccount } from "@/server/execution/providers/meta/meta-api-provider";
+import { getProjectTimezone } from "@/server/chat/content-plan";
 import { taskFingerprint } from "@/server/agency/fingerprint";
 import { MemoryService } from "@/server/memory/memory-service";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
@@ -110,12 +111,38 @@ export type AutoPublishResult = {
   // error — the caller's existing ask-flow fallback applies here.
   status: "PUBLISHED" | "QUEUED" | "SKIPPED";
   message: string;
+  // QUEUED only, and only for a piece with a planned time still ahead (a
+  // content-plan slot): when it is meant to go out. `released` says whether
+  // a Publishing schedule exists to release it then.
+  plannedFor?: Date;
+  released?: boolean;
   // Only meaningful when status is "PUBLISHED" — see
   // PublishQuickActionResult's own comment. Callers use this to skip a
   // redundant "published!" chat message when the creative's own card
   // already shows it.
   cardUpdated?: boolean;
 };
+
+// "Approved — planned for Thu 8 Oct, 10:00" in the project's own timezone, and
+// whether anything will release it then.
+async function plannedApprovalText(
+  projectId: string,
+  title: string,
+  plannedFor: Date,
+  released: boolean,
+): Promise<string> {
+  const when = plannedFor.toLocaleString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: await getProjectTimezone(projectId),
+  });
+  return released
+    ? `✅ ${title} approved — planned for ${when}.`
+    : `✅ ${title} approved — planned for ${when}. Turn on scheduled posting so it goes out then.`;
+}
 
 // True when this project has at least one enabled Instagram publish
 // schedule (created from Settings → Publishing, src/server/actions/
@@ -150,7 +177,7 @@ export async function autoPublishCreative(input: {
   try {
     const creative = await prisma.creative.findUnique({
       where: { id: input.creativeId },
-      select: { platform: true },
+      select: { platform: true, scheduledFor: true },
     });
     // Only Instagram is autonomously reachable today — TikTok/LinkedIn/X
     // publishing (publishCreativeToSocialCore) stays human-triggered.
@@ -164,7 +191,24 @@ export async function autoPublishCreative(input: {
         message: "No connected Meta page/Instagram account",
       };
     }
-    if (await isInstagramPublishScheduled(input.projectId)) {
+    const released = await isInstagramPublishScheduled(input.projectId);
+    // A piece with a planned time (a content-plan slot) goes out at that
+    // time, not the moment it is approved: approving a Thursday post on
+    // Monday must not post it on Monday. It stays APPROVED; once a
+    // Publishing schedule exists publishNextQueuedInstagramCreative releases
+    // it when its time has come (it only takes pieces whose scheduledFor has
+    // passed), and the content plan's "next step" offers to turn one on.
+    if (creative.scheduledFor && creative.scheduledFor.getTime() > Date.now()) {
+      return {
+        status: "QUEUED",
+        message: released
+          ? "Waiting for its planned time"
+          : "Waiting for its planned time — scheduled posting is off",
+        plannedFor: creative.scheduledFor,
+        released,
+      };
+    }
+    if (released) {
       // Leave it APPROVED — publishNextQueuedInstagramCreative finds it via
       // the same query at the next due slot. No task, no side effect yet.
       return {
@@ -599,11 +643,19 @@ export async function applyApprovalDecision(input: {
             // will pick it up at the next slot. Deliberately NOT the
             // ask-flow below: prompting "want to share it?" here would
             // invite a manual publish that skips the queue entirely.
+            const planned = autoPublishResult.plannedFor;
             await IdeaChatRepository.postSystemMessage({
               workspaceId: approval.workspaceId,
               projectId: approval.projectId,
               ideaId: target.ideaId,
-              text: `✅ ${target.title} approved — queued for the next scheduled Instagram slot.`,
+              text: planned
+                ? await plannedApprovalText(
+                    approval.projectId,
+                    target.title,
+                    planned,
+                    autoPublishResult.released === true,
+                  )
+                : `✅ ${target.title} approved — queued for the next scheduled Instagram slot.`,
             });
           } else {
             // Auto-publish didn't apply or failed (not an Instagram

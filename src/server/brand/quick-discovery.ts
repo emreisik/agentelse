@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomBytes } from "node:crypto";
+
 import { languageLabel, countryLabel } from "@/lib/locales";
 import { prisma } from "@/lib/prisma";
 import {
@@ -7,6 +9,11 @@ import {
   type BrandConstitutionPayload,
 } from "@/server/agency/constitution/constitution-schema";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
+import {
+  fillEmptyConstitution,
+  isGuidedOnlyRaw,
+} from "@/server/brand/constitution-merge";
+import { scrubDiscoveredPayload } from "@/server/brand/constitution-scrub";
 import { normalizeScanUrl } from "@/server/brand/site-scan/scan";
 import { quickDiscoveryDef } from "@/server/reasoning/prompts/quick-discovery";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
@@ -21,6 +28,7 @@ import {
 } from "@/server/research/web-evidence";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { BrandConstitutionRepository } from "@/server/repositories/brand-constitution.repository";
+import { isAgentelseError, type ErrorCode } from "@/server/security/errors";
 import { safeFetch, UnsafeUrlError } from "@/server/security/safe-fetch";
 
 // Quick Discovery: the first look at a new brand, done when the client first
@@ -47,11 +55,18 @@ export type QuickDiscoveryTarget = {
   domain?: string;
   language: string;
   country: string;
+  // The client's own words (already filtered by the caller). Guided runs only.
+  description?: string;
+  // Set by claim(projectId, { guided: true }): switches on the fence, the
+  // scrub, the late-landing merge and the relaxed claim gate. Without it a
+  // run behaves exactly as it always did.
+  guided?: true;
 };
 
 export type QuickDiscoveryResult =
-  | { status: "DONE"; version: number; pages: number }
-  | { status: "FAILED"; message: string }
+  // reasoningCallId is only set on guided runs (the runner reads the cost).
+  | { status: "DONE"; version: number; pages: number; reasoningCallId?: string }
+  | { status: "FAILED"; message: string; code?: ErrorCode }
   // The scan is still running when the caller stopped waiting for it; it
   // finishes on its own and the brand is known from the next turn.
   | { status: "PENDING" };
@@ -85,7 +100,10 @@ export const QuickDiscoveryService = {
   // started (which is also what makes it run once). Null means "not now":
   // mock mode, a project that is not active, a brand that already has a
   // constitution, or a scan that started in the last few minutes.
-  async claim(projectId: string): Promise<QuickDiscoveryTarget | null> {
+  async claim(
+    projectId: string,
+    options?: { guided?: boolean },
+  ): Promise<QuickDiscoveryTarget | null> {
     // Mock mode is for tests and seeding; a made-up constitution has no place
     // in a real project's Brand Brain.
     if (ReasoningService.isMockMode()) return null;
@@ -109,7 +127,15 @@ export const QuickDiscoveryService = {
     const brand = project?.brands[0];
     if (!project || !brand || project.status !== "ACTIVE") return null;
 
-    if (await BrandConstitutionRepository.getActive(brand.id)) return null;
+    const active = await BrandConstitutionRepository.getActive(brand.id);
+    if (active) {
+      // A guided run may still look at a brand whose only "profile" is a mock
+      // row or a thin one the guided setup wrote from a few taps.
+      const relaxed =
+        options?.guided === true &&
+        (active.isMock || isGuidedOnlyRaw(active.payload));
+      if (!relaxed) return null;
+    }
 
     const recent = await prisma.auditLog.findFirst({
       where: {
@@ -139,6 +165,7 @@ export const QuickDiscoveryService = {
       domain: project.domain?.trim() || undefined,
       language: project.language || "tr",
       country: project.country || "TR",
+      ...(options?.guided === true ? { guided: true as const } : {}),
     };
   },
 
@@ -155,21 +182,39 @@ export const QuickDiscoveryService = {
     try {
       const pages = await readSitePages(target, deps.fetch ?? safeFetch);
 
-      const reason = deps.reason ?? ReasoningService.run.bind(ReasoningService);
-      const { output, isMock } = await reason(quickDiscoveryDef, {
-        ...scope,
-        context: {
-          brandName: target.brandName,
-          domain: target.domain,
-          language: target.language,
-          country: target.country,
-          languageName: languageLabel(target.language),
-          countryName: countryLabel(target.country),
-          pages: pages.map(({ url, title, text }) => ({ url, title, text })),
-        },
-      });
+      // Guided runs only: a per-call fence around the (untrusted) page text.
+      // Any occurrence inside a page is removed so a page cannot close it.
+      const fence = target.guided ? randomBytes(8).toString("hex") : undefined;
+      const description = target.description?.trim();
 
-      const payload = BrandConstitutionPayloadSchema.parse({
+      const reason = deps.reason ?? ReasoningService.run.bind(ReasoningService);
+      const { output, isMock, reasoningCallId } = await reason(
+        quickDiscoveryDef,
+        {
+          ...scope,
+          context: {
+            brandName: target.brandName,
+            domain: target.domain,
+            language: target.language,
+            country: target.country,
+            languageName: languageLabel(target.language),
+            countryName: countryLabel(target.country),
+            pages: pages.map(({ url, title, text }) =>
+              fence
+                ? {
+                    url: url.split(fence).join(""),
+                    title: title?.split(fence).join(""),
+                    text: text.split(fence).join(""),
+                  }
+                : { url, title, text },
+            ),
+            ...(target.guided && description ? { description } : {}),
+            ...(fence ? { fence } : {}),
+          },
+        },
+      );
+
+      const parsed = BrandConstitutionPayloadSchema.parse({
         ...output,
         // The known-correct codes, not the model's paraphrase of them.
         language: target.language,
@@ -179,23 +224,95 @@ export const QuickDiscoveryService = {
         logoAssetIds: [],
       });
 
-      const constitution = await ConstitutionService.publishVersion({
-        scope,
-        payload,
-        isMock,
-        sourceFindingIds: [],
-        evidenceIds: pages.map((page) => page.evidenceId),
-        note: "quick discovery",
-      });
+      // Web-derived text reaches the constitution only through the scrub on
+      // guided runs; what it drops is counted, never logged.
+      let payload = parsed;
+      if (target.guided) {
+        const scrubbed = scrubDiscoveredPayload(parsed);
+        payload = scrubbed.payload;
+        if (scrubbed.dropped > 0) {
+          await AuditLogRepository.record({
+            ...scope,
+            actorType: "SYSTEM",
+            action: "brand.quick_discovery.scrubbed",
+            entityType: "Project",
+            entityId: target.projectId,
+            metadata: { count: scrubbed.dropped },
+          }).catch(() => undefined);
+        }
+      }
+
+      const evidenceIds = pages.map((page) => page.evidenceId);
+      let constitution: { id: string; version: number };
+      if (!target.guided) {
+        constitution = await ConstitutionService.publishVersion({
+          scope,
+          payload,
+          isMock,
+          sourceFindingIds: [],
+          evidenceIds,
+          note: "quick discovery",
+        });
+      } else {
+        // The person's Approve may have landed while the model was working:
+        // decide again from what is ACTIVE now, never from what claim() saw.
+        const active = await BrandConstitutionRepository.getActive(
+          target.brandId,
+        );
+        let toPublish = payload;
+        let note = "quick discovery";
+        if (active && !active.isMock) {
+          if (!isGuidedOnlyRaw(active.payload)) {
+            // A researched profile appeared: it is never overwritten.
+            await AuditLogRepository.record({
+              ...scope,
+              actorType: "SYSTEM",
+              action: "brand.quick_discovery.skipped",
+              entityType: "Project",
+              entityId: target.projectId,
+              metadata: { reason: "profile_exists" },
+            }).catch(() => undefined);
+            return {
+              status: "FAILED",
+              message: "A brand profile already exists.",
+            };
+          }
+          // The person's thin profile wins field by field; research fills gaps.
+          const activePayload = BrandConstitutionPayloadSchema.parse(
+            active.payload,
+          );
+          const merged = fillEmptyConstitution(activePayload, payload);
+          if (!merged.changed) {
+            await fillEmptyDossierFields(scope, target, payload).catch(
+              logDossierFailure(target),
+            );
+            return {
+              status: "DONE",
+              version: active.version,
+              pages: pages.length,
+              reasoningCallId,
+            };
+          }
+          toPublish = merged.payload;
+          note = "quick discovery (merged)";
+        }
+        // No ACTIVE row, or a MOCK one that this version supersedes.
+        constitution = await ConstitutionService.publishVersion({
+          scope,
+          payload: toPublish,
+          isMock,
+          sourceFindingIds: [],
+          evidenceIds,
+          note,
+          ifActiveVersion: active?.version ?? null,
+        });
+      }
 
       // The constitution is already stored at this point, so a dossier that
       // could not be filled must not turn a finished scan into a failure.
-      await fillEmptyDossierFields(scope, target, payload).catch((error) => {
-        console.error(
-          `[quick-discovery] dossier fill failed for project ${target.projectId}:`,
-          error instanceof Error ? error.message : error,
-        );
-      });
+      await fillEmptyDossierFields(scope, target, payload).catch(
+        logDossierFailure(target),
+      );
 
       await AuditLogRepository.record({
         ...scope,
@@ -210,6 +327,7 @@ export const QuickDiscoveryService = {
         status: "DONE",
         version: constitution.version,
         pages: pages.length,
+        ...(target.guided ? { reasoningCallId } : {}),
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -225,7 +343,11 @@ export const QuickDiscoveryService = {
         entityId: target.projectId,
         metadata: { error: message },
       }).catch(() => undefined);
-      return { status: "FAILED", message };
+      return {
+        status: "FAILED",
+        message,
+        ...(isAgentelseError(error) ? { code: error.code } : {}),
+      };
     }
   },
 
@@ -250,6 +372,15 @@ export const QuickDiscoveryService = {
     }
   },
 };
+
+function logDossierFailure(target: QuickDiscoveryTarget) {
+  return (error: unknown) => {
+    console.error(
+      `[quick-discovery] dossier fill failed for project ${target.projectId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  };
+}
 
 // --- reading the site --------------------------------------------------------
 

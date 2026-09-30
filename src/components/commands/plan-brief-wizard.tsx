@@ -21,6 +21,7 @@ import {
   CHANNEL_KEYS,
   PLAN_GOALS,
   PLAN_GOAL_LABEL,
+  isPlanGoal,
   type ChannelKey,
   type PlanGoal,
 } from "@/lib/content-channels";
@@ -40,12 +41,14 @@ type StepKey = "goal" | "channels" | "formats" | "rhythm";
 const PER_WEEK_OPTIONS = [3, 5, 7] as const;
 const WEEKS_OPTIONS = [1, 2, MAX_BRIEF_WEEKS] as const;
 const START_OPTIONS = ["today", "tomorrow", "monday"] as const;
-type StartChoice = (typeof START_OPTIONS)[number];
+// "after" only exists when there is a plan to continue (card.continuation).
+type StartChoice = (typeof START_OPTIONS)[number] | "after";
 
 const START_LABEL: Record<StartChoice, string> = {
   today: "Today",
   tomorrow: "Tomorrow",
   monday: "Next Monday",
+  after: "After your plan",
 };
 
 function formatDate(date: string): string {
@@ -57,7 +60,12 @@ function formatDate(date: string): string {
   });
 }
 
-function startDate(choice: StartChoice, today: string): string {
+function startDate(
+  choice: StartChoice,
+  today: string,
+  continueFrom?: string,
+): string {
+  if (choice === "after" && continueFrom) return continueFrom;
   if (choice === "today") return today;
   if (choice === "tomorrow") return addDaysToKey(today, 1);
   return addDaysToKey(mondayOf(today), 7);
@@ -103,22 +111,40 @@ export function PlanBriefWizard({ card }: { card: BriefCard }) {
   const router = useRouter();
   const send = useChatSend();
 
-  const [goal, setGoal] = useState<PlanGoal | null>(null);
-  // Connected social channels start ticked with their first format, so the
-  // common case is "Next, Next".
+  const continuation = card.continuation;
+  const inheritedGoal = continuation?.goal;
+  const [goal, setGoal] = useState<PlanGoal | null>(() =>
+    isPlanGoal(inheritedGoal) ? inheritedGoal : null,
+  );
+  // Continuing a plan: the channels and formats it used. Otherwise connected
+  // social channels start ticked with their first format, so the common case
+  // is "Next, Next".
   const [picked, setPicked] = useState<Partial<Record<ChannelKey, string[]>>>(
-    () =>
-      Object.fromEntries(
+    () => {
+      const inherited = CHANNEL_KEYS.flatMap((key) => {
+        const keys = (continuation?.formats?.[key] ?? []).filter((formatKey) =>
+          CHANNELS[key].formats.some((format) => format.key === formatKey),
+        );
+        return keys.length > 0 ? [[key, keys] as const] : [];
+      });
+      if (inherited.length > 0) return Object.fromEntries(inherited);
+      return Object.fromEntries(
         CHANNEL_KEYS.filter(
           (key) =>
             CHANNELS[key].group === "social" &&
             card.connections[key]?.connected,
         ).map((key) => [key, [CHANNELS[key].formats[0]!.key]]),
-      ),
+      );
+    },
   );
   const [perWeek, setPerWeek] = useState<(typeof PER_WEEK_OPTIONS)[number]>(3);
   const [weeks, setWeeks] = useState<(typeof WEEKS_OPTIONS)[number]>(2);
-  const [startChoice, setStartChoice] = useState<StartChoice>("tomorrow");
+  const startOptions: readonly StartChoice[] = continuation?.continueFrom
+    ? ["after", ...START_OPTIONS]
+    : START_OPTIONS;
+  const [startChoice, setStartChoice] = useState<StartChoice>(
+    continuation?.continueFrom ? "after" : "tomorrow",
+  );
   const [theme, setTheme] = useState(card.theme ?? "");
   const [stepIndex, setStepIndex] = useState(0);
   const [sending, setSending] = useState(false);
@@ -177,7 +203,7 @@ export function PlanBriefWizard({ card }: { card: BriefCard }) {
       })),
       perWeek,
       weeks,
-      start: startDate(startChoice, card.today),
+      start: startDate(startChoice, card.today, continuation?.continueFrom),
       theme: theme.trim() || undefined,
     };
     const text = serializePlanBrief(brief);
@@ -434,14 +460,16 @@ export function PlanBriefWizard({ card }: { card: BriefCard }) {
             ))}
           </Row>
           <Row label="Starting">
-            {START_OPTIONS.map((value) => (
+            {startOptions.map((value) => (
               <Chip
                 key={value}
                 active={startChoice === value}
                 onClick={() => setStartChoice(value)}
               >
                 {START_LABEL[value]} ·{" "}
-                {formatDate(startDate(value, card.today))}
+                {formatDate(
+                  startDate(value, card.today, continuation?.continueFrom),
+                )}
               </Chip>
             ))}
           </Row>

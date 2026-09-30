@@ -50,6 +50,20 @@ const PROMOTED_RULE_CATEGORIES = ["negative-brief", "forbidden-claim"];
 
 const normalized = (text: string) => text.trim().toLowerCase();
 
+// Thrown by publishVersion when the caller pinned the ACTIVE version it read
+// (ifActiveVersion) and another writer published in between. Nothing has been
+// created at that point, so the caller can re-read and decide again.
+export class ConstitutionConflictError extends Error {
+  readonly code = "CONFLICT" as const;
+
+  constructor(expected: number | null, actual: number | null) {
+    super(
+      `The active constitution changed (expected ${expected ?? "none"}, found ${actual ?? "none"}).`,
+    );
+    this.name = "ConstitutionConflictError";
+  }
+}
+
 async function promoteConstitutionToBrandBrain(
   scope: BrandBrainScope,
   payload: BrandConstitutionPayload,
@@ -170,9 +184,7 @@ export const ConstitutionService = {
     // (a few of the six research tasks completed), so the synthesis is handed
     // that draft to refine instead of starting from nothing and quietly
     // dropping what the first look had established.
-    const previous = await BrandConstitutionRepository.getActive(
-      input.brandId,
-    );
+    const previous = await BrandConstitutionRepository.getActive(input.brandId);
 
     const { output, isMock } = await ReasoningService.run(
       constitutionSynthesisDef,
@@ -235,8 +247,28 @@ export const ConstitutionService = {
     sourceFindingIds: string[];
     evidenceIds: string[];
     note?: string;
+    // A person's Approve (guided setup) is a USER decision, not a SYSTEM one.
+    decidedBy?: { type: "USER"; userId: string };
+    // The ACTIVE version the caller based this payload on (null = none). A
+    // mismatch throws before anything is created; this narrows the race with a
+    // concurrent publisher to one query, the unique (brandId, version) covers
+    // the rest.
+    ifActiveVersion?: number | null;
   }) {
     const { scope, payload, isMock } = input;
+
+    if (input.ifActiveVersion !== undefined) {
+      const current = await BrandConstitutionRepository.getActive(
+        scope.brandId,
+      );
+      const currentVersion = current?.version ?? null;
+      if (currentVersion !== input.ifActiveVersion) {
+        throw new ConstitutionConflictError(
+          input.ifActiveVersion,
+          currentVersion,
+        );
+      }
+    }
 
     const constitution = await BrandConstitutionRepository.createNextVersion({
       ...scope,
@@ -256,7 +288,9 @@ export const ConstitutionService = {
       topic: "Brand Constitution",
       decision: `v${activated.version} activated${input.note ? ` (${input.note})` : ""}`,
       rationale: activated.summary ?? undefined,
-      decidedByType: isMock ? "AI" : "SYSTEM",
+      ...(input.decidedBy
+        ? { decidedByType: "USER", decidedByUserId: input.decidedBy.userId }
+        : { decidedByType: isMock ? "AI" : "SYSTEM" }),
     });
 
     await BrandEvidenceRepository.linkMany(

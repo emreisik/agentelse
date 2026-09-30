@@ -30,6 +30,12 @@ import { OutputsPanel } from "@/components/workspace/outputs-panel";
 import { CalendarPanel } from "@/components/workspace/calendar-panel";
 import { FilesPanel } from "@/components/workspace/files-panel";
 import { getPendingDecisions } from "@/server/agency/pending-decisions";
+import { computeNextSteps } from "@/server/agency/journey/next-steps";
+import { withPlanSlots } from "@/server/agency/journey/plan-slots";
+import { loadJourneySnapshot } from "@/server/agency/journey/snapshot";
+import { GUIDE_PARAM, GUIDE_VALUE } from "@/lib/guided-setup/contract";
+import { isGuidedSetupEnabled } from "@/server/guided-setup/flag";
+import { loadGuidedHost } from "@/server/guided-setup/service";
 
 // Card kinds a content-package task leaves in the chat over its life: the
 // in-progress card, then its result or failure. creative-ready is also in the
@@ -134,6 +140,13 @@ export default async function ProjectChatPage({
   const wantsThreadView =
     (Array.isArray(sp.thread) ? sp.thread[0] : sp.thread) === "1";
 
+  // ?guide=setup opens the setup sheet on landing. It is read only for the
+  // chat below: the panel and entity branches return earlier and ignore it.
+  const guideRaw = Array.isArray(sp[GUIDE_PARAM])
+    ? sp[GUIDE_PARAM][0]
+    : sp[GUIDE_PARAM];
+  const guideRequested = guideRaw === GUIDE_VALUE;
+
   if (panel) {
     return (
       <AppShell projectId={projectId}>
@@ -169,6 +182,8 @@ export default async function ProjectChatPage({
     currentUser,
     selectedCalendarItem,
     decisions,
+    guidedSetup,
+    journey,
   ] = await Promise.all([
     prisma.project.findUnique({
       where: { id: projectId },
@@ -226,6 +241,15 @@ export default async function ProjectChatPage({
         })
       : Promise.resolve(null),
     getPendingDecisions(projectId),
+    // Never throws (undefined on any failure: the chat renders without the
+    // feature). Flag off: nothing is read.
+    isGuidedSetupEnabled()
+      ? loadGuidedHost(projectId, guideRequested)
+      : Promise.resolve(undefined),
+    // Where every piece of the saved content plans stands, and what to do
+    // next. Never throws (null on any failure: the chat shows its default
+    // shortcuts and plain plan cards).
+    loadJourneySnapshot(projectId),
   ]);
 
   if (!project) notFound();
@@ -283,11 +307,13 @@ export default async function ProjectChatPage({
   // loading card while a piece is being made, then its result (SEO article,
   // Reel script...) or failure — is pulled into the conversation, so a piece
   // is visible from the moment it starts, also after a reload.
+  // (A saved content plan's production runs its tasks under the plan's own
+  // Command, exactly like a package does.)
   const packageCommandIds = chatCommands
-    .filter(
-      (command) =>
-        cardFromParsedIntent(command.parsedIntent)?.kind === "content-package",
-    )
+    .filter((command) => {
+      const kind = cardFromParsedIntent(command.parsedIntent)?.kind;
+      return kind === "content-package" || kind === "content-plan-draft";
+    })
     .map((command) => command.id);
   const packageTaskIds = packageCommandIds.length
     ? (
@@ -335,12 +361,16 @@ export default async function ProjectChatPage({
       (command) => [command.id, command] as const,
     ),
   );
+  const stageByCreativeId = new Map(
+    (journey?.items ?? []).map((item) => [item.id, item] as const),
+  );
+  const nextSteps = journey ? computeNextSteps(journey) : [];
   const chatTurns = [...rowsById.values()]
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     .map((command): ChatTurn => {
-      let card = cardFromParsedIntent(
-        command.parsedIntent,
-        pendingApprovalByCreativeId,
+      let card = withPlanSlots(
+        cardFromParsedIntent(command.parsedIntent, pendingApprovalByCreativeId),
+        stageByCreativeId,
       );
       if (
         card?.kind === "creative-ready" &&
@@ -446,6 +476,9 @@ export default async function ProjectChatPage({
           userFirstName={firstName || null}
           publishTargets={publishTargets}
           turns={turns}
+          guidedSetup={guidedSetup}
+          nextSteps={nextSteps}
+          autoNext={typeof sp.next === "string" ? sp.next : undefined}
         />
       </div>
     </AppShell>

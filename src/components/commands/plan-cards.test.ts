@@ -10,11 +10,15 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/server/actions/content-plan-actions", () => ({
   saveContentPlanAction: vi.fn(),
 }));
+vi.mock("@/server/actions/plan-progress-actions", () => ({
+  approvePlanItemsAction: vi.fn(),
+}));
 vi.mock("@/server/actions/command-actions", () => ({
   submitChatMessageAction: vi.fn(),
 }));
 
 const { ContentPlanCard } = await import("./content-plan-card");
+const { ChatPackageProvider } = await import("./chat-package-context");
 const { PlanBriefWizard } = await import("./plan-brief-wizard");
 
 import type { IdeaEventCardData } from "@/types/idea-event-card";
@@ -98,7 +102,8 @@ describe("ContentPlanCard", () => {
   });
 
   it("summarizes what happens to the pieces and offers Save", () => {
-    expect(html).toContain("Save to calendar");
+    expect(html).toContain("Save only");
+    expect(html).toContain("Save &amp; produce (4)");
     // Instagram post = auto (account connected); carousel and the blog
     // article are hand-offs; the ad brief always waits for approval.
     expect(html).toContain("1 auto-publish");
@@ -115,7 +120,90 @@ describe("ContentPlanCard", () => {
     );
     expect(saved).toContain("Saved");
     expect(saved).toContain('href="/projects/proj-1/takvim"');
-    expect(saved).not.toContain("Save to calendar");
+    expect(saved).not.toContain("Save only");
+    expect(saved).not.toContain("Save &amp; produce");
+  });
+
+  describe("saved plan progress", () => {
+    const chat = {
+      start: vi.fn(),
+      startPlan: vi.fn(),
+      runs: {} as Record<string, { phase: "running" | "started"; itemIds: string[] }>,
+    };
+    const inChat = (
+      card: PlanCard,
+      runs: typeof chat.runs = {},
+    ) =>
+      render(
+        createElement(
+          ChatPackageProvider,
+          { value: { ...chat, runs } },
+          createElement(ContentPlanCard, { card, commandId: "cmd-1" }),
+        ),
+      );
+    const stages = [
+      "IN_REVIEW",
+      "IN_REVIEW",
+      "PLANNED",
+      "PLANNED",
+    ] as const;
+    const savedWithSlots: PlanCard = {
+      ...plan,
+      state: "saved",
+      slots: stages.map((stage, index) => ({
+        id: `c${index}`,
+        stage,
+        assetId: index === 0 ? "asset-1" : undefined,
+      })),
+    };
+
+    it("says where the pieces stand and offers the one-click next moves", () => {
+      const out = inChat(savedWithSlots);
+      expect(out).toContain("2 in review · 2 need content");
+      expect(out).toContain("Approve all (2)");
+      expect(out).toContain("Produce (2)");
+    });
+
+    it("offers a retry when a piece failed, and waits while a run is going", () => {
+      const failed: PlanCard = {
+        ...savedWithSlots,
+        slots: savedWithSlots.slots!.map((slot, index) =>
+          index === 2 ? { id: "c2", stage: "FAILED" as const } : slot,
+        ),
+      };
+      expect(inChat(failed)).toContain("Try again");
+      const running = inChat(savedWithSlots, {
+        "cmd-1": { phase: "running", itemIds: [] },
+      });
+      // The Produce button is disabled while this plan's run is in flight.
+      expect(running).toMatch(
+        /<button[^>]*\sdisabled(=""|\s|>)[^>]*>(?:(?!<\/button>)[\s\S])*Produce/,
+      );
+    });
+
+    it("shows nothing to approve or produce once everything is approved", () => {
+      const done: PlanCard = {
+        ...plan,
+        state: "saved",
+        slots: stages.map((_, index) => ({ id: `c${index}`, stage: "APPROVED" as const })),
+      };
+      const out = inChat(done);
+      expect(out).toContain("4 approved");
+      expect(out).not.toContain("Approve all");
+      expect(out).not.toContain("Produce (");
+    });
+
+    it("a saved plan without slots (older card, or the snapshot failed) stays plain", () => {
+      const out = inChat({ ...plan, state: "saved" });
+      expect(out).not.toContain("Approve all");
+      expect(out).not.toContain("need content");
+    });
+
+    it("marks each piece with its stage and shows the thumbnail of a made one", () => {
+      const out = inChat(savedWithSlots);
+      expect(out).toContain('src="/api/assets/asset-1"');
+      expect(out).toContain("Waiting for your decision");
+    });
   });
 
   it("still renders a plan drafted before channels existed", () => {

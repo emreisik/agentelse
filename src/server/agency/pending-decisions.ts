@@ -25,6 +25,10 @@ export type PendingDecision = {
 // Only Task and Creative approvals are ever created (task-planner.ts,
 // execution-service.ts, instagram-week-planner.ts, creative-actions.ts);
 // any other entityType is skipped rather than shown as an unactionable row.
+function isPlannedAhead(scheduledFor: Date | null): boolean {
+  return scheduledFor !== null && scheduledFor.getTime() > Date.now();
+}
+
 export async function getPendingDecisions(
   projectId: string,
 ): Promise<PendingDecision[]> {
@@ -66,6 +70,7 @@ export async function getPendingDecisions(
             title: true,
             status: true,
             platform: true,
+            scheduledFor: true,
             createdByTaskId: true,
             currentVersionId: true,
             versions: {
@@ -165,7 +170,13 @@ export async function getPendingDecisions(
           // else falls back to the "want to share it?" prompt, so a plain
           // "Approve" is the honest label there.
           approveIntent:
-            creative.platform === "INSTAGRAM" ? approveIntent : undefined,
+            creative.platform !== "INSTAGRAM"
+              ? undefined
+              : // A piece with a planned time still ahead is kept for that
+                // time, never posted on approval (see autoPublishCreative).
+                approveIntent && isPlannedAhead(creative.scheduledFor)
+                ? "planned"
+                : approveIntent,
         },
       });
     }

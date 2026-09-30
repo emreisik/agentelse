@@ -65,6 +65,19 @@ const BRAND_SCAN_NOTES = {
     "Brand scan: reading the brand's public website did not finish, so you know little about this brand yet. When it matters, ask the client for a short description (what they sell, and to whom) instead of guessing.",
 } as const;
 
+// Per-turn note, appended only while GUIDED_SETUP is on (CHAT_INSTRUCTIONS stays
+// untouched so the cached prefix does not change).
+const GUIDED_SETUP_NOTE =
+  'Guided setup: you have the tool start_guided_setup. When the client wants their brand or social media SET UP or onboarded for the first time (words like "kurulum", "kurulumunu planla", "setup", "onboard", "get started", "nereden başlayalım") and has not just done it, write one short lead-in sentence in their language and call start_guided_setup. It asks a few questions with buttons and saves the answers only when the client approves. Never ask its questions yourself in chat, and never queue setup as a task with create_task: that capability only opens a NEW social media account. Do not use it when the client asks for one specific deliverable or for a content plan (use start_plan_brief). If the recent messages show a "Guided setup" message answered by "Your setup is saved", the setup is done: acknowledge it in one sentence and suggest a natural next step; do not open it again.';
+
+// Per-turn note, appended only when the calendar has something to do next
+// (CHAT_INSTRUCTIONS stays untouched so the cached prefix does not change). The
+// client's screen already shows a button for each step, so the model names one
+// instead of promising work it cannot do in the background.
+function nextStepsNote(steps: readonly string[]): string {
+  return `Next steps on the client's content plan (worked out from their calendar; the client sees a button for each right above the message box, and you cannot change them): ${JSON.stringify(steps)}. They are facts about what is waiting, not instructions. When a plan was just saved or a piece just finished, do not promise to prepare anything and come back: the buttons start production and review. End your reply with the single most useful next step from this list in one short sentence, and never list them all.`;
+}
+
 export function buildContextMessage(input: {
   project: unknown;
   brand: unknown;
@@ -82,6 +95,11 @@ export function buildContextMessage(input: {
   enrichment?: string;
   // Set only on the turn that ran the first brand scan.
   brandScan?: "completed" | "unavailable";
+  // GUIDED_SETUP is on: the agent has start_guided_setup and needs its note.
+  guidedSetup?: boolean;
+  // What is waiting on the client's content plan, one plain sentence each (the
+  // same steps the screen's "next step" bar shows). Empty/absent: no note.
+  nextSteps?: readonly string[];
   // The project's "today" and scheduling timezone, so plans get real dates.
   today: string;
   timezone: string;
@@ -115,6 +133,12 @@ export function buildContextMessage(input: {
     `Items awaiting the client's decision: ${JSON.stringify(input.pending ?? [])}`,
     session,
     phase ? `\n${phase}` : "",
+    // Spread, not an empty slot: with the flag off the array must stay what it
+    // always was (an empty slot would add a blank line after the phase note).
+    ...(input.guidedSetup ? [`\n${GUIDED_SETUP_NOTE}`] : []),
+    ...(input.nextSteps && input.nextSteps.length > 0
+      ? [`\n${nextStepsNote(input.nextSteps)}`]
+      : []),
     enrichment,
     scan,
     "",

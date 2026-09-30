@@ -5,6 +5,7 @@ import {
   type ChannelKey,
   type PublishMode,
 } from "@/lib/content-channels";
+import type { PlanItemStage } from "@/lib/journey";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 // Pure view-model helpers for the plan card (kept out of the component so
@@ -29,6 +30,8 @@ export type PlanViewItem = {
   platform?: string;
   // Unknown (undefined) on plans drawn before connection status was stored.
   publish?: PublishMode;
+  // Where the saved slot stands right now (card.slots); absent before saving.
+  slot?: { id: string; stage: PlanItemStage; assetId?: string };
 };
 
 // What actually happens to a piece once it is ready: an "auto" format only
@@ -47,6 +50,7 @@ export function effectivePublish(
 export function toViewItems(
   items: readonly PlanItem[],
   connections: ChannelConnections | undefined,
+  slots?: readonly (PlanViewItem["slot"] | null)[],
 ): PlanViewItem[] {
   return items.map((item, index) => {
     const resolved = resolvePlanItem(item);
@@ -62,6 +66,7 @@ export function toViewItems(
       publish: resolved
         ? effectivePublish(resolved.channel, resolved.format, connections)
         : undefined,
+      slot: slots?.[index] ?? undefined,
     };
   });
 }
@@ -124,4 +129,53 @@ export function buildWeeks(items: readonly { date: string }[]): PlanWeek[] {
     });
   }
   return weeks;
+}
+
+// --- Progress of a saved plan ---
+
+// Plain-language stage names shown on the card.
+export const STAGE_LABEL: Record<PlanItemStage, string> = {
+  PLANNED: "Needs content",
+  PRODUCING: "Being made",
+  FAILED: "Could not be made",
+  IN_REVIEW: "Waiting for your decision",
+  REJECTED: "Declined",
+  APPROVED: "Approved",
+  PUBLISHED: "Published",
+};
+
+export function countStages(
+  items: readonly Pick<PlanViewItem, "slot">[],
+): Record<PlanItemStage, number> {
+  const counts: Record<PlanItemStage, number> = {
+    PLANNED: 0,
+    PRODUCING: 0,
+    FAILED: 0,
+    IN_REVIEW: 0,
+    REJECTED: 0,
+    APPROVED: 0,
+    PUBLISHED: 0,
+  };
+  for (const item of items) if (item.slot) counts[item.slot.stage] += 1;
+  return counts;
+}
+
+const SUMMARY_PART: [PlanItemStage, (n: number) => string][] = [
+  ["PRODUCING", (n) => `${n} being made`],
+  ["FAILED", (n) => `${n} failed`],
+  ["IN_REVIEW", (n) => `${n} in review`],
+  ["PLANNED", (n) => `${n} need content`],
+  ["APPROVED", (n) => `${n} approved`],
+  ["REJECTED", (n) => `${n} declined`],
+  ["PUBLISHED", (n) => `${n} published`],
+];
+
+// "3 in review · 4 need content": the one line under a saved plan.
+export function stageSummary(
+  items: readonly Pick<PlanViewItem, "slot">[],
+): string {
+  const counts = countStages(items);
+  return SUMMARY_PART.filter(([stage]) => counts[stage] > 0)
+    .map(([stage, text]) => text(counts[stage]))
+    .join(" · ");
 }

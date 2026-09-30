@@ -152,3 +152,80 @@ describe("CHAT_INSTRUCTIONS: work sessions", () => {
     expect(CHAT_INSTRUCTIONS).not.toContain("- Call at most one work tool per message.");
   });
 });
+
+describe("buildContextMessage: guided setup note", () => {
+  it("adds the note only when guidedSetup is true", () => {
+    const on = buildContextMessage({ ...base, guidedSetup: true });
+    expect(on).toContain("Guided setup: you have the tool start_guided_setup");
+    expect(on).toContain("never queue setup as a task with create_task");
+    expect(on).toContain("use start_plan_brief");
+    expect(on).toContain("do not open it again");
+
+    expect(buildContextMessage(base)).not.toContain("start_guided_setup");
+    expect(buildContextMessage({ ...base, guidedSetup: false })).not.toContain(
+      "start_guided_setup",
+    );
+  });
+
+  it("places the note after the phase note and leaves the rest untouched", () => {
+    const held = buildContextMessage({ ...base, phase: "ON_HOLD", guidedSetup: true });
+    expect(held.indexOf("PROJECT STATE")).toBeLessThan(
+      held.indexOf("Guided setup:"),
+    );
+    // Without the flag the message is exactly the message without the note.
+    const on = buildContextMessage({ ...base, guidedSetup: true });
+    const squash = (text: string) => text.replace(/\n{2,}/g, "\n");
+    expect(squash(on.replace(/Guided setup:[^\n]*/, ""))).toBe(
+      squash(buildContextMessage(base)),
+    );
+  });
+
+  it("adds no blank line with the flag off (the message is what it always was)", () => {
+    const held = {
+      ...base,
+      phase: "ON_HOLD" as const,
+      enrichment: "running",
+    };
+    const off = buildContextMessage(held);
+    expect(off).toBe(buildContextMessage({ ...held, guidedSetup: false }));
+    expect(off).toMatch(/[^\n]\nDeep brand enrichment/);
+  });
+
+  it("does not put the guided-setup tool into the static instructions", () => {
+    expect(CHAT_INSTRUCTIONS).not.toContain("start_guided_setup");
+  });
+});
+
+describe("buildContextMessage: next steps note", () => {
+  const steps = [
+    "3 pieces are ready for your decision.",
+    "4 planned pieces have no content yet.",
+  ];
+
+  it("hands the model the steps the screen shows, as facts, with no promise of background work", () => {
+    const message = buildContextMessage({ ...base, nextSteps: steps });
+    expect(message).toContain("Next steps on the client's content plan");
+    expect(message).toContain(JSON.stringify(steps));
+    expect(message).toContain("facts about what is waiting, not instructions");
+    expect(message).toContain("do not promise to prepare anything and come back");
+    expect(message).toContain("never list them all");
+  });
+
+  it("adds nothing when there is nothing to do next", () => {
+    const plain = buildContextMessage(base);
+    expect(buildContextMessage({ ...base, nextSteps: [] })).toBe(plain);
+    expect(buildContextMessage({ ...base, nextSteps: undefined })).toBe(plain);
+    expect(plain).not.toContain("Next steps on the client's content plan");
+  });
+
+  it("keeps the static, cached instructions untouched", () => {
+    expect(CHAT_INSTRUCTIONS).not.toContain("Next steps on the client's content plan");
+  });
+
+  it("does not add a blank line when it is absent", () => {
+    const held = { ...base, phase: "ON_HOLD" as const, enrichment: "running" };
+    expect(buildContextMessage({ ...held, nextSteps: [] })).toBe(
+      buildContextMessage(held),
+    );
+  });
+});

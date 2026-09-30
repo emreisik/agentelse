@@ -7,6 +7,7 @@ import {
   type ColorSwatch,
 } from "@/lib/color-swatches";
 import { parseConstitutionPayload } from "@/server/agency/constitution/constitution-schema";
+import { isGuidedOnly } from "@/server/brand/constitution-merge";
 
 // BrandTwin (docs/brand-workspace-migration.md §7 Phase 3) is a typed READ
 // COMPOSITION over the existing Brand Brain models — deliberately NOT a new
@@ -198,7 +199,10 @@ export async function getBrandTwin(
     : constitution.isMock
       ? "low"
       : constitution.status === "ACTIVE"
-        ? "high"
+        ? // A profile made of a few taps is still being learned, not understood.
+          payload && isGuidedOnly(payload)
+          ? "medium"
+          : "high"
         : "medium";
 
   return {

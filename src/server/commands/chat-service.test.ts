@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const project = { findUniqueOrThrow: vi.fn() };
 const approval = { findMany: vi.fn() };
-const command = { findMany: vi.fn() };
+const command = { findMany: vi.fn(), findUnique: vi.fn() };
 const agencyDailyStat = { findFirst: vi.fn() };
 const projectSetupState = { findUnique: vi.fn() };
 vi.mock("@/lib/prisma", () => ({
@@ -159,6 +159,69 @@ describe("ChatService.turn — context", () => {
       }),
     ).rejects.toThrow(/no default brand/);
   });
+});
+
+describe("ChatService.turn — guided setup stand-down", () => {
+  const unactivatedEnrichment = () =>
+    projectSetupState.findUnique.mockResolvedValue({
+      activatedAt: null,
+      intake: { mode: "ENRICHMENT" },
+      stageRecords: [],
+    });
+
+  it("guidedSetup true reaches buildContext as legacyGate: the setup state is read with intake and the phase stands down", async () => {
+    run.mockResolvedValue({
+      output: { reply: "Hi there.", intentKind: "ANSWER" },
+    });
+    unactivatedEnrichment();
+
+    await ChatService.turn({
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      userId: "user-1",
+      message: "hello",
+      guidedSetup: true,
+    });
+
+    expect(projectSetupState.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ intake: true }),
+      }),
+    );
+    expect(run).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        context: expect.objectContaining({ setupPhase: "ACTIVE" }),
+      }),
+    );
+  });
+
+  it.each([{ guidedSetup: false }, {}])(
+    "leaves the legacy phase untouched when the flag is off (%j)",
+    async (flag) => {
+      run.mockResolvedValue({
+        output: { reply: "Hi there.", intentKind: "ANSWER" },
+      });
+      unactivatedEnrichment();
+
+      await ChatService.turn({
+        workspaceId: "ws-1",
+        projectId: "proj-1",
+        userId: "user-1",
+        message: "hello",
+        ...flag,
+      });
+
+      const select = projectSetupState.findUnique.mock.calls[0]?.[0]?.select;
+      expect(select).not.toHaveProperty("intake");
+      expect(run).toHaveBeenCalledWith(
+        {},
+        expect.objectContaining({
+          context: expect.objectContaining({ setupPhase: "IN_PROGRESS" }),
+        }),
+      );
+    },
+  );
 });
 
 describe("ChatService.turn — preference capture", () => {

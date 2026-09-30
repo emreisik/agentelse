@@ -26,6 +26,20 @@ export type ChatStreamEvent =
   // several deliverables that run at once instead of a single chat turn.
   // `itemId` is the package item's own id (not a Command id).
   //
+  // A content-plan run (POST /api/projects/[id]/chat/plan, plan-run.ts) picks
+  // its pieces on the server (the nearest week of the saved plan), so it
+  // announces them first: the chat opens one live message per piece.
+  | {
+      type: "run.items";
+      items: {
+        id: string;
+        title: string;
+        label: string;
+        department?: string;
+        // Image pieces show the live render block, text ones a running card.
+        image: boolean;
+      }[];
+    }
   // The task behind the item exists and is about to run.
   | { type: "item.start"; itemId: string; taskId: string }
   // Streamed in-progress preview of an image item (like `image.partial`).

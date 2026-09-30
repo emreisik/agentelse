@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  STAGE_LABEL,
   buildWeeks,
+  countStages,
   effectivePublish,
   mondayOf,
   planChannels,
   publishSummary,
+  stageSummary,
   toViewItems,
 } from "./content-plan-view";
 import { resolveFormat } from "./content-channels";
@@ -114,5 +117,51 @@ describe("weeks", () => {
       "2026-10-12",
     ]);
     expect(buildWeeks([])).toEqual([]);
+  });
+});
+
+describe("saved plan progress", () => {
+  const slot = (stage: import("./journey").PlanItemStage) => ({
+    id: stage,
+    stage,
+  });
+
+  it("attaches each slot to the item at the same index", () => {
+    const view = toViewItems(items, undefined, [slot("IN_REVIEW"), undefined]);
+    expect(view[0]?.slot).toEqual({ id: "IN_REVIEW", stage: "IN_REVIEW" });
+    expect(view[1]?.slot).toBeUndefined();
+    // A plan that is not saved yet has no slots at all.
+    expect(toViewItems(items, undefined).every((item) => !item.slot)).toBe(true);
+  });
+
+  it("counts stages and skips items with no slot", () => {
+    const counts = countStages([
+      { slot: slot("IN_REVIEW") },
+      { slot: slot("IN_REVIEW") },
+      { slot: slot("PLANNED") },
+      {},
+    ]);
+    expect(counts.IN_REVIEW).toBe(2);
+    expect(counts.PLANNED).toBe(1);
+    expect(counts.PUBLISHED).toBe(0);
+  });
+
+  it("summarises the stages in the order the client cares about", () => {
+    expect(
+      stageSummary([
+        { slot: slot("PLANNED") },
+        { slot: slot("PLANNED") },
+        { slot: slot("IN_REVIEW") },
+        { slot: slot("APPROVED") },
+        { slot: slot("FAILED") },
+      ]),
+    ).toBe("1 failed · 1 in review · 2 need content · 1 approved");
+    expect(stageSummary([{}])).toBe("");
+  });
+
+  it("names every stage", () => {
+    expect(Object.values(STAGE_LABEL).every((label) => label.length > 0)).toBe(
+      true,
+    );
   });
 });

@@ -160,4 +160,36 @@ describe("SchedulerService.runDueSchedules", () => {
     expect(publishNextQueuedInstagramCreative).toHaveBeenCalledOnce();
     expect(planForCapability).not.toHaveBeenCalled();
   });
+
+  it("switches off a leftover idea-generation row instead of running it or planning it as a task", async () => {
+    projectSchedule.findMany.mockResolvedValue([
+      schedule({
+        id: "sched-ideas",
+        name: "Idea generation schedule",
+        capability: "GENERATE_IDEAS",
+        scheduleType: "CRON",
+        cronExpression: "0 9 * * 1",
+        configuration: { cadence: "WEEKLY", limit: 5 },
+      }),
+      schedule({ id: "sched-ok", projectId: "p-ok" }),
+    ]);
+
+    const ran = await SchedulerService.runDueSchedules();
+
+    // Only the ordinary schedule ran; the retired one was not planned as a
+    // task named "Idea generation schedule" either.
+    expect(ran).toBe(1);
+    expect(planForCapability).toHaveBeenCalledOnce();
+    expect(planForCapability).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "p-ok" }),
+    );
+    expect(projectSchedule.update).toHaveBeenCalledWith({
+      where: { id: "sched-ideas" },
+      data: {
+        enabled: false,
+        lastError: expect.stringContaining("Retired"),
+      },
+    });
+    expect(deadLetterCreate).not.toHaveBeenCalled();
+  });
 });

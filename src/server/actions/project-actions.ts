@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { redirect } from "next/navigation";
+import { redirect, RedirectType } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -18,6 +18,12 @@ import { ensureProjectActive } from "@/server/projects/activation";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import { putAsset } from "@/server/storage/asset-storage";
 import { isSupportedLanguage, isSupportedCountry } from "@/lib/locales";
+import { getEnv } from "@/lib/env";
+import { GUIDE_PARAM, GUIDE_VALUE } from "@/lib/guided-setup/contract";
+import {
+  parseCreateProjectForm,
+  type CreateProjectField,
+} from "@/lib/project-create-input";
 
 async function getWorkspaceId(userId: string): Promise<string> {
   const membership = await prisma.workspaceMember.findFirstOrThrow({
@@ -108,6 +114,90 @@ export async function createProjectAction(formData: FormData) {
   });
 
   redirect(`/projects/${project.id}`);
+}
+
+export type CreateProjectFailure = {
+  ok: false;
+  field?: CreateProjectField;
+  message: string;
+};
+
+// The one-screen creation form's action (flag on). It only RETURNS on failure,
+// typed so the screen can print it next to the field; success redirects. The
+// slug loop, audit row and best-effort activation below are deliberately a
+// copy of createProjectAction: that one stays byte-identical as the kill
+// switch and is deleted together with the four-step wizard.
+export async function createGuidedProjectAction(
+  formData: FormData,
+): Promise<CreateProjectFailure> {
+  // An action is a public POST: hiding the screen is not the boundary.
+  if (!getEnv().GUIDED_SETUP) {
+    return { ok: false, message: "Couldn't create the project. Try again." };
+  }
+  const parsed = parseCreateProjectForm(formData);
+  if (!parsed.ok) return parsed;
+  const { name, domain, brandName, language, country, countries } =
+    parsed.value;
+
+  const { userId } = await requireUser();
+  const workspaceId = await getWorkspaceId(userId);
+
+  let baseSlug = slugify(name);
+  if (!baseSlug) baseSlug = randomUUID().slice(0, 8);
+  let slug = baseSlug;
+  let attempt = 0;
+  let project;
+  for (;;) {
+    try {
+      project = await ProjectRepository.create({
+        workspaceId,
+        name,
+        slug,
+        domain,
+        brandName,
+        language,
+        country,
+        countries,
+      });
+      break;
+    } catch (error) {
+      attempt += 1;
+      if (attempt > 5) throw error;
+      slug = `${baseSlug}-${attempt}`;
+    }
+  }
+
+  await AuditLogRepository.record({
+    workspaceId,
+    projectId: project.id,
+    // ProjectRepository.create() always nested-creates exactly one Brand.
+    brandId: project.brands[0]!.id,
+    actorType: "USER",
+    actorId: userId,
+    action: "project.created",
+    entityType: "Project",
+    entityId: project.id,
+    // Only to measure how good the market default is; never a setting.
+    metadata: parsed.value.localeSource
+      ? { localeSource: parsed.value.localeSource }
+      : undefined,
+  });
+
+  // Best effort, as in createProjectAction: activation also runs on the first
+  // chat turn, so a failure here only defers it.
+  await ensureProjectActive(project.id).catch((error) => {
+    console.error(
+      "[createGuidedProjectAction] ensureProjectActive failed:",
+      error,
+    );
+  });
+
+  // Outside any try/catch (redirect throws). Replace, so Back does not return
+  // to a blank creation form.
+  redirect(
+    `/projects/${project.id}?${GUIDE_PARAM}=${GUIDE_VALUE}`,
+    RedirectType.replace,
+  );
 }
 
 const LOGO_MIME_TO_EXT: Record<string, string> = {

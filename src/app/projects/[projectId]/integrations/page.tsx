@@ -394,6 +394,7 @@ export default async function EntegrasyonlarPage({
   const googleError =
     typeof sp.googleError === "string" ? sp.googleError : null;
   const metaError = typeof sp.metaError === "string" ? sp.metaError : null;
+  const metaDetail = typeof sp.metaDetail === "string" ? sp.metaDetail : null;
   const tiktokError =
     typeof sp.tiktokError === "string" ? sp.tiktokError : null;
   const linkedinError =
@@ -531,6 +532,7 @@ export default async function EntegrasyonlarPage({
             }
             closeHref={closeHref}
             metaError={metaError}
+            metaDetail={metaDetail}
           />
         ) : null}
 
@@ -1287,12 +1289,14 @@ function MetaDialog({
   credential,
   closeHref,
   metaError,
+  metaDetail,
 }: {
   service: MetaService;
   projectId: string;
   credential: IntegrationCredential | null;
   closeHref: string;
   metaError: string | null;
+  metaDetail: string | null;
 }) {
   const connected = credential?.status === "ACTIVE";
   const expired = credential?.status === "EXPIRED";
@@ -1333,10 +1337,17 @@ function MetaDialog({
       bodyClassName="space-y-4 overflow-y-auto p-4"
     >
       {metaError ? (
-        <p className="rounded-lg bg-destructive/10 p-2.5 text-xs text-destructive">
-          {META_ERROR_MESSAGES[metaError] ??
-            "Something went wrong, please try again."}
-        </p>
+        <div className="space-y-1 rounded-lg bg-destructive/10 p-2.5 text-xs text-destructive">
+          <p>
+            {META_ERROR_MESSAGES[metaError] ??
+              "Something went wrong, please try again."}
+          </p>
+          {metaDetail ? (
+            // Meta's own wording, shown so a failed connection can be
+            // diagnosed without server logs.
+            <p className="break-words opacity-80">Meta said: {metaDetail}</p>
+          ) : null}
+        </div>
       ) : null}
 
       {credential && (connected || expired) ? (

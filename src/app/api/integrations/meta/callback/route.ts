@@ -12,6 +12,7 @@ import {
 import {
   META_PROVIDER,
   META_SERVICE_LABEL,
+  MetaApiError,
   exchangeForLongLivedToken,
   exchangeInstagramAuthCode,
   exchangeInstagramLongLivedToken,
@@ -32,10 +33,14 @@ function redirectToIntegrations(
   projectId: string,
   service: MetaService,
   metaError?: string,
+  detail?: string,
 ) {
   const url = appUrl(`/projects/${projectId}/integrations`);
   url.searchParams.set("integration", META_PROVIDER[service]);
   if (metaError) url.searchParams.set("metaError", metaError);
+  // What Meta itself said (its error text, never a token), so a failed exchange
+  // can be diagnosed from the page instead of from a silent redirect.
+  if (detail) url.searchParams.set("metaDetail", detail.slice(0, 200));
   return NextResponse.redirect(url);
 }
 
@@ -134,21 +139,38 @@ export async function GET(request: Request) {
   let instagramProfile:
     | Awaited<ReturnType<typeof fetchInstagramLoginProfile>>
     | undefined;
+  let step = "code exchange";
   try {
     if (viaInstagram) {
       const shortLived = await exchangeInstagramAuthCode(code);
+      step = "long-lived token";
       longLivedToken = await exchangeInstagramLongLivedToken(
         shortLived.accessToken,
       );
+      step = "account profile";
       instagramProfile = await fetchInstagramLoginProfile(
         longLivedToken.accessToken,
       );
     } else {
       const shortLived = await exchangeMetaAuthCode(code);
+      step = "long-lived token";
       longLivedToken = await exchangeForLongLivedToken(shortLived.accessToken);
     }
-  } catch {
-    return redirectToIntegrations(state.projectId, service, "exchange_failed");
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[meta-callback] ${viaInstagram ? "instagram-login" : "facebook"} connection failed at "${step}":`,
+      reason,
+      error instanceof MetaApiError
+        ? { code: error.metaErrorCode, subcode: error.metaErrorSubcode }
+        : "",
+    );
+    return redirectToIntegrations(
+      state.projectId,
+      service,
+      "exchange_failed",
+      `${step}: ${reason}`,
+    );
   }
   if (
     instagramProfile?.accountType &&

@@ -212,11 +212,26 @@ describe("callback (Instagram Login)", () => {
     expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
-  it("a failed exchange is 'exchange_failed' and saves nothing", async () => {
-    mocks.exchangeInstagramAuthCode.mockRejectedValue(new Error("bad code"));
+  it("a failed exchange is 'exchange_failed', saves nothing, and says which step failed and what Meta said", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.exchangeInstagramAuthCode.mockRejectedValue(new Error("Invalid client secret"));
     const response = await callback(callbackUrl());
-    expect(location(response).searchParams.get("metaError")).toBe("exchange_failed");
+    const url = location(response);
+    expect(url.searchParams.get("metaError")).toBe("exchange_failed");
+    expect(url.searchParams.get("metaDetail")).toBe("code exchange: Invalid client secret");
     expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledOnce();
+    log.mockRestore();
+  });
+
+  it("names the later steps too, so a bad profile call is not mistaken for a bad code", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.fetchInstagramLoginProfile.mockRejectedValue(new Error("Unsupported get request"));
+    const response = await callback(callbackUrl());
+    expect(location(response).searchParams.get("metaDetail")).toBe(
+      "account profile: Unsupported get request",
+    );
+    log.mockRestore();
   });
 
   it("replaces a previous Facebook-route connection instead of keeping its Page selection", async () => {

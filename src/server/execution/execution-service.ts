@@ -11,6 +11,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { remainingVariantSlots } from "@/lib/works/variants";
 import { capabilityLabel, PLATFORM_LABEL } from "@/lib/labels";
 import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
@@ -28,9 +29,15 @@ import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import {
   claimPlanCreative,
+  planCreativeIdOf,
   releasePlanCreative,
 } from "@/server/execution/plan-creative-link";
+import { isWorksEnabled } from "@/server/works/flag";
 import { ProviderRegistry } from "@/server/execution/provider-registry";
+import {
+  mergeCardAlternatives,
+  type CardPicture,
+} from "@/server/execution/variant-card";
 import type { ExecutionPolicyContext } from "@/server/execution/types";
 
 export type DispatchInput = {
@@ -571,22 +578,311 @@ function generatedImageFrom(value: unknown):
   };
 }
 
+type JobForCreative = {
+  id: string;
+  workspaceId: string;
+  projectId: string;
+  brandId: string;
+  taskId: string;
+  capability: CapabilityKey;
+  providerId: string | null;
+};
+
+type VariantImage = NonNullable<ReturnType<typeof generatedImageFrom>>;
+
+const isPlainRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+// Written only by the variants route ("Make 3 more" on an IN_REVIEW piece).
+function isVariantsOnly(payload: unknown): boolean {
+  return (
+    isPlainRecord(payload) &&
+    (payload as { variantsOnly?: unknown }).variantsOnly === true
+  );
+}
+
+// The provider's extra renders: malformed entries are skipped, never stored.
+function alternativeImagesFrom(
+  value: unknown,
+): { image: VariantImage; label?: string }[] {
+  if (!Array.isArray(value)) return [];
+  const out: { image: VariantImage; label?: string }[] = [];
+  for (const raw of value) {
+    if (!isPlainRecord(raw)) continue;
+    const image = generatedImageFrom(raw.image);
+    if (!image) continue;
+    out.push({
+      image,
+      label: typeof raw.label === "string" ? raw.label : undefined,
+    });
+  }
+  return out;
+}
+
+type StoredAlternative = {
+  assetId: string;
+  // 1-based visual number: the piece's own picture is visual 1.
+  index: number;
+  label?: string;
+  width?: number;
+  height?: number;
+  // The same pixel size under the names the shared reader
+  // (parseAlternatives) and the card use.
+  assetWidth?: number;
+  assetHeight?: number;
+};
+
+function storedAlternative(
+  asset: { id: string; width: number | null; height: number | null },
+  index: number,
+  label: string | undefined,
+): StoredAlternative {
+  return {
+    assetId: asset.id,
+    index,
+    ...(label ? { label } : {}),
+    ...(asset.width ? { width: asset.width, assetWidth: asset.width } : {}),
+    ...(asset.height
+      ? { height: asset.height, assetHeight: asset.height }
+      : {}),
+  };
+}
+
+function cardAlternatives(entries: readonly StoredAlternative[]) {
+  return entries.map((e) => ({
+    assetId: e.assetId,
+    ...(e.label ? { label: e.label } : {}),
+    ...(e.assetWidth ? { assetWidth: e.assetWidth } : {}),
+    ...(e.assetHeight ? { assetHeight: e.assetHeight } : {}),
+  }));
+}
+
+// "Make 3 more": the new pictures join the alternatives of the piece that is
+// already in review. It never claims the slot and never creates a Creative or
+// an Approval (that would be a stray second piece). The cap and the duplicate
+// check run INSIDE the write so a replayed job can neither exceed the cap nor
+// append the same pictures twice. Returns the full alternatives list now
+// stored and how many were added, or null when there was no piece to attach to.
+async function appendVariantsToCreative(
+  job: JobForCreative,
+  creativeId: string,
+  images: readonly { image: VariantImage; label?: string }[],
+): Promise<{ all: StoredAlternative[]; addedCount: number } | null> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          const creative = await tx.creative.findFirst({
+            where: {
+              id: creativeId,
+              projectId: job.projectId,
+              status: "IN_REVIEW",
+            },
+            select: { id: true },
+          });
+          if (!creative) return null;
+          const v1 = await tx.creativeVersion.findUnique({
+            where: { creativeId_version: { creativeId, version: 1 } },
+            select: { id: true, generationMetadata: true },
+          });
+          if (!v1) return null;
+
+          const meta = isPlainRecord(v1.generationMetadata)
+            ? v1.generationMetadata
+            : {};
+          const existing: StoredAlternative[] = Array.isArray(meta.alternatives)
+            ? (meta.alternatives.filter(isPlainRecord) as StoredAlternative[])
+            : [];
+          const existingIds = existing
+            .map((e) => e.assetId)
+            .filter((id): id is string => typeof id === "string");
+          const known = existingIds.length
+            ? await tx.asset.findMany({
+                where: { id: { in: existingIds } },
+                select: { storageKey: true },
+              })
+            : [];
+          const knownKeys = new Set(known.map((a) => a.storageKey));
+
+          const fresh = images
+            .filter(({ image }) => !knownKeys.has(image.storageKey))
+            .slice(0, remainingVariantSlots(existing.length));
+          const added: StoredAlternative[] = [];
+          for (const { image, label } of fresh) {
+            const asset = await tx.asset.create({
+              data: {
+                workspaceId: job.workspaceId,
+                projectId: job.projectId,
+                brandId: job.brandId,
+                type: "CREATIVE",
+                source: "AI_GENERATED",
+                filename: image.filename,
+                mimeType: image.mimeType,
+                storageKey: image.storageKey,
+                size: image.size,
+                width: image.width,
+                height: image.height,
+              },
+            });
+            added.push(
+              storedAlternative(
+                asset,
+                existing.length + added.length + 2,
+                label,
+              ),
+            );
+          }
+          const all = [...existing, ...added];
+          if (added.length > 0) {
+            await tx.creativeVersion.update({
+              where: { id: v1.id },
+              data: {
+                generationMetadata: { ...meta, alternatives: all } as never,
+              },
+            });
+          }
+          return { all, addedCount: added.length };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      // A concurrent append of the same piece: re-read and decide again.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034" &&
+        attempt < 2
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+// Variants-only job: patches the creative-ready card of the piece and turns
+// this task's own "generating" card into a plain note (no second card).
+async function patchCardAfterVariantsOnly(
+  job: JobForCreative,
+  creativeId: string,
+  {
+    all: alternatives,
+    addedCount,
+  }: { all: StoredAlternative[]; addedCount: number },
+) {
+  const existing = await prisma.command.findFirst({
+    where: {
+      projectId: job.projectId,
+      source: "SYSTEM",
+      AND: [
+        { parsedIntent: { path: ["card", "creativeId"], equals: creativeId } },
+        { parsedIntent: { path: ["card", "kind"], equals: "creative-ready" } },
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, parsedIntent: true },
+  });
+  const parsed = existing?.parsedIntent as {
+    card?: { kind?: string; [key: string]: unknown };
+    departmentKey?: unknown;
+  } | null;
+  if (existing && parsed?.card?.kind === "creative-ready") {
+    await prisma.command.update({
+      where: { id: existing.id },
+      data: {
+        parsedIntent: {
+          card: {
+            ...parsed.card,
+            // Merged with the card's own list: after a "Use this one" the
+            // stored v1 list repeats the current picture and lacks the one it
+            // displaced, so it cannot be copied over the card as is.
+            alternatives: mergeCardAlternatives(
+              parsed.card as {
+                assetId?: string;
+                alternatives?: CardPicture[];
+              },
+              cardAlternatives(alternatives),
+            ),
+          },
+          departmentKey: parsed.departmentKey,
+        } as never,
+      },
+    });
+  }
+  await prisma.command.updateMany({
+    where: {
+      projectId: job.projectId,
+      source: "SYSTEM",
+      parsedIntent: { path: ["card", "taskId"], equals: job.taskId },
+    },
+    data: {
+      replyText:
+        addedCount > 0
+          ? `🎨 ${addedCount} more ${addedCount === 1 ? "option" : "options"} added to the piece in review.`
+          : "🎨 No new options could be added to the piece in review.",
+      parsedIntent: {} as never,
+    },
+  });
+}
+
+async function warnIfWorkSlotUnclaimed(job: JobForCreative) {
+  const task = await prisma.task.findUnique({
+    where: { id: job.taskId },
+    select: { payload: true },
+  });
+  if (!planCreativeIdOf(task?.payload)) return;
+  const workId = await IdeaChatRepository.resolveWorkIdForTask(job.taskId);
+  if (!workId) return;
+  console.warn(
+    `[execution-service] plan slot of task ${job.taskId} could not be claimed; a separate Creative was made (work ${workId})`,
+  );
+}
+
 // Turns a completed CREATE_SOCIAL_CREATIVE/CREATE_AD_CREATIVE job's result
 // into a real Creative + first CreativeVersion, in IN_REVIEW status ready
 // for the approval workflow (spec section 29: CREATE -> REVIEW -> APPROVE).
 async function materializeCreativeFromResult(
-  job: {
-    id: string;
-    workspaceId: string;
-    projectId: string;
-    brandId: string;
-    taskId: string;
-    capability: CapabilityKey;
-    providerId: string | null;
-  },
+  job: JobForCreative,
   rawResult: unknown,
 ) {
   const result = (rawResult ?? {}) as Record<string, unknown>;
+  const isVariantResult = Array.isArray(result.alternatives);
+
+  // "Make 3 more" (variantsOnly) attaches to the piece already in review: it
+  // must never reach the claim / Creative / Approval path below. The Task is
+  // read only for a variants result (or with Works on, whose route is the only
+  // writer of the key), so every other job keeps today's exact queries.
+  if (isVariantResult || isWorksEnabled()) {
+    const task = await prisma.task.findUnique({
+      where: { id: job.taskId },
+      select: { payload: true },
+    });
+    if (isVariantsOnly(task?.payload)) {
+      const creativeId = planCreativeIdOf(task?.payload);
+      const mainImage = generatedImageFrom(result.image);
+      const images = [
+        ...(mainImage ? [{ image: mainImage, label: undefined }] : []),
+        ...alternativeImagesFrom(result.alternatives),
+      ];
+      const appended = creativeId
+        ? await appendVariantsToCreative(job, creativeId, images)
+        : null;
+      if (!creativeId || !appended) {
+        console.warn(
+          `[execution-service] variantsOnly job ${job.id} has no piece in review to attach to; its pictures are dropped`,
+        );
+        return;
+      }
+      try {
+        await patchCardAfterVariantsOnly(job, creativeId, appended);
+      } catch (error) {
+        console.error(
+          "[execution-service] variantsOnly card patch failed:",
+          error,
+        );
+      }
+      return;
+    }
+  }
 
   // If a real image exists (OpenAiCreativeProvider -> openclaw infer image
   // generate), it's saved; otherwise falls back to the legacy fake placeholder.
@@ -631,6 +927,32 @@ async function materializeCreativeFromResult(
         })
       : undefined;
 
+  // The extra pictures of a variants job: one Asset each, same fields as the
+  // main one. Absent for every other job (no `alternatives` key).
+  const alternatives: StoredAlternative[] = [];
+  if (isVariantResult) {
+    for (const { image, label } of alternativeImagesFrom(result.alternatives)) {
+      const altAsset = await prisma.asset.create({
+        data: {
+          workspaceId: job.workspaceId,
+          projectId: job.projectId,
+          brandId: job.brandId,
+          type: "CREATIVE",
+          source: "AI_GENERATED",
+          filename: image.filename,
+          mimeType: image.mimeType,
+          storageKey: image.storageKey,
+          size: image.size,
+          width: image.width,
+          height: image.height,
+        },
+      });
+      alternatives.push(
+        storedAlternative(altAsset, alternatives.length + 2, label),
+      );
+    }
+  }
+
   // A job made for a content-plan slot (Task.payload.planCreativeId) fills
   // that slot's empty DRAFT Creative instead of creating a second one, so the
   // calendar entry keeps its channel, plan and planned time.
@@ -638,6 +960,12 @@ async function materializeCreativeFromResult(
     taskId: job.taskId,
     projectId: job.projectId,
   });
+  // Safety net (owner gap 04): a slot job that lost its claim still gets the
+  // fallback Creative below (today's behaviour), but a piece of a Work should
+  // have filled its slot, so say so.
+  if (!planSlot && isWorksEnabled()) {
+    await warnIfWorkSlotUnclaimed(job).catch(() => undefined);
+  }
   const creative = planSlot
     ? { id: planSlot.id }
     : await prisma.creative.create({
@@ -671,7 +999,11 @@ async function materializeCreativeFromResult(
         copy: typeof result.copy === "string" ? result.copy : undefined,
         contentFormat,
         generationProvider: job.providerId ?? "unknown",
-        generationMetadata: result as never,
+        // A variants result stores the normalised alternatives (asset ids),
+        // never the raw render objects.
+        generationMetadata: (isVariantResult
+          ? { ...result, alternatives }
+          : result) as never,
       },
     });
 
@@ -752,6 +1084,9 @@ async function materializeCreativeFromResult(
         approvalId: approval.id,
         versionNumber: version.version,
         brandName: brand?.name,
+        ...(alternatives.length
+          ? { alternatives: cardAlternatives(alternatives) }
+          : {}),
       },
       attachments: asset
         ? [

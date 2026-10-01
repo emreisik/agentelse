@@ -1,6 +1,6 @@
 # Temizlik raporu: ajans simülasyonundan Main Agent'a
 
-Hedef mimari: **Agency Desk sohbeti → Main Agent → (Brand Core + Brand Memory + Current Context) → Skill + Tool → sonuç.** Çok adımlı işlerde araya bir **Work Session** girer. Ürün yetenekleri (Ideas, Signals, Insights, Goals, Calendar, Library, Ads, Connectors, Autopilot) korundu; UI, rota ve navigasyon değişmedi.
+Hedef mimari: **Agency Desk sohbeti → Main Agent → (Brand Core + Brand Memory + Current Context) → Skill + Tool → sonuç.** Çok adımlı işlerde araya bir **Work Session** girer. Ürün yetenekleri (Ideas, Signals, Insights, Goals, Calendar, Library, Ads, Connectors, Autopilot) korundu. Sonradan, Signals / Insights & Opportunities / Goals panelleri Brand Brain'in Intelligence ve Goals sekmelerine taşındı (bkz. `docs/brand-workspace-migration.md` §7); eski adresler yönlenir.
 
 İlke: **skill yerine departman, tool yerine ajan, hafıza yerine tekrar keşif, Work Session yerine her mesajı kuyruğa atmak.**
 
@@ -120,7 +120,7 @@ Ayrıca: `start_brand_setup` tool'u (yerine `start_deep_enrichment`), sabit `MAX
 
 ## Bilinen bulgular (rapor edildi, bu turda düzeltilmedi)
 
-1. **Eski Türkçe yönlendirme sayfaları** (`departmanlar`, `fikirler`, `isler`, `ayarlar`, `zeka`…) hub'ın İngilizce `PANEL_KEYS` / `SUB_KEYS` değerlerini tanımayan anahtarlarla yönlendiriyor (ör. `zeka` → `panel=sinyaller`, `isler` → `sub=planlar`; hub `signals`, `plans` bekliyor). Uygulama içinde bu yollara bağlantı yok; yalnız eski yer imleri etkilenir.
+1. ~~**Eski Türkçe yönlendirme sayfaları** hub'ın anahtarlarını tanımıyordu.~~ **Düzeltildi:** rotalar `legacyRouteHref` ile geçerli panel/sub'a, eski `?panel=` değerleri `normalizeLegacyHubParams` ile yeni yere yönleniyor (`docs/brand-workspace-migration.md` §7).
 2. **`/api/webhooks/product-offers`** kendi token doğrulamasına sahip ama `public-paths`'te olmadığı için dışarıdan gelen çağrı proxy'de 307 ile `/login`'e gidiyor; yani dışarıdan çalışmıyor. Bir güvenlik kararıdır: açmak mı, kaldırmak mı, sizde.
 3. **Kurulumda bir aşamanın reddi de aşamayı tamamlıyor**: `ProjectSetupOrchestrator.submitClientDecision` `approve: false` iken hedefleri onaylamıyor ama yine `completeStage` çağırıyor. Davranışa dokunulmadı.
 4. **`ExecutionVerification`** `ExecutionJob.rawResult`'ı kopyalıyor (doğrulama totoloji).

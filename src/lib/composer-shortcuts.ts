@@ -69,6 +69,8 @@ export type ComposerShortcut =
       // the integrations page instead of firing a doomed task (see
       // composer-plus-menu.tsx).
       requiresConnectedPlatform?: "instagram" | "linkedin" | "x";
+      // Hidden inside a Work, which refuses what this item asks for.
+      worksHidden?: true;
     };
 
 const INTEGRATIONS_HREF = (projectId: string) =>
@@ -132,6 +134,7 @@ export const INTEGRATION_SHORTCUTS: ComposerShortcut[] = [
     targetPlatform: "INSTAGRAM",
     contentFormat: "REEL",
     requiresConnectedPlatform: "instagram",
+    worksHidden: true,
   },
   {
     id: "integration-linkedin",
@@ -296,6 +299,10 @@ export const CAPABILITY_SHORTCUTS: ComposerShortcut[] = [
     kind: "capability",
     capability,
     request: CAPABILITY_REQUEST[capability] ?? capabilityLabel(capability),
+    // A Work has no ad-creative tool, so the item would only be refused.
+    ...(capability === "CREATE_AD_CREATIVE"
+      ? { worksHidden: true as const }
+      : {}),
   })),
   // Same shape as command-service.ts's private adsFormHref — that file is
   // server-only, so this is a small client-side copy of the same URL.
@@ -307,3 +314,12 @@ export const CAPABILITY_SHORTCUTS: ComposerShortcut[] = [
     href: (projectId: string) => `/projects/${projectId}/ads?create=campaign`,
   },
 ];
+
+// Inside a Work the menu must not offer what the Work refuses.
+export function shortcutsForWork(
+  list: readonly ComposerShortcut[],
+  inWork: boolean,
+): ComposerShortcut[] {
+  if (!inWork) return [...list];
+  return list.filter((s) => !(s.kind === "capability" && s.worksHidden));
+}

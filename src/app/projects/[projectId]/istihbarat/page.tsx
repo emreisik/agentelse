@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 
-// Intelligence is now covered by HUB CORE's Signals / Insight & Opportunity
-// panels (see ../page.tsx) — this route stays alive so old bookmarks/links
-// don't break.
+import { legacyRouteHref } from "@/components/hub-core/hub-core-params";
+
+// Old intelligence page: signals and insights now live in the Brand Brain's
+// Intelligence tab. This route stays alive so old bookmarks/links keep working.
 export default async function IstihbaratRedirect({
   params,
   searchParams,
@@ -12,11 +13,12 @@ export default async function IstihbaratRedirect({
 }) {
   const { projectId } = await params;
   const sp = await searchParams;
-  const oldTab = typeof sp.tab === "string" ? sp.tab : "sinyaller";
-  const panel = oldTab === "icgoruler" ? "icgoru-firsat" : "sinyaller";
-
-  const qp = new URLSearchParams({ panel });
-  if (typeof sp.sinyal === "string") qp.set("entity", `signal:${sp.sinyal}`);
-
-  redirect(`/projects/${projectId}?${qp.toString()}`);
+  redirect(
+    legacyRouteHref(projectId, "sinyaller", {
+      entity:
+        typeof sp.sinyal === "string"
+          ? { kind: "signal", id: sp.sinyal }
+          : null,
+    }),
+  );
 }

@@ -234,7 +234,7 @@ describe("computeNextSteps", () => {
     expect(keys(snap([item("PUBLISHED", "2026-10-20")]))).toEqual([]);
   });
 
-  it("shows at most three steps, most urgent first", () => {
+  it("shows at most three steps that are waiting, most urgent first", () => {
     const steps = computeNextSteps(
       snap(
         [
@@ -253,12 +253,35 @@ describe("computeNextSteps", () => {
         },
       ),
     );
-    expect(steps).toHaveLength(3);
-    expect(steps.map((s) => s.key)).toEqual([
+    // Three waiting steps, then the quiet one (not counted against the cap).
+    expect(steps.filter((s) => !s.quiet).map((s) => s.key)).toEqual([
       "produce-retry",
       "publish-manual",
       "review",
     ]);
+    expect(steps.filter((s) => s.quiet).map((s) => s.key)).toEqual([
+      "connect-instagram",
+    ]);
+  });
+
+  it("a channel that is not connected is quiet: it never takes a slot from work that is waiting", () => {
+    const steps = computeNextSteps(
+      snap(
+        [
+          item("FAILED", "2026-10-01"),
+          item("IN_REVIEW", "2026-10-02"),
+          item("PLANNED", "2026-10-09"),
+          item("PUBLISHED", "2026-10-30"),
+        ],
+        { connections: { instagram: { connected: false } } },
+      ),
+    );
+    const connect = steps.find((s) => s.key === "connect-instagram");
+    expect(connect?.quiet).toBe(true);
+    // Last, after everything that is waiting.
+    expect(steps.at(-1)?.key).toBe("connect-instagram");
+    // Nothing else is quiet.
+    expect(steps.filter((s) => s.quiet)).toHaveLength(1);
   });
 
   it("offers the results last, and only when there are real ones", () => {
@@ -308,5 +331,106 @@ describe("computeNextSteps", () => {
     expect(steps).toHaveLength(3);
     expect(steps.map((s) => s.key).slice(0, 2)).toEqual(["produce-retry", "review"]);
     expect(steps.map((s) => s.key)).not.toContain("results");
+  });
+});
+
+// W57: the Work-scoped rules (approve_plan, visible connect) only exist when
+// the snapshot says workScoped.
+describe("computeNextSteps, Work-scoped snapshot", () => {
+  const review = (planId = "plan-1") =>
+    item("IN_REVIEW", "2026-10-02", { planId });
+  const scoped = (items: JourneyItem[], over: Partial<JourneySnapshot> = {}) =>
+    snap(items, { workScoped: true, ...over });
+
+  it("adds approve before review when two or more pieces are in review", () => {
+    const pieces = [review(), review(), item("PLANNED", "2026-10-10")];
+    const steps = computeNextSteps(scoped(pieces));
+    expect(steps.map((s) => s.key)).toEqual(["approve", "review", "produce"]);
+    expect(steps[0]).toMatchObject({
+      tone: "next",
+      label: "Approve 2",
+      title: "2 pieces are ready. Approve them in one go.",
+      action: {
+        kind: "approve_plan",
+        planIds: ["plan-1"],
+        creativeIds: [pieces[0]!.id, pieces[1]!.id],
+        count: 2,
+      },
+    });
+    expect(steps[1]).toMatchObject({
+      action: { kind: "review_queue", count: 2 },
+    });
+  });
+
+  it("is never emitted without workScoped, and the list stays as it was", () => {
+    const pieces = [review(), review(), item("PLANNED", "2026-10-10")];
+    expect(keys(snap(pieces))).toEqual(["review", "produce"]);
+    expect(keys(snap(pieces, { workScoped: false }))).toEqual([
+      "review",
+      "produce",
+    ]);
+  });
+
+  it("needs at least two pieces in review", () => {
+    const one = keys(scoped([review()]));
+    expect(one).toContain("review");
+    expect(one).not.toContain("approve");
+    expect(keys(scoped([item("PLANNED", "2026-10-02")]))).not.toContain(
+      "approve",
+    );
+  });
+
+  it("names distinct plan ids, at most 12, and exactly the in-review pieces of those plans", () => {
+    const pieces = Array.from({ length: 14 }, (_, i) =>
+      review(`plan-${i}`),
+    );
+    // A second piece of the first plan, one of a plan beyond the cap, and
+    // pieces in other stages that must never be listed.
+    const second = review("plan-0");
+    const beyond = review("plan-13");
+    const other = item("APPROVED", "2026-10-02", { planId: "plan-0" });
+    const all = [...pieces, second, beyond, other];
+    const step = computeNextSteps(scoped(all)).find((s) => s.key === "approve");
+    const action = step?.action;
+    if (action?.kind !== "approve_plan") throw new Error("no approve step");
+    expect(action.planIds).toEqual(
+      Array.from({ length: 12 }, (_, i) => `plan-${i}`),
+    );
+    expect(new Set(action.planIds).size).toBe(12);
+    expect(action.creativeIds).toEqual(
+      all
+        .filter(
+          (p) => p.stage === "IN_REVIEW" && action.planIds.includes(p.planId),
+        )
+        .map((p) => p.id),
+    );
+    expect(action.creativeIds).not.toContain(other.id);
+    expect(action.creativeIds).not.toContain(beyond.id);
+    expect(action.count).toBe(action.creativeIds.length);
+    expect(action.count).toBe(13);
+  });
+
+  it("covers at most 100 pieces and counts what it covers", () => {
+    const pieces = Array.from({ length: 120 }, () => review());
+    const action = computeNextSteps(scoped(pieces)).find(
+      (s) => s.key === "approve",
+    )?.action;
+    if (action?.kind !== "approve_plan") throw new Error("no approve step");
+    expect(action.creativeIds).toHaveLength(100);
+    expect(action.count).toBe(100);
+    expect(action.creativeIds).toEqual(pieces.slice(0, 100).map((p) => p.id));
+  });
+
+  it("the connect step is visible only when workScoped", () => {
+    const pieces = [item("PLANNED", "2026-10-03")];
+    const connections = { instagram: { connected: false } };
+    const plain = computeNextSteps(snap(pieces, { connections })).find(
+      (s) => s.key === "connect-instagram",
+    );
+    expect(plain?.quiet).toBe(true);
+    const work = computeNextSteps(scoped(pieces, { connections }));
+    const connect = work.find((s) => s.key === "connect-instagram");
+    expect(connect?.quiet).toBe(false);
+    expect(work.filter((s) => s.quiet)).toHaveLength(0);
   });
 });

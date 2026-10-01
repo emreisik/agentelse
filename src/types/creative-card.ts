@@ -1,4 +1,5 @@
 import type { CreativeContentFormat, SocialPlatform } from "@prisma/client";
+import type { CreativePublishLine } from "@/lib/works/publish-guard";
 
 // Representation of a creative/image generation event in an idea's chat.
 // Written into Command.parsedIntent as `{ card: CreativeCardData }` (see
@@ -66,6 +67,22 @@ export type CreativeCardData =
       // "planned": the piece has its own planned time (a content-plan slot), so
       // approving keeps it for that time instead of posting now.
       approveIntent?: "calendar" | "publish" | "planned";
+      // Render-time only (Works): computed when the page renders, never
+      // persisted into the stored card.
+      publishLine?: CreativePublishLine;
+      // Render-time only (Works): the plan Command this piece belongs to
+      // (Creative.planId), set by the live overlay for pieces under a Work.
+      // "Make 3 more" posts it to the variants route. Never persisted.
+      planId?: string;
+      plannedFor?: string; // ISO
+      // Other variants of the same piece (written by the variants materialize
+      // step, Works only); absent on every older row.
+      alternatives?: {
+        assetId: string;
+        label?: string;
+        assetWidth?: number;
+        assetHeight?: number;
+      }[];
     }
   | {
       kind: "creative-failed";

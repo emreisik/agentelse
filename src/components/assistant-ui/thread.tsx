@@ -14,6 +14,7 @@ import { ImageGenerationPreview } from "@/components/assistant-ui/image-generati
 import type { ImageGenState } from "@/lib/image-progress";
 import { MarkdownText } from "@/components/assistant-ui/markdown-text";
 import { IdeaEventCard } from "@/components/commands/idea-event-card";
+import { PendingCard } from "@/components/works/pending-card";
 import { AgentelseMark } from "@/components/brand/agentelse-mark";
 import { DepartmentBadge } from "@/components/shared/department-badge";
 import { isIdeaEventCardData } from "@/types/idea-event-card";
@@ -445,6 +446,33 @@ const MessageError: FC = () => {
   );
 };
 
+// Works only (set by project-chat's convertMessage): without the flags both
+// helpers answer as the thread always did.
+type WorkMessageFlags = { cardOnly?: unknown; pendingHint?: unknown };
+type PendingHint = "plan" | "ideas" | "generic";
+
+// Copy would copy nothing and Refresh would re-send the parent message as a
+// new Command (duplicate work), so a card-only message has no action bar.
+export function showsActionBar(custom: WorkMessageFlags): boolean {
+  return custom.cardOnly !== true;
+}
+
+export function pendingHintOf(custom: WorkMessageFlags): PendingHint | null {
+  const hint = custom.pendingHint;
+  return hint === "plan" || hint === "ideas" || hint === "generic"
+    ? hint
+    : null;
+}
+
+// The skeleton card shows only while the turn has neither card nor text.
+export function showsPendingCard(
+  custom: WorkMessageFlags,
+  hasCard: boolean,
+  hasText: boolean,
+): boolean {
+  return pendingHintOf(custom) !== null && !hasCard && !hasText;
+}
+
 const AssistantMessage: FC = () => {
   const {
     ToolFallback: ToolFallbackComponent = ToolFallback,
@@ -526,6 +554,20 @@ const AssistantMessage: FC = () => {
     return typeof custom.anchorId === "string" ? custom.anchorId : undefined;
   });
 
+  const cardOnly = useAuiState((s) => {
+    const custom = s.message.metadata.custom as WorkMessageFlags;
+    return !showsActionBar(custom);
+  });
+  const pendingHint = useAuiState((s) => {
+    const custom = s.message.metadata.custom as WorkMessageFlags;
+    const hasText = s.message.content.some(
+      (part) => part.type === "text" && part.text.trim() !== "",
+    );
+    return showsPendingCard(custom, card !== undefined, hasText)
+      ? pendingHintOf(custom)
+      : null;
+  });
+
   const createdAt = useAuiState((s) => s.message.createdAt);
 
   const ACTION_BAR_PT = "pt-1.5";
@@ -600,6 +642,7 @@ const AssistantMessage: FC = () => {
           {imageGen && (
             <ImageGenerationPreview state={imageGen} previewUrl={previewUrl} />
           )}
+          {pendingHint ? <PendingCard hint={pendingHint} /> : null}
           {card && <IdeaEventCard card={card} commandId={commandId} />}
           <MessagePrimitive.GroupedParts
             groupBy={groupPartByType({
@@ -684,7 +727,7 @@ const AssistantMessage: FC = () => {
           className={cn("ms-2 flex items-center gap-2", ACTION_BAR_HEIGHT)}
         >
           <BranchPicker />
-          <AssistantActionBar />
+          {cardOnly ? null : <AssistantActionBar />}
           {createdAt && (
             <span className="text-muted-foreground text-xs">
               {shortDate(createdAt)}

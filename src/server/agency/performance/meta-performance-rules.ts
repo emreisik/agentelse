@@ -228,6 +228,9 @@ export type ScanSnapshot = {
   spend: number;
   costPerResult?: number;
   ctr: number;
+  // Works only: what costPerResult counts (e.g. "Leads"), so a scan never
+  // compares a cost per Leads with a cost per Link Clicks.
+  resultLabel?: string;
 };
 
 // Simplified trend rule — compares the current scan against the ONE

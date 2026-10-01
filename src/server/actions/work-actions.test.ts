@@ -1,0 +1,325 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+const enabled = vi.hoisted(() => vi.fn());
+vi.mock("@/server/works/flag", () => ({ isWorksEnabled: enabled }));
+const requireUser = vi.hoisted(() => vi.fn());
+const requireProjectAccess = vi.hoisted(() => vi.fn());
+vi.mock("@/server/security/tenant-context", () => ({
+  requireUser,
+  requireProjectAccess,
+}));
+const limited = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/rate-limit", () => ({ isRateLimited: limited }));
+const connections = vi.hoisted(() => vi.fn());
+vi.mock("@/server/integrations/channel-connections", () => ({
+  getChannelConnections: connections,
+}));
+const repo = vi.hoisted(() => ({
+  create: vi.fn(),
+  setChannels: vi.fn(),
+  setStatus: vi.fn(),
+  rename: vi.fn(),
+  remove: vi.fn(),
+  removeUnlessLive: vi.fn(),
+  countLiveSlots: vi.fn(),
+  ensureToday: vi.fn(),
+  channelCoverage: vi.fn(),
+  get: vi.fn(),
+}));
+const executeRaw = vi.hoisted(() => vi.fn());
+const order = vi.hoisted(() => ({ calls: [] as string[] }));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ $executeRaw: executeRaw }),
+  },
+}));
+vi.mock("@/server/chat/content-plan", () => ({
+  getProjectTimezone: vi.fn().mockResolvedValue("Europe/Istanbul"),
+  todayInTimezone: () => "2026-10-01",
+}));
+vi.mock("@/server/repositories/work.repository", () => ({
+  WorkRepository: repo,
+}));
+
+const actions = await import("./work-actions");
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  enabled.mockReturnValue(true);
+  limited.mockReturnValue(false);
+  requireUser.mockResolvedValue({ userId: "u1" });
+  requireProjectAccess.mockResolvedValue({ workspaceId: "ws1" });
+  connections.mockResolvedValue({ instagram: { connected: true } });
+  order.calls = [];
+  executeRaw.mockImplementation(async () => {
+    order.calls.push("lock");
+    return 1;
+  });
+  repo.create.mockImplementation(async () => {
+    order.calls.push("create");
+    return { id: "wNew" };
+  });
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+});
+
+describe("guards (every action)", () => {
+  it("refuses when Works is off, without touching the database", async () => {
+    enabled.mockReturnValue(false);
+    expect(await actions.createWorkAction("p1")).toMatchObject({ ok: false });
+    expect(await actions.completeWorkAction("p1", "w1")).toMatchObject({ ok: false });
+    expect(repo.create).not.toHaveBeenCalled();
+    expect(repo.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("refuses bad ids and a rate-limited user", async () => {
+    expect(await actions.completeWorkAction("p1", "")).toMatchObject({ ok: false });
+    expect(await actions.createWorkAction(42 as never)).toMatchObject({ ok: false });
+    limited.mockReturnValue(true);
+    expect(await actions.createWorkAction("p1")).toMatchObject({ ok: false });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it("turns a thrown access error into a plain failure", async () => {
+    requireProjectAccess.mockRejectedValue(new Error("nope"));
+    expect(await actions.createWorkAction("p1")).toEqual({
+      ok: false,
+      message: "That didn't work. Try again.",
+    });
+  });
+});
+
+describe("createWorkAction", () => {
+  it("creates with validated channels and records the unconnected ones", async () => {
+    repo.create.mockResolvedValue({ id: "w1" });
+    const out = await actions.createWorkAction("p1", [
+      "instagram",
+      "linkedin",
+      "bogus",
+    ]);
+    expect(out).toEqual({ ok: true, workId: "w1" });
+    expect(repo.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "p1",
+        workspaceId: "ws1",
+        channels: ["instagram", "linkedin"],
+        acknowledgedUnconnected: ["linkedin"],
+      }),
+    );
+  });
+});
+
+describe("setWorkChannelsAction", () => {
+  it("requires at least one known channel", async () => {
+    expect(await actions.setWorkChannelsAction("p1", "w1", ["bogus"])).toMatchObject({
+      ok: false,
+    });
+    expect(repo.setChannels).not.toHaveBeenCalled();
+  });
+
+  it("saves scoped to the project and reports a missing Work", async () => {
+    repo.setChannels.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    expect(await actions.setWorkChannelsAction("p1", "w1", ["tiktok"])).toEqual({
+      ok: true,
+      channels: ["tiktok"],
+    });
+    expect(repo.setChannels).toHaveBeenCalledWith("p1", "w1", ["tiktok"], ["tiktok"]);
+    expect(await actions.setWorkChannelsAction("p1", "w9", ["x"])).toMatchObject({
+      ok: false,
+    });
+  });
+});
+
+describe("status, rename, delete", () => {
+  it("maps each action to its transition, project-scoped", async () => {
+    repo.setStatus.mockResolvedValue(true);
+    await actions.completeWorkAction("p1", "w1");
+    await actions.reopenWorkAction("p1", "w1");
+    await actions.archiveWorkAction("p1", "w1");
+    expect(repo.setStatus.mock.calls.map((c) => c.slice(0, 3))).toEqual([
+      ["p1", "w1", "DONE"],
+      ["p1", "w1", "ACTIVE"],
+      ["p1", "w1", "ARCHIVED"],
+    ]);
+  });
+
+  it("rename trims, caps and refuses an empty name", async () => {
+    repo.rename.mockResolvedValue(true);
+    expect(await actions.renameWorkAction("p1", "w1", "   ")).toMatchObject({ ok: false });
+    await actions.renameWorkAction("p1", "w1", `  ${"a".repeat(100)}  `);
+    expect(repo.rename.mock.calls[0]?.[2]).toHaveLength(60);
+  });
+
+  it("delete reports a Work that is not there", async () => {
+    repo.removeUnlessLive.mockResolvedValue("NOT_FOUND");
+    expect(await actions.deleteWorkAction("p1", "w1")).toMatchObject({ ok: false });
+  });
+
+  it("delete is refused while live slots exist, and allowed without them", async () => {
+    repo.removeUnlessLive.mockResolvedValue("LIVE");
+    expect(await actions.deleteWorkAction("p1", "w1")).toEqual({
+      ok: false,
+      message: "This Work still has pieces on your calendar. Archive it instead.",
+    });
+    repo.removeUnlessLive.mockResolvedValue("REMOVED");
+    expect(await actions.deleteWorkAction("p1", "w1")).toEqual({ ok: true });
+    expect(repo.removeUnlessLive).toHaveBeenCalledWith("p1", "w1");
+    // Count and delete are one repository call: no separate, racy count.
+    expect(repo.countLiveSlots).not.toHaveBeenCalled();
+    expect(repo.remove).not.toHaveBeenCalled();
+  });
+
+  it("archive still works with live slots", async () => {
+    repo.countLiveSlots.mockResolvedValue(3);
+    repo.setStatus.mockResolvedValue(true);
+    expect(await actions.archiveWorkAction("p1", "w1")).toEqual({ ok: true });
+  });
+});
+
+const TODAY_MESSAGE =
+  "Today's brief can't be completed, archived, renamed or deleted.";
+
+describe("openTodayWorkAction", () => {
+  beforeEach(() => {
+    repo.ensureToday.mockResolvedValue({ id: "today_p1_2026-10-01" });
+  });
+
+  it("refuses with the flag off or a bad project id, writing nothing", async () => {
+    enabled.mockReturnValue(false);
+    expect(await actions.openTodayWorkAction("p1")).toMatchObject({ ok: false });
+    enabled.mockReturnValue(true);
+    expect(await actions.openTodayWorkAction("")).toMatchObject({ ok: false });
+    expect(repo.ensureToday).not.toHaveBeenCalled();
+  });
+
+  it("checks project access and uses its own rate bucket", async () => {
+    await actions.openTodayWorkAction("p1");
+    expect(requireProjectAccess).toHaveBeenCalledWith("u1", "p1");
+    expect(limited.mock.calls[0]?.[0]).toBe("work-open:u1");
+    limited.mockReturnValue(true);
+    expect(await actions.openTodayWorkAction("p1")).toMatchObject({ ok: false });
+  });
+
+  it("plans the connected channels plus seo, only when something is connected", async () => {
+    connections.mockResolvedValue({
+      instagram: { connected: true },
+      linkedin: { connected: false },
+    });
+    await actions.openTodayWorkAction("p1");
+    expect(repo.ensureToday).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        dayKey: "2026-10-01",
+        channels: ["instagram", "seo"],
+        acknowledgedUnconnected: [],
+      }),
+    );
+    connections.mockResolvedValue({ linkedin: { connected: false } });
+    await actions.openTodayWorkAction("p1");
+    expect(repo.ensureToday).toHaveBeenLastCalledWith(
+      expect.objectContaining({ channels: [] }),
+    );
+  });
+
+  it("is idempotent: the same day gives the same id", async () => {
+    const a = await actions.openTodayWorkAction("p1");
+    const b = await actions.openTodayWorkAction("p1");
+    expect(a).toEqual({ ok: true, workId: "today_p1_2026-10-01" });
+    expect(b).toEqual(a);
+  });
+});
+
+describe("openChannelWorkAction", () => {
+  it("refuses a bad channel and seo, creating nothing", async () => {
+    expect(await actions.openChannelWorkAction("p1", "bogus")).toMatchObject({ ok: false });
+    expect(await actions.openChannelWorkAction("p1", "seo")).toMatchObject({ ok: false });
+    expect(await actions.openChannelWorkAction("p1", ["instagram"])).toMatchObject({
+      ok: false,
+    });
+    expect(repo.create).not.toHaveBeenCalled();
+    expect(executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("refuses with the flag off", async () => {
+    enabled.mockReturnValue(false);
+    expect(await actions.openChannelWorkAction("p1", "instagram")).toMatchObject({
+      ok: false,
+    });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it("reuses an ACTIVE non-Today Work whose channels equal [channel]", async () => {
+    repo.channelCoverage.mockResolvedValue([
+      { id: "today_p1_2026-10-01", channels: ["instagram"], status: "ACTIVE" },
+      { id: "wDone", channels: ["instagram"], status: "DONE" },
+      { id: "wMulti", channels: ["instagram", "tiktok"], status: "ACTIVE" },
+      { id: "wIg", channels: ["instagram"], status: "ACTIVE" },
+    ]);
+    repo.get.mockResolvedValue({ id: "wIg" });
+    expect(await actions.openChannelWorkAction("p1", "instagram")).toEqual({
+      ok: true,
+      workId: "wIg",
+    });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a single-channel Work when none covers it, lock first", async () => {
+    repo.channelCoverage.mockResolvedValue([]);
+    expect(await actions.openChannelWorkAction("p1", "instagram")).toEqual({
+      ok: true,
+      workId: "wNew",
+    });
+    expect(order.calls).toEqual(["lock", "create"]);
+    expect(repo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ channels: ["instagram"], acknowledgedUnconnected: [] }),
+    );
+    expect(limited.mock.calls[0]?.[0]).toBe("work-open:u1");
+  });
+
+  it("two parallel taps create ONE Work (the lock serialises them)", async () => {
+    const rows: { id: string; channels: string[]; status: string }[] = [];
+    let chain: Promise<unknown> = Promise.resolve();
+    executeRaw.mockImplementation(() => {
+      // Emulates the advisory lock: the second tap waits for the first.
+      const wait = chain;
+      let release!: () => void;
+      chain = new Promise<void>((r) => (release = r));
+      repo.create.mockImplementationOnce(async () => {
+        rows.push({ id: "w1", channels: ["instagram"], status: "ACTIVE" });
+        release();
+        return { id: "w1" };
+      });
+      return wait.then(() => 1);
+    });
+    repo.channelCoverage.mockImplementation(async () => [...rows]);
+    repo.get.mockImplementation(async (_p: string, id: string) => ({ id }));
+    const [a, b] = await Promise.all([
+      actions.openChannelWorkAction("p1", "instagram"),
+      actions.openChannelWorkAction("p1", "instagram"),
+    ]);
+    expect(a).toEqual({ ok: true, workId: "w1" });
+    expect(b).toEqual({ ok: true, workId: "w1" });
+    expect(repo.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Today Work refusals", () => {
+  const today = "today_p1_2026-10-01";
+
+  it("refuses complete, archive, rename and delete of a Today Work", async () => {
+    const refused = { ok: false, message: TODAY_MESSAGE };
+    expect(await actions.completeWorkAction("p1", today)).toEqual(refused);
+    expect(await actions.archiveWorkAction("p1", today)).toEqual(refused);
+    expect(await actions.renameWorkAction("p1", today, "x")).toEqual(refused);
+    expect(await actions.deleteWorkAction("p1", today)).toEqual(refused);
+    expect(repo.setStatus).not.toHaveBeenCalled();
+    expect(repo.rename).not.toHaveBeenCalled();
+    expect(repo.removeUnlessLive).not.toHaveBeenCalled();
+  });
+
+  it("still allows reopening a Today Work, and ordinary Works are unchanged", async () => {
+    repo.setStatus.mockResolvedValue(true);
+    expect(await actions.reopenWorkAction("p1", today)).toEqual({ ok: true });
+    expect(await actions.completeWorkAction("p1", "w1")).toEqual({ ok: true });
+  });
+});

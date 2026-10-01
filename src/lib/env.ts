@@ -167,6 +167,15 @@ const envSchema = z.object({
   // Optional "user,workspace,global" run caps per 24 h, parsed by
   // parseDiscoveryCaps. It can only lower the documented ceilings.
   GUIDED_SETUP_DISCOVERY_CAPS: z.string().optional().default(""),
+  // Works (docs/works.md): the Agency Desk as titled, channel-scoped
+  // conversations listed in the sidebar instead of one endless chat. Server-only
+  // and off by default (old single-chat behaviour, byte for byte) until the
+  // owner has applied the add_work migration. Only the literal "true" enables.
+  WORKS_UI: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((value) => value === "true"),
   // gpt-image-2 — see openai-image-client.ts. Separate model slot from
   // OPENAI_MODEL/OPENCLAW_IMAGE_MODEL because it names an image model, not
   // a chat one.

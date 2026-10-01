@@ -14,6 +14,8 @@ import { Textarea } from "@/components/ui/textarea";
 import type { KitTemplate } from "@/lib/brand-kit";
 import { isDarkColor } from "@/lib/color-contrast";
 import {
+  defaultOverrides,
+  setDefaultLayout,
   barModeOf,
   buildPresetLayouts,
   describeLayout,
@@ -160,9 +162,24 @@ export function LayoutGallery({
   );
   const warning = bandLogoWarning(selected, colors, logos);
   const bandMode = barModeOf(selected) === "band";
+  // Post shapes the default is not used for (another layout is made for them).
+  const overrides = defaultOverrides(value);
+
+  // Choosing a layout is choosing what new posts use: the card is selected for
+  // editing AND becomes the default. (Selecting used to leave the default where
+  // it was, so a saved "choice" changed nothing.)
+  const choose = (id: string) => {
+    setSelectedId(id);
+    const next = setDefaultLayout(value, id);
+    if (next !== value) onChange(next);
+  };
 
   return (
     <div className="flex flex-col gap-4" data-layout-gallery>
+      <p className="text-xs text-muted-foreground">
+        Click a layout to use it for new posts. The Default badge shows the one
+        in use.
+      </p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {value.items.map((layout) => {
           const isDefault = layout.id === value.defaultId;
@@ -173,7 +190,12 @@ export function LayoutGallery({
               type="button"
               disabled={disabled}
               aria-pressed={isSelected}
-              onClick={() => setSelectedId(layout.id)}
+              onClick={() => choose(layout.id)}
+              title={
+                isDefault
+                  ? "The layout new posts use"
+                  : "Use this layout for new posts"
+              }
               className={cn(
                 "flex flex-col gap-1.5 rounded-xl border p-2 text-left transition-colors hover:bg-muted/50",
                 isSelected
@@ -227,12 +249,28 @@ export function LayoutGallery({
               size="xs"
               variant="outline"
               disabled={disabled}
-              onClick={() => onChange({ ...value, defaultId: selected.id })}
+              onClick={() => onChange(setDefaultLayout(value, selected.id))}
             >
               Use as default
             </Button>
           )}
         </div>
+
+        {selected.id === value.defaultId && overrides.length > 0 ? (
+          <p
+            className="rounded-lg border border-border/60 bg-muted/40 p-2 text-[11px] leading-snug text-muted-foreground"
+            data-layout-overrides
+          >
+            This layout is not made for every post shape.{" "}
+            {overrides
+              .map(
+                ({ label, layout }) =>
+                  `${label} posts use \u201c${layout.name || "Untitled"}\u201d`,
+              )
+              .join("; ")}
+            .
+          </p>
+        ) : null}
 
         {warning ? (
           <p className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px]">

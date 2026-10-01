@@ -10,10 +10,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const commandCreate = vi.fn().mockResolvedValue({ id: "cmd-1" });
 const attachParsedIntent = vi.fn().mockResolvedValue(undefined);
 const attachIdeaId = vi.fn().mockResolvedValue(undefined);
+const attachKeepingCard = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/server/repositories/command.repository", () => ({
   CommandRepository: {
     create: commandCreate,
     attachParsedIntent,
+    attachParsedIntentKeepingCard: attachKeepingCard,
     attachIdeaId,
   },
 }));
@@ -59,6 +61,12 @@ vi.mock("@/server/actions/creative-actions", () => ({
 const approvalFindMany = vi.fn();
 const taskFindUnique = vi.fn();
 const brandFindFirst = vi.fn().mockResolvedValue({ id: "brand-1" });
+const commandFindUnique = vi.fn();
+const commandFindMany = vi.fn();
+const taskFindMany = vi.fn();
+const creativeFindMany = vi.fn();
+let worksOn = false;
+vi.mock("@/server/works/flag", () => ({ isWorksEnabled: () => worksOn }));
 const projectScheduleFindFirst = vi.fn().mockResolvedValue(null);
 // Gate in CommandService.submit (command-service.ts): every user-triggered
 // call goes through ensureProjectActive, which activates a project that never
@@ -70,7 +78,9 @@ vi.mock("@/server/projects/activation", () => ({ ensureProjectActive }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     approval: { findMany: approvalFindMany },
-    task: { findUnique: taskFindUnique },
+    task: { findUnique: taskFindUnique, findMany: taskFindMany },
+    command: { findUnique: commandFindUnique, findMany: commandFindMany },
+    creative: { findMany: creativeFindMany },
     brand: { findFirst: brandFindFirst },
     projectSchedule: { findFirst: projectScheduleFindFirst },
   },
@@ -116,6 +126,7 @@ function baseInput(note: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  worksOn = false;
   commandCreate.mockResolvedValue({ id: "cmd-1" });
   approvalDecide.mockResolvedValue(undefined);
   attachParsedIntent.mockResolvedValue(undefined);
@@ -424,6 +435,26 @@ describe("CommandService.submit — STRATEGIC_REQUEST", () => {
     });
   });
 
+  it("Works: a streaming turn keeps a card it already stored (no plain overwrite)", async () => {
+    worksOn = true;
+    createStrategicIdea.mockResolvedValue({ status: "CREATED", ideaId: "idea-1" });
+    await CommandService.submit({ ...strategicInput(), existingCommandId: "cmd-turn" });
+    expect(attachKeepingCard).toHaveBeenCalledWith(
+      "cmd-turn",
+      expect.objectContaining({ kind: "STRATEGIC_REQUEST" }),
+      "proj-1",
+      "brand-1",
+    );
+    expect(attachParsedIntent).not.toHaveBeenCalled();
+  });
+
+  it("flag off: the plain overwrite is used, as before", async () => {
+    createStrategicIdea.mockResolvedValue({ status: "CREATED", ideaId: "idea-1" });
+    await CommandService.submit({ ...strategicInput(), existingCommandId: "cmd-turn" });
+    expect(attachParsedIntent).toHaveBeenCalledTimes(1);
+    expect(attachKeepingCard).not.toHaveBeenCalled();
+  });
+
   it("returns IDEA_CAP_REACHED without linking the command when the project is at its idea cap", async () => {
     createStrategicIdea.mockResolvedValue({ status: "CAPPED" });
 
@@ -680,5 +711,84 @@ describe("CommandService.submit — inputs a capability cannot run without", () 
       expect(result.status).toBe("APPROVAL_HANDLED");
       expect(approvalDecide).toHaveBeenCalled();
     });
+  });
+});
+
+describe("CommandService.submit — an approval decision inside a Work", () => {
+  const approve = {
+    ...baseInput(""),
+    rawText: "yes approve it",
+    existingCommandId: "cmd-turn",
+    intent: { kind: "APPROVAL_DECISION" as const, decision: "APPROVE" as const },
+  };
+  const row = (over: Record<string, unknown>) => ({
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    brandId: "brand-1",
+    entityType: "Task",
+    entityId: "x",
+    taskId: null,
+    ...over,
+  });
+  // Newest first, as the query returns them: a Task approval of ANOTHER Work,
+  // then a Creative approval of THIS Work.
+  const otherWorkTask = row({ id: "appr-other", taskId: "task-other" });
+  const thisWorkCreative = row({
+    id: "appr-mine",
+    entityType: "Creative",
+    entityId: "cr-1",
+  });
+
+  beforeEach(() => {
+    worksOn = true;
+    commandFindUnique.mockResolvedValue({ workId: "w1" });
+    approvalFindMany.mockResolvedValue([otherWorkTask, thisWorkCreative]);
+    taskFindMany.mockResolvedValue([]);
+    creativeFindMany.mockResolvedValue([{ id: "cr-1", planId: "plan-1" }]);
+    commandFindMany.mockResolvedValue([{ id: "plan-1" }]);
+  });
+
+  it("decides this Work's approval, not the newest one of the project", async () => {
+    const result = await CommandService.submit(approve);
+    expect(result.status).toBe("APPROVAL_HANDLED");
+    expect(approvalDecide).toHaveBeenCalledTimes(1);
+    expect(approvalDecide.mock.calls[0]![0]).toBe("appr-mine");
+    expect(dispatchApprovedTask).not.toHaveBeenCalled();
+    expect(taskFindMany.mock.calls[0]![0]).toMatchObject({
+      where: { command: { workId: "w1" } },
+    });
+  });
+
+  it("finds nothing to decide when only other Works have approvals waiting", async () => {
+    approvalFindMany.mockResolvedValue([otherWorkTask]);
+    const result = await CommandService.submit(approve);
+    expect(result.status).toBe("UNKNOWN_INTENT");
+    expect(approvalDecide).not.toHaveBeenCalled();
+    expect(dispatchApprovedTask).not.toHaveBeenCalled();
+  });
+
+  it("a legacy piece (plan Command without this Work) is not decided from a Work", async () => {
+    approvalFindMany.mockResolvedValue([thisWorkCreative]);
+    commandFindMany.mockResolvedValue([]);
+    expect((await CommandService.submit(approve)).status).toBe(
+      "UNKNOWN_INTENT",
+    );
+    expect(approvalDecide).not.toHaveBeenCalled();
+  });
+
+  it("outside a Work (no workId) keeps the project-wide newest approval", async () => {
+    commandFindUnique.mockResolvedValue({ workId: null });
+    approvalFindMany.mockResolvedValue([otherWorkTask, thisWorkCreative]);
+    await CommandService.submit(approve);
+    expect(approvalDecide.mock.calls[0]![0]).toBe("appr-other");
+    expect(taskFindMany).not.toHaveBeenCalled();
+  });
+
+  it("flag off: no Command read, project-wide behaviour unchanged", async () => {
+    worksOn = false;
+    approvalFindMany.mockResolvedValue([otherWorkTask, thisWorkCreative]);
+    await CommandService.submit(approve);
+    expect(commandFindUnique).not.toHaveBeenCalled();
+    expect(approvalDecide.mock.calls[0]![0]).toBe("appr-other");
   });
 });

@@ -83,19 +83,41 @@ export const MetaAdsQuery = {
   async campaigns(
     conn: ReadyConnection,
     datePreset: DatePreset = DEFAULT_DATE_PRESET,
+    // Works only (the ads card refresh): list first, so a leads campaign
+    // reports its leads exactly the way the scanner's digest does. Omitted,
+    // the two calls run concurrently and nothing changes.
+    options?: { preferLeadForLeadsCampaigns?: boolean },
   ): Promise<WithInsights<MetaCampaignSummary>[]> {
-    const [campaigns, insights] = await Promise.all([
-      listMetaCampaigns({
+    const baseInsights = {
+      adAccountId: conn.adAccountId,
+      accessToken: conn.accessToken,
+      level: "campaign" as const,
+      datePreset,
+    };
+    let campaigns: MetaCampaignSummary[];
+    let insights: Awaited<ReturnType<typeof fetchMetaLevelInsights>>;
+    if (options?.preferLeadForLeadsCampaigns) {
+      campaigns = await listMetaCampaigns({
         adAccountId: conn.adAccountId,
         accessToken: conn.accessToken,
-      }),
-      fetchMetaLevelInsights({
-        adAccountId: conn.adAccountId,
-        accessToken: conn.accessToken,
-        level: "campaign",
-        datePreset,
-      }),
-    ]);
+      });
+      insights = await fetchMetaLevelInsights({
+        ...baseInsights,
+        preferLeadFor: new Set(
+          campaigns
+            .filter((c) => c.objective === "OUTCOME_LEADS")
+            .map((c) => c.campaignId),
+        ),
+      });
+    } else {
+      [campaigns, insights] = await Promise.all([
+        listMetaCampaigns({
+          adAccountId: conn.adAccountId,
+          accessToken: conn.accessToken,
+        }),
+        fetchMetaLevelInsights(baseInsights),
+      ]);
+    }
     return campaigns.map((c) => ({
       ...c,
       insights: insights.get(c.campaignId),

@@ -7,6 +7,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // says when nothing will release it); a piece with no planned time, or one
 // whose time has come, behaves exactly as before.
 
+// The publish hold of Works slice 2 is reachable only with the flag on; these
+// pins are the legacy behaviour, so the flag is off here (the Work cases live
+// in approval-decisions.works.test.ts). Without the mock, reading the flag
+// would parse the environment, which a test has none of.
+vi.mock("@/server/works/flag", () => ({ isWorksEnabled: () => false }));
+
 const creativeFindUnique = vi.fn();
 const scheduleCount = vi.fn();
 vi.mock("@/lib/prisma", () => ({
@@ -75,7 +81,6 @@ vi.mock("@/server/reasoning/prompts/meta-campaign-brief", () => ({
   metaCampaignBriefDef: {},
 }));
 
-
 const rememberCreativeReaction = vi.fn();
 vi.mock("@/server/memory/memory-service", () => ({
   MemoryService: { rememberCreativeReaction },
@@ -84,9 +89,8 @@ vi.mock("@/server/chat/content-plan", () => ({
   getProjectTimezone: vi.fn().mockResolvedValue("Europe/Istanbul"),
 }));
 
-const { autoPublishCreative, applyApprovalDecision } = await import(
-  "./approval-decisions"
-);
+const { autoPublishCreative, applyApprovalDecision } =
+  await import("./approval-decisions");
 
 const input = {
   creativeId: "creative-1",
@@ -109,7 +113,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   getPublishTargets.mockResolvedValue([{ platform: "instagram" }]);
   scheduleCount.mockResolvedValue(0);
-  publishCreativeCore.mockResolvedValue({ ok: true, message: "ok", cardUpdated: true });
+  publishCreativeCore.mockResolvedValue({
+    ok: true,
+    message: "ok",
+    cardUpdated: true,
+  });
   decide.mockResolvedValue(undefined);
   creativeTransition.mockResolvedValue(undefined);
   rememberCreativeReaction.mockResolvedValue(null);
@@ -140,13 +148,17 @@ describe("autoPublishCreative: a planned time", () => {
 
   it("publishes right away a piece with no planned time, as before", async () => {
     creative({ scheduledFor: null });
-    expect(await autoPublishCreative(input)).toMatchObject({ status: "PUBLISHED" });
+    expect(await autoPublishCreative(input)).toMatchObject({
+      status: "PUBLISHED",
+    });
     expect(publishCreativeCore).toHaveBeenCalledTimes(1);
   });
 
   it("publishes a piece whose planned time has come", async () => {
     creative({ scheduledFor: new Date(Date.now() - 60_000) });
-    expect(await autoPublishCreative(input)).toMatchObject({ status: "PUBLISHED" });
+    expect(await autoPublishCreative(input)).toMatchObject({
+      status: "PUBLISHED",
+    });
   });
 
   it("with a schedule, a due piece still waits for the next slot", async () => {
@@ -161,11 +173,15 @@ describe("autoPublishCreative: a planned time", () => {
 
   it("leaves other channels and unconnected accounts to the ask-flow", async () => {
     creative({ platform: "TIKTOK", scheduledFor: new Date(Date.now() + DAY) });
-    expect(await autoPublishCreative(input)).toMatchObject({ status: "SKIPPED" });
+    expect(await autoPublishCreative(input)).toMatchObject({
+      status: "SKIPPED",
+    });
 
     creative({ scheduledFor: new Date(Date.now() + DAY) });
     getPublishTargets.mockResolvedValue([]);
-    expect(await autoPublishCreative(input)).toMatchObject({ status: "SKIPPED" });
+    expect(await autoPublishCreative(input)).toMatchObject({
+      status: "SKIPPED",
+    });
     expect(publishCreativeCore).not.toHaveBeenCalled();
   });
 });
@@ -197,7 +213,9 @@ describe("applyApprovalDecision: approving a planned piece", () => {
     expect(texts[0]).toContain("approved — planned for");
     // In the project's timezone (Istanbul is UTC+3): 07:00Z is 10:00 there.
     expect(texts[0]).toMatch(/Thu,? 8 Oct,? 10:00/);
-    expect(texts[0]).toContain("Turn on scheduled posting so it goes out then.");
+    expect(texts[0]).toContain(
+      "Turn on scheduled posting so it goes out then.",
+    );
   });
 
   it("does not ask to turn anything on when a schedule will release it", async () => {

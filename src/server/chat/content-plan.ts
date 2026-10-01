@@ -3,6 +3,7 @@ import "server-only";
 import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
+import { updateCommandCard } from "./card-store";
 import { dayKeyInTimezone } from "@/lib/timezone";
 import {
   CHANNELS,
@@ -172,7 +173,18 @@ export function buildPlanCard(
 export async function supersedeOpenDrafts(
   projectId: string,
   exceptCommandId: string,
+  workId?: string,
 ): Promise<void> {
+  if (workId) {
+    // Works: only this Work's drafts, flipped atomically with a state check.
+    await supersedeCards({
+      projectId,
+      exceptCommandId,
+      workId,
+      kinds: ["content-plan-draft"],
+    });
+    return;
+  }
   const commands = await prisma.command.findMany({
     where: {
       projectId,
@@ -196,4 +208,65 @@ export async function supersedeOpenDrafts(
       },
     });
   }
+}
+
+// The open states of each card kind a newer card replaces: a draft plan waits
+// in "draft", a set of alternative directions in "open", a main message in
+// "draft" or (after the client adapted it) "adapted".
+const OPEN_STATES_BY_KIND: Record<string, readonly string[]> = {
+  "content-plan-draft": ["draft"],
+  "content-plan-options": ["open"],
+  "master-content": ["draft", "adapted"],
+};
+
+async function supersedeCards(args: {
+  projectId: string;
+  exceptCommandId: string;
+  workId: string;
+  kinds: readonly string[];
+}): Promise<void> {
+  const { projectId, exceptCommandId, workId, kinds } = args;
+  if (kinds.length === 0) return;
+  const commands = await prisma.command.findMany({
+    where: {
+      projectId,
+      workId,
+      id: { not: exceptCommandId },
+      // Prisma JSON path filters have no `in`: one equals per kind.
+      OR: kinds.map((kind) => ({
+        parsedIntent: { path: ["card", "kind"], equals: kind },
+      })),
+    },
+    select: { id: true },
+  });
+  for (const command of commands) {
+    await updateCommandCard({
+      commandId: command.id,
+      projectId,
+      expectKinds: kinds,
+      update: (card) => {
+        const open = OPEN_STATES_BY_KIND[card.kind];
+        const state = (card as { state?: string }).state;
+        // Re-checked inside the transaction: a card that just became saved or
+        // picked is never reverted.
+        if (!open || state === undefined || !open.includes(state)) return null;
+        return { ...card, state: "superseded" } as unknown as typeof card;
+      },
+    });
+  }
+}
+
+// Works: flips the open plan cards (drafts and/or option sets) and main
+// messages of ONE Work.
+export async function supersedeOpenPlanCards(args: {
+  projectId: string;
+  exceptCommandId: string;
+  workId: string;
+  kinds: readonly (
+    | "content-plan-draft"
+    | "content-plan-options"
+    | "master-content"
+  )[];
+}): Promise<void> {
+  await supersedeCards(args);
 }

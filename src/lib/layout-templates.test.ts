@@ -5,6 +5,7 @@ import {
   aspectClassOf,
   barModeOf,
   buildPresetLayouts,
+  defaultOverrides,
   describeLayout,
   duplicateLayout,
   MAX_LAYOUTS,
@@ -19,6 +20,7 @@ import {
   parseLayoutTemplates,
   resolveLayout,
   resolveLayoutColor,
+  setDefaultLayout,
   type LayoutTemplate,
 } from "./layout-templates";
 
@@ -307,5 +309,47 @@ describe("editing helpers", () => {
     };
     const normalized = normalizeLayoutNames(edited);
     expect(normalized.items.map((i) => i.name)).toEqual(["Layout", "Spring launch"]);
+  });
+});
+
+describe("setDefaultLayout", () => {
+  it("makes the chosen layout the default, without touching the layouts", () => {
+    const templates = presets();
+    const other = templates.items[2]!;
+    const next = setDefaultLayout(templates, other.id);
+    expect(next.defaultId).toBe(other.id);
+    expect(next.items).toBe(templates.items);
+    // What was saved resolves to it for a post it suits.
+    expect(resolveLayout(next, { aspect: "portrait" })?.id).toBe(other.id);
+  });
+
+  it("hands back the same object when nothing changes", () => {
+    const templates = presets();
+    expect(setDefaultLayout(templates, templates.defaultId)).toBe(templates);
+    expect(setDefaultLayout(templates, "no-such-layout")).toBe(templates);
+  });
+});
+
+describe("defaultOverrides", () => {
+  const withDefault = (id: string) => setDefaultLayout(presets(), id);
+
+  it("a default made for Posts gives Story / Reel to the layout made for it", () => {
+    const overrides = defaultOverrides(withDefault(presets().items[1]!.id));
+    expect(overrides).toHaveLength(1);
+    expect(overrides[0]!.label).toBe("Story / Reel 9:16");
+    expect(overrides[0]!.layout.formats).toContain("vertical");
+  });
+
+  it("a Story-only default gives Posts and Squares to another layout", () => {
+    const story = presets().items.find((item) =>
+      item.formats.includes("vertical") && item.formats.length === 1,
+    )!;
+    const labels = defaultOverrides(withDefault(story.id)).map((o) => o.label);
+    expect(labels).toEqual(["Post 3:4", "Square 1:1"]);
+  });
+
+  it("a layout that suits every shape is never overridden", () => {
+    const anyShape = presets().items.find((item) => item.formats.length === 0)!;
+    expect(defaultOverrides(withDefault(anyShape.id))).toEqual([]);
   });
 });

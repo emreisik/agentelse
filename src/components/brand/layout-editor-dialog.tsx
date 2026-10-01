@@ -124,9 +124,10 @@ function EditorBody({
         <DialogTitle>Post layouts</DialogTitle>
         <DialogDescription>
           Each layout sets where the logo, the color bar or band and the
-          headline go. New posts use the default one (or the one you pick in
-          chat). The logo and bar are added after the image is made, so they are
-          identical every time.
+          headline go. Click a layout to use it for new posts (or pick another
+          in chat), then save. Posts already made keep their layout. The logo
+          and bar are added after the image is made, so they are identical every
+          time.
         </DialogDescription>
       </DialogHeader>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">

@@ -25,32 +25,66 @@ import {
 // Plans are at most 30 slots; a few plans deep is plenty for "what is next".
 const MAX_SLOTS = 300;
 
+export type JourneyOptions = {
+  // Read only the plans of this Work (its content-plan-draft Commands).
+  workId?: string;
+};
+
+// The plan Commands of one Work: the only plans its journey may look at.
+async function loadWorkPlanIds(
+  projectId: string,
+  workId: string,
+): Promise<string[]> {
+  const plans = await prisma.command.findMany({
+    where: {
+      projectId,
+      workId,
+      parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" },
+    },
+    select: { id: true },
+    take: 200,
+  });
+  return plans.map((plan) => plan.id);
+}
+
 export async function loadJourneySnapshot(
   projectId: string,
+  options?: JourneyOptions,
 ): Promise<JourneySnapshot | null> {
   try {
     const timezone = await getProjectTimezone(projectId);
-    const creatives = await prisma.creative.findMany({
-      where: { projectId, planId: { not: null }, status: { not: "ARCHIVED" } },
-      orderBy: [{ scheduledFor: { sort: "asc", nulls: "last" } }],
-      take: MAX_SLOTS,
-      select: {
-        id: true,
-        planId: true,
-        status: true,
-        currentVersionId: true,
-        scheduledFor: true,
-        channel: true,
-        formatKey: true,
-        title: true,
-        platform: true,
-        versions: {
-          orderBy: { version: "desc" },
-          take: 1,
-          select: { assetId: true },
-        },
-      },
-    });
+    const workId = options?.workId;
+    const workPlanIds = workId
+      ? await loadWorkPlanIds(projectId, workId)
+      : undefined;
+    const creatives =
+      workPlanIds && workPlanIds.length === 0
+        ? []
+        : await prisma.creative.findMany({
+            where: {
+              projectId,
+              planId: workPlanIds ? { in: workPlanIds } : { not: null },
+              status: { not: "ARCHIVED" },
+            },
+            orderBy: [{ scheduledFor: { sort: "asc", nulls: "last" } }],
+            take: MAX_SLOTS,
+            select: {
+              id: true,
+              planId: true,
+              status: true,
+              currentVersionId: true,
+              scheduledFor: true,
+              channel: true,
+              formatKey: true,
+              title: true,
+              platform: true,
+              versions: {
+                orderBy: { version: "desc" },
+                take: 1,
+                select: { assetId: true },
+              },
+            },
+          });
 
     const planIds = [
       ...new Set(
@@ -98,6 +132,7 @@ export async function loadJourneySnapshot(
       connections,
       publishScheduleEnabled: schedules > 0,
       results,
+      ...(workId ? { workScoped: true } : {}),
     };
   } catch (error) {
     console.error("[journey] snapshot failed:", error);
@@ -107,7 +142,10 @@ export async function loadJourneySnapshot(
 
 // The next steps for a project, or [] when there is nothing to advance (or the
 // snapshot could not be read).
-export async function loadNextSteps(projectId: string) {
-  const snapshot = await loadJourneySnapshot(projectId);
+export async function loadNextSteps(
+  projectId: string,
+  options?: JourneyOptions,
+) {
+  const snapshot = await loadJourneySnapshot(projectId, options);
   return snapshot ? computeNextSteps(snapshot) : [];
 }

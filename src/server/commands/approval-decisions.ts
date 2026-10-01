@@ -22,6 +22,9 @@ import { taskFingerprint } from "@/server/agency/fingerprint";
 import { MemoryService } from "@/server/memory/memory-service";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { metaCampaignBriefDef } from "@/server/reasoning/prompts/meta-campaign-brief";
+import { canPublishNow, type PublishBlock } from "@/lib/works/publish-guard";
+import { isWorksEnabled } from "@/server/works/flag";
+import { ownedPlanIds, workOwnershipOf } from "@/server/works/work-owned";
 
 // Pseudo-actor for the first genuinely unattended flow in this codebase —
 // every prior SYSTEM-created row (e.g. meta-adset-chain-relay.ts) simply
@@ -121,6 +124,13 @@ export type AutoPublishResult = {
   // redundant "published!" chat message when the creative's own card
   // already shows it.
   cardUpdated?: boolean;
+  // Works only: the piece is approved but deliberately NOT released (no usable
+  // publish time). It stays APPROVED until the client sets a time or posts it.
+  held?: true;
+  // Works only: why a Work-owned piece is SKIPPED when the cause is a hand-off
+  // (a format or channel posted by hand). The caller must not offer the legacy
+  // "share it on social media?" prompt for these.
+  reason?: "MANUAL_FORMAT" | "WRONG_PLATFORM";
 };
 
 // "Approved — planned for Thu 8 Oct, 10:00" in the project's own timezone, and
@@ -157,6 +167,113 @@ async function isInstagramPublishScheduled(
   return count > 0;
 }
 
+// A failed publish keeps its piece out of the Works queue for this long, so one
+// bad piece cannot be retried at every slot.
+const FAILED_PUBLISH_COOLDOWN_MS = 24 * 3600 * 1000;
+
+const HELD_MESSAGE = "Held: no usable publish time is set";
+
+const SKIP_MESSAGE: Record<
+  Exclude<PublishBlock, "NO_TIME" | "PAST_TIME">,
+  string
+> = {
+  NOT_APPROVED: "Not approved yet",
+  NOT_CONNECTED: "No connected Meta page/Instagram account",
+  NO_ASSET: "This creative has no image to publish",
+  MANUAL_FORMAT: "This format is posted by hand",
+  WRONG_PLATFORM: "Not an Instagram creative",
+};
+
+// Works only: the auto-publish decision for a Work-owned creative. It never
+// posts on approval: a piece without a usable time is held (with or without a
+// Publishing schedule, so turning scheduled posting on never releases an old
+// piece) and the rest waits for its time or for the queue.
+async function autoPublishWorkOwned(input: {
+  creativeId: string;
+  projectId: string;
+}): Promise<AutoPublishResult> {
+  const [creative, targets] = await Promise.all([
+    prisma.creative.findUnique({
+      where: { id: input.creativeId },
+      select: {
+        status: true,
+        platform: true,
+        formatKey: true,
+        scheduledFor: true,
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          select: { assetId: true },
+        },
+      },
+    }),
+    getPublishTargets(input.projectId),
+  ]);
+  if (!creative) return { status: "SKIPPED", message: "Creative not found" };
+
+  const decision = canPublishNow(
+    {
+      status: creative.status,
+      platform: creative.platform,
+      formatKey: creative.formatKey,
+      hasAsset: Boolean(creative.versions[0]?.assetId),
+      scheduledFor: creative.scheduledFor,
+      connectedPlatforms: new Set(targets.map((t) => t.platform)),
+    },
+    "auto",
+  );
+  if (!decision.ok) {
+    if (decision.reason === "NO_TIME" || decision.reason === "PAST_TIME") {
+      return { status: "QUEUED", held: true, message: HELD_MESSAGE };
+    }
+    if (
+      decision.reason === "MANUAL_FORMAT" ||
+      decision.reason === "WRONG_PLATFORM"
+    ) {
+      return {
+        status: "SKIPPED",
+        message: SKIP_MESSAGE[decision.reason],
+        reason: decision.reason,
+      };
+    }
+    return { status: "SKIPPED", message: SKIP_MESSAGE[decision.reason] };
+  }
+
+  const released = await isInstagramPublishScheduled(input.projectId);
+  if (decision.timing === "future" && creative.scheduledFor) {
+    return {
+      status: "QUEUED",
+      message: released
+        ? "Waiting for its planned time"
+        : "Waiting for its planned time — scheduled posting is off",
+      plannedFor: creative.scheduledFor,
+      released,
+    };
+  }
+  // Due (planned within the last 24 h): the queue releases it when a schedule
+  // exists, otherwise it is held for an explicit Post now.
+  if (released) {
+    // The queue judges a piece by its planned time at tick time and refuses it
+    // once that time is more than the grace old. Daily slots are derived from
+    // the plan's own clock times, so for a piece approved after its time the
+    // next slot lands just past that limit: it would be promised a slot and
+    // then skipped for good. The decision to release is taken now, so the time
+    // moves to now and the grace clock starts at approval. Compare-and-set on
+    // the time we judged: a concurrent "Change time" is never overwritten.
+    if (creative.scheduledFor) {
+      await prisma.creative.updateMany({
+        where: { id: input.creativeId, scheduledFor: creative.scheduledFor },
+        data: { scheduledFor: new Date() },
+      });
+    }
+    return {
+      status: "QUEUED",
+      message: "Waiting for the next scheduled Instagram slot",
+    };
+  }
+  return { status: "QUEUED", held: true, message: HELD_MESSAGE };
+}
+
 // Auto-publish: a Creative reaching APPROVED already passed its own human
 // content review — requiring a SEPARATE approval just to actually post it
 // re-asks a question already answered, and in practice nobody was
@@ -182,7 +299,21 @@ export async function autoPublishCreative(input: {
     // Only Instagram is autonomously reachable today — TikTok/LinkedIn/X
     // publishing (publishCreativeToSocialCore) stays human-triggered.
     if (creative?.platform !== "INSTAGRAM") {
+      // Works only: another channel's Work piece is a hand-off, so the caller
+      // must not offer the Instagram share prompt for it.
+      if (isWorksEnabled() && (await workOwnershipOf(input.creativeId)).owned) {
+        return {
+          status: "SKIPPED",
+          message: "Not an Instagram creative",
+          reason: "WRONG_PLATFORM",
+        };
+      }
       return { status: "SKIPPED", message: "Not an Instagram creative" };
+    }
+    // Work-owned pieces follow the hold rule (Works only; flag off never
+    // reaches this).
+    if (isWorksEnabled() && (await workOwnershipOf(input.creativeId)).owned) {
+      return await autoPublishWorkOwned(input);
     }
     const targets = await getPublishTargets(input.projectId);
     if (targets.length === 0) {
@@ -256,7 +387,8 @@ export async function autoPublishCreative(input: {
 // wall-clock time (src/lib/timezone.ts, used by the takvim UI/action).
 async function findNextQueuedInstagramCreativeId(
   projectId: string,
-): Promise<string | null> {
+): Promise<QueuedCreative | null> {
+  if (isWorksEnabled()) return findNextQueuedForWorks(projectId);
   const now = new Date();
   const [inFlightTasks, candidates] = await Promise.all([
     prisma.task.findMany({
@@ -288,10 +420,114 @@ async function findNextQueuedInstagramCreativeId(
       )
       .filter((id): id is string => typeof id === "string"),
   );
-  return (
-    candidates.find((creative) => !inFlightCreativeIds.has(creative.id))?.id ??
-    null
+  const next = candidates.find(
+    (creative) => !inFlightCreativeIds.has(creative.id),
   );
+  return next ? { id: next.id, format: "FEED" } : null;
+}
+
+type QueuedCreative = { id: string; format: "FEED" | "STORIES" };
+
+function creativeIdOfTask(payload: unknown): string | null {
+  const id = (payload as { creativeId?: unknown } | null)?.creativeId;
+  return typeof id === "string" ? id : null;
+}
+
+// Works only: the same queue, but a Work-owned candidate that cannot publish
+// (manual format, no asset, no time, older than 24 h) or that failed to post in
+// the last 24 h is skipped instead of blocking the head of the line. Candidates
+// that are not Work-owned keep the legacy rule (null formatKey = FEED, null
+// time released oldest-first), except that one which failed in the last 24 h or
+// has no image is skipped too, so it cannot starve the pieces behind it.
+async function findNextQueuedForWorks(
+  projectId: string,
+): Promise<QueuedCreative | null> {
+  const now = new Date();
+  const failedSince = new Date(now.getTime() - FAILED_PUBLISH_COOLDOWN_MS);
+  const [tasks, candidates] = await Promise.all([
+    prisma.task.findMany({
+      where: {
+        projectId,
+        capability: "INSTAGRAM_PUBLISH",
+        OR: [
+          { status: { notIn: ["COMPLETED", "FAILED", "CANCELLED"] } },
+          { status: "FAILED", updatedAt: { gte: failedSince } },
+        ],
+      },
+      select: { payload: true, status: true },
+    }),
+    prisma.creative.findMany({
+      where: {
+        projectId,
+        platform: "INSTAGRAM",
+        status: "APPROVED",
+        OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }],
+      },
+      orderBy: [
+        { scheduledFor: { sort: "asc", nulls: "last" } },
+        { updatedAt: "asc" },
+      ],
+      select: {
+        id: true,
+        planId: true,
+        formatKey: true,
+        scheduledFor: true,
+        status: true,
+        platform: true,
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          select: { assetId: true },
+        },
+      },
+    }),
+  ]);
+  const inFlight = new Set<string>();
+  const recentlyFailed = new Set<string>();
+  for (const task of tasks) {
+    const id = creativeIdOfTask(task.payload);
+    if (!id) continue;
+    (task.status === "FAILED" ? recentlyFailed : inFlight).add(id);
+  }
+
+  const planIds = candidates
+    .map((c) => c.planId)
+    .filter((id): id is string => id !== null);
+  const owned = await ownedPlanIds(planIds);
+  const hasOwned = candidates.some((c) => c.planId && owned.has(c.planId));
+  const connected = hasOwned
+    ? new Set((await getPublishTargets(projectId)).map((t) => t.platform))
+    : new Set<string>();
+
+  for (const creative of candidates) {
+    if (inFlight.has(creative.id)) continue;
+    if (!creative.planId || !owned.has(creative.planId)) {
+      // A legacy candidate that already failed in the last 24 h, or that has
+      // no image to post, must not sit at the head of the line and starve the
+      // Work-owned pieces behind it (a failed core call just ends the tick).
+      if (recentlyFailed.has(creative.id)) continue;
+      if (!creative.versions[0]?.assetId) continue;
+      return {
+        id: creative.id,
+        format: creative.formatKey === "instagram.story" ? "STORIES" : "FEED",
+      };
+    }
+    if (recentlyFailed.has(creative.id)) continue;
+    const decision = canPublishNow(
+      {
+        status: creative.status,
+        platform: creative.platform,
+        formatKey: creative.formatKey,
+        hasAsset: Boolean(creative.versions[0]?.assetId),
+        scheduledFor: creative.scheduledFor,
+        connectedPlatforms: connected,
+      },
+      "auto",
+      now,
+    );
+    if (decision.ok) return { id: creative.id, format: decision.format };
+  }
+  return null;
 }
 
 // Called by SchedulerService.runDueSchedules when a Publishing-tab schedule
@@ -306,12 +542,13 @@ export async function publishNextQueuedInstagramCreative(input: {
   brandId: string;
 }): Promise<void> {
   try {
-    const creativeId = await findNextQueuedInstagramCreativeId(input.projectId);
-    if (!creativeId) return;
+    const next = await findNextQueuedInstagramCreativeId(input.projectId);
+    if (!next) return;
+    const creativeId = next.id;
 
     const result = await publishCreativeCore({
       creativeId,
-      format: "FEED",
+      format: next.format,
       workspaceId: input.workspaceId,
       projectId: input.projectId,
       actorUserId: AUTO_PUBLISH_ACTOR_ID,
@@ -648,14 +885,30 @@ export async function applyApprovalDecision(input: {
               workspaceId: approval.workspaceId,
               projectId: approval.projectId,
               ideaId: target.ideaId,
-              text: planned
-                ? await plannedApprovalText(
-                    approval.projectId,
-                    target.title,
-                    planned,
-                    autoPublishResult.released === true,
-                  )
-                : `✅ ${target.title} approved — queued for the next scheduled Instagram slot.`,
+              text: autoPublishResult.held
+                ? `✅ ${target.title} approved — on hold until you set a time or post it now.`
+                : planned
+                  ? await plannedApprovalText(
+                      approval.projectId,
+                      target.title,
+                      planned,
+                      autoPublishResult.released === true,
+                    )
+                  : `✅ ${target.title} approved — queued for the next scheduled Instagram slot.`,
+            });
+          } else if (
+            autoPublishResult?.status === "SKIPPED" &&
+            autoPublishResult.reason
+          ) {
+            // Works: a hand-posted format or another channel's piece. Nothing
+            // here can post it, so no share prompt (web or Telegram) is
+            // offered: its Post / Story buttons would send the cover image to
+            // Instagram as a single feed photo.
+            await IdeaChatRepository.postSystemMessage({
+              workspaceId: approval.workspaceId,
+              projectId: approval.projectId,
+              ideaId: target.ideaId,
+              text: `✅ ${target.title} approved — you post this one yourself.`,
             });
           } else {
             // Auto-publish didn't apply or failed (not an Instagram

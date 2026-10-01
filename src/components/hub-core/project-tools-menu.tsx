@@ -2,13 +2,10 @@ import Link from "next/link";
 import {
   CalendarDays,
   Compass,
-  Lightbulb,
   Megaphone,
   Plug,
-  Radio,
   Settings2,
   SlidersHorizontal,
-  Target,
   UserRoundCog,
   Users2,
   type LucideIcon,
@@ -35,9 +32,6 @@ const PANEL_ICON: Record<(typeof ADVANCED_PANEL_KEYS)[number], LucideIcon> = {
   departments: Users2,
   "human-action": UserRoundCog,
   settings: Settings2,
-  signals: Radio,
-  "insights-opportunities": Lightbulb,
-  goals: Target,
 };
 
 const GROUPS: Array<{
@@ -53,24 +47,19 @@ const GROUPS: Array<{
       { panel: "settings", icon: PANEL_ICON.settings },
     ],
   },
-  {
-    title: "Insight Chain",
-    items: [
-      { panel: "signals", icon: PANEL_ICON.signals },
-      {
-        panel: "insights-opportunities",
-        icon: PANEL_ICON["insights-opportunities"],
-      },
-      { panel: "goals", icon: PANEL_ICON.goals },
-    ],
-  },
 ];
 
-// Everything here already has a dedicated sidebar entry (Brand Brain, Ideas,
-// Work, Library) — this menu exists only for ADVANCED_PANEL_KEYS, the panels
-// with no primary entry of their own. Keep the two lists in sync: adding a
-// panel here without also listing it in ADVANCED_PANEL_KEYS
-// (hub-core-params.ts) is a mistake.
+// The panels the menu lists (tested against ADVANCED_PANEL_KEYS, so the two
+// can't drift apart).
+export const MENU_PANELS: PanelKey[] = GROUPS.flatMap((group) =>
+  group.items.map((item) => item.panel),
+);
+
+// This menu is the home of ADVANCED_PANEL_KEYS, the panels with no primary
+// sidebar entry of their own (Setup, Departments, Human Action), and it also
+// lists Settings, which the sidebar shows as a single line at the bottom. The
+// attention dot on its trigger covers all four. Keep this list and
+// ADVANCED_PANEL_KEYS (hub-core-params.ts) in sync.
 export function ProjectToolsMenu({
   projectId,
   badges,

@@ -1,6 +1,12 @@
 import "server-only";
 
+import type { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
+import { channelOfFormatKey, resolveFormat } from "@/lib/content-channels";
+import { WORKS_COPY } from "@/lib/works/copy";
+import { canPublishNow } from "@/lib/works/publish-guard";
+import { isWorksEnabled } from "@/server/works/flag";
 import { CommandService } from "@/server/commands/command-service";
 import { CommandRepository } from "@/server/repositories/command.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
@@ -28,27 +34,86 @@ export type PublishQuickActionResult =
 // passes workspaceId/projectId/actorUserId already validated. The same
 // logic as applyApprovalDecision's "telegram:<id>" pseudo-user pattern for
 // reviewedByUserId applies here for actorUserId too.
-export async function publishCreativeCore(input: {
+type InstagramPublishInput = {
   creativeId: string;
   format: "FEED" | "STORIES";
   workspaceId: string;
   projectId: string;
   actorUserId: string;
-}): Promise<PublishQuickActionResult> {
-  const { creativeId, format, workspaceId, projectId, actorUserId } = input;
+};
+
+export async function publishCreativeCore(
+  input: InstagramPublishInput,
+): Promise<PublishQuickActionResult> {
+  if (!isWorksEnabled()) return publishInstagramCreative(input, null);
+  // Works only: two tabs, two devices or a stale card serialize on the
+  // creative, so a double Post now (or a queue tick racing one) cannot create
+  // two publish Tasks. The lock is held until the transaction ends; the
+  // in-flight check inside it sees the Task the first caller committed.
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.creativeId}))`;
+      return publishInstagramCreative(input, tx);
+    },
+    { timeout: 20_000, maxWait: 5_000 },
+  );
+}
+
+const EXPLICIT_REFUSAL = {
+  MANUAL_FORMAT:
+    "This format is posted by hand, so it can't be sent to Instagram from here.",
+  WRONG_PLATFORM: "This isn't an Instagram piece, so it can't be posted there.",
+} as const;
+
+// The format of a catalog Instagram piece comes from its formatKey, never from
+// the (client supplied) argument: a feed piece must not go out as a story.
+function formatFromCatalog(
+  formatKey: string | null,
+): "FEED" | "STORIES" | null {
+  if (!formatKey) return null;
+  const channel = channelOfFormatKey(formatKey);
+  if (channel !== "instagram" || !resolveFormat(channel, formatKey)) {
+    return null;
+  }
+  return formatKey === "instagram.story" ? "STORIES" : "FEED";
+}
+
+// `tx` is set only when Works is on (the caller holds the creative's advisory
+// lock); flag off it is null and the body is the original one.
+async function publishInstagramCreative(
+  input: InstagramPublishInput,
+  tx: Prisma.TransactionClient | null,
+): Promise<PublishQuickActionResult> {
+  const { creativeId, workspaceId, projectId, actorUserId } = input;
 
   const creative = await prisma.creative.findUnique({
     where: { id: creativeId },
     include: { versions: { orderBy: { version: "desc" }, take: 1 } },
   });
   if (!creative) return { ok: false, message: "Creative not found." };
+  // Works only: these three refusals close holes for every creative (another
+  // project's piece, a piece nobody approved).
+  if (tx && creative.projectId !== projectId) {
+    return { ok: false, message: "Creative not found." };
+  }
 
   const targets = await getPublishTargets(projectId);
-  if (targets.length === 0) {
+  // Flag on: an Instagram target specifically (a LinkedIn-only project asked
+  // to post to Instagram used to pass this check).
+  const hasInstagramTarget = tx
+    ? targets.some((t) => t.platform === "instagram")
+    : targets.length > 0;
+  if (!hasInstagramTarget) {
     return {
       ok: false,
       message: "There's no connected Meta page with an Instagram account.",
     };
+  }
+  if (tx && creative.status === "PUBLISHED") {
+    return { ok: false, message: WORKS_COPY["publish.alreadyPosting"] };
+  }
+  if (tx && creative.status !== "APPROVED") {
+    return { ok: false, message: WORKS_COPY["publish.notReady"] };
   }
 
   const version = creative.versions[0];
@@ -57,6 +122,54 @@ export async function publishCreativeCore(input: {
       ok: false,
       message: "This creative has no image to publish.",
     };
+  }
+
+  if (tx) {
+    // The explicit path (Post now, the Telegram Post / Story buttons) shares
+    // the guard's format and platform rules: a hand-posted format (carousel,
+    // reel) or another channel's piece is never sent to Instagram as a single
+    // feed photo. A creative with no platform is a legacy piece and passes.
+    const decision = canPublishNow(
+      {
+        status: creative.status,
+        platform: creative.platform ?? "INSTAGRAM",
+        formatKey: creative.formatKey,
+        hasAsset: true,
+        scheduledFor: creative.scheduledFor,
+        connectedPlatforms: new Set(["instagram"]),
+      },
+      "explicit",
+    );
+    if (!decision.ok && decision.reason === "MANUAL_FORMAT") {
+      return { ok: false, message: EXPLICIT_REFUSAL.MANUAL_FORMAT };
+    }
+    if (!decision.ok && decision.reason === "WRONG_PLATFORM") {
+      return { ok: false, message: EXPLICIT_REFUSAL.WRONG_PLATFORM };
+    }
+  }
+
+  const format = tx
+    ? (formatFromCatalog(creative.formatKey) ?? input.format)
+    : input.format;
+
+  if (tx) {
+    // A FAILED or CANCELLED Task does not block a deliberate retry.
+    const publishTasks = await tx.task.findMany({
+      where: {
+        projectId,
+        capability: "INSTAGRAM_PUBLISH",
+        status: { notIn: ["FAILED", "CANCELLED"] },
+      },
+      select: { payload: true },
+    });
+    const taskInFlight = publishTasks.some(
+      (task) =>
+        (task.payload as { creativeId?: unknown } | null)?.creativeId ===
+        creativeId,
+    );
+    if (taskInFlight) {
+      return { ok: false, message: WORKS_COPY["publish.alreadyPosting"] };
+    }
   }
 
   const ideaId = creative.createdByTaskId

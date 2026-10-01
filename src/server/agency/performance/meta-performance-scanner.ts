@@ -17,6 +17,8 @@ import {
   listMetaCampaigns,
   type MetaAdsMetadata,
 } from "@/server/integrations/meta-client";
+import { isWorksEnabled } from "@/server/works/flag";
+import { buildAdsDigest } from "@/lib/works/ads-insight";
 
 const SCAN_INTERVAL_MS = 7 * 3600_000; // 6-8h band, see jitterMinutes below
 const JITTER_MINUTES = 30;
@@ -140,15 +142,44 @@ async function scanOneCredential(
   const previousSnapshot = metadata.previousScanSnapshot ?? {};
   const nextSnapshot: Record<string, ScanSnapshot> = {};
 
-  const [campaigns, campaignInsights] = await Promise.all([
-    listMetaCampaigns({ adAccountId, accessToken }),
-    fetchMetaLevelInsights({
+  const worksOn = isWorksEnabled();
+  // Works only: with the lead preference on, a stored baseline that does not
+  // name the same result (an older click-based scan, or a scan from before the
+  // flag) is no baseline at all: no spurious regression, no "vs last check".
+  const baselineFor = (
+    previous: ScanSnapshot | undefined,
+    currentLabel: string | undefined,
+  ): ScanSnapshot | undefined => {
+    if (!worksOn || !previous) return previous;
+    return previous.resultLabel === currentLabel ? previous : undefined;
+  };
+  let campaigns: Awaited<ReturnType<typeof listMetaCampaigns>>;
+  let campaignInsights: Awaited<ReturnType<typeof fetchMetaLevelInsights>>;
+  if (worksOn) {
+    // Works only: objectives are needed first so leads campaigns report leads.
+    campaigns = await listMetaCampaigns({ adAccountId, accessToken });
+    campaignInsights = await fetchMetaLevelInsights({
       adAccountId,
       accessToken,
       level: "campaign",
       datePreset: "last_7d",
-    }),
-  ]);
+      preferLeadFor: new Set(
+        campaigns
+          .filter((c) => c.objective === "OUTCOME_LEADS")
+          .map((c) => c.campaignId),
+      ),
+    });
+  } else {
+    [campaigns, campaignInsights] = await Promise.all([
+      listMetaCampaigns({ adAccountId, accessToken }),
+      fetchMetaLevelInsights({
+        adAccountId,
+        accessToken,
+        level: "campaign",
+        datePreset: "last_7d",
+      }),
+    ]);
+  }
 
   const active = campaigns
     .filter((c) => c.effectiveStatus === "ACTIVE")
@@ -165,6 +196,9 @@ async function scanOneCredential(
       spend: insights.spend,
       costPerResult: insights.costPerResult,
       ctr: insights.ctr,
+      ...(worksOn && insights.resultLabel
+        ? { resultLabel: insights.resultLabel }
+        : {}),
     };
 
     const finding = evaluateCampaignFinding({
@@ -208,7 +242,10 @@ async function scanOneCredential(
     const trendFinding = evaluateTrendFinding({
       entityName: campaign.name,
       current: nextSnapshot[snapshotKey],
-      previous: previousSnapshot[snapshotKey],
+      previous: baselineFor(
+        previousSnapshot[snapshotKey],
+        nextSnapshot[snapshotKey]?.resultLabel,
+      ),
     });
     if (trendFinding) {
       await SignalUniverse.ingestRaw({
@@ -296,4 +333,34 @@ async function scanOneCredential(
       } as never,
     },
   });
+  if (worksOn) {
+    // Works only: a separate single-key write, so the digest can never revert
+    // another metadata key (e.g. a selectedAdAccountId changed meanwhile). A
+    // digest failure never fails the scan.
+    try {
+      const digest = {
+        ...buildAdsDigest({
+          insights: campaignInsights,
+          // A baseline that never named its result (a scan from before the
+          // lead preference) is dropped, like a baseline with another name.
+          previousSnapshot: Object.fromEntries(
+            Object.entries(previousSnapshot).filter(
+              ([, row]) => row.resultLabel !== undefined,
+            ),
+          ),
+          campaigns,
+          currency,
+          now: new Date(),
+        }),
+        // Binds the numbers to the account they were read from.
+        adAccountId,
+      };
+      await prisma.$executeRaw`UPDATE "IntegrationCredential" SET metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), '{adsDigest}', ${JSON.stringify(digest)}::jsonb) WHERE id = ${credential.id} AND status = 'ACTIVE'`;
+    } catch (error) {
+      console.error(
+        `[meta-performance-scanner] digest write failed for credential ${credential.id}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
 }

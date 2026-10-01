@@ -197,9 +197,11 @@ function hueLightness({ r, g, b }: Rgb): { hue: number; lightness: number } {
   if (max === min) return { hue: 0, lightness };
   const d = max - min;
   const hue =
-    max === rn ? ((gn - bn) / d + (gn < bn ? 6 : 0)) * 60
-    : max === gn ? ((bn - rn) / d + 2) * 60
-    : ((rn - gn) / d + 4) * 60;
+    max === rn
+      ? ((gn - bn) / d + (gn < bn ? 6 : 0)) * 60
+      : max === gn
+        ? ((bn - rn) / d + 2) * 60
+        : ((rn - gn) / d + 4) * 60;
   return { hue, lightness };
 }
 
@@ -211,7 +213,10 @@ function sameFamily(a: Rgb, b: Rgb, mergeDistance: number): boolean {
   if (isNeutral(a) || isNeutral(b)) return false;
   const ha = hueLightness(a);
   const hb = hueLightness(b);
-  const hueGap = Math.min(Math.abs(ha.hue - hb.hue), 360 - Math.abs(ha.hue - hb.hue));
+  const hueGap = Math.min(
+    Math.abs(ha.hue - hb.hue),
+    360 - Math.abs(ha.hue - hb.hue),
+  );
   // A hover / pressed variant is only slightly darker (~0.1 lightness); a
   // lighter or deeper shade of the same hue that differs by more is usually
   // a DIFFERENT role (an accent next to the logo colour), so it stays apart.
@@ -600,4 +605,151 @@ export function extractHtmlFacts(rawHtml: string, baseUrl: string): HtmlFacts {
   facts.icons.sort((a, b) => b.size - a.size);
 
   return facts;
+}
+
+// --- social profile links ------------------------------------------------------
+
+export type SocialPlatform =
+  "instagram" | "facebook" | "linkedin" | "tiktok" | "youtube" | "x";
+export type SocialLink = { platform: SocialPlatform; url: string };
+
+const MAX_SOCIAL_LINKS = 6;
+const MAX_ANCHORS = 4000;
+
+const RESERVED_SEGMENTS = new Set([
+  "share",
+  "sharer",
+  "sharer.php",
+  "intent",
+  "login",
+  "login.php",
+  "plugins",
+  "dialog",
+  "explore",
+  "home",
+  "search",
+  "hashtag",
+  "settings",
+  "privacy",
+  "policies",
+  "help",
+  "about",
+  "p",
+  "reel",
+  "reels",
+  "stories",
+  "accounts",
+  "direct",
+  "tv",
+  "i",
+  "tos",
+  "watch",
+  "events",
+  "groups",
+  "marketplace",
+  "tr",
+  "developer",
+]);
+
+// One rule per platform: the hosts that count, and what a PROFILE path looks
+// like. Anything else on these hosts (a post, a share dialog, a login page, a
+// tracking pixel) is not a profile and is dropped.
+const SOCIAL_RULES: {
+  platform: SocialPlatform;
+  hosts: readonly string[];
+  path: (segments: string[]) => boolean;
+}[] = [
+  {
+    platform: "instagram",
+    hosts: ["instagram.com", "www.instagram.com"],
+    path: (s) =>
+      s.length === 1 &&
+      /^[A-Za-z0-9._]{1,30}$/.test(s[0]!) &&
+      !RESERVED_SEGMENTS.has(s[0]!.toLowerCase()),
+  },
+  {
+    platform: "facebook",
+    hosts: ["facebook.com", "www.facebook.com"],
+    path: (s) =>
+      (s.length === 1 &&
+        /^[A-Za-z0-9.-]{3,80}$/.test(s[0]!) &&
+        !RESERVED_SEGMENTS.has(s[0]!.toLowerCase())) ||
+      (s.length === 3 && s[0] === "pages" && /^\d+$/.test(s[2]!)),
+  },
+  {
+    platform: "linkedin",
+    hosts: ["linkedin.com", "www.linkedin.com"],
+    path: (s) =>
+      s.length === 2 &&
+      ["company", "in", "school"].includes(s[0]!.toLowerCase()) &&
+      /^[^\s/]{1,100}$/.test(s[1]!),
+  },
+  {
+    platform: "tiktok",
+    hosts: ["tiktok.com", "www.tiktok.com"],
+    path: (s) => s.length === 1 && /^@[A-Za-z0-9._]{2,24}$/.test(s[0]!),
+  },
+  {
+    platform: "youtube",
+    hosts: ["youtube.com", "www.youtube.com"],
+    path: (s) =>
+      (s.length === 1 && /^@[\w.-]{2,60}$/.test(s[0]!)) ||
+      (s.length === 2 &&
+        ["channel", "c", "user"].includes(s[0]!) &&
+        /^[\w.-]{1,100}$/.test(s[1]!)),
+  },
+  {
+    platform: "x",
+    hosts: ["x.com", "www.x.com", "twitter.com", "www.twitter.com"],
+    path: (s) =>
+      s.length === 1 &&
+      /^[A-Za-z0-9_]{1,15}$/.test(s[0]!) &&
+      !RESERVED_SEGMENTS.has(s[0]!.toLowerCase()),
+  },
+];
+
+// Profile links of the brand's own social accounts, from <a href> only (never
+// from scripts, JSON-LD or meta: those are harder to trust and to bound). Only
+// https survives after resolving against the page, the query string and hash
+// are dropped, one link per platform (the first in document order), at most 6.
+// Pure: no network.
+export function extractSocialLinks(
+  html: string,
+  baseUrl: string,
+): SocialLink[] {
+  const found = new Map<SocialPlatform, string>();
+  let inspected = 0;
+  for (const match of html.slice(0, MAX_HTML_CHARS).matchAll(/<a\b[^>]*>/gi)) {
+    inspected += 1;
+    if (inspected > MAX_ANCHORS) break;
+    const href = parseAttrs(match[0]).href?.trim();
+    if (!href) continue;
+    let url: URL;
+    try {
+      url = new URL(href, baseUrl);
+    } catch {
+      continue;
+    }
+    if (url.protocol !== "https:" || url.username || url.password) continue;
+    if (url.port && url.port !== "443") continue;
+    const host = url.hostname.toLowerCase();
+    const rule = SOCIAL_RULES.find((r) => r.hosts.includes(host));
+    if (!rule || found.has(rule.platform)) continue;
+    let segments: string[];
+    try {
+      segments = url.pathname
+        .split("/")
+        .filter(Boolean)
+        .map((part) => decodeURIComponent(part));
+    } catch {
+      continue;
+    }
+    if (!rule.path(segments)) continue;
+    found.set(
+      rule.platform,
+      `https://${host}${url.pathname.replace(/\/+$/, "")}`,
+    );
+    if (found.size >= MAX_SOCIAL_LINKS) break;
+  }
+  return [...found].map(([platform, link]) => ({ platform, url: link }));
 }

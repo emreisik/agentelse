@@ -35,7 +35,50 @@ import { withPlanSlots } from "@/server/agency/journey/plan-slots";
 import { loadJourneySnapshot } from "@/server/agency/journey/snapshot";
 import { GUIDE_PARAM, GUIDE_VALUE } from "@/lib/guided-setup/contract";
 import { isGuidedSetupEnabled } from "@/server/guided-setup/flag";
-import { loadGuidedHost } from "@/server/guided-setup/service";
+import { loadDiscoveryHost } from "@/server/guided-discovery/host";
+import { getChannelConnections } from "@/server/integrations/channel-connections";
+import {
+  getProjectTimezone,
+  todayInTimezone,
+} from "@/server/chat/content-plan";
+import { ReasoningService } from "@/server/reasoning/reasoning-service";
+import { WorkRepository } from "@/server/repositories/work.repository";
+import { isWorksEnabled } from "@/server/works/flag";
+import {
+  decisionBelongsToWork,
+  workOwnersByTask,
+  type TaskOwner,
+} from "@/server/works/scope";
+import { loadBriefExtras } from "@/server/works/daily-brief";
+import { loadAdsPulse } from "@/server/works/ads-pulse";
+import {
+  approvalIdOfCard,
+  briefFactsFor,
+  dayStartIso,
+  variantCreativeIds,
+} from "@/server/works/page-wave2";
+import {
+  applyWorkOverlays,
+  loadWorkActivity,
+  loadWorkOverlayInputs,
+} from "@/server/works/page-overlays";
+import { buildWorkHost } from "@/lib/works/host";
+import {
+  channelsWithoutWork,
+  gateWorkChannels,
+  isTodayWork,
+  resolveWorkParam,
+  todayDayKeyOf,
+  workChannelsSummary,
+  type WorkView,
+} from "@/lib/works/work";
+import { buildDailyBrief } from "@/lib/works/daily-brief";
+import { buildAdsInsight } from "@/lib/works/ads-insight";
+import { copyText } from "@/lib/works/copy";
+import { excludeVariantPieces } from "@/lib/works/variants";
+import type { ChannelConnections } from "@/lib/content-channels";
+import { NewWorkOpener } from "@/components/works/new-work-opener";
+import { WorkHeader } from "@/components/works/work-header";
 
 // Card kinds a content-package task leaves in the chat over its life: the
 // in-progress card, then its result or failure. creative-ready is also in the
@@ -174,6 +217,51 @@ export default async function ProjectChatPage({
     );
   }
 
+  // Works (docs/works.md): the conversation on screen is one Work. `?work=`
+  // names it (`today` is the alias of the day's Today Work), a bare URL opens
+  // the newest non-Today one (falling back to the newest row that is not an
+  // earlier day's Today), and a project with none gets its first opened for it. A stale `?work=` goes back to the bare URL.
+  let work: WorkView | null = null;
+  let timezone = "Europe/Istanbul";
+  let todayKey = "";
+  if (isWorksEnabled()) {
+    timezone = await getProjectTimezone(projectId).catch(() => timezone);
+    todayKey = todayInTimezone(timezone);
+    const requested = Array.isArray(sp.work) ? sp.work[0] : sp.work;
+    const param = resolveWorkParam(requested, todayKey);
+    if (param.kind === "today") {
+      work = await WorkRepository.findToday(projectId, todayKey);
+      if (!work) {
+        return (
+          <AppShell projectId={projectId}>
+            <NewWorkOpener projectId={projectId} mode="today" />
+          </AppShell>
+        );
+      }
+    } else if (param.kind === "id") {
+      work = await WorkRepository.get(projectId, param.id);
+      if (!work) redirect(`/projects/${projectId}`);
+    } else {
+      work =
+        (await WorkRepository.latestActive(projectId, {
+          excludeToday: true,
+        })) ??
+        (await WorkRepository.listRecent(projectId, 1, { todayKey }))[0] ??
+        null;
+    }
+    if (!work) {
+      return (
+        <AppShell projectId={projectId}>
+          <NewWorkOpener projectId={projectId} />
+        </AppShell>
+      );
+    }
+  }
+  // Today Work: project-wide by definition, and live only on its own day.
+  const isToday = work ? isTodayWork(work) : false;
+  const workDay = work ? todayDayKeyOf(work.id) : null;
+  const staleDay = isToday && workDay !== todayKey;
+
   const [
     project,
     chatCommands,
@@ -182,7 +270,7 @@ export default async function ProjectChatPage({
     currentUser,
     selectedCalendarItem,
     decisions,
-    guidedSetup,
+    discovery,
     journey,
   ] = await Promise.all([
     prisma.project.findUnique({
@@ -201,6 +289,7 @@ export default async function ProjectChatPage({
         topic: null,
         ideaId: null,
         source: "WEB",
+        ...(work ? { workId: work.id } : {}),
       },
       orderBy: { createdAt: "desc" },
       take: 72,
@@ -241,15 +330,18 @@ export default async function ProjectChatPage({
         })
       : Promise.resolve(null),
     getPendingDecisions(projectId),
-    // Never throws (undefined on any failure: the chat renders without the
-    // feature). Flag off: nothing is read.
+    // Discovery-first setup host (it replaces the old wizard host, which is
+    // no longer mounted). Never throws (undefined on any failure: the chat
+    // renders without the feature). Flag off: nothing is read.
     isGuidedSetupEnabled()
-      ? loadGuidedHost(projectId, guideRequested)
+      ? loadDiscoveryHost(projectId, guideRequested)
       : Promise.resolve(undefined),
     // Where every piece of the saved content plans stands, and what to do
     // next. Never throws (null on any failure: the chat shows its default
     // shortcuts and plain plan cards).
-    loadJourneySnapshot(projectId),
+    work && !isToday
+      ? loadJourneySnapshot(projectId, { workId: work.id })
+      : loadJourneySnapshot(projectId),
   ]);
 
   if (!project) notFound();
@@ -269,6 +361,7 @@ export default async function ProjectChatPage({
       topic: null,
       source: "SYSTEM",
       parsedIntent: { path: ["card", "kind"], equals: "creative-ready" },
+      ...(work ? { workId: work.id } : {}),
     },
     orderBy: { createdAt: "desc" },
     take: 40,
@@ -361,10 +454,76 @@ export default async function ProjectChatPage({
       (command) => [command.id, command] as const,
     ),
   );
+  // In a Work, only the decisions that belong to it (started here) or to no
+  // Work at all; the others wait in the Work that asked for them. An unowned
+  // real-money Meta proposal shows in a Work that chose ads, in Today, or in
+  // every Work when no active Work covers ads.
+  const decisionTaskIdOf = (d: (typeof decisions)[number]): string | undefined =>
+    "taskId" in d.card && typeof d.card.taskId === "string"
+      ? d.card.taskId
+      : undefined;
+  const decisionTaskIds = work
+    ? decisions.flatMap((d) => decisionTaskIdOf(d) ?? [])
+    : [];
+  const [decisionOwners, coverage] = work
+    ? await Promise.all([
+        workOwnersByTask(projectId, decisionTaskIds),
+        WorkRepository.channelCoverage(projectId).catch(() => []),
+      ])
+    : [new Map<string, TaskOwner>(), []];
+  const anyActiveWorkCoversAds = coverage.some(
+    (w) => w.status === "ACTIVE" && w.channels.includes("ads"),
+  );
+  const workDecisions = decisions.filter((d) => {
+    if (!work) return true;
+    const taskId = decisionTaskIdOf(d);
+    return decisionBelongsToWork({
+      workId: work.id,
+      channels: work.channels,
+      isToday,
+      taskId,
+      owner: taskId ? decisionOwners.get(taskId) : undefined,
+      anyActiveWorkCoversAds,
+    });
+  });
+  // Works only: live state of the cards on screen (the decision cards
+  // included: a pending-decision creative card would promise "Approve &
+  // publish" for a piece the hold rule will hold).
+  const overlayInputs = work
+    ? await loadWorkOverlayInputs(projectId, [
+        ...[...rowsById.values()].map((c) => cardFromParsedIntent(c.parsedIntent)),
+        ...workDecisions.map((d) => d.card),
+      ])
+    : null;
   const stageByCreativeId = new Map(
     (journey?.items ?? []).map((item) => [item.id, item] as const),
   );
-  const nextSteps = journey ? computeNextSteps(journey) : [];
+  // Works only: the reads of the Work's own screen. The brief's extras and the
+  // ads pulse are DB-only (no network); Today's brief is skipped on a stale day.
+  const hasAnalytics = rightPanelData.connections.some(
+    (account) =>
+      (account.key === "ga4" ||
+        account.key === "search-console" ||
+        account.key === "meta-ads") &&
+      account.state === "connected",
+  );
+  const [connections, activity, briefExtras, adsPulse] = work
+    ? await Promise.all([
+        getChannelConnections(projectId).catch((): ChannelConnections => ({})),
+        loadWorkActivity(projectId, work.id),
+        isToday && !staleDay
+          ? loadBriefExtras(projectId, timezone, todayKey)
+          : Promise.resolve(null),
+        isToday || work.channels.includes("ads")
+          ? loadAdsPulse(projectId)
+          : Promise.resolve(null),
+      ])
+    : [{} as ChannelConnections, { working: false }, null, null];
+  // A pending-decision creative card is the newest card of its piece.
+  const decisionCardOf = (d: (typeof workDecisions)[number]) =>
+    overlayInputs
+      ? applyWorkOverlays(d.card, overlayInputs, { isNewestCreativeCard: true })
+      : d.card;
   const chatTurns = [...rowsById.values()]
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
     .map((command): ChatTurn => {
@@ -378,6 +537,25 @@ export default async function ProjectChatPage({
         newestCardByCreativeId.get(card.creativeId) !== command.id
       ) {
         card = { ...card, status: "ARCHIVED", approvalId: undefined };
+      }
+      // The channel question is answered once the Work has channels: the card
+      // then reads as a resolved line instead of asking again after a reload.
+      if (
+        work &&
+        card?.kind === "channel-select" &&
+        work.channels.length > 0
+      ) {
+        card = { ...card, selected: work.channels };
+      }
+      // Live overlays go last, so an older card the page archived above (a
+      // revised piece) is never revived by the live row.
+      if (overlayInputs) {
+        card = applyWorkOverlays(card, overlayInputs, {
+          isNewestCreativeCard:
+            card?.kind === "creative-ready"
+              ? newestCardByCreativeId.get(card.creativeId) === command.id
+              : true,
+        });
       }
       return {
         commandId: command.id,
@@ -397,19 +575,74 @@ export default async function ProjectChatPage({
       };
     });
 
+  // Next steps. In a Work, a bulk "Approve n" leaves out the pieces that still
+  // have unchosen picture alternatives (they stay in the Review step one by
+  // one); Today reads the project-wide journey loaded above.
+  const baseNextSteps = journey ? computeNextSteps(journey) : [];
+  const nextSteps = work
+    ? excludeVariantPieces(
+        baseNextSteps,
+        variantCreativeIds([
+          ...chatTurns.map((t) => t.card),
+          ...workDecisions.map(decisionCardOf),
+        ]),
+      )
+    : baseNextSteps;
+
+  // Live turns of a Work: the daily brief (Today, its own day only) and the
+  // Meta Ads card. Built on every render from real rows and never stored.
+  const liveTurns: ChatTurn[] = [];
+  if (work) {
+    const liveAt = dayStartIso(workDay ?? todayKey, timezone);
+    if (briefExtras) {
+      liveTurns.push({
+        commandId: `brief-${work.id}`,
+        source: "SYSTEM",
+        text: "",
+        reply: "Daily brief",
+        replyStatus: null,
+        card: buildDailyBrief(
+          briefFactsFor({
+            projectId,
+            today: todayKey,
+            timezone,
+            now: new Date(),
+            connections,
+            hasAnalytics,
+            extras: briefExtras,
+            journey,
+            nextSteps,
+            goalTitle: rightPanelData.brand?.currentFocus?.title,
+            channelsWithoutWork: channelsWithoutWork(connections, coverage),
+          }),
+        ),
+        attachments: [],
+        createdAt: liveAt,
+      });
+    }
+    if (adsPulse) {
+      liveTurns.push({
+        commandId: `ads-${work.id}`,
+        source: "SYSTEM",
+        text: "",
+        reply: copyText("ads.heading"),
+        replyStatus: null,
+        card: buildAdsInsight(adsPulse, new Date()),
+        attachments: [],
+        createdAt: liveAt,
+      });
+    }
+  }
+
   // Pending approvals are decided inside the conversation. A creative that
-  // already has its card above is decided there; anything else (task
-  // approvals, creatives with no chat card) is appended at the bottom as
-  // the same card, rebuilt from the records. Oldest first; a decided one
-  // drops out on router.refresh().
+  // already has its card above is decided there (so is a proposal the ads
+  // card shows); anything else (task approvals, creatives with no chat card)
+  // is appended at the bottom as the same card, rebuilt from the records.
+  // Oldest first; a decided one drops out on router.refresh().
   const shownApprovalIds = new Set(
-    chatTurns.flatMap((t) =>
-      t.card && "approvalId" in t.card && t.card.approvalId
-        ? [t.card.approvalId]
-        : [],
-    ),
+    [...liveTurns, ...chatTurns].flatMap((t) => approvalIdOfCard(t.card) ?? []),
   );
-  const decisionTurns = decisions
+  const decisionTurns = workDecisions
     .filter((d) => !shownApprovalIds.has(d.approvalId))
     .map(
       (d): ChatTurn => ({
@@ -418,26 +651,72 @@ export default async function ProjectChatPage({
         text: "",
         reply: "Waiting for your decision",
         replyStatus: null,
-        card: d.card,
+        card: decisionCardOf(d),
         attachments: [],
         createdAt: d.createdAt,
       }),
     );
-  const turns = [...chatTurns, ...decisionTurns];
+  const turns = [...liveTurns, ...chatTurns, ...decisionTurns];
+
+  // The Work's header line and its empty screen (channel chooser / cards).
+  let workHost: ReturnType<typeof buildWorkHost> | undefined;
+  let workHeader: React.ReactNode = null;
+  if (work) {
+    workHost = buildWorkHost({
+      projectId,
+      work,
+      connections,
+      timezone,
+      today: journey?.today ?? todayInTimezone(timezone),
+      theme: rightPanelData.brand?.currentFocus?.title,
+      aiOff: ReasoningService.isMockMode(),
+      pendingApprovals: decisionTurns.length,
+      hasAnalytics,
+    });
+    const gate = gateWorkChannels(work.channels, connections);
+    workHeader = (
+      <WorkHeader
+        projectId={projectId}
+        workId={work.id}
+        title={work.title}
+        status={work.status}
+        channelsText={gate.ok ? workChannelsSummary(gate.channels) : ""}
+        channelOptions={workHost.channelOptions}
+        channels={work.channels}
+        working={activity.working}
+        isToday={isToday}
+        staleDay={staleDay}
+      />
+    );
+  }
+
+  const chat = (
+    <ProjectChat
+      projectId={projectId}
+      chatEngine={getEnv().CHAT_ENGINE}
+      projectName={project.name}
+      userFirstName={firstName || null}
+      publishTargets={publishTargets}
+      turns={turns}
+      discovery={discovery}
+      nextSteps={nextSteps}
+      autoNext={typeof sp.next === "string" ? sp.next : undefined}
+      workHost={workHost}
+    />
+  );
 
   return (
     <AppShell
       projectId={projectId}
       rightPanel={
         <WorkspaceRightPanel
-          projectId={projectId}
-          autopilotMode={rightPanelData.autopilotMode}
           brand={
             <BrandSummaryPanel
               projectId={projectId}
               brand={rightPanelData.brand}
               website={rightPanelData.website}
               kit={rightPanelData.brandKit}
+              connections={rightPanelData.connections}
             />
           }
           files={
@@ -468,19 +747,16 @@ export default async function ProjectChatPage({
         />
       }
     >
-      <div key="project-general" className="relative h-full">
-        <ProjectChat
-          projectId={projectId}
-          chatEngine={getEnv().CHAT_ENGINE}
-          projectName={project.name}
-          userFirstName={firstName || null}
-          publishTargets={publishTargets}
-          turns={turns}
-          guidedSetup={guidedSetup}
-          nextSteps={nextSteps}
-          autoNext={typeof sp.next === "string" ? sp.next : undefined}
-        />
-      </div>
+      {work ? (
+        <div key={`work-${work.id}`} className="flex h-full flex-col">
+          {workHeader}
+          <div className="relative min-h-0 flex-1">{chat}</div>
+        </div>
+      ) : (
+        <div key="project-general" className="relative h-full">
+          {chat}
+        </div>
+      )}
     </AppShell>
   );
 }

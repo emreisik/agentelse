@@ -146,6 +146,55 @@ describe("requeueRecoverableDeadLetters", () => {
     expect(OutboxRepository.enqueue).not.toHaveBeenCalled();
   });
 
+  // Guard W99 (variants-selfheal): a creative-variants job has usually billed
+  // its pictures when it failed; a requeue would bill them again (up to 4x for
+  // one tap) and could append the same alternatives twice.
+  it("skips a job whose payload carries variantCount and leaves its dead letter unresolved", async () => {
+    deadLetterJob.findMany.mockResolvedValue([deadLetter()]);
+    executionJob.findUnique.mockResolvedValue({
+      id: "job-1",
+      workspaceId: "ws-1",
+      projectId: "p-1",
+      status: "FAILED",
+      requestPayload: { request: "brief", variantCount: 3, quality: "medium" },
+    });
+
+    const result = await SelfHealingService.requeueRecoverableDeadLetters();
+
+    expect(result).toEqual({ requeued: 0, skipped: 1 });
+    expect(OutboxRepository.enqueue).not.toHaveBeenCalled();
+    expect(executionJob.updateMany).not.toHaveBeenCalled();
+    expect(deadLetterJob.update).not.toHaveBeenCalled();
+  });
+
+  it("still requeues a job whose payload has no variantCount", async () => {
+    deadLetterJob.findMany.mockResolvedValue([deadLetter()]);
+    executionJob.findUnique.mockResolvedValue({
+      id: "job-1",
+      workspaceId: "ws-1",
+      projectId: "p-1",
+      status: "FAILED",
+      requestPayload: { request: "brief", planCreativeId: "c-1" },
+    });
+
+    const result = await SelfHealingService.requeueRecoverableDeadLetters();
+
+    expect(result).toEqual({ requeued: 1, skipped: 0 });
+    expect(OutboxRepository.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("selects the job's requestPayload to look for variantCount", async () => {
+    deadLetterJob.findMany.mockResolvedValue([deadLetter()]);
+
+    await SelfHealingService.requeueRecoverableDeadLetters();
+
+    expect(executionJob.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ requestPayload: true }),
+      }),
+    );
+  });
+
   it("does not requeue a completed job, and closes the record", async () => {
     deadLetterJob.findMany.mockResolvedValue([deadLetter()]);
     executionJob.findUnique.mockResolvedValue({

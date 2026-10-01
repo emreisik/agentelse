@@ -16,7 +16,14 @@ import { chatTurnDef } from "./prompts/chat-turn";
 import { instagramStyleDef } from "./prompts/instagram-style";
 import { strategySynthesisDef } from "./prompts/strategy-synthesis";
 import { metaCampaignBriefDef } from "./prompts/meta-campaign-brief";
-import { quickDiscoveryDef } from "./prompts/quick-discovery";
+import {
+  quickDiscoveryDef,
+  quickDiscoveryGuidedDef,
+} from "./prompts/quick-discovery";
+import { dossierSuggestDef } from "./prompts/dossier-suggest";
+import { discoveryExtendDef } from "./prompts/discovery-extend";
+import { planSlotAlternativesDef } from "./prompts/plan-slot-alternatives";
+import { contentAdaptMasterDef } from "./prompts/content-adapt-master";
 
 // reasoning-service.ts calls z.toJSONSchema(def.schema) on EVERY real
 // (non-mock) call, before the model is ever reached — a schema containing a
@@ -45,6 +52,11 @@ const DEFS: Record<string, { schema: z.ZodType }> = {
   strategySynthesisDef,
   metaCampaignBriefDef,
   quickDiscoveryDef,
+  quickDiscoveryGuidedDef,
+  dossierSuggestDef,
+  discoveryExtendDef,
+  planSlotAlternativesDef,
+  contentAdaptMasterDef,
 };
 
 describe("reasoning def schemas are representable as JSON Schema", () => {

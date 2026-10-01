@@ -13,6 +13,8 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { isValidDomain } from "@/lib/domain";
+import { type IntakeOffer, intakeCopyFor } from "@/lib/intake-offer";
 import type { LocaleDefault } from "@/lib/locale-defaults";
 import {
   SUPPORTED_LANGUAGES,
@@ -27,6 +29,7 @@ import {
 } from "@/server/actions/project-actions";
 import { MarketMultiSelect } from "./market-controls";
 import {
+  DEFAULT_LOCALE_NOTE,
   LOCALE_SOURCE_LABEL,
   initialNewProjectState,
   languageFallbackNote,
@@ -84,8 +87,11 @@ function Chip({
 
 export function NewProjectForm({
   initialLocale,
+  offer,
 }: {
   initialLocale: LocaleDefault;
+  // What the tap can start, decided by the server (see lib/intake-offer.ts).
+  offer: IntakeOffer;
 }) {
   const [state, dispatch] = useReducer(
     newProjectReducer,
@@ -94,9 +100,8 @@ export function NewProjectForm({
   );
   const [pending, startTransition] = useTransition();
   const [failure, setFailure] = useState<CreateProjectFailure | null>(null);
-  const [showBrand, setShowBrand] = useState(false);
   const [showMore, setShowMore] = useState(false);
-  const [changingLanguage, setChangingLanguage] = useState(false);
+  const [changing, setChanging] = useState(false);
 
   const ids = useId();
   const nameRef = useRef<HTMLInputElement | null>(null);
@@ -152,17 +157,28 @@ export function NewProjectForm({
       ? [...QUICK_MARKETS, primary]
       : [...QUICK_MARKETS];
   const fallbackNote = languageFallbackNote(state);
-  const showLanguageRow = state.language !== null || state.errors.language;
-  const languageOpen = changingLanguage || Boolean(state.errors.language);
+  // An error inside the market or language controls forces them open so the
+  // focus target exists.
+  const marketOpen =
+    changing || Boolean(state.errors.country || state.errors.language);
+  const sourceNote = state.localeSource
+    ? LOCALE_SOURCE_LABEL[state.localeSource]
+    : state.defaulted
+      ? DEFAULT_LOCALE_NOTE
+      : null;
 
   const nameErrorId = `${ids}-name-error`;
+  const noteId = `${ids}-intake-note`;
+  // The button and its note come from the function the server's start decision
+  // uses, so the screen promises exactly what the tap does.
+  const intake = intakeCopyFor(offer, isValidDomain(state.domain.trim()));
   const domainErrorId = `${ids}-domain-error`;
   const domainHelpId = `${ids}-domain-help`;
   const marketLabelId = `${ids}-market-label`;
   const marketErrorId = `${ids}-market-error`;
   const marketProvenanceId = `${ids}-market-source`;
   const moreId = `${ids}-more`;
-  const brandId = `${ids}-brand`;
+  const marketPanelId = `${ids}-market-panel`;
 
   return (
     <form
@@ -221,7 +237,7 @@ export function NewProjectForm({
           className="h-11"
         />
         <p id={domainHelpId} className="text-xs text-muted-foreground">
-          We read it to suggest ideas when you ask. We never change your site.
+          We only read it, we never change your site.
         </p>
         {state.errors.domain ? (
           <p
@@ -235,45 +251,33 @@ export function NewProjectForm({
       </div>
 
       <div className="space-y-3">
-        <p id={marketLabelId} className="text-sm font-medium">
-          Where are your customers?
-        </p>
-        <div
-          ref={marketRef}
-          role="group"
-          tabIndex={-1}
-          aria-labelledby={marketLabelId}
-          aria-describedby={
-            state.errors.country
-              ? marketErrorId
-              : state.localeSource
-                ? marketProvenanceId
-                : undefined
-          }
-          className="flex flex-wrap gap-2 rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-        >
-          {chipCodes.map((code) => (
-            <Chip
-              key={code}
-              selected={primary === code}
-              onClick={() => dispatch({ type: "tapMarket", code })}
-            >
-              {countryLabel(code)}
-            </Chip>
-          ))}
-          <Chip
-            selected={showMore}
-            aria-expanded={showMore}
-            aria-controls={moreId}
-            onClick={() => setShowMore((open) => !open)}
-          >
-            More markets…
-          </Chip>
-        </div>
-        {state.localeSource ? (
-          <p id={marketProvenanceId} className="text-xs text-muted-foreground">
-            {LOCALE_SOURCE_LABEL[state.localeSource]}
+        <div className="flex min-h-11 items-center justify-between gap-3">
+          <p id={marketLabelId} className="text-sm">
+            <span className="font-medium">Customers in </span>
+            <span>
+              {primary ? countryLabel(primary) : "—"}
+              {" · "}
+              {state.language ? languageLabel(state.language) : "—"}
+            </span>
           </p>
+          <Button
+            type="button"
+            variant="ghost"
+            aria-expanded={marketOpen}
+            aria-controls={marketPanelId}
+            onClick={() => setChanging((open) => !open)}
+            className="min-h-11 px-3"
+          >
+            Change
+          </Button>
+        </div>
+        {sourceNote ? (
+          <p id={marketProvenanceId} className="text-xs text-muted-foreground">
+            {sourceNote}
+          </p>
+        ) : null}
+        {fallbackNote ? (
+          <p className="text-xs text-muted-foreground">{fallbackNote}</p>
         ) : null}
         {state.errors.country ? (
           <p
@@ -284,47 +288,57 @@ export function NewProjectForm({
             {state.errors.country}
           </p>
         ) : null}
-        {showMore ? (
-          <div id={moreId} className="space-y-2">
-            <MarketMultiSelect
-              value={state.countries}
-              onChange={(codes) =>
-                dispatch({
-                  type: "setMarkets",
-                  codes: codes.filter(isSupportedCountry),
-                })
-              }
-            />
-            <p className="text-xs text-muted-foreground">
-              The first market is the main one.
-            </p>
-          </div>
+        {state.errors.language ? (
+          <p role="alert" className="text-sm text-destructive">
+            {state.errors.language}
+          </p>
         ) : null}
-      </div>
-
-      {showLanguageRow ? (
-        <div className="space-y-2">
-          <div className="flex min-h-11 items-center justify-between gap-3">
-            <p className="text-sm">
-              <span className="font-medium">Content language: </span>
-              <span>
-                {state.language ? languageLabel(state.language) : "—"}
-              </span>
-            </p>
-            <Button
-              type="button"
-              variant="ghost"
-              aria-expanded={languageOpen}
-              onClick={() => setChangingLanguage((open) => !open)}
-              className="min-h-11 px-3"
+        {marketOpen ? (
+          <div id={marketPanelId} className="space-y-4">
+            <div
+              ref={marketRef}
+              role="group"
+              tabIndex={-1}
+              aria-labelledby={marketLabelId}
+              aria-describedby={
+                state.errors.country ? marketErrorId : undefined
+              }
+              className="flex flex-wrap gap-2 rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              Change
-            </Button>
-          </div>
-          {fallbackNote ? (
-            <p className="text-xs text-muted-foreground">{fallbackNote}</p>
-          ) : null}
-          {languageOpen ? (
+              {chipCodes.map((code) => (
+                <Chip
+                  key={code}
+                  selected={primary === code}
+                  onClick={() => dispatch({ type: "tapMarket", code })}
+                >
+                  {countryLabel(code)}
+                </Chip>
+              ))}
+              <Chip
+                selected={showMore}
+                aria-expanded={showMore}
+                aria-controls={moreId}
+                onClick={() => setShowMore((open) => !open)}
+              >
+                More markets…
+              </Chip>
+            </div>
+            {showMore ? (
+              <div id={moreId} className="space-y-2">
+                <MarketMultiSelect
+                  value={state.countries}
+                  onChange={(codes) =>
+                    dispatch({
+                      type: "setMarkets",
+                      codes: codes.filter(isSupportedCountry),
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  The first market is the main one.
+                </p>
+              </div>
+            ) : null}
             <div
               ref={languageRef}
               role="group"
@@ -344,43 +358,6 @@ export function NewProjectForm({
                 </Chip>
               ))}
             </div>
-          ) : null}
-          {state.errors.language ? (
-            <p role="alert" className="text-sm text-destructive">
-              {state.errors.language}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div className="space-y-2">
-        <Button
-          type="button"
-          variant="ghost"
-          aria-expanded={showBrand}
-          aria-controls={brandId}
-          onClick={() => setShowBrand((open) => !open)}
-          className="min-h-11 px-3"
-        >
-          Different brand name?
-        </Button>
-        {showBrand ? (
-          <div id={brandId} className="space-y-2">
-            <label
-              htmlFor={`${ids}-brand-name`}
-              className="text-sm font-medium"
-            >
-              Brand name (if different from the project)
-            </label>
-            <Input
-              id={`${ids}-brand-name`}
-              value={state.brandName}
-              onChange={(event) =>
-                dispatch({ type: "brandName", value: event.target.value })
-              }
-              autoComplete="off"
-              className="h-11"
-            />
           </div>
         ) : null}
       </div>
@@ -391,23 +368,32 @@ export function NewProjectForm({
         </p>
       ) : null}
 
-      <div className="flex justify-end">
-        {/* Never disabled: a disabled button is skipped by keyboard and screen
-            readers and could not show its own error. */}
-        <Button
-          type="submit"
-          size="lg"
-          aria-disabled={pending}
-          className="h-11 min-w-40 px-4"
-        >
-          {pending ? (
-            <>
-              <Loader2 className="animate-spin" /> Creating…
-            </>
-          ) : (
-            "Create and continue"
-          )}
-        </Button>
+      <div className="space-y-2">
+        {intake.note ? (
+          <p id={noteId} className="text-xs text-muted-foreground">
+            {intake.note}
+          </p>
+        ) : null}
+        <div className="flex justify-end">
+          {/* Never disabled: a disabled button is skipped by keyboard and screen
+            readers and could not show its own error. The note above it is tied
+            to it with aria-describedby. */}
+          <Button
+            type="submit"
+            size="lg"
+            aria-disabled={pending}
+            aria-describedby={intake.note ? noteId : undefined}
+            className="h-11 min-w-40 px-4"
+          >
+            {pending ? (
+              <>
+                <Loader2 className="animate-spin" /> Creating…
+              </>
+            ) : (
+              intake.button
+            )}
+          </Button>
+        </div>
       </div>
     </form>
   );

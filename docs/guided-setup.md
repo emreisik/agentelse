@@ -1,12 +1,44 @@
 # Guided setup (butonlu kurulum sheet'i)
 
-Alttan çıkan bir Drawer (Base UI): yazı yazmadan, dokunarak marka kurulumu. Sayılar ve kimlikler tek kaynaktan gelir: `src/lib/guided-setup/contract.ts`. Bu belge ile kod ayrışırsa kod doğrudur.
+Ekranın ortasında açılan bir pencere (Base UI Drawer üzerinde): yazı yazmadan, dokunarak marka kurulumu. Sayılar ve kimlikler tek kaynaktan gelir: `src/lib/guided-setup/contract.ts`. Bu belge ile kod ayrışırsa kod doğrudur.
+
+## Keşif öncelikli kurulum (güncel akış)
+
+> Aşağıdaki "Sorular" ve "Saklama: iki Command satırı" bölümleri **eski soru sihirbazını** anlatır. Sihirbaz (adımlar, plan, oturum, Approve, panel) kodda durur ama `GUIDED_SETUP` açıkken **artık bağlanmaz**; sonraki bir temizlik görevinde silinecek. Güncel akış burada; kaynak: `src/lib/guided-discovery/contract.ts`.
+
+**Kişinin yaptığı:** yalnızca marka adı ve (isteğe bağlı) web sitesi. Ülke ve dil otomatik seçilir, tek satırda "Change" ile değiştirilir. İlke: ajansın kendi bulabileceği şeyi sormayız.
+
+**Akış:** Marka girişi, derin keşif, Brand Brain sentezi, gözden geçirme, hazır. Sheet dört aşama gösterir: siteyi okuma, logo/renk/font bulma, web'de araştırma, profili yazma. Her aşama simge ve sözle `pending / running / done / skipped / failed` gösterir.
+
+**Güven eşikleri:** model her alan için skor ve kanıt türü (`site`, `web`, `both`, `inferred`) bildirir; sunucu skora tek başına güvenmez, kanıta göre tavanlar: `inferred` 70, `site` 90, `web` 90, `both` 100.
+
+| Skor | Katman | Ne olur |
+| ---- | ------ | ------- |
+| 85 ve üstü | Found (accepted) | Otomatik kabul, dossier'ye yazılır |
+| 60-84 | Check (assumed) | Varsayım olarak gösterilir, yazılmaz; "+" çipi ile eklenir; onboarding'i asla durdurmaz |
+| 60 altı | Not found (unknown) | Boş bırakılır; bu turda soru sorulmaz |
+
+`approvedClaims` her zaman boştur; web'den gelen hiçbir şey iddia, kural ya da bellek satırı olmaz.
+
+**Önizleme ekranı:** alan başına bir blok (about, audience, products, services, markets, voice, positioning, competitors, channels): değer, küçük katman etiketi, altında "also found" aday çipleri (satır başına en çok 8, metin en çok 140 karakter, en çok 9 satır). Çipe dokunmak tek bir değeri ekler (liste alanlarında dossier'de en çok 12 öğe, tekrar yok; metin alanı yalnızca boşsa). Kimlik bloğu logo, renk, font ve stili özetler; kanallar sitedeki sosyal bağlantılardan yalnızca etiket olarak gelir (URL saklanmaz). **Looks good** durumu CONFIRMED yapar ("Workspace ready"), başka hiçbir şey yazmaz ya da harcamaz. `services` ve ek öğeler için ayrı küçük bir "extend" çağrısı vardır (öğe başına skor, 85 ve üstü yalnızca liste boşsa kaydedilir, 60-84 aday olur).
+
+**Boş satır kalmaz:** "extend" çağrısı yalnızca services/products/markets/görsel kurallar için değil, about, voice, positioning ve audience için de 1-3 öneri döndürür (skor 50-84, asla 84 üstü). Bunlar **hiçbir zaman otomatik kaydedilmez**; "Suggested" etiketiyle dokun-ekle çipi olarak gelir. Değeri dolu bir metin satırı (about/voice/positioning) öneri almaz; audience listesi her zaman açıktır. Öneri de gelmediyse satır "Nothing found yet" der, boş kalmaz. Model anahtarı yoksa (mock) öneriler boştur.
+
+**Hızlı ekleme:** "Add all suggestions (N)" bekleyen tüm önerileri sırayla ekler (her biri ayrı, yalnızca kimlik alan yazma; biri başarısız olursa döngü durur, kalanlar dokunulmaz). Hazır (CONFIRMED) ekranı da tüm profili gösterir ve ekleme kabul eder.
+
+**Başarısızlık ve yeniden deneme:** nedenler `limit`, `busy`, `timeout`, `error`, `unavailable`. Yeniden deneme yalnızca durum FAILED iken ve deneme sayısı 3'ten azken, açık "Try again" dokunuşuyla olur (en çok 3 ücretli deneme). Koşu 150 sn sonunda zaman aşımına uğrar; 240 sn'den eski RUNNING satırı okunurken FAILED/timeout sayılır (yazılmaz). Başarısız koşunun tavan rezervasyonu iade edilir.
+
+**Tavanlar ve maliyet:** tek `Command` satırı `gd_<projectId>` (`topic: GUIDED_DISCOVERY`, migration yok); satır birincil anahtarı bir başlatmada yalnızca bir araştırma garantiler. Ücretli araştırma yalnızca oluştur dokunuşu ve açık "Try again" ile başlar; GET, yoklama, render ya da yeniden açma asla harcama başlatmaz. Kapılar ve çalışma alanı tavanları eskisiyle aynıdır (`reserveDiscovery`, `GUIDED_SETUP_DISCOVERY`, `GUIDED_SETUP_DISCOVERY_CAPS`); yeni bayrak yoktur.
+
+**API:** `/api/projects/[projectId]/guided-discovery`: `GET` görünümü verir; `POST` `add` (candidateId), `confirm`, `retry`. Yalnızca kimlikler alınır.
+
+**Henüz yok:** bilinmeyen alanlar için sorular, sosyal hesap okuma, bağlı dosyalar, hedefler (sonraki turlar).
 
 ## Amaç
 
 Yeni bir proje, ajansın ilk işi için yeterli bir profille başlasın: hedef, kanallar, işin ne olduğu, kitle, ton. Sohbette soru-cevap yerine beş dokunuş, sonunda tek bir "Approve". Sheet **iki motorda da aynı** çalışır (`CHAT_ENGINE=legacy` ve `agent`). Her şey `GUIDED_SETUP` arkasında **kapalı** gelir.
 
-## Sorular
+## Sorular (eski sihirbaz, bağlı değil)
 
 Varsayılan yol beş sorudur (`MAIN_QUESTIONS`): `goal`, `channels`, `business`, `audience`, `tone`. Checkpoint'te "Add more detail" seçilirse iki soru daha gelir (`DETAIL_QUESTIONS`): `angle` (konumlandırma) ve `guardrails` (asla yapma kuralları). Sonra Review; Review, Approve'un çalıştıracağı plan nesnesinden (`buildApplyPlan`) üretilir, yani ekranda yazan ile yazılan aynıdır.
 
@@ -82,6 +114,35 @@ Sıra: (1) üç değişken de kapalıyken merge; (2) `GUIDED_SETUP` yerel/stagin
 
 Sheet'in kendi satırları sayfa alıntısı **saklamaz**; yalnızca seçilen seçenekler ve cevaplar. Ancak Quick Discovery okuduğu her sayfayı `Evidence.extractedText` olarak saklar: **sayfa başına en çok 20.000 karakter, proje silinene kadar** (7 gün yeniden kullanılır). Bu, üçüncü taraf, güvenilmeyen metindir ve kalır. Audit metadata'sı yalnızca sayım, adım kimliği ve neden kodu taşır; serbest metin ve URL asla. `WEB_PAGE` kanıtlarının 30 günden sonra temizlenmesi B5 işidir.
 
+## Proje oluşturma düğmesi: siteden kimlik ve (açıksa) marka araştırması
+
+`GUIDED_SETUP` açıkken `/projects/new` ekranındaki ana düğme bir **onaydır**: sunucu, proje oluştuktan sonra yanıttan sonra (`after()`) şunları başlatır (`src/server/brand/intake-start.ts`). Düğmenin etiketi ve altındaki not, neyin başlayacağını söyleyen **aynı fonksiyondan** gelir (`src/lib/intake-offer.ts`): not yalnızca gerçekten harcama başlıyorsa "AI credit" der.
+
+| Durum | Düğme | Başlayan |
+| ----- | ----- | -------- |
+| Site yazılmadı | Create and continue | Hiçbir şey (not: "Add a website and we can also read…") |
+| Site var, gerçek model + OpenAI anahtarı | Create and read my website | Marka kimliği taraması |
+| Site var, ücretli araştırma da açık (`GUIDED_SETUP_DISCOVERY` bu çalışma alanını kapsıyor) | Create and set up with AI | Kimlik taraması + marka araştırması |
+| Mock mod ya da anahtar yok | Create and continue | Hiçbir şey |
+
+- **Kimlik taraması** (`src/server/brand/site-scan/auto-identity.ts`): Brand sekmesindeki "Scan site" ile aynı tarama (logo, renkler, fontlar, stil). Sonuç bir modalda onaya sunulmak yerine doğrudan marka kitine yazılır, ama **yalnızca hâlâ boş olan** yere: sizin koyduğunuz logo, renk, font ya da stil asla ezilmez (yazmadan hemen önce yeniden okunur). Her şey doluysa tarama hiç çalışmaz, maliyet yoktur. Sayfanın ya da modelin yazdığı hiçbir şeye güvenilmez: renkler altı haneli hex olarak, stil alanları listelerle doğrulanır, serbest metinler link/işaret/talimat taşıyorsa bütünüyle atılır, logo çözülüp yeniden kodlanır; ikon ya da sosyal görsel logo sayılmaz.
+- **Sınırlar:** bir proje otomatik olarak **bir kez** taranır; kullanıcı başına 10, çalışma alanı başına 20 otomatik tarama / 24 saat (çalışma alanı düzeyinde denetim satırları, proje silinince silinmez). Bir tarama yaklaşık 0,01–0,04 dolardır.
+- **Yeniden tarama:** Brand sekmesindeki **Scan site** düğmesi aynen duruyor: istediğiniz zaman siteyi yeniden tarar, sonucu görüp seçerek kaydedersiniz (bu yol mevcut değerlerin üzerine yazar).
+- **Marka araştırması:** artık keşif akışının (`startDiscovery`) bir parçasıdır (yukarıdaki "Keşif öncelikli kurulum"); aynı kapılar ve tavanlar, koşu arka planda sürer.
+- **Henüz yok:** sosyal hesap ve bağlı dosya okuma, alan başına güven skoru (85 üstü otomatik kabul, 60–84 varsayım, altı tek soru), çok adımlı seçim sihirbazının kaldırılması ve "kritik boşluk soruları" akışı (yeni ürün tarifi; sonraki artışlar).
+
+## Brand Dossier'in boş alanlarını AI önerisiyle doldurma
+
+Sheet yalnızca dokunduğunuz şeyi yazar (işletme türü etiketi, kitle, ton). `Services`, `Products`, `Markets` ve `Visual guidelines` boş kalır; Quick Discovery de `services` ve `visualGuidelines` alanlarını hiç doldurmaz. Bunun için ayrı, küçük bir adım vardır (`src/server/brand/dossier-suggest.ts`):
+
+- **Otomatik:** Approve başarılı olunca yanıt döndükten sonra (`after()`, Approve beklemez ve bundan etkilenmez) bir kez çalışır. Bir marka için otomatik deneme en çok 2 kez yapılır (başarısız çağrı da sayılır).
+- **Elle:** Brand Brain → Brand Dossier kartındaki **Suggest with AI** düğmesi. Sizin dokunuşunuz olduğu için deneme sınırına takılmaz; kullanıcı + proje başına 10 dakikada 3 istekle sınırlıdır.
+- **Girdi:** yalnızca markanın bildiği bilgiler (marka adı, site adresi, işletme türü, kitleler, ton, pazar, dil). Sayfa metni ya da web'den gelen bir şey modele verilmez; link, işaret veya talimat gibi görünen her metin atılır.
+- **Yazma kuralı:** yalnızca hâlâ **boş** olan alanlara yazılır (yazarken yeniden okunur); elle yazdığınız hiçbir değer değişmez. Yalnızca işletme türü etiketinden ibaret bir `summary` yer tutucu sayılır ve bir cümlelik özetle değiştirilir.
+- **Dürüstlük:** yazılan alanlar denetim kaydına `brand_dossier.autofilled` (`source: ai_suggested`) olarak yazılır; kart, dossier'yi siz düzenleyene kadar "AI-suggested: ..." notunu gösterir. Bunlar doğrulanmış bilgi değil, başlangıç önerisidir.
+- **Maliyet:** tek küçük çağrı (varsayılan model, en fazla 1.800 çıktı tokenı, web araması yok), yaklaşık 0,005–0,01 dolar. Mock modda ya da yapay zekâ anahtarı yokken hiçbir şey yazılmaz.
+- **Bayrak:** `GUIDED_SETUP` kapalıyken düğme yoktur ve otomatik adım çalışmaz.
+
 ## Approve ne yazar, ne yazmaz
 
 Approve kısa, yalnızca DB işidir; ağ yok, model çağrısı yok, sohbete asistan mesajı yok. Tek sohbet yazımı aşağıdaki makbuz `Command` satırıdır.
@@ -130,7 +191,7 @@ Aktif bir hedef, `LEGACY_AGENCY_LOOP=on` iken eski Director'ın bekleyen fikirle
 
 ## Drawer, klavye ve Android Geri
 
-Drawer Base UI'dır. Kapatma: Esc veya başlıktan kaydırma; yüzey/gövde dokunuşu ve gövde kaydırması asla kapatmaz, arka plana dokunmak da kapatmaz. Kapatınca oturum kalır ve chip "Continue setup · question n of 5" der. **Android sistem Geri'si sheet'i kapatır ve mevcut seçim korunur**; iOS kenar kaydırması kaydedilmemiş seçimle sayfadan çıkarmaz. "Something else…" alanı için klavye sağlayıcısı alanı ve Continue'yu görünür tutar (16 px yazı, iOS yakınlaştırması yok); masaüstünde Enter geçerli metinle devam eder, telefonda klavyeyi kapatır. Hedefler en az 44 px, `dvh` ile sheet hiçbir zaman ekrandan uzun olmaz, gövde kaydırır, Continue/Approve her zaman erişilebilir. Azaltılmış hareket ve zorunlu renk modu desteklenir.
+Pencere Base UI Drawer'ı üzerinde ama **ekranın ortasında** açılır (alt kenara yapışık değil, kayma ve sürükleme yok; açılış yalnızca yumuşak bir belirme/ölçek geçişidir). Kapatma: Esc veya X; yüzey/gövde dokunuşu asla kapatmaz, arka plana dokunmak da kapatmaz. Kapatınca oturum kalır ve chip "Continue setup · question n of 5" der. **Android sistem Geri'si sheet'i kapatır ve mevcut seçim korunur**; iOS kenar kaydırması kaydedilmemiş seçimle sayfadan çıkarmaz. "Something else…" alanı için klavye sağlayıcısı alanı ve Continue'yu görünür tutar (16 px yazı, iOS yakınlaştırması yok); masaüstünde Enter geçerli metinle devam eder, telefonda klavyeyi kapatır. Hedefler en az 44 px, pencere sabit 40 rem yüksekliktedir ve kısa ekranlarda ekrandan taşmaz (`max-h-full`), gövde kaydırır, Continue/Approve her zaman erişilebilir. Azaltılmış hareket ve zorunlu renk modu desteklenir.
 
 ## Test ve cihaz kontrol listesi
 
@@ -153,7 +214,7 @@ Testler `*.test.ts`, DB'siz. Entegrasyon testleri (`store.integration.test.ts`, 
 11. Approve: bitti görünümü (Close odaklı), makbuz ve düğmeler (değişen yoksa düğme yok); legacy'de mesaj gitmez ve sonraki mesaj röportaj yapmaz; agent'ta "Draft my first plan" bir dokunuş bir mesaj. **Telefonda Approve sonrası klavye açılmaz ve sheet açıkken `router.refresh()` odağı sheet'in dışına taşımaz.** Bağlı hesap, autopilot ve legacy döngü `on` iken Review hedefin öneri olduğunu söyler ve Strategy PROPOSED gösterir.
 12. Sheet açıkken süren sohbet turunda odak sheet'te kalır.
 13. `/projects/new`: bayrak açıkken tek ekran, kapalıyken dört adımlı sihirbaz değişmez.
-14. Kaydırma: yalnızca başlıktan kapatılır; "applying" sırasında kaydırma sadece gizler.
+14. Pencere ekranın ortasındadır; kaydırarak kapanmaz (sürükleme kapalı). "applying" sırasında X/Esc yalnızca gizler.
 15. Yavaş ağ (slow-3G): iskelet, hatada satır içi uyarı, toast yok.
 16. İki sekmede iki projede araştırma: hiçbirinde hata bandı yok (429 sessiz geri çekilme).
 17. Girişler: boş sohbette yalnızca Welcome kartı, dolu sohbette yalnızca chip, **Not now** chip'i gizler, "+" öğesi kalır.

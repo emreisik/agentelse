@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AUTO_RUN_NEXT_KINDS,
   NEXT_STEP_KINDS,
   addDaysKey,
   nextStepHref,
@@ -74,6 +75,7 @@ describe("nextStepHref", () => {
     const kinds: NextStepAction["kind"][] = [
       "produce_plan",
       "review_queue",
+      "approve_plan",
       "connect_channel",
       "enable_scheduled_publish",
       "publish_manual",
@@ -81,6 +83,52 @@ describe("nextStepHref", () => {
       "show_results",
     ];
     expect([...NEXT_STEP_KINDS].sort()).toEqual([...kinds].sort());
+    expect(NEXT_STEP_KINDS).toContain("approve_plan");
+  });
+
+  it("a link never auto-runs approve_plan (an approval needs a tap on the bar)", () => {
+    expect(AUTO_RUN_NEXT_KINDS).not.toContain("approve_plan");
+    expect(AUTO_RUN_NEXT_KINDS).toContain("produce_plan");
+    expect(AUTO_RUN_NEXT_KINDS).toContain("plan_next");
+    expect(AUTO_RUN_NEXT_KINDS.length).toBe(NEXT_STEP_KINDS.length - 1);
+  });
+
+  it("a Work-owned step carries the Work id to the chat and to the integrations page", () => {
+    expect(
+      nextStepHref(
+        "p1",
+        step({ kind: "produce_plan", planId: "x", count: 3 }),
+        { workId: "w 1" },
+      ),
+    ).toBe("/projects/p1?work=w%201&next=produce_plan");
+    expect(
+      nextStepHref(
+        "p1",
+        step({ kind: "connect_channel", channel: "instagram" }),
+        { workId: "w1" },
+      ),
+    ).toBe("/projects/p1/integrations?integration=instagram&from=w1");
+    expect(
+      nextStepHref(
+        "p1",
+        step({ kind: "review_queue", creativeId: "c9", count: 2 }),
+        { workId: "w1" },
+      ),
+    ).toBe("/projects/p1/takvim?creative=c9");
+  });
+
+  it("approve_plan lands in the chat through the default branch", () => {
+    expect(
+      nextStepHref(
+        "p1",
+        step({
+          kind: "approve_plan",
+          planIds: ["x"],
+          creativeIds: ["a", "b"],
+          count: 2,
+        }),
+      ),
+    ).toBe("/projects/p1?next=approve_plan");
   });
 });
 

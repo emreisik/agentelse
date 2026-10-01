@@ -28,6 +28,14 @@ const STUCK_JOB_AFTER_MS = 30 * 60_000;
 // auto-recovery has entered a loop — leave it to a human.
 const MAX_AUTO_REQUEUES_PER_JOB = 3;
 
+function hasVariantCount(payload: unknown): boolean {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    typeof (payload as { variantCount?: unknown }).variantCount === "number"
+  );
+}
+
 export type HealingReport = {
   stuckJobsReset: number;
   deadLettersRequeued: number;
@@ -172,6 +180,7 @@ export const SelfHealingService = {
           workspaceId: true,
           projectId: true,
           status: true,
+          requestPayload: true,
         },
       });
       // Requeuing a job that's already completed/cancelled would be wrong —
@@ -181,6 +190,15 @@ export const SelfHealingService = {
           where: { id: entry.id },
           data: { resolvedAt: new Date() },
         });
+        skipped += 1;
+        continue;
+      }
+
+      // A creative-variants job (the key is written only by the variants
+      // route) has usually billed its pictures before it failed; requeuing it
+      // would bill them again, up to 4x for one tap, and could append the
+      // same alternatives twice. Leave the dead letter unresolved for a human.
+      if (hasVariantCount(job.requestPayload)) {
         skipped += 1;
         continue;
       }

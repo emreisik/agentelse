@@ -545,8 +545,8 @@ function ReviewStep({
           <SectionTitle>Post layouts</SectionTitle>
           <p className="-mt-2 text-xs text-muted-foreground">
             Where the logo, color bar and headline go on your posts. The previews
-            use the colors and logo above. Pick a default; new posts use it (or
-            the one chosen in chat). You can change these any time from the
+            use the colors and logo above. Click the layout new posts should use
+            (or pick another in chat). You can change these any time from the
             Brand tab.
           </p>
           <LayoutGallery

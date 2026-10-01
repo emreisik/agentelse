@@ -10,6 +10,7 @@ import { isRateLimited } from "@/lib/rate-limit";
 import { applyGuidedSetup } from "@/server/guided-setup/apply";
 import { isGuidedSetupEnabled } from "@/server/guided-setup/flag";
 import { resolveGoalMode } from "@/server/guided-setup/goal-mode";
+import { scheduleDossierAutofill } from "@/server/brand/dossier-autofill-trigger";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
 import { ensureProjectActive } from "@/server/projects/activation";
 import {
@@ -94,6 +95,20 @@ export async function applyGuidedSetupAction(
     );
 
     if (result.ok) {
+      // Setup only writes what the person tapped, so services, products,
+      // markets and visual guidelines are still empty. A suggestion for them
+      // runs after the response (never awaited: Approve stays a short
+      // database step, and a failing model cannot fail it).
+      if (access.defaultBrandId) {
+        scheduleDossierAutofill(
+          {
+            workspaceId: access.workspaceId,
+            projectId: args.data.projectId,
+            brandId: access.defaultBrandId,
+          },
+          userId,
+        );
+      }
       // The setup is saved either way: a failing cache purge must not turn it
       // into an error the person would retry.
       try {

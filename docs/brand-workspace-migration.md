@@ -13,7 +13,7 @@ Repo içinde "Brand Workspace" veya "workspace v2" terimine dair **hiçbir önce
 
 - **Routing:** Tüm paneller `?panel=&sub=&entity=` üzerinden `hub-core-params.ts`'teki `PanelKey`/`SubKey`/`EntityKind` sözleşmesiyle adresleniyor; `panel-shell.tsx` dispatcher, `buildHubHref`/`entityHref` tek href üretme API'si.
 - **Mevcut birincil yüzey (sidebar, `sidebar-nav.tsx`):** New chat, Brand Brain, Ideas, Work, Library + (top-bar'da badge ile) Approvals, Human Action + üç hub-core-dışı rota: Content Calendar, Instagram Grid, Connectors.
-- **Mevcut ikincil yüzey ("Tools" dropdown, `project-tools-menu.tsx`):** Setup, Signals, Insights & Opportunities, Goals, Departments, Settings — 3 gruba ayrılmış (System / Insight Chain / Production).
+- **Mevcut ikincil yüzey ("Tools" dropdown, `project-tools-menu.tsx`):** Setup, Departments, Human Action, Settings (System grubu). _Güncelleme: Signals, Insights & Opportunities ve Goals artık burada değil, Brand Brain'in sekmeleri (aşağıdaki "Brand Brain'e toplandı" bölümü)._
 - **Devam eden (commit edilmemiş) değişiklik:** Brand Brain chat, panel içine sabitlenmiş bir karttan çıkıp `AppShell` seviyesinde global bir floating widget'a (`BrandBrainAssistant`) taşınıyor; `brand-brain-panel.tsx` artık salt referans/gözatma yüzeyine (assets/visual-identity/constitution/strategy/decisions/evidence/learnings, 7 sekme) dönüşüyor. Bu, "Brand Workspace" fikrinin ilk somut adımı gibi görünüyor: AI asistanı her ekranda hazır, panel ise arşiv.
 
 ## 2. Sınıflandırma kategorileri (bu dokümanda kullanılan anlamlarıyla)
@@ -58,9 +58,9 @@ Repo içinde "Brand Workspace" veya "workspace v2" terimine dair **hiçbir önce
 | Öğe                                                                 | Sınıflandırma                                         | Not                                                                                                     |
 | ------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Setup panel + `setup-stage-show.tsx` + `setup-progress-widget.tsx`  | KEEP (davranış zaten doğru)                           | Aktivasyon öncesi ambient FAB, sonrasında Tools dropdown içinde kalıyor — dokunulmuyor                  |
-| Signals panel + `signals-list-filters.tsx`                          | **MOVE TO ADVANCED**                                  | Ham sinyal verisi; günlük kullanım yüzeyi değil, mevcut de-facto ikincil konumunu resmileştiriyoruz     |
-| Insights & Opportunities panel                                      | **MOVE TO ADVANCED**                                  | Aynı gerekçe — ama Goals/Ideas'a beslediği için ileride "primary" tartışılabilir, işaretliyorum         |
-| Goals panel                                                         | **MOVE TO ADVANCED**                                  | Onay akışı zaten Setup panel içine gömülü (WAITING_CLIENT), bağımsız goal-review Advanced'a taşınabilir |
+| Signals panel + `signals-list-filters.tsx`                          | **Brand Brain → Intelligence sekmesi** (taşındı)      | Ham sinyal verisi, Findings / Insights / Opportunities ile aynı sekmede (bkz. §7)                        |
+| Insights & Opportunities panel                                      | **Brand Brain → Intelligence sekmesi** (taşındı)      | Finding → Insight → Opportunity zinciri tek sekmede                                                      |
+| Goals panel                                                         | **Brand Brain → Goals sekmesi** (taşındı)             | Her sohbet turunda markanın `currentFocus`u olan hedefler; onay rozeti Brand Brain girdisinde            |
 | Departments panel                                                   | **MOVE TO ADVANCED**                                  | Ajans-içi konfigürasyon, client-facing değil                                                            |
 | Settings panel (autonomy/publishing/decisions/activity/risk)        | **MOVE TO ADVANCED**                                  | Zaten config amaçlı, mevcut konumunu resmileştiriyoruz                                                  |
 | `project-tools-menu.tsx` (System/Insight Chain/Production grupları) | **EXTEND** → kalıcı "Advanced" alanına dönüştürülecek | Geçici dropdown yerine kendi route'u olan bir bölüm                                                     |
@@ -86,11 +86,12 @@ Repo içinde "Brand Workspace" veya "workspace v2" terimine dair **hiçbir önce
 ```
 Primary (sidebar)          Advanced (yeni, kalıcı bölüm — şu anki Tools dropdown'ın yerini alacak)
 ─────────────────          ──────────────────────────────────────────────────────────────────────
-New chat                    Signals
-Brand Brain (arşiv)         Insights & Opportunities
-  + BrandBrainAssistant     Goals
-    (global FAB, her yerde) Departments
-Ideas                       Settings (autonomy/publishing/decisions/activity/risk)
+New chat                    Departments
+Brand Brain (10 sekme:      Settings (autonomy/publishing/decisions/activity/risk)
+  Goals + Intelligence dahil)
+  + BrandBrainAssistant
+    (global FAB, her yerde)
+Ideas
 Work
 Library
 Approvals (top-bar badge)
@@ -310,7 +311,7 @@ Kullanıcıdan, önceki fazların monokrom (siyah/beyaz/gri) `--ws-*` tasarımı
 
 **3. Header, marka anahtarı, composer** (`workspace-top-bar.tsx`, `brand-switcher.tsx`, `thread.tsx`, `project-chat.tsx`): 58px→72px, gerçek "agentelse." wordmark'ı (son nokta zeytin), koyu-zeytin logo karesi, DEMO rozeti (dev-only), onay pili "X onay bekliyor", marka dropdown'u "ÇALIŞMA ALANLARIN"/"Marka ekle". **Gerçek görsel hata bulundu:** composer'ın Gönder/Durdur butonları `Button variant="default"`'ın shadcn `--primary` (monokrom oklch) token'ını kullanıyordu, `--ws-accent`'ı DEĞİL — yani hiçbir zaman zeytin renginde görünmemişlerdi, düzeltildi. Karşılama alanı artık spec'in birebir Türkçe metni ("Günaydın, {isim}." + "Bugün markan için neyi hayata geçirelim?"), iş özeti şeridi "Kaldığımız yerden." + tıklanabilir 03/02/01 istatistikleri. Yeni: Viewport'un dışında, üstte 43px'lik bir `ContextBar` slotu (`thread.tsx`) — "Senin yaratıcı alanın" + marka adı.
 
-**4. Sağ panel** (`workspace-right-panel.tsx` + 4 alt panel): sekmeler Türkçe, aktif sekme artık `--ws-soft-green`/`--ws-accent`, genişlik 400px→367px (2xl'de 390px), Autopilot kartı artık her sekmenin İÇİNDE tekrar tekrar değil panelin ORTAK altında (sticky). Marka panelinde Brand Book kartı + spec'in tam bölüm sırası (ŞİMDİKİ ODAK/GÖRSEL KİMLİK/MARKA SESİ/HEDEF PAZARLAR — hepsi gerçek BrandTwin verisinden). Çıktılar panelinde gerçek Post/Story/Reel/Reklam filtresi (Story/Reel artık `CreativeVersion.contentFormat`'tan geliyor — `workspace-right-panel-data.ts`'e eklendi, ek sorgu gerekmedi).
+**4. Sağ panel** (`workspace-right-panel.tsx` + 4 alt panel): sekmeler Türkçe, aktif sekme artık `--ws-soft-green`/`--ws-accent`, genişlik 400px→367px (2xl'de 390px), Autopilot kartı artık her sekmenin İÇİNDE tekrar tekrar değil panelin ORTAK altında (sticky). **(1 Eki 2026: bu alt kart kaldırıldı; Autopilot modu Settings > Autonomy'den ayarlanmaya devam eder, sağ panelde artık gösterilmez.)** Marka panelinde Brand Book kartı + spec'in tam bölüm sırası (ŞİMDİKİ ODAK/GÖRSEL KİMLİK/MARKA SESİ/HEDEF PAZARLAR — hepsi gerçek BrandTwin verisinden). Çıktılar panelinde gerçek Post/Story/Reel/Reklam filtresi (Story/Reel artık `CreativeVersion.contentFormat`'tan geliyor — `workspace-right-panel-data.ts`'e eklendi, ek sorgu gerekmedi).
 
 **5. Yeni `OutputPreviewDialog`** (`output-preview-dialog.tsx`) — spec'in "Output Preview Dialog"ı: 45/55 iki kolon, gerçek onay/red/revizyon (mevcut `approveApprovalAction`/`rejectApprovalAction`/`reviseCreativeAction`'ı yeniden kullanıyor — spec'in "composer'a odak aktar" önerisi yerine, zaten var olan self-contained revize akışı tercih edildi, çünkü STRICT SCOPE "do not create duplicate sources of truth" diyor), kopyala/indir, onaylı çıktılar için gerçek takvime-ekle formu. Çıktılar/Takvim panelindeki grid artık `/takvim`'e YÖNLENDİRMİYOR (tek-ekran ilkesiyle tutarlı), bu diyaloğu açıyor. Sohbetteki `CreativeReadyCard`'ın "Detayları gör" footer linki de artık harici `/creatives/{id}` sekmesi yerine aynı diyaloğu açıyor.
 
@@ -339,3 +340,31 @@ Silinenler: `/izgara` route'u (`page.tsx`), `grid-split-studio.tsx`, `creative-g
 Şema: `Creative.gridGroupId`/`gridPosition` + `@@index([projectId, gridGroupId])` kaldırıldı, yeni bir down-migration (`20260926000000_remove_instagram_grid_studio`) yazıldı. Silmeden önce canlı DB'de gerçek veri kontrolü yapıldı: 9 Creative satırının `gridGroupId`'si doluydu — bu gruplama meta verisi kayboluyor (asıl creative/asset satırları etkilenmiyor), kullanıcıya "komple kaldır" talimatı gereği kabul edilebilir bulundu.
 
 5 test kaldırıldı (grid-series-schedule.test.ts 3 + creative-grid-split.test.ts 2) — tam suite 552→547, `tsc`/`eslint` temiz, 0 regresyon.
+
+## 7. Brand Brain'e toplandı: Goals ve Intelligence (30 Eyl 2026)
+
+Sidebar'daki "Insights" grubu (Signals, Insights & Opportunities, Goals) kalktı; üç panel Brand Brain'in sekmeleri oldu, böylece markayla ilgili bilinen her şey tek yerde:
+
+| Sekme | İçerik | Eski panel |
+| --- | --- | --- |
+| **Goals** | Hedefler; onay bekleyenler üstte (Approve / Reject / Edit). PROPOSED sayısı sekmede ve sidebar'daki Brand Brain girdisinde rozet. | Goals |
+| **Intelligence** | Findings, Insights, Opportunities, Signals bölümleri (`<details>`); hepsi boşsa "Nothing gathered yet" kartı (ajandan araştırma iste, Meta Ads / GA bağla). "Scan intensity" yalnızca `LEGACY_AGENCY_LOOP=on` iken görünür (taramanın sıklığını belirler; `drain/off`ta işlevsiz). | Signals, Insights & Opportunities |
+
+Brand Brain sekme sırası: `assets, rules, visual-identity, constitution, goals, strategy, decisions, intelligence, evidence, learnings` (`BRAND_BRAIN_SUB_KEYS`). Bir kayıt (signal, finding, insight, opportunity, goal) kendi sekmesinde açılır (`ENTITY_PANEL` hepsi `brand-brain`, `ENTITY_SUB` sekmeyi söyler; `entityHref` kullanır).
+
+**Eski adresler çalışmaya devam eder** (`normalizeLegacyHubParams`, `hub-core-params.ts`): `?panel=signals|insights-opportunities|goals` ve ilk Türkçe adlar (`sinyaller`, `icgoru-firsat`, `hedefler`, `marka-beyni`, `fikirler`, `isler`, `departmanlar`, `ayarlar`, `kurulum`, alt sekmeleriyle) yeni yere yönlenir. Eski rotalar (`/istihbarat`, `/firsatlar`, `/zeka`, `/beyin`, `/fikirler`, `/isler`, `/departmanlar`, `/ayarlar`) `legacyRouteHref` ile geçerli adrese yönlendirir (önceden geçersiz panel adlarıyla sohbete düşüyorlardı).
+
+Yapılan düzeltmeler: fırsat üst sınırı (`countOpen` artık `ACCEPTED`ı saymıyor; fikir üretilen 30 fırsat projeyi kalıcı kilitliyordu), "NBA skoruna göre sıralı" yalanı (sıra createdAt, `nbaScore` hiç yazılmıyordu), bayat Goals boş durumu, `idea-event-card.tsx`'teki bozuk `panel=ayarlar&sub=otonomi` bağlantısı.
+
+Bilinen sınırlar: Goals sekmesinde onaylamak setup'ın GOAL_GENERATION aşamasını ilerletmez (yalnızca Setup'taki "Approve and Continue" ilerletir); `ProjectGoal.currentValue` ve `sourceInsightIds` hiçbir yerde yazılmıyor.
+
+## 8. Sidebar'da System grubu kalktı (30 Eyl 2026)
+
+Sidebar'daki "System" grubu (Setup, Departments, Human Action, Settings) kaldırıldı. Sidebar artık: Agency Desk, Create (Brand Brain, Ideas, Work, Library, Content Calendar), Channels (Ads Manager, Connectors) ve altta başlıksız tek satır **Settings**.
+
+- **Setup, Departments, Human Action** yalnızca başlıktaki **Advanced** menüsünde (rozet noktasıyla; `ADVANCED_PANEL_KEYS`, `project-tools-menu.tsx`, `project-tools-menu.test.ts` ikisinin senkronunu sabitler). Erişim kesilmedi.
+- **Settings** sidebar'da kalıyor, çünkü yayın saatleri (Publishing), harcama tavanları ve Autopilot (Autonomy), aktivite/harcama dökümü ve proje silme (Danger Zone) yalnızca orada; içerik yolculuğunun "Turn on scheduled posting" adımının yazdığı slotlar da yalnızca orada düzenlenir. Advanced menüsünde de durur.
+- **Departments** ölüye yakın (mod ayarı neredeyse hiçbir şeyi etkilemiyor, yeni projede veri yok) ama silinmedi: composer "+" menüsündeki Departments grubu ve eski bağlantılar çalışır.
+
+**Bilinen açık (ayrı iş):** `human-action-required` kartı SYSTEM satırı olarak yazılıyor ama Agency Desk yalnızca WEB satırlarını, creative-ready ve paket satırlarını yüklüyor; bu yüzden OTP/CAPTCHA/MANUAL_BROWSER isteğini çözmenin tek yolu Human Action paneli (Advanced menüsü + rozet) ve workspace geneli `/human-actions` sayfası. Bekleyen istekleri Agency Desk'e onay kartı gibi basmak ayrı yapılacak; o zaman panel gereksizleşir. Ayrıca derin araştırmanın (ENRICHMENT) hedef onayı ve başarısız aşamayı yeniden deneme yalnızca Setup panelinde yapılabiliyor; Setup'a giden yol (top-bar rozeti, sağ-alt FAB, Advanced menüsü) korunmalı.
+

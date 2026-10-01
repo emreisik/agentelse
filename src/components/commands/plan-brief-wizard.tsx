@@ -128,6 +128,12 @@ export function PlanBriefWizard({ card }: { card: BriefCard }) {
         return keys.length > 0 ? [[key, keys] as const] : [];
       });
       if (inherited.length > 0) return Object.fromEntries(inherited);
+      // A Work's own channels: exactly those, each with its first format.
+      if (card.workChannels && card.workChannels.length > 0) {
+        return Object.fromEntries(
+          card.workChannels.map((key) => [key, [CHANNELS[key].formats[0]!.key]]),
+        );
+      }
       return Object.fromEntries(
         CHANNEL_KEYS.filter(
           (key) =>
@@ -150,6 +156,11 @@ export function PlanBriefWizard({ card }: { card: BriefCard }) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<PlanBrief | null>(null);
 
+  // In a Work, only its channels are offered.
+  const offeredChannels: readonly ChannelKey[] =
+    card.workChannels && card.workChannels.length > 0
+      ? CHANNEL_KEYS.filter((key) => card.workChannels!.includes(key))
+      : CHANNEL_KEYS;
   const selected = CHANNEL_KEYS.filter((key) => picked[key]);
   const needsFormats = selected.some((key) => CHANNELS[key].formats.length > 1);
   const steps: StepKey[] = [
@@ -328,7 +339,7 @@ export function PlanBriefWizard({ card }: { card: BriefCard }) {
             Where should it go?
           </p>
           <ul className="grid grid-cols-2 gap-1.5">
-            {CHANNEL_KEYS.map((key) => {
+            {offeredChannels.map((key) => {
               const def = CHANNELS[key];
               const on = Boolean(picked[key]);
               const connection = card.connections[key];

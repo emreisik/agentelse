@@ -6,6 +6,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // decision on anything else is not, and the memory write never gets between the
 // client and the decision itself.
 
+// Flag off pins the legacy behaviour; without the mock the flag would parse
+// the environment, which a test has none of.
+vi.mock("@/server/works/flag", () => ({ isWorksEnabled: () => false }));
+
 const creativeFindUnique = vi.fn();
 vi.mock("@/lib/prisma", () => ({
   prisma: {

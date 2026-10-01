@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
 
-// Opportunities is now covered by HUB CORE's Insight & Opportunity / Goals
-// panels (see ../page.tsx) — this route stays alive so old bookmarks/links
-// don't break.
+import { legacyRouteHref } from "@/components/hub-core/hub-core-params";
+
+// Old opportunities page: opportunities live in the Brand Brain's Intelligence
+// tab and goals in its Goals tab. This route stays alive so old
+// bookmarks/links keep working.
 export default async function FirsatlarRedirect({
   params,
   searchParams,
@@ -12,14 +14,16 @@ export default async function FirsatlarRedirect({
 }) {
   const { projectId } = await params;
   const sp = await searchParams;
-  const panel =
+  const legacyPanel =
     typeof sp.tab === "string" && sp.tab === "hedefler"
       ? "hedefler"
       : "icgoru-firsat";
-
-  const qp = new URLSearchParams({ panel });
-  if (typeof sp.firsat === "string")
-    qp.set("entity", `opportunity:${sp.firsat}`);
-
-  redirect(`/projects/${projectId}?${qp.toString()}`);
+  redirect(
+    legacyRouteHref(projectId, legacyPanel, {
+      entity:
+        typeof sp.firsat === "string"
+          ? { kind: "opportunity", id: sp.firsat }
+          : null,
+    }),
+  );
 }

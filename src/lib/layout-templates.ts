@@ -401,6 +401,47 @@ export function resolveLayout(
   );
 }
 
+// Makes `id` the brand's default: what new posts use. The same object back
+// when it already is (or the id is not one of the layouts), so callers can
+// tell nothing changed.
+export function setDefaultLayout(
+  templates: LayoutTemplates,
+  id: string,
+): LayoutTemplates {
+  if (
+    templates.defaultId === id ||
+    !templates.items.some((item) => item.id === id)
+  ) {
+    return templates;
+  }
+  return { ...templates, defaultId: id };
+}
+
+// The app's post shapes, in the words the client knows them by. "landscape" is
+// not offered as a post format, so it is left out.
+export const POST_SHAPES: { aspect: AspectClass; label: string }[] = [
+  { aspect: "portrait", label: "Post 3:4" },
+  { aspect: "square", label: "Square 1:1" },
+  { aspect: "vertical", label: "Story / Reel 9:16" },
+];
+
+// Where the default is NOT what a post gets: a layout made for other shapes
+// hands them to the layout made for this one (resolveLayout). Shown next to
+// the default so "I made it the default and it still came out different" has
+// its answer on the screen.
+export function defaultOverrides(
+  templates: LayoutTemplates,
+): { label: string; layout: LayoutTemplate }[] {
+  const overrides: { label: string; layout: LayoutTemplate }[] = [];
+  for (const { aspect, label } of POST_SHAPES) {
+    const used = resolveLayout(templates, { aspect });
+    if (used && used.id !== templates.defaultId) {
+      overrides.push({ label, layout: used });
+    }
+  }
+  return overrides;
+}
+
 // --- colour + compositing settings --------------------------------------------
 
 export type LayoutPalette = {

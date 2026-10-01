@@ -14,6 +14,7 @@ import {
 } from "@/server/security/tenant-context";
 import { ProjectRepository } from "@/server/repositories/project.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
+import { startIntakeAtCreate } from "@/server/brand/intake-start";
 import { ensureProjectActive } from "@/server/projects/activation";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import { putAsset } from "@/server/storage/asset-storage";
@@ -190,6 +191,19 @@ export async function createGuidedProjectAction(
       "[createGuidedProjectAction] ensureProjectActive failed:",
       error,
     );
+  });
+
+  // The tap is the consent the screen's note asked for: read the website's
+  // look and, where it is open, research the brand. Runs after the response and
+  // never blocks the redirect (see brand/intake-start.ts).
+  await startIntakeAtCreate({
+    userId,
+    workspaceId,
+    projectId: project.id,
+    brandId: project.brands[0]!.id,
+    domain,
+  }).catch((error) => {
+    console.error("[createGuidedProjectAction] intake failed to start:", error);
   });
 
   // Outside any try/catch (redirect throws). Replace, so Back does not return

@@ -332,9 +332,8 @@ describe("Drawer root (G84)", () => {
     expect(renderPanel(props)).toContain("What matters most right now?");
   });
 
-  it("only the views without a footer leave room for the popup's bottom bleed in the scroll body", () => {
-    const bleed = "var(--bleed)";
-    const withoutFooter: PanelView[] = [
+  it("the scroll body keeps one bottom padding for every view: the dialog is centered, nothing sits under a bottom edge", () => {
+    const views: PanelView[] = [
       { kind: "boot" },
       { kind: "bootError" },
       { kind: "unavailable" },
@@ -343,24 +342,18 @@ describe("Drawer root (G84)", () => {
         kind: "done",
         summary: { saved: ["Brand profile"], canDraftPlan: false },
       },
-    ];
-    for (const v of withoutFooter) {
-      const body = renderPanel(panelProps(v)).match(
-        /<div[^>]*data-slot="drawer-body"[^>]*>/,
-      )?.[0];
-      expect(body, v.kind).toContain(bleed);
-    }
-    const withFooter: PanelView[] = [
       panelViewOf(goalStep()),
       panelViewOf(checkpoint()),
       { kind: "applying", stalled: false },
     ];
-    for (const v of withFooter) {
+    for (const v of views) {
       const body = renderPanel(panelProps(v)).match(
         /<div[^>]*data-slot="drawer-body"[^>]*>/,
       )?.[0];
       expect(body, v.kind).toBeDefined();
-      expect(body, v.kind).not.toContain(bleed);
+      expect(body, v.kind).toContain("pb-4");
+      expect(body, v.kind).not.toContain("var(--bleed)");
+      expect(body, v.kind).not.toContain("safe-area-inset-bottom");
     }
   });
 
@@ -506,9 +499,8 @@ describe("question rows (G40)", () => {
   it("the body and the footer are swipe-ignore regions", () => {
     const html = renderPanel(panelProps(panelViewOf(goalStep())));
     expect(count(html, "data-base-ui-swipe-ignore")).toBe(2);
-    expect(html).toContain(
-      "pb-[calc(0.75rem+env(safe-area-inset-bottom,0px)+var(--bleed))]",
-    );
+    expect(html).toContain("shrink-0 border-t px-5 pt-3 pb-3");
+    expect(html).not.toContain("var(--bleed)");
   });
 
   it("step 1 shows no content of later steps", () => {

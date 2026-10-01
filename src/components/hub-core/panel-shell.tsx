@@ -8,9 +8,6 @@ import { HubBreadcrumb } from "./hub-breadcrumb";
 import { SetupPanel } from "./panels/setup-panel";
 import { LibraryPanel } from "./panels/library-panel";
 import { BrandBrainPanel } from "./panels/brand-brain-panel";
-import { SignalsPanel } from "./panels/signals-panel";
-import { InsightsOpportunitiesPanel } from "./panels/insights-opportunities-panel";
-import { GoalsPanel } from "./panels/goals-panel";
 import { IdeasPanel } from "./panels/ideas-panel";
 import { WorkPanel } from "./panels/work-panel";
 import { DepartmentsPanel } from "./panels/departments-panel";
@@ -24,9 +21,6 @@ const PANEL_COMPONENT: Record<
 > = {
   setup: SetupPanel,
   "brand-brain": BrandBrainPanel,
-  signals: SignalsPanel,
-  "insights-opportunities": InsightsOpportunitiesPanel,
-  goals: GoalsPanel,
   ideas: IdeasPanel,
   work: WorkPanel,
   departments: DepartmentsPanel,

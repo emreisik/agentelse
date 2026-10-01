@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma, type CreativeContentFormat } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { worksProductionGate } from "@/server/works/production-gate";
 import { isIdeaEventCardData } from "@/types/idea-event-card";
 import { ensureProjectActive } from "@/server/projects/activation";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
@@ -89,6 +90,12 @@ export async function claimContentPackage(input: {
             message: "A newer version of this package exists. Use that one.",
           };
         }
+
+        const gate = await worksProductionGate(tx, {
+          projectId: input.projectId,
+          commandId: input.commandId,
+        });
+        if (!gate.ok) return { ok: false, message: gate.message };
 
         const items: ChosenItem[] = [];
         const seen = new Set<string>();

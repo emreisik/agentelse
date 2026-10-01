@@ -3,6 +3,11 @@ import "server-only";
 import OpenAI from "openai";
 
 import { getEnv } from "@/lib/env";
+import {
+  estimateImageCostUsd,
+  type ImageUsage,
+} from "@/server/reasoning/reasoning-pricing";
+import { ReasoningCallRepository } from "@/server/repositories/reasoning-call.repository";
 import { putAsset } from "@/server/storage/asset-storage";
 
 // OpenAI image generation (gpt-image-2 family) — the app's primary image
@@ -79,18 +84,60 @@ function sizeParam(imageSize?: { width: number; height: number }): string {
 
 type OpenAIImageResponse = {
   data?: Array<{ b64_json?: string }>;
+  usage?: ImageUsage;
   error?: { message?: string };
 };
+
+type ImageBilling = {
+  model: string;
+  quality: ImageQuality;
+  size: string;
+  startedAt: number;
+};
+
+// The header's OpenAI balance (billing/openai-credit.ts) is a snapshot minus
+// every gpt-* ReasoningCall, and a high-quality render is the dearest thing
+// this app buys — so each one is logged. No workspace reaches this client;
+// "system" keeps the row out of per-workspace reports while the shared
+// key's balance still counts it. Never throws: a bookkeeping failure must
+// not cost the caller a render OpenAI already billed.
+async function recordImageSpend(
+  usage: ImageUsage | undefined,
+  billing: ImageBilling,
+): Promise<void> {
+  try {
+    await ReasoningCallRepository.record({
+      workspaceId: "system",
+      purpose: "image.generate",
+      model: billing.model,
+      isMock: false,
+      inputTokens: usage?.input_tokens,
+      outputTokens: usage?.output_tokens,
+      costUsd: estimateImageCostUsd({
+        quality: billing.quality,
+        size: billing.size,
+        usage,
+      }),
+      durationMs: Date.now() - billing.startedAt,
+      status: "OK",
+    });
+  } catch (error) {
+    console.error("[openai-image] could not record image spend", error);
+  }
+}
 
 async function storeResult(
   payload: OpenAIImageResponse,
   context: string,
+  billing: ImageBilling,
 ): Promise<GeneratedCreativeImage | null> {
   const b64 = payload.data?.[0]?.b64_json;
   if (!b64) {
     console.error(`[openai-image] no image in response (${context})`);
     return null;
   }
+  // Billed the moment OpenAI returned the image, even if storing it fails.
+  await recordImageSpend(payload.usage, billing);
   const buffer = Buffer.from(b64, "base64");
   // gpt-image-2 always returns PNG regardless of input format.
   const { storageKey, filename } = await putAsset(buffer, "png", "image/png");
@@ -132,12 +179,14 @@ export async function generateOpenAIImage(
   const model = env.OPENAI_IMAGE_MODEL;
   const size = sizeParam(imageSize);
   const inputImage = baseImage ?? referenceImage;
+  const billing: ImageBilling = { model, quality, size, startedAt: Date.now() };
 
   if (onPartial && !inputImage) {
     const streamed = await streamOpenAIImage(
       env.OPENAI_API_KEY,
       { model, prompt, size, quality },
       onPartial,
+      billing,
     );
     if (streamed) return streamed;
   }
@@ -185,7 +234,11 @@ export async function generateOpenAIImage(
       );
       return null;
     }
-    return await storeResult(payload, inputImage ? "edit" : "generate");
+    return await storeResult(
+      payload,
+      inputImage ? "edit" : "generate",
+      billing,
+    );
   } catch (error) {
     console.error("[openai-image] generation failed", error);
     return null;
@@ -199,6 +252,7 @@ async function streamOpenAIImage(
   apiKey: string,
   params: { model: string; prompt: string; size: string; quality: ImageQuality },
   onPartial: (partial: ImagePartial) => void,
+  billing: ImageBilling,
 ): Promise<GeneratedCreativeImage | null> {
   try {
     const stream = await getSdkClient(apiKey).images.generate({
@@ -212,18 +266,24 @@ async function streamOpenAIImage(
     });
 
     let finalB64: string | undefined;
+    let finalUsage: ImageUsage | undefined;
     for await (const event of stream) {
       if (event.type === "image_generation.partial_image") {
         onPartial({ index: event.partial_image_index, b64: event.b64_json });
       } else if (event.type === "image_generation.completed") {
         finalB64 = event.b64_json;
+        finalUsage = event.usage;
       }
     }
     if (!finalB64) {
       console.error("[openai-image] stream ended without a final image");
       return null;
     }
-    return await storeResult({ data: [{ b64_json: finalB64 }] }, "stream");
+    return await storeResult(
+      { data: [{ b64_json: finalB64 }], usage: finalUsage },
+      "stream",
+      billing,
+    );
   } catch (error) {
     console.error("[openai-image] streaming generation failed", error);
     return null;

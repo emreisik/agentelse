@@ -5,6 +5,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
+import { updateCommandCard } from "./card-store";
 import {
   DELIVERABLE_KEYS,
   DELIVERABLES,
@@ -85,7 +86,32 @@ export function buildPackageCard(
 export async function supersedeOpenPackages(
   projectId: string,
   exceptCommandId: string,
+  workId?: string,
 ): Promise<void> {
+  if (workId) {
+    // Works: only this Work's packages, flipped atomically with a state check.
+    const scoped = await prisma.command.findMany({
+      where: {
+        projectId,
+        workId,
+        id: { not: exceptCommandId },
+        parsedIntent: { path: ["card", "kind"], equals: "content-package" },
+      },
+      select: { id: true },
+    });
+    for (const command of scoped) {
+      await updateCommandCard({
+        commandId: command.id,
+        projectId,
+        expectKinds: ["content-package"],
+        update: (card) =>
+          (card as { state?: string }).state === "draft"
+            ? ({ ...card, state: "superseded" } as unknown as typeof card)
+            : null,
+      });
+    }
+    return;
+  }
   const commands = await prisma.command.findMany({
     where: {
       projectId,

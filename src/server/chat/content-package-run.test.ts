@@ -9,7 +9,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const tx = {
   command: { findUnique: vi.fn(), update: vi.fn().mockResolvedValue(undefined) },
+  work: { findFirst: vi.fn() },
 };
+const isWorksEnabled = vi.fn(() => false);
+vi.mock("@/server/works/flag", () => ({ isWorksEnabled }));
 // The run's project gate is ensureProjectActive (a project that never ran
 // setup is activated on the spot; only a paused/closed one is refused).
 const ensureProjectActive = vi.fn();
@@ -104,6 +107,44 @@ beforeEach(() => {
   }));
   driveJobInline.mockResolvedValue({ status: "COMPLETED", errorMessage: null });
   commandFindFirst.mockResolvedValue(null);
+  isWorksEnabled.mockReturnValue(false);
+});
+
+describe("claimContentPackage Work gate", () => {
+  const gateSetup = (work: Record<string, unknown> | null) => {
+    tx.command.findUnique.mockImplementation(
+      async (args: { select: Record<string, boolean> }) =>
+        args.select.workId
+          ? { workId: "work-1" }
+          : { projectId: "proj-1", parsedIntent: pkg("draft") },
+    );
+    tx.work.findFirst.mockResolvedValue(work);
+  };
+
+  it("refuses a completed Work and writes nothing", async () => {
+    isWorksEnabled.mockReturnValue(true);
+    gateSetup({ status: "DONE", channels: [] });
+    const result = await claimContentPackage({
+      projectId: "proj-1",
+      commandId: "cmd-1",
+      selections: [{ id: "i1" }],
+    });
+    expect(result).toEqual({
+      ok: false,
+      message: "This Work is completed. Reopen it to continue.",
+    });
+    expect(tx.command.update).not.toHaveBeenCalled();
+  });
+
+  it("runs no Work query with the flag off", async () => {
+    gateSetup({ status: "DONE", channels: [] });
+    await claimContentPackage({
+      projectId: "proj-1",
+      commandId: "cmd-1",
+      selections: [{ id: "i1" }],
+    });
+    expect(tx.work.findFirst).not.toHaveBeenCalled();
+  });
 });
 
 describe("claimContentPackage", () => {

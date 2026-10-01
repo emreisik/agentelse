@@ -80,6 +80,10 @@ vi.mock("@/server/integrations/channel-connections", () => ({
 }));
 const resolveGoalMode = vi.fn();
 vi.mock("@/server/guided-setup/goal-mode", () => ({ resolveGoalMode }));
+const scheduleDossierAutofill = vi.fn();
+vi.mock("@/server/brand/dossier-autofill-trigger", () => ({
+  scheduleDossierAutofill,
+}));
 
 const applySpy = vi.hoisted(() => vi.fn());
 vi.mock("@/server/guided-setup/apply", () => ({
@@ -317,6 +321,43 @@ describe("running the saga", () => {
     applySpy.mockResolvedValue({ ...OK, unchanged: true, parts: [] });
     await applyGuidedSetupAction(PROJECT, REV);
     expect(revalidatePath).toHaveBeenCalledTimes(1);
+  });
+
+  it("schedules the dossier suggestion once per saved approval, for this project and brand, and never waits for it", async () => {
+    let scheduled = false;
+    scheduleDossierAutofill.mockImplementation(() => {
+      scheduled = true;
+    });
+    const result = await applyGuidedSetupAction(PROJECT, REV);
+
+    expect(result).toEqual(OK);
+    expect(scheduled).toBe(true);
+    expect(scheduleDossierAutofill).toHaveBeenCalledTimes(1);
+    expect(scheduleDossierAutofill).toHaveBeenCalledWith(
+      { workspaceId: "ws-1", projectId: PROJECT, brandId: "brand-1" },
+      "u1",
+    );
+  });
+
+  it("does not schedule the suggestion when nothing was saved", async () => {
+    applySpy.mockResolvedValue({
+      ok: false,
+      code: "STALE",
+      message: "stale",
+      saved: [],
+      failed: [],
+    } satisfies ApplyResult);
+    await applyGuidedSetupAction(PROJECT, REV);
+    expect(scheduleDossierAutofill).not.toHaveBeenCalled();
+  });
+
+  it("does not schedule the suggestion for a project without a default brand", async () => {
+    requireProjectAccess.mockResolvedValue({
+      workspaceId: "ws-1",
+      projectId: PROJECT,
+    });
+    await applyGuidedSetupAction(PROJECT, REV);
+    expect(scheduleDossierAutofill).not.toHaveBeenCalled();
   });
 
   it.each([

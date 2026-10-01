@@ -29,7 +29,6 @@ export type NewProjectFocusTarget = "name" | "domain" | "market" | "language";
 export type NewProjectState = {
   name: string;
   domain: string;
-  brandName: string;
   // The first entry is the primary market (`Project.country`); the rest are
   // stored but display-only downstream.
   countries: CountryCode[];
@@ -39,8 +38,12 @@ export type NewProjectState = {
   languageTouched: boolean;
   // Once the person taps a market it stops following the website address.
   marketTouched: boolean;
-  // Provenance of the pre-selected market; null once the person chose.
+  // Provenance of the pre-selected market; null once the person chose or when
+  // nothing was detected (see `defaulted`).
   localeSource: LocaleSource | null;
+  // True while the market is the built-in Turkey/Turkish fallback (nothing was
+  // detected). It is shown with a note but never sent as a provenance.
+  defaulted: boolean;
   // What the server derived (previous project / browser), the fallback when the
   // typed website has no country signal.
   initial: LocaleDefault;
@@ -50,18 +53,23 @@ export type NewProjectState = {
   focus: NewProjectFocusTarget | null;
 };
 
+// Used when the ladder finds nothing, so the form can always be submitted
+// with just a name.
+export const DEFAULT_COUNTRY: CountryCode = "TR";
+export const DEFAULT_LANGUAGE: LanguageCode = "tr";
+
 export function initialNewProjectState(
   initial: LocaleDefault,
 ): NewProjectState {
   return {
     name: "",
     domain: "",
-    brandName: "",
-    countries: initial ? [initial.country] : [],
-    language: initial ? initial.language : null,
+    countries: [initial ? initial.country : DEFAULT_COUNTRY],
+    language: initial ? initial.language : DEFAULT_LANGUAGE,
     languageTouched: false,
     marketTouched: false,
     localeSource: initial ? initial.source : null,
+    defaulted: !initial,
     initial,
     errors: {},
     focus: null,
@@ -71,7 +79,6 @@ export function initialNewProjectState(
 export type NewProjectAction =
   | { type: "name"; value: string }
   | { type: "domain"; value: string }
-  | { type: "brandName"; value: string }
   // A chip tap: REPLACES the primary market (never appends).
   | { type: "tapMarket"; code: CountryCode }
   // The multi-select's whole list (first = primary).
@@ -104,11 +111,13 @@ function followDomain(state: NewProjectState, domain: string): NewProjectState {
   const target: LocaleDefault = tld
     ? { country: tld, language: languageForCountry(tld), source: "tld" }
     : state.initial;
+  // No signal at all falls back to the built-in default, never to "nothing".
   return {
     ...state,
     domain,
-    ...withPrimary(state, target ? [target.country] : []),
+    ...withPrimary(state, [target ? target.country : DEFAULT_COUNTRY]),
     localeSource: target ? target.source : null,
+    defaulted: !target,
   };
 }
 
@@ -148,8 +157,6 @@ export function newProjectReducer(
         },
       };
     }
-    case "brandName":
-      return { ...state, brandName: action.value };
     case "tapMarket": {
       // Replaces the primary only: the extras (More markets) stay.
       const rest = state.countries
@@ -160,6 +167,7 @@ export function newProjectReducer(
         ...state,
         ...next,
         marketTouched: true,
+        defaulted: false,
         // Tapping the pre-selected chip keeps its provenance; anything else is
         // the person's own choice.
         localeSource:
@@ -176,6 +184,7 @@ export function newProjectReducer(
         ...state,
         ...next,
         marketTouched: true,
+        defaulted: false,
         localeSource: null,
         errors: errorsAfterMarket(state, next.language),
       };
@@ -234,7 +243,6 @@ export function toNewProjectFormData(state: NewProjectState): FormData {
   const formData = new FormData();
   formData.set("name", state.name.trim());
   formData.set("domain", state.domain.trim());
-  formData.set("brandName", state.brandName.trim());
   formData.set("language", state.language ?? "");
   for (const code of state.countries) formData.append("country", code);
   if (state.localeSource) formData.set("localeSource", state.localeSource);
@@ -247,6 +255,10 @@ export const LOCALE_SOURCE_LABEL: Record<LocaleSource, string> = {
   tld: "From your website address",
   browser: "From your browser",
 };
+
+// Shown when nothing could be detected (copy: the line says so).
+export const DEFAULT_LOCALE_NOTE =
+  "We couldn't detect your market, so we assumed Turkey.";
 
 // Markets whose own language is not offered fall back to English, visibly
 // (copy.md new.language.fallback names the missing language).

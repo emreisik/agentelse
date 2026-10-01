@@ -9,6 +9,8 @@ import type {
 
 import { prisma } from "@/lib/prisma";
 import { buildBrandKit, type BrandKit } from "@/lib/brand-kit";
+import type { ConnectedAccount } from "@/lib/connected-accounts";
+import { loadConnectedAccounts } from "@/server/integrations/connected-accounts";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import { CreativeRepository } from "@/server/repositories/creative.repository";
 import { getBrandTwin, type BrandTwin } from "@/server/brand-twin/brand-twin";
@@ -33,9 +35,6 @@ export type WorkspaceCalendarItem = WorkspaceOutputItem & {
   scheduledFor: string;
 };
 
-export type WorkspaceAutopilotMode =
-  "REVIEW_EVERYTHING" | "CREATE_AUTOMATICALLY" | "AUTOPILOT";
-
 // Real counts behind the workspace root's "Resume where we left off" card
 // (product spec's "Home/Dashboard" section) — deliberately just three status
 // buckets, not a full breakdown, so it stays honest without a live feed:
@@ -52,7 +51,9 @@ export type WorkspaceRightPanelData = {
   // variants, role-labelled palette, fonts, style, post template).
   brandKit: BrandKit | null;
   website: string | null;
-  autopilotMode: WorkspaceAutopilotMode;
+  // Where the project's accounts stand, for the Brand tab's "Bağlı hesaplar"
+  // card.
+  connections: ConnectedAccount[];
   resumeStats: WorkspaceResumeStats;
   files: LibraryAsset[];
   outputs: WorkspaceOutputItem[];
@@ -117,22 +118,29 @@ export async function getWorkspaceRightPanelData(
   const monthStart = new Date(year, monthIndex, 1);
   const monthEnd = new Date(year, monthIndex + 1, 0, 23, 59, 59);
 
+  // The account card needs the project's website, so it chains off this query
+  // inside the same Promise.all rather than waiting for the batch to finish.
+  const projectPromise = prisma.project.findUnique({
+    where: { id: projectId },
+    select: { domain: true },
+  });
+
   const [
     brand,
     project,
+    connections,
     assets,
     recentCreatives,
     calendarCreatives,
     schedule,
-    policy,
     statusCounts,
     brandStyle,
   ] = await Promise.all([
     getBrandTwin(projectId),
-    prisma.project.findUnique({
-      where: { id: projectId },
-      select: { domain: true },
-    }),
+    projectPromise,
+    projectPromise.then((row) =>
+      loadConnectedAccounts(projectId, row?.domain ?? null),
+    ),
     prisma.asset.findMany({
       where: { projectId },
       orderBy: { createdAt: "desc" },
@@ -153,15 +161,6 @@ export async function getWorkspaceRightPanelData(
     prisma.projectSchedule.findFirst({
       where: { projectId, capability: "INSTAGRAM_PUBLISH" },
       select: { timezone: true },
-    }),
-    // Read-only: no upsert here (AutonomyPolicyRepository.getOrCreate would
-    // also need workspaceId/brandId this function doesn't otherwise fetch)
-    // — a project that hasn't reached its first autonomy-gated action yet
-    // simply has no row, and AUTOPILOT (the schema default) is an honest
-    // fallback for "not yet configured differently".
-    prisma.autonomyPolicy.findUnique({
-      where: { projectId },
-      select: { autopilotMode: true },
     }),
     prisma.creative.groupBy({
       by: ["status"],
@@ -190,7 +189,7 @@ export async function getWorkspaceRightPanelData(
     brand,
     brandKit,
     website: project?.domain ?? null,
-    autopilotMode: policy?.autopilotMode ?? "AUTOPILOT",
+    connections,
     resumeStats: {
       drafts: countFor(["DRAFT"]),
       pendingApproval: countFor(["IN_REVIEW"]),

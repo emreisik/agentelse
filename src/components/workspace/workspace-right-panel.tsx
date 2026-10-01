@@ -9,8 +9,6 @@ import {
   useWorkspacePanelToggle,
   type WorkspacePanelTabKey,
 } from "@/components/workspace/workspace-panel-toggle";
-import { AutopilotCard } from "@/components/workspace/autopilot-card";
-import type { WorkspaceAutopilotMode } from "@/components/workspace/workspace-right-panel-data";
 
 type TabKey = WorkspacePanelTabKey;
 
@@ -18,15 +16,11 @@ const TAB_TRIGGER_CLASS =
   "h-auto flex-none rounded-[6px] border-none px-2.5 py-1.5 text-[10.5px] font-medium shadow-none";
 
 export function WorkspaceRightPanel({
-  projectId,
-  autopilotMode,
   brand,
   files,
   outputs,
   calendar,
 }: {
-  projectId: string;
-  autopilotMode: WorkspaceAutopilotMode;
   brand: ReactNode;
   files: ReactNode;
   outputs: ReactNode;
@@ -102,16 +96,6 @@ export function WorkspaceRightPanel({
         <TabsContent value="files">{files}</TabsContent>
         <TabsContent value="outputs">{outputs}</TabsContent>
         <TabsContent value="calendar">{calendar}</TabsContent>
-      </div>
-      {/* Fixed at the bottom of the panel, below the scrollable tab body —
-          spec: "Keep a compact Autopilot card fixed at the bottom of the
-          right panel", same across all four tabs since it reads the one
-          project-wide AutonomyPolicy, not a per-tab setting. */}
-      <div
-        className="shrink-0 border-t p-3"
-        style={{ borderColor: "var(--ws-border)" }}
-      >
-        <AutopilotCard projectId={projectId} autopilotMode={autopilotMode} />
       </div>
     </Tabs>
   );

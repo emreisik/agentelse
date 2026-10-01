@@ -119,11 +119,16 @@ export const OpportunityRepository = {
     });
   },
 
+  // Opportunities still waiting for attention: the ones the cap
+  // (maxOpenOpportunities) is there to keep from piling up. ACCEPTED is NOT
+  // open: it is what an opportunity becomes once ideas were made from it, and
+  // nothing ever moves it on, so counting it filled the cap for good (30
+  // opportunities with ideas and the project could never get a new one).
   countOpen(projectId: string) {
     return prisma.opportunity.count({
       where: {
         projectId,
-        status: { in: ["NEW", "REVIEWING", "EVALUATED", "ACCEPTED"] },
+        status: { in: ["NEW", "REVIEWING", "EVALUATED"] },
       },
     });
   },

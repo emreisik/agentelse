@@ -55,7 +55,9 @@ Plan kartı `production: { state: "running", creativeIds, startedAt }` alanını
 7. **Sonraki haftaları planla**: plan bitmeye ≤3 gün kala ya da bitmişse; sihirbaz son planın amaç/kanal/formatıyla önceden dolar ve başlangıç "After your plan" (bitişin ertesi günü) olur.
 8. **Sonuçları gör**: ölçüm döngüsü gerçek (mock olmayan) sonuç bildirdiyse. En sonda: hiçbir bekleyen işin önüne geçmez.
 
-Şerit en çok 3 adım gösterir; adım yoksa eski sabit kısayollar görünür. Takvim aynı adımı üstte bant olarak gösterir; sohbette çalışması gereken adımlar `?next=<tür>` ile sohbete gider ve açılışta **bir kez** çalışır (URL parametresi düşürülür).
+Şerit yalnızca **bekleyen işi** gösterir, en çok 3 adım. **Sessiz** (`quiet`) adımlar şeride girmez ve 3'lük sınırdan yer almaz: "Bağla" gibi hiçbir işi engellemeyen ve haftalarca doğru kalabilen adımlar plan kartında ve takvimde kalır, sohbette sürekli yer kaplamaz. Sabit kısayollar (Create a post, Plan the week...) şeritle birlikte her zaman görünür.
+
+Şeridin sağındaki **×** ("Hide for now") o anki adımları gizler. Gizleme tarayıcıda tutulur (`src/lib/journey-dismissal.ts`, yalnızca kolaylık; saklama yoksa şerit olduğu gibi kalır) ve şu kuralla geri gelir: bir adım **büyürse** (gizlendiğinde 9 parça onay beklerken şimdi 10), **yeni bir adım** çıkarsa ya da **24 saat** geçerse. Parçaları onaylayıp sayı azalırsa şerit geri gelmez (ilerleme haber değildir). Takvim aynı adımı üstte bant olarak gösterir; sohbette çalışması gereken adımlar `?next=<tür>` ile sohbete gider ve açılışta **bir kez** çalışır (URL parametresi düşürülür).
 
 ## Yayın
 
@@ -76,3 +78,11 @@ Sonuçlar `MeasurementPlan/MeasurementCheck` kayıtlarından (24s/72s/7g kontrol
 - Sonuç adımı, sonuç olduğu sürece (30 gün pencere) şeritte kalır; "gördüm" durumu saklanmaz.
 - Çalışan üretim sırasında sunucu ölürse kart 10 dk sonra yeniden üretilebilir hale gelir; açık işi olan slot (`PRODUCING`) o sırada atlanır.
 - Gerçek görsel üretimi bu makinede denenemedi (paylaşımlı kredi, canlı DB): uçtan uca deneme 2 satırlık bir planla elle yapılmalıdır.
+
+## Work kapsamı
+
+Bir Work içinde yolculuk yalnızca o Work'ün parçalarını sayar: `loadJourneySnapshot(projectId, { workId })` Work'ün plan Command'larındaki creative'leri okur (seçenek verilmezse sorgu eskisiyle aynıdır) ve `snapshot.workScoped` açılır. Ayrıntı: `docs/works-slice2.md`.
+
+- **`approve_plan` adımı:** incelemede >= 2 parça varsa `review` adımından önce gelir ve hesaplandığı parçaları adıyla taşır (`planIds`, `creativeIds`). `approvePlansAction` yalnızca gösterilen ve hâlâ bekleyen parçaları onaylar; bu arada daha fazla parça bittiyse `CHANGED` döner ("N more pieces are ready. Review them first.") ve hiçbir şey onaylamaz. Tamamlanmış Work'ün planları atlanır.
+- **Hold kuralı:** Work'e ait onaylı parçada zaman yoksa ya da zaman 24 saatten eskiyse parça, yayın zamanlaması açık olsa bile **tutulur**; zamanlamayı açmak eski parçayı salmaz. Tutulan parça için `Set a time` ya da iki adımlı `Post now` gerekir.
+- **`publishLine`:** her creative kartı canlı bir yayın satırı taşır (`scheduled`, `held`, `manual`, `locked`, `publishing`, `failed`, `published`). `publishing` ve `failed` zamana dayalı satırlardan önce okunur; başarısız yayın "goes out ..." demez. Bağlı olmayan kanal için `connect-<kanal>` adımı Work'te sessiz değildir.

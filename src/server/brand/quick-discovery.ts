@@ -2,6 +2,8 @@ import "server-only";
 
 import { randomBytes } from "node:crypto";
 
+import type { Row } from "@/lib/guided-discovery/contract";
+import { applyTiers, type ConfidenceMap } from "@/lib/guided-discovery/tiers";
 import { languageLabel, countryLabel } from "@/lib/locales";
 import { prisma } from "@/lib/prisma";
 import {
@@ -15,7 +17,10 @@ import {
 } from "@/server/brand/constitution-merge";
 import { scrubDiscoveredPayload } from "@/server/brand/constitution-scrub";
 import { normalizeScanUrl } from "@/server/brand/site-scan/scan";
-import { quickDiscoveryDef } from "@/server/reasoning/prompts/quick-discovery";
+import {
+  quickDiscoveryDef,
+  quickDiscoveryGuidedDef,
+} from "@/server/reasoning/prompts/quick-discovery";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import {
   htmlToText,
@@ -64,8 +69,15 @@ export type QuickDiscoveryTarget = {
 };
 
 export type QuickDiscoveryResult =
-  // reasoningCallId is only set on guided runs (the runner reads the cost).
-  | { status: "DONE"; version: number; pages: number; reasoningCallId?: string }
+  // reasoningCallId and rows are only set on guided runs (the runner reads the
+  // cost; rows are the confidence tiers of the fields that were saved).
+  | {
+      status: "DONE";
+      version: number;
+      pages: number;
+      reasoningCallId?: string;
+      rows?: Row[];
+    }
   | { status: "FAILED"; message: string; code?: ErrorCode }
   // The scan is still running when the caller stopped waiting for it; it
   // finishes on its own and the brand is known from the next turn.
@@ -188,31 +200,48 @@ export const QuickDiscoveryService = {
       const description = target.description?.trim();
 
       const reason = deps.reason ?? ReasoningService.run.bind(ReasoningService);
-      const { output, isMock, reasoningCallId } = await reason(
-        quickDiscoveryDef,
-        {
+      const context = {
+        brandName: target.brandName,
+        domain: target.domain,
+        language: target.language,
+        country: target.country,
+        languageName: languageLabel(target.language),
+        countryName: countryLabel(target.country),
+        pages: pages.map(({ url, title, text }) =>
+          fence
+            ? {
+                url: url.split(fence).join(""),
+                title: title?.split(fence).join(""),
+                text: text.split(fence).join(""),
+              }
+            : { url, title, text },
+        ),
+        ...(target.guided && description ? { description } : {}),
+        ...(fence ? { fence } : {}),
+      };
+      // Guided runs use the same brief plus a per-field confidence; the
+      // confidence is split off here so it never reaches the stored payload.
+      let output: Record<string, unknown>;
+      let confidence: ConfidenceMap = {};
+      let isMock: boolean;
+      let reasoningCallId: string | undefined;
+      if (target.guided) {
+        const called = await reason(quickDiscoveryGuidedDef, {
           ...scope,
-          context: {
-            brandName: target.brandName,
-            domain: target.domain,
-            language: target.language,
-            country: target.country,
-            languageName: languageLabel(target.language),
-            countryName: countryLabel(target.country),
-            pages: pages.map(({ url, title, text }) =>
-              fence
-                ? {
-                    url: url.split(fence).join(""),
-                    title: title?.split(fence).join(""),
-                    text: text.split(fence).join(""),
-                  }
-                : { url, title, text },
-            ),
-            ...(target.guided && description ? { description } : {}),
-            ...(fence ? { fence } : {}),
-          },
-        },
-      );
+          context,
+        });
+        const { confidence: given, ...rest } = called.output;
+        output = rest;
+        // A reasoner that returns no confidence at all means "not found".
+        confidence = given ?? {};
+        isMock = called.isMock;
+        reasoningCallId = called.reasoningCallId;
+      } else {
+        const called = await reason(quickDiscoveryDef, { ...scope, context });
+        output = called.output;
+        isMock = called.isMock;
+        reasoningCallId = called.reasoningCallId;
+      }
 
       const parsed = BrandConstitutionPayloadSchema.parse({
         ...output,
@@ -227,6 +256,9 @@ export const QuickDiscoveryService = {
       // Web-derived text reaches the constitution only through the scrub on
       // guided runs; what it drops is counted, never logged.
       let payload = parsed;
+      // What may be written to the dossier: accepted fields only (guided).
+      let dossierPayload = parsed;
+      let rows: Row[] | undefined;
       if (target.guided) {
         const scrubbed = scrubDiscoveredPayload(parsed);
         payload = scrubbed.payload;
@@ -240,6 +272,13 @@ export const QuickDiscoveryService = {
             metadata: { count: scrubbed.dropped },
           }).catch(() => undefined);
         }
+        // Tiers go after the scrub and BEFORE anything is published: an
+        // assumed value stays (plus an assumption line), an unknown one is
+        // emptied, and only accepted values may reach the dossier.
+        const applied = applyTiers(payload, confidence);
+        payload = applied.payload;
+        dossierPayload = applied.dossierPayload;
+        rows = applied.rows;
       }
 
       const evidenceIds = pages.map((page) => page.evidenceId);
@@ -283,7 +322,7 @@ export const QuickDiscoveryService = {
           );
           const merged = fillEmptyConstitution(activePayload, payload);
           if (!merged.changed) {
-            await fillEmptyDossierFields(scope, target, payload).catch(
+            await fillEmptyDossierFields(scope, target, dossierPayload).catch(
               logDossierFailure(target),
             );
             return {
@@ -291,6 +330,7 @@ export const QuickDiscoveryService = {
               version: active.version,
               pages: pages.length,
               reasoningCallId,
+              ...(rows ? { rows } : {}),
             };
           }
           toPublish = merged.payload;
@@ -310,7 +350,7 @@ export const QuickDiscoveryService = {
 
       // The constitution is already stored at this point, so a dossier that
       // could not be filled must not turn a finished scan into a failure.
-      await fillEmptyDossierFields(scope, target, payload).catch(
+      await fillEmptyDossierFields(scope, target, dossierPayload).catch(
         logDossierFailure(target),
       );
 
@@ -328,6 +368,7 @@ export const QuickDiscoveryService = {
         version: constitution.version,
         pages: pages.length,
         ...(target.guided ? { reasoningCallId } : {}),
+        ...(rows ? { rows } : {}),
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

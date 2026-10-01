@@ -18,6 +18,9 @@ import {
 } from "@/server/commands/limit-notice";
 import { subscribeCreativeProgress } from "@/server/media/creative-progress";
 import { isAgentelseError } from "@/server/security/errors";
+import { isWorksEnabled } from "@/server/works/flag";
+
+import { updateCommandCard } from "./card-store";
 
 import { driveJobInline } from "./inline-job";
 import type { ChatStreamEvent } from "./types";
@@ -71,6 +74,34 @@ export async function patchCommandCard(
   commandId: string,
   patch: Record<string, unknown>,
 ): Promise<void> {
+  if (isWorksEnabled()) {
+    // Works: swap/pick write the same row, so go through the atomic writer.
+    const head = await prisma.command.findUnique({
+      where: { id: commandId },
+      select: { projectId: true, parsedIntent: true },
+    });
+    const headIntent = head?.parsedIntent as {
+      card?: Record<string, unknown>;
+    } | null;
+    if (!head?.projectId || !headIntent?.card) return;
+    // updateCommandCard retries a write conflict itself; if it still loses
+    // (swap/move kept hitting the same row), try the whole write once more and
+    // then throw so the caller's catch logs it. Silently dropping the patch
+    // would leave production.state "running" until the claim expires.
+    // NOT_FOUND / WRONG_KIND mean the card is gone or replaced: nothing to
+    // patch, as in the legacy branch below.
+    for (let attempt = 1; ; attempt += 1) {
+      const result = await updateCommandCard({
+        commandId,
+        projectId: head.projectId,
+        update: (card) => ({ ...card, ...patch }) as typeof card,
+      });
+      if (result.ok || result.code !== "CONFLICT") return;
+      if (attempt >= 2) {
+        throw new Error(`card patch lost a write conflict: ${result.message}`);
+      }
+    }
+  }
   const row = await prisma.command.findUnique({
     where: { id: commandId },
     select: { parsedIntent: true },

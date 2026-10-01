@@ -1,9 +1,7 @@
 import Link from "next/link";
-import { ChevronDown, ShieldCheck, Sliders, Sparkle } from "lucide-react";
+import { Sparkle } from "lucide-react";
 
 import {
-  BrandHero,
-  BrandIdentityLine,
   EmptyKitCard,
   LayoutSection,
   LogoTiles,
@@ -12,25 +10,33 @@ import {
   TypographySection,
 } from "@/components/brand/brand-kit-sections";
 import { BrandScanButton } from "@/components/brand/brand-scan-dialog";
+import {
+  BrandSummaryCard,
+  CollapsibleCard,
+  ConnectedAccountsCard,
+  brandSummaryRows,
+} from "@/components/workspace/brand-overview-cards";
 import { buildHubHref } from "@/components/hub-core/hub-core-params";
-import { buildBrandKit, kitIsEmpty, type BrandKit } from "@/lib/brand-kit";
+import {
+  allPaletteHexes,
+  buildBrandKit,
+  kitIsEmpty,
+  type BrandKit,
+} from "@/lib/brand-kit";
+import type { ConnectedAccount } from "@/lib/connected-accounts";
 import type { BrandTwin } from "@/server/brand-twin/brand-twin";
 
-const CONFIDENCE_LABEL: Record<BrandTwin["confidence"], string> = {
-  high: "Brand understood",
-  medium: "Still learning",
-  low: "Just getting started",
-};
-
-// The Brand tab. Leads with the brand as a visual kit (logo on brand-coloured
-// surfaces, role-labelled palette, type specimens, style, the post layout
-// every creative gets); the strategy text (essence, voice, markets, what
-// works, never-do) sits below in a collapsible section, still one click away.
+// The Brand tab: two cards lead (the brand at a glance, and where its accounts
+// stand), then two collapsed ones for what used to fill the tab: the visual kit
+// (logo on brand-coloured surfaces, role-labelled palette, type specimens, style,
+// the post layout every creative gets) and the strategy text (essence, focus,
+// voice, markets, what works, never-do). Nothing was taken away, only folded.
 export function BrandSummaryPanel({
   projectId,
   brand,
   website,
   kit,
+  connections = [],
 }: {
   projectId: string;
   brand: BrandTwin | null;
@@ -38,6 +44,8 @@ export function BrandSummaryPanel({
   // Absent only for callers that have the twin but not the kit; a kit is then
   // derived from the twin's flat visual summary.
   kit?: BrandKit | null;
+  // Where the project's accounts stand (Bağlı hesaplar), read by the page.
+  connections?: ConnectedAccount[];
 }) {
   if (!brand) {
     return (
@@ -73,97 +81,52 @@ export function BrandSummaryPanel({
     ),
   );
 
-  const verified = brand.confidence === "high";
-  const fallbackLabel = CONFIDENCE_LABEL[brand.confidence];
-  const actions = (
-    <>
-      {empty ? null : (
-        <BrandScanButton
-          projectId={projectId}
-          website={website}
-          hasLogo={hasLogo}
-          kit={brandKit}
-        />
-      )}
-      <Link
-        href={buildHubHref(projectId, { panel: "brand-brain" })}
-        scroll={false}
-        aria-label="Brand settings"
-        className="flex size-6 items-center justify-center rounded-md border bg-background/90 text-foreground transition-colors hover:bg-background"
-        style={{ borderColor: "var(--ws-border)" }}
-      >
-        <Sliders className="size-3" />
-      </Link>
-    </>
-  );
-
   return (
-    <div className="flex flex-col gap-0 px-4 py-4 text-sm">
-      {empty ? (
-        <>
+    <div className="flex flex-col gap-3 px-4 py-4 text-sm">
+      <BrandSummaryCard
+        name={brand.name}
+        website={website}
+        verified={brand.confidence === "high"}
+        confidence={brand.confidence}
+        isMock={brand.isMock}
+        rows={brandSummaryRows(brand)}
+        colors={allPaletteHexes(brandKit)}
+        logos={brandKit.logos}
+        // Editing the profile happens in Brand Brain (its Assets tab has the
+        // dossier form, the Visual Identity tab the look).
+        editHref={buildHubHref(projectId, { panel: "brand-brain" })}
+      />
+
+      <ConnectedAccountsCard projectId={projectId} accounts={connections} />
+
+      <CollapsibleCard title="Marka kiti" defaultOpen={empty}>
+        {empty ? (
           <EmptyKitCard
             projectId={projectId}
             website={website}
             kit={brandKit}
           />
-          <div className="flex items-start justify-between gap-2">
-            <BrandIdentityLine
-              name={brand.name}
-              website={website}
-              verified={verified}
-              fallbackLabel={fallbackLabel}
-              onSurface={false}
-            />
-            <div className="flex shrink-0 items-center gap-1.5">{actions}</div>
-          </div>
-        </>
-      ) : (
-        <BrandHero
-          name={brand.name}
-          website={website}
-          verified={verified}
-          fallbackLabel={fallbackLabel}
-          kit={brandKit}
-          actions={actions}
-        />
-      )}
+        ) : (
+          <>
+            <div className="mb-3 flex justify-end">
+              <BrandScanButton
+                projectId={projectId}
+                website={website}
+                hasLogo={hasLogo}
+                kit={brandKit}
+              />
+            </div>
+            <LogoTiles kit={brandKit} projectId={projectId} />
+            <PaletteSection kit={brandKit} projectId={projectId} />
+            <TypographySection kit={brandKit} />
+            <StyleSection kit={brandKit} projectId={projectId} />
+            <LayoutSection kit={brandKit} projectId={projectId} />
+          </>
+        )}
+      </CollapsibleCard>
 
-      {brand.isMock ? (
-        <div
-          className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
-          style={{
-            background: "var(--ws-soft-green)",
-            color: "var(--ws-accent)",
-          }}
-        >
-          <ShieldCheck className="size-3" />
-          Sample brand profile
-        </div>
-      ) : null}
-
-      {empty ? null : (
-        <div className="mt-3">
-          <LogoTiles kit={brandKit} projectId={projectId} />
-          <PaletteSection kit={brandKit} projectId={projectId} />
-          <TypographySection kit={brandKit} />
-          <StyleSection kit={brandKit} projectId={projectId} />
-          <LayoutSection kit={brandKit} projectId={projectId} />
-        </div>
-      )}
-
-      <details
-        className="group mt-1 border-t pt-1"
-        style={{ borderColor: "var(--ws-border)" }}
-      >
-        <summary
-          className="flex cursor-pointer list-none items-center justify-between py-3 text-[10px] font-semibold tracking-[0.1em] [&::-webkit-details-marker]:hidden"
-          style={{ color: "var(--ws-text-3)" }}
-        >
-          BRAND STRATEGY
-          <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
-        </summary>
-
-        <div className="pb-2">
+      <CollapsibleCard title="Marka stratejisi">
+        <div className="pb-1">
           <div className="mb-3.5">
             <SectionLabel>BRAND ESSENCE</SectionLabel>
             {/* A glanceable summary, not the full text — Brand Brain has it
@@ -279,7 +242,7 @@ export function BrandSummaryPanel({
             Edit brand profile ↗
           </Link>
         </div>
-      </details>
+      </CollapsibleCard>
     </div>
   );
 }
@@ -308,7 +271,7 @@ function Section({
 }) {
   return (
     <div
-      className="border-t py-4 first:border-0"
+      className="border-t py-3 first:border-0"
       style={{ borderColor: "var(--ws-border)" }}
     >
       <div className="mb-2.5 flex items-center justify-between">

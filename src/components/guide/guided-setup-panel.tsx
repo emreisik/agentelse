@@ -636,12 +636,8 @@ export function GuidedSetupHeader({
   onRetryIdeas,
 }: GuidedSetupHeaderProps) {
   return (
-    <div className="relative shrink-0 touch-none px-5 pt-3 pb-3 select-none">
-      <div
-        aria-hidden="true"
-        className="absolute top-2 left-1/2 h-1 w-10 -translate-x-1/2 rounded-full bg-border"
-      />
-      <div className="flex items-center gap-2 pt-2">
+    <div className="relative shrink-0 px-5 pt-4 pb-3 select-none">
+      <div className="flex items-center gap-2">
         <AgentelseMark
           className="size-4 shrink-0"
           style={{ color: "var(--ws-accent)" }}
@@ -1356,8 +1352,7 @@ function DoneView({
 // Footer
 // -----------------------------------------------------------------------------
 
-const FOOTER_CLASS =
-  "shrink-0 border-t px-5 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px)+var(--bleed))]";
+const FOOTER_CLASS = "shrink-0 border-t px-5 pt-3 pb-3";
 
 function Footer({ children, hint }: { children: ReactNode; hint?: ReactNode }) {
   return (
@@ -1655,17 +1650,6 @@ function PanelBody(props: GuidedSetupPanelProps): ReactNode {
   }
 }
 
-// The footer of a view (none for boot, the error states and done).
-function hasFooter(kind: GuidedSetupPanelProps["kind"]): boolean {
-  return (
-    kind === "question" ||
-    kind === "confirm" ||
-    kind === "checkpoint" ||
-    kind === "review" ||
-    kind === "applying"
-  );
-}
-
 function PanelFooter(props: GuidedSetupPanelProps): ReactNode {
   switch (props.kind) {
     case "question": {
@@ -1780,15 +1764,7 @@ export function GuidedSetupPanel(props: GuidedSetupPanelProps) {
   return (
     <>
       <DrawerBody
-        className={cn(
-          "px-5 pt-4",
-          // The popup's bottom --bleed sits below the screen edge. A footer
-          // pads past it itself; a view without one must leave that room, or
-          // its last lines cannot be scrolled into sight.
-          hasFooter(props.kind)
-            ? "pb-4"
-            : "pb-[calc(1rem+env(safe-area-inset-bottom,0px)+var(--bleed))]",
-        )}
+        className="px-5 pt-4 pb-4"
       >
         <div
           key={stepKeyOf(props)}

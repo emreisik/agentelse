@@ -15,7 +15,14 @@ Modal (`brand-scan-dialog.tsx`) üç adımdır: **URL** → **Bulunanlar** (logo
 
 ## 2. Brand sekmesi
 
-`workspace-right-panel-data.ts` markanın kimliğini `buildBrandKit` (`src/lib/brand-kit.ts`) ile düz, serileştirilebilir bir `BrandKit` nesnesine çevirir; `brand-summary-panel.tsx` ve `components/brand/brand-kit-sections.tsx` bunu çizer: hero kartı (marka rengi üstünde doğru logo varyantı, Scan site, ayarlar), logo kutuları, palet (tıkla-kopyala), font örnekleri, stil çipleri, layout galerisi (+ **Edit layouts**). Strateji içerikleri (voice, markets...) katlanır "BRAND STRATEGY" bölümünde durur. Kimlik boşsa büyük bir "Scan site" kartı görünür.
+`workspace-right-panel-data.ts` markanın kimliğini `buildBrandKit` (`src/lib/brand-kit.ts`) ile düz, serileştirilebilir bir `BrandKit` nesnesine çevirir; sağ panelin Marka sekmesi (`brand-summary-panel.tsx`) dört kart çizer:
+
+1. **Marka özeti** (`brand-overview-cards.tsx`): logo, ad, site, Sektör / Hedef Kitle / Tone of Voice / Pazarlar satırları (boş olan satır hiç görünmez) ve en çok beş marka rengi; "Düzenle" Brand Brain'e gider.
+2. **Bağlı hesaplar**: Instagram, Facebook, Meta Ads, GA4, Search Console, Website (+ bağlıysa TikTok/LinkedIn/X), her biri Bağlı / Aktif / Kurulum gerekli / Bağlı değil; satır Integrations sayfasına gider. Durumları `src/server/integrations/connected-accounts.ts` okur, kelimeleri `src/lib/connected-accounts.ts` belirler.
+3. **Marka kiti** (kapalı kart; kimlik boşsa açık): logo kutuları (her varyant kendi zemininde), palet (tıkla-kopyala), font örnekleri, stil çipleri, layout galerisi (+ **Edit layouts**), **Scan site**. Kimlik boşsa büyük bir "Scan my website" kartı görünür.
+4. **Marka stratejisi** (kapalı kart): essence, current focus, voice, markets, what works, never do.
+
+Sayfanın tepesindeki renkli "hero" kartı ve "Agentelse fark etti" kartı yoktur (tasarımda bilerek çıkarıldı).
 
 ## 3. Post layout'ları
 
@@ -29,9 +36,9 @@ Modal (`brand-scan-dialog.tsx`) üç adımdır: **URL** → **Bulunanlar** (logo
 | `headline`    | Bölge (üst, sol üst, orta, sol sütun, alt), hiza, en çok satır, ölçek. Görselde yazıyı **yapay zekâ çizer**.   |
 | `composition` | Görüntü modeline sahne yönergesi ("özneyi alt üçte ikide tut, üst üçte biri sakin bırak").                     |
 
-`buildPresetLayouts(base)` markanın mevcut şablon ayarından **deterministik** 7 hazır layout üretir (Classic, Headline on top, Left column, Center statement, Brand band, Story / Reel, Image only); LLM yoktur. Galeri (`layout-gallery.tsx`) canlı CSS önizlemesi (`layout-preview.tsx`, gerçek logo ve renklerle, kompozitle aynı yüzdelerle) gösterir; kullanıcı düzenler, çoğaltır, hazır haline sıfırlar, siler ve varsayılanı seçer. Kayıt: `updateLayoutTemplatesAction`.
+`buildPresetLayouts(base)` markanın mevcut şablon ayarından **deterministik** 7 hazır layout üretir (Classic, Headline on top, Left column, Center statement, Brand band, Story / Reel, Image only); LLM yoktur. Galeri (`layout-gallery.tsx`) canlı CSS önizlemesi (`layout-preview.tsx`, gerçek logo ve renklerle, kompozitle aynı yüzdelerle) gösterir; kullanıcı düzenler, çoğaltır, hazır haline sıfırlar, siler ve varsayılanı seçer. **Bir layout kartına tıklamak onu yeni postların varsayılanı yapar** (`setDefaultLayout`; seçili kart ve "Default" rozeti aynı yerde olur; eskiden tıklama yalnızca düzenleme için seçiyordu ve ayrı bir "Use as default" düğmesi gerekiyordu, bu yüzden kaydedilen "seçim" hiçbir şeyi değiştirmiyordu). Varsayılan bir post şekli için uygun değilse o şekil, o şekle göre yapılmış layout'u alır; galeri bunu varsayılanın yanında söyler (`defaultOverrides`). Kayıt: `updateLayoutTemplatesAction`. Mevcut postlar layout'unu korur; yalnızca yeni üretimler değişen varsayılanı izler.
 
-**Nasıl uygulanır** (`src/server/media/creative-layout.ts`, `planCreativeLayout`): layout id verilmişse o, yoksa formata uygun olan, yoksa marka varsayılanı seçilir. Sonuç üç şeydir:
+**Nasıl uygulanır** (`src/server/media/creative-layout.ts`, `planCreativeLayout`): layout id verilmişse o; yoksa marka varsayılanı (formata uygunsa); uygun değilse tam o format için yapılmış layout; o da yoksa formata uyan ilk layout seçilir (`resolveLayout`). Sonuç üç şeydir:
 
 1. **Kesin kompozit:** `layoutToTemplateConfig` → `applyBrandTemplate`. Logo, şerit ve bant görüntü üretildikten **sonra** piksel-hassas eklenir (yapay zekâ çizmez). Bantta logo, bant rengine göre doğru varyantla (açık/koyu) bandın içine oturur; Story/Reel'de köşe logosu platformun kendi arayüz bantlarından (`safeZone`) uzak tutulur; layout kullanılırken logonun boş kenarları kırpılır (`trimLogo`), böylece "boyut %" ve "kenar boşluğu" görünen işarete uygulanır.
 2. **Prompt:** `reservedZones` (kompozitin kaplayacağı alanlar, yazıdan ve ana özneden boş bırakılır), `layoutComposition` (sahne yönergesi) ve başlık istendiyse `headlinePlacement`.

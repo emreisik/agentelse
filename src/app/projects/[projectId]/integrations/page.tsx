@@ -77,6 +77,14 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { Input } from "@/components/ui/input";
 import { buttonVariants } from "@/components/ui/button";
+import { isWorksEnabled } from "@/server/works/flag";
+import { WorkRepository } from "@/server/repositories/work.repository";
+import { getChannelConnections } from "@/server/integrations/channel-connections";
+import { singleReturnTarget } from "./works-return";
+import { channelOffers } from "@/lib/works/channel-offers";
+import { WorkReturnLink, WorkReturnLinks } from "@/components/works/work-return-link";
+import { ChannelOfferBanner } from "@/components/works/channel-offer-banner";
+import { offersFor } from "@/components/works/channel-offers-for";
 
 // Only connectors backed by a real, working connection (OAuth / Bot API)
 // are listed. The old BrowserProfile-based placeholders (Instagram, Meta
@@ -99,6 +107,38 @@ const FILTER_KEYS: readonly FilterKey[] = [
   "enabled",
   ...CATEGORY_LIST.map((c) => c.key),
 ];
+
+// The way back to a Work after connecting a channel. Works only; any failure
+// renders nothing so the page itself never breaks.
+async function renderWorksReturn(projectId: string, from: unknown) {
+  try {
+    if (!isWorksEnabled()) return null;
+    const [fromWork, works, connections, coverage] = await Promise.all([
+      typeof from === "string" && from
+        ? WorkRepository.get(projectId, from)
+        : Promise.resolve(null),
+      WorkRepository.listRecent(projectId, 50),
+      getChannelConnections(projectId),
+      // Slim coverage read (all non-archived Works) decides the open offers.
+      WorkRepository.channelCoverage(projectId),
+    ]);
+    const { back } = channelOffers(connections, works);
+    const offers = offersFor(true, connections, coverage);
+    const single = singleReturnTarget(fromWork, back);
+    if (!single && back.length === 0 && offers.length === 0) return null;
+    return (
+      <>
+        {single ? (
+          <WorkReturnLink projectId={projectId} workId={single.id} title={single.title} />
+        ) : null}
+        <WorkReturnLinks projectId={projectId} links={back} />
+        <ChannelOfferBanner projectId={projectId} channels={offers} />
+      </>
+    );
+  } catch {
+    return null;
+  }
+}
 
 export default async function EntegrasyonlarPage({
   params,
@@ -333,6 +373,8 @@ export default async function EntegrasyonlarPage({
   const navRowActiveClass = "bg-muted font-medium text-foreground";
   const navRowInactiveClass = "text-muted-foreground";
 
+  const worksReturn = await renderWorksReturn(projectId, sp.from);
+
   const openTelegram = sp.integration === "telegram";
   const openGoogleService: GoogleService | null =
     sp.integration === GOOGLE_PROVIDER.analytics
@@ -434,6 +476,7 @@ export default async function EntegrasyonlarPage({
           </aside>
 
           <div className="min-w-0 flex-1 space-y-6">
+            {worksReturn}
             <p className="max-w-2xl text-xs text-muted-foreground/80">
               Every connector here is a real connection: you sign in with your
               own account (OAuth) or bot token and grant permission directly.

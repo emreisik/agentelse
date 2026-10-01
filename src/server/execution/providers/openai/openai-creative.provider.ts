@@ -9,6 +9,7 @@ import type {
 import { z } from "zod";
 
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
+import { VARIANT_COUNT, VARIANT_QUALITY } from "@/lib/works/variants";
 import {
   emitCreativeProgress,
   hasCreativeProgressListener,
@@ -49,6 +50,13 @@ const CreativeOutputSchema = z.object({
   imagePrompt: z.string(),
 });
 
+// Only for a variants job (payload.variantCount): the text step also writes
+// the other compositions. A separate schema keeps the one the model sees for
+// every other job exactly as it was.
+const VariantOutputSchema = CreativeOutputSchema.extend({
+  alternativeImagePrompts: z.array(z.string()).optional(),
+});
+
 // The chat's inline generation (generate_image) has the conversation model
 // write the copy and image prompt itself — it already holds the brand
 // context — so the provider can skip its own text LLM round trip (5-30 s).
@@ -56,6 +64,7 @@ const PresetSchema = z.object({
   caption: z.string(),
   copy: z.string(),
   imagePrompt: z.string().min(1),
+  alternativeImagePrompts: z.array(z.string()).optional(),
   // One of the brand's post layouts (src/lib/layout-templates.ts) picked in
   // the chat. Absent or unknown = the brand's default for this format.
   layoutId: z.string().max(40).optional(),
@@ -82,6 +91,8 @@ type StoredResult = {
   contentFormat?: CreativeContentFormat;
   // Which post layout laid this out (null: the brand's base template).
   layoutTemplate?: { id: string; name: string } | null;
+  // Variants job only: the extra renders of the same piece (never the main).
+  alternatives?: { image: GeneratedCreativeImage; label: string }[];
   errorMessage?: string;
 };
 
@@ -100,10 +111,37 @@ function localeInstruction(brandContext: unknown): string {
   return `Write "caption" and "copy" entirely in ${language}, culturally relevant to the ${country} market.`;
 }
 
-function buildSystemPrompt(brandContext: unknown): string {
+// A variants job asks for 2..VARIANT_COUNT pictures in total; anything else
+// (absent, 1, a string, a float) is an ordinary single-image job.
+function variantCountOf(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 2 &&
+    value <= VARIANT_COUNT
+    ? value
+    : undefined;
+}
+
+// An absent quality means "high" downstream (about 4x the price of medium),
+// which would silently triple the stated cost of a variants tap.
+function clampVariantQuality(
+  quality: "low" | "medium" | "high" | undefined,
+): "low" | "medium" {
+  return quality === "low" ? "low" : VARIANT_QUALITY;
+}
+
+function buildSystemPrompt(
+  brandContext: unknown,
+  alternativeCount?: number,
+): string {
   return [
     "You are Agentelse's creative engine for a digital agency.",
     "Given a creative brief and brand context, produce: `caption` (short social caption), `copy` (longer supporting marketing copy), and `imagePrompt` (a concrete, literal visual description for an image generator — subject, composition, style, colours; no text overlays, no brand logos).",
+    ...(alternativeCount
+      ? [
+          `Also produce \`alternativeImagePrompts\`: exactly ${alternativeCount} more image prompts for the SAME post, each with a clearly different composition, light and framing from \`imagePrompt\` and from each other, all obeying the same brand rules.`,
+        ]
+      : []),
     "Respect any negativeBrief/approvedClaims entries in the brand context as hard constraints — never violate them.",
     localeInstruction(brandContext),
     "Brand context (JSON, may be partial):",
@@ -133,18 +171,24 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
     const input = (request.payload ?? {}) as Record<string, unknown>;
     const brief =
       typeof input.request === "string" ? input.request : JSON.stringify(input);
+    const variantCount = variantCountOf(input.variantCount);
 
     try {
       const preset = PresetSchema.safeParse(input.preset);
       const parsed = preset.success
         ? preset.data
-        : CreativeOutputSchema.parse(
+        : (variantCount ? VariantOutputSchema : CreativeOutputSchema).parse(
             (
               await runOpenAIStructured({
                 model: openaiModelForTier(),
-                system: buildSystemPrompt(input.brandContext),
+                system: buildSystemPrompt(
+                  input.brandContext,
+                  variantCount ? variantCount - 1 : undefined,
+                ),
                 user: brief,
-                jsonSchema: z.toJSONSchema(CreativeOutputSchema),
+                jsonSchema: z.toJSONSchema(
+                  variantCount ? VariantOutputSchema : CreativeOutputSchema,
+                ),
                 // See gemini-creative.provider.ts's former history (now
                 // removed): a 3-field schema can still be cut off mid-JSON
                 // on a small budget when `copy`/`imagePrompt` are asked to
@@ -154,10 +198,13 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
               })
             ).raw,
           );
-      const quality =
+      const requestedQuality =
         typeof input.quality === "string" && QUALITIES.has(input.quality)
           ? (input.quality as "low" | "medium" | "high")
           : undefined;
+      const quality = variantCount
+        ? clampVariantQuality(requestedQuality)
+        : requestedQuality;
       const streamed = hasCreativeProgressListener(request.executionJobId);
       const overlay = preset.success ? preset.data.overlay : undefined;
 
@@ -199,47 +246,63 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         pixelSize: platformFormat.pixelSize,
         hasHeadline: Boolean(overlay),
       });
-      const finalImagePrompt = buildCreativePrompt({
-        subject: parsed.imagePrompt,
-        brandContext: input.brandContext,
-        platformLabel: platformFormat.label,
-        contentFormatLabel: platformFormat.contentFormatLabel,
-        pixelSize: platformFormat.pixelSize,
-        safeZone: platformFormat.safeZone,
-        hasStyleReference: Boolean(styleImage),
-        reservedZones: layoutPlan.reservedZones,
-        layoutComposition: layoutPlan.composition,
-        typography: overlay
-          ? {
-              ...overlay,
-              // The brand's own first accent colour, when configured, so the
-              // highlighted words match the palette.
-              accentHex: brandCtx.visualIdentity?.accentColors?.[0]?.hex,
-              placement: layoutPlan.headlinePlacement,
-            }
-          : undefined,
-      });
-      let image = isCreativeImageConfigured()
-        ? ((await generateCreativeImage(finalImagePrompt, {
-            imageSize: platformFormat.pixelSize,
-            referenceImage: styleImage ?? undefined,
-            // Absent for worker-driven jobs: unchanged behavior ("high").
-            quality,
-            // Somebody is watching this render live (inline chat
-            // generation): stream previews and don't detour via Gemini.
-            ...(streamed
-              ? {
-                  skipGemini: true,
-                  onPartial: (partial: { index: number; b64: string }) =>
-                    emitCreativeProgress(request.executionJobId, {
-                      type: "partial",
-                      index: partial.index,
-                      dataUrl: `data:image/png;base64,${partial.b64}`,
-                    }),
-                }
-              : {}),
-          })) ?? undefined)
-        : undefined;
+      const promptFor = (subject: string) =>
+        buildCreativePrompt({
+          subject,
+          brandContext: input.brandContext,
+          platformLabel: platformFormat.label,
+          contentFormatLabel: platformFormat.contentFormatLabel,
+          pixelSize: platformFormat.pixelSize,
+          safeZone: platformFormat.safeZone,
+          hasStyleReference: Boolean(styleImage),
+          reservedZones: layoutPlan.reservedZones,
+          layoutComposition: layoutPlan.composition,
+          typography: overlay
+            ? {
+                ...overlay,
+                // The brand's own first accent colour, when configured, so the
+                // highlighted words match the palette.
+                accentHex: brandCtx.visualIdentity?.accentColors?.[0]?.hex,
+                placement: layoutPlan.headlinePlacement,
+              }
+            : undefined,
+        });
+      const finalImagePrompt = promptFor(parsed.imagePrompt);
+      // One render. `live` = this is the picture the watcher sees streaming
+      // (the main one); an extra variant never streams, its partial frames
+      // would overwrite the main preview.
+      const renderRaw = async (
+        prompt: string,
+        live: boolean,
+      ): Promise<GeneratedCreativeImage | undefined> =>
+        isCreativeImageConfigured()
+          ? ((await generateCreativeImage(prompt, {
+              imageSize: platformFormat.pixelSize,
+              referenceImage: styleImage ?? undefined,
+              // Absent for worker-driven jobs: unchanged behavior ("high").
+              quality,
+              // Somebody is watching this render live (inline chat
+              // generation): stream previews and don't detour via Gemini.
+              ...(streamed
+                ? {
+                    skipGemini: true,
+                    ...(live
+                      ? {
+                          onPartial: (partial: {
+                            index: number;
+                            b64: string;
+                          }) =>
+                            emitCreativeProgress(request.executionJobId, {
+                              type: "partial",
+                              index: partial.index,
+                              dataUrl: `data:image/png;base64,${partial.b64}`,
+                            }),
+                        }
+                      : {}),
+                  }
+                : {}),
+            })) ?? undefined)
+          : undefined;
 
       // Deterministic logo + accent-bar compositing — the ONE guarantee in
       // this pipeline (prompt text alone is stochastic). Reads from the
@@ -247,11 +310,13 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
       // — this execution's behavior must not change mid-flight from a
       // concurrent Visual Identity edit (spec section 35). Best-effort: a
       // templating failure must never fail creative generation.
-      if (image) {
+      const brandTemplated = async (
+        rendered: GeneratedCreativeImage,
+      ): Promise<GeneratedCreativeImage> => {
         try {
           const templated = await applyBrandTemplate({
-            storageKey: image.storageKey,
-            mimeType: image.mimeType,
+            storageKey: rendered.storageKey,
+            mimeType: rendered.mimeType,
             lightLogoAssetId: brandCtx.logoAssetId,
             darkLogoAssetId: brandCtx.darkLogoAssetId,
             accentColors: brandCtx.visualIdentity?.accentColors,
@@ -261,17 +326,72 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
             // Only with a saved layout: brands without one keep their exact
             // previous compositing.
             safeZone: layoutPlan.layout
-              ? safeZonePercent(platformFormat.safeZone, platformFormat.pixelSize)
+              ? safeZonePercent(
+                  platformFormat.safeZone,
+                  platformFormat.pixelSize,
+                )
               : undefined,
             trimLogo: Boolean(layoutPlan.layout),
           });
-          if (templated) image = { ...image, size: templated.size };
+          if (templated) return { ...rendered, size: templated.size };
         } catch (error) {
           console.error(
             "[openai-creative-provider] applyBrandTemplate failed:",
             error,
           );
         }
+        return rendered;
+      };
+
+      let image: GeneratedCreativeImage | undefined;
+      let alternatives: { image: GeneratedCreativeImage; label: string }[] = [];
+      if (variantCount) {
+        // The main picture and the N-1 alternatives render concurrently; a
+        // render that fails or returns nothing is dropped (billing is per
+        // successful image), so one bad render never costs the other two.
+        const prompts = [
+          parsed.imagePrompt,
+          ...("alternativeImagePrompts" in parsed &&
+          Array.isArray(parsed.alternativeImagePrompts)
+            ? parsed.alternativeImagePrompts
+            : []
+          ).filter((p) => p.trim() !== ""),
+        ].slice(0, variantCount);
+        // Fewer prompts than pictures asked for: re-render the main prompt
+        // rather than ask for fewer pictures than the button promised.
+        while (prompts.length < variantCount) prompts.push(parsed.imagePrompt);
+        const settled = await Promise.all(
+          prompts.map(async (subject, index) => {
+            try {
+              const rendered = await renderRaw(promptFor(subject), index === 0);
+              return {
+                image: rendered ? await brandTemplated(rendered) : undefined,
+                error: undefined as unknown,
+              };
+            } catch (error) {
+              return { image: undefined, error };
+            }
+          }),
+        );
+        const rendered = settled.flatMap((r) => (r.image ? [r.image] : []));
+        // Nothing survived, whether a render threw or generateCreativeImage
+        // answered null (it never throws on a failed render: every tier is
+        // caught and it ends in null): fail the job instead of completing an
+        // empty piece that would take the slot and could not be retried.
+        const firstError = settled.find((r) => r.error !== undefined)?.error;
+        if (rendered.length === 0) {
+          throw firstError ?? new Error("No picture could be made.");
+        }
+        // The main render may be the one that failed: the first picture that
+        // survived leads, so the job still completes with a main image.
+        image = rendered[0];
+        alternatives = rendered.slice(1).map((alt, i) => ({
+          image: alt,
+          label: `Option ${i + 2}`,
+        }));
+      } else {
+        image = await renderRaw(finalImagePrompt, true);
+        if (image) image = await brandTemplated(image);
       }
 
       store.set(request.correlationId, {
@@ -286,6 +406,7 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         aspectRatio: platformFormat.aspectRatio,
         contentFormat: platformFormat.contentFormat,
         layoutTemplate: layoutPlan.meta,
+        ...(variantCount ? { alternatives } : {}),
       });
     } catch (error) {
       store.set(request.correlationId, {
@@ -325,6 +446,7 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         aspectRatio: record.aspectRatio,
         contentFormat: record.contentFormat,
         layoutTemplate: record.layoutTemplate ?? null,
+        ...(record.alternatives ? { alternatives: record.alternatives } : {}),
       },
       isMock: false,
     };

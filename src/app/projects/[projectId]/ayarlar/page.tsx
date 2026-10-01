@@ -1,10 +1,9 @@
 import { redirect } from "next/navigation";
 
-const VALID_SUBS = ["otonomi", "kararlar", "aktivite", "tehlike"];
+import { legacyRouteHref } from "@/components/hub-core/hub-core-params";
 
-// Settings is now one of HUB CORE's orbit panels (see ../page.tsx +
-// src/components/hub-core/panels/ayarlar-panel.tsx) — this route stays
-// alive so old bookmarks/links don't break.
+// Old settings page. This route stays alive so old bookmarks/links keep
+// working; its Turkish tab names map to the Settings panel's sub-tabs.
 export default async function AyarlarRedirect({
   params,
   searchParams,
@@ -14,10 +13,9 @@ export default async function AyarlarRedirect({
 }) {
   const { projectId } = await params;
   const sp = await searchParams;
-  const sub =
-    typeof sp.tab === "string" && VALID_SUBS.includes(sp.tab)
-      ? sp.tab
-      : "otonomi";
-
-  redirect(`/projects/${projectId}?panel=ayarlar&sub=${sub}`);
+  redirect(
+    legacyRouteHref(projectId, "ayarlar", {
+      sub: typeof sp.tab === "string" ? sp.tab : "otonomi",
+    }),
+  );
 }

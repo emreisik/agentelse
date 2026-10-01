@@ -50,6 +50,33 @@ describe("CreativeRepository.listForCalendarRange", () => {
   });
 });
 
+describe("CreativeRepository.listScheduledInRange", () => {
+  it("runs a slim, bounded query that skips archived and rejected creatives", async () => {
+    findMany.mockResolvedValueOnce([]);
+    const from = new Date("2026-10-01");
+    const to = new Date("2026-10-31");
+
+    await CreativeRepository.listScheduledInRange("proj-1", { from, to });
+
+    const call = findMany.mock.calls[0]![0];
+    expect(call.where).toEqual({
+      projectId: "proj-1",
+      scheduledFor: { gte: from, lte: to },
+      status: { notIn: ["ARCHIVED", "REJECTED"] },
+    });
+    expect(call.orderBy).toEqual({ scheduledFor: "asc" });
+    expect(call.take).toBe(500);
+    expect(call.select).toEqual({
+      id: true,
+      scheduledFor: true,
+      channel: true,
+      platform: true,
+      status: true,
+    });
+    expect(call.include).toBeUndefined();
+  });
+});
+
 describe("CreativeRepository.listRecentForPanel", () => {
   it("fetches the most recent creatives for the project, latest version+asset only", async () => {
     findMany.mockResolvedValueOnce([]);
@@ -104,5 +131,55 @@ describe("CreativeRepository.setScheduledFor", () => {
       where: { id: "creative-1", projectId: "proj-1" },
       data: { scheduledFor: null },
     });
+  });
+});
+
+describe("CreativeRepository.appendVersionTx", () => {
+  function makeTx(latest: number | null) {
+    return {
+      creative: {
+        findFirst: vi.fn().mockResolvedValue(
+          latest === null
+            ? null
+            : { id: "c1", versions: latest === 0 ? [] : [{ version: latest }] },
+        ),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      creativeVersion: {
+        create: vi.fn().mockResolvedValue({ id: "v-new", version: 0 }),
+      },
+    };
+  }
+
+  it("creates the next version and points the creative at it, over the given tx", async () => {
+    const tx = makeTx(2);
+    const out = await CreativeRepository.appendVersionTx(
+      tx as never,
+      "c1",
+      "p1",
+      { assetId: "a2", revisionReason: "Picked another picture" },
+    );
+    expect(tx.creative.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "c1", projectId: "p1" } }),
+    );
+    expect(tx.creativeVersion.create.mock.calls[0]![0].data).toMatchObject({
+      creativeId: "c1",
+      version: 3,
+      assetId: "a2",
+    });
+    expect(tx.creative.update).toHaveBeenCalledWith({
+      where: { id: "c1" },
+      data: { currentVersionId: "v-new" },
+    });
+    expect(out.id).toBe("v-new");
+  });
+
+  it("starts at version 1 and refuses a creative outside the project", async () => {
+    const tx = makeTx(0);
+    await CreativeRepository.appendVersionTx(tx as never, "c1", "p1", {});
+    expect(tx.creativeVersion.create.mock.calls[0]![0].data.version).toBe(1);
+    await expect(
+      CreativeRepository.appendVersionTx(makeTx(null) as never, "c1", "p2", {}),
+    ).rejects.toThrow(/not found/);
   });
 });

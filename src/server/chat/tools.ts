@@ -21,7 +21,18 @@ import { readLayoutMeta } from "@/server/media/creative-layout";
 import { subscribeCreativeProgress } from "@/server/media/creative-progress";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
-import { parsePlanBrief, validatePlanAgainstBrief } from "@/lib/plan-brief";
+import {
+  parsePlanBrief,
+  validatePlanAgainstBrief,
+  type PlanBrief,
+} from "@/lib/plan-brief";
+import {
+  brandCheckOf,
+  brandRepairMessage,
+  blocksOf,
+  checkItems,
+  type BrandRuleSet,
+} from "@/lib/works/brand-rules";
 import {
   ContentPlanArgsSchema,
   buildPlanCard,
@@ -47,9 +58,22 @@ import type {
 import { CHAT_CAPABILITIES, CHAT_PLATFORMS } from "./constants";
 import { missingCapabilityInput } from "@/server/execution/capability-input";
 import { platformQuestionCard } from "@/server/commands/needs-input";
-import { SKILL_KEYS, SKILLS, skillCatalog } from "./skills/registry";
+import {
+  SKILL_KEYS,
+  SKILLS,
+  skillCatalog,
+  type Skill,
+} from "./skills/registry";
 import { startWorkSession, updateWorkSession } from "./work-session-tools";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
+import type { WorkView } from "@/lib/works/work";
+import {
+  CHANNEL_CONTENT_CAPABILITIES,
+  channelGateOutcome,
+  defaultPlatformOf,
+  planOutsideWork,
+  platformOutsideWork,
+} from "@/server/works/channel-gate";
 import { activeDeliverables } from "./deliverables";
 import { driveJobInline } from "./inline-job";
 import {
@@ -58,6 +82,14 @@ import {
   supersedeOpenPackages,
   validatePackageItems,
 } from "./content-package";
+
+import { slotFirstImage, slotFirstText } from "./slot-first";
+import { worksSkill } from "./works-skills";
+import {
+  WORKS_DESCRIPTION_SUFFIX,
+  WORKS_ONLY_TOOLS,
+  cleanPlanText,
+} from "./works-tools";
 
 import type { ChatStreamEvent } from "./types";
 
@@ -79,6 +111,9 @@ export type ToolContext = {
   brandId: string;
   userId: string;
   ideaId?: string;
+  // The Work (conversation) of this turn, when Works are on. Its chosen
+  // channels are what planning and production are allowed to target.
+  work?: WorkView;
   // The Command row created for this turn before the first token.
   commandId: string;
   message: string;
@@ -92,6 +127,23 @@ export type ToolContext = {
   // Memories saved so far this turn (bounded, see remember_preference).
   memoryWrites?: number;
   session?: SessionHandle;
+  // Works only (every field below stays unset without a Work). Which kind of
+  // card owns this turn: a plan draft or slot-first pieces; the other kind is
+  // refused so the last card of the turn can never orphan the first.
+  planOwner?: "draft" | "slots";
+  // Lazy, memoised per turn by the agent loop: no query until a tool asks.
+  getBrandRules?: () => Promise<BrandRuleSet | null>;
+  // One brand-rule repair round and one text-cleaning repair round per turn.
+  brandRuleRepairs?: number;
+  cleanRepairs?: number;
+  // One options-shape repair round per turn (propose_plan_options).
+  shapeRepairs?: number;
+  // Set by the first propose_ideas call of a turn.
+  ideasShown?: boolean;
+  // The newest [Plan brief] of this Work, for a typed change without one.
+  planBriefFallback?: PlanBrief | null;
+  // Slot-first pieces created so far this turn.
+  slotsCreated?: number;
   // Pushes a stream event to the client WHILE the tool is still running
   // (e.g. a preview of an image being generated). The agent loop forwards
   // queued events as they arrive instead of waiting for execute() to return.
@@ -110,6 +162,14 @@ export type ToolOutcome = {
   appendReply?: string;
   // Follow-up prompts to offer under the reply (suggest_replies).
   suggestions?: string[];
+  // Works only: the card ends the turn, later calls of the round are refused.
+  endTurn?: boolean;
+  // Works only: the card is already the stored one (re-read after the work),
+  // so the loop must not persist a card over it.
+  cardPersisted?: boolean;
+  // The tool refused before writing, starting or spending anything: the loop
+  // gives the turn's work action back (capped) so a corrected retry can run.
+  nothingDone?: boolean;
 };
 
 // work     — turns the message into agency work through CommandService.submit
@@ -138,6 +198,11 @@ export type ChatTool<TArgs = unknown> = {
   // Offered only while GUIDED_SETUP is on; toolsForPhase drops it unless the
   // caller passes { guidedSetup: true }, so the default tool set is unchanged.
   requiresGuidedSetup?: boolean;
+  // Offered only while a Work exists; toolsForPhase drops it unless the caller
+  // passes { works: true }.
+  requiresWorks?: boolean;
+  // Hidden from the model while a Work exists (the card kit replaces it).
+  hiddenInWorks?: boolean;
   // The tool hands the model content from outside the conversation (research
   // results, findings, signals). Once it has run, the turn is tainted.
   external?: boolean;
@@ -165,6 +230,21 @@ const QuestionSchema = z.object({
     .max(4),
   multiSelect: z.boolean().optional(),
 });
+
+// CommandService.submit rewrites the whole parsedIntent of this turn's Command,
+// which is where a slot-first piece keeps its saved plan card: after one, a
+// submit-based tool would orphan the slot (Works only; nothing is written).
+function slotsOwnTurn(ctx: ToolContext): ToolOutcome | null {
+  if (!ctx.work || (ctx.slotsCreated ?? 0) === 0) return null;
+  return {
+    result: {
+      error:
+        "A piece was already scheduled in this message, so this action cannot run in the same message.",
+      note: "Finish with the scheduled piece; the client can ask for this next.",
+    },
+    nothingDone: true,
+  };
+}
 
 async function submitIntent(
   ctx: ToolContext,
@@ -352,6 +432,26 @@ const FORMAT_QUESTION_CARD = (ctx: ToolContext): IdeaEventCardData => ({
   ideaId: ctx.ideaId,
 });
 
+// Reels are scripts and there is no square format in a Work: only the two
+// picture formats the slot-first path can plan.
+const WORKS_FORMAT_QUESTION_CARD = (ctx: ToolContext): IdeaEventCardData => ({
+  kind: "question",
+  questions: [
+    {
+      question: "Which format should this be?",
+      options: [
+        {
+          label: "Post 3:4 (1080×1440)",
+          description: "Feed post, FEED_PORTRAIT",
+        },
+        { label: "Story 9:16 (1080×1920)", description: "Story, STORY" },
+      ],
+    },
+  ],
+  projectId: ctx.projectId,
+  ideaId: ctx.ideaId,
+});
+
 function needsInstagramFormat(args: {
   platform?: string;
   contentFormat?: unknown;
@@ -466,10 +566,44 @@ const createTask = defineTool({
     platform: z.enum(CHAT_PLATFORMS).optional(),
     contentFormat: z.nativeEnum(CreativeContentFormat).optional(),
   }),
-  async execute(args, ctx) {
+  async execute(rawArgs, ctx) {
+    // A Work's channels decide where content goes: nothing channel-bound is
+    // created before one is chosen, and the platform defaults to the Work's.
+    if (CHANNEL_CONTENT_CAPABILITIES.has(rawArgs.capability)) {
+      const gate = await channelGateOutcome(ctx);
+      if (gate) return gate;
+      const outside = platformOutsideWork(ctx.work, rawArgs.platform);
+      if (outside) return { result: outside };
+    }
+    const args = {
+      ...rawArgs,
+      platform:
+        rawArgs.platform ??
+        (CHANNEL_CONTENT_CAPABILITIES.has(rawArgs.capability)
+          ? defaultPlatformOf(ctx.work)
+          : undefined),
+    };
+    // In a Work copy and briefs are planned into a calendar slot first.
+    if (
+      ctx.work &&
+      (args.capability === "CREATE_COPY" ||
+        args.capability === "CREATE_CAPTION" ||
+        args.capability === "CREATE_CAMPAIGN_BRIEF")
+    ) {
+      return slotFirstText(
+        {
+          capability: args.capability,
+          taskBrief: rawArgs.taskBrief,
+          platform: args.platform,
+        },
+        ctx,
+      );
+    }
     // A capability that cannot run without a platform is never created without
     // one: the client is asked with buttons, before any task or approval exists
     // (it used to reach an approval card and fail after they clicked Approve).
+    const occupied = slotsOwnTurn(ctx);
+    if (occupied) return occupied;
     const missing = missingCapabilityInput(args.capability, {
       platform: args.platform,
     });
@@ -526,17 +660,38 @@ const generateImage = defineTool({
     layoutId: z.string().max(40).optional(),
     quality: z.enum(["draft", "final"]).optional(),
   }),
-  async execute(args, ctx) {
-    if (needsInstagramFormat(args)) {
+  async execute(rawArgs, ctx) {
+    const gate = await channelGateOutcome(ctx);
+    if (gate) return gate;
+    const outside = platformOutsideWork(ctx.work, rawArgs.platform);
+    if (outside) return { result: outside };
+    // No channel named: the Work's own (closes the old "platform stays null").
+    const args = {
+      ...rawArgs,
+      platform: rawArgs.platform ?? defaultPlatformOf(ctx.work),
+    };
+    // A Work without Instagram (Blog/SEO or Ads only) has no picture to ask a
+    // format for: slot-first answers with its own refusal instead of a card.
+    const noPictureHere =
+      !!ctx.work &&
+      ctx.work.channels.length > 0 &&
+      !ctx.work.channels.includes("instagram");
+    if (needsInstagramFormat(args) && !noPictureHere) {
       return {
         status: "ANSWERED",
-        card: FORMAT_QUESTION_CARD(ctx),
+        card: ctx.work
+          ? WORKS_FORMAT_QUESTION_CARD(ctx)
+          : FORMAT_QUESTION_CARD(ctx),
         result: {
           outcome: "format_question_shown",
-          note: "Nothing was generated. The client sees a card asking which format they want (Post 3:4 = FEED_PORTRAIT, Story = STORY, Reel = REEL, Square = FEED_SQUARE). Say in one short sentence that you need the format first; when they answer, call generate_image again with that contentFormat and the same design.",
+          note: ctx.work
+            ? "Nothing was generated. The client sees a card asking which format they want (Post 3:4 = FEED_PORTRAIT, Story = STORY). Say in one short sentence that you need the format first; when they answer, call generate_image again with that contentFormat and the same design."
+            : "Nothing was generated. The client sees a card asking which format they want (Post 3:4 = FEED_PORTRAIT, Story = STORY, Reel = REEL, Square = FEED_SQUARE). Say in one short sentence that you need the format first; when they answer, call generate_image again with that contentFormat and the same design.",
         },
       };
     }
+    // In a Work the piece goes onto the calendar first and is rendered there.
+    if (ctx.work) return slotFirstImage({ ...args }, ctx);
     const submission = await submitIntent(
       ctx,
       {
@@ -677,6 +832,8 @@ const startStrategicProject = defineTool({
       .catch(undefined),
   }),
   async execute(args, ctx) {
+    const occupied = slotsOwnTurn(ctx);
+    if (occupied) return occupied;
     const submission = await submitIntent(ctx, {
       kind: "STRATEGIC_REQUEST",
       title: args.title.trim().slice(0, 80),
@@ -733,6 +890,7 @@ const generateIdeas = defineTool({
   label: "Generating ideas…",
   kind: "work",
   phases: ["ACTIVE"],
+  hiddenInWorks: true,
   description:
     'Draw fresh ideas from the agency\'s EXISTING, already-evaluated opportunity backlog. Use when the client asks for new ideas in general ("give me some new ideas", "what should we create next"). NOT for a specific single deliverable (create_task) and NOT for broad new research (start_strategic_project).',
   schema: z.object({}),
@@ -1235,25 +1393,28 @@ const getInsights = defineTool({
   },
 });
 
+const LoadSkillSchema = z.object({ skill: z.enum(SKILL_KEYS) });
+
+function skillResult(skill: Skill) {
+  return {
+    skill: skill.key,
+    name: skill.label,
+    instructions: skill.instructions,
+    capabilities: skill.capabilities,
+    deliverables: skill.deliverables,
+    tools: skill.tools,
+  };
+}
+
 const loadSkill = defineTool({
   name: "load_skill",
   label: "Loading a skill…",
   kind: "read",
   phases: ["ACTIVE"],
   description: `Load the detailed way of working for one area of the agency's work: ${skillCatalog()}. Returns the steps to follow, the capabilities and tools that belong to the area and the deliverables it produces. Load a skill once per conversation, when you are about to do substantial work in its area and have not read it yet; skip it for simple questions and quick replies.`,
-  schema: z.object({ skill: z.enum(SKILL_KEYS) }),
+  schema: LoadSkillSchema,
   async execute(args) {
-    const skill = SKILLS[args.skill];
-    return {
-      result: {
-        skill: skill.key,
-        name: skill.label,
-        instructions: skill.instructions,
-        capabilities: skill.capabilities,
-        deliverables: skill.deliverables,
-        tools: skill.tools,
-      },
-    };
+    return { result: skillResult(SKILLS[args.skill]) };
   },
 });
 
@@ -1305,6 +1466,8 @@ const startPlanBrief = defineTool({
     'Open the planning wizard: a short step-by-step card where the client picks the goal, the channels (Instagram, TikTok, LinkedIn, X, Blog/SEO, Ads), the formats, and the rhythm (posts per week, duration, start date). Use it when the client wants content planned ("plan the week", "content calendar", "what should we post") and has NOT already told you the goal, the channels and how many posts. It replaces ad-hoc questions about planning. Ends your turn: write ONE short lead-in sentence BEFORE calling it. When the client\'s reply arrives it contains a `[Plan brief]` line — then call propose_content_plan.',
   schema: EmptyArgs,
   async execute(_args, ctx) {
+    const gate = await channelGateOutcome(ctx);
+    if (gate) return gate;
     const timezone = await getProjectTimezone(ctx.projectId);
     const [connections, twin] = await Promise.all([
       getChannelConnections(ctx.projectId).catch(() => ({})),
@@ -1318,6 +1481,7 @@ const startPlanBrief = defineTool({
         ideaId: ctx.ideaId,
         today: todayInTimezone(timezone),
         connections,
+        workChannels: ctx.work?.channels.length ? ctx.work.channels : undefined,
         theme: twin?.currentFocus?.title,
         continuation: (await loadPlanContinuation(ctx.projectId)) ?? undefined,
       },
@@ -1375,10 +1539,24 @@ const proposeContentPlan = defineTool({
     "Draft a day-by-day content plan for the client to review as a card (nothing is stored until they press Save). This is THE way to plan content. Normally the client's message contains a `[Plan brief]` line from the planning wizard (goal, channels with formats, perWeek, weeks, start): follow it EXACTLY — only those channels and formats, at most perWeek x weeks items, dates from `start`, and cover every chosen channel. If there is no brief and the client has not said what they want, call start_plan_brief instead. Put the WHOLE plan in one call: `title`, `goal` (awareness | leads | sales | engagement | traffic), and per item a real calendar date (YYYY-MM-DD, from today onward — today's date is in your context), optional time (HH:MM, default 10:00), `channel` (instagram | tiktok | linkedin | x | seo | ads), `formatKey` (one of that channel's formats: instagram.post, instagram.carousel, instagram.reel, instagram.story, tiktok.video, linkedin.post, x.post, x.thread, seo.article, ads.campaign), a concrete `topic` and a `captionIdea` written in the brand voice (for seo.article the working headline + target keyword; for ads.campaign the offer and audience). Spread the channels sensibly across the days. Call it in the SAME reply — never announce that you will draft it later. To change a plan the client already saw, call this again with the full updated plan — the old card is replaced.",
   schema: ContentPlanArgsSchema,
   async execute(args, ctx) {
+    const gate = await channelGateOutcome(ctx);
+    if (gate) return gate;
+    // A slot-first piece already owns this turn's card (Works only).
+    if (ctx.work && ctx.planOwner === "slots") {
+      return {
+        result: {
+          error:
+            "A piece was already scheduled in this message, so a plan cannot be drafted in the same message.",
+          note: "Finish with the scheduled piece; the client can ask for the plan next.",
+        },
+      };
+    }
     const timezone = await getProjectTimezone(ctx.projectId);
     const today = todayInTimezone(timezone);
     const brief = parsePlanBrief(ctx.message);
+    const workProblem = planOutsideWork(ctx.work, args.items);
     const problem =
+      workProblem ??
       validatePlanDates(args.items, today) ??
       validatePlanChannels(args.items) ??
       (brief ? validatePlanAgainstBrief(args.items, brief) : null);
@@ -1390,21 +1568,81 @@ const proposeContentPlan = defineTool({
         },
       };
     }
-    await supersedeOpenDrafts(ctx.projectId, ctx.commandId);
+    // Works only: the model's own words are cleaned like every other Works
+    // text (a link, a disguised word or an instruction is sent back once).
+    let planArgs = args;
+    if (ctx.work) {
+      const cleaned = cleanPlanText(ctx, args);
+      if (!cleaned.ok) return cleaned.outcome;
+      planArgs = cleaned.args;
+    }
+    // Brand rules (Works only): one repair round per turn, then the card
+    // ships with flags. A failed rule load fails open (rules === null).
+    const rules = ctx.work ? ((await ctx.getBrandRules?.()) ?? null) : null;
+    if (ctx.work) {
+      const hits = checkItems(planArgs.items, rules);
+      if (blocksOf(hits).length > 0 && (ctx.brandRuleRepairs ?? 0) < 1) {
+        ctx.brandRuleRepairs = 1;
+        const message = brandRepairMessage(
+          hits,
+          (index) => {
+            const item = planArgs.items[index];
+            return `Item ${index + 1} (${item?.date}, ${item?.formatKey ?? item?.channel ?? item?.platform})`;
+          },
+          "propose_content_plan",
+        );
+        if (message) {
+          return {
+            result: {
+              error: message,
+              note: "Fix the plan and call propose_content_plan again with the full plan.",
+            },
+          };
+        }
+      }
+    }
+    await supersedeOpenDrafts(ctx.projectId, ctx.commandId, ctx.work?.id);
     const connections = await getChannelConnections(ctx.projectId).catch(
       () => undefined,
     );
+    const card = buildPlanCard(
+      { ...planArgs, goal: planArgs.goal ?? brief?.goal },
+      timezone,
+      connections,
+    );
+    const note =
+      "The client sees the plan as a compact calendar card with a Save button, and which channels are connected. In one or two sentences say what the plan emphasizes and that they can ask for changes or save it; do not repeat every item.";
+    if (!ctx.work) {
+      return {
+        status: "ANSWERED",
+        card,
+        result: { outcome: "plan_shown", note },
+      };
+    }
+    // Flags are computed on the SORTED items: buildPlanCard reorders them.
+    const flags = checkItems(card.items, rules);
+    const flagged = {
+      ...card,
+      items: card.items.map((item, index) => {
+        const own = flags
+          .filter((entry) => entry.index === index)
+          .map((entry) => entry.flag);
+        return own.length > 0 ? { ...item, brandFlags: own } : item;
+      }),
+      brandCheck: brandCheckOf(rules),
+    };
+    ctx.planOwner = "draft";
+    const channels = [
+      ...new Set(card.items.map((item) => item.channel ?? item.platform)),
+    ]
+      .filter((channel): channel is string => Boolean(channel))
+      .join(", ");
     return {
       status: "ANSWERED",
-      card: buildPlanCard(
-        { ...args, goal: args.goal ?? brief?.goal },
-        timezone,
-        connections,
-      ),
-      result: {
-        outcome: "plan_shown",
-        note: "The client sees the plan as a compact calendar card with a Save button, and which channels are connected. In one or two sentences say what the plan emphasizes and that they can ask for changes or save it; do not repeat every item.",
-      },
+      card: flagged,
+      endTurn: true,
+      appendReply: `Drafted "${card.title}": ${card.items.length} posts across ${channels}.`,
+      result: { outcome: "plan_shown", note },
     };
   },
 });
@@ -1414,10 +1652,13 @@ const proposeContentPackage = defineTool({
   label: "Preparing a content package…",
   kind: "note",
   phases: ["ACTIVE"],
+  hiddenInWorks: true,
   description:
     "Answer a request that names a TOPIC or GOAL but no specific deliverable (e.g. \"Kommo CRM for health tourism\") with a package of 2-5 concrete deliverables drawn from the agency's ACTIVE departments (listed in your context), shown as a card the client ticks and starts with one click. Each item: `id` (short, unique), `deliverable` (a key from your context), `title` (the concrete piece, in the brand's language), `angle` (ONE sentence on the specific angle/hook for this brand and topic — never generic), and for `instagram_post` a `contentFormat` (propose FEED_PORTRAIT = Post 3:4 unless they asked for another; the client can change it on the card). Mix departments (e.g. an Instagram post + an SEO article + a Reel idea) so the client sees the full range. Do NOT ask what they want first — propose, they untick what they do not want. Never use it when the client already asked for one specific deliverable (use generate_image / create_task) or for a dated calendar (propose_content_plan).",
   schema: ContentPackageArgsSchema,
   async execute(args, ctx) {
+    const gate = await channelGateOutcome(ctx);
+    if (gate) return gate;
     const problem = validatePackageItems(args.items);
     if (problem) {
       return {
@@ -1557,18 +1798,79 @@ const ALL_TOOLS: readonly ChatTool[] = [
   suggestReplies,
 ];
 
+// A Work cannot publish from free text (the publish belongs to the creative
+// card and a real creativeId), so its create_task enum drops those members.
+// Same cast as TASK_CAPABILITIES above: z.enum wants a non-empty tuple.
+const WORKS_PUBLISH_CAPABILITIES: ReadonlySet<string> = new Set([
+  "INSTAGRAM_PUBLISH",
+  "TIKTOK_PUBLISH",
+  "LINKEDIN_PUBLISH",
+  "X_PUBLISH",
+]);
+const WORKS_TASK_CAPABILITIES = TASK_CAPABILITIES.filter(
+  (capability) => !WORKS_PUBLISH_CAPABILITIES.has(capability),
+) as unknown as [TaskCapability, ...TaskCapability[]];
+const worksTaskSchema = z.object({
+  capability: z.enum(WORKS_TASK_CAPABILITIES),
+  taskBrief: z.string(),
+  platform: z.enum(CHAT_PLATFORMS).optional(),
+  contentFormat: z.nativeEnum(CreativeContentFormat).optional(),
+});
+
+// Replacements built from the same tool objects (same execute), used only
+// while a Work exists. The loaded skill and the static instructions still name
+// the two hidden tools, so load_skill returns the Works variant of the skill.
+const WORKS_VARIANTS: Readonly<Record<string, ChatTool>> = {
+  create_task: {
+    ...createTask,
+    description: createTask.description + WORKS_DESCRIPTION_SUFFIX.create_task,
+    schema: worksTaskSchema,
+  },
+  generate_image: {
+    ...generateImage,
+    description:
+      generateImage.description + WORKS_DESCRIPTION_SUFFIX.generate_image,
+  },
+  propose_content_plan: {
+    ...proposeContentPlan,
+    description:
+      proposeContentPlan.description +
+      WORKS_DESCRIPTION_SUFFIX.propose_content_plan,
+  },
+  start_plan_brief: {
+    ...startPlanBrief,
+    description:
+      startPlanBrief.description + WORKS_DESCRIPTION_SUFFIX.start_plan_brief,
+  },
+  load_skill: {
+    ...loadSkill,
+    async execute(args) {
+      const { skill } = LoadSkillSchema.parse(args);
+      return { result: skillResult(worksSkill(SKILLS[skill])) };
+    },
+  },
+};
+
 export function toolsForPhase(
   phase: ChatPhase,
-  options: { guidedSetup?: boolean } = {},
+  options: { guidedSetup?: boolean; works?: boolean } = {},
 ): ChatTool[] {
   // Read per call, not cached: LEGACY_AGENCY_LOOP is an operator switch.
   const legacyLoopOn = isLegacyUnitEnabled("director-decisions");
-  return ALL_TOOLS.filter(
+  const works = options.works === true;
+  const filtered = ALL_TOOLS.filter(
     (tool) =>
       tool.phases.includes(phase) &&
       (legacyLoopOn || !tool.legacyLoop) &&
-      (options.guidedSetup === true || !tool.requiresGuidedSetup),
+      (options.guidedSetup === true || !tool.requiresGuidedSetup) &&
+      (works || !tool.requiresWorks) &&
+      (!works || !tool.hiddenInWorks),
   );
+  if (!works) return filtered;
+  return [
+    ...filtered.map((tool) => WORKS_VARIANTS[tool.name] ?? tool),
+    ...WORKS_ONLY_TOOLS.filter((tool) => tool.phases.includes(phase)),
+  ];
 }
 
 // OpenAI function-tool definition. strict:false for the same reason as the

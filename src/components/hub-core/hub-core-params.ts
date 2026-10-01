@@ -6,9 +6,6 @@
 export const PANEL_KEYS = [
   "setup",
   "brand-brain",
-  "signals",
-  "insights-opportunities",
-  "goals",
   "ideas",
   "work",
   "departments",
@@ -19,16 +16,14 @@ export const PANEL_KEYS = [
 
 export type PanelKey = (typeof PANEL_KEYS)[number];
 
-// Panels with no primary sidebar entry of their own (Agency Desk, Brand Brain,
-// Ideas, Work, Library) — the "Advanced" menu (project-tools-menu.tsx) offers
-// them, and the sidebar lists them again under System/Insights. Single source
-// of truth for that grouping so the sidebar and the menu can't drift apart.
-// (Pending decisions have no panel: they are cards in the Agency Desk chat.)
+// Panels with no primary sidebar entry of their own — the header's "Advanced"
+// menu (project-tools-menu.tsx) is where they live (the sidebar lists only
+// Settings among them, as one line at the bottom). Single source of truth for
+// that grouping so the sidebar and the menu can't drift apart. (Signals,
+// Insights & Opportunities and Goals are tabs of Brand Brain now; pending
+// decisions have no panel: they are cards in the Agency Desk chat.)
 export const ADVANCED_PANEL_KEYS = [
   "setup",
-  "signals",
-  "insights-opportunities",
-  "goals",
   "departments",
   "human-action",
   "settings",
@@ -60,8 +55,10 @@ export const BRAND_BRAIN_SUB_KEYS = [
   "rules",
   "visual-identity",
   "constitution",
+  "goals",
   "strategy",
   "decisions",
+  "intelligence",
   "evidence",
   "learnings",
 ] as const;
@@ -109,7 +106,61 @@ function firstString(value: string | string[] | undefined): string | null {
   return null;
 }
 
-export function parseHubParams(sp: RawSearchParams): HubParams {
+// Panel and sub-tab names that used to exist (the English panels that became
+// Brand Brain tabs, and the Turkish names of the first HUB CORE), mapped to
+// where their content lives now. A bookmark, an old email or a saved link keeps
+// landing on the right screen instead of the chat. `sub` maps only when the
+// old panel had sub-tabs of its own.
+const LEGACY_PANELS: Record<
+  string,
+  { panel: PanelKey; sub?: string; subs?: Record<string, string> }
+> = {
+  signals: { panel: "brand-brain", sub: "intelligence" },
+  "insights-opportunities": { panel: "brand-brain", sub: "intelligence" },
+  goals: { panel: "brand-brain", sub: "goals" },
+  sinyaller: { panel: "brand-brain", sub: "intelligence" },
+  "icgoru-firsat": { panel: "brand-brain", sub: "intelligence" },
+  hedefler: { panel: "brand-brain", sub: "goals" },
+  "marka-beyni": { panel: "brand-brain" },
+  fikirler: { panel: "ideas" },
+  isler: {
+    panel: "work",
+    subs: {
+      planlar: "plans",
+      gorevler: "tasks",
+      devirler: "cycles",
+      olcumler: "measurements",
+    },
+  },
+  departmanlar: { panel: "departments" },
+  ayarlar: {
+    panel: "settings",
+    subs: {
+      otonomi: "autonomy",
+      kararlar: "decisions",
+      aktivite: "activity",
+      tehlike: "risk",
+    },
+  },
+  kurulum: { panel: "setup" },
+};
+
+// Rewrites an old `?panel=`/`?sub=` pair to the current one; anything that is
+// not an old name is returned as it came.
+export function normalizeLegacyHubParams(sp: RawSearchParams): RawSearchParams {
+  const panelRaw = firstString(sp.panel);
+  const legacy = panelRaw ? LEGACY_PANELS[panelRaw] : undefined;
+  if (!legacy) return sp;
+  const subRaw = firstString(sp.sub);
+  return {
+    ...sp,
+    panel: legacy.panel,
+    sub: legacy.sub ?? (subRaw ? legacy.subs?.[subRaw] ?? subRaw : undefined),
+  };
+}
+
+export function parseHubParams(rawParams: RawSearchParams): HubParams {
+  const sp = normalizeLegacyHubParams(rawParams);
   const panelRaw = firstString(sp.panel);
   const panel = (PANEL_KEYS as readonly string[]).includes(panelRaw ?? "")
     ? (panelRaw as PanelKey)
@@ -172,11 +223,11 @@ export const ENTITY_PANEL: Record<EntityKind, PanelKey> = {
   idea: "ideas",
   workPlan: "work",
   task: "work",
-  signal: "signals",
-  finding: "signals",
-  insight: "insights-opportunities",
-  opportunity: "insights-opportunities",
-  goal: "goals",
+  signal: "brand-brain",
+  finding: "brand-brain",
+  insight: "brand-brain",
+  opportunity: "brand-brain",
+  goal: "brand-brain",
   handoff: "work",
   measurementPlan: "work",
   department: "departments",
@@ -184,9 +235,21 @@ export const ENTITY_PANEL: Record<EntityKind, PanelKey> = {
   constitution: "brand-brain",
 };
 
+// The sub-tab of that panel which owns the record, for the kinds whose panel
+// has tabs: Brand Brain keeps intelligence (finding, insight, opportunity,
+// signal), goals and the constitution each in their own tab.
+export const ENTITY_SUB: Partial<Record<EntityKind, BrandBrainSubKey>> = {
+  signal: "intelligence",
+  finding: "intelligence",
+  insight: "intelligence",
+  opportunity: "intelligence",
+  goal: "goals",
+  constitution: "constitution",
+};
+
 // Produces an href that directly opens an entity — the standard usage for
-// cross-link chips. The panel is inferred automatically from ENTITY_PANEL;
-// `sub` (the panel's first sensible sub-tab, if any) is optional.
+// cross-link chips. The panel and its sub-tab are inferred from ENTITY_PANEL /
+// ENTITY_SUB; an explicit `sub` wins.
 export function entityHref(
   projectId: string,
   entity: EntityRef,
@@ -194,7 +257,24 @@ export function entityHref(
 ): string {
   return buildHubHref(projectId, {
     panel: ENTITY_PANEL[entity.kind],
-    sub: sub ?? null,
+    sub: sub ?? ENTITY_SUB[entity.kind] ?? null,
     entity,
   });
+}
+
+// Where an old standalone route (/zeka, /isler, /ayarlar...) sends its
+// visitors: a record opens where it lives now (entityHref), otherwise the old
+// panel and sub-tab names map to the current ones (LEGACY_PANELS). An unknown
+// name lands on the project root instead of breaking.
+export function legacyRouteHref(
+  projectId: string,
+  legacyPanel: string,
+  options: { sub?: string | null; entity?: EntityRef | null } = {},
+): string {
+  if (options.entity) return entityHref(projectId, options.entity);
+  const { panel, sub } = parseHubParams({
+    panel: legacyPanel,
+    sub: options.sub ?? undefined,
+  });
+  return buildHubHref(projectId, { panel, sub });
 }

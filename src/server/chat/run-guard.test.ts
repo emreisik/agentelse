@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   RunGuard,
   SESSION_TURN_LIMITS,
+  MAX_ACTION_REFUNDS,
   STOP_NOTICES,
   TURN_LIMITS,
   canonicalJson,
@@ -339,5 +340,35 @@ describe("canonicalJson", () => {
   it("tells different content apart", () => {
     expect(canonicalJson({ a: 1 })).not.toBe(canonicalJson({ a: 2 }));
     expect(canonicalJson([1, 2])).not.toBe(canonicalJson([2, 1]));
+  });
+});
+
+describe("giving an action back (release)", () => {
+  it("lets the same action run again after a refusal that did nothing", () => {
+    const guard = new RunGuard();
+    expect(run(guard, image, { caption: "a" })).toBeNull();
+    expect(run(guard, image, { caption: "b" })).toContain("Only one action");
+
+    expect(guard.release(image, canonicalJson({ caption: "a" }))).toBe(true);
+    expect(guard.workActions).toBe(0);
+    expect(run(guard, image, { caption: "b" })).toBeNull();
+  });
+
+  it("does nothing for a call that was never admitted or a tool that costs no action", () => {
+    const guard = new RunGuard();
+    expect(guard.release(image, canonicalJson({}))).toBe(false);
+    expect(guard.release(note, canonicalJson({}))).toBe(false);
+    expect(guard.workActions).toBe(0);
+  });
+
+  it("stops handing actions back after the per-message cap", () => {
+    const guard = new RunGuard();
+    for (let i = 0; i < MAX_ACTION_REFUNDS; i += 1) {
+      expect(run(guard, image, { i })).toBeNull();
+      expect(guard.release(image, canonicalJson({ i }))).toBe(true);
+    }
+    expect(run(guard, image, { i: "last" })).toBeNull();
+    expect(guard.release(image, canonicalJson({ i: "last" }))).toBe(false);
+    expect(guard.workActions).toBe(1);
   });
 });

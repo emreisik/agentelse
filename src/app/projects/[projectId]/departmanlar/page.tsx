@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 
-// Departments is now one of HUB CORE's orbit panels (see ../page.tsx +
-// src/components/hub-core/panels/departmanlar-panel.tsx) — this route
-// stays alive so old bookmarks/links don't break.
+import { legacyRouteHref } from "@/components/hub-core/hub-core-params";
+
+// Old departments page. This route stays alive so old bookmarks/links keep
+// working.
 export default async function DepartmanlarRedirect({
   params,
   searchParams,
@@ -12,10 +13,12 @@ export default async function DepartmanlarRedirect({
 }) {
   const { projectId } = await params;
   const sp = await searchParams;
-
-  const qp = new URLSearchParams({ panel: "departmanlar" });
-  if (typeof sp.denetim === "string")
-    qp.set("entity", `department:${sp.denetim}`);
-
-  redirect(`/projects/${projectId}?${qp.toString()}`);
+  redirect(
+    legacyRouteHref(projectId, "departmanlar", {
+      entity:
+        typeof sp.denetim === "string"
+          ? { kind: "department", id: sp.denetim }
+          : null,
+    }),
+  );
 }

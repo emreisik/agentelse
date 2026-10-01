@@ -32,7 +32,23 @@ import type { IdeaEventCardData } from "@/types/idea-event-card";
 import { buildHistoryInput, buildUserInput, trimHistory } from "./history";
 import { loadNextSteps } from "@/server/agency/journey/snapshot";
 import { buildContext } from "./context";
+import {
+  workChannelStates,
+  workSummaryFrom,
+  workTitleFrom,
+} from "@/lib/works/work";
+import { getChannelConnections } from "@/server/integrations/channel-connections";
+import { WorkRepository } from "@/server/repositories/work.repository";
 import { getProjectTimezone, todayInTimezone } from "./content-plan";
+import { utcToZonedDateTimeLocal } from "@/lib/timezone";
+import {
+  MAX_OPTION_SLOTS,
+  describePlanSlots,
+  latestPlanBrief,
+  layoutPlanSlots,
+} from "@/lib/works/plan-layout";
+import { parsePlanBrief, stripPlanBriefMarker } from "@/lib/plan-brief";
+import { createBrandRulesGetter } from "@/server/works/brand-rule-loader";
 import { loadRecentHistoryFiles } from "./history-files";
 import { createMockChatModel } from "./mock-chat-model";
 import {
@@ -71,6 +87,9 @@ export type ChatAgentInput = {
   userId: string;
   message: string;
   ideaId?: string;
+  // The Work this turn belongs to (WORKS_UI). The route has already checked it
+  // belongs to the project.
+  workId?: string;
   attachments?: CommandAttachment[];
   // Base64 bodies shown to the model only (same order as `attachments`);
   // never persisted on the Command row.
@@ -118,6 +137,7 @@ export async function* runChatAgent(
     workspaceId: input.workspaceId,
     projectId: input.projectId,
     ideaId: input.ideaId,
+    workId: input.workId,
     source: "WEB",
     rawText: input.message,
     createdByUserId: input.userId,
@@ -132,6 +152,9 @@ export async function* runChatAgent(
   const appended: string[] = [];
   let status: CommandReplyStatus = "ANSWERED";
   let card: IdeaEventCardData | undefined;
+  // Works: a tool already stored its card on the Command (re-read after the
+  // work), so a later card of the turn must not replace it in persist().
+  let cardPersisted = false;
   // What this message may do (rounds, work actions, cost...) and what it has
   // done so far; see run-guard.ts. Widened when the message belongs to a work
   // session.
@@ -220,7 +243,7 @@ export async function* runChatAgent(
 
   async function persist(text: string, replyStatus: CommandReplyStatus) {
     await CommandRepository.recordReply(command.id, text, replyStatus);
-    if (card) {
+    if (card && !cardPersisted) {
       await CommandRepository.attachParsedIntent(
         command.id,
         { card },
@@ -229,6 +252,21 @@ export async function* runChatAgent(
       ).catch((error) => {
         console.error("[chat-agent] failed to attach card:", error);
       });
+    }
+    if (input.workId) {
+      // The sidebar subtitle: the card's headline, else the reply's first words.
+      const cardTitle =
+        card && "title" in card && typeof card.title === "string"
+          ? card.title
+          : null;
+      // A failed or stopped turn never overwrites it with an error text
+      // ("I can't generate a reply right now: <provider error>") or "(stopped)".
+      const headline = cardTitle ?? (replyStatus === "ERROR" ? null : text);
+      if (headline !== null) {
+        await WorkRepository.touch(input.projectId, input.workId, {
+          summary: workSummaryFrom(headline),
+        }).catch(() => undefined);
+      }
     }
   }
 
@@ -275,9 +313,25 @@ export async function* runChatAgent(
       };
     }
 
+    const work = input.workId
+      ? await WorkRepository.get(input.projectId, input.workId)
+      : null;
+    // The route checked this Work, but it may be gone since (deleted in
+    // another tab): never fall back to the plain tool list for it.
+    if (input.workId && !work) {
+      throw new AgentelseError("NOT_FOUND", "This Work no longer exists.");
+    }
+    if (work) {
+      // The title and ordering are the user's own words, available at once.
+      await WorkRepository.touch(input.projectId, work.id, {
+        // The wizard's machine line is not part of the title.
+        titleIfDefault: workTitleFrom(stripPlanBriefMarker(input.message)),
+      }).catch(() => undefined);
+    }
     const context = await buildContext(input.projectId, input.ideaId, {
       recall: true,
       session: true,
+      workId: work?.id,
     });
     brandId = context.brandId;
     const scope = {
@@ -316,11 +370,20 @@ export async function* runChatAgent(
       brandId: context.brandId,
       userId: input.userId,
       ideaId: input.ideaId,
+      work: work ?? undefined,
       commandId: command.id,
       message: input.message,
       attachments: input.attachments,
       phase: context.projectPhase,
       session: sessionRef,
+      // Works only: lazy, no query until a tool asks.
+      getBrandRules: work
+        ? createBrandRulesGetter({
+            projectId: input.projectId,
+            brandId: context.brandId,
+            language: context.project.language || "tr",
+          })
+        : undefined,
       // Events a running tool wants the client to see NOW (image previews).
       // Drained by the tool loop below while execute() is still pending.
       emit: (event) => {
@@ -330,6 +393,7 @@ export async function* runChatAgent(
     };
     const tools = toolsForPhase(context.projectPhase, {
       guidedSetup: GUIDED_SETUP,
+      ...(work ? { works: true } : {}),
     });
     const toolMap = new Map(tools.map((tool) => [tool.name, tool]));
     const openaiTools = [
@@ -346,9 +410,59 @@ export async function* runChatAgent(
     ).catch(() => new Map());
 
     const timezone = await getProjectTimezone(input.projectId);
+    const workForPrompt = work
+      ? {
+          title: work.title,
+          channels: workChannelStates(
+            work.channels,
+            await getChannelConnections(input.projectId).catch(() => ({})),
+          ).map((state) => ({
+            label: state.label,
+            connected: state.connected,
+          })),
+        }
+      : undefined;
+    // Works: the brief of this message, else the newest earlier brief of the
+    // Work (a typed change such as "more playful" carries none). The slots
+    // note and the plan tool both read it.
+    let worksPlanSlots: string[] | undefined;
+    let worksPlanFromEarlierBrief = false;
+    let worksPlanTooLarge = false;
+    if (work) {
+      const currentBrief = parsePlanBrief(input.message);
+      const planBrief =
+        currentBrief ??
+        latestPlanBrief(
+          context.recent
+            .filter((row) => row.source === "WEB")
+            .map((row) => row.rawText),
+        );
+      toolCtx.planBriefFallback = currentBrief ? undefined : planBrief;
+      if (planBrief) {
+        const slots = layoutPlanSlots({
+          brief: planBrief,
+          today: todayInTimezone(timezone),
+          nowLocalTime: utcToZonedDateTimeLocal(new Date(), timezone).slice(
+            11,
+            16,
+          ),
+        });
+        if (slots.length >= 1 && slots.length <= MAX_OPTION_SLOTS) {
+          // The note numbers the lines itself; describePlanSlots already did.
+          worksPlanSlots = describePlanSlots(slots).map((line) =>
+            line.replace(/^\d+\.\s/, ""),
+          );
+          worksPlanFromEarlierBrief = !currentBrief;
+        } else if (slots.length > MAX_OPTION_SLOTS) {
+          worksPlanTooLarge = true;
+        }
+      }
+    }
     // What is waiting on the client's content plan (never throws: [] when
     // there is nothing or the read failed).
-    const nextSteps = await loadNextSteps(input.projectId);
+    const nextSteps = work
+      ? await loadNextSteps(input.projectId, { workId: work.id })
+      : await loadNextSteps(input.projectId);
 
     const conversation = [
       {
@@ -370,6 +484,11 @@ export async function* runChatAgent(
           // The note only where the tool is really offered (not ON_HOLD).
           guidedSetup: tools.some((tool) => tool.name === "start_guided_setup"),
           nextSteps: nextSteps.map((step) => step.title),
+          work: workForPrompt,
+          ...(worksPlanSlots
+            ? { worksPlanSlots, worksPlanFromEarlierBrief }
+            : {}),
+          ...(worksPlanTooLarge ? { worksPlanTooLarge } : {}),
           today: todayInTimezone(timezone),
           timezone,
           language: context.project.language || "tr",
@@ -380,10 +499,17 @@ export async function* runChatAgent(
         buildHistoryInput(context.recent, command.id, historyFiles),
         HISTORY_CHAR_BUDGET,
       ),
+      // Works only: what the cards on screen say. After the history and before
+      // the user input, so the history prefix stays append-only (cache).
+      ...(context.cardDigestNote
+        ? [{ role: "developer" as const, content: context.cardDigestNote }]
+        : []),
       buildUserInput(input.message, input.attachmentBodies),
     ];
 
     let terminated = false;
+    // An end-turn card exists: the rest of its round is answered, not run.
+    let endedByCard = false;
     let stopReason: StopReason | undefined;
 
     // Decides whether a tool call the model made may run, and with what
@@ -502,6 +628,19 @@ export async function* runChatAgent(
       }
 
       for (const call of completed.functionCalls) {
+        if (endedByCard) {
+          // `terminated` is only read by the outer round loop, so without this
+          // the parallel calls of the same round would all still run.
+          conversation.push({
+            type: "function_call_output",
+            call_id: call.callId,
+            output: JSON.stringify({
+              error:
+                "A card is already shown for this message, so this call was not run. Do not call more tools.",
+            }),
+          });
+          continue;
+        }
         const gate = admitCall(call);
         let result: unknown;
         let outcome: ToolOutcome | undefined;
@@ -550,6 +689,12 @@ export async function* runChatAgent(
             if (run.failed) throw run.error;
             outcome = run.value!;
             result = outcome.result;
+            // The tool refused before doing anything: its work action goes
+            // back, so the model's corrected retry is not answered with "one
+            // action per message" (capped, see RunGuard.release).
+            if (outcome.nothingDone && !outcome.card) {
+              guard.release(tool, canonicalJson(args));
+            }
             if (tool.external) toolCtx.tainted = true;
           } catch (error) {
             ok = false;
@@ -602,7 +747,15 @@ export async function* runChatAgent(
           if (outcome?.suggestions?.length && !card) {
             suggestionItems = outcome.suggestions;
           }
-          if (tool.kind === "terminal") terminated = true;
+          if (outcome?.cardPersisted === true) cardPersisted = true;
+          // In a Work a terminal tool's card (the wizard, a question) ends
+          // the round like an end-turn card, so a later tool call of the same
+          // round cannot replace it. Without a Work nothing changes.
+          const endsByCard =
+            !!outcome?.card &&
+            (outcome.endTurn === true || (!!work && tool.kind === "terminal"));
+          if (tool.kind === "terminal" || endsByCard) terminated = true;
+          if (endsByCard) endedByCard = true;
           // start_work_session opened (or found) a session: from here on this
           // message runs under its allowance.
           if (sessionRef.id && !guard.inSession) {
@@ -707,7 +860,9 @@ export async function* runChatAgent(
     // the message isn't wasted. After any tool ran we must NOT do this
     // (duplicate work), and after text streamed the fallback text would
     // contradict what the client already read.
-    if (guard.workActions === 0 && !replyText()) {
+    // (Never inside a Work: its cards own the turn, a queued rule-based task
+    // would be a loose piece off the calendar.)
+    if (guard.workActions === 0 && !replyText() && !input.workId) {
       try {
         const fallback = await CommandService.submit({
           workspaceId: input.workspaceId,

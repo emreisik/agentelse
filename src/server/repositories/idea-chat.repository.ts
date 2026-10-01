@@ -3,6 +3,7 @@ import "server-only";
 import type { DepartmentKey, RiskLevel } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { isWorksEnabled } from "@/server/works/flag";
 import type { CommandAttachment } from "./command.repository";
 import type { CreativeCardData } from "@/types/creative-card";
 import type {
@@ -24,10 +25,16 @@ export const IdeaChatRepository = {
   // Command.ideaId is nullable in the schema; a null here lands the row in
   // the project's general chat stream instead of a specific idea thread
   // (see the general-chat query in page.tsx / chat-service.ts buildContext).
-  postSystemMessage(input: {
+  async postSystemMessage(input: {
     workspaceId: string;
     projectId: string;
     ideaId: string | null;
+    // The Work (conversation) the event belongs to. Given a taskId instead, it
+    // is the Work of the Command that started the task, so a result lands in
+    // the conversation that asked for it. Neither (background pipeline
+    // events): no Work, it lives in the panels only (docs/works.md).
+    workId?: string | null;
+    taskId?: string;
     text: string;
     attachments?: CommandAttachment[];
     card?: IdeaEventCardData;
@@ -46,11 +53,18 @@ export const IdeaChatRepository = {
       input.card || input.departmentKey
         ? { card: input.card, departmentKey: input.departmentKey }
         : undefined;
+    const workId =
+      input.workId !== undefined
+        ? input.workId
+        : input.taskId
+          ? await IdeaChatRepository.resolveWorkIdForTask(input.taskId)
+          : null;
     return prisma.command.create({
       data: {
         workspaceId: input.workspaceId,
         projectId: input.projectId,
         ideaId: input.ideaId,
+        ...(workId ? { workId } : {}),
         source: "SYSTEM",
         rawText: "",
         replyText: input.text,
@@ -83,6 +97,7 @@ export const IdeaChatRepository = {
     await IdeaChatRepository.postSystemMessage({
       workspaceId: input.workspaceId,
       projectId: input.projectId,
+      taskId: input.taskId,
       ideaId,
       text: `🎨 Generating image: ${input.title}`,
       card: {
@@ -142,6 +157,7 @@ export const IdeaChatRepository = {
     await IdeaChatRepository.postSystemMessage({
       workspaceId: input.workspaceId,
       projectId: input.projectId,
+      taskId: input.taskId,
       ideaId,
       text: input.text,
       card: input.card,
@@ -165,6 +181,7 @@ export const IdeaChatRepository = {
     await IdeaChatRepository.postSystemMessage({
       workspaceId: input.workspaceId,
       projectId: input.projectId,
+      taskId: input.taskId,
       ideaId,
       text: `⏳ Task started: ${input.title}`,
       card: {
@@ -220,6 +237,7 @@ export const IdeaChatRepository = {
     await IdeaChatRepository.postSystemMessage({
       workspaceId: input.workspaceId,
       projectId: input.projectId,
+      taskId: input.taskId,
       ideaId,
       text: input.text,
       card: input.card,
@@ -267,6 +285,7 @@ export const IdeaChatRepository = {
     await IdeaChatRepository.postSystemMessage({
       workspaceId: input.workspaceId,
       projectId: input.projectId,
+      taskId: input.taskId,
       ideaId,
       text: input.text,
       card: input.card,
@@ -298,6 +317,7 @@ export const IdeaChatRepository = {
     await IdeaChatRepository.postSystemMessage({
       workspaceId: input.workspaceId,
       projectId: input.projectId,
+      taskId: input.taskId,
       ideaId,
       text: `⏸️ Awaiting approval: ${input.title}`,
       card: {
@@ -606,6 +626,28 @@ export const IdeaChatRepository = {
       select: { ideaId: true },
     });
     return workPlan?.ideaId ?? null;
+  },
+
+  // The Work of the Command that started a task (null: none, or a legacy row).
+  // Works only: flag off there is no Work, so no extra reads (the post is one
+  // insert, as before). Fail-open: a failed lookup lands the row outside any
+  // Work instead of failing the post.
+  async resolveWorkIdForTask(taskId: string): Promise<string | null> {
+    try {
+      if (!isWorksEnabled()) return null;
+      const task = await prisma.task.findUnique({
+        where: { id: taskId },
+        select: { commandId: true },
+      });
+      if (!task?.commandId) return null;
+      const command = await prisma.command.findUnique({
+        where: { id: task.commandId },
+        select: { workId: true },
+      });
+      return command?.workId ?? null;
+    } catch {
+      return null;
+    }
   },
 
   // A task can be linked to an idea through two paths: (1) if it's part of

@@ -7,6 +7,7 @@ import { MemoryService } from "@/server/memory/memory-service";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 import { WorkSessionService } from "@/server/work-session/work-session-service";
 
+import { buildCardDigestNote } from "@/lib/works/card-digest";
 import { sessionRowId } from "@/lib/guided-setup/contract";
 import { parseSession } from "@/server/guided-setup/session";
 
@@ -59,7 +60,14 @@ function recentUserText(
 export async function buildContext(
   projectId: string,
   ideaId?: string,
-  options: { recall?: boolean; session?: boolean; legacyGate?: boolean } = {},
+  options: {
+    recall?: boolean;
+    session?: boolean;
+    legacyGate?: boolean;
+    // The Work (conversation) the turn belongs to. Given, the history is that
+    // Work's rows only; absent, the old project-wide feed (docs/works.md).
+    workId?: string;
+  } = {},
 ) {
   const recall = options.recall === true;
   const legacyGate = options.legacyGate === true;
@@ -116,7 +124,14 @@ export async function buildContext(
     prisma.command.findMany({
       where: ideaId
         ? { ideaId, source: { in: ["WEB", "SYSTEM"] } }
-        : { projectId, topic: null, source: { in: ["WEB", "SYSTEM"] } },
+        : options.workId
+          ? {
+              projectId,
+              workId: options.workId,
+              topic: null,
+              source: { in: ["WEB", "SYSTEM"] },
+            }
+          : { projectId, topic: null, source: { in: ["WEB", "SYSTEM"] } },
       orderBy: { createdAt: "desc" },
       take: HISTORY_TURNS,
       select: {
@@ -252,6 +267,13 @@ export async function buildContext(
     ...new Set(connectedTargets.map((t) => t.platform)),
   ]);
 
+  // Works only: what the cards on screen say, as ONE note the agent places
+  // after the history (history.ts stays untouched, so its prefix never moves).
+  // Computed from the newest-first rows before parsedIntent is stripped.
+  const cardDigestNote = options.workId
+    ? buildCardDigestNote(recent)
+    : null;
+
   return {
     brandId,
     agency,
@@ -275,6 +297,7 @@ export async function buildContext(
     })),
     history,
     recent: agentHistory,
+    ...(cardDigestNote ? { cardDigestNote } : {}),
     setupPhase,
     setupWaiting,
     projectPhase,

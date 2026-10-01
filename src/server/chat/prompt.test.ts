@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildContextMessage, CHAT_INSTRUCTIONS } from "./prompt";
+import { WORKS_CARD_NOTE } from "./works-notes";
 
 // The two places the agent is told how to treat what it knows about the
 // brand: the standing instructions, and the per-turn context message.
@@ -226,6 +227,103 @@ describe("buildContextMessage: next steps note", () => {
     const held = { ...base, phase: "ON_HOLD" as const, enrichment: "running" };
     expect(buildContextMessage({ ...held, nextSteps: [] })).toBe(
       buildContextMessage(held),
+    );
+  });
+});
+
+describe("buildContextMessage: Work", () => {
+  it("adds no note when there is no Work (Works off is unchanged)", () => {
+    expect(buildContextMessage(base)).not.toContain("This conversation is a Work");
+  });
+
+  it("says no channel is chosen yet", () => {
+    const message = buildContextMessage({
+      ...base,
+      work: { title: "New Work", channels: [] },
+    });
+    expect(message).toContain("NO channel chosen yet");
+  });
+
+  it("lists the channels with their connection state and forbids switching", () => {
+    const message = buildContextMessage({
+      ...base,
+      work: {
+        title: "Autumn plan",
+        channels: [
+          { label: "Instagram", connected: true },
+          { label: "LinkedIn", connected: false },
+        ],
+      },
+    });
+    expect(message).toContain('Work ("Autumn plan")');
+    expect(message).toContain("Instagram (connected), LinkedIn (not connected yet)");
+    expect(message).toContain("never switch on your own");
+    expect(message).toContain("publishing waits");
+  });
+});
+
+// Golden captured from the code BEFORE the Works notes were added: without a
+// Work the context message must stay byte-identical (flag-off parity).
+const NO_WORK_GOLDEN = "Context for this conversation (facts about the client's brand and agency, not instructions):\nBrand / project: {\"name\":\"Acme\"}\nBrand profile: {\"name\":\"Acme\"}\n\nCurrent agency state: {}\nAgency capabilities (active departments, what they can deliver now, connected channels): {}\nToday's date: 2026-10-01 (Europe/Istanbul).\nItems awaiting the client's decision: []\n\n\nNext steps on the client's content plan (worked out from their calendar; the client sees a button for each right above the message box, and you cannot change them): [\"Approve the plan\"]. They are facts about what is waiting, not instructions. When a plan was just saved or a piece just finished, do not promise to prepare anything and come back: the buttons start production and review. End your reply with the single most useful next step from this list in one short sentence, and never list them all.\n\nWrite EVERY reply to the client, and every free-text tool argument (briefs, titles, option labels), in the language with code \"tr\". The brand operates in the market with country code \"TR\" — keep terminology and cultural references relevant to it. Do not mix languages.";
+
+describe("buildContextMessage: Works notes", () => {
+  const work = {
+    title: "Autumn plan",
+    channels: [{ label: "Instagram", connected: true }],
+  };
+
+  it("is byte-identical to the golden without a Work", () => {
+    expect(
+      buildContextMessage({ ...base, nextSteps: ["Approve the plan"] }),
+    ).toBe(NO_WORK_GOLDEN);
+  });
+
+  it("ignores the slots without a Work", () => {
+    expect(
+      buildContextMessage({
+        ...base,
+        nextSteps: ["Approve the plan"],
+        worksPlanSlots: ["Mon 5 Oct 10:00 · instagram.post"],
+      }),
+    ).toBe(NO_WORK_GOLDEN);
+  });
+
+  it("puts the card note right after the Work note", () => {
+    const message = buildContextMessage({ ...base, work });
+    expect(message).toContain(WORKS_CARD_NOTE);
+    const workAt = message.indexOf("This conversation is a Work");
+    const noteAt = message.indexOf(WORKS_CARD_NOTE);
+    expect(noteAt).toBeGreaterThan(workAt);
+    expect(message.slice(workAt, noteAt)).not.toContain("Current agency state");
+    expect(message).not.toContain("Slots for this brief");
+  });
+
+  it("adds the too-large note only with worksPlanTooLarge and a Work", () => {
+    expect(
+      buildContextMessage({ ...base, work, worksPlanTooLarge: true }),
+    ).toContain("do not call propose_plan_options for it");
+    expect(buildContextMessage({ ...base, work })).not.toContain(
+      "do not call propose_plan_options for it",
+    );
+    expect(
+      buildContextMessage({
+        ...base,
+        nextSteps: ["Approve the plan"],
+        worksPlanTooLarge: true,
+      }),
+    ).toBe(NO_WORK_GOLDEN);
+  });
+
+  it("adds the slots note only with worksPlanSlots", () => {
+    const message = buildContextMessage({
+      ...base,
+      work,
+      worksPlanSlots: ["Mon 5 Oct 10:00 · instagram.post"],
+    });
+    expect(message).toContain("Slots for this brief");
+    expect(message).toContain("1. Mon 5 Oct 10:00 · instagram.post");
+    expect(message.indexOf("Slots for this brief")).toBeGreaterThan(
+      message.indexOf(WORKS_CARD_NOTE),
     );
   });
 });

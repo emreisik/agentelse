@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useChatPackage } from "@/components/commands/chat-package-context";
+import { useChatSend } from "@/components/commands/chat-send-context";
 import { WsStatusPill, WsTag } from "@/components/commands/ws-event-card";
 import {
   ChannelBadge,
@@ -43,6 +44,17 @@ import {
 } from "@/lib/content-plan-view";
 import { selectProductionBatch, type PlanItemStage } from "@/lib/journey";
 import { SOCIAL_PLATFORM } from "@/lib/labels";
+import {
+  disabledReasonOf,
+  useWorkCardHost,
+} from "@/components/works/work-card-host";
+import { copyText } from "@/lib/works/copy";
+import { produceCostNote } from "@/lib/works/cost";
+import {
+  worksPlanSummary,
+  worksPublishMode,
+  worksPublishTone,
+} from "@/lib/works/plan-publish-truth";
 import { saveContentPlanAction } from "@/server/actions/content-plan-actions";
 import { approvePlanItemsAction } from "@/server/actions/plan-progress-actions";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
@@ -138,6 +150,15 @@ function summaryText(items: readonly PlanViewItem[]): string {
     .join(" · ");
 }
 
+// Touch size and kit radius of the card buttons inside a Work (the old h-7
+// "sm" size was the smallest tap target of the product).
+const WORKS_BUTTON = "min-h-11 rounded-lg px-4";
+
+// The save action answers a stale plan with code STALE (Works only).
+function isStale(result: object): boolean {
+  return "code" in result && result.code === "STALE";
+}
+
 // A content plan the chat agent drafted (propose_content_plan): a compact,
 // tabbed calendar instead of a long list. Week = a Monday-first mini grid with
 // one small chip per piece (channel colour + format icon), List = one line per
@@ -147,10 +168,18 @@ function summaryText(items: readonly PlanViewItem[]): string {
 export function ContentPlanCard({
   card,
   commandId,
+  aboveActions,
 }: {
   card: PlanCard;
   commandId?: string;
+  // Only the Works plan card passes this (its brand check and other ideas);
+  // it sits where the person decides, between the tabs and the buttons.
+  aboveActions?: ReactNode;
 }) {
+  // Null outside a Work: every Works change below is gated on it.
+  const host = useWorkCardHost();
+  const sendChat = useChatSend();
+  const buttonClass = host ? WORKS_BUTTON : undefined;
   const router = useRouter();
   const params = useParams<{ projectId?: string }>();
   const projectId =
@@ -160,6 +189,7 @@ export function ContentPlanCard({
   const [tab, setTab] = useState<"week" | "list">("week");
   const [selected, setSelected] = useState(0);
   const [weekIndex, setWeekIndex] = useState(0);
+  const [stale, setStale] = useState(false);
 
   const items = useMemo(
     () => toViewItems(card.items, card.connections, card.slots),
@@ -182,6 +212,7 @@ export function ContentPlanCard({
       const result = await saveContentPlanAction(commandId);
       if (!result.ok) {
         toast.error(result.message);
+        if (host && isStale(result)) setStale(true);
         router.refresh();
         return;
       }
@@ -250,6 +281,59 @@ export function ContentPlanCard({
       ).length,
     [items],
   );
+
+  // The quiet "about $0.24 in pictures" line of a Work: what the next batch
+  // of Save & produce / Produce would paint.
+  const costNote = useMemo(() => {
+    if (!host) return null;
+    const note = (pieces: PlanViewItem[]) =>
+      produceCostNote(
+        pieces.map((item) => ({
+          formatKey: item.format?.key,
+          channel: item.channel,
+        })),
+      );
+    if (card.state === "draft") {
+      const ids = new Set(
+        selectProductionBatch(
+          items.map((item) => ({
+            id: String(item.index),
+            planId: "plan",
+            stage: "PLANNED" as const,
+            date: item.date,
+          })),
+        ),
+      );
+      return note(items.filter((item) => ids.has(String(item.index))));
+    }
+    const ids = new Set(
+      selectProductionBatch(
+        items.flatMap((item) =>
+          item.slot
+            ? [
+                {
+                  id: item.slot.id,
+                  planId: "plan",
+                  stage: item.slot.stage,
+                  date: item.date,
+                },
+              ]
+            : [],
+        ),
+      ),
+    );
+    return note(items.filter((item) => item.slot && ids.has(item.slot.id)));
+  }, [host, card.state, items]);
+  const costLine = costNote
+    ? copyText("plan.costNote", { cost: costNote.replace(/^about /, "") })
+    : null;
+
+  const planAgain = () => {
+    if (!sendChat) return;
+    const labels = channels.map((channel) => CHANNELS[channel].label);
+    void sendChat(`Plan the week for ${labels.join(", ")}.`);
+  };
+  const planAgainReason = disabledReasonOf(host, { kind: "send" });
 
   const goToWeek = (next: number) => {
     const bounded = Math.max(0, Math.min(weeks.length - 1, next));
@@ -517,15 +601,26 @@ export function ContentPlanCard({
         </TabsContent>
       </Tabs>
 
+      {aboveActions}
+
       {open ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
-            {summaryText(items) || "Ask me to change anything, or save it."}
-          </p>
+          {host ? (
+            worksPlanSummary(items) ? (
+              <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+                {worksPlanSummary(items)}
+              </p>
+            ) : null
+          ) : (
+            <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+              {summaryText(items) || "Ask me to change anything, or save it."}
+            </p>
+          )}
           <span className="flex items-center gap-1.5">
             <Button
               size="sm"
               variant="ghost"
+              className={buttonClass}
               onClick={() => save(false)}
               disabled={pending || !commandId}
             >
@@ -533,6 +628,7 @@ export function ContentPlanCard({
             </Button>
             <Button
               size="sm"
+              className={buttonClass}
               onClick={() => save(true)}
               disabled={pending || !commandId || !chatPackage}
             >
@@ -544,6 +640,32 @@ export function ContentPlanCard({
               Save &amp; produce{draftBatch > 0 ? ` (${draftBatch})` : ""}
             </Button>
           </span>
+        </div>
+      ) : null}
+
+      {host && open && costLine ? (
+        <p className="text-xs" style={{ color: "var(--ws-text-3)" }}>
+          {costLine}
+        </p>
+      ) : null}
+
+      {host && stale ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+            {copyText("plan.stale")}
+          </p>
+          {sendChat ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className={buttonClass}
+              onClick={planAgain}
+              disabled={planAgainReason !== null}
+              title={planAgainReason ?? undefined}
+            >
+              {copyText("plan.again")}
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -559,6 +681,7 @@ export function ContentPlanCard({
               <Button
                 size="sm"
                 variant="outline"
+                className={buttonClass}
                 onClick={approveAll}
                 disabled={pending}
               >
@@ -568,6 +691,7 @@ export function ContentPlanCard({
             {card.slots && producible > 0 && chatPackage ? (
               <Button
                 size="sm"
+                className={buttonClass}
                 onClick={produce}
                 disabled={pending || producing}
               >
@@ -582,12 +706,24 @@ export function ContentPlanCard({
             {projectId ? (
               <Link
                 href={`/projects/${projectId}/takvim`}
-                className={buttonVariants({ variant: "outline", size: "sm" })}
+                className={
+                  host
+                    ? cn(
+                        buttonVariants({ variant: "outline", size: "sm" }),
+                        WORKS_BUTTON,
+                      )
+                    : buttonVariants({ variant: "outline", size: "sm" })
+                }
               >
                 Open calendar
               </Link>
             ) : null}
           </div>
+          {host && costLine && card.slots && producible > 0 && chatPackage ? (
+            <p className="text-xs" style={{ color: "var(--ws-text-3)" }}>
+              {costLine}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -604,6 +740,7 @@ function PlanItemDetail({
   projectId?: string;
   compact?: boolean;
 }) {
+  const host = useWorkCardHost();
   const channelLabel = item.channel
     ? CHANNELS[item.channel].label
     : (SOCIAL_PLATFORM[item.platform as keyof typeof SOCIAL_PLATFORM]?.label ??
@@ -626,7 +763,11 @@ function PlanItemDetail({
         </WsTag>
         {item.publish ? (
           <span className="text-[11px]" style={{ color: "var(--ws-text-2)" }}>
-            {PUBLISH_TONE[item.publish]}
+            {host
+              ? worksPublishTone(
+                  worksPublishMode({ ...item, publish: item.publish }),
+                )
+              : PUBLISH_TONE[item.publish]}
           </span>
         ) : null}
       </div>

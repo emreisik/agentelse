@@ -11,6 +11,20 @@ import { prisma } from "@/lib/prisma";
 import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 
+const SCHEDULING_PRE_SHORTLIST: ReadonlySet<IdeaStatus> = new Set([
+  "RAW",
+  "RESEARCHING",
+  "VALIDATED",
+  "CONCEPT",
+]);
+const SCHEDULING_CHAIN: readonly IdeaStatus[] = [
+  "SHORTLISTED",
+  "APPROVED",
+  "PLANNING",
+  "ACTIVE",
+  "MEASURING",
+];
+
 export type CreateIdeaInput = {
   workspaceId: string;
   projectId: string;
@@ -211,6 +225,46 @@ export const IdeaRepository = {
       await IdeaRepository.transition(ideaId, projectId, to);
     }
     return "SHORTLISTED";
+  },
+
+  // Moves an idea that was just put on the calendar to MEASURING, every step
+  // through transition() so the state machine stays the judge. MEASURING (not
+  // ACTIVE) on purpose: countActive excludes it, so scheduled ideas never
+  // starve maxActiveIdeas. Idempotent by current status; REJECTED / ARCHIVED
+  // throw before any write.
+  async advanceForScheduling(
+    ideaId: string,
+    projectId: string,
+  ): Promise<IdeaStatus> {
+    const idea = await prisma.idea.findFirst({
+      where: { id: ideaId, projectId },
+      select: { status: true },
+    });
+    if (!idea) {
+      throw new AgentelseError(
+        "NOT_FOUND",
+        `Idea ${ideaId} not found in project ${projectId}`,
+      );
+    }
+    if (idea.status === "REJECTED" || idea.status === "ARCHIVED") {
+      throw new AgentelseError(
+        "INVALID_STATE_TRANSITION",
+        `Idea ${ideaId} is ${idea.status} and cannot be scheduled`,
+      );
+    }
+    if (idea.status === "MEASURING" || idea.status === "LEARNED") {
+      return idea.status;
+    }
+    let status: IdeaStatus = idea.status;
+    if (SCHEDULING_PRE_SHORTLIST.has(status)) {
+      status = await IdeaRepository.promoteToShortlist(ideaId, projectId);
+    }
+    const start = SCHEDULING_CHAIN.indexOf(status);
+    if (start === -1) return status;
+    for (const to of SCHEDULING_CHAIN.slice(start + 1)) {
+      await IdeaRepository.transition(ideaId, projectId, to);
+    }
+    return "MEASURING";
   },
 
   addCouncilEvaluation(input: CreateCouncilEvaluationInput) {

@@ -17,6 +17,7 @@ import {
   type ChannelKey,
 } from "@/lib/content-channels";
 import { utcToZonedDateTimeLocal } from "@/lib/timezone";
+import { VARIANT_COUNT, VARIANT_QUALITY } from "@/lib/works/variants";
 import { isIdeaEventCardData } from "@/types/idea-event-card";
 import { isDepartmentInFocus } from "@/server/agency/agency-focus";
 import {
@@ -27,6 +28,10 @@ import {
 import { planCreativeIdOf } from "@/server/execution/plan-creative-link";
 import { ensureProjectActive } from "@/server/projects/activation";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
+import {
+  outsideChannelsMessage,
+  worksProductionGate,
+} from "@/server/works/production-gate";
 
 import { DELIVERABLES } from "./deliverables";
 import {
@@ -134,6 +139,8 @@ function slotRequest(input: {
   production: PlanProduction;
   title: string;
   idea: string | null;
+  // The master message of a Works plan, so every channel's piece stays coherent.
+  master?: string;
   goal?: string;
   plannedFor: string;
   timezone: string;
@@ -141,6 +148,7 @@ function slotRequest(input: {
   return [
     `${input.production.label}: ${input.title}`,
     input.idea ? `Idea: ${input.idea}` : undefined,
+    input.master ? `Master message: ${input.master.slice(0, 400)}` : undefined,
     input.goal ? `Goal of the plan: ${input.goal}` : undefined,
     `Planned for: ${input.plannedFor.replace("T", " ")} (${input.timezone})`,
     `Deliverable: ${input.production.brief}.`,
@@ -157,6 +165,10 @@ export async function claimPlanProduction(input: {
   projectId: string;
   commandId: string;
   now?: Date;
+  // Variants run: produce exactly this slot (3 pictures in one job), never a
+  // week batch.
+  onlyCreativeId?: string;
+  variantCount?: number;
 }): Promise<PlanClaimResult> {
   const now = input.now ?? new Date();
   try {
@@ -222,6 +234,17 @@ export async function claimPlanProduction(input: {
           }),
         ]);
 
+        // Only the Work's state is checked here. Slots on a channel the Work
+        // no longer covers (Change channels after the plan was saved) are
+        // skipped below, not a reason to refuse the slots that still fit.
+        const gate = await worksProductionGate(tx, {
+          projectId: input.projectId,
+          commandId: input.commandId,
+        });
+        if (!gate.ok) return { ok: false, message: gate.message };
+        const allowedChannels = gate.allowedChannels;
+        const outsideChannels = new Set<string>();
+
         const tasks: PlanTaskRow[] = taskRows.flatMap((task) => {
           const creativeId = planCreativeIdOf(task.payload);
           return creativeId
@@ -235,6 +258,14 @@ export async function claimPlanProduction(input: {
           { production: PlanProduction; row: (typeof creatives)[number] }
         >();
         const journeyItems = creatives.flatMap((creative) => {
+          if (
+            allowedChannels &&
+            creative.channel &&
+            !allowedChannels.includes(creative.channel)
+          ) {
+            outsideChannels.add(creative.channel);
+            return [];
+          }
           const channel = isChannelKey(creative.channel)
             ? creative.channel
             : undefined;
@@ -257,7 +288,29 @@ export async function claimPlanProduction(input: {
           return [item];
         });
 
-        const batch = selectProductionBatch(journeyItems, input.commandId);
+        let batch: string[];
+        if (input.onlyCreativeId) {
+          const item = journeyItems.find((i) => i.id === input.onlyCreativeId);
+          if (item?.stage === "PRODUCING") {
+            return {
+              ok: false,
+              message: "This plan is already being produced.",
+            };
+          }
+          const producible =
+            item &&
+            (item.stage === "PLANNED" || item.stage === "FAILED") &&
+            byId.get(item.id)?.production.image;
+          if (!producible) {
+            return {
+              ok: false,
+              message: "This piece can't be made in three versions.",
+            };
+          }
+          batch = [item.id];
+        } else {
+          batch = selectProductionBatch(journeyItems, input.commandId);
+        }
         if (batch.length === 0) {
           const inFlight = journeyItems.some(
             (item) => item.stage === "PRODUCING",
@@ -266,7 +319,9 @@ export async function claimPlanProduction(input: {
             ok: false,
             message: inFlight
               ? "This plan is already being produced."
-              : "There is nothing left to produce in this plan.",
+              : allowedChannels && outsideChannels.size > 0
+                ? outsideChannelsMessage(allowedChannels, [...outsideChannels])
+                : "There is nothing left to produce in this plan.",
           };
         }
 
@@ -284,6 +339,7 @@ export async function claimPlanProduction(input: {
               production,
               title,
               idea: creative.brief,
+              master: card.master?.message,
               goal: card.goal,
               plannedFor,
               timezone: card.timezone,
@@ -336,7 +392,7 @@ export type RunContentPlanInput = {
   finalCardPolls?: FinalCardPolls;
 };
 
-function specOf(slot: ClaimedSlot): ProductionSpec {
+function specOf(slot: ClaimedSlot, variantCount?: number): ProductionSpec {
   const { production } = slot;
   return {
     itemId: slot.id,
@@ -351,18 +407,41 @@ function specOf(slot: ClaimedSlot): ProductionSpec {
       // Image pieces render as drafts, like everything shown in the
       // conversation (generate_image's default).
       ...(production.image
-        ? { contentFormat: production.contentFormat, quality: "medium" }
+        ? {
+            contentFormat: production.contentFormat,
+            quality: variantCount ? VARIANT_QUALITY : "medium",
+            // Only the single-slot variants runner asks for several pictures.
+            ...(variantCount ? { variantCount } : {}),
+          }
         : {}),
     },
     logPrefix: `[plan-run] ${production.label}`,
   };
 }
 
+type RunMode = { onlyCreativeId?: string; variantCount?: number };
+
 // The whole run as one event stream. The route serializes it onto SSE; it is
 // consumed to the end even if the client disconnects (the slots are already
 // claimed, so it must finish and persist its cards).
 export async function* runContentPlan(
   input: RunContentPlanInput,
+): AsyncGenerator<ChatStreamEvent> {
+  yield* runPlan(input, {});
+}
+
+// "Make 3 versions" on one image slot: one claim, one job that renders the
+// pictures (variantCount in the payload), never inside a week batch.
+export async function* runSingleSlotVariants(
+  input: RunContentPlanInput & { creativeId: string },
+): AsyncGenerator<ChatStreamEvent> {
+  const { creativeId, ...rest } = input;
+  yield* runPlan(rest, { onlyCreativeId: creativeId, variantCount: VARIANT_COUNT });
+}
+
+async function* runPlan(
+  input: RunContentPlanInput,
+  mode: RunMode,
 ): AsyncGenerator<ChatStreamEvent> {
   // A project that has not run setup is activated on the spot; only a project
   // on hold (PAUSED / CLOSED) is refused. See projects/activation.ts.
@@ -376,7 +455,7 @@ export async function* runContentPlan(
     return;
   }
 
-  const claim = await claimPlanProduction(input);
+  const claim = await claimPlanProduction({ ...input, ...mode });
   if (!claim.ok) {
     yield { type: "error", code: "PLAN", message: claim.message };
     return;
@@ -396,7 +475,11 @@ export async function* runContentPlan(
   const channel = createChannel<ChatStreamEvent>();
   const outcomes: ItemOutcome[] = [];
   const work = forEachWithLimit(claim.slots, CONCURRENCY, async (slot) => {
-    outcomes.push(await runProductionItem(specOf(slot), input, channel.push));
+    outcomes.push(await runProductionItem(
+        specOf(slot, mode.variantCount),
+        input,
+        channel.push,
+      ));
   }).finally(() => channel.close());
 
   for await (const event of channel) yield event;

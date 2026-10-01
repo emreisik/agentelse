@@ -4,6 +4,7 @@ import {
   cssColorToHex,
   extractCssFacts,
   extractHtmlFacts,
+  extractSocialLinks,
   googleFontFamilies,
   isNeutral,
   hexToRgb,
@@ -149,5 +150,116 @@ describe("googleFontFamilies", () => {
     expect(
       googleFontFamilies("https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400"),
     ).toEqual(["DM Serif Display", "Inter"]);
+  });
+});
+
+describe("extractSocialLinks", () => {
+  const base = "https://www.example.com/iletisim";
+  const links = (html: string) => extractSocialLinks(html, base);
+
+  it("finds profile links and normalizes them (no query, no hash, no slash)", () => {
+    const html = `
+      <a href="https://www.instagram.com/webhealth/?hl=tr">ig</a>
+      <a href="https://facebook.com/webhealth.tr/#x">fb</a>
+      <a href="https://www.linkedin.com/company/web-health/">in</a>
+      <a href="https://www.tiktok.com/@webhealth">tt</a>
+      <a href="https://www.youtube.com/@webhealth">yt</a>
+      <a href="https://twitter.com/webhealth">x</a>`;
+    expect(links(html)).toEqual([
+      { platform: "instagram", url: "https://www.instagram.com/webhealth" },
+      { platform: "facebook", url: "https://facebook.com/webhealth.tr" },
+      { platform: "linkedin", url: "https://www.linkedin.com/company/web-health" },
+      { platform: "tiktok", url: "https://www.tiktok.com/@webhealth" },
+      { platform: "youtube", url: "https://www.youtube.com/@webhealth" },
+      { platform: "x", url: "https://twitter.com/webhealth" },
+    ]);
+  });
+
+  it("ignores share, intent, login and plugin links and post paths", () => {
+    const html = `
+      <a href="https://www.facebook.com/sharer/sharer.php?u=x">s</a>
+      <a href="https://www.facebook.com/sharer.php?u=x">s</a>
+      <a href="https://www.facebook.com/plugins/like.php">p</a>
+      <a href="https://twitter.com/intent/tweet?text=x">t</a>
+      <a href="https://twitter.com/share?url=x">t</a>
+      <a href="https://x.com/home">h</a>
+      <a href="https://www.linkedin.com/sharing/share-offsite/?url=x">l</a>
+      <a href="https://www.linkedin.com/shareArticle?url=x">l</a>
+      <a href="https://www.instagram.com/p/ABC123/">post</a>
+      <a href="https://www.instagram.com/accounts/login/">login</a>
+      <a href="https://www.youtube.com/watch?v=abc">v</a>
+      <a href="https://www.tiktok.com/share?url=x">t</a>`;
+    expect(links(html)).toEqual([]);
+  });
+
+  it("ignores other hosts, look-alike hosts and userinfo tricks", () => {
+    const html = `
+      <a href="https://evil.example/instagram.com/webhealth">a</a>
+      <a href="https://instagram.com.evil.example/webhealth">b</a>
+      <a href="https://notfacebook.com/webhealth">c</a>
+      <a href="https://user:pw@www.instagram.com/webhealth">d</a>
+      <a href="https://www.instagram.com:8443/webhealth">e</a>`;
+    expect(links(html)).toEqual([]);
+  });
+
+  it("ignores http, javascript: and mailto links", () => {
+    const html = `
+      <a href="http://www.instagram.com/webhealth">a</a>
+      <a href="javascript:window.open('https://www.instagram.com/webhealth')">b</a>
+      <a href="mailto:hi@instagram.com">c</a>`;
+    expect(links(html)).toEqual([]);
+  });
+
+  it("reads <a href> only, not scripts, meta or images", () => {
+    const html = `
+      <meta property="og:see_also" content="https://www.instagram.com/webhealth">
+      <script>var u="https://www.facebook.com/webhealth"</script>
+      <img src="https://www.tiktok.com/@webhealth">
+      <link rel="me" href="https://twitter.com/webhealth">`;
+    expect(links(html)).toEqual([]);
+  });
+
+  it("resolves relative links against the page, which never makes an off-site host", () => {
+    expect(links('<a href="/relative/profile">a</a>')).toEqual([]);
+    expect(
+      extractSocialLinks(
+        '<a href="//www.instagram.com/webhealth">a</a>',
+        "https://www.example.com/",
+      ),
+    ).toEqual([{ platform: "instagram", url: "https://www.instagram.com/webhealth" }]);
+    // A scheme-relative link on an http page resolves to http: dropped.
+    expect(
+      extractSocialLinks(
+        '<a href="//www.instagram.com/webhealth">a</a>',
+        "http://www.example.com/",
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps the first link of a platform only", () => {
+    const html = `
+      <a href="https://www.instagram.com/first">a</a>
+      <a href="https://www.instagram.com/second">b</a>`;
+    expect(links(html)).toEqual([
+      { platform: "instagram", url: "https://www.instagram.com/first" },
+    ]);
+  });
+
+  it("caps at 6 results even with many anchors", () => {
+    const junk = Array.from({ length: 200 }, (_, i) => `<a href="/p${i}">x</a>`).join("");
+    const html = `${junk}
+      <a href="https://instagram.com/a1">1</a><a href="https://facebook.com/abc">2</a>
+      <a href="https://linkedin.com/company/c">3</a><a href="https://tiktok.com/@dd">4</a>
+      <a href="https://youtube.com/@ee">5</a><a href="https://x.com/ff">6</a>
+      <a href="https://twitter.com/gg">7</a>`;
+    const out = links(html);
+    expect(out).toHaveLength(6);
+    expect(new Set(out.map((l) => l.platform)).size).toBe(6);
+  });
+
+  it("never throws on junk input", () => {
+    expect(links("<a href=")).toEqual([]);
+    expect(links('<a href="https://[bad">x</a>')).toEqual([]);
+    expect(links("")).toEqual([]);
   });
 });

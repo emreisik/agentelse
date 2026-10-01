@@ -16,7 +16,10 @@ const tx = {
   },
   creative: { findMany: vi.fn() },
   task: { findMany: vi.fn() },
+  work: { findFirst: vi.fn() },
 };
+const isWorksEnabled = vi.fn(() => false);
+vi.mock("@/server/works/flag", () => ({ isWorksEnabled }));
 const ensureProjectActive = vi.fn();
 vi.mock("@/server/projects/activation", () => ({ ensureProjectActive }));
 const commandFindUnique = vi.fn();
@@ -44,8 +47,13 @@ vi.mock("@/server/repositories/audit-log.repository", () => ({
   AuditLogRepository: { record: auditRecord },
 }));
 
-const { claimPlanProduction, productionFor, runContentPlan, RUN_CLAIM_TTL_MS } =
-  await import("./plan-run");
+const {
+  claimPlanProduction,
+  productionFor,
+  runContentPlan,
+  runSingleSlotVariants,
+  RUN_CLAIM_TTL_MS,
+} = await import("./plan-run");
 const { CHANNELS } = await import("@/lib/content-channels");
 
 import type { ChatStreamEvent } from "./types";
@@ -108,6 +116,7 @@ beforeEach(() => {
   commandUpdate.mockResolvedValue(undefined);
   auditRecord.mockResolvedValue(undefined);
   ensureProjectActive.mockResolvedValue({ usable: true });
+  isWorksEnabled.mockReturnValue(false);
 });
 
 describe("productionFor", () => {
@@ -169,6 +178,92 @@ describe("productionFor", () => {
         expect(productionFor(channel.key, format), format.key).toBeDefined();
       }
     }
+  });
+});
+
+describe("claimPlanProduction Work gate (run-gates)", () => {
+  const withWork = (work: Record<string, unknown> | null) => {
+    setup([slotRow("a", "2026-10-02")]);
+    tx.command.findUnique.mockImplementation(
+      async (args: { select: Record<string, boolean> }) =>
+        args.select.workId ? { workId: "work-1" } : stored(planCard()),
+    );
+    tx.work.findFirst.mockResolvedValue(work);
+  };
+
+  it("refuses a completed Work and writes nothing", async () => {
+    isWorksEnabled.mockReturnValue(true);
+    withWork({ status: "DONE", channels: ["instagram"] });
+    const result = await claimPlanProduction(claimInput);
+    expect(result).toEqual({
+      ok: false,
+      message: "This Work is completed. Reopen it to continue.",
+    });
+    expect(tx.command.update).not.toHaveBeenCalled();
+  });
+
+  it("scopes the Work lookup to the project", async () => {
+    isWorksEnabled.mockReturnValue(true);
+    withWork(null);
+    const result = await claimPlanProduction(claimInput);
+    expect(result.ok).toBe(false);
+    expect(tx.work.findFirst.mock.calls[0]![0].where).toEqual({
+      id: "work-1",
+      projectId: "proj-1",
+    });
+  });
+
+  it("refuses a slot channel outside the Work", async () => {
+    isWorksEnabled.mockReturnValue(true);
+    withWork({ status: "ACTIVE", channels: ["linkedin"] });
+    const result = await claimPlanProduction(claimInput);
+    expect(result.ok).toBe(false);
+    expect(tx.command.update).not.toHaveBeenCalled();
+  });
+
+  it("skips the pieces on a channel the Work dropped and still claims the rest", async () => {
+    isWorksEnabled.mockReturnValue(true);
+    setup([
+      slotRow("a", "2026-10-02"),
+      slotRow("b", "2026-10-03", {
+        channel: "linkedin",
+        formatKey: CHANNELS.linkedin.formats[0]!.key,
+        platform: "LINKEDIN",
+      }),
+    ]);
+    tx.command.findUnique.mockImplementation(
+      async (args: { select: Record<string, boolean> }) =>
+        args.select.workId ? { workId: "work-1" } : stored(planCard()),
+    );
+    tx.work.findFirst.mockResolvedValue({
+      status: "ACTIVE",
+      channels: ["instagram"],
+    });
+    const claim = await claimPlanProduction(claimInput);
+    expect(claim.ok).toBe(true);
+    if (!claim.ok) return;
+    expect(claim.slots.map((slot) => slot.id)).toEqual(["a"]);
+  });
+
+  it("names the channels when every piece is outside the Work", async () => {
+    isWorksEnabled.mockReturnValue(true);
+    withWork({ status: "ACTIVE", channels: ["linkedin"] });
+    expect(await claimPlanProduction(claimInput)).toEqual({
+      ok: false,
+      message: "This Work is for LinkedIn; this plan has pieces on instagram.",
+    });
+  });
+
+  it("claims when the Work is active and covers the channels", async () => {
+    isWorksEnabled.mockReturnValue(true);
+    withWork({ status: "ACTIVE", channels: ["instagram"] });
+    expect((await claimPlanProduction(claimInput)).ok).toBe(true);
+  });
+
+  it("runs no Work query with the flag off", async () => {
+    withWork({ status: "DONE", channels: [] });
+    expect((await claimPlanProduction(claimInput)).ok).toBe(true);
+    expect(tx.work.findFirst).not.toHaveBeenCalled();
   });
 });
 
@@ -571,6 +666,152 @@ describe("runContentPlan", () => {
     const refused = await collect();
     expect(refused).toEqual([
       { type: "error", code: "PLAN", message: "Save the plan first." },
+    ]);
+    expect(planForCapability).not.toHaveBeenCalled();
+  });
+});
+
+describe("master line in the slot request", () => {
+  it("adds the master message only when the card has one", async () => {
+    setup(
+      [slotRow("a", "2026-10-01")],
+      planCard({ master: { title: "M", message: "x".repeat(500) } }),
+    );
+    const withMaster = await claimPlanProduction(claimInput);
+    if (!withMaster.ok) throw new Error("claim");
+    const lines = withMaster.slots[0]!.request.split("\n");
+    expect(lines[1]).toBe("Idea: Idea a");
+    expect(lines[2]).toBe(`Master message: ${"x".repeat(400)}`);
+
+    setup([slotRow("a", "2026-10-01")], planCard());
+    const without = await claimPlanProduction(claimInput);
+    if (!without.ok) throw new Error("claim");
+    expect(without.slots[0]!.request).not.toContain("Master message");
+  });
+});
+
+describe("claimPlanProduction onlyCreativeId", () => {
+  const only = { ...claimInput, onlyCreativeId: "b", variantCount: 3 };
+
+  it("claims exactly that slot, ignoring the week batch", async () => {
+    setup([slotRow("a", "2026-10-01"), slotRow("b", "2026-10-03")]);
+    const claim = await claimPlanProduction(only);
+    if (!claim.ok) throw new Error("claim");
+    expect(claim.slots.map((slot) => slot.id)).toEqual(["b"]);
+    expect(tx.command.update).toHaveBeenCalledWith({
+      where: { id: "plan-1" },
+      data: {
+        parsedIntent: {
+          card: expect.objectContaining({
+            production: {
+              state: "running",
+              creativeIds: ["b"],
+              startedAt: NOW.toISOString(),
+            },
+          }),
+        },
+      },
+    });
+  });
+
+  it("retries a failed slot", async () => {
+    setup([slotRow("b", "2026-10-03")], planCard(), [
+      {
+        status: "FAILED",
+        payload: { planCreativeId: "b" },
+        updatedAt: NOW,
+      },
+    ]);
+    expect((await claimPlanProduction(only)).ok).toBe(true);
+  });
+
+  it("refuses a slot that is not producible as an image", async () => {
+    setup([
+      slotRow("b", "2026-10-03", {
+        channel: "linkedin",
+        formatKey: "linkedin.post",
+        platform: "LINKEDIN",
+      }),
+    ]);
+    expect(await claimPlanProduction(only)).toEqual({
+      ok: false,
+      message: "This piece can't be made in three versions.",
+    });
+    setup([slotRow("b", "2026-10-03", { currentVersionId: "v1" })]);
+    expect((await claimPlanProduction(only)).ok).toBe(false);
+    setup([slotRow("a", "2026-10-03")]);
+    expect((await claimPlanProduction(only)).ok).toBe(false);
+    expect(tx.command.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a slot with a job in flight", async () => {
+    setup([slotRow("b", "2026-10-03")], planCard(), [
+      { status: "RUNNING", payload: { planCreativeId: "b" }, updatedAt: NOW },
+    ]);
+    expect(await claimPlanProduction(only)).toEqual({
+      ok: false,
+      message: "This plan is already being produced.",
+    });
+    expect(tx.command.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("runSingleSlotVariants", () => {
+  const base = {
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    brandId: "brand-1",
+    userId: "user-1",
+    commandId: "plan-1",
+    finalCardPolls: { tries: 1, everyMs: 0 },
+  };
+
+  function planOk() {
+    planForCapability.mockResolvedValue({
+      task: { id: "task-1", riskLevel: "LOW" },
+      job: { id: "job-1" },
+      dispatched: true,
+    });
+    driveJobInline.mockResolvedValue({ status: "COMPLETED", errorMessage: null });
+    commandFindFirst.mockResolvedValue(null);
+  }
+
+  it("runs one job with variantCount and medium quality; batch runs never do", async () => {
+    setup([slotRow("a", "2026-10-01"), slotRow("b", "2026-10-03")]);
+    planOk();
+    const events: ChatStreamEvent[] = [];
+    for await (const e of runSingleSlotVariants({ ...base, creativeId: "b" }))
+      events.push(e);
+    expect(planForCapability).toHaveBeenCalledTimes(1);
+    expect(planForCapability.mock.calls[0]![0].payloadExtra).toEqual({
+      planCreativeId: "b",
+      contentFormat: "FEED_PORTRAIT",
+      quality: "medium",
+      variantCount: 3,
+    });
+    expect(events[0]).toMatchObject({ type: "run.items" });
+    expect(events.at(-1)).toMatchObject({ type: "package.done" });
+
+    vi.clearAllMocks();
+    setup([slotRow("a", "2026-10-01")]);
+    planOk();
+    for await (const e of runContentPlan(base)) void e;
+    expect(planForCapability.mock.calls[0]![0].payloadExtra).not.toHaveProperty(
+      "variantCount",
+    );
+  });
+
+  it("refuses without starting anything when the slot cannot be claimed", async () => {
+    setup([slotRow("a", "2026-10-01")]);
+    const events: ChatStreamEvent[] = [];
+    for await (const e of runSingleSlotVariants({ ...base, creativeId: "zz" }))
+      events.push(e);
+    expect(events).toEqual([
+      {
+        type: "error",
+        code: "PLAN",
+        message: "This piece can't be made in three versions.",
+      },
     ]);
     expect(planForCapability).not.toHaveBeenCalled();
   });

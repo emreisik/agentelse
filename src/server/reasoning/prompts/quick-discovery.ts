@@ -1,3 +1,6 @@
+import { z } from "zod";
+
+import { EVIDENCE } from "@/lib/guided-discovery/tiers";
 import { DISCOVERY_LIMITS } from "@/lib/guided-setup/contract";
 
 import type { ReasoningContext, ReasoningDef } from "../types";
@@ -143,6 +146,86 @@ export const quickDiscoveryDef: ReasoningDef<ConstitutionOutput> = {
         ),
       assumptions: [],
       openQuestions: [`What should ${brandName} focus on first?`],
+    };
+  },
+};
+
+// --- guided runs: the same brief plus a per-field confidence ---------------
+
+const CONFIDENCE_FIELDS = [
+  "identity",
+  "businessModel",
+  "products",
+  "markets",
+  "audiences",
+  "positioning",
+  "valueProposition",
+  "toneOfVoice",
+  "competitors",
+] as const;
+
+// Lenient on purpose: a missing or malformed entry reads as "no confidence",
+// which the tiers turn into "not found" instead of failing the whole run.
+const FieldConfidenceSchema = z
+  .object({
+    score: z.number(),
+    evidence: z.enum(EVIDENCE),
+  })
+  .catch({ score: 0, evidence: "inferred" });
+
+const GuidedOutputSchema = ConstitutionOutputSchema.extend({
+  confidence: z.object({
+    identity: FieldConfidenceSchema,
+    businessModel: FieldConfidenceSchema,
+    products: FieldConfidenceSchema,
+    markets: FieldConfidenceSchema,
+    audiences: FieldConfidenceSchema,
+    positioning: FieldConfidenceSchema,
+    valueProposition: FieldConfidenceSchema,
+    toneOfVoice: FieldConfidenceSchema,
+    competitors: FieldConfidenceSchema,
+  }),
+});
+
+export type GuidedConstitutionOutput = z.infer<typeof GuidedOutputSchema>;
+
+const CONFIDENCE_RULES =
+  '\n\nConfidence: besides the constitution, return a "confidence" object with one entry for each of these fields: ' +
+  CONFIDENCE_FIELDS.join(", ") +
+  '. Each entry is { "score": 0-100, "evidence": "site" | "web" | "both" | "inferred" }.\n' +
+  "- Report an honest score for how sure you are of the value you wrote for that field.\n" +
+  '- evidence: "site" = stated on the brand\'s own pages, "web" = found in web search results, "both" = confirmed by both, "inferred" = your own reasoning.\n' +
+  "- Use 85 or more ONLY when the value is directly stated or confirmed by two sources. Never inflate a score; an empty field gets score 0.\n" +
+  "- Never invent a value to raise a score.";
+
+// Same purpose, same prompt, same web search as quickDiscoveryDef; the only
+// additions are the confidence rules and the confidence part of the schema.
+export const quickDiscoveryGuidedDef: ReasoningDef<GuidedConstitutionOutput> = {
+  purpose: quickDiscoveryDef.purpose,
+  schema: GuidedOutputSchema,
+  webSearch: true,
+  maxTokens: quickDiscoveryDef.maxTokens,
+
+  buildPrompt(context) {
+    const base = quickDiscoveryDef.buildPrompt(context);
+    return { system: base.system + CONFIDENCE_RULES, user: base.user };
+  },
+
+  buildMock(context) {
+    const neutral = { score: 50, evidence: "inferred" as const };
+    return {
+      ...quickDiscoveryDef.buildMock(context),
+      confidence: {
+        identity: neutral,
+        businessModel: neutral,
+        products: neutral,
+        markets: neutral,
+        audiences: neutral,
+        positioning: neutral,
+        valueProposition: neutral,
+        toneOfVoice: neutral,
+        competitors: neutral,
+      },
     };
   },
 };

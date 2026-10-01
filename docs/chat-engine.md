@@ -63,6 +63,8 @@ Kurulum artık ön koşul değil: proje ilk mesajda ya da komutta kendiliğinden
 
 **Kurulum (guided setup).** `GUIDED_SETUP=true` iken kurulum/onboarding/"kurulum" isteğinde ajan tek cümlelik girişten sonra `start_guided_setup` çağırır: sohbette soru sormaz, `create_task` ile kuyruğa atmaz. Araç `guided-setup` kartı döndürür; kart akışta ilk kez `open` geldiğinde alttaki sheet'i açar (geçmişten yüklenen kart açmaz). Sheet iki motorda da aynı çalışır; sohbete yalnızca Approve'dan sonra, bir şey değiştiyse tek makbuz kartı düşer. Oturum durumu iki `Command` satırıdır (`topic` `GUIDED_SETUP` ve `GUIDED_SETUP_IDEAS`, migration yok; Work Session ile aynı yöntem). Ayrıntı: `docs/guided-setup.md`.
 
+Not: sheet artık soru sormaz; keşif öncelikli akış (marka adı + site, güven eşikleri 85/60, tek `GUIDED_DISCOVERY` satırı) `docs/guided-setup.md` başındaki "Keşif öncelikli kurulum" bölümündedir; yukarıdaki iki satırlı oturum anlatımı eski sihirbaza aittir.
+
 Tool kısıtı koddadır (`tools.ts`, `phases`) ve iki durumludur: `ACTIVE` hepsi, `ON_HOLD` (duraklatılmış/kapalı proje) yalnızca soru/tercih/okuma. `CommandService`'in `PROJECT_INACTIVE` kapısı yedek olarak durur. Eski onboarding aracı (`start_brand_setup`) kaldırıldı; yerine isteğe bağlı **derin marka araştırması** (`start_deep_enrichment`) geldi.
 
 \* `start_strategic_project` yalnızca `LEGACY_AGENCY_LOOP=on` iken sunulur (planlayan Director artık çalışmıyorsa ajan geniş işi kendisi somut çıktılara böler). `save_idea` her modda vardır.
@@ -250,3 +252,15 @@ Not: metin sağlayıcısı (`openai-ai.provider.ts`) yanıtı bir bütün olarak
 ## Test
 
 `src/server/chat/*.test.ts` ve `src/app/api/projects/[projectId]/chat/route.test.ts` (sahte model/SDK, DB'siz). Canlı OpenAI ile uçtan uca test elle yapılır.
+
+## Works araçları
+
+Yalnızca Works açıkken (`isWorksEnabled()`) ve bir Work varken geçerlidir; kapalıyken araç listesi ve istemler aynıdır. Ayrıntı: `docs/works-slice2.md`.
+
+- `toolsForPhase(phase, { works })`: `works` verilince `requiresWorks` araçları açılır, `hiddenInWorks` olanlar (`propose_content_package`, `generate_ideas_from_opportunities`) gizlenir ve `WORKS_ONLY_TOOLS` eklenir (`src/server/chat/works-tools.ts`): `propose_plan_options` (2-3 yön) ve `propose_ideas`. İlk plan cevabı ve yön değişikliği `propose_plan_options`, tek bir plan `propose_content_plan` ile gider.
+- **Slot-first:** `generate_image` ve `create_task` parçayı önce takvim slotuna koyar, sonra üretir (`slotFirstImage`, `slotFirstText`).
+- **Turu kartla bitirme (`endTurn`):** kart dönen araç turu bitirir; aynı turdaki sonraki çağrılar çalıştırılmaz, modele "A card is already shown for this message" hatası döner.
+- **`cardPersisted`:** araç kartı işten sonra yeniden okuyup zaten kaydettiyse `true` döner; ajan o kartı tur sonunda `parsedIntent` olarak ikinci kez yazmaz.
+- **Kart özeti:** ekrandaki kartlar tek not olarak geçmişin **sonuna** eklenir (`buildCardDigestNote`, `src/lib/works/card-digest.ts`; `context.ts` yalnızca `workId` varken üretir). `history.ts` dokunulmaz, önbelleklenen önek kaymaz.
+- **Tur notları:** `worksNotes` (`src/server/chat/works-notes.ts`): `WORKS_CARD_NOTE` ve plan slotları notu (`worksPlanSlotsNote`; günleri sunucu belirler, model slot başına bir fikir yazar). Sabit `CHAT_INSTRUCTIONS` değişmez.
+- **`load_skill` varyantı:** Work'te `worksSkill` (`src/server/chat/works-skills.ts`) gizli araçları anan cümleleri çıkarıp yerine `WORKS_PACKAGE_REPLACEMENT` koyar; beceri araç listesinden de bu iki araç düşer.

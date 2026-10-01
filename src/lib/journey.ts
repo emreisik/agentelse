@@ -3,6 +3,7 @@ import {
   type ChannelKey,
   type PublishMode,
 } from "@/lib/content-channels";
+import { integrationsHref } from "@/lib/works/starter-cards";
 
 // The shape of the "what is next" layer that walks a client from a saved
 // content plan to published, measured content. Isomorphic (no server-only):
@@ -66,6 +67,9 @@ export type JourneySnapshot = {
   publishScheduleEnabled: boolean;
   // Real measurement results for published plan pieces, newest first.
   results: JourneyResult[];
+  // True when the snapshot was read for one Work (only that Work's plans):
+  // switches on the approve step and the visible connect step.
+  workScoped?: boolean;
 };
 
 export type NextStepAction =
@@ -73,6 +77,14 @@ export type NextStepAction =
   | { kind: "produce_plan"; planId: string; count: number }
   // Bring the pieces waiting for a decision into view.
   | { kind: "review_queue"; creativeId: string; count: number }
+  // Approve the pieces in review in one go. Carries the ids the person SAW:
+  // the server approves only those (never pieces that finished review later).
+  | {
+      kind: "approve_plan";
+      planIds: string[];
+      creativeIds: string[];
+      count: number;
+    }
   | { kind: "connect_channel"; channel: ChannelKey }
   | { kind: "enable_scheduled_publish"; count: number }
   // Approved pieces the client posts themselves, due today or earlier.
@@ -91,6 +103,10 @@ export type NextStep = {
   // One line: what and why.
   title: string;
   action: NextStepAction;
+  // Never blocks the plan and can stay true for weeks (an account that is not
+  // connected): kept out of the chat bar, which only shows what is waiting.
+  // The plan card and the calendar still show it.
+  quiet?: boolean;
 };
 
 // One click produces at most this many pieces, all from the nearest days:
@@ -157,24 +173,43 @@ export function selectProductionBatch(
 // Where a step leads from outside the chat (the calendar's banner). A step the
 // chat itself has to run (producing, planning...) goes to the chat with
 // `?next=<kind>`, which runs it once on landing; the rest are plain pages.
-export function nextStepHref(projectId: string, step: NextStep): string {
+export function nextStepHref(
+  projectId: string,
+  step: NextStep,
+  // A step that belongs to one Work carries its id, so the chat opens that
+  // Work (not the most recently active one, whose steps may not hold it) and
+  // the integrations page can offer the way back.
+  options?: { workId?: string },
+): string {
   const action = step.action;
+  const workId = options?.workId;
   switch (action.kind) {
     case "review_queue":
       return `/projects/${projectId}/takvim?creative=${action.creativeId}`;
     case "connect_channel":
-      return `/projects/${projectId}/integrations`;
+      return workId
+        ? integrationsHref(projectId, action.channel, { fromWorkId: workId })
+        : `/projects/${projectId}/integrations`;
     default:
-      return `/projects/${projectId}?next=${action.kind}`;
+      return workId
+        ? `/projects/${projectId}?work=${encodeURIComponent(workId)}&next=${action.kind}`
+        : `/projects/${projectId}?next=${action.kind}`;
   }
 }
 
 export const NEXT_STEP_KINDS: readonly NextStepAction["kind"][] = [
   "produce_plan",
   "review_queue",
+  "approve_plan",
   "connect_channel",
   "enable_scheduled_publish",
   "publish_manual",
   "plan_next",
   "show_results",
 ];
+
+// The kinds a `?next=` landing may run by itself. approve_plan decides on the
+// person's behalf (an approval), so it only ever runs from a tap on the bar,
+// never from a link that merely opens the chat.
+export const AUTO_RUN_NEXT_KINDS: readonly NextStepAction["kind"][] =
+  NEXT_STEP_KINDS.filter((kind) => kind !== "approve_plan");

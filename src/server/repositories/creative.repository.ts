@@ -4,12 +4,23 @@ import type {
   CreativeContentFormat,
   CreativeStatus,
   CreativeType,
+  Prisma,
   SocialPlatform,
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
+
+export type CreativeVersionInput = {
+  assetId?: string;
+  caption?: string;
+  copy?: string;
+  contentFormat?: CreativeContentFormat;
+  generationProvider?: string;
+  generationMetadata?: unknown;
+  revisionReason?: string;
+};
 
 export const CreativeRepository = {
   listForProject(projectId: string) {
@@ -59,6 +70,27 @@ export const CreativeRepository = {
         { scheduledFor: { sort: "asc", nulls: "last" } },
         { createdAt: "asc" },
       ],
+    });
+  },
+
+  // Slim occupancy read for slot suggestion: no versions/assets join (unlike
+  // listForCalendarRange), bounded, and dead creatives never occupy a slot.
+  listScheduledInRange(projectId: string, range: { from: Date; to: Date }) {
+    return prisma.creative.findMany({
+      where: {
+        projectId,
+        scheduledFor: { gte: range.from, lte: range.to },
+        status: { notIn: ["ARCHIVED", "REJECTED"] },
+      },
+      orderBy: { scheduledFor: "asc" },
+      take: 500,
+      select: {
+        id: true,
+        scheduledFor: true,
+        channel: true,
+        platform: true,
+        status: true,
+      },
     });
   },
 
@@ -144,6 +176,47 @@ export const CreativeRepository = {
     });
 
     await prisma.creative.update({
+      where: { id: creativeId },
+      data: { currentVersionId: version.id },
+    });
+
+    return version;
+  },
+
+  // The body of addVersion over a caller-owned transaction (the variant adopt
+  // runs it Serializable). addVersion stays as it is.
+  async appendVersionTx(
+    tx: Prisma.TransactionClient,
+    creativeId: string,
+    projectId: string,
+    input: CreativeVersionInput,
+  ) {
+    const creative = await tx.creative.findFirst({
+      where: { id: creativeId, projectId },
+      include: { versions: { orderBy: { version: "desc" }, take: 1 } },
+    });
+    if (!creative)
+      throw new AgentelseError(
+        "NOT_FOUND",
+        `Creative ${creativeId} not found in project ${projectId}`,
+      );
+    const nextVersion = (creative.versions[0]?.version ?? 0) + 1;
+
+    const version = await tx.creativeVersion.create({
+      data: {
+        creativeId,
+        version: nextVersion,
+        assetId: input.assetId,
+        caption: input.caption,
+        copy: input.copy,
+        contentFormat: input.contentFormat,
+        generationProvider: input.generationProvider,
+        generationMetadata: input.generationMetadata as never,
+        revisionReason: input.revisionReason,
+      },
+    });
+
+    await tx.creative.update({
       where: { id: creativeId },
       data: { currentVersionId: version.id },
     });

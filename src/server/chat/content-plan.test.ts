@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const commandFindMany = vi.fn();
 const commandUpdate = vi.fn().mockResolvedValue(undefined);
 const scheduleFindFirst = vi.fn();
+const updateCommandCard = vi.fn();
+vi.mock("./card-store", () => ({ updateCommandCard }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     command: { findMany: commandFindMany, update: commandUpdate },
@@ -14,6 +16,7 @@ const {
   buildPlanCard,
   getProjectTimezone,
   supersedeOpenDrafts,
+  supersedeOpenPlanCards,
   todayInTimezone,
   validatePlanChannels,
   validatePlanDates,
@@ -217,5 +220,117 @@ describe("supersedeOpenDrafts", () => {
         },
       },
     });
+  });
+});
+
+describe("supersedeOpenDrafts (Works scope)", () => {
+  // W08: without a workId the statements are exactly the old ones.
+  it("flag-off call shape: exact where, no OR, no atomic writer", async () => {
+    commandFindMany.mockResolvedValue([]);
+    await supersedeOpenDrafts("proj-1", "cmd-new");
+    // Strict equality: an `undefined` workId key must not sneak in.
+    expect(commandFindMany.mock.calls.at(0)?.[0]).toStrictEqual({
+      where: {
+        projectId: "proj-1",
+        id: { not: "cmd-new" },
+        parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" },
+      },
+      select: { id: true, parsedIntent: true },
+    });
+    expect(updateCommandCard).not.toHaveBeenCalled();
+  });
+
+  it("with a workId adds the filter and flips through the atomic writer", async () => {
+    commandFindMany.mockResolvedValue([{ id: "d1" }]);
+    await supersedeOpenDrafts("proj-1", "cmd-new", "work-1");
+    const arg = commandFindMany.mock.calls.at(0)?.[0] as {
+      where: { workId: string; OR: unknown[] };
+    };
+    expect(arg.where.workId).toBe("work-1");
+    expect(arg.where.OR).toHaveLength(1);
+    expect(commandUpdate).not.toHaveBeenCalled();
+    expect(updateCommandCard).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("supersedeOpenPlanCards", () => {
+  const kinds = ["content-plan-draft", "content-plan-options"] as const;
+
+  function update(card: Record<string, unknown>): unknown {
+    const input = updateCommandCard.mock.calls.at(0)?.[0] as {
+      update: (c: Record<string, unknown>) => unknown;
+    };
+    return input.update(card);
+  }
+
+  it("queries this Work only with one equals per kind", async () => {
+    commandFindMany.mockResolvedValue([{ id: "x" }]);
+    await supersedeOpenPlanCards({
+      projectId: "p",
+      exceptCommandId: "new",
+      workId: "w",
+      kinds,
+    });
+    const arg = commandFindMany.mock.calls.at(0)?.[0] as {
+      where: { workId: string; OR: unknown[] };
+    };
+    expect(arg.where.workId).toBe("w");
+    expect(arg.where.OR).toEqual([
+      { parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" } },
+      { parsedIntent: { path: ["card", "kind"], equals: "content-plan-options" } },
+    ]);
+  });
+
+  it("flips draft plans and open options", async () => {
+    commandFindMany.mockResolvedValue([{ id: "x" }]);
+    await supersedeOpenPlanCards({ projectId: "p", exceptCommandId: "n", workId: "w", kinds });
+    expect(update({ kind: "content-plan-draft", state: "draft" })).toEqual({
+      kind: "content-plan-draft",
+      state: "superseded",
+    });
+    expect(update({ kind: "content-plan-options", state: "open" })).toEqual({
+      kind: "content-plan-options",
+      state: "superseded",
+    });
+  });
+
+  it("never touches a saved or picked card", async () => {
+    commandFindMany.mockResolvedValue([{ id: "x" }]);
+    await supersedeOpenPlanCards({ projectId: "p", exceptCommandId: "n", workId: "w", kinds });
+    expect(update({ kind: "content-plan-draft", state: "saved" })).toBeNull();
+    expect(update({ kind: "content-plan-options", state: "picked" })).toBeNull();
+    expect(update({ kind: "content-plan-options", state: "draft" })).toBeNull();
+  });
+
+  it("flips a main message in draft or adapted, never a superseded one", async () => {
+    commandFindMany.mockResolvedValue([{ id: "x" }]);
+    await supersedeOpenPlanCards({
+      projectId: "p",
+      exceptCommandId: "n",
+      workId: "w",
+      kinds: ["master-content"],
+    });
+    expect(update({ kind: "master-content", state: "draft" })).toEqual({
+      kind: "master-content",
+      state: "superseded",
+    });
+    expect(update({ kind: "master-content", state: "adapted" })).toEqual({
+      kind: "master-content",
+      state: "superseded",
+    });
+    expect(update({ kind: "master-content", state: "superseded" })).toBeNull();
+    expect(update({ kind: "content-plan-draft", state: "adapted" })).toBeNull();
+  });
+
+  it("honours a kinds subset", async () => {
+    commandFindMany.mockResolvedValue([]);
+    await supersedeOpenPlanCards({
+      projectId: "p",
+      exceptCommandId: "n",
+      workId: "w",
+      kinds: ["content-plan-options"],
+    });
+    const arg = commandFindMany.mock.calls.at(0)?.[0] as { where: { OR: unknown[] } };
+    expect(arg.where.OR).toHaveLength(1);
   });
 });

@@ -132,7 +132,8 @@ export type MetaAdsMetadata = MetaConnectionInfo & {
   // (weekly charts, long-run regression) is deliberately out of scope.
   previousScanSnapshot?: Record<
     string,
-    { spend: number; costPerResult?: number; ctr: number }
+    // resultLabel: written only with Works on (what costPerResult counts).
+    { spend: number; costPerResult?: number; ctr: number; resultLabel?: string }
   >;
 };
 
@@ -725,9 +726,40 @@ type RawInsightsRow = {
   actions?: Array<{ action_type: string; value: string }>;
 };
 
-function toInsightsRow(row: RawInsightsRow): MetaInsightsRow {
+// Lead-type actions, in the order they are preferred (Works ads digest).
+const LEAD_ACTION_TYPES = [
+  "lead",
+  "offsite_conversion.fb_pixel_lead",
+  "onsite_conversion.lead_grouped",
+] as const;
+
+// Exported for tests. `preferLead` picks a lead action when its count > 0 so a
+// leads campaign is not reported by a higher-volume click action; otherwise
+// the highest-count rule applies unchanged.
+export function toInsightsRow(
+  row: RawInsightsRow,
+  options?: { preferLead?: boolean },
+): MetaInsightsRow {
   const spend = Number(row.spend ?? 0);
-  const topAction = (row.actions ?? []).reduce<
+  const leadAction = options?.preferLead
+    ? (row.actions ?? [])
+        .map((a) => ({ action_type: a.action_type, value: Number(a.value) }))
+        .filter(
+          (a) =>
+            (LEAD_ACTION_TYPES as readonly string[]).includes(a.action_type) &&
+            a.value > 0,
+        )
+        .sort(
+          (a, b) =>
+            LEAD_ACTION_TYPES.indexOf(
+              a.action_type as (typeof LEAD_ACTION_TYPES)[number],
+            ) -
+            LEAD_ACTION_TYPES.indexOf(
+              b.action_type as (typeof LEAD_ACTION_TYPES)[number],
+            ),
+        )[0]
+    : undefined;
+  const topAction = leadAction ?? (row.actions ?? []).reduce<
     { action_type: string; value: number } | undefined
   >((best, a) => {
     const value = Number(a.value);
@@ -779,6 +811,8 @@ export async function fetchMetaLevelInsights(input: {
   level: "campaign" | "adset" | "ad";
   datePreset: string;
   scopedTo?: { field: "campaign.id" | "adset.id"; value: string };
+  // Campaign ids (OUTCOME_LEADS) whose row should prefer the lead action.
+  preferLeadFor?: ReadonlySet<string>;
 }): Promise<Map<string, MetaInsightsRow>> {
   const params = new URLSearchParams({
     level: input.level,
@@ -812,7 +846,12 @@ export async function fetchMetaLevelInsights(input: {
           ? row.adset_id
           : row.ad_id;
     if (!id) continue;
-    map.set(id, toInsightsRow(row));
+    map.set(
+      id,
+      input.preferLeadFor
+        ? toInsightsRow(row, { preferLead: input.preferLeadFor.has(id) })
+        : toInsightsRow(row),
+    );
   }
   return map;
 }

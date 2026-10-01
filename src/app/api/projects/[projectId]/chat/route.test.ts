@@ -29,6 +29,13 @@ vi.mock("@/server/chat/attachments", () => ({
   storeChatFiles,
 }));
 
+const worksEnabled = vi.hoisted(() => vi.fn().mockReturnValue(false));
+vi.mock("@/server/works/flag", () => ({ isWorksEnabled: worksEnabled }));
+const getWork = vi.hoisted(() => vi.fn());
+vi.mock("@/server/repositories/work.repository", () => ({
+  WorkRepository: { get: getWork },
+}));
+
 const { POST } = await import("./route");
 const { AgentelseError } = await import("@/server/security/errors");
 const { createSseParser } = await import("@/server/chat/sse");
@@ -57,6 +64,7 @@ beforeEach(() => {
     defaultBrandId: "brand-1",
   });
   isRateLimited.mockReturnValue(false);
+  worksEnabled.mockReturnValue(false);
 });
 
 describe("POST /api/projects/[projectId]/chat", () => {
@@ -147,5 +155,42 @@ describe("POST /api/projects/[projectId]/chat", () => {
     const response = await POST(request({ text: "selam" }), params);
     const events = createSseParser()(await response.text());
     expect(events.at(-1)).toMatchObject({ type: "error", message: "kaboom" });
+  });
+});
+
+describe("POST /api/projects/[projectId]/chat with Works on", () => {
+  beforeEach(() => {
+    worksEnabled.mockReturnValue(true);
+    runChatAgent.mockImplementation(async function* () {
+      yield { type: "start", commandId: "cmd-1" };
+      yield { type: "done", status: "ANSWERED" };
+    });
+  });
+
+  it("rejects a turn without a Work", async () => {
+    const response = await POST(request({ text: "hi" }), params);
+    expect(response.status).toBe(400);
+    expect(runChatAgent).not.toHaveBeenCalled();
+  });
+
+  it("rejects a Work that is not this project's (or not active)", async () => {
+    getWork.mockResolvedValue(null);
+    const foreign = await POST(request({ text: "hi", workId: "w-x" }), params);
+    expect(foreign.status).toBe(400);
+    expect(getWork).toHaveBeenCalledWith("proj-1", "w-x");
+
+    getWork.mockResolvedValue({ id: "w-1", status: "DONE" });
+    const done = await POST(request({ text: "hi", workId: "w-1" }), params);
+    expect(done.status).toBe(400);
+    expect(runChatAgent).not.toHaveBeenCalled();
+  });
+
+  it("passes the verified Work id to the agent", async () => {
+    getWork.mockResolvedValue({ id: "w-1", status: "ACTIVE" });
+    const response = await POST(request({ text: "hi", workId: "w-1" }), params);
+    await response.text();
+    expect(runChatAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ workId: "w-1" }),
+    );
   });
 });

@@ -29,6 +29,9 @@ const state = vi.hoisted(() => ({
   messageCount: 0,
 }));
 
+vi.mock("@/server/actions/work-approve-actions", () => ({
+  approvePlansAction: vi.fn(),
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
@@ -55,6 +58,9 @@ vi.mock("@assistant-ui/react", () => ({
   },
   useAuiState: (select: (s: unknown) => unknown) =>
     select({ thread: { messages: { length: state.messageCount } } }),
+}));
+vi.mock("@/server/actions/work-actions", () => ({
+  setWorkChannelsAction: vi.fn(),
 }));
 vi.mock("@/server/actions/command-actions", () => ({
   submitChatMessageAction: vi.fn(),
@@ -129,6 +135,7 @@ const render = (props: {
   ideaId?: string;
   turns?: Parameters<typeof ProjectChat>[0]["turns"];
   chatEngine?: "agent" | "legacy";
+  nextSteps?: Parameters<typeof ProjectChat>[0]["nextSteps"];
 }) =>
   renderToStaticMarkup(
     createElement(ProjectChat, {
@@ -197,6 +204,46 @@ describe("ProjectChat guided setup host", () => {
     const chip = html.indexOf("chip-stub:p1");
     expect(chip).toBeGreaterThan(-1);
     expect(chip).toBeLessThan(html.indexOf("Create a post"));
+  });
+});
+
+describe("ProjectChat next-step bar", () => {
+  const produce = {
+    key: "produce",
+    tone: "next" as const,
+    label: "Produce 7",
+    title: "7 planned pieces have no content yet.",
+    action: { kind: "produce_plan" as const, planId: "plan-1", count: 7 },
+  };
+  const connect = {
+    key: "connect-instagram",
+    tone: "next" as const,
+    label: "Connect Instagram",
+    title: "Instagram is not connected.",
+    quiet: true,
+    action: { kind: "connect_channel" as const, channel: "instagram" as const },
+  };
+
+  it("the shortcuts stay next to the bar: something waiting never takes them away", () => {
+    const html = render({ nextSteps: [produce] });
+    expect(html).toContain('aria-label="Next steps"');
+    expect(html).toContain("Produce 7");
+    for (const label of ["Create a post", "Find a Reel idea", "Plan the week"]) {
+      expect(html).toContain(label);
+    }
+  });
+
+  it("only a quiet step leaves no bar, and the shortcuts are there as ever", () => {
+    const html = render({ nextSteps: [connect] });
+    expect(html).not.toContain('aria-label="Next steps"');
+    expect(html).not.toContain("Connect Instagram");
+    expect(html).toContain("Create a post");
+  });
+
+  it("an idea thread has neither", () => {
+    const html = render({ nextSteps: [produce], ideaId: "i1" });
+    expect(html).not.toContain('aria-label="Next steps"');
+    expect(html).not.toContain("Create a post");
   });
 });
 

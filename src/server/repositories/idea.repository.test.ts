@@ -115,3 +115,76 @@ describe("IdeaRepository.promoteToShortlist", () => {
     );
   });
 });
+
+describe("IdeaRepository.advanceForScheduling", () => {
+  function stubIdea(status: string) {
+    let current = status;
+    idea.findFirst.mockImplementation(async () => ({ id: "idea-1", status: current }));
+    idea.update.mockImplementation(
+      async ({ data }: { data: { status: string } }) => {
+        current = data.status;
+        return { id: "idea-1", status: current };
+      },
+    );
+    return () => current;
+  }
+  const statusesWritten = () =>
+    idea.update.mock.calls.map(
+      (call) => (call[0] as { data: { status: string } }).data.status,
+    );
+
+  it.each([
+    ["RAW", ["VALIDATED", "CONCEPT", "SHORTLISTED", "APPROVED", "PLANNING", "ACTIVE", "MEASURING"]],
+    ["CONCEPT", ["SHORTLISTED", "APPROVED", "PLANNING", "ACTIVE", "MEASURING"]],
+    ["SHORTLISTED", ["APPROVED", "PLANNING", "ACTIVE", "MEASURING"]],
+    ["APPROVED", ["PLANNING", "ACTIVE", "MEASURING"]],
+    ["PLANNING", ["ACTIVE", "MEASURING"]],
+    ["ACTIVE", ["MEASURING"]],
+  ])("ends a %s idea at MEASURING through legal steps", async (start, steps) => {
+    const current = stubIdea(start);
+
+    const result = await IdeaRepository.advanceForScheduling("idea-1", "proj-1");
+
+    expect(result).toBe("MEASURING");
+    expect(current()).toBe("MEASURING");
+    expect(statusesWritten()).toEqual(steps);
+  });
+
+  it("is idempotent: a second run writes nothing", async () => {
+    stubIdea("APPROVED");
+    await IdeaRepository.advanceForScheduling("idea-1", "proj-1");
+    idea.update.mockClear();
+
+    const again = await IdeaRepository.advanceForScheduling("idea-1", "proj-1");
+
+    expect(again).toBe("MEASURING");
+    expect(idea.update).not.toHaveBeenCalled();
+  });
+
+  it.each(["MEASURING", "LEARNED"])("is a no-op from %s", async (status) => {
+    stubIdea(status);
+
+    const result = await IdeaRepository.advanceForScheduling("idea-1", "proj-1");
+
+    expect(result).toBe(status);
+    expect(idea.update).not.toHaveBeenCalled();
+  });
+
+  it.each(["REJECTED", "ARCHIVED"])("refuses a %s idea without writes", async (status) => {
+    stubIdea(status);
+
+    await expect(
+      IdeaRepository.advanceForScheduling("idea-1", "proj-1"),
+    ).rejects.toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+    expect(idea.update).not.toHaveBeenCalled();
+  });
+
+  it("throws NOT_FOUND for an idea outside the project", async () => {
+    idea.findFirst.mockResolvedValue(null);
+
+    await expect(
+      IdeaRepository.advanceForScheduling("idea-1", "other"),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(idea.update).not.toHaveBeenCalled();
+  });
+});

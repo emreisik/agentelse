@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
 
-const VALID_PANELS = ["sinyaller", "icgoru-firsat", "hedefler", "marka-beyni"];
+import { legacyRouteHref } from "@/components/hub-core/hub-core-params";
 
-// Intelligence is now split across three of HUB CORE's orbit panels
-// (Signals / Insight & Opportunity / Goals — Brand Brain is a separate
-// node; see ../page.tsx + src/components/hub-core/panels/*.tsx) — this
-// route stays alive so old bookmarks/links don't break, redirecting to the
-// correct panel/deep link.
+const LEGACY_TABS = ["sinyaller", "icgoru-firsat", "hedefler", "marka-beyni"];
+
+// Old intelligence hub: its three tabs and Brand Brain are all Brand Brain
+// tabs now. This route stays alive so old bookmarks/links keep working,
+// redirecting to the matching tab or record.
 export default async function ZekaRedirect({
   params,
   searchParams,
@@ -18,8 +18,8 @@ export default async function ZekaRedirect({
   const sp = await searchParams;
 
   const requestedTab = typeof sp.tab === "string" ? sp.tab : undefined;
-  const panel =
-    requestedTab && VALID_PANELS.includes(requestedTab)
+  const legacyPanel =
+    requestedTab && LEGACY_TABS.includes(requestedTab)
       ? requestedTab
       : typeof sp.firsat === "string"
         ? "icgoru-firsat"
@@ -27,10 +27,14 @@ export default async function ZekaRedirect({
           ? "sinyaller"
           : "hedefler";
 
-  const qp = new URLSearchParams({ panel });
-  if (typeof sp.sinyal === "string") qp.set("entity", `signal:${sp.sinyal}`);
-  if (typeof sp.firsat === "string")
-    qp.set("entity", `opportunity:${sp.firsat}`);
-
-  redirect(`/projects/${projectId}?${qp.toString()}`);
+  redirect(
+    legacyRouteHref(projectId, legacyPanel, {
+      entity:
+        typeof sp.firsat === "string"
+          ? { kind: "opportunity", id: sp.firsat }
+          : typeof sp.sinyal === "string"
+            ? { kind: "signal", id: sp.sinyal }
+            : null,
+    }),
+  );
 }

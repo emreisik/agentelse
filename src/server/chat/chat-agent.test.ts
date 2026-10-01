@@ -137,6 +137,25 @@ vi.mock("@/server/repositories/command.repository", () => ({
   },
 }));
 
+// Works: the Work row and its sidebar bookkeeping.
+const workGet = vi.fn();
+const workTouch = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/server/repositories/work.repository", () => ({
+  WorkRepository: { get: workGet, touch: workTouch },
+}));
+// The brand-rule loader: only the lazy getter's wiring matters here.
+const rulesGetter = vi.fn().mockResolvedValue(null);
+const createBrandRulesGetter = vi.fn(() => rulesGetter);
+vi.mock("@/server/works/brand-rule-loader", () => ({ createBrandRulesGetter }));
+// The real tool list, spied so the tests see the options the agent passes and
+// can swap in small fake tools for the end-turn cases.
+const toolsForPhaseSpy = vi.fn();
+vi.mock("./tools", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./tools")>();
+  toolsForPhaseSpy.mockImplementation(actual.toolsForPhase);
+  return { ...actual, toolsForPhase: toolsForPhaseSpy };
+});
+
 const checkAndIncrement = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/server/repositories/autonomy-policy.repository", () => ({
   AutonomyPolicyRepository: { checkAndIncrement },
@@ -154,7 +173,10 @@ const { runChatAgent } = await import("./chat-agent");
 const { AgentelseError } = await import("@/server/security/errors");
 const { serializePlanBrief } = await import("@/lib/plan-brief");
 
+import { z } from "zod";
+
 import { createSession, type WorkSession } from "@/server/work-session/session";
+import type { ChatTool, ToolContext, ToolOutcome } from "./tools";
 import type {
   ChatModel,
   ChatModelEvent,
@@ -2219,5 +2241,555 @@ describe("runChatAgent: work sessions", () => {
     expect(auditRecord).toHaveBeenCalledWith(
       expect.objectContaining({ action: "command.received" }),
     );
+  });
+});
+
+describe("runChatAgent: Works", () => {
+  const workInput = { ...baseInput, workId: "work-1" };
+  const workRow = { id: "work-1", title: "Autumn", channels: ["instagram"] };
+  const planCard = {
+    kind: "question",
+    questions: [],
+    projectId: "proj-1",
+  } as never;
+
+  beforeEach(() => {
+    workGet.mockResolvedValue(workRow);
+    rulesGetter.mockResolvedValue(null);
+  });
+
+  // A small fake tool: the outcome (or a thrown error) comes from `run`.
+  function fakeTool(
+    name: string,
+    run: (ctx: ToolContext) => ToolOutcome,
+    execute?: (ctx: ToolContext) => void,
+  ): ChatTool {
+    return {
+      name,
+      label: name,
+      description: name,
+      kind: "note",
+      phases: ["ACTIVE"],
+      schema: z.object({}).passthrough(),
+      async execute(_args, ctx) {
+        execute?.(ctx);
+        return run(ctx);
+      },
+    };
+  }
+  const useTools = (...tools: ChatTool[]) =>
+    toolsForPhaseSpy.mockImplementationOnce(() => tools);
+
+  describe("flag-off parity (agent-parity)", () => {
+    it("without a workId passes only guidedSetup, loads next steps unscoped and keeps the fallback", async () => {
+      envOverrides.GUIDED_SETUP = true;
+      submit.mockResolvedValue({ status: "PLANNED" });
+      const { model, requests } = scriptedModel([
+        { fail: new Error("boom") },
+      ]);
+      const events = await collect(runChatAgent(baseInput, { model }));
+
+      expect(toolsForPhaseSpy.mock.calls[0]![1]).toEqual({ guidedSetup: true });
+      expect(Object.keys(toolsForPhaseSpy.mock.calls[0]![1])).toEqual([
+        "guidedSetup",
+      ]);
+      expect(loadNextSteps).toHaveBeenCalledWith("proj-1");
+      expect(loadNextSteps.mock.calls[0]).toHaveLength(1);
+      expect(createBrandRulesGetter).not.toHaveBeenCalled();
+      expect(workGet).not.toHaveBeenCalled();
+      // The legacy rule-based fallback still queues the message.
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(events.at(-1)).toMatchObject({ type: "done", status: "PLANNED" });
+      // The conversation is the developer note and the user message only.
+      expect(requests[0]!.input).toHaveLength(2);
+    });
+
+    it("without a Work ignores a card digest note and plan briefs", async () => {
+      buildContext.mockResolvedValue({
+        ...context("ACTIVE"),
+        cardDigestNote: "[Cards the client sees] x",
+      });
+      const brief = serializePlanBrief({
+        goal: "leads",
+        channels: [{ channel: "instagram", formats: ["instagram.post"] }],
+        perWeek: 3,
+        weeks: 1,
+        start: day(1),
+        theme: undefined,
+      });
+      const { model, requests } = scriptedModel([{ text: ["ok"] }]);
+      await collect(
+        runChatAgent({ ...baseInput, message: brief }, { model }),
+      );
+      const note = String((requests[0]!.input[0] as { content: string }).content);
+      expect(note).not.toContain("Slots for this brief");
+      expect(note).not.toContain("In this Work");
+    });
+
+    it("with a workId passes works:true, skips the fallback and loads no brand rules eagerly", async () => {
+      const { model } = scriptedModel([{ fail: new Error("boom") }]);
+      const events = await collect(runChatAgent(workInput, { model }));
+
+      expect(toolsForPhaseSpy.mock.calls[0]![1]).toMatchObject({
+        works: true,
+      });
+      expect(loadNextSteps).toHaveBeenCalledWith("proj-1", {
+        workId: "work-1",
+      });
+      expect(createBrandRulesGetter).toHaveBeenCalledWith({
+        projectId: "proj-1",
+        brandId: "brand-1",
+        language: "tr",
+      });
+      expect(rulesGetter).not.toHaveBeenCalled();
+      expect(submit).not.toHaveBeenCalled();
+      expect(events.at(-1)).toMatchObject({ type: "error", code: "FAILED" });
+      expect(recordReply).toHaveBeenCalledWith(
+        "cmd-1",
+        expect.stringContaining("can't generate a reply"),
+        "ERROR",
+      );
+    });
+
+    it("hands the tools a lazy brand-rule getter only inside a Work", async () => {
+      const seen: (ToolContext["getBrandRules"] | "unset")[] = [];
+      const peekTool = () =>
+        fakeTool("peek", () => ({ result: { ok: true } }), (ctx) => {
+          seen.push(ctx.getBrandRules ?? "unset");
+        });
+      const peek = () =>
+        scriptedModel([{ calls: [{ name: "peek", args: {} }] }, { text: ["ok"] }])
+          .model;
+      useTools(peekTool());
+      await collect(runChatAgent(workInput, { model: peek() }));
+      useTools(peekTool());
+      await collect(runChatAgent(baseInput, { model: peek() }));
+      expect(seen).toEqual([rulesGetter, "unset"]);
+    });
+  });
+
+  describe("plan brief and digest note", () => {
+    const briefLine = serializePlanBrief({
+      goal: "leads",
+      channels: [{ channel: "instagram", formats: ["instagram.post"] }],
+      perWeek: 3,
+      weeks: 1,
+      start: day(1),
+      theme: undefined,
+    });
+    const devNote = (requests: ChatModelRequest[]) =>
+      String((requests[0]!.input[0] as { content: string }).content);
+
+    it("builds the slots note from the message's brief, with no fallback on the tool context", async () => {
+      let fallback: unknown = "unset";
+      useTools(
+        fakeTool("peek", () => ({ result: {} }), (ctx) => {
+          fallback = ctx.planBriefFallback;
+        }),
+      );
+      const { model, requests } = scriptedModel([
+        { calls: [{ name: "peek", args: {} }] },
+        { text: ["ok"] },
+      ]);
+      await collect(
+        runChatAgent({ ...workInput, message: briefLine }, { model }),
+      );
+      const note = devNote(requests);
+      expect(note).toContain("Slots for this brief");
+      expect(note).not.toContain("earlier in this Work");
+      expect(note).toContain("1. ");
+      expect(note).not.toContain("1. 1. ");
+      expect(fallback).toBeUndefined();
+    });
+
+    it("says so in the note when the brief has more posts than directions can carry", async () => {
+      const big = serializePlanBrief({
+        goal: "leads",
+        channels: [{ channel: "instagram", formats: ["instagram.post"] }],
+        perWeek: 7,
+        weeks: 2,
+        start: day(1),
+        theme: undefined,
+      });
+      const { model, requests } = scriptedModel([{ text: ["ok"] }]);
+      await collect(runChatAgent({ ...workInput, message: big }, { model }));
+      const note = devNote(requests);
+      expect(note).toContain("do not call propose_plan_options for it");
+      expect(note).not.toContain("Slots for this brief");
+    });
+
+    it("uses the newest earlier brief of the Work for a typed change", async () => {
+      const older = serializePlanBrief({
+        goal: "leads",
+        channels: [{ channel: "instagram", formats: ["instagram.post"] }],
+        perWeek: 5,
+        weeks: 1,
+        start: day(1),
+        theme: undefined,
+      });
+      buildContext.mockResolvedValue({
+        ...context("ACTIVE"),
+        recent: [
+          { id: "c-1", source: "WEB", rawText: older, replyText: "A" },
+          { id: "c-2", source: "SYSTEM", rawText: "", replyText: "event" },
+          { id: "c-3", source: "WEB", rawText: briefLine, replyText: "B" },
+          { id: "c-4", source: "WEB", rawText: "more playful", replyText: "C" },
+        ],
+      });
+      let fallback: { perWeek: number } | null | undefined;
+      useTools(
+        fakeTool("peek", () => ({ result: {} }), (ctx) => {
+          fallback = ctx.planBriefFallback;
+        }),
+      );
+      const { model, requests } = scriptedModel([
+        { calls: [{ name: "peek", args: {} }] },
+        { text: ["ok"] },
+      ]);
+      await collect(
+        runChatAgent({ ...workInput, message: "more playful" }, { model }),
+      );
+      // The NEWEST brief (3 per week) wins, not the older one (5).
+      expect(fallback?.perWeek).toBe(3);
+      expect(devNote(requests)).toContain("earlier in this Work");
+    });
+
+    it("adds no slots note when there is no brief anywhere", async () => {
+      const { model, requests } = scriptedModel([{ text: ["ok"] }]);
+      await collect(runChatAgent(workInput, { model }));
+      expect(devNote(requests)).not.toContain("Slots for");
+    });
+
+    it("places the card digest note after the history and before the user message", async () => {
+      buildContext.mockResolvedValue({
+        ...context("ACTIVE"),
+        recent: [
+          { id: "c-1", source: "WEB", rawText: "hello", replyText: "hi" },
+        ],
+        cardDigestNote: "[Cards the client sees on screen in this Work] x",
+      });
+      const { model, requests } = scriptedModel([{ text: ["ok"] }]);
+      await collect(runChatAgent(workInput, { model }));
+      const input = requests[0]!.input as { role?: string; content?: unknown }[];
+      expect(input).toHaveLength(5);
+      expect(input[1]).toMatchObject({ role: "user", content: "hello" });
+      expect(input[2]).toMatchObject({ role: "assistant", content: "hi" });
+      expect(input[3]).toEqual({
+        role: "developer",
+        content: "[Cards the client sees on screen in this Work] x",
+      });
+      expect(input[4]).toMatchObject({ role: "user" });
+    });
+  });
+
+  describe("end-turn cards (agent-endturn)", () => {
+    it("stops after one model round and keeps the tool's reply text", async () => {
+      useTools(
+        fakeTool("show", () => ({
+          result: { ok: true },
+          card: planCard,
+          endTurn: true,
+          appendReply: "Here are your options.",
+        })),
+      );
+      const { model, requests } = scriptedModel([
+        { calls: [{ name: "show", args: {} }] },
+        { text: ["Should never be requested."] },
+      ]);
+      const events = await collect(runChatAgent(workInput, { model }));
+
+      expect(requests).toHaveLength(1);
+      expect(events.at(-1)).toMatchObject({
+        type: "done",
+        reply: "Here are your options.",
+      });
+      expect(recordReply).toHaveBeenCalledWith(
+        "cmd-1",
+        "Here are your options.",
+        "ANSWERED",
+      );
+      expect(attachParsedIntent).toHaveBeenCalledWith(
+        "cmd-1",
+        { card: planCard },
+        "proj-1",
+        "brand-1",
+      );
+    });
+
+    it("lets the model repair after an error without a card", async () => {
+      useTools(
+        fakeTool("show", () => ({
+          result: { error: "Every option needs exactly 3 ideas." },
+          endTurn: true,
+        })),
+      );
+      const { model, requests } = scriptedModel([
+        { calls: [{ name: "show", args: {} }] },
+        { text: ["Fixed it."] },
+      ]);
+      await collect(runChatAgent(workInput, { model }));
+      expect(requests).toHaveLength(2);
+    });
+
+    it("answers a later call of the same round with an error and never runs it", async () => {
+      const second = vi.fn();
+      useTools(
+        fakeTool("show", () => ({
+          result: { ok: true },
+          card: planCard,
+          endTurn: true,
+        })),
+        fakeTool("other", () => ({ result: { ok: true } }), second),
+      );
+      const { model, requests } = scriptedModel([
+        {
+          calls: [
+            { name: "show", args: {} },
+            { name: "other", args: {} },
+            { name: "show", args: {} },
+          ],
+        },
+        { text: ["never"] },
+      ]);
+      await collect(runChatAgent(workInput, { model }));
+
+      expect(second).not.toHaveBeenCalled();
+      expect(requests).toHaveLength(1);
+      // Inspect what the loop answered, via the conversation array it mutated.
+      const outputs = (requests[0]!.input as { type?: string; output?: string }[])
+        .filter((item) => item.type === "function_call_output")
+        .map((item) => JSON.parse(String(item.output)));
+      expect(outputs).toHaveLength(3);
+      expect(outputs[0]).toEqual({ ok: true });
+      for (const refused of outputs.slice(1)) {
+        expect(refused.error).toContain("A card is already shown");
+      }
+    });
+  });
+
+  describe("a terminal tool's card ends the round in a Work", () => {
+    const terminalShow = (): ChatTool => ({
+      ...fakeTool("wizard", () => ({ result: { ok: true }, card: planCard })),
+      kind: "terminal",
+    });
+
+    it("does not run a later tool of the same round", async () => {
+      const second = vi.fn();
+      useTools(
+        terminalShow(),
+        fakeTool("other", () => ({ result: { ok: true } }), second),
+      );
+      const { model } = scriptedModel([
+        {
+          calls: [
+            { name: "wizard", args: {} },
+            { name: "other", args: {} },
+          ],
+        },
+      ]);
+      await collect(runChatAgent(workInput, { model }));
+      expect(second).not.toHaveBeenCalled();
+    });
+
+    it("without a Work the later tool still runs as before", async () => {
+      const second = vi.fn();
+      useTools(
+        terminalShow(),
+        fakeTool("other", () => ({ result: { ok: true } }), second),
+      );
+      const { model } = scriptedModel([
+        {
+          calls: [
+            { name: "wizard", args: {} },
+            { name: "other", args: {} },
+          ],
+        },
+      ]);
+      await collect(runChatAgent(baseInput, { model }));
+      expect(second).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("does not run a turn with the plain tool list when the Work is gone", async () => {
+    workGet.mockResolvedValue(null);
+    const { model, requests } = scriptedModel([{ text: ["Hello"] }]);
+    const events = await collect(runChatAgent(workInput, { model }));
+    expect(requests).toHaveLength(0);
+    expect(events.at(-1)).toMatchObject({ type: "error", code: "FAILED" });
+    expect(toolsForPhaseSpy).not.toHaveBeenCalled();
+  });
+
+  describe("Work title and sidebar summary", () => {
+    it("titles the Work from the visible line of a wizard message, not the machine line", async () => {
+      const message = `Plan the week \u00b7 from Fri 2 Oct\n${serializePlanBrief({
+        goal: "awareness",
+        channels: [{ channel: "instagram", formats: ["instagram.post"] }],
+        perWeek: 3,
+        weeks: 1,
+        start: "2026-10-02",
+      }).split("\n")[1]}`;
+      const { model } = scriptedModel([{ text: ["Ok."] }]);
+      await collect(runChatAgent({ ...workInput, message }, { model }));
+      const touch = workTouch.mock.calls.find(
+        (call) => call[2] && "titleIfDefault" in call[2],
+      );
+      expect(touch?.[2].titleIfDefault).toBe("Plan the week \u00b7 from Fri 2 Oct");
+    });
+
+    it("keeps the sidebar summary when the turn fails", async () => {
+      const { model } = scriptedModel([{ fail: new Error("provider exploded") }]);
+      await collect(runChatAgent(workInput, { model }));
+      const summaries = workTouch.mock.calls.filter(
+        (call) => call[2] && "summary" in call[2],
+      );
+      expect(summaries).toHaveLength(0);
+    });
+
+    it("sets the summary from a normal reply", async () => {
+      const { model } = scriptedModel([{ text: ["All planned."] }]);
+      await collect(runChatAgent(workInput, { model }));
+      expect(workTouch).toHaveBeenCalledWith("proj-1", "work-1", {
+        summary: "All planned.",
+      });
+    });
+  });
+
+  describe("a refused work tool gives its action back (guard-release)", () => {
+    // A work tool: the first call refuses without doing anything (the way
+    // slot-first answers a brand-rule block), later calls succeed.
+    function slotTool(outcomes: ToolOutcome[]): ChatTool {
+      let call = 0;
+      return {
+        name: "slot",
+        label: "slot",
+        description: "slot",
+        kind: "work",
+        phases: ["ACTIVE"],
+        schema: z.object({ caption: z.string() }),
+        async execute() {
+          return outcomes[Math.min(call++, outcomes.length - 1)]!;
+        },
+      };
+    }
+    const refused: ToolOutcome = {
+      result: { error: "brand rule" },
+      nothingDone: true,
+    };
+    const done: ToolOutcome = { result: { ok: true } };
+
+    it("lets the corrected retry run after a refusal that did nothing", async () => {
+      const execute = vi.fn();
+      const tool = slotTool([refused, done]);
+      useTools({
+        ...tool,
+        async execute(args, ctx) {
+          execute(args);
+          return tool.execute(args, ctx);
+        },
+      });
+      const { model, requests } = scriptedModel([
+        { calls: [{ name: "slot", args: { caption: "cheap deal" } }] },
+        { calls: [{ name: "slot", args: { caption: "fair deal" } }] },
+        { text: ["Planned."] },
+      ]);
+      await collect(runChatAgent(workInput, { model }));
+
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(requests.at(-1)!.input)).not.toContain(
+        "Only one action",
+      );
+    });
+
+    it("keeps the action when the tool really did work", async () => {
+      const execute = vi.fn();
+      const tool = slotTool([done]);
+      useTools({
+        ...tool,
+        async execute(args, ctx) {
+          execute(args);
+          return tool.execute(args, ctx);
+        },
+      });
+      const { model, requests } = scriptedModel([
+        { calls: [{ name: "slot", args: { caption: "a" } }] },
+        { calls: [{ name: "slot", args: { caption: "b" } }] },
+        { text: ["Planned."] },
+      ]);
+      await collect(runChatAgent(workInput, { model }));
+
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(requests.at(-1)!.input)).toContain(
+        "Only one action",
+      );
+    });
+
+    it("stops handing the action back after the per-message cap", async () => {
+      const execute = vi.fn();
+      const tool = slotTool([refused]);
+      useTools({
+        ...tool,
+        async execute(args, ctx) {
+          execute(args);
+          return tool.execute(args, ctx);
+        },
+      });
+      const { model } = scriptedModel([
+        { calls: [{ name: "slot", args: { caption: "a" } }] },
+        { calls: [{ name: "slot", args: { caption: "b" } }] },
+        { calls: [{ name: "slot", args: { caption: "c" } }] },
+        { calls: [{ name: "slot", args: { caption: "d" } }] },
+        { text: ["No."] },
+      ]);
+      await collect(runChatAgent(workInput, { model }));
+
+      // Two refunds, so three executions; the fourth call is blocked.
+      expect(execute).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe("a stored card is kept (persist-keeps-card)", () => {
+    it("does not replace a persisted card with a later limit notice", async () => {
+      useTools(
+        fakeTool("show", () => ({
+          result: { ok: true },
+          card: planCard,
+          cardPersisted: true,
+        })),
+      );
+      const { model } = scriptedModel([
+        { calls: [{ name: "show", args: {} }] },
+        {
+          fail: new AgentelseError("BUDGET_EXCEEDED", "cap", {
+            meta: { limit: "maxReasoningCallsPerDay", cap: 200, used: 200 },
+          }),
+        },
+      ]);
+      const events = await collect(runChatAgent(workInput, { model }));
+
+      expect(events.at(-1)).toMatchObject({
+        type: "error",
+        card: { kind: "limit-notice" },
+      });
+      expect(attachParsedIntent).not.toHaveBeenCalled();
+      // The sidebar headline still follows the last card.
+      expect(recordReply).toHaveBeenCalledTimes(1);
+    });
+
+    it("still attaches a normal card", async () => {
+      useTools(
+        fakeTool("show", () => ({ result: { ok: true }, card: planCard })),
+      );
+      const { model } = scriptedModel([
+        { calls: [{ name: "show", args: {} }] },
+        { text: ["Done."] },
+      ]);
+      await collect(runChatAgent(workInput, { model }));
+      expect(attachParsedIntent).toHaveBeenCalledWith(
+        "cmd-1",
+        { card: planCard },
+        "proj-1",
+        "brand-1",
+      );
+    });
   });
 });

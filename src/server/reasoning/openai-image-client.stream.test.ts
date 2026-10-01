@@ -23,6 +23,13 @@ const putAsset = vi.fn(async (_b: Buffer, ext: string) => ({
 }));
 vi.mock("@/server/storage/asset-storage", () => ({ putAsset }));
 
+const record = vi.fn<(input: Record<string, unknown>) => Promise<object>>(
+  async () => ({}),
+);
+vi.mock("@/server/repositories/reasoning-call.repository", () => ({
+  ReasoningCallRepository: { record },
+}));
+
 const { generateOpenAIImage } = await import("./openai-image-client");
 
 async function* events(...items: unknown[]) {
@@ -116,6 +123,59 @@ describe("generateOpenAIImage streaming", () => {
 
     expect(generate).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+  it("records the streamed render's spend from the completed event's usage", async () => {
+    generate.mockResolvedValue(
+      events({
+        type: "image_generation.completed",
+        b64_json: FINAL,
+        usage: {
+          input_tokens: 200,
+          input_tokens_details: { text_tokens: 200, image_tokens: 0 },
+          output_tokens: 1_000,
+        },
+      }),
+    );
+
+    await generateOpenAIImage(
+      "a clinic",
+      undefined,
+      undefined,
+      undefined,
+      "medium",
+      () => undefined,
+    );
+
+    expect(record).toHaveBeenCalledTimes(1);
+    const row = record.mock.calls[0]![0] as Record<string, number | string>;
+    expect(row).toMatchObject({ purpose: "image.generate", outputTokens: 1_000 });
+    // 200 text in @ $5/M + 1K image out @ $30/M
+    expect(row.costUsd).toBeCloseTo(0.001 + 0.03, 6);
+  });
+
+  it("bills once when a dead stream falls back to the plain request", async () => {
+    generate.mockRejectedValue(new Error("stream unsupported"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ b64_json: FINAL }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    await generateOpenAIImage(
+      "a clinic",
+      undefined,
+      undefined,
+      undefined,
+      "medium",
+      () => undefined,
+    );
+
+    expect(record).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
   });
 });

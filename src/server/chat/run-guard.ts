@@ -87,6 +87,11 @@ const actionsUsedUp = (max: number) =>
 const DECISIVE_FIRST =
   "Not done: a decision on the client's behalf, or a long paid job, is only started when the client asks for it in their message, and only as the first action of the reply, before any other work. Say what is pending and ask them to confirm it in their next message.";
 
+// A tool that refused before writing anything gives its action back, so the
+// model's corrected retry can run. Capped so a model that keeps getting refused
+// cannot loop on free retries (rounds still bound it too).
+export const MAX_ACTION_REFUNDS = 2;
+
 const DUPLICATE =
   "That exact action already ran in this message and was not repeated. Use its result.";
 
@@ -114,6 +119,7 @@ export class RunGuard {
   private inSessionRun = false;
   private actions = 0;
   private readonly ran = new Set<string>();
+  private refunds = 0;
   private readonly startedAt: number;
 
   constructor(private readonly clock: () => number = Date.now) {
@@ -187,5 +193,21 @@ export class RunGuard {
     this.ran.add(key);
     this.actions += 1;
     return null;
+  }
+
+  // The tool admitted for `argsKey` refused without doing anything (nothing was
+  // written, started or spent): hands its action back and forgets the call, so
+  // a corrected retry is not answered with "one action per message". Returns
+  // false (and keeps the action) once the per-message refund cap is used up or
+  // when the call was never admitted.
+  release(tool: GuardedTool, argsKey: string): boolean {
+    if (!consumesAction(tool)) return false;
+    const key = `${tool.name}:${argsKey}`;
+    if (!this.ran.has(key) || this.actions === 0) return false;
+    if (this.refunds >= MAX_ACTION_REFUNDS) return false;
+    this.ran.delete(key);
+    this.actions -= 1;
+    this.refunds += 1;
+    return true;
   }
 }

@@ -32,6 +32,8 @@ export const CommandRepository = {
     projectId?: string;
     brandId?: string;
     ideaId?: string;
+    // The Work (conversation) this row belongs to; absent = legacy single chat.
+    workId?: string;
     // A non-idea, non-general conversation scope (e.g. "BRAND_BRAIN") — see
     // schema.prisma's Command.topic comment.
     topic?: string;
@@ -60,6 +62,35 @@ export const CommandRepository = {
     return prisma.command.update({
       where: { id },
       data: { parsedIntent: parsedIntent as never, projectId, brandId },
+    });
+  },
+
+  // Works only: the same write, but a card the turn already stored on the row
+  // (slot-first generation stores the saved plan card before the turn ends)
+  // survives. Replacing the whole parsedIntent would drop it and leave the
+  // slots it created invisible, un-producible and uncounted.
+  async attachParsedIntentKeepingCard(
+    id: string,
+    parsedIntent: unknown,
+    projectId?: string,
+    brandId?: string,
+  ) {
+    const existing = await prisma.command.findUnique({
+      where: { id },
+      select: { parsedIntent: true },
+    });
+    const kept = (existing?.parsedIntent as { card?: unknown } | null)?.card;
+    const next =
+      kept !== undefined &&
+      kept !== null &&
+      parsedIntent !== null &&
+      typeof parsedIntent === "object" &&
+      !("card" in parsedIntent)
+        ? { ...(parsedIntent as Record<string, unknown>), card: kept }
+        : parsedIntent;
+    return prisma.command.update({
+      where: { id },
+      data: { parsedIntent: next as never, projectId, brandId },
     });
   },
 

@@ -54,8 +54,18 @@ import {
 import { CreativeCard } from "@/components/commands/creative-card";
 import { ContentPlanCard } from "@/components/commands/content-plan-card";
 import { PlanBriefWizard } from "@/components/commands/plan-brief-wizard";
+import { ChannelSelectCard } from "@/components/works/channel-select-card";
+import { useWorkCardHost } from "@/components/works/work-card-host";
+import {
+  WORKS_ONLY_KINDS,
+  WorksCreativeCard,
+  WorksFallbackCard,
+  WorksPlanCard,
+  renderWorksCard,
+} from "@/components/works/works-card";
 import { GuidedSetupCard } from "@/components/commands/guided-setup-card";
 import { useChatPackage } from "@/components/commands/chat-package-context";
+import { buildHubHref } from "@/components/hub-core/hub-core-params";
 import {
   DELIVERABLES,
   INSTAGRAM_POST_FORMATS,
@@ -110,7 +120,15 @@ export function IdeaEventCard({
   // actions on that row (content-plan-draft's Save) need it.
   commandId?: string;
 }) {
-  if (isCreativeCardData(card)) return <CreativeCard card={card} />;
+  // Null outside a Work: every Works branch below is gated on it.
+  const host = useWorkCardHost();
+  if (isCreativeCardData(card)) {
+    return host && card.kind === "creative-ready" ? (
+      <WorksCreativeCard card={card} host={host} />
+    ) : (
+      <CreativeCard card={card} />
+    );
+  }
 
   switch (card.kind) {
     case "signal":
@@ -344,11 +362,18 @@ export function IdeaEventCard({
     case "question":
       return <QuestionCard card={card} />;
 
+    case "channel-select":
+      return <ChannelSelectCard card={card} />;
+
     case "content-plan-summary":
       return <ContentPlanSummaryCard card={card} />;
 
     case "content-plan-draft":
-      return <ContentPlanCard card={card} commandId={commandId} />;
+      return host ? (
+        <WorksPlanCard card={card} commandId={commandId} />
+      ) : (
+        <ContentPlanCard card={card} commandId={commandId} />
+      );
 
     case "plan-brief":
       return <PlanBriefWizard card={card} />;
@@ -409,7 +434,11 @@ export function IdeaEventCard({
       );
 
     default:
-      return null;
+      return host ? (
+        renderWorksCard(card, { commandId, host })
+      ) : WORKS_ONLY_KINDS.has(card.kind) ? (
+        <WorksFallbackCard card={card} />
+      ) : null;
   }
 }
 
@@ -537,7 +566,7 @@ function LimitNoticeCard({ card }: { card: LimitNoticeData }) {
       </p>
       {copy.settingsCta && projectId ? (
         <Link
-          href={`/projects/${projectId}?panel=ayarlar&sub=otonomi`}
+          href={buildHubHref(projectId, { panel: "settings", sub: "autonomy" })}
           className={cn(
             buttonVariants({ size: "sm", variant: "outline" }),
             "mt-2 w-fit",

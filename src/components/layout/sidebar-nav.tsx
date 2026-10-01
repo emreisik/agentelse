@@ -1,23 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import * as React from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   CalendarDays,
   Gem,
-  Lightbulb,
   Library,
   ListChecks,
   Megaphone,
   MessagesSquare,
   Plug,
-  Radio,
   Settings2,
-  SlidersHorizontal,
   Sparkles,
-  Target,
-  UserRoundCog,
-  Users2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -26,6 +21,7 @@ import {
   buildHubHref,
   type PanelKey,
 } from "@/components/hub-core/hub-core-params";
+import { WorkList, type SidebarWork } from "@/components/layout/work-list";
 
 type NavItem = {
   label: string;
@@ -36,12 +32,21 @@ type NavItem = {
   | { home: true }
 );
 
-type NavGroup = { title: string | null; items: NavItem[] };
+type NavGroup = {
+  title: string | null;
+  items: NavItem[];
+  // Sits at the bottom of the sidebar instead of following the group above.
+  pinnedToBottom?: boolean;
+};
 
-// Every entry the header's Advanced menu (project-tools-menu.tsx) offers is
-// listed here too, grouped by what it's for. "Agency Desk" is the project's
-// free-text agency chat (ProjectChat) — everything, decisions included,
-// happens in that one screen (pending cards in the chat).
+// What the project's day-to-day work needs, grouped by what it's for. "Agency
+// Desk" is the project's free-text agency chat (ProjectChat) — everything,
+// decisions included, happens in that one screen (pending cards in the chat).
+// The rarely used panels (Setup, Departments, Human Action) are not listed
+// here: they live in the header's Advanced menu (project-tools-menu.tsx), with
+// its attention dot. Settings is the one of them that stays in the sidebar, as
+// a single line at the bottom: publishing times, spending limits, Autopilot and
+// deleting the project are only there.
 const GROUPS: NavGroup[] = [
   {
     title: null,
@@ -58,18 +63,6 @@ const GROUPS: NavGroup[] = [
     ],
   },
   {
-    title: "Insights",
-    items: [
-      { label: "Signals", icon: Radio, panel: "signals" },
-      {
-        label: "Insights & Opportunities",
-        icon: Lightbulb,
-        panel: "insights-opportunities",
-      },
-      { label: "Goals", icon: Target, panel: "goals" },
-    ],
-  },
-  {
     title: "Channels",
     items: [
       { label: "Ads Manager", icon: Megaphone, route: "ads" },
@@ -77,13 +70,9 @@ const GROUPS: NavGroup[] = [
     ],
   },
   {
-    title: "System",
-    items: [
-      { label: "Setup", icon: SlidersHorizontal, panel: "setup" },
-      { label: "Departments", icon: Users2, panel: "departments" },
-      { label: "Human Action", icon: UserRoundCog, panel: "human-action" },
-      { label: "Settings", icon: Settings2, panel: "settings" },
-    ],
+    title: null,
+    pinnedToBottom: true,
+    items: [{ label: "Settings", icon: Settings2, panel: "settings" }],
   },
 ];
 
@@ -97,9 +86,16 @@ const ACTIVE_CLASS =
 export function SidebarNav({
   activeProjectId,
   toolBadges = {},
+  works,
+  todayKey,
 }: {
   activeProjectId?: string;
   toolBadges?: Partial<Record<PanelKey, number>>;
+  // Recent Works (docs/works.md). Absent when Works is off: the nav renders
+  // exactly as before.
+  works?: readonly SidebarWork[];
+  // The project's day (Works only): pins the Today row.
+  todayKey?: string;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -118,7 +114,10 @@ export function SidebarNav({
   return (
     <nav className="flex flex-1 flex-col gap-4 overflow-y-auto px-3 py-3 text-sm">
       {GROUPS.map((group, index) => (
-        <div key={group.title ?? index} className="space-y-0.5">
+        <React.Fragment key={group.title ?? index}>
+        <div
+          className={cn("space-y-0.5", group.pinnedToBottom && "mt-auto")}
+        >
           {group.title ? (
             <div className="px-2.5 pb-1 text-[10px] font-semibold tracking-[0.1em] text-sidebar-foreground/45 uppercase">
               {group.title}
@@ -142,7 +141,8 @@ export function SidebarNav({
               active = pathname === href;
             } else {
               href = `/projects/${activeProjectId}`;
-              active = isPlainChat;
+              // With Works, the list below marks the open conversation.
+              active = isPlainChat && !works;
             }
             return (
               <Link
@@ -165,6 +165,14 @@ export function SidebarNav({
             );
           })}
         </div>
+        {index === 0 && works ? (
+          <WorkList
+            projectId={activeProjectId}
+            works={works}
+            todayKey={todayKey}
+          />
+        ) : null}
+        </React.Fragment>
       ))}
     </nav>
   );

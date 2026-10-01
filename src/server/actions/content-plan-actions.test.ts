@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireUser = vi.fn();
 const requireProjectAccess = vi.fn();
@@ -17,12 +17,35 @@ const tx = {
   creative: { create: vi.fn() },
 };
 const commandFindUnique = vi.fn();
+const workFindFirst = vi.fn();
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     command: { findUnique: commandFindUnique },
+    work: { findFirst: workFindFirst },
     $transaction: async (fn: (t: typeof tx) => unknown) => fn(tx),
   },
 }));
+
+const worksEnabled = vi.fn().mockReturnValue(false);
+vi.mock("@/server/works/flag", () => ({ isWorksEnabled: worksEnabled }));
+const loadBrandRules = vi.fn();
+vi.mock("@/server/works/brand-rule-loader", () => ({ loadBrandRules }));
+const ruleLanguageOf = vi.fn();
+vi.mock("@/server/brand/rule-language", () => ({
+  brandRuleLanguageOf: ruleLanguageOf,
+}));
+
+const coreSpy = vi.fn();
+vi.mock("@/server/chat/save-plan-core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/chat/save-plan-core")>();
+  return {
+    ...actual,
+    savePlanSlotsInTx: (...args: Parameters<typeof actual.savePlanSlotsInTx>) => {
+      coreSpy(...args);
+      return actual.savePlanSlotsInTx(...args);
+    },
+  };
+});
 
 const { saveContentPlanAction } = await import("./content-plan-actions");
 
@@ -54,6 +77,10 @@ const draft = (state: string) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  worksEnabled.mockReturnValue(false);
+  loadBrandRules.mockResolvedValue(null);
+  ruleLanguageOf.mockResolvedValue("de");
+  workFindFirst.mockResolvedValue({ status: "ACTIVE" });
   requireUser.mockResolvedValue({ userId: "u1", email: null });
   requireProjectAccess.mockResolvedValue({
     workspaceId: "ws-1",
@@ -242,6 +269,150 @@ describe("saveContentPlanAction", () => {
     expect(await saveContentPlanAction("cmd-1")).toMatchObject({
       ok: false,
       message: "Plan not found.",
+    });
+  });
+
+  it("delegates to the save core with the same tx and the access scope", async () => {
+    await saveContentPlanAction("cmd-1");
+    expect(coreSpy).toHaveBeenCalledTimes(1);
+    expect(coreSpy.mock.calls[0]![0]).toBe(tx);
+    expect(coreSpy.mock.calls[0]![1]).toEqual({
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      brandId: "brand-1",
+    });
+    expect(coreSpy.mock.calls[0]![2]).toBe("cmd-1");
+  });
+});
+
+describe("saveContentPlanAction in a Work", () => {
+  const rules = {
+    language: "en",
+    never: [{ text: "guaranteed", origin: "client-rule" }],
+    approvedClaims: [],
+    competitors: [],
+  };
+  const blockedCard = () => {
+    const d = draft("draft");
+    d.card.items[0]!.topic = "Guaranteed results";
+    return d;
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-01T06:00:00Z"));
+    worksEnabled.mockReturnValue(true);
+    loadBrandRules.mockResolvedValue(rules);
+    commandFindUnique.mockResolvedValue({
+      projectId: "proj-1",
+      workId: "w1",
+      parsedIntent: draft("draft"),
+    });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("flag off: one command read, no brand load, same tx body", async () => {
+    worksEnabled.mockReturnValue(false);
+    expect(await saveContentPlanAction("cmd-1")).toEqual({ ok: true, saved: 2 });
+    expect(commandFindUnique).toHaveBeenCalledTimes(1);
+    expect(loadBrandRules).not.toHaveBeenCalled();
+  });
+
+  it("flag on but no workId: no brand load", async () => {
+    commandFindUnique.mockResolvedValue({
+      projectId: "proj-1",
+      workId: null,
+      parsedIntent: blockedCard(),
+    });
+    expect((await saveContentPlanAction("cmd-1")).ok).toBe(true);
+    expect(loadBrandRules).not.toHaveBeenCalled();
+  });
+
+  it("refuses a Completed Work before the tx and before any rules load", async () => {
+    workFindFirst.mockResolvedValue({ status: "DONE" });
+    const result = await saveContentPlanAction("cmd-1", { allowIssues: true });
+    expect(result).toEqual({
+      ok: false,
+      message: "This Work is completed. Reopen it to continue.",
+    });
+    expect(workFindFirst).toHaveBeenCalledWith({
+      where: { id: "w1", projectId: "proj-1" },
+      select: { status: true },
+    });
+    expect(loadBrandRules).not.toHaveBeenCalled();
+    expect(tx.command.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns STALE before the tx, even with allowIssues", async () => {
+    const d = blockedCard();
+    d.card.items[0]!.date = "2026-09-20";
+    commandFindUnique.mockResolvedValue({
+      projectId: "proj-1",
+      workId: "w1",
+      parsedIntent: d,
+    });
+    const result = await saveContentPlanAction("cmd-1", { allowIssues: true });
+    expect(result).toEqual({
+      ok: false,
+      code: "STALE",
+      message: "Some days in this plan have passed. Ask me to plan again.",
+    });
+    expect(tx.command.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("loads the brand rules in the project language, not a hard-coded one", async () => {
+    await saveContentPlanAction("cmd-1");
+    expect(ruleLanguageOf).toHaveBeenCalledWith("proj-1");
+    expect(loadBrandRules).toHaveBeenCalledWith(
+      expect.objectContaining({ language: "de" }),
+    );
+  });
+
+  it("blocks on a brand rule before the tx", async () => {
+    commandFindUnique.mockResolvedValue({
+      projectId: "proj-1",
+      workId: "w1",
+      parsedIntent: blockedCard(),
+    });
+    const result = await saveContentPlanAction("cmd-1");
+    expect(result).toMatchObject({ ok: false, code: "BRAND_RULES" });
+    expect(tx.command.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("allowIssues saves and the audit carries the matched terms and user", async () => {
+    commandFindUnique.mockResolvedValue({
+      projectId: "proj-1",
+      workId: "w1",
+      parsedIntent: blockedCard(),
+    });
+    const result = await saveContentPlanAction("cmd-1", { allowIssues: true });
+    expect(result).toEqual({ ok: true, saved: 2 });
+    const meta = auditRecord.mock.calls[0]![0].metadata;
+    expect(meta).toMatchObject({ allowIssues: true, userId: "u1" });
+    expect(meta.matched.length).toBeGreaterThan(0);
+  });
+
+  it("maps P2034 to 'Already being saved.' and other errors to the generic text", async () => {
+    const race = Object.assign(new Error("raw prisma text"), { code: "P2034" });
+    tx.command.findUnique.mockRejectedValueOnce(race);
+    expect(await saveContentPlanAction("cmd-1")).toEqual({
+      ok: false,
+      message: "Already being saved.",
+    });
+    tx.command.findUnique.mockRejectedValueOnce(new Error("boom"));
+    expect(await saveContentPlanAction("cmd-1")).toEqual({
+      ok: false,
+      message: "That didn't work. Try again.",
+    });
+  });
+
+  it("flag off keeps the raw error message", async () => {
+    worksEnabled.mockReturnValue(false);
+    const race = Object.assign(new Error("raw prisma text"), { code: "P2034" });
+    tx.command.findUnique.mockRejectedValueOnce(race);
+    expect(await saveContentPlanAction("cmd-1")).toEqual({
+      ok: false,
+      message: "raw prisma text",
     });
   });
 });

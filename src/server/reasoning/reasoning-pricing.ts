@@ -60,6 +60,50 @@ function priceFor(model: string): ModelPrice {
 // model fallbacks above: the budget cap should trip early, not late.
 const WEB_SEARCH_USD_PER_CALL = 0.01;
 
+// gpt-image-2 (platform.openai.com/docs/pricing), USD per 1M tokens. A render
+// is billed on its real token usage, which the API returns with every image.
+const IMAGE_TEXT_INPUT_PER_MILLION = 5;
+const IMAGE_INPUT_PER_MILLION = 8;
+const IMAGE_OUTPUT_PER_MILLION = 30;
+
+// Per-image list price at 1024x1024, only used when a response carried no
+// `usage`. "auto" is priced as "high" — overstating beats understating here
+// too, because the header balance is read as "what I can still spend".
+const IMAGE_FALLBACK_USD = { low: 0.006, medium: 0.053, high: 0.211 } as const;
+
+export type ImageUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  input_tokens_details?: { text_tokens?: number; image_tokens?: number };
+};
+
+export function estimateImageCostUsd(input: {
+  quality: "low" | "medium" | "high" | "auto";
+  size: string;
+  usage?: ImageUsage;
+}): number {
+  const { usage } = input;
+  if (usage?.output_tokens) {
+    const details = usage.input_tokens_details;
+    const textIn = details?.text_tokens ?? 0;
+    // Without a breakdown the whole input is priced as image tokens (the
+    // dearer rate).
+    const imageIn = details
+      ? (details.image_tokens ?? 0)
+      : (usage.input_tokens ?? 0);
+    return (
+      (textIn / 1_000_000) * IMAGE_TEXT_INPUT_PER_MILLION +
+      (imageIn / 1_000_000) * IMAGE_INPUT_PER_MILLION +
+      (usage.output_tokens / 1_000_000) * IMAGE_OUTPUT_PER_MILLION
+    );
+  }
+  const [width, height] = input.size.split("x").map(Number);
+  const scale =
+    width && height ? Math.max(1, (width * height) / (1024 * 1024)) : 1;
+  const tier = input.quality === "auto" ? "high" : input.quality;
+  return IMAGE_FALLBACK_USD[tier] * scale;
+}
+
 export function estimateReasoningCostUsd(input: {
   model: string;
   inputTokens?: number;

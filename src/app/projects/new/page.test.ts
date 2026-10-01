@@ -25,6 +25,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { project: { findFirst: projectFindFirst } },
 }));
 
+const intakeOfferFor = vi.fn();
+vi.mock("@/server/brand/intake-offer", () => ({ intakeOfferFor }));
+
 vi.mock("@/components/layout/app-shell", () => ({
   AppShell: function AppShell() {
     return null;
@@ -70,6 +73,7 @@ beforeEach(() => {
   requireWorkspaceMembership.mockResolvedValue({ workspaceId: "ws-1" });
   projectFindFirst.mockResolvedValue(null);
   acceptLanguage.mockReturnValue(null);
+  intakeOfferFor.mockReturnValue({ scan: false, research: false });
 });
 
 describe("/projects/new page", () => {
@@ -82,6 +86,7 @@ describe("/projects/new page", () => {
     expect(requireUser).not.toHaveBeenCalled();
     expect(projectFindFirst).not.toHaveBeenCalled();
     expect(requestHeaders).not.toHaveBeenCalled();
+    expect(intakeOfferFor).not.toHaveBeenCalled();
   });
 
   it("renders the one-screen form with the flag on, seeded from the latest project", async () => {
@@ -91,6 +96,7 @@ describe("/projects/new page", () => {
     expect(find(tree, NewProjectWizard)).toBeNull();
     expect(find(tree, NewProjectForm)?.props).toEqual({
       initialLocale: { country: "MK", language: "mk", source: "previous" },
+      offer: { scan: false, research: false },
     });
     expect(projectFindFirst).toHaveBeenCalledWith({
       where: { workspaceId: "ws-1" },
@@ -105,9 +111,25 @@ describe("/projects/new page", () => {
     let tree = await NewProjectPage();
     expect(find(tree, NewProjectForm)?.props).toEqual({
       initialLocale: { country: "TR", language: "tr", source: "browser" },
+      offer: { scan: false, research: false },
     });
     acceptLanguage.mockReturnValue("en-US,en;q=0.9");
     tree = await NewProjectPage();
-    expect(find(tree, NewProjectForm)?.props).toEqual({ initialLocale: null });
+    expect(find(tree, NewProjectForm)?.props).toEqual({
+      initialLocale: null,
+      offer: { scan: false, research: false },
+    });
+  });
+
+  it("hands the form the server's own offer for this workspace", async () => {
+    getEnv.mockReturnValue({ GUIDED_SETUP: true });
+    intakeOfferFor.mockReturnValue({ scan: true, research: true });
+
+    const tree = await NewProjectPage();
+
+    expect(intakeOfferFor).toHaveBeenCalledWith("ws-1");
+    expect(find(tree, NewProjectForm)?.props).toMatchObject({
+      offer: { scan: true, research: true },
+    });
   });
 });

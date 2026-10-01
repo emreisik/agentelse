@@ -40,6 +40,18 @@ import type { ChatStreamEvent } from "@/server/chat/types";
 import { Thread } from "@/components/assistant-ui/thread";
 import { ComposerPlusMenu } from "@/components/commands/composer-plus-menu";
 import { ChatSendProvider } from "@/components/commands/chat-send-context";
+import { WorkStart } from "@/components/works/work-start";
+import {
+  WorkCardHostProvider,
+  type WorkCardHostInput,
+} from "@/components/works/work-card-host";
+import {
+  appendStreamText,
+  cardTextHidden,
+  pendingCard,
+} from "@/lib/works/card-text";
+import type { WorkHost } from "@/lib/works/host";
+import type { StarterAction } from "@/lib/works/starter-cards";
 import {
   ChatPackageProvider,
   type PackageRunItem,
@@ -58,10 +70,7 @@ import {
 import { stripPlanBriefMarker } from "@/lib/plan-brief";
 import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
 import type { PublishTarget } from "@/server/integrations/meta-connection-status";
-import {
-  CARDS_THAT_KEEP_TEXT,
-  type IdeaEventCardData,
-} from "@/types/idea-event-card";
+import type { IdeaEventCardData } from "@/types/idea-event-card";
 import { composerAutoFocus } from "@/components/guide/composer-autofocus";
 import { GuidedSetupBoundary } from "@/components/guide/guided-setup-boundary";
 import {
@@ -70,7 +79,7 @@ import {
 } from "@/components/commands/next-steps-bar";
 import { ManualPublishDialog } from "@/components/commands/manual-publish-dialog";
 import { PlanResultsDialog } from "@/components/commands/plan-results-dialog";
-import { NEXT_STEP_KINDS, type NextStep } from "@/lib/journey";
+import { AUTO_RUN_NEXT_KINDS, type NextStep } from "@/lib/journey";
 import {
   buildGuidedSetupApi,
   GuidedSetupProvider,
@@ -81,12 +90,23 @@ import {
   ConnectedGuidedSetupWelcomeCard,
 } from "@/components/guide/guided-setup-entry";
 import {
+  buildDiscoveryContext,
+  DiscoveryProvider,
+  type DiscoveryContextValue,
+} from "@/components/discovery/discovery-context";
+import {
+  ConnectedDiscoveryChip,
+  ConnectedDiscoveryWelcomeCard,
+} from "@/components/discovery/discovery-entry-view";
+import type { DiscoveryHost } from "@/server/guided-discovery/host";
+import {
   GUIDE_PARAM,
   type GuidedSetupHost,
   type GuidedSetupSummary,
 } from "@/lib/guided-setup/contract";
 import type { WorkspaceResumeStats } from "@/components/workspace/workspace-right-panel-data";
 import { dayKey, dayLabel } from "@/lib/dates";
+import { requestOpenAiCreditRefresh } from "@/lib/openai-credit-events";
 
 // The sheet, its panel, reducer and the sanitizer regexes load on demand, and
 // only when a host exists (the entry components above stay static and tiny).
@@ -95,6 +115,15 @@ const GuidedSetupSheet = dynamic(
   () =>
     import("@/components/guide/guided-setup-sheet").then(
       (mod) => mod.GuidedSetupSheet,
+    ),
+  { ssr: false },
+);
+
+// Same rules for the discovery sheet (the flow that replaces the wizard).
+const DiscoverySheet = dynamic(
+  () =>
+    import("@/components/discovery/discovery-sheet").then(
+      (mod) => mod.DiscoverySheet,
     ),
   { ssr: false },
 );
@@ -206,6 +235,9 @@ type FlatMessage =
       error?: boolean;
       // True while the reply is still arriving (streaming engine).
       streaming?: boolean;
+      // The person's message behind a streaming turn (Works: picks the
+      // skeleton shown before the card arrives).
+      pendingRequest?: string;
       // Live preview of an image still rendering (streaming engine).
       previewUrl?: string;
       imageGen?: ImageGenState;
@@ -300,8 +332,10 @@ export function ProjectChat({
   resumeStats,
   chatEngine = "legacy",
   guidedSetup,
+  discovery,
   nextSteps,
   autoNext,
+  workHost,
 }: {
   projectId: string;
   projectName: string;
@@ -326,6 +360,9 @@ export function ProjectChat({
   // Only passed by the project page when GUIDED_SETUP is on (and loadGuidedHost
   // did not fail). Ignored in an idea thread: the sheet never mounts there.
   guidedSetup?: GuidedSetupHost;
+  // Passed instead of guidedSetup when GUIDED_SETUP is on (discovery-first
+  // setup). When present the old sheet never mounts. Ignored in an idea thread.
+  discovery?: DiscoveryHost;
   // What to do next on the project's content plan, worked out by the server
   // from the records (journey/next-steps.ts). Empty/absent: the default
   // shortcuts show instead. Ignored in an idea thread.
@@ -333,17 +370,28 @@ export function ProjectChat({
   // `?next=<kind>` on the URL (the calendar's banner): run that step once on
   // landing. Latched at mount, like `?guide=setup`.
   autoNext?: string;
+  // Works on (docs/works.md): the Work this conversation is, with what its
+  // empty screen shows. Every turn is sent with its id; the quick-action chips
+  // give way to the channel chooser / next-step cards. Absent: the old chat.
+  workHost?: WorkHost;
 }) {
   const router = useRouter();
+  // Works on: every Works-only behaviour below hangs on this one flag.
+  const inWork = Boolean(workHost);
   // The sheet crashed (e.g. its lazy chunk failed to load): every entry hides
   // as with the flag off instead of greying out over a sheet that is gone.
   const [guidedBroken, setGuidedBroken] = React.useState(false);
   // The feature needs a host and the root chat.
-  const guidedEnabled = Boolean(guidedSetup) && !ideaId && !guidedBroken;
+  const guidedEnabled =
+    Boolean(guidedSetup) && !discovery && !ideaId && !guidedBroken;
+  const [discoveryBroken, setDiscoveryBroken] = React.useState(false);
+  const discoveryEnabled = Boolean(discovery) && !ideaId && !discoveryBroken;
   // ?guide=setup was on the URL at mount. Latched: the page recomputes
   // `requested` on every server render, but only the landing may auto-open.
   const [requestedAtMount] = React.useState(
-    () => guidedEnabled && Boolean(guidedSetup?.requested),
+    () =>
+      (guidedEnabled && Boolean(guidedSetup?.requested)) ||
+      (discoveryEnabled && Boolean(discovery?.requested)),
   );
   // The composer autofocus is latched ONCE: a live value would flip on the
   // first router.refresh() and focus the composer over an open sheet (or open
@@ -351,17 +399,24 @@ export function ProjectChat({
   const [quietComposer] = React.useState(
     () =>
       !composerAutoFocus({
-        requested: Boolean(guidedSetup?.requested),
+        requested: Boolean(guidedSetup?.requested ?? discovery?.requested),
         coarsePointer:
           typeof window !== "undefined" &&
           window.matchMedia("(pointer: coarse)").matches,
-        hasHost: Boolean(guidedSetup),
+        hasHost: Boolean(guidedSetup ?? discovery),
       }),
   );
-  const [guidedOpen, setGuidedOpen] = React.useState(requestedAtMount);
+  const [guidedOpen, setGuidedOpen] = React.useState(
+    requestedAtMount && guidedEnabled,
+  );
+  const [discoveryOpen, setDiscoveryOpen] = React.useState(
+    requestedAtMount && discoveryEnabled,
+  );
+  const discoveryOpenRef = React.useRef(requestedAtMount && discoveryEnabled);
+  const discoveryOpenerRef = React.useRef<HTMLElement | null>(null);
 
   // Mirror of guidedOpen for the idempotency check in open() (handlers only).
-  const guidedOpenRef = React.useRef(requestedAtMount);
+  const guidedOpenRef = React.useRef(requestedAtMount && guidedEnabled);
   const guidedOpenerRef = React.useRef<HTMLElement | null>(null);
   const [guidedSeed, setGuidedSeed] = React.useState<string | undefined>();
   const [guidedSummary, setGuidedSummary] =
@@ -406,6 +461,37 @@ export function ProjectChat({
     setGuidedOpen(false);
     setGuidedBroken(true);
   }, []);
+  const openDiscovery = React.useCallback<DiscoveryContextValue["open"]>(() => {
+    if (discoveryOpenRef.current) return;
+    discoveryOpenRef.current = true;
+    discoveryOpenerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setDiscoveryOpen(true);
+  }, []);
+  const closeDiscovery = React.useCallback(() => {
+    discoveryOpenRef.current = false;
+    setDiscoveryOpen(false);
+  }, []);
+  const failDiscovery = React.useCallback(() => {
+    discoveryOpenRef.current = false;
+    setDiscoveryOpen(false);
+    setDiscoveryBroken(true);
+  }, []);
+  const discoveryApi = React.useMemo(
+    () =>
+      discoveryEnabled && discovery
+        ? buildDiscoveryContext({
+            isOpen: discoveryOpen,
+            open: openDiscovery,
+            close: closeDiscovery,
+            view: discovery.view,
+            brandName: discovery.brandName,
+          })
+        : null,
+    [discoveryEnabled, discovery, discoveryOpen, openDiscovery, closeDiscovery],
+  );
   const liveGuidedSummary = guidedSummary ?? guidedSetup?.summary ?? null;
   const guidedApi = React.useMemo(
     () =>
@@ -600,11 +686,17 @@ export function ProjectChat({
       }
       if (turn.state === "pending") {
         const streamed = turn.streamText ?? "";
+        // In a Work a turn with no text yet shows the skeleton card instead of
+        // "Thinking…", and a card whose words replace the reply shows while
+        // the turn still streams.
         const text = streamed
           ? turn.toolLabel
             ? `${streamed}\n\n*${turn.toolLabel}*`
             : streamed
-          : (turn.toolLabel ?? "Thinking…");
+          : workHost
+            ? ""
+            : (turn.toolLabel ?? "Thinking…");
+        const showCardNow = workHost && cardTextHidden(turn.card, true);
         out.push({
           id: `${turn.key}-a`,
           role: "assistant",
@@ -612,6 +704,10 @@ export function ProjectChat({
           streaming: true,
           previewUrl: turn.previewUrl,
           imageGen: turn.imageGen,
+          ...(showCardNow
+            ? { card: turn.card, commandId: turn.commandId }
+            : {}),
+          ...(workHost ? { pendingRequest: turn.text } : {}),
           createdAt: turn.createdAt,
         });
       } else if (turn.reply) {
@@ -627,7 +723,7 @@ export function ProjectChat({
       }
     }
     return out;
-  }, [turns, visibleLocal, serverIds]);
+  }, [turns, visibleLocal, serverIds, workHost]);
 
   const convertMessage = React.useCallback(
     (message: FlatMessage): ThreadMessageLike => {
@@ -675,10 +771,7 @@ export function ProjectChat({
         role: "assistant",
         // A plan/package card is a companion to the assistant's words (why
         // this plan, what to do next), not a replacement for them.
-        content:
-          message.card && !CARDS_THAT_KEEP_TEXT.has(message.card.kind)
-            ? []
-            : message.text,
+        content: cardTextHidden(message.card, inWork) ? [] : message.text,
         createdAt: new Date(message.createdAt),
         metadata: {
           custom: {
@@ -690,6 +783,21 @@ export function ProjectChat({
             ideaTitle: message.ideaTitle,
             ideaId: message.ideaId,
             anchorId: message.anchorId,
+            // Works only: the Copy / Refresh bar would copy nothing or re-send
+            // the parent message as a new Command, and a skeleton card shows
+            // while the turn has neither card nor text yet.
+            ...(inWork
+              ? {
+                  cardOnly: cardTextHidden(message.card, true),
+                  pendingHint: message.streaming
+                    ? (pendingCard({
+                        text: message.text,
+                        card: message.card,
+                        request: message.pendingRequest,
+                      }) ?? undefined)
+                    : undefined,
+                }
+              : {}),
           },
         },
         status: message.error
@@ -699,7 +807,7 @@ export function ProjectChat({
             : undefined,
       };
     },
-    [],
+    [inWork],
   );
 
   // Shared skeleton for anything that turns into a new Command: push an
@@ -799,6 +907,9 @@ export function ProjectChat({
         );
 
       let streamed = "";
+      // The card of this turn, so text that follows a card that replaces the
+      // reply can be dropped in a Work.
+      let streamCard: IdeaEventCardData | undefined;
       let finished = false;
       // `done` repeats the card: open the sheet once per turn.
       let openedGuided = false;
@@ -808,7 +919,12 @@ export function ProjectChat({
             patch((turn) => ({ ...turn, commandId: event.commandId }));
             break;
           case "text.delta":
-            streamed += event.text;
+            streamed = appendStreamText(
+              streamed,
+              event.text,
+              streamCard,
+              inWork,
+            );
             patch((turn) => ({ ...turn, streamText: streamed }));
             break;
           case "tool.start":
@@ -854,6 +970,7 @@ export function ProjectChat({
             }));
             break;
           case "card":
+            streamCard = event.card;
             patch((turn) => ({ ...turn, card: event.card }));
             if (
               guidedEnabled &&
@@ -872,6 +989,7 @@ export function ProjectChat({
             break;
           case "done":
             finished = true;
+            requestOpenAiCreditRefresh();
             patch((turn) => ({
               ...turn,
               state: "done",
@@ -907,6 +1025,7 @@ export function ProjectChat({
         const formData = new FormData();
         formData.set("text", text);
         if (ideaId) formData.set("ideaId", ideaId);
+        if (workHost) formData.set("workId", workHost.work.id);
         for (const file of files) formData.append("files", file);
 
         const response = await fetch(`/api/projects/${projectId}/chat`, {
@@ -980,12 +1099,16 @@ export function ProjectChat({
         router.refresh();
       }
     },
-    [projectId, ideaId, router, guidedEnabled, openGuided],
+    [projectId, ideaId, router, guidedEnabled, openGuided, workHost, inWork],
   );
 
   const sendMessage = React.useCallback(
     (text: string, files: File[]) => {
       if (!text && files.length === 0) return Promise.resolve();
+      if (workHost && workHost.work.status !== "ACTIVE") {
+        toast.info("Reopen this Work to continue.");
+        return Promise.resolve();
+      }
       if (chatEngine === "agent") return runStreamingTurn(text, files);
 
       return runTurn(
@@ -1007,7 +1130,7 @@ export function ProjectChat({
         },
       );
     },
-    [runTurn, runStreamingTurn, chatEngine, projectId, ideaId],
+    [runTurn, runStreamingTurn, chatEngine, projectId, ideaId, workHost],
   );
 
   // The composer's "+" menu shortcuts (see ComposerPlusMenu /
@@ -1026,7 +1149,12 @@ export function ProjectChat({
       // channels, rhythm) and drafts a plan the client saves to the calendar.
       // The bypass would run the old weekly planner inside the request and
       // start generating images straight from a menu click.
-      if (chatEngine === "agent" && capability === "CREATE_CONTENT_PLAN") {
+      // In a Work every shortcut is a chat message too: it hits the channel
+      // gate and the Work's rules instead of creating standalone work.
+      if (
+        (chatEngine === "agent" && capability === "CREATE_CONTENT_PLAN") ||
+        inWork
+      ) {
         return sendMessage(request, []);
       }
       return runTurn(request, [], () =>
@@ -1040,7 +1168,7 @@ export function ProjectChat({
         ),
       );
     },
-    [runTurn, sendMessage, chatEngine, projectId, ideaId],
+    [runTurn, sendMessage, chatEngine, projectId, ideaId, inWork],
   );
 
   const onNew = React.useCallback(
@@ -1162,6 +1290,17 @@ export function ProjectChat({
       resumeStats.pendingApproval > 0 ||
       resumeStats.approved > 0);
 
+  // A starter card's button: send a message, open a page, or open a right-panel
+  // tab. A card never does anything a typed message or a link could not.
+  const actOnStarter = React.useCallback(
+    (action: StarterAction) => {
+      if (action.kind === "send") void sendMessage(action.text, []);
+      else if (action.kind === "link") router.push(action.href);
+      else openTab(action.tab);
+    },
+    [sendMessage, router, openTab],
+  );
+
   const Welcome = React.useCallback(
     () =>
       ideaId ? (
@@ -1245,6 +1384,16 @@ export function ProjectChat({
             </div>
           ) : null}
 
+          {workHost ? (
+            <WorkStart
+              projectId={projectId}
+              host={workHost}
+              disabled={isSending || workHost.work.status !== "ACTIVE"}
+              onAct={actOnStarter}
+              onChannelsSaved={() => router.refresh()}
+            />
+          ) : null}
+
           {/* Flag off: no wrapper at all (the markup stays as before).
               empty:hidden keeps the gap away when the card renders nothing. */}
           {guidedEnabled ? (
@@ -1252,17 +1401,28 @@ export function ProjectChat({
               <ConnectedGuidedSetupWelcomeCard projectName={projectName} />
             </div>
           ) : null}
+          {discoveryEnabled ? (
+            <div className="mt-5 empty:hidden">
+              <ConnectedDiscoveryWelcomeCard />
+            </div>
+          ) : null}
         </div>
       ),
     [
       ideaId,
       guidedEnabled,
+      discoveryEnabled,
       projectName,
+      projectId,
       userFirstName,
       timeGreeting,
       hasResumeStats,
       resumeStats,
       openTab,
+      workHost,
+      isSending,
+      actOnStarter,
+      router,
     ],
   );
 
@@ -1273,9 +1433,10 @@ export function ProjectChat({
         publishTargets={publishTargets}
         disabled={isSending}
         onShortcut={sendShortcut}
+        works={inWork}
       />
     ),
-    [projectId, publishTargets, isSending, sendShortcut],
+    [projectId, publishTargets, isSending, sendShortcut, inWork],
   );
 
   // Replaces the composer's old inert "Automatic" label with something
@@ -1365,6 +1526,9 @@ export function ProjectChat({
       // Any item event means the run was claimed and is running on the
       // server, even if the connection later drops before package.done.
       let claimed = false;
+      // Works: the header's "working" line comes from the server, so pull the
+      // page once when the run is claimed.
+      let refreshedForWork = false;
       const settle = (message: string) =>
         setLocalTurns((current) => failPendingItems(current, inRun, message));
       // The run never started (claim refused, request rejected): its
@@ -1375,6 +1539,10 @@ export function ProjectChat({
         switch (event.type) {
           case "run.items":
             claimed = true;
+            if (inWork && !refreshedForWork) {
+              refreshedForWork = true;
+              router.refresh();
+            }
             openItems(
               event.items.map((item) => ({
                 id: item.id,
@@ -1389,6 +1557,7 @@ export function ProjectChat({
           case "item.partial":
           case "item.done":
             claimed = true;
+            if (event.type === "item.done") requestOpenAiCreditRefresh();
             setLocalTurns((current) =>
               current.map((turn) =>
                 inRun(turn) ? reduceItemEvent(turn, event) : turn,
@@ -1397,6 +1566,7 @@ export function ProjectChat({
             break;
           case "package.done":
             finished = true;
+            requestOpenAiCreditRefresh();
             started = event.started;
             // Every item that ran has reported by now; one still waiting was
             // skipped when the run was claimed.
@@ -1479,7 +1649,7 @@ export function ProjectChat({
       }
       return { ok: started > 0 || claimed };
     },
-    [router],
+    [router, inWork],
   );
 
   // "Create selected" on a content-package card.
@@ -1538,23 +1708,31 @@ export function ProjectChat({
   React.useEffect(() => {
     if (autoNextDone.current || !autoNext) return;
     autoNextDone.current = true;
-    router.replace(`/projects/${projectId}`, { scroll: false });
-    const kind = NEXT_STEP_KINDS.find((candidate) => candidate === autoNext);
+    // Inside a Work the parameter drop keeps `?work=`: the bare URL would open
+    // the most recently active Work, which may not be this one.
+    router.replace(
+      workHost
+        ? `/projects/${projectId}?work=${encodeURIComponent(workHost.work.id)}`
+        : `/projects/${projectId}`,
+      { scroll: false },
+    );
+    const kind = AUTO_RUN_NEXT_KINDS.find((candidate) => candidate === autoNext);
     const step = nextSteps?.find((candidate) => candidate.action.kind === kind);
     if (step) runNextStep(step);
-  }, [autoNext, nextSteps, projectId, router, runNextStep]);
+  }, [autoNext, nextSteps, projectId, router, runNextStep, workHost]);
   const hasRunningRun = Object.values(packageRuns).some(
     (run) => run.phase === "running",
   );
-  const hasNextSteps = (nextSteps?.length ?? 0) > 0;
   const QuickActions = React.useCallback(
     () =>
       ideaId ? null : (
         <>
           <ConnectedGuidedSetupChip projectId={projectId} />
-          {nextSteps && hasNextSteps ? (
+          <ConnectedDiscoveryChip projectId={projectId} />
+          {nextSteps && nextSteps.length > 0 ? (
             <NextStepsBar
               steps={nextSteps}
+              projectId={projectId}
               disabled={isSending || hasRunningRun || nextStepPending}
               onAct={runNextStep}
             />
@@ -1573,7 +1751,8 @@ export function ProjectChat({
               onPlanNext={() => void sendMessage("Plan the next two weeks.", [])}
             />
           ) : null}
-          {hasNextSteps ? null : (
+          {/* In a Work the starter cards replace these chips. */}
+          {workHost ? null : (
           <div className="scrollbar-none flex gap-2 overflow-x-auto px-1 pb-1">
             {QUICK_ACTIONS.map(({ label, icon: Icon }) => (
               <button
@@ -1599,10 +1778,10 @@ export function ProjectChat({
     [
       ideaId,
       projectId,
+      workHost,
       isSending,
       sendMessage,
       nextSteps,
-      hasNextSteps,
       hasRunningRun,
       runNextStep,
       nextStepPending,
@@ -1620,6 +1799,39 @@ export function ProjectChat({
       runs: packageRuns,
     }),
     [startContentPackage, startContentPlan, packageRuns],
+  );
+
+  // What the Works cards read (null outside a Work: they keep today's
+  // behaviour). `busy` is a chat turn streaming only: production runs block
+  // just the plan they run, through `producing`.
+  const producingKey = producingPlanIds(packageRuns).join("|");
+  const producing = React.useMemo<ReadonlySet<string>>(
+    () => new Set(producingKey ? producingKey.split("|") : []),
+    [producingKey],
+  );
+  // useRunNextStep returns a fresh function every render; the cards get a
+  // stable one so the host value does not change on every render.
+  const runNextStepRef = React.useRef(runNextStep);
+  React.useEffect(() => {
+    runNextStepRef.current = runNextStep;
+  });
+  const runNextStepStable = React.useCallback(
+    (step: NextStep) => runNextStepRef.current(step),
+    [],
+  );
+  const workHostValue = React.useMemo(
+    () =>
+      workHost
+        ? buildWorkHostValue({
+            projectId,
+            workHost,
+            isSending,
+            producing,
+            openTab,
+            runNextStep: runNextStepStable,
+          })
+        : null,
+    [workHost, projectId, isSending, producing, openTab, runNextStepStable],
   );
 
   // A content-package piece whose live stream is gone (page reload, dropped
@@ -1644,11 +1856,10 @@ export function ProjectChat({
     [sendMessage],
   );
 
-  return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <ChatSendProvider value={sendFromCard}>
+  const packageTree = (
         <ChatPackageProvider value={chatPackage}>
           <GuidedSetupProvider value={guidedApi}>
+            <DiscoveryProvider value={discoveryApi}>
             <Thread
               autoFocusComposer={!quietComposer}
               components={{
@@ -1672,11 +1883,79 @@ export function ProjectChat({
                 />
               </GuidedSetupBoundary>
             ) : null}
+            {discoveryEnabled && discovery ? (
+              <GuidedSetupBoundary onError={failDiscovery}>
+                <DiscoverySheet
+                  projectId={projectId}
+                  open={discoveryOpen}
+                  onOpenChange={(next) => {
+                    if (!next) closeDiscovery();
+                  }}
+                  initialView={discovery.view}
+                  brandName={discovery.brandName}
+                  openerRef={discoveryOpenerRef}
+                />
+              </GuidedSetupBoundary>
+            ) : null}
+            </DiscoveryProvider>
           </GuidedSetupProvider>
         </ChatPackageProvider>
+  );
+
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <ChatSendProvider value={sendFromCard}>
+        {workHostValue ? (
+          <WorkCardHostProvider value={workHostValue}>
+            {packageTree}
+          </WorkCardHostProvider>
+        ) : (
+          packageTree
+        )}
       </ChatSendProvider>
     </AssistantRuntimeProvider>
   );
+}
+
+// The plan Command ids with a running production, sorted so the host value
+// only changes when the set does.
+export function producingPlanIds(
+  runs: Record<string, { phase: string }>,
+): string[] {
+  return Object.entries(runs)
+    .filter(([, run]) => run.phase === "running")
+    .map(([id]) => id)
+    .sort();
+}
+
+// What the Works cards read. `busy` is a chat turn streaming only: a running
+// production blocks just its own plan, through `producing`.
+export function buildWorkHostValue(input: {
+  projectId: string;
+  workHost: WorkHost;
+  isSending: boolean;
+  producing: ReadonlySet<string>;
+  openTab: WorkCardHostInput["openTab"];
+  runNextStep: WorkCardHostInput["runNextStep"];
+}): WorkCardHostInput {
+  const { workHost } = input;
+  return {
+    projectId: input.projectId,
+    workId: workHost.work.id,
+    workTitle: workHost.work.title,
+    active: workHost.work.status === "ACTIVE",
+    busy: input.isSending,
+    producing: input.producing,
+    timezone: workHost.timezone,
+    channels: workHost.channelOptions
+      .filter((option) => workHost.work.channels.includes(option.key))
+      .map(({ key, label, connected }) => ({ key, label, connected })),
+    connectedChannels: workHost.channelOptions
+      .filter((option) => option.connected)
+      .map((option) => option.key),
+    openTab: input.openTab,
+    runNextStep: input.runNextStep,
+  };
 }
 
 function ResumeStat({

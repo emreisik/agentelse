@@ -22,7 +22,9 @@ import { ImageLightbox } from "@/components/shared/image-lightbox";
 import { WsTag } from "@/components/commands/ws-event-card";
 import { OutputPreviewDialog } from "@/components/workspace/output-preview-dialog";
 import { CREATIVE_STATUS } from "@/lib/labels";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useWorkCardHost } from "@/components/works/work-card-host";
 import { Input } from "@/components/ui/input";
 import {
   approveApprovalAction,
@@ -167,6 +169,13 @@ function CreativeReadyCard({
   card: Extract<CreativeCardData, { kind: "creative-ready" }>;
 }) {
   const router = useRouter();
+  // Null outside a Work: every Works change below is gated on it.
+  const host = useWorkCardHost();
+  const touch = host ? "min-h-11 rounded-lg" : undefined;
+  // The Work's publish line (below this card) owns publishing: this card's
+  // own publish surfaces would be a second one.
+  const lineOwnsPublish =
+    host !== null && "publishLine" in card && card.publishLine != null;
   const [isPending, startTransition] = useTransition();
   const [localStatus, setLocalStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -379,7 +388,7 @@ function CreativeReadyCard({
                 type="button"
                 size="sm"
                 disabled={isPending}
-                className="rounded-[10px]"
+                className={cn("rounded-[10px]", touch)}
                 style={{
                   background: "var(--ws-accent)",
                   color: "var(--ws-on-accent)",
@@ -403,7 +412,7 @@ function CreativeReadyCard({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="rounded-[10px]"
+                className={cn("rounded-[10px]", touch)}
                 style={{
                   borderColor: "var(--ws-border)",
                   color: "var(--ws-text)",
@@ -418,7 +427,7 @@ function CreativeReadyCard({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="rounded-[10px]"
+                className={cn("rounded-[10px]", touch, host && "ml-auto")}
                 style={{ color: "var(--ws-text-3)" }}
                 disabled={isPending}
                 onClick={() => decide("REJECTED")}
@@ -434,7 +443,7 @@ function CreativeReadyCard({
               type="button"
               variant="outline"
               size="sm"
-              className="mt-4 w-fit rounded-[10px]"
+              className={cn("mt-4 w-fit rounded-[10px]", touch)}
               style={{
                 borderColor: "var(--ws-border)",
                 color: "var(--ws-text)",
@@ -482,7 +491,7 @@ function CreativeReadyCard({
             </div>
           ) : null}
 
-          {card.publishState ? (
+          {card.publishState && !lineOwnsPublish ? (
             <div
               className="mt-3 flex items-center gap-1.5 text-xs"
               style={{
@@ -518,6 +527,7 @@ function CreativeReadyCard({
           ) : null}
 
           {status === "APPROVED" &&
+          !lineOwnsPublish &&
           (!card.publishState || card.publishState === "failed") ? (
             <div className="mt-3">
               <PublishSection creativeId={card.creativeId} />

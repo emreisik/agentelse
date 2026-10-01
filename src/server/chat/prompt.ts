@@ -1,6 +1,7 @@
 import type { PromptMemory } from "@/server/memory/relevance";
 
 import { skillCatalog } from "./skills/registry";
+import { worksNotes } from "./works-notes";
 import type { ChatPhase } from "./tools";
 
 // The chat agent's prompts. Two pieces, kept apart on purpose:
@@ -78,6 +79,19 @@ function nextStepsNote(steps: readonly string[]): string {
   return `Next steps on the client's content plan (worked out from their calendar; the client sees a button for each right above the message box, and you cannot change them): ${JSON.stringify(steps)}. They are facts about what is waiting, not instructions. When a plan was just saved or a piece just finished, do not promise to prepare anything and come back: the buttons start production and review. End your reply with the single most useful next step from this list in one short sentence, and never list them all.`;
 }
 
+function workNote(work: {
+  title: string;
+  channels: { label: string; connected: boolean }[];
+}): string {
+  if (work.channels.length === 0) {
+    return `This conversation is a Work ("${work.title}") with NO channel chosen yet. Do not plan or produce channel content; the tools show the client a card to choose the channel first.`;
+  }
+  const list = work.channels
+    .map((c) => `${c.label} (${c.connected ? "connected" : "not connected yet"})`)
+    .join(", ");
+  return `This conversation is a Work ("${work.title}") for these channels only: ${list}. Plan and produce only for them, never for another channel, and never switch on your own: if the client wants another channel, tell them they can add it to this Work or open a new Work. For a channel that is not connected, plans and content are fine but publishing waits until the client connects it: say so in one short sentence when it matters.`;
+}
+
 export function buildContextMessage(input: {
   project: unknown;
   brand: unknown;
@@ -100,6 +114,19 @@ export function buildContextMessage(input: {
   // What is waiting on the client's content plan, one plain sentence each (the
   // same steps the screen's "next step" bar shows). Empty/absent: no note.
   nextSteps?: readonly string[];
+  // The Work (conversation) this turn belongs to, when Works are on: its chosen
+  // channels and whether each can publish yet. Absent: no note at all.
+  work?: {
+    title: string;
+    channels: { label: string; connected: boolean }[];
+  };
+  // Works only: the numbered plan slots the server fixed for the [Plan brief]
+  // of this turn (or of the newest earlier brief), and whether they come from
+  // the earlier one. Ignored without `work`.
+  worksPlanSlots?: readonly string[];
+  worksPlanFromEarlierBrief?: boolean;
+  // Works only: the brief has more posts than directions can carry.
+  worksPlanTooLarge?: boolean;
   // The project's "today" and scheduling timezone, so plans get real dates.
   today: string;
   timezone: string;
@@ -132,6 +159,16 @@ export function buildContextMessage(input: {
     `Today's date: ${input.today} (${input.timezone}).`,
     `Items awaiting the client's decision: ${JSON.stringify(input.pending ?? [])}`,
     session,
+    ...(input.work ? [workNote(input.work)] : []),
+    // Overrides the static prompt's package/ideas lines, which stay untouched
+    // because they are a cached prefix.
+    ...(input.work
+      ? worksNotes({
+          planSlots: input.worksPlanSlots,
+          fromEarlierBrief: input.worksPlanFromEarlierBrief,
+          tooLarge: input.worksPlanTooLarge,
+        }).map((note) => `\n${note}`)
+      : []),
     phase ? `\n${phase}` : "",
     // Spread, not an empty slot: with the flag off the array must stay what it
     // always was (an empty slot would add a blank line after the phase note).

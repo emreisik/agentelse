@@ -5,7 +5,9 @@ import { NewProjectForm } from "@/components/projects/new-project-form";
 import { NewProjectWizard } from "@/components/projects/new-project-wizard";
 import { getEnv } from "@/lib/env";
 import { pickLocaleDefault, type LocaleDefault } from "@/lib/locale-defaults";
+import { NO_OFFER, type IntakeOffer } from "@/lib/intake-offer";
 import { prisma } from "@/lib/prisma";
+import { intakeOfferFor } from "@/server/brand/intake-offer";
 import {
   requireUser,
   requireWorkspaceMembership,
@@ -20,6 +22,8 @@ export default async function NewProjectPage() {
   // The ccTLD rung of the ladder runs in the browser from the typed website;
   // the server contributes the two rungs only it can see.
   let initialLocale: LocaleDefault = null;
+  // What the tap can start (the server's own facts; the action decides again).
+  let offer: IntakeOffer = NO_OFFER;
   if (guided) {
     const { userId } = await requireUser();
     const { workspaceId } = await requireWorkspaceMembership(userId);
@@ -35,6 +39,7 @@ export default async function NewProjectPage() {
       previous,
       acceptLanguage: requestHeaders.get("accept-language"),
     });
+    offer = intakeOfferFor(workspaceId);
   }
 
   return (
@@ -44,7 +49,7 @@ export default async function NewProjectPage() {
           Create New Project
         </p>
         {guided ? (
-          <NewProjectForm initialLocale={initialLocale} />
+          <NewProjectForm initialLocale={initialLocale} offer={offer} />
         ) : (
           <NewProjectWizard />
         )}

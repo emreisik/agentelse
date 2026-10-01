@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 
 import { isRateLimited } from "@/lib/rate-limit";
 import { runChatAgent } from "@/server/chat/chat-agent";
+import { WorkRepository } from "@/server/repositories/work.repository";
+import { isWorksEnabled } from "@/server/works/flag";
 import { storeChatFiles, validateChatFiles } from "@/server/chat/attachments";
 import { encodeSseEvent } from "@/server/chat/sse";
 import type { ChatStreamEvent } from "@/server/chat/types";
@@ -70,6 +72,23 @@ export async function POST(
   const ideaIdField = formData.get("ideaId");
   const ideaId =
     typeof ideaIdField === "string" && ideaIdField ? ideaIdField : undefined;
+  // Works on: every turn belongs to an ACTIVE Work of this project. The id is
+  // re-checked here (a form field is not trusted); Works off: no workId at all.
+  let workId: string | undefined;
+  if (isWorksEnabled()) {
+    const field = formData.get("workId");
+    const work =
+      typeof field === "string" && field
+        ? await WorkRepository.get(projectId, field)
+        : null;
+    if (!work || work.status !== "ACTIVE") {
+      return NextResponse.json(
+        { error: "Open or start a Work first." },
+        { status: 400 },
+      );
+    }
+    workId = work.id;
+  }
   const files = formData
     .getAll("files")
     .filter((entry): entry is File => entry instanceof File && entry.size > 0);
@@ -115,6 +134,7 @@ export async function POST(
           userId,
           message: text || "(file only, no message text)",
           ideaId,
+          workId,
           attachments,
           attachmentBodies,
           signal: request.signal,

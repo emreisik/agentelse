@@ -11,6 +11,7 @@ import type {
 } from "@prisma/client";
 
 import { useGuidedSetup } from "@/components/guide/guided-setup-context";
+import { useDiscovery } from "@/components/discovery/discovery-context";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import {
   Popover,
@@ -30,6 +31,7 @@ import {
   CAPABILITY_SHORTCUTS,
   DEPARTMENT_SHORTCUTS,
   INTEGRATION_SHORTCUTS,
+  shortcutsForWork,
   type ComposerShortcut,
 } from "@/lib/composer-shortcuts";
 import type { PublishTarget } from "@/server/integrations/meta-connection-status";
@@ -49,10 +51,13 @@ export function ComposerPlusMenu({
   publishTargets,
   disabled,
   onShortcut,
+  works = false,
 }: {
   projectId: string;
   publishTargets: PublishTarget[];
   disabled?: boolean;
+  // Inside a Work: no Reel / ad-creative items and no jump to integrations.
+  works?: boolean;
   onShortcut: (
     capability: CapabilityKey,
     request: string,
@@ -63,7 +68,16 @@ export function ComposerPlusMenu({
   const [open, setOpen] = React.useState(false);
   const router = useRouter();
   // Null outside the root chat or with GUIDED_SETUP off: no Setup group.
-  const guided = useGuidedSetup();
+  const guidedSetup = useGuidedSetup();
+  // The discovery flow replaces the old wizard when present: same menu item,
+  // its own label and open().
+  const discovery = useDiscovery();
+  const guided = discovery
+    ? {
+        entry: discovery.entry,
+        open: (source: "menu") => discovery.open(source),
+      }
+    : guidedSetup;
   // ComposerPrimitive.AddAttachment owns its own click handler (opens the
   // native file picker) and can't take an onClick of its own — so the real
   // control stays mounted (hidden) and the menu item just clicks it via
@@ -85,6 +99,7 @@ export function ComposerPlusMenu({
       return;
     }
     if (
+      !works &&
       shortcut.requiresConnectedPlatform &&
       !isConnected(shortcut.requiresConnectedPlatform)
     ) {
@@ -177,7 +192,7 @@ export function ComposerPlusMenu({
               </CommandGroup>
               <CommandSeparator />
               <CommandGroup heading="Integrations">
-                {INTEGRATION_SHORTCUTS.map((shortcut) => (
+                {shortcutsForWork(INTEGRATION_SHORTCUTS, works).map((shortcut) => (
                   <CommandItem
                     key={shortcut.id}
                     value={shortcut.label}
@@ -190,7 +205,7 @@ export function ComposerPlusMenu({
               </CommandGroup>
               <CommandSeparator />
               <CommandGroup heading="Shortcuts">
-                {CAPABILITY_SHORTCUTS.map((shortcut) => (
+                {shortcutsForWork(CAPABILITY_SHORTCUTS, works).map((shortcut) => (
                   <CommandItem
                     key={shortcut.id}
                     value={shortcut.label}

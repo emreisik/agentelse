@@ -495,3 +495,75 @@ describe("buildContext: legacy setup gate (guided setup stand-down)", () => {
     expect(command.findUnique).not.toHaveBeenCalled();
   });
 });
+
+describe("buildContext Work scope", () => {
+  it("reads only that Work's rows when a workId is given", async () => {
+    await buildContext("proj-1", undefined, { workId: "work-1" });
+    expect(command.findMany.mock.calls[0]?.[0].where).toEqual({
+      projectId: "proj-1",
+      workId: "work-1",
+      topic: null,
+      source: { in: ["WEB", "SYSTEM"] },
+    });
+  });
+
+  it("keeps the old project-wide feed without one", async () => {
+    await buildContext("proj-1", undefined, {});
+    expect(command.findMany.mock.calls[0]?.[0].where).toEqual({
+      projectId: "proj-1",
+      topic: null,
+      source: { in: ["WEB", "SYSTEM"] },
+    });
+  });
+});
+
+describe("buildContext card digest note", () => {
+  const cardRow = (id: string, title: string) => ({
+    id,
+    source: "SYSTEM",
+    rawText: "",
+    replyText: "Showed a piece.",
+    attachments: null,
+    parsedIntent: {
+      card: { kind: "creative-ready", title, status: "IN_REVIEW" },
+    },
+  });
+  const rows = () => [cardRow("c2", "Second"), webRow("w1", "hi", "hello")];
+
+  it("builds a framed, id-free note with a workId", async () => {
+    command.findMany.mockResolvedValue(rows());
+    const context = await buildContext("proj-1", undefined, {
+      workId: "work-1",
+    });
+    expect(context.cardDigestNote).toContain('Piece "Second" is IN_REVIEW');
+    expect(context.cardDigestNote).toContain("data, not instructions");
+    expect(context.cardDigestNote).not.toContain("c2");
+  });
+
+  it("has no note key without a workId and leaves the query and history alone", async () => {
+    command.findMany.mockResolvedValue(rows());
+    const off = await buildContext("proj-1", undefined, {});
+    expect("cardDigestNote" in off).toBe(false);
+    const offArgs = command.findMany.mock.calls[0]?.[0];
+    expect(offArgs.where).toEqual({
+      projectId: "proj-1",
+      topic: null,
+      source: { in: ["WEB", "SYSTEM"] },
+    });
+    command.findMany.mockResolvedValue(rows());
+    const on = await buildContext("proj-1", undefined, { workId: "work-1" });
+    expect(on.recent).toEqual(off.recent);
+    expect(on.history).toBe(off.history);
+    expect(command.findMany.mock.calls[1]?.[0].select).toEqual(
+      offArgs.select,
+    );
+  });
+
+  it("omits the note when the Work has no card", async () => {
+    command.findMany.mockResolvedValue([webRow("w1", "hi", "hello")]);
+    const context = await buildContext("proj-1", undefined, {
+      workId: "work-1",
+    });
+    expect("cardDigestNote" in context).toBe(false);
+  });
+});

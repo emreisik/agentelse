@@ -6,10 +6,14 @@ import { requireUser } from "@/server/security/tenant-context";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { SetupProgressWidget } from "@/components/layout/setup-progress-widget";
 import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
-import type { PanelKey } from "@/components/hub-core/hub-core-params";
+import { toolBadgesFrom } from "@/components/hub-core/tool-badges";
 import { getAgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
 import { WorkspacePanelToggleProvider } from "@/components/workspace/workspace-panel-toggle";
 import { SETUP_STAGE, SETUP_STAGE_ORDER_UI } from "@/lib/labels";
+import { getProjectTimezone, todayInTimezone } from "@/server/chat/content-plan";
+import { isTodayWork } from "@/lib/works/work";
+import { WorkRepository } from "@/server/repositories/work.repository";
+import { isWorksEnabled } from "@/server/works/flag";
 
 export type ProjectNavBadges = {
   setupPercent: number | null; // null = activated / no setup
@@ -141,29 +145,6 @@ async function getProjectBadges(
   };
 }
 
-// projectBadges already carries the counts that overlap with the panels in
-// the Tools menu and sidebar (setup/goals/work/human-action) — instead of
-// firing a separate query, we derive from the same data.
-function toolBadgesFrom(
-  projectBadges: ProjectNavBadges | null,
-): Partial<Record<PanelKey, number>> {
-  if (!projectBadges) return {};
-  const badges: Partial<Record<PanelKey, number>> = {};
-  if (projectBadges.setupWaitingClient > 0) {
-    badges.setup = projectBadges.setupWaitingClient;
-  }
-  if (projectBadges.proposedGoals > 0) {
-    badges.goals = projectBadges.proposedGoals;
-  }
-  const islerBadge =
-    projectBadges.proposedHandoffs + projectBadges.awaitingPlans;
-  if (islerBadge > 0) badges.work = islerBadge;
-  if (projectBadges.pendingHumanActions > 0) {
-    badges["human-action"] = projectBadges.pendingHumanActions;
-  }
-  return badges;
-}
-
 export async function AppShell({
   children,
   projectId,
@@ -185,6 +166,29 @@ export async function AppShell({
       projectId ? getAgencyStatusSnapshot(projectId) : Promise.resolve(null),
     ]);
   const sidebarVisible = Boolean(projectId);
+  // Recent Works for the sidebar (docs/works.md). Flag off, or a read that
+  // fails (e.g. the migration is not applied yet): no list, the nav is as before.
+  const sidebarWorksData =
+    projectId && isWorksEnabled()
+      ? await (async () => {
+          const todayKey = todayInTimezone(await getProjectTimezone(projectId));
+          const list = await WorkRepository.listRecent(projectId, 12, {
+            todayKey,
+          });
+          return {
+            todayKey,
+            works: list.map((work) => ({
+              id: work.id,
+              title: work.title,
+              summary: work.summary,
+              status: work.status,
+              isToday: isTodayWork(work),
+            })),
+          };
+        })().catch(() => undefined)
+      : undefined;
+  const sidebarWorks = sidebarWorksData?.works;
+  const sidebarTodayKey = sidebarWorksData?.todayKey;
 
   // Only the project chat root passes a right panel (pixel spec §15) — it
   // alone gets the panel-toggle context and the header's toggle button.
@@ -257,6 +261,8 @@ export async function AppShell({
           <SidebarNav
             activeProjectId={projectId}
             toolBadges={toolBadgesFrom(projectBadges)}
+            works={sidebarWorks}
+            todayKey={sidebarTodayKey}
           />
         </aside>
       ) : null}

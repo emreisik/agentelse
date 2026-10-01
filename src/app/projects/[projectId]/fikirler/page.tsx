@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
-// Ideas is now one of HUB CORE's orbit panels (see ../page.tsx +
-// src/components/hub-core/panels/fikirler-panel.tsx) — this route stays
-// alive so old bookmarks/links don't break.
+import { legacyRouteHref } from "@/components/hub-core/hub-core-params";
+
+// Old ideas page. This route stays alive so old bookmarks/links keep working.
 export default async function FikirlerRedirect({
   params,
   searchParams,
@@ -12,9 +12,10 @@ export default async function FikirlerRedirect({
 }) {
   const { projectId } = await params;
   const sp = await searchParams;
-
-  const qp = new URLSearchParams({ panel: "fikirler" });
-  if (typeof sp.fikir === "string") qp.set("entity", `idea:${sp.fikir}`);
-
-  redirect(`/projects/${projectId}?${qp.toString()}`);
+  redirect(
+    legacyRouteHref(projectId, "fikirler", {
+      entity:
+        typeof sp.fikir === "string" ? { kind: "idea", id: sp.fikir } : null,
+    }),
+  );
 }

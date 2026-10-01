@@ -75,7 +75,7 @@ const { BrandConstitutionPayloadSchema } =
   await import("@/server/agency/constitution/constitution-schema");
 const { GUIDED_ONLY_OPEN_QUESTION } =
   await import("@/lib/guided-setup/contract");
-const { quickDiscoveryDef } =
+const { quickDiscoveryDef, quickDiscoveryGuidedDef } =
   await import("@/server/reasoning/prompts/quick-discovery");
 
 const target = {
@@ -790,6 +790,25 @@ const hostileOutput = () =>
     approvedClaims: ["SHOULD NEVER APPEAR"],
   });
 
+// What the guided def returns on top of the constitution: every field sure.
+const SURE = Object.fromEntries(
+  [
+    "identity",
+    "businessModel",
+    "products",
+    "markets",
+    "audiences",
+    "positioning",
+    "valueProposition",
+    "toneOfVoice",
+    "competitors",
+  ].map((field) => [field, { score: 95, evidence: "both" }]),
+);
+const withConfidence = (
+  output: Record<string, unknown>,
+  confidence: Record<string, unknown> = SURE,
+) => ({ ...output, confidence });
+
 const publishedPayload = () =>
   (publishVersion.mock.calls[0]![0] as { payload: Record<string, unknown> })
     .payload;
@@ -962,7 +981,7 @@ describe("QuickDiscoveryService.run: the scrub on guided runs", () => {
   it("publishes the scrubbed payload and fills the dossier from it", async () => {
     await QuickDiscoveryService.run(guidedTarget, {
       fetch: fetch(),
-      reason: reasonReturning(hostileOutput()),
+      reason: reasonReturning(withConfidence(hostileOutput())),
     });
 
     const payload = publishedPayload() as {
@@ -1058,9 +1077,11 @@ describe("QuickDiscoveryService.run: the late-landing merge on guided runs", () 
   const fetch = () => siteFetcher({ "https://acme.com.tr": HOME_HTML });
   const reason = () =>
     reasonReturning(
-      constitutionOutput({
-        identity: "Acme Boya, İzmir merkezli boya üreticisi",
-      }),
+      withConfidence(
+        constitutionOutput({
+          identity: "Acme Boya, İzmir merkezli boya üreticisi",
+        }),
+      ),
     );
 
   it("publishes as before when nothing is ACTIVE, pinned to 'no active version'", async () => {
@@ -1083,6 +1104,7 @@ describe("QuickDiscoveryService.run: the late-landing merge on guided runs", () 
       version: 1,
       pages: 1,
       reasoningCallId: "rc-1",
+      rows: expect.any(Array),
     });
   });
 
@@ -1114,7 +1136,7 @@ describe("QuickDiscoveryService.run: the late-landing merge on guided runs", () 
     const result = await QuickDiscoveryService.run(guidedTarget, {
       fetch: fetch(),
       reason: reasonReturning(
-        constitutionOutput({ approvedClaims: ["Numara 1"] }),
+        withConfidence(constitutionOutput({ approvedClaims: ["Numara 1"] })),
       ),
     });
 
@@ -1139,6 +1161,7 @@ describe("QuickDiscoveryService.run: the late-landing merge on guided runs", () 
       version: 5,
       pages: 1,
       reasoningCallId: "rc-1",
+      rows: expect.any(Array),
     });
   });
 
@@ -1149,12 +1172,14 @@ describe("QuickDiscoveryService.run: the late-landing merge on guided runs", () 
 
     const result = await QuickDiscoveryService.run(guidedTarget, {
       fetch: fetch(),
-      reason: reasonReturning({ ...thin }),
+      reason: reasonReturning(withConfidence({ ...thin })),
     });
 
     // The scrub drops the marker from the research, so the merge replaces it.
     expect(publishVersion).toHaveBeenCalledTimes(1);
-    expect(publishedPayload()).toMatchObject({ openQuestions: [] });
+    expect(
+      (publishedPayload() as { openQuestions: string[] }).openQuestions,
+    ).not.toContain(GUIDED_ONLY_OPEN_QUESTION);
     expect(result).toMatchObject({ status: "DONE", version: 5 });
     // The dossier is still filled from the scrubbed research.
     expect(dossierCreate).toHaveBeenCalled();
@@ -1310,5 +1335,154 @@ describe("QuickDiscoveryService.run: result shapes", () => {
     expect(guided).toMatchObject({ status: "DONE", reasoningCallId: "rc-1" });
     expect(plain).toEqual({ status: "DONE", version: 1, pages: 1 });
     expect(plain).not.toHaveProperty("reasoningCallId");
+  });
+});
+
+describe("QuickDiscoveryService.run: confidence tiers on guided runs", () => {
+  const fetch = () => siteFetcher({ "https://acme.com.tr": HOME_HTML });
+  // identity accepted (95 both), positioning assumed (70 site), tone unknown
+  // (30), audiences capped by "inferred" from 99 down to 70 (assumed).
+  const mixedConfidence = {
+    ...SURE,
+    positioning: { score: 70, evidence: "site" },
+    toneOfVoice: { score: 30, evidence: "web" },
+    audiences: { score: 99, evidence: "inferred" },
+  };
+  const mixed = () =>
+    reasonReturning(
+      withConfidence(
+        constitutionOutput({
+          approvedClaims: ["Numara 1"],
+          openQuestions: ["Existing question"],
+        }),
+        mixedConfidence,
+      ),
+    );
+
+  it("calls the guided def for a guided run and the plain def otherwise", async () => {
+    const guidedReason = mixed();
+    await QuickDiscoveryService.run(guidedTarget, {
+      fetch: fetch(),
+      reason: guidedReason,
+    });
+    const plainReason = reasonReturning(constitutionOutput());
+    await QuickDiscoveryService.run(target, {
+      fetch: fetch(),
+      reason: plainReason,
+    });
+
+    expect(guidedReason.mock.calls[0]![0]).toBe(quickDiscoveryGuidedDef);
+    expect(plainReason.mock.calls[0]![0]).toBe(quickDiscoveryDef);
+  });
+
+  it("publishes the tiered payload: assumed kept with a line, unknown emptied with an open question, no claims", async () => {
+    await QuickDiscoveryService.run(guidedTarget, {
+      fetch: fetch(),
+      reason: mixed(),
+    });
+
+    const payload = publishedPayload() as Record<string, unknown> & {
+      assumptions: string[];
+      openQuestions: string[];
+    };
+    expect(payload.identity).toBe("Acme Boya, İzmir merkezli boya üreticisi");
+    // Assumed: still there for the agent, and said out loud.
+    expect(payload.positioning).toBe("Düşük kokulu su bazlı boya");
+    expect(payload.assumptions).toContain(
+      "Positioning: Düşük kokulu su bazlı boya (assumed, 70%)",
+    );
+    expect(payload.audiences).toEqual(["Ev sahipleri", "Müteahhitler"]);
+    expect(payload.assumptions.some((a) => a.startsWith("Audience:"))).toBe(
+      true,
+    );
+    // Unknown: emptied, and asked about later.
+    expect(payload.toneOfVoice).toBe("");
+    expect(payload.openQuestions).toContain(
+      "Voice: not found with enough confidence",
+    );
+    expect(payload.openQuestions).toContain("Existing question");
+    expect(payload.approvedClaims).toEqual([]);
+    // The confidence key never reaches the stored constitution.
+    expect(payload).not.toHaveProperty("confidence");
+  });
+
+  it("fills the dossier from accepted fields only", async () => {
+    await QuickDiscoveryService.run(guidedTarget, {
+      fetch: fetch(),
+      reason: mixed(),
+    });
+
+    const { data } = dossierCreate.mock.calls[0]![0] as {
+      data: Record<string, unknown>;
+    };
+    expect(data.summary).toBe("Acme Boya, İzmir merkezli boya üreticisi");
+    expect(data.products).toEqual(["İç cephe boyası", "Dış cephe boyası"]);
+    expect(data).not.toHaveProperty("positioning");
+    expect(data).not.toHaveProperty("toneOfVoice");
+    expect(data).not.toHaveProperty("targetAudiences");
+  });
+
+  it("keeps assumed values out of the dossier on the late-landing merge path too", async () => {
+    getActive.mockResolvedValue(activeRow(guidedOnlyPayload(), { version: 4 }));
+    publishVersion.mockResolvedValue({ id: "const-5", version: 5 });
+
+    await QuickDiscoveryService.run(guidedTarget, {
+      fetch: fetch(),
+      reason: mixed(),
+    });
+
+    const { data } = dossierCreate.mock.calls[0]![0] as {
+      data: Record<string, unknown>;
+    };
+    expect(data).not.toHaveProperty("positioning");
+    expect(data).not.toHaveProperty("toneOfVoice");
+    expect(data).not.toHaveProperty("targetAudiences");
+  });
+
+  it("returns the tier rows with the DONE result", async () => {
+    const result = await QuickDiscoveryService.run(guidedTarget, {
+      fetch: fetch(),
+      reason: mixed(),
+    });
+
+    expect(result.status).toBe("DONE");
+    const rows = (result as { rows?: { field: string; tier: string }[] }).rows;
+    const tierOf = (field: string) =>
+      rows?.find((r) => r.field === field)?.tier;
+    expect(tierOf("about")).toBe("accepted");
+    expect(tierOf("positioning")).toBe("assumed");
+    expect(tierOf("voice")).toBe("unknown");
+    expect(tierOf("audience")).toBe("assumed");
+  });
+
+  it("treats a missing confidence as not found instead of failing the run", async () => {
+    const result = await QuickDiscoveryService.run(guidedTarget, {
+      fetch: fetch(),
+      reason: reasonReturning(constitutionOutput()),
+    });
+
+    expect(result.status).toBe("DONE");
+    expect(publishedPayload()).toMatchObject({ identity: "" });
+    expect(dossierCreate.mock.calls[0]![0].data).not.toHaveProperty("summary");
+  });
+
+  it("leaves a non-guided run exactly as it was: same def, same payload, full dossier, no rows", async () => {
+    const result = await QuickDiscoveryService.run(target, {
+      fetch: fetch(),
+      reason: reasonReturning(constitutionOutput()),
+    });
+
+    expect(result).toEqual({ status: "DONE", version: 1, pages: 1 });
+    expect(result).not.toHaveProperty("rows");
+    const payload = publishedPayload() as Record<string, unknown> & {
+      assumptions: string[];
+    };
+    expect(payload.assumptions).toEqual([]);
+    expect(payload.toneOfVoice).toBe("Sade ve samimi");
+    const { data } = dossierCreate.mock.calls[0]![0] as {
+      data: Record<string, unknown>;
+    };
+    expect(data.toneOfVoice).toBe("Sade ve samimi");
+    expect(data.positioning).toBe("Düşük kokulu su bazlı boya");
   });
 });

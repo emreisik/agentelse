@@ -39,6 +39,8 @@ vi.mock("@/server/repositories/audit-log.repository", () => ({
 
 const ensureProjectActive = vi.fn();
 vi.mock("@/server/projects/activation", () => ({ ensureProjectActive }));
+const startIntakeAtCreate = vi.fn();
+vi.mock("@/server/brand/intake-start", () => ({ startIntakeAtCreate }));
 vi.mock("@/server/media/creative-image", () => ({
   generateCreativeImage: vi.fn(),
 }));
@@ -75,6 +77,7 @@ beforeEach(() => {
   projectCreate.mockResolvedValue({ id: "proj-1", brands: [{ id: "brand-1" }] });
   auditRecord.mockResolvedValue(undefined);
   ensureProjectActive.mockResolvedValue(undefined);
+  startIntakeAtCreate.mockResolvedValue(undefined);
 });
 
 describe("createGuidedProjectAction", () => {
@@ -127,6 +130,62 @@ describe("createGuidedProjectAction", () => {
     // Had the redirect sat inside the slug loop's try/catch, its throw would
     // have been swallowed as a slug clash and the project created again.
     expect(projectCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts the intake once, after the project exists and before the redirect, with ids it derived itself", async () => {
+    const order: string[] = [];
+    startIntakeAtCreate.mockImplementation(async () => {
+      order.push("intake");
+    });
+    redirect.mockImplementation((): never => {
+      order.push("redirect");
+      throw new RedirectSignal("NEXT_REDIRECT");
+    });
+
+    await expect(createGuidedProjectAction(valid())).rejects.toBeInstanceOf(
+      RedirectSignal,
+    );
+
+    expect(startIntakeAtCreate).toHaveBeenCalledTimes(1);
+    expect(startIntakeAtCreate).toHaveBeenCalledWith({
+      userId: "user-1",
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      brandId: "brand-1",
+      domain: "qrhub.com.tr",
+    });
+    expect(order).toEqual(["intake", "redirect"]);
+  });
+
+  it("passes no website when none was typed, so nothing can start", async () => {
+    await expect(
+      createGuidedProjectAction(
+        form({ name: "Qr Hub", language: "tr", country: "TR" }),
+      ),
+    ).rejects.toBeInstanceOf(RedirectSignal);
+
+    expect(startIntakeAtCreate.mock.calls[0]![0].domain).toBeUndefined();
+  });
+
+  it("still redirects, once, when the intake cannot even be started", async () => {
+    startIntakeAtCreate.mockRejectedValue(new Error("scheduler exploded"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(createGuidedProjectAction(valid())).rejects.toBeInstanceOf(
+      RedirectSignal,
+    );
+
+    expect(redirect).toHaveBeenCalledTimes(1);
+    expect(projectCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts nothing when the flag is off or the form is invalid", async () => {
+    getEnv.mockReturnValue({ GUIDED_SETUP: false });
+    await createGuidedProjectAction(valid());
+    getEnv.mockReturnValue({ GUIDED_SETUP: true });
+    await createGuidedProjectAction(form({ name: "  ", language: "tr", country: "TR" }));
+
+    expect(startIntakeAtCreate).not.toHaveBeenCalled();
   });
 
   it("records project.created with the locale provenance", async () => {

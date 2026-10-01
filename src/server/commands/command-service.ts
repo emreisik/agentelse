@@ -27,6 +27,7 @@ import type { NeedsInput } from "@/server/commands/needs-input";
 import { missingCapabilityInput } from "@/server/execution/capability-input";
 import { MemoryService } from "@/server/memory/memory-service";
 import { ensureProjectActive } from "@/server/projects/activation";
+import { isWorksEnabled } from "@/server/works/flag";
 import { performCreativeRevision } from "@/server/actions/creative-actions";
 import { createStrategicIdea } from "@/server/commands/strategic-request";
 import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
@@ -212,6 +213,9 @@ export const CommandService = {
         input.workspaceId,
         input.knownProjectId,
         input.ideaId,
+        input.existingCommandId
+          ? await workIdOfCommand(input.existingCommandId)
+          : null,
       );
       if (!approval) {
         return { status: "UNKNOWN_INTENT", commandId: command.id };
@@ -424,12 +428,22 @@ export const CommandService = {
       return { status: "PROJECT_INACTIVE", commandId: command.id };
     }
 
-    await CommandRepository.attachParsedIntent(
-      command.id,
-      intent,
-      projectId,
-      brandId,
-    );
+    // Works: a turn that already stored its card (slot-first) keeps it.
+    if (input.existingCommandId && isWorksEnabled()) {
+      await CommandRepository.attachParsedIntentKeepingCard(
+        command.id,
+        intent,
+        projectId,
+        brandId,
+      );
+    } else {
+      await CommandRepository.attachParsedIntent(
+        command.id,
+        intent,
+        projectId,
+        brandId,
+      );
+    }
 
     if (intent.kind === "STRATEGIC_REQUEST") {
       const result = await createStrategicIdea(
@@ -574,18 +588,80 @@ export const CommandService = {
   },
 };
 
+// Works only: a turn that runs inside a Work (its Command has a workId) may
+// only decide an approval that belongs to THAT Work. Falling back to the
+// newest approval of the whole project would let "yes, approve it" in one Work
+// approve (and dispatch) something the client never saw there.
+async function workIdOfCommand(commandId: string): Promise<string | null> {
+  if (!isWorksEnabled()) return null;
+  const command = await prisma.command.findUnique({
+    where: { id: commandId },
+    select: { workId: true },
+  });
+  return command?.workId ?? null;
+}
+
+// The pending approvals that belong to a Work: a Task approval through
+// Task.command.workId, a Creative approval through Creative.planId ->
+// Command.workId (the same ownership rule as the publish hold).
+async function approvalsOfWork<
+  T extends { entityType: string; entityId: string; taskId: string | null },
+>(pending: T[], workId: string): Promise<T[]> {
+  const taskIds = pending.flatMap((a) => (a.taskId ? [a.taskId] : []));
+  const creativeIds = pending
+    .filter((a) => a.entityType === "Creative")
+    .map((a) => a.entityId);
+  const [tasks, creatives] = await Promise.all([
+    taskIds.length > 0
+      ? prisma.task.findMany({
+          where: { id: { in: taskIds }, command: { workId } },
+          select: { id: true },
+        })
+      : [],
+    creativeIds.length > 0
+      ? prisma.creative.findMany({
+          where: { id: { in: creativeIds } },
+          select: { id: true, planId: true },
+        })
+      : [],
+  ]);
+  const planIds = creatives.flatMap((c) => (c.planId ? [c.planId] : []));
+  const plans =
+    planIds.length > 0
+      ? await prisma.command.findMany({
+          where: { id: { in: planIds }, workId },
+          select: { id: true },
+        })
+      : [];
+  const taskOk = new Set(tasks.map((t) => t.id));
+  const planOk = new Set(plans.map((p) => p.id));
+  const creativeOk = new Set(
+    creatives
+      .filter((c) => c.planId !== null && planOk.has(c.planId))
+      .map((c) => c.id),
+  );
+  return pending.filter((a) =>
+    a.entityType === "Creative"
+      ? creativeOk.has(a.entityId)
+      : a.taskId !== null && taskOk.has(a.taskId),
+  );
+}
+
 // When the command comes from a specific idea's chat thread (input.ideaId),
 // "I approve" must resolve to THAT idea's pending approval — not just the
 // most recently created one in the project. Two ideas in the same project
 // can easily have overlapping pending approvals (e.g. two work-plan nodes
 // clearing their dependencies around the same time), and picking the wrong
 // one means approving/rejecting work the user never looked at.
+// Inside a Work (workId set) the candidates are limited to that Work's own
+// approvals, with no project-wide fallback.
 async function findLatestPendingApproval(
   workspaceId: string,
   projectId?: string,
   ideaId?: string,
+  workId?: string | null,
 ) {
-  const pending = await prisma.approval.findMany({
+  const allPending = await prisma.approval.findMany({
     where: {
       workspaceId,
       status: "PENDING",
@@ -594,6 +670,9 @@ async function findLatestPendingApproval(
     orderBy: { createdAt: "desc" },
     take: 20,
   });
+  const pending = workId
+    ? await approvalsOfWork(allPending, workId)
+    : allPending;
 
   if (ideaId) {
     for (const approval of pending) {

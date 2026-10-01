@@ -12,12 +12,10 @@ import {
 import { buildHubHref } from "@/components/hub-core/hub-core-params";
 import { BrandVisualIdentityQuickEdit } from "@/components/workspace/brand-visual-identity-quick-edit";
 import {
-  allPaletteHexes,
   BACKGROUND_TONE_LABEL,
   brandSurfaceColor,
   kitLayoutPalette,
   PHOTOGRAPHY_STYLE_LABEL,
-  pickLogoForBackground,
   type BrandKit,
 } from "@/lib/brand-kit";
 import {
@@ -29,7 +27,6 @@ import {
   DARK_INK,
   isDarkColor,
   LIGHT_INK,
-  readableOn,
 } from "@/lib/color-contrast";
 
 // The visual half of the Brand tab. Every colour on these surfaces comes from
@@ -92,38 +89,34 @@ function Chip({
   );
 }
 
-// --- hero ----------------------------------------------------------------------
+// --- identity --------------------------------------------------------------------
 
-// Name, verified tick and site address. On the hero it inherits the card's
-// ink colour (currentColor) so it reads on any brand colour; standalone it
-// uses the app's own text tokens.
+// Name, verified tick and site address, for the brand summary card.
 export function BrandIdentityLine({
   name,
   website,
   verified,
   fallbackLabel,
-  onSurface,
 }: {
   name: string;
   website: string | null;
   verified: boolean;
   // Shown instead of the site address when the brand has none.
   fallbackLabel: string;
-  onSurface: boolean;
 }) {
   return (
     <div className="min-w-0">
       <div className="flex items-center gap-1.5">
         <p
-          className="truncate text-xl leading-tight font-semibold tracking-[-0.02em]"
-          style={onSurface ? undefined : { color: "var(--ws-text)" }}
+          className="truncate text-sm leading-tight font-semibold"
+          style={{ color: "var(--ws-text)" }}
         >
           {name}
         </p>
         {verified ? (
           <BadgeCheck
-            className="size-4 shrink-0"
-            style={onSurface ? undefined : { color: "var(--ws-approved)" }}
+            className="size-3.5 shrink-0"
+            style={{ color: "var(--ws-approved)" }}
           />
         ) : null}
       </div>
@@ -132,90 +125,16 @@ export function BrandIdentityLine({
           href={website.startsWith("http") ? website : `https://${website}`}
           target="_blank"
           rel="noreferrer"
-          className="text-xs hover:underline"
-          style={onSurface ? { opacity: 0.78 } : { color: "var(--ws-text-3)" }}
+          className="text-[11px] hover:underline"
+          style={{ color: "var(--ws-text-3)" }}
         >
           {website}
         </a>
       ) : (
-        <p
-          className="text-xs"
-          style={onSurface ? { opacity: 0.78 } : { color: "var(--ws-text-3)" }}
-        >
+        <p className="text-[11px]" style={{ color: "var(--ws-text-3)" }}>
           {fallbackLabel}
         </p>
       )}
-    </div>
-  );
-}
-
-// The brand as one card in its own colour: the primary colour is the surface,
-// the ink is chosen for contrast, the logo variant that is legible on it sits
-// top-left, the identity (name, site) bottom-left, the actions top-right, and
-// the whole palette runs along the bottom edge as a signature strip.
-export function BrandHero({
-  name,
-  website,
-  verified,
-  fallbackLabel,
-  kit,
-  actions,
-}: {
-  name: string;
-  website: string | null;
-  verified: boolean;
-  fallbackLabel: string;
-  kit: BrandKit;
-  actions: React.ReactNode;
-}) {
-  const surface = brandSurfaceColor(kit);
-  const background = surface ?? "var(--ws-accent)";
-  const ink = surface ? readableOn(surface) : "var(--ws-on-accent)";
-  const logo = surface ? pickLogoForBackground(kit.logos, surface) : null;
-  const strip = allPaletteHexes(kit);
-
-  return (
-    <div
-      data-kit="hero"
-      className="mb-3 flex min-h-40 w-full flex-col justify-between gap-4 overflow-hidden rounded-2xl p-4 ring-1 ring-black/10"
-      style={{ background, color: ink }}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          {logo ? (
-            // eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image can't optimize it
-            <img
-              src={`/api/assets/${logo.assetId}`}
-              alt={`${name} logo`}
-              className="max-h-12 max-w-[70%] object-contain object-left"
-            />
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">{actions}</div>
-      </div>
-      <div>
-        <BrandIdentityLine
-          name={name}
-          website={website}
-          verified={verified}
-          fallbackLabel={fallbackLabel}
-          onSurface
-        />
-        {strip.length > 1 ? (
-          <div
-            data-kit="palette-strip"
-            className="mt-3 flex h-2 overflow-hidden rounded-full ring-1 ring-black/10"
-          >
-            {strip.map((hex) => (
-              <span
-                key={hex}
-                className="flex-1"
-                style={{ backgroundColor: hex }}
-              />
-            ))}
-          </div>
-        ) : null}
-      </div>
     </div>
   );
 }
@@ -232,7 +151,7 @@ export function EmptyKitCard({
   return (
     <div
       data-kit="empty"
-      className="mb-3 flex flex-col items-center gap-2.5 rounded-2xl border border-dashed p-5 text-center"
+      className="mb-3 flex flex-col items-center gap-2 rounded-xl border border-dashed p-4 text-center"
       style={{ borderColor: "var(--ws-border)" }}
     >
       <span

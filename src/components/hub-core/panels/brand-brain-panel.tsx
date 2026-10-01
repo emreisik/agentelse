@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   BookOpen,
   ChevronDown,
+  Compass,
   FileSearch,
   Gavel,
   Gem,
@@ -10,6 +11,7 @@ import {
   GraduationCap,
   Palette,
   ShieldCheck,
+  Target,
   Type as FontIcon,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -24,15 +26,19 @@ import {
   FACT_CLASSIFICATION,
 } from "@/lib/labels";
 import { BrandDossierEditSheet } from "@/components/brand/brand-dossier-edit-sheet";
+import { BrandDossierSuggestButton } from "@/components/brand/brand-dossier-suggest-button";
 import { BrandLogoCard } from "@/components/brand/brand-logo-card";
 import { VisualIdentitySection } from "@/components/brand/visual-identity-section";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { suggestBrandDossierAction } from "@/server/actions/brand-dossier-actions";
 import { updateBrandDossierAction } from "@/server/actions/project-actions";
+import { isGuidedSetupEnabled } from "@/server/guided-setup/flag";
 import {
   BRAND_BRAIN_SUB_KEYS,
+  ENTITY_SUB,
   buildHubHref,
   entityHref,
   type BrandBrainSubKey,
@@ -42,6 +48,8 @@ import { AssetPreview } from "../primitives/asset-preview";
 import { CrossLinkChip } from "../primitives/cross-link-chip";
 import { FieldGrid, type FieldSpec } from "../primitives/field-grid";
 import { JsonViewer } from "../primitives/json-viewer";
+import { GoalsSection } from "./brand-brain/goals-section";
+import { IntelligenceSection } from "./brand-brain/intelligence-section";
 import type { PanelProps } from "./panel-props";
 
 const ACTOR_TYPE_LABEL: Record<ActorType, string> = {
@@ -71,8 +79,10 @@ const BRAND_BRAIN_TAB_LABEL: Record<BrandBrainSubKey, string> = {
   rules: "Rules & Knowledge",
   "visual-identity": "Visual Identity",
   constitution: "Constitution",
+  goals: "Goals",
   strategy: "Strategy",
   decisions: "Decisions",
+  intelligence: "Intelligence",
   evidence: "Evidence",
   learnings: "Learnings",
 };
@@ -82,8 +92,10 @@ const BRAND_BRAIN_TAB_ICON: Record<BrandBrainSubKey, LucideIcon> = {
   rules: ShieldCheck,
   "visual-identity": Palette,
   constitution: BookOpen,
+  goals: Target,
   strategy: GitBranch,
   decisions: Gavel,
+  intelligence: Compass,
   evidence: FileSearch,
   learnings: GraduationCap,
 };
@@ -92,13 +104,14 @@ function isBrandBrainSub(value: string | null): value is BrandBrainSubKey {
   return !!value && (BRAND_BRAIN_SUB_KEYS as readonly string[]).includes(value);
 }
 
-// The "Brand Brain" node — the codified/reference output layer: constitution,
-// brand assets, strategy versions, decisions, evidence, learnings
-// (the HUB CORE-migrated + expanded version of brand-brain-tab.tsx). Purely
-// read-only/dashboard — editing goes through BrandDossierEditSheet and the
-// Visual Identity forms, not a chat (the chat-based revision flow was
-// removed). `constitution` is the only type in ENTITY_PANEL that belongs to
-// this panel — entity depth only kicks in for that type.
+// The "Brand Brain" node — everything the agency knows about the brand, in one
+// place: the constitution and brand assets, the goals it works toward
+// (Goals tab), what it has gathered about the market (Intelligence tab:
+// findings, insights, opportunities, signals), strategy versions, decisions,
+// evidence and learnings. Editing goes through BrandDossierEditSheet, the
+// Visual Identity forms and the Goals tab's own approve/edit actions.
+// Records opened by a cross-link (ENTITY_PANEL / ENTITY_SUB) pick their tab;
+// a constitution opens its own detail view.
 export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
   const brand = await prisma.brand.findFirst({
     where: { projectId, isDefault: true },
@@ -145,7 +158,10 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
     );
   }
 
-  const activeSub: BrandBrainSubKey = isBrandBrainSub(sub) ? sub : "assets";
+  // A record opened by a cross-link decides its tab; otherwise `sub` does.
+  const entitySub = entity ? ENTITY_SUB[entity.kind] : undefined;
+  const activeSub: BrandBrainSubKey =
+    entitySub ?? (isBrandBrainSub(sub) ? sub : "assets");
 
   const [
     constitutionCount,
@@ -154,6 +170,10 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
     evidenceCount,
     learningCount,
     knowledge,
+    proposedGoalCount,
+    findingCount,
+    insightCount,
+    opportunityCount,
   ] = await Promise.all([
     prisma.brandConstitution.count({ where: { brandId } }),
     prisma.brandStrategyVersion.count({ where: { brandId } }),
@@ -161,6 +181,10 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
     prisma.brandEvidence.count({ where: { brandId } }),
     prisma.brandLearning.count({ where: { projectId } }),
     countBrandKnowledge(brandId),
+    prisma.projectGoal.count({ where: { projectId, status: "PROPOSED" } }),
+    prisma.finding.count({ where: { projectId } }),
+    prisma.insight.count({ where: { projectId } }),
+    prisma.opportunity.count({ where: { projectId } }),
   ]);
 
   const tabCount: Partial<Record<BrandBrainSubKey, number>> = {
@@ -170,8 +194,11 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
       knowledge.facts +
       knowledge.assumptions,
     constitution: constitutionCount,
+    // Only the goals waiting for the client's decision: the tab says "needs you".
+    goals: proposedGoalCount > 0 ? proposedGoalCount : undefined,
     strategy: strategyCount,
     decisions: decisionCount,
+    intelligence: findingCount + insightCount + opportunityCount,
     evidence: evidenceCount,
     learnings: learningCount,
   };
@@ -226,6 +253,10 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
           brandId={brandId}
           focusedId={null}
         />
+      ) : activeSub === "goals" ? (
+        <GoalsSection projectId={projectId} entity={entity} />
+      ) : activeSub === "intelligence" ? (
+        <IntelligenceSection projectId={projectId} entity={entity} />
       ) : activeSub === "strategy" ? (
         <StrategyVersionsSection brandId={brandId} />
       ) : activeSub === "decisions" ? (
@@ -522,6 +553,10 @@ async function AssetsSection({
   knowledge: BrandKnowledgeCounts;
 }) {
   const dossier = await prisma.brandDossier.findUnique({ where: { brandId } });
+  // The fields an AI suggestion filled (see brand/dossier-suggest.ts): the
+  // note stays until a person edits the dossier afterwards.
+  const suggestionsOn = isGuidedSetupEnabled();
+  const aiNote = suggestionsOn ? await aiSuggestedFieldsOf(brandId) : null;
 
   let strategyVersionLabel: string | null = null;
   if (dossier?.currentStrategyVersionId) {
@@ -719,24 +754,38 @@ async function AssetsSection({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
           <CardTitle className="text-base">Brand Dossier</CardTitle>
-          <BrandDossierEditSheet
-            projectId={projectId}
-            dossier={{
-              summary: dossier?.summary ?? null,
-              positioning: dossier?.positioning ?? null,
-              toneOfVoice: dossier?.toneOfVoice ?? null,
-              language: dossier?.language ?? null,
-              country: dossier?.country ?? null,
-              targetAudiences: dossier?.targetAudiences ?? null,
-              markets: dossier?.markets ?? null,
-              products: dossier?.products ?? null,
-              services: dossier?.services ?? null,
-              visualGuidelines: dossier?.visualGuidelines ?? null,
-            }}
-            action={updateBrandDossierAction}
-          />
+          <div className="flex items-center gap-1">
+            {suggestionsOn ? (
+              <BrandDossierSuggestButton
+                projectId={projectId}
+                action={suggestBrandDossierAction}
+              />
+            ) : null}
+            <BrandDossierEditSheet
+              projectId={projectId}
+              dossier={{
+                summary: dossier?.summary ?? null,
+                positioning: dossier?.positioning ?? null,
+                toneOfVoice: dossier?.toneOfVoice ?? null,
+                language: dossier?.language ?? null,
+                country: dossier?.country ?? null,
+                targetAudiences: dossier?.targetAudiences ?? null,
+                markets: dossier?.markets ?? null,
+                products: dossier?.products ?? null,
+                services: dossier?.services ?? null,
+                visualGuidelines: dossier?.visualGuidelines ?? null,
+              }}
+              action={updateBrandDossierAction}
+            />
+          </div>
         </CardHeader>
         <CardContent>
+          {aiNote ? (
+            <p className="mb-3 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+              AI-suggested: {aiNote}. These are starting points, not verified
+              facts. Review and edit them.
+            </p>
+          ) : null}
           {dossier ? (
             <FieldGrid fields={dossierFields} />
           ) : (
@@ -751,6 +800,40 @@ async function AssetsSection({
 }
 
 // ---------------------------------------------------------------------------
+
+const DOSSIER_FIELD_LABEL: Record<string, string> = {
+  summary: "Summary",
+  positioning: "Positioning",
+  services: "Services",
+  products: "Products",
+  markets: "Markets",
+  visualGuidelines: "Visual guidelines",
+};
+
+// The labels of the fields the latest AI suggestion filled, or null when there
+// was none or a person edited the dossier after it.
+async function aiSuggestedFieldsOf(brandId: string): Promise<string | null> {
+  const [filled, edited] = await Promise.all([
+    prisma.auditLog.findFirst({
+      where: { brandId, action: "brand_dossier.autofilled" },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true, metadata: true },
+    }),
+    prisma.auditLog.findFirst({
+      where: { brandId, action: "brand_dossier.updated" },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    }),
+  ]);
+  if (!filled || (edited && edited.createdAt > filled.createdAt)) return null;
+  const fields = (filled.metadata as { fields?: unknown } | null)?.fields;
+  if (!Array.isArray(fields)) return null;
+  const labels = fields
+    .filter((field): field is string => typeof field === "string")
+    .map((field) => DOSSIER_FIELD_LABEL[field])
+    .filter((label): label is string => Boolean(label));
+  return labels.length > 0 ? labels.join(", ") : null;
+}
 
 const KNOWLEDGE_LIST_LIMIT = 50;
 

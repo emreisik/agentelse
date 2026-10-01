@@ -19,6 +19,10 @@ import { selectProductionBatch } from "./plan-progress";
 // advance (no plan yet), and the bar falls back to its default shortcuts.
 
 const MAX_STEPS = 3;
+// One approve step covers at most this many plans and pieces (the server caps
+// the same way).
+const MAX_APPROVE_PLANS = 12;
+const MAX_APPROVE_PIECES = 100;
 
 const count = (n: number, one: string, many: string) =>
   `${n} ${n === 1 ? one : many}`;
@@ -77,6 +81,33 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
         creativeIds: dueManual.map((item) => item.id),
       },
     });
+  }
+
+  // Work-scoped only: approving what is in review in one go comes before the
+  // review step itself. It names the exact pieces it was computed for.
+  if (snapshot.workScoped === true && inReview.length >= 2) {
+    const planIds = [...new Set(inReview.map((item) => item.planId))].slice(
+      0,
+      MAX_APPROVE_PLANS,
+    );
+    const creativeIds = inReview
+      .filter((item) => planIds.includes(item.planId))
+      .slice(0, MAX_APPROVE_PIECES)
+      .map((item) => item.id);
+    if (creativeIds.length >= 2) {
+      steps.push({
+        key: "approve",
+        tone: "next",
+        label: `Approve ${creativeIds.length}`,
+        title: `${creativeIds.length} pieces are ready. Approve them in one go.`,
+        action: {
+          kind: "approve_plan",
+          planIds,
+          creativeIds,
+          count: creativeIds.length,
+        },
+      });
+    }
   }
 
   if (inReview.length > 0) {
@@ -153,6 +184,8 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
       label: `Connect ${channelLabel(channel)}`,
       title: `${channelLabel(channel)} is not connected, so its pieces cannot post themselves.`,
       action: { kind: "connect_channel", channel },
+      // A Work with a locked channel needs to see it in the bar.
+      ...(snapshot.workScoped === true ? { quiet: false } : { quiet: true }),
     });
   }
 
@@ -190,5 +223,9 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
     });
   }
 
-  return steps.slice(0, MAX_STEPS);
+  // The cap is for what is waiting; quiet steps never take a slot from it.
+  return [
+    ...steps.filter((step) => !step.quiet).slice(0, MAX_STEPS),
+    ...steps.filter((step) => step.quiet),
+  ];
 }

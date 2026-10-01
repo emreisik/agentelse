@@ -1,10 +1,9 @@
 import { redirect } from "next/navigation";
 
-const VALID_SUBS = ["planlar", "gorevler", "devirler", "olcumler"];
+import { legacyRouteHref } from "@/components/hub-core/hub-core-params";
 
-// Work is now one of HUB CORE's orbit panels (see ../page.tsx +
-// src/components/hub-core/panels/isler-panel.tsx) — this route stays
-// alive so old bookmarks/links don't break.
+// Old work page. This route stays alive so old bookmarks/links keep working;
+// its Turkish tab names map to the Work panel's sub-tabs.
 export default async function IslerRedirect({
   params,
   searchParams,
@@ -14,14 +13,15 @@ export default async function IslerRedirect({
 }) {
   const { projectId } = await params;
   const sp = await searchParams;
-  const sub =
-    typeof sp.tab === "string" && VALID_SUBS.includes(sp.tab)
-      ? sp.tab
-      : "planlar";
-
-  const qp = new URLSearchParams({ panel: "isler", sub });
-  if (typeof sp.plan === "string") qp.set("entity", `workPlan:${sp.plan}`);
-  if (typeof sp.gorev === "string") qp.set("entity", `task:${sp.gorev}`);
-
-  redirect(`/projects/${projectId}?${qp.toString()}`);
+  redirect(
+    legacyRouteHref(projectId, "isler", {
+      sub: typeof sp.tab === "string" ? sp.tab : "planlar",
+      entity:
+        typeof sp.plan === "string"
+          ? { kind: "workPlan", id: sp.plan }
+          : typeof sp.gorev === "string"
+            ? { kind: "task", id: sp.gorev }
+            : null,
+    }),
+  );
 }

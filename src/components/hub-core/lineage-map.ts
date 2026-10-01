@@ -12,9 +12,6 @@ export type LineageEdge = { panel: PanelKey; relation: LineageRelation };
 export const PANEL_LABEL: Record<PanelKey, string> = {
   setup: "Setup",
   "brand-brain": "Brand Brain",
-  signals: "Signals",
-  "insights-opportunities": "Insights & Opportunities",
-  goals: "Goals",
   ideas: "Ideas",
   work: "Work",
   departments: "Departments",
@@ -35,19 +32,11 @@ export const RELATION_LABEL: Record<LineageRelation, string> = {
 // can be read from its own perspective.
 export const LINEAGE: Record<PanelKey, LineageEdge[]> = {
   setup: [],
-  "brand-brain": [{ panel: "signals", relation: "feeds" }],
-  signals: [
-    { panel: "brand-brain", relation: "fedBy" },
-    { panel: "insights-opportunities", relation: "feeds" },
-  ],
-  "insights-opportunities": [
-    { panel: "signals", relation: "fedBy" },
-    { panel: "goals", relation: "feeds" },
-    { panel: "ideas", relation: "feeds" },
-  ],
-  goals: [{ panel: "insights-opportunities", relation: "fedBy" }],
+  // Signals, insights, opportunities and goals are tabs of Brand Brain now, so
+  // the whole derivation chain reads as "Brand Brain feeds Ideas".
+  "brand-brain": [{ panel: "ideas", relation: "feeds" }],
   ideas: [
-    { panel: "insights-opportunities", relation: "fedBy" },
+    { panel: "brand-brain", relation: "fedBy" },
     { panel: "work", relation: "feeds" },
   ],
   work: [

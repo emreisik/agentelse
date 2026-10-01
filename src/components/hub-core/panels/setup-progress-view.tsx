@@ -245,8 +245,11 @@ function stageLink(
       };
     case "SIGNAL_PROFILE":
       return {
-        href: buildHubHref(projectId, { panel: "signals" }),
-        label: "View signal profile →",
+        href: buildHubHref(projectId, {
+          panel: "brand-brain",
+          sub: "intelligence",
+        }),
+        label: "View intelligence →",
       };
     case "BASELINE_AUDITS":
       return {
@@ -255,7 +258,7 @@ function stageLink(
       };
     case "GOAL_GENERATION":
       return {
-        href: buildHubHref(projectId, { panel: "goals" }),
+        href: buildHubHref(projectId, { panel: "brand-brain", sub: "goals" }),
         label: "View goals →",
       };
     case "AGENCY_CONFIGURATION":
@@ -270,7 +273,10 @@ function stageLink(
       };
     case "INITIAL_OPPORTUNITIES":
       return {
-        href: buildHubHref(projectId, { panel: "insights-opportunities" }),
+        href: buildHubHref(projectId, {
+          panel: "brand-brain",
+          sub: "intelligence",
+        }),
         label: "View opportunities →",
       };
     case "INITIAL_IDEA_PORTFOLIO":
@@ -285,7 +291,10 @@ function stageLink(
       };
     case "DEEP_DISCOVERY":
       return {
-        href: buildHubHref(projectId, { panel: "signals" }),
+        href: buildHubHref(projectId, {
+          panel: "brand-brain",
+          sub: "intelligence",
+        }),
         label: "View findings →",
       };
     default:

@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 
-// Brand Brain is now HUB CORE's own orbit panel (see ../page.tsx +
-// src/components/hub-core/panels/marka-beyni-panel.tsx) — this route stays
-// alive so old bookmarks/links don't break.
+import { legacyRouteHref } from "@/components/hub-core/hub-core-params";
+
+// Old Brand Brain page. This route stays alive so old bookmarks/links keep
+// working; its findings tab moved to the Intelligence tab.
 export default async function BeyinRedirect({
   params,
   searchParams,
@@ -12,8 +13,12 @@ export default async function BeyinRedirect({
 }) {
   const { projectId } = await params;
   const sp = await searchParams;
-  const oldTab = typeof sp.tab === "string" ? sp.tab : "anayasa";
-  const panel = oldTab === "bulgular" ? "sinyaller" : "marka-beyni";
-
-  redirect(`/projects/${projectId}?panel=${panel}`);
+  redirect(
+    legacyRouteHref(
+      projectId,
+      typeof sp.tab === "string" && sp.tab === "bulgular"
+        ? "sinyaller"
+        : "marka-beyni",
+    ),
+  );
 }

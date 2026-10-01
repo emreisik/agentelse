@@ -7,11 +7,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const creativeFindMany = vi.fn();
 const taskFindMany = vi.fn();
+const commandFindMany = vi.fn();
 const scheduleCount = vi.fn();
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     creative: { findMany: creativeFindMany },
     task: { findMany: taskFindMany },
+    command: { findMany: commandFindMany },
     projectSchedule: { count: scheduleCount },
   },
 }));
@@ -48,6 +50,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   creativeFindMany.mockResolvedValue([slot("a"), slot("b")]);
   taskFindMany.mockResolvedValue([]);
+  commandFindMany.mockResolvedValue([]);
   scheduleCount.mockResolvedValue(0);
   getChannelConnections.mockResolvedValue({ instagram: { connected: true } });
   loadPlanResults.mockResolvedValue([]);
@@ -65,6 +68,97 @@ describe("loadJourneySnapshot", () => {
         },
       }),
     );
+  });
+
+  // W07: the default call is byte-identical to the pre-Works query and never
+  // reads Command rows.
+  it("without options the creative query is exactly the old one and no command is read", async () => {
+    const snapshot = await loadJourneySnapshot("proj-1");
+    expect(creativeFindMany).toHaveBeenCalledTimes(1);
+    expect(creativeFindMany.mock.calls[0]![0]).toEqual({
+      where: {
+        projectId: "proj-1",
+        planId: { not: null },
+        status: { not: "ARCHIVED" },
+      },
+      orderBy: [{ scheduledFor: { sort: "asc", nulls: "last" } }],
+      take: 300,
+      select: {
+        id: true,
+        planId: true,
+        status: true,
+        currentVersionId: true,
+        scheduledFor: true,
+        channel: true,
+        formatKey: true,
+        title: true,
+        platform: true,
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          select: { assetId: true },
+        },
+      },
+    });
+    expect(commandFindMany).not.toHaveBeenCalled();
+    expect(snapshot).not.toHaveProperty("workScoped");
+    await loadJourneySnapshot("proj-1", {});
+    expect(commandFindMany).not.toHaveBeenCalled();
+  });
+
+  it("with a workId it reads that Work's plan commands, then only creatives of those plans", async () => {
+    commandFindMany.mockResolvedValue([{ id: "plan-1" }, { id: "plan-2" }]);
+    const snapshot = await loadJourneySnapshot("proj-1", { workId: "w1" });
+    expect(commandFindMany).toHaveBeenCalledWith({
+      where: {
+        projectId: "proj-1",
+        workId: "w1",
+        parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" },
+      },
+      select: { id: true },
+      take: 200,
+    });
+    expect(creativeFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          projectId: "proj-1",
+          planId: { in: ["plan-1", "plan-2"] },
+          status: { not: "ARCHIVED" },
+        },
+      }),
+    );
+    expect(snapshot?.workScoped).toBe(true);
+    expect(snapshot?.items).toHaveLength(2);
+  });
+
+  it("a Work with no plans has no items but still reports the rest", async () => {
+    commandFindMany.mockResolvedValue([]);
+    loadPlanResults.mockResolvedValue([]);
+    const snapshot = await loadJourneySnapshot("proj-1", { workId: "w1" });
+    expect(creativeFindMany).not.toHaveBeenCalled();
+    expect(taskFindMany).not.toHaveBeenCalled();
+    expect(snapshot).toMatchObject({
+      today: "2026-10-01",
+      items: [],
+      workScoped: true,
+      connections: { instagram: { connected: true } },
+      publishScheduleEnabled: false,
+      results: [],
+    });
+  });
+
+  it("loadNextSteps passes the options through and keeps the null-safe behaviour", async () => {
+    commandFindMany.mockResolvedValue([{ id: "plan-1" }]);
+    creativeFindMany.mockResolvedValue([
+      slot("a", { status: "IN_REVIEW", currentVersionId: "v1" }),
+      slot("b", { status: "IN_REVIEW", currentVersionId: "v2" }),
+    ]);
+    const steps = await loadNextSteps("proj-1", { workId: "w1" });
+    expect(steps[0]?.action.kind).toBe("approve_plan");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    commandFindMany.mockRejectedValue(new Error("db down"));
+    expect(await loadJourneySnapshot("proj-1", { workId: "w1" })).toBeNull();
+    expect(await loadNextSteps("proj-1", { workId: "w1" })).toEqual([]);
   });
 
   it("derives each slot's stage, day and latest image", async () => {

@@ -1,8 +1,15 @@
 import { type CreativeCardData, isCreativeCardData } from "./creative-card";
 import type { ChatQuestion } from "@/server/chat/constants";
-import type { ChannelConnections } from "@/lib/content-channels";
+import type { ChannelConnections, ChannelKey } from "@/lib/content-channels";
+import type { ChannelOption } from "@/lib/works/work";
 import type { GuidedSetupCardData } from "@/lib/guided-setup/contract";
 import type { PlanItemStage } from "@/lib/journey";
+import type { BrandCheckState, BrandFlag } from "@/lib/works/brand-rules";
+import type { PlanOptionsCardData } from "@/lib/works/plan-options";
+import type { IdeaOptionsCardData } from "@/lib/works/idea-options";
+import type { MasterContentCardData } from "@/lib/works/master-content";
+import type { DailyBrief } from "@/lib/works/daily-brief";
+import type { AdsInsightCardData } from "@/lib/works/ads-insight";
 
 // Representation of EVERY pipeline event in an idea's chat (origin
 // signal/finding, insight/opportunity, idea birth, council decision, work
@@ -219,7 +226,24 @@ export type IdeaEventCardData =
         formatKey?: string;
         topic: string;
         captionIdea: string;
+        // Works-only, all optional so stored rows stay valid.
+        // Other takes on the same slot (other directions, "More ideas").
+        alternatives?: { topic: string; captionIdea: string; from?: string }[];
+        // Source label of the idea when it came from a direction.
+        from?: string;
+        origin?: { kind: "idea" | "master" | "brief" | "creative"; ref: string };
+        ideaId?: string;
+        brandFlags?: BrandFlag[];
+        // Set by removeSlotAction.
+        removed?: boolean;
       }[];
+      // Claim + run cap of "More ideas" (Works only).
+      alternativesMeta?: { runs: number; runningSince?: string };
+      fromOption?: { id: string; label: string };
+      // The master content this plan was adapted from (Works only).
+      master?: { title: string; message: string; ideaId?: string };
+      brandCheck?: BrandCheckState;
+      via?: "idea" | "master" | "suggestion" | "brief" | "generate" | "options";
       savedCreativeIds?: string[];
       // Production of the saved slots (plan-run.ts): set when a run is claimed
       // so a double click or a second tab cannot start the same pieces twice.
@@ -250,6 +274,9 @@ export type IdeaEventCardData =
       // start-date choices are computed from it.
       today: string;
       connections: ChannelConnections;
+      // The channels of the Work this plan is for (docs/works.md). Present: the
+      // wizard offers only these, all ticked. Absent: every channel, as before.
+      workChannels?: ChannelKey[];
       // Prefilled from the brand's current focus; the client can edit it.
       theme?: string;
       // What the next plan inherits from the last one (journey/continuation.ts):
@@ -297,6 +324,16 @@ export type IdeaEventCardData =
   // posting a new message, so the client always finds a single up-to-date
   // carousel instead of a growing pile of near-duplicate messages. Posted
   // project-wide (ideaId: null) — setup isn't scoped to any one idea.
+  // The channel gate of a Work (docs/works.md): which channel(s) the Work is
+  // for, with each channel's live connection state. Picking saves them on the
+  // Work; an unconnected one may be picked ("I'll connect later").
+  | {
+      kind: "channel-select";
+      projectId: string;
+      workId: string;
+      options: ChannelOption[];
+      selected: ChannelKey[];
+    }
   | {
       kind: "setup-demo-carousel";
       items: {
@@ -309,6 +346,13 @@ export type IdeaEventCardData =
         createdAt: string;
       }[];
     }
+  | PlanOptionsCardData
+  | IdeaOptionsCardData
+  | MasterContentCardData
+  // daily-brief and ads-insight are LIVE cards: built on every render, never
+  // persisted. They are registered only so the client accepts them.
+  | DailyBrief
+  | AdsInsightCardData
   | GuidedSetupCardData
   | CreativeCardData;
 
@@ -335,7 +379,25 @@ const EVENT_KINDS = new Set([
   "content-package",
   "setup-demo-carousel",
   "guided-setup",
+  "channel-select",
+  "content-plan-options",
+  "idea-options",
+  "master-content",
+  "daily-brief",
+  "ads-insight",
 ]);
+
+const CREATIVE_KINDS = [
+  "creative-loading",
+  "creative-ready",
+  "creative-failed",
+  "publish-prompt",
+];
+
+// Every kind a stored card may have (render-every-kind guard).
+export function cardKinds(): string[] {
+  return [...EVENT_KINDS, ...CREATIVE_KINDS].sort();
+}
 
 // Cards whose message keeps the model's lead-in sentence above them (the chat
 // hides the text of every other card kind).

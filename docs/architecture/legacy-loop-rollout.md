@@ -121,7 +121,7 @@ ORDER BY calls DESC;
 
 | Yüzey                                        | Durum                                                                                              |
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Signals / Insights / Opportunities panelleri | Meta, GA ve webhook sinyalleri gelir ve işlenir; genel OpenClaw taraması zaten sinyal üretmiyordu. |
+| Brand Brain → Intelligence sekmesi (eski Signals / Insights / Opportunities panelleri) | Meta, GA ve webhook sinyalleri gelir ve işlenir; genel OpenClaw taraması zaten sinyal üretmiyordu, bulgu (Finding) üretir. "Scan intensity" `drain/off`ta gizlenir. |
 | Ideas                                        | `save_idea` ve isteğe bağlı üretim, council-lite ile `SHORTLISTED`. Onay çalışır.                  |
 | Autopilot (Auto content planning)            | Çalışır; Meta Track 2 etkilenmez.                                                                  |
 | Work / Handoff / Measurement panelleri       | Yeni satır yok; mevcutlar `drain` ile bittikten sonra arşiv niteliğinde.                           |

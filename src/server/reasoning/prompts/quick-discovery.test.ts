@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { DISCOVERY_LIMITS } from "@/lib/guided-setup/contract";
 
 import { ConstitutionOutputSchema } from "./constitution-synthesis";
-import { quickDiscoveryDef } from "./quick-discovery";
+import { quickDiscoveryDef, quickDiscoveryGuidedDef } from "./quick-discovery";
 
 // The prompt is where the rules for untrusted input live, so they are pinned
 // here: a reworded prompt that drops one should fail a test, not ship.
@@ -188,5 +189,93 @@ describe("quickDiscoveryDef", () => {
       expect(mock.language).toBe("tr");
       expect(mock.country).toBe("TR");
     });
+  });
+});
+
+describe("quickDiscoveryGuidedDef", () => {
+  const base = quickDiscoveryDef.buildPrompt(context);
+  const guided = quickDiscoveryGuidedDef.buildPrompt(context);
+  const FIELDS = [
+    "identity",
+    "businessModel",
+    "products",
+    "markets",
+    "audiences",
+    "positioning",
+    "valueProposition",
+    "toneOfVoice",
+    "competitors",
+  ];
+
+  it("shares the purpose and web search with the plain def", () => {
+    expect(quickDiscoveryGuidedDef.purpose).toBe(quickDiscoveryDef.purpose);
+    expect(quickDiscoveryGuidedDef.webSearch).toBe(true);
+    expect(quickDiscoveryGuidedDef.maxTokens).toBe(quickDiscoveryDef.maxTokens);
+  });
+
+  it("keeps the base prompt text exactly and only appends the confidence rules", () => {
+    expect(guided.user).toBe(base.user);
+    expect(guided.system.startsWith(base.system)).toBe(true);
+    const extra = guided.system.slice(base.system.length);
+    for (const field of FIELDS) expect(extra).toContain(field);
+    expect(extra).toContain("score");
+    expect(extra).toContain("0-100");
+    for (const evidence of ["site", "web", "both", "inferred"]) {
+      expect(extra).toContain(`"${evidence}"`);
+    }
+    expect(extra).toContain("85 or more ONLY");
+    expect(extra).toContain("Never invent");
+    // The claim and untrusted-data rules of the base prompt are still there.
+    expect(guided.system).toContain("approvedClaims MUST be an empty array");
+    expect(guided.system).toContain("UNTRUSTED DATA");
+  });
+
+  it("leaves the plain def's prompt free of the confidence rules", () => {
+    expect(base.system).not.toContain("Confidence:");
+  });
+
+  it("extends the constitution schema with a confidence object and survives z.toJSONSchema", () => {
+    expect(() => z.toJSONSchema(quickDiscoveryGuidedDef.schema)).not.toThrow();
+    const json = z.toJSONSchema(quickDiscoveryGuidedDef.schema) as {
+      properties: Record<string, unknown>;
+    };
+    expect(json.properties).toHaveProperty("confidence");
+    expect(json.properties).toHaveProperty("identity");
+  });
+
+  it("parses a missing or malformed confidence entry to the lenient default", () => {
+    const mock = quickDiscoveryGuidedDef.buildMock(context);
+    const partial: Record<string, unknown> = { ...mock.confidence };
+    delete partial.identity;
+    const parsed = quickDiscoveryGuidedDef.schema.parse({
+      ...mock,
+      confidence: {
+        ...partial,
+        products: { score: "high", evidence: "telepathy" },
+        markets: { score: 90, evidence: "both" },
+      },
+    });
+
+    expect(parsed.confidence.identity).toEqual({
+      score: 0,
+      evidence: "inferred",
+    });
+    expect(parsed.confidence.products).toEqual({
+      score: 0,
+      evidence: "inferred",
+    });
+    expect(parsed.confidence.markets).toEqual({ score: 90, evidence: "both" });
+  });
+
+  it("builds a mock that satisfies the schema with neutral confidence", () => {
+    const mock = quickDiscoveryGuidedDef.buildMock(context);
+
+    expect(() => quickDiscoveryGuidedDef.schema.parse(mock)).not.toThrow();
+    expect(mock.approvedClaims).toEqual([]);
+    for (const field of FIELDS) {
+      const entry = mock.confidence[field as keyof typeof mock.confidence];
+      expect(entry.score).toBeLessThan(60);
+      expect(entry.evidence).toBe("inferred");
+    }
   });
 });

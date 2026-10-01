@@ -7,7 +7,7 @@ export const metadata: Metadata = {
     "How Agentelse collects, uses, and protects your data when you use your AI Growth Team.",
 };
 
-const LAST_UPDATED = "August 20, 2026";
+const LAST_UPDATED = "October 1, 2026";
 
 type PolicySection = {
   id: string;
@@ -138,6 +138,50 @@ const SECTIONS: PolicySection[] = [
           </li>
           <li>Any other party, where you have given us consent to do so.</li>
         </ul>
+      </>
+    ),
+  },
+  {
+    id: "instagram-data",
+    title: "Instagram and Meta connections",
+    body: (
+      <>
+        <p>
+          When you connect an Instagram professional (Business or Creator)
+          account, you sign in on Instagram&rsquo;s own screen and approve the
+          permissions listed there. Agentelse asks for two:
+        </p>
+        <ul className="flex flex-col gap-2 pl-5 list-disc">
+          <li>
+            <span className="text-foreground">instagram_business_basic</span> —
+            to read the account&rsquo;s id, username and account type, so we can
+            show which account is connected.
+          </li>
+          <li>
+            <span className="text-foreground">instagram_business_content_publish</span>{" "}
+            — to publish the posts and stories that you create or approve in
+            Agentelse to that account.
+          </li>
+        </ul>
+        <p>
+          We store the access token Instagram gives us (encrypted), the account
+          id, username and account type. We use them only to publish content you
+          approve and to show the connection. We do not read your followers,
+          messages or comments, we do not sell this data, and we do not use it
+          for advertising or to train AI models.
+        </p>
+        <p>
+          You can stop Agentelse from using the connection at any time with
+          Integrations &gt; Instagram &gt; Disconnect, or by removing Agentelse in
+          Instagram under Settings &gt; Apps and websites. To have the stored
+          Instagram data erased, ask Instagram to delete it when you remove the
+          app (we receive the request and erase it automatically), or email us.
+          Instructions and the status of a request are on our{" "}
+          <Link href="/data-deletion" className="underline underline-offset-4">
+            data deletion page
+          </Link>
+          . Posts already published to Instagram remain on Instagram.
+        </p>
       </>
     ),
   },

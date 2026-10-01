@@ -61,6 +61,8 @@ Aynı Meta uygulamasında kalınır, ama **Instagram uygulama kimliği ve sırr�
 - **"Invalid redirect_uri":** adres Instagram > API setup with Instagram login > "4. Set up Instagram business login" > Business login settings > OAuth redirect URIs listesinde birebir olmalı (Enter ile etiket olarak eklenir; "3. Configure webhooks" alanı başka bir şeydir). Yerelde Instagram yalnızca `https://` kabul eder: `npm run dev:https`, `.env.development.local` içinde `NEXT_PUBLIC_APP_URL=https://localhost:3000` ve Meta'ya `https://localhost:3000/api/integrations/meta/callback`.
 - Callback hataları sunucu loguna `[meta-callback] ... failed at "<adım>"` olarak yazılır ve entegrasyon penceresinde "Meta said: ..." satırı olarak görünür.
 
+Herkesin hesabını bağlayabilmek (Advanced Access / App Review), gerekli callback adresleri ve başvuru metinleri: `docs/instagram-app-review.md`.
+
 ## Bilinen sınırlar
 
 - Token yenileme yok (`ig_refresh_token` kullanılmadı); 60 günde bir yeniden bağlanmak gerekir. Facebook yolunda da durum aynıydı.

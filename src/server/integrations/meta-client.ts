@@ -121,6 +121,9 @@ export type MetaInstagramMetadata = MetaConnectionInfo & {
   login?: "instagram";
   instagramAccount?: {
     id: string;
+    // Instagram's app-scoped id for the same person. Meta's deauthorize and data
+    // deletion requests name the person by it, so it is kept to match them.
+    appScopedId?: string;
     username?: string;
     // BUSINESS or MEDIA_CREATOR as Instagram reports it.
     accountType?: string;
@@ -387,7 +390,12 @@ export async function exchangeInstagramLongLivedToken(
 // account id every publishing call is addressed to (`id` is an app-scoped id).
 export async function fetchInstagramLoginProfile(
   accessToken: string,
-): Promise<{ id: string; username?: string; accountType?: string }> {
+): Promise<{
+  id: string;
+  appScopedId?: string;
+  username?: string;
+  accountType?: string;
+}> {
   const result = await request<{
     id?: string;
     user_id?: string | number;
@@ -402,6 +410,11 @@ export async function fetchInstagramLoginProfile(
   }
   return {
     id: String(id),
+    // `id` is the app-scoped id whenever `user_id` is present too.
+    appScopedId:
+      result.user_id !== undefined && result.id !== undefined
+        ? String(result.id)
+        : undefined,
     username: result.username,
     accountType: result.account_type,
   };

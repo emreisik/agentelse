@@ -9,6 +9,15 @@ export function isPublicPath(pathname: string): boolean {
     pathname === "/register" ||
     pathname === "/privacy" ||
     pathname === "/terms" ||
+    // How to delete Instagram data, and the status page Meta links a person to
+    // after a deletion request (its confirmation code is signed). Meta's
+    // reviewers and users open it without an account.
+    pathname === "/data-deletion" ||
+    // Meta's own server-to-server calls (someone removed the app / asked for
+    // their data to be deleted). No session; each verifies Meta's signed_request
+    // itself (see meta-data-requests.ts) and answers 400 without a valid one.
+    pathname === "/api/integrations/meta/deauthorize" ||
+    pathname === "/api/integrations/meta/data-deletion" ||
     pathname === "/api/auth" ||
     pathname.startsWith("/api/auth/") ||
     // Has its own signed-token verification (see

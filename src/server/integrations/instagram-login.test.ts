@@ -138,6 +138,9 @@ describe("Instagram Login token exchange", () => {
     );
     expect(await fetchInstagramLoginProfile("tok")).toEqual({
       id: "17841400",
+      // `id` is the app-scoped id: kept, because Meta's deauthorize / deletion
+      // requests name the person by it.
+      appScopedId: "app-scoped",
       username: "webhealth",
       accountType: "BUSINESS",
     });

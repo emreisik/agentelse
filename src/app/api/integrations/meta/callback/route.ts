@@ -139,10 +139,12 @@ export async function GET(request: Request) {
   let instagramProfile:
     | Awaited<ReturnType<typeof fetchInstagramLoginProfile>>
     | undefined;
+  let instagramAuthUserId: string | undefined;
   let step = "code exchange";
   try {
     if (viaInstagram) {
       const shortLived = await exchangeInstagramAuthCode(code);
+      instagramAuthUserId = shortLived.userId;
       step = "long-lived token";
       longLivedToken = await exchangeInstagramLongLivedToken(
         shortLived.accessToken,
@@ -206,6 +208,7 @@ export async function GET(request: Request) {
         login: "instagram",
         instagramAccount: {
           id: instagramProfile.id,
+          appScopedId: instagramProfile.appScopedId ?? instagramAuthUserId,
           username: instagramProfile.username,
           accountType: instagramProfile.accountType,
         },

@@ -147,7 +147,7 @@ describe("callback (Instagram Login)", () => {
       service: "instagram",
       login: "instagram",
     });
-    mocks.exchangeInstagramAuthCode.mockResolvedValue({ accessToken: "short" });
+    mocks.exchangeInstagramAuthCode.mockResolvedValue({ accessToken: "short", userId: "scoped-99" });
     mocks.exchangeInstagramLongLivedToken.mockResolvedValue({
       accessToken: "long",
       expiresIn: 5184000,
@@ -177,7 +177,8 @@ describe("callback (Instagram Login)", () => {
     });
     expect(saved.metadata).toMatchObject({
       login: "instagram",
-      instagramAccount: { id: "17841400", username: "webhealth", accountType: "BUSINESS" },
+      // Both ids are kept: Meta's deauthorize / deletion requests name the person by the app-scoped one.
+      instagramAccount: { id: "17841400", appScopedId: "scoped-99", username: "webhealth", accountType: "BUSINESS" },
       pages: [],
       connectedName: "@webhealth",
     });

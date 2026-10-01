@@ -37,6 +37,8 @@ vi.mock("@/server/storage/asset-storage", () => ({
 }));
 
 const metaClientMocks = vi.hoisted(() => ({
+  publishInstagramPost: vi.fn(),
+  fetchPageAccessToken: vi.fn(),
   uploadMetaAdVideo: vi.fn(),
   checkMetaVideoStatus: vi.fn(),
   createMetaVideoAdCreative: vi.fn(),
@@ -51,6 +53,8 @@ vi.mock("@/server/integrations/meta-client", async (importOriginal) => {
     await importOriginal<typeof import("@/server/integrations/meta-client")>();
   return {
     ...actual,
+    publishInstagramPost: metaClientMocks.publishInstagramPost,
+    fetchPageAccessToken: metaClientMocks.fetchPageAccessToken,
     uploadMetaAdVideo: metaClientMocks.uploadMetaAdVideo,
     checkMetaVideoStatus: metaClientMocks.checkMetaVideoStatus,
     createMetaVideoAdCreative: metaClientMocks.createMetaVideoAdCreative,
@@ -907,6 +911,30 @@ describe("MetaApiProvider credential routing", () => {
     }
   });
 
+  it("allows INSTAGRAM_PUBLISH for an account connected through Instagram Login, with no Page at all", async () => {
+    prismaMocks.credentialFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      metadata: {
+        login: "instagram",
+        instagramAccount: { id: "17841400", username: "webhealth" },
+        pages: [],
+      },
+    });
+    expect(
+      await new MetaApiProvider().canExecute("INSTAGRAM_PUBLISH", context),
+    ).toBe(true);
+  });
+
+  it("an Instagram Login row without an account is not publishable", async () => {
+    prismaMocks.credentialFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      metadata: { login: "instagram", pages: [] },
+    });
+    expect(
+      await new MetaApiProvider().canExecute("INSTAGRAM_PUBLISH", context),
+    ).toBe(false);
+  });
+
   it("does not let an ads credential enable Instagram publishing", async () => {
     // An ads-shaped credential has no Instagram-linked Page selected.
     prismaMocks.credentialFindUnique.mockResolvedValue({
@@ -921,5 +949,89 @@ describe("MetaApiProvider credential routing", () => {
     expect(
       await new MetaApiProvider().canExecute("INSTAGRAM_PUBLISH", context),
     ).toBe(false);
+  });
+});
+
+describe("MetaApiProvider INSTAGRAM_PUBLISH", () => {
+  const publishRequest = (): ExecutionRequest => ({
+    executionJobId: "job-ig",
+    correlationId: "corr-ig",
+    idempotencyKey: "idem-ig",
+    capability: "INSTAGRAM_PUBLISH",
+    context,
+    payload: { imageUrl: "https://cdn.example.com/a.png", caption: "Hello" },
+  });
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    envMocks.configured = true;
+    metaClientMocks.publishInstagramPost.mockResolvedValue({ postId: "post-1" });
+    metaClientMocks.fetchPageAccessToken.mockResolvedValue("page-token");
+  });
+
+  it("Instagram Login publishes with the account's own token on Instagram's host, never deriving a Page token", async () => {
+    prismaMocks.credentialFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      encryptedSecret: "encrypted",
+      metadata: {
+        login: "instagram",
+        instagramAccount: { id: "17841400", username: "webhealth" },
+        pages: [],
+      },
+    });
+    const provider = new MetaApiProvider();
+    await provider.execute(publishRequest());
+
+    expect(metaClientMocks.fetchPageAccessToken).not.toHaveBeenCalled();
+    expect(metaClientMocks.publishInstagramPost).toHaveBeenCalledWith({
+      instagramBusinessAccountId: "17841400",
+      pageAccessToken: "decrypted-access-token",
+      imageUrl: "https://cdn.example.com/a.png",
+      caption: "Hello",
+      mediaType: undefined,
+      api: "instagram",
+    });
+    expect((await provider.getStatus("corr-ig")).status).toBe("COMPLETED");
+  });
+
+  it("the Facebook route still derives the Page token and publishes on the Facebook host", async () => {
+    prismaMocks.credentialFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      encryptedSecret: "encrypted",
+      metadata: {
+        selectedPageId: "page-1",
+        pages: [
+          { pageId: "page-1", pageName: "Test Page", instagramBusinessAccountId: "ig-1" },
+        ],
+      },
+    });
+    await new MetaApiProvider().execute(publishRequest());
+
+    expect(metaClientMocks.fetchPageAccessToken).toHaveBeenCalledWith(
+      "page-1",
+      "decrypted-access-token",
+    );
+    expect(metaClientMocks.publishInstagramPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instagramBusinessAccountId: "ig-1",
+        pageAccessToken: "page-token",
+        api: "facebook",
+      }),
+    );
+  });
+
+  it("fails clearly when an Instagram Login row has no account", async () => {
+    prismaMocks.credentialFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      encryptedSecret: "encrypted",
+      metadata: { login: "instagram", pages: [] },
+    });
+    const provider = new MetaApiProvider();
+    await provider.execute(publishRequest());
+    expect(metaClientMocks.publishInstagramPost).not.toHaveBeenCalled();
+    expect(await provider.getStatus("corr-ig")).toMatchObject({
+      status: "FAILED",
+      errorMessage: "No Instagram account is connected",
+    });
   });
 });

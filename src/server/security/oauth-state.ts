@@ -21,6 +21,10 @@ type OAuthStatePayload = {
   // (analytics / search_console) this grant is for, since both share one
   // callback URL. See google-client.ts's GOOGLE_SERVICES.
   service?: string;
+  // Only filled in by Meta's Instagram service — "instagram" when the grant
+  // is made through Instagram Login (no Facebook account), absent for the
+  // Facebook Login route. Both share one callback URL.
+  login?: string;
 };
 
 function sign(payloadB64: string): string {
@@ -32,7 +36,7 @@ function sign(payloadB64: string): string {
 export function signOAuthState(
   input: Pick<
     OAuthStatePayload,
-    "projectId" | "userId" | "codeVerifier" | "service"
+    "projectId" | "userId" | "codeVerifier" | "service" | "login"
   >,
 ): string {
   const payload: OAuthStatePayload = { ...input, issuedAt: Date.now() };
@@ -44,7 +48,7 @@ export function verifyOAuthState(
   token: string,
 ): Pick<
     OAuthStatePayload,
-    "projectId" | "userId" | "codeVerifier" | "service"
+    "projectId" | "userId" | "codeVerifier" | "service" | "login"
   > | null {
   const [payloadB64, sig] = token.split(".");
   if (!payloadB64 || !sig) return null;
@@ -71,7 +75,8 @@ export function verifyOAuthState(
     typeof payload.issuedAt !== "number" ||
     (payload.codeVerifier !== undefined &&
       typeof payload.codeVerifier !== "string") ||
-    (payload.service !== undefined && typeof payload.service !== "string")
+    (payload.service !== undefined && typeof payload.service !== "string") ||
+    (payload.login !== undefined && typeof payload.login !== "string")
   ) {
     return null;
   }
@@ -82,5 +87,6 @@ export function verifyOAuthState(
     userId: payload.userId,
     codeVerifier: payload.codeVerifier,
     service: payload.service,
+    login: payload.login,
   };
 }

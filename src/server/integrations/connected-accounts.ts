@@ -14,8 +14,10 @@ import {
 // Reads where the project's accounts stand for the right panel's "Bağlı
 // hesaplar" card: Instagram, Meta Ads and the simple channels through the same
 // source the plan card and the creative card use (getChannelConnections), the
-// Facebook Page linked through the Instagram connection, GA4 and Search Console
-// (linked AND a property/site chosen), and whether the project has a website.
+// Facebook Page (the one picked with the Instagram connection on the Facebook
+// route, else the one Meta Ads runs as; an account connected through Instagram
+// Login has no Page), GA4 and Search Console (linked AND a property/site
+// chosen), and whether the project has a website.
 // Never throws into the page: on any failure the card simply has no rows.
 
 const GOOGLE_PROVIDERS = {
@@ -36,6 +38,7 @@ export async function loadConnectedAccounts(
           provider: {
             in: [
               META_PROVIDER.instagram,
+              META_PROVIDER.ads,
               GOOGLE_PROVIDERS.ga4,
               GOOGLE_PROVIDERS.searchConsole,
             ],
@@ -52,6 +55,16 @@ export async function loadConnectedAccounts(
       );
     const meta = (active(META_PROVIDER.instagram)?.metadata ??
       null) as Partial<MetaInstagramMetadata> | null;
+    const adsMeta = (active(META_PROVIDER.ads)?.metadata ?? null) as {
+      selectedPageId?: string;
+      selectedPageName?: string;
+    } | null;
+    const facebookPage =
+      meta?.login !== "instagram" && meta?.selectedPageId !== undefined
+        ? { name: meta.selectedPageName }
+        : adsMeta?.selectedPageId !== undefined
+          ? { name: adsMeta.selectedPageName }
+          : null;
     const ga4 = (active(GOOGLE_PROVIDERS.ga4)?.metadata ?? null) as {
       selectedGa4PropertyId?: string;
       selectedGa4PropertyName?: string;
@@ -64,13 +77,7 @@ export async function loadConnectedAccounts(
         connected: connections.instagram?.connected === true,
         label: connections.instagram?.accountLabel,
       },
-      // The Page picked when Instagram was connected: Instagram publishing
-      // goes through a Facebook Page, so having one selected is the Page being
-      // linked.
-      facebookPage:
-        meta?.selectedPageId !== undefined
-          ? { name: meta.selectedPageName }
-          : null,
+      facebookPage,
       metaAds: {
         connected: connections.ads?.connected === true,
         label: connections.ads?.accountLabel,

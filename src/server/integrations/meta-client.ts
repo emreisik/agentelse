@@ -11,6 +11,27 @@ const GRAPH_API_VERSION = "v26.0";
 const AUTHORIZE_URL = `https://www.facebook.com/${GRAPH_API_VERSION}/dialog/oauth`;
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
+// "Instagram API with Instagram Login": the same Instagram Content Publishing,
+// but the grant is made on Instagram's own consent screen and the token is the
+// Instagram account's own, so there is no Facebook account, no Page and no
+// Page access token. Different hosts, different scopes, and its own app ID and
+// secret (INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET, see env.ts).
+const INSTAGRAM_AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize";
+const INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token";
+const INSTAGRAM_GRAPH_BASE = `https://graph.instagram.com/${GRAPH_API_VERSION}`;
+const INSTAGRAM_GRAPH_ROOT = "https://graph.instagram.com";
+const INSTAGRAM_LOGIN_SCOPES = [
+  "instagram_business_basic",
+  "instagram_business_content_publish",
+];
+
+// Which Graph host an Instagram call goes to: the Facebook one (Page token) or
+// Instagram's own (Instagram Login token).
+export type InstagramApi = "facebook" | "instagram";
+function graphBaseFor(api: InstagramApi): string {
+  return api === "instagram" ? INSTAGRAM_GRAPH_BASE : GRAPH_BASE;
+}
+
 const DEFAULT_TIMEOUT_MS = 8_000;
 
 // Instagram and Meta Ads are two independent integrations: each has its own
@@ -90,7 +111,20 @@ type MetaConnectionInfo = {
 
 // provider "instagram": `pages` only lists Pages that have a linked
 // Instagram Business account — that is what publishing needs.
+//
+// Two routes land in the same row. Facebook Login (`login` absent): `pages`
+// lists the Pages that have a linked Instagram account, one is selected, and
+// the token is a Facebook user token a Page token is derived from. Instagram
+// Login (`login: "instagram"`): there is no Page, `pages` stays empty, the
+// account is `instagramAccount`, and the token is the account's own.
 export type MetaInstagramMetadata = MetaConnectionInfo & {
+  login?: "instagram";
+  instagramAccount?: {
+    id: string;
+    username?: string;
+    // BUSINESS or MEDIA_CREATOR as Instagram reports it.
+    accountType?: string;
+  };
   pages: MetaPage[];
   pagesListError?: string;
   selectedPageId?: string;
@@ -190,12 +224,17 @@ async function request<T>(
   if (!res.ok) {
     const errorBody = body as {
       error?: { message?: string; code?: number; error_subcode?: number };
+      // The Instagram Login token endpoint answers in this flatter shape.
+      error_message?: string;
+      code?: number;
     } | null;
     const message =
-      errorBody?.error?.message ?? `Meta API error (HTTP ${res.status})`;
+      errorBody?.error?.message ??
+      errorBody?.error_message ??
+      `Meta API error (HTTP ${res.status})`;
     throw new MetaApiError(
       message,
-      errorBody?.error?.code,
+      errorBody?.error?.code ?? errorBody?.code,
       errorBody?.error?.error_subcode,
     );
   }
@@ -261,6 +300,92 @@ export async function exchangeForLongLivedToken(
   return {
     accessToken: result.access_token,
     expiresIn: result.expires_in ?? 60 * 24 * 60 * 60,
+  };
+}
+
+export function buildInstagramLoginAuthorizeUrl(state: string): string {
+  const params = new URLSearchParams({
+    client_id: getEnv().INSTAGRAM_APP_ID,
+    redirect_uri: redirectUri(),
+    response_type: "code",
+    scope: INSTAGRAM_LOGIN_SCOPES.join(","),
+    state,
+  });
+  return `${INSTAGRAM_AUTHORIZE_URL}?${params.toString()}`;
+}
+
+// Instagram's token endpoint takes a form POST and answers either with the
+// flat `{access_token, user_id}` or, since the 2024 launch, with the same inside
+// a `data` array — both are read.
+export async function exchangeInstagramAuthCode(
+  code: string,
+): Promise<{ accessToken: string; userId?: string }> {
+  const env = getEnv();
+  const result = await request<{
+    access_token?: string;
+    user_id?: number | string;
+    data?: Array<{ access_token?: string; user_id?: number | string }>;
+  }>(INSTAGRAM_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: env.INSTAGRAM_APP_ID,
+      client_secret: env.INSTAGRAM_APP_SECRET,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri(),
+      // Instagram sometimes hands the code back with a trailing "#_".
+      code: code.replace(/#_$/, ""),
+    }).toString(),
+  });
+  const entry = result.data?.[0] ?? result;
+  if (!entry.access_token) {
+    throw new MetaApiError("Instagram did not return an access token");
+  }
+  return {
+    accessToken: entry.access_token,
+    userId: entry.user_id !== undefined ? String(entry.user_id) : undefined,
+  };
+}
+
+// Short-lived (1 hour) -> long-lived (60 days) Instagram token.
+export async function exchangeInstagramLongLivedToken(
+  shortLivedToken: string,
+): Promise<{ accessToken: string; expiresIn: number }> {
+  const params = new URLSearchParams({
+    grant_type: "ig_exchange_token",
+    client_secret: getEnv().INSTAGRAM_APP_SECRET,
+    access_token: shortLivedToken,
+  });
+  const result = await request<{ access_token: string; expires_in?: number }>(
+    `${INSTAGRAM_GRAPH_ROOT}/access_token?${params.toString()}`,
+  );
+  return {
+    accessToken: result.access_token,
+    expiresIn: result.expires_in ?? 60 * 24 * 60 * 60,
+  };
+}
+
+// The account the token belongs to. `user_id` is the Instagram professional
+// account id every publishing call is addressed to (`id` is an app-scoped id).
+export async function fetchInstagramLoginProfile(
+  accessToken: string,
+): Promise<{ id: string; username?: string; accountType?: string }> {
+  const result = await request<{
+    id?: string;
+    user_id?: string | number;
+    username?: string;
+    account_type?: string;
+  }>(
+    `${INSTAGRAM_GRAPH_BASE}/me?fields=user_id,username,account_type&access_token=${encodeURIComponent(accessToken)}`,
+  );
+  const id = result.user_id ?? result.id;
+  if (id === undefined) {
+    throw new MetaApiError("Instagram did not return the account id");
+  }
+  return {
+    id: String(id),
+    username: result.username,
+    accountType: result.account_type,
   };
 }
 
@@ -414,9 +539,10 @@ export function reconcileAdAccountSelection(
 export async function verifyInstagramAccess(
   instagramBusinessAccountId: string,
   pageAccessToken: string,
+  api: InstagramApi = "facebook",
 ): Promise<string> {
   const result = await request<{ username?: string }>(
-    `${GRAPH_BASE}/${instagramBusinessAccountId}?fields=username&access_token=${encodeURIComponent(pageAccessToken)}`,
+    `${graphBaseFor(api)}/${instagramBusinessAccountId}?fields=username&access_token=${encodeURIComponent(pageAccessToken)}`,
   );
   return result.username ?? instagramBusinessAccountId;
 }
@@ -432,10 +558,11 @@ const CONTAINER_POLL_MAX_ATTEMPTS = 15; // ~30s — plenty for a single image.
 async function waitForContainerReady(
   creationId: string,
   accessToken: string,
+  api: InstagramApi,
 ): Promise<void> {
   for (let attempt = 0; attempt < CONTAINER_POLL_MAX_ATTEMPTS; attempt++) {
     const status = await request<{ status_code?: string }>(
-      `${GRAPH_BASE}/${creationId}?fields=status_code&access_token=${encodeURIComponent(accessToken)}`,
+      `${graphBaseFor(api)}/${creationId}?fields=status_code&access_token=${encodeURIComponent(accessToken)}`,
     );
     if (status.status_code === "FINISHED") return;
     if (status.status_code === "ERROR" || status.status_code === "EXPIRED") {
@@ -465,14 +592,18 @@ const MEDIA_CONTAINER_CREATE_TIMEOUT_MS = 20_000;
 // — see src/server/media). If mediaType is "STORIES", it's published as a
 // Story — Stories have NO caption field (a Meta API constraint; the text
 // must already be embedded in the image), so caption is only sent in
-// normal post (FEED) mode.
+// normal post (FEED) mode. `pageAccessToken` is the Page token on the Facebook
+// route and the account's own token on the Instagram Login route (`api`).
 export async function publishInstagramPost(input: {
   instagramBusinessAccountId: string;
   pageAccessToken: string;
   imageUrl: string;
   caption: string;
   mediaType?: "STORIES";
+  api?: InstagramApi;
 }): Promise<{ postId: string }> {
+  const api = input.api ?? "facebook";
+  const base = graphBaseFor(api);
   const body: Record<string, string> = {
     image_url: input.imageUrl,
     access_token: input.pageAccessToken,
@@ -484,7 +615,7 @@ export async function publishInstagramPost(input: {
   }
 
   const creation = await request<{ id: string }>(
-    `${GRAPH_BASE}/${input.instagramBusinessAccountId}/media`,
+    `${base}/${input.instagramBusinessAccountId}/media`,
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -493,10 +624,10 @@ export async function publishInstagramPost(input: {
     MEDIA_CONTAINER_CREATE_TIMEOUT_MS,
   );
 
-  await waitForContainerReady(creation.id, input.pageAccessToken);
+  await waitForContainerReady(creation.id, input.pageAccessToken, api);
 
   const published = await request<{ id: string }>(
-    `${GRAPH_BASE}/${input.instagramBusinessAccountId}/media_publish`,
+    `${base}/${input.instagramBusinessAccountId}/media_publish`,
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },

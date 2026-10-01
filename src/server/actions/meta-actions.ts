@@ -14,13 +14,16 @@ import {
   META_SERVICE_LABEL,
   MetaApiError,
   fetchMetaAdsInsights,
-  fetchPageAccessToken,
   parseMetaService,
   verifyInstagramAccess,
   type MetaAdsMetadata,
   type MetaInstagramMetadata,
   type MetaService,
 } from "@/server/integrations/meta-client";
+import {
+  instagramAccessFor,
+  resolveInstagramTarget,
+} from "@/server/integrations/instagram-target";
 
 export type ActionResult = { ok: true } | { ok: false; message: string };
 
@@ -162,22 +165,21 @@ export async function testMetaConnectionAction(
     try {
       if (service === "instagram") {
         const metadata = (credential.metadata ?? {}) as MetaInstagramMetadata;
-        const page = metadata.pages?.find(
-          (p) => p.pageId === metadata.selectedPageId,
-        );
-        if (!page?.instagramBusinessAccountId) {
+        const target = resolveInstagramTarget(metadata);
+        if (!target) {
           return {
             ok: false,
-            message: "Select a Page with a linked Instagram account first",
+            message:
+              metadata.login === "instagram"
+                ? "No Instagram account is connected"
+                : "Select a Page with a linked Instagram account first",
           };
         }
-        const pageAccessToken = await fetchPageAccessToken(
-          page.pageId,
-          accessToken,
-        );
+        const access = await instagramAccessFor(target, accessToken);
         const igUsername = await verifyInstagramAccess(
-          page.instagramBusinessAccountId,
-          pageAccessToken,
+          target.igUserId,
+          access.accessToken,
+          access.api,
         );
         testedAt = new Date().toISOString();
         nextMetadata = { ...metadata, lastTestResult: { testedAt, igUsername } };

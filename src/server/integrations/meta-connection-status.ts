@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { resolveInstagramTarget } from "@/server/integrations/instagram-target";
 import {
   META_PROVIDER,
   type MetaInstagramMetadata,
@@ -9,15 +10,19 @@ import {
 // Which of a project's accounts with a real OAuth connection can actually
 // be published to — the SINGLE source of data that the "Share on Social
 // Accounts" section on the creative card (see creative-card.tsx) lists
-// (for Instagram, the metadata.pages matching logic is the same as
-// canExecute() in meta-api-provider.ts). Instagram requires being linked
-// to a selected Page (Instagram integration); TikTok/LinkedIn/X have no extra selection step
+// (for Instagram, resolveInstagramTarget is the same check canExecute() in
+// meta-api-provider.ts makes). Instagram needs either an account connected
+// through Instagram Login or a selected Page with a linked account (Facebook
+// Login); TikTok/LinkedIn/X have no extra selection step
 // — a single ACTIVE IntegrationCredential is enough (see
 // getSimpleCredentialTarget).
 export type PublishTarget =
   | {
       platform: "instagram";
+      // Unique key of the account on the creative card. The Facebook Page's id
+      // on the Facebook route; the Instagram account's own id on Instagram Login.
       pageId: string;
+      // The card's title: the Page's name, or @username on Instagram Login.
       pageName: string;
       igUsername?: string;
     }
@@ -35,18 +40,19 @@ async function getInstagramTargets(
   });
   if (!credential || credential.status !== "ACTIVE") return [];
 
-  const metadata = (credential.metadata ?? {}) as MetaInstagramMetadata;
-  const page = metadata.pages?.find(
-    (p) => p.pageId === metadata.selectedPageId,
+  const target = resolveInstagramTarget(
+    (credential.metadata ?? {}) as MetaInstagramMetadata,
   );
-  if (!page?.instagramBusinessAccountId) return [];
+  if (!target) return [];
 
   return [
     {
       platform: "instagram",
-      pageId: page.pageId,
-      pageName: page.pageName,
-      igUsername: page.instagramUsername,
+      pageId: target.pageId ?? target.igUserId,
+      pageName:
+        target.pageName ??
+        (target.username ? `@${target.username}` : "Instagram"),
+      igUsername: target.username,
     },
   ];
 }

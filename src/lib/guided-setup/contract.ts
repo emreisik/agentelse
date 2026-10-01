@@ -317,9 +317,8 @@ export const CHANNEL_HINTS: Record<ChannelKey, string> = {
 };
 
 // How hands-on the agency is for this project (AutonomyPolicy.autopilotMode).
-// Closed vocabulary, mirrors the wording of the Autopilot card
-// (src/components/workspace/autopilot-card.tsx AUTOPILOT_NOTE); shown read-only on
-// Review so the person knows what a saved goal can lead to.
+// Closed vocabulary, mirrors the wording of the Autopilot setting (Settings >
+// Autonomy); shown read-only on Review so the person knows what a saved goal can lead to.
 export const HANDS_ON_MODES = [
   "REVIEW_EVERYTHING",
   "CREATE_AUTOMATICALLY",

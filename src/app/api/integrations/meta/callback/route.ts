@@ -13,7 +13,10 @@ import {
   META_PROVIDER,
   META_SERVICE_LABEL,
   exchangeForLongLivedToken,
+  exchangeInstagramAuthCode,
+  exchangeInstagramLongLivedToken,
   exchangeMetaAuthCode,
+  fetchInstagramLoginProfile,
   fetchMetaAccountName,
   fetchMetaAdAccountList,
   fetchMetaPageList,
@@ -73,10 +76,16 @@ async function buildMetadata(
   };
 }
 
+// Instagram's own account types: only these can publish through the API. A
+// personal account cannot, and Instagram says so on its consent screen.
+const PROFESSIONAL_ACCOUNT_TYPES = ["BUSINESS", "MEDIA_CREATOR", "CREATOR"];
+
 // Return from Meta's consent screen — exchanges the code for a long-lived
 // token, lists what the service needs (Pages with a linked Instagram
 // Business account, or ad accounts + Pages) and establishes that service's
-// connection. Same skeleton as google/callback/route.ts.
+// connection. Same skeleton as google/callback/route.ts. A grant made through
+// Instagram Login (state.login === "instagram") skips the Page list: the
+// account itself is the connection.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
@@ -119,12 +128,33 @@ export async function GET(request: Request) {
     return redirectToIntegrations(state.projectId, service, "state_invalid");
   }
 
+  const viaInstagram = service === "instagram" && state.login === "instagram";
+
   let longLivedToken: { accessToken: string; expiresIn: number };
+  let instagramProfile:
+    | Awaited<ReturnType<typeof fetchInstagramLoginProfile>>
+    | undefined;
   try {
-    const shortLived = await exchangeMetaAuthCode(code);
-    longLivedToken = await exchangeForLongLivedToken(shortLived.accessToken);
+    if (viaInstagram) {
+      const shortLived = await exchangeInstagramAuthCode(code);
+      longLivedToken = await exchangeInstagramLongLivedToken(
+        shortLived.accessToken,
+      );
+      instagramProfile = await fetchInstagramLoginProfile(
+        longLivedToken.accessToken,
+      );
+    } else {
+      const shortLived = await exchangeMetaAuthCode(code);
+      longLivedToken = await exchangeForLongLivedToken(shortLived.accessToken);
+    }
   } catch {
     return redirectToIntegrations(state.projectId, service, "exchange_failed");
+  }
+  if (
+    instagramProfile?.accountType &&
+    !PROFESSIONAL_ACCOUNT_TYPES.includes(instagramProfile.accountType)
+  ) {
+    return redirectToIntegrations(state.projectId, service, "not_professional");
   }
 
   const provider = META_PROVIDER[service];
@@ -135,18 +165,36 @@ export async function GET(request: Request) {
   // Even if a list fails (e.g. permission wasn't granted for that Page), the
   // connection is still established — the error message is stored in the
   // metadata and shown in the dialog.
-  const connectedName = await fetchMetaAccountName(longLivedToken.accessToken);
-  const metadata = await buildMetadata(
-    service,
-    longLivedToken.accessToken,
-    {
-      connectedName: connectedName ?? undefined,
-      longLivedTokenExpiresAt: new Date(
-        Date.now() + longLivedToken.expiresIn * 1000,
-      ).toISOString(),
-    },
-    (existing?.metadata ?? {}) as Record<string, unknown>,
-  );
+  const connectedName = instagramProfile
+    ? instagramProfile.username
+      ? `@${instagramProfile.username}`
+      : null
+    : await fetchMetaAccountName(longLivedToken.accessToken);
+  const connection = {
+    connectedName: connectedName ?? undefined,
+    longLivedTokenExpiresAt: new Date(
+      Date.now() + longLivedToken.expiresIn * 1000,
+    ).toISOString(),
+  };
+  // A fresh Instagram Login row replaces whatever a previous Facebook-route
+  // connection held (its Page list and selection mean nothing here).
+  const metadata: MetaInstagramMetadata | MetaAdsMetadata = instagramProfile
+    ? {
+        ...connection,
+        login: "instagram",
+        instagramAccount: {
+          id: instagramProfile.id,
+          username: instagramProfile.username,
+          accountType: instagramProfile.accountType,
+        },
+        pages: [],
+      }
+    : await buildMetadata(
+        service,
+        longLivedToken.accessToken,
+        connection,
+        (existing?.metadata ?? {}) as Record<string, unknown>,
+      );
   const accountLabel = connectedName ?? META_SERVICE_LABEL[service];
 
   const credential = await prisma.integrationCredential.upsert({

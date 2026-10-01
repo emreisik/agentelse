@@ -19,7 +19,6 @@ import {
   createMetaCampaign,
   createMetaCarouselAdCreative,
   createMetaVideoAdCreative,
-  fetchPageAccessToken,
   publishInstagramPost,
   updateMetaAd,
   updateMetaAdSet,
@@ -31,6 +30,10 @@ import {
   type MetaInstagramMetadata,
   type MetaService,
 } from "@/server/integrations/meta-client";
+import {
+  instagramAccessFor,
+  resolveInstagramTarget,
+} from "@/server/integrations/instagram-target";
 import {
   DATE_PRESETS,
   DEFAULT_DATE_PRESET,
@@ -314,7 +317,12 @@ export class MetaApiProvider implements ExecutionProvider {
   readonly type: ExecutionProviderType = "API";
 
   get isConfigured(): boolean {
-    return isIntegrationConfigured("META");
+    // Instagram Login has its own app credentials, so a project connected that
+    // way can publish even where only those are set.
+    return (
+      isIntegrationConfigured("META") ||
+      isIntegrationConfigured("INSTAGRAM_LOGIN")
+    );
   }
 
   async canExecute(
@@ -331,11 +339,11 @@ export class MetaApiProvider implements ExecutionProvider {
     if (!credential) return false;
 
     if (capability === "INSTAGRAM_PUBLISH") {
-      const igMetadata = (credential.metadata ?? {}) as MetaInstagramMetadata;
-      const page = igMetadata.pages?.find(
-        (p) => p.pageId === igMetadata.selectedPageId,
+      return (
+        resolveInstagramTarget(
+          credential.metadata as Partial<MetaInstagramMetadata> | null,
+        ) !== null
       );
-      return Boolean(page?.instagramBusinessAccountId);
     }
     const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
     if (capability === "META_AD_CREATE") {
@@ -755,13 +763,14 @@ export class MetaApiProvider implements ExecutionProvider {
     accessToken: string,
     payload: Record<string, unknown>,
   ): Promise<StoredResult> {
-    const page = metadata.pages?.find(
-      (p) => p.pageId === metadata.selectedPageId,
-    );
-    if (!page?.instagramBusinessAccountId) {
+    const target = resolveInstagramTarget(metadata);
+    if (!target) {
       return {
         status: "FAILED",
-        errorMessage: "The selected Page has no connected Instagram account",
+        errorMessage:
+          metadata.login === "instagram"
+            ? "No Instagram account is connected"
+            : "The selected Page has no connected Instagram account",
       };
     }
     const imageUrl =
@@ -777,16 +786,14 @@ export class MetaApiProvider implements ExecutionProvider {
     const mediaType =
       payload.targetFormat === "STORIES" ? "STORIES" : undefined;
 
-    const pageAccessToken = await fetchPageAccessToken(
-      page.pageId,
-      accessToken,
-    );
+    const access = await instagramAccessFor(target, accessToken);
     const { postId } = await publishInstagramPost({
-      instagramBusinessAccountId: page.instagramBusinessAccountId,
-      pageAccessToken,
+      instagramBusinessAccountId: target.igUserId,
+      pageAccessToken: access.accessToken,
       imageUrl,
       caption,
       mediaType,
+      api: access.api,
     });
     return {
       status: "COMPLETED",

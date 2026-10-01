@@ -37,13 +37,18 @@ const byKey = async (website: string | null = null) =>
   );
 
 describe("loadConnectedAccounts", () => {
-  it("reads this project's Instagram, GA4 and Search Console credentials only", async () => {
+  it("reads this project's Instagram, Meta Ads, GA4 and Search Console credentials only", async () => {
     await loadConnectedAccounts("proj-1", null);
     expect(credentialFindMany).toHaveBeenCalledWith({
       where: {
         projectId: "proj-1",
         provider: {
-          in: ["instagram", "google_analytics", "google_search_console"],
+          in: [
+            "instagram",
+            "meta_ads",
+            "google_analytics",
+            "google_search_console",
+          ],
         },
       },
       select: { provider: true, status: true, metadata: true },
@@ -85,6 +90,46 @@ describe("loadConnectedAccounts", () => {
     // A revoked connection claims nothing.
     credentialFindMany.mockResolvedValue([
       { provider: "instagram", status: "REVOKED", metadata: { selectedPageId: "p1" } },
+    ]);
+    expect((await byKey()).facebook?.state).toBe("off");
+  });
+
+  it("an account connected through Instagram Login has no Page, so Facebook stays off", async () => {
+    credentialFindMany.mockResolvedValue([
+      {
+        provider: "instagram",
+        status: "ACTIVE",
+        metadata: {
+          login: "instagram",
+          instagramAccount: { id: "ig-1", username: "webhealth" },
+          pages: [],
+        },
+      },
+    ]);
+    expect((await byKey()).facebook?.state).toBe("off");
+  });
+
+  it("without an Instagram Page, the Page Meta Ads runs as counts as the Facebook Page", async () => {
+    credentialFindMany.mockResolvedValue([
+      {
+        provider: "instagram",
+        status: "ACTIVE",
+        metadata: { login: "instagram", pages: [] },
+      },
+      {
+        provider: "meta_ads",
+        status: "ACTIVE",
+        metadata: { selectedPageId: "p9", selectedPageName: "Web Health Ads Page" },
+      },
+    ]);
+    expect((await byKey()).facebook).toMatchObject({
+      state: "connected",
+      detail: "Web Health Ads Page",
+    });
+
+    // A revoked Meta Ads connection claims nothing.
+    credentialFindMany.mockResolvedValue([
+      { provider: "meta_ads", status: "REVOKED", metadata: { selectedPageId: "p9" } },
     ]);
     expect((await byKey()).facebook?.state).toBe("off");
   });

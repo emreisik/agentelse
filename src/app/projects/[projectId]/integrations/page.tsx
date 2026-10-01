@@ -1168,6 +1168,8 @@ const META_ERROR_MESSAGES: Record<string, string> = {
   not_configured: "This integration hasn't been configured yet.",
   exchange_failed:
     "Couldn't establish a connection with Meta, please try again.",
+  not_professional:
+    "That Instagram account isn't a professional account. In Instagram, go to Settings > Account type and tools > Switch to professional account (Business or Creator), then connect again.",
   state_invalid:
     "The connection request expired or is invalid, please try again.",
   unauthorized: "Your session has expired, please sign in again and retry.",
@@ -1181,7 +1183,7 @@ const META_SERVICE_UI: Record<
     icon: PURPOSE_ICONS.INSTAGRAM.icon,
     description: "Publish posts and stories to Instagram",
     emptyHint:
-      "Connect your Facebook account, then choose the Page linked to your Instagram Business account.",
+      "Connect your Instagram account directly. No Facebook account or Page is needed.",
   },
   ads: {
     icon: PURPOSE_ICONS.META_ADS.icon,
@@ -1191,8 +1193,52 @@ const META_SERVICE_UI: Record<
   },
 };
 
-function metaStartHref(projectId: string, service: MetaService): string {
-  return `/api/integrations/meta/start?projectId=${projectId}&service=${service}`;
+function metaStartHref(
+  projectId: string,
+  service: MetaService,
+  login?: "instagram",
+): string {
+  const href = `/api/integrations/meta/start?projectId=${projectId}&service=${service}`;
+  return login ? `${href}&login=${login}` : href;
+}
+
+// What has to be true for Instagram to accept the connection, stated before the
+// person tries: the failures it prevents (a personal account, a Page-less
+// Business account on the Facebook route, an expired token) all come back from
+// Meta as unhelpful errors.
+function InstagramRequirements() {
+  return (
+    <div className="space-y-1.5 rounded-lg bg-muted/50 p-3 text-left">
+      <p className="text-[11px] font-medium text-foreground">
+        Before you connect
+      </p>
+      <ul className="list-disc space-y-1 pl-4 text-[11px] text-muted-foreground">
+        <li>
+          The account must be a <strong>professional account</strong> (Business
+          or Creator). A personal account can&apos;t be connected. In Instagram:
+          Settings &gt; Account type and tools &gt; Switch to professional
+          account.
+        </li>
+        <li>
+          No Facebook account or Facebook Page is needed. You sign in with
+          Instagram and approve publishing.
+        </li>
+        <li>
+          Up to 100 posts can be published through the API in 24 hours. Stories
+          can&apos;t carry a caption, so the text has to be on the image.
+        </li>
+        <li>
+          The connection lasts 60 days. When it expires the tile shows
+          &quot;Needs reconnection&quot;; connect again to renew it.
+        </li>
+        <li>
+          While Meta&apos;s app is in development mode, only Instagram accounts
+          added to it as testers can connect. Ask the app admin to add yours (or
+          to finish Meta&apos;s App Review for everyone).
+        </li>
+      </ul>
+    </div>
+  );
 }
 
 function MetaTile({
@@ -1250,7 +1296,12 @@ function MetaDialog({
 }) {
   const connected = credential?.status === "ACTIVE";
   const expired = credential?.status === "EXPIRED";
-  const configured = isIntegrationConfigured("META");
+  const facebookConfigured = isIntegrationConfigured("META");
+  const instagramLoginConfigured =
+    service === "instagram" && isIntegrationConfigured("INSTAGRAM_LOGIN");
+  // Instagram can be connected two ways; Meta Ads only through Facebook.
+  const configured =
+    facebookConfigured || instagramLoginConfigured;
   const title = META_SERVICE_LABEL[service];
   const ui = META_SERVICE_UI[service];
   const Icon = ui.icon;
@@ -1259,6 +1310,9 @@ function MetaDialog({
     | MetaInstagramMetadata
     | MetaAdsMetadata;
   const adsMetadata = metadata as MetaAdsMetadata;
+  const igMetadata = metadata as MetaInstagramMetadata;
+  // Connected (or last connected) through Instagram Login: no Page involved.
+  const viaInstagram = service === "instagram" && igMetadata.login === "instagram";
 
   return (
     <EntityDialog
@@ -1305,7 +1359,11 @@ function MetaDialog({
             // navigation triggers a CORS error against Meta's (cross-origin)
             // OAuth dialog.
             <a
-              href={metaStartHref(projectId, service)}
+              href={metaStartHref(
+                projectId,
+                service,
+                viaInstagram ? "instagram" : undefined,
+              )}
               className={cn(buttonVariants({ size: "xs" }))}
             >
               Reconnect
@@ -1313,32 +1371,56 @@ function MetaDialog({
           ) : (
             <>
               <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-muted-foreground">
-                    {service === "instagram"
-                      ? "Facebook Page (Instagram)"
-                      : "Facebook Page (ads run as)"}
-                  </span>
-                  {(metadata.pages ?? []).length > 0 ? (
-                    <ModeSwitcher
-                      value={metadata.selectedPageId ?? ""}
-                      options={metadata.pages.map((p) => ({
-                        value: p.pageId,
-                        label: p.instagramUsername
-                          ? `${p.pageName} (@${p.instagramUsername})`
-                          : p.pageName,
-                      }))}
-                      action={selectMetaPageAction}
-                      hiddenFields={hiddenFields}
-                      fieldName="pageId"
-                      successMessage="Page updated"
-                    />
-                  ) : (
+                {viaInstagram ? (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-muted-foreground">
+                        Instagram account
+                      </span>
+                      <span className="text-[11px] font-medium">
+                        {igMetadata.instagramAccount?.username
+                          ? `@${igMetadata.instagramAccount.username}`
+                          : "Connected"}
+                        {igMetadata.instagramAccount?.accountType
+                          ? ` (${igMetadata.instagramAccount.accountType === "BUSINESS" ? "Business" : "Creator"})`
+                          : ""}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Connected with Instagram, no Facebook Page involved.
+                      {igMetadata.longLivedTokenExpiresAt
+                        ? ` Renew before ${igMetadata.longLivedTokenExpiresAt.slice(0, 10)}.`
+                        : ""}
+                    </p>
+                  </>
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] text-muted-foreground">
-                      {metadata.pagesListError ?? "No accessible Page found"}
+                      {service === "instagram"
+                        ? "Facebook Page (Instagram)"
+                        : "Facebook Page (ads run as)"}
                     </span>
-                  )}
-                </div>
+                    {(metadata.pages ?? []).length > 0 ? (
+                      <ModeSwitcher
+                        value={metadata.selectedPageId ?? ""}
+                        options={metadata.pages.map((p) => ({
+                          value: p.pageId,
+                          label: p.instagramUsername
+                            ? `${p.pageName} (@${p.instagramUsername})`
+                            : p.pageName,
+                        }))}
+                        action={selectMetaPageAction}
+                        hiddenFields={hiddenFields}
+                        fieldName="pageId"
+                        successMessage="Page updated"
+                      />
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground">
+                        {metadata.pagesListError ?? "No accessible Page found"}
+                      </span>
+                    )}
+                  </div>
+                )}
                 {service === "ads" ? (
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] text-muted-foreground">
@@ -1392,24 +1474,47 @@ function MetaDialog({
           )}
         </div>
       ) : (
-        <EmptyState
-          icon={Icon}
-          title="Not connected yet"
-          hint={ui.emptyHint}
-          className="py-8"
-        >
-          {/* Plain <a>: see the note in the Google block. */}
-          <a
-            href={metaStartHref(projectId, service)}
-            className={cn(
-              buttonVariants({ size: "xs" }),
-              !configured && "pointer-events-none opacity-50",
-            )}
-            aria-disabled={!configured}
+        <>
+          <EmptyState
+            icon={Icon}
+            title="Not connected yet"
+            hint={
+              service === "instagram" && !instagramLoginConfigured
+                ? "Connect your Facebook account, then choose the Page linked to your Instagram Business account."
+                : ui.emptyHint
+            }
+            className="py-8"
           >
-            Connect with Meta
-          </a>
-        </EmptyState>
+            {/* Plain <a>: see the note in the Google block. */}
+            <div className="flex flex-col items-center gap-2">
+              <a
+                href={metaStartHref(
+                  projectId,
+                  service,
+                  instagramLoginConfigured ? "instagram" : undefined,
+                )}
+                className={cn(
+                  buttonVariants({ size: "xs" }),
+                  !configured && "pointer-events-none opacity-50",
+                )}
+                aria-disabled={!configured}
+              >
+                {instagramLoginConfigured
+                  ? "Connect with Instagram"
+                  : "Connect with Meta"}
+              </a>
+              {instagramLoginConfigured && facebookConfigured ? (
+                <a
+                  href={metaStartHref(projectId, service)}
+                  className="text-[11px] text-muted-foreground underline underline-offset-2"
+                >
+                  Use a Facebook Page instead (Instagram linked to a Page)
+                </a>
+              ) : null}
+            </div>
+          </EmptyState>
+          {service === "instagram" ? <InstagramRequirements /> : null}
+        </>
       )}
     </EntityDialog>
   );

@@ -169,6 +169,14 @@ const envSchema = z.object({
   // Google, it's derived from NEXT_PUBLIC_APP_URL.
   META_APP_ID: z.string().optional().default(""),
   META_APP_SECRET: z.string().optional().default(""),
+  // "Instagram API with Instagram Login": connects an Instagram professional
+  // account directly, with no Facebook account or Page. It lives in the SAME
+  // Meta app (App Dashboard > Instagram > API setup with Instagram login) but
+  // has its own "Instagram app ID" and "Instagram app secret", which are NOT
+  // META_APP_ID / META_APP_SECRET. Optional: without them the Instagram tile
+  // only offers the Facebook Page route.
+  INSTAGRAM_APP_ID: z.string().optional().default(""),
+  INSTAGRAM_APP_SECRET: z.string().optional().default(""),
 
   // TikTok Content Posting API (together with Login Kit) — so the client
   // can grant video publishing permission with their own TikTok account
@@ -215,6 +223,7 @@ export function isIntegrationConfigured(
     | "TELEGRAM"
     | "GOOGLE"
     | "META"
+    | "INSTAGRAM_LOGIN"
     | "TIKTOK"
     | "LINKEDIN"
     | "X",
@@ -245,6 +254,8 @@ export function isIntegrationConfigured(
       );
     case "META":
       return Boolean(env.META_APP_ID && env.META_APP_SECRET);
+    case "INSTAGRAM_LOGIN":
+      return Boolean(env.INSTAGRAM_APP_ID && env.INSTAGRAM_APP_SECRET);
     case "TIKTOK":
       return Boolean(env.TIKTOK_CLIENT_KEY && env.TIKTOK_CLIENT_SECRET);
     case "LINKEDIN":

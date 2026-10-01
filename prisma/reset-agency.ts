@@ -8,9 +8,8 @@
 //   npm run db:reset:agency            -> all projects with setup state
 //   npm run db:reset:agency -- biduniq -> only the given slugs
 //
-// Also prepares for production: browser profiles' externalProfileId is
-// bound to the "hubconnect" OpenClaw agent and setupAutoApprove is turned
-// off (in a real setup, the client makes the decisions).
+// Also prepares for production: setupAutoApprove is turned off (in a real
+// setup, the client makes the decisions).
 
 process.loadEnvFile(".env");
 
@@ -23,8 +22,6 @@ nodeRequire.cache[serverOnlyPath] = {
   loaded: true,
   exports: {},
 } as never;
-
-const OPENCLAW_AGENT_ID = "hubconnect";
 
 async function main() {
   const { prisma } = await import("../src/lib/prisma");
@@ -117,15 +114,7 @@ async function main() {
       data: { setupAutoApprove: false },
     });
 
-    // Bind browser profiles to the isolated "hubconnect" OpenClaw agent.
-    const boundProfiles = await prisma.browserProfile.updateMany({
-      where,
-      data: { externalProfileId: OPENCLAW_AGENT_ID },
-    });
-
-    console.log(
-      `  ${taskIds.length} agency tasks deleted · ${boundProfiles.count} profiles bound to the "${OPENCLAW_AGENT_ID}" agent`,
-    );
+    console.log(`  ${taskIds.length} agency tasks deleted`);
   }
 
   console.log(

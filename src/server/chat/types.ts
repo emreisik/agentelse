@@ -78,7 +78,7 @@ export type ChatModelRequest = {
   instructions: string;
   input: ResponseInputItem[];
   tools: Tool[];
-  effort: "minimal" | "low" | "medium" | "high";
+  effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   maxOutputTokens: number;
   signal?: AbortSignal;
 };
@@ -93,6 +93,8 @@ export type ChatModelEvent =
       output: ResponseInputItem[];
       functionCalls: { callId: string; name: string; arguments: string }[];
       inputTokens?: number;
+      // The part of inputTokens OpenAI served from its prompt cache.
+      cachedInputTokens?: number;
       outputTokens?: number;
     };
 

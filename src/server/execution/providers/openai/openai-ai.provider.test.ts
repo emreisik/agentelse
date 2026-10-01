@@ -10,6 +10,13 @@ vi.mock("@/server/reasoning/openai-client", () => ({
   runOpenAIText: openaiMocks.runOpenAIText,
 }));
 
+const searchMocks = vi.hoisted(() => ({
+  runOpenAITextWithSearch: vi.fn(),
+}));
+vi.mock("@/server/reasoning/openai-search-client", () => ({
+  runOpenAITextWithSearch: searchMocks.runOpenAITextWithSearch,
+}));
+
 const prismaMocks = vi.hoisted(() => ({
   findUniqueExecutionJob: vi.fn(),
   updateExecutionJob: vi.fn(),
@@ -69,15 +76,22 @@ describe("OpenAiAiProvider", () => {
       expect(await provider.canExecute("CREATE_COPY")).toBe(true);
     });
 
-    // OpenAI's Chat Completions API has no built-in web-search tool — these
-    // 4 stay on OpenClawProvider's real browser-based research instead (see
-    // the provider's own comment for the full rationale).
-    it("does not claim the search-grounded research capabilities", async () => {
+    it("claims the public-web research capabilities (served via web_search)", async () => {
       const provider = new OpenAiAiProvider();
-      expect(await provider.canExecute("BRAND_DISCOVERY")).toBe(false);
-      expect(await provider.canExecute("WEB_RESEARCH")).toBe(false);
-      expect(await provider.canExecute("COMPETITOR_RESEARCH")).toBe(false);
-      expect(await provider.canExecute("SEO_RESEARCH")).toBe(false);
+      expect(await provider.canExecute("BRAND_DISCOVERY")).toBe(true);
+      expect(await provider.canExecute("WEB_RESEARCH")).toBe(true);
+      expect(await provider.canExecute("COMPETITOR_RESEARCH")).toBe(true);
+      expect(await provider.canExecute("SEO_RESEARCH")).toBe(true);
+    });
+
+    // A plain-text model can't open a browser or observe a published post, so
+    // the browser-only capabilities stay unserved instead of being faked.
+    it("does not claim the browser-only capabilities", async () => {
+      const provider = new OpenAiAiProvider();
+      expect(await provider.canExecute("SOCIAL_ACCOUNT_SETUP")).toBe(false);
+      expect(await provider.canExecute("SOCIAL_PROFILE_AUDIT")).toBe(false);
+      expect(await provider.canExecute("SIGNAL_SCAN")).toBe(false);
+      expect(await provider.canExecute("MEASUREMENT_CHECK")).toBe(false);
     });
 
     it("does not claim creative or unrelated capabilities", async () => {
@@ -104,6 +118,39 @@ describe("OpenAiAiProvider", () => {
       expect(openaiMocks.runOpenAIText).toHaveBeenCalledWith(
         expect.objectContaining({ model: "gpt-test", maxOutputTokens: 4096 }),
       );
+    });
+
+    it("runs research capabilities through web search, not plain text", async () => {
+      searchMocks.runOpenAITextWithSearch.mockResolvedValue({
+        text: "sourced research report",
+        webSearchCalls: 3,
+      });
+
+      const provider = new OpenAiAiProvider();
+      await provider.execute(request("COMPETITOR_RESEARCH"));
+
+      expect(openaiMocks.runOpenAIText).not.toHaveBeenCalled();
+      expect(searchMocks.runOpenAITextWithSearch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gpt-test",
+          maxOutputTokens: 8192,
+          system: expect.stringContaining("web_search"),
+        }),
+      );
+      expect(await provider.getStatus("corr-1")).toEqual({
+        status: "COMPLETED",
+        rawResult: { text: "sourced research report" },
+        isMock: false,
+      });
+    });
+
+    it("keeps non-research capabilities off web search", async () => {
+      openaiMocks.runOpenAIText.mockResolvedValue({ text: "the report" });
+
+      const provider = new OpenAiAiProvider();
+      await provider.execute(request("REPORTING"));
+
+      expect(searchMocks.runOpenAITextWithSearch).not.toHaveBeenCalled();
     });
 
     it("reports FAILED with the error message when the call throws", async () => {

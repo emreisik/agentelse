@@ -2,16 +2,15 @@ import type { CapabilityKey, CouncilType, DepartmentKey } from "@prisma/client";
 
 // Static department registry (spec section 13). Pure module — the single
 // source of truth for which department owns which capability, which council
-// reviews its ideas, and which OpenClaw workspace skill backs it. Every
-// CapabilityKey must be owned by exactly ONE department (enforced by unit
-// test), so DepartmentRouter.ownerOf() is total and unambiguous.
+// reviews its ideas. Every CapabilityKey must be owned by exactly ONE
+// department (enforced by unit test), so DepartmentRouter.ownerOf() is total
+// and unambiguous.
 
 export type DepartmentDefinition = {
   key: DepartmentKey;
   label: string;
   ownedCapabilities: CapabilityKey[];
   councilAffinity: CouncilType;
-  openclawSkill?: string;
 };
 
 export const DEPARTMENTS: Record<DepartmentKey, DepartmentDefinition> = {
@@ -20,7 +19,6 @@ export const DEPARTMENTS: Record<DepartmentKey, DepartmentDefinition> = {
     label: "Brand Strategy",
     ownedCapabilities: ["BRAND_DISCOVERY", "CLAIM_VALIDATION", "BRAND_SAFETY"],
     councilAffinity: "STRATEGY",
-    openclawSkill: "hubconnect-brand-strategist",
   },
   MARKET_INTELLIGENCE: {
     key: "MARKET_INTELLIGENCE",
@@ -34,14 +32,12 @@ export const DEPARTMENTS: Record<DepartmentKey, DepartmentDefinition> = {
       "SIGNAL_SCAN",
     ],
     councilAffinity: "STRATEGY",
-    openclawSkill: "hubconnect-market-research",
   },
   CUSTOMER_INTELLIGENCE: {
     key: "CUSTOMER_INTELLIGENCE",
     label: "Customer Intelligence",
     ownedCapabilities: ["CUSTOMER_INTELLIGENCE", "REVIEW_RESEARCH"],
     councilAffinity: "STRATEGY",
-    openclawSkill: "hubconnect-customer-intelligence",
   },
   COMPETITOR_INTELLIGENCE: {
     key: "COMPETITOR_INTELLIGENCE",
@@ -53,21 +49,18 @@ export const DEPARTMENTS: Record<DepartmentKey, DepartmentDefinition> = {
       "ADVERTISING_RESEARCH",
     ],
     councilAffinity: "STRATEGY",
-    openclawSkill: "hubconnect-competitor-intelligence",
   },
   CREATIVE: {
     key: "CREATIVE",
     label: "Creative",
     ownedCapabilities: ["CREATE_SOCIAL_CREATIVE", "CREATE_AD_CREATIVE"],
     councilAffinity: "CREATIVE",
-    openclawSkill: "hubconnect-creative-director",
   },
   ART_DIRECTION: {
     key: "ART_DIRECTION",
     label: "Art Direction",
     ownedCapabilities: ["SCREENSHOT_CAPTURE"],
     councilAffinity: "CREATIVE",
-    openclawSkill: "hubconnect-art-director",
   },
   COPY_CONTENT: {
     key: "COPY_CONTENT",
@@ -80,7 +73,6 @@ export const DEPARTMENTS: Record<DepartmentKey, DepartmentDefinition> = {
       "EMAIL_DRAFT",
     ],
     councilAffinity: "CREATIVE",
-    openclawSkill: "hubconnect-copywriter",
   },
   SOCIAL_MEDIA: {
     key: "SOCIAL_MEDIA",
@@ -95,14 +87,12 @@ export const DEPARTMENTS: Record<DepartmentKey, DepartmentDefinition> = {
       "X_PUBLISH",
     ],
     councilAffinity: "MEDIA",
-    openclawSkill: "hubconnect-social-strategist",
   },
   SEO: {
     key: "SEO",
     label: "SEO",
     ownedCapabilities: ["SEO_RESEARCH", "SEO_ANALYSIS", "ASO_ANALYSIS"],
     councilAffinity: "GROWTH",
-    openclawSkill: "hubconnect-seo-intelligence",
   },
   PERFORMANCE_MARKETING: {
     key: "PERFORMANCE_MARKETING",
@@ -119,7 +109,6 @@ export const DEPARTMENTS: Record<DepartmentKey, DepartmentDefinition> = {
       "GOOGLE_ADS_CAMPAIGN_CREATE",
     ],
     councilAffinity: "GROWTH",
-    openclawSkill: "hubconnect-performance-strategist",
   },
   DATA_ANALYTICS: {
     key: "DATA_ANALYTICS",
@@ -132,35 +121,30 @@ export const DEPARTMENTS: Record<DepartmentKey, DepartmentDefinition> = {
       "VERIFY_EXTERNAL_ACTION",
     ],
     councilAffinity: "GROWTH",
-    openclawSkill: "hubconnect-verification",
   },
   GROWTH: {
     key: "GROWTH",
     label: "Growth",
     ownedCapabilities: ["WEB_BROWSING"],
     councilAffinity: "GROWTH",
-    openclawSkill: "hubconnect-growth-strategist",
   },
   PR_MEDIA: {
     key: "PR_MEDIA",
     label: "PR & Media",
     ownedCapabilities: ["MEDIA_RESEARCH", "CULTURAL_RESEARCH", "PR_OUTREACH"],
     councilAffinity: "MEDIA",
-    openclawSkill: "hubconnect-pr-media-strategist",
   },
   INFLUENCER_CREATOR: {
     key: "INFLUENCER_CREATOR",
     label: "Influencer & Creator",
     ownedCapabilities: ["CREATOR_RESEARCH"],
     councilAffinity: "MEDIA",
-    openclawSkill: "hubconnect-creator-intelligence",
   },
   PARTNERSHIPS: {
     key: "PARTNERSHIPS",
     label: "Partnerships",
     ownedCapabilities: ["PARTNERSHIP_RESEARCH"],
     councilAffinity: "STRATEGY",
-    openclawSkill: "hubconnect-partnership-intelligence",
   },
   CRM_LIFECYCLE: {
     key: "CRM_LIFECYCLE",

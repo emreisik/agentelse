@@ -71,6 +71,7 @@ import {
   type ToolContext,
   type ToolOutcome,
 } from "./tools";
+import { logTurnTiming } from "./turn-timing";
 import type { ChatModel, ChatModelEvent, ChatStreamEvent } from "./types";
 
 // How long the first reply waits for the brand scan (site pages + a few web
@@ -164,8 +165,19 @@ export async function* runChatAgent(
   const sessionRef: SessionHandle = {};
   let suggestionItems: string[] | undefined;
   let inputTokens = 0;
+  let cachedInputTokens = 0;
   let outputTokens = 0;
   let modelRan = false;
+  // Where the time of this turn goes (logged once, see logTurnTiming): the
+  // work before the first model call, the wait for the first token, the model
+  // loop, and the writes after it.
+  const timing = {
+    modelStartedAt: 0,
+    firstTokenAt: 0,
+    modelEndedAt: 0,
+    rounds: 0,
+    tools: [] as string[],
+  };
   let brandId: string | undefined;
   let settled = false;
   const modelName = ReasoningService.isMockMode() ? "mock" : chatModelName();
@@ -190,6 +202,14 @@ export async function* runChatAgent(
   // shows up in the same usage dashboards and budget counters as before.
   async function recordUsage(ok: boolean, errorMessage?: string) {
     if (!modelRan || !brandId) return;
+    logTurnTiming({
+      ok,
+      startedAt,
+      ...timing,
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+    });
     const mock = modelName === "mock";
     const costUsd = turnCostUsd();
     const scope = {
@@ -578,6 +598,8 @@ export async function* runChatAgent(
       }
 
       modelRan = true;
+      timing.rounds += 1;
+      timing.modelStartedAt ||= Date.now();
       inFlight = "";
       let completed: Extract<ChatModelEvent, { type: "completed" }> | undefined;
 
@@ -591,6 +613,7 @@ export async function* runChatAgent(
         signal: input.signal,
       })) {
         if (event.type === "text.delta") {
+          timing.firstTokenAt ||= Date.now();
           // Text from a later round (the wrap-up after a tool ran) starts a
           // new paragraph instead of gluing onto the lead-in.
           const separator =
@@ -604,10 +627,13 @@ export async function* runChatAgent(
 
       if (inFlight.trim()) replyParts.push(inFlight.trim());
       inFlight = "";
+      timing.modelEndedAt = Date.now();
       if (!completed) break;
       inputTokens += completed.inputTokens ?? 0;
+      cachedInputTokens += completed.cachedInputTokens ?? 0;
       outputTokens += completed.outputTokens ?? 0;
       if (completed.functionCalls.length === 0) break;
+      timing.tools.push(...completed.functionCalls.map((call) => call.name));
 
       // A work session's message that has used up its cost or context
       // allowance stops here, before the calls of this round run.
@@ -768,6 +794,16 @@ export async function* runChatAgent(
           call_id: call.callId,
           output: JSON.stringify(result),
         });
+      }
+
+      // suggest_replies only decorates a reply that is already written. Another
+      // round would resend the whole context (~10k tokens, several seconds) just
+      // to hand the model a result it has nothing to add to.
+      if (
+        replyParts.length > 0 &&
+        completed.functionCalls.every((call) => call.name === "suggest_replies")
+      ) {
+        break;
       }
     }
 

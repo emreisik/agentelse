@@ -65,9 +65,9 @@ export function DeleteProjectCard({
             </ul>
           ) : null}
           <p className="text-xs text-muted-foreground">
-            Records in external systems such as the OpenClaw agent, browser
-            sessions, and connected social accounts are not deleted — you need
-            to remove those from the relevant tool.
+            Records in external systems such as connected social accounts and ad
+            platforms are not deleted — you need to remove those from the
+            relevant tool.
           </p>
         </div>
 

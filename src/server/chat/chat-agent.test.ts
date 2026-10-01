@@ -280,7 +280,11 @@ beforeEach(() => {
   ensureProjectActive.mockResolvedValue({ status: "ACTIVE", usable: true });
   loadNextSteps.mockResolvedValue([]);
   claimQuickDiscovery.mockResolvedValue(null);
-  rememberMemory.mockResolvedValue({ status: "CREATED", id: "m1", superseded: 0 });
+  rememberMemory.mockResolvedValue({
+    status: "CREATED",
+    id: "m1",
+    superseded: 0,
+  });
   recordUserDecision.mockResolvedValue({ id: "dec-1" });
   runQuickDiscovery.mockResolvedValue({ status: "DONE", version: 1, pages: 2 });
   commandCreate.mockResolvedValue({ id: "cmd-1" });
@@ -479,7 +483,9 @@ describe("runChatAgent", () => {
 
       await collect(runChatAgent(baseInput, { model }));
 
-      expect(developerNote(requests)).not.toContain("Next steps on the client's content plan");
+      expect(developerNote(requests)).not.toContain(
+        "Next steps on the client's content plan",
+      );
     });
   });
 
@@ -739,7 +745,12 @@ describe("runChatAgent", () => {
       });
       const { model, requests } = scriptedModel([
         {
-          calls: [call("a rule"), call("b rule"), call("c rule"), call("d rule")],
+          calls: [
+            call("a rule"),
+            call("b rule"),
+            call("c rule"),
+            call("d rule"),
+          ],
         },
         { text: ["Üçünü kaydettim."] },
       ]);
@@ -793,7 +804,9 @@ describe("runChatAgent", () => {
       expect(order).toEqual(["scan", "buildContext"]);
       expect(runQuickDiscovery).toHaveBeenCalledWith(target, 75_000);
       const types = events.map((e) => e.type);
-      expect(types.indexOf("tool.start")).toBeLessThan(types.indexOf("text.delta"));
+      expect(types.indexOf("tool.start")).toBeLessThan(
+        types.indexOf("text.delta"),
+      );
       expect(events).toContainEqual({
         type: "tool.start",
         name: "quick_discovery",
@@ -810,22 +823,25 @@ describe("runChatAgent", () => {
     it.each([
       ["failed", { status: "FAILED", message: "site down" }],
       ["still running", { status: "PENDING" }],
-    ])("goes on without the scan when it %s, and says the brand is barely known", async (_label, outcome) => {
-      claimQuickDiscovery.mockResolvedValue(target);
-      runQuickDiscovery.mockResolvedValue(outcome);
-      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+    ])(
+      "goes on without the scan when it %s, and says the brand is barely known",
+      async (_label, outcome) => {
+        claimQuickDiscovery.mockResolvedValue(target);
+        runQuickDiscovery.mockResolvedValue(outcome);
+        const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
 
-      const events = await collect(runChatAgent(baseInput, { model }));
+        const events = await collect(runChatAgent(baseInput, { model }));
 
-      expect(text(events)).toBe("Merhaba");
-      expect(events).toContainEqual({
-        type: "tool.end",
-        name: "quick_discovery",
-        ok: false,
-      });
-      expect(developerNote(requests)).toContain("did not finish");
-      expect(developerNote(requests)).not.toContain("first draft");
-    });
+        expect(text(events)).toBe("Merhaba");
+        expect(events).toContainEqual({
+          type: "tool.end",
+          name: "quick_discovery",
+          ok: false,
+        });
+        expect(developerNote(requests)).toContain("did not finish");
+        expect(developerNote(requests)).not.toContain("first draft");
+      },
+    );
 
     it("does not let a broken claim take the turn down", async () => {
       claimQuickDiscovery.mockRejectedValue(new Error("db hiccup"));
@@ -1012,6 +1028,47 @@ describe("runChatAgent", () => {
       items: ["Haftayı planla", "Yeni fikir ver"],
     });
     expect(types.indexOf("suggestions")).toBeLessThan(types.indexOf("done"));
+  });
+
+  it("does not spend another model round on suggest_replies after a written reply", async () => {
+    const { model, requests } = scriptedModel([
+      {
+        text: ["Hazır."],
+        calls: [
+          {
+            name: "suggest_replies",
+            args: { suggestions: ["Haftayı planla"] },
+          },
+        ],
+      },
+      { text: ["gereksiz ikinci tur"] },
+    ]);
+    const events = await collect(runChatAgent(baseInput, { model }));
+
+    expect(requests).toHaveLength(1);
+    const done = events.find((e) => e.type === "done");
+    expect(done).toMatchObject({ reply: "Hazır." });
+  });
+
+  it("still continues after suggest_replies when no reply text was written yet", async () => {
+    const { model, requests } = scriptedModel([
+      {
+        text: [],
+        calls: [
+          {
+            name: "suggest_replies",
+            args: { suggestions: ["Haftayı planla"] },
+          },
+        ],
+      },
+      { text: ["Şimdi yazıyorum."] },
+    ]);
+    const events = await collect(runChatAgent(baseInput, { model }));
+
+    expect(requests).toHaveLength(2);
+    expect(events.find((e) => e.type === "done")).toMatchObject({
+      reply: "Şimdi yazıyorum.",
+    });
   });
 
   it("offers the hosted web_search tool only when enabled", async () => {
@@ -1745,8 +1802,12 @@ describe("runChatAgent: work sessions", () => {
   const toolOutputs = (requests: ChatModelRequest[]) =>
     requests
       .at(-1)!
-      .input.filter((item) => "type" in item && item.type === "function_call_output")
-      .map((item) => JSON.parse((item as unknown as { output: string }).output));
+      .input.filter(
+        (item) => "type" in item && item.type === "function_call_output",
+      )
+      .map((item) =>
+        JSON.parse((item as unknown as { output: string }).output),
+      );
   const reply = (events: ChatStreamEvent[]) => {
     const done = events.at(-1);
     return done?.type === "done" ? done.reply : "";
@@ -1876,7 +1937,10 @@ describe("runChatAgent: work sessions", () => {
       submit.mockResolvedValue(planned());
       const { model, requests } = scriptedModel([
         {
-          calls: [task(1), { name: "decide_approval", args: { decision: "APPROVE" } }],
+          calls: [
+            task(1),
+            { name: "decide_approval", args: { decision: "APPROVE" } },
+          ],
         },
         { text: ["Onaylamadım."] },
       ]);
@@ -1900,7 +1964,10 @@ describe("runChatAgent: work sessions", () => {
         .mockResolvedValueOnce(planned());
       const { model } = scriptedModel([
         {
-          calls: [{ name: "decide_approval", args: { decision: "APPROVE" } }, task(1)],
+          calls: [
+            { name: "decide_approval", args: { decision: "APPROVE" } },
+            task(1),
+          ],
         },
         { text: ["Onayladım, devam ettim."] },
       ]);
@@ -2127,7 +2194,9 @@ describe("runChatAgent: work sessions", () => {
     it("never gets in the way of the reply if charging fails", async () => {
       withLiveSession();
       addSessionSpend.mockRejectedValue(new Error("db down"));
-      const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const spy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => undefined);
       const { model } = scriptedModel([{ text: ["Tamam."] }]);
 
       const events = await collect(runChatAgent(baseInput, { model }));
@@ -2171,7 +2240,9 @@ describe("runChatAgent: work sessions", () => {
 
       // Reaches the store, told that this message may not write words.
       expect(updateSession).toHaveBeenCalledTimes(1);
-      expect(updateSession.mock.calls[0]![2]).toMatchObject({ freeText: false });
+      expect(updateSession.mock.calls[0]![2]).toMatchObject({
+        freeText: false,
+      });
       expect(JSON.stringify(toolOutputs(requests))).not.toContain(
         "blocked_external_content",
       );
@@ -2284,9 +2355,7 @@ describe("runChatAgent: Works", () => {
     it("without a workId passes only guidedSetup, loads next steps unscoped and keeps the fallback", async () => {
       envOverrides.GUIDED_SETUP = true;
       submit.mockResolvedValue({ status: "PLANNED" });
-      const { model, requests } = scriptedModel([
-        { fail: new Error("boom") },
-      ]);
+      const { model, requests } = scriptedModel([{ fail: new Error("boom") }]);
       const events = await collect(runChatAgent(baseInput, { model }));
 
       expect(toolsForPhaseSpy.mock.calls[0]![1]).toEqual({ guidedSetup: true });
@@ -2318,10 +2387,10 @@ describe("runChatAgent: Works", () => {
         theme: undefined,
       });
       const { model, requests } = scriptedModel([{ text: ["ok"] }]);
-      await collect(
-        runChatAgent({ ...baseInput, message: brief }, { model }),
+      await collect(runChatAgent({ ...baseInput, message: brief }, { model }));
+      const note = String(
+        (requests[0]!.input[0] as { content: string }).content,
       );
-      const note = String((requests[0]!.input[0] as { content: string }).content);
       expect(note).not.toContain("Slots for this brief");
       expect(note).not.toContain("In this Work");
     });
@@ -2354,12 +2423,18 @@ describe("runChatAgent: Works", () => {
     it("hands the tools a lazy brand-rule getter only inside a Work", async () => {
       const seen: (ToolContext["getBrandRules"] | "unset")[] = [];
       const peekTool = () =>
-        fakeTool("peek", () => ({ result: { ok: true } }), (ctx) => {
-          seen.push(ctx.getBrandRules ?? "unset");
-        });
+        fakeTool(
+          "peek",
+          () => ({ result: { ok: true } }),
+          (ctx) => {
+            seen.push(ctx.getBrandRules ?? "unset");
+          },
+        );
       const peek = () =>
-        scriptedModel([{ calls: [{ name: "peek", args: {} }] }, { text: ["ok"] }])
-          .model;
+        scriptedModel([
+          { calls: [{ name: "peek", args: {} }] },
+          { text: ["ok"] },
+        ]).model;
       useTools(peekTool());
       await collect(runChatAgent(workInput, { model: peek() }));
       useTools(peekTool());
@@ -2383,9 +2458,13 @@ describe("runChatAgent: Works", () => {
     it("builds the slots note from the message's brief, with no fallback on the tool context", async () => {
       let fallback: unknown = "unset";
       useTools(
-        fakeTool("peek", () => ({ result: {} }), (ctx) => {
-          fallback = ctx.planBriefFallback;
-        }),
+        fakeTool(
+          "peek",
+          () => ({ result: {} }),
+          (ctx) => {
+            fallback = ctx.planBriefFallback;
+          },
+        ),
       );
       const { model, requests } = scriptedModel([
         { calls: [{ name: "peek", args: {} }] },
@@ -2438,9 +2517,13 @@ describe("runChatAgent: Works", () => {
       });
       let fallback: { perWeek: number } | null | undefined;
       useTools(
-        fakeTool("peek", () => ({ result: {} }), (ctx) => {
-          fallback = ctx.planBriefFallback;
-        }),
+        fakeTool(
+          "peek",
+          () => ({ result: {} }),
+          (ctx) => {
+            fallback = ctx.planBriefFallback;
+          },
+        ),
       );
       const { model, requests } = scriptedModel([
         { calls: [{ name: "peek", args: {} }] },
@@ -2470,7 +2553,10 @@ describe("runChatAgent: Works", () => {
       });
       const { model, requests } = scriptedModel([{ text: ["ok"] }]);
       await collect(runChatAgent(workInput, { model }));
-      const input = requests[0]!.input as { role?: string; content?: unknown }[];
+      const input = requests[0]!.input as {
+        role?: string;
+        content?: unknown;
+      }[];
       expect(input).toHaveLength(5);
       expect(input[1]).toMatchObject({ role: "user", content: "hello" });
       expect(input[2]).toMatchObject({ role: "assistant", content: "hi" });
@@ -2556,7 +2642,9 @@ describe("runChatAgent: Works", () => {
       expect(second).not.toHaveBeenCalled();
       expect(requests).toHaveLength(1);
       // Inspect what the loop answered, via the conversation array it mutated.
-      const outputs = (requests[0]!.input as { type?: string; output?: string }[])
+      const outputs = (
+        requests[0]!.input as { type?: string; output?: string }[]
+      )
         .filter((item) => item.type === "function_call_output")
         .map((item) => JSON.parse(String(item.output)));
       expect(outputs).toHaveLength(3);
@@ -2621,23 +2709,29 @@ describe("runChatAgent: Works", () => {
 
   describe("Work title and sidebar summary", () => {
     it("titles the Work from the visible line of a wizard message, not the machine line", async () => {
-      const message = `Plan the week \u00b7 from Fri 2 Oct\n${serializePlanBrief({
-        goal: "awareness",
-        channels: [{ channel: "instagram", formats: ["instagram.post"] }],
-        perWeek: 3,
-        weeks: 1,
-        start: "2026-10-02",
-      }).split("\n")[1]}`;
+      const message = `Plan the week \u00b7 from Fri 2 Oct\n${
+        serializePlanBrief({
+          goal: "awareness",
+          channels: [{ channel: "instagram", formats: ["instagram.post"] }],
+          perWeek: 3,
+          weeks: 1,
+          start: "2026-10-02",
+        }).split("\n")[1]
+      }`;
       const { model } = scriptedModel([{ text: ["Ok."] }]);
       await collect(runChatAgent({ ...workInput, message }, { model }));
       const touch = workTouch.mock.calls.find(
         (call) => call[2] && "titleIfDefault" in call[2],
       );
-      expect(touch?.[2].titleIfDefault).toBe("Plan the week \u00b7 from Fri 2 Oct");
+      expect(touch?.[2].titleIfDefault).toBe(
+        "Plan the week \u00b7 from Fri 2 Oct",
+      );
     });
 
     it("keeps the sidebar summary when the turn fails", async () => {
-      const { model } = scriptedModel([{ fail: new Error("provider exploded") }]);
+      const { model } = scriptedModel([
+        { fail: new Error("provider exploded") },
+      ]);
       await collect(runChatAgent(workInput, { model }));
       const summaries = workTouch.mock.calls.filter(
         (call) => call[2] && "summary" in call[2],

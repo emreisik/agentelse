@@ -192,6 +192,8 @@ export const openaiChatModel: ChatModel = {
                 : [],
             ),
             inputTokens: response.usage?.input_tokens,
+            cachedInputTokens:
+              response.usage?.input_tokens_details?.cached_tokens,
             outputTokens: response.usage?.output_tokens,
           };
         }

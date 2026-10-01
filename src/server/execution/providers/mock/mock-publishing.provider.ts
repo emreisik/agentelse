@@ -35,7 +35,7 @@ const store = new Map<
 
 export class MockPublishingProvider implements ExecutionProvider {
   readonly key = "mock-publishing";
-  readonly type: ExecutionProviderType = "OPENCLAW";
+  readonly type: ExecutionProviderType = "API";
   readonly isConfigured = true;
 
   async canExecute(capability: CapabilityKey): Promise<boolean> {

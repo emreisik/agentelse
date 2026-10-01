@@ -8,6 +8,7 @@ import {
   openaiModelForTier,
   runOpenAIText,
 } from "@/server/reasoning/openai-client";
+import { runOpenAITextWithSearch } from "@/server/reasoning/openai-search-client";
 import type {
   ExecutionAcceptedResult,
   ExecutionProvider,
@@ -15,18 +16,28 @@ import type {
   ProviderExecutionStatus,
 } from "@/server/execution/types";
 
+// Public-web research capabilities: they need live facts, so they run through
+// OpenAI's hosted web_search tool (Responses API) instead of plain text
+// generation. The report comes back as free text in rawResult.text and
+// ResultMaterializer turns it into findings.
+const SEARCH_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
+  "WEB_RESEARCH",
+  "BRAND_DISCOVERY",
+  "COMPETITOR_RESEARCH",
+  "SEO_RESEARCH",
+  "PRODUCT_RESEARCH",
+  "MEDIA_RESEARCH",
+  "CULTURAL_RESEARCH",
+  "CREATOR_RESEARCH",
+  "PARTNERSHIP_RESEARCH",
+  "ADVERTISING_RESEARCH",
+  "REVIEW_RESEARCH",
+  "TECHNOLOGY_RESEARCH",
+  "SOCIAL_RESEARCH",
+]);
+
 // Text/analysis capabilities — the real "AI thinks" step. Content that
 // produces a visual asset is OpenAiCreativeProvider's job instead.
-//
-// The 4 search-grounded capabilities Gemini used to own here
-// (BRAND_DISCOVERY, WEB_RESEARCH, COMPETITOR_RESEARCH, SEO_RESEARCH) are
-// deliberately NOT included: OpenAI's Chat Completions API (used here) has
-// no built-in web-search tool — that requires OpenAI's separate Responses
-// API. Rather than add a second client for four capabilities, they're left
-// entirely to OpenClawProvider, which already claims all four and, as of
-// this session, does real grounded browsing (tool-use directive, real
-// source data, agent.wait completion detection) — the more reliable path
-// for "needs live web facts" questions anyway.
 const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "MARKET_RESEARCH",
   "TREND_RESEARCH",
@@ -136,9 +147,13 @@ function buildSystemPrompt(
   capability: CapabilityKey,
   brandContext: unknown,
 ): string {
+  const searchInstruction = SEARCH_CAPABILITIES.has(capability)
+    ? `Use the web_search tool to ground every claim in current public sources. Write a research report: concrete facts first, each with its source URL inline; mark anything you could not verify as unverified instead of guessing.`
+    : undefined;
   return [
     `You are Agentelse's AI execution engine handling the ${capability} capability for a digital agency managing multiple client brands.`,
     `Respond with the production-ready deliverable only — no meta commentary about what you are doing, no "Here is..." preamble.`,
+    ...(searchInstruction ? [searchInstruction] : []),
     localeInstruction(brandContext),
     `Brand context for this request (JSON, may be partial — treat any negativeBrief/approvedClaims entries as hard constraints):`,
     JSON.stringify(brandContext ?? {}),
@@ -154,7 +169,9 @@ export class OpenAiAiProvider implements ExecutionProvider {
   }
 
   async canExecute(capability: CapabilityKey): Promise<boolean> {
-    return OWNED_CAPABILITIES.has(capability);
+    return (
+      OWNED_CAPABILITIES.has(capability) || SEARCH_CAPABILITIES.has(capability)
+    );
   }
 
   async execute(request: ExecutionRequest): Promise<ExecutionAcceptedResult> {
@@ -164,12 +181,14 @@ export class OpenAiAiProvider implements ExecutionProvider {
 
     let result: StoredResult;
     try {
-      const { text } = await runOpenAIText({
+      const call = {
         model: openaiModelForTier(),
         system: buildSystemPrompt(request.capability, input.brandContext),
         user: requestText,
-        maxOutputTokens: 4096,
-      });
+      };
+      const { text } = SEARCH_CAPABILITIES.has(request.capability)
+        ? await runOpenAITextWithSearch({ ...call, maxOutputTokens: 8192 })
+        : await runOpenAIText({ ...call, maxOutputTokens: 4096 });
       result = { status: "completed", text };
     } catch (error) {
       result = {

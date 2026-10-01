@@ -28,7 +28,7 @@ Next.js UI / Server Actions / API
                  |
        CapabilityRouter + ProviderRegistry
           /              |              \
-     OpenClaw         OpenAI           Mock fleet
+   Platform APIs        OpenAI           Mock fleet
                  |
     Verification -> Measurement -> Learning
 ```
@@ -85,7 +85,7 @@ src/
     commands/              CommandService, intent routing, and task planning
     context/               Brand context policy and immutable snapshot generation
     execution/              Policy, routing, provider registry, and execution
-      providers/            OpenClaw, OpenAI, and mocks for explicit test mode
+      providers/            Platform APIs, OpenAI, and mocks for explicit test mode
     reasoning/              OpenAI-backed structured reasoning
     repositories/           Tenant-scoped Prisma data access
     scheduler/              CRON, interval, and one-off project schedulers
@@ -100,7 +100,7 @@ prisma/
 
 ## Local setup
 
-Recommended requirements: Node.js 22.22+ and PostgreSQL 16. If OpenClaw won't be used, the Node.js 20.9+ supported by Next.js is also sufficient.
+Recommended requirements: Node.js 20.9+ (the version Next.js supports) and PostgreSQL 16.
 
 ```bash
 npm ci
@@ -123,21 +123,15 @@ If using Neon, `DATABASE_URL` should be the pooled connection URL and `DIRECT_UR
 
 Execution providers and Agency OS's internal reasoning calls are separate layers:
 
-- If `OPENCLAW_CLI_PATH` is set, the OpenClaw provider runs through a real `openclaw` CLI process. There is no HTTP-based `OPENCLAW_BASE_URL` integration.
-- `GEMINI_API_KEY` enables `GeminiAiProvider`/`GeminiCreativeProvider` — the default text/analysis and creative (caption/copy + "Nano Banana" image) execution providers, and the default backend for Agency OS's internal reasoning calls (`REASONING_PROVIDER=openai` switches the reasoning side to OpenAI without touching any prompt file).
-- `OPENAI_API_KEY` enables `OpenAiAiProvider`/`OpenAiCreativeProvider` — the automatic fallback for both text/analysis and creative execution when Gemini is unconfigured, circuit-broken, or its call fails (quota, safety refusal, network).
-- The 4 search-grounded research capabilities (`BRAND_DISCOVERY`, `WEB_RESEARCH`, `COMPETITOR_RESEARCH`, `SEO_RESEARCH`) are served by `GeminiAiProvider`'s native Google Search grounding tool by default, falling back to OpenClaw's real browser-based research when Gemini is unavailable — OpenAI's Chat Completions API has no built-in web-search tool, so `OpenAiAiProvider` never claims these.
+- `OPENAI_API_KEY` enables `OpenAiAiProvider`/`OpenAiCreativeProvider` — the real text/analysis and creative (caption/copy + image prompt) execution providers. `OpenAiAiProvider` also serves the public-web research capabilities (`BRAND_DISCOVERY`, `WEB_RESEARCH`, `COMPETITOR_RESEARCH`, `SEO_RESEARCH`, `PRODUCT_RESEARCH`, ...) through OpenAI's hosted `web_search` tool (Responses API) and returns the report as free text for `ResultMaterializer`.
+- `GEMINI_API_KEY` enables Gemini as an optional backend for Agency OS's internal reasoning calls (`REASONING_PROVIDER=openai` switches the reasoning side to OpenAI without touching any prompt file) and as the first image tier. There is no Gemini execution provider.
+- Capabilities that need a logged-in browser (`SOCIAL_ACCOUNT_SETUP`, `SOCIAL_PROFILE_AUDIT`, `SIGNAL_SCAN`, `MEASUREMENT_CHECK`, ...) have no real provider; the router fails them with `PROVIDER_UNAVAILABLE`.
 - `AGENTELSE_PROVIDER_MODE=mock` forces the mock provider fleet, for development and testing only.
 - If the provider mode is not `mock`, the registry only considers real providers. If no real provider is configured, the job explicitly fails with `PROVIDER_UNAVAILABLE`; there is no silent mock fallback.
 - Under the `AGENTELSE_REASONING_MODE=auto` default, Gemini is used; `REASONING_PROVIDER=openai` switches it to OpenAI. A `ReasoningDef.model` pin always wins regardless of `REASONING_PROVIDER` — the backend is inferred from the model name's own family (`gpt-*` → OpenAI, otherwise Gemini).
 - `AGENTELSE_REASONING_MODE=mock` produces deterministic reasoning for test and seed scenarios.
 
-OpenClaw is used in two different ways:
-
-- Browser/research/publish jobs are executed via `openclaw agent --agent ... --message ... --json`.
-- The image generation action uses the `openclaw infer image generate` call and stores the result under `storage/assets` in the development environment.
-
-Because OpenClaw has no structured field to report the need for human intervention, OTP/MFA/CAPTCHA detection relies on signals in the provider's text output. This is a known limitation of this integration.
+Image generation tries Gemini, then OpenAI (`gpt-image-2`), then fal.ai as a last resort, and stores the result under `storage/assets` in the development environment.
 
 ## Agency OS
 
@@ -173,7 +167,7 @@ The web UI includes the following areas:
 - Tenant relationships are re-validated server-side.
 - OTP/MFA values are encrypted with AES-256-GCM, kept with a short TTL, and are single-use.
 - The local asset route validates user and project access; it only accepts safe filenames generated by the app.
-- OpenClaw and provider responses are validated with Zod schemas.
+- Provider responses are validated with Zod schemas.
 - The worker cron endpoint requires `Authorization: Bearer $CRON_SECRET`; it does not allow access even if the secret is undefined.
 
 ## Tests
@@ -236,8 +230,7 @@ A worker tick covers the scheduler, outbox dispatch, running job polling, verifi
 
 ## Current limitations
 
-- The OpenAI creative provider generates copy and the image prompt; the actual image is generated separately (OpenAI's image API primarily, falling back to the OpenClaw image action if that isn't configured or fails).
+- The OpenAI creative provider generates copy and the image prompt; the actual image is generated separately (Gemini first, then OpenAI's image API, then fal.ai if those aren't configured or fail).
 - Competitor models exist; the regular research -> snapshot -> diff pipeline is not yet complete.
 - `Skill` and `ProjectSkill` models exist; the skill discovery/review/sandbox/approval pipeline is not yet complete.
 - `SENTRY_DSN` is readable, but there is no direct Sentry bootstrap integration yet.
-- OpenClaw's CLI call is blocking within the worker; a separate process/queue model for long browser tasks has not been implemented yet.

@@ -20,7 +20,7 @@ type MockExecutionRecord = {
 };
 
 // Every result carries isMock: true and a demo-labelled payload so the UI
-// never confuses this with a real OpenClaw action (spec section 84).
+// never confuses this with a real research/browser action (spec section 84).
 const store = new Map<string, MockExecutionRecord>();
 
 // Publish/campaign-write capabilities are owned by MockPublishingProvider so
@@ -64,7 +64,7 @@ function buildMockResult(
   const base: Record<string, unknown> = {
     isMock: true,
     capability,
-    note: "MOCK OpenClaw execution — no real browser session was used.",
+    note: "MOCK research execution — no real browser session or web search was used.",
     input,
     screenshotUrl: "mock://screenshot/placeholder.png",
   };
@@ -87,9 +87,9 @@ function buildMockResult(
   return base;
 }
 
-export class MockOpenClawProvider implements ExecutionProvider {
-  readonly key = "mock-openclaw";
-  readonly type: ExecutionProviderType = "OPENCLAW";
+export class MockResearchProvider implements ExecutionProvider {
+  readonly key = "mock-research";
+  readonly type: ExecutionProviderType = "AI";
   readonly isConfigured = true;
 
   async canExecute(capability: CapabilityKey): Promise<boolean> {

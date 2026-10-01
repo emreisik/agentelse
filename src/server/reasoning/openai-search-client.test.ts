@@ -23,9 +23,8 @@ vi.mock("openai", () => {
 const toAgentelseError = vi.fn((error: unknown) => error);
 vi.mock("@/server/chat/openai-chat-client", () => ({ toAgentelseError }));
 
-const { runOpenAIStructuredWithSearch } = await import(
-  "./openai-search-client"
-);
+const { runOpenAIStructuredWithSearch, runOpenAITextWithSearch } =
+  await import("./openai-search-client");
 
 const schema = { type: "object", properties: { value: { type: "string" } } };
 
@@ -56,6 +55,79 @@ beforeEach(() => {
   envState.key = "test-key";
   toAgentelseError.mockImplementation((error: unknown) => error);
   create.mockResolvedValue(response());
+});
+
+describe("runOpenAITextWithSearch", () => {
+  const textInput = {
+    model: "gpt-5.6-luna",
+    system: "system prompt",
+    user: "user prompt",
+    maxOutputTokens: 4_000,
+  };
+
+  it("asks for free text with the hosted web search tool, statelessly and without a schema", async () => {
+    create.mockResolvedValue(response({ output_text: "  a sourced report  " }));
+
+    await runOpenAITextWithSearch(textInput);
+
+    expect(create).toHaveBeenCalledWith({
+      model: "gpt-5.6-luna",
+      instructions: "system prompt",
+      input: "user prompt",
+      tools: [{ type: "web_search" }],
+      max_output_tokens: 4_000,
+      store: false,
+      reasoning: { effort: "low" },
+    });
+  });
+
+  it("returns the trimmed report, token counts and how many searches ran", async () => {
+    create.mockResolvedValue(response({ output_text: "  a sourced report  " }));
+
+    await expect(runOpenAITextWithSearch(textInput)).resolves.toEqual({
+      text: "a sourced report",
+      inputTokens: 1_200,
+      outputTokens: 340,
+      webSearchCalls: 2,
+    });
+  });
+
+  it("retries once with a bigger budget when the report was cut off", async () => {
+    create
+      .mockResolvedValueOnce(
+        response({
+          status: "incomplete",
+          incomplete_details: { reason: "max_output_tokens" },
+          output_text: "",
+        }),
+      )
+      .mockResolvedValueOnce(response({ output_text: "full report" }));
+
+    const result = await runOpenAITextWithSearch(textInput);
+
+    expect(create.mock.calls.map((call) => call[0].max_output_tokens)).toEqual([
+      4_000, 8_000,
+    ]);
+    expect(result.text).toBe("full report");
+  });
+
+  it("throws when the model returns no text", async () => {
+    create.mockResolvedValue(response({ output_text: "   " }));
+
+    await expect(runOpenAITextWithSearch(textInput)).rejects.toMatchObject({
+      code: "INVALID_PROVIDER_RESULT",
+    });
+  });
+
+  it("sends SDK failures through the shared error mapper", async () => {
+    const sdkError = new Error("429 rate limited");
+    const mapped = new Error("mapped rate limit");
+    create.mockRejectedValue(sdkError);
+    toAgentelseError.mockReturnValue(mapped);
+
+    await expect(runOpenAITextWithSearch(textInput)).rejects.toBe(mapped);
+    expect(toAgentelseError).toHaveBeenCalledWith(sdkError);
+  });
 });
 
 describe("runOpenAIStructuredWithSearch", () => {

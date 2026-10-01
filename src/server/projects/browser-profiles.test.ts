@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // A project that starts working from the chat never ran setup, so nothing has
-// created its browser profiles yet. Without them OpenClaw cannot serve public
-// research at all, hence the lazy, idempotent bundle.
+// created its browser profiles yet, hence the lazy, idempotent bundle.
 
 const count = vi.fn();
 const createMany = vi.fn();
@@ -14,14 +13,6 @@ vi.mock("@/lib/prisma", () => ({
     project: { findUniqueOrThrow, findUnique },
   },
 }));
-
-const provisionOpenClawAgent = vi.fn();
-vi.mock(
-  "@/server/execution/providers/openclaw/openclaw-agent-provisioner",
-  () => ({
-    provisionOpenClawAgent,
-  }),
-);
 
 const {
   ensureStandardBrowserProfiles,
@@ -35,14 +26,12 @@ beforeEach(() => {
   count.mockResolvedValue(0);
   createMany.mockResolvedValue({ count: 6 });
   findUniqueOrThrow.mockResolvedValue({ slug: "acme" });
-  provisionOpenClawAgent.mockResolvedValue("acme");
 });
 
 describe("ensureStandardBrowserProfiles", () => {
-  it("creates the six standard profiles bound to the project's own agent", async () => {
+  it("creates the six standard profiles without binding an external agent", async () => {
     await expect(ensureStandardBrowserProfiles(scope)).resolves.toBe(true);
 
-    expect(provisionOpenClawAgent).toHaveBeenCalledWith("acme");
     const { data, skipDuplicates } = createMany.mock.calls[0]![0] as {
       data: Record<string, unknown>[];
       skipDuplicates: boolean;
@@ -61,8 +50,8 @@ describe("ensureStandardBrowserProfiles", () => {
       brandId: "brand-1",
       slug: "acme-public_research",
       status: "READY",
-      externalProfileId: "acme",
     });
+    expect(data.every((row) => !("externalProfileId" in row))).toBe(true);
     // Two callers can both see zero profiles; the loser must not throw.
     expect(skipDuplicates).toBe(true);
   });
@@ -72,20 +61,7 @@ describe("ensureStandardBrowserProfiles", () => {
 
     await expect(ensureStandardBrowserProfiles(scope)).resolves.toBe(false);
 
-    expect(provisionOpenClawAgent).not.toHaveBeenCalled();
     expect(createMany).not.toHaveBeenCalled();
-  });
-
-  it("still creates the profiles when the agent cannot be provisioned", async () => {
-    provisionOpenClawAgent.mockResolvedValue(null);
-
-    await expect(ensureStandardBrowserProfiles(scope)).resolves.toBe(true);
-
-    const { data } = createMany.mock.calls[0]![0] as {
-      data: { externalProfileId?: string }[];
-    };
-    // The job then falls back to the default agent instead of blocking.
-    expect(data.every((row) => row.externalProfileId === undefined)).toBe(true);
   });
 
   it("reports false when a concurrent caller created them first", async () => {

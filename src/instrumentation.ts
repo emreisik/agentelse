@@ -40,9 +40,7 @@ export async function register() {
     // the next redeploy) while the panel showed R2 fully configured. This
     // line turns that mismatch into something grep-able in the deploy log.
     const { isIntegrationConfigured } = await import("@/lib/env");
-    const summary = (
-      ["R2", "GEMINI", "OPENAI", "OPENCLAW_GATEWAY", "TELEGRAM"] as const
-    )
+    const summary = (["R2", "GEMINI", "OPENAI", "TELEGRAM"] as const)
       .map((key) => `${key}=${isIntegrationConfigured(key) ? "on" : "OFF"}`)
       .join(" ");
     console.log(`[boot] integrations: ${summary}`);

@@ -53,6 +53,70 @@ function supportsReasoning(model: string): boolean {
   return /^(gpt-5|o\d)/.test(model);
 }
 
+// Free-text report WITH live web search, for the research execution
+// capabilities (OpenAiAiProvider). Same transport and limits as the structured
+// variant below, but no schema: the report is turned into findings later by
+// ResultMaterializer, which reads rawResult.text.
+export async function runOpenAITextWithSearch(
+  input: {
+    model: string;
+    system: string;
+    user: string;
+    maxOutputTokens: number;
+  },
+  maxOutputTokens = input.maxOutputTokens,
+): Promise<{
+  text: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  webSearchCalls: number;
+}> {
+  let response;
+  try {
+    response = await getClient().responses.create({
+      model: input.model,
+      instructions: input.system,
+      input: input.user,
+      tools: [{ type: "web_search" }],
+      max_output_tokens: maxOutputTokens,
+      store: false,
+      ...(supportsReasoning(input.model)
+        ? { reasoning: { effort: "low" as const } }
+        : {}),
+    });
+  } catch (error) {
+    throw toAgentelseError(error);
+  }
+
+  if (
+    response.status === "incomplete" &&
+    response.incomplete_details?.reason === "max_output_tokens" &&
+    maxOutputTokens < MAX_TOKENS_RETRY_CEILING
+  ) {
+    return runOpenAITextWithSearch(
+      input,
+      Math.min(maxOutputTokens * 2, MAX_TOKENS_RETRY_CEILING),
+    );
+  }
+
+  const text = (response.output_text ?? "").trim();
+  if (!text) {
+    throw new AgentelseError(
+      "INVALID_PROVIDER_RESULT",
+      `OpenAI returned no text (status: ${response.status ?? "unknown"})`,
+    );
+  }
+
+  return {
+    text,
+    inputTokens: response.usage?.input_tokens,
+    outputTokens: response.usage?.output_tokens,
+    webSearchCalls: response.output.filter(
+      (item) => item.type === "web_search_call",
+    ).length,
+  };
+}
+
 export async function runOpenAIStructuredWithSearch(
   input: {
     model: string;

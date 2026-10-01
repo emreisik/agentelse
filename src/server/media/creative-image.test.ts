@@ -3,7 +3,7 @@ import sharp from "sharp";
 
 // Core guarantee this file exists to prove (docs/brand-workspace-migration.md
 // §7 Phase 5 — Creative Engine provider fallback): generateCreativeImage's
-// preference order is Gemini -> OpenAI -> OpenClaw -> fal.ai (last-resort
+// preference order is Gemini -> OpenAI -> fal.ai (last-resort
 // tier), each only tried once every earlier tier has failed or isn't
 // configured — and the explicit falModelId path (Image Studio) still never
 // falls back to anything else.
@@ -35,15 +35,6 @@ vi.mock("@/server/reasoning/openai-image-client", () => ({
   isOpenAIImageConfigured: openaiMocks.isOpenAIImageConfigured,
 }));
 
-const openclawMocks = vi.hoisted(() => ({
-  generateCreativeImageAsset: vi.fn(),
-  isOpenClawImageConfigured: vi.fn(),
-}));
-vi.mock("@/server/execution/providers/openclaw/openclaw-image-client", () => ({
-  generateCreativeImageAsset: openclawMocks.generateCreativeImageAsset,
-  isOpenClawImageConfigured: openclawMocks.isOpenClawImageConfigured,
-}));
-
 const falMocks = vi.hoisted(() => ({
   generateFalImage: vi.fn(),
   isFalImageConfigured: vi.fn(),
@@ -70,12 +61,11 @@ beforeEach(async () => {
   storageMocks.overwriteAsset.mockResolvedValue(undefined);
   geminiMocks.isGeminiImageConfigured.mockReturnValue(false);
   openaiMocks.isOpenAIImageConfigured.mockReturnValue(false);
-  openclawMocks.isOpenClawImageConfigured.mockReturnValue(false);
   falMocks.isFalImageConfigured.mockReturnValue(false);
 });
 
 describe("generateCreativeImage — fallback order", () => {
-  it("uses Gemini when configured and successful, never touching OpenAI, OpenClaw or fal", async () => {
+  it("uses Gemini when configured and successful, never touching OpenAI or fal", async () => {
     geminiMocks.isGeminiImageConfigured.mockReturnValue(true);
     geminiMocks.generateGeminiImage.mockResolvedValue({
       storageKey: "k-gemini",
@@ -87,7 +77,6 @@ describe("generateCreativeImage — fallback order", () => {
 
     expect(result?.storageKey).toBe("k-gemini");
     expect(openaiMocks.generateOpenAIImage).not.toHaveBeenCalled();
-    expect(openclawMocks.generateCreativeImageAsset).not.toHaveBeenCalled();
     expect(falMocks.generateFalImage).not.toHaveBeenCalled();
   });
 
@@ -106,7 +95,7 @@ describe("generateCreativeImage — fallback order", () => {
     expect(result?.storageKey).toBe("k-openai");
   });
 
-  it("uses OpenAI when Gemini is unconfigured, never touching OpenClaw or fal", async () => {
+  it("uses OpenAI when Gemini is unconfigured, never touching fal", async () => {
     openaiMocks.isOpenAIImageConfigured.mockReturnValue(true);
     openaiMocks.generateOpenAIImage.mockResolvedValue({
       storageKey: "k-openai",
@@ -117,42 +106,27 @@ describe("generateCreativeImage — fallback order", () => {
     const result = await generateCreativeImage("a blazer on white");
 
     expect(result?.storageKey).toBe("k-openai");
-    expect(openclawMocks.generateCreativeImageAsset).not.toHaveBeenCalled();
     expect(falMocks.generateFalImage).not.toHaveBeenCalled();
   });
 
-  it("falls back to OpenClaw when neither Gemini nor OpenAI is configured", async () => {
-    openclawMocks.isOpenClawImageConfigured.mockReturnValue(true);
-    openclawMocks.generateCreativeImageAsset.mockResolvedValue({
-      storageKey: "k-openclaw",
-      mimeType: "image/png",
-      size: 123,
-    });
-
-    const result = await generateCreativeImage("a blazer on white");
-
-    expect(result?.storageKey).toBe("k-openclaw");
-    expect(falMocks.generateFalImage).not.toHaveBeenCalled();
-  });
-
-  it("falls back to OpenClaw when Gemini and OpenAI are both configured but return null (failure)", async () => {
+  it("falls back to fal when Gemini and OpenAI are both configured but return null (failure)", async () => {
     geminiMocks.isGeminiImageConfigured.mockReturnValue(true);
     geminiMocks.generateGeminiImage.mockResolvedValue(null);
     openaiMocks.isOpenAIImageConfigured.mockReturnValue(true);
     openaiMocks.generateOpenAIImage.mockResolvedValue(null);
-    openclawMocks.isOpenClawImageConfigured.mockReturnValue(true);
-    openclawMocks.generateCreativeImageAsset.mockResolvedValue({
-      storageKey: "k-openclaw",
+    falMocks.isFalImageConfigured.mockReturnValue(true);
+    falMocks.generateFalImage.mockResolvedValue({
+      storageKey: "k-fal",
       mimeType: "image/png",
       size: 123,
     });
 
     const result = await generateCreativeImage("a blazer on white");
 
-    expect(result?.storageKey).toBe("k-openclaw");
+    expect(result?.storageKey).toBe("k-fal");
   });
 
-  it("falls back to fal (FLUX Schnell) only once Gemini, OpenAI and OpenClaw all fail/aren't configured", async () => {
+  it("falls back to fal (FLUX Schnell) only once Gemini and OpenAI both fail/aren't configured", async () => {
     falMocks.isFalImageConfigured.mockReturnValue(true);
     falMocks.generateFalImage.mockResolvedValue({
       storageKey: "k-fal",
@@ -176,10 +150,9 @@ describe("generateCreativeImage — fallback order", () => {
     expect(result).toBeNull();
   });
 
-  it("an explicit falModelId (Image Studio path) never falls back to Gemini/OpenAI/OpenClaw/the generic fal fallback", async () => {
+  it("an explicit falModelId (Image Studio path) never falls back to Gemini/OpenAI/the generic fal fallback", async () => {
     geminiMocks.isGeminiImageConfigured.mockReturnValue(true);
     openaiMocks.isOpenAIImageConfigured.mockReturnValue(true);
-    openclawMocks.isOpenClawImageConfigured.mockReturnValue(true);
     falMocks.generateFalImage.mockResolvedValue(null); // the picked model fails
 
     const result = await generateCreativeImage("a blazer", {
@@ -189,7 +162,6 @@ describe("generateCreativeImage — fallback order", () => {
     expect(result).toBeNull();
     expect(geminiMocks.generateGeminiImage).not.toHaveBeenCalled();
     expect(openaiMocks.generateOpenAIImage).not.toHaveBeenCalled();
-    expect(openclawMocks.generateCreativeImageAsset).not.toHaveBeenCalled();
     expect(falMocks.generateFalImage).toHaveBeenCalledWith(
       "fal-ai/flux-pro/v1.1-ultra",
       "a blazer",

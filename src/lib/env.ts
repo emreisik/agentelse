@@ -16,63 +16,13 @@ const envSchema = z.object({
   // to NEXT_PUBLIC_APP_URL when empty.
   PUBLIC_ASSET_BASE_URL: z.string().optional().default(""),
 
-  // Only image generation (`openclaw infer image generate`) still shells
-  // out to the CLI subprocess — it's a direct provider HTTP call with no
-  // Gateway RPC equivalent (confirmed: no `infer.*`/`image.*` method exists
-  // on the Gateway). Agent listing and provisioning moved to the Gateway
-  // (see openclaw-gateway-client.ts). Path to the `openclaw` binary; empty
-  // means "not configured" — this fallback is dormant whenever OpenAI
-  // (creative-image.ts's primary image provider) is configured.
-  OPENCLAW_CLI_PATH: z.string().optional().default(""),
-  // Optional: a Node binary compatible with OpenClaw's engine requirement,
-  // when the environment's default `node` is older (this machine's default
-  // is v21.7.1; OpenClaw requires >=22.22/24.15/25.9). When set, we spawn
-  // `<OPENCLAW_NODE_PATH> <OPENCLAW_CLI_PATH> ...` instead of the CLI path
-  // directly.
-  OPENCLAW_NODE_PATH: z.string().optional().default(""),
-  // Hub Connect's isolated OpenClaw agent — created during setup with
-  // `openclaw agents add hubconnect`; all execution traffic goes to it by
-  // default (can be overridden per profile via externalProfileId).
-  OPENCLAW_DEFAULT_AGENT_ID: z.string().optional().default("hubconnect"),
-  OPENCLAW_TIMEOUT_SECONDS: z.coerce.number().optional().default(120),
-  // `openclaw infer image generate --model <this>` — a direct provider CLI
-  // call, independent of any agent/workspace. Confirmed against a live
-  // gateway: the "openai" image provider is the one actually configured.
-  OPENCLAW_IMAGE_MODEL: z.string().optional().default("openai/gpt-image-2"),
-
-  // OpenClaw Gateway — the WebSocket RPC endpoint that `openclaw agent`
-  // itself talks to under the hood (see openclaw-gateway-client.ts). Used
-  // for runAgentTurn (browser/research/publish tasks), agent id
-  // listing/validation, and per-project agent provisioning. Only image
-  // generation still goes through the CLI subprocess (see
-  // OPENCLAW_CLI_PATH above). Separate from OPENCLAW_CLI_PATH on purpose —
-  // a project can run against a Gateway deployed as its own service (e.g. a
-  // dedicated Railway service) without the web app's own container ever
-  // needing the `openclaw` binary.
-  OPENCLAW_GATEWAY_URL: z.string().optional().default(""),
-  OPENCLAW_GATEWAY_TOKEN: z.string().optional().default(""),
-  // Workspace root as seen by the Gateway process itself (not this app's
-  // filesystem) — used to build the `workspace` path passed to
-  // agents.create when provisioning a per-project agent. Defaults to the
-  // clawdbot-railway-template convention (its README pins
-  // OPENCLAW_WORKSPACE_DIR=/data/workspace); override for a Gateway with a
-  // different layout (e.g. a local dev gateway using
-  // ~/.openclaw/workspaces).
-  OPENCLAW_GATEWAY_WORKSPACE_ROOT: z
-    .string()
-    .optional()
-    .default("/data/workspace"),
-
-  // Google Gemini — ReasoningService's default LLM backend, and the default
-  // execution provider for text/analysis, search-grounded, and creative
-  // (caption/copy + "Nano Banana" image) capabilities (see gemini-client.ts,
-  // gemini-ai.provider.ts, gemini-creative.provider.ts). If unset, the
-  // execution-provider layer falls through to OpenAI automatically
-  // (CapabilityRouter skips the unconfigured Gemini provider and picks the
-  // next one in provider-registry.ts). ReasoningService.run() does NOT
-  // auto-reroute the same way — if REASONING_PROVIDER stays "gemini" while
-  // this is unset, it throws PROVIDER_UNAVAILABLE instead of retrying with
-  // OpenAI; set REASONING_PROVIDER=openai explicitly for that path instead.
+  // Google Gemini — ReasoningService's optional LLM backend and the first
+  // image tier in creative-image.ts (see gemini-client.ts,
+  // gemini-image-client.ts). There is no Gemini execution provider: text and
+  // creative capabilities always run on OpenAI. ReasoningService.run() does
+  // NOT auto-reroute — if REASONING_PROVIDER stays "gemini" while this is
+  // unset, it throws PROVIDER_UNAVAILABLE instead of retrying with OpenAI; set
+  // REASONING_PROVIDER=openai explicitly for that path instead.
   GEMINI_API_KEY: z.string().optional().default(""),
   // NOTE: "gemini-pro-latest" resolves to the latest Pro, and Pro's free
   // tier limit is only 250 requests/day — the agency loop was burning
@@ -135,8 +85,12 @@ const envSchema = z.object({
     .catch("legacy"),
   // Empty means "use OPENAI_MODEL" — the chat is no longer on the lite tier.
   CHAT_MODEL: z.string().optional().default(""),
+  // Which values a model accepts differs: gpt-5.6-luna takes none/low/medium/
+  // high/xhigh/max and rejects "minimal" (a 400); older gpt-5 models take
+  // minimal/low/medium/high. An unsupported value for the chosen model fails
+  // the turn at OpenAI, so set one the model lists.
   CHAT_REASONING_EFFORT: z
-    .enum(["minimal", "low", "medium", "high"])
+    .enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
     .optional()
     .default("low")
     .catch("low"),
@@ -177,15 +131,13 @@ const envSchema = z.object({
     .default("false")
     .transform((value) => value === "true"),
   // gpt-image-2 — see openai-image-client.ts. Separate model slot from
-  // OPENAI_MODEL/OPENCLAW_IMAGE_MODEL because it names an image model, not
-  // a chat one.
+  // OPENAI_MODEL because it names an image model, not a chat one.
   OPENAI_IMAGE_MODEL: z.string().optional().default("gpt-image-2"),
 
   // fal.ai — optional additional image-generation provider (see
   // fal-image-client.ts and fal-image-models.ts). Purely opt-in: the
   // Image Studio's fal.ai model group only appears when this is set, and
-  // the existing Gemini -> OpenAI -> OpenClaw fallback chain is unaffected
-  // when it isn't.
+  // the existing Gemini -> OpenAI fallback chain is unaffected when it isn't.
   FAL_API_KEY: z.string().optional().default(""),
 
   R2_ACCOUNT_ID: z.string().optional().default(""),
@@ -255,8 +207,6 @@ export function getEnv() {
 
 export function isIntegrationConfigured(
   key:
-    | "OPENCLAW"
-    | "OPENCLAW_GATEWAY"
     | "GEMINI"
     | "OPENAI"
     | "FAL"
@@ -271,10 +221,6 @@ export function isIntegrationConfigured(
 ): boolean {
   const env = getEnv();
   switch (key) {
-    case "OPENCLAW":
-      return Boolean(env.OPENCLAW_CLI_PATH);
-    case "OPENCLAW_GATEWAY":
-      return Boolean(env.OPENCLAW_GATEWAY_URL && env.OPENCLAW_GATEWAY_TOKEN);
     case "GEMINI":
       return Boolean(env.GEMINI_API_KEY);
     case "OPENAI":

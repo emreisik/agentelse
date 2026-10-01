@@ -55,6 +55,12 @@ enum CommandSource {
   SCHEDULE
 }
 
+enum WorkStatus {
+  ACTIVE
+  DONE
+  ARCHIVED
+}
+
 enum RiskLevel {
   LOW
   MEDIUM
@@ -1231,6 +1237,37 @@ model ExecutionContextSnapshot {
 // COMMAND / TASK / EXECUTION
 // =============================================================================
 
+// One conversation of the Agency Desk (docs/works.md): a titled, channel-scoped
+// piece of work the user opens, continues and completes. Chat rows (Command)
+// belong to a Work through Command.workId; rows without one are the legacy
+// single project chat. Connection status is NOT stored here (it is read live);
+// only the channels the user chose to work on.
+model Work {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  createdByUserId String?
+
+  title   String
+  // One-line subtitle: the newest card's summary.
+  summary String?
+  status  WorkStatus @default(ACTIVE)
+
+  // Chosen channel keys (content-channels CHANNEL_KEYS subset), e.g. ["instagram"].
+  channels Json @default("[]")
+  // Channel keys chosen while NOT connected ("I'll connect later").
+  acknowledgedUnconnected Json @default("[]")
+
+  lastActivityAt DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  commands Command[]
+
+  @@index([projectId, status, lastActivityAt])
+  @@index([workspaceId])
+}
+
 model Command {
   id          String  @id @default(cuid())
   workspaceId String
@@ -1263,6 +1300,10 @@ model Command {
   replyText   String?
   replyStatus String?
 
+  // The Work (conversation) this row belongs to; null = legacy single chat.
+  workId String?
+  work   Work?   @relation(fields: [workId], references: [id], onDelete: SetNull)
+
   idea  Idea?  @relation(fields: [ideaId], references: [id], onDelete: SetNull)
   tasks Task[]
 
@@ -1272,6 +1313,7 @@ model Command {
   @@index([projectId])
   @@index([createdAt])
   @@index([ideaId])
+  @@index([workId, createdAt])
   @@index([topic])
   // Single-chat consolidation: the general-chat query is no longer narrowed
   // by ideaId (it now includes every SYSTEM pipeline event project-wide,

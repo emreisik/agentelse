@@ -100,6 +100,33 @@ describe("Instagram Login token exchange", () => {
     expect(result).toEqual({ accessToken: "long", expiresIn: 5184000 });
   });
 
+  it("turns Meta's 'Unsupported request' into the likely cause: a tester invite still pending", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ error: { message: "Unsupported request - method type: get", code: 100 } }, 400),
+    );
+    await expect(exchangeInstagramLongLivedToken("short")).rejects.toMatchObject({
+      metaErrorCode: 100,
+      message: expect.stringMatching(
+        /Unsupported request - method type: get\. .*pending tester.*Tester invites/,
+      ),
+    });
+    // One documented GET, no guessing with other methods.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain(
+      "https://graph.instagram.com/access_token?",
+    );
+  });
+
+  it("leaves other failures such as a bad token untouched", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({ error: { message: "Invalid OAuth access token", code: 190 } }, 400),
+    );
+    await expect(exchangeInstagramLongLivedToken("short")).rejects.toMatchObject({
+      message: "Invalid OAuth access token",
+      metaErrorCode: 190,
+    });
+  });
+
   it("assumes 60 days when Instagram leaves expires_in out", async () => {
     fetchMock.mockResolvedValue(json({ access_token: "long" }));
     expect((await exchangeInstagramLongLivedToken("s")).expiresIn).toBe(5184000);

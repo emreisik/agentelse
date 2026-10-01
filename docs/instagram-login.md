@@ -55,6 +55,12 @@ Aynı Meta uygulamasında kalınır, ama **Instagram uygulama kimliği ve sırr�
 
 `resolveInstagramTarget(metadata)` iki şekli de `{ login, igUserId, username, pageId? }` olarak çözer; `instagramAccessFor` doğru token'ı ve Graph sunucusunu verir. Yayın hedefi listesi, `canExecute`, yayın ve bağlantı testi hep bunu kullanır.
 
+## Sorun giderme
+
+- **"Unsupported request - method type: get" (long-lived token adımında):** Meta'nın yanıltıcı mesajı. Bağlanan Instagram hesabı uygulamaya **Instagram Tester** olarak eklenmiş ama davet **Pending**. Hesap sahibi Instagram'da Ayarlar > Uygulamalar ve web siteleri > Tester invites > Accept demeli; Meta'da App roles > Roles sayfasında durum **Active** olmalı. GET, POST ve sürümlü yol aynı mesajı verir, yöntem değiştirmek işe yaramaz. Kod bu mesajı bu açıklamayla birlikte gösterir.
+- **"Invalid redirect_uri":** adres Instagram > API setup with Instagram login > "4. Set up Instagram business login" > Business login settings > OAuth redirect URIs listesinde birebir olmalı (Enter ile etiket olarak eklenir; "3. Configure webhooks" alanı başka bir şeydir). Yerelde Instagram yalnızca `https://` kabul eder: `npm run dev:https`, `.env.development.local` içinde `NEXT_PUBLIC_APP_URL=https://localhost:3000` ve Meta'ya `https://localhost:3000/api/integrations/meta/callback`.
+- Callback hataları sunucu loguna `[meta-callback] ... failed at "<adım>"` olarak yazılır ve entegrasyon penceresinde "Meta said: ..." satırı olarak görünür.
+
 ## Bilinen sınırlar
 
 - Token yenileme yok (`ig_refresh_token` kullanılmadı); 60 günde bir yeniden bağlanmak gerekir. Facebook yolunda da durum aynıydı.

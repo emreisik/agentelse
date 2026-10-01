@@ -347,7 +347,14 @@ export async function exchangeInstagramAuthCode(
   };
 }
 
-// Short-lived (1 hour) -> long-lived (60 days) Instagram token.
+// Short-lived (1 hour) -> long-lived (60 days) Instagram token: the documented
+// GET on the unversioned host root. Meta answers "Unsupported request - method
+// type: get" (and the same for POST and for a versioned path) when the Instagram
+// account is a Tester of the Meta app whose invitation is still Pending, so that
+// message is turned into the thing to actually do.
+const PENDING_TESTER_HINT =
+  "The Instagram account is probably still a pending tester of the Meta app: accept the invite in Instagram (Settings > Apps and websites > Tester invites) and check the Meta app's App roles page shows it as Active.";
+
 export async function exchangeInstagramLongLivedToken(
   shortLivedToken: string,
 ): Promise<{ accessToken: string; expiresIn: number }> {
@@ -356,13 +363,24 @@ export async function exchangeInstagramLongLivedToken(
     client_secret: getEnv().INSTAGRAM_APP_SECRET,
     access_token: shortLivedToken,
   });
-  const result = await request<{ access_token: string; expires_in?: number }>(
-    `${INSTAGRAM_GRAPH_ROOT}/access_token?${params.toString()}`,
-  );
-  return {
-    accessToken: result.access_token,
-    expiresIn: result.expires_in ?? 60 * 24 * 60 * 60,
-  };
+  try {
+    const result = await request<{ access_token: string; expires_in?: number }>(
+      `${INSTAGRAM_GRAPH_ROOT}/access_token?${params.toString()}`,
+    );
+    return {
+      accessToken: result.access_token,
+      expiresIn: result.expires_in ?? 60 * 24 * 60 * 60,
+    };
+  } catch (error) {
+    if (error instanceof MetaApiError && /unsupported request/i.test(error.message)) {
+      throw new MetaApiError(
+        `${error.message}. ${PENDING_TESTER_HINT}`,
+        error.metaErrorCode,
+        error.metaErrorSubcode,
+      );
+    }
+    throw error;
+  }
 }
 
 // The account the token belongs to. `user_id` is the Instagram professional

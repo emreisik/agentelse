@@ -34,6 +34,8 @@ export const WORK_LIST_COPY = {
   done: "Completed",
   fallbackSummary: "Active work",
   failed: "Couldn't open a new Work. Try again.",
+  // New Work never piles up empty rows: while one is still blank, it is opened.
+  reused: "You already have an empty Work, so that one is open.",
 } as const;
 
 const DOT_CLASS: Record<WorkStatusValue, string> = {
@@ -74,6 +76,29 @@ export function activeWorkIdOf(
       works.find((work) => work.status === "ACTIVE")
     )?.id ?? null
   );
+}
+
+// What a "New Work" tap does with the server's answer: go to the Work, and when
+// it was an existing blank one (not a new row), say so, so the tap never looks
+// like it did nothing (it often changes nothing visible: that Work is already
+// the open one). Pure, so the rule is testable without a router.
+export function applyNewWorkResult(
+  projectId: string,
+  result:
+    | { ok: true; workId: string; reused?: true }
+    | { ok: false; message: string },
+  handlers: {
+    push: (href: string) => void;
+    error: (message: string) => void;
+    info: (message: string) => void;
+  },
+): void {
+  if (!result.ok) {
+    handlers.error(result.message || WORK_LIST_COPY.failed);
+    return;
+  }
+  if (result.reused) handlers.info(WORK_LIST_COPY.reused);
+  handlers.push(workHref(projectId, result.workId));
 }
 
 export function WorkListView({
@@ -210,11 +235,11 @@ export function WorkList({
   const onNew = React.useCallback(() => {
     startTransition(async () => {
       const result = await createWorkAction(projectId);
-      if (!result.ok) {
-        toast.error(result.message || WORK_LIST_COPY.failed);
-        return;
-      }
-      router.push(workHref(projectId, result.workId));
+      applyNewWorkResult(projectId, result, {
+        push: (href) => router.push(href),
+        error: (message) => toast.error(message),
+        info: (message) => toast.info(message),
+      });
     });
   }, [projectId, router]);
 

@@ -72,6 +72,75 @@ export const WorkRepository = {
     return toWorkView(row);
   },
 
+  // "New Work", made idempotent: a project needs at most ONE Work that nobody has
+  // written in yet, so a second tap, a second tab, or the first-Work opener gets
+  // that one back instead of another empty "New Work" row.
+  //
+  // Blank means: ACTIVE, not a Today Work, still titled WORK_DEFAULT_TITLE (the
+  // first message renames it, and so does the person) and no chat row at all.
+  // With several (older duplicates), the most recently active one wins.
+  //
+  // The advisory lock serialises two creators of the same project: the second
+  // waits, then finds the Work the first one made. All reads and writes use the
+  // transaction's own client (not the global one), so the lock and the row
+  // always share one connection.
+  async createOrReuseBlank(input: {
+    workspaceId: string;
+    projectId: string;
+    createdByUserId?: string;
+    channels?: ChannelKey[];
+    acknowledgedUnconnected?: ChannelKey[];
+  }): Promise<{ work: WorkView; reused: boolean }> {
+    return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.projectId}:blank-work`}))`;
+
+      const blank = await tx.work.findFirst({
+        where: {
+          projectId: input.projectId,
+          status: "ACTIVE",
+          title: WORK_DEFAULT_TITLE,
+          NOT: { id: { startsWith: TODAY_WORK_PREFIX } },
+          commands: { none: {} },
+        },
+        orderBy: [{ lastActivityAt: "desc" }, { createdAt: "desc" }],
+        select: SELECT,
+      });
+
+      if (blank) {
+        // Reopened: it moves to the top of the list like any Work just used. Only
+        // explicitly requested channels replace what it has; none keeps its own.
+        const channels = input.channels ?? [];
+        const row = await tx.work.update({
+          where: { id: blank.id },
+          data: {
+            lastActivityAt: new Date(),
+            ...(channels.length > 0
+              ? {
+                  channels,
+                  acknowledgedUnconnected: input.acknowledgedUnconnected ?? [],
+                }
+              : {}),
+          },
+          select: SELECT,
+        });
+        return { work: toWorkView(row), reused: true };
+      }
+
+      const row = await tx.work.create({
+        data: {
+          workspaceId: input.workspaceId,
+          projectId: input.projectId,
+          createdByUserId: input.createdByUserId,
+          title: WORK_DEFAULT_TITLE,
+          channels: input.channels ?? [],
+          acknowledgedUnconnected: input.acknowledgedUnconnected ?? [],
+        },
+        select: SELECT,
+      });
+      return { work: toWorkView(row), reused: false };
+    });
+  },
+
   async get(projectId: string, workId: string): Promise<WorkView | null> {
     const row = await prisma.work.findFirst({
       where: { id: workId, projectId },

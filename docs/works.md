@@ -34,6 +34,7 @@ Bir Work'te kanal seçilmeden `start_plan_brief`, `propose_content_plan`, `propo
 
 - `components/layout/work-list.tsx`: sidebar listesi, durum noktası (yeşil aktif, mor tamamlandı), "New Work".
 - `components/works/work-header.tsx`: başlık, durum satırı (kanallar ve bağlı olmayanlar), Complete/Reopen, yeniden adlandır / arşivle / sil.
+- **New Work boş satır biriktirmez.** Projede içine hiçbir şey yazılmamış bir Work varsa (aktif, Today değil, başlığı hâlâ "New Work", hiç sohbet satırı yok) yenisi açılmaz, o açılır ve en üste çıkar; ekranda "You already have an empty Work, so that one is open." yazar. Birkaç boş kopya varsa en son etkin olan açılır. Kural sunucuda tek yerde (`WorkRepository.createOrReuseBlank`, `createWorkAction` ve ilk-Work açıcısı onu kullanır); iki sekme ya da çift tıklama advisory kilitle tek Work'e iner. İçine ilk mesaj yazılınca (ya da yeniden adlandırılınca) Work artık boş sayılmaz ve bir sonraki "New Work" yenisini açar. Daha önce birikmiş boş kopyalar silinmez; "…" menüsünden arşivlenir/silinir.
 - Boş Work: önce `ChannelPicker` (kanal seçimi, bağlı/bağlı değil durumuyla), kanal seçilince `starter-cards` (`lib/works/starter-cards.ts`, saf): haftayı planla, bekleyen kararlar, fikir bul, bağlı değilse "Connect X" ya da performans.
 - Hiç Work yoksa ilk Work otomatik açılır (`NewWorkOpener`).
 - Tamamlanan Work'e yazılmaz; "Reopen" gerekir.

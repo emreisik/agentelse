@@ -17,6 +17,7 @@ vi.mock("@/server/integrations/channel-connections", () => ({
 }));
 const repo = vi.hoisted(() => ({
   create: vi.fn(),
+  createOrReuseBlank: vi.fn(),
   setChannels: vi.fn(),
   setStatus: vi.fn(),
   rename: vi.fn(),
@@ -61,6 +62,10 @@ beforeEach(() => {
     order.calls.push("create");
     return { id: "wNew" };
   });
+  repo.createOrReuseBlank.mockResolvedValue({
+    work: { id: "wNew" },
+    reused: false,
+  });
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
 
@@ -70,6 +75,7 @@ describe("guards (every action)", () => {
     expect(await actions.createWorkAction("p1")).toMatchObject({ ok: false });
     expect(await actions.completeWorkAction("p1", "w1")).toMatchObject({ ok: false });
     expect(repo.create).not.toHaveBeenCalled();
+    expect(repo.createOrReuseBlank).not.toHaveBeenCalled();
     expect(repo.setStatus).not.toHaveBeenCalled();
   });
 
@@ -79,6 +85,7 @@ describe("guards (every action)", () => {
     limited.mockReturnValue(true);
     expect(await actions.createWorkAction("p1")).toMatchObject({ ok: false });
     expect(repo.create).not.toHaveBeenCalled();
+    expect(repo.createOrReuseBlank).not.toHaveBeenCalled();
   });
 
   it("turns a thrown access error into a plain failure", async () => {
@@ -90,23 +97,73 @@ describe("guards (every action)", () => {
   });
 });
 
-describe("createWorkAction", () => {
-  it("creates with validated channels and records the unconnected ones", async () => {
-    repo.create.mockResolvedValue({ id: "w1" });
+describe("createWorkAction (New Work is idempotent)", () => {
+  it("opens the blank Work with validated channels and records the unconnected ones", async () => {
+    repo.createOrReuseBlank.mockResolvedValue({
+      work: { id: "w1" },
+      reused: false,
+    });
     const out = await actions.createWorkAction("p1", [
       "instagram",
       "linkedin",
       "bogus",
     ]);
     expect(out).toEqual({ ok: true, workId: "w1" });
-    expect(repo.create).toHaveBeenCalledWith(
+    expect(repo.createOrReuseBlank).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "p1",
         workspaceId: "ws1",
+        createdByUserId: "u1",
         channels: ["instagram", "linkedin"],
         acknowledgedUnconnected: ["linkedin"],
       }),
     );
+  });
+
+  it("a brand-new row answers exactly as before: no `reused` key at all", async () => {
+    repo.createOrReuseBlank.mockResolvedValue({
+      work: { id: "w1" },
+      reused: false,
+    });
+    expect(await actions.createWorkAction("p1")).toStrictEqual({
+      ok: true,
+      workId: "w1",
+    });
+  });
+
+  it("says `reused: true` when an existing blank Work was opened instead of a new row", async () => {
+    repo.createOrReuseBlank.mockResolvedValue({
+      work: { id: "wBlank" },
+      reused: true,
+    });
+    expect(await actions.createWorkAction("p1")).toStrictEqual({
+      ok: true,
+      workId: "wBlank",
+      reused: true,
+    });
+  });
+
+  it("never inserts a row itself: the repository decides between new and existing", async () => {
+    await actions.createWorkAction("p1");
+    await actions.createWorkAction("p1", ["instagram"]);
+    expect(repo.create).not.toHaveBeenCalled();
+    expect(repo.createOrReuseBlank).toHaveBeenCalledTimes(2);
+  });
+
+  it("a plain New Work tap (no channels) does not read the live connections", async () => {
+    await actions.createWorkAction("p1");
+    expect(connections).not.toHaveBeenCalled();
+    expect(repo.createOrReuseBlank).toHaveBeenCalledWith(
+      expect.objectContaining({ channels: [], acknowledgedUnconnected: [] }),
+    );
+  });
+
+  it("turns a failing repository into a plain failure", async () => {
+    repo.createOrReuseBlank.mockRejectedValue(new Error("db down"));
+    expect(await actions.createWorkAction("p1")).toEqual({
+      ok: false,
+      message: "That didn't work. Try again.",
+    });
   });
 });
 

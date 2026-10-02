@@ -11,7 +11,8 @@ vi.mock("@/server/actions/work-actions", () => ({
   createWorkAction: vi.fn(),
 }));
 
-const { WorkListView, activeWorkIdOf, workHref } = await import("./work-list");
+const { WorkListView, activeWorkIdOf, applyNewWorkResult, workHref } =
+  await import("./work-list");
 const { SidebarNav } = await import("./sidebar-nav");
 
 const WORKS = [
@@ -81,6 +82,49 @@ const todayRow = {
   isToday: true,
 } as const;
 const earlierRow = { ...todayRow, id: EARLIER_ID } as const;
+
+describe("applyNewWorkResult (what a New Work tap does with the answer)", () => {
+  const handlers = () => ({ push: vi.fn(), error: vi.fn(), info: vi.fn() });
+
+  it("a brand-new Work: go to it, nothing said", () => {
+    const h = handlers();
+    applyNewWorkResult("proj-1", { ok: true, workId: "w9" }, h);
+    expect(h.push).toHaveBeenCalledTimes(1);
+    expect(h.push).toHaveBeenCalledWith(workHref("proj-1", "w9"));
+    expect(h.info).not.toHaveBeenCalled();
+    expect(h.error).not.toHaveBeenCalled();
+  });
+
+  it("an existing empty Work: go to it AND say so, so the tap never looks like it did nothing", () => {
+    const h = handlers();
+    applyNewWorkResult("proj-1", { ok: true, workId: "wBlank", reused: true }, h);
+    expect(h.push).toHaveBeenCalledTimes(1);
+    expect(h.push).toHaveBeenCalledWith(workHref("proj-1", "wBlank"));
+    expect(h.info).toHaveBeenCalledTimes(1);
+    expect(h.info).toHaveBeenCalledWith(
+      "You already have an empty Work, so that one is open.",
+    );
+    expect(h.error).not.toHaveBeenCalled();
+  });
+
+  it("a refusal: say why, and do not navigate", () => {
+    const h = handlers();
+    applyNewWorkResult("proj-1", { ok: false, message: "Slow down for a moment." }, h);
+    expect(h.error).toHaveBeenCalledTimes(1);
+    expect(h.error).toHaveBeenCalledWith("Slow down for a moment.");
+    expect(h.push).not.toHaveBeenCalled();
+    expect(h.info).not.toHaveBeenCalled();
+  });
+
+  it("a refusal without a message falls back to the standard line", () => {
+    const h = handlers();
+    applyNewWorkResult("proj-1", { ok: false, message: "" }, h);
+    expect(h.error).toHaveBeenCalledTimes(1);
+    expect(h.error).toHaveBeenCalledWith(
+      "Couldn't open a new Work. Try again.",
+    );
+  });
+});
 
 describe("WorkListView with a Today Work", () => {
   it("pins the Today row first with the daily-brief subtitle", () => {

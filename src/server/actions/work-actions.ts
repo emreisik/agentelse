@@ -102,23 +102,31 @@ async function unconnectedOf(
   );
 }
 
+// "New Work". Idempotent: while the project still has a Work nobody has written
+// in (default title, no chat rows), that one is opened instead of making another
+// empty row. `reused: true` tells the screen so it can say it (it is only
+// present then, so a freshly created Work answers exactly as before).
 export async function createWorkAction(
   projectId: string,
   channels?: unknown,
-): Promise<WorkActionResult<{ workId: string }>> {
+): Promise<WorkActionResult<{ workId: string; reused?: true }>> {
   return guarded("create", async () => {
     const gate = await authorize(projectId);
     if (!gate.ok) return gate;
     const chosen = parseChannelKeys(channels);
-    const work = await WorkRepository.create({
+    const { work, reused } = await WorkRepository.createOrReuseBlank({
       workspaceId: gate.auth.workspaceId,
       projectId,
       createdByUserId: gate.auth.userId,
       channels: chosen,
-      acknowledgedUnconnected: await unconnectedOf(projectId, chosen),
+      // Only a channel choice needs the live connection read.
+      acknowledgedUnconnected:
+        chosen.length > 0 ? await unconnectedOf(projectId, chosen) : [],
     });
     refresh(projectId);
-    return { ok: true, workId: work.id };
+    return reused
+      ? { ok: true, workId: work.id, reused: true }
+      : { ok: true, workId: work.id };
   });
 }
 

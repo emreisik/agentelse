@@ -232,16 +232,19 @@ export function WorkList({
     ? activeWorkIdOf(works, searchParams.get("work"), todayKey, projectId)
     : null;
 
+  // The Work on screen: when it is the empty one, New Work keeps the person there.
+  const currentWorkId =
+    activeWorkId && activeWorkId !== TODAY_WORK_PARAM ? activeWorkId : undefined;
   const onNew = React.useCallback(() => {
     startTransition(async () => {
-      const result = await createWorkAction(projectId);
+      const result = await createWorkAction(projectId, undefined, currentWorkId);
       applyNewWorkResult(projectId, result, {
         push: (href) => router.push(href),
         error: (message) => toast.error(message),
         info: (message) => toast.info(message),
       });
     });
-  }, [projectId, router]);
+  }, [projectId, router, currentWorkId]);
 
   return (
     <WorkListView

@@ -78,11 +78,14 @@ export const WorkRepository = {
   //
   // Blank means: ACTIVE, not a Today Work, still titled WORK_DEFAULT_TITLE (the
   // first message renames it, and so does the person) and no chat row at all.
-  // With several (older duplicates), the most recently active one wins.
+  // Which blank Work: the one the person is in (`currentWorkId`, when it is
+  // blank), else the most recently active one. Any OTHER blank Work of the
+  // project (empty copies piled up before this rule) is archived, not deleted:
+  // it holds nothing, and it leaves the sidebar.
   //
   // The advisory lock serialises two creators of the same project: the second
   // waits, then finds the Work the first one made. All reads and writes use the
-  // transaction's own client (not the global one), so the lock and the row
+  // transaction's own client (not the global one), so the lock and the rows
   // always share one connection.
   async createOrReuseBlank(input: {
     workspaceId: string;
@@ -90,28 +93,48 @@ export const WorkRepository = {
     createdByUserId?: string;
     channels?: ChannelKey[];
     acknowledgedUnconnected?: ChannelKey[];
-  }): Promise<{ work: WorkView; reused: boolean }> {
+    currentWorkId?: string;
+  }): Promise<{ work: WorkView; reused: boolean; archived: number }> {
     return prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.projectId}:blank-work`}))`;
 
-      const blank = await tx.work.findFirst({
-        where: {
-          projectId: input.projectId,
-          status: "ACTIVE",
-          title: WORK_DEFAULT_TITLE,
-          NOT: { id: { startsWith: TODAY_WORK_PREFIX } },
-          commands: { none: {} },
-        },
-        orderBy: [{ lastActivityAt: "desc" }, { createdAt: "desc" }],
-        select: SELECT,
-      });
+      const blankWhere: Prisma.WorkWhereInput = {
+        projectId: input.projectId,
+        status: "ACTIVE",
+        title: WORK_DEFAULT_TITLE,
+        NOT: { id: { startsWith: TODAY_WORK_PREFIX } },
+        commands: { none: {} },
+      };
 
+      const current = input.currentWorkId
+        ? await tx.work.findFirst({
+            where: { AND: [blankWhere, { id: input.currentWorkId }] },
+            select: SELECT,
+          })
+        : null;
+      const blank =
+        current ??
+        (await tx.work.findFirst({
+          where: blankWhere,
+          orderBy: [{ lastActivityAt: "desc" }, { createdAt: "desc" }],
+          select: SELECT,
+        }));
+
+      let archived = 0;
       if (blank) {
+        ({ count: archived } = await tx.work.updateMany({
+          where: { AND: [blankWhere, { id: { not: blank.id } }] },
+          data: { status: "ARCHIVED" },
+        }));
         // Reopened: it moves to the top of the list like any Work just used. Only
         // explicitly requested channels replace what it has; none keeps its own.
+        // Conditional on it STILL being blank: the lock only serialises New Work
+        // taps, so a delete or a first message from another tab can land between
+        // the read and this write. Then it is not reused, and a fresh Work is
+        // made below instead of failing the tap.
         const channels = input.channels ?? [];
-        const row = await tx.work.update({
-          where: { id: blank.id },
+        const { count } = await tx.work.updateMany({
+          where: { AND: [blankWhere, { id: blank.id }] },
           data: {
             lastActivityAt: new Date(),
             ...(channels.length > 0
@@ -121,9 +144,15 @@ export const WorkRepository = {
                 }
               : {}),
           },
-          select: SELECT,
         });
-        return { work: toWorkView(row), reused: true };
+        const row =
+          count > 0
+            ? await tx.work.findFirst({
+                where: { id: blank.id, projectId: input.projectId },
+                select: SELECT,
+              })
+            : null;
+        if (row) return { work: toWorkView(row), reused: true, archived };
       }
 
       const row = await tx.work.create({
@@ -137,7 +166,7 @@ export const WorkRepository = {
         },
         select: SELECT,
       });
-      return { work: toWorkView(row), reused: false };
+      return { work: toWorkView(row), reused: false, archived };
     });
   },
 

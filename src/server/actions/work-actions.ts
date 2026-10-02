@@ -104,11 +104,14 @@ async function unconnectedOf(
 
 // "New Work". Idempotent: while the project still has a Work nobody has written
 // in (default title, no chat rows), that one is opened instead of making another
-// empty row. `reused: true` tells the screen so it can say it (it is only
-// present then, so a freshly created Work answers exactly as before).
+// empty row, and other empty copies are archived. `currentWorkId` is the Work the
+// person is in: when it is the empty one, they stay there. `reused: true` tells
+// the screen so it can say it (it is only present then, so a freshly created
+// Work answers exactly as before).
 export async function createWorkAction(
   projectId: string,
   channels?: unknown,
+  currentWorkId?: unknown,
 ): Promise<WorkActionResult<{ workId: string; reused?: true }>> {
   return guarded("create", async () => {
     const gate = await authorize(projectId);
@@ -118,6 +121,8 @@ export async function createWorkAction(
       workspaceId: gate.auth.workspaceId,
       projectId,
       createdByUserId: gate.auth.userId,
+      // Only a hint: the repository uses it only if it is this project's blank Work.
+      currentWorkId: validId(currentWorkId) ? currentWorkId : undefined,
       channels: chosen,
       // Only a channel choice needs the live connection read.
       acknowledgedUnconnected:

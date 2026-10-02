@@ -9,8 +9,8 @@ import { describeIntegration } from "@/test-support/integration-suite";
 
 // "New Work" never piles up empty rows. What the in-memory repository tests cannot
 // prove, a REAL Postgres does: the relation filter that says "no chat row at all",
-// the advisory lock that makes two simultaneous taps one, and the ordering among
-// older duplicates. Runs only with a dedicated TEST_DATABASE_URL (CI, or a local
+// the advisory lock that makes two simultaneous taps one, the ordering among older
+// duplicates, and that tidying them away (archive) never touches a Work with content. Runs only with a dedicated TEST_DATABASE_URL (CI, or a local
 // disposable database), never against the shared development database.
 
 describeIntegration("WorkRepository.createOrReuseBlank on Postgres", () => {
@@ -24,6 +24,7 @@ describeIntegration("WorkRepository.createOrReuseBlank on Postgres", () => {
     over: {
       channels?: ("instagram" | "linkedin")[];
       acknowledgedUnconnected?: ("instagram" | "linkedin")[];
+      currentWorkId?: string;
     } = {},
   ) =>
     WorkRepository.createOrReuseBlank({
@@ -34,6 +35,9 @@ describeIntegration("WorkRepository.createOrReuseBlank on Postgres", () => {
     });
   const countOf = (projectId: string) =>
     prisma.work.count({ where: { projectId } });
+  const statusOf = async (id: string) =>
+    (await prisma.work.findUnique({ where: { id }, select: { status: true } }))
+      ?.status;
   const writeIn = (
     projectId: string,
     workId: string,
@@ -198,11 +202,14 @@ describeIntegration("WorkRepository.createOrReuseBlank on Postgres", () => {
     expect(await countOf(b)).toBe(1);
   });
 
-  it("with older duplicates already there, opens the most recently active one and makes no third", async () => {
+  it("empty copies left from before: the most recently active one opens, the others are archived, not deleted", async () => {
     const projectId = newProject();
     const now = Date.now();
-    const older = await insertWork(projectId, {
+    const oldest = await insertWork(projectId, {
       lastActivityAt: new Date(now - 3 * 3_600_000),
+    });
+    const older = await insertWork(projectId, {
+      lastActivityAt: new Date(now - 2 * 3_600_000),
     });
     const newer = await insertWork(projectId, {
       lastActivityAt: new Date(now - 1 * 3_600_000),
@@ -210,8 +217,98 @@ describeIntegration("WorkRepository.createOrReuseBlank on Postgres", () => {
     const out = await open(projectId);
     expect(out.reused).toBe(true);
     expect(out.work.id).toBe(newer.id);
-    expect(out.work.id).not.toBe(older.id);
-    expect(await countOf(projectId)).toBe(2);
+    expect(out.archived).toBe(2);
+    expect(await statusOf(oldest.id)).toBe("ARCHIVED");
+    expect(await statusOf(older.id)).toBe("ARCHIVED");
+    expect(await statusOf(newer.id)).toBe("ACTIVE");
+    // Archived, not deleted: every row is still there, only one is listed.
+    expect(await countOf(projectId)).toBe(3);
+    const listed = await WorkRepository.listRecent(projectId);
+    expect(listed.map((w) => w.id)).toEqual([newer.id]);
+
+    // Nothing left to tidy: the next tap archives nothing.
+    expect((await open(projectId)).archived).toBe(0);
+  });
+
+  it("a person already in an empty Work stays there; the other empty copies are archived", async () => {
+    const projectId = newProject();
+    const now = Date.now();
+    const here = await insertWork(projectId, {
+      lastActivityAt: new Date(now - 4 * 3_600_000),
+    });
+    const elsewhere = await insertWork(projectId, {
+      lastActivityAt: new Date(now - 1 * 3_600_000),
+    });
+    const out = await open(projectId, { currentWorkId: here.id });
+    expect(out.reused).toBe(true);
+    expect(out.work.id).toBe(here.id);
+    expect(await statusOf(here.id)).toBe("ACTIVE");
+    expect(await statusOf(elsewhere.id)).toBe("ARCHIVED");
+  });
+
+  it("a current Work that is not empty (used, renamed, Today, another project's, unknown) is only a hint and is ignored", async () => {
+    const otherProject = newProject();
+    const elsewhereBlank = await insertWork(otherProject);
+    for (const make of [
+      async (projectId: string) => {
+        const used = await insertWork(projectId);
+        await writeIn(projectId, used.id);
+        return used.id;
+      },
+      async (projectId: string) =>
+        (await insertWork(projectId, { title: "Weekly plan" })).id,
+      async (projectId: string) =>
+        (await insertWork(projectId, { id: todayWorkId(projectId, "2026-10-02") }))
+          .id,
+      async () => elsewhereBlank.id,
+      async () => "does_not_exist",
+    ]) {
+      const projectId = newProject();
+      const blank = await insertWork(projectId, {
+        lastActivityAt: new Date(Date.now() - 3_600_000),
+      });
+      const currentWorkId = await make(projectId);
+      const out = await open(projectId, { currentWorkId });
+      expect(out.work.id).toBe(blank.id);
+      if (currentWorkId !== "does_not_exist") {
+        // The ignored hint itself is left exactly as it was.
+        expect(await statusOf(currentWorkId)).toBe("ACTIVE");
+      }
+    }
+    expect(await statusOf(elsewhereBlank.id)).toBe("ACTIVE");
+  });
+
+  it("tidying up never touches a Work with content, a renamed, completed or Today Work, or another project's", async () => {
+    const projectId = newProject();
+    const otherProject = newProject();
+    const now = Date.now();
+    const at = (hoursAgo: number) => new Date(now - hoursAgo * 3_600_000);
+
+    const emptyOld = await insertWork(projectId, { lastActivityAt: at(5) });
+    const emptyNew = await insertWork(projectId, { lastActivityAt: at(1) });
+    // Still titled "New Work" but something was written in it.
+    const used = await insertWork(projectId, { lastActivityAt: at(6) });
+    await writeIn(projectId, used.id);
+    const renamed = await insertWork(projectId, {
+      title: "Weekly plan",
+      lastActivityAt: at(7),
+    });
+    const done = await insertWork(projectId, { status: "DONE", lastActivityAt: at(8) });
+    const today = await insertWork(projectId, {
+      id: todayWorkId(projectId, "2026-10-02"),
+      lastActivityAt: at(9),
+    });
+    const otherBlank = await insertWork(otherProject, { lastActivityAt: at(10) });
+
+    const out = await open(projectId);
+    expect(out.work.id).toBe(emptyNew.id);
+    expect(out.archived).toBe(1);
+    expect(await statusOf(emptyOld.id)).toBe("ARCHIVED");
+    expect(await statusOf(used.id)).toBe("ACTIVE");
+    expect(await statusOf(renamed.id)).toBe("ACTIVE");
+    expect(await statusOf(done.id)).toBe("DONE");
+    expect(await statusOf(today.id)).toBe("ACTIVE");
+    expect(await statusOf(otherBlank.id)).toBe("ACTIVE");
   });
 
   it("opening it moves it to the top of the recent list", async () => {

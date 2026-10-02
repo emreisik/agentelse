@@ -158,6 +158,19 @@ describe("createWorkAction (New Work is idempotent)", () => {
     );
   });
 
+  it("passes the Work the person is in as a hint, and drops an invalid one", async () => {
+    await actions.createWorkAction("p1", undefined, "wHere");
+    expect(repo.createOrReuseBlank).toHaveBeenLastCalledWith(
+      expect.objectContaining({ currentWorkId: "wHere" }),
+    );
+    for (const bad of [42, "", "x".repeat(65), { id: "w" }, null]) {
+      await actions.createWorkAction("p1", undefined, bad);
+      expect(repo.createOrReuseBlank).toHaveBeenLastCalledWith(
+        expect.objectContaining({ currentWorkId: undefined }),
+      );
+    }
+  });
+
   it("turns a failing repository into a plain failure", async () => {
     repo.createOrReuseBlank.mockRejectedValue(new Error("db down"));
     expect(await actions.createWorkAction("p1")).toEqual({

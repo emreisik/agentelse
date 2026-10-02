@@ -32,12 +32,27 @@ describe("data deletion page", () => {
     expect(html).toContain("Your request was processed");
     expect(html).toContain("2026-10-01");
     expect(html).toContain("1 connection");
+    expect(html).toContain("connection record");
     expect(html).toContain(code);
+    // It does not claim more than the record: the rest of the workspace stays.
+    expect(html).toContain("stay there until it is deleted");
   });
 
-  it("says plainly when there was nothing to erase", async () => {
+  it("when nothing matched, says so honestly instead of claiming no data was held", async () => {
     const html = await render(createDeletionCode(0, "auth-secret", now));
-    expect(html).toContain("nothing to erase");
+    expect(html).toContain("could not match this request");
+    expect(html).toContain("Facebook Page or Meta Ads");
+    expect(html).not.toContain("did not hold");
+    expect(html).not.toContain("nothing to erase");
+  });
+
+  it("names the real menu (Connectors) and does not list Disconnect as a way to erase", async () => {
+    const html = await render();
+    expect(html).toContain("Connectors");
+    expect(html).not.toContain("Integrations");
+    // Disconnect is explained separately, as stopping use, not erasing.
+    expect(html).toContain("does not erase");
+    expect(html).toContain("either of these");
   });
 
   it("ignores a made-up or tampered code and just shows the instructions", async () => {

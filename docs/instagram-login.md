@@ -19,7 +19,7 @@ Entegrasyonlar sayfasındaki Instagram penceresinde "Before you connect" kutusun
 - Hesap **profesyonel** olmalı (Business ya da Creator). Kişisel hesap bağlanamaz: Instagram'da Ayarlar > Hesap türü ve araçlar > Profesyonel hesaba geç. Kişisel hesap gelirse bağlantı kaydedilmeden `not_professional` hatası gösterilir.
 - Facebook hesabı ya da Page gerekmez.
 - API ile 24 saatte en çok 100 gönderi yayınlanabilir. Story'de açıklama (caption) olmaz, metin görselin üstünde olmalı.
-- Bağlantı 60 gün sürer; süre dolunca kutucuk "Needs reconnection" olur, yeniden bağlanmak yeniler. (Otomatik yenileme yok.)
+- Bağlantı 60 gün sürer; 60. günü geçince ya da Meta bir yayında 190 (token geçersiz) döndürünce kutucuk "Needs reconnection" olur, yeniden bağlanmak yeniler. (Otomatik yenileme yok.)
 - Meta uygulaması geliştirme modundayken yalnızca uygulamaya **Instagram tester** olarak eklenmiş hesaplar bağlanabilir.
 
 ## Kurulum (bir kez, uygulama sahibi)

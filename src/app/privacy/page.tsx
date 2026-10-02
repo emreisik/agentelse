@@ -143,7 +143,7 @@ const SECTIONS: PolicySection[] = [
   },
   {
     id: "instagram-data",
-    title: "Instagram and Meta connections",
+    title: "Instagram connection",
     body: (
       <>
         <p>
@@ -159,28 +159,41 @@ const SECTIONS: PolicySection[] = [
           </li>
           <li>
             <span className="text-foreground">instagram_business_content_publish</span>{" "}
-            — to publish the posts and stories that you create or approve in
-            Agentelse to that account.
+            — to publish posts and stories to that account: content you create
+            or approve in Agentelse, and content Agentelse publishes for you if
+            you switch on scheduled posting or Autopilot for a project.
           </li>
         </ul>
         <p>
           We store the access token Instagram gives us (encrypted), the account
-          id, username and account type. We use them only to publish content you
-          approve and to show the connection. We do not read your followers,
-          messages or comments, we do not sell this data, and we do not use it
-          for advertising or to train AI models.
+          id, username and account type in a connection record. We use them only
+          to publish content as described above and to show which account is
+          connected. We do not read your followers, messages or comments, we do
+          not sell this data, and we do not use it for advertising or to train
+          AI models.
         </p>
         <p>
           You can stop Agentelse from using the connection at any time with
-          Integrations &gt; Instagram &gt; Disconnect, or by removing Agentelse in
-          Instagram under Settings &gt; Apps and websites. To have the stored
-          Instagram data erased, ask Instagram to delete it when you remove the
-          app (we receive the request and erase it automatically), or email us.
-          Instructions and the status of a request are on our{" "}
+          Connectors &gt; Instagram &gt; Disconnect, or by removing Agentelse in
+          Instagram under Settings &gt; Apps and websites. Neither erases the
+          stored connection record by itself. To have it erased, email us or,
+          if Instagram offers the choice when you remove the app, ask Instagram
+          to delete your data: Instagram then notifies us and we erase the
+          record automatically. Instructions and the status of a request are on
+          our{" "}
           <Link href="/data-deletion" className="underline underline-offset-4">
             data deletion page
           </Link>
-          . Posts already published to Instagram remain on Instagram.
+          . Posts already published to Instagram remain on Instagram, and plans,
+          chats and other content you created in Agentelse stay in your
+          workspace until it is deleted.
+        </p>
+        <p>
+          If you connect through a Facebook Page instead, or connect Meta Ads,
+          you sign in with Facebook and approve the permissions shown there. We
+          store a Meta access token (encrypted) together with the Pages and ad
+          accounts you choose. You can remove that access in your Facebook
+          settings under Business Integrations, or email us.
         </p>
       </>
     ),

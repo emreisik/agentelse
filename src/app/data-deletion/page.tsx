@@ -73,16 +73,17 @@ export default async function DataDeletionPage({
             <p className="text-muted-foreground">
               Received on {request.requestedAt.toISOString().slice(0, 10)}.{" "}
               {request.removed > 0
-                ? `We erased the Instagram connection data we held for your account (${request.removed} ${request.removed === 1 ? "connection" : "connections"}): the access token, account id, username and account type.`
-                : "We did not hold any Instagram connection data for your account, so there was nothing to erase."}
+                ? `We erased the Instagram connection record we held for your account (${request.removed} ${request.removed === 1 ? "connection" : "connections"}): the access token, account id, username and account type.`
+                : "We could not match this request to an Instagram connection stored in Agentelse, so nothing was erased. If you connected through a Facebook Page or Meta Ads, or you want more removed, email us and we will handle it by hand."}
             </p>
             <p className="text-muted-foreground">
               Confirmation code: <span className="font-mono text-foreground">{code}</span>
             </p>
             <p className="text-muted-foreground">
-              Posts that were published to Instagram stay on Instagram, and the
-              content kept in the workspace that created them is that
-              workspace&rsquo;s own. Questions? Write to <Mail />.
+              Posts that were published to Instagram stay on Instagram. Plans,
+              chats and other content created in Agentelse belong to the
+              workspace that made them and stay there until it is deleted;
+              email <Mail /> to have those deleted too.
             </p>
           </section>
         ) : null}
@@ -92,26 +93,30 @@ export default async function DataDeletionPage({
             How to delete your Instagram data
           </h2>
           <p>
-            When you connect Instagram, Agentelse stores an access token, your
-            Instagram account id, username and account type. To erase them, use
-            any of these:
+            When you connect Instagram, Agentelse keeps a connection record: an
+            access token, your Instagram account id, username and account type.
+            To erase that record, use either of these:
           </p>
           <ol className="flex list-decimal flex-col gap-2 pl-5">
             <li>
               In Instagram, open <span className="text-foreground">Settings &gt; Apps and websites</span>,
-              find Agentelse and remove it, choosing to delete the data when
-              Instagram offers it. Instagram then tells us, and we erase the
-              connection data automatically.
+              find Agentelse and remove it, choosing to delete the data if
+              Instagram offers that choice. Instagram then tells us, and we
+              erase the connection record automatically.
             </li>
             <li>
               Email <Mail /> from the address you use with Agentelse, naming your
-              Instagram username. We will erase the data and confirm.
-            </li>
-            <li>
-              Inside Agentelse, open <span className="text-foreground">Integrations &gt; Instagram &gt; Disconnect</span> to
-              stop Agentelse from using the connection right away.
+              Instagram username. We will erase the record and confirm.
             </li>
           </ol>
+          <p>
+            To only stop Agentelse from using the connection, open{" "}
+            <span className="text-foreground">Connectors &gt; Instagram &gt; Disconnect</span> inside
+            Agentelse. That takes effect right away but does not erase the
+            record; use one of the options above for that. Content you created
+            in Agentelse (plans, chats, creatives) belongs to your workspace and
+            is deleted with it: email us to have a workspace deleted.
+          </p>
           <p>
             See our <Link href="/privacy#instagram-data" className="underline underline-offset-4">Privacy Policy</Link>{" "}
             for what we collect and why.

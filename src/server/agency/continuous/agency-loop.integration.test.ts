@@ -8,6 +8,7 @@ process.env.AGENTELSE_REASONING_MODE = "mock";
 process.env.AGENTELSE_PROVIDER_MODE = "mock";
 
 import { prisma } from "@/lib/prisma";
+import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
 import { SignalUniverse } from "@/server/agency/signals/signal-universe";
 import { WorkHandoffEngine } from "@/server/agency/handoffs/work-handoff-engine";
 import { TaskPlanner } from "@/server/commands/task-planner";
@@ -23,6 +24,12 @@ import { describeIntegration } from "@/test-support/integration-suite";
 // Spec test (b): a simulated "new technology product launch" signal walks
 // Signal -> Intelligence -> relevance -> Opportunity -> Idea Foundry (multi
 // concepts) -> Council -> Agency Director -> plan -> department tasks.
+//
+// Everything up to an EVALUATED opportunity, and everything from a RAW idea on
+// (Council, Director, plan), is driven by the worker tick. Turning an EVALUATED
+// opportunity into ideas is NOT: it stopped being a tick step in d5eddbf and is
+// on demand only (a chat request, command-service.ts
+// GENERATE_IDEAS_FROM_OPPORTUNITIES), so the test makes that same call itself.
 describeIntegration(
   "Continuous loop — signal to work plan (spec test b)",
   () => {
@@ -63,6 +70,24 @@ describeIntegration(
     });
 
     it("walks the signal through intelligence to an agency decision with work", async () => {
+      // The worker brings the signal to an EVALUATED opportunity on its own...
+      const evaluated = await pumpWorker(
+        async () =>
+          (await prisma.opportunity.count({
+            where: { projectId: fixture.projectId, status: "EVALUATED" },
+          })) > 0,
+        60,
+      );
+      expect(evaluated).toBe(true);
+
+      // ...and turning it into ideas is the on-demand step: the same call a chat
+      // request ("give me some new ideas") makes. The mock lens concepts give a
+      // multi-concept set (>= 3 ideas across >= 3 lenses).
+      const generated = await IdeaFoundry.generateForTopOpportunities(5, {
+        projectId: fixture.projectId,
+      });
+      expect(generated).toBeGreaterThanOrEqual(3);
+
       const done = await pumpWorker(async () => {
         const decision = await prisma.agencyDecision.findFirst({
           where: {

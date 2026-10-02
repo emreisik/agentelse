@@ -55,7 +55,14 @@ async function buildMetadata(
   existing: Record<string, unknown>,
 ): Promise<MetaInstagramMetadata | MetaAdsMetadata> {
   if (service === "instagram") {
-    const previous = existing as Partial<MetaInstagramMetadata>;
+    // Facebook route. A previous Instagram Login connection's keys must not carry
+    // over: resolveInstagramTarget puts them ahead of the Page, which would pair this
+    // Facebook token with Instagram's host and the old account.
+    const previous: Partial<MetaInstagramMetadata> = {
+      ...(existing as Partial<MetaInstagramMetadata>),
+    };
+    delete previous.login;
+    delete previous.instagramAccount;
     const pages = await fetchMetaPageList(accessToken, {
       onlyWithInstagram: true,
     });

@@ -38,9 +38,8 @@ const {
   publishInstagramPost,
   verifyInstagramAccess,
 } = await import("./meta-client");
-const { resolveInstagramTarget, instagramAccessFor } = await import(
-  "./instagram-target"
-);
+const { resolveInstagramTarget, instagramAccessFor, instagramLoginExpired } =
+  await import("./instagram-target");
 
 describe("Instagram Login token exchange", () => {
   it("posts the code to Instagram's token endpoint with the Instagram app credentials", async () => {
@@ -251,6 +250,38 @@ describe("resolveInstagramTarget", () => {
       resolveInstagramTarget({ selectedPageId: "p1", pages: [{ pageId: "p1", pageName: "x" }] }),
     ).toBeNull();
     expect(resolveInstagramTarget(null)).toBeNull();
+  });
+});
+
+describe("instagramLoginExpired", () => {
+  const now = Date.UTC(2026, 11, 1);
+  const day = 24 * 60 * 60 * 1000;
+  const login = (expires: string | undefined) => ({
+    login: "instagram" as const,
+    instagramAccount: { id: "1" },
+    pages: [],
+    longLivedTokenExpiresAt: expires,
+  });
+
+  it("is true for an Instagram Login connection past its 60 days", () => {
+    expect(instagramLoginExpired(login(new Date(now - day).toISOString()), now)).toBe(true);
+  });
+
+  it("is false before that date, and without a date", () => {
+    expect(instagramLoginExpired(login(new Date(now + day).toISOString()), now)).toBe(false);
+    expect(instagramLoginExpired(login(undefined), now)).toBe(false);
+    expect(instagramLoginExpired(login("not a date"), now)).toBe(false);
+  });
+
+  it("never calls a Facebook-route connection expired from its date: that date is a guess", () => {
+    expect(
+      instagramLoginExpired(
+        { pages: [], longLivedTokenExpiresAt: new Date(now - 100 * day).toISOString() },
+        now,
+      ),
+    ).toBe(false);
+    expect(instagramLoginExpired(null, now)).toBe(false);
+    expect(instagramLoginExpired(undefined, now)).toBe(false);
   });
 });
 

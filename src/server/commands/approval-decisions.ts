@@ -178,7 +178,7 @@ const SKIP_MESSAGE: Record<
   string
 > = {
   NOT_APPROVED: "Not approved yet",
-  NOT_CONNECTED: "No connected Meta page/Instagram account",
+  NOT_CONNECTED: "No connected Instagram account",
   NO_ASSET: "This creative has no image to publish",
   MANUAL_FORMAT: "This format is posted by hand",
   WRONG_PLATFORM: "Not an Instagram creative",
@@ -319,7 +319,7 @@ export async function autoPublishCreative(input: {
     if (targets.length === 0) {
       return {
         status: "SKIPPED",
-        message: "No connected Meta page/Instagram account",
+        message: "No connected Instagram account",
       };
     }
     const released = await isInstagramPublishScheduled(input.projectId);

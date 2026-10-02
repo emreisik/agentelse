@@ -19,6 +19,7 @@ import {
   createMetaCampaign,
   createMetaCarouselAdCreative,
   createMetaVideoAdCreative,
+  MetaApiError,
   publishInstagramPost,
   updateMetaAd,
   updateMetaAdSet,
@@ -751,6 +752,14 @@ export class MetaApiProvider implements ExecutionProvider {
           };
       }
     } catch (error) {
+      // Meta answers code 190 when the token expired or was revoked. Flag the
+      // connection (the Test button already does) so the Connectors tile asks for a
+      // reconnect, instead of every later publish failing while it still says Connected.
+      if (error instanceof MetaApiError && error.metaErrorCode === 190) {
+        await prisma.integrationCredential
+          .update({ where: { id: credential.id }, data: { status: "EXPIRED" } })
+          .catch(() => undefined);
+      }
       return {
         status: "FAILED",
         errorMessage: error instanceof Error ? error.message : String(error),

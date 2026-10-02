@@ -251,6 +251,81 @@ describe("callback (Instagram Login)", () => {
   });
 });
 
+describe("callback (Facebook route) over an earlier Instagram Login connection", () => {
+  // Instagram Login, then Disconnect (or an Instagram deauthorize), then "Use a Facebook
+  // Page instead": the row still holds the Instagram Login keys. They used to survive the
+  // reconnect, and resolveInstagramTarget puts them ahead of the Page, so the Facebook
+  // token was sent to Instagram's host for the old account and the Facebook route could
+  // never be completed on that project.
+  const previousRow = {
+    status: "REVOKED",
+    metadata: {
+      login: "instagram",
+      instagramAccount: { id: "17841400", appScopedId: "scoped-99", username: "old" },
+      pages: [],
+      lastTestResult: { testedAt: "2026-10-01T00:00:00.000Z", igUsername: "old" },
+    },
+  };
+
+  beforeEach(() => {
+    mocks.verifyOAuthState.mockReturnValue({
+      projectId: "proj-1",
+      userId: "user-1",
+      service: "instagram", // no login: the Facebook route
+    });
+    mocks.exchangeMetaAuthCode.mockResolvedValue({ accessToken: "short", expiresIn: 3600 });
+    mocks.exchangeForLongLivedToken.mockResolvedValue({ accessToken: "long", expiresIn: 5184000 });
+    mocks.fetchMetaAccountName.mockResolvedValue("Emre");
+    mocks.fetchMetaPageList.mockResolvedValue({
+      pages: [{ pageId: "p1", pageName: "Web Health", instagramBusinessAccountId: "ig-1", instagramUsername: "wh" }],
+    });
+    mocks.findUnique.mockResolvedValue(previousRow);
+    mocks.upsert.mockResolvedValue({ id: "cred-1" });
+  });
+
+  it("drops the old Instagram Login keys, so the new Facebook connection is a Facebook one", async () => {
+    await callback(callbackUrl());
+    for (const write of ["create", "update"] as const) {
+      const saved = mocks.upsert.mock.calls[0]![0][write];
+      expect(saved.metadata.login).toBeUndefined();
+      expect(saved.metadata.instagramAccount).toBeUndefined();
+      expect(saved.metadata.pages).toHaveLength(1);
+      expect(saved.accountLabel).toBe("Emre");
+    }
+  });
+
+  it("resolves to the Facebook Page's account once a Page is picked, never to the old account", async () => {
+    await callback(callbackUrl());
+    const saved = mocks.upsert.mock.calls[0]![0].update.metadata;
+    const { resolveInstagramTarget } = await import("@/server/integrations/instagram-target");
+    expect(resolveInstagramTarget(saved)).toBeNull(); // no Page selected yet
+    expect(resolveInstagramTarget({ ...saved, selectedPageId: "p1" })).toMatchObject({
+      login: "facebook",
+      igUserId: "ig-1",
+      pageId: "p1",
+    });
+  });
+
+  it("an Instagram deauthorize for the old account can no longer match the Facebook row", async () => {
+    await callback(callbackUrl());
+    const saved = mocks.upsert.mock.calls[0]![0].update.metadata;
+    // meta-data-requests matches on these two paths:
+    expect(saved.instagramAccount?.id).toBeUndefined();
+    expect(saved.instagramAccount?.appScopedId).toBeUndefined();
+  });
+
+  it("keeps what a reconnect should keep (the old test result and any Page selection that is still valid)", async () => {
+    mocks.findUnique.mockResolvedValue({
+      ...previousRow,
+      metadata: { ...previousRow.metadata, selectedPageId: "p1", selectedPageName: "Web Health" },
+    });
+    await callback(callbackUrl());
+    const saved = mocks.upsert.mock.calls[0]![0].update.metadata;
+    expect(saved.selectedPageId).toBe("p1");
+    expect(saved.lastTestResult).toBeDefined();
+  });
+});
+
 describe("callback (Facebook route)", () => {
   it("without login in the state still exchanges through Facebook and lists Pages", async () => {
     mocks.verifyOAuthState.mockReturnValue({

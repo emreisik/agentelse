@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const prismaMocks = vi.hoisted(() => ({
   credentialFindUnique: vi.fn(),
+  credentialUpdate: vi.fn(),
   assetFindFirst: vi.fn(),
   executionJobFindUnique: vi.fn(),
   executionJobUpdate: vi.fn(),
@@ -9,7 +10,10 @@ const prismaMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    integrationCredential: { findUnique: prismaMocks.credentialFindUnique },
+    integrationCredential: {
+      findUnique: prismaMocks.credentialFindUnique,
+      update: prismaMocks.credentialUpdate,
+    },
     asset: { findFirst: prismaMocks.assetFindFirst },
     executionJob: {
       findUnique: prismaMocks.executionJobFindUnique,
@@ -67,6 +71,7 @@ vi.mock("@/server/integrations/meta-client", async (importOriginal) => {
 });
 
 import { MetaApiProvider } from "@/server/execution/providers/meta/meta-api-provider";
+import { MetaApiError } from "@/server/integrations/meta-client";
 import type {
   ExecutionPolicyContext,
   ExecutionRequest,
@@ -1018,6 +1023,61 @@ describe("MetaApiProvider INSTAGRAM_PUBLISH", () => {
         api: "facebook",
       }),
     );
+  });
+
+  describe("a token Meta no longer accepts (error 190)", () => {
+    const row = {
+      id: "cred-9",
+      status: "ACTIVE",
+      encryptedSecret: "encrypted",
+      metadata: {
+        login: "instagram",
+        instagramAccount: { id: "17841400", username: "webhealth" },
+        pages: [],
+      },
+    };
+
+    it("marks the connection EXPIRED, so the Connectors tile asks for a reconnect", async () => {
+      prismaMocks.credentialFindUnique.mockResolvedValue(row);
+      prismaMocks.credentialUpdate.mockResolvedValue({});
+      metaClientMocks.publishInstagramPost.mockRejectedValue(
+        new MetaApiError("Error validating access token: Session has expired", 190),
+      );
+      const provider = new MetaApiProvider();
+      await provider.execute(publishRequest());
+
+      expect(prismaMocks.credentialUpdate).toHaveBeenCalledWith({
+        where: { id: "cred-9" },
+        data: { status: "EXPIRED" },
+      });
+      expect(await provider.getStatus("corr-ig")).toMatchObject({
+        status: "FAILED",
+        errorMessage: expect.stringContaining("Session has expired"),
+      });
+    });
+
+    it("leaves the connection alone for every other error", async () => {
+      prismaMocks.credentialFindUnique.mockResolvedValue(row);
+      metaClientMocks.publishInstagramPost.mockRejectedValue(
+        new MetaApiError("Media container could not be processed", 100),
+      );
+      await new MetaApiProvider().execute(publishRequest());
+      expect(prismaMocks.credentialUpdate).not.toHaveBeenCalled();
+    });
+
+    it("still reports the publish failure when flagging the connection itself fails", async () => {
+      prismaMocks.credentialFindUnique.mockResolvedValue(row);
+      prismaMocks.credentialUpdate.mockRejectedValue(new Error("db down"));
+      metaClientMocks.publishInstagramPost.mockRejectedValue(
+        new MetaApiError("Invalid OAuth access token", 190),
+      );
+      const provider = new MetaApiProvider();
+      await provider.execute(publishRequest());
+      expect(await provider.getStatus("corr-ig")).toMatchObject({
+        status: "FAILED",
+        errorMessage: "Invalid OAuth access token",
+      });
+    });
   });
 
   it("fails clearly when an Instagram Login row has no account", async () => {

@@ -47,6 +47,21 @@ export function resolveInstagramTarget(
   };
 }
 
+// An Instagram Login token lasts 60 days and nothing refreshes it yet, so past its
+// date the connection no longer works even though no status has flipped. Only for
+// Instagram Login rows: a Facebook-route date is a guess (Meta sometimes sends no
+// expires_in and the token does not expire), so it must never be trusted to mean dead.
+export function instagramLoginExpired(
+  metadata: Partial<MetaInstagramMetadata> | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (metadata?.login !== "instagram" || !metadata.longLivedTokenExpiresAt) {
+    return false;
+  }
+  const expiresAt = Date.parse(metadata.longLivedTokenExpiresAt);
+  return Number.isFinite(expiresAt) && expiresAt < now;
+}
+
 // The token to call Instagram with, and the Graph host it belongs to. The
 // Facebook route never stores a Page token: it is derived from the user token
 // right before use. The Instagram route uses the stored token as it is.

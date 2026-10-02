@@ -106,7 +106,7 @@ async function publishInstagramCreative(
   if (!hasInstagramTarget) {
     return {
       ok: false,
-      message: "There's no connected Meta page with an Instagram account.",
+      message: "There's no connected Instagram account.",
     };
   }
   if (tx && creative.status === "PUBLISHED") {

@@ -14,6 +14,7 @@ import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/dates";
 import { isIntegrationConfigured } from "@/lib/env";
+import { visibleMetaDetail } from "@/lib/meta-error-detail";
 import { PURPOSE_ICONS } from "@/features/dashboard/purpose-icons";
 import {
   GOOGLE_PROVIDER,
@@ -29,6 +30,7 @@ import {
   type MetaInstagramMetadata,
   type MetaService,
 } from "@/server/integrations/meta-client";
+import { instagramLoginExpired } from "@/server/integrations/instagram-target";
 import type { TikTokCredentialMetadata } from "@/server/integrations/tiktok-client";
 import type { LinkedInCredentialMetadata } from "@/server/integrations/linkedin-client";
 import type { XCredentialMetadata } from "@/server/integrations/x-client";
@@ -275,7 +277,9 @@ export default async function EntegrasyonlarPage({
       key: META_PROVIDER.instagram,
       category: "social",
       label: META_SERVICE_LABEL.instagram,
-      connected: instagramCredential?.status === "ACTIVE",
+      connected:
+        instagramCredential?.status === "ACTIVE" &&
+        !instagramLoginExpired(instagramCredential?.metadata as MetaInstagramMetadata),
       node: (
         <MetaTile
           key={META_PROVIDER.instagram}
@@ -394,7 +398,7 @@ export default async function EntegrasyonlarPage({
   const googleError =
     typeof sp.googleError === "string" ? sp.googleError : null;
   const metaError = typeof sp.metaError === "string" ? sp.metaError : null;
-  const metaDetail = typeof sp.metaDetail === "string" ? sp.metaDetail : null;
+  const metaDetail = visibleMetaDetail(metaError, sp.metaDetail);
   const tiktokError =
     typeof sp.tiktokError === "string" ? sp.tiktokError : null;
   const linkedinError =
@@ -1208,7 +1212,7 @@ function metaStartHref(
 // person tries: the failures it prevents (a personal account, a Page-less
 // Business account on the Facebook route, an expired token) all come back from
 // Meta as unhelpful errors.
-function InstagramRequirements() {
+function InstagramRequirements({ facebookOnly }: { facebookOnly: boolean }) {
   return (
     <div className="space-y-1.5 rounded-lg bg-muted/50 p-3 text-left">
       <p className="text-[11px] font-medium text-foreground">
@@ -1221,10 +1225,17 @@ function InstagramRequirements() {
           Settings &gt; Account type and tools &gt; Switch to professional
           account.
         </li>
-        <li>
-          No Facebook account or Facebook Page is needed. You sign in with
-          Instagram and approve publishing.
-        </li>
+        {facebookOnly ? (
+          <li>
+            The Instagram account must be linked to a Facebook Page that you
+            manage. You sign in with Facebook and choose that Page.
+          </li>
+        ) : (
+          <li>
+            No Facebook account or Facebook Page is needed. You sign in with
+            Instagram and approve publishing.
+          </li>
+        )}
         <li>
           Up to 100 posts can be published through the API in 24 hours. Stories
           can&apos;t carry a caption, so the text has to be on the image.
@@ -1254,8 +1265,12 @@ function MetaTile({
   kategori: string | undefined;
   credential: IntegrationCredential | null;
 }) {
-  const connected = credential?.status === "ACTIVE";
-  const expired = credential?.status === "EXPIRED";
+  // Past its 60 days an Instagram Login token is dead even if no status flipped.
+  const expired =
+    credential?.status === "EXPIRED" ||
+    (credential?.status === "ACTIVE" &&
+      instagramLoginExpired(credential.metadata as MetaInstagramMetadata));
+  const connected = credential?.status === "ACTIVE" && !expired;
   const params = new URLSearchParams({ integration: META_PROVIDER[service] });
   if (kategori) params.set("kategori", kategori);
   const ui = META_SERVICE_UI[service];
@@ -1298,8 +1313,12 @@ function MetaDialog({
   metaError: string | null;
   metaDetail: string | null;
 }) {
-  const connected = credential?.status === "ACTIVE";
-  const expired = credential?.status === "EXPIRED";
+  // Past its 60 days an Instagram Login token is dead even if no status flipped.
+  const expired =
+    credential?.status === "EXPIRED" ||
+    (credential?.status === "ACTIVE" &&
+      instagramLoginExpired(credential.metadata as MetaInstagramMetadata));
+  const connected = credential?.status === "ACTIVE" && !expired;
   const facebookConfigured = isIntegrationConfigured("META");
   const instagramLoginConfigured =
     service === "instagram" && isIntegrationConfigured("INSTAGRAM_LOGIN");
@@ -1524,7 +1543,9 @@ function MetaDialog({
               ) : null}
             </div>
           </EmptyState>
-          {service === "instagram" ? <InstagramRequirements /> : null}
+          {service === "instagram" ? (
+            <InstagramRequirements facebookOnly={!instagramLoginConfigured} />
+          ) : null}
         </>
       )}
     </EntityDialog>

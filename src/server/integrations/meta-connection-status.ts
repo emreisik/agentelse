@@ -22,7 +22,7 @@ export type PublishTarget =
       // Unique key of the account on the creative card. The Facebook Page's id
       // on the Facebook route; the Instagram account's own id on Instagram Login.
       pageId: string;
-      // The card's title: the Page's name, or @username on Instagram Login.
+      // The card's title: the Page's name, or "Instagram" on Instagram Login.
       pageName: string;
       igUsername?: string;
     }
@@ -49,9 +49,9 @@ async function getInstagramTargets(
     {
       platform: "instagram",
       pageId: target.pageId ?? target.igUserId,
-      pageName:
-        target.pageName ??
-        (target.username ? `@${target.username}` : "Instagram"),
+      // The creative card prints igUsername as the subtitle, so on the Page-less
+      // route the title is just "Instagram" (the handle would otherwise show twice).
+      pageName: target.pageName ?? "Instagram",
       igUsername: target.username,
     },
   ];

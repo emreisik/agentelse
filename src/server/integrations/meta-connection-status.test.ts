@@ -52,6 +52,32 @@ describe("getPublishTargets: Instagram", () => {
     ]);
   });
 
+  it("lists nothing for an Instagram Login connection past its 60 days, even though no status flipped yet", async () => {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const metadata = (expires: string) => ({
+      login: "instagram",
+      instagramAccount: { id: "17841400", username: "webhealth" },
+      pages: [],
+      longLivedTokenExpiresAt: expires,
+    });
+    onlyInstagram(row("ACTIVE", metadata(yesterday)));
+    expect(await getPublishTargets("proj-1")).toEqual([]);
+    onlyInstagram(row("ACTIVE", metadata(tomorrow)));
+    expect(await getPublishTargets("proj-1")).toHaveLength(1);
+  });
+
+  it("does not treat a Facebook-route connection's date as expiry (that date is a guess)", async () => {
+    onlyInstagram(
+      row("ACTIVE", {
+        selectedPageId: "p1",
+        pages: [{ pageId: "p1", pageName: "Web Health", instagramBusinessAccountId: "ig-1" }],
+        longLivedTokenExpiresAt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+      }),
+    );
+    expect(await getPublishTargets("proj-1")).toHaveLength(1);
+  });
+
   it("lists nothing for a connection that is expired, revoked or has no account", async () => {
     for (const status of ["EXPIRED", "REVOKED", "NOT_CONFIGURED"]) {
       onlyInstagram(

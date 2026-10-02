@@ -33,6 +33,7 @@ import {
 } from "@/server/integrations/meta-client";
 import {
   instagramAccessFor,
+  instagramLoginExpired,
   resolveInstagramTarget,
 } from "@/server/integrations/instagram-target";
 import {
@@ -340,10 +341,11 @@ export class MetaApiProvider implements ExecutionProvider {
     if (!credential) return false;
 
     if (capability === "INSTAGRAM_PUBLISH") {
+      const igMetadata = credential.metadata as Partial<MetaInstagramMetadata> | null;
+      // Past its 60 days an Instagram Login token is dead: do not even try.
       return (
-        resolveInstagramTarget(
-          credential.metadata as Partial<MetaInstagramMetadata> | null,
-        ) !== null
+        !instagramLoginExpired(igMetadata) &&
+        resolveInstagramTarget(igMetadata) !== null
       );
     }
     const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;

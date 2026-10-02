@@ -19,6 +19,10 @@ const text = section
   .replace(/\s+/g, " ");
 
 describe("privacy policy: Instagram connection section", () => {
+  it("carries the date of the text that was rewritten on 2 October 2026", () => {
+    expect(html).toContain("Last updated: October 2, 2026");
+  });
+
   it("is titled for what it covers, and linked from the deletion page", () => {
     expect(section).toContain("Instagram connection");
     expect(section).not.toContain("Instagram and Meta connections");

@@ -4,7 +4,6 @@ import { getEnv } from "@/lib/env";
 import { parseSignedRequest } from "@/lib/meta-signed-request";
 import { prisma } from "@/lib/prisma";
 import { META_PROVIDER } from "@/server/integrations/meta-client";
-import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 
 // What happens when a person removes Agentelse in Instagram (deauthorize) or
 // asks Meta to delete their data (data deletion). Both only concern the
@@ -72,6 +71,14 @@ export async function readSignedUserId(request: Request): Promise<string | null>
   );
 }
 
+// Meta resends a callback it thinks timed out, and a person can trigger a
+// deauthorize and a deletion together, so each row is handled as ONE atomic unit
+// that is safe to repeat: the change and its audit entry commit together, a row
+// that is already gone or already revoked counts as zero (never an error), and only
+// what this call really changed is counted. (Writing the audit first would record
+// an erasure that may not have happened; writing it after would lose it when the
+// second write fails and the retry finds nothing left to do.)
+
 // The person removed the app: stop using the connection. The account's details
 // stay (so the workspace can see what was connected) until a deletion request.
 export async function deauthorizeInstagramUser(userId: string): Promise<number> {
@@ -79,22 +86,30 @@ export async function deauthorizeInstagramUser(userId: string): Promise<number> 
     where: { ...ownedBy(userId), NOT: { status: "REVOKED" } },
     select: { id: true, workspaceId: true, projectId: true },
   });
+  let revoked = 0;
   for (const row of rows) {
-    await prisma.integrationCredential.update({
-      where: { id: row.id },
-      data: { status: "REVOKED" },
-    });
-    await AuditLogRepository.record({
-      workspaceId: row.workspaceId,
-      projectId: row.projectId,
-      actorType: "SYSTEM",
-      action: "integration_credential.deauthorized_by_instagram",
-      entityType: "IntegrationCredential",
-      entityId: row.id,
-      metadata: { provider: META_PROVIDER.instagram },
+    revoked += await prisma.$transaction(async (tx) => {
+      const { count } = await tx.integrationCredential.updateMany({
+        where: { id: row.id, NOT: { status: "REVOKED" } },
+        data: { status: "REVOKED" },
+      });
+      if (count > 0) {
+        await tx.auditLog.create({
+          data: {
+            workspaceId: row.workspaceId,
+            projectId: row.projectId,
+            actorType: "SYSTEM",
+            action: "integration_credential.deauthorized_by_instagram",
+            entityType: "IntegrationCredential",
+            entityId: row.id,
+            metadata: { provider: META_PROVIDER.instagram },
+          },
+        });
+      }
+      return count;
     });
   }
-  return rows.length;
+  return revoked;
 }
 
 // A deletion request: erase what Agentelse holds from Instagram for this person
@@ -105,17 +120,27 @@ export async function deleteInstagramUserData(userId: string): Promise<number> {
     where: ownedBy(userId),
     select: { id: true, workspaceId: true, projectId: true },
   });
+  let erased = 0;
   for (const row of rows) {
-    await prisma.integrationCredential.delete({ where: { id: row.id } });
-    await AuditLogRepository.record({
-      workspaceId: row.workspaceId,
-      projectId: row.projectId,
-      actorType: "SYSTEM",
-      action: "integration_credential.deleted_on_user_request",
-      entityType: "IntegrationCredential",
-      entityId: row.id,
-      metadata: { provider: META_PROVIDER.instagram },
+    erased += await prisma.$transaction(async (tx) => {
+      const { count } = await tx.integrationCredential.deleteMany({
+        where: { id: row.id },
+      });
+      if (count > 0) {
+        await tx.auditLog.create({
+          data: {
+            workspaceId: row.workspaceId,
+            projectId: row.projectId,
+            actorType: "SYSTEM",
+            action: "integration_credential.deleted_on_user_request",
+            entityType: "IntegrationCredential",
+            entityId: row.id,
+            metadata: { provider: META_PROVIDER.instagram },
+          },
+        });
+      }
+      return count;
     });
   }
-  return rows.length;
+  return erased;
 }

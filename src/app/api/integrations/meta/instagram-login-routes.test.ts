@@ -314,7 +314,7 @@ describe("callback (Facebook route) over an earlier Instagram Login connection",
     expect(saved.instagramAccount?.appScopedId).toBeUndefined();
   });
 
-  it("keeps what a reconnect should keep (the old test result and any Page selection that is still valid)", async () => {
+  it("drops the old account's last test result too (it names @old), and keeps a Page selection that is still valid", async () => {
     mocks.findUnique.mockResolvedValue({
       ...previousRow,
       metadata: { ...previousRow.metadata, selectedPageId: "p1", selectedPageName: "Web Health" },
@@ -322,6 +322,20 @@ describe("callback (Facebook route) over an earlier Instagram Login connection",
     await callback(callbackUrl());
     const saved = mocks.upsert.mock.calls[0]![0].update.metadata;
     expect(saved.selectedPageId).toBe("p1");
+    expect(saved.lastTestResult).toBeUndefined();
+  });
+
+  it("keeps the test result on a plain Facebook-route reconnect (nothing in it is stale there)", async () => {
+    mocks.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      metadata: {
+        pages: [],
+        selectedPageId: "p1",
+        lastTestResult: { testedAt: "2026-10-01T00:00:00.000Z", igUsername: "wh" },
+      },
+    });
+    await callback(callbackUrl());
+    const saved = mocks.upsert.mock.calls[0]![0].update.metadata;
     expect(saved.lastTestResult).toBeDefined();
   });
 });

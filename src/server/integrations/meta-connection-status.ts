@@ -1,7 +1,10 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { resolveInstagramTarget } from "@/server/integrations/instagram-target";
+import {
+  instagramLoginExpired,
+  resolveInstagramTarget,
+} from "@/server/integrations/instagram-target";
 import {
   META_PROVIDER,
   type MetaInstagramMetadata,
@@ -40,9 +43,13 @@ async function getInstagramTargets(
   });
   if (!credential || credential.status !== "ACTIVE") return [];
 
-  const target = resolveInstagramTarget(
-    (credential.metadata ?? {}) as MetaInstagramMetadata,
-  );
+  const metadata = (credential.metadata ?? {}) as MetaInstagramMetadata;
+  // The Connectors tile already calls an Instagram Login connection past its 60
+  // days "Needs reconnection"; every other view (creative card, plan card, Works
+  // Post now, autopublish) reads this list, so it must agree rather than offer a
+  // publish that Meta will refuse.
+  if (instagramLoginExpired(metadata)) return [];
+  const target = resolveInstagramTarget(metadata);
   if (!target) return [];
 
   return [

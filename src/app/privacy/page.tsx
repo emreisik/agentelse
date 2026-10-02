@@ -7,7 +7,7 @@ export const metadata: Metadata = {
     "How Agentelse collects, uses, and protects your data when you use your AI Growth Team.",
 };
 
-const LAST_UPDATED = "October 1, 2026";
+const LAST_UPDATED = "October 2, 2026";
 
 type PolicySection = {
   id: string;

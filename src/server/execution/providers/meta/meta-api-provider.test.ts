@@ -930,6 +930,25 @@ describe("MetaApiProvider credential routing", () => {
     ).toBe(true);
   });
 
+  it("an Instagram Login connection past its 60 days is not publishable, before Meta has to refuse it", async () => {
+    const metadata = (expires: string) => ({
+      login: "instagram",
+      instagramAccount: { id: "17841400", username: "webhealth" },
+      pages: [],
+      longLivedTokenExpiresAt: expires,
+    });
+    prismaMocks.credentialFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      metadata: metadata(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+    });
+    expect(await new MetaApiProvider().canExecute("INSTAGRAM_PUBLISH", context)).toBe(false);
+    prismaMocks.credentialFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      metadata: metadata(new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()),
+    });
+    expect(await new MetaApiProvider().canExecute("INSTAGRAM_PUBLISH", context)).toBe(true);
+  });
+
   it("an Instagram Login row without an account is not publishable", async () => {
     prismaMocks.credentialFindUnique.mockResolvedValue({
       status: "ACTIVE",

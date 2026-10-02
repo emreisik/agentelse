@@ -61,6 +61,8 @@ async function buildMetadata(
     const previous: Partial<MetaInstagramMetadata> = {
       ...(existing as Partial<MetaInstagramMetadata>),
     };
+    // Its last test result names the old account too (IG: @old): drop it as well.
+    if (previous.login === "instagram") delete previous.lastTestResult;
     delete previous.login;
     delete previous.instagramAccount;
     const pages = await fetchMetaPageList(accessToken, {

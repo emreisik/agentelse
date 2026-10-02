@@ -63,6 +63,32 @@ describe("deauthorize callback", () => {
     expect(mocks.deauthorize).toHaveBeenCalledWith("1784");
   });
 
+  it("logs every verified request with its match count (never the id) and every rejection", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mocks.deauthorize.mockResolvedValue(0);
+    await deauthorize(post(signed("ig-secret")));
+    expect(info).toHaveBeenCalledOnce();
+    const line = String(info.mock.calls[0]![0]);
+    expect(line).toContain("0 connection(s) revoked");
+    expect(line).toContain("id length 4");
+    expect(line).not.toContain("1784");
+
+    await deauthorize(post(signed("attacker")));
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]![0])).toContain("rejected");
+    info.mockRestore();
+    warn.mockRestore();
+  });
+
+  it("answers 400 at once, doing no work, for an oversized hostile body", async () => {
+    const started = performance.now();
+    const response = await deauthorize(post("=".repeat(100_000) + "x.y"));
+    expect(response.status).toBe(400);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(mocks.deauthorize).not.toHaveBeenCalled();
+  });
+
   it("answers 400 and does nothing for an unsigned or wrongly signed request", async () => {
     expect((await deauthorize(post())).status).toBe(400);
     expect((await deauthorize(post(signed("attacker")))).status).toBe(400);
@@ -78,6 +104,24 @@ describe("deauthorize callback", () => {
 });
 
 describe("data deletion callback", () => {
+  it("logs the verified request with its erase count, never the id", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    mocks.erase.mockResolvedValue(3);
+    await dataDeletion(post(signed("meta-secret")));
+    const line = String(info.mock.calls[0]![0]);
+    expect(line).toContain("3 connection(s) erased");
+    expect(line).not.toContain("1784");
+    info.mockRestore();
+  });
+
+  it("answers 400 at once, erasing nothing, for an oversized hostile body", async () => {
+    const started = performance.now();
+    const response = await dataDeletion(post("=".repeat(100_000) + "x.y"));
+    expect(response.status).toBe(400);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(mocks.erase).not.toHaveBeenCalled();
+  });
+
   it("erases, then answers { url, confirmation_code } whose code the status page can read", async () => {
     mocks.erase.mockResolvedValue(2);
     const response = await dataDeletion(post(signed("ig-secret")));

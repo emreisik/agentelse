@@ -25,15 +25,44 @@ function ownedBy(userId: string) {
   };
 }
 
-// The user id inside a request that Meta really signed, else null.
-export async function readSignedUserId(request: Request): Promise<string | null> {
-  let signedRequest: FormDataEntryValue | null = null;
+// A real callback body is `signed_request=<a few hundred characters>`. Cap what is
+// read so a caller with no session can't make the server buffer or parse megabytes.
+const MAX_BODY_BYTES = 16 * 1024;
+
+async function readLimitedText(
+  request: Request,
+  limit: number,
+): Promise<string | null> {
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > limit) return null;
+  if (!request.body) return null;
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
   try {
-    signedRequest = (await request.formData()).get("signed_request");
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
   } catch {
     return null;
   }
-  if (typeof signedRequest !== "string") return null;
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+// The user id inside a request that Meta really signed, else null. Meta sends a
+// urlencoded form with one `signed_request` field.
+export async function readSignedUserId(request: Request): Promise<string | null> {
+  const body = await readLimitedText(request, MAX_BODY_BYTES);
+  if (body === null) return null;
+  const signedRequest = new URLSearchParams(body).get("signed_request");
+  if (!signedRequest) return null;
   const env = getEnv();
   return (
     parseSignedRequest(signedRequest, [

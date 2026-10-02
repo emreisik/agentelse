@@ -5,13 +5,42 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 // base64url: the signature is HMAC-SHA256 of the payload text with the app
 // secret, the payload a JSON object with the app-scoped `user_id`. The request
 // carries no session, so this signature is the only proof it came from Meta.
+//
+// Everything before the signature check runs on input from an unauthenticated
+// caller, so it is kept cheap and bounded: a hard length cap, no regular
+// expression, and nothing is decoded or parsed until the signature has matched.
 
 export type SignedRequest = { userId: string };
+
+// A real signed_request is a few hundred characters (a 43-character signature
+// and a small JSON payload). Anything much longer is not from Meta.
+export const MAX_SIGNED_REQUEST_LENGTH = 4096;
+// A SHA-256 signature is 43 base64url characters (44 with padding).
+const MAX_SIGNATURE_LENGTH = 64;
 
 function safeEqual(a: string, b: string): boolean {
   const left = Buffer.from(a);
   const right = Buffer.from(b);
   return left.length === right.length && timingSafeEqual(left, right);
+}
+
+// Linear on purpose. The obvious `replace(/=+$/, "")` backtracks quadratically on
+// a long run of "=" followed by any other character (about 5 seconds of a blocked
+// server for 100,000 characters), and this runs on input anyone can send.
+function trimTrailingEquals(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 61) end--;
+  return value.slice(0, end);
+}
+
+// `user_id` can arrive as a JSON number, and an Instagram id (17 digits) is larger
+// than 2^53, so JSON.parse has already rounded it. The payload is signed, so the
+// digits as sent are safe to read straight from its text.
+function exactUserId(payloadJson: string, parsed: string | number): string {
+  if (typeof parsed === "string") return parsed;
+  return (
+    /"user_id"\s*:\s*(-?\d+)\s*[,}]/.exec(payloadJson)?.[1] ?? String(parsed)
+  );
 }
 
 // `secrets` are tried in turn: Instagram Login requests are signed with the
@@ -20,11 +49,14 @@ export function parseSignedRequest(
   signedRequest: string,
   secrets: string[],
 ): SignedRequest | null {
+  if (signedRequest.length > MAX_SIGNED_REQUEST_LENGTH) return null;
   const parts = signedRequest.split(".");
   if (parts.length !== 2) return null;
-  const signature = parts[0]!.replace(/=+$/, "");
+  const signature = trimTrailingEquals(parts[0]!);
   const payloadText = parts[1]!;
-  if (!signature || !payloadText) return null;
+  if (!signature || signature.length > MAX_SIGNATURE_LENGTH || !payloadText) {
+    return null;
+  }
 
   const signedBy = secrets
     .filter(Boolean)
@@ -36,22 +68,36 @@ export function parseSignedRequest(
     );
   if (!signedBy) return null;
 
-  let payload: { algorithm?: unknown; user_id?: unknown };
+  let payloadJson: string;
+  let payload: unknown;
   try {
-    payload = JSON.parse(Buffer.from(payloadText, "base64url").toString("utf8"));
+    payloadJson = Buffer.from(payloadText, "base64url").toString("utf8");
+    payload = JSON.parse(payloadJson);
   } catch {
     return null;
   }
+  // A correctly signed `null`, number or array must be refused, not crash.
   if (
-    typeof payload.algorithm !== "string" ||
-    payload.algorithm.toUpperCase() !== "HMAC-SHA256"
+    payload === null ||
+    typeof payload !== "object" ||
+    Array.isArray(payload)
   ) {
     return null;
   }
-  if (typeof payload.user_id !== "string" && typeof payload.user_id !== "number") {
+  const { algorithm, user_id: rawUserId } = payload as {
+    algorithm?: unknown;
+    user_id?: unknown;
+  };
+  if (
+    typeof algorithm !== "string" ||
+    algorithm.toUpperCase() !== "HMAC-SHA256"
+  ) {
     return null;
   }
-  const userId = String(payload.user_id);
+  if (typeof rawUserId !== "string" && typeof rawUserId !== "number") {
+    return null;
+  }
+  const userId = exactUserId(payloadJson, rawUserId);
   return userId ? { userId } : null;
 }
 

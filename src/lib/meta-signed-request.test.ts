@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  MAX_SIGNED_REQUEST_LENGTH,
   createDeletionCode,
   parseSignedRequest,
   readDeletionCode,
@@ -60,6 +61,79 @@ describe("parseSignedRequest", () => {
     expect(parseSignedRequest(sign({ ...payload, algorithm: "HMAC-SHA1" }, "s"), ["s"])).toBeNull();
     expect(parseSignedRequest(sign({ algorithm: "HMAC-SHA256" }, "s"), ["s"])).toBeNull();
     expect(parseSignedRequest(sign("not json", "s"), ["s"])).toBeNull();
+  });
+});
+
+// The text of a payload as Meta would send it, signed with `secret`.
+function signText(payloadJson: string, secret: string) {
+  const body = Buffer.from(payloadJson).toString("base64url");
+  return `${createHmac("sha256", secret).update(body).digest("base64url")}.${body}`;
+}
+
+describe("parseSignedRequest: hostile input from an unauthenticated caller", () => {
+  // The first version stripped padding with /=+$/, which backtracks quadratically:
+  // 100,000 "=" followed by anything stalled the whole server for about 5 seconds.
+  it("answers null at once for the long '=' run that used to stall the server", () => {
+    for (const hostile of [
+      "=".repeat(100_000) + "x.y",
+      "=".repeat(MAX_SIGNED_REQUEST_LENGTH - 10) + "x.y",
+      "=".repeat(4000) + "x" + "=".repeat(4000) + ".y",
+    ]) {
+      const started = performance.now();
+      expect(parseSignedRequest(hostile, ["ig-secret", "meta-secret"])).toBeNull();
+      expect(performance.now() - started).toBeLessThan(100);
+    }
+  });
+
+  it("refuses anything longer than a real signed_request, even correctly signed", () => {
+    const padding = "a".repeat(MAX_SIGNED_REQUEST_LENGTH);
+    expect(
+      parseSignedRequest(signText(JSON.stringify({ ...payload, pad: padding }), "s"), ["s"]),
+    ).toBeNull();
+  });
+
+  it("refuses a signature part longer than any SHA-256 signature", () => {
+    expect(parseSignedRequest(`${"A".repeat(200)}.${b64(payload)}`, ["s"])).toBeNull();
+  });
+
+  it("tolerates a padded signature but never needs the padding", () => {
+    const [signature, body] = sign(payload, "s").split(".");
+    expect(parseSignedRequest(`${signature}==.${body}`, ["s"])).toEqual({ userId: "1784" });
+    expect(parseSignedRequest(`${signature}.${body}`, ["s"])).toEqual({ userId: "1784" });
+  });
+
+  it("refuses a correctly signed payload that is not an object instead of throwing", () => {
+    for (const text of ["null", "5", '"text"', "[]", '[{"algorithm":"HMAC-SHA256","user_id":"1"}]', "true"]) {
+      expect(() => parseSignedRequest(signText(text, "s"), ["s"])).not.toThrow();
+      expect(parseSignedRequest(signText(text, "s"), ["s"])).toBeNull();
+    }
+  });
+});
+
+describe("parseSignedRequest: ids larger than 2^53", () => {
+  // Instagram ids are 17 digits. JSON.parse rounds a 17-digit number, so a numeric
+  // user_id must be read as the digits Meta sent or no connection would ever match.
+  it("keeps a 17-digit numeric user_id exactly as sent", () => {
+    // An odd 17-digit id: above 2^53 doubles are spaced 2 apart, so JSON.parse turns
+    // it into its even neighbour (an even id happens to survive, which hides the bug).
+    const raw = '{"algorithm":"HMAC-SHA256","issued_at":1790000000,"user_id":17841410649718709}';
+    expect(String(JSON.parse(raw).user_id)).toBe("17841410649718708");
+    expect(parseSignedRequest(signText(raw, "s"), ["s"])).toEqual({ userId: "17841410649718709" });
+  });
+
+  it("reads the id wherever it sits in the payload, and leaves strings and small numbers alone", () => {
+    expect(
+      parseSignedRequest(
+        signText('{"user_id":17841410649718709,"algorithm":"HMAC-SHA256"}', "s"),
+        ["s"],
+      ),
+    ).toEqual({ userId: "17841410649718709" });
+    expect(
+      parseSignedRequest(signText('{"algorithm":"HMAC-SHA256","user_id":"17841410649718708"}', "s"), ["s"]),
+    ).toEqual({ userId: "17841410649718708" });
+    expect(
+      parseSignedRequest(signText('{"algorithm":"HMAC-SHA256","user_id":42}', "s"), ["s"]),
+    ).toEqual({ userId: "42" });
   });
 });
 

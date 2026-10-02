@@ -107,6 +107,66 @@ describe("deleteInstagramUserData", () => {
   });
 });
 
+describe("readSignedUserId: bounded body", () => {
+  const payload = { algorithm: "HMAC-SHA256", user_id: "1784" };
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const valid = `${createHmac("sha256", "ig-secret").update(body).digest("base64url")}.${body}`;
+
+  const withBody = (init: RequestInit & { duplex?: "half" }) =>
+    new Request("https://app.example.com/x", { method: "POST", ...init });
+
+  it("refuses a body that declares itself larger than a real callback, without reading it", async () => {
+    const request = withBody({
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": String(10 * 1024 * 1024),
+      },
+      body: new URLSearchParams({ signed_request: valid }).toString(),
+    });
+    const getReader = vi.spyOn(request.body!, "getReader");
+    expect(await readSignedUserId(request)).toBeNull();
+    expect(getReader).not.toHaveBeenCalled();
+  });
+
+  it("stops reading a streamed body that never declared its size once it passes the cap", async () => {
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new TextEncoder().encode("x".repeat(8 * 1024)));
+        if (pulled > 1000) controller.close();
+      },
+    });
+    const request = withBody({
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: stream,
+      duplex: "half",
+    });
+    expect(await readSignedUserId(request)).toBeNull();
+    // It stopped long before the 1000 chunks (8 MB) the sender was ready to push.
+    expect(pulled).toBeLessThan(10);
+  });
+
+  it("answers null at once for the long '=' run, whatever the size", async () => {
+    const started = performance.now();
+    const hostile = new Request("https://app.example.com/x", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ signed_request: "=".repeat(100_000) + "x.y" }).toString(),
+    });
+    expect(await readSignedUserId(hostile)).toBeNull();
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("still reads a normal callback", async () => {
+    const request = withBody({
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ signed_request: valid }).toString(),
+    });
+    expect(await readSignedUserId(request)).toBe("1784");
+  });
+});
+
 describe("readSignedUserId", () => {
   const signed = (secret: string, payload: object) => {
     const body = Buffer.from(JSON.stringify(payload)).toString("base64url");

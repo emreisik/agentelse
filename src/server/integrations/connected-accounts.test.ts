@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // What this suite proves: the card reads each account from the record that
 // really decides it (GA4 and Search Console count only with a property / site
-// chosen, the Facebook Page only when one was selected), nothing is claimed for
+// chosen, the Facebook Page only when one was selected in the Facebook integration), nothing is claimed for
 // an inactive credential, and a failure is "no rows", never an error.
 
 const credentialFindMany = vi.fn();
@@ -37,7 +37,7 @@ const byKey = async (website: string | null = null) =>
   );
 
 describe("loadConnectedAccounts", () => {
-  it("reads this project's Instagram, Meta Ads, GA4 and Search Console credentials only", async () => {
+  it("reads this project's Instagram, Facebook, Meta Ads, GA4 and Search Console credentials only", async () => {
     await loadConnectedAccounts("proj-1", null);
     expect(credentialFindMany).toHaveBeenCalledWith({
       where: {
@@ -45,6 +45,7 @@ describe("loadConnectedAccounts", () => {
         provider: {
           in: [
             "instagram",
+            "facebook",
             "meta_ads",
             "google_analytics",
             "google_search_console",
@@ -77,59 +78,41 @@ describe("loadConnectedAccounts", () => {
     expect(accounts["meta-ads"]).toMatchObject({ state: "connected", detail: "Web Health Ads" });
   });
 
-  it("the Facebook Page is linked when the Instagram connection has one selected", async () => {
+  it("the Facebook Page comes from the Facebook integration, once a Page is selected", async () => {
     credentialFindMany.mockResolvedValue([
       {
-        provider: "instagram",
+        provider: "facebook",
         status: "ACTIVE",
         metadata: { selectedPageId: "p1", selectedPageName: "Web Health" },
       },
     ]);
     expect((await byKey()).facebook).toMatchObject({ state: "connected", detail: "Web Health" });
 
+    // Connected but no Page chosen yet: nothing to claim.
+    credentialFindMany.mockResolvedValue([
+      { provider: "facebook", status: "ACTIVE", metadata: { pages: [] } },
+    ]);
+    expect((await byKey()).facebook?.state).toBe("off");
+
     // A revoked connection claims nothing.
     credentialFindMany.mockResolvedValue([
-      { provider: "instagram", status: "REVOKED", metadata: { selectedPageId: "p1" } },
+      { provider: "facebook", status: "REVOKED", metadata: { selectedPageId: "p1" } },
     ]);
     expect((await byKey()).facebook?.state).toBe("off");
   });
 
-  it("an account connected through Instagram Login has no Page, so Facebook stays off", async () => {
+  it("a Page picked in the Instagram or Meta Ads connection does not make Facebook connected", async () => {
     credentialFindMany.mockResolvedValue([
       {
         provider: "instagram",
         status: "ACTIVE",
-        metadata: {
-          login: "instagram",
-          instagramAccount: { id: "ig-1", username: "webhealth" },
-          pages: [],
-        },
-      },
-    ]);
-    expect((await byKey()).facebook?.state).toBe("off");
-  });
-
-  it("without an Instagram Page, the Page Meta Ads runs as counts as the Facebook Page", async () => {
-    credentialFindMany.mockResolvedValue([
-      {
-        provider: "instagram",
-        status: "ACTIVE",
-        metadata: { login: "instagram", pages: [] },
+        metadata: { selectedPageId: "p1", selectedPageName: "Web Health" },
       },
       {
         provider: "meta_ads",
         status: "ACTIVE",
         metadata: { selectedPageId: "p9", selectedPageName: "Web Health Ads Page" },
       },
-    ]);
-    expect((await byKey()).facebook).toMatchObject({
-      state: "connected",
-      detail: "Web Health Ads Page",
-    });
-
-    // A revoked Meta Ads connection claims nothing.
-    credentialFindMany.mockResolvedValue([
-      { provider: "meta_ads", status: "REVOKED", metadata: { selectedPageId: "p9" } },
     ]);
     expect((await byKey()).facebook?.state).toBe("off");
   });

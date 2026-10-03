@@ -10,7 +10,7 @@ import {
 } from "@/server/security/tenant-context";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { putAsset } from "@/server/storage/asset-storage";
-import { fetchInstagramPostPreview } from "@/server/media/instagram-post-preview";
+import { loadOwnInstagramPosts } from "@/server/media/instagram-own-posts";
 import {
   analyzeInstagramStyle,
   downloadImageAsAttachment,
@@ -342,7 +342,8 @@ export async function removeStyleReferenceAction(
   revalidatePath(`/projects/${projectId}`);
 }
 
-const MAX_INSTAGRAM_URLS = 5;
+// How many of the account's most recent posts are analysed.
+const INSTAGRAM_POSTS_ANALYSED = 5;
 
 export type InstagramImportResult =
   | { ok: true; suggestion: InstagramStyleSuggestion; failedUrls: string[] }
@@ -352,7 +353,10 @@ export type InstagramImportResult =
 // suggestion to the client, which pre-fills the same edit Sheet
 // updateBrandVisualIdentityAction already serves; saving still goes through
 // that one action, so nothing about this feature bypasses the user
-// reviewing/editing before anything is persisted.
+// reviewing/editing before anything is persisted. The posts are the project's
+// own, read from its connected Instagram account through the official API
+// (instagram-own-posts.ts); another account's posts can't be read that way,
+// so inspiration from them goes through the style reference upload instead.
 export async function analyzeInstagramPostsAction(
   formData: FormData,
 ): Promise<InstagramImportResult> {
@@ -361,59 +365,27 @@ export async function analyzeInstagramPostsAction(
     const { userId } = await requireUser();
     const access = await requireProjectAccess(userId, projectId);
 
-    const urls = String(formData.get("urls") ?? "")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .slice(0, MAX_INSTAGRAM_URLS);
-
-    if (urls.length === 0) {
-      return { ok: false, message: "Paste at least one Instagram post link" };
-    }
-
-    const previews = await Promise.all(
-      urls.map(async (url) => ({
-        url,
-        preview: await fetchInstagramPostPreview(url),
-      })),
-    );
-
-    const failedUrls = previews.filter((p) => !p.preview.ok).map((p) => p.url);
-    const succeeded = previews.filter(
-      (
-        p,
-      ): p is {
-        url: string;
-        preview: Extract<typeof p.preview, { ok: true }>;
-      } => p.preview.ok,
-    );
-
-    if (succeeded.length === 0) {
-      return {
-        ok: false,
-        message:
-          "Couldn't read any of those links — check they're public post/reel URLs",
-      };
-    }
+    const own = await loadOwnInstagramPosts(projectId, INSTAGRAM_POSTS_ANALYSED);
+    if (!own.ok) return { ok: false, message: own.reason };
 
     const downloaded = await Promise.all(
-      succeeded.map((p) => downloadImageAsAttachment(p.preview.imageUrl)),
+      own.posts.map((post) => downloadImageAsAttachment(post.imageUrl)),
     );
     const images = downloaded.filter((img) => img !== null);
-    const imageFailedUrls = succeeded
+    const failedUrls = own.posts
       .filter((_, i) => downloaded[i] === null)
-      .map((p) => p.url);
+      .map((post) => post.permalink ?? post.id);
 
     if (images.length === 0) {
       return {
         ok: false,
-        message: "Found the posts but couldn't download their images",
+        message: "Found your posts but couldn't download their images",
       };
     }
 
-    const captions = succeeded
+    const captions = own.posts
       .filter((_, i) => downloaded[i] !== null)
-      .map((p) => p.preview.caption);
+      .map((post) => post.caption);
 
     const suggestion = await analyzeInstagramStyle(images, captions, {
       workspaceId: access.workspaceId,
@@ -430,14 +402,10 @@ export async function analyzeInstagramPostsAction(
       action: "brand_visual_identity.instagram_import_analyzed",
       entityType: "BrandVisualIdentity",
       entityId: access.defaultBrandId,
-      metadata: { urlCount: urls.length, imageCount: images.length },
+      metadata: { postCount: own.posts.length, imageCount: images.length },
     });
 
-    return {
-      ok: true,
-      suggestion,
-      failedUrls: [...failedUrls, ...imageFailedUrls],
-    };
+    return { ok: true, suggestion, failedUrls };
   } catch (error) {
     return {
       ok: false,

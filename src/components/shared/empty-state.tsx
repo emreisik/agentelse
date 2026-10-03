@@ -5,12 +5,15 @@ import { cn } from "@/lib/utils";
 
 export function EmptyState({
   icon: Icon,
+  media,
   title,
   hint,
   children,
   className,
 }: {
-  icon: LucideIcon;
+  icon?: LucideIcon;
+  // Replaces the default icon tile, e.g. a brand mark.
+  media?: ReactNode;
   title: string;
   hint?: string;
   children?: ReactNode;
@@ -23,9 +26,12 @@ export function EmptyState({
         className,
       )}
     >
-      <span className="flex size-10 items-center justify-center rounded-xl bg-muted text-foreground">
-        <Icon className="size-5" />
-      </span>
+      {media ??
+        (Icon ? (
+          <span className="flex size-10 items-center justify-center rounded-xl bg-muted text-foreground">
+            <Icon className="size-5" />
+          </span>
+        ) : null)}
       <p className="text-sm font-medium">{title}</p>
       {hint ? (
         <p className="max-w-sm text-xs text-muted-foreground">{hint}</p>

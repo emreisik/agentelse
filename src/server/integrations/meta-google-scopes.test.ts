@@ -22,17 +22,37 @@ function scopesOf(url: string, separator: string): string[] {
 }
 
 describe("Meta OAuth scopes are isolated per integration", () => {
-  it("Instagram asks for publishing scopes and no ads scopes", () => {
+  it("Instagram asks for publishing scopes, no ads scopes and no Page posting", () => {
     const scopes = scopesOf(buildMetaAuthorizeUrl("s", "instagram"), ",");
     expect(scopes).toContain("instagram_content_publish");
+    expect(scopes).toContain("instagram_manage_insights");
     expect(scopes).not.toContain("ads_management");
     expect(scopes).not.toContain("ads_read");
+    // Publishing to Instagram through a Page needs the Page's token, not the
+    // right to post on the Page: that belongs to the Facebook service alone.
+    expect(scopes).not.toContain("pages_manage_posts");
   });
 
-  it("Meta Ads asks for ads scopes and no Instagram scopes", () => {
+  it("Meta Ads asks for ads scopes and no Instagram scopes or Page posting", () => {
     const scopes = scopesOf(buildMetaAuthorizeUrl("s", "ads"), ",");
     expect(scopes).toContain("ads_management");
     expect(scopes).toContain("ads_read");
+    expect(scopes).not.toContain("instagram_basic");
+    expect(scopes).not.toContain("instagram_content_publish");
+    expect(scopes).not.toContain("pages_manage_posts");
+  });
+
+  it("Facebook asks for Page scopes and no ads or Instagram scopes", () => {
+    const scopes = scopesOf(buildMetaAuthorizeUrl("s", "facebook"), ",");
+    expect(scopes).toEqual(
+      expect.arrayContaining([
+        "pages_show_list",
+        "pages_manage_posts",
+        "pages_read_engagement",
+      ]),
+    );
+    expect(scopes).not.toContain("ads_management");
+    expect(scopes).not.toContain("ads_read");
     expect(scopes).not.toContain("instagram_basic");
     expect(scopes).not.toContain("instagram_content_publish");
   });
@@ -51,14 +71,20 @@ describe("Meta OAuth scopes are isolated per integration", () => {
     expect(scopes).toEqual([
       "instagram_business_basic",
       "instagram_business_content_publish",
+      "instagram_business_manage_insights",
     ]);
     // No Facebook scopes: that route asks for Page access, this one must not.
     expect(scopes.join(",")).not.toMatch(/pages_|business_management|ads_/);
   });
 
   it("stores each integration under its own provider key", () => {
-    expect(META_PROVIDER).toEqual({ instagram: "instagram", ads: "meta_ads" });
+    expect(META_PROVIDER).toEqual({
+      instagram: "instagram",
+      facebook: "facebook",
+      ads: "meta_ads",
+    });
     expect(parseMetaService("ads")).toBe("ads");
+    expect(parseMetaService("facebook")).toBe("facebook");
     expect(parseMetaService("meta")).toBeNull();
   });
 });

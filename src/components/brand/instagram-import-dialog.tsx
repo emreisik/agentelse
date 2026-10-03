@@ -5,7 +5,6 @@ import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -114,8 +113,8 @@ export function InstagramImportDialog({
         <DialogHeader>
           <DialogTitle>Import from Instagram</DialogTitle>
           <DialogDescription>
-            Paste up to 5 post or reel links (yours or ones you&apos;re inspired
-            by) — their images are analyzed for a recurring color palette,
+            Your 5 most recent posts are read from your connected Instagram
+            account and their images analyzed for a recurring color palette,
             photography style, and mood, which you can then review and apply to
             your settings.
           </DialogDescription>
@@ -124,16 +123,10 @@ export function InstagramImportDialog({
         {!result?.ok ? (
           <form onSubmit={onAnalyze} className="space-y-3">
             <input type="hidden" name="projectId" value={projectId} />
-            <Textarea
-              name="urls"
-              rows={5}
-              required
-              placeholder={
-                "https://www.instagram.com/p/...\nhttps://www.instagram.com/reel/..."
-              }
-            />
             <p className="text-[11px] text-muted-foreground">
-              One link per line, up to 5. Public posts only.
+              Only your own connected account can be read. For inspiration from
+              another account, upload a screenshot as your style reference
+              instead.
             </p>
             <DialogFooter>
               <Button
@@ -145,7 +138,7 @@ export function InstagramImportDialog({
               </Button>
               <Button type="submit" disabled={pending}>
                 {pending ? <Loader2 className="size-3.5 animate-spin" /> : null}
-                Analyze
+                Analyze my recent posts
               </Button>
             </DialogFooter>
           </form>
@@ -187,14 +180,14 @@ export function InstagramImportDialog({
             </div>
             {result.failedUrls.length > 0 ? (
               <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                Couldn&apos;t read {result.failedUrls.length} link
+                Couldn&apos;t download {result.failedUrls.length} post
                 {result.failedUrls.length > 1 ? "s" : ""}:{" "}
                 {result.failedUrls.join(", ")}
               </p>
             ) : null}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={reset}>
-                Try different links
+                Back
               </Button>
               <Button type="button" onClick={onApplyClick}>
                 Apply to settings

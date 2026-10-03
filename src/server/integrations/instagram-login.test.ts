@@ -35,6 +35,7 @@ const {
   exchangeInstagramAuthCode,
   exchangeInstagramLongLivedToken,
   fetchInstagramLoginProfile,
+  fetchInstagramRecentMedia,
   publishInstagramPost,
   verifyInstagramAccess,
 } = await import("./meta-client");
@@ -303,5 +304,58 @@ describe("instagramAccessFor", () => {
     );
     expect(access).toEqual({ accessToken: "page-token", api: "facebook" });
     expect(String(fetchMock.mock.calls[0]![0])).toContain("https://graph.facebook.com/");
+  });
+});
+
+describe("fetchInstagramRecentMedia", () => {
+  it("reads the account's own recent posts from the host its token belongs to", async () => {
+    fetchMock.mockImplementation(async () => json({ data: [] }));
+
+    await fetchInstagramRecentMedia({
+      igUserId: "17841400",
+      accessToken: "ig-token",
+      api: "instagram",
+      limit: 12,
+    });
+    await fetchInstagramRecentMedia({
+      igUserId: "17841400",
+      accessToken: "page-token",
+      api: "facebook",
+      limit: 12,
+    });
+
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+      "https://graph.instagram.com/v26.0/17841400/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink&limit=12&access_token=ig-token",
+    );
+    expect(String(fetchMock.mock.calls[1]![0])).toContain(
+      "https://graph.facebook.com/v26.0/17841400/media?",
+    );
+  });
+
+  it("uses the image itself, a video's thumbnail, and nothing when there is no picture", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json({
+        data: [
+          { id: "1", media_type: "IMAGE", media_url: "https://cdn/1.jpg", caption: "One", permalink: "https://www.instagram.com/p/1/" },
+          { id: "2", media_type: "VIDEO", media_url: "https://cdn/2.mp4", thumbnail_url: "https://cdn/2.jpg" },
+          { id: "3", media_type: "CAROUSEL_ALBUM", media_url: "https://cdn/3.jpg" },
+          { id: "4", media_type: "VIDEO", media_url: "https://cdn/4.mp4" },
+        ],
+      }),
+    );
+
+    const media = await fetchInstagramRecentMedia({
+      igUserId: "17841400",
+      accessToken: "ig-token",
+      api: "instagram",
+      limit: 12,
+    });
+
+    expect(media).toEqual([
+      { id: "1", caption: "One", imageUrl: "https://cdn/1.jpg", permalink: "https://www.instagram.com/p/1/" },
+      { id: "2", caption: null, imageUrl: "https://cdn/2.jpg", permalink: null },
+      { id: "3", caption: null, imageUrl: "https://cdn/3.jpg", permalink: null },
+      { id: "4", caption: null, imageUrl: null, permalink: null },
+    ]);
   });
 });

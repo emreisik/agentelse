@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useWorkCardHost } from "@/components/works/work-card-host";
 import { Input } from "@/components/ui/input";
+import { FacebookShareRow } from "@/components/integrations/facebook-share-row";
 import {
   approveApprovalAction,
   rejectApprovalAction,
@@ -599,7 +600,15 @@ function PublishSection({ creativeId }: { creativeId: string }) {
 
   if (targets === null) return null;
 
-  if (targets.length === 0) {
+  // Facebook is a cross-post with a row of its own (share, then edit or delete
+  // the live post), not one of the one-click Share targets below.
+  const hasFacebook = targets.some((t) => t.platform === "facebook");
+  const shareTargets = targets.filter(
+    (t): t is Exclude<PublishTarget, { platform: "facebook" }> =>
+      t.platform !== "facebook",
+  );
+
+  if (shareTargets.length === 0 && !hasFacebook) {
     return (
       <p className="pt-0.5 text-xs" style={{ color: "var(--ws-text-3)" }}>
         No connected social accounts yet.
@@ -653,7 +662,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
       <p className="text-xs font-medium" style={{ color: "var(--ws-text-3)" }}>
         Share on Social Accounts
       </p>
-      {targets.map((target) => {
+      {shareTargets.map((target) => {
         const rowKey =
           target.platform === "instagram" ? target.pageId : target.platform;
         const title =
@@ -744,6 +753,7 @@ function PublishSection({ creativeId }: { creativeId: string }) {
           </div>
         );
       })}
+      {hasFacebook ? <FacebookShareRow creativeId={creativeId} /> : null}
     </div>
   );
 }

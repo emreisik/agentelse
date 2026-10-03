@@ -5,6 +5,11 @@ import type { CapabilityKey } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { CreativeRepository } from "@/server/repositories/creative.repository";
 
+// FACEBOOK_PUBLISH is deliberately absent: a Facebook share is a cross-post of
+// a piece whose own channel publishes it (facebook-share.ts, whose task names
+// the piece as `sharedCreativeId`). Flipping the Creative to PUBLISHED there
+// would mark an Instagram piece as posted and drop it from the Instagram
+// schedule.
 const PUBLISH_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>(
   ["INSTAGRAM_PUBLISH", "TIKTOK_PUBLISH", "LINKEDIN_PUBLISH", "X_PUBLISH"],
 );

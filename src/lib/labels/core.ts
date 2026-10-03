@@ -240,6 +240,7 @@ const CAPABILITY_LABELS: Partial<Record<CapabilityKey, string>> = {
   TIKTOK_PUBLISH: "TikTok Publish",
   LINKEDIN_PUBLISH: "LinkedIn Publish",
   X_PUBLISH: "X Publish",
+  FACEBOOK_PUBLISH: "Facebook Publish",
   META_ADS_ANALYSIS: "Meta Ads Analysis",
   META_CAMPAIGN_CREATE: "Meta Campaign Creation",
   META_CAMPAIGN_UPDATE: "Meta Campaign Update",

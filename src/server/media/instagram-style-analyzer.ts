@@ -11,10 +11,10 @@ const DEFAULT_MIME_TYPE = "image/jpeg";
 
 export type ImageAttachment = { mimeType: string; data: string };
 
-// Instagram's og:image CDN URLs need no auth (they're public preview
-// assets) — a plain fetch + base64 is enough, no asset-storage round trip.
-// Best-effort like fetchInstagramPostPreview: a failed download drops that
-// one image rather than failing the whole import.
+// The media URLs Instagram's API returns for the account's own posts are
+// signed CDN links that need no further auth — a plain fetch + base64 is
+// enough, no asset-storage round trip. Best-effort: a failed download drops
+// that one image rather than failing the whole import.
 export async function downloadImageAsAttachment(
   imageUrl: string,
 ): Promise<ImageAttachment | null> {

@@ -266,7 +266,8 @@ const SOCIAL_PUBLISH_CONFIG = {
 // (Instagram-only — its capability/payload shape is fixed). Differs from
 // the Instagram version: TikTok requires a video asset (videoUrl, not
 // imageUrl), while LinkedIn/X only need text (caption) — an image/video
-// isn't required. publishCreativeCore is left UNTOUCHED (also called by the
+// isn't required. Facebook is a cross-post with its own path
+// (facebook-share.ts), not one of these. publishCreativeCore is left UNTOUCHED (also called by the
 // Telegram poller, a function whose behavior must stay fixed) — hence a
 // separate function that repeats the shared `submit + reply` skeleton.
 export async function publishCreativeToSocialCore(input: {

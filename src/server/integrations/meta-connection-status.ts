@@ -7,6 +7,7 @@ import {
 } from "@/server/integrations/instagram-target";
 import {
   META_PROVIDER,
+  type MetaFacebookMetadata,
   type MetaInstagramMetadata,
 } from "@/server/integrations/meta-client";
 
@@ -29,6 +30,8 @@ export type PublishTarget =
       pageName: string;
       igUsername?: string;
     }
+  // The Page selected in the Facebook integration; accountLabel is its name.
+  | { platform: "facebook"; pageId: string; accountLabel: string }
   | { platform: "tiktok"; accountLabel: string }
   | { platform: "linkedin"; accountLabel: string }
   | { platform: "x"; accountLabel: string };
@@ -64,6 +67,23 @@ async function getInstagramTargets(
   ];
 }
 
+// Facebook needs a Page selected in its own integration (the Page the posts go
+// to); a Page picked in the Instagram or Meta Ads connection does not count.
+export async function getFacebookPublishTarget(
+  projectId: string,
+): Promise<Extract<PublishTarget, { platform: "facebook" }> | null> {
+  const credential = await prisma.integrationCredential.findUnique({
+    where: {
+      projectId_provider: { projectId, provider: META_PROVIDER.facebook },
+    },
+  });
+  if (!credential || credential.status !== "ACTIVE") return null;
+  const metadata = (credential.metadata ?? {}) as Partial<MetaFacebookMetadata>;
+  const page = metadata.pages?.find((p) => p.pageId === metadata.selectedPageId);
+  if (!page) return null;
+  return { platform: "facebook", pageId: page.pageId, accountLabel: page.pageName };
+}
+
 // For each of TikTok/LinkedIn/X, simply being ACTIVE on the
 // IntegrationCredential is considered a sufficient target — unlike
 // Instagram, there's no extra "which Page/account is selected" step, since
@@ -85,13 +105,17 @@ async function getSimpleCredentialTarget(
 export async function getPublishTargets(
   projectId: string,
 ): Promise<PublishTarget[]> {
-  const [instagram, tiktok, linkedin, x] = await Promise.all([
+  const [instagram, tiktok, linkedin, x, facebook] = await Promise.all([
     getInstagramTargets(projectId),
     getSimpleCredentialTarget(projectId, "tiktok"),
     getSimpleCredentialTarget(projectId, "linkedin"),
     getSimpleCredentialTarget(projectId, "x"),
+    getFacebookPublishTarget(projectId),
   ]);
-  return [...instagram, tiktok, linkedin, x].filter(
+  // Facebook last: the first entry is a project's primary platform for image
+  // sizing (work-plan-builder.ts), and connecting Facebook must not change it
+  // for a project that already publishes elsewhere.
+  return [...instagram, tiktok, linkedin, x, facebook].filter(
     (t): t is PublishTarget => t !== null,
   );
 }

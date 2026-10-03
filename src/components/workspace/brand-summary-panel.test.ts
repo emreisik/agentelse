@@ -122,6 +122,29 @@ const accounts: ConnectedAccount[] = [
 ];
 
 describe("BrandSummaryPanel (cards)", () => {
+  it("shows the Instagram card right after the accounts card, only while Instagram is connected", () => {
+    const connected = render(twin(), fullKit, "webhealth.com.tr", accounts);
+    expect(connected).toContain('data-card="instagram-overview"');
+    expect(connected.indexOf('data-card="instagram-overview"')).toBeGreaterThan(
+      connected.indexOf('data-card="connected-accounts"'),
+    );
+    expect(connected.indexOf('data-card="instagram-overview"')).toBeLessThan(
+      connected.indexOf('data-card="collapsible-Marka kiti"'),
+    );
+
+    const off = accounts.map((account) =>
+      account.key === "instagram"
+        ? { ...account, state: "off" as const }
+        : account,
+    );
+    expect(render(twin(), fullKit, "webhealth.com.tr", off)).not.toContain(
+      'data-card="instagram-overview"',
+    );
+    expect(render(twin(), fullKit)).not.toContain(
+      'data-card="instagram-overview"',
+    );
+  });
+
   it("leads with the brand summary card, then the accounts card, then the collapsed cards", () => {
     const html = render(twin(), fullKit, "webhealth.com.tr", accounts);
     const order = [

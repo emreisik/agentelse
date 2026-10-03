@@ -20,6 +20,8 @@ import {
   createMetaCarouselAdCreative,
   createMetaVideoAdCreative,
   MetaApiError,
+  fetchPageAccessToken,
+  publishFacebookPagePost,
   publishInstagramPost,
   updateMetaAd,
   updateMetaAdSet,
@@ -28,6 +30,7 @@ import {
   uploadMetaAdVideo,
   type MetaAdSetTargeting,
   type MetaAdsMetadata,
+  type MetaFacebookMetadata,
   type MetaInstagramMetadata,
   type MetaService,
 } from "@/server/integrations/meta-client";
@@ -57,6 +60,7 @@ import type {
 // real API is always preferred over screen scraping.
 const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "INSTAGRAM_PUBLISH",
+  "FACEBOOK_PUBLISH",
   "META_ADS_ANALYSIS",
   "META_CAMPAIGN_CREATE",
   "META_CAMPAIGN_UPDATE",
@@ -227,9 +231,10 @@ async function recoverPendingVideoAdFromRawResult(
   }
 }
 
-// Instagram and Meta Ads are separate integrations with separate
-// credentials: INSTAGRAM_PUBLISH reads the "instagram" one, every other
-// capability here (campaigns/adsets/ads/analysis) reads "meta_ads".
+// Instagram, Facebook and Meta Ads are separate integrations with separate
+// credentials: INSTAGRAM_PUBLISH reads the "instagram" one, FACEBOOK_PUBLISH
+// the "facebook" one, every other capability here (campaigns/adsets/ads/
+// analysis) reads "meta_ads".
 async function findActiveMetaCredential(
   projectId: string,
   service: MetaService,
@@ -244,7 +249,18 @@ async function findActiveMetaCredential(
 }
 
 function serviceFor(capability: CapabilityKey): MetaService {
-  return capability === "INSTAGRAM_PUBLISH" ? "instagram" : "ads";
+  if (capability === "INSTAGRAM_PUBLISH") return "instagram";
+  if (capability === "FACEBOOK_PUBLISH") return "facebook";
+  return "ads";
+}
+
+// The Page a FACEBOOK_PUBLISH posts to: the one selected in the Facebook
+// integration, and only while it is still in that connection's Page list.
+function selectedFacebookPage(metadata: Partial<MetaFacebookMetadata> | null) {
+  if (!metadata?.selectedPageId) return null;
+  return (
+    metadata.pages?.find((p) => p.pageId === metadata.selectedPageId) ?? null
+  );
 }
 
 // Exported so callers deciding WHETHER to even propose Meta ads work (e.g.
@@ -340,6 +356,13 @@ export class MetaApiProvider implements ExecutionProvider {
     );
     if (!credential) return false;
 
+    if (capability === "FACEBOOK_PUBLISH") {
+      return (
+        selectedFacebookPage(
+          credential.metadata as Partial<MetaFacebookMetadata> | null,
+        ) !== null
+      );
+    }
     if (capability === "INSTAGRAM_PUBLISH") {
       const igMetadata = credential.metadata as Partial<MetaInstagramMetadata> | null;
       // Past its 60 days an Instagram Login token is dead: do not even try.
@@ -722,6 +745,12 @@ export class MetaApiProvider implements ExecutionProvider {
             accessToken,
             payload,
           );
+        case "FACEBOOK_PUBLISH":
+          return await this.publishFacebook(
+            credential.metadata as MetaFacebookMetadata,
+            accessToken,
+            payload,
+          );
         case "META_ADS_ANALYSIS":
           return await this.analyzeAds(metadata, accessToken, payload);
         case "META_CAMPAIGN_CREATE":
@@ -812,6 +841,43 @@ export class MetaApiProvider implements ExecutionProvider {
       // actually sent to Meta in production (see the targetFormat flow) —
       // for observability, permanently useful.
       rawResult: { postId, requestedMediaType: mediaType ?? "FEED" },
+    };
+  }
+
+  // A post on the Page selected in the Facebook integration: a photo post when
+  // the creative has an image, otherwise a text post. The Page token is
+  // derived from the stored user token right here and never persisted.
+  private async publishFacebook(
+    metadata: MetaFacebookMetadata,
+    accessToken: string,
+    payload: Record<string, unknown>,
+  ): Promise<StoredResult> {
+    const page = selectedFacebookPage(metadata);
+    if (!page) {
+      return { status: "FAILED", errorMessage: "No Facebook Page selected" };
+    }
+    const imageUrl =
+      typeof payload.imageUrl === "string" && payload.imageUrl
+        ? payload.imageUrl
+        : undefined;
+    const caption = typeof payload.caption === "string" ? payload.caption : "";
+    if (!imageUrl && !caption.trim()) {
+      return {
+        status: "FAILED",
+        errorMessage: "FACEBOOK_PUBLISH requires `caption` or `imageUrl`",
+      };
+    }
+
+    const pageAccessToken = await fetchPageAccessToken(page.pageId, accessToken);
+    const { postId } = await publishFacebookPagePost({
+      pageId: page.pageId,
+      pageAccessToken,
+      message: caption,
+      imageUrl,
+    });
+    return {
+      status: "COMPLETED",
+      rawResult: { postId, pageId: page.pageId, withImage: Boolean(imageUrl) },
     };
   }
 

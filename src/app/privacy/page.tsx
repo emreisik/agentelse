@@ -149,13 +149,23 @@ const SECTIONS: PolicySection[] = [
         <p>
           When you connect an Instagram professional (Business or Creator)
           account, you sign in on Instagram&rsquo;s own screen and approve the
-          permissions listed there. Agentelse asks for two:
+          permissions listed there. Agentelse asks for three:
         </p>
         <ul className="flex flex-col gap-2 pl-5 list-disc">
           <li>
             <span className="text-foreground">instagram_business_basic</span> —
-            to read the account&rsquo;s id, username and account type, so we can
-            show which account is connected.
+            to read the account&rsquo;s id, username, account type, profile
+            picture and follower, following and post counts, and its most recent
+            posts with their like and comment counts, so we can show which
+            account is connected and how it looks in your workspace, and, when
+            you ask for a style analysis, the images and captions of its most
+            recent posts.
+          </li>
+          <li>
+            <span className="text-foreground">instagram_business_manage_insights</span>{" "}
+            — to read the account&rsquo;s insights over the last 28 days
+            (accounts reached, views, accounts that engaged and total
+            interactions), so we can show how the account is doing.
           </li>
           <li>
             <span className="text-foreground">instagram_business_content_publish</span>{" "}
@@ -167,8 +177,10 @@ const SECTIONS: PolicySection[] = [
         <p>
           We store the access token Instagram gives us (encrypted), the account
           id, username and account type in a connection record. We use them only
-          to publish content as described above and to show which account is
-          connected. We do not read your followers, messages or comments, we do
+          to publish content as described above, to show which account is
+          connected and, when you ask, to analyze the look of your recent posts:
+          their images and captions are sent to our AI provider for that
+          analysis and are not stored. The profile figures, post counters and insights are read when you open your workspace and shown to you; we do not store them. We do not read your messages, the content of comments or who your followers are, we do
           not sell this data, and we do not use it for advertising or to train
           AI models.
         </p>
@@ -194,6 +206,94 @@ const SECTIONS: PolicySection[] = [
           store a Meta access token (encrypted) together with the Pages and ad
           accounts you choose. You can remove that access in your Facebook
           settings under Business Integrations, or email us.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "facebook-and-meta-ads",
+    title: "Facebook Page and Meta Ads connections",
+    body: (
+      <>
+        <p>
+          Facebook and Meta Ads are connected separately from Instagram and from
+          each other: each one has its own sign-in with Facebook, asks only for
+          the permissions it needs, and can be disconnected on its own.
+        </p>
+        <p>When you connect a Facebook Page, Agentelse asks for:</p>
+        <ul className="flex flex-col gap-2 pl-5 list-disc">
+          <li>
+            <span className="text-foreground">pages_show_list</span> — to list
+            the Pages you manage, so you can choose one.
+          </li>
+          <li>
+            <span className="text-foreground">pages_read_engagement</span> — to
+            read the chosen Page&rsquo;s name, read back the posts Agentelse
+            published there (their text and link), and obtain the Page access
+            token that posting as the Page requires.
+          </li>
+          <li>
+            <span className="text-foreground">pages_manage_posts</span> — to
+            publish posts to the chosen Page (content you create or approve in
+            Agentelse and choose to share on Facebook), and to change the text
+            of those posts or delete them when you ask.
+          </li>
+          <li>
+            <span className="text-foreground">business_management</span> — so
+            Pages owned through a Meta Business portfolio appear in that list.
+          </li>
+        </ul>
+        <p>When you connect Meta Ads, Agentelse asks for:</p>
+        <ul className="flex flex-col gap-2 pl-5 list-disc">
+          <li>
+            <span className="text-foreground">ads_management</span> — to create
+            and update campaigns, ad sets and ads in the ad account you choose,
+            when you ask for it or approve it.
+          </li>
+          <li>
+            <span className="text-foreground">ads_read</span> — to read how
+            those campaigns perform (spend, impressions, clicks and results) for
+            reports and recommendations.
+          </li>
+          <li>
+            <span className="text-foreground">pages_show_list</span>,{" "}
+            <span className="text-foreground">pages_read_engagement</span> and{" "}
+            <span className="text-foreground">business_management</span> — to
+            choose the Page your ads run as and to see ad accounts and Pages
+            owned through a Business portfolio.
+          </li>
+        </ul>
+        <p>
+          If you connect Instagram through a Facebook Page, Agentelse also asks
+          for <span className="text-foreground">instagram_basic</span>,{" "}
+          <span className="text-foreground">instagram_content_publish</span> and{" "}
+          <span className="text-foreground">instagram_manage_insights</span>, to
+          find the Instagram account linked to that Page, publish to it, show
+          its profile figures, recent posts and insights, and read its recent
+          posts for a style analysis you ask for, as described in the Instagram
+          section above.
+        </p>
+        <p>
+          We store the Meta access token (encrypted), the Pages and ad accounts
+          you can choose from, the ones you chose, and the latest performance
+          figures of your campaigns. Page access tokens are derived when needed
+          and never stored. We use this data only to publish and manage what you
+          ask for and to show and analyze your results; campaign performance
+          figures may be processed by our AI provider to produce recommendations
+          (see How AI is used with your data). We do not sell this data and we
+          do not use it to train AI models.
+        </p>
+        <p>
+          You can stop Agentelse from using either connection with Connectors
+          &gt; Facebook &gt; Disconnect or Connectors &gt; Meta Ads &gt;
+          Disconnect, or by removing Agentelse in Facebook under Settings &gt;
+          Business Integrations. Neither erases the stored record by itself; to
+          have it erased, email us (see the{" "}
+          <Link href="/data-deletion" className="underline underline-offset-4">
+            data deletion page
+          </Link>
+          ). Posts and ads already published stay on Facebook and Instagram
+          until you remove them there.
         </p>
       </>
     ),

@@ -42,6 +42,7 @@ vi.mock("@/server/storage/asset-storage", () => ({
 
 const metaClientMocks = vi.hoisted(() => ({
   publishInstagramPost: vi.fn(),
+  publishFacebookPagePost: vi.fn(),
   fetchPageAccessToken: vi.fn(),
   uploadMetaAdVideo: vi.fn(),
   checkMetaVideoStatus: vi.fn(),
@@ -58,6 +59,7 @@ vi.mock("@/server/integrations/meta-client", async (importOriginal) => {
   return {
     ...actual,
     publishInstagramPost: metaClientMocks.publishInstagramPost,
+    publishFacebookPagePost: metaClientMocks.publishFacebookPagePost,
     fetchPageAccessToken: metaClientMocks.fetchPageAccessToken,
     uploadMetaAdVideo: metaClientMocks.uploadMetaAdVideo,
     checkMetaVideoStatus: metaClientMocks.checkMetaVideoStatus,
@@ -1112,5 +1114,110 @@ describe("MetaApiProvider INSTAGRAM_PUBLISH", () => {
       status: "FAILED",
       errorMessage: "No Instagram account is connected",
     });
+  });
+});
+
+function facebookPublishRequest(
+  payload: Record<string, unknown> = {},
+): ExecutionRequest {
+  return {
+    executionJobId: "job-fb",
+    correlationId: "corr-fb",
+    idempotencyKey: "idem-fb",
+    capability: "FACEBOOK_PUBLISH",
+    context: { ...context, capability: "FACEBOOK_PUBLISH" },
+    payload: { caption: "Hello Facebook", ...payload },
+  };
+}
+
+const facebookCredential = (metadata: Record<string, unknown>) => ({
+  id: "cred-fb",
+  status: "ACTIVE",
+  encryptedSecret: "encrypted",
+  metadata,
+});
+
+const facebookPages = {
+  selectedPageId: "page-9",
+  pages: [{ pageId: "page-9", pageName: "Web Health" }],
+};
+
+// FACEBOOK_PUBLISH reads the "facebook" credential (never the Instagram or
+// Meta Ads one) and posts to the Page selected there with a freshly derived
+// Page token.
+describe("MetaApiProvider FACEBOOK_PUBLISH", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    envMocks.configured = true;
+    metaClientMocks.fetchPageAccessToken.mockResolvedValue("page-token");
+    metaClientMocks.publishFacebookPagePost.mockResolvedValue({
+      postId: "page-9_post-1",
+    });
+  });
+
+  it("canExecute reads the facebook credential and needs a selected Page", async () => {
+    const provider = new MetaApiProvider();
+    prismaMocks.credentialFindUnique.mockResolvedValue(
+      facebookCredential(facebookPages),
+    );
+    expect(await provider.canExecute("FACEBOOK_PUBLISH", context)).toBe(true);
+    expect(prismaMocks.credentialFindUnique).toHaveBeenCalledWith({
+      where: {
+        projectId_provider: { projectId: "project-1", provider: "facebook" },
+      },
+    });
+
+    prismaMocks.credentialFindUnique.mockResolvedValue(
+      facebookCredential({ ...facebookPages, selectedPageId: undefined }),
+    );
+    expect(await provider.canExecute("FACEBOOK_PUBLISH", context)).toBe(false);
+  });
+
+  it("posts the image with the caption to the selected Page", async () => {
+    prismaMocks.credentialFindUnique.mockResolvedValue(
+      facebookCredential(facebookPages),
+    );
+    const provider = new MetaApiProvider();
+    const result = await provider.execute(
+      facebookPublishRequest({ imageUrl: "https://cdn.example.com/a.png" }),
+    );
+    const status = await provider.getStatus(result.executionReference);
+
+    expect(metaClientMocks.fetchPageAccessToken).toHaveBeenCalledWith(
+      "page-9",
+      "decrypted-access-token",
+    );
+    expect(metaClientMocks.publishFacebookPagePost).toHaveBeenCalledWith({
+      pageId: "page-9",
+      pageAccessToken: "page-token",
+      message: "Hello Facebook",
+      imageUrl: "https://cdn.example.com/a.png",
+    });
+    expect(status).toMatchObject({
+      status: "COMPLETED",
+      rawResult: { postId: "page-9_post-1", pageId: "page-9", withImage: true },
+    });
+  });
+
+  it("fails without calling Meta when no Page is selected, or there is nothing to post", async () => {
+    const provider = new MetaApiProvider();
+
+    prismaMocks.credentialFindUnique.mockResolvedValue(
+      facebookCredential({ ...facebookPages, selectedPageId: undefined }),
+    );
+    let result = await provider.execute(facebookPublishRequest());
+    expect(await provider.getStatus(result.executionReference)).toMatchObject({
+      status: "FAILED",
+      errorMessage: "No Facebook Page selected",
+    });
+
+    prismaMocks.credentialFindUnique.mockResolvedValue(
+      facebookCredential(facebookPages),
+    );
+    result = await provider.execute(facebookPublishRequest({ caption: "  " }));
+    expect((await provider.getStatus(result.executionReference)).status).toBe(
+      "FAILED",
+    );
+    expect(metaClientMocks.publishFacebookPagePost).not.toHaveBeenCalled();
   });
 });

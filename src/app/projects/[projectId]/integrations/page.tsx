@@ -1,13 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import {
-  BarChart3,
-  Plug,
-  RefreshCw,
-  Search,
-  Send,
-  type LucideIcon,
-} from "lucide-react";
+import { Plug, RefreshCw } from "lucide-react";
 import type { IntegrationCredential } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
@@ -15,7 +8,11 @@ import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/dates";
 import { isIntegrationConfigured } from "@/lib/env";
 import { visibleMetaDetail } from "@/lib/meta-error-detail";
-import { PURPOSE_ICONS } from "@/features/dashboard/purpose-icons";
+import {
+  BrandIcon,
+  BrandTile,
+  type BrandKey,
+} from "@/components/integrations/brand-icons";
 import {
   GOOGLE_PROVIDER,
   GOOGLE_SERVICE_LABEL,
@@ -27,6 +24,7 @@ import {
   META_PROVIDER,
   META_SERVICE_LABEL,
   type MetaAdsMetadata,
+  type MetaFacebookMetadata,
   type MetaInstagramMetadata,
   type MetaService,
 } from "@/server/integrations/meta-client";
@@ -170,6 +168,7 @@ export default async function EntegrasyonlarPage({
     analyticsCredential,
     searchConsoleCredential,
     instagramCredential,
+    facebookCredential,
     metaAdsCredential,
     tiktokCredential,
     linkedinCredential,
@@ -186,6 +185,9 @@ export default async function EntegrasyonlarPage({
     }),
     prisma.integrationCredential.findFirst({
       where: { projectId, provider: META_PROVIDER.instagram },
+    }),
+    prisma.integrationCredential.findFirst({
+      where: { projectId, provider: META_PROVIDER.facebook },
     }),
     prisma.integrationCredential.findFirst({
       where: { projectId, provider: META_PROVIDER.ads },
@@ -291,6 +293,21 @@ export default async function EntegrasyonlarPage({
       ),
     },
     {
+      key: META_PROVIDER.facebook,
+      category: "social",
+      label: META_SERVICE_LABEL.facebook,
+      connected: facebookCredential?.status === "ACTIVE",
+      node: (
+        <MetaTile
+          key={META_PROVIDER.facebook}
+          service="facebook"
+          base={base}
+          kategori={kategoriParam}
+          credential={facebookCredential}
+        />
+      ),
+    },
+    {
       key: META_PROVIDER.ads,
       category: "reklam",
       label: META_SERVICE_LABEL.ads,
@@ -389,9 +406,11 @@ export default async function EntegrasyonlarPage({
   const openMetaService: MetaService | null =
     sp.integration === META_PROVIDER.instagram
       ? "instagram"
-      : sp.integration === META_PROVIDER.ads
-        ? "ads"
-        : null;
+      : sp.integration === META_PROVIDER.facebook
+        ? "facebook"
+        : sp.integration === META_PROVIDER.ads
+          ? "ads"
+          : null;
   const openTikTok = sp.integration === "tiktok";
   const openLinkedIn = sp.integration === "linkedin";
   const openX = sp.integration === "x";
@@ -532,7 +551,9 @@ export default async function EntegrasyonlarPage({
             credential={
               openMetaService === "instagram"
                 ? instagramCredential
-                : metaAdsCredential
+                : openMetaService === "facebook"
+                  ? facebookCredential
+                  : metaAdsCredential
             }
             closeHref={closeHref}
             metaError={metaError}
@@ -581,13 +602,13 @@ type ConnectionTone = "positive" | "waiting" | "neutral";
 // IntegrationSection, the cards line up side by side.
 function IntegrationRow({
   href,
-  icon: Icon,
+  brand,
   title,
   subtitle,
   badge,
 }: {
   href: string;
-  icon: LucideIcon;
+  brand: BrandKey;
   title: string;
   subtitle: string;
   badge: { label: string; tone: ConnectionTone };
@@ -598,9 +619,7 @@ function IntegrationRow({
       className="flex flex-col gap-3 rounded-xl border border-border p-3.5 transition-colors hover:bg-muted/50"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-          <Icon className="size-4" strokeWidth={1.75} />
-        </span>
+        <BrandTile brand={brand} className="size-9" iconClassName="size-5" />
         <StatusBadge meta={{ label: badge.label, tone: badge.tone }} />
       </div>
       <div className="min-w-0">
@@ -651,7 +670,7 @@ function TelegramTile({
   return (
     <IntegrationRow
       href={`${base}?${params.toString()}`}
-      icon={Send}
+      brand="telegram"
       title="Telegram"
       subtitle={
         connected
@@ -693,9 +712,7 @@ function TelegramDialog({
       title="Telegram"
       header={
         <div className="flex items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-            <Send className="size-4" />
-          </span>
+          <BrandTile brand="telegram" className="size-8" iconClassName="size-[18px]" />
           <div className="min-w-0">
             <p className="text-sm font-semibold">Telegram</p>
             <p className="text-xs text-muted-foreground">
@@ -777,7 +794,11 @@ function TelegramDialog({
         </div>
       ) : (
         <EmptyState
-          icon={Send}
+          media={
+            <span className="flex size-10 items-center justify-center rounded-xl bg-muted">
+              <BrandIcon brand="telegram" className="size-5" />
+            </span>
+          }
           title="Not connected yet"
           hint="Connect below by entering the bot token and target chat."
           className="py-8"
@@ -814,16 +835,16 @@ const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
 
 const GOOGLE_SERVICE_UI: Record<
   GoogleService,
-  { icon: LucideIcon; description: string; emptyHint: string }
+  { brand: BrandKey; description: string; emptyHint: string }
 > = {
   analytics: {
-    icon: BarChart3,
+    brand: "ga4",
     description: "Read-only access to GA4 traffic data",
     emptyHint:
       "Connect with your Google account, then select the GA4 property to track.",
   },
   search_console: {
-    icon: Search,
+    brand: "search-console",
     description: "Read-only access to Search Console queries",
     emptyHint:
       "Connect with your Google account, then select the Search Console site to track.",
@@ -878,7 +899,7 @@ function GoogleTile({
   return (
     <IntegrationRow
       href={`${base}?${params.toString()}`}
-      icon={ui.icon}
+      brand={ui.brand}
       title={GOOGLE_SERVICE_LABEL[service]}
       subtitle={
         connected
@@ -916,7 +937,6 @@ function GoogleDialog({
   const configured = isIntegrationConfigured("GOOGLE");
   const title = GOOGLE_SERVICE_LABEL[service];
   const ui = GOOGLE_SERVICE_UI[service];
-  const Icon = ui.icon;
   const hiddenFields = { projectId, service };
 
   return (
@@ -925,9 +945,7 @@ function GoogleDialog({
       title={title}
       header={
         <div className="flex items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-            <Icon className="size-4" />
-          </span>
+          <BrandTile brand={ui.brand} className="size-8" iconClassName="size-[18px]" />
           <div className="min-w-0">
             <p className="text-sm font-semibold">{title}</p>
             <p className="text-xs text-muted-foreground">{ui.description}</p>
@@ -1043,7 +1061,11 @@ function GoogleDialog({
         </div>
       ) : (
         <EmptyState
-          icon={Icon}
+          media={
+            <span className="flex size-10 items-center justify-center rounded-xl bg-muted">
+              <BrandIcon brand={ui.brand} className="size-5" />
+            </span>
+          }
           title="Not connected yet"
           hint={ui.emptyHint}
           className="py-8"
@@ -1163,11 +1185,12 @@ function GoogleLastTestResult({
 }
 
 // ---------------------------------------------------------------------------
-// Meta — two separate real OAuth connections based on IntegrationCredential:
-// Instagram (provider: "instagram", Content Publishing) and Meta Ads
-// (provider: "meta_ads", Marketing API). Each has its own grant with only
-// the permissions that service needs, so they can use different Facebook
-// accounts and be disconnected independently.
+// Meta — three separate real OAuth connections based on IntegrationCredential:
+// Instagram (provider: "instagram", Content Publishing), Facebook (provider:
+// "facebook", Page access) and Meta Ads (provider: "meta_ads", Marketing API).
+// Each has its own grant with only the permissions that service needs and its
+// own Page selection, so they can use different Facebook accounts and be
+// disconnected independently.
 
 const META_ERROR_MESSAGES: Record<string, string> = {
   denied: "Meta permission was denied.",
@@ -1183,16 +1206,22 @@ const META_ERROR_MESSAGES: Record<string, string> = {
 
 const META_SERVICE_UI: Record<
   MetaService,
-  { icon: LucideIcon; description: string; emptyHint: string }
+  { brand: BrandKey; description: string; emptyHint: string }
 > = {
   instagram: {
-    icon: PURPOSE_ICONS.INSTAGRAM.icon,
+    brand: "instagram",
     description: "Publish posts and stories to Instagram",
     emptyHint:
       "Connect your Instagram account directly. No Facebook account or Page is needed.",
   },
+  facebook: {
+    brand: "facebook",
+    description: "Publish posts to your Facebook Page",
+    emptyHint:
+      "Connect your Facebook account, then choose the Page to publish to. This is separate from Instagram and Meta Ads.",
+  },
   ads: {
-    icon: PURPOSE_ICONS.META_ADS.icon,
+    brand: "meta-ads",
     description: "Manage Meta ad campaigns and read performance",
     emptyHint:
       "Connect your Facebook account, then choose your ad account and the Page your ads run as.",
@@ -1278,7 +1307,7 @@ function MetaTile({
   return (
     <IntegrationRow
       href={`${base}?${params.toString()}`}
-      icon={ui.icon}
+      brand={ui.brand}
       title={META_SERVICE_LABEL[service]}
       subtitle={
         connected
@@ -1327,10 +1356,10 @@ function MetaDialog({
     facebookConfigured || instagramLoginConfigured;
   const title = META_SERVICE_LABEL[service];
   const ui = META_SERVICE_UI[service];
-  const Icon = ui.icon;
   const hiddenFields = { projectId, service };
   const metadata = (credential?.metadata ?? {}) as
     | MetaInstagramMetadata
+    | MetaFacebookMetadata
     | MetaAdsMetadata;
   const adsMetadata = metadata as MetaAdsMetadata;
   const igMetadata = metadata as MetaInstagramMetadata;
@@ -1343,9 +1372,7 @@ function MetaDialog({
       title={title}
       header={
         <div className="flex items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-            <Icon className="size-4" />
-          </span>
+          <BrandTile brand={ui.brand} className="size-8" iconClassName="size-[18px]" />
           <div className="min-w-0">
             <p className="text-sm font-semibold">{title}</p>
             <p className="text-xs text-muted-foreground">{ui.description}</p>
@@ -1428,7 +1455,9 @@ function MetaDialog({
                     <span className="text-[11px] text-muted-foreground">
                       {service === "instagram"
                         ? "Facebook Page (Instagram)"
-                        : "Facebook Page (ads run as)"}
+                        : service === "facebook"
+                          ? "Facebook Page"
+                          : "Facebook Page (ads run as)"}
                     </span>
                     {(metadata.pages ?? []).length > 0 ? (
                       <ModeSwitcher
@@ -1506,7 +1535,11 @@ function MetaDialog({
       ) : (
         <>
           <EmptyState
-            icon={Icon}
+            media={
+              <span className="flex size-10 items-center justify-center rounded-xl bg-muted">
+                <BrandIcon brand={ui.brand} className="size-5" />
+              </span>
+            }
             title="Not connected yet"
             hint={
               service === "instagram" && !instagramLoginConfigured
@@ -1557,7 +1590,7 @@ function MetaLastTestResult({
   metadata,
 }: {
   service: MetaService;
-  metadata: MetaInstagramMetadata | MetaAdsMetadata;
+  metadata: MetaInstagramMetadata | MetaFacebookMetadata | MetaAdsMetadata;
 }) {
   const result = metadata.lastTestResult;
   if (!result) return null;
@@ -1568,6 +1601,9 @@ function MetaLastTestResult({
   } else if (service === "instagram") {
     const ig = result as NonNullable<MetaInstagramMetadata["lastTestResult"]>;
     summary = ig.igUsername ? `IG: @${ig.igUsername}` : "OK";
+  } else if (service === "facebook") {
+    const fb = result as NonNullable<MetaFacebookMetadata["lastTestResult"]>;
+    summary = fb.pageName ? `Page: ${fb.pageName}` : "OK";
   } else {
     const ads = result as NonNullable<MetaAdsMetadata["lastTestResult"]>;
     summary = `Spend (7d): ${ads.adAccountSpend ?? 0}`;
@@ -1615,7 +1651,7 @@ function TikTokTile({
   return (
     <IntegrationRow
       href={`${base}?${params.toString()}`}
-      icon={PURPOSE_ICONS.TIKTOK.icon}
+      brand="tiktok"
       title="TikTok"
       subtitle={
         connected
@@ -1657,9 +1693,7 @@ function TikTokDialog({
       title="TikTok"
       header={
         <div className="flex items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-            <PURPOSE_ICONS.TIKTOK.icon className="size-4" />
-          </span>
+          <BrandTile brand="tiktok" className="size-8" iconClassName="size-[18px]" />
           <div className="min-w-0">
             <p className="text-sm font-semibold">TikTok</p>
             <p className="text-xs text-muted-foreground">
@@ -1740,7 +1774,11 @@ function TikTokDialog({
         </div>
       ) : (
         <EmptyState
-          icon={PURPOSE_ICONS.TIKTOK.icon}
+          media={
+            <span className="flex size-10 items-center justify-center rounded-xl bg-muted">
+              <BrandIcon brand="tiktok" className="size-5" />
+            </span>
+          }
           title="Not connected yet"
           hint="Connect with your TikTok account to enable video publishing."
           className="py-8"
@@ -1789,7 +1827,7 @@ function LinkedInTile({
   return (
     <IntegrationRow
       href={`${base}?${params.toString()}`}
-      icon={PURPOSE_ICONS.LINKEDIN.icon}
+      brand="linkedin"
       title="LinkedIn"
       subtitle={
         connected
@@ -1831,9 +1869,7 @@ function LinkedInDialog({
       title="LinkedIn"
       header={
         <div className="flex items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-            <PURPOSE_ICONS.LINKEDIN.icon className="size-4" />
-          </span>
+          <BrandTile brand="linkedin" className="size-8" iconClassName="size-[18px]" />
           <div className="min-w-0">
             <p className="text-sm font-semibold">LinkedIn</p>
             <p className="text-xs text-muted-foreground">
@@ -1915,7 +1951,11 @@ function LinkedInDialog({
         </div>
       ) : (
         <EmptyState
-          icon={PURPOSE_ICONS.LINKEDIN.icon}
+          media={
+            <span className="flex size-10 items-center justify-center rounded-xl bg-muted">
+              <BrandIcon brand="linkedin" className="size-5" />
+            </span>
+          }
           title="Not connected yet"
           hint="Connect with your LinkedIn account to enable post publishing."
           className="py-8"
@@ -1964,7 +2004,7 @@ function XTile({
   return (
     <IntegrationRow
       href={`${base}?${params.toString()}`}
-      icon={PURPOSE_ICONS.X.icon}
+      brand="x"
       title="X"
       subtitle={
         connected
@@ -2006,9 +2046,7 @@ function XDialog({
       title="X"
       header={
         <div className="flex items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-            <PURPOSE_ICONS.X.icon className="size-4" />
-          </span>
+          <BrandTile brand="x" className="size-8" iconClassName="size-[18px]" />
           <div className="min-w-0">
             <p className="text-sm font-semibold">X</p>
             <p className="text-xs text-muted-foreground">
@@ -2090,7 +2128,11 @@ function XDialog({
         </div>
       ) : (
         <EmptyState
-          icon={PURPOSE_ICONS.X.icon}
+          media={
+            <span className="flex size-10 items-center justify-center rounded-xl bg-muted">
+              <BrandIcon brand="x" className="size-5" />
+            </span>
+          }
           title="Not connected yet"
           hint="Connect with your X account to enable post publishing."
           className="py-8"

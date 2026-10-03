@@ -291,4 +291,5 @@ export const PLATFORM_LABEL: Partial<Record<CapabilityKey, string>> = {
   TIKTOK_PUBLISH: "TikTok",
   LINKEDIN_PUBLISH: "LinkedIn",
   X_PUBLISH: "X",
+  FACEBOOK_PUBLISH: "Facebook",
 };

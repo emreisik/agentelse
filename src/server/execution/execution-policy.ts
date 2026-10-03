@@ -21,6 +21,7 @@ const APPROVAL_REQUIRED_CAPABILITIES: ReadonlySet<CapabilityKey> =
     "TIKTOK_PUBLISH",
     "LINKEDIN_PUBLISH",
     "X_PUBLISH",
+    "FACEBOOK_PUBLISH",
     "META_CAMPAIGN_CREATE",
     "META_CAMPAIGN_UPDATE",
     "META_ADSET_CREATE",
@@ -40,6 +41,7 @@ const VERIFICATION_REQUIRED_CAPABILITIES: ReadonlySet<CapabilityKey> =
     "TIKTOK_PUBLISH",
     "LINKEDIN_PUBLISH",
     "X_PUBLISH",
+    "FACEBOOK_PUBLISH",
     "META_CAMPAIGN_CREATE",
     "META_CAMPAIGN_UPDATE",
     "META_ADSET_CREATE",
@@ -90,7 +92,9 @@ const BROWSER_PURPOSE_BY_CAPABILITY: Partial<
   SIGNAL_SCAN: "PUBLIC_RESEARCH",
   MEASUREMENT_CHECK: "PUBLIC_RESEARCH",
   INSTAGRAM_PUBLISH: "INSTAGRAM",
-  // TIKTOK_PUBLISH/LINKEDIN_PUBLISH/X_PUBLISH deliberately NOT mapped here.
+  // TIKTOK_PUBLISH/LINKEDIN_PUBLISH/X_PUBLISH/FACEBOOK_PUBLISH deliberately NOT
+  // mapped here (FACEBOOK_PUBLISH publishes through the Meta Graph API with the
+  // "facebook" IntegrationCredential, never through a BrowserProfile).
   // (A missing profile no longer throws — resolveBrowserProfile() in
   // capability-router.ts now returns undefined and lets route() fall through
   // to the API providers — but mapping them would still steer a fallback to
@@ -130,6 +134,7 @@ const HIGH_RISK_CAPABILITIES: ReadonlySet<CapabilityKey> =
     "TIKTOK_PUBLISH",
     "LINKEDIN_PUBLISH",
     "X_PUBLISH",
+    "FACEBOOK_PUBLISH",
     "META_CAMPAIGN_CREATE",
     "META_CAMPAIGN_UPDATE",
     "META_ADSET_CREATE",

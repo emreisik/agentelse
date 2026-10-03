@@ -10,13 +10,17 @@ const { default: PrivacyPage } = await import("./page");
 // erase, the menu is called Connectors, and the Facebook route / Meta Ads are mentioned.
 
 const html = renderToStaticMarkup(createElement(PrivacyPage));
-const section = html.slice(html.indexOf('id="instagram-data"'), html.indexOf('id="data-retention"'));
+const sectionBetween = (from: string, to: string) =>
+  html.slice(html.indexOf(`id="${from}"`), html.indexOf(`id="${to}"`));
 // Tags and entities out, so a sentence can be matched across inline markup.
-const text = section
-  .replace(/<[^>]+>/g, "")
-  .replace(/&gt;/g, ">")
-  .replace(/&rsquo;/g, "'")
-  .replace(/\s+/g, " ");
+const plain = (markup: string) =>
+  markup
+    .replace(/<[^>]+>/g, "")
+    .replace(/&gt;/g, ">")
+    .replace(/&rsquo;/g, "'")
+    .replace(/\s+/g, " ");
+const section = sectionBetween("instagram-data", "facebook-and-meta-ads");
+const text = plain(section);
 
 describe("privacy policy: Instagram connection section", () => {
   it("carries the date of the text that was rewritten on 2 October 2026", () => {
@@ -28,9 +32,17 @@ describe("privacy policy: Instagram connection section", () => {
     expect(section).not.toContain("Instagram and Meta connections");
   });
 
-  it("names the two permissions requested", () => {
+  it("names the three permissions requested", () => {
+    expect(text).toContain("Agentelse asks for three");
     expect(text).toContain("instagram_business_basic");
     expect(text).toContain("instagram_business_content_publish");
+    expect(text).toContain("instagram_business_manage_insights");
+  });
+
+  it("says the profile figures, post counters and insights are shown, not stored", () => {
+    expect(text).toContain("last 28 days");
+    expect(text).toContain("shown to you; we do not store them");
+    expect(text).toContain("We do not read your messages, the content of comments or who your followers are");
   });
 
   it("does not say content only ever goes out after a click: scheduled posting and Autopilot publish too", () => {
@@ -53,8 +65,48 @@ describe("privacy policy: Instagram connection section", () => {
     expect(text).toContain("Business Integrations");
   });
 
+  it("says recent posts are read only for a style analysis the person asks for, and not stored", () => {
+    expect(text).toContain("the images and captions of its most recent posts");
+    expect(text).toContain("sent to our AI provider for that analysis and are not stored");
+  });
+
   it("says what is NOT done with the data", () => {
-    expect(text).toContain("do not read your followers, messages or comments");
+    expect(text).toContain("do not read your messages, the content of comments");
     expect(text).toContain("do not sell this data");
+  });
+});
+
+// The Facebook Page and Meta Ads section names every permission those two
+// connections request and says what each is used for, so the policy matches what
+// Meta's reviewers see requested (meta-client.ts SCOPES).
+describe("privacy policy: Facebook Page and Meta Ads section", () => {
+  const meta = plain(sectionBetween("facebook-and-meta-ads", "data-retention"));
+
+  it("names every permission the Facebook and Meta Ads connections request", () => {
+    for (const permission of [
+      "pages_show_list",
+      "pages_read_engagement",
+      "pages_manage_posts",
+      "business_management",
+      "ads_management",
+      "ads_read",
+      "instagram_basic",
+      "instagram_content_publish",
+      "instagram_manage_insights",
+    ]) {
+      expect(meta, permission).toContain(permission);
+    }
+  });
+
+  it("says Page posts can be edited and deleted, and are read back", () => {
+    expect(meta).toContain("change the text of those posts or delete them");
+    expect(meta).toContain("read back the posts Agentelse published there");
+  });
+
+  it("says AI may process campaign figures, and where each connection is removed", () => {
+    expect(meta).toContain("processed by our AI provider");
+    expect(meta).toContain("Connectors > Facebook > Disconnect");
+    expect(meta).toContain("Connectors > Meta Ads > Disconnect");
+    expect(meta).toContain("Neither erases the stored record by itself");
   });
 });

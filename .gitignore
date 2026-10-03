@@ -44,3 +44,5 @@ next-env.d.ts
 # locally-generated/uploaded assets — the local-disk fallback used when R2
 # isn't configured (see src/server/storage/asset-storage.ts)
 /storage/assets/
+
+certificates

@@ -25,6 +25,7 @@ import {
   reconcileAdAccountSelection,
   reconcilePageSelection,
   type MetaAdsMetadata,
+  type MetaFacebookMetadata,
   type MetaInstagramMetadata,
   type MetaService,
 } from "@/server/integrations/meta-client";
@@ -53,7 +54,21 @@ async function buildMetadata(
   accessToken: string,
   connection: { connectedName?: string; longLivedTokenExpiresAt: string },
   existing: Record<string, unknown>,
-): Promise<MetaInstagramMetadata | MetaAdsMetadata> {
+): Promise<MetaInstagramMetadata | MetaFacebookMetadata | MetaAdsMetadata> {
+  if (service === "facebook") {
+    // Facebook keeps its own Page selection: nothing is read from, or written
+    // to, the Instagram or Meta Ads rows.
+    const previous = existing as Partial<MetaFacebookMetadata>;
+    const pages = await fetchMetaPageList(accessToken, {
+      onlyWithInstagram: false,
+    });
+    return {
+      ...previous,
+      ...connection,
+      ...pages,
+      ...reconcilePageSelection(previous, pages.pages),
+    };
+  }
   if (service === "instagram") {
     // Facebook route. A previous Instagram Login connection's keys must not carry
     // over: resolveInstagramTarget puts them ahead of the Page, which would pair this
@@ -96,7 +111,7 @@ const PROFESSIONAL_ACCOUNT_TYPES = ["BUSINESS", "MEDIA_CREATOR", "CREATOR"];
 
 // Return from Meta's consent screen — exchanges the code for a long-lived
 // token, lists what the service needs (Pages with a linked Instagram
-// Business account, or ad accounts + Pages) and establishes that service's
+// Business account, every managed Page for Facebook, or ad accounts + Pages) and establishes that service's
 // connection. Same skeleton as google/callback/route.ts. A grant made through
 // Instagram Login (state.login === "instagram") skips the Page list: the
 // account itself is the connection.
@@ -211,7 +226,10 @@ export async function GET(request: Request) {
   };
   // A fresh Instagram Login row replaces whatever a previous Facebook-route
   // connection held (its Page list and selection mean nothing here).
-  const metadata: MetaInstagramMetadata | MetaAdsMetadata = instagramProfile
+  const metadata:
+    | MetaInstagramMetadata
+    | MetaFacebookMetadata
+    | MetaAdsMetadata = instagramProfile
     ? {
         ...connection,
         login: "instagram",

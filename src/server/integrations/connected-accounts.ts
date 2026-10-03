@@ -6,17 +6,13 @@ import {
   type ConnectedAccount,
 } from "@/lib/connected-accounts";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
-import {
-  META_PROVIDER,
-  type MetaInstagramMetadata,
-} from "@/server/integrations/meta-client";
+import { META_PROVIDER } from "@/server/integrations/meta-client";
 
 // Reads where the project's accounts stand for the right panel's "Bağlı
 // hesaplar" card: Instagram, Meta Ads and the simple channels through the same
 // source the plan card and the creative card use (getChannelConnections), the
-// Facebook Page (the one picked with the Instagram connection on the Facebook
-// route, else the one Meta Ads runs as; an account connected through Instagram
-// Login has no Page), GA4 and Search Console (linked AND a property/site
+// Facebook Page (the one picked in the Facebook integration, which is its own
+// connection, independent of Instagram and Meta Ads), GA4 and Search Console (linked AND a property/site
 // chosen), and whether the project has a website.
 // Never throws into the page: on any failure the card simply has no rows.
 
@@ -38,6 +34,7 @@ export async function loadConnectedAccounts(
           provider: {
             in: [
               META_PROVIDER.instagram,
+              META_PROVIDER.facebook,
               META_PROVIDER.ads,
               GOOGLE_PROVIDERS.ga4,
               GOOGLE_PROVIDERS.searchConsole,
@@ -53,18 +50,15 @@ export async function loadConnectedAccounts(
         (credential) =>
           credential.provider === provider && credential.status === "ACTIVE",
       );
-    const meta = (active(META_PROVIDER.instagram)?.metadata ??
-      null) as Partial<MetaInstagramMetadata> | null;
-    const adsMeta = (active(META_PROVIDER.ads)?.metadata ?? null) as {
-      selectedPageId?: string;
-      selectedPageName?: string;
-    } | null;
+    // The Facebook Page comes from the Facebook integration only: a Page an
+    // Instagram connection or an ad account happens to use is not "Facebook
+    // connected".
+    const facebookMeta = (active(META_PROVIDER.facebook)?.metadata ??
+      null) as { selectedPageId?: string; selectedPageName?: string } | null;
     const facebookPage =
-      meta?.login !== "instagram" && meta?.selectedPageId !== undefined
-        ? { name: meta.selectedPageName }
-        : adsMeta?.selectedPageId !== undefined
-          ? { name: adsMeta.selectedPageName }
-          : null;
+      facebookMeta?.selectedPageId !== undefined
+        ? { name: facebookMeta.selectedPageName }
+        : null;
     const ga4 = (active(GOOGLE_PROVIDERS.ga4)?.metadata ?? null) as {
       selectedGa4PropertyId?: string;
       selectedGa4PropertyName?: string;

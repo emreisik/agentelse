@@ -55,6 +55,16 @@ describe("data deletion page", () => {
     expect(html).toContain("either of these");
   });
 
+  it("also explains how to erase the Facebook Page and Meta Ads records", async () => {
+    const html = await render();
+    expect(html).toContain("How to delete your Facebook Page and Meta Ads data");
+    expect(html).toContain("Page access tokens are never stored");
+    expect(html).toContain("Connectors &gt; Facebook &gt; Disconnect");
+    expect(html).toContain("Connectors &gt; Meta Ads &gt; Disconnect");
+    expect(html).toContain("Business integrations");
+    expect(html).toContain("/privacy#facebook-and-meta-ads");
+  });
+
   it("ignores a made-up or tampered code and just shows the instructions", async () => {
     for (const bad of ["abc", createDeletionCode(1, "other-secret", now), "x".repeat(35)]) {
       const html = await render(bad);

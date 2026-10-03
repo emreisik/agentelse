@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // What this suite proves: the creative card's "Share on Social Accounts" list shows an
 // Instagram Login connection once, under a neutral title with the handle as subtitle (not
-// the handle twice), keeps the Page's name on the Facebook route, and lists nothing for a
-// connection that is not ACTIVE.
+// the handle twice), keeps the Page's name on the Facebook route, lists nothing for a
+// connection that is not ACTIVE, and shows Facebook only for a Page selected in the
+// Facebook integration itself.
 
 const findUnique = vi.fn();
 vi.mock("@/lib/prisma", () => ({
@@ -89,5 +90,64 @@ describe("getPublishTargets: Instagram", () => {
     expect(await getPublishTargets("proj-1")).toEqual([]);
     onlyInstagram(null);
     expect(await getPublishTargets("proj-1")).toEqual([]);
+  });
+});
+
+// Rows per provider; a provider without an entry has no row.
+function rowsByProvider(rows: Record<string, unknown>) {
+  findUnique.mockImplementation(
+    async ({ where }: { where: { projectId_provider: { provider: string } } }) =>
+      rows[where.projectId_provider.provider] ?? null,
+  );
+}
+
+describe("getPublishTargets: Facebook", () => {
+  const facebookPages = {
+    selectedPageId: "p1",
+    pages: [
+      { pageId: "p1", pageName: "Web Health" },
+      { pageId: "p2", pageName: "Other Page" },
+    ],
+  };
+
+  it("lists the Page selected in the Facebook integration, with its name as the label", async () => {
+    rowsByProvider({ facebook: row("ACTIVE", facebookPages) });
+    expect(await getPublishTargets("proj-1")).toEqual([
+      { platform: "facebook", pageId: "p1", accountLabel: "Web Health" },
+    ]);
+  });
+
+  it("lists nothing without a selected Page, for a Page no longer in the list, or when not ACTIVE", async () => {
+    rowsByProvider({ facebook: row("ACTIVE", { ...facebookPages, selectedPageId: undefined }) });
+    expect(await getPublishTargets("proj-1")).toEqual([]);
+
+    rowsByProvider({ facebook: row("ACTIVE", { ...facebookPages, selectedPageId: "gone" }) });
+    expect(await getPublishTargets("proj-1")).toEqual([]);
+
+    for (const status of ["EXPIRED", "REVOKED"]) {
+      rowsByProvider({ facebook: row(status, facebookPages) });
+      expect(await getPublishTargets("proj-1")).toEqual([]);
+    }
+  });
+
+  it("a Page picked in the Instagram or Meta Ads connection is not a Facebook target", async () => {
+    rowsByProvider({
+      instagram: row("ACTIVE", {
+        selectedPageId: "p1",
+        pages: [{ pageId: "p1", pageName: "Web Health", instagramBusinessAccountId: "ig-1" }],
+      }),
+      meta_ads: row("ACTIVE", facebookPages),
+    });
+    const targets = await getPublishTargets("proj-1");
+    expect(targets.map((t) => t.platform)).toEqual(["instagram"]);
+  });
+
+  it("comes last, so it never becomes the primary platform of a project that already publishes elsewhere", async () => {
+    rowsByProvider({
+      facebook: row("ACTIVE", facebookPages),
+      x: { status: "ACTIVE", metadata: {}, accountLabel: "@webhealth" },
+    });
+    const targets = await getPublishTargets("proj-1");
+    expect(targets.map((t) => t.platform)).toEqual(["x", "facebook"]);
   });
 });

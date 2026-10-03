@@ -121,6 +121,38 @@ export default async function DataDeletionPage({
             See our <Link href="/privacy#instagram-data" className="underline underline-offset-4">Privacy Policy</Link>{" "}
             for what we collect and why.
           </p>
+
+          <h2 className="mt-6 text-lg font-semibold text-foreground">
+            How to delete your Facebook Page and Meta Ads data
+          </h2>
+          <p>
+            When you connect a Facebook Page or Meta Ads, Agentelse keeps a
+            connection record for each: a Meta access token, your name on
+            Facebook, the Pages and ad accounts you can choose from and the ones
+            you chose, and for Meta Ads the latest performance figures of your
+            campaigns. Page access tokens are never stored. To erase those
+            records, email <Mail /> from the address you use with Agentelse,
+            naming the Page or ad account. We will erase the records and
+            confirm.
+          </p>
+          <p>
+            To stop Agentelse from using them right away, open{" "}
+            <span className="text-foreground">Connectors &gt; Facebook &gt; Disconnect</span> or{" "}
+            <span className="text-foreground">Connectors &gt; Meta Ads &gt; Disconnect</span>, or
+            remove Agentelse in Facebook under{" "}
+            <span className="text-foreground">Settings &amp; privacy &gt; Settings &gt; Business integrations</span>.
+            Neither erases the record by itself; email us for that. A post
+            Agentelse shared on your Page can be deleted from its card in
+            Agentelse or on Facebook; posts and ads already published stay on
+            Facebook until you remove them there.
+          </p>
+          <p>
+            See the{" "}
+            <Link href="/privacy#facebook-and-meta-ads" className="underline underline-offset-4">
+              Facebook Page and Meta Ads section
+            </Link>{" "}
+            of our Privacy Policy for what we collect and why.
+          </p>
         </div>
       </main>
 

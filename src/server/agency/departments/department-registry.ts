@@ -85,6 +85,7 @@ export const DEPARTMENTS: Record<DepartmentKey, DepartmentDefinition> = {
       "TIKTOK_PUBLISH",
       "LINKEDIN_PUBLISH",
       "X_PUBLISH",
+      "FACEBOOK_PUBLISH",
     ],
     councilAffinity: "MEDIA",
   },

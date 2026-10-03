@@ -23,6 +23,7 @@ const INSTAGRAM_GRAPH_ROOT = "https://graph.instagram.com";
 const INSTAGRAM_LOGIN_SCOPES = [
   "instagram_business_basic",
   "instagram_business_content_publish",
+  "instagram_business_manage_insights",
 ];
 
 // Which Graph host an Instagram call goes to: the Facebook one (Page token) or
@@ -34,40 +35,50 @@ function graphBaseFor(api: InstagramApi): string {
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
-// Instagram and Meta Ads are two independent integrations: each has its own
-// OAuth grant (only the scopes that service needs), its own long-lived token
-// and its own IntegrationCredential row — so they can be connected from
-// different Facebook accounts and disconnected separately. Both share the
-// same Meta app and the same registered redirect URI; the service travels
-// in the signed OAuth state.
-export const META_SERVICES = ["instagram", "ads"] as const;
+// Instagram, Facebook and Meta Ads are three independent integrations: each
+// has its own OAuth grant (only the scopes that service needs), its own
+// long-lived token and its own IntegrationCredential row — so they can be
+// connected from different Facebook accounts and disconnected separately. All
+// share the same Meta app and the same registered redirect URI; the service
+// travels in the signed OAuth state.
+export const META_SERVICES = ["instagram", "facebook", "ads"] as const;
 export type MetaService = (typeof META_SERVICES)[number];
 
 export const META_PROVIDER = {
   instagram: "instagram",
+  facebook: "facebook",
   ads: "meta_ads",
 } as const satisfies Record<MetaService, string>;
 
 export const META_SERVICE_LABEL: Record<MetaService, string> = {
   instagram: "Instagram",
+  facebook: "Facebook",
   ads: "Meta Ads",
 };
 
-// business_management is on both: Pages owned by a Business Portfolio only
-// show up in /me/accounts with it, and Instagram accounts are usually linked
-// through those Pages.
+// business_management is on every service: Pages owned by a Business Portfolio
+// only show up in /me/accounts with it, and Instagram accounts are usually
+// linked through those Pages. Page posting (pages_manage_posts) belongs to the
+// Facebook service alone: Instagram publishing through a Page needs the Page's
+// token, not the right to post on the Page itself. Meta Ads only needs to see
+// Pages to pick the identity its ads run as.
 const SCOPES: Record<MetaService, string[]> = {
   instagram: [
     "pages_show_list",
-    "pages_manage_posts",
     "pages_read_engagement",
     "instagram_basic",
     "instagram_content_publish",
+    "instagram_manage_insights",
+    "business_management",
+  ],
+  facebook: [
+    "pages_show_list",
+    "pages_manage_posts",
+    "pages_read_engagement",
     "business_management",
   ],
   ads: [
     "pages_show_list",
-    "pages_manage_posts",
     "pages_read_engagement",
     "ads_management",
     "ads_read",
@@ -135,6 +146,21 @@ export type MetaInstagramMetadata = MetaConnectionInfo & {
   lastTestResult?: {
     testedAt: string;
     igUsername?: string;
+    error?: string;
+  };
+};
+
+// provider "facebook": `pages` is every managed Page; the selected one is the
+// Page organic posts go to. It has nothing to do with the Page an Instagram
+// connection or an ad account uses — each service keeps its own selection.
+export type MetaFacebookMetadata = MetaConnectionInfo & {
+  pages: MetaPage[];
+  pagesListError?: string;
+  selectedPageId?: string;
+  selectedPageName?: string;
+  lastTestResult?: {
+    testedAt: string;
+    pageName?: string;
     error?: string;
   };
 };
@@ -433,9 +459,16 @@ export async function fetchMetaAccountName(
   }
 }
 
+// The linked Instagram account is a field only the Instagram route's grant
+// (instagram_basic) may read, so the Facebook and Meta Ads routes ask for the
+// Page's id and name alone.
 export async function listManagedPages(
   accessToken: string,
+  options: { withInstagram: boolean } = { withInstagram: true },
 ): Promise<MetaPage[]> {
+  const fields = options.withInstagram
+    ? "id,name,instagram_business_account{id,username}"
+    : "id,name";
   const result = await request<{
     data?: Array<{
       id: string;
@@ -443,7 +476,7 @@ export async function listManagedPages(
       instagram_business_account?: { id: string; username?: string };
     }>;
   }>(
-    `${GRAPH_BASE}/me/accounts?fields=id,name,instagram_business_account{id,username}&access_token=${encodeURIComponent(accessToken)}`,
+    `${GRAPH_BASE}/me/accounts?fields=${fields}&access_token=${encodeURIComponent(accessToken)}`,
   );
 
   return (result.data ?? []).map((page) => ({
@@ -465,6 +498,20 @@ export async function fetchPageAccessToken(
     `${GRAPH_BASE}/${pageId}?fields=access_token&access_token=${encodeURIComponent(userAccessToken)}`,
   );
   return result.access_token;
+}
+
+// Real read for the Facebook integration's test button: derives the Page token
+// from the user token (which fails if the Page grant is gone) and reads the
+// Page's name with it.
+export async function verifyFacebookPageAccess(
+  pageId: string,
+  userAccessToken: string,
+): Promise<string> {
+  const pageToken = await fetchPageAccessToken(pageId, userAccessToken);
+  const result = await request<{ name?: string }>(
+    `${GRAPH_BASE}/${pageId}?fields=name&access_token=${encodeURIComponent(pageToken)}`,
+  );
+  return result.name ?? pageId;
 }
 
 export async function listAdAccounts(
@@ -508,7 +555,9 @@ export async function fetchMetaPageList(
   options: { onlyWithInstagram: boolean },
 ): Promise<Pick<MetaAdsMetadata, "pages" | "pagesListError">> {
   const result = await safeList(
-    listManagedPages(accessToken),
+    listManagedPages(accessToken, {
+      withInstagram: options.onlyWithInstagram,
+    }),
     "Failed to fetch Page list",
   );
   const pages = options.onlyWithInstagram
@@ -625,6 +674,173 @@ const MEDIA_CONTAINER_CREATE_TIMEOUT_MS = 20_000;
 // must already be embedded in the image), so caption is only sent in
 // normal post (FEED) mode. `pageAccessToken` is the Page token on the Facebook
 // route and the account's own token on the Instagram Login route (`api`).
+export type InstagramMediaItem = {
+  id: string;
+  caption: string | null;
+  // The picture to look at: the image itself, a carousel's cover, or a
+  // video's thumbnail. null when Instagram gives none (e.g. a copyrighted
+  // video with no thumbnail).
+  imageUrl: string | null;
+  permalink: string | null;
+};
+
+// The connected account's own most recent posts, through the official API
+// (instagram_business_basic on Instagram Login, instagram_basic on the
+// Facebook route) — never by fetching instagram.com pages.
+export async function fetchInstagramRecentMedia(input: {
+  igUserId: string;
+  accessToken: string;
+  api: InstagramApi;
+  limit: number;
+}): Promise<InstagramMediaItem[]> {
+  const result = await request<{
+    data?: Array<{
+      id: string;
+      caption?: string;
+      media_type?: string;
+      media_url?: string;
+      thumbnail_url?: string;
+      permalink?: string;
+    }>;
+  }>(
+    `${graphBaseFor(input.api)}/${input.igUserId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink&limit=${input.limit}&access_token=${encodeURIComponent(input.accessToken)}`,
+  );
+  return (result.data ?? []).map((item) => ({
+    id: item.id,
+    caption: item.caption ?? null,
+    imageUrl:
+      (item.media_type === "VIDEO" ? item.thumbnail_url : item.media_url) ??
+      null,
+    permalink: item.permalink ?? null,
+  }));
+}
+
+// The connected account at a glance: who it is and how big it is. Only the
+// basic permission is needed (instagram_business_basic / instagram_basic).
+export type InstagramProfile = {
+  username: string | null;
+  name: string | null;
+  pictureUrl: string | null;
+  followers: number | null;
+  follows: number | null;
+  posts: number | null;
+};
+
+export async function fetchInstagramProfile(input: {
+  igUserId: string;
+  accessToken: string;
+  api: InstagramApi;
+}): Promise<InstagramProfile> {
+  const result = await request<{
+    username?: string;
+    name?: string;
+    profile_picture_url?: string;
+    followers_count?: number;
+    follows_count?: number;
+    media_count?: number;
+  }>(
+    `${graphBaseFor(input.api)}/${input.igUserId}?fields=username,name,profile_picture_url,followers_count,follows_count,media_count&access_token=${encodeURIComponent(input.accessToken)}`,
+  );
+  return {
+    username: result.username ?? null,
+    name: result.name ?? null,
+    pictureUrl: result.profile_picture_url ?? null,
+    followers: result.followers_count ?? null,
+    follows: result.follows_count ?? null,
+    posts: result.media_count ?? null,
+  };
+}
+
+// The account's totals over a recent window: how many accounts it reached, how
+// many times its content was seen, how many accounts interacted and how many
+// interactions there were. Needs the insights permission
+// (instagram_business_manage_insights / instagram_manage_insights); a token
+// granted before that scope existed fails here with a permission error.
+export const INSTAGRAM_INSIGHT_METRICS = [
+  "reach",
+  "views",
+  "accounts_engaged",
+  "total_interactions",
+] as const;
+export type InstagramInsightMetric = (typeof INSTAGRAM_INSIGHT_METRICS)[number];
+export type InstagramAccountInsights = Partial<
+  Record<InstagramInsightMetric, number>
+>;
+
+export async function fetchInstagramAccountInsights(input: {
+  igUserId: string;
+  accessToken: string;
+  api: InstagramApi;
+  // Unix seconds. Meta accepts at most 30 days between them.
+  since: number;
+  until: number;
+}): Promise<InstagramAccountInsights> {
+  const params = new URLSearchParams({
+    metric: INSTAGRAM_INSIGHT_METRICS.join(","),
+    period: "day",
+    metric_type: "total_value",
+    since: String(input.since),
+    until: String(input.until),
+    access_token: input.accessToken,
+  });
+  const result = await request<{
+    data?: Array<{ name?: string; total_value?: { value?: number } }>;
+  }>(`${graphBaseFor(input.api)}/${input.igUserId}/insights?${params.toString()}`);
+  const insights: InstagramAccountInsights = {};
+  for (const row of result.data ?? []) {
+    const metric = INSTAGRAM_INSIGHT_METRICS.find((name) => name === row.name);
+    const value = row.total_value?.value;
+    if (metric && typeof value === "number") insights[metric] = value;
+  }
+  return insights;
+}
+
+// The account's latest posts with their public counters (likes, comments).
+// Basic permission only. like_count is absent when the owner hid likes.
+export type InstagramPostStats = {
+  id: string;
+  caption: string | null;
+  imageUrl: string | null;
+  permalink: string | null;
+  timestamp: string | null;
+  likes: number | null;
+  comments: number | null;
+};
+
+export async function fetchInstagramPostStats(input: {
+  igUserId: string;
+  accessToken: string;
+  api: InstagramApi;
+  limit: number;
+}): Promise<InstagramPostStats[]> {
+  const result = await request<{
+    data?: Array<{
+      id: string;
+      caption?: string;
+      media_type?: string;
+      media_url?: string;
+      thumbnail_url?: string;
+      permalink?: string;
+      timestamp?: string;
+      like_count?: number;
+      comments_count?: number;
+    }>;
+  }>(
+    `${graphBaseFor(input.api)}/${input.igUserId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=${input.limit}&access_token=${encodeURIComponent(input.accessToken)}`,
+  );
+  return (result.data ?? []).map((item) => ({
+    id: item.id,
+    caption: item.caption ?? null,
+    imageUrl:
+      (item.media_type === "VIDEO" ? item.thumbnail_url : item.media_url) ??
+      null,
+    permalink: item.permalink ?? null,
+    timestamp: item.timestamp ?? null,
+    likes: item.like_count ?? null,
+    comments: item.comments_count ?? null,
+  }));
+}
+
 export async function publishInstagramPost(input: {
   instagramBusinessAccountId: string;
   pageAccessToken: string;
@@ -670,6 +886,93 @@ export async function publishInstagramPost(input: {
   );
 
   return { postId: published.id };
+}
+
+// A post on a Facebook Page: with an image it is a photo post (the caption is
+// the post text), without one a plain text post on the Page's feed. Needs the
+// Page access token (pages_manage_posts) — derive it with fetchPageAccessToken.
+export async function publishFacebookPagePost(input: {
+  pageId: string;
+  pageAccessToken: string;
+  message: string;
+  imageUrl?: string;
+}): Promise<{ postId: string }> {
+  const body: Record<string, string> = {
+    access_token: input.pageAccessToken,
+  };
+  let edge: "photos" | "feed";
+  if (input.imageUrl) {
+    edge = "photos";
+    body.url = input.imageUrl;
+    body.caption = input.message;
+    body.published = "true";
+  } else {
+    edge = "feed";
+    body.message = input.message;
+  }
+
+  const result = await request<{ id?: string; post_id?: string }>(
+    `${GRAPH_BASE}/${input.pageId}/${edge}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(body).toString(),
+    },
+    MEDIA_CONTAINER_CREATE_TIMEOUT_MS,
+  );
+  // A photo post answers with both the photo id and the feed post id.
+  const postId = result.post_id ?? result.id;
+  if (!postId) throw new MetaApiError("Facebook did not return a post id");
+  return { postId };
+}
+
+// Graph's answer for a post that no longer exists (deleted on Facebook):
+// code 100, subcode 33 ("Object ... does not exist").
+export function isMetaObjectMissing(error: unknown): boolean {
+  return (
+    error instanceof MetaApiError &&
+    error.metaErrorCode === 100 &&
+    error.metaErrorSubcode === 33
+  );
+}
+
+// Reads back a Page post the app published (its text and link), with the
+// Page token (pages_read_engagement).
+export async function fetchFacebookPagePost(
+  postId: string,
+  pageAccessToken: string,
+): Promise<{ message?: string; permalinkUrl?: string }> {
+  const result = await request<{ message?: string; permalink_url?: string }>(
+    `${GRAPH_BASE}/${postId}?fields=message,permalink_url&access_token=${encodeURIComponent(pageAccessToken)}`,
+  );
+  return { message: result.message, permalinkUrl: result.permalink_url };
+}
+
+// Changes the text of a Page post (pages_manage_posts).
+export async function updateFacebookPagePost(
+  postId: string,
+  pageAccessToken: string,
+  message: string,
+): Promise<void> {
+  await request<{ success?: boolean }>(`${GRAPH_BASE}/${postId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      message,
+      access_token: pageAccessToken,
+    }).toString(),
+  });
+}
+
+// Removes a Page post from Facebook (pages_manage_posts).
+export async function deleteFacebookPagePost(
+  postId: string,
+  pageAccessToken: string,
+): Promise<void> {
+  await request<{ success?: boolean }>(
+    `${GRAPH_BASE}/${postId}?access_token=${encodeURIComponent(pageAccessToken)}`,
+    { method: "DELETE" },
+  );
 }
 
 export type MetaAdsInsights = {

@@ -30,7 +30,7 @@ export type ConnectedAccount = {
 
 export type ConnectedAccountsInput = {
   instagram: { connected: boolean; label?: string };
-  // The Facebook Page linked through the Instagram connection; null = none.
+  // The Page selected in the Facebook integration; null = none.
   facebookPage: { name?: string } | null;
   metaAds: { connected: boolean; label?: string };
   ga4: { linked: boolean; selected: boolean; label?: string };

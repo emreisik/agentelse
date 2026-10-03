@@ -15,8 +15,10 @@ import {
   MetaApiError,
   fetchMetaAdsInsights,
   parseMetaService,
+  verifyFacebookPageAccess,
   verifyInstagramAccess,
   type MetaAdsMetadata,
+  type MetaFacebookMetadata,
   type MetaInstagramMetadata,
   type MetaService,
 } from "@/server/integrations/meta-client";
@@ -60,7 +62,7 @@ function loadCredential(projectId: string, service: MetaService) {
 }
 
 // Every action carries `projectId` (+ `service` where the action is shared
-// by both integrations) in its form; access is verified before anything is
+// by the integrations) in its form; access is verified before anything is
 // read.
 async function resolveScope(formData: FormData, fixedService?: MetaService) {
   const projectId = String(formData.get("projectId"));
@@ -71,9 +73,10 @@ async function resolveScope(formData: FormData, fixedService?: MetaService) {
   return { projectId, service, userId, access };
 }
 
-// Both integrations pick a Page: Instagram needs one with a linked
-// Instagram Business account (its list is already filtered to those), Meta
-// Ads uses it as the identity ads run as.
+// Every integration keeps its own Page selection: Instagram needs one with a
+// linked Instagram Business account (its list is already filtered to those),
+// Facebook is where organic posts go, Meta Ads uses it as the identity ads run
+// as. Changing one never touches the others.
 export async function selectMetaPageAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -86,6 +89,7 @@ export async function selectMetaPageAction(
 
     const metadata = (credential.metadata ?? {}) as
       | MetaInstagramMetadata
+      | MetaFacebookMetadata
       | MetaAdsMetadata;
     const page = metadata.pages?.find((p) => p.pageId === pageId);
     if (!page) {
@@ -160,7 +164,10 @@ export async function testMetaConnectionAction(
     const accessToken = decryptSecret(credential.encryptedSecret);
     let testedAt = new Date().toISOString();
     let testError: string | undefined;
-    let nextMetadata: MetaInstagramMetadata | MetaAdsMetadata;
+    let nextMetadata:
+      | MetaInstagramMetadata
+      | MetaFacebookMetadata
+      | MetaAdsMetadata;
 
     try {
       if (service === "instagram") {
@@ -183,6 +190,17 @@ export async function testMetaConnectionAction(
         );
         testedAt = new Date().toISOString();
         nextMetadata = { ...metadata, lastTestResult: { testedAt, igUsername } };
+      } else if (service === "facebook") {
+        const metadata = (credential.metadata ?? {}) as MetaFacebookMetadata;
+        if (!metadata.selectedPageId) {
+          return { ok: false, message: "Select a Page first" };
+        }
+        const pageName = await verifyFacebookPageAccess(
+          metadata.selectedPageId,
+          accessToken,
+        );
+        testedAt = new Date().toISOString();
+        nextMetadata = { ...metadata, lastTestResult: { testedAt, pageName } };
       } else {
         const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
         if (!metadata.selectedAdAccountId) {
@@ -208,6 +226,7 @@ export async function testMetaConnectionAction(
       testError = describeMetaError(error);
       nextMetadata = {
         ...((credential.metadata ?? {}) as MetaInstagramMetadata &
+          MetaFacebookMetadata &
           MetaAdsMetadata),
         lastTestResult: { testedAt, error: testError },
       };

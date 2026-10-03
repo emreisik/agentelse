@@ -16,6 +16,7 @@ import {
   ConnectedAccountsCard,
   brandSummaryRows,
 } from "@/components/workspace/brand-overview-cards";
+import { InstagramOverviewCard } from "@/components/workspace/instagram-overview-card";
 import { buildHubHref } from "@/components/hub-core/hub-core-params";
 import {
   allPaletteHexes,
@@ -98,6 +99,12 @@ export function BrandSummaryPanel({
       />
 
       <ConnectedAccountsCard projectId={projectId} accounts={connections} />
+
+      {connections.some(
+        (account) => account.key === "instagram" && account.state === "connected",
+      ) ? (
+        <InstagramOverviewCard projectId={projectId} />
+      ) : null}
 
       <CollapsibleCard title="Marka kiti" defaultOpen={empty}>
         {empty ? (

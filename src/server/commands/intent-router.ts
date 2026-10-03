@@ -160,7 +160,9 @@ export function parseIntent(rawText: string): ParsedIntent {
           ? "TIKTOK_PUBLISH"
           : platform === "LINKEDIN"
             ? "LINKEDIN_PUBLISH"
-            : "X_PUBLISH";
+            : platform === "FACEBOOK"
+              ? "FACEBOOK_PUBLISH"
+              : "X_PUBLISH";
     return {
       kind: "CAPABILITY",
       capability,

@@ -417,6 +417,140 @@ describe("MemoryService.rememberCreativeReaction", () => {
   });
 });
 
+describe("MemoryService.rememberCreativeRating", () => {
+  const creativeRow = {
+    title: "Autumn sale",
+    channel: "instagram",
+    formatKey: "instagram.post",
+    brief: "Hook: New\nVisual: A phone on pale blue",
+    versions: [
+      { generationMetadata: { layoutTemplate: { id: "l1", name: "Product hero" } } },
+    ],
+  };
+
+  beforeEach(() => {
+    creative.findFirst.mockResolvedValue(creativeRow);
+  });
+
+  it("records a like as a 'works' memory with what the post looked like", async () => {
+    await MemoryService.rememberCreativeRating({
+      scope,
+      creativeId: "cr-1",
+      rating: "LIKE",
+    });
+
+    expect(learning.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        insight:
+          'Client liked "Autumn sale" (instagram.post) (visual: A phone on pale blue; layout: Product hero)',
+        polarity: "WORKS",
+        sourceType: "OUTPUT_ACCEPTED",
+        sourceRef: "creative:cr-1:rating",
+      }),
+    });
+  });
+
+  it("records a dislike as an 'avoid' memory with the reasons the client ticked", async () => {
+    await MemoryService.rememberCreativeRating({
+      scope,
+      creativeId: "cr-1",
+      rating: "DISLIKE",
+      reasons: ["product", "nonsense"],
+      note: "  show it bigger ",
+    });
+
+    const data = learning.create.mock.calls[0]![0].data;
+    expect(data).toMatchObject({
+      polarity: "AVOID",
+      sourceType: "USER_CORRECTION",
+      sourceRef: "creative:cr-1:rating",
+    });
+    expect(data.insight).toContain('Client did not like "Autumn sale"');
+    expect(data.insight).toContain("the product is not shown right");
+    expect(data.insight).not.toContain("nonsense");
+    expect(data.insight.endsWith("show it bigger")).toBe(true);
+  });
+
+  it("replaces the previous verdict on the same post instead of piling up", async () => {
+    await MemoryService.rememberCreativeRating({
+      scope,
+      creativeId: "cr-1",
+      rating: "LIKE",
+    });
+
+    expect(learning.deleteMany).toHaveBeenCalledWith({
+      where: { brandId: "brand-1", sourceRef: "creative:cr-1:rating" },
+    });
+    // The old verdict goes before the new one is written.
+    expect(learning.deleteMany.mock.invocationCallOrder[0]!).toBeLessThan(
+      learning.create.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("looks the post up inside this project only", async () => {
+    await MemoryService.rememberCreativeRating({
+      scope,
+      creativeId: "cr-1",
+      rating: "LIKE",
+    });
+
+    expect(creative.findFirst.mock.calls[0]![0].where).toEqual({
+      id: "cr-1",
+      projectId: "proj-1",
+    });
+  });
+
+  it("works for a post made before layouts existed", async () => {
+    creative.findFirst.mockResolvedValue({
+      ...creativeRow,
+      brief: null,
+      versions: [{ generationMetadata: null }],
+    });
+
+    await MemoryService.rememberCreativeRating({
+      scope,
+      creativeId: "cr-1",
+      rating: "LIKE",
+    });
+
+    expect(learning.create.mock.calls[0]![0].data.insight).toBe(
+      'Client liked "Autumn sale" (instagram.post)',
+    );
+  });
+
+  it.each([
+    ["it does not exist", null],
+    ["it has no title", { ...creativeRowOf(), title: null }],
+  ])("learns nothing (and deletes nothing) when %s", async (_label, found) => {
+    creative.findFirst.mockResolvedValue(found);
+
+    await expect(
+      MemoryService.rememberCreativeRating({ scope, creativeId: "cr-1", rating: "LIKE" }),
+    ).resolves.toBeNull();
+    expect(learning.create).not.toHaveBeenCalled();
+    expect(learning.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("never throws, so it cannot break the tap it is learning from", async () => {
+    creative.findFirst.mockRejectedValue(new Error("db down"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(
+      MemoryService.rememberCreativeRating({ scope, creativeId: "cr-1", rating: "DISLIKE" }),
+    ).resolves.toBeNull();
+  });
+});
+
+function creativeRowOf() {
+  return {
+    title: "Autumn sale",
+    channel: "instagram",
+    formatKey: "instagram.post",
+    brief: null,
+    versions: [],
+  };
+}
+
 describe("MemoryService.recall", () => {
   it("always brings back what the client explicitly said, whatever they ask", async () => {
     learning.findMany.mockResolvedValue([

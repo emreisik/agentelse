@@ -28,6 +28,7 @@ import {
   loadLiveInputs,
   withLiveConnections,
   withLiveCreativeState,
+  withLivePlan,
   type LiveCreativeRow,
   type LiveInputs,
 } from "./live-creative-state";
@@ -233,6 +234,67 @@ describe("withLiveConnections", () => {
   it("leaves other kinds unchanged", () => {
     const other = { kind: "plan-brief" } as unknown as IdeaEventCardData;
     expect(withLiveConnections(other, {})).toBe(other);
+  });
+});
+
+describe("withLivePlan", () => {
+  const live = {
+    connections: { instagram: { connected: true, accountLabel: "@acme" } },
+    scheduleEnabled: false,
+    timezone: "Europe/Istanbul",
+  };
+  const saved = {
+    kind: "content-plan-draft",
+    title: "P",
+    timezone: "Europe/Istanbul",
+    state: "saved",
+    items: [],
+    slots: [
+      { id: "c1", stage: "IN_REVIEW", assetId: "a1" },
+      null,
+      { id: "c3", stage: "PLANNED" },
+    ],
+  } as unknown as IdeaEventCardData;
+
+  it("adds the live connections and whether scheduled posting is on", () => {
+    const out = withLivePlan(saved, live, new Map());
+    expect(out).toMatchObject({
+      connections: live.connections,
+      scheduleEnabled: false,
+    });
+  });
+
+  it("gives a saved plan's pieces their words and their time in the plan's zone", () => {
+    const rows = new Map([
+      [
+        "c1",
+        row({
+          id: "c1",
+          // 09:00 UTC is 12:00 in Istanbul.
+          scheduledFor: new Date("2026-10-05T09:00:00Z"),
+          version: { version: 2, assetId: "a1", caption: " Caption ", copy: "x" },
+        }),
+      ],
+    ]);
+    const out = withLivePlan(saved, live, rows) as Extract<
+      IdeaEventCardData,
+      { kind: "content-plan-draft" }
+    >;
+    expect(out.slots?.[0]).toEqual({
+      id: "c1",
+      stage: "IN_REVIEW",
+      assetId: "a1",
+      text: "Caption",
+      when: "2026-10-05T12:00",
+    });
+    // A gone slot stays gone; a slot with no live row is left as it was.
+    expect(out.slots?.[1]).toBeNull();
+    expect(out.slots?.[2]).toEqual({ id: "c3", stage: "PLANNED" });
+  });
+
+  it("leaves other kinds unchanged", () => {
+    const other = { kind: "plan-brief" } as unknown as IdeaEventCardData;
+    expect(withLivePlan(other, live, new Map())).toBe(other);
   });
 });
 

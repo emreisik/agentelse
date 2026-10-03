@@ -25,12 +25,15 @@ for (const file of [
   "command-actions",
   "content-plan-actions",
   "creative-actions",
+  "creative-rating-actions",
   "facebook-share-actions",
   "human-action-actions",
   "master-content-actions",
   "work-ads-actions",
   "creative-variant-actions",
   "plan-options-actions",
+  "plan-draft-actions",
+  "slot-text-actions",
   "plan-progress-actions",
   "publish-actions",
   "schedule-slots-actions",
@@ -179,16 +182,12 @@ const PANE = {
 
 describe("long cards in a chat with a pane are one compact card", () => {
   const cases: [string, IdeaEventCardData, string][] = [
-    ["plan directions", options, "2 directions · 1 post · Instagram"],
+    ["plan directions", options, "2 directions · 1 post"],
     ["idea options", ideas, "1 idea"],
-    ["master content", master, "1 channel · Instagram"],
+    ["master content", master, "1 channel"],
     ["the Meta Ads card", ads, "Spring: cost per lead is $4"],
     ["a content package", pkg, "1 piece"],
-    [
-      "a plan of several posts",
-      multiPlan,
-      "2 posts · Oct 3 – Oct 5 · Instagram",
-    ],
+    ["a plan of several posts", multiPlan, "2 posts · Oct 3 – Oct 5"],
   ];
 
   for (const [name, c, subtitle] of cases) {
@@ -200,6 +199,14 @@ describe("long cards in a chat with a pane are one compact card", () => {
       expect(html.match(/<button/g)).toHaveLength(1);
     });
   }
+
+  it("a plan, its directions and a master message show their channels as brand marks", () => {
+    for (const c of [options, master, multiPlan]) {
+      const html = render(c, PANE);
+      expect(html).toContain("data-card-channels");
+      expect(html).toContain('aria-label="Instagram"');
+    }
+  });
 
   it("the card the pane has open is rendered into the pane, not into the chat", () => {
     const html = render(master, {

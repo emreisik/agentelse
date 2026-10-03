@@ -47,6 +47,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ImageLightbox } from "@/components/shared/image-lightbox";
+import { assetUrl } from "@/lib/asset-url";
 
 export type LibraryAsset = {
   id: string;
@@ -113,7 +114,11 @@ function LibraryEntryLink({
   const src = `/api/assets/${asset.id}`;
   if (isImageAsset(asset)) {
     return (
-      <ImageLightbox src={src} alt={asset.filename} className={className}>
+      <ImageLightbox
+        src={assetUrl(asset.id, "large")}
+        alt={asset.filename}
+        className={className}
+      >
         {children}
       </ImageLightbox>
     );
@@ -150,8 +155,10 @@ function FileThumb({
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it */}
         <img
-          src={`/api/assets/${asset.id}`}
+          src={assetUrl(asset.id, "thumb")}
           alt={asset.filename}
+          loading="lazy"
+          decoding="async"
           className="h-full w-full object-cover"
         />
       </div>

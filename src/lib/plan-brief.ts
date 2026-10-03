@@ -148,6 +148,12 @@ export function stripPlanBriefMarker(message: string): string {
   return message.replace(/\n?\[Plan brief\] .+$/m, "").trimEnd();
 }
 
+// A wizard message: it carries the machine line stripPlanBriefMarker hides
+// (such a message is not edited as text, its brief would be lost).
+export function hasPlanBriefMarker(message: string): boolean {
+  return /\[Plan brief\] .+$/m.test(message);
+}
+
 type PlanItemLike = { date: string; channel?: string; formatKey?: string };
 
 // A message the MODEL can act on (handed back as the tool result so it

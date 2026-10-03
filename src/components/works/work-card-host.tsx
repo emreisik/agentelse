@@ -17,6 +17,8 @@ import { copyText } from "@/lib/works/copy";
 // every card falls back to today's behaviour.
 export type WorkCardHostValue = {
   projectId: string;
+  // The brand's name (the plan pane's header reads "{brand} · dates · goal").
+  projectName?: string;
   workId: string;
   workTitle: string;
   active: boolean;

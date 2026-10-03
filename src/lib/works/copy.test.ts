@@ -92,6 +92,15 @@ const NEW_COMPONENT_FILES = [
   "new-work-opener.tsx",
   // Slice-1 files that keep their sentences in their own *_COPY constant.
   "card-focus.tsx",
+  // Under a finished post: the like / not-quite row (sentences in its own table).
+  "creative-rating.tsx",
+  // The social media plan pane: every sentence is in plan-pane/copy.ts.
+  "plan-pane/plan-pane.tsx",
+  "plan-pane/pane-parts.tsx",
+  "plan-pane/post-card.tsx",
+  "plan-pane/move-day.tsx",
+  "plan-pane/publish-review.tsx",
+  "plan-pane/quick-links.tsx",
 ].map((f) => join("src/components/works", f));
 
 // Literals that are not user-visible sentences. One comment per entry.

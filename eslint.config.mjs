@@ -17,6 +17,24 @@ const eslintConfig = defineConfig([
     // from the root, same reasoning as tsconfig.json's "apps" exclude.
     "apps/**",
   ]),
+  // The site has ONE date and time picker (src/components/ui/date-time-picker):
+  // same field, calendar, time panel and format everywhere. A native
+  // <input type="date|time|datetime-local"> looks different in every browser
+  // and would bring back the style differences it replaced.
+  {
+    files: ["src/**/*.tsx"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "JSXAttribute[name.name='type'][value.value=/^(date|time|datetime-local|month|week)$/]",
+          message:
+            "Use DatePicker, TimePicker or DateTimePicker from @/components/ui/date-time-picker instead of a native date/time input.",
+        },
+      ],
+    },
+  },
   // Guided setup is a dialog full of ARIA state (aria-pressed rows, labelled
   // groups, alerts): eslint-config-next only warns on these rules, and a warning
   // never fails CI, so a wrong attribute would ship. Errors here.

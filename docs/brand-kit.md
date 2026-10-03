@@ -15,12 +15,15 @@ Modal (`brand-scan-dialog.tsx`) üç adımdır: **URL** → **Bulunanlar** (logo
 
 ## 2. Brand sekmesi
 
-`workspace-right-panel-data.ts` markanın kimliğini `buildBrandKit` (`src/lib/brand-kit.ts`) ile düz, serileştirilebilir bir `BrandKit` nesnesine çevirir; sağ panelin Marka sekmesi (`brand-summary-panel.tsx`) dört kart çizer:
+`workspace-right-panel-data.ts` markanın kimliğini `buildBrandKit` (`src/lib/brand-kit.ts`) ile düz, serileştirilebilir bir `BrandKit` nesnesine çevirir; sağ panelin Marka sekmesi (`brand-summary-panel.tsx`) beş kart çizer.
 
-1. **Marka özeti** (`brand-overview-cards.tsx`): logo, ad, site, Sektör / Hedef Kitle / Tone of Voice / Pazarlar satırları (boş olan satır hiç görünmez) ve en çok beş marka rengi; "Düzenle" Brand Brain'e gider.
-2. **Bağlı hesaplar**: Instagram, Facebook, Meta Ads, GA4, Search Console, Website (+ bağlıysa TikTok/LinkedIn/X), her biri Bağlı / Aktif / Kurulum gerekli / Bağlı değil; satır Integrations sayfasına gider. Durumları `src/server/integrations/connected-accounts.ts` okur, kelimeleri `src/lib/connected-accounts.ts` belirler.
-3. **Marka kiti** (kapalı kart; kimlik boşsa açık): logo kutuları (her varyant kendi zemininde), palet (tıkla-kopyala), font örnekleri, stil çipleri, layout galerisi (+ **Edit layouts**), **Scan site**. Kimlik boşsa büyük bir "Scan my website" kartı görünür.
-4. **Marka stratejisi** (kapalı kart): essence, current focus, voice, markets, what works, never do.
+Her kartın başlığında küçük bir ikon vardır (`card-title.tsx`), sıra en çok kullanılandan başlar:
+
+1. **Bağlı hesaplar** (en üstte, `brand-overview-cards.tsx`): yalnız gerçekten bağlı hesaplar (`state === "connected"`), tek sıra gerçek marka logosu (`integrations/brand-icons.tsx`). Kurulumu yarım kalan (GA4 property / Search Console sitesi seçilmemiş), bağlı olmayan hesaplar ve Website (hesap değil; adresi özette) gösterilmez. İpucu "Instagram · @handle"; "Yönet" Integrations sayfasına gider. Hiç bağlı yoksa "Henüz bağlı hesap yok. Hesap bağla". Durumları `src/server/integrations/connected-accounts.ts` okur.
+2. **Marka özeti**: logo, ad, site; ikonlu Sektör / Hedef kitle / Ses tonu / Pazarlar satırları (boş olan satır hiç görünmez) ve en çok beş renk; "Düzenle" Brand Brain'e gider.
+3. **Instagram** (yalnız bağlıyken): profil + takipçi, son 28 gün erişim / görüntülenme, etkileşim oranı, son 3 gönderi.
+4. **Marka kiti** (kapalı kart; kimlik boşsa açık): logo kutuları (her varyant kendi zemininde), palet (tıkla-kopyala), font örnekleri, stil çipleri, layout galerisi (+ **Edit layouts**), **Scan site**. Kimlik boşsa büyük bir "Scan my website" kartı görünür.
+5. **Marka stratejisi** (kapalı kart): Marka özü, Şu anki odak, İşe yarayanlar, Asla yapma. Ses tonu ve pazarlar özette olduğu için burada tekrar edilmez.
 
 Sayfanın tepesindeki renkli "hero" kartı ve "Agentelse fark etti" kartı yoktur (tasarımda bilerek çıkarıldı).
 
@@ -53,6 +56,10 @@ Sayfanın tepesindeki renkli "hero" kartı ve "Agentelse fark etti" kartı yoktu
 | Kart/Studio **revize** (edit) | Mevcut görselin layout'u aynen korunur: görüntüde logo/band zaten pikselde olduğundan başka layout ikinci bir logo/band bindirirdi. Layout'tan önce üretilmiş görsel eski gibi kompozit edilir.                                                                                       |
 | Studio **sıfırdan üret**      | Studio'daki "Post layout" seçici; boşsa önceki layout (format şekli değişmediyse), değiştiyse yeni formata uygun olan.                                                                                                                                                                |
 | Haftalık planlayıcı (cron)    | Marka kimliğiyle kurulan prompt + varsayılan layout + logo/şerit. Daha önce bu yol hiç şablon uygulamıyordu.                                                                                                                                                                          |
+
+## 4b. Post style kit (örnek postlar)
+
+Layout'lar logo/şerit/başlık yerleşimini belirler; **post tasarımının kendisi** (ürün odaklı düzen, tipografi, grafik öğeler) ise örnek post görselleriyle öğretilir. Bu, ayrı bir özelliktir: bkz. [post-style-kit.md](./post-style-kit.md). Örnekler Visual Identity sekmesindeki "Post style" kartından, sohbetten (`save_style_reference`) ya da beğenilen bir posttan eklenir ve her üretime referans resim olarak girer.
 
 ## 5. Geriye dönük uyum
 

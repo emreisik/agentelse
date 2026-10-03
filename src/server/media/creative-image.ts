@@ -119,6 +119,10 @@ export type GenerateCreativeImageOptions = {
   // during from-scratch generation (see openai-image-client.ts). Not used
   // on the fal.ai fallback path.
   referenceImage?: { data: string; mimeType: string };
+  // Several reference pictures (the brand's example posts, then the real
+  // product): the Gemini and OpenAI tiers follow all of them in order; fal.ai
+  // takes none. Wins over referenceImage; an edit (baseImage) ignores both.
+  referenceImages?: { data: string; mimeType: string }[];
   imageSize?: { width: number; height: number };
   // Defaults to "high" in both provider clients if left unset — see
   // openai-image-client.ts's generateOpenAIImage comment. Exposed here so
@@ -180,6 +184,7 @@ async function tryGemini(
       options.baseImage,
       options.imageSize,
       options.referenceImage,
+      options.referenceImages,
     );
   } catch (error) {
     console.error("[creative-image] Gemini image generation failed:", error);
@@ -200,6 +205,7 @@ async function tryOpenAI(
       options.referenceImage,
       options.quality,
       options.onPartial,
+      options.referenceImages,
     );
   } catch (error) {
     console.error("[creative-image] OpenAI image generation failed:", error);

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Megaphone } from "lucide-react";
 import { toast } from "sonner";
 
+import { ChannelMark } from "@/components/commands/channel-badge";
 import { WsTag } from "@/components/commands/ws-event-card";
 import { Button } from "@/components/ui/button";
 import { ActionCard } from "@/components/works/action-card";
@@ -368,7 +369,7 @@ export function MasterChannelChips({
                   onAdd(chip);
                 }}
                 className={cn(
-                  "min-h-11 rounded-xl border border-dashed px-3 py-2 text-sm font-medium outline-none transition-colors hover:bg-[var(--ws-hover)] focus-visible:ring-2 focus-visible:ring-ring/50",
+                  "inline-flex min-h-11 items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-sm font-medium outline-none transition-colors hover:bg-[var(--ws-hover)] focus-visible:ring-2 focus-visible:ring-ring/50",
                   blocked && "cursor-not-allowed opacity-50",
                 )}
                 style={{
@@ -376,6 +377,7 @@ export function MasterChannelChips({
                   color: "var(--ws-text-2)",
                 }}
               >
+                <ChannelMark channel={chip.key} className="size-5" decorative />
                 {copyText("master.chip.add")} {chip.label}
               </button>
             );
@@ -405,7 +407,7 @@ export function MasterChannelChips({
                   onToggle(chip);
                 }}
                 className={cn(
-                  "min-h-11 rounded-xl border px-3 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
+                  "inline-flex min-h-11 items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
                   on
                     ? "border-primary bg-primary/5"
                     : "hover:bg-[var(--ws-hover)]",
@@ -413,6 +415,7 @@ export function MasterChannelChips({
                 )}
                 style={on ? undefined : { borderColor: "var(--ws-border)" }}
               >
+                <ChannelMark channel={chip.key} className="size-5" decorative />
                 {chip.label}
               </button>
               {locked ? (
@@ -463,7 +466,16 @@ export function MasterTargetRows({
             className="space-y-1 rounded-xl border p-3"
             style={{ borderColor: "var(--ws-border)" }}
           >
-            <WsTag>{labelOf(target.channel)}</WsTag>
+            <WsTag>
+              {isChannelKey(target.channel) ? (
+                <ChannelMark
+                  channel={target.channel}
+                  className="size-4"
+                  decorative
+                />
+              ) : null}
+              {labelOf(target.channel)}
+            </WsTag>
             <p
               className="text-sm font-semibold"
               style={{ color: "var(--ws-text)" }}

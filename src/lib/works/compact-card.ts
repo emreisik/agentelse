@@ -1,4 +1,5 @@
-import { CHANNELS, isChannelKey } from "@/lib/content-channels";
+import { isChannelKey, type ChannelKey } from "@/lib/content-channels";
+import { activePlatformsOf, groupPosts } from "@/lib/works/plan-platforms";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 // Long cards of a chat are shown as ONE compact card, like ChatGPT's canvas
@@ -17,8 +18,10 @@ export type CompactTone =
 export type CompactCardSpec = {
   icon: CompactIcon;
   title: string;
-  // One line: what is inside ("3 directions · 3 posts · Instagram").
+  // One line: what is inside ("3 directions · 3 posts").
   subtitle: string;
+  // The channels the card is for: shown as their brand marks after the subtitle.
+  channels?: ChannelKey[];
   // Where the card stands, when it has a state worth showing.
   status?: { label: string; tone: CompactTone };
 };
@@ -27,6 +30,7 @@ export type CompactCardSpec = {
 export const DETAIL_PANE_ID = "workspace-detail";
 
 export const COMPACT_COPY = {
+  planTitle: "Social media plan",
   open: "Open",
   replaced: "Replaced",
   pickDirection: "Pick a direction",
@@ -80,16 +84,16 @@ function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
-// "Instagram", "Instagram · TikTok", "Instagram · TikTok +1": the channels a
-// card is for, from the raw keys it stores. Unknown keys are left out.
-export function channelsLine(keys: readonly string[]): string {
-  const labels = [
-    ...new Set(
-      keys.flatMap((key) => (isChannelKey(key) ? [CHANNELS[key].label] : [])),
-    ),
-  ];
-  if (labels.length <= 2) return labels.join(" · ");
-  return `${labels.slice(0, 2).join(" · ")} +${labels.length - 2}`;
+// The channels a card is for, from the raw keys it stores: the known ones, once
+// each, in the order they come.
+export function channelKeysOf(keys: readonly string[]): ChannelKey[] {
+  return [...new Set(keys.filter(isChannelKey))];
+}
+
+// `{ channels }` when there is anything to show, else nothing.
+function channelsOf(keys: readonly string[]): { channels?: ChannelKey[] } {
+  const channels = channelKeysOf(keys);
+  return channels.length > 0 ? { channels } : {};
 }
 
 function join(parts: readonly (string | null | undefined | false)[]): string {
@@ -123,8 +127,8 @@ export function compactSpecOf(card: IdeaEventCardData): CompactCardSpec | null {
         subtitle: join([
           plural(card.options.length, "direction", "directions"),
           plural(card.slots.length, "post", "posts"),
-          channelsLine(card.slots.map((slot) => slot.channel)),
         ]),
+        ...channelsOf(card.slots.map((slot) => slot.channel)),
         status:
           card.state === "superseded"
             ? { label: COMPACT_COPY.replaced, tone: "neutral" }
@@ -158,8 +162,8 @@ export function compactSpecOf(card: IdeaEventCardData): CompactCardSpec | null {
         title: card.title,
         subtitle: join([
           plural(channels.length, "channel", "channels"),
-          channelsLine(channels.map((target) => target.channel)),
         ]),
+        ...channelsOf(channels.map((target) => target.channel)),
         status: card.adapting
           ? { label: COMPACT_COPY.adapting, tone: "waiting" }
           : card.state === "superseded"
@@ -175,14 +179,13 @@ export function compactSpecOf(card: IdeaEventCardData): CompactCardSpec | null {
       const items = card.items.filter((item) => !item.removed);
       return {
         icon: "plan",
-        title: card.title,
+        // A plan is general (not Instagram's): one name for every plan.
+        title: COMPACT_COPY.planTitle,
         subtitle: join([
-          plural(items.length, "post", "posts"),
+          plural(groupPosts(items).length, "post", "posts"),
           dayRange(items.map((item) => item.date)),
-          channelsLine(
-            items.flatMap((item) => (item.channel ? [item.channel] : [])),
-          ),
         ]),
+        ...channelsOf(activePlatformsOf(card)),
         status:
           card.state === "superseded"
             ? { label: COMPACT_COPY.replaced, tone: "neutral" }

@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const prismaMocks = vi.hoisted(() => ({
   dossierFindUnique: vi.fn(),
   identityFindUnique: vi.fn(),
+  factFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     brandDossier: { findUnique: prismaMocks.dossierFindUnique },
     brandVisualIdentity: { findUnique: prismaMocks.identityFindUnique },
+    brandFact: { findMany: prismaMocks.factFindMany },
   },
 }));
 
@@ -164,6 +166,81 @@ describe("resolveBrandStyleContext", () => {
     });
     expect(prismaMocks.identityFindUnique).toHaveBeenCalledWith({
       where: { brandId: "brand-42" },
+    });
+  });
+
+  describe("the Post Style Kit", () => {
+    const identity = {
+      primaryColors: [],
+      secondaryColors: [],
+      accentColors: [],
+      photographyStyle: null,
+      styleRefinement: null,
+      moodTags: [],
+      compositionNotes: null,
+      backgroundTone: null,
+      alwaysInclude: [],
+      alwaysAvoid: [],
+      referenceImageAssetId: null,
+      layoutTemplates: null,
+      templateEnabled: true,
+      logoPosition: "BOTTOM_RIGHT",
+      logoSizePercent: 16,
+      logoMarginPercent: 4,
+      accentBarEnabled: true,
+      accentBarColorHex: null,
+      accentBarHeightPercent: 5,
+      accentBarPosition: "BOTTOM",
+    };
+
+    it("rides on the visual identity: the examples that are on, newest first, and the instructions", async () => {
+      prismaMocks.dossierFindUnique.mockResolvedValue(null);
+      prismaMocks.identityFindUnique.mockResolvedValue(identity);
+      prismaMocks.factFindMany.mockResolvedValue([
+        { key: "directives", value: { text: "Always dark.", fidelity: "match" } },
+        {
+          key: "example:old",
+          value: { assetId: "old", enabled: true, addedAt: "2026-09-01T00:00:00.000Z" },
+        },
+        {
+          key: "example:off",
+          value: { assetId: "off", enabled: false, addedAt: "2026-09-15T00:00:00.000Z" },
+        },
+        {
+          key: "example:new",
+          value: { assetId: "new", enabled: true, addedAt: "2026-10-01T00:00:00.000Z" },
+        },
+      ]);
+      const result = await resolveBrandStyleContext("brand-1");
+      expect(result.visualIdentity?.postStyle).toEqual({
+        fidelity: "match",
+        directives: "Always dark.",
+        examples: [
+          { assetId: "new", label: "", analysis: null },
+          { assetId: "old", label: "", analysis: null },
+        ],
+      });
+      expect(prismaMocks.factFindMany.mock.calls[0]![0].where).toMatchObject({
+        brandId: "brand-1",
+        category: "post_style",
+      });
+    });
+
+    it("a brand without a kit gets exactly the identity it always had", async () => {
+      prismaMocks.dossierFindUnique.mockResolvedValue(null);
+      prismaMocks.identityFindUnique.mockResolvedValue(identity);
+      prismaMocks.factFindMany.mockResolvedValue([]);
+      const result = await resolveBrandStyleContext("brand-1");
+      expect(result.visualIdentity).not.toHaveProperty("postStyle");
+    });
+
+    it("a kit that cannot be read never costs the brand its look", async () => {
+      prismaMocks.dossierFindUnique.mockResolvedValue(null);
+      prismaMocks.identityFindUnique.mockResolvedValue(identity);
+      prismaMocks.factFindMany.mockRejectedValue(new Error("db blip"));
+      const result = await resolveBrandStyleContext("brand-1");
+      expect(result.visualIdentity).not.toBeNull();
+      expect(result.visualIdentity).not.toHaveProperty("postStyle");
     });
   });
 });

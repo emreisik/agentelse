@@ -1732,7 +1732,7 @@ describe("runChatAgent", () => {
     expect(events.at(-1)).toMatchObject({ type: "done", status: "ERROR" });
   });
 
-  it("keeps the partial reply when the client aborts", async () => {
+  it("keeps the partial reply when the turn is stopped, as STOPPED", async () => {
     const controller = new AbortController();
     const { model } = scriptedModel([{ text: ["Yarım kalan "], hang: true }]);
     const gen = runChatAgent(
@@ -1749,8 +1749,15 @@ describe("runChatAgent", () => {
     expect(recordReply).toHaveBeenCalledWith(
       "cmd-1",
       "Yarım kalan",
-      "ANSWERED",
+      "STOPPED",
     );
+    // Whoever follows the run learns at once that it ended stopped.
+    expect(events.at(-1)).toMatchObject({
+      type: "done",
+      commandId: "cmd-1",
+      status: "STOPPED",
+      reply: "Yarım kalan",
+    });
   });
 });
 

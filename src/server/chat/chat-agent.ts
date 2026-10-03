@@ -5,6 +5,7 @@ import {
   limitNoticeFromError,
   limitNoticeReplyText,
 } from "@/server/commands/limit-notice";
+import { isPlaceholderReply, STOPPED_REPLY } from "@/lib/chat-reply";
 import { getEnv } from "@/lib/env";
 import { brandCoreOf } from "@/server/brand-twin/brand-twin";
 import { QuickDiscoveryService } from "@/server/brand/quick-discovery";
@@ -29,7 +30,12 @@ import {
 import { WorkSessionService } from "@/server/work-session/work-session-service";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
-import { buildHistoryInput, buildUserInput, trimHistory } from "./history";
+import {
+  attachmentNote,
+  buildHistoryInput,
+  buildUserInput,
+  trimHistory,
+} from "./history";
 import { loadNextSteps } from "@/server/agency/journey/snapshot";
 import { buildContext } from "./context";
 import {
@@ -95,12 +101,57 @@ export type ChatAgentInput = {
   // Base64 bodies shown to the model only (same order as `attachments`);
   // never persisted on the Command row.
   attachmentBodies?: { mimeType: string; data: string }[];
-  // Aborted when the client hits Stop / disconnects: cancels the in-flight
-  // model stream so no further tokens are paid for.
+  // The turn's cancel switch, owned by its run (run-registry.ts): aborted
+  // when the person presses Stop or the run hits its deadline, never by a
+  // dropped connection. The turn then ends at once as STOPPED: the model
+  // stream is cut (no further tokens are paid for) and a running tool is
+  // left to finish on its own.
   signal?: AbortSignal;
 };
 
 type ParsedArgs = { ok: true; value: unknown } | { ok: false; error: string };
+
+function cancelledError(): AgentelseError {
+  return new AgentelseError("CANCELLED", "The turn was stopped");
+}
+
+// The promise, or CANCELLED as soon as the signal aborts (the promise itself
+// goes on unobserved; its own failure is swallowed then).
+function untilAborted<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      promise.catch(() => undefined);
+      reject(cancelledError());
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
+// An edited message is sent again with its stored files (history-files.ts):
+// one that could not be loaded back still reaches the model by name.
+function unloadedFilesNote(input: ChatAgentInput): string {
+  const files = input.attachments ?? [];
+  const loaded = input.attachmentBodies?.length ?? 0;
+  return files.length > loaded ? attachmentNote(files) : "";
+}
 
 function parseArgs(tool: ChatTool, raw: string): ParsedArgs {
   let json: unknown;
@@ -143,6 +194,10 @@ export async function* runChatAgent(
     rawText: input.message,
     createdByUserId: input.userId,
     attachments: input.attachments,
+    // In flight until the final status replaces it (every exit below writes
+    // one). A row left RUNNING by a process that died is cleaned up as
+    // INTERRUPTED by the chat route.
+    replyStatus: "RUNNING",
   });
   // From this moment the Work is no longer blank: its Recents row shows the
   // person's own words (and the chat moves to the top) at once, not after the
@@ -166,6 +221,10 @@ export async function* runChatAgent(
   // Works: a tool already stored its card on the Command (re-read after the
   // work), so a later card of the turn must not replace it in persist().
   let cardPersisted = false;
+  // A tool is running and the turn has not seen it finish. It stays true when
+  // the turn is stopped mid-tool: the tool goes on and may still write its
+  // card on this row, so the final write must leave the card alone.
+  let toolInFlight = false;
   // What this message may do (rounds, work actions, cost...) and what it has
   // done so far; see run-guard.ts. Widened when the message belongs to a work
   // session.
@@ -291,13 +350,29 @@ export async function* runChatAgent(
           : null;
       // A failed or stopped turn never overwrites it with an error text
       // ("I can't generate a reply right now: <provider error>") or "(stopped)".
-      const headline = cardTitle ?? (replyStatus === "ERROR" ? null : text);
+      const headline =
+        cardTitle ??
+        (replyStatus === "ERROR" || isPlaceholderReply(text) ? null : text);
       if (headline !== null) {
         await WorkRepository.touch(input.projectId, input.workId, {
           summary: workSummaryFrom(headline),
         }).catch(() => undefined);
       }
     }
+  }
+
+  // The final write of a turn that ends early: Stop, the run's deadline, or a
+  // consumer that went away. Keeps whatever the client already saw. A tool
+  // still running may be writing its card on this very row (slot-first), so
+  // then only the reply is written: persist() could replace that card.
+  async function persistStopped(): Promise<string> {
+    const reply = replyText() || STOPPED_REPLY;
+    if (toolInFlight) {
+      await CommandRepository.recordReply(command.id, reply, "STOPPED");
+    } else {
+      await persist(reply, "STOPPED");
+    }
+    return reply;
   }
 
   try {
@@ -331,9 +406,10 @@ export async function* runChatAgent(
         name: "quick_discovery",
         label: "Getting to know your brand…",
       };
-      const scan = await QuickDiscoveryService.runWithin(
-        discovery,
-        QUICK_DISCOVERY_WAIT_MS,
+      // Stop ends the wait (the scan itself finishes in the background).
+      const scan = await untilAborted(
+        QuickDiscoveryService.runWithin(discovery, QUICK_DISCOVERY_WAIT_MS),
+        input.signal,
       );
       brandScan = scan.status === "DONE" ? "completed" : "unavailable";
       yield {
@@ -409,7 +485,10 @@ export async function* runChatAgent(
         : undefined,
       // Events a running tool wants the client to see NOW (image previews).
       // Drained by the tool loop below while execute() is still pending.
+      // Dropped once the turn is stopped: a tool left running keeps
+      // emitting, and nobody drains the queue any more.
       emit: (event) => {
+        if (input.signal?.aborted) return;
         streamQueue.push(event);
         wakeStream?.();
       },
@@ -527,7 +606,10 @@ export async function* runChatAgent(
       ...(context.cardDigestNote
         ? [{ role: "developer" as const, content: context.cardDigestNote }]
         : []),
-      buildUserInput(input.message, input.attachmentBodies),
+      buildUserInput(
+        input.message + unloadedFilesNote(input),
+        input.attachmentBodies,
+      ),
     ];
 
     let terminated = false;
@@ -578,6 +660,9 @@ export async function* runChatAgent(
     };
 
     for (let round = 0; !terminated; round += 1) {
+      // Stopped before this round (during the pre-model work, or right as a
+      // tool finished): no further model call is made or counted.
+      if (input.signal?.aborted) throw cancelledError();
       const early = guard.beforeRound(round);
       if (early) {
         stopReason = early;
@@ -631,10 +716,15 @@ export async function* runChatAgent(
       if (inFlight.trim()) replyParts.push(inFlight.trim());
       inFlight = "";
       timing.modelEndedAt = Date.now();
+      if (completed) {
+        inputTokens += completed.inputTokens ?? 0;
+        cachedInputTokens += completed.cachedInputTokens ?? 0;
+        outputTokens += completed.outputTokens ?? 0;
+      }
+      // openai ends an aborted stream silently (no error, no `completed`):
+      // a Stop in the middle of a reply must not be saved as an answer.
+      if (input.signal?.aborted) throw cancelledError();
       if (!completed) break;
-      inputTokens += completed.inputTokens ?? 0;
-      cachedInputTokens += completed.cachedInputTokens ?? 0;
-      outputTokens += completed.outputTokens ?? 0;
       if (completed.functionCalls.length === 0) break;
       timing.tools.push(...completed.functionCalls.map((call) => call.name));
 
@@ -679,41 +769,70 @@ export async function* runChatAgent(
         } else {
           const { tool, args } = gate;
           yield { type: "tool.start", name: tool.name, label: tool.label };
+          // A stopped turn never starts a tool (a render is paid work).
+          if (input.signal?.aborted) throw cancelledError();
           let ok = true;
+          // Run the tool, but keep forwarding events it emits while it
+          // works (an image render takes a minute; the client should watch
+          // it sharpen, not stare at a spinner).
+          const run: {
+            done: boolean;
+            failed: boolean;
+            value?: ToolOutcome;
+            error?: unknown;
+          } = { done: false, failed: false };
+          toolInFlight = true;
+          let execution: Promise<ToolOutcome>;
           try {
-            // Run the tool, but keep forwarding events it emits while it
-            // works (an image render takes a minute; the client should
-            // watch it sharpen, not stare at a spinner).
-            const run: {
-              done: boolean;
-              failed: boolean;
-              value?: ToolOutcome;
-              error?: unknown;
-            } = { done: false, failed: false };
-            tool.execute(args, toolCtx).then(
-              (value) => {
-                run.value = value;
-                run.done = true;
-                wakeStream?.();
-              },
-              (error: unknown) => {
-                run.error = error;
-                run.failed = true;
-                run.done = true;
-                wakeStream?.();
-              },
-            );
-            while (!run.done) {
+            execution = tool.execute(args, toolCtx);
+          } catch (error) {
+            execution = Promise.reject(error);
+          }
+          // Both handlers are attached up front, so a tool the turn stops
+          // waiting for never leaves an unhandled rejection behind.
+          execution.then(
+            (value) => {
+              run.value = value;
+              run.done = true;
+              wakeStream?.();
+            },
+            (error: unknown) => {
+              run.error = error;
+              run.failed = true;
+              run.done = true;
+              wakeStream?.();
+            },
+          );
+          // Stop (or the run's deadline) wakes the wait too.
+          const wakeOnAbort = () => wakeStream?.();
+          input.signal?.addEventListener("abort", wakeOnAbort);
+          try {
+            while (!run.done && !input.signal?.aborted) {
               while (streamQueue.length) yield streamQueue.shift()!;
-              if (run.done) break;
+              if (run.done || input.signal?.aborted) break;
               await new Promise<void>((resolve) => {
                 wakeStream = resolve;
-                // Re-check after registering: an event or completion may
-                // have landed between the checks above and this line.
-                if (streamQueue.length || run.done) resolve();
+                // Re-check after registering: an event, the completion or
+                // the abort may have landed between the checks above and
+                // this line.
+                if (streamQueue.length || run.done || input.signal?.aborted) {
+                  resolve();
+                }
               });
               wakeStream = undefined;
             }
+          } finally {
+            input.signal?.removeEventListener("abort", wakeOnAbort);
+          }
+          if (!run.done) {
+            // Stopped while the tool works: the conversation ends now (the
+            // cancelled branch below). The tool finishes on its own with its
+            // own side effects (a paid render still lands in its slot as a
+            // draft); nothing it returns is shown or stored by this turn.
+            throw cancelledError();
+          }
+          toolInFlight = false;
+          try {
             while (streamQueue.length) yield streamQueue.shift()!;
             if (run.failed) throw run.error;
             outcome = run.value!;
@@ -855,11 +974,13 @@ export async function* runChatAgent(
       (isAgentelseError(error) && error.code === "CANCELLED");
 
     if (cancelled) {
-      // Stop pressed: keep whatever the client already saw. Nobody is
-      // listening any more, so nothing is yielded.
-      await persist(replyText() || "(stopped)", replyText() ? status : "ERROR");
+      // Stop pressed (or the run's deadline): the turn ends now as STOPPED,
+      // keeping whatever the client already saw. Its spend is still charged.
+      // Whoever follows the run gets the final status at once.
+      const reply = await persistStopped();
       settled = true;
-      await recordUsage(false, "cancelled by client");
+      await recordUsage(false, "stopped");
+      yield { type: "done", commandId: command.id, status: "STOPPED", reply };
       return;
     }
 
@@ -943,13 +1064,11 @@ export async function* runChatAgent(
     await recordUsage(false, errorMessage);
     yield { type: "error", code: "FAILED", message: errorMessage };
   } finally {
-    // The consumer stopped iterating mid-stream (connection dropped without
-    // the abort signal firing first): still keep what was produced.
+    // The consumer stopped iterating mid-stream. The run registry always
+    // drains a turn, so this is a safety net: what was produced is kept and
+    // the row never stays RUNNING.
     if (!settled) {
-      await persist(
-        replyText() || "(stopped)",
-        replyText() ? status : "ERROR",
-      ).catch(() => undefined);
+      await persistStopped().catch(() => undefined);
       await recordUsage(false, "consumer stopped").catch(() => undefined);
     }
   }

@@ -49,6 +49,14 @@ export type CreativePromptInput = {
   // on the image): the model renders that one headline itself instead of
   // producing a textless photo. Absent = the classic textless behavior.
   typography?: CreativeTypography;
+  // The Post Style Kit's section for this render (lib/post-style.ts
+  // postStyleSection): what the attached example and product pictures are, and
+  // the brand's standing instructions. It rules over every other design choice.
+  postStyle?: string | null;
+  // The kit asks for posts that follow its examples closely: the examples decide
+  // layout and typography, so the layout's own composition and headline
+  // placement notes stand aside.
+  matchStyle?: boolean;
 };
 
 export type CreativeTypography = {
@@ -63,6 +71,9 @@ export type CreativeTypography = {
   // ("large, centered, at most 3 lines, placed in the upper third...").
   // Absent = a generic "calm area of the scene".
   placement?: string;
+  // Further on-image texts (sub-headline, price, button label, badge), each
+  // rendered exactly once where the design puts that kind of text.
+  lines?: string[];
 };
 
 // Global baseline — applies to every generation regardless of brand. A
@@ -106,16 +117,30 @@ const EDITORIAL_BASELINE =
   "photography style, mood and rules — those take precedence over any " +
   "generic taste. Crisp, professional, not a generic AI-rendered look.";
 
-function typographyBlock(t: CreativeTypography, reservedZones?: string): string {
+function typographyBlock(
+  t: CreativeTypography,
+  reservedZones?: string,
+  matchStyle?: boolean,
+): string {
   const accent = t.accentHex
     ? `the brand accent colour ${t.accentHex}`
     : "the brand's accent colour from the BRAND section";
+  const lines = (t.lines ?? []).filter((line) => line.trim());
   const parts = [
-    "Render exactly this text, character for character, correctly spelled with every diacritic (ş ğ ı İ ö ü ç etc.), perfectly sharp and legible. It is the ONLY text in the image.",
-    `HEADLINE: "${t.headline}" — set in a refined typeface that suits the brand's tone (from the BRAND section), high contrast against its background, at most 3-4 lines, generous margins${t.highlight ? `; set the words "${t.highlight}" in ${accent}` : ""}.`,
-    t.placement
-      ? `Set the headline ${t.placement}. Keep that area calm (deepen it with a subtle natural gradient if needed) so contrast is strong.`
-      : "Place it on a calm area of the scene (deepen that area with a subtle natural gradient if needed) so contrast is strong.",
+    lines.length > 0
+      ? "Render exactly these texts, character for character, correctly spelled with every diacritic (ş ğ ı İ ö ü ç etc.), perfectly sharp and legible. They are the ONLY texts in the image."
+      : "Render exactly this text, character for character, correctly spelled with every diacritic (ş ğ ı İ ö ü ç etc.), perfectly sharp and legible. It is the ONLY text in the image.",
+    matchStyle
+      ? `HEADLINE: "${t.headline}" — set in the typeface, weight, case, colour and size relationship of the headline in the reference posts, at most 3-4 lines${t.highlight ? `; set the words "${t.highlight}" the way the reference posts highlight words` : ""}.`
+      : `HEADLINE: "${t.headline}" — set in a refined typeface that suits the brand's tone (from the BRAND section), high contrast against its background, at most 3-4 lines, generous margins${t.highlight ? `; set the words "${t.highlight}" in ${accent}` : ""}.`,
+    lines.length > 0
+      ? `OTHER TEXTS, each exactly once, placed where the design puts that kind of text (sub-headline, price, button label, badge): ${lines.map((line) => `"${line}"`).join(", ")}.`
+      : "",
+    matchStyle
+      ? "Place every text where the reference posts place that kind of text."
+      : t.placement
+        ? `Set the headline ${t.placement}. Keep that area calm (deepen it with a subtle natural gradient if needed) so contrast is strong.`
+        : "Place it on a calm area of the scene (deepen that area with a subtle natural gradient if needed) so contrast is strong.",
     reservedZones
       ? `Keep text and busy detail out of: ${reservedZones}`
       : "",
@@ -320,6 +345,8 @@ export function buildCreativePrompt({
   reservedZones,
   layoutComposition,
   typography,
+  postStyle,
+  matchStyle,
 }: CreativePromptInput): string {
   const { brandLine, styleAddition, avoidAddition, compositionAddition } =
     extractBrandStyle(brandContext);
@@ -351,7 +378,10 @@ export function buildCreativePrompt({
     );
   }
   if (compositionAddition) compositionParts.push(compositionAddition);
-  if (layoutComposition) compositionParts.push(layoutComposition);
+  // The examples decide the layout when the kit asks to follow them.
+  if (layoutComposition && !matchStyle) {
+    compositionParts.push(layoutComposition);
+  }
   if (reservedZones) {
     compositionParts.push(
       `Keep the main subject clear of these areas, which are covered afterwards: ${reservedZones}`,
@@ -362,10 +392,11 @@ export function buildCreativePrompt({
 
   return [
     `SUBJECT: ${subject}`,
+    postStyle ? `POST STYLE KIT:\n${postStyle}` : null,
     `STYLE & LIGHTING: ${[typography ? EDITORIAL_BASELINE : STYLE_AND_LIGHTING, styleAddition].filter(Boolean).join(" ")}`,
     `COMPOSITION: ${compositionParts.join(" ")}`,
     typography
-      ? `TYPOGRAPHY: ${typographyBlock(typography, reservedZones)}`
+      ? `TYPOGRAPHY: ${typographyBlock(typography, reservedZones, matchStyle)}`
       : null,
     brandLine ? `BRAND: ${brandLine}` : null,
     `AVOID: ${[avoid, avoidAddition].filter(Boolean).join(" ")}`,

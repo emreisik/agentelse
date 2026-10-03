@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -13,6 +13,7 @@ import {
 
 import { uploadLibraryAssetAction } from "@/server/actions/library-actions";
 import type { LibraryAsset } from "@/components/hub-core/panels/library-browser";
+import { assetUrl } from "@/lib/asset-url";
 
 // Brand Workspace right panel's Files tab — a compact grouped list,
 // deliberately a SEPARATE component from LibraryBrowser (which stays
@@ -104,63 +105,136 @@ export function FilesPanel({
         onChange={handleFileChange}
       />
 
-      {groups.map((group) => (
-        <div key={group.label} className="flex flex-col gap-0.5">
-          <div
-            className="mb-1 flex items-center gap-1.5 px-1 text-[10px] font-semibold tracking-[0.1em] uppercase"
-            style={{ color: "var(--ws-text-3)" }}
-          >
-            {group.label}
-            <span>{group.assets.length}</span>
-          </div>
-          {group.assets.map((asset) => (
-            <div
-              key={asset.id}
-              className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-[var(--ws-hover)]"
-            >
-              <span
-                className="flex size-8 shrink-0 items-center justify-center rounded-lg"
-                style={{ background: "var(--ws-surface-2)" }}
+      {groups.map((group) =>
+        group.kind === "images" ? (
+          <ImageGroup key={group.label} label={group.label} assets={group.assets} />
+        ) : (
+          <div key={group.label} className="flex flex-col gap-0.5">
+            <GroupLabel label={group.label} count={group.assets.length} />
+            {group.assets.map((asset) => (
+              <div
+                key={asset.id}
+                className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-[var(--ws-hover)]"
               >
-                <FileTypeIcon
-                  mimeType={asset.mimeType}
-                  className="size-3.5"
-                  style={{ color: "var(--ws-text-2)" }}
-                />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div
-                  className="truncate text-xs font-medium"
-                  style={{ color: "var(--ws-text-body)" }}
+                <span
+                  className="flex size-8 shrink-0 items-center justify-center rounded-lg"
+                  style={{ background: "var(--ws-surface-2)" }}
                 >
-                  {asset.filename}
+                  <FileTypeIcon
+                    mimeType={asset.mimeType}
+                    className="size-3.5"
+                    style={{ color: "var(--ws-text-2)" }}
+                  />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div
+                    className="truncate text-xs font-medium"
+                    style={{ color: "var(--ws-text-body)" }}
+                  >
+                    {asset.filename}
+                  </div>
+                  <div
+                    className="text-[9px] uppercase"
+                    style={{ color: "var(--ws-text-3)" }}
+                  >
+                    {extensionLabel(asset.mimeType)}
+                  </div>
                 </div>
-                <div
-                  className="text-[9px] uppercase"
+                <a
+                  href={`/api/assets/${asset.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Download ${asset.filename}`}
+                  className="shrink-0 transition-colors hover:opacity-70"
                   style={{ color: "var(--ws-text-3)" }}
                 >
-                  {extensionLabel(asset.mimeType)}
-                </div>
+                  <Download className="size-3.5" />
+                </a>
               </div>
-              <a
-                href={`/api/assets/${asset.id}`}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={`Download ${asset.filename}`}
-                className="shrink-0 transition-colors hover:opacity-70"
-                style={{ color: "var(--ws-text-3)" }}
-              >
-                <Download className="size-3.5" />
-              </a>
-            </div>
-          ))}
-        </div>
-      ))}
+            ))}
+          </div>
+        ),
+      )}
 
       {assets.length === 0 ? (
         <p className="px-1 text-xs" style={{ color: "var(--ws-text-3)" }}>
           No files yet — upload a logo, catalogue or reference image.
         </p>
+      ) : null}
+    </div>
+  );
+}
+
+function GroupLabel({ label, count }: { label: string; count: number }) {
+  return (
+    <div
+      className="mb-1 flex items-center gap-1.5 px-1 text-[10px] font-semibold tracking-[0.1em] uppercase"
+      style={{ color: "var(--ws-text-3)" }}
+    >
+      {label}
+      <span>{count}</span>
+    </div>
+  );
+}
+
+// How many thumbnails a group shows before "Show all": a project collects
+// every generated image here, and each tile loads the full file.
+export const IMAGE_PREVIEW_LIMIT = 9;
+
+// Images are recognised by sight, not by file name: a grid of thumbnails, each
+// opening the full image in a new tab. Logos are shown whole (contain), photos
+// fill their tile (cover).
+function ImageGroup({
+  label,
+  assets,
+}: {
+  label: string;
+  assets: LibraryAsset[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? assets : assets.slice(0, IMAGE_PREVIEW_LIMIT);
+  const isBrand = label === "Brand";
+  return (
+    <div className="flex flex-col">
+      <GroupLabel label={label} count={assets.length} />
+      <ul className="grid grid-cols-3 gap-1.5">
+        {shown.map((asset) => (
+          <li key={asset.id}>
+            <a
+              href={`/api/assets/${asset.id}`}
+              target="_blank"
+              rel="noreferrer"
+              title={asset.filename}
+              data-file-thumb={asset.id}
+              className="block aspect-square overflow-hidden rounded-lg border transition-opacity hover:opacity-85"
+              style={{
+                borderColor: "var(--ws-border)",
+                background: "var(--ws-surface-2)",
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image can't optimize it */}
+              <img
+                src={assetUrl(asset.id, "thumb")}
+                alt={asset.filename}
+                loading="lazy"
+                decoding="async"
+                className={
+                  isBrand ? "size-full object-contain p-2" : "size-full object-cover"
+                }
+              />
+            </a>
+          </li>
+        ))}
+      </ul>
+      {assets.length > IMAGE_PREVIEW_LIMIT ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="mt-2 self-start px-1 text-[11px] font-medium underline-offset-2 hover:underline"
+          style={{ color: "var(--ws-text-2)" }}
+        >
+          {expanded ? "Show less" : `Show all ${assets.length}`}
+        </button>
       ) : null}
     </div>
   );
@@ -194,27 +268,32 @@ function FileTypeIcon({
 // yet (see docs/brand-workspace-migration.md §7 Phase 9 audit), so this
 // approximates the spec's exact 3-group split (Brand / Images / Documents)
 // instead of building new upload-time classification for it.
-function groupAssets(
+export function groupAssets(
   assets: LibraryAsset[],
-): { label: string; assets: LibraryAsset[] }[] {
+): { label: string; kind: "images" | "list"; assets: LibraryAsset[] }[] {
   const brand: LibraryAsset[] = [];
   const images: LibraryAsset[] = [];
   const documents: LibraryAsset[] = [];
 
   for (const asset of assets) {
     const name = asset.filename.toLowerCase();
-    if (name.includes("logo") || name.includes("brand")) {
+    const isImage = asset.mimeType.startsWith("image/");
+    if (isImage && (name.includes("logo") || name.includes("brand"))) {
       brand.push(asset);
-    } else if (asset.mimeType.startsWith("image/")) {
+    } else if (isImage) {
       images.push(asset);
     } else {
       documents.push(asset);
     }
   }
 
-  return [
-    { label: "Brand", assets: brand },
-    { label: "Images", assets: images },
-    { label: "Documents", assets: documents },
-  ].filter((group) => group.assets.length > 0);
+  return (
+    [
+      { label: "Brand", kind: "images", assets: brand },
+      { label: "Images", kind: "images", assets: images },
+      { label: "Documents", kind: "list", assets: documents },
+    ] as const
+  )
+    .filter((group) => group.assets.length > 0)
+    .map((group) => ({ ...group, assets: [...group.assets] }));
 }

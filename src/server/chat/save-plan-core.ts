@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import { creativeFieldsOfPlanItem } from "@/lib/works/plan-item-fields";
+import { expandForPlatforms } from "@/lib/works/plan-platforms";
 import { zonedDateTimeToUtc } from "@/lib/timezone";
 import { isIdeaEventCardData } from "@/types/idea-event-card";
 
@@ -47,8 +48,15 @@ export async function savePlanSlotsInTx(
     };
   }
 
+  // A social media plan (Works) is general: its items are posts and the card
+  // names the platforms they go to, so each post becomes one piece per platform.
+  // The saved card keeps the expanded items: slot i is item i.
+  const items =
+    Array.isArray(card.platforms) && card.platforms.length > 0
+      ? expandForPlatforms(card.items, card.platforms)
+      : card.items;
   const creativeIds: string[] = [];
-  for (const item of card.items) {
+  for (const item of items) {
     const fields = creativeFieldsOfPlanItem(item);
     const creative = await tx.creative.create({
       data: {
@@ -79,7 +87,7 @@ export async function savePlanSlotsInTx(
     data: {
       parsedIntent: {
         ...intent,
-        card: { ...card, state: "saved", savedCreativeIds: creativeIds },
+        card: { ...card, items, state: "saved", savedCreativeIds: creativeIds },
       } as never,
     },
   });

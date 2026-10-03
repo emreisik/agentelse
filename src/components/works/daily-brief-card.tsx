@@ -4,7 +4,7 @@ import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sun } from "lucide-react";
 
-import { ChannelBadge } from "@/components/commands/channel-badge";
+import { ChannelMark } from "@/components/commands/channel-badge";
 import { WsStatusPill } from "@/components/commands/ws-event-card";
 import { workHref } from "@/components/layout/work-list";
 import { ActionCard } from "@/components/works/action-card";
@@ -204,7 +204,7 @@ export function DailyBriefCard({ card }: { card: DailyBrief }) {
                     ) : null}
                     <li className="flex flex-wrap items-center gap-x-2 gap-y-1">
                       {row.channel ? (
-                        <ChannelBadge channel={row.channel} />
+                        <ChannelMark channel={row.channel} />
                       ) : null}
                       <span
                         className="min-w-0 flex-1 text-sm"

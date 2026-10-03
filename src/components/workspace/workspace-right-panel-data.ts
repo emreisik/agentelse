@@ -1,39 +1,14 @@
 import "server-only";
 
-import type {
-  CreativeContentFormat,
-  CreativeStatus,
-  CreativeType,
-  SocialPlatform,
-} from "@prisma/client";
+import type { CreativeStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { buildBrandKit, type BrandKit } from "@/lib/brand-kit";
 import type { ConnectedAccount } from "@/lib/connected-accounts";
 import { loadConnectedAccounts } from "@/server/integrations/connected-accounts";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
-import { CreativeRepository } from "@/server/repositories/creative.repository";
 import { getBrandTwin, type BrandTwin } from "@/server/brand-twin/brand-twin";
 import type { LibraryAsset } from "@/components/hub-core/panels/library-browser";
-
-export type WorkspaceOutputItem = {
-  id: string;
-  type: CreativeType;
-  platform: SocialPlatform | null;
-  status: CreativeStatus;
-  title: string | null;
-  createdAt: string;
-  assetId: string | null;
-  // From the latest CreativeVersion (see toOutputItem) — the real signal
-  // behind the Outputs panel's Post/Story/Reel filter (spec: "All / Post
-  // / Story / Reel / Ad"), rather than guessing from CreativeType
-  // alone (which has no distinct Story/Reel value).
-  contentFormat: CreativeContentFormat | null;
-};
-
-export type WorkspaceCalendarItem = WorkspaceOutputItem & {
-  scheduledFor: string;
-};
 
 // Real counts behind the workspace root's "Resume where we left off" card
 // (product spec's "Home/Dashboard" section) — deliberately just three status
@@ -56,16 +31,11 @@ export type WorkspaceRightPanelData = {
   connections: ConnectedAccount[];
   resumeStats: WorkspaceResumeStats;
   files: LibraryAsset[];
-  outputs: WorkspaceOutputItem[];
+  // The Calendar tab reads its own data client-side from the board's light
+  // endpoint (calendar-panel.tsx); the page only hands it the project's
+  // scheduling timezone so "today" matches the server's day keys.
   calendar: {
-    items: WorkspaceCalendarItem[];
-    // Approved/in-review/draft creatives with a platform but no
-    // scheduledFor yet — listForCalendarRange already returns these
-    // alongside the month's scheduled items (its OR clause has no date
-    // filter on this branch), so no separate query is needed.
-    unscheduled: WorkspaceOutputItem[];
     timezone: string;
-    month: string; // "YYYY-MM", the range `items` was fetched for
   };
 };
 
@@ -80,44 +50,18 @@ async function loadBrandStyle(projectId: string) {
   return brand ? resolveBrandStyleContext(brand.id) : null;
 }
 
-function toOutputItem(
-  creative: Awaited<
-    ReturnType<typeof CreativeRepository.listRecentForPanel>
-  >[number],
-): WorkspaceOutputItem {
-  return {
-    id: creative.id,
-    type: creative.type,
-    platform: creative.platform,
-    status: creative.status,
-    title: creative.title,
-    createdAt: creative.createdAt.toISOString(),
-    assetId: creative.versions[0]?.asset?.id ?? null,
-    contentFormat: creative.versions[0]?.contentFormat ?? null,
-  };
-}
-
-// One Promise.all for the Brand Workspace right panel's four tabs (Brand /
-// Files / Outputs / Calendar) — same "one fetch, several cheap read models"
+// One Promise.all for the Brand Workspace right panel's server-fed tabs (Brand
+// / Files; Outputs and Calendar read their own light endpoints client-side,
+// see outputs-panel.tsx and calendar-panel.tsx) — same "one fetch, several cheap read models"
 // shape as app-shell.tsx's getSidebarData, so the panel doesn't add a
 // second request waterfall alongside the page's own root-branch fetch.
 // getBrandTwin() runs its own internal composition (see brand-twin.ts) but
 // is still just one more parallel branch here, not a second round-trip.
+export const FILES_PANEL_LIMIT = 120;
+
 export async function getWorkspaceRightPanelData(
   projectId: string,
-  // "YYYY-MM" — the right panel's own inline month navigation (see
-  // calendar-panel.tsx's `?calMonth=`), independent of hub-core's
-  // panel/sub/entity params. Invalid/absent falls back to the current
-  // month, same as before this param existed.
-  opts?: { month?: string },
 ): Promise<WorkspaceRightPanelData> {
-  const now = new Date();
-  const parsedMonth = opts?.month?.match(/^(\d{4})-(\d{2})$/);
-  const year = parsedMonth ? Number(parsedMonth[1]) : now.getFullYear();
-  const monthIndex = parsedMonth ? Number(parsedMonth[2]) - 1 : now.getMonth();
-  const monthStart = new Date(year, monthIndex, 1);
-  const monthEnd = new Date(year, monthIndex + 1, 0, 23, 59, 59);
-
   // The account card needs the project's website, so it chains off this query
   // inside the same Promise.all rather than waiting for the batch to finish.
   const projectPromise = prisma.project.findUnique({
@@ -130,8 +74,6 @@ export async function getWorkspaceRightPanelData(
     project,
     connections,
     assets,
-    recentCreatives,
-    calendarCreatives,
     schedule,
     statusCounts,
     brandStyle,
@@ -141,9 +83,12 @@ export async function getWorkspaceRightPanelData(
     projectPromise.then((row) =>
       loadConnectedAccounts(projectId, row?.domain ?? null),
     ),
+    // The newest files only: every generated image lands here, and the whole
+    // list is sent to the browser with the page. The full set is in Library.
     prisma.asset.findMany({
       where: { projectId },
       orderBy: { createdAt: "desc" },
+      take: FILES_PANEL_LIMIT,
       select: {
         id: true,
         filename: true,
@@ -152,11 +97,6 @@ export async function getWorkspaceRightPanelData(
         createdAt: true,
         type: true,
       },
-    }),
-    CreativeRepository.listRecentForPanel(projectId),
-    CreativeRepository.listForCalendarRange(projectId, {
-      from: monthStart,
-      to: monthEnd,
     }),
     prisma.projectSchedule.findFirst({
       where: { projectId, capability: "INSTAGRAM_PUBLISH" },
@@ -199,19 +139,8 @@ export async function getWorkspaceRightPanelData(
       ...asset,
       createdAt: asset.createdAt.toISOString(),
     })),
-    outputs: recentCreatives.map(toOutputItem),
     calendar: {
-      items: calendarCreatives
-        .filter((creative) => creative.scheduledFor)
-        .map((creative) => ({
-          ...toOutputItem(creative),
-          scheduledFor: creative.scheduledFor!.toISOString(),
-        })),
-      unscheduled: calendarCreatives
-        .filter((creative) => !creative.scheduledFor)
-        .map(toOutputItem),
       timezone: schedule?.timezone ?? "Europe/Istanbul",
-      month: `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, "0")}`,
     },
   };
 }

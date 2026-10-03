@@ -178,3 +178,78 @@ describe("buildCreativePrompt with a post layout", () => {
     expect(prompt).toContain("Place it on a calm area of the scene");
   });
 });
+
+describe("buildCreativePrompt with a Post Style Kit", () => {
+  const section = "REFERENCE POSTS: the first 2 attached images are example posts.\n\nALWAYS: dark.";
+
+  it("puts the kit's section right after the subject, above every other taste", () => {
+    const prompt = buildCreativePrompt({
+      subject: "an iPhone auction",
+      postStyle: section,
+    });
+    const sections = prompt.split("\n\n");
+    expect(sections[0]).toBe("SUBJECT: an iPhone auction");
+    expect(prompt).toContain(`POST STYLE KIT:\n${section}`);
+    expect(prompt.indexOf("POST STYLE KIT:")).toBeLessThan(
+      prompt.indexOf("STYLE & LIGHTING:"),
+    );
+  });
+
+  it("adds nothing without a kit", () => {
+    const prompt = buildCreativePrompt({ subject: "s" });
+    expect(prompt).not.toContain("POST STYLE KIT");
+    expect(buildCreativePrompt({ subject: "s", postStyle: null })).toBe(prompt);
+  });
+
+  it("matching the examples: the layout's scene notes stand aside, its reserved areas do not", () => {
+    const input = {
+      subject: "s",
+      layoutComposition: "Keep the upper third calm.",
+      reservedZones: "the bottom band",
+    };
+    const free = buildCreativePrompt(input);
+    expect(free).toContain("Keep the upper third calm.");
+    const matched = buildCreativePrompt({ ...input, matchStyle: true });
+    expect(matched).not.toContain("Keep the upper third calm.");
+    expect(matched).toContain("which are covered afterwards: the bottom band");
+  });
+
+  it("matching the examples: the headline takes the reference posts' typography and places", () => {
+    const prompt = buildCreativePrompt({
+      subject: "s",
+      matchStyle: true,
+      typography: {
+        headline: "iPhone 16 Pro Max",
+        highlight: "Pro Max",
+        placement: "large, centered, in the upper third",
+      },
+    });
+    expect(prompt).toContain(
+      'HEADLINE: "iPhone 16 Pro Max" — set in the typeface, weight, case, colour and size relationship of the headline in the reference posts',
+    );
+    expect(prompt).toContain("the way the reference posts highlight words");
+    expect(prompt).toContain("Place every text where the reference posts place that kind of text.");
+    // The layout's own placement is not used: the examples decide.
+    expect(prompt).not.toContain("in the upper third");
+  });
+
+  it("further on-image texts are rendered exactly once each, and only those", () => {
+    const prompt = buildCreativePrompt({
+      subject: "s",
+      typography: {
+        headline: "Hello",
+        lines: ["Başlangıç 1 TL", "  ", "Teklif ver"],
+      },
+    });
+    expect(prompt).toContain("Render exactly these texts");
+    expect(prompt).toContain("They are the ONLY texts in the image.");
+    expect(prompt).toContain(
+      'OTHER TEXTS, each exactly once, placed where the design puts that kind of text (sub-headline, price, button label, badge): "Başlangıç 1 TL", "Teklif ver".',
+    );
+    expect(prompt).not.toContain('""');
+    // A single headline keeps its old wording.
+    expect(
+      buildCreativePrompt({ subject: "s", typography: { headline: "Hello" } }),
+    ).toContain("Render exactly this text, character for character");
+  });
+});

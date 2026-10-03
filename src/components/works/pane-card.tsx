@@ -13,6 +13,7 @@ import {
 import * as React from "react";
 import { createPortal } from "react-dom";
 
+import { ChannelMark } from "@/components/commands/channel-badge";
 import { WsStatusPill } from "@/components/commands/ws-event-card";
 import { useWorkspaceDetail } from "@/components/workspace/workspace-panel-toggle";
 import {
@@ -86,11 +87,24 @@ export function CompactCardView({
         >
           {spec.title}
         </span>
-        <span
-          className="block truncate text-xs"
-          style={{ color: "var(--ws-text-2)" }}
-        >
-          {spec.subtitle}
+        <span className="flex min-w-0 items-center gap-2">
+          <span
+            className="truncate text-xs"
+            style={{ color: "var(--ws-text-2)" }}
+          >
+            {spec.subtitle}
+          </span>
+          {spec.channels?.length ? (
+            <span data-card-channels className="flex shrink-0 items-center gap-1">
+              {spec.channels.map((channel) => (
+                <ChannelMark
+                  key={channel}
+                  channel={channel}
+                  className="size-4 rounded"
+                />
+              ))}
+            </span>
+          ) : null}
         </span>
       </span>
       {spec.status ? (
@@ -126,12 +140,15 @@ export function PaneCardView({
   cardId,
   spec,
   children,
+  below,
   buttonRef,
 }: {
   pane: PaneContext | null;
   cardId: string;
   spec: CompactCardSpec;
   children?: React.ReactNode;
+  // Shown under the compact card only (a plan's two quick links).
+  below?: React.ReactNode;
   buttonRef?: React.Ref<HTMLButtonElement>;
 }) {
   if (!pane) return <>{children}</>;
@@ -144,6 +161,7 @@ export function PaneCardView({
         onOpen={() => pane.openDetail(cardId, spec.title)}
         buttonRef={buttonRef}
       />
+      {below}
       {open && pane.detailContainer
         ? createPortal(children, pane.detailContainer)
         : null}
@@ -157,10 +175,12 @@ export function PaneCard({
   cardId,
   spec,
   children,
+  below,
 }: {
   cardId: string;
   spec: CompactCardSpec;
   children?: React.ReactNode;
+  below?: React.ReactNode;
 }) {
   const pane = useWorkspaceDetail();
   const buttonRef = React.useRef<HTMLButtonElement>(null);
@@ -193,6 +213,7 @@ export function PaneCard({
       cardId={cardId}
       spec={spec}
       buttonRef={buttonRef}
+      below={below}
     >
       {children}
     </PaneCardView>

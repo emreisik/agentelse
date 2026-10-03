@@ -58,7 +58,8 @@ export function frameTaskResult(resultText: string): string {
   ].join("\n");
 }
 
-function attachmentNote(attachments: unknown): string {
+// " [attached: a.png, b.pdf]" for a message's stored files ("" for none).
+export function attachmentNote(attachments: unknown): string {
   if (!Array.isArray(attachments) || attachments.length === 0) return "";
   const names = (attachments as { filename?: string }[])
     .map((attachment) => attachment.filename ?? "file")

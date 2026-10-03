@@ -4,17 +4,17 @@ import type { ReactNode } from "react";
 import { Layers } from "lucide-react";
 
 import { CreativeCard } from "@/components/commands/creative-card";
-import { ContentPlanCard } from "@/components/commands/content-plan-card";
 import { WsEventCard } from "@/components/commands/ws-event-card";
 import { FacebookShareRow } from "@/components/integrations/facebook-share-row";
 import { useCardFocus } from "@/components/works/card-focus";
 import { AdsInsightCard } from "@/components/works/ads-insight-card";
 import { CreativePublishLine } from "@/components/works/creative-publish-line";
+import { CreativeRating } from "@/components/works/creative-rating";
 import { CreativeVariantsStrip } from "@/components/works/creative-variants-strip";
 import { DailyBriefCard } from "@/components/works/daily-brief-card";
 import { MasterContentCard } from "@/components/works/master-content-card";
 import { IdeaOptionsCard } from "@/components/works/idea-options-card";
-import { PlanCardExtras } from "@/components/works/plan-card-extras";
+import { ContentPlanPane } from "@/components/works/plan-pane/plan-pane";
 import { PlanOptionsCard } from "@/components/works/plan-options-card";
 import { PaneCard } from "@/components/works/pane-card";
 import { PlannedSlotCard } from "@/components/works/planned-slot-card";
@@ -45,12 +45,14 @@ export function inPane(
   card: IdeaEventCardData,
   commandId: string | undefined,
   element: ReactNode,
+  // Under the compact card, outside the pane (a plan's quick links).
+  below?: ReactNode,
 ): ReactNode {
   const spec = compactSpecOf(card);
   if (!spec) return element;
   const id = commandId ?? spec.title;
   return (
-    <PaneCard key={`pane-${id}`} cardId={id} spec={spec}>
+    <PaneCard key={`pane-${id}`} cardId={id} spec={spec} below={below}>
       {element}
     </PaneCard>
   );
@@ -100,6 +102,13 @@ export function renderWorksCard(
   }
 }
 
+// A post the client can still pass a verdict on: finished, not replaced.
+const RATED_STATUSES: ReadonlySet<string> = new Set([
+  "IN_REVIEW",
+  "APPROVED",
+  "PUBLISHED",
+]);
+
 const MASTER_LINE_MAX = 140;
 
 function clip(text: string): string {
@@ -145,11 +154,7 @@ export function WorksPlanCard({
           {clip(card.master.message)}
         </p>
       ) : null}
-      <ContentPlanCard
-        card={card}
-        commandId={commandId}
-        aboveActions={<PlanCardExtras card={card} commandId={commandId} />}
-      />
+      <ContentPlanPane card={card} commandId={commandId} />
     </div>
   );
 }
@@ -169,6 +174,10 @@ export function WorksCreativeCard({
         <CreativeVariantsStrip card={card} planCommandId={card.planId} />
       ) : null}
       <CreativePublishLine card={card} />
+      {/* What the brand learns from this post (a finished one only). */}
+      {RATED_STATUSES.has(card.status) ? (
+        <CreativeRating creativeId={card.creativeId} />
+      ) : null}
       {/* A cross-post on the project's Facebook Page; renders nothing when no
           Page is connected. Only a finished piece can be shared, and only
           here when the publish line owns publishing: otherwise the card's

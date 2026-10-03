@@ -18,6 +18,7 @@ import {
   markCreativePublishedAction,
   type ManualPublishItem,
 } from "@/server/actions/plan-progress-actions";
+import { assetUrl } from "@/lib/asset-url";
 
 // "Publish N": approved pieces the client posts themselves (a Reel, a
 // carousel, a blog article, a post on an account that is not connected). The
@@ -54,7 +55,7 @@ export function ManualPublishList({
             {item.assetId ? (
               // eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it
               <img
-                src={`/api/assets/${item.assetId}`}
+                src={assetUrl(item.assetId, "thumb")}
                 alt=""
                 className="size-14 shrink-0 rounded-md object-cover"
               />

@@ -20,6 +20,17 @@ vi.mock("@/lib/rate-limit", () => ({ isRateLimited }));
 const runChatAgent = vi.fn();
 vi.mock("@/server/chat/chat-agent", () => ({ runChatAgent }));
 
+const commands = vi.hoisted(() => ({
+  runningTurnIds: vi.fn(),
+  markInterrupted: vi.fn(),
+  supersedeFrom: vi.fn(),
+}));
+vi.mock("@/server/repositories/command.repository", () => ({
+  CommandRepository: commands,
+}));
+const loadAttachmentBodies = vi.hoisted(() => vi.fn());
+vi.mock("@/server/chat/history-files", () => ({ loadAttachmentBodies }));
+
 const storeChatFiles = vi
   .fn()
   .mockResolvedValue({ attachments: [], attachmentBodies: [] });
@@ -41,6 +52,7 @@ vi.mock("@/server/works/channel-defaults", () => ({
 }));
 
 const { POST } = await import("./route");
+const { __resetChatRunsForTests } = await import("@/server/chat/run-registry");
 const { AgentelseError } = await import("@/server/security/errors");
 const { createSseParser } = await import("@/server/chat/sse");
 
@@ -61,6 +73,10 @@ function request(fields: Record<string, string | string[] | File | File[]>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetChatRunsForTests();
+  commands.runningTurnIds.mockResolvedValue([]);
+  commands.markInterrupted.mockResolvedValue(0);
+  loadAttachmentBodies.mockResolvedValue([]);
   requireUser.mockResolvedValue({ userId: "user-1", email: null });
   requireProjectAccess.mockResolvedValue({
     workspaceId: "ws-1",

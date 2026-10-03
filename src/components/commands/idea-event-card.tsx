@@ -55,6 +55,7 @@ import { CreativeCard } from "@/components/commands/creative-card";
 import { ContentPlanCard } from "@/components/commands/content-plan-card";
 import { PlanBriefWizard } from "@/components/commands/plan-brief-wizard";
 import { ChannelSelectCard } from "@/components/works/channel-select-card";
+import { PlanQuickLinks } from "@/components/works/plan-pane/quick-links";
 import { useWorkCardHost } from "@/components/works/work-card-host";
 import {
   WORKS_ONLY_KINDS,
@@ -92,6 +93,7 @@ import {
 } from "@/server/actions/human-action-actions";
 import { submitChatMessageAction } from "@/server/actions/command-actions";
 import { useChatSend } from "@/components/commands/chat-send-context";
+import { assetUrl } from "@/lib/asset-url";
 
 // Narrows a raw department string (e.g. "BRAND_STRATEGY") to DepartmentKey
 // if valid — so that EVERYWHERE a department is mentioned in cards, the
@@ -375,6 +377,7 @@ export function IdeaEventCard({
           card,
           commandId,
           <WorksPlanCard card={card} commandId={commandId} />,
+          <PlanQuickLinks projectId={host.projectId} workId={host.workId} />,
         )
       ) : (
         <ContentPlanCard card={card} commandId={commandId} />
@@ -1241,8 +1244,10 @@ function ContentPlanSummaryCard({
           {card.items.map((item) => {
             const thumb = item.assetId ? (
               <img
-                src={`/api/assets/${item.assetId}`}
+                src={assetUrl(item.assetId, "thumb")}
                 alt={item.title}
+                loading="lazy"
+                decoding="async"
                 className="size-full object-cover"
               />
             ) : (

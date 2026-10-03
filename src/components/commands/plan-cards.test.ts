@@ -201,7 +201,7 @@ describe("ContentPlanCard", () => {
 
     it("marks each piece with its stage and shows the thumbnail of a made one", () => {
       const out = inChat(savedWithSlots);
-      expect(out).toContain('src="/api/assets/asset-1"');
+      expect(out).toContain('src="/api/assets/asset-1?w=320"');
       expect(out).toContain("Waiting for your decision");
     });
   });

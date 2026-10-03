@@ -39,6 +39,7 @@ import {
 } from "@/server/actions/publish-actions";
 import type { PublishTarget } from "@/server/integrations/meta-connection-status";
 import type { CreativeCardData } from "@/types/creative-card";
+import { assetUrl } from "@/lib/asset-url";
 
 // Visual representation of a creative/image generation event in the chat —
 // the same logic as ChatGPT's "loading" → result card transition while
@@ -208,7 +209,7 @@ function CreativeReadyCard({
     });
   };
 
-  const src = card.assetId ? `/api/assets/${card.assetId}` : undefined;
+  const src = card.assetId ? assetUrl(card.assetId, "card") : undefined;
   const isImage = card.mimeType?.startsWith("image/") ?? Boolean(src);
   const status = localStatus ?? card.status;
   const canDecide = status === "IN_REVIEW" && Boolean(card.approvalId);
@@ -290,7 +291,7 @@ function CreativeReadyCard({
         >
           {src && isImage ? (
             <ImageLightbox
-              src={src}
+              src={card.assetId ? assetUrl(card.assetId, "large") : src}
               alt={displayTitle}
               title={title}
               className="block h-full"
@@ -299,6 +300,8 @@ function CreativeReadyCard({
               <img
                 src={src}
                 alt={displayTitle}
+                loading="lazy"
+                decoding="async"
                 style={{ aspectRatio: `${displayWidth} / ${displayHeight}` }}
                 className="w-full object-cover"
               />

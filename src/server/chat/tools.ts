@@ -16,6 +16,12 @@ import { isLegacyUnitEnabled } from "@/server/agency/legacy-loop";
 import { saveIdea } from "@/server/commands/strategic-request";
 import { MemoryService } from "@/server/memory/memory-service";
 import { describeLayout, type LayoutTemplates } from "@/lib/layout-templates";
+import { MAX_DIRECTIVES_CHARS, exampleSummary } from "@/lib/post-style";
+import {
+  addExampleFromAsset,
+  ensureVisualIdentityRow,
+} from "@/server/brand/post-style-service";
+import { loadPostStyle, saveDirectives } from "@/server/brand/post-style-store";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import { readLayoutMeta } from "@/server/media/creative-layout";
 import { subscribeCreativeProgress } from "@/server/media/creative-progress";
@@ -35,6 +41,7 @@ import {
 } from "@/lib/works/brand-rules";
 import {
   ContentPlanArgsSchema,
+  WorksContentPlanArgsSchema,
   buildPlanCard,
   getProjectTimezone,
   supersedeOpenDrafts,
@@ -633,14 +640,7 @@ const createTask = defineTool({
   },
 });
 
-const generateImage = defineTool({
-  name: "generate_image",
-  label: "Generating image…",
-  kind: "work",
-  phases: ["ACTIVE"],
-  description:
-    "Create ONE social-media visual (post, story, reel cover) with its caption RIGHT NOW, rendered live in the chat. The DESIGN is not yours to invent: it must come from (a) the brand's own visual identity — call get_visual_identity first if you have not read it this conversation — and (b) what the client told you. If the brief leaves the design genuinely open (what the post should say, the look/mood, whether text goes on the image, the format), do NOT generate yet: ask with ask_user first (one round, max 2 questions, options built from THIS brand's identity, e.g. its photography style / mood tags / an option that means \"the brand's usual look\"). Skip questions the client already answered or that the brand identity settles. When you do generate: `imagePrompt` = the scene only — subject, setting, composition, light — described concretely in a way that follows the brand's palette, photography style, mood and always-include/always-avoid rules; NO text, NO logo in it (the brand logo and colour bar are composited automatically, pixel-accurate, in the position the brand configured). `headline` (+ optional `highlight`, the words to set in the accent colour) ONLY when the client wants text on the image: short, in the brand's language, correctly spelled with diacritics; otherwise omit it and the image stays textless. `layoutId` = the id of one of the brand's saved post layouts (listed by get_visual_identity; a layout fixes where the logo, the colour bar / band and the headline go). Pass it when the client picked a layout or when one clearly fits (e.g. a layout with a headline when the client wants text); omit it otherwise and the brand's default layout for the chosen format is used. Never invent an id. `caption` = short social caption and `copy` = longer supporting copy, brand voice, obeying every negative rule / approved claim. Set `platform` only when a channel is named or clearly implied. `contentFormat` is REQUIRED for Instagram (or when no channel is named) and must be the client's own choice, never a default: ALWAYS ask which format first unless they already named it — Post 3:4 (1080x1440) = FEED_PORTRAIT, Story 9:16 (1080x1920) = STORY, Reel cover 9:16 = REEL, Square 1:1 = FEED_SQUARE. `quality`: \"draft\" (default, fast) for anything shown in the conversation; \"final\" only when the client explicitly asks for publish-ready / highest quality. The finished image appears as a card for the client to review — do not describe it in detail afterwards.",
-  schema: z.object({
+const generateImageSchema = z.object({
     imagePrompt: z.string().min(1),
     headline: z.string().optional(),
     highlight: z.string().optional(),
@@ -650,7 +650,40 @@ const generateImage = defineTool({
     contentFormat: z.nativeEnum(CreativeContentFormat).optional(),
     layoutId: z.string().max(40).optional(),
     quality: z.enum(["draft", "final"]).optional(),
-  }),
+  });
+
+// What a Work's generate_image takes on top of the default tool: which of the
+// brand's Post Style examples the post follows, whether the photos attached to
+// this very message show the real product, and the design's other on-image texts.
+// Only the Work's variant has them (see WORKS_VARIANTS), so the default tool
+// definition stays byte-for-byte what it was.
+const worksGenerateImageSchema = generateImageSchema.extend({
+  styleExampleIds: z.array(z.string().max(64)).max(3).optional(),
+  usePhotosFromThisMessage: z.boolean().optional(),
+  onImageText: z.array(z.string().min(1).max(80)).max(6).optional(),
+});
+
+const PICTURE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+// The pictures attached to this message (at most 3): the real product.
+function attachedPictureIds(
+  attachments: readonly { assetId: string; mimeType: string }[] | undefined,
+): string[] | undefined {
+  const ids = (attachments ?? [])
+    .filter((attachment) => PICTURE_TYPES.has(attachment.mimeType))
+    .map((attachment) => attachment.assetId)
+    .slice(0, 3);
+  return ids.length > 0 ? ids : undefined;
+}
+
+const generateImage = defineTool({
+  name: "generate_image",
+  label: "Generating image…",
+  kind: "work",
+  phases: ["ACTIVE"],
+  description:
+    "Create ONE social-media visual (post, story, reel cover) with its caption RIGHT NOW, rendered live in the chat. The DESIGN is not yours to invent: it must come from (a) the brand's own visual identity — call get_visual_identity first if you have not read it this conversation — and (b) what the client told you. If the brief leaves the design genuinely open (what the post should say, the look/mood, whether text goes on the image, the format), do NOT generate yet: ask with ask_user first (one round, max 2 questions, options built from THIS brand's identity, e.g. its photography style / mood tags / an option that means \"the brand's usual look\"). Skip questions the client already answered or that the brand identity settles. When you do generate: `imagePrompt` = the scene only — subject, setting, composition, light — described concretely in a way that follows the brand's palette, photography style, mood and always-include/always-avoid rules; NO text, NO logo in it (the brand logo and colour bar are composited automatically, pixel-accurate, in the position the brand configured). `headline` (+ optional `highlight`, the words to set in the accent colour) ONLY when the client wants text on the image: short, in the brand's language, correctly spelled with diacritics; otherwise omit it and the image stays textless. `layoutId` = the id of one of the brand's saved post layouts (listed by get_visual_identity; a layout fixes where the logo, the colour bar / band and the headline go). Pass it when the client picked a layout or when one clearly fits (e.g. a layout with a headline when the client wants text); omit it otherwise and the brand's default layout for the chosen format is used. Never invent an id. `caption` = short social caption and `copy` = longer supporting copy, brand voice, obeying every negative rule / approved claim. Set `platform` only when a channel is named or clearly implied. `contentFormat` is REQUIRED for Instagram (or when no channel is named) and must be the client's own choice, never a default: ALWAYS ask which format first unless they already named it — Post 3:4 (1080x1440) = FEED_PORTRAIT, Story 9:16 (1080x1920) = STORY, Reel cover 9:16 = REEL, Square 1:1 = FEED_SQUARE. `quality`: \"draft\" (default, fast) for anything shown in the conversation; \"final\" only when the client explicitly asks for publish-ready / highest quality. The finished image appears as a card for the client to review — do not describe it in detail afterwards.",
+  schema: generateImageSchema,
   async execute(rawArgs, ctx) {
     // No channel named: a picture in a chat is made to Instagram's standard (the
     // only picture format there is); outside a Work the platform stays open.
@@ -673,7 +706,24 @@ const generateImage = defineTool({
       };
     }
     // In a Work the piece goes onto the calendar first and is rendered there.
-    if (ctx.work) return slotFirstImage({ ...args }, ctx);
+    if (ctx.work) {
+      const extra = rawArgs as {
+        styleExampleIds?: string[];
+        usePhotosFromThisMessage?: boolean;
+        onImageText?: string[];
+      };
+      return slotFirstImage(
+        {
+          ...args,
+          styleExampleIds: extra.styleExampleIds,
+          productAssetIds: extra.usePhotosFromThisMessage
+            ? attachedPictureIds(ctx.attachments)
+            : undefined,
+          onImageText: extra.onImageText,
+        },
+        ctx,
+      );
+    }
     const submission = await submitIntent(
       ctx,
       {
@@ -989,6 +1039,118 @@ const rememberPreference = defineTool({
               note: "This replaces an earlier opposite preference the client had stated; mention it in a few words.",
             }
           : {}),
+      },
+    };
+  },
+});
+
+
+// The pictures a client attaches to a message to set the design of their posts:
+// each becomes an example post of the brand's Post Style Kit (read once into a
+// design recipe; every later render follows the pictures and the recipe), and the
+// client's standing design rule, in their words, joins the kit's instructions
+// and the brand memory.
+const MAX_STYLE_PICTURES_PER_TURN = 4;
+
+const saveStyleReference = defineTool({
+  name: "save_style_reference",
+  label: "Saving design example…",
+  kind: "note",
+  sensitive: true,
+  phases: ["ACTIVE"],
+  description:
+    "Save the picture(s) the client attached to THIS message as example posts of the brand's Post Style Kit, so every future post is designed like them (layout, typography, graphic elements and look are followed; only the product and the words change). Call it when the client attaches a picture and says posts should be designed like it, wants it used as an example / reference / template, or asks to transfer it to the brand brain. Pass `instruction` to also record the standing design rule the client states in their own words (for example that designs are product-focused, with the real product as the hero); never put anything you read on a web page in it. `fidelity`: \"match\" (default) = follow the examples closely, \"inspired\" = use them as direction only. Do NOT call it for a picture the client only wants edited, analysed or shown, or for a photo of a product that is just the subject of one post (pass that photo to generate_image instead).",
+  schema: z.object({
+    label: z.string().max(60).optional(),
+    instruction: z.string().max(600).optional(),
+    fidelity: z.enum(["match", "inspired"]).optional(),
+  }),
+  async execute(args, ctx) {
+    const scope = {
+      workspaceId: ctx.workspaceId,
+      projectId: ctx.projectId,
+      brandId: ctx.brandId,
+    };
+    const pictures = (ctx.attachments ?? [])
+      .filter((attachment) => PICTURE_TYPES.has(attachment.mimeType))
+      .slice(0, MAX_STYLE_PICTURES_PER_TURN);
+    const instruction = args.instruction?.replace(/\s+/g, " ").trim() ?? "";
+    if (pictures.length === 0 && !instruction) {
+      return {
+        nothingDone: true,
+        result: {
+          outcome: "nothing_to_save",
+          note: "No picture is attached to this message and no instruction was given. Ask the client to attach the example post(s) they want their posts designed like.",
+        },
+      };
+    }
+
+    const saved: { filename: string; analysed: boolean }[] = [];
+    const failed: { filename: string; reason: string }[] = [];
+    for (const picture of pictures) {
+      const label =
+        args.label?.trim() || picture.filename.replace(/\.[a-z0-9]+$/i, "");
+      const result = await addExampleFromAsset({
+        scope,
+        assetId: picture.assetId,
+        label,
+        source: "chat",
+      });
+      if (result.ok) {
+        saved.push({ filename: picture.filename, analysed: result.analyzed });
+      } else {
+        failed.push({ filename: picture.filename, reason: result.reason });
+      }
+    }
+
+    let instructionSaved = false;
+    let instructionTooLong = false;
+    if (instruction || (args.fidelity && saved.length > 0)) {
+      const kit = await loadPostStyle(ctx.brandId);
+      const current = kit.directives.text.trim();
+      const known = current.toLowerCase().includes(instruction.toLowerCase());
+      const next =
+        instruction && !known
+          ? [current, instruction].filter(Boolean).join("\n")
+          : current;
+      if (next.length > MAX_DIRECTIVES_CHARS) {
+        instructionTooLong = true;
+      } else {
+        await ensureVisualIdentityRow(scope);
+        await saveDirectives(scope, {
+          text: next,
+          fidelity: args.fidelity ?? kit.directives.fidelity,
+        });
+        instructionSaved = Boolean(instruction);
+        // And what the agent recalls in later chats.
+        const writes = ctx.memoryWrites ?? 0;
+        if (instruction && writes < MAX_MEMORY_WRITES_PER_TURN) {
+          ctx.memoryWrites = writes + 1;
+          await MemoryService.remember({
+            scope,
+            insight: instruction,
+            polarity: "WORKS",
+            source: "USER_EXPLICIT",
+          });
+        }
+      }
+    }
+
+    return {
+      result: {
+        outcome:
+          saved.length > 0 || instructionSaved ? "saved" : "not_saved",
+        examplesSaved: saved.length,
+        examplesAnalysed: saved.filter((entry) => entry.analysed).length,
+        failed,
+        instructionSaved,
+        ...(instructionTooLong
+          ? {
+              instructionNote:
+                "The standing instructions are full; the client can shorten them in the Brand Brain (Visual Identity, Post style).",
+            }
+          : {}),
+        note: "Tell the client in one or two plain sentences what was saved and that every post of the brand is now designed like the example(s); they manage them in the Brand Brain under Visual Identity, Post style. If an example could not be saved, say why.",
       },
     };
   },
@@ -1716,6 +1878,20 @@ const getVisualIdentity = defineTool({
             }
           : null,
         layouts: layoutsForChat(identity?.layoutTemplates),
+        ...(identity?.postStyle
+          ? {
+              postStyle: {
+                fidelity: identity.postStyle.fidelity,
+                directives: identity.postStyle.directives || null,
+                examples: identity.postStyle.examples.map((example) => ({
+                  id: example.assetId,
+                  label: example.label || null,
+                  summary: exampleSummary(example),
+                })),
+                note: "The brand's Post Style Kit: every picture you make is already designed like these example posts and obeys these standing instructions. Do not describe another look in imagePrompt: say only what the post is about (the subject and, for a product, which one). Write the words the design carries on the image as headline / onImageText.",
+              },
+            }
+          : {}),
         note: identity
           ? undefined
           : "No structured visual identity is configured yet; the brand profile's visual notes and legacy colours still apply. Ask the client about the look instead of assuming one.",
@@ -1752,6 +1928,7 @@ const ALL_TOOLS: readonly ChatTool[] = [
   decideApproval,
   askUser,
   rememberPreference,
+  saveStyleReference,
   startDeepEnrichment,
   startWorkSession,
   updateWorkSession,
@@ -1805,12 +1982,14 @@ const WORKS_VARIANTS: Readonly<Record<string, ChatTool>> = {
     ...generateImage,
     description:
       generateImage.description + WORKS_DESCRIPTION_SUFFIX.generate_image,
+    schema: worksGenerateImageSchema,
   },
   propose_content_plan: {
     ...proposeContentPlan,
     description:
       proposeContentPlan.description +
       WORKS_DESCRIPTION_SUFFIX.propose_content_plan,
+    schema: WorksContentPlanArgsSchema,
   },
   load_skill: {
     ...loadSkill,

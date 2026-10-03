@@ -7,9 +7,16 @@ import {
 } from "@/server/security/tenant-context";
 import { isAgentelseError } from "@/server/security/errors";
 import { readAsset } from "@/server/storage/asset-storage";
+import {
+  assetThumbnail,
+  canResize,
+  parseAssetWidth,
+} from "@/server/storage/asset-thumbnail";
+
+const CACHE_CONTROL = "private, max-age=31536000, immutable";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ assetId: string }> },
 ) {
   const { assetId } = await params;
@@ -41,13 +48,27 @@ export async function GET(
     throw error;
   }
 
+  // ?w= asks for a resized preview (src/lib/asset-url.ts). A width outside
+  // the allowed set, or a file that is not a still image, gets the original.
+  const width = parseAssetWidth(new URL(request.url).searchParams.get("w"));
+  if (width && canResize(asset.mimeType)) {
+    try {
+      const preview = await assetThumbnail(assetId, width, () =>
+        readAsset(asset.storageKey),
+      );
+      return new NextResponse(new Uint8Array(preview), {
+        headers: { "Content-Type": "image/webp", "Cache-Control": CACHE_CONTROL },
+      });
+    } catch (error) {
+      // A file sharp cannot read is still served as it is, below.
+      console.error(`[api/assets] preview failed for asset ${assetId}`, error);
+    }
+  }
+
   try {
     const file = await readAsset(asset.storageKey);
     return new NextResponse(new Uint8Array(file), {
-      headers: {
-        "Content-Type": asset.mimeType,
-        "Cache-Control": "private, max-age=31536000, immutable",
-      },
+      headers: { "Content-Type": asset.mimeType, "Cache-Control": CACHE_CONTROL },
     });
   } catch (error) {
     // Distinguishes the two ways this can fail: a `local-asset://` key means

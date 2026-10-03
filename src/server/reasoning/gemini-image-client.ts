@@ -105,12 +105,21 @@ export async function generateGeminiImage(
   baseImage?: { data: string; mimeType: string },
   imageSize?: { width: number; height: number },
   referenceImage?: { data: string; mimeType: string },
+  // Several reference pictures (the brand's example posts, then the real
+  // product), in the order the prompt names them. Ignored in edit mode.
+  referenceImages?: { data: string; mimeType: string }[],
 ): Promise<GeneratedCreativeImage | null> {
   const env = getEnv();
   if (!env.GEMINI_API_KEY) return null;
 
   const model = env.GEMINI_IMAGE_MODEL;
-  const inputImage = baseImage ?? referenceImage;
+  const inputs = baseImage
+    ? [baseImage]
+    : referenceImages && referenceImages.length > 0
+      ? referenceImages
+      : referenceImage
+        ? [referenceImage]
+        : [];
 
   try {
     const response = await fetch(`${BASE_URL}/${model}:generateContent`, {
@@ -123,17 +132,18 @@ export async function generateGeminiImage(
         contents: [
           {
             role: "user",
-            parts: inputImage
-              ? [
-                  {
-                    inlineData: {
-                      mimeType: inputImage.mimeType,
-                      data: inputImage.data,
-                    },
-                  },
-                  { text: prompt },
-                ]
-              : [{ text: prompt }],
+            parts:
+              inputs.length > 0
+                ? [
+                    ...inputs.map((image) => ({
+                      inlineData: {
+                        mimeType: image.mimeType,
+                        data: image.data,
+                      },
+                    })),
+                    { text: prompt },
+                  ]
+                : [{ text: prompt }],
           },
         ],
         generationConfig: {

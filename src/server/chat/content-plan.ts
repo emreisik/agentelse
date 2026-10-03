@@ -33,35 +33,59 @@ export const MAX_PLAN_ITEMS = 30;
 // wrong (wrong year/month), not something the client meant.
 export const MAX_PLAN_HORIZON_DAYS = 60;
 const DEFAULT_TIME = "10:00";
+// The "purpose" line under a post's title stays a few words.
+const MAX_PURPOSE = 60;
 const DEFAULT_TIMEZONE = "Europe/Istanbul";
 
 // `channel` + `formatKey` (src/lib/content-channels.ts) say WHERE and IN WHAT
 // SHAPE. `platform` + free-text `format` are the pre-channel shape, still
 // accepted so older tool calls and saved plans keep working; buildPlanCard
 // normalizes both to the same card.
-export const PlanItemSchema = z
-  .object({
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    time: z
-      .string()
-      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
-      .optional(),
-    channel: z.enum(CHANNEL_KEYS).optional(),
-    formatKey: z.string().optional(),
-    platform: z.enum(CHAT_PLATFORMS).optional(),
-    format: z.string().optional(),
-    topic: z.string().min(1),
-    captionIdea: z.string().min(1),
-  })
-  .refine((item) => (item.channel && item.formatKey) || item.platform, {
-    message:
-      "Each item needs `channel` and `formatKey` (or a legacy `platform`).",
-  });
+const PlanItemShape = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  time: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+    .optional(),
+  channel: z.enum(CHANNEL_KEYS).optional(),
+  formatKey: z.string().optional(),
+  platform: z.enum(CHAT_PLATFORMS).optional(),
+  format: z.string().optional(),
+  topic: z.string().min(1),
+  captionIdea: z.string().min(1),
+});
+
+const needsChannel = (item: {
+  channel?: string;
+  formatKey?: string;
+  platform?: string;
+}) => (item.channel && item.formatKey) || item.platform;
+const NEEDS_CHANNEL = {
+  message: "Each item needs `channel` and `formatKey` (or a legacy `platform`).",
+};
+
+export const PlanItemSchema = PlanItemShape.refine(needsChannel, NEEDS_CHANNEL);
 
 export const ContentPlanArgsSchema = z.object({
   title: z.string().min(1),
   goal: z.enum(PLAN_GOALS).optional(),
   items: z.array(PlanItemSchema).min(1).max(MAX_PLAN_ITEMS),
+});
+
+// What a Work's tool takes: the same plan, and per post a `purpose` (a few words
+// on what it does for the plan, the line under its title on the card). Only the
+// Work's variant of the tool uses it: every other tool definition stays byte-for-
+// byte what it was.
+export const WorksContentPlanArgsSchema = ContentPlanArgsSchema.extend({
+  items: z
+    .array(
+      PlanItemShape.extend({ purpose: z.string().optional() }).refine(
+        needsChannel,
+        NEEDS_CHANNEL,
+      ),
+    )
+    .min(1)
+    .max(MAX_PLAN_ITEMS),
 });
 
 // Same convention as the content calendar and the publish queue: the
@@ -131,7 +155,7 @@ export function validatePlanChannels(
 }
 
 export function buildPlanCard(
-  args: z.infer<typeof ContentPlanArgsSchema>,
+  args: z.infer<typeof WorksContentPlanArgsSchema>,
   timezone: string,
   connections?: ChannelConnections,
 ): ContentPlanCard {
@@ -153,6 +177,9 @@ export function buildPlanCard(
         formatKey,
         topic: item.topic.trim(),
         captionIdea: item.captionIdea.trim(),
+        ...(item.purpose?.trim()
+          ? { purpose: item.purpose.trim().slice(0, MAX_PURPOSE) }
+          : {}),
       };
     })
     .sort((a, b) => `${a.date}T${a.time}`.localeCompare(`${b.date}T${b.time}`));

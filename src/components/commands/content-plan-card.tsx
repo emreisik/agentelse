@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition, type ReactNode } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -42,8 +42,9 @@ import {
   toViewItems,
   type PlanViewItem,
 } from "@/lib/content-plan-view";
-import { selectProductionBatch, type PlanItemStage } from "@/lib/journey";
+import { selectProductionBatch } from "@/lib/journey";
 import { SOCIAL_PLATFORM } from "@/lib/labels";
+import { StageDot } from "@/components/works/stage-dot";
 import {
   disabledReasonOf,
   useWorkCardHost,
@@ -58,35 +59,11 @@ import {
 import { saveContentPlanAction } from "@/server/actions/content-plan-actions";
 import { approvePlanItemsAction } from "@/server/actions/plan-progress-actions";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
+import { assetUrl } from "@/lib/asset-url";
 
 type PlanCard = Extract<IdeaEventCardData, { kind: "content-plan-draft" }>;
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
-
-// The dot on a saved piece: one colour per stage, the same ones the status
-// line under the plan uses.
-const STAGE_COLOR: Record<PlanItemStage, string> = {
-  PLANNED: "var(--ws-text-3)",
-  PRODUCING: "var(--ws-olive)",
-  FAILED: "var(--destructive)",
-  IN_REVIEW: "var(--ws-accent)",
-  REJECTED: "var(--destructive)",
-  APPROVED: "var(--ws-approved)",
-  PUBLISHED: "var(--ws-approved)",
-};
-
-function StageDot({ stage }: { stage: PlanItemStage }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "size-1.5 shrink-0 rounded-full",
-        stage === "PRODUCING" && "animate-pulse",
-      )}
-      style={{ background: STAGE_COLOR[stage] }}
-    />
-  );
-}
 
 function formatDay(date: string): string {
   return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB", {
@@ -168,13 +145,9 @@ function isStale(result: object): boolean {
 export function ContentPlanCard({
   card,
   commandId,
-  aboveActions,
 }: {
   card: PlanCard;
   commandId?: string;
-  // Only the Works plan card passes this (its brand check and other ideas);
-  // it sits where the person decides, between the tabs and the buttons.
-  aboveActions?: ReactNode;
 }) {
   // Null outside a Work: every Works change below is gated on it.
   const host = useWorkCardHost();
@@ -601,8 +574,6 @@ export function ContentPlanCard({
         </TabsContent>
       </Tabs>
 
-      {aboveActions}
-
       {open ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
           {host ? (
@@ -788,8 +759,10 @@ function PlanItemDetail({
           {item.slot.assetId ? (
             // eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it
             <img
-              src={`/api/assets/${item.slot.assetId}`}
+              src={assetUrl(item.slot.assetId, "thumb")}
               alt=""
+              loading="lazy"
+              decoding="async"
               className="size-12 shrink-0 rounded-md object-cover"
             />
           ) : null}

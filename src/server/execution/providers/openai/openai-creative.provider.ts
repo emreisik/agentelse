@@ -29,7 +29,7 @@ import {
   safeZonePercent,
 } from "@/server/media/creative-layout";
 import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
-import { loadReferenceImage } from "@/server/media/brand-logo";
+import { loadStyleReferences } from "@/server/media/style-references";
 import { applyBrandTemplate } from "@/server/media/creative-template";
 import type { BrandVisualIdentityContext } from "@/server/media/brand-style-context";
 import type {
@@ -57,6 +57,15 @@ const VariantOutputSchema = CreativeOutputSchema.extend({
   alternativeImagePrompts: z.array(z.string()).optional(),
 });
 
+// Only while the brand's Post Style Kit asks to follow its example posts: the
+// text step also writes the words the design carries on the image. The kit's
+// examples decide whether any are needed (empty = a post with no on-image text).
+const KitOutputSchema = CreativeOutputSchema.extend({
+  headline: z.string().optional(),
+  highlight: z.string().optional(),
+  lines: z.array(z.string()).max(6).optional(),
+});
+
 // The chat's inline generation (generate_image) has the conversation model
 // write the copy and image prompt itself — it already holds the brand
 // context — so the provider can skip its own text LLM round trip (5-30 s).
@@ -68,6 +77,11 @@ const PresetSchema = z.object({
   // One of the brand's post layouts (src/lib/layout-templates.ts) picked in
   // the chat. Absent or unknown = the brand's default for this format.
   layoutId: z.string().max(40).optional(),
+  // Which of the brand's Post Style examples this post follows (the agent
+  // picked them), and the real product's pictures. Absent = the newest
+  // examples and no product picture (lib/post-style.ts, style-references.ts).
+  styleExampleIds: z.array(z.string().max(64)).max(3).optional(),
+  productAssetIds: z.array(z.string().max(64)).max(3).optional(),
   // Only when the client chose text on the image: one headline, rendered by
   // the image model (see creative-prompt-builder.ts's TYPOGRAPHY block).
   // The brand logo is NOT part of this — applyBrandTemplate adds it below.
@@ -75,6 +89,8 @@ const PresetSchema = z.object({
     .object({
       headline: z.string().min(1),
       highlight: z.string().optional(),
+      // The design's other texts (sub-headline, price, button label...).
+      lines: z.array(z.string().min(1).max(80)).max(6).optional(),
     })
     .optional(),
 });
@@ -130,9 +146,33 @@ function clampVariantQuality(
   return quality === "low" ? "low" : VARIANT_QUALITY;
 }
 
+// The words a kit-following post carries on the image, from the text step's
+// answer (empty headline = the post has none).
+function kitOverlayOf(
+  parsed: unknown,
+): { headline: string; highlight?: string; lines?: string[] } | undefined {
+  const value = parsed as {
+    headline?: string;
+    highlight?: string;
+    lines?: string[];
+  };
+  const headline = value.headline?.trim();
+  if (!headline) return undefined;
+  const lines = (value.lines ?? [])
+    .map((line) => line.trim().slice(0, 80))
+    .filter(Boolean)
+    .slice(0, 6);
+  return {
+    headline: headline.slice(0, 120),
+    highlight: value.highlight?.trim() || undefined,
+    ...(lines.length > 0 ? { lines } : {}),
+  };
+}
+
 function buildSystemPrompt(
   brandContext: unknown,
   alternativeCount?: number,
+  kitText?: boolean,
 ): string {
   return [
     "You are Agentelse's creative engine for a digital agency.",
@@ -140,6 +180,11 @@ function buildSystemPrompt(
     ...(alternativeCount
       ? [
           `Also produce \`alternativeImagePrompts\`: exactly ${alternativeCount} more image prompts for the SAME post, each with a clearly different composition, light and framing from \`imagePrompt\` and from each other, all obeying the same brand rules.`,
+        ]
+      : []),
+    ...(kitText
+      ? [
+          "The brand's example posts carry designed text on the image, so ALSO produce: `headline` (the main on-image line, at most 8 words, in the brand language; leave it empty if the examples carry no text), `highlight` (the words of it to emphasise, optional) and `lines` (up to 3 shorter texts the design has, such as a sub-headline, a price or a button label; empty if none). Take every fact, price and claim from the brief: never invent prices, discounts or promises.",
         ]
       : []),
     "Respect any negativeBrief/approvedClaims entries in the brand context as hard constraints — never violate them.",
@@ -175,19 +220,52 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
 
     try {
       const preset = PresetSchema.safeParse(input.preset);
+      const brandCtx = (input.brandContext ?? {}) as {
+        logoAssetId?: string | null;
+        darkLogoAssetId?: string | null;
+        approvedColors?: unknown;
+        visualIdentity?: BrandVisualIdentityContext | null;
+      };
+      // The pictures this render follows: the brand's Post Style examples, then
+      // the real product of the post (or, without a kit, the one old style
+      // board). The logo itself is NEVER one of them: applyBrandTemplate adds
+      // it afterward, guaranteed (prompt text can only nudge a stochastic
+      // model, never guarantee exact placement). A board or an example is
+      // style to follow, never literal content to copy (see
+      // creative-prompt-builder.ts).
+      const styleRefs = await loadStyleReferences({
+        visualIdentity: brandCtx.visualIdentity,
+        exampleIds: preset.success ? preset.data.styleExampleIds : undefined,
+        productAssetIds: preset.success
+          ? preset.data.productAssetIds
+          : undefined,
+      });
+      // The text step also writes the design's on-image words when the kit asks
+      // to follow its examples (a post of an ordinary job stays textless).
+      const kitText = !preset.success && !variantCount && styleRefs.matchStyle;
       const parsed = preset.success
         ? preset.data
-        : (variantCount ? VariantOutputSchema : CreativeOutputSchema).parse(
+        : (variantCount
+            ? VariantOutputSchema
+            : kitText
+              ? KitOutputSchema
+              : CreativeOutputSchema
+          ).parse(
             (
               await runOpenAIStructured({
                 model: openaiModelForTier(),
                 system: buildSystemPrompt(
                   input.brandContext,
                   variantCount ? variantCount - 1 : undefined,
+                  kitText,
                 ),
                 user: brief,
                 jsonSchema: z.toJSONSchema(
-                  variantCount ? VariantOutputSchema : CreativeOutputSchema,
+                  variantCount
+                    ? VariantOutputSchema
+                    : kitText
+                      ? KitOutputSchema
+                      : CreativeOutputSchema,
                 ),
                 // See gemini-creative.provider.ts's former history (now
                 // removed): a 3-field schema can still be cut off mid-JSON
@@ -206,7 +284,11 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         ? clampVariantQuality(requestedQuality)
         : requestedQuality;
       const streamed = hasCreativeProgressListener(request.executionJobId);
-      const overlay = preset.success ? preset.data.overlay : undefined;
+      const overlay = preset.success
+        ? preset.data.overlay
+        : kitText
+          ? kitOverlayOf(parsed)
+          : undefined;
 
       const platformFormat = getCreativePlatformFormat(
         typeof input.platform === "string"
@@ -218,22 +300,6 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         typeof input.contentFormat === "string"
           ? (input.contentFormat as CreativeContentFormat)
           : undefined,
-      );
-      const brandCtx = (input.brandContext ?? {}) as {
-        logoAssetId?: string | null;
-        darkLogoAssetId?: string | null;
-        approvedColors?: unknown;
-        visualIdentity?: BrandVisualIdentityContext | null;
-      };
-      // The logo itself is NEVER sent to the AI as a referenceImage — it's
-      // added afterward, guaranteed, by applyBrandTemplate below (that's
-      // the whole point: prompt text can only nudge a stochastic model,
-      // never guarantee exact placement). The referenceImage slot instead
-      // carries the brand's optional "style board" image, if configured —
-      // see hasStyleReference's wording in creative-prompt-builder.ts for
-      // why that image must never be copied for its literal content.
-      const styleImage = await loadReferenceImage(
-        brandCtx.visualIdentity?.referenceImageAssetId,
       );
       // Which post layout applies (the chat's pick, else the brand's
       // default for this format) and what it means for the prompt and for
@@ -254,7 +320,9 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
           contentFormatLabel: platformFormat.contentFormatLabel,
           pixelSize: platformFormat.pixelSize,
           safeZone: platformFormat.safeZone,
-          hasStyleReference: Boolean(styleImage),
+          hasStyleReference: styleRefs.legacyBoard,
+          postStyle: styleRefs.section,
+          matchStyle: styleRefs.matchStyle,
           reservedZones: layoutPlan.reservedZones,
           layoutComposition: layoutPlan.composition,
           typography: overlay
@@ -278,7 +346,11 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         isCreativeImageConfigured()
           ? ((await generateCreativeImage(prompt, {
               imageSize: platformFormat.pixelSize,
-              referenceImage: styleImage ?? undefined,
+              // One picture (the old style board) goes the way it always did;
+              // the kit's examples and the product go as an ordered set.
+              ...(styleRefs.exampleCount > 0 || styleRefs.productCount > 0
+                ? { referenceImages: styleRefs.images }
+                : { referenceImage: styleRefs.images[0] ?? undefined }),
               // Absent for worker-driven jobs: unchanged behavior ("high").
               quality,
               // Somebody is watching this render live (inline chat

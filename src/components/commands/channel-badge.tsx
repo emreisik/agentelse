@@ -11,6 +11,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import {
+  BrandIcon,
+  type BrandKey,
+} from "@/components/integrations/brand-icons";
 import { cn } from "@/lib/utils";
 import {
   CHANNELS,
@@ -42,15 +46,66 @@ export function FormatGlyphIcon({
   return <Icon className={cn("size-3.5 shrink-0", className)} aria-hidden />;
 }
 
+// The social channels carry the same brand mark as their connector (the
+// integrations page): one icon per platform in the chat's own UI, the plan card,
+// the planner and the pieces. (The legacy chat keeps its coloured badge below.)
+const BRAND_OF: Partial<Record<ChannelKey, BrandKey>> = {
+  instagram: "instagram",
+  tiktok: "tiktok",
+  linkedin: "linkedin",
+  x: "x",
+};
+
+// The platform's own brand icon; Blog/SEO and Ads (no brand mark) keep their
+// short-code badge. `decorative`: the channel's name is written right beside it,
+// so the mark is not announced a second time.
+export function ChannelMark({
+  channel,
+  className,
+  decorative,
+}: {
+  channel: ChannelKey;
+  className?: string;
+  decorative?: boolean;
+}) {
+  const brand = BRAND_OF[channel];
+  if (!brand) {
+    return (
+      <ChannelBadge
+        channel={channel}
+        className={className}
+        decorative={decorative}
+      />
+    );
+  }
+  const label = CHANNELS[channel].label;
+  return (
+    <span
+      {...(decorative
+        ? { "aria-hidden": true }
+        : { role: "img", "aria-label": label, title: label })}
+      className={cn(
+        "inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-foreground",
+        className,
+      )}
+    >
+      <BrandIcon brand={brand} className="size-[70%]" />
+    </span>
+  );
+}
+
 // The channel's coloured mark. Lucide ships no brand icons, so each channel is
 // a small solid badge with its short code; the same colour identifies it on
 // the plan card, in the wizard and on the calendar.
 export function ChannelBadge({
   channel,
   className,
+  decorative,
 }: {
   channel: ChannelKey;
   className?: string;
+  // The channel's name is written right beside it: no tooltip, not announced.
+  decorative?: boolean;
 }) {
   const def = CHANNELS[channel];
   return (
@@ -60,7 +115,8 @@ export function ChannelBadge({
         className,
       )}
       style={{ background: def.color }}
-      title={def.label}
+      title={decorative ? undefined : def.label}
+      aria-hidden={decorative || undefined}
     >
       {def.short}
     </span>

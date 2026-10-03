@@ -5,8 +5,8 @@ import { utcToZonedDateTimeLocal } from "@/lib/timezone";
 import {
   loadLiveCreativeRows,
   loadLiveInputs,
-  withLiveConnections,
   withLiveCreativeState,
+  withLivePlan,
   type LiveCreativeRow,
   type LiveInputs,
 } from "@/server/agency/journey/live-creative-state";
@@ -50,15 +50,6 @@ function isSavedPlan(card: IdeaEventCardData | undefined): card is PlanCard {
     card.state === "saved" &&
     Array.isArray(card.savedCreativeIds)
   );
-}
-
-// Slot Creative ids of the saved plan items that came from an idea.
-function ideaSlotIds(card: PlanCard): string[] {
-  const ids = card.savedCreativeIds ?? [];
-  return card.items.flatMap((item, index) => {
-    const id = ids[index];
-    return item.origin?.kind === "idea" && id ? [id] : [];
-  });
 }
 
 // An idea counts as scheduled only while one of its slot Creatives is alive:
@@ -110,7 +101,11 @@ export async function loadWorkOverlayInputs(
   const ids = new Set<string>();
   for (const card of cards) {
     if (card?.kind === "creative-ready") ids.add(card.creativeId);
-    else if (isSavedPlan(card)) for (const id of ideaSlotIds(card)) ids.add(id);
+    else if (isSavedPlan(card)) {
+      // Every slot: the pane shows each piece's text and time, an idea's chip
+      // its day.
+      for (const id of card.savedCreativeIds ?? []) ids.add(id);
+    }
   }
   const [live, liveRows] = await Promise.all([
     loadLiveInputs(projectId),
@@ -135,7 +130,7 @@ export function applyWorkOverlays(
         isNewestCard: context?.isNewestCreativeCard,
       });
     case "content-plan-draft":
-      return withLiveConnections(card, inputs.live.connections);
+      return withLivePlan(card, inputs.live, inputs.liveRows);
     case "idea-options": {
       const scheduled: Record<string, ScheduledIdea> = {};
       for (const item of card.items) {

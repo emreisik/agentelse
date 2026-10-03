@@ -867,6 +867,14 @@ const UserMessage: FC = () => {
 };
 
 const UserActionBar: FC = () => {
+  // The pencil only where an edit can work: the runtime takes edits (Works,
+  // agent engine) and this message may be edited (sent, not still being
+  // answered, not a wizard message). Otherwise the click would throw.
+  const canEdit = useAuiState((s) => {
+    const custom = s.message.metadata.custom as { editable?: unknown };
+    return s.thread.capabilities.edit && custom.editable !== false;
+  });
+  if (!canEdit) return null;
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning

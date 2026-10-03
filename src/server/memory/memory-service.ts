@@ -3,6 +3,14 @@ import "server-only";
 import type { LearningPolarity } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import {
+  cleanReasons,
+  creativeName,
+  designDigestOf,
+  ratingInsight,
+  type CreativeRating,
+} from "@/lib/creative-rating";
+import { readLayoutMeta } from "@/server/media/creative-layout";
 
 import {
   DEFAULT_CONFIDENCE,
@@ -206,6 +214,65 @@ export const MemoryService = {
     } catch (error) {
       console.error(
         "[memory] could not record a creative reaction:",
+        error instanceof Error ? error.message : error,
+      );
+      return null;
+    }
+  },
+
+  // The client rated a finished post (like / not quite, with what was wrong).
+  // A deliberate verdict, so it is richer than an approval: the sentence names
+  // what the post looked like and, for a dislike, what was wrong, and a second
+  // verdict on the same post replaces the first. A like is a hint of taste (it
+  // takes repetition to be confirmed); a dislike with a reason is a correction.
+  // Never throws: rating must not be able to break the card it sits on.
+  async rememberCreativeRating(input: {
+    scope: MemoryScope;
+    creativeId: string;
+    rating: CreativeRating;
+    reasons?: readonly unknown[];
+    note?: string;
+  }): Promise<RememberResult | null> {
+    try {
+      const creative = await prisma.creative.findFirst({
+        where: { id: input.creativeId, projectId: input.scope.projectId },
+        select: {
+          title: true,
+          channel: true,
+          formatKey: true,
+          brief: true,
+          versions: {
+            orderBy: { version: "desc" },
+            take: 1,
+            select: { generationMetadata: true },
+          },
+        },
+      });
+      if (!creative) return null;
+      const name = creativeName(creative);
+      if (!name) return null;
+      const layout = readLayoutMeta(creative.versions[0]?.generationMetadata);
+      const sourceRef = `creative:${input.creativeId}:rating`;
+      // One verdict per post: the new one replaces the old.
+      await prisma.brandLearning.deleteMany({
+        where: { brandId: input.scope.brandId, sourceRef },
+      });
+      return await MemoryService.remember({
+        scope: input.scope,
+        insight: ratingInsight({
+          rating: input.rating,
+          name,
+          digest: designDigestOf({ brief: creative.brief, layoutName: layout?.name }),
+          reasons: cleanReasons(input.reasons ?? []),
+          note: input.note,
+        }),
+        polarity: input.rating === "LIKE" ? "WORKS" : "AVOID",
+        source: input.rating === "LIKE" ? "OUTPUT_ACCEPTED" : "USER_CORRECTION",
+        sourceRef,
+      });
+    } catch (error) {
+      console.error(
+        "[memory] could not record a creative rating:",
         error instanceof Error ? error.message : error,
       );
       return null;

@@ -8,6 +8,13 @@ import { Check, Copy, Download, Loader2, PenLine } from "lucide-react";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ScheduleField } from "@/components/calendar/schedule-field";
+import {
+  formatPickerValue,
+  splitDateTime,
+  todayKeyIn,
+} from "@/lib/date-picker";
+import { utcToZonedDateTimeLocal } from "@/lib/timezone";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
   approveApprovalAction,
@@ -21,6 +28,7 @@ import {
 import { assignCreativeDateAction } from "@/server/actions/creative-calendar-actions";
 import { CREATIVE_STATUS } from "@/lib/labels";
 import type { CreativeStatus } from "@prisma/client";
+import { assetUrl } from "@/lib/asset-url";
 
 // The spec's "Output Preview Dialog" — the single, shared inline preview
 // for a creative, opened from the Outputs grid, the Calendar list, and
@@ -33,9 +41,13 @@ import type { CreativeStatus } from "@prisma/client";
 export function OutputPreviewDialog({
   creativeId,
   onOpenChange,
+  onChanged,
 }: {
   creativeId: string | null;
   onOpenChange: (open: boolean) => void;
+  // Onay/ret, değişiklik isteği ya da takvime ekleme sonrası: istemcide kendi
+  // verisini tutan paneller (Outputs) tazelensin.
+  onChanged?: () => void;
 }) {
   return (
     <Dialog open={creativeId !== null} onOpenChange={onOpenChange}>
@@ -45,14 +57,24 @@ export function OutputPreviewDialog({
         style={{ background: "var(--ws-surface)", maxHeight: "90dvh" }}
       >
         {creativeId ? (
-          <PreviewBody key={creativeId} creativeId={creativeId} />
+          <PreviewBody
+            key={creativeId}
+            creativeId={creativeId}
+            onChanged={onChanged}
+          />
         ) : null}
       </DialogContent>
     </Dialog>
   );
 }
 
-function PreviewBody({ creativeId }: { creativeId: string }) {
+function PreviewBody({
+  creativeId,
+  onChanged,
+}: {
+  creativeId: string;
+  onChanged?: () => void;
+}) {
   const router = useRouter();
   const [data, setData] = useState<CreativePreview | null | undefined>(
     undefined,
@@ -99,7 +121,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
   }
 
   const status = localStatus ?? data.status;
-  const src = data.assetId ? `/api/assets/${data.assetId}` : undefined;
+  const src = data.assetId ? assetUrl(data.assetId, "large") : undefined;
   const format = getCreativePlatformFormat(data.platform, data.contentFormat);
   const title = data.title ?? "Output";
   const canDecide = status === "IN_REVIEW" && Boolean(data.approvalId);
@@ -116,6 +138,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
         setLocalStatus(to);
         toast.success(to === "APPROVED" ? "Approved" : "Rejected");
         router.refresh();
+        onChanged?.();
       } else {
         toast.error(result.message);
       }
@@ -133,6 +156,7 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
           "Revising — the new version will appear in the chat shortly",
         );
         router.refresh();
+        onChanged?.();
       } else {
         toast.error(result.message);
       }
@@ -363,17 +387,23 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
                 style={{ color: "var(--ws-text-2)" }}
               >
                 Scheduled for{" "}
-                {new Date(data.scheduledFor).toLocaleString("en-US", {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                })}{" "}
+                {formatPickerValue(
+                  splitDateTime(zonedValue(data.scheduledFor, data.timezone)) ??
+                    {},
+                  Number(todayKeyIn(data.timezone).slice(0, 4)),
+                )}{" "}
                 · change
               </button>
             ) : (
               <ScheduleForm
                 creativeId={creativeId}
+                projectId={data.projectId}
+                timezone={data.timezone}
                 scheduledFor={data.scheduledFor}
-                onSaved={() => router.refresh()}
+                onSaved={() => {
+                  router.refresh();
+                  onChanged?.();
+                }}
               />
             )}
           </div>
@@ -383,17 +413,30 @@ function PreviewBody({ creativeId }: { creativeId: string }) {
   );
 }
 
+// scheduledFor bir UTC anıdır; seçici ve etiket projenin saat dilimindeki duvar
+// saatini ("YYYY-MM-DDTHH:mm") gösterir. (Eskiden ISO dizgesinin ilk 16 karakteri
+// alınıyordu: UTC saati yerel saat gibi gösterilir ve her kayıtta kayardı.)
+function zonedValue(scheduledFor: string | null, timezone: string): string {
+  return scheduledFor
+    ? utcToZonedDateTimeLocal(new Date(scheduledFor), timezone)
+    : "";
+}
+
 function ScheduleForm({
   creativeId,
+  projectId,
+  timezone,
   scheduledFor,
   onSaved,
 }: {
   creativeId: string;
+  projectId: string;
+  timezone: string;
   scheduledFor: string | null;
   onSaved: () => void;
 }) {
   const [isSaving, startSaving] = useTransition();
-  const defaultValue = scheduledFor ? scheduledFor.slice(0, 16) : "";
+  const defaultValue = zonedValue(scheduledFor, timezone);
 
   return (
     <form
@@ -420,12 +463,14 @@ function ScheduleForm({
         >
           Day &amp; time
         </span>
-        <input
-          type="datetime-local"
+        <ScheduleField
           name="date"
+          // Kayıt sonrası sunucu yeni zamanı verince alan baştan kurulur.
+          key={defaultValue}
           defaultValue={defaultValue}
-          className="h-8 w-full rounded-lg border px-2 text-xs"
-          style={{ borderColor: "var(--ws-border)", color: "var(--ws-text)" }}
+          timezone={timezone}
+          projectId={projectId}
+          creativeId={creativeId}
         />
       </label>
       <Button

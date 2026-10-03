@@ -122,11 +122,11 @@ const accounts: ConnectedAccount[] = [
 ];
 
 describe("BrandSummaryPanel (cards)", () => {
-  it("shows the Instagram card right after the accounts card, only while Instagram is connected", () => {
+  it("shows the Instagram card right after the brand summary card, only while Instagram is connected", () => {
     const connected = render(twin(), fullKit, "webhealth.com.tr", accounts);
     expect(connected).toContain('data-card="instagram-overview"');
     expect(connected.indexOf('data-card="instagram-overview"')).toBeGreaterThan(
-      connected.indexOf('data-card="connected-accounts"'),
+      connected.indexOf('data-card="brand-summary"'),
     );
     expect(connected.indexOf('data-card="instagram-overview"')).toBeLessThan(
       connected.indexOf('data-card="collapsible-Marka kiti"'),
@@ -145,11 +145,11 @@ describe("BrandSummaryPanel (cards)", () => {
     );
   });
 
-  it("leads with the brand summary card, then the accounts card, then the collapsed cards", () => {
+  it("leads with the accounts card, then the brand summary card, then the collapsed cards", () => {
     const html = render(twin(), fullKit, "webhealth.com.tr", accounts);
     const order = [
-      'data-card="brand-summary"',
       'data-card="connected-accounts"',
+      'data-card="brand-summary"',
       'data-card="collapsible-Marka kiti"',
       'data-card="collapsible-Marka stratejisi"',
     ].map((marker) => html.indexOf(marker));
@@ -163,7 +163,7 @@ describe("BrandSummaryPanel (cards)", () => {
 
   it("shows the name once, the site, the verified tick and an edit link into Brand Brain", () => {
     const html = render(twin(), fullKit);
-    const card = between(html, 'data-card="brand-summary"', 'data-card="connected-accounts"');
+    const card = between(html, 'data-card="brand-summary"', 'data-card="collapsible-Marka kiti"');
     expect(card).toContain("webhealth.com.tr");
     expect(card).toContain("Düzenle");
     expect(card).toContain("panel=brand-brain");
@@ -184,24 +184,24 @@ describe("BrandSummaryPanel (cards)", () => {
       }),
       fullKit,
     );
-    const card = between(full, 'data-card="brand-summary"', 'data-card="connected-accounts"');
+    const card = between(full, 'data-card="brand-summary"', 'data-card="collapsible-Marka kiti"');
     expect(card).toContain("Sektör");
     expect(card).toContain("Sağlık turizmi");
-    expect(card).toContain("Hedef Kitle");
+    expect(card).toContain("Hedef kitle");
     expect(card).toContain("Yurt dışı hastalar, Aileler");
-    expect(card).toContain("Tone of Voice");
+    expect(card).toContain("Ses tonu");
     // Traits from both fields are deduped into one line.
     expect(card).toContain("Profesyonel, net, güvenilir");
     expect(card).toContain("Pazarlar");
     expect(card).toContain("Türkiye, Almanya");
-    expect(card).toContain("Marka Renkleri");
+    expect(card).toContain("Renkler");
 
     const sparse = render(
       twin({ markets: [], voice: { personality: null, toneOfVoice: null } }),
       { ...fullKit, identity: null, legacyColors: [] },
     );
-    const sparseCard = between(sparse, 'data-card="brand-summary"', 'data-card="connected-accounts"');
-    for (const label of ["Sektör", "Hedef Kitle", "Tone of Voice", "Pazarlar", "Marka Renkleri"]) {
+    const sparseCard = between(sparse, 'data-card="brand-summary"', 'data-card="collapsible-Marka kiti"');
+    for (const label of ["Sektör", "Hedef kitle", "Ses tonu", "Pazarlar", "Renkler"]) {
       expect(sparseCard).not.toContain(label);
     }
   });
@@ -218,7 +218,7 @@ describe("BrandSummaryPanel (cards)", () => {
         }),
       },
     );
-    const card = between(html, 'data-card="brand-summary"', 'data-card="connected-accounts"');
+    const card = between(html, 'data-card="brand-summary"', 'data-card="collapsible-Marka kiti"');
     expect(card).toContain("Premium klinik");
     const colors = between(card, 'data-row="brand-colors"');
     expect(colors.match(/ring-1 ring-black\/10/g)).toHaveLength(5);
@@ -228,14 +228,14 @@ describe("BrandSummaryPanel (cards)", () => {
     const withLogo = between(
       render(twin(), fullKit),
       'data-card="brand-summary"',
-      'data-card="connected-accounts"',
+      'data-card="collapsible-Marka kiti"',
     );
     expect(withLogo).toContain("/api/assets/logo-dark");
 
     const noLogo = between(
       render(twin(), { ...fullKit, logoAssetId: null, darkLogoAssetId: null }),
       'data-card="brand-summary"',
-      'data-card="connected-accounts"',
+      'data-card="collapsible-Marka kiti"',
     );
     expect(noLogo).not.toContain("/api/assets/");
     expect(noLogo).toContain(">W<");
@@ -248,27 +248,32 @@ describe("BrandSummaryPanel (cards)", () => {
     expect(render(twin({ confidence: "high" }), fullKit)).not.toContain("Marka hâlâ öğreniliyor");
   });
 
-  it("shows each account with its state in words, linking to the integrations page", () => {
+  it("shows only the accounts that are really linked, as icons linking to the integrations page", () => {
     const html = render(twin(), fullKit, "webhealth.com.tr", accounts);
-    const card = between(html, 'data-card="connected-accounts"', 'data-card="collapsible-Marka kiti"');
-    const row = (key: string) =>
-      between(card, `data-account="${key}"`, "</li>");
-    expect(row("instagram")).toContain("Instagram");
-    expect(row("instagram")).toContain("Bağlı");
-    expect(row("meta-ads")).toContain("Bağlı değil");
-    expect(row("ga4")).toContain("Kurulum gerekli");
-    expect(row("website")).toContain("Aktif");
+    const card = between(html, 'data-card="connected-accounts"', 'data-card="brand-summary"');
+    expect(card).toContain('title="Instagram · @webhealth"');
+    expect(card).toContain('data-account="facebook"');
+    expect(card).toContain('data-account="search-console"');
+    // Not linked, half set up, or not an account at all: left out.
+    expect(card).not.toContain('data-account="meta-ads"');
+    expect(card).not.toContain('data-account="ga4"');
+    expect(card).not.toContain('data-account="website"');
+    expect(card.match(/data-account="/g)).toHaveLength(3);
     expect(card).toContain('href="/projects/proj-1/integrations"');
-    // The account's own name is the tooltip, never a visible "Bağlı" lookalike.
-    expect(card).toContain('title="@webhealth" data-account="instagram"');
+    expect(card).toContain("Yönet");
   });
 
-  it("calls a missing website 'Eklenmedi' and says so when the accounts could not be read", () => {
+  it("invites a connection when nothing is linked, and says so when the accounts could not be read", () => {
     const html = render(twin(), fullKit, null, [
-      { key: "website", label: "Website", state: "off" },
+      { key: "instagram", label: "Instagram", state: "off" },
+      { key: "ga4", label: "Google Analytics 4", state: "setup" },
+      { key: "website", label: "Website", state: "active", detail: "x.com" },
     ]);
-    expect(html).toContain("Eklenmedi");
-    expect(html).not.toContain("Bağlı değil");
+    const card = between(html, 'data-card="connected-accounts"', 'data-card="brand-summary"');
+    expect(card).toContain("Henüz bağlı hesap yok.");
+    expect(card).toContain("Hesap bağla");
+    expect(card).not.toContain("data-account=");
+    expect(card).not.toContain("Yönet");
     expect(render(twin(), fullKit, null, [])).toContain("Hesap durumu şu an okunamadı.");
   });
 });

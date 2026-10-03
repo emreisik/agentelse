@@ -172,13 +172,24 @@ export async function generateOpenAIImage(
   // "image sharpens in place" experience. Any streaming failure falls back
   // to the plain single request below.
   onPartial?: (partial: ImagePartial) => void,
+  // Several pictures the render must follow (the brand's example posts, then
+  // the real product): sent as the edits endpoint's `image[]`, the first one
+  // leading. Ignored when baseImage is given (an edit has one picture).
+  referenceImages?: { data: string; mimeType: string }[],
 ): Promise<GeneratedCreativeImage | null> {
   const env = getEnv();
   if (!env.OPENAI_API_KEY) return null;
 
   const model = env.OPENAI_IMAGE_MODEL;
   const size = sizeParam(imageSize);
-  const inputImage = baseImage ?? referenceImage;
+  const inputs = baseImage
+    ? [baseImage]
+    : referenceImages && referenceImages.length > 0
+      ? referenceImages
+      : referenceImage
+        ? [referenceImage]
+        : [];
+  const inputImage = inputs[0];
   const billing: ImageBilling = { model, quality, size, startedAt: Date.now() };
 
   if (onPartial && !inputImage) {
@@ -199,14 +210,18 @@ export async function generateOpenAIImage(
       form.set("prompt", prompt);
       form.set("size", size);
       form.set("quality", quality);
-      const ext = inputImage.mimeType.split("/")[1] ?? "png";
-      form.set(
-        "image",
-        new Blob([Buffer.from(inputImage.data, "base64")], {
-          type: inputImage.mimeType,
-        }),
-        `input.${ext}`,
-      );
+      const blobOf = (image: { data: string; mimeType: string }) =>
+        new Blob([Buffer.from(image.data, "base64")], { type: image.mimeType });
+      const extOf = (image: { mimeType: string }) =>
+        image.mimeType.split("/")[1] ?? "png";
+      if (inputs.length === 1) {
+        form.set("image", blobOf(inputImage), `input.${extOf(inputImage)}`);
+      } else {
+        // Several pictures: the multipart array form the API documents.
+        inputs.forEach((image, index) => {
+          form.append("image[]", blobOf(image), `input-${index + 1}.${extOf(image)}`);
+        });
+      }
       response = await fetch(EDITS_URL, {
         method: "POST",
         headers: { authorization: `Bearer ${env.OPENAI_API_KEY}` },

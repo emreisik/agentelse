@@ -19,6 +19,7 @@ const fetchMock = vi.fn();
 beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
+  clearPageTokenCache();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -32,11 +33,13 @@ const json = (body: unknown, status = 200) =>
 
 const {
   MetaApiError,
+  clearPageTokenCache,
   deleteFacebookPagePost,
   fetchFacebookPagePost,
   fetchMetaPageList,
   fetchPageAccessToken,
   isMetaObjectMissing,
+  isMetaRateLimit,
   publishFacebookPagePost,
   updateFacebookPagePost,
   verifyFacebookPageAccess,
@@ -221,6 +224,28 @@ describe("fetchPageAccessToken", () => {
     expect(failure).toBeInstanceOf(MetaApiError);
     expect((failure as InstanceType<typeof MetaApiError>).metaErrorCode).toBeUndefined();
     expect((failure as Error).message).toContain("no longer manage it");
+  });
+});
+
+describe("Page token reuse and Meta's request limit", () => {
+  it("asks Meta for a Page token once, then reuses it for the same user token", async () => {
+    fetchMock.mockImplementation(async () => json({ access_token: "page-token" }));
+
+    expect(await fetchPageAccessToken("page-9", "user-token")).toBe("page-token");
+    expect(await fetchPageAccessToken("page-9", "user-token")).toBe("page-token");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // A reconnect (new user token) asks again.
+    await fetchPageAccessToken("page-9", "new-user-token");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("recognises Meta's throttling codes", () => {
+    expect(isMetaRateLimit(new MetaApiError("Application request limit reached", 4))).toBe(true);
+    expect(isMetaRateLimit(new MetaApiError("User request limit reached", 17))).toBe(true);
+    expect(isMetaRateLimit(new MetaApiError("limit", 80004))).toBe(true);
+    expect(isMetaRateLimit(new MetaApiError("expired", 190))).toBe(false);
+    expect(isMetaRateLimit(new Error("x"))).toBe(false);
   });
 });
 

@@ -73,7 +73,11 @@ import {
   PROGRESS_POLL_MS,
   reduceItemEvent,
 } from "@/components/commands/package-run";
-import { stripPlanBriefMarker } from "@/lib/plan-brief";
+import {
+  isPlaceholderReply,
+  STOPPED_REPLY as STOPPED_PLACEHOLDER,
+} from "@/lib/chat-reply";
+import { hasPlanBriefMarker, stripPlanBriefMarker } from "@/lib/plan-brief";
 import { useWorkspacePanelToggle } from "@/components/workspace/workspace-panel-toggle";
 import type { PublishTarget } from "@/server/integrations/meta-connection-status";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
@@ -113,6 +117,7 @@ import {
 import type { WorkspaceResumeStats } from "@/components/workspace/workspace-right-panel-data";
 import { dayKey, dayLabel } from "@/lib/dates";
 import { requestOpenAiCreditRefresh } from "@/lib/openai-credit-events";
+import { assetUrl } from "@/lib/asset-url";
 
 // The sheet, its panel, reducer and the sanitizer regexes load on demand, and
 // only when a host exists (the entry components above stay static and tiny).
@@ -191,6 +196,8 @@ type LocalTurn = {
   // the server list refresh delivers the persisted copy.
   card?: IdeaEventCardData;
   commandId?: string;
+  // The turn's final status from the server (its `done` event), for the note.
+  replyStatus?: string;
   // Streaming engine only: the reply as it arrives, and the label of the
   // tool currently running ("Creating task…") while the model waits on it.
   streamText?: string;
@@ -224,6 +231,11 @@ type FlatMessage =
       // FIRST one emitted for a given idea, which can be a user bubble
       // when the idea's founding message was typed in this same chat.
       anchorId?: string;
+      // The Command row behind the message (an edit acts on it), and whether
+      // the pencil may edit it (sent, not still being answered, not a wizard
+      // message).
+      commandId?: string;
+      editable?: boolean;
       createdAt: string;
     }
   | {
@@ -281,7 +293,24 @@ const STATUS_NOTE: Record<string, string> = {
   APPROVAL_HANDLED: "Approval processed",
   UNCLEAR: "Awaiting clarification",
   ERROR: "Error",
+  STOPPED: "Stopped",
+  INTERRUPTED: "Interrupted. Send it again to retry.",
 };
+
+// A reply with its status note under it. A reply with no words of its own
+// (stopped or interrupted before anything was written) shows the note alone.
+function replyWithNote(
+  reply: string,
+  replyStatus: string | null | undefined,
+): string {
+  const note = replyStatus ? STATUS_NOTE[replyStatus] : undefined;
+  if (!note) return reply;
+  return isPlaceholderReply(reply) ? `*${note}*` : `${reply}\n\n*${note}*`;
+}
+
+// Stop waits this long for the turn's final event before it lets go of the
+// stream itself (the page then shows whatever the server stored).
+const STOP_FALLBACK_MS = 8_000;
 
 // Brand Workspace composer's persistent quick-action row (docs/
 // brand-workspace-migration.md §16/§17) — sent through the exact same
@@ -324,7 +353,7 @@ function attachmentSrc(
   if ("previewUrl" in attachment && attachment.previewUrl) {
     return attachment.previewUrl;
   }
-  if ("assetId" in attachment) return `/api/assets/${attachment.assetId}`;
+  if ("assetId" in attachment) return assetUrl(attachment.assetId, "card");
   return undefined;
 }
 
@@ -342,6 +371,7 @@ export function ProjectChat({
   nextSteps,
   autoNext,
   workHost,
+  liveRunCommandId,
 }: {
   projectId: string;
   projectName: string;
@@ -380,6 +410,10 @@ export function ProjectChat({
   // empty screen shows. Every turn is sent with its id; the quick-action chips
   // give way to the channel chooser / next-step cards. Absent: the old chat.
   workHost?: WorkHost;
+  // A turn of this chat still being written on the server (the page was
+  // reloaded, or the chat opened again while it works): the chat follows it
+  // live, with Stop. Agent engine only.
+  liveRunCommandId?: string;
 }) {
   const router = useRouter();
   // Works on: every Works-only behaviour below hangs on this one flag.
@@ -435,6 +469,22 @@ export function ProjectChat({
   // Stop aborts. Ref for the controller (no re-render needed to abort).
   const [streamingKey, setStreamingKey] = React.useState<string | null>(null);
   const abortRef = React.useRef<AbortController | null>(null);
+  // For handlers: the key and the Command row of the turn whose stream is
+  // open, a Stop pressed before that row existed, and the timer that lets go
+  // of a stopped stream that never ended.
+  const streamingKeyRef = React.useRef<string | null>(null);
+  const streamCommandRef = React.useRef<string | null>(null);
+  const pendingCancelRef = React.useRef<string | null>(null);
+  const stopTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const mountedRef = React.useRef(true);
+  // An edit in flight: the edited message and everything after it hide at
+  // once (the server supersedes them; the refresh then leaves them out).
+  const [editedFrom, setEditedFrom] = React.useState<{
+    commandId: string;
+    createdAt: string;
+  } | null>(null);
   // Follow-up prompts from the last finished reply (suggest_replies tool).
   const [suggestions, setSuggestions] = React.useState<string[]>([]);
   const isSending = isActionSending || streamingKey !== null;
@@ -548,15 +598,23 @@ export function ProjectChat({
     () => finalTaskIds(turns.map((turn) => turn.card)),
     [turns],
   );
+  // A row whose reply is still being written reads RUNNING.
+  const serverStatus = React.useMemo(
+    () =>
+      new Map(turns.map((turn) => [turn.commandId, turn.replyStatus] as const)),
+    [turns],
+  );
   const visibleLocal = localTurns.filter((turn) => {
-    // A settled turn gives way to its persisted row. One that is still
-    // streaming stays: its row exists from the first token but only holds the
-    // client's message, so dropping the turn on a mid-stream page refresh
-    // would blank the reply that is being written.
+    // A settled turn gives way to its persisted row once that row is final.
+    // One that is still streaming stays: its row exists from the first token
+    // but only holds the client's message, so dropping the turn on a
+    // mid-stream page refresh would blank the reply that is being written; a
+    // stopped one stays until its row has the stopped reply.
     if (
       turn.state !== "pending" &&
       turn.commandId &&
-      serverIds.has(turn.commandId)
+      serverIds.has(turn.commandId) &&
+      serverStatus.get(turn.commandId) !== "RUNNING"
     ) {
       return false;
     }
@@ -596,8 +654,19 @@ export function ProjectChat({
     // A content-package item is shown live from its local message; the
     // persisted "running" row of the same task stays hidden until it is final.
     const liveTaskIds = localItemTaskIds(visibleLocal);
+    // Turns this chat follows itself (a local copy exists).
+    const localCommandIds = new Set(
+      visibleLocal.flatMap((turn) => (turn.commandId ? [turn.commandId] : [])),
+    );
+    // An edit just sent: the edited message and what follows it are gone
+    // until the refresh confirms it (the rows are then left out anyway).
+    const hideFrom =
+      editedFrom && serverIds.has(editedFrom.commandId)
+        ? editedFrom.createdAt
+        : null;
     for (const turn of turns) {
       if (isServerRowHidden(turn.card, liveTaskIds)) continue;
+      if (hideFrom !== null && turn.createdAt >= hideFrom) continue;
       maybeDivider(turn.createdAt);
       if (turn.source === "SYSTEM") {
         // Pipeline event: no user bubble, just an assistant note — if
@@ -625,17 +694,32 @@ export function ProjectChat({
         text: turn.text,
         attachments: turn.attachments,
         anchorId: anchorFor(turn.ideaId),
+        commandId: turn.commandId,
+        editable:
+          turn.replyStatus !== "RUNNING" && !hasPlanBriefMarker(turn.text),
         createdAt: turn.createdAt,
       });
-      if (turn.reply) {
-        const note = turn.replyStatus
-          ? STATUS_NOTE[turn.replyStatus]
-          : undefined;
+      if (
+        turn.replyStatus === "RUNNING" &&
+        !localCommandIds.has(turn.commandId)
+      ) {
+        // Being written by a run this chat does not follow (yet): a running
+        // reply until the re-attach (or the next refresh) takes over.
+        out.push({
+          id: `${turn.commandId}-a`,
+          role: "assistant",
+          text: workHost ? "" : "Thinking…",
+          streaming: true,
+          commandId: turn.commandId,
+          ...(workHost ? { pendingRequest: turn.text } : {}),
+          createdAt: turn.createdAt,
+        });
+      } else if (turn.reply) {
         out.push({
           id: `${turn.commandId}-a`,
           role: "assistant",
           commandId: turn.commandId,
-          text: note ? `${turn.reply}\n\n*${note}*` : turn.reply,
+          text: replyWithNote(turn.reply, turn.replyStatus),
           // A user turn can also carry a card reply (limit-notice) — when
           // present it replaces the plain text, same as SYSTEM events.
           card: turn.card,
@@ -689,6 +773,11 @@ export function ProjectChat({
           role: "user",
           text: turn.text,
           attachments: turn.attachments,
+          commandId: turn.commandId,
+          editable:
+            turn.state !== "pending" &&
+            Boolean(turn.commandId) &&
+            !hasPlanBriefMarker(turn.text),
           createdAt: turn.createdAt,
         });
       }
@@ -722,7 +811,7 @@ export function ProjectChat({
         out.push({
           id: `${turn.key}-a`,
           role: "assistant",
-          text: turn.reply,
+          text: replyWithNote(turn.reply, turn.replyStatus),
           commandId: turn.commandId,
           card: turn.card,
           error: turn.state === "error",
@@ -731,7 +820,7 @@ export function ProjectChat({
       }
     }
     return out;
-  }, [turns, visibleLocal, serverIds, workHost]);
+  }, [turns, visibleLocal, serverIds, workHost, editedFrom]);
 
   const convertMessage = React.useCallback(
     (message: FlatMessage): ThreadMessageLike => {
@@ -740,7 +829,13 @@ export function ProjectChat({
           role: "user",
           content: stripPlanBriefMarker(message.text),
           createdAt: new Date(message.createdAt),
-          metadata: { custom: { anchorId: message.anchorId } },
+          metadata: {
+            custom: {
+              anchorId: message.anchorId,
+              commandId: message.commandId,
+              editable: message.editable,
+            },
+          },
           attachments: message.attachments.map((attachment, index) => {
             const isImage = attachment.mimeType.startsWith("image/");
             const src = attachmentSrc(attachment);
@@ -880,34 +975,43 @@ export function ProjectChat({
     [],
   );
 
-  // Streaming counterpart of runTurn (CHAT_ENGINE=agent): POSTs the message to
-  // the SSE route and folds each ChatStreamEvent into the same optimistic
-  // LocalTurn, so the reply grows token by token. Stop aborts the fetch, which
-  // aborts the model stream on the server; the server keeps and persists the
-  // partial reply either way.
-  const runStreamingTurn = React.useCallback(
-    async (text: string, files: File[]) => {
-      const key = `local-${crypto.randomUUID()}`;
-      const controller = new AbortController();
+  // Stop: asks the server to end the turn. The stream stays open and ends
+  // with the turn's final (stopped) reply.
+  const requestCancel = React.useCallback(
+    async (commandId: string) => {
+      try {
+        const response = await fetch(
+          `/api/projects/${projectId}/chat/runs/${encodeURIComponent(commandId)}/cancel`,
+          { method: "POST" },
+        );
+        if (!response.ok) throw new Error(String(response.status));
+      } catch {
+        toast.error("Couldn't stop it. Try again.");
+      }
+    },
+    [projectId],
+  );
+
+  // Reads one turn's SSE stream into its LocalTurn: the POST that started the
+  // turn, or a re-attach to a turn the server is still writing (after a
+  // reload or a chat switch). The fetch is only a subscription: aborting it
+  // (unmount, chat switch) never stops the turn, which runs on the server on
+  // its own; Stop is its own request (stopTurn).
+  const followTurn = React.useCallback(
+    async (
+      key: string,
+      controller: AbortController,
+      open: (signal: AbortSignal) => Promise<Response>,
+      hooks: {
+        // The server no longer runs that turn (re-attach only).
+        onGone?: () => void;
+        // The turn could not run (an edit then shows the old messages again).
+        onFailed?: () => void;
+      } = {},
+    ) => {
       abortRef.current = controller;
-      setLocalTurns((current) => [
-        ...current,
-        {
-          key,
-          text: text || "(file sent)",
-          attachments: files.map((file) => ({
-            filename: file.name,
-            mimeType: file.type,
-            previewUrl: file.type.startsWith("image/")
-              ? URL.createObjectURL(file)
-              : undefined,
-          })),
-          state: "pending",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
+      streamingKeyRef.current = key;
       setStreamingKey(key);
-      setSuggestions([]);
 
       const patch = (update: (turn: LocalTurn) => LocalTurn) =>
         setLocalTurns((current) =>
@@ -924,7 +1028,13 @@ export function ProjectChat({
       const apply = (event: ChatStreamEvent) => {
         switch (event.type) {
           case "start":
+            streamCommandRef.current = event.commandId;
             patch((turn) => ({ ...turn, commandId: event.commandId }));
+            // Stop was pressed before the turn's row existed.
+            if (pendingCancelRef.current === key) {
+              pendingCancelRef.current = null;
+              void requestCancel(event.commandId);
+            }
             break;
           case "text.delta":
             streamed = appendStreamText(
@@ -1002,6 +1112,7 @@ export function ProjectChat({
               ...turn,
               state: "done",
               reply: event.reply,
+              replyStatus: event.status,
               card: event.card ?? turn.card,
               commandId: event.commandId,
               streamText: undefined,
@@ -1024,23 +1135,18 @@ export function ProjectChat({
               previewUrl: undefined,
               imageGen: undefined,
             }));
+            hooks.onFailed?.();
             if (!event.card) toast.error(event.message);
             break;
         }
       };
 
       try {
-        const formData = new FormData();
-        formData.set("text", text);
-        if (ideaId) formData.set("ideaId", ideaId);
-        if (workHost) formData.set("workId", workHost.work.id);
-        for (const file of files) formData.append("files", file);
-
-        const response = await fetch(`/api/projects/${projectId}/chat`, {
-          method: "POST",
-          body: formData,
-          signal: controller.signal,
-        });
+        const response = await open(controller.signal);
+        if (response.status === 410 && hooks.onGone) {
+          hooks.onGone();
+          return;
+        }
         const contentType = response.headers.get("content-type") ?? "";
         if (!response.ok || !response.body) {
           let message = "Failed to send message";
@@ -1082,10 +1188,16 @@ export function ProjectChat({
         }
       } catch (error) {
         if (controller.signal.aborted) {
+          // Gone with the chat (unmount): the turn goes on on the server and
+          // the chat re-attaches when it is opened again.
+          if (controller.signal.reason === "unmount") return;
+          // Stopped, but the stream never brought the final event: let go
+          // and show it stopped (the refresh brings what the server kept).
           patch((turn) => ({
             ...turn,
             state: "done",
-            reply: streamed || "(stopped)",
+            reply: streamed || STOPPED_PLACEHOLDER,
+            replyStatus: "STOPPED",
             streamText: undefined,
             toolLabel: undefined,
             previewUrl: undefined,
@@ -1100,33 +1212,191 @@ export function ProjectChat({
           });
         }
       } finally {
-        abortRef.current = null;
-        setStreamingKey(null);
-        // Pulls the persisted Command rows; the local copy drops itself once
-        // its commandId shows up in the server list.
-        router.refresh();
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+          streamingKeyRef.current = null;
+          streamCommandRef.current = null;
+          if (stopTimerRef.current) {
+            clearTimeout(stopTimerRef.current);
+            stopTimerRef.current = null;
+          }
+        }
+        const gone =
+          controller.signal.aborted && controller.signal.reason === "unmount";
+        if (mountedRef.current && !gone) {
+          setStreamingKey((current) => (current === key ? null : current));
+          // Pulls the persisted Command rows; the local copy drops itself
+          // once its row shows up in the server list with a final status.
+          router.refresh();
+        }
       }
     },
-    [
-      projectId,
-      ideaId,
-      router,
-      guidedEnabled,
-      openGuided,
-      workHost,
-      inWork,
-    ],
+    [router, guidedEnabled, openGuided, inWork, requestCancel],
   );
 
+  // Streaming counterpart of runTurn (CHAT_ENGINE=agent): POSTs the message to
+  // the SSE route, which starts the turn on the server and streams it back;
+  // each ChatStreamEvent folds into the same optimistic LocalTurn, so the
+  // reply grows token by token. `editOf`: the sent message this one replaces.
+  const runStreamingTurn = React.useCallback(
+    async (text: string, files: File[], editOf?: string) => {
+      const key = `local-${crypto.randomUUID()}`;
+      const controller = new AbortController();
+      setLocalTurns((current) => [
+        ...current,
+        {
+          key,
+          text: text || "(file sent)",
+          attachments: files.map((file) => ({
+            filename: file.name,
+            mimeType: file.type,
+            previewUrl: file.type.startsWith("image/")
+              ? URL.createObjectURL(file)
+              : undefined,
+          })),
+          state: "pending",
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      setSuggestions([]);
+
+      await followTurn(
+        key,
+        controller,
+        (signal) => {
+          const formData = new FormData();
+          formData.set("text", text);
+          if (ideaId) formData.set("ideaId", ideaId);
+          if (workHost) formData.set("workId", workHost.work.id);
+          if (editOf) formData.set("editOf", editOf);
+          for (const file of files) formData.append("files", file);
+          return fetch(`/api/projects/${projectId}/chat`, {
+            method: "POST",
+            body: formData,
+            signal,
+          });
+        },
+        editOf ? { onFailed: () => setEditedFrom(null) } : {},
+      );
+    },
+    [followTurn, projectId, ideaId, workHost],
+  );
+
+  // Follows a turn that is already running on the server, from its start
+  // (the server replays it), with a local copy of its reply.
+  const attachToRun = React.useCallback(
+    (
+      commandId: string,
+      controller: AbortController,
+      request: { text: string; createdAt: string },
+    ) => {
+      const key = `resume-${commandId}`;
+      streamCommandRef.current = commandId;
+      setLocalTurns((current) =>
+        current.some((turn) => turn.key === key)
+          ? current
+          : [
+              ...current,
+              {
+                key,
+                text: request.text,
+                attachments: [],
+                state: "pending",
+                commandId,
+                createdAt: request.createdAt,
+              },
+            ],
+      );
+      return followTurn(
+        key,
+        controller,
+        (signal) =>
+          fetch(
+            `/api/projects/${projectId}/chat/runs/${encodeURIComponent(commandId)}`,
+            { signal },
+          ),
+        {
+          // It ended meanwhile: the page's rows tell the rest.
+          onGone: () => {
+            setLocalTurns((current) =>
+              current.filter((turn) => turn.key !== key),
+            );
+            router.refresh();
+          },
+        },
+      );
+    },
+    [followTurn, projectId, router],
+  );
+
+  const stopTurn = React.useCallback(() => {
+    const key = streamingKeyRef.current;
+    // Escape calls this even when nothing runs; the legacy blocking path has
+    // nothing to stop.
+    if (!key || chatEngine !== "agent") return;
+    setLocalTurns((current) =>
+      current.map((turn) =>
+        turn.key === key ? { ...turn, toolLabel: "Stopping…" } : turn,
+      ),
+    );
+    const commandId = streamCommandRef.current;
+    if (commandId) void requestCancel(commandId);
+    else pendingCancelRef.current = key;
+    const controller = abortRef.current;
+    if (stopTimerRef.current) clearTimeout(stopTimerRef.current);
+    stopTimerRef.current = setTimeout(() => {
+      stopTimerRef.current = null;
+      if (controller && abortRef.current === controller) {
+        controller.abort("stopped");
+      }
+    }, STOP_FALLBACK_MS);
+  }, [chatEngine, requestCancel]);
+
+  // Leaving the chat drops only the subscription: the turn keeps running on
+  // the server and this chat re-attaches when it is opened again.
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort("unmount");
+    };
+  }, []);
+
+  // A turn of this chat still runs on the server (the page was reloaded, or
+  // the chat opened again while it works): follow it live, with Stop.
+  const attachLiveRun = React.useEffectEvent(
+    (commandId: string, controller: AbortController): boolean => {
+      // Already following a stream (this tab started the turn).
+      if (abortRef.current) return false;
+      const row = turns.find((turn) => turn.commandId === commandId);
+      void attachToRun(commandId, controller, {
+        text: row?.text ?? "",
+        createdAt: row?.createdAt ?? new Date().toISOString(),
+      });
+      return true;
+    },
+  );
+  React.useEffect(() => {
+    if (chatEngine !== "agent" || !liveRunCommandId) return undefined;
+    const controller = new AbortController();
+    if (!attachLiveRun(liveRunCommandId, controller)) return undefined;
+    return () => {
+      controller.abort("unmount");
+      if (abortRef.current === controller) abortRef.current = null;
+    };
+  }, [chatEngine, liveRunCommandId]);
+
   const sendMessage = React.useCallback(
-    (text: string, files: File[]) => {
+    (text: string, files: File[], options: { editOf?: string } = {}) => {
       if (!text && files.length === 0) return Promise.resolve();
       if (workHost && workHost.work.status !== "ACTIVE") {
         toast.info("Reopen this Work to continue.");
         return Promise.resolve();
       }
       const go = () => {
-        if (chatEngine === "agent") return runStreamingTurn(text, files);
+        if (chatEngine === "agent") {
+          return runStreamingTurn(text, files, options.editOf);
+        }
 
         return runTurn(
           text || "(file sent)",
@@ -1257,6 +1527,37 @@ export function ProjectChat({
     [messages, sendMessage],
   );
 
+  // Edit (Works, agent engine): the edited message and everything after it
+  // are replaced by a new turn with the new text (the server carries the
+  // message's files over). `sourceId` is the edited message's index in
+  // `messages`, like onReload's parentId.
+  const onEdit = React.useCallback(
+    async (message: AppendMessage) => {
+      const index = message.sourceId != null ? Number(message.sourceId) : NaN;
+      const source = Number.isInteger(index) ? messages[index] : undefined;
+      if (
+        !source ||
+        source.role !== "user" ||
+        !source.commandId ||
+        source.editable === false
+      ) {
+        toast.info("Wait until this message is sent.");
+        return;
+      }
+      const text = message.content
+        .map((part) => (part.type === "text" ? part.text : ""))
+        .join("")
+        .trim();
+      if (!text) {
+        toast.error("Message is empty.");
+        return;
+      }
+      setEditedFrom({ commandId: source.commandId, createdAt: source.createdAt });
+      await sendMessage(text, [], { editOf: source.commandId });
+    },
+    [messages, sendMessage],
+  );
+
   const runtime = useExternalStoreRuntime({
     messages,
     convertMessage,
@@ -1264,10 +1565,11 @@ export function ProjectChat({
     suggestions: suggestions.map((prompt) => ({ prompt })),
     onNew,
     onReload,
-    // Stop: aborts the SSE fetch, which aborts the model stream server-side.
-    // A no-op on the legacy blocking path (nothing to abort).
+    ...(inWork && chatEngine === "agent" ? { onEdit } : {}),
+    // Stop: asks the server to end the turn. A no-op on the legacy blocking
+    // path (nothing to stop).
     onCancel: async () => {
-      abortRef.current?.abort();
+      stopTurn();
     },
     adapters: { attachments: attachmentAdapter },
   });
@@ -1891,6 +2193,7 @@ export function ProjectChat({
       workHost
         ? buildWorkHostValue({
             projectId,
+            projectName,
             workHost,
             isSending,
             producing,
@@ -1898,7 +2201,15 @@ export function ProjectChat({
             runNextStep: runNextStepStable,
           })
         : null,
-    [workHost, projectId, isSending, producing, openTab, runNextStepStable],
+    [
+      workHost,
+      projectId,
+      projectName,
+      isSending,
+      producing,
+      openTab,
+      runNextStepStable,
+    ],
   );
 
   // A content-package piece whose live stream is gone (page reload, dropped
@@ -2000,6 +2311,7 @@ export function producingPlanIds(
 // production blocks just its own plan, through `producing`.
 export function buildWorkHostValue(input: {
   projectId: string;
+  projectName?: string;
   workHost: WorkHost;
   isSending: boolean;
   producing: ReadonlySet<string>;
@@ -2009,6 +2321,7 @@ export function buildWorkHostValue(input: {
   const { workHost } = input;
   return {
     projectId: input.projectId,
+    ...(input.projectName ? { projectName: input.projectName } : {}),
     workId: workHost.work.id,
     workTitle: workHost.work.title,
     active: workHost.work.status === "ACTIVE",

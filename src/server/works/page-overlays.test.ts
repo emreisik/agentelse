@@ -247,7 +247,7 @@ describe("loadWorkOverlayInputs", () => {
     creativeFindMany.mockResolvedValue([]);
   });
 
-  it("loads the rows of creative cards and of idea slots of saved plans only", async () => {
+  it("loads the rows of creative cards and of every slot of saved plans (the pane shows each piece), never a draft's", async () => {
     const saved = plan(
       [item("i1"), item(null, { origin: { kind: "master", ref: "m" } })],
       ["s1", "s2"],
@@ -259,7 +259,7 @@ describe("loadWorkOverlayInputs", () => {
         where: { id: { in: string[] } };
       }
     ).where.id.in;
-    expect([...ids].sort()).toEqual(["c1", "s1"]);
+    expect([...ids].sort()).toEqual(["c1", "s1", "s2"]);
   });
 
   it("asks for no rows when there is nothing to look up", async () => {

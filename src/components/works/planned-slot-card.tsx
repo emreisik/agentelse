@@ -5,6 +5,7 @@ import { CalendarClock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
+import { ChannelMark } from "@/components/commands/channel-badge";
 import { useChatPackage } from "@/components/commands/chat-package-context";
 import type { WsTone } from "@/components/commands/ws-event-card";
 import { ActionCard } from "@/components/works/action-card";
@@ -346,11 +347,23 @@ export function PlannedSlotCard({
         </div>
       }
     >
-      <p className="text-sm" style={{ color: "var(--ws-text)" }}>
-        {copyText("slot.where", {
-          when: slotWhenLabel(item.date, item.time),
-          where,
-        })}
+      <p
+        className="flex items-center gap-2 text-sm"
+        style={{ color: "var(--ws-text)" }}
+      >
+        {resolved ? (
+          <ChannelMark
+            channel={resolved.channel}
+            className="size-5"
+            decorative
+          />
+        ) : null}
+        <span>
+          {copyText("slot.where", {
+            when: slotWhenLabel(item.date, item.time),
+            where,
+          })}
+        </span>
       </p>
       {flags.length > 0 ? (
         <span

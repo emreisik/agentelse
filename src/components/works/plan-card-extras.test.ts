@@ -22,20 +22,28 @@ vi.mock("@/server/actions/schedule-slots-actions", () => ({
 vi.mock("@/server/actions/slot-suggest-actions", () => ({
   suggestSlotsAction: vi.fn(),
 }));
+vi.mock("@/server/actions/plan-draft-actions", () => ({
+  movePlanPostAction: vi.fn(),
+  removePlanPostAction: vi.fn(),
+  setPlanPlatformsAction: vi.fn(),
+}));
 vi.mock("@/server/actions/plan-progress-actions", () => ({
   approvePlanItemsAction: vi.fn(),
+  enablePlanPublishingAction: vi.fn(),
+}));
+vi.mock("@/server/actions/slot-text-actions", () => ({
+  updateSlotTextAction: vi.fn(),
 }));
 
-const { PlanCardExtras, parseReply, replyFailure, swappableOf } =
+const { BrandCheck, parseReply, replyFailure } =
   await import("./plan-card-extras");
 const { PlannedSlotCard } = await import("./planned-slot-card");
-const { ContentPlanCard } =
-  await import("@/components/commands/content-plan-card");
+const { ContentPlanPane } = await import("./plan-pane/plan-pane");
 const { ChatPackageProvider } =
   await import("@/components/commands/chat-package-context");
 const { WorkCardHostProvider } = await import("./work-card-host");
 
-import type { WorkCardHostInput } from "./work-card-host";
+import type { WorkCardHostInput, WorkCardHostValue } from "./work-card-host";
 
 type PlanCard = Extract<IdeaEventCardData, { kind: "content-plan-draft" }>;
 type PlanItem = PlanCard["items"][number];
@@ -64,9 +72,20 @@ function inHost(element: ReactElement, host: WorkCardHostInput = HOST) {
   );
 }
 
-function extrasHtml(card: PlanCard, host: WorkCardHostInput | null = HOST) {
-  const element = createElement(PlanCardExtras, { card, commandId: "cmd-1" });
-  return host ? inHost(element, host) : renderToStaticMarkup(element);
+// The brand check as the plan pane renders it (it takes the host as a prop).
+function extrasHtml(card: PlanCard, host: WorkCardHostInput = HOST) {
+  const value: WorkCardHostValue = {
+    ...host,
+    announce: () => undefined,
+    requestFocus: () => undefined,
+    cancelFocus: () => undefined,
+    consumeFocus: () => false,
+  };
+  return norm(
+    renderToStaticMarkup(
+      createElement(BrandCheck, { card, commandId: "cmd-1", host: value }),
+    ),
+  );
 }
 
 function item(over: Partial<PlanItem> = {}): PlanItem {
@@ -132,12 +151,9 @@ function tagOf(html: string, label: string): string {
 
 const count = (html: string, needle: string) => html.split(needle).length - 1;
 
-describe("PlanCardExtras: guard plan-extras (W78)", () => {
-  it("renders nothing without a Work host and nothing for a superseded plan", () => {
-    expect(extrasHtml(plan(), null)).toBe("");
-    expect(extrasHtml(plan({ state: "superseded" }))).not.toContain(
-      "data-plan-extras",
-    );
+describe("BrandCheck: guard plan-extras (W78)", () => {
+  it("renders nothing for a plan with no flag and no check", () => {
+    expect(extrasHtml(plan())).toBe("");
   });
 
   describe("brand check", () => {
@@ -239,160 +255,7 @@ describe("PlanCardExtras: guard plan-extras (W78)", () => {
     });
   });
 
-  describe("other ideas", () => {
-    it("one details per post with only the first open, alternatives with their source label", () => {
-      const html = extrasHtml(plan());
-      expect(html).toContain("Other ideas");
-      expect(count(html, "<details")).toBe(2);
-      expect(count(html, "<details open")).toBe(1);
-      expect(html.indexOf("<details open")).toBeLessThan(
-        html.indexOf("<details", html.indexOf("<details open") + 5),
-      );
-      expect(html).toContain("Mon 5 Oct · Instagram");
-      expect(html).toContain("Tue 6 Oct · LinkedIn");
-      expect(html).toContain("Current idea");
-      expect(html).toContain("Meet the team");
-      expect(html).toContain("From: Story first");
-      expect(html).toContain("Three small wins");
-      expect(count(html, "From:")).toBe(2);
-      expect(html).toContain(
-        'aria-label="Other ideas for Mon 5 Oct · Instagram"',
-      );
-      expect(count(html, "Use this idea")).toBe(3);
-      const use = tagOf(html, "Use this idea");
-      expect(use).toContain("min-h-11");
-      expect(use).toContain("w-full");
-    });
-
-    it("the helper line depends on whether alternatives came with the pick", () => {
-      expect(extrasHtml(plan())).toContain(
-        "Ideas from the other directions are ready for each post.",
-      );
-      const generated = plan({
-        items: [
-          item({ alternatives: [{ topic: "Generated", captionIdea: "c" }] }),
-        ],
-      });
-      expect(extrasHtml(generated)).toContain(
-        "One quick request covers every post. Nothing changes until you pick an idea.",
-      );
-      const none = plan({ items: [item(), item({ date: "2026-10-06" })] });
-      const html = extrasHtml(none);
-      expect(html).toContain("One quick request covers every post.");
-      expect(count(html, "No other idea fits this post yet.")).toBe(2);
-    });
-
-    it("'More ideas' only below the run cap, 'Get other ideas' only without any alternative; both are quiet", () => {
-      const more = extrasHtml(plan({ alternativesMeta: { runs: 1 } }));
-      expect(more).toContain("More ideas");
-      expect(more).not.toContain("Get other ideas");
-      expect(tagOf(more, "More ideas")).toContain('data-emphasis="quiet"');
-      expect(tagOf(more, "More ideas")).toContain("min-h-11");
-
-      const capped = extrasHtml(plan({ alternativesMeta: { runs: 2 } }));
-      expect(capped).not.toContain("More ideas");
-      expect(capped).toContain(
-        "You&#x27;ve used both idea refreshes for this plan.",
-      );
-
-      const get = extrasHtml(
-        plan({ items: [item(), item({ date: "2026-10-06" })] }),
-      );
-      expect(get).toContain("Get other ideas");
-      expect(get).not.toContain("More ideas");
-      expect(tagOf(get, "Get other ideas")).toContain('data-emphasis="quiet"');
-      // Never a second primary next to Save & produce.
-      expect(more).not.toContain('data-emphasis="primary"');
-      expect(get).not.toContain('data-emphasis="primary"');
-    });
-
-    it("a saved plan only offers slots still waiting for content, and says so for made ones", () => {
-      const saved = plan({
-        state: "saved",
-        savedCreativeIds: ["c1", "c2"],
-        slots: [
-          { id: "c1", stage: "PLANNED" },
-          { id: "c2", stage: "IN_REVIEW" },
-        ],
-      });
-      const html = extrasHtml(saved);
-      expect(count(html, "<details")).toBe(2);
-      expect(html).toContain("Already made, so this idea can&#x27;t change.");
-      expect(count(html, "<details open")).toBe(1);
-      expect(count(html, "Use this idea")).toBe(2);
-
-      const allMade = plan({
-        state: "saved",
-        slots: [
-          { id: "c1", stage: "IN_REVIEW" },
-          { id: "c2", stage: "APPROVED" },
-        ],
-      });
-      const done = extrasHtml(allMade);
-      expect(done).toContain("Nothing to change: every post is already made.");
-      expect(done).not.toContain("<details");
-      expect(done).not.toContain("More ideas");
-      expect(done).not.toContain("Get other ideas");
-    });
-
-    it("a slot in a running production is locked", () => {
-      const html = extrasHtml(
-        plan({
-          state: "saved",
-          slots: [
-            { id: "c1", stage: "PLANNED" },
-            { id: "c2", stage: "PLANNED" },
-          ],
-          production: {
-            state: "running",
-            creativeIds: ["c1"],
-            startedAt: "2026-10-01T10:00:00.000Z",
-          },
-        }),
-      );
-      expect(html).toContain("Already made, so this idea can&#x27;t change.");
-      expect(count(html, "Use this idea")).toBe(1);
-    });
-
-    it("a removed post gets no disclosure", () => {
-      const card = plan({
-        items: [
-          item({ alternatives: ALTS, removed: true }),
-          item({ alternatives: ALTS }),
-        ],
-      });
-      expect(count(extrasHtml(card), "<details")).toBe(1);
-    });
-
-    it("blocks the buttons with ONE visible reason in a Completed Work or while the plan is produced", () => {
-      const done = extrasHtml(plan(), { ...HOST, active: false });
-      expect(done).toContain("This Work is completed. Reopen it to continue.");
-      expect(tagOf(done, "Use this idea")).toContain('aria-disabled="true"');
-      const producing = extrasHtml(plan(), {
-        ...HOST,
-        producing: new Set(["cmd-1"]),
-      });
-      expect(producing).toContain("Making your pieces…");
-      expect(count(producing, "Making your pieces…")).toBe(1);
-    });
-  });
-
   describe("pure helpers", () => {
-    it("swappableOf: a draft is all non-removed posts; a saved plan only PLANNED slots outside a running claim", () => {
-      const draft = plan({ items: [item(), item({ removed: true }), item()] });
-      expect([...swappableOf(draft, draft.items)]).toEqual([0, 2]);
-      const saved = plan({
-        state: "saved",
-        items: [item(), item(), item()],
-        slots: [
-          { id: "a", stage: "PLANNED" },
-          null,
-          { id: "c", stage: "FAILED" },
-        ],
-      });
-      expect([...swappableOf(saved, saved.items)]).toEqual([0]);
-    });
-
     it("maps every alternatives-route refusal to its copy", () => {
       expect(parseReply({ ok: true })).toEqual({ ok: true });
       expect(parseReply("x")).toBeNull();
@@ -423,38 +286,36 @@ describe("PlanCardExtras: guard plan-extras (W78)", () => {
     });
   });
 
-  describe("inside the plan card", () => {
+  describe("inside the plan pane", () => {
     const chat = { start: vi.fn(), startPlan: vi.fn(), runs: {} };
     const html = (card: PlanCard) =>
       inHost(
         createElement(
           ChatPackageProvider,
           { value: chat },
-          createElement(ContentPlanCard, {
-            card,
-            commandId: "cmd-1",
-            aboveActions: createElement(PlanCardExtras, {
-              card,
-              commandId: "cmd-1",
-            }),
-          }),
+          createElement(ContentPlanPane, { card, commandId: "cmd-1" }),
         ),
       );
 
-    it("the extras sit above Save, never below it", () => {
+    it("the brand check sits above the footer, never below it", () => {
       const out = html(
         plan({
           brandCheck: { state: "checked", rules: 3 },
           items: [item({ brandFlags: [BLOCK_FLAG], alternatives: ALTS })],
         }),
       );
-      const save = out.indexOf("Save only");
-      expect(save).toBeGreaterThan(0);
+      const prepare = out.indexOf("Prepare content");
+      expect(prepare).toBeGreaterThan(0);
       expect(out.indexOf("Brand check")).toBeGreaterThan(-1);
-      expect(out.indexOf("Brand check")).toBeLessThan(save);
-      expect(out.indexOf("Other ideas")).toBeLessThan(save);
-      expect(out.indexOf("Save anyway")).toBeLessThan(save);
-      expect(out.indexOf("More ideas")).toBeLessThan(save);
+      expect(out.indexOf("Brand check")).toBeLessThan(prepare);
+      expect(out.indexOf("Save anyway")).toBeLessThan(prepare);
+    });
+
+    it("the Other ideas area is gone: each post has its own New idea button", () => {
+      const out = html(plan());
+      expect(out).not.toContain("Other ideas");
+      expect(out).not.toContain("data-other-ideas");
+      expect(count(out, "New idea</span>")).toBe(2);
     });
   });
 });

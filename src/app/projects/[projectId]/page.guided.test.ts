@@ -76,8 +76,7 @@ vi.mock("@/components/workspace/workspace-right-panel-data", () => ({
     brandKit: null,
     connections: [],
     files: [],
-    outputs: [],
-    calendar: {},
+    calendar: { timezone: "Europe/Istanbul" },
   }),
 }));
 vi.mock("@/components/workspace/workspace-right-panel", () => ({
@@ -402,10 +401,13 @@ describe("project page Works wave 2", () => {
     expect(opener.props).toEqual({ projectId: "p1" });
   });
 
-  it("the right panel's calendar is told the open Work, so its links keep it", async () => {
+  it("the right panel's calendar gets the project and its timezone, nothing per month", async () => {
     mocks.workRepo.get.mockResolvedValue(work());
     const tree = await renderWorkTree({ work: "w1" });
-    expect(findPropsOf(tree, mocks.CalendarPanel)?.workId).toBe("w1");
+    expect(findPropsOf(tree, mocks.CalendarPanel)).toEqual({
+      projectId: "p1",
+      timezone: "Europe/Istanbul",
+    });
   });
 
   it("tells the sidebar whether the chat on screen is still the new one", async () => {
@@ -454,12 +456,10 @@ describe("project page Works wave 2", () => {
     expect(findPropsOf(tree, mocks.ProjectChat)).toBeDefined();
   });
 
-  it("without Works the calendar is told no Work", async () => {
+  it("without Works the calendar still renders", async () => {
     mocks.worksOn = false;
     const tree = await renderWorkTree({});
-    const props = findPropsOf(tree, mocks.CalendarPanel);
-    expect(props).toBeDefined();
-    expect(props?.workId).toBeUndefined();
+    expect(findPropsOf(tree, mocks.CalendarPanel)?.projectId).toBe("p1");
   });
 
   it("a stale ?work= id still goes back to the bare URL", async () => {

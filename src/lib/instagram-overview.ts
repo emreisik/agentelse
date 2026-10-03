@@ -22,7 +22,8 @@ export type InstagramOverview =
       insightsMissing: "permission" | "error" | null;
       posts: InstagramPostStats[];
     }
-  | { ok: false; reason: "not_connected" | "expired" | "error" };
+  // "rate_limited": Meta's request limit is reached; it clears by itself.
+  | { ok: false; reason: "not_connected" | "expired" | "rate_limited" | "error" };
 
 // Likes + comments per post over the recent posts, as a share of followers.
 // null when there is nothing to divide by, or no post shows its counters.

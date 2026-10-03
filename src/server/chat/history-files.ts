@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import type { CommandAttachment } from "@/server/repositories/command.repository";
 import { readAsset } from "@/server/storage/asset-storage";
 
 import type { HistoryRow } from "./history";
@@ -20,7 +21,7 @@ type StoredAttachment = { assetId?: string; mimeType?: string };
 function isVisual(mimeType: string | undefined): boolean {
   return Boolean(
     mimeType &&
-      (mimeType.startsWith("image/") || mimeType === "application/pdf"),
+    (mimeType.startsWith("image/") || mimeType === "application/pdf"),
   );
 }
 
@@ -67,8 +68,48 @@ export async function loadRecentHistoryFiles(
     } catch (error) {
       // A missing file must not fail the turn; the model still sees the
       // "[attached: name]" note from the history text.
-      console.error("[chat-history-files] could not read asset", asset.id, error);
+      console.error(
+        "[chat-history-files] could not read asset",
+        asset.id,
+        error,
+      );
     }
   }
   return files;
+}
+
+// Every file of ONE earlier message, loaded back in its order: an edited
+// message is sent again with the files it had (the edit itself is text only).
+// Scoped to the project like the history files. A file that can't be read is
+// left out; the agent then names it in the message instead (chat-agent.ts).
+export async function loadAttachmentBodies(
+  attachments: readonly CommandAttachment[],
+  projectId: string,
+): Promise<HistoryFile[]> {
+  if (attachments.length === 0) return [];
+  const assets = await prisma.asset.findMany({
+    where: { id: { in: attachments.map((a) => a.assetId) }, projectId },
+    select: { id: true, storageKey: true, mimeType: true },
+  });
+  const byId = new Map(assets.map((asset) => [asset.id, asset] as const));
+
+  const bodies: HistoryFile[] = [];
+  for (const attachment of attachments) {
+    const asset = byId.get(attachment.assetId);
+    if (!asset) continue;
+    try {
+      const buffer = await readAsset(asset.storageKey);
+      bodies.push({
+        mimeType: asset.mimeType,
+        data: buffer.toString("base64"),
+      });
+    } catch (error) {
+      console.error(
+        "[chat-history-files] could not read asset",
+        asset.id,
+        error,
+      );
+    }
+  }
+  return bodies;
 }

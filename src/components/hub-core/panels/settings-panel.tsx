@@ -35,6 +35,7 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { TimePicker } from "@/components/ui/date-time-picker";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -545,13 +546,15 @@ async function PublishingTab({ projectId }: { projectId: string }) {
               {[1, 2, 3].map((slot) => (
                 <div key={slot} className="space-y-1.5">
                   <Label htmlFor={`publishing-slot${slot}`}>Slot {slot}</Label>
-                  <Input
+                  <TimePicker
                     id={`publishing-slot${slot}`}
                     name={`slot${slot}`}
-                    type="time"
                     defaultValue={cronToTime(
                       bySlot.get(slot)?.cronExpression ?? null,
                     )}
+                    // An empty slot is a slot that is off.
+                    clearable
+                    placeholder="Off"
                   />
                 </div>
               ))}
@@ -638,10 +641,9 @@ async function PublishingTab({ projectId }: { projectId: string }) {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="auto-plan-time">Time</Label>
-                <Input
+                <TimePicker
                   id="auto-plan-time"
                   name="time"
-                  type="time"
                   defaultValue={autoPlanTime}
                 />
               </div>

@@ -105,6 +105,40 @@ describe("gemini-image-client", () => {
     });
   });
 
+  it("sends several reference pictures as inlineData parts, in order, before the prompt", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, IMAGE_RESPONSE_BODY));
+
+    await generateGeminiImage("a post in our design", undefined, undefined, undefined, [
+      { data: "ZXgx", mimeType: "image/jpeg" },
+      { data: "ZXgy", mimeType: "image/png" },
+      { data: "cHJvZA==", mimeType: "image/png" },
+    ]);
+
+    const parts = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string).contents[0].parts;
+    expect(parts).toEqual([
+      { inlineData: { mimeType: "image/jpeg", data: "ZXgx" } },
+      { inlineData: { mimeType: "image/png", data: "ZXgy" } },
+      { inlineData: { mimeType: "image/png", data: "cHJvZA==" } },
+      { text: "a post in our design" },
+    ]);
+  });
+
+  it("an edit keeps its own picture and ignores the reference set", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, IMAGE_RESPONSE_BODY));
+
+    await generateGeminiImage(
+      "make the sky purple",
+      { data: "YmFzZQ==", mimeType: "image/png" },
+      undefined,
+      undefined,
+      [{ data: "cmVm", mimeType: "image/png" }],
+    );
+
+    const parts = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string).contents[0].parts;
+    expect(parts).toHaveLength(2);
+    expect(parts[0]).toEqual({ inlineData: { mimeType: "image/png", data: "YmFzZQ==" } });
+  });
+
   it("returns null and logs on a non-2xx response", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(400, { error: { message: "invalid prompt" } }),

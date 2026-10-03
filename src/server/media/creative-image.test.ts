@@ -64,6 +64,55 @@ beforeEach(async () => {
   falMocks.isFalImageConfigured.mockReturnValue(false);
 });
 
+describe("generateCreativeImage — reference pictures", () => {
+  const refs = [
+    { data: "ZXgx", mimeType: "image/png" },
+    { data: "cHJvZA==", mimeType: "image/png" },
+  ];
+  const stored = {
+    storageKey: "local-asset://a.png",
+    filename: "a.png",
+    mimeType: "image/png",
+    size: 1,
+  };
+
+  it("hands the whole ordered set to the Gemini tier", async () => {
+    geminiMocks.isGeminiImageConfigured.mockReturnValue(true);
+    geminiMocks.generateGeminiImage.mockResolvedValue({ ...stored, provider: "gemini" });
+
+    await generateCreativeImage("p", { referenceImages: refs, imageSize: { width: 100, height: 100 } });
+
+    const args = geminiMocks.generateGeminiImage.mock.calls[0]!;
+    expect(args[3]).toBeUndefined();
+    expect(args[4]).toEqual(refs);
+  });
+
+  it("hands the whole ordered set to the OpenAI tier", async () => {
+    openaiMocks.isOpenAIImageConfigured.mockReturnValue(true);
+    openaiMocks.generateOpenAIImage.mockResolvedValue({ ...stored, provider: "openai" });
+
+    await generateCreativeImage("p", { referenceImages: refs, imageSize: { width: 100, height: 100 } });
+
+    const args = openaiMocks.generateOpenAIImage.mock.calls[0]!;
+    expect(args[3]).toBeUndefined();
+    expect(args[6]).toEqual(refs);
+  });
+
+  it("the single reference picture goes the way it always did", async () => {
+    openaiMocks.isOpenAIImageConfigured.mockReturnValue(true);
+    openaiMocks.generateOpenAIImage.mockResolvedValue({ ...stored, provider: "openai" });
+
+    await generateCreativeImage("p", {
+      referenceImage: refs[0],
+      imageSize: { width: 100, height: 100 },
+    });
+
+    const args = openaiMocks.generateOpenAIImage.mock.calls[0]!;
+    expect(args[3]).toEqual(refs[0]);
+    expect(args[6]).toBeUndefined();
+  });
+});
+
 describe("generateCreativeImage — fallback order", () => {
   it("uses Gemini when configured and successful, never touching OpenAI or fal", async () => {
     geminiMocks.isGeminiImageConfigured.mockReturnValue(true);

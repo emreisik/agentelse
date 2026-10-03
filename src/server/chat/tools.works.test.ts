@@ -99,6 +99,7 @@ const PRE_CHANGE_NAMES = [
   "decide_approval",
   "ask_user",
   "remember_preference",
+  "save_style_reference",
   "start_deep_enrichment",
   "start_work_session",
   "update_work_session",
@@ -258,21 +259,63 @@ describe("the Works tool list", () => {
   });
 
   it("the variants extend the descriptions and keep the parameters", () => {
+    type Definition = { description: string; parameters: unknown };
+    const definitions = (name: string) => ({
+      works: toOpenAITools([worksTool(name)])[0] as Definition,
+      plain: toOpenAITools([defaultTool(name)])[0] as Definition,
+    });
     for (const name of ["generate_image", "propose_content_plan"]) {
-      const works = toOpenAITools([worksTool(name)])[0] as {
-        description: string;
-        parameters: unknown;
-      };
-      const plain = toOpenAITools([defaultTool(name)])[0] as {
-        description: string;
-        parameters: unknown;
-      };
+      const { works, plain } = definitions(name);
       expect(works.description.startsWith(plain.description)).toBe(true);
       expect(works.description.length).toBeGreaterThan(
         plain.description.length,
       );
-      expect(works.parameters).toEqual(plain.parameters);
     }
+  });
+
+  it("a Work's picture tool takes three more fields (the examples to follow, the product photos of this message, the other on-image texts) and nothing else changes", () => {
+    type Params = { properties: Record<string, unknown>; required?: string[] };
+    const works = toOpenAITools([worksTool("generate_image")])[0] as {
+      parameters: Params;
+    };
+    const plain = toOpenAITools([defaultTool("generate_image")])[0] as {
+      parameters: Params;
+    };
+    const { styleExampleIds, usePhotosFromThisMessage, onImageText, ...rest } =
+      works.parameters.properties;
+    expect(styleExampleIds).toBeDefined();
+    expect(usePhotosFromThisMessage).toBeDefined();
+    expect(onImageText).toBeDefined();
+    expect(rest).toEqual(plain.parameters.properties);
+    // None of them is required: an ordinary post is asked for as before.
+    expect(works.parameters.required).toEqual(plain.parameters.required);
+    expect(
+      "styleExampleIds" in plain.parameters.properties,
+    ).toBe(false);
+  });
+
+  it("a Work's plan tool takes one more field per post, its purpose, and nothing else changes", () => {
+    type Params = {
+      properties: {
+        title: unknown;
+        items: { items: { properties: Record<string, unknown> } };
+      };
+    };
+    const works = toOpenAITools([worksTool("propose_content_plan")])[0] as {
+      parameters: Params;
+    };
+    const plain = toOpenAITools([defaultTool("propose_content_plan")])[0] as {
+      parameters: Params;
+    };
+    const { purpose, ...rest } = works.parameters.properties.items.items.properties;
+    expect(purpose).toBeDefined();
+    expect(rest).toEqual(plain.parameters.properties.items.items.properties);
+    expect(works.parameters.properties.title).toEqual(
+      plain.parameters.properties.title,
+    );
+    expect(
+      "purpose" in plain.parameters.properties.items.items.properties,
+    ).toBe(false);
   });
 });
 

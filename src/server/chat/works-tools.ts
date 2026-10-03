@@ -162,7 +162,7 @@ function cleaningError(
 
 type PlanTextArgs = {
   title: string;
-  items: readonly { topic: string; captionIdea: string }[];
+  items: readonly { topic: string; captionIdea: string; purpose?: string }[];
 };
 
 // The text of a plan the model drafts in a Work (title, topics, caption ideas)
@@ -181,15 +181,22 @@ export function cleanPlanText<T extends PlanTextArgs>(
     return "";
   };
   const title = clean(args.title, 120, "The title");
-  const items = args.items.map((item, index) => ({
-    ...item,
-    topic: clean(item.topic, 120, `Item ${index + 1} (topic)`),
-    captionIdea: clean(
-      item.captionIdea,
-      IDEA_TEXT_MAX,
-      `Item ${index + 1} (captionIdea)`,
-    ),
-  }));
+  const items = args.items.map((item, index) => {
+    // The purpose is optional: a blank one is left out, not kept as "".
+    const { purpose, ...rest } = item;
+    return {
+      ...rest,
+      topic: clean(item.topic, 120, `Item ${index + 1} (topic)`),
+      captionIdea: clean(
+        item.captionIdea,
+        IDEA_TEXT_MAX,
+        `Item ${index + 1} (captionIdea)`,
+      ),
+      ...(purpose?.trim()
+        ? { purpose: clean(purpose, 60, `Item ${index + 1} (purpose)`) }
+        : {}),
+    };
+  });
   if (failures.length > 0) {
     return {
       ok: false,
@@ -792,9 +799,9 @@ export const WORKS_DESCRIPTION_SUFFIX: Record<
   string
 > = {
   generate_image:
-    " In a Work the piece is planned first: the tool puts it on the calendar at the next free day and renders it there, so the result is a planned slot, not a loose picture. Pictures are for Instagram only (Post 3:4 = FEED_PORTRAIT, Story 9:16 = STORY); a Reel is planned as a script, there is no square format, and text for LinkedIn, X, TikTok or the website is written with create_task. Report the planned day in one short sentence.",
+    " In a Work the piece is planned first: the tool puts it on the calendar at the next free day and renders it there, so the result is a planned slot, not a loose picture. Pictures are for Instagram only (Post 3:4 = FEED_PORTRAIT, Story 9:16 = STORY); a Reel is planned as a script, there is no square format, and text for LinkedIn, X, TikTok or the website is written with create_task. Report the planned day in one short sentence. POST STYLE KIT: when get_visual_identity shows a `postStyle`, every render already follows the brand's example posts and standing instructions: keep your own design ideas out of `imagePrompt` and say only what the post is about (the subject and, for a product, which product). When the client attached the real product's photo(s) to this message, set `usePhotosFromThisMessage: true` so that exact product is shown. When the examples carry designed text, write it in the brand language in `headline` (+ `highlight`) and `onImageText` (up to 6 shorter texts: sub-headline, price, button label, badge); take every fact from the client, never invent prices or promises. `styleExampleIds` picks which examples to follow (their ids come from get_visual_identity); leave it out to use the newest.",
   create_task:
     " In a Work, copy and briefs for a channel become planned calendar slots (LinkedIn, X, TikTok, Blog/SEO, Ads); an Instagram caption goes with its visual via generate_image. Publishing is not a task: approved pieces are published from their card.",
   propose_content_plan:
-    " In a Work (a free chat) this is THE planning tool: call it right away for any plan request (defaults for whatever the client left out: the default channels, 3 posts per week for the next 7 days from tomorrow), and again with the full updated plan to change it. Every item carries its own channel and format. It stops your turn: the card shows the plan.",
+    " In a Work (a free chat) this is THE planning tool: call it right away for any plan request (defaults for whatever the client left out: the default channels, 3 posts per week for the next 7 days from tomorrow), and again with the full updated plan to change it. A plan is general: ONE item per POST (never one per platform), every item on the first default channel with its natural format; the client chooses the platforms on the card, which makes each post for each of them. Give the plan a general title (for example \"Social media plan\"), never naming a platform, and each post a `purpose` (2-4 words on what it does for the plan, for example \"Introduce the product\"). It stops your turn: the card shows the plan.",
 };

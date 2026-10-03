@@ -1,36 +1,59 @@
-import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 
 import { isRateLimited } from "@/lib/rate-limit";
-import { runChatAgent } from "@/server/chat/chat-agent";
+import { CommandRepository } from "@/server/repositories/command.repository";
 import { WorkRepository } from "@/server/repositories/work.repository";
 import { applyDefaultChannels } from "@/server/works/channel-defaults";
 import { isWorksEnabled } from "@/server/works/flag";
 import { storeChatFiles, validateChatFiles } from "@/server/chat/attachments";
-import { encodeSseEvent } from "@/server/chat/sse";
-import type { ChatStreamEvent } from "@/server/chat/types";
+import { runChatAgent } from "@/server/chat/chat-agent";
+import { loadAttachmentBodies } from "@/server/chat/history-files";
+import {
+  findActiveRun,
+  isRunLive,
+  startChatRun,
+} from "@/server/chat/run-registry";
+import { chatRunResponse } from "@/server/chat/run-sse";
 import { isAgentelseError } from "@/server/security/errors";
 import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
 
-// Streaming chat endpoint (CHAT_ENGINE=agent). One POST = one chat turn; the
-// response is a Server-Sent Events stream of ChatStreamEvent frames (see
-// src/server/chat/types.ts and sse.ts). The Command row for the turn is
-// written by the agent before the first frame, so an aborted or dropped
-// request never loses the client's message.
-
-// Proxies (Railway edge, Cloudflare) close connections that stay silent for
-// tens of seconds; a reasoning model can think that long before its first
-// token, so an SSE comment goes out on this interval to keep the pipe warm.
-const HEARTBEAT_MS = 10_000;
+// Streaming chat endpoint (CHAT_ENGINE=agent). One POST = one chat turn, run
+// DETACHED from this request (run-registry.ts): the response is a Server-Sent
+// Events stream of ChatStreamEvent frames (src/server/chat/types.ts, sse.ts)
+// that only follows the run. A reload, a chat switch or a closed tab drops the
+// stream, never the turn; the client re-attaches through
+// /chat/runs/[commandId] and stops it through /chat/runs/[commandId]/cancel.
 
 // Per-user message rate. In-memory (see rate-limit.ts): enforced per
 // instance, which is fine as a runaway-client guard; the real spend cap is
 // the per-project daily AutonomyPolicy budget.
 const RATE_LIMIT_MAX = 20;
 const RATE_LIMIT_WINDOW_MS = 60_000;
+
+const BUSY_MESSAGE =
+  "A reply is still being written in this chat. Wait for it or press Stop.";
+
+function busy() {
+  return NextResponse.json({ error: BUSY_MESSAGE }, { status: 409 });
+}
+
+// Turns of this chat still marked RUNNING that no run of this process drives
+// any more (a restart or deploy cut them off) end as INTERRUPTED. Best-effort:
+// it never fails the message.
+async function settleOrphans(projectId: string, workId: string | null) {
+  try {
+    const ids = await CommandRepository.runningTurnIds({ projectId, workId });
+    await CommandRepository.markInterrupted(ids.filter((id) => !isRunLive(id)));
+  } catch (error) {
+    console.error(
+      "[chat-route] settling interrupted turns failed:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
 
 export async function POST(
   request: Request,
@@ -78,6 +101,8 @@ export async function POST(
   let workId: string | undefined;
   // A chat with no channel yet gets its defaults with the message (see below).
   let needsDefaults = false;
+  // Works only: the sent message this one replaces (an edit).
+  let editOf: string | undefined;
   if (isWorksEnabled()) {
     const field = formData.get("workId");
     const work =
@@ -92,6 +117,8 @@ export async function POST(
     }
     workId = work.id;
     needsDefaults = work.channels.length === 0;
+    const editField = formData.get("editOf");
+    if (typeof editField === "string" && editField) editOf = editField;
   }
   const files = formData
     .getAll("files")
@@ -103,6 +130,30 @@ export async function POST(
   const fileError = validateChatFiles(files);
   if (fileError) {
     return NextResponse.json({ error: fileError }, { status: 400 });
+  }
+
+  // One turn at a time per chat: checked before anything is stored or edited.
+  const chatWorkId = workId ?? null;
+  if (findActiveRun(projectId, chatWorkId)) return busy();
+  await settleOrphans(projectId, chatWorkId);
+
+  // An edit: the edited message and everything after it leave the chat and
+  // the model's history; its files come along with the new text.
+  let carried: Awaited<
+    ReturnType<typeof CommandRepository.supersedeFrom>
+  > | null = null;
+  if (editOf && workId) {
+    carried = await CommandRepository.supersedeFrom({
+      projectId,
+      workId,
+      commandId: editOf,
+    });
+    if (!carried.ok) {
+      return NextResponse.json(
+        { error: "This message can't be edited." },
+        { status: 400 },
+      );
+    }
   }
 
   // A chat is free, but its tools default pieces to the connected channels:
@@ -118,80 +169,31 @@ export async function POST(
     });
   }
 
-  const { attachments, attachmentBodies } = await storeChatFiles(files, {
+  const stored = await storeChatFiles(files, {
     workspaceId: access.workspaceId,
     projectId,
     brandId: access.defaultBrandId,
   });
+  const carriedFiles = carried?.ok ? carried.attachments : [];
+  const carriedBodies =
+    carriedFiles.length > 0
+      ? await loadAttachmentBodies(carriedFiles, projectId).catch(() => [])
+      : [];
 
-  const encoder = new TextEncoder();
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
-  let closed = false;
-
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const write = (chunk: string) => {
-        if (closed) return;
-        try {
-          controller.enqueue(encoder.encode(chunk));
-        } catch {
-          // The client went away; the agent keeps running to persist its
-          // partial reply (request.signal aborts the model stream).
-          closed = true;
-        }
-      };
-      const send = (event: ChatStreamEvent) => write(encodeSseEvent(event));
-
-      heartbeat = setInterval(() => write(": ping\n\n"), HEARTBEAT_MS);
-
-      try {
-        for await (const event of runChatAgent({
-          workspaceId: access.workspaceId,
-          projectId,
-          userId,
-          message: text || "(file only, no message text)",
-          ideaId,
-          workId,
-          attachments,
-          attachmentBodies,
-          signal: request.signal,
-        })) {
-          send(event);
-        }
-        revalidatePath(`/projects/${projectId}`);
-      } catch (error) {
-        console.error("[chat-route] agent crashed:", error);
-        send({
-          type: "error",
-          code: "FAILED",
-          message:
-            error instanceof Error ? error.message : "Failed to send message",
-        });
-      } finally {
-        clearInterval(heartbeat);
-        if (!closed) {
-          closed = true;
-          try {
-            controller.close();
-          } catch {
-            // Already closed by a client cancel.
-          }
-        }
-      }
+  const started = startChatRun(
+    {
+      workspaceId: access.workspaceId,
+      projectId,
+      userId,
+      message: text || "(file only, no message text)",
+      ideaId,
+      workId,
+      attachments: [...carriedFiles, ...stored.attachments],
+      attachmentBodies: [...carriedBodies, ...stored.attachmentBodies],
     },
-    cancel() {
-      closed = true;
-      clearInterval(heartbeat);
-    },
-  });
+    { agent: runChatAgent },
+  );
+  if (!started.ok) return busy();
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      // Reverse proxies (nginx-style) buffer by default; this opts out so
-      // tokens reach the browser as they are produced.
-      "X-Accel-Buffering": "no",
-    },
-  });
+  return chatRunResponse(started.run, request.signal);
 }

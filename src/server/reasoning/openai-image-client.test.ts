@@ -131,6 +131,74 @@ describe("openai-image-client", () => {
     );
   });
 
+  it("sends several reference pictures as the edits endpoint's image[] array, in order", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { data: [{ b64_json: ONE_PX_PNG_B64 }] }),
+    );
+
+    await generateOpenAIImage(
+      "a post in our design",
+      undefined,
+      undefined,
+      undefined,
+      "high",
+      undefined,
+      [
+        { data: "ZXhhbXBsZTE=", mimeType: "image/jpeg" },
+        { data: "ZXhhbXBsZTI=", mimeType: "image/png" },
+        { data: "cHJvZHVjdA==", mimeType: "image/png" },
+      ],
+    );
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://api.openai.com/v1/images/edits");
+    const form = init.body as FormData;
+    const sent = form.getAll("image[]");
+    expect(sent).toHaveLength(3);
+    expect((sent[0] as File).type).toBe("image/jpeg");
+    expect((sent[0] as File).name).toBe("input-1.jpeg");
+    expect((sent[2] as File).name).toBe("input-3.png");
+    // The single-picture field is not used next to the array.
+    expect(form.get("image")).toBeNull();
+  });
+
+  it("one reference picture in the array is sent the single-picture way", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { data: [{ b64_json: ONE_PX_PNG_B64 }] }),
+    );
+
+    await generateOpenAIImage("p", undefined, undefined, undefined, "high", undefined, [
+      { data: "b25l", mimeType: "image/png" },
+    ]);
+
+    const form = fetchMock.mock.calls[0]![1].body as FormData;
+    expect(form.get("image")).toBeInstanceOf(Blob);
+    expect(form.getAll("image[]")).toHaveLength(0);
+  });
+
+  it("an edit keeps its own picture and ignores the reference set", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { data: [{ b64_json: ONE_PX_PNG_B64 }] }),
+    );
+
+    await generateOpenAIImage(
+      "make the sky purple",
+      { data: "YmFzZQ==", mimeType: "image/png" },
+      undefined,
+      undefined,
+      "high",
+      undefined,
+      [
+        { data: "cmVm", mimeType: "image/png" },
+        { data: "cmVmMg==", mimeType: "image/png" },
+      ],
+    );
+
+    const form = fetchMock.mock.calls[0]![1].body as FormData;
+    expect(form.getAll("image[]")).toHaveLength(0);
+    expect(form.get("image")).toBeInstanceOf(Blob);
+  });
+
   it("returns null and logs on a non-2xx response", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(400, { error: { message: "invalid prompt" } }),

@@ -4,6 +4,7 @@ import { useId } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Sparkles } from "lucide-react";
 
+import { ChannelMark } from "@/components/commands/channel-badge";
 import { WsTag } from "@/components/commands/ws-event-card";
 import { Button } from "@/components/ui/button";
 import { ActionCard } from "@/components/works/action-card";
@@ -199,7 +200,12 @@ function OptionRegion({
             : copyText("planOptions.posts.many", { n: postCount })}
         </WsTag>
         {channels.map((channel) => (
-          <WsTag key={channel}>{channelLabelOf(channel)}</WsTag>
+          <WsTag key={channel}>
+            {isChannelKey(channel) ? (
+              <ChannelMark channel={channel} className="size-4" decorative />
+            ) : null}
+            {channelLabelOf(channel)}
+          </WsTag>
         ))}
         {option.basis ? (
           <WsTag>

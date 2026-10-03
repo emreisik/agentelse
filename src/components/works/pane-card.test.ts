@@ -41,7 +41,8 @@ const { CompactCardView, PaneCard, PaneCardView } = await import("./pane-card");
 const SPEC: CompactCardSpec = {
   icon: "directions",
   title: "BidUniq farkındalık haftası",
-  subtitle: "3 directions · 3 posts · Instagram",
+  subtitle: "3 directions · 3 posts",
+  channels: ["instagram", "tiktok"],
   status: { label: "Pick a direction", tone: "waiting" },
 };
 
@@ -85,9 +86,24 @@ describe("CompactCardView", () => {
   it("is one card: title, what is inside, where it stands", () => {
     const html = render();
     expect(html).toContain("BidUniq farkındalık haftası");
-    expect(html).toContain("3 directions · 3 posts · Instagram");
+    expect(html).toContain("3 directions · 3 posts");
     expect(html).toContain("Pick a direction");
     expect(html.match(/<button/g)).toHaveLength(1);
+  });
+
+  it("shows each channel it is for as that platform's brand mark", () => {
+    const html = render();
+    expect(html).toContain("data-card-channels");
+    expect(html).toContain('aria-label="Instagram"');
+    expect(html).toContain('aria-label="TikTok"');
+    const without = renderToStaticMarkup(
+      createElement(CompactCardView, {
+        spec: { ...SPEC, channels: undefined },
+        open: false,
+        onOpen: () => undefined,
+      }),
+    );
+    expect(without).not.toContain("data-card-channels");
   });
 
   it("is a button that says whether its card is open, and which region it opens", () => {

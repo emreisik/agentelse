@@ -21,6 +21,7 @@ const {
   validatePlanChannels,
   validatePlanDates,
   ContentPlanArgsSchema,
+  WorksContentPlanArgsSchema,
 } = await import("./content-plan");
 
 beforeEach(() => vi.clearAllMocks());
@@ -79,6 +80,35 @@ describe("buildPlanCard", () => {
     expect(card.items.map((i) => i.topic)).toEqual(["Earlier", "Later"]);
     expect(card.items[1]!.time).toBe("10:00");
     expect(card.items[0]!.format).toBeUndefined();
+  });
+});
+
+describe("the purpose of a post", () => {
+  const base = {
+    date: "2026-10-02",
+    channel: "instagram" as const,
+    formatKey: "instagram.carousel",
+    topic: "How it works",
+    captionIdea: "An example",
+  };
+
+  it("is kept trimmed and clipped to a few words, and left out when empty", () => {
+    const card = buildPlanCard(
+      WorksContentPlanArgsSchema.parse({
+        title: "Plan",
+        items: [
+          { ...base, purpose: "  Introduce the product  " },
+          { ...base, date: "2026-10-03", purpose: "x".repeat(200) },
+          { ...base, date: "2026-10-04", purpose: "   " },
+          { ...base, date: "2026-10-05" },
+        ],
+      }),
+      "Europe/Istanbul",
+    );
+    expect(card.items[0]!.purpose).toBe("Introduce the product");
+    expect(card.items[1]!.purpose).toHaveLength(60);
+    expect(card.items[2]).not.toHaveProperty("purpose");
+    expect(card.items[3]).not.toHaveProperty("purpose");
   });
 });
 

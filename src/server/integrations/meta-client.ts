@@ -5,6 +5,8 @@ import "server-only";
 // flow + the minimum surface of Instagram Content Publishing + Marketing
 // API needed for this integration.
 
+import { createHash } from "node:crypto";
+
 import { getEnv } from "@/lib/env";
 
 const GRAPH_API_VERSION = "v26.0";
@@ -222,6 +224,20 @@ export class MetaApiError extends Error {
 // the "Valid OAuth Redirect URI" in the Meta App Dashboard.
 function redirectUri(): string {
   return `${getEnv().NEXT_PUBLIC_APP_URL}/api/integrations/meta/callback`;
+}
+
+// Meta's throttling codes: 4 = the app's request limit, 17 = the user's,
+// 32 = a Page's, 613 = a call-specific limit, 80001-80014 = business use case
+// limits. They clear by themselves (usually within the hour); retrying right
+// away only keeps the counter full.
+const RATE_LIMIT_CODES = new Set([4, 17, 32, 613]);
+
+export function isMetaRateLimit(error: unknown): boolean {
+  if (!(error instanceof MetaApiError) || error.metaErrorCode === undefined) {
+    return false;
+  }
+  const code = error.metaErrorCode;
+  return RATE_LIMIT_CODES.has(code) || (code >= 80001 && code <= 80014);
 }
 
 async function request<T>(
@@ -495,7 +511,30 @@ export async function listManagedPages(
 // We never persist the Page Access Token anywhere (see the MetaPage
 // comment) — it's derived on the fly from the current long-lived user
 // token right before a publish/campaign operation.
+// The Page token only changes when the user token does, so it is kept for a
+// while in this process instead of asked for again on every share, check and
+// card (each ask counts against Meta's request limit). Keyed by the Page and a
+// hash of the user token: a reconnect gets a fresh one.
+const PAGE_TOKEN_TTL_MS = 30 * 60_000;
+const pageTokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+export function clearPageTokenCache() {
+  pageTokenCache.clear();
+}
+
 export async function fetchPageAccessToken(
+  pageId: string,
+  userAccessToken: string,
+): Promise<string> {
+  const key = `${pageId}:${createHash("sha256").update(userAccessToken).digest("hex")}`;
+  const cached = pageTokenCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.token;
+  const token = await requestPageAccessToken(pageId, userAccessToken);
+  pageTokenCache.set(key, { token, expiresAt: Date.now() + PAGE_TOKEN_TTL_MS });
+  return token;
+}
+
+async function requestPageAccessToken(
   pageId: string,
   userAccessToken: string,
 ): Promise<string> {

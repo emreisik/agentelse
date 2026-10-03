@@ -214,6 +214,10 @@ export type IdeaEventCardData =
       // Absent on plans drafted before channels existed.
       goal?: string;
       connections?: ChannelConnections;
+      // Works: whether the Instagram publishing schedule is on right now (read
+      // live with the connections, never stored): approved Instagram pieces only
+      // go out by themselves at their time while it is.
+      scheduleEnabled?: boolean;
       items: {
         date: string;
         time: string;
@@ -227,6 +231,9 @@ export type IdeaEventCardData =
         topic: string;
         captionIdea: string;
         // Works-only, all optional so stored rows stay valid.
+        // What the post does for the plan, in a few words ("Introduce the
+        // product"): the line under its title on the card.
+        purpose?: string;
         // Other takes on the same slot (other directions, "More ideas").
         alternatives?: { topic: string; captionIdea: string; from?: string }[];
         // Source label of the idea when it came from a direction.
@@ -244,6 +251,11 @@ export type IdeaEventCardData =
       master?: { title: string; message: string; ideaId?: string };
       brandCheck?: BrandCheckState;
       via?: "idea" | "master" | "suggestion" | "brief" | "generate" | "options";
+      // Works: the social platforms this plan goes to, chosen on the card
+      // (docs/works.md). A draft's items are the general posts; saving makes one
+      // piece per post and platform (lib/works/plan-platforms.ts). Absent: each
+      // item keeps the channel it names.
+      platforms?: string[];
       savedCreativeIds?: string[];
       // Production of the saved slots (plan-run.ts): set when a run is claimed
       // so a double click or a second tab cannot start the same pieces twice.
@@ -260,7 +272,18 @@ export type IdeaEventCardData =
       // plan-progress.ts), never stored: a saved card is a plan, its progress
       // is whatever the calendar says today.
       // null = a slot whose piece is gone (archived or deleted).
-      slots?: ({ id: string; stage: PlanItemStage; assetId?: string } | null)[];
+      // Works adds what the pane edits and reads: the piece's text and its
+      // publish time (the zone of the plan, "YYYY-MM-DDTHH:mm").
+      slots?: (
+        | {
+            id: string;
+            stage: PlanItemStage;
+            assetId?: string;
+            text?: string;
+            when?: string;
+          }
+        | null
+      )[];
     }
   // The plan wizard (start_plan_brief): a step-by-step card that collects
   // goal, channels, formats and rhythm, then sends them back as ONE chat

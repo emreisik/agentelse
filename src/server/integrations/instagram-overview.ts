@@ -15,6 +15,7 @@ import {
   META_PROVIDER,
   MetaApiError,
   fetchInstagramAccountInsights,
+  isMetaRateLimit,
   fetchInstagramPostStats,
   fetchInstagramProfile,
   type MetaInstagramMetadata,
@@ -30,9 +31,44 @@ import { decryptSecret } from "@/server/security/crypto";
 const POSTS_LIMIT = 6;
 const DAY_SECONDS = 24 * 60 * 60;
 
+// The card is read on every chat page, and each read is 3-4 Graph calls that
+// count against Meta's request limit for the whole app. A read that worked is
+// kept for a while; while Meta says the limit is reached, nothing is asked
+// for and the last good read (if any) is shown.
+const FRESH_MS = 15 * 60_000;
+const RATE_LIMIT_PAUSE_MS = 30 * 60_000;
+const lastGood = new Map<string, { overview: InstagramOverview; at: number }>();
+let pausedUntil = 0;
+
+export function clearInstagramOverviewCache() {
+  lastGood.clear();
+  pausedUntil = 0;
+}
+
 export async function loadInstagramOverview(
   projectId: string,
   now: number = Date.now(),
+): Promise<InstagramOverview> {
+  const cached = lastGood.get(projectId);
+  if (cached && now - cached.at < FRESH_MS) return cached.overview;
+  if (now < pausedUntil) {
+    return cached?.overview ?? { ok: false, reason: "rate_limited" };
+  }
+  const overview = await readInstagramOverview(projectId, now);
+  if (overview.ok) {
+    lastGood.set(projectId, { overview, at: now });
+  } else if (overview.reason === "rate_limited") {
+    pausedUntil = now + RATE_LIMIT_PAUSE_MS;
+    return cached?.overview ?? overview;
+  } else {
+    lastGood.delete(projectId);
+  }
+  return overview;
+}
+
+async function readInstagramOverview(
+  projectId: string,
+  now: number,
 ): Promise<InstagramOverview> {
   const credential = await prisma.integrationCredential.findUnique({
     where: {
@@ -90,6 +126,7 @@ export async function loadInstagramOverview(
     if (error instanceof MetaApiError && error.metaErrorCode === 190) {
       return { ok: false, reason: "expired" };
     }
+    if (isMetaRateLimit(error)) return { ok: false, reason: "rate_limited" };
     console.error("[instagram-overview] failed:", error);
     return { ok: false, reason: "error" };
   }

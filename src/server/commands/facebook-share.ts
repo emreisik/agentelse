@@ -12,6 +12,7 @@ import {
   fetchFacebookPagePost,
   fetchPageAccessToken,
   isMetaObjectMissing,
+  isMetaRateLimit,
   updateFacebookPagePost,
   type MetaFacebookMetadata,
 } from "@/server/integrations/meta-client";
@@ -216,6 +217,9 @@ const GENERIC_FAILURE = "Facebook sharing failed, please try again.";
 
 function describeError(error: unknown): string {
   if (error instanceof MetaApiError) {
+    if (isMetaRateLimit(error)) {
+      return "Facebook: Meta's request limit for this app was reached for now. Try again in about an hour.";
+    }
     if (error.metaErrorCode === 190) {
       return "Facebook: the connection is no longer authorized. Reconnect Facebook in Connectors.";
     }

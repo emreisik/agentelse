@@ -21,7 +21,7 @@ Dalga 1 kapsamı (tek başına yayınlanabilir):
 
 Kartlar `src/components/works/` altındaki ortak parçalardan kurulur: `action-card.tsx` (kart iskeleti), `card-actions.tsx`, `card-focus.tsx` (odak), `live-region.tsx` (duyuru), `use-card-action.ts` (buton durumu, görünür "neden kapalı" nedeni), `work-card-host.tsx` ve saf yardımcılar `src/lib/works/host.ts`, `card-action.ts`. Kullanıcıya görünen her metin tek yerden gelir: `src/lib/works/copy.ts` (`WORKS_COPY`, `copyText`).
 
-Yeni kart türleri: `PlanOptionsCard` (`plan-options-card.tsx`), `IdeaOptionsCard` (`idea-options-card.tsx`), `PlannedSlotCard` (`planned-slot-card.tsx`), `PlanCardExtras` (`plan-card-extras.tsx`), `CreativePublishLine` (`creative-publish-line.tsx`), kanal seçim kartı (`channel-select-card.tsx`) ve başlangıç kartları (`starter-cards.tsx`). Eski plan ve creative kartları yalnızca Work içinde (host kapılı) yeni görünümü alır; Work dışında aynı işaretleme kalır.
+Yeni kart türleri: `PlanOptionsCard` (`plan-options-card.tsx`), `IdeaOptionsCard` (`idea-options-card.tsx`), `PlannedSlotCard` (`planned-slot-card.tsx`), `BrandCheck` (`plan-card-extras.tsx`; plan kartının kendisi artık `plan-pane/`, bkz. works.md "Sosyal medya planı"), `CreativePublishLine` (`creative-publish-line.tsx`), kanal seçim kartı (`channel-select-card.tsx`) ve başlangıç kartları (`starter-cards.tsx`). Eski plan ve creative kartları yalnızca Work içinde (host kapılı) yeni görünümü alır; Work dışında aynı işaretleme kalır.
 
 Kartlar atomik yazılır: `src/server/chat/card-store.ts` (`updateCardInTx`, `updateCommandCard`).
 
@@ -29,7 +29,7 @@ Kartlar atomik yazılır: `src/server/chat/card-store.ts` (`updateCardInTx`, `up
 
 1. "Plan the week" bir `[Plan brief]` ile başlar (sihirbaz, `plan-brief-wizard.tsx`). Model `propose_plan_options` çağırır: 2-3 **yön** (`OPTIONS_MIN`, `OPTIONS_MAX` = `src/lib/works/plan-layout.ts`). Günler modelden değil sunucudan gelir: `layoutPlanSlots` bugünü çapa alır ve ileri taşır; model her seçenek için slot başına tam bir fikir yazar (`worksPlanSlotsNote`).
 2. Yön seçimi: `pickPlanOptionAction` (`src/server/actions/plan-options-actions.ts`). Seçilmeyen yönlerin fikirleri plan kartına **bedava alternatif** olarak gelir.
-3. Slot başına alternatif: `swapPlanItemAction` (tek dokunuşla değiştirir, maliyeti yok). Sessiz ücretli **More ideas** `POST /api/projects/[projectId]/chat/plan/alternatives` rotasıdır (LLM'li adım Route Handler'dır, Server Action değil); iki alternatif ekler. Maliyet satırı `src/lib/works/cost.ts`.
+3. Slot başına alternatif: `swapPlanItemAction` (tek dokunuşla değiştirir, maliyeti yok). Sessiz ücretli **More ideas** `POST /api/projects/[projectId]/chat/plan/alternatives` rotasıdır (LLM'li adım Route Handler'dır, Server Action değil); iki alternatif ekler. Plan kartında artık ayrı bir "Other ideas" alanı yoktur: her gönderi kartındaki **New idea** butonu gönderinin elindeki alternatiflerden sıradakini **öneri olarak** gösterir (sen "Use this idea" diyene kadar post değişmez; onayda `swapPlanItemAction`), hiç yoksa bu rotayı bir kez çalıştırıp ilk öneriyi gösterir. Maliyet satırı `src/lib/works/cost.ts`.
 4. Yönleri değiştirmek ("daha eğlenceli") her zaman **yeni** bir yön kümesi üretir; revize turu yoktur. Tek bir plan istenirse `propose_content_plan` kullanılır.
 5. Tek öğelik fikir listesi için `propose_ideas` (`IdeaOptionsCard`).
 
@@ -110,7 +110,7 @@ Testler DB'siz (`src/lib/works/*.test.ts`, `src/server/chat/works-*.test.ts`, `s
 
 Elle (paylaşımlı canlı DB ve kredi nedeniyle otomatik değil), ayrılmış bir projede:
 
-1. Yeni sohbet, kanalı çipten seç (bağlı kanal hazır gelir), "Plan the week": 2-3 yön gelir; birini seç, bir slotta fikir değiştir, More ideas dene.
+1. Yeni sohbet, kanalı çipten seç (bağlı kanal hazır gelir), "Plan the week": 2-3 yön gelir; birini seç, bir gönderi kartının New idea butonuyla öneri al ve onayla.
 2. Marka kuralına aykırı bir konu iste: kart uyarır / engeller.
 3. Bir fikri takvime ekle (bir basışta birden çok kanal), sonra `Remove` ile geri al.
 4. Bir gönderi iste: önce slot, sonra üretim görünür; başka bir gün sorulmaz.

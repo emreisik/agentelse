@@ -4,6 +4,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Heart, MessageCircle } from "lucide-react";
 
+import { BrandIcon } from "@/components/integrations/brand-icons";
+import { CardTitle } from "@/components/workspace/card-title";
 import {
   INSIGHTS_WINDOW_DAYS,
   engagementRate,
@@ -12,8 +14,9 @@ import {
   type InstagramOverview,
 } from "@/lib/instagram-overview";
 
-// The right panel's Instagram card: the connected account's profile numbers,
-// how its last weeks went (reach, views, engagement) and its latest posts.
+// The right panel's Instagram card, kept to what gets looked at: the account
+// and its followers, how its last weeks went (reach, views, engagement rate)
+// and its latest posts.
 // Read after the page has rendered, through the overview endpoint, so a slow
 // Meta answer never holds the workspace up. Shown only while Instagram is
 // connected; the "Bağlı hesaplar" card already says when it is not.
@@ -55,9 +58,17 @@ function useInstagramOverview(projectId: string): LoadState {
   return state;
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
   return (
-    <div className="min-w-0">
+    <div className="min-w-0" title={hint}>
       <p
         className="truncate text-sm font-semibold tabular-nums"
         style={{ color: "var(--ws-text)" }}
@@ -128,9 +139,7 @@ export function InstagramOverviewView({
       className={CARD_CLASS}
       style={CARD_STYLE}
     >
-      <h2 className="text-sm font-semibold" style={{ color: "var(--ws-text)" }}>
-        Instagram
-      </h2>
+      <CardTitle icon={<BrandIcon brand="instagram" />}>Instagram</CardTitle>
 
       {state.status === "loading" ? <Skeleton /> : null}
 
@@ -148,6 +157,8 @@ export function InstagramOverviewView({
               </Link>
               .
             </>
+          ) : state.overview.reason === "rate_limited" ? (
+            "Meta istek sınırına ulaşıldı; veriler birazdan kendiliğinden yenilenecek."
           ) : (
             "Instagram verisi şu an okunamadı."
           )}
@@ -179,7 +190,7 @@ function Loaded({
         style={{ borderColor: "var(--ws-border)" }}
       >
         <span
-          className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full"
+          className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full"
           style={{ background: "var(--ws-surface-2)", color: "var(--ws-text)" }}
         >
           {profile.pictureUrl ? (
@@ -191,10 +202,10 @@ function Loaded({
               className="size-full object-cover"
             />
           ) : (
-            <span className="text-sm font-bold">IG</span>
+            <span className="text-xs font-bold">IG</span>
           )}
         </span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p
             className="truncate text-xs font-semibold"
             style={{ color: "var(--ws-text)" }}
@@ -207,36 +218,30 @@ function Loaded({
             </p>
           ) : null}
         </div>
-      </div>
-
-      <div
-        className="grid grid-cols-3 gap-2 border-b py-3"
-        style={{ borderColor: "var(--ws-border)" }}
-      >
-        <Stat label="Takipçi" value={formatCount(profile.followers)} />
-        <Stat label="Takip edilen" value={formatCount(profile.follows)} />
-        <Stat label="Gönderi" value={formatCount(profile.posts)} />
+        <div className="shrink-0 text-right">
+          <Stat label="Takipçi" value={formatCount(profile.followers)} />
+        </div>
       </div>
 
       <div className="border-b py-3" style={{ borderColor: "var(--ws-border)" }}>
         <p className="mb-2 text-[11px]" style={{ color: "var(--ws-text-3)" }}>
           Son {INSIGHTS_WINDOW_DAYS} gün
         </p>
-        {insights ? (
-          <div className="grid grid-cols-2 gap-x-2 gap-y-2.5">
-            <Stat label="Erişilen hesap" value={formatCount(insights.reach)} />
-            <Stat label="Görüntülenme" value={formatCount(insights.views)} />
-            <Stat
-              label="Etkileşime giren hesap"
-              value={formatCount(insights.accounts_engaged)}
-            />
-            <Stat
-              label="Toplam etkileşim"
-              value={formatCount(insights.total_interactions)}
-            />
-          </div>
-        ) : insightsMissing === "permission" ? (
-          <p className="text-[11px] leading-snug" style={{ color: "var(--ws-text-2)" }}>
+        <div className="grid grid-cols-3 gap-2">
+          {insights ? (
+            <>
+              <Stat label="Erişim" value={formatCount(insights.reach)} hint="Erişilen hesap" />
+              <Stat label="Görüntülenme" value={formatCount(insights.views)} />
+            </>
+          ) : null}
+          <Stat
+            label="Etkileşim"
+            value={formatRate(rate)}
+            hint={`Etkileşim oranı: son ${posts.length} gönderi, takipçiye göre`}
+          />
+        </div>
+        {insights ? null : insightsMissing === "permission" ? (
+          <p className="mt-2 text-[11px] leading-snug" style={{ color: "var(--ws-text-2)" }}>
             Erişim ve görüntülenme için ek izin gerekiyor.{" "}
             <Link
               href={integrationsHref}
@@ -248,16 +253,10 @@ function Loaded({
             .
           </p>
         ) : (
-          <p className="text-[11px]" style={{ color: "var(--ws-text-2)" }}>
+          <p className="mt-2 text-[11px]" style={{ color: "var(--ws-text-2)" }}>
             Erişim verisi şu an okunamadı.
           </p>
         )}
-        <div className="mt-2.5">
-          <Stat
-            label={`Etkileşim oranı (son ${posts.length} gönderi, takipçiye göre)`}
-            value={formatRate(rate)}
-          />
-        </div>
       </div>
 
       {posts.length > 0 ? (
@@ -266,7 +265,7 @@ function Loaded({
             Son gönderiler
           </p>
           <ul className="grid grid-cols-3 gap-1.5">
-            {posts.map((post) => (
+            {posts.slice(0, 3).map((post) => (
               <li key={post.id}>
                 <PostTile post={post} />
               </li>

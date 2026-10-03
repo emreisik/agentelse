@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Lightbulb } from "lucide-react";
 import { toast } from "sonner";
 
+import { ChannelMark } from "@/components/commands/channel-badge";
 import { useChatPackage } from "@/components/commands/chat-package-context";
 import { Button } from "@/components/ui/button";
 import { ActionCard } from "@/components/works/action-card";
@@ -242,13 +243,14 @@ export function IdeaPlanPanelView({
               aria-pressed={on}
               onClick={() => onToggle(channel.key)}
               className={cn(
-                "min-h-11 rounded-xl border px-3 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
+                "inline-flex min-h-11 items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
                 on
                   ? "border-primary bg-primary/5"
                   : "hover:bg-[var(--ws-hover)]",
               )}
               style={on ? undefined : { borderColor: "var(--ws-border)" }}
             >
+              <ChannelMark channel={channel.key} className="size-5" decorative />
               {channel.label}
             </button>
           );
@@ -278,9 +280,10 @@ export function IdeaPlanPanelView({
             >
               {selected.length > 1 ? (
                 <p
-                  className="text-xs font-medium"
+                  className="flex items-center gap-1.5 text-xs font-medium"
                   style={{ color: "var(--ws-text)" }}
                 >
+                  <ChannelMark channel={key} className="size-4" decorative />
                   {channelLabelOf(key)}
                 </p>
               ) : null}

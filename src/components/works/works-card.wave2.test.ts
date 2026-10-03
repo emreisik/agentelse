@@ -31,14 +31,17 @@ vi.mock("@/server/actions/approval-actions", inert);
 vi.mock("@/server/actions/command-actions", inert);
 vi.mock("@/server/actions/content-plan-actions", inert);
 vi.mock("@/server/actions/creative-actions", inert);
+vi.mock("@/server/actions/creative-rating-actions", inert);
 vi.mock("@/server/actions/facebook-share-actions", inert);
 vi.mock("@/server/actions/creative-variant-actions", inert);
 vi.mock("@/server/actions/human-action-actions", inert);
 vi.mock("@/server/actions/plan-options-actions", inert);
+vi.mock("@/server/actions/plan-draft-actions", inert);
 vi.mock("@/server/actions/plan-progress-actions", inert);
 vi.mock("@/server/actions/publish-actions", inert);
 vi.mock("@/server/actions/schedule-slots-actions", inert);
 vi.mock("@/server/actions/slot-suggest-actions", inert);
+vi.mock("@/server/actions/slot-text-actions", inert);
 vi.mock("@/server/actions/work-actions", inert);
 vi.mock("@/server/actions/work-ads-actions", inert);
 vi.mock("@/server/actions/master-content-actions", inert);
@@ -337,5 +340,41 @@ describe("Make 3 visuals on the compact slot card", () => {
     expect(
       html(one("instagram.post", "instagram", "PLANNED"), false),
     ).not.toContain("Make 3 visuals");
+  });
+});
+
+describe("the creative card rating row", () => {
+  const ready = {
+    kind: "creative-ready",
+    title: "Post",
+    creativeId: "cr-1",
+    assetId: "a0",
+    mimeType: "image/png",
+    status: "IN_REVIEW",
+    contentFormat: "FEED_SQUARE",
+    approvalId: "ap-1",
+    versionNumber: 1,
+  } as CreativeCardData as IdeaEventCardData;
+
+  it("asks what the brand should learn from a finished post", () => {
+    for (const status of ["IN_REVIEW", "APPROVED", "PUBLISHED"]) {
+      const out = html({ ...ready, status } as IdeaEventCardData, true);
+      expect(out, status).toContain("data-creative-rating");
+      expect(out, status).toContain("Like this post");
+      expect(out, status).toContain("Not quite");
+    }
+  });
+
+  it("stays away from a post that is not finished or was replaced", () => {
+    for (const status of ["GENERATING", "REJECTED", "ARCHIVED"]) {
+      expect(
+        html({ ...ready, status } as IdeaEventCardData, true),
+        status,
+      ).not.toContain("data-creative-rating");
+    }
+  });
+
+  it("is absent without a host (flag-off parity)", () => {
+    expect(html(ready, false)).not.toContain("data-creative-rating");
   });
 });

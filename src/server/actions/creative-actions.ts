@@ -28,7 +28,10 @@ import {
   revisionLayoutRequest,
   safeZonePercent,
 } from "@/server/media/creative-layout";
-import { loadReferenceImage } from "@/server/media/brand-logo";
+import {
+  NO_STYLE_REFERENCES,
+  loadStyleReferences,
+} from "@/server/media/style-references";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import { readAsset } from "@/server/storage/asset-storage";
@@ -58,6 +61,9 @@ export type CreativePreview = {
   brandName: string | null;
   approvalId: string | null;
   scheduledFor: string | null;
+  // Projenin yayın saat dilimi (IANA): scheduledFor bir UTC anıdır, ekranda ve
+  // seçicide bu dilimin duvar saatiyle gösterilmeli.
+  timezone: string;
 };
 
 export async function getCreativePreviewAction(
@@ -81,10 +87,14 @@ export async function getCreativePreviewAction(
     return null;
   }
 
-  const [brand, pendingApproval] = await Promise.all([
+  const [brand, schedule, pendingApproval] = await Promise.all([
     prisma.brand.findUnique({
       where: { id: creative.brandId },
       select: { name: true },
+    }),
+    prisma.projectSchedule.findFirst({
+      where: { projectId: creative.projectId, capability: "INSTAGRAM_PUBLISH" },
+      select: { timezone: true },
     }),
     prisma.approval.findFirst({
       where: {
@@ -114,6 +124,7 @@ export async function getCreativePreviewAction(
     brandName: brand?.name ?? null,
     approvalId: pendingApproval?.id ?? null,
     scheduledFor: creative.scheduledFor?.toISOString() ?? null,
+    timezone: schedule?.timezone ?? "Europe/Istanbul",
   };
 }
 
@@ -280,11 +291,11 @@ export async function performCreativeRevision({
     // the brand's optional "style board" image, and only in from-scratch
     // mode (edit mode already has baseImage; the two are never used
     // together).
-    const styleImage = baseImage
-      ? null
-      : await loadReferenceImage(
-          brandStyle.visualIdentity?.referenceImageAssetId ?? undefined,
-        );
+    // The brand's Post Style examples (else its one style board) go along in
+    // from-scratch mode; an edit has its own picture and nothing else.
+    const styleRefs = baseImage
+      ? NO_STYLE_REFERENCES
+      : await loadStyleReferences({ visualIdentity: brandStyle.visualIdentity });
 
     // Which post layout this revision uses. Editing keeps the layout the image
     // already carries (its logo and band are baked into the pixels being
@@ -327,14 +338,18 @@ export async function performCreativeRevision({
           contentFormatLabel: platformFormat.contentFormatLabel,
           pixelSize: platformFormat.pixelSize,
           safeZone: platformFormat.safeZone,
-          hasStyleReference: Boolean(styleImage),
+          hasStyleReference: styleRefs.legacyBoard,
+          postStyle: styleRefs.section,
+          matchStyle: styleRefs.matchStyle,
           reservedZones: layoutPlan.reservedZones,
           layoutComposition: layoutPlan.composition,
         });
 
     const generated = await generateCreativeImage(prompt, {
       baseImage,
-      referenceImage: styleImage ?? undefined,
+      ...(styleRefs.exampleCount > 0 || styleRefs.productCount > 0
+        ? { referenceImages: styleRefs.images }
+        : { referenceImage: styleRefs.images[0] ?? undefined }),
       imageSize: platformFormat.pixelSize,
       falModelId,
     });

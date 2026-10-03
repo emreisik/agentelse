@@ -6,6 +6,8 @@ import {
   parseLayoutTemplates,
   type LayoutTemplates,
 } from "@/lib/layout-templates";
+import type { PostStyleContext } from "@/lib/post-style";
+import { loadPostStyleContext } from "@/server/brand/post-style-store";
 import type {
   LogoPositionValue,
   AccentBarPositionValue,
@@ -41,6 +43,9 @@ export type BrandVisualIdentityContext = {
   alwaysInclude: string[];
   alwaysAvoid: string[];
   referenceImageAssetId: string | null;
+  // The brand's Post Style Kit (example posts and standing instructions), when
+  // it has one: every render follows it. Absent otherwise.
+  postStyle?: PostStyleContext | null;
   // The brand's named post layouts, or null when it has none (then `template`
   // below is the only layout, as it always was). Optional so existing callers
   // and fixtures need no change.
@@ -74,7 +79,7 @@ export type BrandStyleContext = {
 export async function resolveBrandStyleContext(
   brandId: string,
 ): Promise<BrandStyleContext> {
-  const [dossier, identity] = await Promise.all([
+  const [dossier, identity, postStyle] = await Promise.all([
     prisma.brandDossier.findUnique({
       where: { brandId },
       select: {
@@ -85,6 +90,8 @@ export async function resolveBrandStyleContext(
       },
     }),
     prisma.brandVisualIdentity.findUnique({ where: { brandId } }),
+    // Best-effort: a brand's look must never fail to load over the kit.
+    loadPostStyleContext(brandId).catch(() => null),
   ]);
 
   return {
@@ -105,6 +112,7 @@ export async function resolveBrandStyleContext(
           alwaysInclude: identity.alwaysInclude,
           alwaysAvoid: identity.alwaysAvoid,
           referenceImageAssetId: identity.referenceImageAssetId,
+          ...(postStyle ? { postStyle } : {}),
           layoutTemplates: parseLayoutTemplates(identity.layoutTemplates),
           template: {
             enabled: identity.templateEnabled,

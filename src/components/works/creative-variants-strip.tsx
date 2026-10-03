@@ -19,10 +19,9 @@ import {
 } from "@/lib/works/variants";
 import { adoptCreativeVariantAction } from "@/server/actions/creative-variant-actions";
 import type { CreativeCardData } from "@/types/creative-card";
+import { assetUrl } from "@/lib/asset-url";
 
 type ReadyCard = Extract<CreativeCardData, { kind: "creative-ready" }>;
-
-const assetUrl = (assetId: string) => `/api/assets/${assetId}`;
 
 // The pictures of one piece in review: the current one and its alternatives.
 // Picking is only possible before approval; afterwards nothing is interactive.
@@ -59,7 +58,7 @@ export function CreativeVariantsStrip({
       <div data-variants-strip="locked" className="mt-2 space-y-1.5">
         {/* eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it */}
         <img
-          src={assetUrl(card.assetId)}
+          src={assetUrl(card.assetId, "thumb")}
           alt={copyText("variants.alt", { i: 1, n })}
           className="h-20 w-20 rounded-lg object-cover"
         />
@@ -155,7 +154,9 @@ export function CreativeVariantsStrip({
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it */}
                   <img
-                    src={assetUrl(picture.assetId)}
+                    src={assetUrl(picture.assetId, "thumb")}
+                    loading="lazy"
+                    decoding="async"
                     alt={copyText("variants.alt", { i, n })}
                     className="h-24 w-24 object-cover"
                   />
@@ -263,7 +264,7 @@ export function CreativeVariantsStrip({
           {shown ? (
             // eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it
             <img
-              src={assetUrl(shown.assetId)}
+              src={assetUrl(shown.assetId, "large")}
               alt={copyText("variants.alt", { i: (enlarged ?? 0) + 1, n })}
               className="max-h-[80dvh] w-full rounded-lg object-contain"
             />

@@ -1,498 +1,1805 @@
+"use client";
+
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, ImageOff, X } from "lucide-react";
-import type { CreativeStatus, SocialPlatform } from "@prisma/client";
+import { toast } from "sonner";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  GripVertical,
+  Inbox,
+  LoaderCircle,
+  Lock,
+  Maximize2,
+  Plug,
+  Search,
+  SlidersHorizontal,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 
-import { submitProjectCommandAction } from "@/server/actions/command-actions";
-import { assignCreativeDateAction } from "@/server/actions/creative-calendar-actions";
-import { ActionForm } from "@/components/shared/action-form";
-import { SubmitButton } from "@/components/shared/submit-button";
-import { CREATIVE_STATUS, SOCIAL_PLATFORM } from "@/lib/labels";
-import { utcToZonedDateTimeLocal } from "@/lib/timezone";
+import {
+  SourceMark,
+  StageIcon,
+  StagePill,
+  ItemThumb,
+} from "@/components/calendar/calendar-bits";
+import { DRAG_TYPE, WEEKDAYS } from "@/components/calendar/calendar-day";
+import { fetchCalendar, fetchDetail } from "@/components/calendar/api";
+import { CreativeDetail } from "@/components/calendar/creative-detail";
+import {
+  addDaysToKey,
+  formatDayLong,
+  formatShortRange,
+  monthGridDays,
+  parseDayKey,
+  shiftMonthParam,
+  weekGridDays,
+  weekdayShort,
+} from "@/lib/calendar/grid";
+import {
+  mergeFresh,
+  rescheduleItem,
+  reuseUnchanged,
+  type ItemCache,
+} from "@/lib/calendar/item";
+import { isDroppableDay, resolveDrop } from "@/lib/calendar/move";
+import {
+  ATTENTION_STAGES,
+  EMPTY_FILTER,
+  GLYPH_LABEL,
+  PANEL_SORTS,
+  countBy,
+  dayDots,
+  filterItems,
+  groupForSort,
+  isFiltering,
+  relativeDayLabel,
+  sortItems,
+  type PanelFilter,
+  type PanelSort,
+} from "@/lib/calendar/panel-view";
+import {
+  STAGE_META,
+  STAGE_ORDER,
+  type CalendarStage,
+} from "@/lib/calendar/stage";
 import type {
-  WorkspaceCalendarItem,
-  WorkspaceOutputItem,
-} from "./workspace-right-panel-data";
+  CalendarDetail,
+  CalendarItem,
+  CalendarPayload,
+  CalendarSource,
+} from "@/lib/calendar/types";
+import type { FormatGlyph } from "@/lib/content-channels";
+import { dayKeyInTimezone, utcToZonedDateTimeLocal } from "@/lib/timezone";
+import { cn } from "@/lib/utils";
+import { submitProjectCommandAction } from "@/server/actions/command-actions";
+import { rescheduleCreativeAction } from "@/server/actions/creative-calendar-actions";
 
-// Monday-first, matching buildMonthGrid below.
-const WEEKDAY_LABELS = [
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-  "Sunday",
+// Sağ panelin Calendar sekmesi: /takvim panosunun verisini (aynı hafif uç,
+// aynı durum hesabı, aynı detay paneli) 400 px'lik panele sığdırır. Ay / Hafta
+// / Liste görünümü, platform (entegrasyon) çoklu süzgeci, durum ve biçim
+// süzgeçleri, arama, sıralama, sürükle-bırakla gün değiştirme. Gezinti ve
+// süzgeçler tamamen istemcide: eskiden her ay değişimi (`?calMonth=`) proje
+// sayfasını komple sunucuda yeniden render ediyordu.
+
+type PanelView = "month" | "week" | "list";
+type PanelItem = CalendarItem & { pending?: boolean };
+
+const POLL_MS = 30_000;
+const STORAGE_PREFIX = "ws-calendar:";
+const TRAY_LIMIT = 24;
+const TRAY_KEY = "tray";
+
+const VIEWS: readonly { key: PanelView; label: string }[] = [
+  { key: "month", label: "Month" },
+  { key: "week", label: "Week" },
+  { key: "list", label: "List" },
 ];
 
-// Grid cells for `month` ("YYYY-MM"), Monday-first — `items`' local dates
-// (already resolved to the project's scheduling timezone by the caller)
-// mark which day numbers get a dot indicator.
-function buildMonthGrid(
-  month: string,
-  localDatesWithItems: Set<string>,
-  todayLocalDate: string,
-) {
-  const [yearStr, monStr] = month.split("-");
-  const year = Number(yearStr);
-  const mon = Number(monStr);
-  const firstOfMonth = new Date(Date.UTC(year, mon - 1, 1));
-  // getUTCDay(): 0=Sun..6=Sat -> Monday-first offset (0=Mon..6=Sun).
-  const leadingBlanks = (firstOfMonth.getUTCDay() + 6) % 7;
-  const daysInMonth = new Date(Date.UTC(year, mon, 0)).getUTCDate();
+const MONTH_TITLE = new Intl.DateTimeFormat("en-US", {
+  month: "long",
+  year: "numeric",
+  timeZone: "UTC",
+});
 
-  const cells: {
-    day: number | null;
-    localDate: string;
-    isToday: boolean;
-    hasItems: boolean;
-  }[] = [];
-  for (let i = 0; i < leadingBlanks; i++) {
-    cells.push({ day: null, localDate: "", isToday: false, hasItems: false });
+type Prefs = { view: PanelView; sort: PanelSort; sources: string[] };
+
+function readPrefs(projectId: string): Partial<Prefs> {
+  try {
+    const raw = localStorage.getItem(STORAGE_PREFIX + projectId);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Partial<Prefs>;
+    return {
+      view: VIEWS.some((v) => v.key === parsed.view) ? parsed.view : undefined,
+      sort: PANEL_SORTS.some((s) => s.key === parsed.sort)
+        ? parsed.sort
+        : undefined,
+      sources: Array.isArray(parsed.sources)
+        ? parsed.sources.filter((s): s is string => typeof s === "string")
+        : undefined,
+    };
+  } catch {
+    return {};
   }
-  for (let day = 1; day <= daysInMonth; day++) {
-    const localDate = `${month}-${String(day).padStart(2, "0")}`;
-    cells.push({
-      day,
-      localDate,
-      isToday: localDate === todayLocalDate,
-      hasItems: localDatesWithItems.has(localDate),
-    });
-  }
-  return cells;
 }
 
-function shiftMonth(month: string, delta: number): string {
-  const [yearStr, monStr] = month.split("-");
-  const total = Number(yearStr) * 12 + (Number(monStr) - 1) + delta;
-  const y = Math.floor(total / 12);
-  const m = ((total % 12) + 12) % 12;
-  return `${y}-${String(m + 1).padStart(2, "0")}`;
+function writePrefs(projectId: string, prefs: Prefs) {
+  try {
+    localStorage.setItem(STORAGE_PREFIX + projectId, JSON.stringify(prefs));
+  } catch {
+    // Gizli pencere / engelli depolama: tercih yalnız bu oturumda kalır.
+  }
 }
 
-function Thumb({
-  assetId,
-  size = "size-9",
+function toggled<T>(set: ReadonlySet<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
+
+function headline(item: CalendarItem): string {
+  return item.title ?? item.preview ?? item.label;
+}
+
+// Görünür aralık: ay görünümü ve liste ayın tam haftalarını, hafta görünümü
+// Pazartesi-Pazar haftasını okur.
+function rangeOf(view: PanelView, anchor: string) {
+  const ymd = parseDayKey(anchor)!;
+  if (view === "week") {
+    const days = weekGridDays(ymd);
+    return {
+      days,
+      focusMonth: null as number | null,
+      title: formatShortRange(days[0]!.key, days[6]!.key),
+    };
+  }
+  return {
+    days: monthGridDays(ymd.year, ymd.month),
+    focusMonth: ymd.month,
+    title: MONTH_TITLE.format(new Date(Date.UTC(ymd.year, ymd.month - 1, 1))),
+  };
+}
+
+function shiftAnchor(view: PanelView, anchor: string, delta: number): string {
+  if (view === "week") return addDaysToKey(anchor, delta * 7) ?? anchor;
+  const ymd = parseDayKey(anchor)!;
+  return `${shiftMonthParam(ymd.year, ymd.month, delta)}-01`;
+}
+
+export function CalendarPanel({
+  projectId,
+  timezone,
 }: {
-  assetId: string | null;
-  size?: string;
+  projectId: string;
+  timezone: string;
 }) {
-  if (assetId) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it
-      <img
-        src={`/api/assets/${assetId}`}
-        alt=""
-        className={`${size} shrink-0 rounded-lg object-cover`}
-      />
+  const [todayKey, setTodayKey] = useState(() =>
+    dayKeyInTimezone(new Date(), timezone),
+  );
+
+  // ── Görünüm, gezinti, süzgeçler ────────────────────────────────────────────
+  // Tercihler (görünüm, sıralama, platformlar) bu tarayıcıda hatırlanır. Panel
+  // yalnız sekme açılınca bağlanır (Base UI pasif sekmeyi render etmez), yani
+  // sunucu render'ıyla çakışmaz; sunucuda okuma sessizce boş döner.
+  const [initialPrefs] = useState(() => readPrefs(projectId));
+  const [view, setView] = useState<PanelView>(initialPrefs.view ?? "month");
+  const [anchor, setAnchor] = useState(todayKey);
+  const [pickedDay, setPickedDay] = useState<string | null>(null);
+  const [filter, setFilter] = useState<PanelFilter>(() =>
+    initialPrefs.sources?.length
+      ? { ...EMPTY_FILTER, sources: new Set(initialPrefs.sources) }
+      : EMPTY_FILTER,
+  );
+  const [sort, setSort] = useState<PanelSort>(initialPrefs.sort ?? "soonest");
+  const [showFilters, setShowFilters] = useState(false);
+  const [trayOpen, setTrayOpen] = useState(true);
+  const [trayAll, setTrayAll] = useState(false);
+
+  useEffect(() => {
+    writePrefs(projectId, { view, sort, sources: [...filter.sources] });
+  }, [projectId, view, sort, filter.sources]);
+
+  const range = useMemo(() => rangeOf(view, anchor), [view, anchor]);
+  const firstKey = range.days[0]!.key;
+  const lastKey = range.days[range.days.length - 1]!.key;
+  const containsToday = range.days.some(
+    (d) =>
+      d.key === todayKey &&
+      (range.focusMonth === null || d.month === range.focusMonth),
+  );
+
+  // ── Veri: hafif uçtan okuma + yerel değişiklikler ──────────────────────────
+  const [cache] = useState<ItemCache>(() => new Map());
+  const [items, setItems] = useState<PanelItem[]>([]);
+  const [meta, setMeta] = useState<{
+    connections: CalendarPayload["connections"];
+    scheduleEnabled: boolean;
+  }>({ connections: [], scheduleEnabled: false });
+  const [status, setStatus] = useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  // Ekrandaki verinin ait olduğu aralık; görünür aralıktan farklıysa yeni
+  // aralık okunuyor demektir.
+  const [loadedRange, setLoadedRange] = useState<string | null>(null);
+  const rangeKey = `${firstKey}|${lastKey}`;
+  const refreshing = loadedRange !== rangeKey;
+  const stamps = useRef(new Map<string, number>());
+  const itemsRef = useRef(items);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+  const busy = useRef(0);
+  const dragRef = useRef<string | null>(null);
+
+  const applyPayload = useCallback(
+    (payload: CalendarPayload, loaded: string) => {
+      setItems((prev) =>
+        reuseUnchanged(mergeFresh(prev, payload, stamps.current), cache),
+      );
+      setMeta({
+        connections: payload.connections,
+        scheduleEnabled: payload.scheduleEnabled,
+      });
+      setStatus("ready");
+      setLoadedRange(loaded);
+    },
+    [cache],
+  );
+
+  const settle = useCallback(
+    (payload: CalendarPayload | null, loaded: string) => {
+      if (payload) applyPayload(payload, loaded);
+      else setStatus((prev) => (prev === "ready" ? prev : "error"));
+    },
+    [applyPayload],
+  );
+  const load = useCallback(async () => {
+    settle(await fetchCalendar(projectId, firstKey, lastKey), rangeKey);
+  }, [projectId, firstKey, lastKey, rangeKey, settle]);
+
+  // Aralık değişince hemen oku (öncekini iptal et).
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchCalendar(projectId, firstKey, lastKey, controller.signal).then(
+      (payload) => {
+        if (!controller.signal.aborted) settle(payload, rangeKey);
+      },
     );
-  }
+    return () => controller.abort();
+  }, [projectId, firstKey, lastKey, rangeKey, settle]);
+
+  // Hafif yoklama; sekme gizliyken, yazma ya da sürükleme sürerken durur.
+  useEffect(() => {
+    const tick = () => {
+      if (document.hidden || busy.current > 0 || dragRef.current !== null) {
+        return;
+      }
+      setTodayKey(dayKeyInTimezone(new Date(), timezone));
+      void load();
+    };
+    const timer = setInterval(tick, POLL_MS);
+    const onVisible = () => {
+      if (!document.hidden) tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [load, timezone]);
+
+  // ── Süzme ──────────────────────────────────────────────────────────────────
+  // Ay görünümü ve liste yalnız odaktaki ayın günlerini sayar (ızgaranın
+  // komşu ay günleri soluk gösterilir ama özete ve listeye girmez).
+  const inFocus = useCallback(
+    (item: CalendarItem) => {
+      if (!item.localDay) return true;
+      if (item.localDay < firstKey || item.localDay > lastKey) return false;
+      if (range.focusMonth === null) return true;
+      return Number(item.localDay.slice(5, 7)) === range.focusMonth;
+    },
+    [firstKey, lastKey, range.focusMonth],
+  );
+  const scoped = useMemo(() => items.filter(inFocus), [items, inFocus]);
+  const visible = useMemo(() => filterItems(scoped, filter), [scoped, filter]);
+
+  const sourceCounts = useMemo(
+    () => countBy(filterItems(scoped, filter, "sources"), (i) => i.source.key),
+    [scoped, filter],
+  );
+  const stagePool = useMemo(
+    () => filterItems(scoped, filter, "stages"),
+    [scoped, filter],
+  );
+  const stageCounts = useMemo(
+    () => countBy(stagePool, (i) => i.stage),
+    [stagePool],
+  );
+  const glyphCounts = useMemo(
+    () => countBy(filterItems(scoped, filter, "glyphs"), (i) => i.glyph),
+    [scoped, filter],
+  );
+
+  const scheduledVisible = useMemo(
+    () => visible.filter((i) => i.localDay),
+    [visible],
+  );
+  const unscheduled = useMemo(
+    () =>
+      sortItems(
+        visible.filter((i) => !i.localDay),
+        "soonest",
+      ),
+    [visible],
+  );
+  const byDay = useMemo(() => {
+    const map = new Map<string, PanelItem[]>();
+    for (const item of sortItems(scheduledVisible, "soonest")) {
+      const bucket = map.get(item.localDay!);
+      if (bucket) bucket.push(item);
+      else map.set(item.localDay!, [item]);
+    }
+    return map;
+  }, [scheduledVisible]);
+  // Ay ızgarasının noktaları odak dışı günleri de gösterir (soluk).
+  const gridByDay = useMemo(() => {
+    const map = new Map<string, CalendarItem[]>();
+    for (const item of filterItems(items, filter)) {
+      if (!item.localDay) continue;
+      const bucket = map.get(item.localDay);
+      if (bucket) bucket.push(item);
+      else map.set(item.localDay, [item]);
+    }
+    return map;
+  }, [items, filter]);
+
+  // Platform şeridi: bağlı hesaplar + bu aralıkta parçası olan her kaynak.
+  const sourceRows = useMemo(() => {
+    type Row = {
+      source: CalendarSource;
+      connected: boolean | null;
+      account: string | null;
+    };
+    const present = new Set(scoped.map((i) => i.source.key));
+    const rows: Row[] = meta.connections
+      .filter(
+        (c) =>
+          c.connected ||
+          present.has(c.source.key) ||
+          filter.sources.has(c.source.key),
+      )
+      .map((c) => ({
+        source: c.source,
+        connected: c.connected,
+        account: c.account,
+      }));
+    const known = new Set(meta.connections.map((c) => c.source.key));
+    const seen = new Set<string>();
+    for (const item of scoped) {
+      if (known.has(item.source.key) || seen.has(item.source.key)) continue;
+      seen.add(item.source.key);
+      rows.push({ source: item.source, connected: null, account: null });
+    }
+    return rows;
+  }, [meta.connections, scoped, filter.sources]);
+
+  const disconnectedWithPosts = sourceRows.filter(
+    (row) => row.connected === false && (sourceCounts.get(row.source.key) ?? 0),
+  );
+  const scheduleOffNote =
+    !meta.scheduleEnabled &&
+    scoped.some(
+      (i) => i.stage === "held" && i.source.key === "instagram" && i.localDay,
+    );
+
+  // Özet kutucukları: süzgeçlerin geri kalanına göre sayılır (durum hariç).
+  const tiles = useMemo(() => {
+    const count = (stages: ReadonlySet<CalendarStage>) =>
+      stagePool.filter((i) => stages.has(i.stage)).length;
+    return [
+      {
+        key: "all",
+        label: "Planned",
+        value: stagePool.length,
+        stages: new Set<CalendarStage>(),
+      },
+      {
+        key: "attention",
+        label: "Needs you",
+        value: count(ATTENTION_STAGES),
+        stages: new Set(ATTENTION_STAGES),
+        tone: "warn" as const,
+      },
+      {
+        key: "scheduled",
+        label: "Scheduled",
+        value: count(new Set<CalendarStage>(["scheduled", "publishing"])),
+        stages: new Set<CalendarStage>(["scheduled", "publishing"]),
+      },
+      {
+        key: "published",
+        label: "Published",
+        value: count(new Set<CalendarStage>(["published"])),
+        stages: new Set<CalendarStage>(["published"]),
+      },
+    ];
+  }, [stagePool]);
+  const sameSet = (
+    a: ReadonlySet<CalendarStage>,
+    b: ReadonlySet<CalendarStage>,
+  ) => a.size === b.size && [...a].every((x) => b.has(x));
+
+  const problems =
+    (stageCounts.get("failed") ?? 0) + (stageCounts.get("missed") ?? 0);
+
+  // ── Yazma: taşı / planla (iyimser, geri alınabilir) ────────────────────────
+  const commitMove = async (
+    item: PanelItem,
+    localDateTime: string | null,
+    restore = false,
+  ) => {
+    const previous =
+      item.localDay && item.localTime
+        ? `${item.localDay}T${item.localTime}`
+        : null;
+    const moved: PanelItem = {
+      ...rescheduleItem(item, localDateTime, {
+        timezone,
+        scheduleEnabled: meta.scheduleEnabled,
+        now: new Date(),
+      }),
+      pending: true,
+    };
+    const replace = (next: PanelItem) =>
+      setItems((prev) => prev.map((i) => (i.id === next.id ? next : i)));
+
+    stamps.current.set(item.id, Date.now());
+    replace(moved);
+    busy.current += 1;
+    let result: Awaited<ReturnType<typeof rescheduleCreativeAction>>;
+    try {
+      result = await rescheduleCreativeAction({
+        creativeId: item.id,
+        localDateTime,
+        restore,
+      });
+    } catch {
+      result = { ok: false, message: "Couldn't reach the server. Try again." };
+    } finally {
+      busy.current -= 1;
+    }
+    stamps.current.set(item.id, Date.now());
+
+    if (!result.ok) {
+      toast.error(result.message);
+      replace({ ...item, pending: false });
+      return;
+    }
+    const settled: PanelItem = { ...moved, pending: false };
+    replace(settled);
+    toast.success(
+      localDateTime
+        ? `Moved to ${formatDayLong(localDateTime.slice(0, 10))} · ${localDateTime.slice(11, 16)}`
+        : "Moved to Unscheduled",
+      restore
+        ? undefined
+        : {
+            action: {
+              label: "Undo",
+              onClick: () => void moveRef.current(settled, previous, true),
+            },
+          },
+    );
+  };
+  const moveRef = useRef(commitMove);
+  useEffect(() => {
+    moveRef.current = commitMove;
+  });
+  const onMove = useCallback(
+    (item: PanelItem, localDateTime: string | null) =>
+      void moveRef.current(item, localDateTime),
+    [],
+  );
+
+  // ── Detay paneli (/takvim ile aynı) ────────────────────────────────────────
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [details, setDetails] = useState<Record<string, CalendarDetail | null>>(
+    {},
+  );
+  const loadDetail = useCallback(
+    (id: string) => {
+      void fetchDetail(projectId, id).then((detail) =>
+        setDetails((prev) => ({ ...prev, [id]: detail })),
+      );
+    },
+    [projectId],
+  );
+  const openDetail = (id: string) => {
+    setOpenId(id);
+    loadDetail(id);
+  };
+  const onDecided = useCallback(() => {
+    if (openId) loadDetail(openId);
+    void load();
+  }, [openId, loadDetail, load]);
+  const openItem = openId ? items.find((i) => i.id === openId) : undefined;
+
+  // ── Sürükle-bırak ──────────────────────────────────────────────────────────
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overKey, setOverKey] = useState<string | null>(null);
+  const endDrag = useCallback(() => {
+    dragRef.current = null;
+    setDragId(null);
+    setOverKey(null);
+  }, []);
+  const onDragStart = useCallback((event: DragEvent, item: PanelItem) => {
+    if (!item.movable) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.setData(DRAG_TYPE, item.id);
+    event.dataTransfer.setData("text/plain", item.id);
+    event.dataTransfer.effectAllowed = "move";
+    dragRef.current = item.id;
+    setTimeout(() => setDragId(item.id), 0);
+  }, []);
+  const itemFromDrop = useCallback((event: DragEvent) => {
+    const id =
+      event.dataTransfer.getData(DRAG_TYPE) ||
+      event.dataTransfer.getData("text/plain") ||
+      dragRef.current;
+    return id ? itemsRef.current.find((i) => i.id === id) : undefined;
+  }, []);
+  const dropOnDay = useCallback(
+    (event: DragEvent, dayKey: string) => {
+      event.preventDefault();
+      const item = itemFromDrop(event);
+      endDrag();
+      if (!item || !item.movable || item.localDay === dayKey) return;
+      const decision = resolveDrop({
+        targetDay: dayKey,
+        currentTime: item.localTime,
+        nowLocal: utcToZonedDateTimeLocal(new Date(), timezone),
+      });
+      if (!decision.ok) {
+        toast.error(decision.reason);
+        return;
+      }
+      onMove(item, decision.localDateTime);
+    },
+    [itemFromDrop, endDrag, onMove, timezone],
+  );
+  const dropOnTray = useCallback(
+    (event: DragEvent) => {
+      event.preventDefault();
+      const item = itemFromDrop(event);
+      endDrag();
+      if (!item || !item.movable || !item.localDay) return;
+      onMove(item, null);
+    },
+    [itemFromDrop, endDrag, onMove],
+  );
+  // Her bırakma alanı (gün hücresi, hafta günü, tepsi) aynı sabit işleyicileri
+  // alır; hangi alan olduğu `data-drop-key`ten okunur.
+  const zone = useMemo<DropZone>(
+    () => ({
+      onDragOver(event) {
+        if (!event.dataTransfer.types.includes(DRAG_TYPE)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        const key = event.currentTarget.dataset.dropKey ?? null;
+        setOverKey((prev) => (prev === key ? prev : key));
+      },
+      onDragLeave(event) {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          const key = event.currentTarget.dataset.dropKey;
+          setOverKey((prev) => (prev === key ? null : prev));
+        }
+      },
+      onDrop(event) {
+        const key = event.currentTarget.dataset.dropKey;
+        if (key === TRAY_KEY) dropOnTray(event);
+        else if (key) dropOnDay(event, key);
+      },
+    }),
+    [dropOnDay, dropOnTray],
+  );
+  const dragged = dragId ? items.find((i) => i.id === dragId) : undefined;
+
+  const rowProps = {
+    projectId,
+    todayKey,
+    openId,
+    dragId,
+    onOpen: openDetail,
+    onDragStart,
+    onDragEnd: endDrag,
+  };
+
+  // ── Gezinti ────────────────────────────────────────────────────────────────
+  const goto = (nextAnchor: string) => {
+    setAnchor(nextAnchor);
+    setPickedDay(null);
+  };
+  const changeView = (next: PanelView) => {
+    if (next === view) return;
+    // Bağlamı koru: aydan haftaya geçerken bugün bu aydaysa bugünün haftası,
+    // değilse seçili gün ya da ayın ilk günü.
+    if (next === "week") {
+      setAnchor(pickedDay ?? (containsToday ? todayKey : anchor));
+    } else if (view === "week") {
+      setAnchor(range.days[3]!.key);
+    }
+    setView(next);
+    setPickedDay(null);
+  };
+  const selectedDay =
+    view === "month" && pickedDay && range.days.some((d) => d.key === pickedDay)
+      ? pickedDay
+      : null;
+
+  const activeFilterCount =
+    filter.stages.size + filter.glyphs.size + (filter.query.trim() ? 1 : 0);
+  const anyFilter = isFiltering(filter);
+  const glyphs = [...glyphCounts.keys()] as FormatGlyph[];
+  const stagesShown = STAGE_ORDER.filter(
+    (s) => stageCounts.has(s) || filter.stages.has(s),
+  );
+
   return (
-    <span
-      className={`flex ${size} shrink-0 items-center justify-center rounded-lg`}
-      style={{ background: "var(--ws-hover)", color: "var(--ws-text-3)" }}
+    <div className="flex flex-col gap-3 px-4 py-4 text-sm">
+      {/* Başlık */}
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div
+            className="text-[10px] font-semibold tracking-[0.1em]"
+            style={{ color: "var(--ws-text-3)" }}
+          >
+            CONTENT CALENDAR
+          </div>
+          <div
+            className="mt-0.5 text-base font-semibold"
+            style={{ color: "var(--ws-text)" }}
+          >
+            Everything, on time.
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          {refreshing && status === "ready" ? (
+            <LoaderCircle
+              aria-label="Refreshing"
+              className="size-3.5 animate-spin"
+              style={{ color: "var(--ws-text-3)" }}
+            />
+          ) : null}
+          <Link
+            href={`/projects/${projectId}/takvim`}
+            title="Open the full calendar"
+            aria-label="Open the full calendar"
+            className="flex size-7 items-center justify-center rounded-full transition-colors hover:bg-[var(--ws-hover)]"
+            style={{ color: "var(--ws-text-2)" }}
+          >
+            <Maximize2 className="size-3.5" />
+          </Link>
+        </div>
+      </div>
+
+      {/* Özet: aynı zamanda hızlı durum süzgeci */}
+      <div className="grid grid-cols-4 gap-1.5" aria-label="Summary">
+        {tiles.map((tile) => {
+          const active =
+            tile.key === "all"
+              ? filter.stages.size === 0
+              : sameSet(filter.stages, tile.stages);
+          return (
+            <button
+              key={tile.key}
+              type="button"
+              aria-pressed={active}
+              onClick={() =>
+                setFilter((prev) => ({
+                  ...prev,
+                  stages:
+                    tile.key === "all" || active
+                      ? new Set()
+                      : new Set(tile.stages),
+                }))
+              }
+              className="flex flex-col items-start rounded-xl border px-2 py-1.5 text-left transition-colors hover:bg-[var(--ws-hover)]"
+              style={{
+                borderColor: active ? "var(--ws-text)" : "var(--ws-border)",
+                background: active ? "var(--ws-hover)" : undefined,
+              }}
+            >
+              <span
+                className={cn(
+                  "text-base leading-tight font-semibold tabular-nums",
+                  tile.tone === "warn" && tile.value > 0 && "text-warning",
+                )}
+                style={
+                  tile.tone === "warn" && tile.value > 0
+                    ? undefined
+                    : { color: "var(--ws-text)" }
+                }
+              >
+                {status === "loading" ? "–" : tile.value}
+              </span>
+              <span
+                className="truncate text-[10px]"
+                style={{ color: "var(--ws-text-3)" }}
+              >
+                {tile.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Gezinti + görünüm */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-0.5">
+          <IconButton
+            label={view === "week" ? "Previous week" : "Previous month"}
+            onClick={() => goto(shiftAnchor(view, anchor, -1))}
+          >
+            <ChevronLeft className="size-3.5" />
+          </IconButton>
+          <span
+            className="min-w-0 truncate px-1 text-xs font-semibold"
+            style={{ color: "var(--ws-text)" }}
+          >
+            {range.title}
+          </span>
+          <IconButton
+            label={view === "week" ? "Next week" : "Next month"}
+            onClick={() => goto(shiftAnchor(view, anchor, 1))}
+          >
+            <ChevronRight className="size-3.5" />
+          </IconButton>
+          <button
+            type="button"
+            disabled={containsToday && !selectedDay}
+            onClick={() => goto(todayKey)}
+            className="ml-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-40"
+            style={{
+              borderColor: "var(--ws-border)",
+              color: "var(--ws-text-2)",
+            }}
+          >
+            Today
+          </button>
+        </div>
+        <div
+          role="group"
+          aria-label="Calendar view"
+          className="flex shrink-0 rounded-lg p-0.5"
+          style={{ background: "var(--ws-surface-2)" }}
+        >
+          {VIEWS.map((v) => (
+            <button
+              key={v.key}
+              type="button"
+              aria-pressed={view === v.key}
+              onClick={() => changeView(v.key)}
+              className="rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors"
+              style={
+                view === v.key
+                  ? {
+                      background: "var(--ws-surface)",
+                      color: "var(--ws-text)",
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                    }
+                  : { color: "var(--ws-text-3)" }
+              }
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Platformlar: nereye gidiyor, hesap bağlı mı? (çoklu seçim) */}
+      <div
+        className="scrollbar-none -mx-4 flex gap-1.5 overflow-x-auto px-4 pb-0.5"
+        aria-label="Platforms"
+      >
+        <Chip
+          active={filter.sources.size === 0}
+          onClick={() => setFilter((prev) => ({ ...prev, sources: new Set() }))}
+        >
+          All
+          <Count>{[...sourceCounts.values()].reduce((a, b) => a + b, 0)}</Count>
+        </Chip>
+        {sourceRows.map((row) => {
+          const active = filter.sources.has(row.source.key);
+          return (
+            <Chip
+              key={row.source.key}
+              active={active}
+              onClick={() =>
+                setFilter((prev) => ({
+                  ...prev,
+                  sources: toggled(prev.sources, row.source.key),
+                }))
+              }
+              title={
+                row.connected
+                  ? `${row.source.label} connected${row.account ? ` as ${row.account}` : ""}`
+                  : row.connected === false
+                    ? `${row.source.label} isn't connected`
+                    : row.source.label
+              }
+            >
+              <span className="relative inline-flex">
+                <SourceMark
+                  source={row.source}
+                  decorative
+                  className="size-4 rounded"
+                />
+                {row.connected !== null ? (
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-1 ring-[var(--ws-surface)]",
+                      row.connected ? "bg-success" : "bg-warning",
+                    )}
+                  />
+                ) : null}
+              </span>
+              {row.source.label}
+              <Count>{sourceCounts.get(row.source.key) ?? 0}</Count>
+            </Chip>
+          );
+        })}
+      </div>
+
+      {/* Arama + süzgeçler + sıralama */}
+      <div className="flex items-center gap-1.5">
+        <label
+          className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg border px-2"
+          style={{ borderColor: "var(--ws-border)" }}
+        >
+          <Search
+            className="size-3.5 shrink-0"
+            style={{ color: "var(--ws-text-3)" }}
+          />
+          <input
+            type="search"
+            value={filter.query}
+            onChange={(event) =>
+              setFilter((prev) => ({ ...prev, query: event.target.value }))
+            }
+            placeholder="Search posts"
+            aria-label="Search posts"
+            className="h-full min-w-0 flex-1 bg-transparent text-xs outline-none"
+            style={{ color: "var(--ws-text)" }}
+          />
+        </label>
+        <button
+          type="button"
+          aria-expanded={showFilters}
+          onClick={() => setShowFilters((v) => !v)}
+          className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border px-2 text-[11px] font-medium transition-colors hover:bg-[var(--ws-hover)]"
+          style={{
+            borderColor:
+              activeFilterCount > 0 ? "var(--ws-text)" : "var(--ws-border)",
+            color: "var(--ws-text-2)",
+          }}
+        >
+          <SlidersHorizontal className="size-3.5" />
+          Filters
+          {activeFilterCount > 0 ? (
+            <span
+              className="rounded-full px-1.5 text-[10px] font-semibold tabular-nums"
+              style={{
+                background: "var(--ws-accent)",
+                color: "var(--ws-on-accent)",
+              }}
+            >
+              {activeFilterCount}
+            </span>
+          ) : null}
+        </button>
+      </div>
+
+      {showFilters ? (
+        <div
+          className="space-y-2.5 rounded-xl border p-2.5"
+          style={{
+            borderColor: "var(--ws-border)",
+            background: "var(--ws-surface)",
+          }}
+        >
+          <FilterGroup label="Status">
+            {stagesShown.length === 0 ? (
+              <Muted>No posts in this range.</Muted>
+            ) : (
+              stagesShown.map((stage) => (
+                <Chip
+                  key={stage}
+                  small
+                  active={filter.stages.has(stage)}
+                  title={STAGE_META[stage].hint}
+                  onClick={() =>
+                    setFilter((prev) => ({
+                      ...prev,
+                      stages: toggled(prev.stages, stage),
+                    }))
+                  }
+                >
+                  <StageIcon stage={stage} className="size-3" />
+                  {STAGE_META[stage].label}
+                  <Count>{stageCounts.get(stage) ?? 0}</Count>
+                </Chip>
+              ))
+            )}
+          </FilterGroup>
+          {glyphs.length > 0 ? (
+            <FilterGroup label="Format">
+              {glyphs.map((glyph) => (
+                <Chip
+                  key={glyph}
+                  small
+                  active={filter.glyphs.has(glyph)}
+                  onClick={() =>
+                    setFilter((prev) => ({
+                      ...prev,
+                      glyphs: toggled(prev.glyphs, glyph),
+                    }))
+                  }
+                >
+                  {GLYPH_LABEL[glyph]}
+                  <Count>{glyphCounts.get(glyph) ?? 0}</Count>
+                </Chip>
+              ))}
+            </FilterGroup>
+          ) : null}
+          <FilterGroup label="Sort">
+            {PANEL_SORTS.map((option) => (
+              <Chip
+                key={option.key}
+                small
+                active={sort === option.key}
+                onClick={() => setSort(option.key)}
+              >
+                {option.label}
+              </Chip>
+            ))}
+          </FilterGroup>
+          {anyFilter ? (
+            <button
+              type="button"
+              onClick={() => setFilter(EMPTY_FILTER)}
+              className="inline-flex items-center gap-1 text-[11px] font-medium underline-offset-2 hover:underline"
+              style={{ color: "var(--ws-text-2)" }}
+            >
+              <X className="size-3" /> Clear all filters
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Uyarılar */}
+      {problems > 0 && !filter.stages.has("failed") ? (
+        <Notice tone="danger">
+          <span className="min-w-0 flex-1">
+            {problems === 1
+              ? "1 post failed or was missed."
+              : `${problems} posts failed or were missed.`}
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              setFilter((prev) => ({
+                ...prev,
+                stages: new Set<CalendarStage>(["failed", "missed"]),
+              }))
+            }
+            className="shrink-0 font-medium underline underline-offset-2"
+          >
+            Show
+          </button>
+        </Notice>
+      ) : null}
+      {disconnectedWithPosts.length > 0 ? (
+        <Notice tone="warn">
+          <span className="min-w-0 flex-1">
+            {disconnectedWithPosts.map((r) => r.source.label).join(", ")}{" "}
+            {disconnectedWithPosts.length === 1 ? "isn't" : "aren't"} connected,
+            so those posts can&apos;t go out.
+          </span>
+          <Link
+            href={`/projects/${projectId}/integrations`}
+            className="inline-flex shrink-0 items-center gap-1 font-medium underline underline-offset-2"
+          >
+            <Plug className="size-3" /> Connect
+          </Link>
+        </Notice>
+      ) : null}
+      {scheduleOffNote ? (
+        <Notice tone="warn">
+          <span className="min-w-0 flex-1">
+            Scheduled posting is off, so approved Instagram posts won&apos;t go
+            out on their own.
+          </span>
+          <Link
+            href={`/projects/${projectId}/ayarlar`}
+            className="shrink-0 font-medium underline underline-offset-2"
+          >
+            Turn on
+          </Link>
+        </Notice>
+      ) : null}
+
+      {status === "loading" ? (
+        <PanelSkeleton />
+      ) : status === "error" ? (
+        <div
+          className="flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-xs"
+          style={{ borderColor: "var(--ws-border)", color: "var(--ws-text-2)" }}
+        >
+          Couldn&apos;t load the calendar.
+          <button
+            type="button"
+            onClick={() => {
+              setStatus("loading");
+              void load();
+            }}
+            className="font-medium underline underline-offset-2"
+          >
+            Retry
+          </button>
+        </div>
+      ) : (
+        <>
+          {view === "month" ? (
+            <MonthGrid
+              days={range.days}
+              focusMonth={range.focusMonth}
+              todayKey={todayKey}
+              selectedDay={selectedDay}
+              byDay={gridByDay}
+              dragging={dragged !== undefined}
+              overKey={overKey}
+              onSelect={(key) => {
+                // Komşu ayın soluk günü: o aya geç ve günü seç.
+                if (Number(key.slice(5, 7)) !== range.focusMonth) {
+                  setAnchor(key);
+                  setPickedDay(key);
+                  return;
+                }
+                setPickedDay((prev) => (prev === key ? null : key));
+              }}
+              zone={zone}
+            />
+          ) : null}
+
+          {view === "week" ? (
+            <div className="flex flex-col gap-1.5">
+              {range.days.map((day) => {
+                const dayItems = byDay.get(day.key) ?? [];
+                const droppable = isDroppableDay(day.key, todayKey);
+                const relative = relativeDayLabel(
+                  day.key,
+                  todayKey,
+                  addDaysToKey,
+                );
+                return (
+                  <section
+                    key={day.key}
+                    aria-label={formatDayLong(day.key)}
+                    data-drop-key={day.key}
+                    {...(droppable ? zone : {})}
+                    className={cn(
+                      "rounded-xl border p-2 transition-colors",
+                      dragged && !droppable && "opacity-40",
+                    )}
+                    style={{
+                      borderColor:
+                        overKey === day.key
+                          ? "var(--ws-accent)"
+                          : "var(--ws-border)",
+                      borderStyle: dragged && droppable ? "dashed" : undefined,
+                      background:
+                        overKey === day.key
+                          ? "var(--ws-soft-green)"
+                          : day.key === todayKey
+                            ? "var(--ws-surface-2)"
+                            : undefined,
+                    }}
+                  >
+                    <DayHeader
+                      day={day.key}
+                      relative={relative}
+                      count={dayItems.length}
+                    />
+                    {dayItems.length > 0 ? (
+                      <div className="mt-1.5 flex flex-col gap-1">
+                        {dayItems.map((item) => (
+                          <ItemRow key={item.id} item={item} {...rowProps} />
+                        ))}
+                      </div>
+                    ) : (
+                      <p
+                        className="mt-1 text-[11px]"
+                        style={{ color: "var(--ws-text-3)" }}
+                      >
+                        {dragged && droppable ? "Drop here" : "Nothing planned"}
+                      </p>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {view !== "week" ? (
+            selectedDay ? (
+              <section aria-label="Selected day" className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <DayHeader
+                    day={selectedDay}
+                    relative={relativeDayLabel(
+                      selectedDay,
+                      todayKey,
+                      addDaysToKey,
+                    )}
+                    count={(byDay.get(selectedDay) ?? []).length}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setPickedDay(null)}
+                    className="text-[11px] font-medium underline-offset-2 hover:underline"
+                    style={{ color: "var(--ws-text-2)" }}
+                  >
+                    Whole month
+                  </button>
+                </div>
+                {(byDay.get(selectedDay) ?? []).length > 0 ? (
+                  <div className="flex flex-col gap-1">
+                    {(byDay.get(selectedDay) ?? []).map((item) => (
+                      <ItemRow key={item.id} item={item} {...rowProps} />
+                    ))}
+                  </div>
+                ) : (
+                  <Muted>
+                    {isDroppableDay(selectedDay, todayKey)
+                      ? "Nothing planned. Drag a post onto this day to schedule it."
+                      : "Nothing was planned for this day."}
+                  </Muted>
+                )}
+              </section>
+            ) : (
+              <GroupedList
+                groups={groupForSort(scheduledVisible, sort)}
+                todayKey={todayKey}
+                empty={
+                  scoped.length === 0
+                    ? "Nothing planned this month yet."
+                    : "No posts match these filters."
+                }
+                rowProps={rowProps}
+              />
+            )
+          ) : null}
+
+          {/* Günü atanmamışlar: günlere sürükle; günden buraya bırakınca gün kalkar */}
+          {unscheduled.length > 0 || dragged?.localDay ? (
+            <section
+              aria-label="Unscheduled"
+              data-drop-key={TRAY_KEY}
+              {...(dragged?.localDay ? zone : {})}
+              className="rounded-xl border p-2.5 transition-colors"
+              style={{
+                borderColor:
+                  overKey === TRAY_KEY ? "var(--ws-accent)" : "var(--ws-border)",
+                borderStyle: dragged?.localDay ? "dashed" : undefined,
+                background:
+                  overKey === TRAY_KEY ? "var(--ws-soft-green)" : undefined,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setTrayOpen((v) => !v)}
+                aria-expanded={trayOpen}
+                className="flex w-full items-center justify-between gap-2"
+              >
+                <span
+                  className="text-[10px] font-semibold tracking-[0.1em]"
+                  style={{ color: "var(--ws-text-3)" }}
+                >
+                  UNSCHEDULED · {unscheduled.length}
+                </span>
+                <ChevronDown
+                  className={cn(
+                    "size-3.5 transition-transform",
+                    !trayOpen && "-rotate-90",
+                  )}
+                  style={{ color: "var(--ws-text-3)" }}
+                />
+              </button>
+              {trayOpen ? (
+                <>
+                  <p
+                    className="mt-0.5 text-[10.5px]"
+                    style={{ color: "var(--ws-text-3)" }}
+                  >
+                    {dragged?.localDay
+                      ? "Drop here to take it off the calendar"
+                      : "Drag one onto a day, or open it to pick a time"}
+                  </p>
+                  <div className="mt-2 flex flex-col gap-1">
+                    {(trayAll
+                      ? unscheduled
+                      : unscheduled.slice(0, TRAY_LIMIT)
+                    ).map((item) => (
+                      <ItemRow key={item.id} item={item} {...rowProps} />
+                    ))}
+                    {!trayAll && unscheduled.length > TRAY_LIMIT ? (
+                      <button
+                        type="button"
+                        onClick={() => setTrayAll(true)}
+                        className="rounded-lg border border-dashed py-1.5 text-[11px] font-medium hover:bg-[var(--ws-hover)]"
+                        style={{
+                          borderColor: "var(--ws-border)",
+                          color: "var(--ws-text-2)",
+                        }}
+                      >
+                        Show all {unscheduled.length}
+                      </button>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
+            </section>
+          ) : null}
+        </>
+      )}
+
+      <div className="flex gap-1.5">
+        <form action={submitProjectCommandAction} className="flex-1">
+          <input type="hidden" name="projectId" value={projectId} />
+          <input type="hidden" name="text" value="Plan this week" />
+          <button
+            type="submit"
+            className="w-full rounded-xl border px-3 py-2.5 text-center text-xs font-medium transition-colors hover:bg-[var(--ws-hover)]"
+            style={{ borderColor: "var(--ws-border)", color: "var(--ws-text)" }}
+          >
+            + Prepare a weekly plan
+          </button>
+        </form>
+        <Link
+          href={`/projects/${projectId}/takvim`}
+          className="flex items-center rounded-xl border px-3 text-xs font-medium transition-colors hover:bg-[var(--ws-hover)]"
+          style={{ borderColor: "var(--ws-border)", color: "var(--ws-text-2)" }}
+        >
+          Full calendar
+        </Link>
+      </div>
+
+      {openItem ? (
+        <CreativeDetail
+          key={openItem.id}
+          item={openItem}
+          detail={details[openItem.id]}
+          timezone={timezone}
+          todayKey={todayKey}
+          onSchedule={(localDateTime) => onMove(openItem, localDateTime)}
+          onClose={() => setOpenId(null)}
+          onDecided={onDecided}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// ── Parçalar ──────────────────────────────────────────────────────────────────
+
+function IconButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onClick}
+      className="flex size-6 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--ws-hover)]"
+      style={{ color: "var(--ws-text-2)" }}
     >
-      <ImageOff className="size-3.5" />
+      {children}
+    </button>
+  );
+}
+
+function Chip({
+  active,
+  onClick,
+  title,
+  small = false,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  title?: string;
+  small?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      title={title}
+      onClick={onClick}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 rounded-full border font-medium whitespace-nowrap transition-colors hover:bg-[var(--ws-hover)]",
+        small ? "h-6 px-2 text-[10.5px]" : "h-7 px-2.5 text-[11px]",
+      )}
+      style={
+        active
+          ? {
+              borderColor: "var(--ws-text)",
+              background: "var(--ws-hover)",
+              color: "var(--ws-text)",
+            }
+          : { borderColor: "var(--ws-border)", color: "var(--ws-text-2)" }
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+function Count({ children }: { children: ReactNode }) {
+  return (
+    <span className="tabular-nums" style={{ color: "var(--ws-text-3)" }}>
+      {children}
     </span>
   );
 }
 
-// Brand Workspace right panel's Calendar tab — real month navigation and
-// inline day/time scheduling, entirely within this 400px panel (no link
-// out to /takvim). `?calMonth=YYYY-MM` pages the month; `?calItem=id`
-// opens the inline quick-edit block for one creative (see page.tsx, which
-// resolves it tenant-scoped before passing it in as `selectedItem`).
-// Day cells stay a compact visual overview (day number + dot) rather than
-// individually clickable — at this width, every item is already reachable
-// (with its real day/time) from the list below, so a second click target
-// per cell would just duplicate that without adding real information.
-export function CalendarPanel({
-  projectId,
-  workId,
-  calendar,
-  selectedItem,
-}: {
-  projectId: string;
-  // The Work on screen (Works only). The calendar's own links keep it: the bare
-  // project URL starts a new chat, so dropping it would leave the conversation.
-  workId?: string;
-  calendar: {
-    items: WorkspaceCalendarItem[];
-    unscheduled: WorkspaceOutputItem[];
-    timezone: string;
-    month: string;
-  };
-  selectedItem?: {
-    id: string;
-    title: string | null;
-    platform: SocialPlatform | null;
-    status: CreativeStatus;
-    assetId: string | null;
-    scheduledFor: string | null;
-  };
-}) {
-  const todayLocalDate = utcToZonedDateTimeLocal(
-    new Date(),
-    calendar.timezone,
-  ).slice(0, 10);
-
-  const itemsWithLocalDate = calendar.items
-    .map((item) => ({
-      item,
-      localDateTime: utcToZonedDateTimeLocal(
-        new Date(item.scheduledFor),
-        calendar.timezone,
-      ),
-    }))
-    .sort((a, b) => a.localDateTime.localeCompare(b.localDateTime));
-  const localDatesWithItems = new Set(
-    itemsWithLocalDate.map((i) => i.localDateTime.slice(0, 10)),
-  );
-  const grid = buildMonthGrid(
-    calendar.month,
-    localDatesWithItems,
-    todayLocalDate,
-  );
-
-  const monthLabel = new Date(
-    `${calendar.month}-01T00:00:00Z`,
-  ).toLocaleDateString("en-US", {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-
-  const workQuery = workId ? `work=${encodeURIComponent(workId)}&` : "";
-  const monthHref = (month: string) =>
-    `/projects/${projectId}?${workQuery}calMonth=${month}`;
-  const itemHref = (creativeId: string) =>
-    `/projects/${projectId}?${workQuery}calMonth=${calendar.month}&calItem=${creativeId}`;
-  const closeItemHref = `/projects/${projectId}?${workQuery}calMonth=${calendar.month}`;
-
+function Muted({ children }: { children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-4 px-4 py-4 text-sm">
-      <div>
-        <div
-          className="text-[10px] font-semibold tracking-[0.1em]"
-          style={{ color: "var(--ws-text-3)" }}
-        >
-          YOUR BRAND&apos;S RHYTHM
-        </div>
-        <div
-          className="mt-0.5 text-base font-semibold"
-          style={{ color: "var(--ws-text)" }}
-        >
-          Everything, on time.
-        </div>
+    <p className="text-[11px]" style={{ color: "var(--ws-text-3)" }}>
+      {children}
+    </p>
+  );
+}
+
+function FilterGroup({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <div
+        className="mb-1 text-[10px] font-semibold tracking-[0.08em] uppercase"
+        style={{ color: "var(--ws-text-3)" }}
+      >
+        {label}
       </div>
-
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <Link
-            href={monthHref(shiftMonth(calendar.month, -1))}
-            scroll={false}
-            aria-label="Previous month"
-            className="flex size-6 items-center justify-center rounded-full transition-colors hover:bg-[var(--ws-hover)]"
-            style={{ color: "var(--ws-text-2)" }}
-          >
-            <ChevronLeft className="size-3.5" />
-          </Link>
-          <span
-            className="text-xs font-medium"
-            style={{ color: "var(--ws-text-2)" }}
-          >
-            {monthLabel}
-          </span>
-          <Link
-            href={monthHref(shiftMonth(calendar.month, 1))}
-            scroll={false}
-            aria-label="Next month"
-            className="flex size-6 items-center justify-center rounded-full transition-colors hover:bg-[var(--ws-hover)]"
-            style={{ color: "var(--ws-text-2)" }}
-          >
-            <ChevronRight className="size-3.5" />
-          </Link>
-        </div>
-        <div className="grid grid-cols-7 gap-y-1 text-center">
-          {WEEKDAY_LABELS.map((label) => (
-            <span
-              key={label}
-              className="text-[9px] font-medium"
-              style={{ color: "var(--ws-text-3)" }}
-            >
-              {label[0]}
-            </span>
-          ))}
-          {grid.map((cell, index) =>
-            cell.day === null ? (
-              <span key={`blank-${index}`} />
-            ) : (
-              <div
-                key={cell.localDate}
-                className="flex flex-col items-center justify-center gap-0.5 py-1"
-              >
-                <span
-                  className="flex size-6 items-center justify-center rounded-full text-[11px]"
-                  style={
-                    cell.isToday
-                      ? {
-                          background: "var(--ws-accent)",
-                          color: "var(--ws-on-accent)",
-                          fontWeight: 600,
-                        }
-                      : { color: "var(--ws-text-2)" }
-                  }
-                >
-                  {cell.day}
-                </span>
-                <span
-                  className="size-1 rounded-full"
-                  style={{
-                    background: cell.hasItems
-                      ? "var(--ws-accent)"
-                      : "transparent",
-                  }}
-                />
-              </div>
-            ),
-          )}
-        </div>
-      </div>
-
-      {selectedItem ? (
-        <ScheduleQuickEdit
-          item={selectedItem}
-          timezone={calendar.timezone}
-          closeHref={closeItemHref}
-        />
-      ) : null}
-
-      {calendar.unscheduled.length > 0 ? (
-        <div>
-          <div
-            className="mb-2 text-[10px] font-semibold tracking-[0.1em]"
-            style={{ color: "var(--ws-text-3)" }}
-          >
-            Unscheduled ({calendar.unscheduled.length})
-          </div>
-          <div className="scrollbar-none flex gap-2 overflow-x-auto pb-1">
-            {calendar.unscheduled.map((item) => (
-              <Link
-                key={item.id}
-                href={itemHref(item.id)}
-                scroll={false}
-                className="flex shrink-0 flex-col items-center gap-1"
-                title={item.title ?? undefined}
-              >
-                <Thumb assetId={item.assetId} size="size-11" />
-                <span
-                  className="max-w-13 truncate text-[9px]"
-                  style={{ color: "var(--ws-text-3)" }}
-                >
-                  {item.platform ? SOCIAL_PLATFORM[item.platform].label : "—"}
-                </span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <div>
-        <div
-          className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.1em]"
-          style={{ color: "var(--ws-text-3)" }}
-        >
-          Planned content
-          {itemsWithLocalDate.length > 0 ? (
-            <span>{itemsWithLocalDate.length}</span>
-          ) : null}
-        </div>
-
-        {itemsWithLocalDate.length === 0 ? (
-          <p className="px-0.5 text-sm" style={{ color: "var(--ws-text-3)" }}>
-            Nothing scheduled this month.
-          </p>
-        ) : (
-          <div className="flex flex-col gap-1.5">
-            {itemsWithLocalDate.map(({ item, localDateTime }) => {
-              const dayName = new Date(
-                `${localDateTime.slice(0, 10)}T00:00:00Z`,
-              )
-                .toLocaleDateString("en-US", {
-                  weekday: "short",
-                  timeZone: "UTC",
-                })
-                .toUpperCase();
-              const dayNumber = localDateTime.slice(8, 10);
-              const time = localDateTime.slice(11, 16);
-              const isSelected = selectedItem?.id === item.id;
-
-              return (
-                <Link
-                  key={item.id}
-                  href={itemHref(item.id)}
-                  scroll={false}
-                  className="flex items-center gap-3 rounded-2xl border p-3 shadow-[0_1px_3px_rgba(52,75,29,0.04)] transition-colors hover:bg-[var(--ws-hover)]"
-                  style={{
-                    borderColor: isSelected
-                      ? "var(--ws-text)"
-                      : "var(--ws-border)",
-                    background: isSelected ? "var(--ws-hover)" : undefined,
-                  }}
-                >
-                  <div
-                    className="flex size-11 shrink-0 flex-col items-center justify-center rounded-xl"
-                    style={{ background: "var(--ws-surface-2)" }}
-                  >
-                    <span
-                      className="text-[9px] font-medium"
-                      style={{ color: "var(--ws-text-3)" }}
-                    >
-                      {dayName}
-                    </span>
-                    <span
-                      className="text-sm font-semibold"
-                      style={{ color: "var(--ws-text)" }}
-                    >
-                      {dayNumber}
-                    </span>
-                  </div>
-                  <Thumb assetId={item.assetId} />
-                  <div className="min-w-0 flex-1">
-                    <div
-                      className="truncate text-xs font-medium"
-                      style={{ color: "var(--ws-text)" }}
-                    >
-                      {item.platform
-                        ? SOCIAL_PLATFORM[item.platform].label
-                        : item.type}
-                    </div>
-                    <div
-                      className="mt-0.5 text-[10px]"
-                      style={{ color: "var(--ws-text-3)" }}
-                    >
-                      {time} · {CREATIVE_STATUS[item.status].label}
-                    </div>
-                  </div>
-                  <ChevronRight
-                    className="size-3.5 shrink-0"
-                    style={{ color: "var(--ws-text-3)" }}
-                  />
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <form action={submitProjectCommandAction}>
-        <input type="hidden" name="projectId" value={projectId} />
-        <input type="hidden" name="text" value="Plan this week" />
-        <button
-          type="submit"
-          className="w-full rounded-xl border px-3 py-2.5 text-center text-xs font-medium transition-colors hover:bg-[var(--ws-hover)]"
-          style={{ borderColor: "var(--ws-border)", color: "var(--ws-text)" }}
-        >
-          + Prepare a weekly plan
-        </button>
-      </form>
+      <div className="flex flex-wrap gap-1">{children}</div>
     </div>
   );
 }
 
-// Inline day/time assignment for one creative — the calendar's one real
-// write path (assignCreativeDateAction, shared with /takvim's own
-// dialog), reached without ever leaving this panel. Deliberately narrow:
-// no approve/reject (the creative-ready chat card already has live
-// Approve/Reject buttons) and no image regeneration (same — the chat
-// card's Revise button covers that) — this block's only job is WHEN it
-// goes out, not what it looks like or whether it's approved.
-function ScheduleQuickEdit({
-  item,
-  timezone,
-  closeHref,
+function Notice({
+  tone,
+  children,
 }: {
-  item: {
-    id: string;
-    title: string | null;
-    platform: SocialPlatform | null;
-    status: CreativeStatus;
-    assetId: string | null;
-    scheduledFor: string | null;
-  };
-  timezone: string;
-  closeHref: string;
+  tone: "warn" | "danger";
+  children: ReactNode;
 }) {
-  const scheduledValue = item.scheduledFor
-    ? utcToZonedDateTimeLocal(new Date(item.scheduledFor), timezone)
-    : "";
-
   return (
     <div
-      className="space-y-2.5 rounded-2xl border p-3"
-      style={{
-        borderColor: "var(--ws-border)",
-        background: "var(--ws-surface)",
-      }}
+      className={cn(
+        "flex items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] leading-snug",
+        tone === "danger"
+          ? "border-destructive/25 bg-destructive/5 text-destructive"
+          : "border-warning/30 bg-warning/10 text-foreground",
+      )}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <Thumb assetId={item.assetId} />
-          <div className="min-w-0">
-            <p
-              className="truncate text-xs font-medium"
-              style={{ color: "var(--ws-text)" }}
-            >
-              {item.title ?? "Creative"}
-            </p>
-            <p className="text-[10px]" style={{ color: "var(--ws-text-3)" }}>
-              {item.platform ? SOCIAL_PLATFORM[item.platform].label : "—"} ·{" "}
-              {CREATIVE_STATUS[item.status].label}
-            </p>
-          </div>
-        </div>
-        <Link
-          href={closeHref}
-          scroll={false}
-          aria-label="Close"
-          className="flex size-6 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--ws-hover)]"
-          style={{ color: "var(--ws-text-3)" }}
-        >
-          <X className="size-3.5" />
-        </Link>
-      </div>
-      <ActionForm
-        action={assignCreativeDateAction}
-        successMessage="Schedule updated"
-        className="flex items-end gap-1.5"
-      >
-        <input type="hidden" name="creativeId" value={item.id} />
-        <label className="block flex-1 space-y-1">
-          <span
-            className="text-[10px] font-medium"
-            style={{ color: "var(--ws-text-3)" }}
-          >
-            Day &amp; time ({timezone})
-          </span>
-          <input
-            // Keyed on the value itself: this page polls every 7s
-            // (LiveRefresh) and this is an uncontrolled input, so without a
-            // key tied to the real value, a background refresh that
-            // changes item.scheduledFor (another tab, another session)
-            // would silently NOT update what's shown here — React only
-            // honors defaultValue on a fresh mount, not on a re-render of
-            // the same element.
-            key={scheduledValue}
-            type="datetime-local"
-            name="date"
-            defaultValue={scheduledValue}
-            className="h-8 w-full rounded-lg border px-2 text-xs"
-            style={{ borderColor: "var(--ws-border)", color: "var(--ws-text)" }}
-          />
-        </label>
-        <SubmitButton size="sm" variant="outline">
-          Save
-        </SubmitButton>
-      </ActionForm>
+      <TriangleAlert
+        aria-hidden
+        className={cn(
+          "mt-px size-3.5 shrink-0",
+          tone === "danger" ? "text-destructive" : "text-warning",
+        )}
+      />
+      {children}
     </div>
   );
 }
+
+function DayHeader({
+  day,
+  relative,
+  count,
+}: {
+  day: string;
+  relative: string | null;
+  count: number;
+}) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <span
+        className="text-[11px] font-semibold"
+        style={{ color: "var(--ws-text)" }}
+      >
+        {relative ?? weekdayShort(day)}
+      </span>
+      <span className="text-[11px]" style={{ color: "var(--ws-text-3)" }}>
+        {formatDayLong(day).replace(/^\w+, /, "")}
+      </span>
+      {count > 0 ? (
+        <span
+          className="text-[10px] tabular-nums"
+          style={{ color: "var(--ws-text-3)" }}
+        >
+          · {count}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function PanelSkeleton() {
+  return (
+    <div className="space-y-2" aria-hidden>
+      <div
+        className="h-52 animate-pulse rounded-xl"
+        style={{ background: "var(--ws-surface-2)" }}
+      />
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="h-12 animate-pulse rounded-xl"
+          style={{ background: "var(--ws-surface-2)" }}
+        />
+      ))}
+    </div>
+  );
+}
+
+type DropZone = {
+  onDragOver: (event: DragEvent<HTMLElement>) => void;
+  onDragLeave: (event: DragEvent<HTMLElement>) => void;
+  onDrop: (event: DragEvent<HTMLElement>) => void;
+};
+
+function MonthGrid({
+  days,
+  focusMonth,
+  todayKey,
+  selectedDay,
+  byDay,
+  dragging,
+  overKey,
+  onSelect,
+  zone,
+}: {
+  days: readonly { key: string; day: number; month: number }[];
+  focusMonth: number | null;
+  todayKey: string;
+  selectedDay: string | null;
+  byDay: ReadonlyMap<string, CalendarItem[]>;
+  dragging: boolean;
+  overKey: string | null;
+  onSelect: (key: string) => void;
+  zone: DropZone;
+}) {
+  return (
+    <div
+      role="grid"
+      aria-label="Month"
+      className="grid grid-cols-7 gap-0.5 rounded-xl border p-1"
+      style={{ borderColor: "var(--ws-border)" }}
+    >
+      {WEEKDAYS.map((label) => (
+        <span
+          key={label}
+          className="py-0.5 text-center text-[9px] font-medium"
+          style={{ color: "var(--ws-text-3)" }}
+        >
+          {label.slice(0, 2)}
+        </span>
+      ))}
+      {days.map((day) => {
+        const dayItems = byDay.get(day.key) ?? [];
+        const dots = dayDots(dayItems);
+        const isToday = day.key === todayKey;
+        const outside = focusMonth !== null && day.month !== focusMonth;
+        const past = day.key < todayKey;
+        const droppable = isDroppableDay(day.key, todayKey);
+        const selected = selectedDay === day.key;
+        return (
+          <button
+            key={day.key}
+            type="button"
+            role="gridcell"
+            aria-selected={selected}
+            aria-label={`${formatDayLong(day.key)}${dots.total ? `, ${dots.total} posts` : ""}`}
+            onClick={() => onSelect(day.key)}
+            data-drop-key={day.key}
+            {...(droppable ? zone : {})}
+            className={cn(
+              "relative flex h-11 flex-col items-center justify-start gap-0.5 rounded-lg pt-1 transition-colors hover:bg-[var(--ws-hover)]",
+              outside && "opacity-40",
+              dragging && !droppable && "opacity-25",
+            )}
+            style={{
+              background:
+                overKey === day.key
+                  ? "var(--ws-soft-green)"
+                  : selected
+                    ? "var(--ws-hover)"
+                    : undefined,
+              boxShadow:
+                selected || overKey === day.key
+                  ? "inset 0 0 0 1px var(--ws-text)"
+                  : dragging && droppable
+                    ? "inset 0 0 0 1px var(--ws-border)"
+                    : undefined,
+            }}
+          >
+            <span
+              className="flex size-5 items-center justify-center rounded-full text-[11px] tabular-nums"
+              style={
+                isToday
+                  ? {
+                      background: "var(--ws-accent)",
+                      color: "var(--ws-on-accent)",
+                      fontWeight: 600,
+                    }
+                  : {
+                      color: past ? "var(--ws-text-3)" : "var(--ws-text-2)",
+                    }
+              }
+            >
+              {day.day}
+            </span>
+            {dots.total > 0 ? (
+              <span className="flex items-center gap-0.5">
+                {dots.colors.map((color) => (
+                  <span
+                    key={color}
+                    className="size-1.5 rounded-full"
+                    style={{ background: color }}
+                  />
+                ))}
+                {dots.total > dots.colors.length ? (
+                  <span
+                    className="text-[8px] leading-none tabular-nums"
+                    style={{ color: "var(--ws-text-3)" }}
+                  >
+                    {dots.total}
+                  </span>
+                ) : null}
+              </span>
+            ) : null}
+            {dots.attention ? (
+              <span
+                aria-hidden
+                className="absolute top-1 right-1 size-1.5 rounded-full bg-destructive"
+              />
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+type RowProps = {
+  projectId: string;
+  todayKey: string;
+  openId: string | null;
+  dragId: string | null;
+  onOpen: (id: string) => void;
+  onDragStart: (event: DragEvent, item: PanelItem) => void;
+  onDragEnd: () => void;
+};
+
+function GroupedList({
+  groups,
+  todayKey,
+  empty,
+  rowProps,
+}: {
+  groups: ReturnType<typeof groupForSort>;
+  todayKey: string;
+  empty: string;
+  rowProps: RowProps;
+}) {
+  if (groups.length === 0) {
+    return (
+      <div
+        className="flex items-center gap-2.5 rounded-xl border border-dashed px-3 py-3"
+        style={{ borderColor: "var(--ws-border)" }}
+      >
+        <Inbox
+          className="size-4 shrink-0"
+          style={{ color: "var(--ws-text-3)" }}
+        />
+        <Muted>{empty}</Muted>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {groups.map((group) => {
+        const first = group.items[0]!;
+        return (
+          <section key={`${group.kind}-${group.key}`} className="space-y-1">
+            {group.kind === "day" ? (
+              <DayHeader
+                day={group.key}
+                relative={relativeDayLabel(group.key, todayKey, addDaysToKey)}
+                count={group.items.length}
+              />
+            ) : (
+              <div className="flex items-center gap-1.5">
+                {group.kind === "stage" ? (
+                  <StageIcon stage={first.stage} className="size-3" />
+                ) : (
+                  <SourceMark
+                    source={first.source}
+                    decorative
+                    className="size-3.5 rounded"
+                  />
+                )}
+                <span
+                  className="text-[11px] font-semibold"
+                  style={{ color: "var(--ws-text)" }}
+                >
+                  {group.kind === "stage"
+                    ? STAGE_META[first.stage].label
+                    : first.source.label}
+                </span>
+                <span
+                  className="text-[10px] tabular-nums"
+                  style={{ color: "var(--ws-text-3)" }}
+                >
+                  · {group.items.length}
+                </span>
+              </div>
+            )}
+            <div className="flex flex-col gap-1">
+              {group.items.map((item) => (
+                <ItemRow
+                  key={item.id}
+                  item={item}
+                  showDate={group.kind !== "day"}
+                  {...rowProps}
+                />
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+const EXPLAIN: ReadonlySet<CalendarStage> = new Set([
+  "failed",
+  "missed",
+  "held",
+]);
+
+// Tek parça satırı: tıklayınca detay paneli; taşınabilirse sürüklenir.
+// Cmd/Ctrl+tık tam takvimde açar (gerçek adres).
+const ItemRow = memo(function ItemRow({
+  item,
+  projectId,
+  todayKey,
+  openId,
+  dragId,
+  showDate = false,
+  onOpen,
+  onDragStart,
+  onDragEnd,
+}: RowProps & { item: PanelItem; showDate?: boolean }) {
+  const active = openId === item.id;
+  const dragging = dragId === item.id;
+  const when = item.localDay
+    ? [
+        showDate
+          ? (relativeDayLabel(item.localDay, todayKey, addDaysToKey) ??
+            formatDayLong(item.localDay))
+          : null,
+        item.localTime,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "No day yet";
+  const onClick = (event: MouseEvent) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0)
+      return;
+    event.preventDefault();
+    onOpen(item.id);
+  };
+  return (
+    <a
+      href={`/projects/${projectId}/takvim?creative=${item.id}`}
+      onClick={onClick}
+      draggable={item.movable}
+      onDragStart={(event) => onDragStart(event, item)}
+      onDragEnd={onDragEnd}
+      title={`${headline(item)}\n${item.label} · ${when}\n${STAGE_META[item.stage].label}${item.reason ? ` — ${item.reason}` : ""}`}
+      className={cn(
+        "group flex items-center gap-2.5 rounded-xl border px-2 py-1.5 transition-colors hover:bg-[var(--ws-hover)]",
+        item.movable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
+        (dragging || item.pending) && "opacity-50",
+      )}
+      style={{
+        borderColor: active ? "var(--ws-text)" : "var(--ws-border)",
+        background: active ? "var(--ws-hover)" : "var(--ws-surface)",
+      }}
+    >
+      <ItemThumb
+        assetId={item.assetId}
+        source={item.source}
+        className="size-9"
+      />
+      <div className="min-w-0 flex-1">
+        <div
+          className="truncate text-xs font-medium"
+          style={{ color: "var(--ws-text)" }}
+        >
+          {headline(item)}
+        </div>
+        <div
+          className="mt-0.5 flex min-w-0 items-center gap-1 text-[10.5px]"
+          style={{ color: "var(--ws-text-3)" }}
+        >
+          <span className="shrink-0 tabular-nums">{when}</span>
+          <span aria-hidden>·</span>
+          <span className="truncate">{item.label}</span>
+        </div>
+        {EXPLAIN.has(item.stage) && item.reason ? (
+          <div className="mt-0.5 truncate text-[10.5px] text-destructive">
+            {item.reason}
+          </div>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-1">
+        <StagePill stage={item.stage} className="h-[18px] px-1.5 text-[10px]" />
+        {item.movable ? (
+          <GripVertical
+            aria-hidden
+            className="size-3 opacity-0 transition-opacity group-hover:opacity-60"
+            style={{ color: "var(--ws-text-3)" }}
+          />
+        ) : (
+          <Lock
+            aria-label="Can't be moved"
+            className="size-3 opacity-50"
+            style={{ color: "var(--ws-text-3)" }}
+          />
+        )}
+      </div>
+    </a>
+  );
+});

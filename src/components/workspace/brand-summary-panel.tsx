@@ -1,5 +1,13 @@
-import Link from "next/link";
-import { Sparkle } from "lucide-react";
+import type { ReactNode } from "react";
+import {
+  Ban,
+  Compass,
+  Crosshair,
+  Gem,
+  Palette,
+  Sparkle,
+  ThumbsUp,
+} from "lucide-react";
 
 import {
   EmptyKitCard,
@@ -27,11 +35,11 @@ import {
 import type { ConnectedAccount } from "@/lib/connected-accounts";
 import type { BrandTwin } from "@/server/brand-twin/brand-twin";
 
-// The Brand tab: two cards lead (the brand at a glance, and where its accounts
-// stand), then two collapsed ones for what used to fill the tab: the visual kit
-// (logo on brand-coloured surfaces, role-labelled palette, type specimens, style,
-// the post layout every creative gets) and the strategy text (essence, focus,
-// voice, markets, what works, never-do). Nothing was taken away, only folded.
+// The Brand tab, most used first: where the accounts stand (a row of icons),
+// the brand at a glance, the Instagram numbers while it is connected, then two
+// collapsed cards: the visual kit (logo on brand-coloured surfaces, palette,
+// type, style, post layouts) and the strategy text (essence, focus, what
+// works, never-do). Voice and markets live in the summary only, not twice.
 export function BrandSummaryPanel({
   projectId,
   brand,
@@ -68,22 +76,10 @@ export function BrandSummaryPanel({
   const empty = kitIsEmpty(brandKit);
   const hasLogo = Boolean(brandKit.logos.light || brandKit.logos.dark);
 
-  // personality/toneOfVoice are each a single free-text field, but the AI
-  // often writes them as a comma-separated list of traits in one string
-  // (e.g. "Confident, playful, direct") — split so each trait gets its own
-  // pill instead of one long run-on pill. Deduped since both fields can
-  // repeat a trait.
-  const voiceTags = Array.from(
-    new Set(
-      [brand.voice.personality, brand.voice.toneOfVoice]
-        .filter((v): v is string => Boolean(v))
-        .flatMap((v) => v.split(",").map((s) => s.trim()))
-        .filter(Boolean),
-    ),
-  );
-
   return (
     <div className="flex flex-col gap-3 px-4 py-4 text-sm">
+      <ConnectedAccountsCard projectId={projectId} accounts={connections} />
+
       <BrandSummaryCard
         name={brand.name}
         website={website}
@@ -98,15 +94,17 @@ export function BrandSummaryPanel({
         editHref={buildHubHref(projectId, { panel: "brand-brain" })}
       />
 
-      <ConnectedAccountsCard projectId={projectId} accounts={connections} />
-
       {connections.some(
         (account) => account.key === "instagram" && account.state === "connected",
       ) ? (
         <InstagramOverviewCard projectId={projectId} />
       ) : null}
 
-      <CollapsibleCard title="Marka kiti" defaultOpen={empty}>
+      <CollapsibleCard
+        title="Marka kiti"
+        icon={<Palette />}
+        defaultOpen={empty}
+      >
         {empty ? (
           <EmptyKitCard
             projectId={projectId}
@@ -132,23 +130,22 @@ export function BrandSummaryPanel({
         )}
       </CollapsibleCard>
 
-      <CollapsibleCard title="Marka stratejisi">
+      <CollapsibleCard title="Marka stratejisi" icon={<Compass />}>
         <div className="pb-1">
-          <div className="mb-3.5">
-            <SectionLabel>BRAND ESSENCE</SectionLabel>
-            {/* A glanceable summary, not the full text — Brand Brain has it
+          <Section title="Marka özü" icon={<Gem />}>
+            {/* A glanceable summary, not the full text: Brand Brain has it
                 in full; the title shows it on hover. */}
             <p
-              className="mt-1 line-clamp-3 text-base leading-[1.3] font-semibold tracking-[-0.01em]"
+              className="line-clamp-3 text-sm leading-snug font-semibold"
               style={{ color: "var(--ws-text)" }}
               title={brand.valueProposition || undefined}
             >
               {brand.valueProposition || "You, in every detail."}
             </p>
-          </div>
+          </Section>
 
           {brand.currentFocus ? (
-            <Section title="CURRENT FOCUS" dot>
+            <Section title="Şu anki odak" icon={<Crosshair />}>
               <div
                 className="flex items-start gap-2 rounded-xl border px-3 py-2.5"
                 style={{
@@ -161,7 +158,7 @@ export function BrandSummaryPanel({
                   style={{ color: "var(--ws-accent)" }}
                 />
                 <span
-                  className="text-sm leading-5"
+                  className="text-xs leading-5"
                   style={{ color: "var(--ws-text-body)" }}
                 >
                   {brand.currentFocus.title}
@@ -170,55 +167,15 @@ export function BrandSummaryPanel({
             </Section>
           ) : null}
 
-          {voiceTags.length > 0 ? (
-            <Section title="BRAND VOICE">
-              <div className="flex flex-wrap gap-1.5">
-                {voiceTags.slice(0, 6).map((tag) => (
-                  <Pill key={tag}>{tag}</Pill>
-                ))}
-              </div>
-            </Section>
-          ) : null}
-
-          {brand.markets.length > 0 ? (
-            <Section title="TARGET MARKETS">
-              <div className="flex flex-col gap-1.5">
-                {brand.markets.map((market, index) => (
-                  <div
-                    key={market}
-                    className="flex items-center gap-2 text-sm"
-                    style={{ color: "var(--ws-text-body)" }}
-                  >
-                    <span
-                      className="text-[11px] font-medium tabular-nums"
-                      style={{ color: "var(--ws-text-3)" }}
-                    >
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
-                    {market}
-                  </div>
-                ))}
-              </div>
-            </Section>
-          ) : null}
-
           {brand.creativeMemory.works.length > 0 ? (
-            <Section title="WHAT WORKS">
+            <Section title="İşe yarayanlar" icon={<ThumbsUp />}>
               <ul
                 className="space-y-1.5 text-xs"
                 style={{ color: "var(--ws-text-2)" }}
               >
                 {brand.creativeMemory.works.slice(0, 3).map((item) => (
-                  <li key={item.insight} className="flex items-start gap-1.5">
-                    <span
-                      className="mt-0.5"
-                      style={{ color: "var(--ws-approved)" }}
-                    >
-                      ✓
-                    </span>
-                    <span className="line-clamp-2" title={item.insight}>
-                      {item.insight}
-                    </span>
+                  <li key={item.insight} className="line-clamp-2" title={item.insight}>
+                    {item.insight}
                   </li>
                 ))}
               </ul>
@@ -226,7 +183,7 @@ export function BrandSummaryPanel({
           ) : null}
 
           {brand.negativeRules.length > 0 ? (
-            <Section title="NEVER DO">
+            <Section title="Asla yapma" icon={<Ban />}>
               <ul
                 className="space-y-1.5 text-xs"
                 style={{ color: "var(--ws-text-2)" }}
@@ -239,75 +196,35 @@ export function BrandSummaryPanel({
               </ul>
             </Section>
           ) : null}
-
-          <Link
-            href={buildHubHref(projectId, { panel: "brand-brain" })}
-            scroll={false}
-            className="mt-3.5 block rounded-xl border px-3 py-2.5 text-center text-xs font-medium transition-colors hover:bg-[var(--ws-hover)]"
-            style={{ borderColor: "var(--ws-border)", color: "var(--ws-text)" }}
-          >
-            Edit brand profile ↗
-          </Link>
         </div>
       </CollapsibleCard>
     </div>
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      className="text-[10px] font-semibold tracking-[0.1em]"
-      style={{ color: "var(--ws-text-3)" }}
-    >
-      {children}
-    </div>
-  );
-}
-
+// One part of the strategy card: a small icon and title above its content.
 function Section({
   title,
-  dot,
-  action,
+  icon,
   children,
 }: {
   title: string;
-  dot?: boolean;
-  action?: React.ReactNode;
-  children: React.ReactNode;
+  icon: ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div
-      className="border-t py-3 first:border-0"
+      className="border-t py-3 first:border-0 first:pt-0"
       style={{ borderColor: "var(--ws-border)" }}
     >
-      <div className="mb-2.5 flex items-center justify-between">
-        <span
-          className="text-[10px] font-semibold tracking-[0.1em]"
-          style={{ color: "var(--ws-text-3)" }}
-        >
-          {title}
-        </span>
-        {action ?? null}
-        {!action && dot ? (
-          <span
-            className="size-1.5 rounded-full"
-            style={{ background: "var(--ws-approved)" }}
-          />
-        ) : null}
+      <div
+        className="mb-2 flex items-center gap-1.5 text-[11px] font-medium [&>svg]:size-3"
+        style={{ color: "var(--ws-text-3)" }}
+      >
+        {icon}
+        {title}
       </div>
       {children}
     </div>
-  );
-}
-
-function Pill({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      className="inline-flex rounded-full border px-2.5 py-1 text-[11px]"
-      style={{ borderColor: "var(--ws-border)", color: "var(--ws-text-2)" }}
-    >
-      {children}
-    </span>
   );
 }

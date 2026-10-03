@@ -73,6 +73,39 @@ export const CreativeRepository = {
     });
   },
 
+  // Content Calendar panosu: aralıktaki her parça (arşivlenmişler hariç; geçmiş
+  // yayınlar ve reddedilenler de görünür, durumları takvimin işi) + günü henüz
+  // atanmamış ama planlanabilir olanlar. Plan parçası olan Blog/Ads gibi
+  // platformsuz kanallar da "atanmamış" tepsisine girer (channel dolu).
+  listForCalendarBoard(projectId: string, range: { from: Date; to: Date }) {
+    return prisma.creative.findMany({
+      where: {
+        projectId,
+        status: { not: "ARCHIVED" },
+        OR: [
+          { scheduledFor: { gte: range.from, lte: range.to } },
+          {
+            scheduledFor: null,
+            status: { in: ["DRAFT", "IN_REVIEW", "APPROVED"] },
+            OR: [{ platform: { not: null } }, { channel: { not: null } }],
+          },
+        ],
+      },
+      include: {
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1,
+          include: { asset: true },
+        },
+      },
+      orderBy: [
+        { scheduledFor: { sort: "asc", nulls: "last" } },
+        { createdAt: "asc" },
+      ],
+      take: 400,
+    });
+  },
+
   // Slim occupancy read for slot suggestion: no versions/assets join (unlike
   // listForCalendarRange), bounded, and dead creatives never occupy a slot.
   listScheduledInRange(projectId: string, range: { from: Date; to: Date }) {

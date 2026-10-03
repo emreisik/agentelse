@@ -1,7 +1,9 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { utcToZonedDateTimeLocal } from "@/lib/timezone";
 import type { ChannelConnections } from "@/lib/content-channels";
+import { pieceTextOf } from "@/lib/works/piece-text";
 import {
   describePublishLine,
   type PublishLineInput,
@@ -30,7 +32,12 @@ export type LiveCreativeRow = {
   // the overlay must not promise a hold for it. Absent (hand-built rows) counts
   // as owned. loadLiveCreativeRows always sets it.
   owned?: boolean;
-  version: { version: number; assetId: string | null } | null;
+  version: {
+    version: number;
+    assetId: string | null;
+    caption?: string | null;
+    copy?: string | null;
+  } | null;
 };
 
 export type LiveInputs = {
@@ -87,7 +94,7 @@ export async function loadLiveCreativeRows(
         versions: {
           orderBy: { version: "desc" },
           take: 1,
-          select: { version: true, assetId: true },
+          select: { version: true, assetId: true, caption: true, copy: true },
         },
       },
     });
@@ -171,6 +178,9 @@ export function withLiveCreativeState(
     ...(alternatives ? { alternatives } : {}),
     ...(assetId ? { assetId } : {}),
     ...(row.version ? { versionNumber: row.version.version } : {}),
+    // The words of the piece as they are now (the pane edits them in place).
+    ...(row.version?.caption ? { caption: row.version.caption } : {}),
+    ...(row.version?.copy ? { copy: row.version.copy } : {}),
     ...(row.scheduledFor ? { plannedFor: row.scheduledFor.toISOString() } : {}),
     ...(publishLine ? { publishLine } : {}),
     // Only a piece under a Work can be given more pictures (the route checks
@@ -189,4 +199,38 @@ export function withLiveConnections(
 ): IdeaEventCardData {
   if (card.kind !== "content-plan-draft") return card;
   return { ...card, connections };
+}
+
+// A plan card in a Work reads the records too: which channels are connected
+// and whether scheduled posting is on, and for a saved plan each piece's text
+// and publish time as they are right now (the card stores neither).
+export function withLivePlan(
+  card: IdeaEventCardData,
+  live: Pick<LiveInputs, "connections" | "scheduleEnabled" | "timezone">,
+  rows: ReadonlyMap<string, LiveCreativeRow>,
+): IdeaEventCardData {
+  if (card.kind !== "content-plan-draft") return card;
+  const next = {
+    ...card,
+    connections: live.connections,
+    scheduleEnabled: live.scheduleEnabled,
+  };
+  if (!card.slots) return next;
+  return {
+    ...next,
+    slots: card.slots.map((slot) => {
+      if (!slot) return slot;
+      const row = rows.get(slot.id);
+      if (!row) return slot;
+      const text = pieceTextOf(row.version);
+      const when = row.scheduledFor
+        ? utcToZonedDateTimeLocal(row.scheduledFor, live.timezone)
+        : undefined;
+      return {
+        ...slot,
+        ...(text ? { text } : {}),
+        ...(when ? { when } : {}),
+      };
+    }),
+  };
 }

@@ -68,6 +68,12 @@ export type SlotFirstImageArgs = {
   contentFormat?: CreativeContentFormat;
   layoutId?: string;
   quality?: "draft" | "final";
+  // Works only: the brand's Post Style examples this post follows, the real
+  // product's pictures (Assets of the project) and the design's other on-image
+  // texts (sub-headline, price, button label...).
+  styleExampleIds?: string[];
+  productAssetIds?: string[];
+  onImageText?: string[];
 };
 
 export type SlotFirstTextArgs = {
@@ -498,6 +504,14 @@ export async function slotFirstImage(
   }
   const headline = cleanWorksTextOrNull(args.headline, OVERLAY_MAX);
   const highlight = cleanWorksTextOrNull(args.highlight, OVERLAY_MAX);
+  // The design's further on-image texts go through the same cleaner as the
+  // headline; with no headline the first of them leads.
+  const extraTexts = (args.onImageText ?? [])
+    .map((line) => cleanWorksTextOrNull(line, OVERLAY_MAX))
+    .filter((line): line is string => Boolean(line))
+    .slice(0, 6);
+  const leadText = headline ?? extraTexts[0] ?? null;
+  const otherTexts = headline ? extraTexts : extraTexts.slice(1);
 
   const title =
     headline ??
@@ -551,10 +565,20 @@ export async function slotFirstImage(
           caption: publishCaption.text,
           copy: publishCopy,
           imagePrompt: imagePrompt.text,
-          overlay: headline
-            ? { headline, highlight: highlight ?? undefined }
+          overlay: leadText
+            ? {
+                headline: leadText,
+                highlight: highlight ?? undefined,
+                ...(otherTexts.length > 0 ? { lines: otherTexts } : {}),
+              }
             : undefined,
           layoutId: args.layoutId?.trim() || undefined,
+          ...(args.styleExampleIds?.length
+            ? { styleExampleIds: args.styleExampleIds.slice(0, 3) }
+            : {}),
+          ...(args.productAssetIds?.length
+            ? { productAssetIds: args.productAssetIds.slice(0, 3) }
+            : {}),
         },
         contentFormat: args.contentFormat,
         quality: args.quality === "final" ? "high" : "medium",

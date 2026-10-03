@@ -6,7 +6,10 @@ import { prisma } from "@/lib/prisma";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { dayKeyInTimezone, zonedDateTimeToUtc } from "@/lib/timezone";
 import { generateCreativeImage } from "@/server/media/creative-image";
-import { loadReferenceImage } from "@/server/media/brand-logo";
+import {
+  NO_STYLE_REFERENCES,
+  loadStyleReferences,
+} from "@/server/media/style-references";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import {
   planCreativeLayout,
@@ -279,11 +282,11 @@ export async function planWeeklyInstagramContent(
     );
     return null;
   });
-  const styleImage = brandStyle
-    ? await loadReferenceImage(
-        brandStyle.visualIdentity?.referenceImageAssetId ?? undefined,
-      ).catch(() => null)
-    : null;
+  const styleRefs = brandStyle
+    ? await loadStyleReferences({
+        visualIdentity: brandStyle.visualIdentity,
+      }).catch(() => NO_STYLE_REFERENCES)
+    : NO_STYLE_REFERENCES;
   // Every post of the batch has the same format and no on-image headline, so
   // one layout decision covers them all (the brand's default for the format).
   const layoutPlan = planCreativeLayout({
@@ -330,14 +333,18 @@ export async function planWeeklyInstagramContent(
             contentFormatLabel: format.contentFormatLabel,
             pixelSize: format.pixelSize,
             safeZone: format.safeZone,
-            hasStyleReference: Boolean(styleImage),
+            hasStyleReference: styleRefs.legacyBoard,
+            postStyle: styleRefs.section,
+            matchStyle: styleRefs.matchStyle,
             reservedZones: layoutPlan.reservedZones,
             layoutComposition: layoutPlan.composition,
           })
         : subject;
       const generated = await generateCreativeImage(prompt, {
         imageSize: format.pixelSize,
-        referenceImage: styleImage ?? undefined,
+        ...(styleRefs.exampleCount > 0 || styleRefs.productCount > 0
+          ? { referenceImages: styleRefs.images }
+          : { referenceImage: styleRefs.images[0] ?? undefined }),
       });
       if (!generated) {
         result.imagesFailed += 1;

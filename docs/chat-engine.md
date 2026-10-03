@@ -232,12 +232,24 @@ Müşteri çıktı türü söylemeden bir konu/hedef yazınca ("Kommo CRM sağl�
 
 Not: metin sağlayıcısı (`openai-ai.provider.ts`) yanıtı bir bütün olarak döndürür; yazı parçaları token token akmaz, "running" kartı sonra sonuç kartı gelir.
 
+## Arka planda süren turlar (ChatGPT gibi)
+
+Bir sohbet turu artık onu başlatan HTTP isteğine bağlı değildir: `POST /chat` turu süreç içi bir **çalışma** olarak başlatır (`src/server/chat/run-registry.ts`, `globalThis` üzerinde; Turbopack katmanları ve Fast Refresh'ten etkilenmez) ve yalnızca ona **abone olan** bir SSE akışı döner (`run-sse.ts`). Sayfa yenileme, sohbet değiştirme ya da sekme kapatma yalnız aboneliği bırakır; tur sunucuda sürer.
+
+- **Durumlar** (`Command.replyStatus`): `RUNNING` (satır açılırken yazılır, tur sürerken), `STOPPED` (Stop ya da 15 dk süre sınırı), `INTERRUPTED` (süreç tur ortasında öldü: deploy/yeniden başlatma). Şema değişikliği yok.
+- **Yeniden bağlanma:** sayfa, sohbette süren turu `liveRunCommandId` ile verir; istemci `GET /chat/runs/[commandId]` ile turu baştan (sıkıştırılmış kayıttan) ve sonra canlı izler, Stop görünür. Biten tur 60 sn daha tekrar oynatılabilir; yoksa 410 → sayfa yenilenir.
+- **Stop:** `POST /chat/runs/[commandId]/cancel` turun kendi `AbortController`'ını keser. Model akışı hemen kesilir (openai'nin sessiz bitişi de `STOPPED` sayılır); çalışan bir araç beklenmez, tur hemen biter. **Başlamış ücretli bir görsel üretimi iptal edilmez**: tamamlanır ve yerine taslak olarak düşer (sahip kararı). Araç beklenirken bitirilen turda yalnız yanıt yazılır, kart yazımı araca bırakılır.
+- **Tek tur kuralı:** bir sohbette aynı anda tek tur (`409`); farklı sohbetler aynı anda çalışabilir. `GET /chat/runs` projenin süren turlarını listeler.
+- **Yetimler:** bu süreçte çalışmayan bir `RUNNING` satır sayfada "Interrupted" görünür; o sohbete yeni mesaj gelince ya da Stop'a basılınca DB'de de `INTERRUPTED`/`STOPPED` olur.
+- **Edit:** `editOf` alanı ile gelir; `CommandRepository.supersedeFrom` düzenlenen mesaj ve sonrasındaki tüm satırları (WEB + SYSTEM) `topic = "SUPERSEDED"` yapar, böylece sohbetten ve modelin geçmişinden düşerler; mesajın dosyaları yeni tura taşınır. Üretilmiş görseller/slotlar yerinde kalır. Sihirbaz mesajları (`[Plan brief]`) düzenlenemez.
+- **Sınırlar:** tek Railway örneği varsayılır (kayıt süreç içi); deploy anında süren turlar `INTERRUPTED` olur.
+
 ## Hata davranışı
 
 - Tanınan engeller (bütçe, kota, anahtar yok, oran sınırı, zaman aşımı): `limit-notice` kartı, yedeğe düşülmez.
 - Model hiçbir şey üretmeden ve hiçbir iş kuyruğa girmeden düşerse: eski kural tabanlı `parseIntent` yedeği.
 - Bir tool çalıştıktan veya metin akıtıldıktan sonra hata: yedeğe **düşülmez** (çift iş / çelişen metin olmasın), yalnızca dürüst hata.
-- Kullanıcı Stop'a basarsa: istek iptal olur, o ana kadarki metin kaydedilir.
+- Kullanıcı Stop'a basarsa: tur sunucuda hemen biter, o ana kadarki metin `STOPPED` olarak kaydedilir (bkz. "Arka planda süren turlar").
 
 ## Bilinen sınırlar
 
@@ -247,7 +259,7 @@ Not: metin sağlayıcısı (`openai-ai.provider.ts`) yanıtı bir bütün olarak
 - Rate limit süreç içidir; birden çok instance'ta paylaşılmaz. Asıl harcama sınırı projenin günlük `AutonomyPolicy` bütçesidir.
 - Tool izi (hangi tool çağrıldı) kalıcı değildir; yalnızca canlı akışta görünür.
 - Bir mesajda birden çok kart üretilirse (work session) hepsi canlı akışta görünür ama `Command` satırına yalnızca sonuncusu yazılır; görev ve creative sonuçları kendi SYSTEM satırlarıyla zaten kalıcıdır.
-- Edit, yeni mesaj olarak gider (dal geçmişi tutulmaz); BranchPicker tek dalda gizlidir.
+- Edit (yalnız Works, agent motoru): düzenlenen mesaj ve sonrası sohbetten kalkar, tur yeni metinle yeniden koşar (dal/sürüm tutulmaz); BranchPicker tek dalda gizlidir.
 
 ## Test
 

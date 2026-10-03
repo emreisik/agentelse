@@ -79,6 +79,9 @@ describe("which tools the injection protection covers", () => {
     ).toEqual([
       "decide_approval",
       "remember_preference",
+      // Saves the client's design examples and standing design rule into the
+      // brand's Post Style Kit: lasting state.
+      "save_style_reference",
       "start_deep_enrichment",
       // The goal and steps are read back on later messages, so a plan written
       // after outside content was read could carry text from a page.

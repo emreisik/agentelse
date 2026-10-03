@@ -28,6 +28,7 @@ import {
 import { BrandDossierEditSheet } from "@/components/brand/brand-dossier-edit-sheet";
 import { BrandDossierSuggestButton } from "@/components/brand/brand-dossier-suggest-button";
 import { BrandLogoCard } from "@/components/brand/brand-logo-card";
+import { PostStyleSection } from "@/components/brand/post-style-section";
 import { VisualIdentitySection } from "@/components/brand/visual-identity-section";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ScoreBar } from "@/components/shared/score-bar";
@@ -44,6 +45,7 @@ import {
   type BrandBrainSubKey,
 } from "../hub-core-params";
 import { parseColorSwatches, parseFontNames } from "@/lib/color-swatches";
+import { POST_STYLE_CATEGORY } from "@/lib/post-style";
 import { AssetPreview } from "../primitives/asset-preview";
 import { CrossLinkChip } from "../primitives/cross-link-chip";
 import { FieldGrid, type FieldSpec } from "../primitives/field-grid";
@@ -246,7 +248,10 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
       </div>
 
       {activeSub === "visual-identity" ? (
-        <VisualIdentitySection projectId={projectId} brandId={brandId} />
+        <div className="space-y-5">
+          <VisualIdentitySection projectId={projectId} brandId={brandId} />
+          <PostStyleSection projectId={projectId} brandId={brandId} />
+        </div>
       ) : activeSub === "constitution" ? (
         <ConstitutionSection
           projectId={projectId}
@@ -503,7 +508,9 @@ async function countBrandKnowledge(
   const [negativeRules, claims, facts, assumptions] = await Promise.all([
     prisma.negativeBriefRule.count({ where: { brandId, active: true } }),
     prisma.approvedClaim.count({ where: { brandId, active: true } }),
-    prisma.brandFact.count({ where: { brandId } }),
+    prisma.brandFact.count({
+      where: { brandId, category: { not: POST_STYLE_CATEGORY } },
+    }),
     prisma.brandAssumption.count({ where: { brandId } }),
   ]);
   return { negativeRules, claims, facts, assumptions };
@@ -859,7 +866,7 @@ async function RulesSection({
       orderBy: { approvedAt: "desc" },
     }),
     prisma.brandFact.findMany({
-      where: { brandId },
+      where: { brandId, category: { not: POST_STYLE_CATEGORY } },
       take: KNOWLEDGE_LIST_LIMIT,
       orderBy: { createdAt: "desc" },
     }),

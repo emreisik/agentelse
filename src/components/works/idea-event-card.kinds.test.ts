@@ -27,16 +27,19 @@ vi.mock("@/server/actions/approval-actions", inert);
 vi.mock("@/server/actions/command-actions", inert);
 vi.mock("@/server/actions/content-plan-actions", inert);
 vi.mock("@/server/actions/creative-actions", inert);
+vi.mock("@/server/actions/creative-rating-actions", inert);
 vi.mock("@/server/actions/facebook-share-actions", inert);
 vi.mock("@/server/actions/human-action-actions", inert);
 vi.mock("@/server/actions/master-content-actions", inert);
 vi.mock("@/server/actions/work-ads-actions", inert);
 vi.mock("@/server/actions/creative-variant-actions", inert);
 vi.mock("@/server/actions/plan-options-actions", inert);
+vi.mock("@/server/actions/plan-draft-actions", inert);
 vi.mock("@/server/actions/plan-progress-actions", inert);
 vi.mock("@/server/actions/publish-actions", inert);
 vi.mock("@/server/actions/schedule-slots-actions", inert);
 vi.mock("@/server/actions/slot-suggest-actions", inert);
+vi.mock("@/server/actions/slot-text-actions", inert);
 vi.mock("@/server/actions/work-actions", inert);
 vi.mock("@/components/workspace/output-preview-dialog", () => ({
   OutputPreviewDialog: () => null,
@@ -385,14 +388,14 @@ describe("flag-off parity (W09)", () => {
 });
 
 describe("the plan card with a host", () => {
-  it("shows the extras between the tabs and the buttons (one card)", () => {
+  it("is the social media plan pane, once, inside the card's focus target", () => {
     const out = html(plan, true);
-    const extras = out.indexOf("data-plan-extras");
-    expect(extras).toBeGreaterThan(-1);
+    expect(out).toContain("data-plan-pane");
     expect(out.indexOf('data-card-id="cmd-1"')).toBeGreaterThan(-1);
-    // The extras sit before the last button of the card.
-    expect(extras).toBeLessThan(out.lastIndexOf("<button"));
-    expect(out.match(/data-plan-extras/g)).toHaveLength(1);
+    expect(out.indexOf("data-plan-pane")).toBeGreaterThan(
+      out.indexOf('data-card-id="cmd-1"'),
+    );
+    expect(out.match(/data-plan-pane/g)).toHaveLength(1);
   });
 });
 
@@ -408,25 +411,25 @@ describe("the plan card dispatch with a host (compact versus full)", () => {
     it(`a one-item plan via ${via} is the compact planned-slot card`, () => {
       const out = html(one(via), true);
       expect(out).toContain("data-slot-actions");
-      expect(out).not.toContain("data-plan-extras");
+      expect(out).not.toContain("data-plan-pane");
     });
   }
 
   it("a one-item plan via options stays the full plan card", () => {
     const out = html(one("options"), true);
-    expect(out).toContain("data-plan-extras");
+    expect(out).toContain("data-plan-pane");
     expect(out).not.toContain("data-slot-actions");
   });
 
   it("a one-item plan without via stays the full plan card", () => {
     const out = html(one(undefined), true);
-    expect(out).toContain("data-plan-extras");
+    expect(out).toContain("data-plan-pane");
     expect(out).not.toContain("data-slot-actions");
   });
 
   it("a two-item plan via idea stays the full plan card", () => {
     const out = html({ ...plan, via: "idea" }, true);
-    expect(out).toContain("data-plan-extras");
+    expect(out).toContain("data-plan-pane");
     expect(out).not.toContain("data-slot-actions");
   });
 });

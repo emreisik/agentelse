@@ -78,11 +78,13 @@ describe("InstagramOverviewView", () => {
     expect(html).toContain("Takipçi");
     expect(html).toMatch(/12,3\s?B/);
     expect(html).toContain("Son 28 gün");
-    expect(html).toContain("Erişilen hesap");
+    expect(html).toContain("Erişim");
     expect(html).toContain("4.200");
     expect(html).toContain("Görüntülenme");
-    expect(html).toContain("Etkileşime giren hesap");
-    expect(html).toContain("Toplam etkileşim");
+    // Kept to what gets looked at: no following / post counts, no engaged
+    // accounts or interaction totals.
+    expect(html).not.toContain("Takip edilen");
+    expect(html).not.toContain("Toplam etkileşim");
     expect(html).toContain("Son gönderiler");
     expect(html).toContain('href="https://www.instagram.com/p/1/"');
     expect(html).toContain('rel="noopener noreferrer"');

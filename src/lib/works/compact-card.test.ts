@@ -4,7 +4,7 @@ import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 import {
   COMPACT_COPY,
-  channelsLine,
+  channelKeysOf,
   compactSpecOf,
   dayRange,
   isSingleSlotPlan,
@@ -62,18 +62,19 @@ describe("shortDay and dayRange", () => {
   });
 });
 
-describe("channelsLine", () => {
-  it("names the channels once each, at most two, then counts the rest", () => {
-    expect(channelsLine(["instagram", "instagram"])).toBe("Instagram");
-    expect(channelsLine(["instagram", "linkedin"])).toBe("Instagram · LinkedIn");
-    expect(channelsLine(["instagram", "linkedin", "x", "tiktok"])).toBe(
-      "Instagram · LinkedIn +2",
-    );
+describe("channelKeysOf", () => {
+  it("lists the channels once each, in the order they come", () => {
+    expect(channelKeysOf(["instagram", "instagram"])).toEqual(["instagram"]);
+    expect(channelKeysOf(["linkedin", "instagram", "x", "linkedin"])).toEqual([
+      "linkedin",
+      "instagram",
+      "x",
+    ]);
   });
 
   it("leaves out keys the catalog does not have", () => {
-    expect(channelsLine(["instagram", "myspace", ""])).toBe("Instagram");
-    expect(channelsLine([])).toBe("");
+    expect(channelKeysOf(["instagram", "myspace", ""])).toEqual(["instagram"]);
+    expect(channelKeysOf([])).toEqual([]);
   });
 });
 
@@ -82,7 +83,8 @@ describe("compactSpecOf: the long cards collapse", () => {
     expect(compactSpecOf(planOptions())).toEqual({
       icon: "directions",
       title: "BidUniq farkındalık haftası",
-      subtitle: "3 directions · 3 posts · Instagram",
+      subtitle: "3 directions · 3 posts",
+      channels: ["instagram"],
       status: { label: "Pick a direction", tone: "waiting" },
     });
   });
@@ -95,7 +97,8 @@ describe("compactSpecOf: the long cards collapse", () => {
         options: [{ id: "a", label: "A", angle: "x", ideas: [] }],
       }),
     );
-    expect(spec?.subtitle).toBe("1 direction · 1 post · X");
+    expect(spec?.subtitle).toBe("1 direction · 1 post");
+    expect(spec?.channels).toEqual(["x"]);
     expect(spec?.status).toEqual({ label: COMPACT_COPY.replaced, tone: "neutral" });
   });
 
@@ -138,7 +141,8 @@ describe("compactSpecOf: the long cards collapse", () => {
       });
     expect(compactSpecOf(master())).toMatchObject({
       icon: "master",
-      subtitle: "2 channels · Instagram · LinkedIn",
+      subtitle: "2 channels",
+      channels: ["instagram", "linkedin"],
       status: { label: "Draft", tone: "waiting" },
     });
     expect(compactSpecOf(master({ state: "adapted" }))?.status).toEqual({
@@ -154,8 +158,10 @@ describe("compactSpecOf: the long cards collapse", () => {
   it("a plan of several posts: how many, which days, which channels, where it stands", () => {
     expect(compactSpecOf(planDraft())).toEqual({
       icon: "plan",
-      title: "Autumn week",
-      subtitle: "2 posts · Oct 3 – Oct 9 · Instagram · LinkedIn",
+      // A plan is general: one name for every plan, never a platform's.
+      title: "Social media plan",
+      subtitle: "2 posts · Oct 3 – Oct 9",
+      channels: ["instagram", "linkedin"],
       status: { label: "Draft", tone: "waiting" },
     });
     expect(compactSpecOf(planDraft({ state: "saved" }))?.status).toEqual({
@@ -183,7 +189,8 @@ describe("compactSpecOf: the long cards collapse", () => {
         ],
       }),
     );
-    expect(spec?.subtitle).toBe("2 posts · Oct 3 – Oct 5 · Instagram");
+    expect(spec?.subtitle).toBe("2 posts · Oct 3 – Oct 5");
+    expect(spec?.channels).toEqual(["instagram"]);
   });
 
   it("a content package: its topic, how many pieces, and what to do with it", () => {

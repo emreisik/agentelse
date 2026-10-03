@@ -27,7 +27,9 @@ vi.mock("@/server/integrations/meta-client", async (importOriginal) => ({
   fetchPageAccessToken,
 }));
 
-const { loadInstagramOverview } = await import("./instagram-overview");
+const { loadInstagramOverview, clearInstagramOverviewCache } = await import(
+  "./instagram-overview"
+);
 const { MetaApiError } = await import("./meta-client");
 
 const NOW = Date.parse("2026-10-03T12:00:00Z");
@@ -52,6 +54,7 @@ const profile = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearInstagramOverviewCache();
   fetchPageAccessToken.mockResolvedValue("page-token");
   fetchInstagramProfile.mockResolvedValue(profile);
   fetchInstagramPostStats.mockResolvedValue([]);
@@ -215,5 +218,40 @@ describe("loadInstagramOverview", () => {
       ok: false,
       reason: "error",
     });
+  });
+
+  it("reuses a good read for a while instead of asking Meta again", async () => {
+    findUnique.mockResolvedValue(instagramLogin);
+
+    expect(await loadInstagramOverview("p", NOW)).toMatchObject({ ok: true });
+    expect(await loadInstagramOverview("p", NOW + 60_000)).toMatchObject({ ok: true });
+    expect(fetchInstagramProfile).toHaveBeenCalledTimes(1);
+
+    // Later, it reads again.
+    await loadInstagramOverview("p", NOW + 20 * 60_000);
+    expect(fetchInstagramProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it("on Meta's request limit, keeps the last good read and stops asking for a while", async () => {
+    findUnique.mockResolvedValue(instagramLogin);
+    const limit = new MetaApiError("(#4) Application request limit reached", 4);
+
+    // Nothing read yet: the card says the limit is reached.
+    fetchInstagramProfile.mockRejectedValueOnce(limit);
+    expect(await loadInstagramOverview("p", NOW)).toEqual({
+      ok: false,
+      reason: "rate_limited",
+    });
+    // Paused: no call to Meta at all.
+    expect(await loadInstagramOverview("p", NOW + 60_000)).toEqual({
+      ok: false,
+      reason: "rate_limited",
+    });
+    expect(fetchInstagramProfile).toHaveBeenCalledTimes(1);
+
+    // After the pause, a good read is kept; a new limit then shows that read.
+    expect(await loadInstagramOverview("p", NOW + 31 * 60_000)).toMatchObject({ ok: true });
+    fetchInstagramProfile.mockRejectedValueOnce(limit);
+    expect(await loadInstagramOverview("p", NOW + 47 * 60_000)).toMatchObject({ ok: true });
   });
 });

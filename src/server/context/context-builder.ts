@@ -3,6 +3,7 @@ import "server-only";
 import type { CapabilityKey } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { POST_STYLE_CATEGORY } from "@/lib/post-style";
 import {
   ContextPolicy,
   type ContextField,
@@ -52,7 +53,9 @@ export async function buildExecutionContext(
 
   if (fields.has("brandFacts")) {
     context.brandFacts = await prisma.brandFact.findMany({
-      where: { brandId },
+      // The Post Style Kit (examples and instructions) is its own thing: it
+      // reaches generation through visualIdentity, not as a "fact".
+      where: { brandId, category: { not: POST_STYLE_CATEGORY } },
       take: 50,
     });
   }

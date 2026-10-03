@@ -1,9 +1,11 @@
 import { notFound, redirect } from "next/navigation";
 import type { DepartmentKey } from "@prisma/client";
 
+import { presentTurnReply } from "@/lib/chat-reply";
 import { prisma } from "@/lib/prisma";
 import { getEnv } from "@/lib/env";
 import { DEPARTMENT_KEY } from "@/lib/labels";
+import { findActiveRun, isRunLive } from "@/server/chat/run-registry";
 import {
   requireProjectAccess,
   requireUser,
@@ -167,14 +169,6 @@ export default async function ProjectChatPage({
   }
 
   const { panel, sub, entity } = parseHubParams(sp);
-  // Right panel's inline Calendar tab (see calendar-panel.tsx) — its own
-  // month-paging/item-selection params, independent of panel/sub/entity.
-  const calMonthRaw = Array.isArray(sp.calMonth) ? sp.calMonth[0] : sp.calMonth;
-  const calMonth =
-    calMonthRaw && /^\d{4}-\d{2}$/.test(calMonthRaw) ? calMonthRaw : undefined;
-  const calItemRaw = Array.isArray(sp.calItem) ? sp.calItem[0] : sp.calItem;
-  const calItem = typeof calItemRaw === "string" ? calItemRaw : undefined;
-
   // Opt-in escape hatch to the old, isolated per-idea thread view
   // (ProjectFlowView/IdeaFlow) — only used when something explicitly links
   // to it with &thread=1 (see the `entity` branch below).
@@ -265,10 +259,11 @@ export default async function ProjectChatPage({
     publishTargets,
     rightPanelData,
     currentUser,
-    selectedCalendarItem,
     decisions,
     discovery,
     journey,
+    creativeCommands,
+    [connections, activity, briefExtras, adsPulse, untouched],
   ] = await Promise.all([
     prisma.project.findUnique({
       where: { id: projectId },
@@ -302,30 +297,11 @@ export default async function ProjectChatPage({
       },
     }),
     getPublishTargets(projectId),
-    getWorkspaceRightPanelData(projectId, { month: calMonth }),
+    getWorkspaceRightPanelData(projectId),
     prisma.user.findUnique({
       where: { id: userId },
       select: { name: true, email: true },
     }),
-    // Tenant-scoped: findFirst with projectId, not findUnique(id) alone —
-    // calItem is a plain user-suppliable query param.
-    calItem
-      ? prisma.creative.findFirst({
-          where: { id: calItem, projectId },
-          select: {
-            id: true,
-            title: true,
-            platform: true,
-            status: true,
-            scheduledFor: true,
-            versions: {
-              orderBy: { version: "desc" },
-              take: 1,
-              select: { assetId: true },
-            },
-          },
-        })
-      : Promise.resolve(null),
     getPendingDecisions(projectId),
     // Discovery-first setup host (it replaces the old wizard host, which is
     // no longer mounted). Never throws (undefined on any failure: the chat
@@ -339,6 +315,55 @@ export default async function ProjectChatPage({
     work && !isToday
       ? loadJourneySnapshot(projectId, { workId: work.id })
       : loadJourneySnapshot(projectId),
+    // Every creative the pipeline ever produced stays in the conversation as
+    // the same creative-ready card (SYSTEM rows, whichever idea they belong
+    // to — the rest of the pipeline noise stays out of this chat). The
+    // stored card is kept current by IdeaChatRepository (status, publish
+    // state), so history and new creatives look and behave identically.
+    prisma.command.findMany({
+      where: {
+        projectId,
+        topic: null,
+        source: "SYSTEM",
+        parsedIntent: { path: ["card", "kind"], equals: "creative-ready" },
+        ...(work ? { workId: work.id } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+      take: 40,
+      select: {
+        id: true,
+        source: true,
+        rawText: true,
+        replyText: true,
+        replyStatus: true,
+        attachments: true,
+        parsedIntent: true,
+        createdAt: true,
+      },
+    }),
+    // Works only: the reads of the Work's own screen. The brief's extras and
+    // the ads pulse are DB-only (no network); Today's brief is skipped on a
+    // stale day. They depend on the Work alone, so they load with the rest.
+    work
+      ? Promise.all([
+          getChannelConnections(projectId).catch((): ChannelConnections => ({})),
+          loadWorkActivity(projectId, work.id),
+          isToday && !staleDay
+            ? loadBriefExtras(projectId, timezone, todayKey)
+            : Promise.resolve(null),
+          isToday || work.channels.includes("ads")
+            ? loadAdsPulse(projectId)
+            : Promise.resolve(null),
+          // Still the new chat: the sidebar marks New Chat (not clickable) for it.
+          WorkRepository.isUntouched(projectId, work.id).catch(() => false),
+        ] as const)
+      : Promise.resolve([
+          {} as ChannelConnections,
+          { working: false },
+          null,
+          null,
+          false,
+        ] as const),
   ]);
 
   if (!project) notFound();
@@ -346,33 +371,6 @@ export default async function ProjectChatPage({
   const firstName = (currentUser?.name ?? currentUser?.email ?? "").split(
     /[\s@]/,
   )[0];
-
-  // Every creative the pipeline ever produced stays in the conversation as
-  // the same creative-ready card (SYSTEM rows, whichever idea they belong
-  // to — the rest of the pipeline noise stays out of this chat). The
-  // stored card is kept current by IdeaChatRepository (status, publish
-  // state), so history and new creatives look and behave identically.
-  const creativeCommands = await prisma.command.findMany({
-    where: {
-      projectId,
-      topic: null,
-      source: "SYSTEM",
-      parsedIntent: { path: ["card", "kind"], equals: "creative-ready" },
-      ...(work ? { workId: work.id } : {}),
-    },
-    orderBy: { createdAt: "desc" },
-    take: 40,
-    select: {
-      id: true,
-      source: true,
-      rawText: true,
-      replyText: true,
-      replyStatus: true,
-      attachments: true,
-      parsedIntent: true,
-      createdAt: true,
-    },
-  });
 
   // creativeId → open approval, to (re)attach Approve/Reject to the newest
   // card of a creative that is still awaiting a decision.
@@ -405,52 +403,49 @@ export default async function ProjectChatPage({
       return kind === "content-package" || kind === "content-plan-draft";
     })
     .map((command) => command.id);
-  const packageTaskIds = packageCommandIds.length
-    ? (
-        await prisma.task.findMany({
-          where: { projectId, commandId: { in: packageCommandIds } },
-          select: { id: true },
+  const loadPackageRows = async () => {
+    const packageTaskIds = packageCommandIds.length
+      ? (
+          await prisma.task.findMany({
+            where: { projectId, commandId: { in: packageCommandIds } },
+            select: { id: true },
+          })
+        ).map((task) => task.id)
+      : [];
+    const packageRowCommands = packageTaskIds.length
+      ? await prisma.command.findMany({
+          where: {
+            projectId,
+            topic: null,
+            source: "SYSTEM",
+            AND: [
+              {
+                OR: PACKAGE_ROW_KINDS.map((kind) => ({
+                  parsedIntent: { path: ["card", "kind"], equals: kind },
+                })),
+              },
+              {
+                OR: packageTaskIds.map((taskId) => ({
+                  parsedIntent: { path: ["card", "taskId"], equals: taskId },
+                })),
+              },
+            ],
+          },
+          select: {
+            id: true,
+            source: true,
+            rawText: true,
+            replyText: true,
+            replyStatus: true,
+            attachments: true,
+            parsedIntent: true,
+            createdAt: true,
+          },
         })
-      ).map((task) => task.id)
-    : [];
-  const packageRowCommands = packageTaskIds.length
-    ? await prisma.command.findMany({
-        where: {
-          projectId,
-          topic: null,
-          source: "SYSTEM",
-          AND: [
-            {
-              OR: PACKAGE_ROW_KINDS.map((kind) => ({
-                parsedIntent: { path: ["card", "kind"], equals: kind },
-              })),
-            },
-            {
-              OR: packageTaskIds.map((taskId) => ({
-                parsedIntent: { path: ["card", "taskId"], equals: taskId },
-              })),
-            },
-          ],
-        },
-        select: {
-          id: true,
-          source: true,
-          rawText: true,
-          replyText: true,
-          replyStatus: true,
-          attachments: true,
-          parsedIntent: true,
-          createdAt: true,
-        },
-      })
-    : [];
+      : [];
+    return packageRowCommands;
+  };
 
-  // A creative's card can match both queries — one row, one message.
-  const rowsById = new Map(
-    [...chatCommands, ...creativeCommands, ...packageRowCommands].map(
-      (command) => [command.id, command] as const,
-    ),
-  );
   // In a Work, only the decisions that belong to it (started here) or to no
   // Work at all; the others wait in the Work that asked for them. An unowned
   // real-money Meta proposal shows in a Work that chose ads, in Today, or in
@@ -462,12 +457,22 @@ export default async function ProjectChatPage({
   const decisionTaskIds = work
     ? decisions.flatMap((d) => decisionTaskIdOf(d) ?? [])
     : [];
-  const [decisionOwners, coverage] = work
-    ? await Promise.all([
-        workOwnersByTask(projectId, decisionTaskIds),
-        WorkRepository.channelCoverage(projectId).catch(() => []),
-      ])
-    : [new Map<string, TaskOwner>(), []];
+  // The package rows and the decisions' owners are independent: one wait.
+  const [packageRowCommands, [decisionOwners, coverage]] = await Promise.all([
+    loadPackageRows(),
+    work
+      ? Promise.all([
+          workOwnersByTask(projectId, decisionTaskIds),
+          WorkRepository.channelCoverage(projectId).catch(() => []),
+        ])
+      : Promise.resolve([new Map<string, TaskOwner>(), []] as const),
+  ]);
+  // A creative's card can match both queries — one row, one message.
+  const rowsById = new Map(
+    [...chatCommands, ...creativeCommands, ...packageRowCommands].map(
+      (command) => [command.id, command] as const,
+    ),
+  );
   const anyActiveWorkCoversAds = coverage.some(
     (w) => w.status === "ACTIVE" && w.channels.includes("ads"),
   );
@@ -495,8 +500,6 @@ export default async function ProjectChatPage({
   const stageByCreativeId = new Map(
     (journey?.items ?? []).map((item) => [item.id, item] as const),
   );
-  // Works only: the reads of the Work's own screen. The brief's extras and the
-  // ads pulse are DB-only (no network); Today's brief is skipped on a stale day.
   const hasAnalytics = rightPanelData.connections.some(
     (account) =>
       (account.key === "ga4" ||
@@ -504,20 +507,6 @@ export default async function ProjectChatPage({
         account.key === "meta-ads") &&
       account.state === "connected",
   );
-  const [connections, activity, briefExtras, adsPulse, untouched] = work
-    ? await Promise.all([
-        getChannelConnections(projectId).catch((): ChannelConnections => ({})),
-        loadWorkActivity(projectId, work.id),
-        isToday && !staleDay
-          ? loadBriefExtras(projectId, timezone, todayKey)
-          : Promise.resolve(null),
-        isToday || work.channels.includes("ads")
-          ? loadAdsPulse(projectId)
-          : Promise.resolve(null),
-        // Still the new chat: the sidebar marks New Chat (not clickable) for it.
-        WorkRepository.isUntouched(projectId, work.id).catch(() => false),
-      ])
-    : [{} as ChannelConnections, { working: false }, null, null, false];
   // A pending-decision creative card is the newest card of its piece.
   const decisionCardOf = (d: (typeof workDecisions)[number]) =>
     overlayInputs
@@ -560,8 +549,9 @@ export default async function ProjectChatPage({
         commandId: command.id,
         source: command.source as "WEB" | "SYSTEM",
         text: command.rawText,
-        reply: command.replyText,
-        replyStatus: command.replyStatus,
+        // A turn still RUNNING whose run is gone (restart, deploy) reads as
+        // interrupted; a live one stays RUNNING and the chat re-attaches.
+        ...presentTurnReply(command, isRunLive(command.id)),
         departmentKey: departmentKeyFromParsedIntent(command.parsedIntent),
         // Limit-notice cards are also written to WEB-sourced rows (see
         // chat-service.ts) — without this, the card would only show
@@ -698,6 +688,9 @@ export default async function ProjectChatPage({
       nextSteps={nextSteps}
       autoNext={typeof sp.next === "string" ? sp.next : undefined}
       workHost={workHost}
+      liveRunCommandId={
+        findActiveRun(projectId, work?.id ?? null)?.commandId ?? undefined
+      }
     />
   );
 
@@ -719,27 +712,16 @@ export default async function ProjectChatPage({
           files={
             <FilesPanel projectId={projectId} assets={rightPanelData.files} />
           }
-          outputs={<OutputsPanel outputs={rightPanelData.outputs} />}
+          outputs={
+            <OutputsPanel
+              projectId={projectId}
+              timezone={rightPanelData.calendar.timezone}
+            />
+          }
           calendar={
             <CalendarPanel
               projectId={projectId}
-              workId={work?.id}
-              calendar={rightPanelData.calendar}
-              selectedItem={
-                selectedCalendarItem
-                  ? {
-                      id: selectedCalendarItem.id,
-                      title: selectedCalendarItem.title,
-                      platform: selectedCalendarItem.platform,
-                      status: selectedCalendarItem.status,
-                      assetId:
-                        selectedCalendarItem.versions[0]?.assetId ?? null,
-                      scheduledFor:
-                        selectedCalendarItem.scheduledFor?.toISOString() ??
-                        null,
-                    }
-                  : undefined
-              }
+              timezone={rightPanelData.calendar.timezone}
             />
           }
         />

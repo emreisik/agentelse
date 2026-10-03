@@ -35,12 +35,14 @@ function graphBaseFor(api: InstagramApi): string {
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
-// Instagram, Facebook and Meta Ads are three independent integrations: each
-// has its own OAuth grant (only the scopes that service needs), its own
-// long-lived token and its own IntegrationCredential row — so they can be
-// connected from different Facebook accounts and disconnected separately. All
-// share the same Meta app and the same registered redirect URI; the service
-// travels in the signed OAuth state.
+// Instagram, Facebook and Meta Ads are three integrations: each asks only for
+// the scopes that service needs and keeps its own long-lived token and
+// IntegrationCredential row, so they can be connected from different Facebook
+// accounts and disconnected separately. All share the same Meta app and the
+// same registered redirect URI; the service travels in the signed OAuth state.
+// Meta keeps ONE grant per person and app, though: permissions granted through
+// one service's dialog apply to the others' tokens of the same person, and the
+// Pages ticked in the latest dialog are the Pages every service can reach.
 export const META_SERVICES = ["instagram", "facebook", "ads"] as const;
 export type MetaService = (typeof META_SERVICES)[number];
 
@@ -281,6 +283,9 @@ export function buildMetaAuthorizeUrl(
     redirect_uri: redirectUri(),
     response_type: "code",
     scope: SCOPES[service].join(","),
+    // Asks again for a permission the person declined last time; without it
+    // Meta silently keeps the old answer on every reconnect.
+    auth_type: "rerequest",
     state,
   });
   return `${AUTHORIZE_URL}?${params.toString()}`;
@@ -469,17 +474,17 @@ export async function listManagedPages(
   const fields = options.withInstagram
     ? "id,name,instagram_business_account{id,username}"
     : "id,name";
-  const result = await request<{
-    data?: Array<{
-      id: string;
-      name: string;
-      instagram_business_account?: { id: string; username?: string };
-    }>;
+  // Every page of the list: someone managing more Pages than one response
+  // holds must still find theirs.
+  const pages = await requestAllPages<{
+    id: string;
+    name: string;
+    instagram_business_account?: { id: string; username?: string };
   }>(
-    `${GRAPH_BASE}/me/accounts?fields=${fields}&access_token=${encodeURIComponent(accessToken)}`,
+    `${GRAPH_BASE}/me/accounts?fields=${fields}&limit=100&access_token=${encodeURIComponent(accessToken)}`,
   );
 
-  return (result.data ?? []).map((page) => ({
+  return pages.map((page) => ({
     pageId: page.id,
     pageName: page.name,
     instagramBusinessAccountId: page.instagram_business_account?.id,
@@ -494,9 +499,17 @@ export async function fetchPageAccessToken(
   pageId: string,
   userAccessToken: string,
 ): Promise<string> {
-  const result = await request<{ access_token: string }>(
+  const result = await request<{ access_token?: string }>(
     `${GRAPH_BASE}/${pageId}?fields=access_token&access_token=${encodeURIComponent(userAccessToken)}`,
   );
+  // Graph leaves the field out (instead of failing) when the person no longer
+  // manages the Page; calling on with no token would come back as a 190 that
+  // reads like the whole connection expired.
+  if (!result.access_token) {
+    throw new MetaApiError(
+      "Facebook gave no access to this Page: the connected account may no longer manage it.",
+    );
+  }
   return result.access_token;
 }
 
@@ -665,6 +678,7 @@ async function waitForContainerReady(
 // conditions (same reasoning as IMAGE_UPLOAD_TIMEOUT_MS above), so it gets
 // its own, more generous timeout instead of DEFAULT_TIMEOUT_MS.
 const MEDIA_CONTAINER_CREATE_TIMEOUT_MS = 20_000;
+const FACEBOOK_POST_TIMEOUT_MS = 60_000;
 
 // The two-step Instagram Content Publishing flow: first the media
 // container is created, then we wait for it to be processed, then it's
@@ -918,7 +932,10 @@ export async function publishFacebookPagePost(input: {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(body).toString(),
     },
-    MEDIA_CONTAINER_CREATE_TIMEOUT_MS,
+    // Facebook downloads the picture before answering. Cutting the wait short
+    // would report a post that does go out as failed, and "Try again" would
+    // then post it twice.
+    FACEBOOK_POST_TIMEOUT_MS,
   );
   // A photo post answers with both the photo id and the feed post id.
   const postId = result.post_id ?? result.id;

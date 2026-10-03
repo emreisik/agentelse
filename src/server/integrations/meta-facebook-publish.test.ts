@@ -35,6 +35,7 @@ const {
   deleteFacebookPagePost,
   fetchFacebookPagePost,
   fetchMetaPageList,
+  fetchPageAccessToken,
   isMetaObjectMissing,
   publishFacebookPagePost,
   updateFacebookPagePost,
@@ -199,12 +200,46 @@ describe("fetchMetaPageList fields", () => {
 
     await fetchMetaPageList("user-token", { onlyWithInstagram: false });
     expect(String(fetchMock.mock.calls[0]![0])).toContain(
-      "/me/accounts?fields=id,name&access_token=user-token",
+      "/me/accounts?fields=id,name&limit=100&access_token=user-token",
     );
 
     await fetchMetaPageList("user-token", { onlyWithInstagram: true });
     expect(String(fetchMock.mock.calls[1]![0])).toContain(
       "fields=id,name,instagram_business_account{id,username}",
+    );
+  });
+});
+
+describe("fetchPageAccessToken", () => {
+  it("fails clearly (not as an expired token) when Facebook leaves the Page token out", async () => {
+    fetchMock.mockResolvedValueOnce(json({ id: "page-1" }));
+
+    const failure = await fetchPageAccessToken("page-1", "user-token").catch(
+      (error: unknown) => error,
+    );
+
+    expect(failure).toBeInstanceOf(MetaApiError);
+    expect((failure as InstanceType<typeof MetaApiError>).metaErrorCode).toBeUndefined();
+    expect((failure as Error).message).toContain("no longer manage it");
+  });
+});
+
+describe("the Page list follows every page of /me/accounts", () => {
+  it("collects Pages beyond the first response", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        json({
+          data: [{ id: "p1", name: "One" }],
+          paging: { next: "https://graph.facebook.com/v26.0/me/accounts?after=x" },
+        }),
+      )
+      .mockResolvedValueOnce(json({ data: [{ id: "p2", name: "Two" }] }));
+
+    const result = await fetchMetaPageList("user-token", { onlyWithInstagram: false });
+
+    expect(result.pages.map((p) => p.pageId)).toEqual(["p1", "p2"]);
+    expect(String(fetchMock.mock.calls[1]![0])).toBe(
+      "https://graph.facebook.com/v26.0/me/accounts?after=x",
     );
   });
 });

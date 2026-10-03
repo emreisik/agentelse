@@ -1,28 +1,34 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-
 import { prisma } from "@/lib/prisma";
 import {
   deleteFacebookShareCore,
   editFacebookShareCore,
-  readFacebookShareState,
   shareCreativeToFacebookCore,
   type FacebookShareResult,
-  type FacebookShareState,
 } from "@/server/commands/facebook-share";
+import { isAgentelseError } from "@/server/security/errors";
 import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
 
-export type { FacebookShareResult, FacebookShareState };
+export type { FacebookShareResult };
 
-// The creative card's Facebook row (facebook-share-row.tsx). Like the other
-// card actions it only knows the creativeId: the project comes from the
-// Creative row, and access is checked against it before anything is read.
-async function scopeOf(creativeId: string) {
+// The creative card's Facebook row (facebook-share-row.tsx) changes a share
+// through these; it reads the share's state from
+// /api/creatives/[creativeId]/facebook-share instead. Like the other card
+// actions they only know the creativeId: the project comes from the Creative
+// row, and access is checked against it before anything is read.
+
+const NOT_FOUND: FacebookShareResult = {
+  ok: false,
+  message: "Creative not found.",
+};
+
+async function scopeOf(creativeId: unknown) {
   const { userId } = await requireUser();
+  if (typeof creativeId !== "string" || !creativeId) return null;
   const creative = await prisma.creative.findUnique({
     where: { id: creativeId },
     select: { projectId: true },
@@ -37,24 +43,12 @@ async function scopeOf(creativeId: string) {
   };
 }
 
+// Another workspace's creative reads exactly like a missing one, and an
+// unexpected error is logged rather than handed to the browser.
 function failed(error: unknown): FacebookShareResult {
-  return {
-    ok: false,
-    message: error instanceof Error ? error.message : "Something went wrong.",
-  };
-}
-
-export async function getFacebookShareAction(
-  creativeId: string,
-): Promise<FacebookShareState> {
-  try {
-    const scope = await scopeOf(creativeId);
-    if (!scope) return { kind: "unavailable" };
-    return await readFacebookShareState(scope.projectId, creativeId);
-  } catch (error) {
-    console.error("[facebook-share] reading the share state failed:", error);
-    return { kind: "unavailable" };
-  }
+  if (isAgentelseError(error)) return NOT_FOUND;
+  console.error("[facebook-share] action failed:", error);
+  return { ok: false, message: "Something went wrong, please try again." };
 }
 
 export async function shareCreativeToFacebookAction(
@@ -62,10 +56,11 @@ export async function shareCreativeToFacebookAction(
 ): Promise<FacebookShareResult> {
   try {
     const scope = await scopeOf(creativeId);
-    if (!scope) return { ok: false, message: "Creative not found." };
-    const result = await shareCreativeToFacebookCore(scope);
-    revalidatePath(`/projects/${scope.projectId}`);
-    return result;
+    if (!scope) return NOT_FOUND;
+    // No revalidatePath: a share changes nothing else on the page (the piece's
+    // status and publish line stay as they are), and re-rendering the project
+    // would only keep the client's action queue busy longer.
+    return await shareCreativeToFacebookCore(scope);
   } catch (error) {
     return failed(error);
   }
@@ -77,7 +72,7 @@ export async function editFacebookPostAction(
 ): Promise<FacebookShareResult> {
   try {
     const scope = await scopeOf(creativeId);
-    if (!scope) return { ok: false, message: "Creative not found." };
+    if (!scope) return NOT_FOUND;
     return await editFacebookShareCore({ ...scope, message: String(message) });
   } catch (error) {
     return failed(error);
@@ -89,7 +84,7 @@ export async function deleteFacebookPostAction(
 ): Promise<FacebookShareResult> {
   try {
     const scope = await scopeOf(creativeId);
-    if (!scope) return { ok: false, message: "Creative not found." };
+    if (!scope) return NOT_FOUND;
     return await deleteFacebookShareCore(scope);
   } catch (error) {
     return failed(error);

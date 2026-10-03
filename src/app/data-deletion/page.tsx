@@ -129,8 +129,8 @@ export default async function DataDeletionPage({
             When you connect a Facebook Page or Meta Ads, Agentelse keeps a
             connection record for each: a Meta access token, your name on
             Facebook, the Pages and ad accounts you can choose from and the ones
-            you chose, and for Meta Ads the latest performance figures of your
-            campaigns. Page access tokens are never stored. To erase those
+            you chose, the ids of posts Agentelse shared on your Page, and for
+            Meta Ads the latest performance figures of your campaigns. Page access tokens are never stored. To erase those
             records, email <Mail /> from the address you use with Agentelse,
             naming the Page or ad account. We will erase the records and
             confirm.

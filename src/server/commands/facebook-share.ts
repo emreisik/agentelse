@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { ExecutionJobStatus } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import { driveJobInline } from "@/server/chat/inline-job";
 import { CommandService } from "@/server/commands/command-service";
@@ -16,6 +18,7 @@ import {
 import { getFacebookPublishTarget } from "@/server/integrations/meta-connection-status";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { CommandRepository } from "@/server/repositories/command.repository";
+import { TaskRepository } from "@/server/repositories/task.repository";
 import { buildAssetPublicUrl } from "@/server/security/asset-public-link";
 import { decryptSecret } from "@/server/security/crypto";
 
@@ -29,6 +32,10 @@ import { decryptSecret } from "@/server/security/crypto";
 
 export type FacebookShareState =
   | { kind: "unavailable" }
+  // The Facebook connection stopped working (its token expired or was
+  // revoked on Facebook): nothing can be shared or managed until it is
+  // connected again.
+  | { kind: "reconnect" }
   | { kind: "ready"; pageName: string }
   | { kind: "sharing"; pageName: string }
   | { kind: "failed"; pageName: string; reason?: string }
@@ -63,6 +70,16 @@ const SHAREABLE_STATUSES = new Set(["APPROVED", "PUBLISHED"]);
 // A job holding a live post: VERIFYING is the window before the worker's
 // automatic verification moves it to COMPLETED.
 const POSTED_JOB_STATUSES = new Set(["VERIFYING", "COMPLETED"]);
+// Job states a share can be stuck in when its inline run never got going.
+const UNSETTLED_JOB_STATUSES: ExecutionJobStatus[] = [
+  "QUEUED",
+  "RUNNING",
+  "WAITING_PROVIDER",
+];
+// A share runs inline and Facebook answers within a minute; one still not
+// settled after this long never will (its dispatch was claimed by the inline
+// run that failed), so it counts as failed and can be tried again.
+const STALE_SHARE_MS = 3 * 60_000;
 // Facebook accepts far longer posts; this only stops an accidental paste.
 const MAX_MESSAGE_LENGTH = 10_000;
 
@@ -73,6 +90,7 @@ type LatestShare = {
   postId: string | null;
   pageId: string | null;
   errorMessage: string | null;
+  lastActivityAt: Date;
 };
 
 // The newest FACEBOOK_PUBLISH task made for this creative, with its newest job.
@@ -90,10 +108,16 @@ async function findLatestShare(
     select: {
       id: true,
       status: true,
+      updatedAt: true,
       executionJobs: {
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { status: true, rawResult: true, errorMessage: true },
+        select: {
+          status: true,
+          rawResult: true,
+          errorMessage: true,
+          updatedAt: true,
+        },
       },
     },
   });
@@ -107,12 +131,13 @@ async function findLatestShare(
     postId: typeof raw.postId === "string" ? raw.postId : null,
     pageId: typeof raw.pageId === "string" ? raw.pageId : null,
     errorMessage: job?.errorMessage ?? null,
+    lastActivityAt: job?.updatedAt ?? task.updatedAt,
   };
 }
 
-type ShareOutcome = "none" | "sharing" | "failed" | "posted";
+type ShareOutcome = "none" | "sharing" | "stale" | "failed" | "posted";
 
-function outcomeOf(share: LatestShare | null): ShareOutcome {
+function outcomeOf(share: LatestShare | null, now = Date.now()): ShareOutcome {
   if (!share) return "none";
   if (share.jobStatus && POSTED_JOB_STATUSES.has(share.jobStatus)) {
     return "posted";
@@ -123,16 +148,51 @@ function outcomeOf(share: LatestShare | null): ShareOutcome {
   if (share.jobStatus === "CANCELLED" || share.taskStatus === "CANCELLED") {
     return "none";
   }
-  return "sharing";
+  return now - share.lastActivityAt.getTime() > STALE_SHARE_MS
+    ? "stale"
+    : "sharing";
 }
 
-async function activeFacebookCredential(projectId: string) {
-  const credential = await prisma.integrationCredential.findUnique({
+// Closes a share that can no longer post, so it neither blocks a new attempt
+// nor wakes up later and posts a second copy. It only touches what provably
+// never reached Facebook: a QUEUED job (or, for a stale share, an unsettled
+// job that has not moved since the cutoff), or a task left without any job.
+// A job that got further (the worker is running it, or it already posted and
+// is VERIFYING) is left to settle — failing its task under a VERIFYING job
+// would make the worker's verification step (FAILED -> COMPLETED) throw.
+// Returns whether the share is closed.
+async function closeUnsettledShare(
+  taskId: string,
+  projectId: string,
+  reason: string,
+  options: { onlyQueued?: boolean; staleBefore?: Date } = {},
+): Promise<boolean> {
+  const closed = await prisma.executionJob.updateMany({
+    where: {
+      taskId,
+      status: { in: options.onlyQueued ? ["QUEUED"] : UNSETTLED_JOB_STATUSES },
+      ...(options.staleBefore
+        ? { updatedAt: { lt: options.staleBefore } }
+        : {}),
+    },
+    data: { status: "FAILED", errorMessage: reason, completedAt: new Date() },
+  });
+  if (closed.count === 0) {
+    const jobs = await prisma.executionJob.count({ where: { taskId } });
+    if (jobs > 0) return false;
+  }
+  await TaskRepository.transition(taskId, projectId, "FAILED", {
+    failureReason: reason,
+  }).catch(() => undefined);
+  return true;
+}
+
+async function facebookCredential(projectId: string) {
+  return prisma.integrationCredential.findUnique({
     where: {
       projectId_provider: { projectId, provider: META_PROVIDER.facebook },
     },
   });
-  return credential?.status === "ACTIVE" ? credential : null;
 }
 
 function pageNameOf(
@@ -150,6 +210,10 @@ function pageIdOf(share: LatestShare): string | null {
   return share.pageId ?? share.postId?.split("_")[0] ?? null;
 }
 
+// Meta's own wording helps (a missing permission, a rejected picture); any
+// other error is logged and kept out of the card, the reply and the job.
+const GENERIC_FAILURE = "Facebook sharing failed, please try again.";
+
 function describeError(error: unknown): string {
   if (error instanceof MetaApiError) {
     if (error.metaErrorCode === 190) {
@@ -157,32 +221,56 @@ function describeError(error: unknown): string {
     }
     return `Facebook: ${error.message}`;
   }
-  return error instanceof Error ? error.message : "Something went wrong.";
+  console.error("[facebook-share]", error);
+  return GENERIC_FAILURE;
 }
 
-async function markExpiredOn190(credentialId: string, error: unknown) {
-  if (error instanceof MetaApiError && error.metaErrorCode === 190) {
-    await prisma.integrationCredential
-      .update({ where: { id: credentialId }, data: { status: "EXPIRED" } })
-      .catch(() => undefined);
+function isExpiredToken(error: unknown): boolean {
+  return error instanceof MetaApiError && error.metaErrorCode === 190;
+}
+
+// The Page token for the Page a post lives on. Only this step uses the stored
+// user token, so only a 190 here means the connection itself expired; it is
+// then flagged for reconnecting. Any other failure (the person no longer
+// manages that Page) leaves the connection alone.
+async function pageTokenFor(
+  credential: { id: string; encryptedSecret: string },
+  pageId: string,
+): Promise<{ ok: true; token: string } | { ok: false; error: unknown }> {
+  try {
+    return {
+      ok: true,
+      token: await fetchPageAccessToken(
+        pageId,
+        decryptSecret(credential.encryptedSecret),
+      ),
+    };
+  } catch (error) {
+    if (isExpiredToken(error)) {
+      await prisma.integrationCredential
+        .update({ where: { id: credential.id }, data: { status: "EXPIRED" } })
+        .catch(() => undefined);
+    }
+    return { ok: false, error };
   }
 }
 
-// Whether a posted share is still on Facebook. Anything but a definite "it no
-// longer exists" counts as live, so an unreadable post is never posted twice.
+// Whether a posted share still blocks sharing to the current Page. Only the
+// post read itself answering "it no longer exists" counts as gone; anything
+// else (no token, an unreadable post) counts as live, so a post is never made
+// twice on the same Page. A post on another Page the connection can no longer
+// reach does not block the Page now selected.
 async function postStillLive(
-  projectId: string,
+  credential: { id: string; encryptedSecret: string; status: string } | null,
   share: LatestShare,
+  currentPageId: string,
 ): Promise<boolean> {
   const pageId = pageIdOf(share);
-  const credential = await activeFacebookCredential(projectId);
-  if (!share.postId || !pageId || !credential) return true;
+  if (!share.postId || !pageId || credential?.status !== "ACTIVE") return true;
+  const token = await pageTokenFor(credential, pageId);
+  if (!token.ok) return isExpiredToken(token.error) || pageId === currentPageId;
   try {
-    const pageToken = await fetchPageAccessToken(
-      pageId,
-      decryptSecret(credential.encryptedSecret),
-    );
-    await fetchFacebookPagePost(share.postId, pageToken);
+    await fetchFacebookPagePost(share.postId, token.token);
     return true;
   } catch (error) {
     return !isMetaObjectMissing(error);
@@ -200,50 +288,49 @@ export async function readFacebookShareState(
     }),
     getFacebookPublishTarget(projectId),
     findLatestShare(projectId, creativeId),
-    activeFacebookCredential(projectId),
+    facebookCredential(projectId),
   ]);
   if (!creative || creative.projectId !== projectId) {
     return { kind: "unavailable" };
   }
+  if (credential?.status === "EXPIRED") return { kind: "reconnect" };
 
   const outcome = outcomeOf(share);
   const fallbackName = target?.accountLabel ?? "Facebook Page";
+  const active = credential?.status === "ACTIVE" ? credential : null;
 
   if (outcome === "posted" && share) {
     const pageId = pageIdOf(share);
     const pageName = pageNameOf(credential, pageId, fallbackName);
+    const unreadable = {
+      kind: "posted" as const,
+      pageName,
+      postId: share.postId,
+      detailsUnavailable: true,
+    };
     if (!share.postId) return { kind: "posted", pageName, postId: null };
-    if (!credential || !pageId) {
-      return {
-        kind: "posted",
-        pageName,
-        postId: share.postId,
-        detailsUnavailable: true,
-      };
+    if (!active || !pageId) return unreadable;
+
+    const token = await pageTokenFor(active, pageId);
+    if (!token.ok) {
+      if (isExpiredToken(token.error)) return { kind: "reconnect" };
+      // Its Page is out of reach now, but another Page is selected: offer that
+      // one (below) instead of a post nobody can manage.
+      if (!target || target.pageId === pageId) return unreadable;
     }
-    try {
-      const pageToken = await fetchPageAccessToken(
-        pageId,
-        decryptSecret(credential.encryptedSecret),
-      );
-      const post = await fetchFacebookPagePost(share.postId, pageToken);
-      return {
-        kind: "posted",
-        pageName,
-        postId: share.postId,
-        message: post.message,
-        permalinkUrl: post.permalinkUrl,
-      };
-    } catch (error) {
-      // Deleted on Facebook: the piece can be shared again (below).
-      if (!isMetaObjectMissing(error)) {
-        await markExpiredOn190(credential.id, error);
+    if (token.ok) {
+      try {
+        const post = await fetchFacebookPagePost(share.postId, token.token);
         return {
           kind: "posted",
           pageName,
           postId: share.postId,
-          detailsUnavailable: true,
+          message: post.message,
+          permalinkUrl: post.permalinkUrl,
         };
+      } catch (error) {
+        // Deleted on Facebook: the piece can be shared again (below).
+        if (!isMetaObjectMissing(error)) return unreadable;
       }
     }
   }
@@ -253,11 +340,14 @@ export async function readFacebookShareState(
   if (!target || !SHAREABLE_STATUSES.has(creative.status)) {
     return { kind: "unavailable" };
   }
-  if (outcome === "failed" && share) {
+  if ((outcome === "failed" || outcome === "stale") && share) {
     return {
       kind: "failed",
       pageName: target.accountLabel,
-      reason: share.errorMessage ?? undefined,
+      reason:
+        outcome === "stale"
+          ? "The share didn't finish."
+          : (share.errorMessage ?? undefined),
     };
   }
   return { kind: "ready", pageName: target.accountLabel };
@@ -295,10 +385,11 @@ export async function shareCreativeToFacebookCore(
 
   const version = creative.versions[0];
   const caption = version?.caption || version?.copy || "";
-  const imageUrl =
-    version?.asset?.type === "IMAGE"
-      ? await buildAssetPublicUrl(version.asset.id)
-      : undefined;
+  // Generated pictures are stored as CREATIVE assets and uploads as IMAGE:
+  // what matters is that the file is a picture.
+  const imageUrl = version?.asset?.mimeType.startsWith("image/")
+    ? await buildAssetPublicUrl(version.asset.id)
+    : undefined;
   if (!imageUrl && !caption.trim()) {
     return {
       ok: false,
@@ -307,14 +398,36 @@ export async function shareCreativeToFacebookCore(
   }
 
   // Already on Facebook, or a share still running: no second post. A post
-  // deleted on Facebook counts as gone, so the piece can be shared again.
+  // deleted on Facebook counts as gone, so the piece can be shared again; a
+  // share that never settled is closed first.
   const share = await findLatestShare(projectId, creativeId);
   const outcome = outcomeOf(share);
   if (outcome === "sharing") {
     return { ok: false, message: "This piece is already being shared." };
   }
-  if (outcome === "posted" && share && (await postStillLive(projectId, share))) {
+  if (
+    outcome === "posted" &&
+    share &&
+    (await postStillLive(
+      await facebookCredential(projectId),
+      share,
+      target.pageId,
+    ))
+  ) {
     return { ok: false, message: "This piece is already on Facebook." };
+  }
+  if (outcome === "stale" && share) {
+    // Re-checked at the write: a job that moved since the read is not closed,
+    // and then nothing new is posted either.
+    const closed = await closeUnsettledShare(
+      share.taskId,
+      projectId,
+      "The share didn't finish.",
+      { staleBefore: new Date(Date.now() - STALE_SHARE_MS) },
+    );
+    if (!closed) {
+      return { ok: false, message: "This piece is already being shared." };
+    }
   }
   const seenTaskId = share?.taskId ?? null;
 
@@ -376,15 +489,39 @@ export async function shareCreativeToFacebookCore(
   }
 
   // Run it now rather than on the worker's next tick, so the card can show
-  // the live post right away.
-  const job = await prisma.executionJob.findFirst({
-    where: { taskId: submission.taskId },
-    orderBy: { createdAt: "desc" },
-    select: { id: true, task: { select: { riskLevel: true } } },
-  });
-  const settled = job
-    ? await driveJobInline(job.id, job.task.riskLevel)
-    : { status: "QUEUED", errorMessage: null };
+  // the live post right away. The inline run claims the job's dispatch, so a
+  // job it left QUEUED when it threw would never run: that one is closed as
+  // FAILED and the card offers Try again. A job that got further is left to
+  // settle (it may already be on Facebook) and the card keeps polling it.
+  let settled: { status: string; errorMessage: string | null };
+  try {
+    const job = await prisma.executionJob.findFirst({
+      where: { taskId: submission.taskId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, task: { select: { riskLevel: true } } },
+    });
+    settled = job
+      ? await driveJobInline(job.id, job.task.riskLevel)
+      : { status: "QUEUED", errorMessage: null };
+  } catch (error) {
+    const reason = describeError(error);
+    const closed = await closeUnsettledShare(
+      submission.taskId,
+      projectId,
+      reason,
+      { onlyQueued: true },
+    ).catch(() => false);
+    if (!closed) {
+      const reply = "📤 Facebook share is still running.";
+      await CommandRepository.recordReply(
+        submission.commandId,
+        reply,
+        "PLANNED",
+      );
+      return { ok: true, message: reply };
+    }
+    settled = { status: "FAILED", errorMessage: reason };
+  }
 
   if (settled.status === "FAILED") {
     const reply = `Couldn't share on Facebook${settled.errorMessage ? `: ${settled.errorMessage}` : "."}`;
@@ -404,12 +541,7 @@ async function resolveLivePost(
   projectId: string,
   creativeId: string,
 ): Promise<
-  | {
-      ok: true;
-      postId: string;
-      pageToken: string;
-      credentialId: string;
-    }
+  | { ok: true; postId: string; pageToken: string }
   | { ok: false; message: string }
 > {
   const share = await findLatestShare(projectId, creativeId);
@@ -417,25 +549,13 @@ async function resolveLivePost(
     return { ok: false, message: "This piece isn't on Facebook." };
   }
   const pageId = pageIdOf(share);
-  const credential = await activeFacebookCredential(projectId);
-  if (!credential || !pageId) {
+  const credential = await facebookCredential(projectId);
+  if (credential?.status !== "ACTIVE" || !pageId) {
     return { ok: false, message: "Reconnect Facebook in Connectors first." };
   }
-  try {
-    const pageToken = await fetchPageAccessToken(
-      pageId,
-      decryptSecret(credential.encryptedSecret),
-    );
-    return {
-      ok: true,
-      postId: share.postId,
-      pageToken,
-      credentialId: credential.id,
-    };
-  } catch (error) {
-    await markExpiredOn190(credential.id, error);
-    return { ok: false, message: describeError(error) };
-  }
+  const token = await pageTokenFor(credential, pageId);
+  if (!token.ok) return { ok: false, message: describeError(token.error) };
+  return { ok: true, postId: share.postId, pageToken: token.token };
 }
 
 export async function editFacebookShareCore(
@@ -452,7 +572,6 @@ export async function editFacebookShareCore(
   try {
     await updateFacebookPagePost(live.postId, live.pageToken, message);
   } catch (error) {
-    await markExpiredOn190(live.credentialId, error);
     return { ok: false, message: describeError(error) };
   }
 
@@ -479,7 +598,6 @@ export async function deleteFacebookShareCore(
   } catch (error) {
     // Already gone on Facebook: the outcome the person asked for.
     if (!isMetaObjectMissing(error)) {
-      await markExpiredOn190(live.credentialId, error);
       return { ok: false, message: describeError(error) };
     }
   }

@@ -89,6 +89,13 @@ describe("getPendingDecisions: the approve intent of a creative", () => {
   it("promises nothing without a connection, or for another channel", async () => {
     getPublishTargets.mockResolvedValue([]);
     expect(await intent({ scheduledFor: new Date(Date.now() + DAY) })).toBeUndefined();
+    // Only Instagram can take the Instagram post the button promises: a
+    // Facebook Page (or any other channel) alone promises nothing.
+    getPublishTargets.mockResolvedValue([
+      { platform: "facebook", pageId: "p1", accountLabel: "Web Health" },
+      { platform: "x", accountLabel: "@wh" },
+    ]);
+    expect(await intent({ scheduledFor: new Date(Date.now() + DAY) })).toBeUndefined();
     getPublishTargets.mockResolvedValue([{ platform: "instagram" }]);
     expect(
       await intent({ platform: "TIKTOK", scheduledFor: new Date(Date.now() + DAY) }),

@@ -615,6 +615,11 @@ function PublishSection({ creativeId }: { creativeId: string }) {
       </p>
     );
   }
+  // Facebook alone: its row brings its own label and may render nothing, so
+  // no bordered section around it.
+  if (shareTargets.length === 0) {
+    return <FacebookShareRow creativeId={creativeId} className="mt-1" />;
+  }
 
   // Instagram carries a FEED/STORIES choice; TikTok/LinkedIn/X don't have a
   // format concept, so they get a single "Share" button and a key that's

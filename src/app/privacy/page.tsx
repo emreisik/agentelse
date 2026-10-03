@@ -7,7 +7,7 @@ export const metadata: Metadata = {
     "How Agentelse collects, uses, and protects your data when you use your AI Growth Team.",
 };
 
-const LAST_UPDATED = "October 2, 2026";
+const LAST_UPDATED = "October 3, 2026";
 
 type PolicySection = {
   id: string;
@@ -217,8 +217,10 @@ const SECTIONS: PolicySection[] = [
       <>
         <p>
           Facebook and Meta Ads are connected separately from Instagram and from
-          each other: each one has its own sign-in with Facebook, asks only for
-          the permissions it needs, and can be disconnected on its own.
+          each other: each one asks only for the permissions it needs and can be
+          disconnected on its own. Facebook keeps one grant per person for
+          Agentelse, though, so the Pages you allow in its dialog apply to all
+          of these connections.
         </p>
         <p>When you connect a Facebook Page, Agentelse asks for:</p>
         <ul className="flex flex-col gap-2 pl-5 list-disc">
@@ -274,14 +276,17 @@ const SECTIONS: PolicySection[] = [
           section above.
         </p>
         <p>
-          We store the Meta access token (encrypted), the Pages and ad accounts
-          you can choose from, the ones you chose, and the latest performance
+          We store the Meta access token (encrypted), your name on Facebook, the
+          Pages and ad accounts you can choose from and the ones you chose, the
+          ids of posts Agentelse shared on your Page, and the latest performance
           figures of your campaigns. Page access tokens are derived when needed
           and never stored. We use this data only to publish and manage what you
-          ask for and to show and analyze your results; campaign performance
-          figures may be processed by our AI provider to produce recommendations
-          (see How AI is used with your data). We do not sell this data and we
-          do not use it to train AI models.
+          ask for and to show and analyze your results. Campaign performance
+          figures may be processed by our AI provider to produce
+          recommendations, and so may the names of your connected Page and
+          accounts, so the assistant knows where it can publish (see How AI is
+          used with your data). We do not sell this data and we do not use it to
+          train AI models.
         </p>
         <p>
           You can stop Agentelse from using either connection with Connectors

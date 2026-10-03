@@ -109,14 +109,15 @@ export async function getPendingDecisions(
 
   const taskById = new Map(tasks.map((t) => [t.id, t]));
   const creativeById = new Map(creatives.map((c) => [c.id, c]));
-  // Mirrors autoPublishCreative's own gates: no Meta connection → it
+  // Mirrors autoPublishCreative's own gates: no Instagram connection → it
   // skips and asks instead, so no calendar/publish promise on the button.
-  const approveIntent =
-    publishTargets.length === 0
-      ? undefined
-      : publishScheduleCount > 0
-        ? "calendar"
-        : "publish";
+  // Instagram specifically: a TikTok, LinkedIn, X or Facebook Page target
+  // can't take the Instagram post the button promises.
+  const approveIntent = !publishTargets.some((t) => t.platform === "instagram")
+    ? undefined
+    : publishScheduleCount > 0
+      ? "calendar"
+      : "publish";
 
   const decisions: PendingDecision[] = [];
   for (const approval of approvals) {

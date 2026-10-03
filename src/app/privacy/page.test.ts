@@ -23,8 +23,8 @@ const section = sectionBetween("instagram-data", "facebook-and-meta-ads");
 const text = plain(section);
 
 describe("privacy policy: Instagram connection section", () => {
-  it("carries the date of the text that was rewritten on 2 October 2026", () => {
-    expect(html).toContain("Last updated: October 2, 2026");
+  it("carries the date of the text that was last rewritten on 3 October 2026", () => {
+    expect(html).toContain("Last updated: October 3, 2026");
   });
 
   it("is titled for what it covers, and linked from the deletion page", () => {
@@ -96,6 +96,13 @@ describe("privacy policy: Facebook Page and Meta Ads section", () => {
     ]) {
       expect(meta, permission).toContain(permission);
     }
+  });
+
+  it("lists what the callback and the shares store, and that the Meta grant is shared", () => {
+    expect(meta).toContain("your name on Facebook");
+    expect(meta).toContain("ids of posts Agentelse shared on your Page");
+    expect(meta).toContain("names of your connected Page and accounts");
+    expect(meta).toContain("one grant per person");
   });
 
   it("says Page posts can be edited and deleted, and are read back", () => {

@@ -159,7 +159,12 @@ export async function testMetaConnectionAction(
     const { projectId, service } = await resolveScope(formData);
 
     const credential = await loadCredential(projectId, service);
-    if (!credential) return notFound(service);
+    // A disconnected row keeps its token, but only a new OAuth connection may
+    // bring it back: a successful test below would otherwise set it ACTIVE
+    // again without the account owner's renewed consent.
+    if (!credential || credential.status === "REVOKED") {
+      return notFound(service);
+    }
 
     const accessToken = decryptSecret(credential.encryptedSecret);
     let testedAt = new Date().toISOString();
@@ -232,8 +237,10 @@ export async function testMetaConnectionAction(
       };
     }
 
-    await prisma.integrationCredential.update({
-      where: { id: credential.id },
+    // A Disconnect that landed while the test ran wins: the row is only
+    // written while it is still not REVOKED.
+    await prisma.integrationCredential.updateMany({
+      where: { id: credential.id, status: { not: "REVOKED" } },
       data: {
         metadata: nextMetadata,
         // An expired token stays EXPIRED; any other failure leaves the

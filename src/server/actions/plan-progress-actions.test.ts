@@ -226,6 +226,14 @@ describe("enablePlanPublishingAction", () => {
       ok: false,
       message: "Connect Instagram first.",
     });
+    // A Facebook Page is not an Instagram account.
+    getPublishTargets.mockResolvedValue([
+      { platform: "facebook", pageId: "p1", accountLabel: "Web Health" },
+    ]);
+    expect(await enablePlanPublishingAction("proj-1")).toEqual({
+      ok: false,
+      message: "Connect Instagram first.",
+    });
     expect(enableScheduledPublishing).not.toHaveBeenCalled();
 
     requireProjectAccess.mockRejectedValue(new Error("Project not found"));

@@ -316,7 +316,7 @@ export async function autoPublishCreative(input: {
       return await autoPublishWorkOwned(input);
     }
     const targets = await getPublishTargets(input.projectId);
-    if (targets.length === 0) {
+    if (!targets.some((t) => t.platform === "instagram")) {
       return {
         status: "SKIPPED",
         message: "No connected Instagram account",

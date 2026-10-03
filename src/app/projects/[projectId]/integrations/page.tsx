@@ -1218,13 +1218,13 @@ const META_SERVICE_UI: Record<
     brand: "facebook",
     description: "Publish posts to your Facebook Page",
     emptyHint:
-      "Connect your Facebook account, then choose the Page to publish to. This is separate from Instagram and Meta Ads.",
+      "Connect your Facebook account, then choose the Page to publish to. In Facebook's dialog, keep every Page you use with Agentelse ticked: Instagram and Meta Ads share that access.",
   },
   ads: {
     brand: "meta-ads",
     description: "Manage Meta ad campaigns and read performance",
     emptyHint:
-      "Connect your Facebook account, then choose your ad account and the Page your ads run as.",
+      "Connect your Facebook account, then choose your ad account and the Page your ads run as. In Facebook's dialog, keep every Page you use with Agentelse ticked: Facebook and Instagram share that access.",
   },
 };
 
@@ -1257,7 +1257,9 @@ function InstagramRequirements({ facebookOnly }: { facebookOnly: boolean }) {
         {facebookOnly ? (
           <li>
             The Instagram account must be linked to a Facebook Page that you
-            manage. You sign in with Facebook and choose that Page.
+            manage. You sign in with Facebook and choose that Page; keep every
+            Page you use with Agentelse ticked in Facebook&apos;s dialog, since
+            the Facebook and Meta Ads connections share that access.
           </li>
         ) : (
           <li>
@@ -1300,6 +1302,13 @@ function MetaTile({
     (credential?.status === "ACTIVE" &&
       instagramLoginExpired(credential.metadata as MetaInstagramMetadata));
   const connected = credential?.status === "ACTIVE" && !expired;
+  // Facebook posts nowhere until a Page is picked: say so on the tile instead
+  // of a plain "Connected".
+  const needsPage =
+    service === "facebook" &&
+    connected &&
+    !(credential.metadata as Partial<MetaFacebookMetadata> | null)
+      ?.selectedPageId;
   const params = new URLSearchParams({ integration: META_PROVIDER[service] });
   if (kategori) params.set("kategori", kategori);
   const ui = META_SERVICE_UI[service];
@@ -1310,18 +1319,22 @@ function MetaTile({
       brand={ui.brand}
       title={META_SERVICE_LABEL[service]}
       subtitle={
-        connected
-          ? (credential.accountLabel ?? "Connected")
-          : expired
-            ? "Needs reconnection"
-            : ui.description
+        needsPage
+          ? "Choose the Page to publish to"
+          : connected
+            ? (credential.accountLabel ?? "Connected")
+            : expired
+              ? "Needs reconnection"
+              : ui.description
       }
       badge={
-        connected
-          ? { label: "Connected", tone: "positive" }
-          : expired
-            ? { label: "Needs reconnection", tone: "waiting" }
-            : { label: "Not connected", tone: "neutral" }
+        needsPage
+          ? { label: "Choose a Page", tone: "waiting" }
+          : connected
+            ? { label: "Connected", tone: "positive" }
+            : expired
+              ? { label: "Needs reconnection", tone: "waiting" }
+              : { label: "Not connected", tone: "neutral" }
       }
     />
   );

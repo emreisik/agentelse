@@ -77,6 +77,13 @@ describe("Meta OAuth scopes are isolated per integration", () => {
     expect(scopes.join(",")).not.toMatch(/pages_|business_management|ads_/);
   });
 
+  it("asks Facebook again for a permission declined last time", () => {
+    for (const service of ["instagram", "facebook", "ads"] as const) {
+      const url = new URL(buildMetaAuthorizeUrl("s", service));
+      expect(url.searchParams.get("auth_type")).toBe("rerequest");
+    }
+  });
+
   it("stores each integration under its own provider key", () => {
     expect(META_PROVIDER).toEqual({
       instagram: "instagram",

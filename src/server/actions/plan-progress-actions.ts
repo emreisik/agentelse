@@ -137,7 +137,8 @@ export async function enablePlanPublishingAction(
     const { userId } = await requireUser();
     const access = await requireProjectAccess(userId, projectId);
 
-    if ((await getPublishTargets(projectId)).length === 0) {
+    const targets = await getPublishTargets(projectId);
+    if (!targets.some((t) => t.platform === "instagram")) {
       return { ok: false, message: "Connect Instagram first." };
     }
 

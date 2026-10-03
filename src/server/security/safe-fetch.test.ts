@@ -93,7 +93,7 @@ describe("assertPublicAddresses", () => {
   });
 });
 
-function hop(partial: Partial<HopResponse>): HopResponse {
+function hop(partial: Partial<HopResponse> = {}): HopResponse {
   return {
     status: 200,
     headers: { "content-type": "text/html" },

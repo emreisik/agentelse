@@ -65,13 +65,6 @@ describe("suggestSlotsAction", () => {
     expect(mocks.loadSuggestedSlots).not.toHaveBeenCalled();
   });
 
-  it("ignores channels that are not in the Work", async () => {
-    mocks.get.mockResolvedValue({ id: "wk1", channels: ["instagram"] });
-    const r = await suggestSlotsAction("p1", "wk1", { channels: ["instagram", "x"] });
-    expect(r.ok && Object.keys(r.byChannel)).toEqual(["instagram"]);
-    expect(mocks.loadSuggestedSlots).toHaveBeenCalledTimes(1);
-  });
-
   it("caps channels at 6 so a fourth still gets suggestions", async () => {
     // The Work really has a 7th channel, so only the slice can drop it.
     mocks.get.mockResolvedValue({ id: "wk1", channels: [...ALL, "extra"] });

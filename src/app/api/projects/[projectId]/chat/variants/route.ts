@@ -309,7 +309,6 @@ export async function POST(
   const gate = await worksProductionGate(prisma, {
     projectId,
     commandId,
-    slotChannels: creative.channel ? [creative.channel] : undefined,
   });
   if (!gate.ok) return refuse(projectId, "STATE", gate.message);
 

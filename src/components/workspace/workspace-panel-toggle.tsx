@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { createDetailStore, togglePanel } from "@/lib/works/detail-pane";
+
 const STORAGE_KEY = "agentelse:workspace-right-panel:collapsed";
 const DESKTOP_QUERY = "(min-width: 1024px)";
 
@@ -32,6 +34,12 @@ export type WorkspacePanelTabKey = "brand" | "files" | "outputs" | "calendar";
 // records which tab was asked for; WorkspaceRightPanel consumes it once
 // (via consumeRequestedTab) so a later manual tab click isn't overridden
 // back on a re-render.
+//
+// detail: a long card of the chat shown in full in the same slot, wider than
+// the tabs (docs/works.md, src/lib/works/detail-pane.ts). While it is open it
+// takes the panel's place whether the panel was collapsed or not; closing it
+// returns to the tabs (or to the collapsed state they were in). The card is
+// rendered into `detailContainer` by a portal from where it sits in the chat.
 type PanelToggleState = {
   collapsed: boolean;
   toggle: () => void;
@@ -39,6 +47,13 @@ type PanelToggleState = {
   requestedTab: WorkspacePanelTabKey | null;
   openTab: (tab: WorkspacePanelTabKey) => void;
   consumeRequestedTab: () => void;
+  detail: { id: string; title: string } | null;
+  openDetail: (id: string, title: string) => void;
+  closeDetail: () => void;
+  detailContainer: HTMLElement | null;
+  setDetailContainer: (container: HTMLElement | null) => void;
+  registerCard: (id: string) => () => void;
+  detailPresent: ReadonlySet<string>;
 };
 
 const WorkspacePanelToggleContext = createContext<PanelToggleState | null>(
@@ -94,29 +109,42 @@ export function WorkspacePanelToggleProvider({
   const [requestedTab, setRequestedTab] = useState<WorkspacePanelTabKey | null>(
     null,
   );
+  const [detailStore] = useState(() => createDetailStore<HTMLElement>());
+  const detailSnapshot = useSyncExternalStore(
+    detailStore.subscribe,
+    detailStore.getSnapshot,
+    detailStore.getSnapshot,
+  );
 
   const toggle = useCallback(() => {
+    const detailOpen = detailStore.getSnapshot().detail !== null;
+    if (detailOpen) detailStore.close();
     setSessionOverride((current) => {
       const currentCollapsed = current ?? storedOverride ?? !isDesktop;
-      const next = !currentCollapsed;
+      const outcome = togglePanel({ detailOpen, collapsed: currentCollapsed });
       try {
-        localStorage.setItem(STORAGE_KEY, next ? "1" : "0");
+        localStorage.setItem(STORAGE_KEY, outcome.collapsed ? "1" : "0");
       } catch {
         // Private-window/storage-denied — collapse state just won't persist.
       }
-      return next;
+      return outcome.collapsed;
     });
-  }, [storedOverride, isDesktop]);
+  }, [storedOverride, isDesktop, detailStore]);
 
-  const openTab = useCallback((tab: WorkspacePanelTabKey) => {
-    setSessionOverride(false);
-    try {
-      localStorage.setItem(STORAGE_KEY, "0");
-    } catch {
-      // Private-window/storage-denied — collapse state just won't persist.
-    }
-    setRequestedTab(tab);
-  }, []);
+  const openTab = useCallback(
+    (tab: WorkspacePanelTabKey) => {
+      setSessionOverride(false);
+      try {
+        localStorage.setItem(STORAGE_KEY, "0");
+      } catch {
+        // Private-window/storage-denied — collapse state just won't persist.
+      }
+      // A tab is asked for in the tabs' own slot: an open card gives it back.
+      detailStore.close();
+      setRequestedTab(tab);
+    },
+    [detailStore],
+  );
 
   const consumeRequestedTab = useCallback(() => setRequestedTab(null), []);
 
@@ -128,8 +156,24 @@ export function WorkspacePanelToggleProvider({
       requestedTab,
       openTab,
       consumeRequestedTab,
+      detail: detailSnapshot.detail,
+      openDetail: detailStore.open,
+      closeDetail: detailStore.close,
+      detailContainer: detailSnapshot.container,
+      setDetailContainer: detailStore.setContainer,
+      registerCard: detailStore.register,
+      detailPresent: detailSnapshot.present,
     }),
-    [collapsed, toggle, isDesktop, requestedTab, openTab, consumeRequestedTab],
+    [
+      collapsed,
+      toggle,
+      isDesktop,
+      requestedTab,
+      openTab,
+      consumeRequestedTab,
+      detailSnapshot,
+      detailStore,
+    ],
   );
 
   return (
@@ -147,4 +191,11 @@ export function useWorkspacePanelToggle(): PanelToggleState {
     );
   }
   return ctx;
+}
+
+// The pane on the right for one long card: null where there is no workspace
+// panel (any page but the project's chat), so a compact card there simply shows
+// its full card in the chat as before.
+export function useWorkspaceDetail(): PanelToggleState | null {
+  return useContext(WorkspacePanelToggleContext);
 }

@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { gateWorkChannels } from "./work";
-import { parsePlanBrief } from "@/lib/plan-brief";
 
 import {
   MAX_STARTER_CARDS,
-  channelChoiceFraming,
-  defaultChannelSelection,
+  chatDefaultChannels,
   integrationsHref,
   pendingHintFor,
   starterCards,
@@ -29,8 +27,52 @@ function facts(
 }
 
 describe("starterCards", () => {
-  it("has no cards before a channel is chosen (the chooser comes first)", () => {
-    expect(starterCards(facts([], {}))).toEqual([]);
+  it("with no channel and an account connected there is nothing to suggest (the picker is in the composer)", () => {
+    expect(
+      starterCards(facts([], { instagram: { connected: true } })),
+    ).toEqual([]);
+  });
+
+  it("with no channel and nothing connected, the one suggestion is connecting a channel", () => {
+    const cards = starterCards(
+      facts([], {}, { fromWorkId: "w1" }),
+    );
+    expect(cards.map((c) => c.id)).toEqual(["connect-first"]);
+    expect(cards[0]?.line).toBe("Connect a channel");
+    expect(cards[0]?.action).toEqual({
+      kind: "link",
+      href: "/projects/p1/integrations?from=w1",
+    });
+  });
+
+  it("every card has one sentence for the list, naming the channels where it helps", () => {
+    const cards = starterCards(
+      facts(
+        ["instagram", "linkedin"],
+        { instagram: { connected: true }, linkedin: { connected: true } },
+        { pendingApprovals: 2 },
+      ),
+    );
+    const lines = Object.fromEntries(cards.map((c) => [c.id, c.line]));
+    expect(lines["plan-week"]).toBe("Plan the week for Instagram and LinkedIn");
+    expect(lines["ideas"]).toBe("Find content ideas for Instagram and LinkedIn");
+    expect(lines["make-post"]).toBe("Make one post for Instagram");
+    expect(lines["decisions"]).toBe("2 decisions waiting for you");
+    for (const card of cards) {
+      expect(card.line.trim()).not.toBe("");
+      expect(card.line).not.toMatch(/[.!?]$/);
+    }
+  });
+
+  it("the connect and performance lines read as a sentence too", () => {
+    const connect = starterCards(
+      facts(["tiktok"], { tiktok: { connected: false } }),
+    ).find((c) => c.id === "connect");
+    expect(connect?.line).toBe("Connect TikTok to publish");
+    const performance = starterCards(
+      facts(["instagram"], { instagram: { connected: true } }, { hasAnalytics: true }),
+    ).find((c) => c.id === "performance");
+    expect(performance?.line).toBe("Check how your content is performing");
   });
 
   it("always opens with planning for the Work's channels", () => {
@@ -41,7 +83,7 @@ describe("starterCards", () => {
       }),
     );
     expect(first?.id).toBe("plan-week");
-    expect(first?.primary.action).toEqual({
+    expect(first?.action).toEqual({
       kind: "send",
       text: "Plan the week for Instagram and LinkedIn.",
     });
@@ -52,12 +94,12 @@ describe("starterCards", () => {
     expect(starterCards(base).some((c) => c.id === "decisions")).toBe(false);
     const cards = starterCards({ ...base, pendingApprovals: 3 });
     const decisions = cards.find((c) => c.id === "decisions");
-    expect(decisions?.title).toBe("3 decisions waiting");
-    expect(decisions?.primary.action).toEqual({ kind: "tab", tab: "outputs" });
+    expect(decisions?.line).toBe("3 decisions waiting for you");
+    expect(decisions?.action).toEqual({ kind: "tab", tab: "outputs" });
     expect(
       starterCards({ ...base, pendingApprovals: 1 }).find((c) => c.id === "decisions")
-        ?.title,
-    ).toBe("1 decision waiting");
+        ?.line,
+    ).toBe("1 decision waiting for you");
   });
 
   it("an unconnected channel gets a Connect card linking to that channel", () => {
@@ -65,8 +107,8 @@ describe("starterCards", () => {
       facts(["tiktok"], { tiktok: { connected: false } }),
     );
     const connect = cards.find((c) => c.id === "connect");
-    expect(connect?.title).toBe("Connect TikTok");
-    expect(connect?.primary.action).toEqual({
+    expect(connect?.line).toBe("Connect TikTok to publish");
+    expect(connect?.action).toEqual({
       kind: "link",
       href: "/projects/p1/integrations?integration=tiktok",
     });
@@ -100,9 +142,7 @@ describe("starterCards", () => {
 });
 
 describe("helpers", () => {
-  it("frames the channel choice by whether anything is connected", () => {
-    expect(channelChoiceFraming(true).title).toContain("Which channel");
-    expect(channelChoiceFraming(false).title).toContain("Connect a channel");
+  it("integrationsHref without a channel is the plain page", () => {
     expect(integrationsHref("p1")).toBe("/projects/p1/integrations");
   });
 
@@ -119,26 +159,24 @@ describe("helpers", () => {
     );
   });
 
-  it("defaultChannelSelection pre-selects 1 to 3 connected publishing channels", () => {
+  it("chatDefaultChannels: the connected publishing channels (at most 3), else Instagram", () => {
     const opt = (n: number) =>
       (["instagram", "tiktok", "linkedin", "x"] as const).map((key, i) => ({
         key,
         connected: i < n,
       }));
-    expect(defaultChannelSelection(opt(0))).toEqual([]);
-    expect(defaultChannelSelection(opt(1))).toEqual(["instagram"]);
-    expect(defaultChannelSelection(opt(3))).toEqual([
-      "instagram",
-      "tiktok",
-      "linkedin",
-    ]);
-    expect(defaultChannelSelection(opt(4))).toEqual([]);
+    expect(chatDefaultChannels(opt(0))).toEqual(["instagram"]);
+    expect(chatDefaultChannels(opt(1))).toEqual(["instagram"]);
+    expect(chatDefaultChannels(opt(3))).toEqual(["instagram", "tiktok", "linkedin"]);
+    // Four connected: the first three, never a guess of all four.
+    expect(chatDefaultChannels(opt(4))).toEqual(["instagram", "tiktok", "linkedin"]);
+    // Blog/SEO and Ads are not publishing channels of a plan's default.
     expect(
-      defaultChannelSelection([
+      chatDefaultChannels([
         { key: "seo", connected: true },
         { key: "ads", connected: true },
       ]),
-    ).toEqual([]);
+    ).toEqual(["instagram"]);
   });
 
   it("pendingHintFor tells plan, ideas and generic apart", () => {
@@ -155,34 +193,19 @@ describe("starter cards of wave 1", () => {
     ads: { connected: true },
   };
 
-  it("plan-week sends a friendly line plus a machine brief that round-trips", () => {
+  it("plan-week sends one plain sentence: the plan comes back at once, with defaults for the rest", () => {
     const cards = starterCards(
       facts(["instagram", "ads"], connected, { today: "2026-10-01", theme: "Autumn" }),
     );
-    const plan = cards.find((c) => c.id === "plan-week");
-    const action = plan?.primary.action;
-    if (action?.kind !== "send") throw new Error("expected send");
-    const [first, machine, ...rest] = action.text.split("\n");
-    expect(rest).toEqual([]);
-    expect(first).toBe("Plan the week · from Fri 2 Oct");
-    expect(first).not.toMatch(/\d{4}-\d{2}-\d{2}/);
-    expect(machine).toMatch(/^\[Plan brief\] /);
-    const brief = parsePlanBrief(action.text);
-    expect(brief?.channels.map((c) => c.channel)).toEqual(["instagram"]);
-    expect(brief?.start).toBe("2026-10-02");
-    expect(brief?.perWeek).toBe(3);
-    expect(brief?.weeks).toBe(1);
-    expect(brief?.theme).toBe("Autumn");
-    expect(plan?.secondary?.label).toBe("Customize");
-    expect(plan?.secondary?.action).toEqual({
+    expect(cards.find((c) => c.id === "plan-week")?.action).toEqual({
       kind: "send",
       text: "Plan the week for Instagram and Ads.",
     });
   });
 
-  it("falls back to the old text without today", () => {
+  it("says the same without today", () => {
     const [plan] = starterCards(facts(["instagram"], connected));
-    expect(plan?.primary.action).toEqual({
+    expect(plan?.action).toEqual({
       kind: "send",
       text: "Plan the week for Instagram.",
     });
@@ -191,7 +214,7 @@ describe("starter cards of wave 1", () => {
   it("make-post targets the first social channel and is absent for seo only", () => {
     const cards = starterCards(facts(["seo", "linkedin", "instagram"], connected));
     const post = cards.find((c) => c.id === "make-post");
-    expect(post?.primary.action).toEqual({
+    expect(post?.action).toEqual({
       kind: "send",
       text: "Make one post for LinkedIn.",
     });
@@ -205,7 +228,7 @@ describe("starter cards of wave 1", () => {
       facts(["instagram"], connected, { aiOff: true, today: "2026-10-01" }),
     );
     expect(cards.map((c) => c.id)).toEqual(["ai-off"]);
-    expect(cards[0]?.primary.action).toEqual({ kind: "tab", tab: "calendar" });
+    expect(cards[0]?.action).toEqual({ kind: "tab", tab: "calendar" });
   });
 
   it("only one of decisions, connect, performance fills the fourth place", () => {
@@ -223,7 +246,7 @@ describe("starter cards of wave 1", () => {
     const cards = starterCards(
       facts(["tiktok"], { tiktok: { connected: false } }, { fromWorkId: "w9" }),
     );
-    expect(cards.find((c) => c.id === "connect")?.primary.action).toEqual({
+    expect(cards.find((c) => c.id === "connect")?.action).toEqual({
       kind: "link",
       href: "/projects/p1/integrations?integration=tiktok&from=w9",
     });

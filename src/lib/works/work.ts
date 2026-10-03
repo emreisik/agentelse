@@ -13,7 +13,20 @@ import { channelOffers } from "./channel-offers";
 export const WORK_STATUSES = ["ACTIVE", "DONE", "ARCHIVED"] as const;
 export type WorkStatusValue = (typeof WORK_STATUSES)[number];
 
-export const WORK_DEFAULT_TITLE = "New Work";
+export const WORK_DEFAULT_TITLE = "New Chat";
+// Untitled Works made before the "New Chat" rename still carry this title. They
+// count as untitled everywhere (blank reuse, first-message title) and read as
+// WORK_DEFAULT_TITLE on screen, so no stored row needs rewriting.
+export const LEGACY_WORK_DEFAULT_TITLES = ["New Work"] as const;
+export const WORK_DEFAULT_TITLES: readonly string[] = [
+  WORK_DEFAULT_TITLE,
+  ...LEGACY_WORK_DEFAULT_TITLES,
+];
+
+export function isDefaultWorkTitle(title: string): boolean {
+  return WORK_DEFAULT_TITLES.includes(title);
+}
+
 export const WORK_TITLE_MAX = 60;
 export const WORK_SUMMARY_MAX = 90;
 
@@ -228,6 +241,18 @@ export function isTodayWork(work: { id: string }): boolean {
 
 export function todayWorkTitle(): string {
   return "Today";
+}
+
+// An address that keeps the chat the person is in: panels opened from a chat and
+// their "Back to chat" carry `?work=`, because the bare project URL starts a new
+// chat (docs/works.md).
+export function withWorkParam(
+  href: string,
+  workId: string | null | undefined,
+): string {
+  const id = workId?.trim();
+  if (!id) return href;
+  return `${href}${href.includes("?") ? "&" : "?"}work=${encodeURIComponent(id)}`;
 }
 
 export type WorkParam =

@@ -100,7 +100,13 @@ export function BrandSwitcher({
             key={project.id}
             className="flex items-center gap-2.5 rounded-xl px-2 py-2 text-sm"
             style={{ color: "var(--ws-text)" }}
-            onClick={() => router.push(`/projects/${project.id}`)}
+            // The brand already open: nothing to do (opening it would start a
+            // new chat in place of the conversation on screen).
+            onClick={() => {
+              if (project.id !== activeProjectId) {
+                router.push(`/projects/${project.id}`);
+              }
+            }}
           >
             <Avatar name={project.name} size={28} />
             <span className="min-w-0 flex-1 truncate">{project.name}</span>

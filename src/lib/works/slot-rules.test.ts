@@ -18,8 +18,8 @@ const target = (over: Partial<SlotTargetInput> = {}): SlotTargetInput => ({
   time: "11:00",
   ...over,
 });
-const run = (targets: SlotTargetInput[], workChannels = ["instagram", "seo"]) =>
-  validateSlotTargets({ workChannels, targets, today: TODAY, nowLocal: NOW });
+const run = (targets: SlotTargetInput[]) =>
+  validateSlotTargets({ targets, today: TODAY, nowLocal: NOW });
 const code = (targets: SlotTargetInput[]) => {
   const r = run(targets);
   return r.ok ? "ok" : r.code;
@@ -34,11 +34,10 @@ describe("validateSlotTargets", () => {
     expect(code(Array.from({ length: MAX_TARGETS_PER_PRESS + 1 }, () => target()))).toBe("TOO_MANY");
     expect(code(Array.from({ length: MAX_TARGETS_PER_PRESS }, () => target()))).toBe("ok");
   });
-  it("rejects a work without channels and channels outside it", () => {
-    expect(run([target()], []).ok).toBe(false);
-    expect(run([target()], [])).toMatchObject({ code: "NO_CHANNEL" });
-    expect(code([target({ channel: "linkedin", formatKey: "linkedin.post" })])).toBe("OUTSIDE_WORK");
-    expect(code([target({ channel: "bogus" })])).toBe("OUTSIDE_WORK");
+  it("a chat is not bound to a channel: any known channel and format is fine", () => {
+    expect(code([target({ channel: "linkedin", formatKey: "linkedin.post" })])).toBe("ok");
+    expect(code([target({ channel: "seo", formatKey: "seo.article" })])).toBe("ok");
+    expect(code([target({ channel: "bogus" })])).toBe("BAD_FORMAT");
   });
   it("rejects a format that is not of the channel", () => {
     expect(code([target({ formatKey: "seo.article" })])).toBe("BAD_FORMAT");
@@ -74,7 +73,6 @@ describe("validateSlotTargets", () => {
   });
   it("fails closed on an unusable clock", () => {
     const r = validateSlotTargets({
-      workChannels: ["instagram"],
       targets: [target({ date: TODAY, time: "23:00" })],
       today: TODAY,
       nowLocal: "garbage",

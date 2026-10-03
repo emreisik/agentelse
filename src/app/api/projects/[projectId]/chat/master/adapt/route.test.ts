@@ -369,43 +369,6 @@ describe("master-adapt: auth, scoping and body", () => {
     expect(response.status).toBe(409);
     expect(runMasterAdapt).not.toHaveBeenCalled();
   });
-
-  it("refuses a channel outside the Work without a claim or a model call", async () => {
-    workGet.mockResolvedValue({
-      id: "work-1",
-      status: "ACTIVE",
-      channels: ["instagram"],
-    });
-    const before = JSON.stringify(row);
-    // linkedin is ticked on the card but not part of the Work
-    const response = await POST(request(valid), params);
-    expect(await response.json()).toMatchObject({
-      ok: false,
-      code: "OUTSIDE_WORK",
-    });
-    expect(runMasterAdapt).not.toHaveBeenCalled();
-    expect(JSON.stringify(row)).toBe(before);
-  });
-
-  it("refuses a requested target that is outside the Work", async () => {
-    workGet.mockResolvedValue({
-      id: "work-1",
-      status: "ACTIVE",
-      channels: ["instagram", "linkedin"],
-    });
-    const response = await POST(
-      request({
-        commandId: "cmd-1",
-        targets: [{ channel: "tiktok", formatKey: "tiktok.video" }],
-      }),
-      params,
-    );
-    expect(await response.json()).toMatchObject({
-      ok: false,
-      code: "OUTSIDE_WORK",
-    });
-    expect(runMasterAdapt).not.toHaveBeenCalled();
-  });
 });
 
 describe("master-adapt: mock mode, claim and cap", () => {

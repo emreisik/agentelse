@@ -68,15 +68,18 @@ describe("hidden-tools-note", () => {
     expect(WORKS_CARD_NOTE).toContain(
       "ignore every instruction that tells you to call propose_content_package or generate_ideas_from_opportunities",
     );
-    for (const name of ["propose_plan_options", "propose_ideas", "start_plan_brief"]) {
+    for (const name of ["propose_plan_options", "propose_ideas"]) {
       expect(WORKS_CARD_NOTE).toContain(name);
     }
   });
 
   it("tells the model not to web-search and routes typed changes", () => {
     expect(WORKS_CARD_NOTE).toContain("Do not search the web for plans or ideas");
-    expect(WORKS_CARD_NOTE).toContain("change the DIRECTIONS");
-    expect(WORKS_CARD_NOTE).toContain("to change the plan they already picked");
+    // A plan request goes straight to a plan: no wizard, no directions first.
+    expect(WORKS_CARD_NOTE).toContain("call propose_content_plan RIGHT AWAY");
+    expect(WORKS_CARD_NOTE).toContain("no wizard, no questions, no directions first");
+    expect(WORKS_CARD_NOTE).toContain("again with the full updated plan");
+    expect(WORKS_CARD_NOTE).toContain("never ask which channel it is for");
   });
 
   it("worksSkill strips every hidden tool and keeps the lines", () => {

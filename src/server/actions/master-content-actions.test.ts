@@ -705,14 +705,6 @@ describe("master-schedule: refusals before any write", () => {
     expect(mocks.creativeCreate).not.toHaveBeenCalled();
   });
 
-  it("refuses a ticked channel that is no longer part of the Work", async () => {
-    mocks.workGet.mockResolvedValue(work({ channels: ["instagram"] }));
-    const result = await scheduleMasterAction(CMD);
-    expect(result).toMatchObject({ ok: false, code: "STATE" });
-    expect(mocks.loadSuggestedSlots).not.toHaveBeenCalled();
-    expect(mocks.creativeCreate).not.toHaveBeenCalled();
-  });
-
   it("refuses a format the catalog does not know", async () => {
     setCard(
       masterCard({

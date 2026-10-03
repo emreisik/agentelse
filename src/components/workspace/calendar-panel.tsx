@@ -107,10 +107,14 @@ function Thumb({
 // per cell would just duplicate that without adding real information.
 export function CalendarPanel({
   projectId,
+  workId,
   calendar,
   selectedItem,
 }: {
   projectId: string;
+  // The Work on screen (Works only). The calendar's own links keep it: the bare
+  // project URL starts a new chat, so dropping it would leave the conversation.
+  workId?: string;
   calendar: {
     items: WorkspaceCalendarItem[];
     unscheduled: WorkspaceOutputItem[];
@@ -157,11 +161,12 @@ export function CalendarPanel({
     timeZone: "UTC",
   });
 
+  const workQuery = workId ? `work=${encodeURIComponent(workId)}&` : "";
   const monthHref = (month: string) =>
-    `/projects/${projectId}?calMonth=${month}`;
+    `/projects/${projectId}?${workQuery}calMonth=${month}`;
   const itemHref = (creativeId: string) =>
-    `/projects/${projectId}?calMonth=${calendar.month}&calItem=${creativeId}`;
-  const closeItemHref = `/projects/${projectId}?calMonth=${calendar.month}`;
+    `/projects/${projectId}?${workQuery}calMonth=${calendar.month}&calItem=${creativeId}`;
+  const closeItemHref = `/projects/${projectId}?${workQuery}calMonth=${calendar.month}`;
 
   return (
     <div className="flex flex-col gap-4 px-4 py-4 text-sm">

@@ -7,7 +7,7 @@ import { WORK_DEFAULT_TITLE, todayWorkId } from "@/lib/works/work";
 import { WorkRepository } from "@/server/repositories/work.repository";
 import { describeIntegration } from "@/test-support/integration-suite";
 
-// "New Work" never piles up empty rows. What the in-memory repository tests cannot
+// "New Chat" never piles up empty rows. What the in-memory repository tests cannot
 // prove, a REAL Postgres does: the relation filter that says "no chat row at all",
 // the advisory lock that makes two simultaneous taps one, the ordering among older
 // duplicates, and that tidying them away (archive) never touches a Work with content. Runs only with a dedicated TEST_DATABASE_URL (CI, or a local
@@ -286,7 +286,7 @@ describeIntegration("WorkRepository.createOrReuseBlank on Postgres", () => {
 
     const emptyOld = await insertWork(projectId, { lastActivityAt: at(5) });
     const emptyNew = await insertWork(projectId, { lastActivityAt: at(1) });
-    // Still titled "New Work" but something was written in it.
+    // Still untitled but something was written in it.
     const used = await insertWork(projectId, { lastActivityAt: at(6) });
     await writeIn(projectId, used.id);
     const renamed = await insertWork(projectId, {
@@ -311,6 +311,36 @@ describeIntegration("WorkRepository.createOrReuseBlank on Postgres", () => {
     expect(await statusOf(otherBlank.id)).toBe("ACTIVE");
   });
 
+  it("an untitled Work from before the rename (\"New Work\") is still an empty one: it opens, reads as New Chat, and its first message titles it", async () => {
+    const projectId = newProject();
+    const now = Date.now();
+    const legacyOld = await insertWork(projectId, {
+      title: "New Work",
+      lastActivityAt: new Date(now - 3 * 3_600_000),
+    });
+    const legacyNew = await insertWork(projectId, {
+      title: "New Work",
+      lastActivityAt: new Date(now - 1 * 3_600_000),
+    });
+    const renamedAlready = await insertWork(projectId, {
+      lastActivityAt: new Date(now - 2 * 3_600_000),
+    });
+    const out = await open(projectId);
+    expect(out.reused).toBe(true);
+    expect(out.work.id).toBe(legacyNew.id);
+    expect(out.work.title).toBe(WORK_DEFAULT_TITLE);
+    expect(out.archived).toBe(2);
+    expect(await statusOf(legacyOld.id)).toBe("ARCHIVED");
+    expect(await statusOf(renamedAlready.id)).toBe("ARCHIVED");
+
+    await WorkRepository.touch(projectId, legacyNew.id, {
+      titleIfDefault: "Weekly plan",
+    });
+    expect((await WorkRepository.get(projectId, legacyNew.id))?.title).toBe(
+      "Weekly plan",
+    );
+  });
+
   it("opening it moves it to the top of the recent list", async () => {
     const projectId = newProject();
     const now = Date.now();
@@ -326,6 +356,72 @@ describeIntegration("WorkRepository.createOrReuseBlank on Postgres", () => {
     const out = await open(projectId);
     expect(out.work.id).toBe(blank.id);
     expect((await WorkRepository.listRecent(projectId))[0]?.id).toBe(blank.id);
+  });
+
+  it("recents: the blank chat and Today are not listed; one with a message, a renamed or a completed one is", async () => {
+    const projectId = newProject();
+    const now = Date.now();
+    const at = (hoursAgo: number) => new Date(now - hoursAgo * 3_600_000);
+    const blank = await insertWork(projectId, { lastActivityAt: at(1) });
+    await insertWork(projectId, { title: "New Work", lastActivityAt: at(2) });
+    const used = await insertWork(projectId, { lastActivityAt: at(3) });
+    await writeIn(projectId, used.id);
+    const renamed = await insertWork(projectId, {
+      title: "Ideas for May",
+      lastActivityAt: at(4),
+    });
+    const done = await insertWork(projectId, {
+      status: "DONE",
+      lastActivityAt: at(5),
+    });
+    await insertWork(projectId, {
+      title: "Old",
+      status: "ARCHIVED",
+      lastActivityAt: at(0.5),
+    });
+    const today = await insertWork(projectId, {
+      id: todayWorkId(projectId, "2026-10-02"),
+      title: "Today",
+      lastActivityAt: at(0.2),
+    });
+    await writeIn(projectId, today.id);
+    await insertWork(newProject(), { title: "Another project's chat" });
+
+    const ids = async (limit?: number) =>
+      (await WorkRepository.recents(projectId, limit)).map((w) => w.id);
+    expect(await ids()).toEqual([used.id, renamed.id, done.id]);
+
+    // Its first message moves the blank chat into Recents.
+    await writeIn(projectId, blank.id);
+    expect(await ids()).toEqual([blank.id, used.id, renamed.id, done.id]);
+    expect(await ids(2)).toEqual([blank.id, used.id]);
+  });
+
+  it("isUntouched agrees with New Chat's reuse rule, row by row", async () => {
+    const projectId = newProject();
+    const blank = await insertWork(projectId);
+    const legacy = await insertWork(projectId, { title: "New Work" });
+    const used = await insertWork(projectId);
+    await writeIn(projectId, used.id, "SYSTEM");
+    const renamed = await insertWork(projectId, { title: "Ideas for May" });
+    const done = await insertWork(projectId, { status: "DONE" });
+    const archived = await insertWork(projectId, { status: "ARCHIVED" });
+    const today = await insertWork(projectId, {
+      id: todayWorkId(projectId, "2026-10-02"),
+    });
+    const verdict = async (id: string, project = projectId) =>
+      WorkRepository.isUntouched(project, id);
+    expect(await verdict(blank.id)).toBe(true);
+    expect(await verdict(legacy.id)).toBe(true);
+    for (const id of [used.id, renamed.id, done.id, archived.id, today.id]) {
+      expect(await verdict(id)).toBe(false);
+    }
+    expect(await verdict(blank.id, newProject())).toBe(false);
+    expect(await verdict("does_not_exist")).toBe(false);
+    // The Work New Chat reuses is exactly an untouched one.
+    const reused = await open(projectId, { currentWorkId: legacy.id });
+    expect(reused.reused).toBe(true);
+    expect(await verdict(reused.work.id)).toBe(true);
   });
 
   it("explicitly requested channels replace the blank Work's; asking for none keeps its own", async () => {
@@ -346,5 +442,63 @@ describeIntegration("WorkRepository.createOrReuseBlank on Postgres", () => {
     expect(switched.work.channels).toEqual(["linkedin"]);
     expect(switched.work.acknowledgedUnconnected).toEqual(["linkedin"]);
     expect(await countOf(projectId)).toBe(1);
+  });
+
+  // A message that finds a chat with no channel stores its defaults
+  // (setInitialChannels): one conditional UPDATE on a Json column.
+  const channelsOf = async (id: string) =>
+    (await prisma.work.findUnique({ where: { id }, select: { channels: true } }))
+      ?.channels;
+  const storeFirst = (
+    projectId: string,
+    workId: string,
+    channels: ("instagram" | "linkedin")[] = ["instagram"],
+  ) => WorkRepository.setInitialChannels(projectId, workId, channels, []);
+
+  it("setInitialChannels fills the blank new chat once; a choice already stored is never overwritten", async () => {
+    const projectId = newProject();
+    const blank = await insertWork(projectId);
+    // `channels = '[]'` on a real jsonb column.
+    expect(await channelsOf(blank.id)).toEqual([]);
+    expect(await storeFirst(projectId, blank.id, ["instagram", "linkedin"])).toBe(true);
+    expect(await channelsOf(blank.id)).toEqual(["instagram", "linkedin"]);
+    expect(await storeFirst(projectId, blank.id, ["linkedin"])).toBe(false);
+    expect(await channelsOf(blank.id)).toEqual(["instagram", "linkedin"]);
+  });
+
+  it("setInitialChannels gives defaults to an ACTIVE Work that has none, used or not; never to a completed, archived or foreign one", async () => {
+    const projectId = newProject();
+    const used = await insertWork(projectId);
+    await writeIn(projectId, used.id);
+    const renamed = await insertWork(projectId, { title: "Ideas for May" });
+    const today = await insertWork(projectId, {
+      id: todayWorkId(projectId, "2026-10-02"),
+      title: "Today",
+    });
+    for (const work of [used, renamed, today]) {
+      expect(await storeFirst(projectId, work.id)).toBe(true);
+      expect(await channelsOf(work.id)).toEqual(["instagram"]);
+    }
+    const done = await insertWork(projectId, { status: "DONE" });
+    const archived = await insertWork(projectId, { status: "ARCHIVED" });
+    for (const work of [done, archived]) {
+      expect(await storeFirst(projectId, work.id)).toBe(false);
+      expect(await channelsOf(work.id)).toEqual([]);
+    }
+    const blank = await insertWork(projectId);
+    expect(await storeFirst(newProject(), blank.id)).toBe(false);
+    expect(await storeFirst(projectId, "does_not_exist")).toBe(false);
+    expect(await channelsOf(blank.id)).toEqual([]);
+  });
+
+  it("two first messages at once (two tabs): exactly one stores its channels", async () => {
+    const projectId = newProject();
+    const blank = await insertWork(projectId);
+    const [a, b] = await Promise.all([
+      storeFirst(projectId, blank.id, ["instagram"]),
+      storeFirst(projectId, blank.id, ["linkedin"]),
+    ]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    expect(await channelsOf(blank.id)).toEqual(a ? ["instagram"] : ["linkedin"]);
   });
 });

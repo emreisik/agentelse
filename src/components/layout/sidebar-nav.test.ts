@@ -42,7 +42,7 @@ describe("SidebarNav", () => {
     expect(html).not.toContain("panel=human-action");
   });
 
-  it("keeps the rest of the navigation, with Settings as one line at the bottom", () => {
+  it("keeps the rest of the navigation (Agency Desk only without Works), with Settings as one line at the bottom", () => {
     const html = render();
     for (const label of [
       "Agency Desk",

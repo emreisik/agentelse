@@ -2728,6 +2728,20 @@ describe("runChatAgent: Works", () => {
       );
     });
 
+    it("titles the Work right after the Command row is stored, before the brand scan and before the first event the client sees", async () => {
+      const order: string[] = [];
+      workTouch.mockImplementation(async (_p: string, _w: string, patch: { titleIfDefault?: string }) => {
+        if (patch.titleIfDefault) order.push("title");
+      });
+      const { model } = scriptedModel([{ text: ["Ok."] }]);
+      const events = [];
+      for await (const event of runChatAgent(workInput, { model })) {
+        if (events.length === 0) order.push(`first:${event.type}`);
+        events.push(event);
+      }
+      expect(order.slice(0, 2)).toEqual(["title", "first:start"]);
+    });
+
     it("keeps the sidebar summary when the turn fails", async () => {
       const { model } = scriptedModel([
         { fail: new Error("provider exploded") },

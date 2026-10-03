@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The interleavings a real database cannot be paused into: the blank Work is read,
 // then, before it is reopened, another tab deletes it or writes its first message
-// (the advisory lock only serialises New Work taps). The tap must then open a
+// (the advisory lock only serialises New Chat taps). The tap must then open a
 // fresh Work instead of failing. Control flow only, so the transaction client is
 // a stand-in; the query semantics are proven in work.repository.integration.test.ts.
 
@@ -80,7 +80,7 @@ describe("createOrReuseBlank: the blank Work changes under the tap", () => {
         expect.objectContaining({
           projectId: "p1",
           status: "ACTIVE",
-          title: "New Work",
+          title: { in: ["New Chat", "New Work"] },
           commands: { none: {} },
         }),
       ]),

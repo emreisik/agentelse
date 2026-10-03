@@ -342,22 +342,6 @@ describe("what may be made", () => {
     nothingPaidOrMade();
   });
 
-  it("refuses a slot on a channel the Work no longer covers, before any reserve (guard V16)", async () => {
-    workFindFirst.mockResolvedValue({
-      status: "ACTIVE",
-      channels: ["linkedin"],
-    });
-    const out = await events(await POST(request(valid), params));
-    expect(out).toEqual([
-      expect.objectContaining({
-        type: "error",
-        code: "STATE",
-        message: expect.stringContaining("instagram"),
-      }),
-    ]);
-    nothingPaidOrMade();
-  });
-
   it("first set: refuses a piece that already has content", async () => {
     creativeFindFirst.mockResolvedValue(
       creativeRow({ status: "IN_REVIEW", currentVersionId: "v1" }),

@@ -83,13 +83,16 @@ function workNote(work: {
   title: string;
   channels: { label: string; connected: boolean }[];
 }): string {
-  if (work.channels.length === 0) {
-    return `This conversation is a Work ("${work.title}") with NO channel chosen yet. Do not plan or produce channel content; the tools show the client a card to choose the channel first.`;
-  }
-  const list = work.channels
-    .map((c) => `${c.label} (${c.connected ? "connected" : "not connected yet"})`)
-    .join(", ");
-  return `This conversation is a Work ("${work.title}") for these channels only: ${list}. Plan and produce only for them, never for another channel, and never switch on your own: if the client wants another channel, tell them they can add it to this Work or open a new Work. For a channel that is not connected, plans and content are fine but publishing waits until the client connects it: say so in one short sentence when it matters.`;
+  const list =
+    work.channels.length > 0
+      ? work.channels
+          .map(
+            (c) =>
+              `${c.label} (${c.connected ? "connected" : "not connected yet"})`,
+          )
+          .join(", ")
+      : "Instagram";
+  return `This conversation ("${work.title}") is a free chat: it is not bound to a channel. Default channels, used when the client names none: ${list}. Any channel may be used (Instagram, TikTok, LinkedIn, X, Blog/SEO, Ads), connected or not: plans and content for a channel that is not connected are fine, publishing waits until the client connects it, and you say so in one short sentence when it matters. Never ask which channel the chat is for; when you chose the channel yourself, name it in a few words so the client can correct you.`;
 }
 
 export function buildContextMessage(input: {

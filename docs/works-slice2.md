@@ -79,7 +79,7 @@ Bu dilimde yeni migration yok; ama birinci dilimin `20261001000000_add_work` mig
 
 1. Migration'ı **trafiğin az olduğu saatte** uygula (`prisma migrate deploy`), kod **ondan sonra**: önce migration, sonra kod. Birinci ya da ikinci dilim kodu migration'dan önce çalışmamalı.
 2. `CHAT_ENGINE=agent` ve `WORKS_UI=true`.
-3. Yeni Work -> kanal kartı -> plan yönleri -> kaydet -> üret -> onayla -> yayın satırı.
+3. Yeni sohbet -> kanal çipi -> plan yönleri -> kaydet -> üret -> onayla -> yayın satırı.
 
 ### Yerel çalıştırma uyarısı
 
@@ -110,7 +110,7 @@ Testler DB'siz (`src/lib/works/*.test.ts`, `src/server/chat/works-*.test.ts`, `s
 
 Elle (paylaşımlı canlı DB ve kredi nedeniyle otomatik değil), ayrılmış bir projede:
 
-1. Yeni Work, kanal seç, "Plan the week": 2-3 yön gelir; birini seç, bir slotta fikir değiştir, More ideas dene.
+1. Yeni sohbet, kanalı çipten seç (bağlı kanal hazır gelir), "Plan the week": 2-3 yön gelir; birini seç, bir slotta fikir değiştir, More ideas dene.
 2. Marka kuralına aykırı bir konu iste: kart uyarır / engeller.
 3. Bir fikri takvime ekle (bir basışta birden çok kanal), sonra `Remove` ile geri al.
 4. Bir gönderi iste: önce slot, sonra üretim görünür; başka bir gün sorulmaz.
@@ -141,6 +141,8 @@ Tek bir ana mesaj yazılır (`propose_master_content`, `src/server/chat/works-to
 - **Hiç resim çıkmazsa iş başarısız olur:** sağlayıcı, varyant işinde tek resim bile üretilemediyse işi `FAILED` yapar (boş bir parça slotu almaz); slot yeniden denenebilir. Ayrılan bütçe yine iade edilmez.
 
 ## Dalga 2: Today Work ve günlük özet
+
+> **2 Eki 2026:** Today kenar çubuğundan kaldırıldı (sahip kararı: "Today'e gerek yok"). Recents hiçbir günün Today Work'ünü listelemez ve arayüzde Today'e giden bağlantı kalmadı. Kod (`openTodayWorkAction`, `ensureToday`, günlük özet, `?work=today` takma adı) yerinde duruyor: eski bir bağlantıyla açılan Today yine çalışır. Tümden silinmesi ayrı bir iş.
 
 - **Deterministik kimlik:** `today_<projectId>_<dayKey>` (`todayWorkId`, `src/lib/works/work.ts`; gün proje saat diliminde). Şema değişmedi; birincil anahtar tekilliği sağlar. Tek yazan `openTodayWorkAction` (`ensureToday`); sayfa GET'te yazmaz, `?work=today` takma adı açıcıyı gösterir. Today Work tamamlanamaz, arşivlenemez, yeniden adlandırılamaz, silinemez (sunucuda reddedilir). Eski günler listeden gizlenir, bağlantıyla erişilir. Kanallar bağlantı gerektiren bağlı kanallardır (Meta Ads dahil; bağlı bir şey varsa `seo` da); hiçbiri yoksa kanalsız başlar.
 - **Canlı kart:** özet (`buildDailyBrief`, `src/lib/works/daily-brief.ts`) saklanmaz, her çizimde gerçek satırlardan (`loadBriefExtras`) hesaplanır; model çağrısı ve ağ çağrısı yoktur. Sayılar yalnızca gerçek satır sayısıdır, uydurma metrik yok.
@@ -175,7 +177,7 @@ Tasarım sırasında sahibine ait çıkan kararlar, önerilen varsayılanla kodl
 | O7 | "Add to calendar" kullanıcı balonu | Görünür, yalnızca kanal etiketiyle | fikir başlığıyla; sessiz SYSTEM satırı |
 | O8 | Marka kuralı sertliği | Birebir terim ve sıkı ön ayarlar engeller (`Add anyway` / `Save anyway`), sezgisel olanlar uyarır; Türkçe ve İngilizce sözlük | yalnızca uyar; daha çok dil |
 | O9 | Facebook / E-posta / Website | Çıkarıldı; Website = master kartta `seo` etiketi | sonra elle yayınlı `facebook.post` |
-| O10 | Çıplak adres ve Today | Çıplak adres en yeni Today olmayan Work'ü açar; Today deterministik kimlikle | çıplak adres Today'i açsın |
+| O10 | Çıplak adres ve Today | Çıplak adres her zaman yeni sohbet açar (boş Work varsa o; en son etkin Work açılmaz); Today deterministik kimlikle ve yalnız `?work=today` ile | çıplak adres Today'i ya da eski bir sohbeti açsın |
 | O11 | Kanal bağlandı teklifi | Kanal başına tek açık Work (yeniden kullan) | her seferinde yeni Work |
 | O12 | Kart kabuğu | Yeni türlerde model metni gizli, yalnızca kart olan mesajlarda eylem çubuğu gizli | tek satır giriş, Copy |
 | O13 | Slot kuralları | Aynı gün 60 dk ilerisi, basış başına 6 hedef, 10:00 / 12:00 / 15:00 / 18:00, Instagram yayın zamanlaması saatleri | başka tolerans, kanal başına sınır, sessiz saatler |

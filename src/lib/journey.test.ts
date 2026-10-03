@@ -5,8 +5,10 @@ import {
   NEXT_STEP_KINDS,
   addDaysKey,
   nextStepHref,
+  planIdOfStep,
   publishesItself,
   selectProductionBatch,
+  type JourneyItem,
   type NextStep,
   type NextStepAction,
 } from "./journey";
@@ -17,6 +19,69 @@ const step = (action: NextStepAction): NextStep => ({
   label: "L",
   title: "T",
   action,
+});
+
+const item = (
+  id: string,
+  planId: string,
+  date: string,
+): JourneyItem => ({
+  id,
+  planId,
+  stage: "IN_REVIEW",
+  publish: "manual",
+  date,
+  title: id,
+});
+
+// A link that opens the chat to run a step must open the chat that holds the
+// plan: the bare project URL starts a new chat, whose own journey is empty.
+describe("planIdOfStep", () => {
+  const items = [
+    item("c1", "planA", "2026-10-05"),
+    item("c2", "planB", "2026-10-20"),
+    item("c3", "planB", "2026-10-22"),
+  ];
+
+  it("is the plan the step names", () => {
+    expect(
+      planIdOfStep(step({ kind: "produce_plan", planId: "planA", count: 2 }), items),
+    ).toBe("planA");
+    expect(
+      planIdOfStep(
+        step({ kind: "approve_plan", planIds: ["planB", "planA"], creativeIds: ["c2"], count: 1 }),
+        items,
+      ),
+    ).toBe("planB");
+  });
+
+  it("is the plan of the pieces the step names", () => {
+    expect(
+      planIdOfStep(step({ kind: "publish_manual", creativeIds: ["c1"] }), items),
+    ).toBe("planA");
+  });
+
+  it("else the plan that ends last (the newest), for steps about the plan as a whole", () => {
+    for (const action of [
+      { kind: "plan_next", afterDate: "2026-10-22" },
+      { kind: "show_results", count: 1 },
+      { kind: "enable_scheduled_publish", count: 2 },
+    ] as const) {
+      expect(planIdOfStep(step(action), items)).toBe("planB");
+    }
+  });
+
+  it("falls back to the first plan when no piece has a day, and to nothing without plans", () => {
+    const undated = [item("c1", "planA", ""), item("c2", "planB", "")];
+    expect(
+      planIdOfStep(step({ kind: "show_results", count: 1 }), undated),
+    ).toBe("planA");
+    expect(planIdOfStep(step({ kind: "show_results", count: 1 }), [])).toBeUndefined();
+    // Named pieces that are not in the snapshot fall through to the newest.
+    expect(
+      planIdOfStep(step({ kind: "publish_manual", creativeIds: ["zzz"] }), items),
+    ).toBe("planB");
+  });
 });
 
 describe("addDaysKey", () => {

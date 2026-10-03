@@ -46,7 +46,6 @@ import { IdeaRepository } from "@/server/repositories/idea.repository";
 import { WorkRepository } from "@/server/repositories/work.repository";
 import { isAgentelseError } from "@/server/security/errors";
 import { loadBrandRules } from "@/server/works/brand-rule-loader";
-import { planOutsideWork } from "@/server/works/channel-gate";
 import {
   loadOccupiedSlots,
   loadSuggestedSlots,
@@ -128,7 +127,6 @@ export type AddMasterChannelResult =
 
 const BUCKET = { bucket: "slots", limit: 30 } as const;
 const NOT_FOUND_MESSAGE = "Card not found.";
-const OUTSIDE_WORK_MESSAGE = copyText("master.channelOutside");
 const TITLE_MAX = 90;
 const REPLY_TITLE_MAX = 60;
 const TOPIC_MAX = 120;
@@ -357,7 +355,6 @@ async function chooseSlots(input: {
   let first: { date: string; time: string } | undefined;
   if (leadSlot) {
     const verdict = validateSlotTargets({
-      workChannels: work.channels,
       targets: [
         {
           channel: lead.channel,
@@ -722,12 +719,7 @@ export async function scheduleMasterAction(
         };
       }
 
-      // 4. Channels must still belong to the Work.
-      if (planOutsideWork(work, included)) {
-        return { ok: false, code: "STATE", message: OUTSIDE_WORK_MESSAGE };
-      }
-
-      // 5. Brand rules over the final items.
+      // 4. Brand rules over the final items.
       const texts = textsOf(card);
       const rules = await loadBrandRules({
         projectId,
@@ -783,7 +775,6 @@ export async function scheduleMasterAction(
         time: chosen.slots[i]?.time ?? "",
       }));
       const verdict = validateSlotTargets({
-        workChannels: work.channels,
         targets: slotTargets,
         ...clockOf(timezone),
       });

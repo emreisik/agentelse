@@ -35,6 +35,10 @@ const getWork = vi.hoisted(() => vi.fn());
 vi.mock("@/server/repositories/work.repository", () => ({
   WorkRepository: { get: getWork },
 }));
+const applyDefaults = vi.hoisted(() => vi.fn());
+vi.mock("@/server/works/channel-defaults", () => ({
+  applyDefaultChannels: applyDefaults,
+}));
 
 const { POST } = await import("./route");
 const { AgentelseError } = await import("@/server/security/errors");
@@ -42,7 +46,7 @@ const { createSseParser } = await import("@/server/chat/sse");
 
 const params = { params: Promise.resolve({ projectId: "proj-1" }) };
 
-function request(fields: Record<string, string | File | File[]>) {
+function request(fields: Record<string, string | string[] | File | File[]>) {
   const formData = new FormData();
   for (const [key, value] of Object.entries(fields)) {
     for (const item of Array.isArray(value) ? value : [value]) {
@@ -65,6 +69,7 @@ beforeEach(() => {
   });
   isRateLimited.mockReturnValue(false);
   worksEnabled.mockReturnValue(false);
+  applyDefaults.mockResolvedValue(true);
 });
 
 describe("POST /api/projects/[projectId]/chat", () => {
@@ -179,18 +184,87 @@ describe("POST /api/projects/[projectId]/chat with Works on", () => {
     expect(foreign.status).toBe(400);
     expect(getWork).toHaveBeenCalledWith("proj-1", "w-x");
 
-    getWork.mockResolvedValue({ id: "w-1", status: "DONE" });
+    getWork.mockResolvedValue({ id: "w-1", status: "DONE", channels: [] });
     const done = await POST(request({ text: "hi", workId: "w-1" }), params);
     expect(done.status).toBe(400);
     expect(runChatAgent).not.toHaveBeenCalled();
   });
 
   it("passes the verified Work id to the agent", async () => {
-    getWork.mockResolvedValue({ id: "w-1", status: "ACTIVE" });
+    getWork.mockResolvedValue({ id: "w-1", status: "ACTIVE", channels: [] });
     const response = await POST(request({ text: "hi", workId: "w-1" }), params);
     await response.text();
     expect(runChatAgent).toHaveBeenCalledWith(
       expect.objectContaining({ workId: "w-1" }),
+    );
+  });
+});
+
+// A chat is free, but its tools default pieces to the connected channels: a
+// message that finds a chat with none has the defaults stored first, before the
+// message becomes a Command (the screen sends nothing about channels).
+describe("POST /api/projects/[projectId]/chat: a chat's default channels", () => {
+  const order = (mock: { mock: { invocationCallOrder: number[] } }) =>
+    mock.mock.invocationCallOrder[0] ?? 0;
+
+  beforeEach(() => {
+    worksEnabled.mockReturnValue(true);
+    getWork.mockResolvedValue({ id: "w-1", status: "ACTIVE", channels: [] });
+    runChatAgent.mockImplementation(async function* () {
+      yield { type: "start", commandId: "cmd-1" };
+      yield { type: "done", status: "ANSWERED" };
+    });
+  });
+
+  it("stores the defaults of a chat that has no channel, before the agent runs", async () => {
+    const response = await POST(request({ text: "plan my week", workId: "w-1" }), params);
+    await response.text();
+    expect(applyDefaults).toHaveBeenCalledTimes(1);
+    expect(applyDefaults).toHaveBeenCalledWith({ projectId: "proj-1", workId: "w-1" });
+    expect(order(applyDefaults)).toBeLessThan(order(runChatAgent));
+  });
+
+  it("stores nothing for a chat that already has channels", async () => {
+    getWork.mockResolvedValue({ id: "w-1", status: "ACTIVE", channels: ["tiktok"] });
+    const response = await POST(request({ text: "hi", workId: "w-1" }), params);
+    await response.text();
+    expect(applyDefaults).not.toHaveBeenCalled();
+    expect(runChatAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores nothing for a message that is turned away", async () => {
+    const empty = await POST(request({ text: "  ", workId: "w-1" }), params);
+    expect(empty.status).toBe(400);
+    const manyFiles = await POST(
+      request({
+        text: "hi",
+        workId: "w-1",
+        files: Array.from({ length: 5 }, (_, i) => new File(["x"], `${i}.txt`)),
+      }),
+      params,
+    );
+    expect(manyFiles.status).toBe(400);
+    expect(applyDefaults).not.toHaveBeenCalled();
+    expect(runChatAgent).not.toHaveBeenCalled();
+  });
+
+  it("a failed store does not stop the turn: the pieces fall back to Instagram", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    applyDefaults.mockRejectedValue(new Error("db down"));
+    const response = await POST(request({ text: "hi", workId: "w-1" }), params);
+    const events = createSseParser()(await response.text());
+    expect(events.at(-1)).toMatchObject({ type: "done" });
+    expect(runChatAgent).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalled();
+  });
+
+  it("Works off: nothing is stored", async () => {
+    worksEnabled.mockReturnValue(false);
+    const response = await POST(request({ text: "hi", workId: "w-1" }), params);
+    await response.text();
+    expect(applyDefaults).not.toHaveBeenCalled();
+    expect(runChatAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ workId: undefined }),
     );
   });
 });

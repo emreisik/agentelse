@@ -536,19 +536,23 @@ describe("slot-first: channel and format mapping (W34)", () => {
     },
   );
 
-  it("refuses a picture for a Work without Instagram, also when the platform is defaulted", async () => {
+  it("plans a picture for Instagram whatever the chat's channels are (a chat is not bound to one)", async () => {
     const outcome = await slotFirstImage(
       imageArgs({ platform: undefined }),
       makeCtx({ work: work(["linkedin"]) }),
     );
-    expect(JSON.stringify(outcome.result)).toContain("create_task");
-    expect(writes()).toBe(0);
+    expect(outcome.result).toMatchObject({
+      outcome: "image_ready",
+      slot: { channel: "Instagram" },
+    });
+  });
 
-    const noInstagram = await slotFirstImage(
-      imageArgs({ platform: "INSTAGRAM" }),
-      makeCtx({ work: work(["seo"]) }),
+  it("refuses a picture for another platform and points to create_task", async () => {
+    const outcome = await slotFirstImage(
+      imageArgs({ platform: "LINKEDIN" }),
+      makeCtx({ work: work(["instagram"]) }),
     );
-    expect(JSON.stringify(noInstagram.result)).toContain("create_task");
+    expect(JSON.stringify(outcome.result)).toContain("create_task");
     expect(writes()).toBe(0);
   });
 
@@ -638,24 +642,6 @@ describe("slot-first: channel and format mapping (W34)", () => {
         note: "An Instagram caption belongs to its visual: use generate_image.",
       });
     }
-    const instagramOnly = await slotFirstText(
-      textArgs({ platform: undefined }),
-      makeCtx({ work: work(["instagram"]) }),
-    );
-    expect(instagramOnly.result).toMatchObject({
-      note: "An Instagram caption belongs to its visual: use generate_image.",
-    });
-    expect(writes()).toBe(0);
-  });
-
-  it("refuses a text platform the Work does not target", async () => {
-    const outcome = await slotFirstText(
-      textArgs({ platform: "X" }),
-      makeCtx({ work: work(["linkedin"]) }),
-    );
-    expect(outcome.result).toMatchObject({
-      error: "This Work does not target X.",
-    });
     expect(writes()).toBe(0);
   });
 

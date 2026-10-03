@@ -24,8 +24,12 @@ import {
   type ChannelKey,
 } from "@/lib/content-channels";
 import { CREATIVE_STATUS, SOCIAL_PLATFORM } from "@/lib/labels";
-import { nextStepHref, type NextStep } from "@/lib/journey";
-import { loadNextSteps } from "@/server/agency/journey/snapshot";
+import type { NextStep } from "@/lib/journey";
+import { NextStepBanner } from "@/components/commands/next-step-banner";
+import { computeNextSteps } from "@/server/agency/journey/next-steps";
+import { loadJourneySnapshot } from "@/server/agency/journey/snapshot";
+import { workIdOfStep } from "@/server/agency/journey/step-work";
+import { isWorksEnabled } from "@/server/works/flag";
 import {
   dayKeyInTimezone,
   utcToZonedDateTimeLocal,
@@ -238,14 +242,21 @@ export default async function ContentCalendarPage({
       channel: channelParam,
     });
 
-  const [allCreatives, nextSteps] = await Promise.all([
+  const [allCreatives, snapshot] = await Promise.all([
     CreativeRepository.listForCalendarRange(projectId, {
       from: grid.rangeFrom,
       to: grid.rangeTo,
     }) as Promise<CalendarCreative[]>,
     // What to do next on the content plan (the same answer the chat bar gives).
-    loadNextSteps(projectId),
+    loadJourneySnapshot(projectId),
   ]);
+  const nextSteps = snapshot ? computeNextSteps(snapshot) : [];
+  // With Works on, the banner opens the chat that holds the plan: the bare
+  // project URL would start a new chat, where the step runs nothing.
+  const bannerWorkId =
+    snapshot && nextSteps[0] && isWorksEnabled()
+      ? await workIdOfStep(projectId, snapshot, nextSteps[0])
+      : undefined;
 
   // Channel filter chips: only the channels that have something in view, in
   // catalog order. Creatives made outside a plan carry no channel and show
@@ -344,7 +355,11 @@ export default async function ContentCalendarPage({
         </div>
 
         {nextSteps[0] ? (
-          <NextStepBanner projectId={projectId} step={nextSteps[0]} />
+          <NextStepBanner
+            projectId={projectId}
+            step={nextSteps[0]}
+            workId={bannerWorkId}
+          />
         ) : null}
 
         {channelCounts.size > 0 ? (
@@ -452,42 +467,6 @@ function creativeHref(
     channel: channelParam,
     creative: creativeId,
   });
-}
-
-// The one thing to do next on the plan, with the button that does it (the chat
-// runs the steps that need it). Same source as the chat's "next step" bar.
-function NextStepBanner({
-  projectId,
-  step,
-}: {
-  projectId: string;
-  step: NextStep;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3",
-        step.tone === "blocker" ? "border-destructive/40" : "border-border",
-      )}
-    >
-      <p className="flex min-w-0 items-center gap-2 text-sm">
-        <span
-          aria-hidden
-          className={cn(
-            "size-2 shrink-0 rounded-full",
-            step.tone === "blocker" ? "bg-destructive" : "bg-success",
-          )}
-        />
-        <span className="min-w-0">{step.title}</span>
-      </p>
-      <Link
-        href={nextStepHref(projectId, step)}
-        className={buttonVariants({ size: "sm" })}
-      >
-        {step.label}
-      </Link>
-    </div>
-  );
 }
 
 function ChannelFilterChip({

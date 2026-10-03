@@ -37,16 +37,17 @@ function render(
     status: "ACTIVE" | "DONE";
     isToday: boolean;
     staleDay: boolean;
+    untouched: boolean;
   }>,
 ) {
   return renderToStaticMarkup(
     createElement(WorkHeaderView, {
       title: "Spring launch",
       status: over.status ?? "ACTIVE",
-      channelsText: "Instagram and X",
       working: over.working ?? false,
       isToday: over.isToday,
       staleDay: over.staleDay,
+      untouched: over.untouched,
       openTodayHref: "/projects/p1?work=today",
       onJumpToBrief: noop,
       editing: false,
@@ -56,7 +57,6 @@ function render(
       onStartEdit: noop,
       onSaveEdit: noop,
       onCancelEdit: noop,
-      onChangeChannels: noop,
       onComplete: noop,
       onReopen: noop,
       onArchive: noop,
@@ -68,7 +68,7 @@ function render(
 describe("WorkHeaderView", () => {
   it("shows the channels text and an empty live region when idle", () => {
     const html = render({});
-    expect(html).toContain("Instagram and X");
+    expect(html).toContain(WORK_HEADER_COPY.active);
     expect(html).toContain('<span role="status" class="sr-only"></span>');
     expect(html).not.toContain(WORK_HEADER_COPY.working);
     expect(html).toContain(WORK_HEADER_COPY.complete);
@@ -80,7 +80,7 @@ describe("WorkHeaderView", () => {
       `<span role="status" class="sr-only">${WORK_HEADER_COPY.working}</span>`,
     );
     expect(html).toContain("motion-reduce:animate-none");
-    expect(html).not.toContain("Instagram and X");
+    expect(html).not.toContain(WORK_HEADER_COPY.active);
   });
 
   it("does not show the working line on a completed Work", () => {
@@ -91,17 +91,62 @@ describe("WorkHeaderView", () => {
     expect(html).toContain(WORK_HEADER_COPY.reopen);
   });
 
-  it("keeps the copy for the menu, dialog and delete confirm", () => {
-    expect(WORK_HEADER_COPY.changeChannels).toBe("Change channels");
-    expect(WORK_HEADER_COPY.channelsDialogTitle).toBe("Channels for this Work");
-    expect(WORK_HEADER_COPY.channelsDialogNote).toBe(
-      "Pieces you already made stay where they are.",
-    );
-    expect(WORK_HEADER_COPY.channelsSaved).toBe("Channels updated.");
+  it("keeps the copy for the delete confirm", () => {
     expect(WORK_HEADER_COPY.deleteConfirm).toBe(
       "Delete this Work and its conversation? Pieces already made stay in your library.",
     );
     expect(WORK_HEADER_COPY.deleteConfirm).not.toMatch(/plans/i);
+  });
+});
+
+// A new chat nobody has written in has nothing to complete, rename, archive or
+// delete: the bar shows only the title and the status line (ChatGPT's new chat).
+describe("WorkHeaderView of a new (untouched) chat", () => {
+  // The menu is rendered inline in this file (its trigger is a passthrough that
+  // drops the aria-label), so it is detected by its items and by its icon.
+  const MENU_ITEMS = [
+    WORK_HEADER_COPY.rename,
+    WORK_HEADER_COPY.archive,
+    WORK_HEADER_COPY.delete,
+  ];
+
+  it("shows the title and the status line, and none of the actions", () => {
+    const html = render({ untouched: true });
+    expect(html).toContain("Spring launch");
+    expect(html).toContain(WORK_HEADER_COPY.active);
+    for (const action of [
+      WORK_HEADER_COPY.complete,
+      WORK_HEADER_COPY.reopen,
+      ...MENU_ITEMS,
+    ]) {
+      expect(html).not.toContain(action);
+    }
+    // No button, and no icon: neither Complete's check nor the menu's dots.
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("<svg");
+  });
+
+  it("has the actions back once it is used", () => {
+    for (const untouched of [false, undefined]) {
+      const html = render({ untouched });
+      expect(html).toContain(WORK_HEADER_COPY.complete);
+      for (const item of MENU_ITEMS) expect(html).toContain(item);
+      expect(html).toContain("<svg");
+    }
+  });
+
+  it("never hides the actions of a completed or a Today Work, whatever the flag says", () => {
+    const done = render({ untouched: true, status: "DONE" });
+    expect(done).toContain(WORK_HEADER_COPY.reopen);
+    for (const item of MENU_ITEMS) expect(done).toContain(item);
+
+    const today = render({ untouched: true, isToday: true });
+    expect(today).toContain("Today&#x27;s brief");
+  });
+
+  it("still shows what the agent is doing on it", () => {
+    const html = render({ untouched: true, working: true });
+    expect(html).toContain(WORK_HEADER_COPY.working);
   });
 });
 
@@ -117,12 +162,12 @@ describe("WorkHeaderView of a Today Work", () => {
     expect(html).not.toContain("Open today");
   });
 
-  it("hides Rename, Archive and Delete in the menu but keeps Change channels", () => {
+  it("has no Rename, Archive or Delete menu at all", () => {
     const html = render({ isToday: true });
     expect(html).not.toContain(WORK_HEADER_COPY.rename);
     expect(html).not.toContain(WORK_HEADER_COPY.archive);
     expect(html).not.toContain(WORK_HEADER_COPY.delete);
-    expect(html).toContain(WORK_HEADER_COPY.changeChannels);
+    expect(html).not.toContain(WORK_HEADER_COPY.menuAria);
   });
 
   it("never offers Reopen or Complete on a stale Today Work, only the way to today", () => {
@@ -139,7 +184,6 @@ describe("WorkHeaderView of a Today Work", () => {
     expect(html).toContain(WORK_HEADER_COPY.complete);
     for (const item of [
       WORK_HEADER_COPY.rename,
-      WORK_HEADER_COPY.changeChannels,
       WORK_HEADER_COPY.archive,
       WORK_HEADER_COPY.delete,
     ]) {

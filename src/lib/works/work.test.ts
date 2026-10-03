@@ -5,6 +5,7 @@ import {
   channelsWithoutWork,
   channelOptions,
   gateWorkChannels,
+  isDefaultWorkTitle,
   parseChannelKeys,
   isTodayWork,
   primaryPlatformOf,
@@ -12,6 +13,7 @@ import {
   todayDayKeyOf,
   todayWorkId,
   todayWorkTitle,
+  withWorkParam,
   workSummaryFrom,
   workTitleFrom,
 } from "./work";
@@ -43,7 +45,20 @@ describe("workTitleFrom", () => {
     expect(title).not.toMatch(/\s…$/);
   });
   it("never returns an empty title", () => {
-    expect(workTitleFrom("   ")).toBe("New Work");
+    expect(workTitleFrom("   ")).toBe("New Chat");
+  });
+});
+
+describe("isDefaultWorkTitle", () => {
+  it("knows the current untitled title and the one from before the rename", () => {
+    expect(isDefaultWorkTitle("New Chat")).toBe(true);
+    expect(isDefaultWorkTitle("New Work")).toBe(true);
+  });
+  it("anything else is a real title, exactly as typed", () => {
+    expect(isDefaultWorkTitle("Weekly plan")).toBe(false);
+    expect(isDefaultWorkTitle("new chat")).toBe(false);
+    expect(isDefaultWorkTitle(" New Chat")).toBe(false);
+    expect(isDefaultWorkTitle("")).toBe(false);
   });
 });
 
@@ -208,5 +223,21 @@ describe("channelsWithoutWork", () => {
       works.map((w) => ({ ...w, title: "t" })),
     ).open;
     expect(channelsWithoutWork(conn, works)).toEqual(offers);
+  });
+});
+
+describe("withWorkParam", () => {
+  it("adds the chat to an address that has a query, or starts one", () => {
+    expect(withWorkParam("/projects/p1?panel=brand-brain", "w1")).toBe(
+      "/projects/p1?panel=brand-brain&work=w1",
+    );
+    expect(withWorkParam("/projects/p1", "w1")).toBe("/projects/p1?work=w1");
+  });
+
+  it("encodes the id and ignores a missing or blank one", () => {
+    expect(withWorkParam("/projects/p1", "a b&c")).toBe("/projects/p1?work=a%20b%26c");
+    for (const id of [undefined, null, "", "   "]) {
+      expect(withWorkParam("/projects/p1?panel=x", id)).toBe("/projects/p1?panel=x");
+    }
   });
 });

@@ -13,7 +13,17 @@ const store = vi.hoisted(() => ({
 
 function matches(row: Row, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([key, value]) => {
-    if (key === "NOT") return !matches(row, value as Record<string, unknown>);
+    if (key === "AND") {
+      return (value as Record<string, unknown>[]).every((part) => matches(row, part));
+    }
+    if (key === "NOT") {
+      const parts = (Array.isArray(value) ? value : [value]) as Record<string, unknown>[];
+      return parts.every((part) => !matches(row, part));
+    }
+    if (key === "commands") {
+      const has = store.commands.some((c) => c.workId === row.id);
+      return (value as { none?: object }).none ? !has : has;
+    }
     if (key === "id" && value && typeof value === "object") {
       const { startsWith, lt } = value as { startsWith?: string; lt?: string };
       return (
@@ -23,6 +33,16 @@ function matches(row: Row, where: Record<string, unknown>): boolean {
     }
     if (key === "status" && value && typeof value === "object") {
       return row.status !== (value as { not: unknown }).not;
+    }
+    if (value && typeof value === "object" && "equals" in value) {
+      // A Json column compared with a value.
+      return (
+        JSON.stringify(row[key]) ===
+        JSON.stringify((value as { equals: unknown }).equals)
+      );
+    }
+    if (value && typeof value === "object" && "in" in value) {
+      return (value as { in: unknown[] }).in.includes(row[key]);
     }
     return row[key] === value;
   });
@@ -59,6 +79,8 @@ vi.mock("@/lib/prisma", () => {
       store.works.find((r) => matches(r, where)) ?? null,
     findMany: async ({ where }: { where: Record<string, unknown> }) =>
       store.works.filter((r) => matches(r, where)),
+    count: async ({ where }: { where: Record<string, unknown> }) =>
+      store.works.filter((r) => matches(r, where)).length,
     updateMany: async ({
       where,
       data,
@@ -141,7 +163,7 @@ describe("WorkRepository", () => {
       projectId: "p1",
       channels: ["instagram"],
     });
-    expect(work.title).toBe("New Work");
+    expect(work.title).toBe("New Chat");
     expect(work.channels).toEqual(["instagram"]);
     expect(work.status).toBe("ACTIVE");
   });
@@ -152,7 +174,16 @@ describe("WorkRepository", () => {
     expect(await WorkRepository.rename("p2", work.id, "x")).toBe(false);
     expect(await WorkRepository.setStatus("p2", work.id, "DONE")).toBe(false);
     expect(await WorkRepository.remove("p2", work.id)).toBe(false);
-    expect((await WorkRepository.get("p1", work.id))?.title).toBe("New Work");
+    expect((await WorkRepository.get("p1", work.id))?.title).toBe("New Chat");
+  });
+
+  it("an untitled Work from before the rename reads as New Chat, a real title as stored", async () => {
+    const legacy = await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "New Work" });
+    const named = await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "Autumn push" });
+    expect((await WorkRepository.get("p1", legacy.id))?.title).toBe("New Chat");
+    expect((await WorkRepository.get("p1", named.id))?.title).toBe("Autumn push");
+    // Only the screen reads it differently: the stored row is left as it was.
+    expect(store.works.find((r) => r.id === legacy.id)?.title).toBe("New Work");
   });
 
   it("lists recent works without the archived ones", async () => {
@@ -161,6 +192,40 @@ describe("WorkRepository", () => {
     await WorkRepository.setStatus("p1", a.id, "ARCHIVED");
     const list = await WorkRepository.listRecent("p1");
     expect(list.map((w) => w.title)).toEqual(["B"]);
+  });
+
+  it("recents: a chat joins with its first message; the blank one is not listed", async () => {
+    const blank = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+    const legacyBlank = await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "New Work" });
+    expect(await WorkRepository.recents("p1")).toEqual([]);
+    store.commands.push({ id: "c1", projectId: "p1", workId: blank.id });
+    expect((await WorkRepository.recents("p1")).map((w) => w.id)).toEqual([blank.id]);
+    expect((await WorkRepository.recents("p1")).map((w) => w.id)).not.toContain(legacyBlank.id);
+  });
+
+  it("recents lists an empty chat the person renamed or completed (they kept it on purpose)", async () => {
+    const renamed = await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "Ideas for May" });
+    const done = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+    await WorkRepository.setStatus("p1", done.id, "DONE");
+    const archived = await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "Old" });
+    await WorkRepository.setStatus("p1", archived.id, "ARCHIVED");
+    expect((await WorkRepository.recents("p1")).map((w) => w.id).sort()).toEqual([renamed.id, done.id].sort());
+  });
+
+  it("isUntouched: only an ACTIVE, untitled Work with no chat row of this project, never Today", async () => {
+    const blank = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+    const legacy = await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "New Work" });
+    const renamed = await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "Ideas" });
+    const done = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+    await WorkRepository.setStatus("p1", done.id, "DONE");
+    expect(await WorkRepository.isUntouched("p1", blank.id)).toBe(true);
+    expect(await WorkRepository.isUntouched("p1", legacy.id)).toBe(true);
+    expect(await WorkRepository.isUntouched("p1", renamed.id)).toBe(false);
+    expect(await WorkRepository.isUntouched("p1", done.id)).toBe(false);
+    expect(await WorkRepository.isUntouched("p2", blank.id)).toBe(false);
+    expect(await WorkRepository.isUntouched("p1", "missing")).toBe(false);
+    store.commands.push({ id: "c1", projectId: "p1", workId: blank.id });
+    expect(await WorkRepository.isUntouched("p1", blank.id)).toBe(false);
   });
 
   it("touch sets the title only while it is still the default", async () => {
@@ -178,12 +243,50 @@ describe("WorkRepository", () => {
     expect(got?.summary).toBe("second");
   });
 
+  it("touch also titles an untitled Work from before the rename", async () => {
+    const work = await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "New Work" });
+    await WorkRepository.touch("p1", work.id, { titleIfDefault: "Weekly plan" });
+    expect((await WorkRepository.get("p1", work.id))?.title).toBe("Weekly plan");
+  });
+
   it("setChannels stores the choice and the acknowledged-unconnected subset", async () => {
     const work = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
     await WorkRepository.setChannels("p1", work.id, ["instagram", "x"], ["x"]);
     const got = await WorkRepository.get("p1", work.id);
     expect(got?.channels).toEqual(["instagram", "x"]);
     expect(got?.acknowledgedUnconnected).toEqual(["x"]);
+  });
+
+  it("setInitialChannels stores a new chat's channels, once: a stored choice is never overwritten", async () => {
+    const blank = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+    expect(
+      await WorkRepository.setInitialChannels("p1", blank.id, ["instagram", "x"], ["x"]),
+    ).toBe(true);
+    const got = await WorkRepository.get("p1", blank.id);
+    expect(got?.channels).toEqual(["instagram", "x"]);
+    expect(got?.acknowledgedUnconnected).toEqual(["x"]);
+    // A card or another tab got there first.
+    expect(await WorkRepository.setInitialChannels("p1", blank.id, ["linkedin"], [])).toBe(false);
+    expect((await WorkRepository.get("p1", blank.id))?.channels).toEqual(["instagram", "x"]);
+  });
+
+  it("setInitialChannels gives defaults to an ACTIVE Work that has none, used or not; never to a completed or foreign one", async () => {
+    const used = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+    store.commands.push({ id: "c1", projectId: "p1", workId: used.id });
+    const renamed = await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "Ideas" });
+    const done = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+    await WorkRepository.setStatus("p1", done.id, "DONE");
+    const blank = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+    // An older chat that never got channels (it asked for one before chats were free) is given them.
+    for (const id of [used.id, renamed.id]) {
+      expect(await WorkRepository.setInitialChannels("p1", id, ["instagram"], [])).toBe(true);
+      expect((await WorkRepository.get("p1", id))?.channels).toEqual(["instagram"]);
+    }
+    expect(await WorkRepository.setInitialChannels("p1", done.id, ["instagram"], [])).toBe(false);
+    expect((await WorkRepository.get("p1", done.id))?.channels).toEqual([]);
+    expect(await WorkRepository.setInitialChannels("p2", blank.id, ["instagram"], [])).toBe(false);
+    expect(await WorkRepository.setInitialChannels("p1", "missing", ["instagram"], [])).toBe(false);
+    expect((await WorkRepository.get("p1", blank.id))?.channels).toEqual([]);
   });
 
   it("remove deletes the Work and only its own chat rows", async () => {
@@ -285,6 +388,12 @@ describe("WorkRepository", () => {
       }
     });
 
+    it("a Today Work is never the new chat, even untitled and empty", async () => {
+      await WorkRepository.ensureToday(today("2026-10-01"));
+      store.works[0]!.title = "New Chat";
+      expect(await WorkRepository.isUntouched("p1", "today_p1_2026-10-01")).toBe(false);
+    });
+
     it("does not touch another project's Today row", async () => {
       await WorkRepository.ensureToday(today("2026-10-01", { projectId: "p2" }));
       expect(await WorkRepository.findToday("p1", "2026-10-01")).toBeNull();
@@ -293,24 +402,12 @@ describe("WorkRepository", () => {
       );
     });
 
-    it("listRecent hides earlier Today Works and keeps today's", async () => {
+    it("recents never lists a Today Work, of any day; listRecent still has every live one", async () => {
       await WorkRepository.ensureToday(today("2026-09-30"));
       await WorkRepository.ensureToday(today("2026-10-01"));
       await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "Chat" });
-      const hidden = await WorkRepository.listRecent("p1", 12, { todayKey: "2026-10-01" });
-      expect(hidden.map((w) => w.id).sort()).toEqual(["today_p1_2026-10-01", "w3"]);
-      // Default call is unchanged: everything non-archived.
+      expect((await WorkRepository.recents("p1")).map((w) => w.id)).toEqual(["w3"]);
       expect(await WorkRepository.listRecent("p1")).toHaveLength(3);
-    });
-
-    it("latestActive excludes Today Works only on request", async () => {
-      await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "Chat" });
-      await WorkRepository.ensureToday(today("2026-10-01"));
-      const plain = await WorkRepository.latestActive("p1");
-      expect(plain).not.toBeNull();
-      store.works = store.works.filter((r) => r.id.startsWith("today_"));
-      expect(await WorkRepository.latestActive("p1", { excludeToday: true })).toBeNull();
-      expect((await WorkRepository.latestActive("p1"))?.id).toBe("today_p1_2026-10-01");
     });
 
     it("channelCoverage returns id, channels and status of non-archived Works", async () => {

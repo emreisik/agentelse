@@ -29,7 +29,6 @@ import { planCreativeIdOf } from "@/server/execution/plan-creative-link";
 import { ensureProjectActive } from "@/server/projects/activation";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import {
-  outsideChannelsMessage,
   worksProductionGate,
 } from "@/server/works/production-gate";
 
@@ -234,16 +233,13 @@ export async function claimPlanProduction(input: {
           }),
         ]);
 
-        // Only the Work's state is checked here. Slots on a channel the Work
-        // no longer covers (Change channels after the plan was saved) are
-        // skipped below, not a reason to refuse the slots that still fit.
+        // Only the Work's state is checked here: a plan's pieces carry their
+        // own channels (a chat is not bound to one).
         const gate = await worksProductionGate(tx, {
           projectId: input.projectId,
           commandId: input.commandId,
         });
         if (!gate.ok) return { ok: false, message: gate.message };
-        const allowedChannels = gate.allowedChannels;
-        const outsideChannels = new Set<string>();
 
         const tasks: PlanTaskRow[] = taskRows.flatMap((task) => {
           const creativeId = planCreativeIdOf(task.payload);
@@ -258,14 +254,6 @@ export async function claimPlanProduction(input: {
           { production: PlanProduction; row: (typeof creatives)[number] }
         >();
         const journeyItems = creatives.flatMap((creative) => {
-          if (
-            allowedChannels &&
-            creative.channel &&
-            !allowedChannels.includes(creative.channel)
-          ) {
-            outsideChannels.add(creative.channel);
-            return [];
-          }
           const channel = isChannelKey(creative.channel)
             ? creative.channel
             : undefined;
@@ -319,9 +307,7 @@ export async function claimPlanProduction(input: {
             ok: false,
             message: inFlight
               ? "This plan is already being produced."
-              : allowedChannels && outsideChannels.size > 0
-                ? outsideChannelsMessage(allowedChannels, [...outsideChannels])
-                : "There is nothing left to produce in this plan.",
+              : "There is nothing left to produce in this plan.",
           };
         }
 

@@ -28,6 +28,12 @@ vi.mock("@/server/actions/publish-actions", () => ({
   publishCreativeToInstagramAction: vi.fn(),
   publishCreativeToSocialAction: vi.fn(),
 }));
+vi.mock("@/server/actions/facebook-share-actions", () => ({
+  getFacebookShareAction: vi.fn(),
+  shareCreativeToFacebookAction: vi.fn(),
+  editFacebookPostAction: vi.fn(),
+  deleteFacebookPostAction: vi.fn(),
+}));
 vi.mock("@/components/workspace/output-preview-dialog", () => ({
   OutputPreviewDialog: () => null,
 }));

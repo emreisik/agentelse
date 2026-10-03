@@ -24,8 +24,6 @@ export type SlotRuleResult =
       code:
         | "EMPTY"
         | "TOO_MANY"
-        | "NO_CHANNEL"
-        | "OUTSIDE_WORK"
         | "BAD_FORMAT"
         | "BAD_DATE"
         | "BAD_TIME"
@@ -63,21 +61,17 @@ function fail(
 }
 
 export function validateSlotTargets(input: {
-  workChannels: readonly string[];
   targets: readonly SlotTargetInput[];
   today: string;
   nowLocal: string;
 }): SlotRuleResult {
-  const { workChannels, targets, today, nowLocal } = input;
+  const { targets, today, nowLocal } = input;
   if (targets.length === 0) return fail("EMPTY", "Pick at least one channel.");
   if (targets.length > MAX_TARGETS_PER_PRESS) {
     return fail(
       "TOO_MANY",
       `Pick at most ${MAX_TARGETS_PER_PRESS} channels at once.`,
     );
-  }
-  if (workChannels.length === 0) {
-    return fail("NO_CHANNEL", "This work has no channels yet.");
   }
 
   const todayMs = dayMs(today);
@@ -86,8 +80,8 @@ export function validateSlotTargets(input: {
 
   for (let i = 0; i < targets.length; i += 1) {
     const target = targets[i]!;
-    if (!isChannelKey(target.channel) || !workChannels.includes(target.channel)) {
-      return fail("OUTSIDE_WORK", "That channel is not part of this work.", i);
+    if (!isChannelKey(target.channel)) {
+      return fail("BAD_FORMAT", "That channel does not exist.", i);
     }
     if (!resolveFormat(target.channel, target.formatKey)) {
       return fail("BAD_FORMAT", "That format does not exist on this channel.", i);

@@ -104,6 +104,10 @@ export type ThreadComponents = {
   // that brand context is loaded for this turn (see project-chat.tsx's
   // ContextChip). Falls back to nothing (not a fake claim) when unset.
   ContextChip?: ComponentType | undefined;
+  // Suggestion rows under the composer of a new chat (like ChatGPT's), while
+  // its input is empty. Laid out from a zero-height anchor so that they never
+  // move the centred block. Nothing when unset.
+  StartSuggestions?: ComponentType | undefined;
   ToolFallback?: ToolCallMessagePartComponent | undefined;
   ToolGroup?:
     ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>> | undefined;
@@ -152,6 +156,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
     Welcome = ThreadWelcome,
     QuickActions,
     ContextBar,
+    StartSuggestions,
   } = useContext(ThreadComponentsContext);
 
   return (
@@ -178,6 +183,10 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
           what we want. */}
       <ThreadPrimitive.Viewport
         data-slot="aui_thread-viewport"
+        // A new chat opens at the top: following the content to the bottom
+        // would cut the greeting off in a window shorter than the first screen.
+        // Everything else keeps the default (see the note above).
+        autoScroll={isEmpty ? false : undefined}
         className="relative flex flex-1 flex-col overflow-x-auto overflow-y-auto scroll-smooth"
       >
         <div
@@ -216,6 +225,22 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
             >
               ✳ Agentelse automatically uses your brand context.
             </p>
+            {StartSuggestions ? (
+              // The rows hang below the composer from a zero-height anchor:
+              // they do not count in the height of the vertically centred
+              // block, so the greeting and the composer stay where they are
+              // when the rows go (the first keystroke) or change in number (a
+              // channel was added or removed in the composer's menu).
+              <AuiIf condition={isNewChatView}>
+                <div className="relative h-0">
+                  <div className="absolute inset-x-0 top-0">
+                    <AuiIf condition={(s) => s.composer.isEmpty}>
+                      <StartSuggestions />
+                    </AuiIf>
+                  </div>
+                </div>
+              </AuiIf>
+            ) : null}
             <AuiIf condition={(s) => isNewChatView(s) && s.composer.isEmpty}>
               <ThreadSuggestions />
             </AuiIf>
@@ -292,7 +317,7 @@ const ThreadWelcome: FC = () => {
 
 const ThreadSuggestions: FC = () => {
   return (
-    <div className="aui-thread-welcome-suggestions flex w-full flex-wrap items-center justify-center gap-2 px-4">
+    <div className="aui-thread-welcome-suggestions flex w-full flex-wrap items-center justify-center gap-2 px-4 empty:hidden">
       <ThreadPrimitive.Suggestions>
         {() => <ThreadSuggestionItem />}
       </ThreadPrimitive.Suggestions>
@@ -347,14 +372,16 @@ const Composer: FC = () => {
 };
 
 const ComposerAction: FC = () => {
-  const { ComposerPlusMenu, ContextChip } = useContext(ThreadComponentsContext);
+  const { ComposerPlusMenu, ContextChip } = useContext(
+    ThreadComponentsContext,
+  );
   return (
-    <div className="aui-composer-action-wrapper relative flex items-center justify-between">
-      <div className="flex items-center gap-1.5">
+    <div className="aui-composer-action-wrapper relative flex items-center justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-1.5">
         {ComposerPlusMenu ? <ComposerPlusMenu /> : <ComposerAddAttachment />}
         {ContextChip ? <ContextChip /> : null}
       </div>
-      <div className="flex items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>
             <ComposerPrimitive.Dictate

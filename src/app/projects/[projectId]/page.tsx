@@ -65,11 +65,9 @@ import {
 import { buildWorkHost } from "@/lib/works/host";
 import {
   channelsWithoutWork,
-  gateWorkChannels,
   isTodayWork,
   resolveWorkParam,
   todayDayKeyOf,
-  workChannelsSummary,
   type WorkView,
 } from "@/lib/works/work";
 import { buildDailyBrief } from "@/lib/works/daily-brief";
@@ -191,6 +189,11 @@ export default async function ProjectChatPage({
   const guideRequested = guideRaw === GUIDE_VALUE;
 
   if (panel) {
+    // The chat the panel was opened from (Works only): "Back to chat" returns
+    // to it, because the bare project URL starts a new chat.
+    const fromWork = isWorksEnabled()
+      ? (Array.isArray(sp.work) ? sp.work[0] : sp.work)?.trim() || undefined
+      : undefined;
     return (
       <AppShell projectId={projectId}>
         <PanelShell
@@ -198,6 +201,7 @@ export default async function ProjectChatPage({
           panel={panel}
           sub={sub}
           entity={entity}
+          workId={fromWork}
         />
       </AppShell>
     );
@@ -218,9 +222,10 @@ export default async function ProjectChatPage({
   }
 
   // Works (docs/works.md): the conversation on screen is one Work. `?work=`
-  // names it (`today` is the alias of the day's Today Work), a bare URL opens
-  // the newest non-Today one (falling back to the newest row that is not an
-  // earlier day's Today), and a project with none gets its first opened for it. A stale `?work=` goes back to the bare URL.
+  // names it (`today` is the alias of the day's Today Work). The bare URL, what
+  // opening the project lands on, always starts a new chat: the opener reuses
+  // the project's empty Work when there is one and moves into it. A stale
+  // `?work=` goes back to the bare URL.
   let work: WorkView | null = null;
   let timezone = "Europe/Istanbul";
   let todayKey = "";
@@ -242,14 +247,6 @@ export default async function ProjectChatPage({
       work = await WorkRepository.get(projectId, param.id);
       if (!work) redirect(`/projects/${projectId}`);
     } else {
-      work =
-        (await WorkRepository.latestActive(projectId, {
-          excludeToday: true,
-        })) ??
-        (await WorkRepository.listRecent(projectId, 1, { todayKey }))[0] ??
-        null;
-    }
-    if (!work) {
       return (
         <AppShell projectId={projectId}>
           <NewWorkOpener projectId={projectId} />
@@ -507,7 +504,7 @@ export default async function ProjectChatPage({
         account.key === "meta-ads") &&
       account.state === "connected",
   );
-  const [connections, activity, briefExtras, adsPulse] = work
+  const [connections, activity, briefExtras, adsPulse, untouched] = work
     ? await Promise.all([
         getChannelConnections(projectId).catch((): ChannelConnections => ({})),
         loadWorkActivity(projectId, work.id),
@@ -517,8 +514,10 @@ export default async function ProjectChatPage({
         isToday || work.channels.includes("ads")
           ? loadAdsPulse(projectId)
           : Promise.resolve(null),
+        // Still the new chat: the sidebar marks New Chat (not clickable) for it.
+        WorkRepository.isUntouched(projectId, work.id).catch(() => false),
       ])
-    : [{} as ChannelConnections, { working: false }, null, null];
+    : [{} as ChannelConnections, { working: false }, null, null, false];
   // A pending-decision creative card is the newest card of its piece.
   const decisionCardOf = (d: (typeof workDecisions)[number]) =>
     overlayInputs
@@ -673,19 +672,16 @@ export default async function ProjectChatPage({
       pendingApprovals: decisionTurns.length,
       hasAnalytics,
     });
-    const gate = gateWorkChannels(work.channels, connections);
     workHeader = (
       <WorkHeader
         projectId={projectId}
         workId={work.id}
         title={work.title}
         status={work.status}
-        channelsText={gate.ok ? workChannelsSummary(gate.channels) : ""}
-        channelOptions={workHost.channelOptions}
-        channels={work.channels}
         working={activity.working}
         isToday={isToday}
         staleDay={staleDay}
+        untouched={untouched}
       />
     );
   }
@@ -708,6 +704,7 @@ export default async function ProjectChatPage({
   return (
     <AppShell
       projectId={projectId}
+      openWorkUntouched={untouched}
       rightPanel={
         <WorkspaceRightPanel
           brand={
@@ -726,6 +723,7 @@ export default async function ProjectChatPage({
           calendar={
             <CalendarPanel
               projectId={projectId}
+              workId={work?.id}
               calendar={rightPanelData.calendar}
               selectedItem={
                 selectedCalendarItem

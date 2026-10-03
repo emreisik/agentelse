@@ -33,7 +33,6 @@ import { readLayoutMeta } from "@/server/media/creative-layout";
 import { ensureProjectActive } from "@/server/projects/activation";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { TaskPlanner } from "@/server/commands/task-planner";
-import { defaultPlatformOf } from "@/server/works/channel-gate";
 import { loadSuggestedSlots } from "@/server/works/free-slot-loader";
 import {
   isIdeaEventCardData,
@@ -251,7 +250,6 @@ async function writeSlot(
   const usable =
     first !== undefined &&
     validateSlotTargets({
-      workChannels: work.channels,
       targets: [
         {
           channel: piece.channel,
@@ -457,8 +455,8 @@ export async function slotFirstImage(
   // A picture is planned only for Instagram (review RE-17): Produce and Try
   // again make LinkedIn, X and TikTok formats as TEXT, so an image slot there
   // would silently change shape later.
-  const platform = args.platform ?? defaultPlatformOf(work);
-  if (platform !== "INSTAGRAM" || !work.channels.includes("instagram")) {
+  const platform = args.platform ?? "INSTAGRAM";
+  if (platform !== "INSTAGRAM") {
     return refusal(
       "This Work cannot plan a picture there.",
       NOT_INSTAGRAM_NOTE,
@@ -656,11 +654,9 @@ const INSTAGRAM_TEXT_NOTE =
 
 // The one text format a request lands on, or the reason it cannot.
 function textFormatOf(
-  work: NonNullable<ToolContext["work"]>,
   args: SlotFirstTextArgs,
 ):
   { channel: ChannelKey; formatKey: string } | { error: string; note: string } {
-  const has = (key: ChannelKey) => work.channels.includes(key);
   switch (args.platform) {
     case "INSTAGRAM":
       return {
@@ -668,42 +664,23 @@ function textFormatOf(
         note: INSTAGRAM_TEXT_NOTE,
       };
     case "LINKEDIN":
-      return has("linkedin")
-        ? { channel: "linkedin", formatKey: "linkedin.post" }
-        : outsideWork("LinkedIn");
+      return { channel: "linkedin", formatKey: "linkedin.post" };
     case "X":
-      return has("x")
-        ? { channel: "x", formatKey: "x.post" }
-        : outsideWork("X");
+      return { channel: "x", formatKey: "x.post" };
     case "TIKTOK":
-      return has("tiktok")
-        ? { channel: "tiktok", formatKey: "tiktok.video" }
-        : outsideWork("TikTok");
+      return { channel: "tiktok", formatKey: "tiktok.video" };
     case undefined:
       break;
     default:
       return {
         error: "That platform has no text format in a Work.",
-        note: "Use one of this Work's channels, or tell the client they can add the channel to this Work.",
+        note: "Name one of LinkedIn, X or TikTok, or leave the platform out.",
       };
   }
-  // No platform named: the Work's website or ads channel.
-  if (args.capability === "CREATE_CAMPAIGN_BRIEF" && has("ads")) {
-    return { channel: "ads", formatKey: "ads.campaign" };
-  }
-  if (has("seo")) return { channel: "seo", formatKey: "seo.article" };
-  if (has("ads")) return { channel: "ads", formatKey: "ads.campaign" };
-  return {
-    error: "This Work has no text channel.",
-    note: INSTAGRAM_TEXT_NOTE,
-  };
-}
-
-function outsideWork(label: string): { error: string; note: string } {
-  return {
-    error: `This Work does not target ${label}.`,
-    note: "Use one of this Work's channels, or tell the client they can add the channel to this Work or open a new Work for it. Do not switch channel on your own.",
-  };
+  // No platform named: a campaign brief is an ads piece, any other text an article.
+  return args.capability === "CREATE_CAMPAIGN_BRIEF"
+    ? { channel: "ads", formatKey: "ads.campaign" }
+    : { channel: "seo", formatKey: "seo.article" };
 }
 
 export async function slotFirstText(
@@ -716,7 +693,7 @@ export async function slotFirstText(
   const work = ctx.work;
   if (!work) return refusal("Pieces are planned inside a Work.", "");
 
-  const target = textFormatOf(work, args);
+  const target = textFormatOf(args);
   if ("error" in target) return refusal(target.error, target.note);
   const { channel, formatKey } = target;
   const format = resolveFormat(channel, formatKey);

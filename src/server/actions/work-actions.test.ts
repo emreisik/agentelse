@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+const revalidatePath = vi.hoisted(() => vi.fn());
+vi.mock("next/cache", () => ({ revalidatePath }));
 const enabled = vi.hoisted(() => vi.fn());
 vi.mock("@/server/works/flag", () => ({ isWorksEnabled: enabled }));
 const requireUser = vi.hoisted(() => vi.fn());
@@ -97,7 +98,38 @@ describe("guards (every action)", () => {
   });
 });
 
-describe("createWorkAction (New Work is idempotent)", () => {
+// Opening a project lands in createWorkAction, so it must not run into the
+// 40-per-10-minutes bucket of the destructive actions, and must not re-read the
+// page it is leaving.
+describe("createWorkAction as the landing step of every project open", () => {
+  beforeEach(() => {
+    repo.createOrReuseBlank.mockResolvedValue({ work: { id: "w1" }, reused: false });
+  });
+
+  it("has its own, much larger rate bucket", async () => {
+    await actions.createWorkAction("p1");
+    const [key, limit] = limited.mock.calls[0] as [string, number];
+    expect(key).toBe("work-create:u1");
+    expect(limit).toBeGreaterThanOrEqual(200);
+    // Sharing no bucket with the others (40 per window).
+    await actions.completeWorkAction("p1", "w1");
+    expect(limited.mock.calls[1]?.[0]).toBe("works:u1");
+    expect(limited.mock.calls[1]?.[1]).toBe(40);
+  });
+
+  it("is still refused when its own bucket is spent", async () => {
+    limited.mockReturnValue(true);
+    expect(await actions.createWorkAction("p1")).toMatchObject({ ok: false });
+    expect(repo.createOrReuseBlank).not.toHaveBeenCalled();
+  });
+
+  it("does not revalidate: an empty chat is not in Recents and both callers move to a fresh URL", async () => {
+    await actions.createWorkAction("p1");
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("createWorkAction (New Chat is idempotent)", () => {
   it("opens the blank Work with validated channels and records the unconnected ones", async () => {
     repo.createOrReuseBlank.mockResolvedValue({
       work: { id: "w1" },
@@ -120,27 +152,17 @@ describe("createWorkAction (New Work is idempotent)", () => {
     );
   });
 
-  it("a brand-new row answers exactly as before: no `reused` key at all", async () => {
-    repo.createOrReuseBlank.mockResolvedValue({
-      work: { id: "w1" },
-      reused: false,
-    });
-    expect(await actions.createWorkAction("p1")).toStrictEqual({
-      ok: true,
-      workId: "w1",
-    });
-  });
-
-  it("says `reused: true` when an existing blank Work was opened instead of a new row", async () => {
-    repo.createOrReuseBlank.mockResolvedValue({
-      work: { id: "wBlank" },
-      reused: true,
-    });
-    expect(await actions.createWorkAction("p1")).toStrictEqual({
-      ok: true,
-      workId: "wBlank",
-      reused: true,
-    });
+  it("answers the same whether the chat is new or the project's blank one (nothing to say, like ChatGPT)", async () => {
+    for (const reused of [false, true]) {
+      repo.createOrReuseBlank.mockResolvedValue({
+        work: { id: "w1" },
+        reused,
+      });
+      expect(await actions.createWorkAction("p1")).toStrictEqual({
+        ok: true,
+        workId: "w1",
+      });
+    }
   });
 
   it("never inserts a row itself: the repository decides between new and existing", async () => {
@@ -150,7 +172,7 @@ describe("createWorkAction (New Work is idempotent)", () => {
     expect(repo.createOrReuseBlank).toHaveBeenCalledTimes(2);
   });
 
-  it("a plain New Work tap (no channels) does not read the live connections", async () => {
+  it("a plain New Chat tap (no channels) does not read the live connections", async () => {
     await actions.createWorkAction("p1");
     expect(connections).not.toHaveBeenCalled();
     expect(repo.createOrReuseBlank).toHaveBeenCalledWith(

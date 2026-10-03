@@ -9,14 +9,16 @@ const mocks = vi.hoisted(() => ({
   enabled: false,
   worksOn: false,
   ProjectChat: () => null,
+  CalendarPanel: () => null,
+  PanelShell: () => null,
   getPendingDecisions: vi.fn(),
   loadJourneySnapshot: vi.fn(),
   computeNextSteps: vi.fn(),
   workRepo: {
     get: vi.fn(),
     findToday: vi.fn(),
-    latestActive: vi.fn(),
     listRecent: vi.fn(),
+    isUntouched: vi.fn(),
     channelCoverage: vi.fn(),
   },
   getChannelConnections: vi.fn(),
@@ -53,7 +55,7 @@ vi.mock("@/components/hub-core/hub-core-params", () => ({
   entityHref: () => "/x",
 }));
 vi.mock("@/components/hub-core/panel-shell", () => ({
-  PanelShell: () => null,
+  PanelShell: mocks.PanelShell,
 }));
 vi.mock("@/components/hub-core/project-flow-view", () => ({
   ProjectFlowView: () => null,
@@ -88,7 +90,7 @@ vi.mock("@/components/workspace/outputs-panel", () => ({
   OutputsPanel: () => null,
 }));
 vi.mock("@/components/workspace/calendar-panel", () => ({
-  CalendarPanel: () => null,
+  CalendarPanel: mocks.CalendarPanel,
 }));
 vi.mock("@/components/workspace/files-panel", () => ({
   FilesPanel: () => null,
@@ -143,6 +145,7 @@ vi.mock("@/server/guided-discovery/host", () => ({
 }));
 
 const { default: ProjectChatPage } = await import("./page");
+const { WorkHeader } = await import("@/components/works/work-header");
 
 const HOST = { marker: "host" };
 
@@ -167,6 +170,7 @@ beforeEach(() => {
   mocks.getChannelConnections.mockResolvedValue({});
   mocks.workRepo.channelCoverage.mockResolvedValue([]);
   mocks.workRepo.listRecent.mockResolvedValue([]);
+  mocks.workRepo.isUntouched.mockResolvedValue(false);
   mocks.parseHubParams.mockReturnValue({
     panel: null,
     sub: null,
@@ -215,6 +219,18 @@ describe("project page guided setup wiring", () => {
     expect(chatProps.projectName).toBe("Acme");
   });
 
+  it("a panel opened from a chat gets that chat for its Back to chat link (Works on); off, none", async () => {
+    mocks.parseHubParams.mockReturnValue({ panel: "settings", sub: null, entity: null });
+    mocks.worksOn = true;
+    const on = await renderWorkTree({ panel: "settings", work: "w1" });
+    expect(findPropsOf(on, mocks.PanelShell)?.workId).toBe("w1");
+    const blank = await renderWorkTree({ panel: "settings", work: "  " });
+    expect(findPropsOf(blank, mocks.PanelShell)?.workId).toBeUndefined();
+    mocks.worksOn = false;
+    const off = await renderWorkTree({ panel: "settings", work: "w1" });
+    expect(findPropsOf(off, mocks.PanelShell)?.workId).toBeUndefined();
+  });
+
   it("?guide is ignored with ?panel (the chat is swapped out)", async () => {
     mocks.enabled = true;
     mocks.parseHubParams.mockReturnValue({
@@ -259,6 +275,33 @@ function findChatProps(node: unknown): AnyProps | undefined {
   const element = node as { type?: unknown; props?: AnyProps };
   if (element.type === mocks.ProjectChat) return element.props;
   return findChatProps(element.props?.children);
+}
+
+// Depth-first search of the rendered tree, props included (the right panel is a
+// prop, not a child), for the first element of a (mocked) component.
+function findPropsOf(node: unknown, type: unknown): AnyProps | undefined {
+  if (!node || typeof node !== "object") return undefined;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findPropsOf(child, type);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const element = node as { type?: unknown; props?: AnyProps };
+  if (element.type === type) return element.props;
+  for (const value of Object.values(element.props ?? {})) {
+    const found = findPropsOf(value, type);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+async function renderWorkTree(sp: Record<string, string | string[] | undefined>) {
+  return ProjectChatPage({
+    params: Promise.resolve({ projectId: "p1" }),
+    searchParams: Promise.resolve(sp),
+  });
 }
 
 async function renderWork(sp: Record<string, string | string[] | undefined>) {
@@ -332,21 +375,91 @@ describe("project page Works wave 2", () => {
     expect(mocks.workRepo.findToday).toHaveBeenCalledWith("p1", "2026-10-01");
   });
 
-  it("a bare URL never opens a Today Work", async () => {
-    mocks.workRepo.latestActive.mockResolvedValue(work());
-    await renderWork({});
-    expect(mocks.workRepo.latestActive).toHaveBeenCalledWith("p1", {
-      excludeToday: true,
-    });
+  // Opening the project always starts a new chat: the bare URL shows the opener
+  // (which reuses the project's empty Work or makes one) and never a Work read
+  // from the list, however recent. Writes happen in the opener's server action,
+  // not while this page renders.
+  it("a bare URL starts a new chat: the opener renders, no existing Work is opened", async () => {
+    mocks.workRepo.listRecent.mockResolvedValue([work()]);
+    const { element, chat } = await renderWork({});
+    const opener = (
+      element as { props: { children: { props: AnyProps } } }
+    ).props.children;
+    expect(opener.props).toEqual({ projectId: "p1" });
+    expect(chat).toBeUndefined();
+    expect(mocks.workRepo.get).not.toHaveBeenCalled();
+    expect(mocks.workRepo.findToday).not.toHaveBeenCalled();
+    expect(mocks.workRepo.listRecent).not.toHaveBeenCalled();
+    // Nothing of the conversation is loaded for a page that is about to move on.
+    expect(mocks.prisma.command.findMany).not.toHaveBeenCalled();
   });
 
-  it("a bare URL with no ordinary active Work never falls back to an earlier day's Today", async () => {
-    mocks.workRepo.latestActive.mockResolvedValue(null);
-    mocks.workRepo.listRecent.mockResolvedValue([work()]);
-    await renderWork({});
-    expect(mocks.workRepo.listRecent).toHaveBeenCalledWith("p1", 1, {
-      todayKey: "2026-10-01",
+  it("a blank ?work= is the bare URL too", async () => {
+    const { element } = await renderWork({ work: "  " });
+    const opener = (
+      element as { props: { children: { props: AnyProps } } }
+    ).props.children;
+    expect(opener.props).toEqual({ projectId: "p1" });
+  });
+
+  it("the right panel's calendar is told the open Work, so its links keep it", async () => {
+    mocks.workRepo.get.mockResolvedValue(work());
+    const tree = await renderWorkTree({ work: "w1" });
+    expect(findPropsOf(tree, mocks.CalendarPanel)?.workId).toBe("w1");
+  });
+
+  it("tells the sidebar whether the chat on screen is still the new one", async () => {
+    mocks.workRepo.get.mockResolvedValue(work());
+    mocks.workRepo.isUntouched.mockResolvedValue(true);
+    const fresh = (await renderWorkTree({ work: "w1" })) as { props: AnyProps };
+    expect(fresh.props.openWorkUntouched).toBe(true);
+    expect(mocks.workRepo.isUntouched).toHaveBeenCalledWith("p1", "w1");
+
+    mocks.workRepo.isUntouched.mockResolvedValue(false);
+    const used = (await renderWorkTree({ work: "w1" })) as { props: AnyProps };
+    expect(used.props.openWorkUntouched).toBe(false);
+  });
+
+  it("the Work's bar is told too: a new chat shows no actions, a used one does", async () => {
+    mocks.workRepo.get.mockResolvedValue(work());
+    mocks.workRepo.isUntouched.mockResolvedValue(true);
+    const fresh = await renderWorkTree({ work: "w1" });
+    expect(findPropsOf(fresh, WorkHeader)?.untouched).toBe(true);
+
+    mocks.workRepo.isUntouched.mockResolvedValue(false);
+    const used = await renderWorkTree({ work: "w1" });
+    expect(findPropsOf(used, WorkHeader)?.untouched).toBe(false);
+  });
+
+  it("a new chat starts with the connected channel as its default", async () => {
+    mocks.workRepo.get.mockResolvedValue(work({ channels: [] }));
+    mocks.workRepo.isUntouched.mockResolvedValue(true);
+    mocks.getChannelConnections.mockResolvedValue({
+      instagram: { connected: true },
     });
+    const tree = await renderWorkTree({ work: "w1" });
+    const chat = findPropsOf(tree, mocks.ProjectChat) as {
+      workHost: { defaultChannels: string[]; work: { channels: string[] } };
+    };
+    expect(chat.workHost.defaultChannels).toEqual(["instagram"]);
+    // Nothing is stored yet: the first message stores it.
+    expect(chat.workHost.work.channels).toEqual([]);
+  });
+
+  it("a failed read counts as no new chat (New Chat stays clickable), the page still renders", async () => {
+    mocks.workRepo.get.mockResolvedValue(work());
+    mocks.workRepo.isUntouched.mockRejectedValue(new Error("db down"));
+    const tree = (await renderWorkTree({ work: "w1" })) as { props: AnyProps };
+    expect(tree.props.openWorkUntouched).toBe(false);
+    expect(findPropsOf(tree, mocks.ProjectChat)).toBeDefined();
+  });
+
+  it("without Works the calendar is told no Work", async () => {
+    mocks.worksOn = false;
+    const tree = await renderWorkTree({});
+    const props = findPropsOf(tree, mocks.CalendarPanel);
+    expect(props).toBeDefined();
+    expect(props?.workId).toBeUndefined();
   });
 
   it("a stale ?work= id still goes back to the bare URL", async () => {

@@ -18,6 +18,7 @@ import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
+import { unconnectedOf } from "@/server/works/channel-defaults";
 import { isWorksEnabled } from "@/server/works/flag";
 import { authorizeWorks, guardedAction } from "@/server/works/guard";
 
@@ -41,6 +42,9 @@ const TODAY_REFUSAL =
   "Today's brief can't be completed, archived, renamed or deleted.";
 
 const PER_WINDOW = 40;
+const CREATE_PER_WINDOW = 300;
+// A channel menu is made for quick multi-select: every tick is one store.
+const CHANNELS_PER_WINDOW = 120;
 const WINDOW_MS = 10 * 60_000;
 
 function validId(value: unknown): value is string {
@@ -51,12 +55,14 @@ type Authed = { userId: string; workspaceId: string };
 
 async function authorize(
   projectId: unknown,
+  // Opening a chat has its own, larger bucket: every project open does it.
+  bucket: { name: string; limit: number } = { name: "works", limit: PER_WINDOW },
 ): Promise<WorkActionResult<{ auth: Authed }>> {
   if (!validId(projectId)) return { ok: false, message: MESSAGE.failed };
   if (!isWorksEnabled()) return { ok: false, message: MESSAGE.disabled };
   const { userId } = await requireUser();
   const access = await requireProjectAccess(userId, projectId);
-  if (isRateLimited(`works:${userId}`, PER_WINDOW, WINDOW_MS)) {
+  if (isRateLimited(`${bucket.name}:${userId}`, bucket.limit, WINDOW_MS)) {
     return { ok: false, message: MESSAGE.rate };
   }
   return { ok: true, auth: { userId, workspaceId: access.workspaceId } };
@@ -88,36 +94,27 @@ async function guarded<T>(
   }
 }
 
-// Which of the chosen channels are not connected right now ("I'll connect
-// later"): stored so the screen can tell a deliberate choice from a gap.
-async function unconnectedOf(
-  projectId: string,
-  channels: ChannelKey[],
-): Promise<ChannelKey[]> {
-  const connections: ChannelConnections = await getChannelConnections(
-    projectId,
-  ).catch(() => ({}));
-  return channels.filter(
-    (key) => channelNeedsConnection(key) && !connections[key]?.connected,
-  );
-}
-
-// "New Work". Idempotent: while the project still has a Work nobody has written
-// in (default title, no chat rows), that one is opened instead of making another
-// empty row, and other empty copies are archived. `currentWorkId` is the Work the
-// person is in: when it is the empty one, they stay there. `reused: true` tells
-// the screen so it can say it (it is only present then, so a freshly created
-// Work answers exactly as before).
+// "New Chat" (and opening the project). Idempotent: while the project still
+// has a Work nobody has written in (default title, no chat rows), that one is
+// opened instead of making another empty row, and other empty copies are
+// archived. `currentWorkId` is the Work the person is in: when it is the empty
+// one, they stay there.
 export async function createWorkAction(
   projectId: string,
   channels?: unknown,
   currentWorkId?: unknown,
-): Promise<WorkActionResult<{ workId: string; reused?: true }>> {
+): Promise<WorkActionResult<{ workId: string }>> {
   return guarded("create", async () => {
-    const gate = await authorize(projectId);
+    // Opening a project lands here. The call is idempotent (an empty chat is
+    // reused, not added), so its bucket is far larger than the one that guards
+    // the destructive actions: normal use must never lock someone out of it.
+    const gate = await authorize(projectId, {
+      name: "work-create",
+      limit: CREATE_PER_WINDOW,
+    });
     if (!gate.ok) return gate;
     const chosen = parseChannelKeys(channels);
-    const { work, reused } = await WorkRepository.createOrReuseBlank({
+    const { work } = await WorkRepository.createOrReuseBlank({
       workspaceId: gate.auth.workspaceId,
       projectId,
       createdByUserId: gate.auth.userId,
@@ -128,10 +125,9 @@ export async function createWorkAction(
       acknowledgedUnconnected:
         chosen.length > 0 ? await unconnectedOf(projectId, chosen) : [],
     });
-    refresh(projectId);
-    return reused
-      ? { ok: true, workId: work.id, reused: true }
-      : { ok: true, workId: work.id };
+    // No revalidation: an empty chat is not in Recents, and both callers move
+    // to a freshly rendered URL, so re-reading the page they leave is waste.
+    return { ok: true, workId: work.id };
   });
 }
 
@@ -142,7 +138,12 @@ export async function setWorkChannelsAction(
 ): Promise<WorkActionResult<{ channels: ChannelKey[] }>> {
   return guarded("set-channels", async () => {
     if (!validId(workId)) return { ok: false, message: MESSAGE.failed };
-    const gate = await authorize(projectId);
+    // Its own bucket: ticking channels in the composer's menu must not use up
+    // the one that guards complete / archive / rename / delete.
+    const gate = await authorize(projectId, {
+      name: "work-channels",
+      limit: CHANNELS_PER_WINDOW,
+    });
     if (!gate.ok) return gate;
     const chosen = parseChannelKeys(channels);
     if (chosen.length === 0) {

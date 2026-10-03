@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { isRateLimited } from "@/lib/rate-limit";
 import { runChatAgent } from "@/server/chat/chat-agent";
 import { WorkRepository } from "@/server/repositories/work.repository";
+import { applyDefaultChannels } from "@/server/works/channel-defaults";
 import { isWorksEnabled } from "@/server/works/flag";
 import { storeChatFiles, validateChatFiles } from "@/server/chat/attachments";
 import { encodeSseEvent } from "@/server/chat/sse";
@@ -75,6 +76,8 @@ export async function POST(
   // Works on: every turn belongs to an ACTIVE Work of this project. The id is
   // re-checked here (a form field is not trusted); Works off: no workId at all.
   let workId: string | undefined;
+  // A chat with no channel yet gets its defaults with the message (see below).
+  let needsDefaults = false;
   if (isWorksEnabled()) {
     const field = formData.get("workId");
     const work =
@@ -88,6 +91,7 @@ export async function POST(
       );
     }
     workId = work.id;
+    needsDefaults = work.channels.length === 0;
   }
   const files = formData
     .getAll("files")
@@ -99,6 +103,19 @@ export async function POST(
   const fileError = validateChatFiles(files);
   if (fileError) {
     return NextResponse.json({ error: fileError }, { status: 400 });
+  }
+
+  // A chat is free, but its tools default pieces to the connected channels:
+  // stored BEFORE the message becomes a Command so this very turn sees them
+  // (conditional: never over channels stored meanwhile). A failure only means
+  // the pieces fall back to Instagram.
+  if (workId && needsDefaults) {
+    await applyDefaultChannels({ projectId, workId }).catch((error) => {
+      console.error(
+        "[chat-route] storing the chat's default channels failed:",
+        error instanceof Error ? error.message : error,
+      );
+    });
   }
 
   const { attachments, attachmentBodies } = await storeChatFiles(files, {

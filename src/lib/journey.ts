@@ -177,7 +177,7 @@ export function nextStepHref(
   projectId: string,
   step: NextStep,
   // A step that belongs to one Work carries its id, so the chat opens that
-  // Work (not the most recently active one, whose steps may not hold it) and
+  // Work (the bare project URL starts a new chat, whose steps are empty) and
   // the integrations page can offer the way back.
   options?: { workId?: string },
 ): string {
@@ -195,6 +195,29 @@ export function nextStepHref(
         ? `/projects/${projectId}?work=${encodeURIComponent(workId)}&next=${action.kind}`
         : `/projects/${projectId}?next=${action.kind}`;
   }
+}
+
+// The plan a next step is about, so a link to it can open the Work that holds
+// that plan (the bare project URL starts a new chat, whose own journey is empty
+// and would run nothing). The plan the step names; else the plan of the pieces
+// it names; else the plan that ends last (the newest). Undefined without plans.
+export function planIdOfStep(
+  step: NextStep,
+  items: readonly JourneyItem[],
+): string | undefined {
+  const action = step.action;
+  if (action.kind === "produce_plan") return action.planId;
+  if (action.kind === "approve_plan" && action.planIds[0]) {
+    return action.planIds[0];
+  }
+  if (action.kind === "publish_manual") {
+    const named = items.find((item) => action.creativeIds.includes(item.id));
+    if (named) return named.planId;
+  }
+  const newest = [...items]
+    .filter((item) => item.date)
+    .sort((a, b) => b.date.localeCompare(a.date))[0];
+  return (newest ?? items[0])?.planId;
 }
 
 export const NEXT_STEP_KINDS: readonly NextStepAction["kind"][] = [

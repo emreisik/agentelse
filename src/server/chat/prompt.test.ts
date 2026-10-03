@@ -236,15 +236,17 @@ describe("buildContextMessage: Work", () => {
     expect(buildContextMessage(base)).not.toContain("This conversation is a Work");
   });
 
-  it("says no channel is chosen yet", () => {
+  it("says the chat is free, with Instagram as the default while it has no channel yet", () => {
     const message = buildContextMessage({
       ...base,
       work: { title: "New Work", channels: [] },
     });
-    expect(message).toContain("NO channel chosen yet");
+    expect(message).toContain("is a free chat: it is not bound to a channel");
+    expect(message).toContain("used when the client names none: Instagram");
+    expect(message).toContain("Never ask which channel the chat is for");
   });
 
-  it("lists the channels with their connection state and forbids switching", () => {
+  it("lists the default channels with their connection state, and any other channel stays allowed", () => {
     const message = buildContextMessage({
       ...base,
       work: {
@@ -255,9 +257,9 @@ describe("buildContextMessage: Work", () => {
         ],
       },
     });
-    expect(message).toContain('Work ("Autumn plan")');
+    expect(message).toContain('("Autumn plan") is a free chat');
     expect(message).toContain("Instagram (connected), LinkedIn (not connected yet)");
-    expect(message).toContain("never switch on your own");
+    expect(message).toContain("Any channel may be used");
     expect(message).toContain("publishing waits");
   });
 });

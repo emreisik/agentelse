@@ -80,6 +80,8 @@ vi.mock("@/components/commands/composer-plus-menu", () => ({
 }));
 vi.mock("@/components/workspace/workspace-panel-toggle", () => ({
   useWorkspacePanelToggle: () => ({ openTab: vi.fn() }),
+  // No workspace pane around this chat.
+  useWorkspaceDetail: () => null,
 }));
 vi.mock("@/components/guide/guided-setup-entry", async (importOriginal) => ({
   ...(await importOriginal<

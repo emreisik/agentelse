@@ -7,6 +7,8 @@ import type { ChannelKey } from "@/lib/content-channels";
 import {
   TODAY_WORK_PREFIX,
   WORK_DEFAULT_TITLE,
+  WORK_DEFAULT_TITLES,
+  isDefaultWorkTitle,
   parseChannelKeys,
   todayWorkId,
   todayWorkTitle,
@@ -37,10 +39,30 @@ const SELECT = {
   lastActivityAt: true,
 } as const;
 
+// A Work nobody has used yet: still ACTIVE, untitled, and with no chat row at
+// all (a chosen channel does not count). The one New Chat reuses instead of
+// adding another, and the one Recents does not list until its first message.
+const UNTOUCHED: Prisma.WorkWhereInput = {
+  status: "ACTIVE",
+  title: { in: [...WORK_DEFAULT_TITLES] },
+  commands: { none: {} },
+};
+
+// A project's untouched Works, Today Works never among them: what New Chat
+// reuses and what the sidebar shows as the new chat.
+function blankOf(projectId: string): Prisma.WorkWhereInput {
+  return {
+    projectId,
+    ...UNTOUCHED,
+    NOT: { id: { startsWith: TODAY_WORK_PREFIX } },
+  };
+}
+
 export function toWorkView(row: WorkRow): WorkView {
   return {
     id: row.id,
-    title: row.title,
+    // An untitled Work from before the rename reads like a new one.
+    title: isDefaultWorkTitle(row.title) ? WORK_DEFAULT_TITLE : row.title,
     summary: row.summary,
     status: row.status,
     channels: parseChannelKeys(row.channels),
@@ -72,12 +94,13 @@ export const WorkRepository = {
     return toWorkView(row);
   },
 
-  // "New Work", made idempotent: a project needs at most ONE Work that nobody has
-  // written in yet, so a second tap, a second tab, or the first-Work opener gets
-  // that one back instead of another empty "New Work" row.
+  // "New Chat", made idempotent: a project needs at most ONE Work that nobody has
+  // written in yet, so a second tap, a second tab, or opening the project (the
+  // bare URL always starts a new chat) gets that one back instead of another
+  // empty row.
   //
-  // Blank means: ACTIVE, not a Today Work, still titled WORK_DEFAULT_TITLE (the
-  // first message renames it, and so does the person) and no chat row at all.
+  // Blank means: ACTIVE, not a Today Work, still untitled (WORK_DEFAULT_TITLES:
+  // the first message renames it, and so does the person) and no chat row at all.
   // Which blank Work: the one the person is in (`currentWorkId`, when it is
   // blank), else the most recently active one. Any OTHER blank Work of the
   // project (empty copies piled up before this rule) is archived, not deleted:
@@ -98,13 +121,7 @@ export const WorkRepository = {
     return prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.projectId}:blank-work`}))`;
 
-      const blankWhere: Prisma.WorkWhereInput = {
-        projectId: input.projectId,
-        status: "ACTIVE",
-        title: WORK_DEFAULT_TITLE,
-        NOT: { id: { startsWith: TODAY_WORK_PREFIX } },
-        commands: { none: {} },
-      };
+      const blankWhere = blankOf(input.projectId);
 
       const current = input.currentWorkId
         ? await tx.work.findFirst({
@@ -128,7 +145,7 @@ export const WorkRepository = {
         }));
         // Reopened: it moves to the top of the list like any Work just used. Only
         // explicitly requested channels replace what it has; none keeps its own.
-        // Conditional on it STILL being blank: the lock only serialises New Work
+        // Conditional on it STILL being blank: the lock only serialises New Chat
         // taps, so a delete or a first message from another tab can land between
         // the read and this write. Then it is not reused, and a fresh Work is
         // made below instead of failing the tap.
@@ -170,6 +187,15 @@ export const WorkRepository = {
     });
   },
 
+  // Whether this Work is still the new chat (untouched, by the same rule New
+  // Chat reuses it): the sidebar then marks New Chat, not a Recents row.
+  async isUntouched(projectId: string, workId: string): Promise<boolean> {
+    const count = await prisma.work.count({
+      where: { AND: [blankOf(projectId), { id: workId }] },
+    });
+    return count > 0;
+  },
+
   async get(projectId: string, workId: string): Promise<WorkView | null> {
     const row = await prisma.work.findFirst({
       where: { id: workId, projectId },
@@ -178,29 +204,11 @@ export const WorkRepository = {
     return row ? toWorkView(row) : null;
   },
 
-  // The sidebar list: newest activity first, archived hidden. With todayKey,
-  // earlier days' Today Works are hidden too (today's stays); without options
-  // the query is byte-identical to the slice-1 one.
-  async listRecent(
-    projectId: string,
-    limit = 12,
-    options?: { todayKey?: string },
-  ): Promise<WorkView[]> {
+  // Every live Work, newest activity first, archived hidden (the integrations
+  // page's way back to a Work).
+  async listRecent(projectId: string, limit = 12): Promise<WorkView[]> {
     const rows = await prisma.work.findMany({
-      where: {
-        projectId,
-        status: { not: "ARCHIVED" },
-        ...(options?.todayKey
-          ? {
-              NOT: {
-                id: {
-                  startsWith: `${TODAY_WORK_PREFIX}${projectId}_`,
-                  lt: todayWorkId(projectId, options.todayKey),
-                },
-              },
-            }
-          : {}),
-      },
+      where: { projectId, status: { not: "ARCHIVED" } },
       orderBy: { lastActivityAt: "desc" },
       take: limit,
       select: SELECT,
@@ -208,24 +216,22 @@ export const WorkRepository = {
     return rows.map(toWorkView);
   },
 
-  // The Work a bare project URL opens: the newest active one. The Today-aware
-  // page passes excludeToday so a bare URL never lands on a Today Work.
-  async latestActive(
-    projectId: string,
-    options?: { excludeToday?: boolean },
-  ): Promise<WorkView | null> {
-    const row = await prisma.work.findFirst({
+  // The sidebar's Recents (docs/works.md), newest activity first. Like ChatGPT
+  // a chat joins it with its first message: the blank one (what New Chat and
+  // opening the project land in) is not listed. Today Works are not either
+  // (Today is not in the sidebar), and archived ones never are.
+  async recents(projectId: string, limit = 50): Promise<WorkView[]> {
+    const rows = await prisma.work.findMany({
       where: {
         projectId,
-        status: "ACTIVE",
-        ...(options?.excludeToday
-          ? { NOT: { id: { startsWith: TODAY_WORK_PREFIX } } }
-          : {}),
+        status: { not: "ARCHIVED" },
+        NOT: [{ id: { startsWith: TODAY_WORK_PREFIX } }, UNTOUCHED],
       },
       orderBy: { lastActivityAt: "desc" },
+      take: limit,
       select: SELECT,
     });
-    return row ? toWorkView(row) : null;
+    return rows.map(toWorkView);
   },
 
   // The deterministic Today Work of a day: created once, and always ACTIVE
@@ -332,6 +338,29 @@ export const WorkRepository = {
     return result.count > 0;
   },
 
+  // The default channels of a chat, stored with a message that finds it with
+  // none (docs/works.md): one conditional write, only for an ACTIVE Work that
+  // has no channel yet, so a channel stored meanwhile (a card, another tab) is
+  // never overwritten. A chat is not bound to a channel: these are defaults.
+  // false = nothing was written.
+  async setInitialChannels(
+    projectId: string,
+    workId: string,
+    channels: ChannelKey[],
+    acknowledgedUnconnected: ChannelKey[],
+  ): Promise<boolean> {
+    const result = await prisma.work.updateMany({
+      where: {
+        id: workId,
+        projectId,
+        status: "ACTIVE",
+        channels: { equals: [] },
+      },
+      data: { channels, acknowledgedUnconnected, lastActivityAt: new Date() },
+    });
+    return result.count > 0;
+  },
+
   // Activity bump: the newest card/message refreshes the subtitle and moves the
   // Work to the top of the list. A still-default title is replaced by the
   // first message's title (only then, so a rename is never overwritten).
@@ -343,7 +372,11 @@ export const WorkRepository = {
     const now = new Date();
     if (patch.titleIfDefault) {
       await prisma.work.updateMany({
-        where: { id: workId, projectId, title: WORK_DEFAULT_TITLE },
+        where: {
+          id: workId,
+          projectId,
+          title: { in: [...WORK_DEFAULT_TITLES] },
+        },
         data: { title: patch.titleIfDefault },
       });
     }

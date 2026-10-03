@@ -6,6 +6,7 @@ import { Layers } from "lucide-react";
 import { CreativeCard } from "@/components/commands/creative-card";
 import { ContentPlanCard } from "@/components/commands/content-plan-card";
 import { WsEventCard } from "@/components/commands/ws-event-card";
+import { FacebookShareRow } from "@/components/integrations/facebook-share-row";
 import { useCardFocus } from "@/components/works/card-focus";
 import { AdsInsightCard } from "@/components/works/ads-insight-card";
 import { CreativePublishLine } from "@/components/works/creative-publish-line";
@@ -15,8 +16,10 @@ import { MasterContentCard } from "@/components/works/master-content-card";
 import { IdeaOptionsCard } from "@/components/works/idea-options-card";
 import { PlanCardExtras } from "@/components/works/plan-card-extras";
 import { PlanOptionsCard } from "@/components/works/plan-options-card";
+import { PaneCard } from "@/components/works/pane-card";
 import { PlannedSlotCard } from "@/components/works/planned-slot-card";
 import type { WorkCardHostValue } from "@/components/works/work-card-host";
+import { compactSpecOf, isSingleSlotPlan } from "@/lib/works/compact-card";
 import { copyText } from "@/lib/works/copy";
 import type { CreativeCardData } from "@/types/creative-card";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
@@ -34,14 +37,24 @@ export const WORKS_ONLY_KINDS: ReadonlySet<string> = new Set([
   "ads-insight",
 ]);
 
-// A plan of one post that came straight from an idea, a brief, a suggestion
-// or slot-first generation is shown as the compact planned-slot card.
-const COMPACT_VIA: ReadonlySet<string> = new Set([
-  "idea",
-  "generate",
-  "suggestion",
-  "brief",
-]);
+// A long card is a compact card in the chat that opens it in the pane on the
+// right (docs/works.md); a short one stays as it is. The wrapper is keyed by the
+// card's Command, not by its kind: a card that changes in place (directions ->
+// plan) keeps it, so an open pane follows the card instead of closing.
+export function inPane(
+  card: IdeaEventCardData,
+  commandId: string | undefined,
+  element: ReactNode,
+): ReactNode {
+  const spec = compactSpecOf(card);
+  if (!spec) return element;
+  const id = commandId ?? spec.title;
+  return (
+    <PaneCard key={`pane-${id}`} cardId={id} spec={spec}>
+      {element}
+    </PaneCard>
+  );
+}
 
 export function renderWorksCard(
   card: IdeaEventCardData,
@@ -49,33 +62,39 @@ export function renderWorksCard(
 ): ReactNode | null {
   switch (card.kind) {
     case "content-plan-options":
-      return (
+      return inPane(
+        card,
+        commandId,
         <PlanOptionsCard
           key={commandId ?? card.title}
           card={card}
           commandId={commandId ?? card.title}
-        />
+        />,
       );
     case "idea-options":
-      return (
+      return inPane(
+        card,
+        commandId,
         <IdeaOptionsCard
           key={commandId ?? card.title}
           card={card}
           commandId={commandId ?? card.title}
-        />
+        />,
       );
     case "master-content":
-      return (
+      return inPane(
+        card,
+        commandId,
         <MasterContentCard
           key={commandId ?? card.title}
           card={card}
           commandId={commandId ?? card.title}
-        />
+        />,
       );
     case "daily-brief":
       return <DailyBriefCard card={card} />;
     case "ads-insight":
-      return <AdsInsightCard card={card} />;
+      return inPane(card, commandId, <AdsInsightCard card={card} />);
     default:
       return null;
   }
@@ -100,7 +119,7 @@ export function WorksPlanCard({
 }) {
   // Called before the branch: hooks cannot be conditional.
   const focusRef = useCardFocus(commandId ?? "");
-  if (card.items.length === 1 && card.via && COMPACT_VIA.has(card.via)) {
+  if (isSingleSlotPlan(card)) {
     return <PlannedSlotCard card={card} commandId={commandId} />;
   }
   return (
@@ -150,6 +169,14 @@ export function WorksCreativeCard({
         <CreativeVariantsStrip card={card} planCommandId={card.planId} />
       ) : null}
       <CreativePublishLine card={card} />
+      {/* A cross-post on the project's Facebook Page; renders nothing when no
+          Page is connected. Only a finished piece can be shared, and only
+          here when the publish line owns publishing: otherwise the card's
+          own share list already carries the Facebook row. */}
+      {card.publishLine &&
+      (card.status === "APPROVED" || card.status === "PUBLISHED") ? (
+        <FacebookShareRow creativeId={card.creativeId} className="mt-2" />
+      ) : null}
     </div>
   );
 }

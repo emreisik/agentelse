@@ -21,7 +21,6 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 import { loadBrandRules } from "@/server/works/brand-rule-loader";
-import { planOutsideWork } from "@/server/works/channel-gate";
 import { isWorksEnabled } from "@/server/works/flag";
 import {
   GUARD_MESSAGE,
@@ -52,7 +51,6 @@ const BodySchema = z.object({
     .optional(),
 });
 
-const OUTSIDE_WORK_MESSAGE = copyText("master.channelOutside");
 
 // Soft refusals are 200 with ok:false: the card shows the message, nothing is
 // wrong with the request itself.
@@ -200,15 +198,6 @@ export async function POST(
   const storedCard = (command.parsedIntent as { card?: unknown } | null)?.card;
   if (!isMasterCard(storedCard) || !isOpenState(storedCard)) {
     return conflict("WRONG_KIND", copyText("kit.failed"));
-  }
-
-  // The channels asked for and the ticked ones must all belong to the Work.
-  const outside = planOutsideWork(work, [
-    ...(askedTargets ?? []),
-    ...storedCard.targets.filter((target) => target.included),
-  ]);
-  if (outside) {
-    return soft("OUTSIDE_WORK", OUTSIDE_WORK_MESSAGE);
   }
 
   // A mock answer must never be written into a real card.

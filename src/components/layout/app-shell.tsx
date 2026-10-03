@@ -10,10 +10,7 @@ import { toolBadgesFrom } from "@/components/hub-core/tool-badges";
 import { getAgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
 import { WorkspacePanelToggleProvider } from "@/components/workspace/workspace-panel-toggle";
 import { SETUP_STAGE, SETUP_STAGE_ORDER_UI } from "@/lib/labels";
-import { getProjectTimezone, todayInTimezone } from "@/server/chat/content-plan";
-import { isTodayWork } from "@/lib/works/work";
-import { WorkRepository } from "@/server/repositories/work.repository";
-import { isWorksEnabled } from "@/server/works/flag";
+import { loadSidebarWorks } from "@/server/works/sidebar-works";
 
 export type ProjectNavBadges = {
   setupPercent: number | null; // null = activated / no setup
@@ -149,9 +146,14 @@ export async function AppShell({
   children,
   projectId,
   rightPanel,
+  openWorkUntouched,
 }: {
   children: React.ReactNode;
   projectId?: string;
+  // Works: the chat on screen is still the new chat (untouched). The sidebar
+  // then marks New Chat, not clickable, instead of guessing from Recents (an
+  // archived or old chat is not in Recents either, and is no new chat).
+  openWorkUntouched?: boolean;
   // Brand Workspace shell (docs/brand-workspace-migration.md §7) — the
   // right panel's data (Brand/Files/Outputs/Calendar) lives outside what
   // this shell already fetches, so it's the caller's job. undefined at
@@ -166,29 +168,9 @@ export async function AppShell({
       projectId ? getAgencyStatusSnapshot(projectId) : Promise.resolve(null),
     ]);
   const sidebarVisible = Boolean(projectId);
-  // Recent Works for the sidebar (docs/works.md). Flag off, or a read that
-  // fails (e.g. the migration is not applied yet): no list, the nav is as before.
-  const sidebarWorksData =
-    projectId && isWorksEnabled()
-      ? await (async () => {
-          const todayKey = todayInTimezone(await getProjectTimezone(projectId));
-          const list = await WorkRepository.listRecent(projectId, 12, {
-            todayKey,
-          });
-          return {
-            todayKey,
-            works: list.map((work) => ({
-              id: work.id,
-              title: work.title,
-              summary: work.summary,
-              status: work.status,
-              isToday: isTodayWork(work),
-            })),
-          };
-        })().catch(() => undefined)
-      : undefined;
-  const sidebarWorks = sidebarWorksData?.works;
-  const sidebarTodayKey = sidebarWorksData?.todayKey;
+  // The sidebar's Recents (docs/works.md); undefined with Works off, or when the
+  // read fails: the nav is then as before.
+  const sidebarWorks = projectId ? await loadSidebarWorks(projectId) : undefined;
 
   // Only the project chat root passes a right panel (pixel spec §15) — it
   // alone gets the panel-toggle context and the header's toggle button.
@@ -262,7 +244,7 @@ export async function AppShell({
             activeProjectId={projectId}
             toolBadges={toolBadgesFrom(projectBadges)}
             works={sidebarWorks}
-            todayKey={sidebarTodayKey}
+            openWorkUntouched={openWorkUntouched}
           />
         </aside>
       ) : null}

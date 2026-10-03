@@ -1,6 +1,7 @@
 "use server";
 
 import { WorkRepository } from "@/server/repositories/work.repository";
+import { isChannelKey } from "@/lib/content-channels";
 import { MAX_TARGETS_PER_PRESS } from "@/lib/works/slot-rules";
 import {
   authorizeWorks,
@@ -46,11 +47,10 @@ export async function suggestSlotsAction(
     if (!work) {
       return { ok: false, code: "NOT_FOUND", message: "That Work no longer exists." };
     }
-    const allowed = new Set<string>(work.channels);
     const wanted = [
       ...new Set(input.channels.filter((c): c is string => typeof c === "string")),
     ]
-      .filter((c) => allowed.has(c))
+      .filter((c) => isChannelKey(c))
       .slice(0, MAX_TARGETS_PER_PRESS);
     const startFrom =
       typeof input.startFrom === "string" && DATE_KEY.test(input.startFrom)

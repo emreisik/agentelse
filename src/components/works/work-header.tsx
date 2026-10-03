@@ -14,17 +14,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ChannelPicker } from "@/components/works/channel-picker";
-import type { ChannelKey } from "@/lib/content-channels";
-import type { ChannelOption, WorkStatusValue } from "@/lib/works/work";
+import type { WorkStatusValue } from "@/lib/works/work";
 import { copyText } from "@/lib/works/copy";
 import { WORK_TITLE_MAX } from "@/lib/works/work";
 import {
@@ -36,17 +27,15 @@ import {
 } from "@/server/actions/work-actions";
 
 // The bar above a Work's conversation: title, status line, Complete / Reopen and
-// the "…" menu (docs/works.md).
+// the "…" menu (docs/works.md). A new chat nobody has written in yet shows only
+// the title and the status line: there is nothing to complete, rename, archive
+// or delete, so the actions appear with its first message.
 
 export const WORK_HEADER_COPY = {
   complete: "Complete",
   reopen: "Reopen",
   menuAria: "Work options",
   rename: "Rename",
-  changeChannels: "Change channels",
-  channelsDialogTitle: "Channels for this Work",
-  channelsDialogNote: "Pieces you already made stay where they are.",
-  channelsSaved: "Channels updated.",
   archive: "Archive",
   delete: "Delete",
   deleteConfirm:
@@ -55,7 +44,7 @@ export const WORK_HEADER_COPY = {
   nameAria: "Work name",
   done: "Completed",
   working: "Agentelse is working on this Work",
-  channelsNone: "No channel chosen yet",
+  active: "Active",
   failed: "That didn't work. Try again.",
 } as const;
 
@@ -65,7 +54,6 @@ export const DAILY_BRIEF_HEADING_ID = "daily-brief";
 export function WorkHeaderView({
   title,
   status,
-  channelsText,
   working,
   editing,
   draft,
@@ -74,19 +62,18 @@ export function WorkHeaderView({
   onStartEdit,
   onSaveEdit,
   onCancelEdit,
-  onChangeChannels,
   onComplete,
   onReopen,
   onArchive,
   onDelete,
   isToday = false,
   staleDay = false,
+  untouched = false,
   openTodayHref,
   onJumpToBrief,
 }: {
   title: string;
   status: WorkStatusValue;
-  channelsText: string;
   working: boolean;
   editing: boolean;
   draft: string;
@@ -95,7 +82,6 @@ export function WorkHeaderView({
   onStartEdit: () => void;
   onSaveEdit: () => void;
   onCancelEdit: () => void;
-  onChangeChannels: () => void;
   onComplete: () => void;
   onReopen: () => void;
   onArchive: () => void;
@@ -104,11 +90,15 @@ export function WorkHeaderView({
   // deleted (the server refuses those too); a stale day links to today.
   isToday?: boolean;
   staleDay?: boolean;
+  // Still the new chat (WorkRepository.isUntouched): no actions yet.
+  untouched?: boolean;
   openTodayHref?: string;
   onJumpToBrief?: () => void;
 }) {
   const done = status === "DONE";
   const showWorking = working && !done;
+  // Never applies to a completed or a Today Work, whatever the flag says.
+  const quiet = untouched && !isToday && !done;
   return (
     <header
       className="flex shrink-0 items-center gap-3 border-b px-4 py-2.5 sm:px-6"
@@ -170,7 +160,7 @@ export function WorkHeaderView({
           ) : done ? (
             WORK_HEADER_COPY.done
           ) : (
-            channelsText
+            WORK_HEADER_COPY.active
           )}
           {isToday && staleDay && openTodayHref ? (
             <Link
@@ -184,7 +174,7 @@ export function WorkHeaderView({
         </p>
       </div>
 
-      {isToday ? (
+      {quiet ? null : isToday ? (
         staleDay ? null : (
           <Button
             type="button"
@@ -221,35 +211,28 @@ export function WorkHeaderView({
         </Button>
       )}
 
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          aria-label={WORK_HEADER_COPY.menuAria}
-          className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-[var(--ws-hover)] focus-visible:ring-2 focus-visible:ring-ring/50"
-        >
-          <MoreHorizontal aria-hidden="true" className="size-4" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-44">
-          {isToday ? null : (
+      {quiet || isToday ? null : (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label={WORK_HEADER_COPY.menuAria}
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-[var(--ws-hover)] focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            <MoreHorizontal aria-hidden="true" className="size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
             <DropdownMenuItem onClick={onStartEdit}>
               {WORK_HEADER_COPY.rename}
             </DropdownMenuItem>
-          )}
-          <DropdownMenuItem className="min-h-11" onClick={onChangeChannels}>
-            {WORK_HEADER_COPY.changeChannels}
-          </DropdownMenuItem>
-          {isToday ? null : (
-            <>
-              <DropdownMenuItem onClick={onArchive}>
-                {WORK_HEADER_COPY.archive}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={onDelete}>
-                {WORK_HEADER_COPY.delete}
-              </DropdownMenuItem>
-            </>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            <DropdownMenuItem onClick={onArchive}>
+              {WORK_HEADER_COPY.archive}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={onDelete}>
+              {WORK_HEADER_COPY.delete}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </header>
   );
 }
@@ -259,29 +242,25 @@ export function WorkHeader({
   workId,
   title,
   status,
-  channelsText,
-  channelOptions,
-  channels,
   working,
   isToday,
   staleDay,
+  untouched,
 }: {
   projectId: string;
   workId: string;
   title: string;
   status: WorkStatusValue;
-  channelsText: string;
-  channelOptions: ChannelOption[];
-  channels: ChannelKey[];
   working: boolean;
   isToday?: boolean;
   staleDay?: boolean;
+  // Still the new chat: the bar shows no actions (see WorkHeaderView).
+  untouched?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(title);
-  const [channelsOpen, setChannelsOpen] = React.useState(false);
 
   const run = React.useCallback(
     (
@@ -302,12 +281,12 @@ export function WorkHeader({
   );
 
   return (
-    <>
     <WorkHeaderView
       title={title}
       working={working}
       isToday={isToday}
       staleDay={staleDay}
+      untouched={untouched}
       openTodayHref={`/projects/${projectId}?work=today`}
       onJumpToBrief={() => {
         const heading = document.getElementById(DAILY_BRIEF_HEADING_ID);
@@ -316,9 +295,7 @@ export function WorkHeader({
         heading.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
         heading.focus({ preventScroll: true });
       }}
-      onChangeChannels={() => setChannelsOpen(true)}
       status={status}
-      channelsText={channelsText || WORK_HEADER_COPY.channelsNone}
       editing={editing}
       draft={draft}
       pending={pending}
@@ -350,28 +327,5 @@ export function WorkHeader({
         );
       }}
     />
-    <Dialog open={channelsOpen} onOpenChange={setChannelsOpen}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>{WORK_HEADER_COPY.channelsDialogTitle}</DialogTitle>
-          <DialogDescription>
-            {WORK_HEADER_COPY.channelsDialogNote}
-          </DialogDescription>
-        </DialogHeader>
-        {/* setWorkChannelsAction already revalidates the page: no refresh here. */}
-        <ChannelPicker
-          projectId={projectId}
-          workId={workId}
-          options={channelOptions}
-          initial={channels}
-          title={WORK_HEADER_COPY.channelsDialogTitle}
-          onSaved={() => {
-            setChannelsOpen(false);
-            toast.success(WORK_HEADER_COPY.channelsSaved);
-          }}
-        />
-      </DialogContent>
-    </Dialog>
-    </>
   );
 }

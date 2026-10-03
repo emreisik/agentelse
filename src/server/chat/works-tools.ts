@@ -44,8 +44,6 @@ import { foldForMatch } from "@/lib/text-fold";
 import { limitNoticeReplyText } from "@/server/commands/limit-notice";
 import { saveIdea } from "@/server/commands/strategic-request";
 import {
-  channelGateOutcome,
-  planOutsideWork,
 } from "@/server/works/channel-gate";
 
 import {
@@ -253,9 +251,6 @@ const proposePlanOptions = defineWorksTool<PlanOptionsArgs>({
     "Show the client 2-3 directions for the plan described by the [Plan brief] line, as one card they pick from (no revise round trip). The server fixes the days, channels and formats (the numbered slots in your context); you write the ideas: each option has a label (2-4 words), an angle (one sentence tied to a concrete fact in the brand profile or memory), optionally a basis (that fact in a few words) and exactly one idea per slot in slot order, each with a concrete topic and a captionIdea (at most 200 characters) in the brand voice and language. The options must differ in angle, not in wording. Obey every negative rule and approved claim. Ends your turn when it succeeds: do not describe the options.",
   schema: PlanOptionsArgsSchema,
   async execute(args, ctx) {
-    // 1. Channel gate.
-    const gate = await channelGateOutcome(ctx);
-    if (gate) return gate;
     const work = ctx.work;
     if (!work) {
       return {
@@ -279,21 +274,7 @@ const proposePlanOptions = defineWorksTool<PlanOptionsArgs>({
       };
     }
 
-    // 3. Only this Work's channels.
-    const outside = planOutsideWork(
-      work,
-      brief.channels.map(({ channel }) => ({ channel })),
-    );
-    if (outside) {
-      return {
-        result: {
-          error: outside,
-          note: "Ask the client to change the plan brief or the Work's channels.",
-        },
-      };
-    }
-
-    // 4. The server fixes the calendar.
+    // 3. The server fixes the calendar.
     const slots = layoutPlanSlots({
       brief,
       today,
@@ -452,9 +433,6 @@ const proposeIdeasTool = defineWorksTool<IdeaOptionsArgs>({
     "Show the client up to 3 content ideas as a card with a Plan it button each. Write ideas from the brand profile, its current focus and what worked (never generic). Pass includeBacklog: true to also show the best ideas already on the client's shortlist. reason is one short sentence on why these ideas. Saves new ideas to the Ideas list (an idea that is already there is reused); nothing is scheduled or produced. Ends your turn when it succeeds.",
   schema: IdeaOptionsArgsSchema,
   async execute(args, ctx) {
-    const gate = await channelGateOutcome(ctx);
-    if (gate) return gate;
-
     // A slot-first piece already owns this turn's stored card; a second card
     // would be streamed and its ideas saved, then lost on reload.
     if (ctx.planOwner === "slots") {
@@ -709,26 +687,10 @@ const proposeMasterContent = defineWorksTool<MasterContentArgs>({
     "Write ONE main message (message, at most 600 characters, brand voice and language) the client can adapt to several channels and put on the calendar. title is a short name; cta an optional call to action; channels only when the client named some (default: all of the Work's channels except ads). Ends your turn when it succeeds.",
   schema: MasterContentArgsSchema,
   async execute(args, ctx) {
-    const gate = await channelGateOutcome(ctx);
-    if (gate) return gate;
     const work = ctx.work;
     if (!work) {
       return {
         result: { error: "A main message only exists inside a Work." },
-      };
-    }
-
-    // Only this Work's channels; adding one is the client's tap.
-    const outside = planOutsideWork(
-      work,
-      (args.channels ?? []).map((channel) => ({ channel })),
-    );
-    if (outside) {
-      return {
-        result: {
-          error: outside,
-          note: "Ask the client to change the Work's channels, or leave channels out.",
-        },
       };
     }
 
@@ -826,15 +788,13 @@ export const WORKS_ONLY_TOOLS: readonly ChatTool[] = [
 
 // Appended to the static descriptions by tools.ts only while a Work exists.
 export const WORKS_DESCRIPTION_SUFFIX: Record<
-  "generate_image" | "create_task" | "propose_content_plan" | "start_plan_brief",
+  "generate_image" | "create_task" | "propose_content_plan",
   string
 > = {
-  start_plan_brief:
-    " In a Work, when the client's reply arrives with a `[Plan brief]` line, call propose_plan_options (not propose_content_plan).",
   generate_image:
     " In a Work the piece is planned first: the tool puts it on the calendar at the next free day and renders it there, so the result is a planned slot, not a loose picture. Pictures are for Instagram only (Post 3:4 = FEED_PORTRAIT, Story 9:16 = STORY); a Reel is planned as a script, there is no square format, and text for LinkedIn, X, TikTok or the website is written with create_task. Report the planned day in one short sentence.",
   create_task:
     " In a Work, copy and briefs for a channel become planned calendar slots (LinkedIn, X, TikTok, Blog/SEO, Ads); an Instagram caption goes with its visual via generate_image. Publishing is not a task: approved pieces are published from their card.",
   propose_content_plan:
-    " In a Work use this for ONE specific plan the client asked for, or to change the plan they already picked; for the first answer to a [Plan brief], and for a change of the directions, use propose_plan_options. It stops your turn: the card shows the plan.",
+    " In a Work (a free chat) this is THE planning tool: call it right away for any plan request (defaults for whatever the client left out: the default channels, 3 posts per week for the next 7 days from tomorrow), and again with the full updated plan to change it. Every item carries its own channel and format. It stops your turn: the card shows the plan.",
 };

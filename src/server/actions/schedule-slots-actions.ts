@@ -305,7 +305,6 @@ export async function scheduleSlotsAction(
         time: target.time,
       }));
       const verdict = validateSlotTargets({
-        workChannels: work.channels,
         targets,
         ...clockOf(timezone),
       });
@@ -581,7 +580,6 @@ export async function moveSlotAction(
     const timezone =
       slot.card.timezone || (await getProjectTimezone(projectId));
     const verdict = validateSlotTargets({
-      workChannels: found.work.channels,
       targets: [{ channel, formatKey, date: to.date, time: to.time }],
       ...clockOf(timezone),
     });

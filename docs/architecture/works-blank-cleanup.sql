@@ -1,15 +1,15 @@
--- Works: birikmiş boş "New Work" kopyalarını arşivleme (SİZİN çalıştıracağınız).
+-- Works: birikmiş boş "New Chat" (eski adıyla "New Work") kopyalarını arşivleme (SİZİN çalıştıracağınız).
 -- Bu dosya bir migration DEĞİLDİR ve prisma/migrations altına konmaz: paylaşımlı
 -- canlı veritabanına otomatik uygulanmasın diye yalnızca dokümandır.
 --
 -- Neden: "New Work" eskiden her tıklamada yeni satır ekliyordu. Artık boş bir Work
 -- varsa o açılıyor ve aynı projedeki diğer boş kopyalar o anda arşivleniyor
--- (docs/works.md), yani bir projede "New Work"e bir kez basmak o projeyi zaten
--- temizler. Bu betik İSTEĞE BAĞLIDIR: tüm projelerdeki eski kopyaları, tek tek
+-- (docs/works.md), yani bir projeyi açmak ya da "New Chat"e bir kez basmak o
+-- projeyi zaten temizler. Bu betik İSTEĞE BAĞLIDIR: tüm projelerdeki eski kopyaları, tek tek
 -- girmeden, bir kerede arşivler. SİLMEZ, ARCHIVED yapar (kenar çubuğundan kalkar,
 -- satır durur; geri almak için aşağıdaki 3. adım).
 --
--- "Boş Work": aktif, Today değil, başlığı hâlâ "New Work" ve HİÇ sohbet satırı yok
+-- "Boş Work": aktif, Today değil, başlığı hâlâ "New Chat" ya da eski "New Work" ve HİÇ sohbet satırı yok
 -- (kodun kullandığı tanımın aynısı: WorkRepository.createOrReuseBlank). İçine bir
 -- şey yazılmış ya da yeniden adlandırılmış Work'lere dokunulmaz. Her projede en son
 -- etkin olan boş Work kalır, diğerleri arşivlenir.
@@ -18,7 +18,7 @@
 SELECT w."projectId", count(*) AS bos_work
 FROM "Work" w
 WHERE w."status" = 'ACTIVE'
-  AND w."title" = 'New Work'
+  AND w."title" IN ('New Chat', 'New Work')
   AND left(w."id", 6) <> 'today_'
   AND NOT EXISTS (SELECT 1 FROM "Command" c WHERE c."workId" = w."id")
 GROUP BY w."projectId"
@@ -39,7 +39,7 @@ ORDER BY bos_work DESC;
 --            ) AS sira
 --     FROM "Work" w
 --     WHERE w."status" = 'ACTIVE'
---       AND w."title" = 'New Work'
+--       AND w."title" IN ('New Chat', 'New Work')
 --       AND left(w."id", 6) <> 'today_'
 --       AND NOT EXISTS (SELECT 1 FROM "Command" c WHERE c."workId" = w."id")
 --   ) ranked

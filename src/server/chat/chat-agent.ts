@@ -144,6 +144,16 @@ export async function* runChatAgent(
     createdByUserId: input.userId,
     attachments: input.attachments,
   });
+  // From this moment the Work is no longer blank: its Recents row shows the
+  // person's own words (and the chat moves to the top) at once, not after the
+  // first-conversation brand scan that can take over a minute. A no-op when the
+  // title is not the default any more or the Work is gone.
+  if (input.workId) {
+    await WorkRepository.touch(input.projectId, input.workId, {
+      // The wizard's machine line is not part of the title.
+      titleIfDefault: workTitleFrom(stripPlanBriefMarker(input.message)),
+    }).catch(() => undefined);
+  }
   yield { type: "start", commandId: command.id };
 
   const replyParts: string[] = [];
@@ -340,13 +350,6 @@ export async function* runChatAgent(
     // another tab): never fall back to the plain tool list for it.
     if (input.workId && !work) {
       throw new AgentelseError("NOT_FOUND", "This Work no longer exists.");
-    }
-    if (work) {
-      // The title and ordering are the user's own words, available at once.
-      await WorkRepository.touch(input.projectId, work.id, {
-        // The wizard's machine line is not part of the title.
-        titleIfDefault: workTitleFrom(stripPlanBriefMarker(input.message)),
-      }).catch(() => undefined);
     }
     const context = await buildContext(input.projectId, input.ideaId, {
       recall: true,

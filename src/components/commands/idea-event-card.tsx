@@ -61,6 +61,7 @@ import {
   WorksCreativeCard,
   WorksFallbackCard,
   WorksPlanCard,
+  inPane,
   renderWorksCard,
 } from "@/components/works/works-card";
 import { GuidedSetupCard } from "@/components/commands/guided-setup-card";
@@ -370,7 +371,11 @@ export function IdeaEventCard({
 
     case "content-plan-draft":
       return host ? (
-        <WorksPlanCard card={card} commandId={commandId} />
+        inPane(
+          card,
+          commandId,
+          <WorksPlanCard card={card} commandId={commandId} />,
+        )
       ) : (
         <ContentPlanCard card={card} commandId={commandId} />
       );
@@ -383,11 +388,23 @@ export function IdeaEventCard({
       // without this a card would inherit another package's ticks when the
       // list shifts under it.
       return (
-        <ContentPackageCard
-          key={commandId ?? card.topic}
-          card={card}
-          commandId={commandId}
-        />
+        host
+          ? inPane(
+              card,
+              commandId,
+              <ContentPackageCard
+                key={commandId ?? card.topic}
+                card={card}
+                commandId={commandId}
+              />,
+            )
+          : (
+              <ContentPackageCard
+                key={commandId ?? card.topic}
+                card={card}
+                commandId={commandId}
+              />
+            )
       );
 
     case "setup-demo-carousel":

@@ -213,47 +213,6 @@ describe("claimPlanProduction Work gate (run-gates)", () => {
     });
   });
 
-  it("refuses a slot channel outside the Work", async () => {
-    isWorksEnabled.mockReturnValue(true);
-    withWork({ status: "ACTIVE", channels: ["linkedin"] });
-    const result = await claimPlanProduction(claimInput);
-    expect(result.ok).toBe(false);
-    expect(tx.command.update).not.toHaveBeenCalled();
-  });
-
-  it("skips the pieces on a channel the Work dropped and still claims the rest", async () => {
-    isWorksEnabled.mockReturnValue(true);
-    setup([
-      slotRow("a", "2026-10-02"),
-      slotRow("b", "2026-10-03", {
-        channel: "linkedin",
-        formatKey: CHANNELS.linkedin.formats[0]!.key,
-        platform: "LINKEDIN",
-      }),
-    ]);
-    tx.command.findUnique.mockImplementation(
-      async (args: { select: Record<string, boolean> }) =>
-        args.select.workId ? { workId: "work-1" } : stored(planCard()),
-    );
-    tx.work.findFirst.mockResolvedValue({
-      status: "ACTIVE",
-      channels: ["instagram"],
-    });
-    const claim = await claimPlanProduction(claimInput);
-    expect(claim.ok).toBe(true);
-    if (!claim.ok) return;
-    expect(claim.slots.map((slot) => slot.id)).toEqual(["a"]);
-  });
-
-  it("names the channels when every piece is outside the Work", async () => {
-    isWorksEnabled.mockReturnValue(true);
-    withWork({ status: "ACTIVE", channels: ["linkedin"] });
-    expect(await claimPlanProduction(claimInput)).toEqual({
-      ok: false,
-      message: "This Work is for LinkedIn; this plan has pieces on instagram.",
-    });
-  });
-
   it("claims when the Work is active and covers the channels", async () => {
     isWorksEnabled.mockReturnValue(true);
     withWork({ status: "ACTIVE", channels: ["instagram"] });

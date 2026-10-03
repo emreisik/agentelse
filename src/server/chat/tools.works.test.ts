@@ -206,12 +206,10 @@ describe("tools-parity: without the works option nothing changes", () => {
 });
 
 describe("start_plan_brief in a Work", () => {
-  it("sends the wizard answer to propose_plan_options; the default text is untouched", () => {
-    const works = worksTool("start_plan_brief").description;
-    expect(works).toContain("call propose_plan_options (not propose_content_plan)");
-    expect(defaultTool("start_plan_brief").description).not.toContain(
-      "propose_plan_options",
-    );
+  it("is hidden: a chat plans straight away, the wizard stays for the default list", () => {
+    const names = toolsForPhase("ACTIVE", { works: true }).map((t) => t.name);
+    expect(names).not.toContain("start_plan_brief");
+    expect(toolsForPhase("ACTIVE").map((t) => t.name)).toContain("start_plan_brief");
   });
 });
 
@@ -232,7 +230,8 @@ describe("the Works tool list", () => {
     const expected = PRE_CHANGE_NAMES.filter(
       (name) =>
         name !== "propose_content_package" &&
-        name !== "generate_ideas_from_opportunities",
+        name !== "generate_ideas_from_opportunities" &&
+        name !== "start_plan_brief",
     );
     expect(names()).toEqual([
       ...expected,
@@ -356,16 +355,6 @@ describe("slot-first branches", () => {
       expect(submit).not.toHaveBeenCalled();
     },
   );
-
-  it("generate_image in a Blog/SEO-only Work goes to slot-first, not the Post/Story question", async () => {
-    slotFirstImage.mockResolvedValue({ result: { error: "x" }, nothingDone: true });
-    const out = await worksTool("generate_image").execute(
-      { imagePrompt: "p", caption: "c", copy: "" } as never,
-      ctx({ work: work(["seo"]) }),
-    );
-    expect(slotFirstImage).toHaveBeenCalledTimes(1);
-    expect((out as { card?: unknown }).card).toBeUndefined();
-  });
 
   it("generate_image in an Instagram Work still asks for the format first", async () => {
     const out = await worksTool("generate_image").execute(

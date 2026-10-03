@@ -213,7 +213,10 @@ export function ChannelPicker({
       selected={selected}
       pending={pending}
       error={error}
-      connectHref={integrationsHref(projectId)}
+      // With the way back to this chat (the integrations page offers it).
+      connectHref={integrationsHref(projectId, undefined, {
+        fromWorkId: workId,
+      })}
       onToggle={onToggle}
       onSubmit={onSubmit}
     />

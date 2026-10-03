@@ -304,14 +304,6 @@ describe("scheduleSlotsAction: guards (W24)", () => {
     expect(mocks.createSlots).not.toHaveBeenCalled();
   });
 
-  it("refuses a channel outside the Work", async () => {
-    const result = await press({
-      targets: [{ ...IG_TARGET, channel: "tiktok", formatKey: undefined }],
-    });
-    expect(result).toMatchObject({ ok: false, code: "INVALID" });
-    expect(mocks.createSlots).not.toHaveBeenCalled();
-  });
-
   it.each([
     ["25:00", "25:00"],
     ["10:99", "10:99"],
@@ -740,12 +732,6 @@ describe("moveSlotAction (W25)", () => {
     { date: "soon", time: "10:00" },
   ])("refuses the malformed target %o before any write", async (to) => {
     expect(await move(to)).toMatchObject({ ok: false, code: "INVALID" });
-    expect(mocks.transaction).not.toHaveBeenCalled();
-  });
-
-  it("refuses a slot whose channel left the Work", async () => {
-    mocks.workGet.mockResolvedValue(work({ channels: ["linkedin"] }));
-    expect(await move()).toMatchObject({ ok: false, code: "INVALID" });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 

@@ -31,6 +31,7 @@ vi.mock("@/server/actions/approval-actions", inert);
 vi.mock("@/server/actions/command-actions", inert);
 vi.mock("@/server/actions/content-plan-actions", inert);
 vi.mock("@/server/actions/creative-actions", inert);
+vi.mock("@/server/actions/facebook-share-actions", inert);
 vi.mock("@/server/actions/creative-variant-actions", inert);
 vi.mock("@/server/actions/human-action-actions", inert);
 vi.mock("@/server/actions/plan-options-actions", inert);

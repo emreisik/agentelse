@@ -15,6 +15,8 @@ type ThreadProps = {
     Welcome: ComponentType;
     QuickActions: ComponentType;
     ComposerPlusMenu: ComponentType;
+    ContextChip?: ComponentType;
+    StartSuggestions?: ComponentType;
   };
 };
 
@@ -38,6 +40,9 @@ const state = vi.hoisted(() => ({
   runtime: null as unknown,
   plus: null as unknown,
   submitShortcut: vi.fn(),
+  announce: vi.fn(),
+  settled: vi.fn(),
+  setChannels: vi.fn(),
 }));
 
 vi.mock("@/server/actions/work-approve-actions", () => ({
@@ -56,7 +61,7 @@ vi.mock("@assistant-ui/react", () => ({
   useAuiState: () => 0,
 }));
 vi.mock("@/server/actions/work-actions", () => ({
-  setWorkChannelsAction: vi.fn(),
+  setWorkChannelsAction: state.setChannels,
 }));
 vi.mock("@/server/actions/command-actions", () => ({
   submitChatMessageAction: vi.fn(),
@@ -71,6 +76,10 @@ vi.mock("@/server/actions/plan-progress-actions", () => ({
 vi.mock("@/server/actions/composer-shortcut-actions", () => ({
   submitComposerShortcutAction: state.submitShortcut,
 }));
+vi.mock("@/lib/works/work-activity", () => ({
+  announceWorkActivity: state.announce,
+  announceWorkSettled: state.settled,
+}));
 vi.mock("@/components/commands/composer-plus-menu", () => ({
   ComposerPlusMenu: (props: unknown) => {
     state.plus = props;
@@ -79,6 +88,8 @@ vi.mock("@/components/commands/composer-plus-menu", () => ({
 }));
 vi.mock("@/components/workspace/workspace-panel-toggle", () => ({
   useWorkspacePanelToggle: () => ({ openTab: vi.fn() }),
+  // No workspace pane around this chat: long cards stay in full.
+  useWorkspaceDetail: () => null,
 }));
 vi.mock("@/components/guide/guided-setup-entry", async (importOriginal) => ({
   ...(await importOriginal<
@@ -112,6 +123,12 @@ vi.mock("@/components/assistant-ui/thread", async () => {
       createElement(props.components.Welcome),
       createElement(props.components.QuickActions),
       createElement(props.components.ComposerPlusMenu),
+      props.components.ContextChip
+        ? createElement(props.components.ContextChip)
+        : null,
+      props.components.StartSuggestions
+        ? createElement(props.components.StartSuggestions)
+        : null,
     );
   },
   };
@@ -148,32 +165,52 @@ const render = (channels: WorkView["channels"], connected = true) =>
     }),
   );
 
-describe("ProjectChat in a Work", () => {
-  it("asks for the channel first and shows no cards or chips", () => {
-    const html = render([]);
-    expect(html).toContain("Which channel is this Work for?");
-    expect(html).toContain("Instagram");
-    expect(html).not.toContain("Plan the week");
+// The new chat's first screen, like ChatGPT's: one centered line, the composer,
+// the suggestions as one-line rows. A chat is free: no channel chip, no picker.
+describe("ProjectChat in a Work: the new chat's first screen", () => {
+  it("suggests for the connected channel by default: no chip, no picker card", () => {
+    const html = render([], true);
+    expect(html).toContain("Plan the week for Instagram");
+    expect(html).toContain("Find content ideas for Instagram");
+    expect(html).not.toContain("Channels for this chat");
+    expect(html).not.toContain("Choose channel");
+    expect(html).not.toContain("Which channel is this Work for?");
+    expect(html).not.toContain("What do you want to do?");
     expect(html).not.toContain("Find a Reel idea");
     expect(html).not.toContain("Create a campaign");
   });
 
-  it("frames the chooser differently when nothing is connected", () => {
-    expect(render([], false)).toContain("Connect a channel, or pick one to plan for");
+  it("greets in one centered line: no subtitle, no resume box, no card block", () => {
+    const html = render([], true);
+    expect(html).toContain("Emre");
+    expect(html).toMatch(/<div class="mb-8 px-1 text-center"><h1/);
+    expect(html).not.toContain("What should we bring to life for your brand today?");
+    expect(html).not.toContain("Where we left off");
   });
 
-  it("with a channel chosen, shows the next-step cards instead of the chooser", () => {
-    const html = render(["instagram"]);
-    expect(html).not.toContain("Which channel is this Work for?");
-    expect(html).toContain("What do you want to do?");
-    expect(html).toContain("Plan the week");
-    expect(html).toContain("Find content ideas");
-    expect(html).not.toContain("Find a Reel idea");
+  it("the context label shares the composer's row: it is the part that gives way on a phone", () => {
+    const html = render([], true);
+    expect(html).toMatch(
+      /<span class="flex min-w-0 items-center gap-1\.5 text-\[11px\] select-none">/,
+    );
+    expect(html).toMatch(/<span class="min-w-0 truncate"[^>]*>Acme context on<\/span>/);
+    expect(html).toMatch(/<span class="size-1\.5 shrink-0 rounded-full"/);
   });
 
-  it("an unconnected chosen channel offers to connect it", () => {
+  it("nothing connected: it still plans for Instagram, and the way to publish is connecting it", () => {
+    const html = render([], false);
+    expect(html).toContain("Plan the week for Instagram");
+    expect(html).toContain("Connect Instagram to publish");
+  });
+
+  it("a stored channel is what the suggestions name", () => {
+    const html = render(["linkedin"], true);
+    expect(html).toContain("Plan the week for LinkedIn");
+  });
+
+  it("an unconnected stored channel offers to connect it, as a row", () => {
     const html = render(["instagram"], false);
-    expect(html).toContain("Connect Instagram");
+    expect(html).toContain("Connect Instagram to publish");
   });
 });
 
@@ -190,6 +227,23 @@ describe("ProjectChat without a Work (Works off)", () => {
     );
     expect(html).toContain("Find a Reel idea");
     expect(html).not.toContain("What do you want to do?");
+  });
+
+  it("keeps the old first screen: the greeting with its subtitle, no channel chip, no suggestion rows", () => {
+    const html = renderToStaticMarkup(
+      createElement(ProjectChat, {
+        projectId: "p1",
+        projectName: "Acme",
+        turns: [],
+        publishTargets: [],
+        userFirstName: "Emre",
+      }),
+    );
+    expect(html).toContain("What should we bring to life for your brand today?");
+    expect(html).not.toContain("text-center");
+    expect(html).not.toContain("Channels for this chat");
+    expect(html).not.toContain("Choose channel");
+    expect(html).not.toContain("Suggestions for this chat");
   });
 });
 
@@ -342,9 +396,94 @@ describe("ProjectChat composer shortcuts in a Work (W85)", () => {
 
   beforeEach(() => {
     state.submitShortcut.mockReset();
+    state.announce.mockReset();
+    state.settled.mockReset();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("tells the sidebar again when the turn is over, so a send that never made a chat does not leave a phantom row", async () => {
+    const fetchMock = stubFetch();
+    renderWork();
+    await (state.plus as PlusProps).onShortcut(
+      "CREATE_SOCIAL_POST",
+      "Create an Instagram post",
+    );
+    expect(state.settled).toHaveBeenCalledTimes(1);
+    expect(state.settled).toHaveBeenCalledWith({ projectId: "p1", workId: "w1" });
+    // After the request, before nothing else: announce < fetch < settled.
+    const first = (mock: { mock: { invocationCallOrder: number[] } }) =>
+      mock.mock.invocationCallOrder[0] ?? 0;
+    expect(first(state.announce)).toBeLessThan(first(fetchMock));
+    expect(first(fetchMock)).toBeLessThan(first(state.settled));
+  });
+
+  it("settles even when the send fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    );
+    renderWork();
+    await (state.plus as PlusProps).onShortcut(
+      "CREATE_SOCIAL_POST",
+      "Create an Instagram post",
+    );
+    expect(state.settled).toHaveBeenCalledTimes(1);
+  });
+
+  it("Today's brief is no Recents row: nothing is announced or settled for it", async () => {
+    stubFetch();
+    renderToStaticMarkup(
+      createElement(ProjectChat, {
+        projectId: "p1",
+        projectName: "Acme",
+        turns: [],
+        publishTargets: [],
+        userFirstName: "Emre",
+        chatEngine: "agent",
+        workHost: buildWorkHost({
+          projectId: "p1",
+          work: { ...work(["instagram"]), id: "today_p1_2026-10-02", title: "Today" },
+          connections: { instagram: { connected: true } },
+          pendingApprovals: 0,
+          hasAnalytics: false,
+        }),
+      }),
+    );
+    await (state.plus as PlusProps).onShortcut(
+      "CREATE_SOCIAL_POST",
+      "Create an Instagram post",
+    );
+    expect(state.announce).not.toHaveBeenCalled();
+    expect(state.settled).not.toHaveBeenCalled();
+  });
+
+  it("tells the sidebar the moment it sends (the chat joins Recents before the reply ends)", async () => {
+    const fetchMock = stubFetch();
+    renderWork();
+    const plus = state.plus as PlusProps;
+    await plus.onShortcut("CREATE_SOCIAL_POST", "Create an Instagram post. With a carousel.");
+    expect(state.announce).toHaveBeenCalledTimes(1);
+    expect(state.announce).toHaveBeenCalledWith({
+      projectId: "p1",
+      workId: "w1",
+      title: "Create an Instagram post.",
+    });
+    // Announced before the request went out, not after the reply.
+    expect(state.announce.mock.invocationCallOrder[0]).toBeLessThan(
+      fetchMock.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("a completed Work announces nothing (nothing is sent)", async () => {
+    stubFetch();
+    renderWork({}, ["instagram"], "DONE");
+    const plus = state.plus as PlusProps;
+    await plus.onShortcut("CREATE_SOCIAL_POST", "Create an Instagram post");
+    expect(state.announce).not.toHaveBeenCalled();
   });
 
   it("sends a chat message (with the Work id) instead of the shortcut action", async () => {
@@ -392,6 +531,64 @@ describe("ProjectChat composer shortcuts in a Work (W85)", () => {
       plus.onShortcut("CREATE_SOCIAL_POST", "Create an Instagram post"),
     ).catch(() => undefined);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// A chat is free: a message carries its text and the Work id, nothing about
+// channels (the chat route stores the defaults and the tools decide per piece).
+describe("ProjectChat sends a message of a free chat", () => {
+  const sse = (events: object[]) =>
+    events.map((e) => `event: x\ndata: ${JSON.stringify(e)}\n\n`).join("");
+  const stubFetch = () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          sse([{ type: "done", commandId: "c", status: "ANSWERED", reply: "ok" }]),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  };
+
+  beforeEach(() => {
+    state.announce.mockReset();
+    state.settled.mockReset();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("goes out at once with the Work id and no channel field, after announcing the chat", async () => {
+    const fetchMock = stubFetch();
+    render([], true);
+    await (state.plus as PlusProps).onShortcut(
+      "CREATE_SOCIAL_POST",
+      "Create an Instagram post",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = call[1].body as FormData;
+    expect(body.get("workId")).toBe("w1");
+    expect(body.getAll("channels")).toEqual([]);
+    expect(state.announce.mock.invocationCallOrder[0] ?? 0).toBeLessThan(
+      fetchMock.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("the turn is on screen before the request goes out", async () => {
+    const fetchMock = stubFetch();
+    const turnKey = vi.spyOn(globalThis.crypto, "randomUUID");
+    render([], true);
+    const sent = (state.plus as PlusProps).onShortcut(
+      "CREATE_SOCIAL_POST",
+      "Create an Instagram post",
+    );
+    // The local turn exists synchronously (and with it `isSending`).
+    expect(turnKey).toHaveBeenCalledTimes(1);
+    await sent;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    turnKey.mockRestore();
   });
 });
 

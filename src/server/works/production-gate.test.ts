@@ -9,27 +9,23 @@ const db = {
   command: { findUnique: vi.fn() },
   work: { findFirst: vi.fn() },
 };
-const gate = (slotChannels?: string[]) =>
+const gate = () =>
   worksProductionGate(db as never, {
     projectId: "p1",
     commandId: "c1",
-    slotChannels,
   });
 
 beforeEach(() => {
   vi.clearAllMocks();
   isWorksEnabled.mockReturnValue(true);
   db.command.findUnique.mockResolvedValue({ workId: "w1" });
-  db.work.findFirst.mockResolvedValue({
-    status: "ACTIVE",
-    channels: ["instagram", "linkedin"],
-  });
+  db.work.findFirst.mockResolvedValue({ status: "ACTIVE" });
 });
 
 describe("worksProductionGate", () => {
   it("runs no query with the flag off", async () => {
     isWorksEnabled.mockReturnValue(false);
-    expect(await gate(["x"])).toEqual({ ok: true });
+    expect(await gate()).toEqual({ ok: true });
     expect(db.command.findUnique).not.toHaveBeenCalled();
     expect(db.work.findFirst).not.toHaveBeenCalled();
   });
@@ -50,37 +46,16 @@ describe("worksProductionGate", () => {
   });
 
   it.each(["DONE", "ARCHIVED"])("refuses a %s Work", async (status) => {
-    db.work.findFirst.mockResolvedValue({ status, channels: [] });
+    db.work.findFirst.mockResolvedValue({ status });
     expect(await gate()).toEqual({
       ok: false,
       message: "This Work is completed. Reopen it to continue.",
     });
   });
 
-  it("refuses a slot channel outside the Work", async () => {
-    expect(await gate(["instagram", "tiktok"])).toEqual({
-      ok: false,
-      message:
-        "This Work is for Instagram and LinkedIn; this plan has pieces on tiktok.",
-    });
-  });
-
-  it("accepts channels inside the Work and reports them", async () => {
-    expect(await gate(["instagram"])).toEqual({
-      ok: true,
-      allowedChannels: ["instagram", "linkedin"],
-    });
-  });
-
-  it("does not compare channels when none are given, but still reports them", async () => {
-    expect(await gate()).toEqual({
-      ok: true,
-      allowedChannels: ["instagram", "linkedin"],
-    });
-  });
-
-  it("reports no channels for a Work that has chosen none", async () => {
-    db.work.findFirst.mockResolvedValue({ status: "ACTIVE", channels: [] });
-    expect(await gate(["tiktok"])).toEqual({ ok: true });
+  it("an ACTIVE Work passes whatever channels it has: a chat is not bound to one", async () => {
+    expect(await gate()).toEqual({ ok: true });
+    db.work.findFirst.mockResolvedValue({ status: "ACTIVE" });
+    expect(await gate()).toEqual({ ok: true });
   });
 });

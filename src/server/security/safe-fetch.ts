@@ -231,6 +231,10 @@ export type SafeFetchOptions = {
   accept?: string;
   // Rejected unless the response Content-Type matches.
   allowedContentTypes?: RegExp;
+  // The socket timeout is idle-based: a server dripping one byte per window can
+  // hold a hop open far past timeoutMs. true also destroys the request at
+  // timeoutMs in TOTAL. Opt-in so every other caller keeps today's behaviour.
+  hardDeadline?: boolean;
 };
 
 export type SafeFetchResult = {
@@ -255,6 +259,7 @@ export type Transport = (
     Pick<SafeFetchOptions, "maxBytes" | "truncate" | "timeoutMs">
   > & {
     accept: string;
+    hardDeadline?: boolean;
   },
 ) => Promise<HopResponse>;
 
@@ -278,6 +283,10 @@ function decoderFor(
 
 const nodeTransport: Transport = (url, options) =>
   new Promise<HopResponse>((resolve, reject) => {
+    let hard: ReturnType<typeof setTimeout> | null = null;
+    const done = () => {
+      if (hard) clearTimeout(hard);
+    };
     const client = url.protocol === "https:" ? https : http;
     const request = client.request(
       url,
@@ -297,6 +306,7 @@ const nodeTransport: Transport = (url, options) =>
         // A redirect's body is irrelevant; don't download it.
         if (status >= 300 && status < 400) {
           response.resume();
+          done();
           resolve({ status, headers, body: Buffer.alloc(0), truncated: false });
           return;
         }
@@ -316,6 +326,7 @@ const nodeTransport: Transport = (url, options) =>
         const finish = (truncated: boolean) => {
           if (settled) return;
           settled = true;
+          done();
           request.destroy();
           resolve({ status, headers, body: Buffer.concat(chunks), truncated });
         };
@@ -330,6 +341,7 @@ const nodeTransport: Transport = (url, options) =>
               finish(true);
             } else if (!settled) {
               settled = true;
+              done();
               request.destroy();
               reject(new UnsafeUrlError("The response is too large"));
             }
@@ -341,6 +353,7 @@ const nodeTransport: Transport = (url, options) =>
         source.on("error", (error) => {
           if (!settled) {
             settled = true;
+            done();
             reject(error);
           }
         });
@@ -349,7 +362,21 @@ const nodeTransport: Transport = (url, options) =>
     request.on("timeout", () => {
       request.destroy(new Error("The site took too long to respond"));
     });
-    request.on("error", reject);
+    // Total (not idle) deadline, only when asked for. Reject directly as well:
+    // once the response has started, a destroyed request may not surface the
+    // error on the request itself (reject after settling is a no-op).
+    if (options.hardDeadline) {
+      hard = setTimeout(() => {
+        const error = new Error("The site took too long to respond");
+        request.destroy(error);
+        reject(error);
+      }, options.timeoutMs);
+    }
+    request.on("error", (error) => {
+      done();
+      reject(error);
+    });
+    request.on("close", done);
     request.end();
   });
 
@@ -374,6 +401,8 @@ export async function safeFetch(
       truncate: options.truncate ?? false,
       timeoutMs: remaining,
       accept: options.accept ?? "*/*",
+      // Absent unless true, so a fake transport sees today's options object.
+      ...(options.hardDeadline ? { hardDeadline: true } : {}),
     });
 
     if (REDIRECT_STATUSES.has(response.status)) {

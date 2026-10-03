@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
@@ -12,28 +12,80 @@ import {
   openTodayWorkAction,
 } from "@/server/actions/work-actions";
 
-// A project with no Work yet: the first one is opened for the client (one tap
-// would only be a detour) and the page moves into it. Guarded so a double
-// effect (dev strict mode) cannot open two.
+// Opening a project (its bare URL) always starts a new chat: the Work is opened
+// for the client (the project's empty one when it has one, so no blank rows pile
+// up) and the page moves into it. Today mode does the same for ?work=today before
+// the day's Work exists. Guarded so a double effect (dev strict mode) cannot
+// open two.
 
 export const OPENER_COPY = {
-  opening: "Opening your first Work…",
+  opening: "Opening a new chat…",
   today: copyText("today.opening"),
-  failed: "Couldn't open a Work.",
+  failed: "Couldn't open a new chat.",
   retry: "Try again",
 } as const;
 
-export type OpenerMode = "first" | "today";
+export type OpenerMode = "new" | "today";
 
-// The opening line for a mode; "first" (the default) is the slice-1 text.
-export function openerCopy(mode: OpenerMode = "first"): string {
+export function openerCopy(mode: OpenerMode = "new"): string {
   return mode === "today" ? OPENER_COPY.today : OPENER_COPY.opening;
+}
+
+// Where the page moves: the opened Work, with whatever else the landing URL
+// asked for (?guide=setup, ?next=, the right panel's calendar). The URL only
+// stood in for "a chat"; its other parameters must not be lost on the way.
+export function openedWorkHref(
+  projectId: string,
+  workId: string,
+  landing: string,
+): string {
+  const params = new URLSearchParams(landing);
+  params.delete("work");
+  const rest = params.toString();
+  return `${workHref(projectId, workId)}${rest ? `&${rest}` : ""}`;
+}
+
+// What the opener does once its action answers, apart from React so it can be
+// tested: the new chat is moved into only while the person is still on the
+// landing page. The action takes a moment (a cold database, the lock), and the
+// sidebar and Back stay usable meanwhile: someone who has already clicked a
+// chat or pressed Back must not be pulled into the new one when it answers.
+export type OpenerOutcome =
+  | { kind: "moved" }
+  | { kind: "left" }
+  | { kind: "error"; message: string };
+
+export async function runOpener(input: {
+  projectId: string;
+  mode: OpenerMode;
+  landing: string;
+  create: () => Promise<
+    { ok: true; workId: string } | { ok: false; message: string }
+  >;
+  stillHere: () => boolean;
+  replace: (href: string) => void;
+}): Promise<OpenerOutcome> {
+  try {
+    const result = await input.create();
+    if (!input.stillHere()) return { kind: "left" };
+    if (!result.ok) {
+      return { kind: "error", message: result.message || OPENER_COPY.failed };
+    }
+    input.replace(openedWorkHref(input.projectId, result.workId, input.landing));
+    return { kind: "moved" };
+  } catch {
+    // A dropped network or a cold database: the retry button instead of
+    // spinning forever.
+    return input.stillHere()
+      ? { kind: "error", message: OPENER_COPY.failed }
+      : { kind: "left" };
+  }
 }
 
 export function NewWorkOpenerView({
   error,
   onRetry,
-  mode = "first",
+  mode = "new",
 }: {
   error: string | null;
   onRetry: () => void;
@@ -63,36 +115,45 @@ export function NewWorkOpenerView({
 
 export function NewWorkOpener({
   projectId,
-  mode = "first",
+  mode = "new",
 }: {
   projectId: string;
   mode?: OpenerMode;
 }) {
   const router = useRouter();
+  const landing = useSearchParams().toString();
   const started = React.useRef(false);
+  // False once the person has left the landing page (and while the page is torn
+  // down): a late answer then moves nowhere. Re-armed by the effect so React's
+  // simulated unmount in development does not leave it false.
+  const here = React.useRef(true);
+  React.useEffect(() => {
+    here.current = true;
+    return () => {
+      here.current = false;
+    };
+  }, []);
   const [error, setError] = React.useState<string | null>(null);
 
   const open = React.useCallback(async () => {
     setError(null);
-    try {
+    const outcome = await runOpener({
+      projectId,
+      mode,
+      landing,
       // Today mode: the deterministic id makes a repeated call harmless.
-      const result =
+      create: () =>
         mode === "today"
-          ? await openTodayWorkAction(projectId)
-          : await createWorkAction(projectId);
-      if (!result.ok) {
-        started.current = false;
-        setError(result.message || OPENER_COPY.failed);
-        return;
-      }
-      router.replace(workHref(projectId, result.workId));
-    } catch {
-      // A dropped network or a cold database: show the retry button instead
-      // of spinning forever.
+          ? openTodayWorkAction(projectId)
+          : createWorkAction(projectId),
+      stillHere: () => here.current,
+      replace: (href) => router.replace(href),
+    });
+    if (outcome.kind === "error") {
       started.current = false;
-      setError(OPENER_COPY.failed);
+      setError(outcome.message);
     }
-  }, [projectId, router, mode]);
+  }, [projectId, router, mode, landing]);
 
   React.useEffect(() => {
     if (started.current) return;

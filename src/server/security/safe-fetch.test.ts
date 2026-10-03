@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertPublicAddresses,
@@ -172,5 +175,119 @@ describe("safeFetch with the real transport", () => {
     await expect(
       safeFetch("http://localhost/", { maxBytes: 1024, timeoutMs: 3000 }),
     ).rejects.toThrow(/non-public address/);
+  });
+});
+
+describe("safeFetch hardDeadline (G110)", () => {
+  it("hands the transport exactly today's options without the flag", async () => {
+    const seen: unknown[] = [];
+    const transport: Transport = async (_url, options) => {
+      seen.push(options);
+      return hop();
+    };
+    await safeFetch("https://example.com/", { maxBytes: 10 }, transport);
+    await safeFetch(
+      "https://example.com/",
+      { maxBytes: 10, hardDeadline: false },
+      transport,
+    );
+    for (const options of seen) {
+      expect(options).toEqual({
+        maxBytes: 10,
+        truncate: false,
+        timeoutMs: expect.any(Number),
+        accept: "*/*",
+      });
+      expect(Object.keys(options as object)).not.toContain("hardDeadline");
+    }
+  });
+
+  it("forwards the flag to the transport only when it is true", async () => {
+    let seen: Record<string, unknown> = {};
+    await safeFetch(
+      "https://example.com/",
+      { maxBytes: 10, hardDeadline: true },
+      async (_url, options) => {
+        seen = options;
+        return hop();
+      },
+    );
+    expect(seen.hardDeadline).toBe(true);
+  });
+});
+
+// The real transport against a fake node:https: a server that keeps the
+// socket "active" (so the idle timeout never fires) by trickling bytes.
+describe("nodeTransport hard deadline (G110)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.doUnmock("node:https");
+    vi.doUnmock("node:http");
+    vi.resetModules();
+  });
+
+  async function loadWithTrickle() {
+    const destroyed = vi.fn();
+    const request = Object.assign(new EventEmitter(), {
+      destroy: (error?: Error) => {
+        destroyed(error);
+        if (error) request.emit("error", error);
+        request.emit("close");
+      },
+      end: () => undefined,
+    });
+    const fakeClient = {
+      request: (
+        _url: URL,
+        _opts: unknown,
+        onResponse: (res: PassThrough) => void,
+      ) => {
+        const res = Object.assign(new PassThrough(), {
+          statusCode: 200,
+          headers: { "content-type": "text/html" },
+        });
+        setTimeout(() => onResponse(res), 0);
+        // One byte every second: never idle for the 5 s socket timeout.
+        const timer = setInterval(() => res.write("x"), 1000);
+        request.on("close", () => clearInterval(timer));
+        return request;
+      },
+    };
+    vi.resetModules();
+    vi.doMock("node:https", () => ({ default: fakeClient }));
+    vi.doMock("node:http", () => ({ default: fakeClient }));
+    const mod = await import("./safe-fetch");
+    return { mod, destroyed };
+  }
+
+  it("aborts a trickling response at the TOTAL timeout", async () => {
+    vi.useFakeTimers();
+    const { mod, destroyed } = await loadWithTrickle();
+    const pending = mod.safeFetch("https://example.com/", {
+      maxBytes: 1024 * 1024,
+      timeoutMs: 8000,
+      hardDeadline: true,
+    });
+    const outcome = pending.then(
+      () => "resolved",
+      (error: Error) => error.message,
+    );
+    await vi.advanceTimersByTimeAsync(7900);
+    expect(destroyed).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(await outcome).toBe("The site took too long to respond");
+    expect(destroyed).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not arm the total deadline without the flag", async () => {
+    vi.useFakeTimers();
+    const { mod, destroyed } = await loadWithTrickle();
+    const pending = mod.safeFetch("https://example.com/", {
+      maxBytes: 1024 * 1024,
+      timeoutMs: 8000,
+    });
+    void pending.catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(destroyed).not.toHaveBeenCalled();
   });
 });

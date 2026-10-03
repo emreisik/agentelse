@@ -360,7 +360,7 @@ Bilinen sınırlar: Goals sekmesinde onaylamak setup'ın GOAL_GENERATION aşamas
 
 ## 8. Sidebar'da System grubu kalktı (30 Eyl 2026)
 
-Sidebar'daki "System" grubu (Setup, Departments, Human Action, Settings) kaldırıldı. Sidebar artık: Agency Desk, Create (Brand Brain, Ideas, Work, Library, Content Calendar), Channels (Ads Manager, Connectors) ve altta başlıksız tek satır **Settings**.
+Sidebar'daki "System" grubu (Setup, Departments, Human Action, Settings) kaldırıldı. Sidebar artık: Agency Desk, Create (Brand Brain, Ideas, Work, Library, Content Calendar), Channels (Ads Manager, Connectors) ve altta başlıksız tek satır **Settings**. Works açıkken (ChatGPT düzeni, docs/works.md): en üstte **New Chat**, sonra Create ve Channels, sonra kalan yüksekliği dolduran ve kendi içinde kayan **Recents**, en altta Settings; Agency Desk ve Today yok, proje her zaman yeni sohbetle açılır.
 
 - **Setup, Departments, Human Action** yalnızca başlıktaki **Advanced** menüsünde (rozet noktasıyla; `ADVANCED_PANEL_KEYS`, `project-tools-menu.tsx`, `project-tools-menu.test.ts` ikisinin senkronunu sabitler). Erişim kesilmedi.
 - **Settings** sidebar'da kalıyor, çünkü yayın saatleri (Publishing), harcama tavanları ve Autopilot (Autonomy), aktivite/harcama dökümü ve proje silme (Danger Zone) yalnızca orada; içerik yolculuğunun "Turn on scheduled posting" adımının yazdığı slotlar da yalnızca orada düzenlenir. Advanced menüsünde de durur.

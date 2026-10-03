@@ -82,10 +82,15 @@ const NEW_COMPONENT_FILES = [
   "daily-brief-card.tsx",
   "ads-insight-card.tsx",
   "channel-offer-banner.tsx",
-  // Slice-1 files with their own *_COPY constants (channel-select-card,
-  // starter-cards, work-header, channel-picker, new-work-opener) are not
-  // scanned: their pinned English baseline predates the copy table.
-  "work-start.tsx",
+  // The new chat's first screen. Its sentences live in the file's own *_COPY
+  // constant (one place per file); only the constant's body is exempt from the
+  // scan (see stripCopyConstants), anything inline is caught.
+  "starter-rows.tsx",
+  "channel-picker.tsx",
+  "channel-select-card.tsx",
+  "work-header.tsx",
+  "new-work-opener.tsx",
+  // Slice-1 files that keep their sentences in their own *_COPY constant.
   "card-focus.tsx",
 ].map((f) => join("src/components/works", f));
 
@@ -99,7 +104,19 @@ const ALLOWED_LITERALS = new Set<string>([
   "Make the directions more playful.",
   "Make the directions more educational.",
   "Make the directions shorter and simpler.",
+  // The turn the channel gate's card sends to resume the request (the agent's
+  // instruction, not interface text; see continueMessage).
+  "Continue with ${channelListText(channels)}.",
 ]);
+
+// `export const SOMETHING_COPY = { ... } as const;`: the one place a file keeps
+// its sentences. Flat objects only, so the first closing brace ends it.
+function stripCopyConstants(src: string): string {
+  return src.replace(
+    /export const [A-Z0-9_]+_COPY\s*=\s*\{[\s\S]*?\}\s*as const;/g,
+    "",
+  );
+}
 
 function stripComments(src: string): string {
   return src
@@ -109,7 +126,7 @@ function stripComments(src: string): string {
 
 /** Returns string literals and JSX text nodes that look like hard-coded sentences. */
 function findHardCodedSentences(source: string): string[] {
-  const src = stripComments(source);
+  const src = stripCopyConstants(stripComments(source));
   const found: string[] = [];
   const sentence = (t: string) => {
     const s = t.trim();
@@ -149,6 +166,17 @@ describe("copy coverage scan (W01)", () => {
       findHardCodedSentences('// Nothing to show here\nconst a = "ok";'),
     ).toEqual([]);
     expect(findHardCodedSentences('const a = "kit.tryAgain";')).toEqual([]);
+  });
+
+  it("a file's own *_COPY constant is its table; a sentence outside it is flagged", () => {
+    const table = 'export const ROWS_COPY = {\n  group: "Suggestions for this chat",\n} as const;\n';
+    expect(findHardCodedSentences(table)).toEqual([]);
+    expect(
+      findHardCodedSentences(`${table}const label = "Nothing to show here";`),
+    ).toEqual(["Nothing to show here"]);
+    expect(
+      findHardCodedSentences(`${table}<p>Nothing to show here</p>`),
+    ).toHaveLength(1);
   });
 
   for (const file of NEW_COMPONENT_FILES) {

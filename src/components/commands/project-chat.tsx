@@ -40,7 +40,8 @@ import type { ChatStreamEvent } from "@/server/chat/types";
 import { Thread } from "@/components/assistant-ui/thread";
 import { ComposerPlusMenu } from "@/components/commands/composer-plus-menu";
 import { ChatSendProvider } from "@/components/commands/chat-send-context";
-import { WorkStart } from "@/components/works/work-start";
+import { StarterRowsView } from "@/components/works/starter-rows";
+import { useCloseDetailOnLeave } from "@/components/works/use-close-detail-on-leave";
 import {
   WorkCardHostProvider,
   type WorkCardHostInput,
@@ -51,6 +52,11 @@ import {
   pendingCard,
 } from "@/lib/works/card-text";
 import type { WorkHost } from "@/lib/works/host";
+import { isTodayWork, workTitleFrom } from "@/lib/works/work";
+import {
+  announceWorkActivity,
+  announceWorkSettled,
+} from "@/lib/works/work-activity";
 import type { StarterAction } from "@/lib/works/starter-cards";
 import {
   ChatPackageProvider,
@@ -378,6 +384,8 @@ export function ProjectChat({
   const router = useRouter();
   // Works on: every Works-only behaviour below hangs on this one flag.
   const inWork = Boolean(workHost);
+  // The pane on the right shows a card of this chat: it closes with the chat.
+  useCloseDetailOnLeave();
   // The sheet crashed (e.g. its lazy chunk failed to load): every entry hides
   // as with the flag off instead of greying out over a sheet that is gone.
   const [guidedBroken, setGuidedBroken] = React.useState(false);
@@ -1099,7 +1107,15 @@ export function ProjectChat({
         router.refresh();
       }
     },
-    [projectId, ideaId, router, guidedEnabled, openGuided, workHost, inWork],
+    [
+      projectId,
+      ideaId,
+      router,
+      guidedEnabled,
+      openGuided,
+      workHost,
+      inWork,
+    ],
   );
 
   const sendMessage = React.useCallback(
@@ -1109,26 +1125,48 @@ export function ProjectChat({
         toast.info("Reopen this Work to continue.");
         return Promise.resolve();
       }
-      if (chatEngine === "agent") return runStreamingTurn(text, files);
+      const go = () => {
+        if (chatEngine === "agent") return runStreamingTurn(text, files);
 
-      return runTurn(
-        text || "(file sent)",
-        files.map((file) => ({
-          filename: file.name,
-          mimeType: file.type,
-          previewUrl: file.type.startsWith("image/")
-            ? URL.createObjectURL(file)
-            : undefined,
-        })),
-        () => {
-          const formData = new FormData();
-          formData.set("projectId", projectId);
-          if (ideaId) formData.set("ideaId", ideaId);
-          formData.set("text", text);
-          for (const file of files) formData.append("files", file);
-          return submitChatMessageAction(formData);
-        },
-      );
+        return runTurn(
+          text || "(file sent)",
+          files.map((file) => ({
+            filename: file.name,
+            mimeType: file.type,
+            previewUrl: file.type.startsWith("image/")
+              ? URL.createObjectURL(file)
+              : undefined,
+          })),
+          () => {
+            const formData = new FormData();
+            formData.set("projectId", projectId);
+            if (ideaId) formData.set("ideaId", ideaId);
+            formData.set("text", text);
+            for (const file of files) formData.append("files", file);
+            return submitChatMessageAction(formData);
+          },
+        );
+      };
+      if (!workHost) return go();
+      // The chat shows in the sidebar's Recents the moment something is sent,
+      // not when the reply ends (the stored title replaces this one then); the
+      // row stays through every server list until the turn is over. Today's
+      // brief is no Recents row: it is not listed there at all.
+      const workId = workHost.work.id;
+      const listed = !isTodayWork(workHost.work);
+      if (listed) {
+        announceWorkActivity({
+          projectId,
+          workId,
+          title: workTitleFrom(stripPlanBriefMarker(text)),
+        });
+      }
+      // `go` runs at once (the turn is on screen before anything is awaited);
+      // the async wrapper only turns a throw into a rejection, so the sidebar is
+      // told in every case.
+      return (async () => go())().finally(() => {
+        if (listed) announceWorkSettled({ projectId, workId });
+      });
     },
     [runTurn, runStreamingTurn, chatEngine, projectId, ideaId, workHost],
   );
@@ -1314,6 +1352,31 @@ export function ProjectChat({
             example &quot;prepare an Instagram post using this image&quot;.
           </p>
         </div>
+      ) : inWork ? (
+        // A new chat, like ChatGPT's: one centered line; the composer follows
+        // right under it, then the suggestions (StartSuggestions).
+        <div className="mb-8 px-1 text-center">
+          <h1
+            className="text-[29px] leading-[1.15] font-medium sm:text-[35px]"
+            style={{ color: "var(--ws-text)", letterSpacing: "-1.4px" }}
+          >
+            {userFirstName
+              ? `${timeGreeting}, ${userFirstName}`
+              : "Your brand workspace"}
+            <span style={{ color: "var(--ws-olive)" }}>.</span>
+          </h1>
+
+          {guidedEnabled ? (
+            <div className="mt-5 text-left empty:hidden">
+              <ConnectedGuidedSetupWelcomeCard projectName={projectName} />
+            </div>
+          ) : null}
+          {discoveryEnabled ? (
+            <div className="mt-5 text-left empty:hidden">
+              <ConnectedDiscoveryWelcomeCard />
+            </div>
+          ) : null}
+        </div>
       ) : (
         <div className="mb-9 px-1">
           <div className="relative">
@@ -1384,16 +1447,6 @@ export function ProjectChat({
             </div>
           ) : null}
 
-          {workHost ? (
-            <WorkStart
-              projectId={projectId}
-              host={workHost}
-              disabled={isSending || workHost.work.status !== "ACTIVE"}
-              onAct={actOnStarter}
-              onChannelsSaved={() => router.refresh()}
-            />
-          ) : null}
-
           {/* Flag off: no wrapper at all (the markup stays as before).
               empty:hidden keeps the gap away when the card renders nothing. */}
           {guidedEnabled ? (
@@ -1410,20 +1463,30 @@ export function ProjectChat({
       ),
     [
       ideaId,
+      inWork,
       guidedEnabled,
       discoveryEnabled,
       projectName,
-      projectId,
       userFirstName,
       timeGreeting,
       hasResumeStats,
       resumeStats,
       openTab,
-      workHost,
-      isSending,
-      actOnStarter,
-      router,
     ],
+  );
+
+  // The new chat's suggestions under the composer: one line each, a tap does
+  // what the card's main button does.
+  const StartSuggestions = React.useCallback(
+    () =>
+      workHost ? (
+        <StarterRowsView
+          cards={workHost.starterCards}
+          disabled={isSending || workHost.work.status !== "ACTIVE"}
+          onAct={actOnStarter}
+        />
+      ) : null,
+    [workHost, isSending, actOnStarter],
   );
 
   const PlusMenu = React.useCallback(
@@ -1449,16 +1512,17 @@ export function ProjectChat({
   // whether it's present.
   const ContextChip = React.useCallback(
     () => (
-      <span className="flex items-center gap-1.5 text-[11px] select-none">
+      <span className="flex min-w-0 items-center gap-1.5 text-[11px] select-none">
         <span
           className="h-4 w-px shrink-0"
           style={{ background: "var(--ws-border)" }}
         />
         <span
-          className="size-1.5 rounded-full"
+          className="size-1.5 shrink-0 rounded-full"
           style={{ background: "var(--ws-approved)" }}
         />
-        <span style={{ color: "var(--ws-text-3)" }}>
+        {/* The channel chip shares this row: on a phone the label gives way. */}
+        <span className="min-w-0 truncate" style={{ color: "var(--ws-text-3)" }}>
           {projectName} context on
         </span>
       </span>
@@ -1708,8 +1772,8 @@ export function ProjectChat({
   React.useEffect(() => {
     if (autoNextDone.current || !autoNext) return;
     autoNextDone.current = true;
-    // Inside a Work the parameter drop keeps `?work=`: the bare URL would open
-    // the most recently active Work, which may not be this one.
+    // Inside a Work the parameter drop keeps `?work=`: the bare URL would start
+    // a new chat.
     router.replace(
       workHost
         ? `/projects/${projectId}?work=${encodeURIComponent(workHost.work.id)}`
@@ -1719,6 +1783,9 @@ export function ProjectChat({
     const kind = AUTO_RUN_NEXT_KINDS.find((candidate) => candidate === autoNext);
     const step = nextSteps?.find((candidate) => candidate.action.kind === kind);
     if (step) runNextStep(step);
+    // A link that no longer has a step to run (done elsewhere, or opened in a
+    // chat that does not hold the plan) says so instead of doing nothing.
+    else if (kind) toast.info("That step isn't waiting here any more.");
   }, [autoNext, nextSteps, projectId, router, runNextStep, workHost]);
   const hasRunningRun = Object.values(packageRuns).some(
     (run) => run.phase === "running",
@@ -1751,7 +1818,7 @@ export function ProjectChat({
               onPlanNext={() => void sendMessage("Plan the next two weeks.", [])}
             />
           ) : null}
-          {/* In a Work the starter cards replace these chips. */}
+          {/* In a Work the suggestions under the composer replace these chips. */}
           {workHost ? null : (
           <div className="scrollbar-none flex gap-2 overflow-x-auto px-1 pb-1">
             {QUICK_ACTIONS.map(({ label, icon: Icon }) => (
@@ -1860,15 +1927,16 @@ export function ProjectChat({
         <ChatPackageProvider value={chatPackage}>
           <GuidedSetupProvider value={guidedApi}>
             <DiscoveryProvider value={discoveryApi}>
-            <Thread
-              autoFocusComposer={!quietComposer}
-              components={{
-                Welcome,
-                ComposerPlusMenu: PlusMenu,
-                QuickActions,
-                ContextChip,
-              }}
-            />
+              <Thread
+                autoFocusComposer={!quietComposer}
+                components={{
+                  Welcome,
+                  ComposerPlusMenu: PlusMenu,
+                  QuickActions,
+                  ContextChip,
+                  StartSuggestions: inWork ? StartSuggestions : undefined,
+                }}
+              />
             {guidedEnabled && guidedSetup ? (
               <GuidedSetupBoundary onError={failGuided}>
                 <GuidedSetupSheet

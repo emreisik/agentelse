@@ -69,10 +69,7 @@ import type { IdeaEventCardData } from "@/types/idea-event-card";
 import type { WorkView } from "@/lib/works/work";
 import {
   CHANNEL_CONTENT_CAPABILITIES,
-  channelGateOutcome,
   defaultPlatformOf,
-  planOutsideWork,
-  platformOutsideWork,
 } from "@/server/works/channel-gate";
 import { activeDeliverables } from "./deliverables";
 import { driveJobInline } from "./inline-job";
@@ -567,14 +564,8 @@ const createTask = defineTool({
     contentFormat: z.nativeEnum(CreativeContentFormat).optional(),
   }),
   async execute(rawArgs, ctx) {
-    // A Work's channels decide where content goes: nothing channel-bound is
-    // created before one is chosen, and the platform defaults to the Work's.
-    if (CHANNEL_CONTENT_CAPABILITIES.has(rawArgs.capability)) {
-      const gate = await channelGateOutcome(ctx);
-      if (gate) return gate;
-      const outside = platformOutsideWork(ctx.work, rawArgs.platform);
-      if (outside) return { result: outside };
-    }
+    // A chat is free: the channel is the client's when named, else the chat's
+    // default (the connected channels). Nothing is asked first.
     const args = {
       ...rawArgs,
       platform:
@@ -661,22 +652,13 @@ const generateImage = defineTool({
     quality: z.enum(["draft", "final"]).optional(),
   }),
   async execute(rawArgs, ctx) {
-    const gate = await channelGateOutcome(ctx);
-    if (gate) return gate;
-    const outside = platformOutsideWork(ctx.work, rawArgs.platform);
-    if (outside) return { result: outside };
-    // No channel named: the Work's own (closes the old "platform stays null").
+    // No channel named: a picture in a chat is made to Instagram's standard (the
+    // only picture format there is); outside a Work the platform stays open.
     const args = {
       ...rawArgs,
-      platform: rawArgs.platform ?? defaultPlatformOf(ctx.work),
+      platform: rawArgs.platform ?? (ctx.work ? "INSTAGRAM" : undefined),
     };
-    // A Work without Instagram (Blog/SEO or Ads only) has no picture to ask a
-    // format for: slot-first answers with its own refusal instead of a card.
-    const noPictureHere =
-      !!ctx.work &&
-      ctx.work.channels.length > 0 &&
-      !ctx.work.channels.includes("instagram");
-    if (needsInstagramFormat(args) && !noPictureHere) {
+    if (needsInstagramFormat(args)) {
       return {
         status: "ANSWERED",
         card: ctx.work
@@ -1462,12 +1444,12 @@ const startPlanBrief = defineTool({
   label: "Opening the planning wizard…",
   kind: "terminal",
   phases: ["ACTIVE"],
+  // A chat is free: it plans straight away with defaults (no wizard).
+  hiddenInWorks: true,
   description:
     'Open the planning wizard: a short step-by-step card where the client picks the goal, the channels (Instagram, TikTok, LinkedIn, X, Blog/SEO, Ads), the formats, and the rhythm (posts per week, duration, start date). Use it when the client wants content planned ("plan the week", "content calendar", "what should we post") and has NOT already told you the goal, the channels and how many posts. It replaces ad-hoc questions about planning. Ends your turn: write ONE short lead-in sentence BEFORE calling it. When the client\'s reply arrives it contains a `[Plan brief]` line — then call propose_content_plan.',
   schema: EmptyArgs,
   async execute(_args, ctx) {
-    const gate = await channelGateOutcome(ctx);
-    if (gate) return gate;
     const timezone = await getProjectTimezone(ctx.projectId);
     const [connections, twin] = await Promise.all([
       getChannelConnections(ctx.projectId).catch(() => ({})),
@@ -1481,7 +1463,6 @@ const startPlanBrief = defineTool({
         ideaId: ctx.ideaId,
         today: todayInTimezone(timezone),
         connections,
-        workChannels: ctx.work?.channels.length ? ctx.work.channels : undefined,
         theme: twin?.currentFocus?.title,
         continuation: (await loadPlanContinuation(ctx.projectId)) ?? undefined,
       },
@@ -1539,8 +1520,6 @@ const proposeContentPlan = defineTool({
     "Draft a day-by-day content plan for the client to review as a card (nothing is stored until they press Save). This is THE way to plan content. Normally the client's message contains a `[Plan brief]` line from the planning wizard (goal, channels with formats, perWeek, weeks, start): follow it EXACTLY — only those channels and formats, at most perWeek x weeks items, dates from `start`, and cover every chosen channel. If there is no brief and the client has not said what they want, call start_plan_brief instead. Put the WHOLE plan in one call: `title`, `goal` (awareness | leads | sales | engagement | traffic), and per item a real calendar date (YYYY-MM-DD, from today onward — today's date is in your context), optional time (HH:MM, default 10:00), `channel` (instagram | tiktok | linkedin | x | seo | ads), `formatKey` (one of that channel's formats: instagram.post, instagram.carousel, instagram.reel, instagram.story, tiktok.video, linkedin.post, x.post, x.thread, seo.article, ads.campaign), a concrete `topic` and a `captionIdea` written in the brand voice (for seo.article the working headline + target keyword; for ads.campaign the offer and audience). Spread the channels sensibly across the days. Call it in the SAME reply — never announce that you will draft it later. To change a plan the client already saw, call this again with the full updated plan — the old card is replaced.",
   schema: ContentPlanArgsSchema,
   async execute(args, ctx) {
-    const gate = await channelGateOutcome(ctx);
-    if (gate) return gate;
     // A slot-first piece already owns this turn's card (Works only).
     if (ctx.work && ctx.planOwner === "slots") {
       return {
@@ -1554,9 +1533,7 @@ const proposeContentPlan = defineTool({
     const timezone = await getProjectTimezone(ctx.projectId);
     const today = todayInTimezone(timezone);
     const brief = parsePlanBrief(ctx.message);
-    const workProblem = planOutsideWork(ctx.work, args.items);
     const problem =
-      workProblem ??
       validatePlanDates(args.items, today) ??
       validatePlanChannels(args.items) ??
       (brief ? validatePlanAgainstBrief(args.items, brief) : null);
@@ -1657,8 +1634,6 @@ const proposeContentPackage = defineTool({
     "Answer a request that names a TOPIC or GOAL but no specific deliverable (e.g. \"Kommo CRM for health tourism\") with a package of 2-5 concrete deliverables drawn from the agency's ACTIVE departments (listed in your context), shown as a card the client ticks and starts with one click. Each item: `id` (short, unique), `deliverable` (a key from your context), `title` (the concrete piece, in the brand's language), `angle` (ONE sentence on the specific angle/hook for this brand and topic — never generic), and for `instagram_post` a `contentFormat` (propose FEED_PORTRAIT = Post 3:4 unless they asked for another; the client can change it on the card). Mix departments (e.g. an Instagram post + an SEO article + a Reel idea) so the client sees the full range. Do NOT ask what they want first — propose, they untick what they do not want. Never use it when the client already asked for one specific deliverable (use generate_image / create_task) or for a dated calendar (propose_content_plan).",
   schema: ContentPackageArgsSchema,
   async execute(args, ctx) {
-    const gate = await channelGateOutcome(ctx);
-    if (gate) return gate;
     const problem = validatePackageItems(args.items);
     if (problem) {
       return {
@@ -1836,11 +1811,6 @@ const WORKS_VARIANTS: Readonly<Record<string, ChatTool>> = {
     description:
       proposeContentPlan.description +
       WORKS_DESCRIPTION_SUFFIX.propose_content_plan,
-  },
-  start_plan_brief: {
-    ...startPlanBrief,
-    description:
-      startPlanBrief.description + WORKS_DESCRIPTION_SUFFIX.start_plan_brief,
   },
   load_skill: {
     ...loadSkill,

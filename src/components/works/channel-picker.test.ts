@@ -7,7 +7,7 @@ vi.mock("@/server/actions/work-actions", () => ({
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
-const { ChannelPickerView } = await import("./channel-picker");
+const { ChannelPicker, ChannelPickerView } = await import("./channel-picker");
 const { ChannelSelectDone, continueMessage } = await import("./channel-select-card");
 const { channelOptions } = await import("@/lib/works/work");
 
@@ -56,6 +56,19 @@ describe("ChannelPickerView", () => {
 
   it("offers the integrations link while something is unconnected", () => {
     expect(view()).toContain('href="/projects/p1/integrations"');
+  });
+
+  it("the connected picker (the gate's card, the header's dialog) links with the way back to the chat", () => {
+    const html = renderToStaticMarkup(
+      createElement(ChannelPicker, {
+        projectId: "p1",
+        workId: "w1",
+        options: OPTIONS,
+        initial: [],
+        title: "Which channel?",
+      }),
+    );
+    expect(html).toContain('href="/projects/p1/integrations?from=w1"');
   });
 
   it("shows the saving state and an error alert", () => {

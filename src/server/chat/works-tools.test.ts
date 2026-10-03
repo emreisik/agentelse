@@ -148,7 +148,6 @@ describe("tool registry", () => {
       "create_task",
       "generate_image",
       "propose_content_plan",
-      "start_plan_brief",
     ]);
     for (const text of Object.values(WORKS_DESCRIPTION_SUFFIX)) {
       expect(text.startsWith(" In a Work")).toBe(true);
@@ -192,21 +191,6 @@ describe("propose_plan_options (W41 options-tool)", () => {
       workId: "work-1",
       kinds: ["content-plan-options"],
     });
-  });
-
-  it("returns the channel-select card before anything else when the Work has no channel", async () => {
-    const out = await run(optionsTool, optionsArgs(), ctx({ work: work([]) }));
-    expect((out.card as Loose).kind).toBe("channel-select");
-    expect(supersedeOpenPlanCards).not.toHaveBeenCalled();
-  });
-
-  it("refuses brief channels outside the Work", async () => {
-    const c = ctx({ work: work(["instagram"]) });
-    const out = await run(optionsTool, optionsArgs(), c);
-    expect(out.card).toBeUndefined();
-    expect((out.result as Loose).error).toContain("linkedin");
-    expect(c.planOwner).toBeUndefined();
-    expect(supersedeOpenPlanCards).not.toHaveBeenCalled();
   });
 
   it("refuses more than MAX_OPTION_SLOTS posts", async () => {
@@ -693,11 +677,5 @@ describe("propose_ideas de-duplication (W44 ideas-dedupe)", () => {
     expect(results.find((r) => !r.card)?.result as Loose).toEqual({
       error: "Ideas were already shown in this message.",
     });
-  });
-
-  it("goes through the channel gate first", async () => {
-    const out = await run(ideasTool, args, ctx({ work: work([]) }));
-    expect((out.card as Loose).kind).toBe("channel-select");
-    expect(saveIdea).not.toHaveBeenCalled();
   });
 });

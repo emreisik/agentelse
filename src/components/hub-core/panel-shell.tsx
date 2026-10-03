@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { withWorkParam } from "@/lib/works/work";
 import { buildHubHref, type EntityRef, type PanelKey } from "./hub-core-params";
 import { PANEL_LABEL } from "./lineage-map";
 import { HubBreadcrumb } from "./hub-breadcrumb";
@@ -40,19 +41,25 @@ export async function PanelShell({
   panel,
   sub,
   entity,
+  workId,
 }: {
   projectId: string;
   panel: PanelKey | null;
   sub: string | null;
   entity: EntityRef | null;
+  // Works on: the chat the panel was opened from; "Back to chat" returns to it.
+  workId?: string;
 }) {
   if (!panel) return null;
 
-  const closeHref = buildHubHref(projectId, {
-    panel: null,
-    sub: null,
-    entity: null,
-  });
+  const closeHref = withWorkParam(
+    buildHubHref(projectId, {
+      panel: null,
+      sub: null,
+      entity: null,
+    }),
+    workId,
+  );
   const Panel = PANEL_COMPONENT[panel];
   // The list (kanban) view of the ideas and work panels uses its own
   // column/card overflow instead of page scrolling — this needs to be

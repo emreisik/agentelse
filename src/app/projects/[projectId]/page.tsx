@@ -580,8 +580,11 @@ export default async function ProjectChatPage({
 
   // Live turns of a Work: the daily brief (Today, its own day only) and the
   // Meta Ads card. Built on every render from real rows and never stored.
+  // A new chat (untouched) stays empty, like ChatGPT's: with a card in it, it
+  // would look used while it is still "New Chat" and not in Recents. Its first
+  // message makes it a chat; the cards show from then on (Today always).
   const liveTurns: ChatTurn[] = [];
-  if (work) {
+  if (work && !untouched) {
     const liveAt = dayStartIso(workDay ?? todayKey, timezone);
     if (briefExtras) {
       liveTurns.push({
@@ -631,7 +634,7 @@ export default async function ProjectChatPage({
   const shownApprovalIds = new Set(
     [...liveTurns, ...chatTurns].flatMap((t) => approvalIdOfCard(t.card) ?? []),
   );
-  const decisionTurns = workDecisions
+  const decisionTurns = (untouched ? [] : workDecisions)
     .filter((d) => !shownApprovalIds.has(d.approvalId))
     .map(
       (d): ChatTurn => ({

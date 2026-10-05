@@ -1,5 +1,6 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { DockedSidebarSkeleton } from "@/components/layout/sidebar-collapse";
+import { isModulesEnabled } from "@/server/works/flag";
 
 // The loading boundary for everything under a project — the chat root and,
 // since the redirect-only legacy segments (ayarlar, fikirler, isler...) have
@@ -10,11 +11,12 @@ import { DockedSidebarSkeleton } from "@/components/layout/sidebar-collapse";
 // project sidebar once the real page lands. A hand-rolled skeleton that
 // approximates the real shell's shape (sidebar with the brand switcher and
 // account row, no top bar, right panel) avoids that flash. Below md the real
-// shell shows a slim bar instead of the sidebar.
+// shell shows a slim bar instead of the sidebar. The modules flag is a plain
+// env read (no cookies() or headers()), so the fallback stays instant.
 export default function Loading() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden md:flex-row">
-      <DockedSidebarSkeleton />
+      <DockedSidebarSkeleton modulesUi={isModulesEnabled()} />
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border bg-sidebar px-2 md:hidden">
         <Skeleton className="size-8 rounded-full" />
         <Skeleton className="h-5 w-24" />

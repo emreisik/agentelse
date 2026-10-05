@@ -19,8 +19,13 @@ vi.mock("@/server/media/creative-image", () => ({
 }));
 const loadReferenceImage = vi.fn();
 vi.mock("@/server/media/brand-logo", () => ({ loadReferenceImage }));
-vi.mock("@/server/media/creative-template", () => ({
-  applyBrandTemplate: vi.fn().mockResolvedValue(null),
+const applyBrandTemplate = vi.fn();
+vi.mock("@/server/media/creative-template", () => ({ applyBrandTemplate }));
+// The clean copy a post with words keeps for its other formats: no storage.
+vi.mock("@/server/storage/asset-storage", () => ({
+  readAsset: vi.fn().mockResolvedValue(Buffer.from("png")),
+  putAsset: vi.fn().mockResolvedValue({ storageKey: "r2://clean.png", filename: "clean.png" }),
+  deleteAsset: vi.fn().mockResolvedValue(true),
 }));
 
 const { DEFAULT_KIT_TEMPLATE } = await import("@/lib/brand-kit");
@@ -107,6 +112,7 @@ const kit = (fidelity: "match" | "inspired" = "match") => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  applyBrandTemplate.mockResolvedValue(null);
   generateCreativeImage.mockResolvedValue(image);
   loadReferenceImage.mockImplementation(async (id: string | null | undefined) =>
     id ? { data: `data-${id}`, mimeType: "image/png" } : null,
@@ -152,7 +158,7 @@ describe("OpenAiCreativeProvider with a Post Style Kit", () => {
     ]);
   });
 
-  it("headline and further texts are rendered exactly, where the reference posts put them", async () => {
+  it("headline and further texts are typeset by the compositing, never spelled by the image model", async () => {
     await new OpenAiCreativeProvider().execute(
       request({
         request: "brief",
@@ -168,11 +174,15 @@ describe("OpenAiCreativeProvider with a Post Style Kit", () => {
       }),
     );
     const prompt = generateCreativeImage.mock.calls[0]![0] as string;
-    expect(prompt).toContain("Render exactly these texts");
-    expect(prompt).toContain('HEADLINE: "iPhone 16 Pro Max"');
-    expect(prompt).toContain('"Başlangıç 1 TL", "Teklif ver"');
-    expect(prompt).toContain("in the reference posts");
-    expect(prompt).toContain("Place every text where the reference posts place that kind of text.");
+    expect(prompt).not.toContain("Render exactly these texts");
+    expect(prompt).not.toContain("Başlangıç 1 TL");
+    expect(prompt).toContain("completely textless");
+    expect(prompt).toContain("where the reference posts carry text, leave clean space instead");
+    expect(applyBrandTemplate.mock.calls[0]![0].text).toMatchObject({
+      headline: "iPhone 16 Pro Max",
+      highlight: "Pro Max",
+      lines: ["Başlangıç 1 TL", "Teklif ver"],
+    });
   });
 
   it("when the kit follows its examples the layout's own scene notes stand aside; the compositing still reserves its areas", async () => {
@@ -233,11 +243,15 @@ describe("OpenAiCreativeProvider with a Post Style Kit", () => {
     expect(call.jsonSchema.properties).toHaveProperty("headline");
     expect(call.system).toContain("ALSO produce: `headline`");
     const prompt = generateCreativeImage.mock.calls[0]![0] as string;
-    expect(prompt).toContain('HEADLINE: "iPhone 16 Pro Max"');
-    expect(prompt).toContain('"Teklif ver"');
+    expect(prompt).not.toContain("iPhone 16 Pro Max");
+    expect(applyBrandTemplate.mock.calls[0]![0].text).toMatchObject({
+      headline: "iPhone 16 Pro Max",
+      lines: ["Teklif ver"],
+    });
 
     // The examples carry no text: the model leaves the headline empty.
     vi.clearAllMocks();
+    applyBrandTemplate.mockResolvedValue(null);
     generateCreativeImage.mockResolvedValue(image);
     loadReferenceImage.mockResolvedValue({ data: "d", mimeType: "image/png" });
     runOpenAIStructured.mockResolvedValue({
@@ -247,6 +261,8 @@ describe("OpenAiCreativeProvider with a Post Style Kit", () => {
       request({ request: "brief", brandContext: brandContext({ postStyle: kit() }) }),
     );
     expect(generateCreativeImage.mock.calls[0]![0]).not.toContain("TYPOGRAPHY:");
+    expect(generateCreativeImage.mock.calls[0]![0]).not.toContain("typeset onto the image afterwards");
+    expect(applyBrandTemplate.mock.calls[0]![0].text).toBeUndefined();
   });
 
   it("inspired: a direction, not a replica, and no text step change", async () => {

@@ -472,6 +472,68 @@ describe("applyBrandTemplate", () => {
     });
   });
 
+  describe("the post's words", () => {
+    const words = {
+      headline: "Güneşli günler",
+      placement: { zone: "TOP" as const, align: "center" as const, maxLines: 3, scale: "L" as const },
+    };
+
+    // The brightest red channel in a horizontal band of the output.
+    async function brightestIn(buffer: Buffer, y0: number, y1: number): Promise<number> {
+      const { data, info } = await sharp(buffer).raw().toBuffer({ resolveWithObject: true });
+      let max = 0;
+      for (let y = y0; y < y1; y += 1) {
+        for (let x = 0; x < info.width; x += 1) {
+          max = Math.max(max, data[(y * info.width + x) * info.channels]!);
+        }
+      }
+      return max;
+    }
+
+    it("typesets the words in the layout's zone even with no logo or bar to draw", async () => {
+      const result = await applyBrandTemplate({
+        storageKey: "base-key",
+        mimeType: "image/png",
+        lightLogoAssetId: null,
+        template: { accentBarEnabled: false },
+        text: words,
+      });
+      expect(result).toMatchObject({ textDrawn: true });
+      const [, out] = storageMocks.overwriteAsset.mock.calls[0]!;
+      // White words in the upper third of the near-black picture...
+      expect(await brightestIn(out, 44, 180)).toBeGreaterThan(200);
+      // ...and nothing below it.
+      expect(await brightestIn(out, 260, 400)).toBe(10);
+    });
+
+    it("are set even when the brand switched its logo / bar compositing off", async () => {
+      const result = await applyBrandTemplate({
+        storageKey: "base-key",
+        mimeType: "image/png",
+        lightLogoAssetId: "logo-1",
+        accentColors: [{ hex: "#ff0000" }],
+        template: { enabled: false },
+        text: words,
+      });
+      expect(result).toMatchObject({ textDrawn: true });
+      // No logo was even looked up, and no bar was drawn.
+      expect(prismaMocks.assetFindUnique).not.toHaveBeenCalled();
+      const [, out] = storageMocks.overwriteAsset.mock.calls[0]!;
+      expect(await pixelAt(out, WIDTH / 2, HEIGHT - 5)).toEqual([10, 10, 10]);
+    });
+
+    it("an empty headline draws nothing new", async () => {
+      const result = await applyBrandTemplate({
+        storageKey: "base-key",
+        mimeType: "image/png",
+        lightLogoAssetId: null,
+        template: { accentBarEnabled: false },
+        text: { ...words, headline: "   " },
+      });
+      expect(result).toBeNull();
+    });
+  });
+
   it("returns null and does not throw when the referenced logo asset no longer exists", async () => {
     prismaMocks.assetFindUnique.mockResolvedValue(null);
     const result = await applyBrandTemplate({

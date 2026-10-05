@@ -6,6 +6,13 @@ import * as React from "react";
 
 import { Button } from "@/components/ui/button";
 import { workHref } from "@/components/layout/work-list";
+import { isFlowModuleKey } from "@/lib/module-flows/card";
+import {
+  MODULES,
+  parseModuleKey,
+  type ModuleKey,
+} from "@/lib/modules/catalog";
+import { startModuleFlowAction } from "@/server/actions/module-flow-actions";
 import { copyText } from "@/lib/works/copy";
 import {
   createWorkAction,
@@ -15,8 +22,8 @@ import {
 // Opening a project (its bare URL) always starts a new chat: the Work is opened
 // for the client (the project's empty one when it has one, so no blank rows pile
 // up) and the page moves into it. Today mode does the same for ?work=today before
-// the day's Work exists. Guarded so a double effect (dev strict mode) cannot
-// open two.
+// the day's Work exists. `?module=` (a module link) opens the new chat for that
+// module. Guarded so a double effect (dev strict mode) cannot open two.
 
 export const OPENER_COPY = {
   opening: "Opening a new chat…",
@@ -34,6 +41,7 @@ export function openerCopy(mode: OpenerMode = "new"): string {
 // Where the page moves: the opened Work, with whatever else the landing URL
 // asked for (?guide=setup, ?next=, the right panel's calendar). The URL only
 // stood in for "a chat"; its other parameters must not be lost on the way.
+// `?module=` is not carried: the opened Work remembers its module.
 export function openedWorkHref(
   projectId: string,
   workId: string,
@@ -41,6 +49,8 @@ export function openedWorkHref(
 ): string {
   const params = new URLSearchParams(landing);
   params.delete("work");
+  params.delete("module");
+  params.delete("post");
   const rest = params.toString();
   return `${workHref(projectId, workId)}${rest ? `&${rest}` : ""}`;
 }
@@ -82,6 +92,24 @@ export async function runOpener(input: {
   }
 }
 
+// A module link (?module=): the chat for that module. Ads Manager, Analytics
+// and SEO Manager run on a flow card (docs/modules.md): a ready one gets its
+// card written at once, so the chat opens on its Brief. A card that cannot be
+// written leaves the module's start on screen instead; the chat still opens.
+async function openModuleWork(
+  projectId: string,
+  module: ModuleKey,
+  sourcePost: string | null,
+): Promise<{ ok: true; workId: string } | { ok: false; message: string }> {
+  const result = await createWorkAction(projectId, undefined, undefined, module);
+  if (result.ok && isFlowModuleKey(module) && MODULES[module].ready) {
+    await startModuleFlowAction(projectId, result.workId, module, {
+      sourceCreativeId: sourcePost,
+    }).catch(() => undefined);
+  }
+  return result;
+}
+
 export function NewWorkOpenerView({
   error,
   onRetry,
@@ -121,7 +149,12 @@ export function NewWorkOpener({
   mode?: OpenerMode;
 }) {
   const router = useRouter();
-  const landing = useSearchParams().toString();
+  const search = useSearchParams();
+  const landing = search.toString();
+  // Known keys only: anything else opens a general chat, as before.
+  const requested = parseModuleKey(search.get("module"));
+  // "Boost with an ad" on a post: the ads flow starts from that post.
+  const sourcePost = search.get("post");
   const started = React.useRef(false);
   // False once the person has left the landing page (and while the page is torn
   // down): a late answer then moves nowhere. Re-armed by the effect so React's
@@ -145,7 +178,9 @@ export function NewWorkOpener({
       create: () =>
         mode === "today"
           ? openTodayWorkAction(projectId)
-          : createWorkAction(projectId),
+          : requested
+            ? openModuleWork(projectId, requested, sourcePost)
+            : createWorkAction(projectId),
       stillHere: () => here.current,
       replace: (href) => router.replace(href),
     });
@@ -153,7 +188,7 @@ export function NewWorkOpener({
       started.current = false;
       setError(outcome.message);
     }
-  }, [projectId, router, mode, landing]);
+  }, [projectId, router, mode, landing, requested, sourcePost]);
 
   React.useEffect(() => {
     if (started.current) return;

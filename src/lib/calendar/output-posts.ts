@@ -161,12 +161,40 @@ export function assetsOf(entry: OutputEntry): string[] {
   ];
 }
 
+export type OutputVerdict = "APPROVED" | "REJECTED";
+
+// Kartın kararı sunucuya nasıl gider. Postun Approve'u postu onaylar
+// (approvePostAction: bekleyen bütün mecralar birlikte); postu olmayan parça
+// kendi onay kaydıyla onaylanır. Ret parça başına kalır: birden çok mecralı
+// postun kartında ret yok, mecra kendi önizlemesinden reddedilir.
+export type OutputDecision =
+  | { kind: "approve-post"; postId: string }
+  | { kind: "approve"; approvalId: string }
+  | { kind: "reject"; approvalId: string };
+
+// null: kartın şu an böyle bir kararı yok (bekleyen onay yok ya da bir mecra
+// henüz içeriksiz; bkz. approvalOf).
+export function decisionOf(
+  entry: OutputEntry,
+  to: OutputVerdict,
+): OutputDecision | null {
+  if (!entry.approvalId) return null;
+  if (to === "APPROVED") {
+    return entry.postId
+      ? { kind: "approve-post", postId: entry.postId }
+      : { kind: "approve", approvalId: entry.approvalId };
+  }
+  return entry.deliveries.length === 1
+    ? { kind: "reject", approvalId: entry.approvalId }
+    : null;
+}
+
 // Karar sonrası iyimser hal: kartın kararı bekleyen teslimatları yeni duruma
 // geçer (post onayı, sunucuda da postun bekleyen bütün mecralarını onaylar).
 export function applyDecision(
   items: readonly OutputDelivery[],
   entry: OutputEntry,
-  to: "APPROVED" | "REJECTED",
+  to: OutputVerdict,
 ): OutputDelivery[] {
   const waiting = new Set(
     entry.deliveries

@@ -121,6 +121,16 @@ const envSchema = z.object({
     .optional()
     .default("false")
     .transform((value) => value === "true"),
+  // Modules (src/lib/modules/catalog.ts): New Chat opens into the Social Media
+  // Planner, Ads Manager, Analytics or SEO Manager, each walking the same
+  // steps. A Work remembers its module, so they ride on Works (isModulesEnabled
+  // also needs WORKS_UI). Server-only and off by default; only the literal
+  // "true" enables.
+  MODULES_UI: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((value) => value === "true"),
   // gpt-image-2 — see openai-image-client.ts. Separate model slot from
   // OPENAI_MODEL because it names an image model, not a chat one.
   OPENAI_IMAGE_MODEL: z.string().optional().default("gpt-image-2"),

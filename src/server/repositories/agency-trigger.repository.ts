@@ -53,15 +53,16 @@ export const AgencyTriggerRepository = {
       orderBy: { scheduledFor: "asc" },
     });
 
-    const claimed = [];
-    for (const trigger of candidates) {
-      const result = await prisma.agencyTrigger.updateMany({
-        where: { id: trigger.id, status: "PENDING" },
-        data: { status: "PROCESSING" },
-      });
-      if (result.count === 1) claimed.push(trigger);
-    }
-    return claimed;
+    // Sent together, each swap atomic on its own row; order kept.
+    const results = await Promise.all(
+      candidates.map((trigger) =>
+        prisma.agencyTrigger.updateMany({
+          where: { id: trigger.id, status: "PENDING" },
+          data: { status: "PROCESSING" },
+        }),
+      ),
+    );
+    return candidates.filter((_, index) => results[index]?.count === 1);
   },
 
   async markProcessed(triggerId: string) {

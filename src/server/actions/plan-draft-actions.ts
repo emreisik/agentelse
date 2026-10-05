@@ -1,10 +1,13 @@
 "use server";
 
+import { ALL_FORMAT_KEYS } from "@/lib/content-channels";
 import { prisma } from "@/lib/prisma";
 import {
   DATE_SHAPE,
   TIME_SHAPE,
+  nextSkipFormats,
   orderedPlatforms,
+  withSkipFormats,
 } from "@/lib/works/plan-platforms";
 import { updateCommandCard } from "@/server/chat/card-store";
 import { todayInTimezone, validatePlanDates } from "@/server/chat/content-plan";
@@ -21,7 +24,8 @@ import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 // Server Actions of the social media plan card while it is still a DRAFT
 // (docs/works.md): choose the platforms it goes to, move a post to another day
-// or time, drop a post. DB only, no model call. Every write goes through the
+// or time, drop a post, leave one of a post's channels out. DB only, no model
+// call. Every write goes through the
 // atomic card writer with requireActiveWork, so a direct POST cannot change a
 // completed Work or a saved plan. The client does not refresh after success: the
 // action's revalidation carries the new page.
@@ -52,6 +56,7 @@ const MESSAGE = {
   locked: "This plan is already saved. Change its posts on the calendar.",
   range: "That isn't possible for this plan.",
   lastPost: "A plan needs at least one post.",
+  lastChannel: "A post keeps at least one channel.",
   day: "Pick a day from today on.",
 } as const;
 
@@ -261,6 +266,50 @@ export async function removePlanPostAction(
     if (items.filter((item) => !item.removed).length === 0) {
       return fail("RANGE", MESSAGE.lastPost);
     }
+    return { card: { ...plan, items } };
+  });
+}
+
+// One channel of a post left out (`skip`) or taken back in (docs/works.md
+// "Posts"), by its format key ("instagram.story", "facebook.post"): every item
+// of the post carries the list, and saving never makes those deliveries. The
+// post is named by its items and its idea; it keeps at least one channel.
+export async function setPlanPostSkipAction(
+  commandId: string,
+  indices: number[],
+  expectTopic: string,
+  formatKey: string,
+  skip: boolean,
+): Promise<PlanDraftResult> {
+  return editDraft(commandId, "plan-post-skip", (plan) => {
+    if (
+      !isIndices(indices) ||
+      typeof expectTopic !== "string" ||
+      typeof formatKey !== "string" ||
+      !ALL_FORMAT_KEYS.includes(formatKey) ||
+      typeof skip !== "boolean"
+    ) {
+      return fail("RANGE", MESSAGE.range);
+    }
+    if (!sameTopic(plan, indices, expectTopic)) {
+      return fail("STALE", MESSAGE.stale);
+    }
+    const next = nextSkipFormats(
+      indices.map((index) => plan.items[index]!),
+      plan,
+      formatKey,
+      skip,
+    );
+    if (!next.ok) {
+      return fail(
+        "RANGE",
+        next.reason === "LAST" ? MESSAGE.lastChannel : MESSAGE.range,
+      );
+    }
+    const post = new Set(indices);
+    const items = plan.items.map((item, at) =>
+      post.has(at) ? withSkipFormats(item, next.skipFormats) : item,
+    );
     return { card: { ...plan, items } };
   });
 }

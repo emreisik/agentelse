@@ -1,4 +1,6 @@
 import type { ChannelConnections, ChannelKey } from "@/lib/content-channels";
+import { todayKeyIn } from "@/lib/date-picker";
+import type { ModuleKey } from "@/lib/modules/catalog";
 import {
   chatDefaultChannels,
   starterCards,
@@ -15,6 +17,11 @@ import {
 // itself and everything its empty screen needs, worked out on the server.
 export type WorkHost = {
   work: WorkView;
+  // The module this chat is for (src/lib/modules), null for a general chat.
+  // Always null while modules are off: read this, not work.module.
+  module: ModuleKey | null;
+  // Modules are on (MODULES_UI): a new chat opens into them.
+  modulesUi: boolean;
   // The chooser's options, with each channel's live connection state.
   channelOptions: ChannelOption[];
   anyConnected: boolean;
@@ -28,6 +35,11 @@ export type WorkHost = {
   starterCards: StarterCard[];
   // The workspace zone, for printing wall-clock times.
   timezone?: string;
+  // The project's day (YYYY-MM-DD in its own timezone) as the server read it,
+  // and the brand's current focus: what a new plan starts from (the Social
+  // Media Planner's Brief, module-start.tsx).
+  today: string;
+  theme?: string;
 };
 
 export function buildWorkHost(input: {
@@ -40,8 +52,11 @@ export function buildWorkHost(input: {
   theme?: string;
   aiOff?: boolean;
   timezone?: string;
+  // isModulesEnabled(), read by the page. Absent = off.
+  modulesUi?: boolean;
 }): WorkHost {
   const { work, connections } = input;
+  const modulesUi = input.modulesUi === true;
   const options = channelOptions(connections);
   const defaultChannels =
     work.channels.length === 0 ? chatDefaultChannels(options) : [];
@@ -54,6 +69,8 @@ export function buildWorkHost(input: {
   );
   return {
     work,
+    module: modulesUi ? (work.module ?? null) : null,
+    modulesUi,
     channelOptions: options,
     anyConnected,
     defaultChannels,
@@ -69,5 +86,8 @@ export function buildWorkHost(input: {
       fromWorkId: work.id,
     }),
     ...(input.timezone ? { timezone: input.timezone } : {}),
+    // The page passes its day; without it, the day in the project's timezone.
+    today: input.today ?? todayKeyIn(input.timezone),
+    ...(input.theme ? { theme: input.theme } : {}),
   };
 }

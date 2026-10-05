@@ -9,6 +9,7 @@ import {
   resolveFormat,
   type ChannelKey,
 } from "@/lib/content-channels";
+import { isSocialPlatform } from "@/lib/works/plan-platforms";
 
 // What the plan wizard collects, and how it travels: the wizard sends an
 // ordinary chat message (readable line + one machine line), the agent reads
@@ -33,12 +34,71 @@ export const PlanBriefSchema = z.object({
       }),
     )
     .min(1),
+  // "+ Story": each Instagram post also goes out as a Story made from its
+  // picture (the plan card's instagramStory). Only kept with Instagram among
+  // the channels; absent = off.
+  story: z.boolean().optional(),
   perWeek: z.number().int().min(1).max(MAX_BRIEF_PER_WEEK),
   weeks: z.number().int().min(1).max(MAX_BRIEF_WEEKS),
   start: z.string().regex(DATE_RE),
   theme: z.string().trim().max(200).optional(),
 });
 export type PlanBrief = z.infer<typeof PlanBriefSchema>;
+
+// What is known before the wizard opens (the New Chat module start reads it
+// from the client's own words): each field preselects its step.
+export type PlanBriefPrefill = {
+  channels?: readonly ChannelKey[];
+  story?: boolean;
+  perWeek?: number;
+  weeks?: number;
+  topic?: string;
+};
+
+// What a brief's slots rotate through, in brief order. A post is general
+// (docs/works.md "Posts"): it goes to every social channel of the brief (the
+// plan's platforms), so the social channels share ONE place, drawn on the
+// first of them with its formats. Blog/SEO and Ads are not posts: each of
+// their formats keeps a place of its own.
+export function briefRotation(
+  channels: PlanBrief["channels"],
+): { channel: ChannelKey; formatKey: string }[] {
+  let posts = false;
+  return channels.flatMap(({ channel, formats }) => {
+    if (isSocialPlatform(channel)) {
+      if (posts) return [];
+      posts = true;
+    }
+    return formats.map((formatKey) => ({ channel, formatKey }));
+  });
+}
+
+// The brief's channels its plan gives nothing at all, because perWeek x weeks
+// is smaller than what the slots rotate through. Any post reaches every social
+// channel.
+export function channelsLeftOut(
+  brief: Pick<PlanBrief, "channels" | "perWeek" | "weeks">,
+): ChannelKey[] {
+  const reached = briefRotation(brief.channels).slice(
+    0,
+    totalBriefItems(brief),
+  );
+  const posted = reached.some(({ channel }) => isSocialPlatform(channel));
+  const used = new Set(reached.map(({ channel }) => channel));
+  return brief.channels
+    .map(({ channel }) => channel)
+    .filter((channel) =>
+      isSocialPlatform(channel) ? !posted : !used.has(channel),
+    );
+}
+
+// The Story switch only means something with Instagram among the channels.
+function storyOn(brief: Pick<PlanBrief, "story" | "channels">): boolean {
+  return (
+    brief.story === true &&
+    brief.channels.some(({ channel }) => channel === "instagram")
+  );
+}
 
 function briefIsConsistent(brief: PlanBrief): boolean {
   const seen = new Set<ChannelKey>();
@@ -83,25 +143,30 @@ function decodeChannels(value: string): PlanBrief["channels"] | null {
 // tool validation parse. The bubble hides the machine line
 // (stripPlanBriefMarker).
 export function serializePlanBrief(brief: PlanBrief): string {
+  const story = storyOn(brief);
   const channels = brief.channels
     .map(({ channel, formats }) => {
       const labels = formats
         .map((key) => resolveFormat(channel, key)?.label ?? key)
         .join(", ");
-      return `${CHANNELS[channel].label} (${labels})`;
+      const extra = channel === "instagram" && story ? " + Story" : "";
+      return `${CHANNELS[channel].label} (${labels})${extra}`;
     })
     .join("; ");
   const sentence = [
     `Plan my content. Goal: ${PLAN_GOAL_LABEL[brief.goal].label}.`,
     `Channels: ${channels}.`,
     `${brief.perWeek} per week for ${brief.weeks} week${brief.weeks === 1 ? "" : "s"}, starting ${brief.start}.`,
-    brief.theme ? `Theme: ${brief.theme}.` : "",
+    // One line: a line break in the theme would start a line of its own (the
+    // machine line keeps the exact text).
+    brief.theme ? `Theme: ${brief.theme.replace(/\s+/g, " ")}.` : "",
   ]
     .filter(Boolean)
     .join(" ");
   const fields = [
     `goal=${brief.goal}`,
     `channels=${encodeChannels(brief.channels)}`,
+    story ? "story=1" : "",
     `perWeek=${brief.perWeek}`,
     `weeks=${brief.weeks}`,
     `start=${brief.start}`,
@@ -134,13 +199,16 @@ export function parsePlanBrief(message: string): PlanBrief | null {
   const parsed = PlanBriefSchema.safeParse({
     goal: fields.get("goal"),
     channels,
+    ...(fields.get("story") === "1" ? { story: true } : {}),
     perWeek: Number(fields.get("perWeek")),
     weeks: Number(fields.get("weeks")),
     start: fields.get("start"),
     theme,
   });
   if (!parsed.success || !briefIsConsistent(parsed.data)) return null;
-  return parsed.data;
+  const brief = parsed.data;
+  if (brief.story && !storyOn(brief)) delete brief.story;
+  return brief;
 }
 
 // The visible part of a wizard message (what the bubble shows).
@@ -186,12 +254,18 @@ export function validatePlanAgainstBrief(
     }
   }
   // Covering every channel is only possible when the total allows it (the
-  // wizard warns when perWeek x weeks is smaller than the channel count).
-  if (max >= brief.channels.length) {
+  // wizard warns when it does not). A post goes to every social channel of
+  // the brief (the plan's platforms), so any social item covers them all;
+  // Blog/SEO and Ads each need an item of their own.
+  const places = [
+    ...new Set(briefRotation(brief.channels).map(({ channel }) => channel)),
+  ];
+  if (max >= places.length) {
     const usedChannels = new Set(items.map((item) => item.channel));
-    const missing = brief.channels
-      .map(({ channel }) => channel)
-      .filter((channel) => !usedChannels.has(channel));
+    const posted = items.some((item) => isSocialPlatform(item.channel));
+    const missing = places.filter((channel) =>
+      isSocialPlatform(channel) ? !posted : !usedChannels.has(channel),
+    );
     if (missing.length > 0) {
       return `The brief includes ${missing.join(", ")} but the plan has no item for it. Cover every chosen channel.`;
     }

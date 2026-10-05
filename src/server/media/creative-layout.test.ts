@@ -191,6 +191,41 @@ describe("planCreativeLayout with saved layouts", () => {
     expect(plan.template).toMatchObject({ enabled: false });
     expect(plan.reservedZones).toBeUndefined();
     expect(plan.composition).toBeUndefined();
+    expect(plan.textPlacement).toBeNull();
+  });
+
+  it("names the headline zone the post's words are typeset in, whether or not a headline was asked for", () => {
+    const plan = planCreativeLayout({
+      visualIdentity: withLayouts(),
+      hasLogo: true,
+      requestedId: "left-column",
+      pixelSize: FEED,
+      hasHeadline: false,
+    });
+    expect(plan.textPlacement).toEqual({
+      zone: "LEFT_COLUMN",
+      align: "left",
+      maxLines: 4,
+      scale: "M",
+    });
+    // A layout without a headline zone, and a brand without layouts, carry none.
+    expect(
+      planCreativeLayout({
+        visualIdentity: withLayouts(),
+        hasLogo: true,
+        requestedId: "minimal-corner",
+        pixelSize: FEED,
+        hasHeadline: false,
+      }).textPlacement,
+    ).toBeNull();
+    expect(
+      planCreativeLayout({
+        visualIdentity: identity(),
+        hasLogo: true,
+        pixelSize: FEED,
+        hasHeadline: true,
+      }).textPlacement,
+    ).toBeNull();
   });
 });
 

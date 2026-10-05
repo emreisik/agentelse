@@ -47,6 +47,9 @@ vi.mock("@assistant-ui/react", () => ({
   useAuiState: (select: (s: unknown) => unknown) =>
     select({ thread: { messages: { length: state.messageCount } } }),
 }));
+vi.mock("@/server/actions/module-flow-actions", () => ({
+  startModuleFlowAction: vi.fn(async () => ({ ok: true, commandId: "cmd-flow" })),
+}));
 vi.mock("@/server/actions/work-actions", () => ({
   setWorkChannelsAction: vi.fn(),
 }));

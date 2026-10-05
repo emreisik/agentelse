@@ -60,6 +60,9 @@ vi.mock("@assistant-ui/react", () => ({
   },
   useAuiState: () => 0,
 }));
+vi.mock("@/server/actions/module-flow-actions", () => ({
+  startModuleFlowAction: vi.fn(async () => ({ ok: true, commandId: "cmd-flow" })),
+}));
 vi.mock("@/server/actions/work-actions", () => ({
   setWorkChannelsAction: state.setChannels,
 }));
@@ -146,6 +149,7 @@ const work = (channels: WorkView["channels"]): WorkView => ({
   status: "ACTIVE",
   channels,
   acknowledgedUnconnected: [],
+  module: null,
   lastActivityAt: "2026-10-01T10:00:00.000Z",
 });
 

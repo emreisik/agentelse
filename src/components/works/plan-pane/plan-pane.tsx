@@ -35,8 +35,7 @@ import {
   resolvePlanItem,
   type ChannelKey,
 } from "@/lib/content-channels";
-import { buildWeeks, toViewItems } from "@/lib/content-plan-view";
-import { MAX_PRODUCTION_BATCH, selectProductionBatch } from "@/lib/journey";
+import { buildWeeks } from "@/lib/content-plan-view";
 import { copyText } from "@/lib/works/copy";
 import { produceCostNote } from "@/lib/works/cost";
 import {
@@ -45,12 +44,18 @@ import {
   swapItem,
 } from "@/lib/works/plan-alternatives";
 import {
+  canApprovePost,
   canMovePost,
   canOpenStep,
   canPlanPublishing,
+  isLiveDelivery,
+  isPostMade,
+  liveStagesOf,
   movePieces,
+  nextRunOf,
   nextSuggestion,
   pieceOf,
+  piecesToMove,
   progressOf,
   rangeLabel,
   stepOf,
@@ -58,17 +63,19 @@ import {
   todayIn,
   type PaneStep,
   type PieceView,
+  type RunPiece,
 } from "@/lib/works/plan-pane";
 import { worksPublishMode } from "@/lib/works/plan-publish-truth";
 import {
   activePlatformsOf,
+  deliveriesOfPlan,
   formatFor,
   groupPosts,
-  INSTAGRAM_POST,
-  INSTAGRAM_STORY,
+  nextSkipFormats,
   orderedPlatforms,
   piecesOfPlan,
   postKeyOf,
+  withSkipFormats,
 } from "@/lib/works/plan-platforms";
 import { integrationsHref } from "@/lib/works/starter-cards";
 import { saveContentPlanAction } from "@/server/actions/content-plan-actions";
@@ -77,9 +84,14 @@ import {
   removePlanPostAction,
   setPlanInstagramStoryAction,
   setPlanPlatformsAction,
+  setPlanPostSkipAction,
   type PlanDraftResult,
 } from "@/server/actions/plan-draft-actions";
 import { swapPlanItemAction } from "@/server/actions/plan-options-actions";
+import {
+  approvePostAction,
+  setDeliveryExcludedAction,
+} from "@/server/actions/post-actions";
 import { moveSlotAction } from "@/server/actions/schedule-slots-actions";
 import { enablePlanPublishingAction } from "@/server/actions/plan-progress-actions";
 import { approvePlansAction } from "@/server/actions/work-approve-actions";
@@ -109,11 +121,23 @@ type PlanItem = PlanCard["items"][number];
 type DraftEdit =
   | { type: "move"; indices: readonly number[]; date: string; time: string }
   | { type: "remove"; indices: readonly number[] }
-  | { type: "swap"; index: number; altIndex: number };
+  | { type: "swap"; index: number; altIndex: number }
+  | {
+      type: "skip";
+      indices: readonly number[];
+      skipFormats: readonly string[];
+    };
 
 function applyDraftEdit(current: PlanItem[], edit: DraftEdit): PlanItem[] {
   if (edit.type === "remove") {
     return current.filter((_, at) => !edit.indices.includes(at));
+  }
+  if (edit.type === "skip") {
+    return current.map((item, at) =>
+      edit.indices.includes(at)
+        ? withSkipFormats(item, edit.skipFormats)
+        : item,
+    );
   }
   if (edit.type === "swap") {
     return current.map((item, at) =>
@@ -200,7 +224,7 @@ function PaneBody({
     (_current, next: boolean) => next,
   );
   // What saving would make right now (one piece per post and platform, plus
-  // the Stories).
+  // the Stories, less the channels each post leaves out).
   const draftPieces = useMemo(
     () =>
       piecesOfPlan({
@@ -210,13 +234,32 @@ function PaneBody({
       }),
     [draftItems, choice, story],
   );
+  // A made post's channel left out or taken back in, shown at once while its
+  // action runs (creative id -> left out).
+  const [leftNow, markLeftOut] = useOptimistic(
+    {} as Readonly<Record<string, boolean>>,
+    (current, change: { id: string; out: boolean }) => ({
+      ...current,
+      [change.id]: change.out,
+    }),
+  );
+  const leftOutAt = (index: number): boolean => {
+    const slot = card.slots?.[index];
+    if (!slot) return false;
+    return leftNow[slot.id] ?? slot.excluded === true;
+  };
 
   const sourceItems = draftItems;
-  const posts = useMemo(() => groupPosts(sourceItems), [sourceItems]);
-  const pieceCount = useMemo(
+  // A saved plan's posts are its Posts (one card each, whatever day a channel
+  // says); a draft's, and an older plan's, are the items that share a day, a
+  // time and an idea.
+  const posts = useMemo(
     () =>
-      (draft ? draftPieces : card.items).filter((item) => !item.removed).length,
-    [draft, draftPieces, card.items],
+      groupPosts(
+        sourceItems,
+        draft ? undefined : (index) => card.slots?.[index]?.postId,
+      ),
+    [sourceItems, draft, card.slots],
   );
 
   // ---- steps -----------------------------------------------------------------
@@ -263,32 +306,38 @@ function PaneBody({
   const [scheduleBusy, setScheduleBusy] = useState(false);
 
   // ---- what each post is made of ----------------------------------------------
+  // One tab per channel of the post: a channel can have two (an Instagram post
+  // and its Story). A draft shows what saving would make, the channels the post
+  // leaves out among them; a made plan shows its pieces.
   const tabsOf = (post: (typeof posts)[number]): CardTab[] => {
-    if (draft) {
-      const first = post.items[0];
-      const firstChannel = first ? resolvePlanItem(first)?.channel : undefined;
-      const own = orderedPlatforms(
-        post.items.flatMap((item) => {
-          const channel = resolvePlanItem(item)?.channel;
-          return channel ? [channel] : [];
-        }),
-      );
-      const channels = choice ? platforms : own.length > 0 ? own : platforms;
-      return channels.flatMap((channel) => {
-        const formatKey =
-          firstChannel === channel
-            ? first?.formatKey
-            : formatFor(channel, first?.formatKey);
-        const tab = { channel, formatKey };
-        return story && channel === "instagram" && formatKey === INSTAGRAM_POST
-          ? [tab, { channel, formatKey: INSTAGRAM_STORY }]
-          : [tab];
-      });
-    }
-    // One tab per piece: a channel can have two (an Instagram post and its
-    // Story).
     const seen = new Set<string>();
     const tabs: CardTab[] = [];
+    if (draft) {
+      const deliveries = deliveriesOfPlan({
+        items: post.items,
+        platforms: choice ?? undefined,
+        instagramStory: story,
+      });
+      for (const delivery of deliveries) {
+        const resolved = resolvePlanItem(delivery.item);
+        if (!resolved) continue;
+        const key = `${resolved.channel}:${resolved.format.key}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        tabs.push({
+          channel: resolved.channel,
+          formatKey: resolved.format.key,
+          ...(delivery.skipped ? { leftOut: true } : {}),
+        });
+      }
+      // Items outside the catalog: the platforms the plan goes to.
+      return tabs.length > 0
+        ? tabs
+        : platforms.map((channel) => ({
+            channel,
+            formatKey: formatFor(channel, post.items[0]?.formatKey),
+          }));
+    }
     for (const index of post.indices) {
       const item = card.items[index];
       const channel = item ? resolvePlanItem(item)?.channel : undefined;
@@ -299,10 +348,25 @@ function PaneBody({
         channel,
         formatKey: item.formatKey,
         piece: pieceOf(card, item, index, channel),
+        ...(leftOutAt(index) ? { leftOut: true } : {}),
       });
     }
     return tabs;
   };
+  // Each post's tabs, once per render.
+  const tabsByPost = new Map(posts.map((post) => [post.key, tabsOf(post)]));
+  const tabsFor = (post: (typeof posts)[number]): CardTab[] =>
+    tabsByPost.get(post.key) ?? [];
+  // The channels the posts go to, as their cards count them (a left-out one,
+  // or one gone since, is not counted).
+  const pieceCount = posts.reduce(
+    (sum, post) => sum + tabsFor(post).filter(isLiveDelivery).length,
+    0,
+  );
+  // The post's id once saved (every piece of a post carries the same one).
+  const postIdOf = (post: (typeof posts)[number]): string | undefined =>
+    post.postId ??
+    post.indices.map((index) => card.slots?.[index]?.postId).find(Boolean);
 
   // ---- the plan's actions ------------------------------------------------------
   const reason = disabledReasonOf(host, { kind: "server", planId: commandId });
@@ -324,22 +388,27 @@ function PaneBody({
     });
   };
 
-  // A made plan's post: each of its pieces moves to the new day and time, one
-  // after the other (a piece is its own creative). The open card follows the
-  // post to its new place.
+  // A made plan's post to a new day and time. A Post moves as one: moving one
+  // of its pieces moves the others (post-move.ts). An older plan's post moves
+  // piece by piece, one after the other, and its open card follows it to its
+  // new place (it is named by its day).
   const moveMade = (
     post: (typeof posts)[number],
     pieces: readonly (PieceView | undefined)[],
     date: string,
     time: string,
   ) => {
+    const to = { date, time };
+    const moving = postIdOf(post)
+      ? piecesToMove(pieces, to).slice(0, 1)
+      : pieces;
     startEdit(async () => {
-      const result = await movePieces(pieces, { date, time }, (id, to) =>
-        moveSlotAction(projectId, workId, id, to).catch(() => ({
+      const result = await movePieces(moving, to, (id, at) =>
+        moveSlotAction(projectId, workId, id, at).catch(() => ({
           ok: false,
         })),
       );
-      if (result.moved > 0) {
+      if (result.moved > 0 && !post.postId) {
         setOpenKey(postKeyOf({ date, time, topic: post.topic }));
       }
       if (result.ok) {
@@ -371,6 +440,76 @@ function PaneBody({
       () => applyStory(next),
       (id) => setPlanInstagramStoryAction(id, next),
     );
+  };
+
+  // One channel of one post left out, or taken back in (docs/works.md
+  // "Posts"). A draft skips its format, so saving never makes it; a made plan
+  // excludes its piece, which is then never made, approved or posted. A post
+  // keeps at least one channel.
+  const toggleLeftOut = (post: (typeof posts)[number], tab: CardTab) => {
+    const out = !tab.leftOut;
+    if (draft) {
+      if (!tab.formatKey) return;
+      const formatKey = tab.formatKey;
+      const next = nextSkipFormats(
+        post.items,
+        { platforms: choice ?? undefined, instagramStory: story },
+        formatKey,
+        out,
+      );
+      if (!next.ok) {
+        if (next.reason === "LAST") toast.info(COPY.keepOneChannel);
+        else toast.error(COPY.failedGeneric);
+        return;
+      }
+      edit(
+        () =>
+          applyDraft({
+            type: "skip",
+            indices: post.indices,
+            skipFormats: next.skipFormats,
+          }),
+        (id) =>
+          setPlanPostSkipAction(id, post.indices, post.topic, formatKey, out),
+      );
+      return;
+    }
+    const creativeId = tab.piece?.creativeId;
+    if (!creativeId) return;
+    startEdit(async () => {
+      markLeftOut({ id: creativeId, out });
+      const result = await setDeliveryExcludedAction(creativeId, out).catch(
+        () => null,
+      );
+      if (result?.ok) {
+        host.announce(out ? COPY.leftOutDone : COPY.includedDone);
+      } else {
+        toast.error(result?.message ?? COPY.failedGeneric);
+      }
+      router.refresh();
+    });
+  };
+
+  // One Approve for a made post: every channel left in it that waits is
+  // approved together (post-actions.ts).
+  const [approvingPost, setApprovingPost] = useState<string | null>(null);
+  const approvePost = async (postId: string) => {
+    if (approvingPost) return;
+    setApprovingPost(postId);
+    try {
+      const result = await approvePostAction(postId);
+      if (result.ok) {
+        toast.success(COPY.postApproved);
+        host.announce(COPY.postApproved);
+      } else {
+        toast.error(result.message);
+      }
+    } catch {
+      toast.error(COPY.failedGeneric);
+    } finally {
+      setApprovingPost(null);
+      router.refresh();
+    }
   };
 
   // A new idea for a post: its other ideas one after the other, each shown as a
@@ -516,75 +655,54 @@ function PaneBody({
   };
 
   // ---- making, approving, scheduling --------------------------------------------
-  const viewItems = useMemo(
-    () =>
-      toViewItems(
-        draft ? draftPieces : sourceItems,
-        card.connections,
-        card.slots,
-      ),
-    [draft, draftPieces, sourceItems, card.connections, card.slots],
-  );
   const producing =
     host.producing.has(commandId ?? "") ||
     chatPackage?.runs[commandId ?? ""]?.phase === "running";
-  const producibleNow = useMemo(
-    () =>
-      selectProductionBatch(
-        viewItems.flatMap((item) =>
-          item.slot
-            ? [
-                {
-                  id: item.slot.id,
-                  planId: "plan",
-                  stage: item.slot.stage,
-                  date: item.date,
-                },
-              ]
-            : [],
-        ),
-      ).length,
-    [viewItems],
-  );
-  const costLine = useMemo(() => {
-    const ids = new Set(
-      draft
-        ? selectProductionBatch(
-            viewItems.map((item) => ({
-              id: String(item.index),
-              planId: "plan",
+  // The pieces a tap can make: a draft's are all still to make; a made plan's
+  // are the pieces left in their posts.
+  const runPieces: (RunPiece & { formatKey?: string; channel?: ChannelKey })[] =
+    draft
+      ? draftPieces.flatMap((item, index) => {
+          if (item.removed) return [];
+          const resolved = resolvePlanItem(item);
+          return [
+            {
+              id: String(index),
+              post: postKeyOf(item),
               stage: "PLANNED" as const,
               date: item.date,
-            })),
-          )
-        : selectProductionBatch(
-            viewItems.flatMap((item) =>
-              item.slot
-                ? [
-                    {
-                      id: item.slot.id,
-                      planId: "plan",
-                      stage: item.slot.stage,
-                      date: item.date,
-                    },
-                  ]
-                : [],
-            ),
-          ),
-    );
-    const next = viewItems.filter((item) =>
-      draft ? ids.has(String(item.index)) : item.slot && ids.has(item.slot.id),
-    );
-    const note = produceCostNote(
-      next.map((item) => ({
-        formatKey: item.format?.key,
-        channel: item.channel,
-      })),
-    );
-    return note
-      ? copyText("plan.costNote", { cost: note.replace(/^about /, "") })
-      : null;
-  }, [draft, viewItems]);
+              formatKey: resolved?.format.key ?? item.formatKey,
+              channel: resolved?.channel,
+            },
+          ];
+        })
+      : posts.flatMap((post) =>
+          tabsFor(post).flatMap((tab) => {
+            const piece = tab.piece;
+            if (tab.leftOut || !piece?.creativeId || !piece.stage) return [];
+            return [
+              {
+                id: piece.creativeId,
+                post: post.key,
+                stage: piece.stage,
+                date: piece.when?.slice(0, 10) || post.date,
+                formatKey: tab.formatKey,
+                channel: tab.channel,
+              },
+            ];
+          }),
+        );
+  // What one tap makes now: whole posts, at most three (the plan run picks them
+  // the same way), and what their pictures cost.
+  const nextRun = nextRunOf(runPieces);
+  const producibleNow = nextRun.posts;
+  const runIds = new Set(nextRun.ids);
+  const costNote = produceCostNote(
+    runPieces.filter((piece) => runIds.has(piece.id)),
+  );
+  const costLine = costNote
+    ? copyText("plan.costNote", { cost: costNote.replace(/^about /, "") })
+    : null;
 
   const save = (produce: boolean) => {
     if (!commandId) return;
@@ -596,9 +714,7 @@ function PaneBody({
         router.refresh();
         return;
       }
-      toast.success(
-        copyText("plan.savedToast", { n: result.saved ?? pieceCount }),
-      );
+      toast.success(copyText("plan.savedToast", { n: posts.length }));
       router.refresh();
       // The run streams for a while: start it without holding this transition
       // (the chat shows each piece live).
@@ -619,7 +735,7 @@ function PaneBody({
     // approved nor silently skipped — the whole call is refused instead, so
     // a refresh brings it into view before anything is decided.
     const shown = (card.savedCreativeIds ?? []).filter(
-      (id, index) => id && !card.items[index]?.removed,
+      (id, index) => id && !card.items[index]?.removed && !leftOutAt(index),
     );
     startTransition(async () => {
       const result = await approvePlansAction(projectId, {
@@ -664,25 +780,37 @@ function PaneBody({
   };
 
   // ---- derived views of the last step ---------------------------------------------
+  // One row per post, one line per channel left in it.
   const reviewPosts: ReviewPost[] = posts.map((post) => ({
     key: post.key,
     date: post.date,
     topic: post.topic,
-    pieces: tabsOf(post).map((tab) => ({
-      channel: tab.channel,
-      stage: tab.piece?.stage,
-      when: tab.piece?.when ?? `${post.date}T${post.time}`,
-      mode: worksPublishMode({
+    pieces: tabsFor(post)
+      .filter(isLiveDelivery)
+      .map((tab) => ({
         channel: tab.channel,
         formatKey: tab.formatKey,
-        publish:
-          (tab.formatKey
-            ? resolveFormat(tab.channel, tab.formatKey)?.publish
-            : undefined) ?? "manual",
-      }),
-      connected: connected.includes(tab.channel),
-    })),
+        stage: tab.piece?.stage,
+        when: tab.piece?.when ?? `${post.date}T${post.time}`,
+        mode: worksPublishMode({
+          channel: tab.channel,
+          formatKey: tab.formatKey,
+          publish:
+            (tab.formatKey
+              ? resolveFormat(tab.channel, tab.formatKey)?.publish
+              : undefined) ?? "manual",
+        }),
+        connected: connected.includes(tab.channel),
+      })),
   }));
+  // The person counts posts: one made once every channel left in it is, one to
+  // approve while something of it waits.
+  const postsMade = posts.filter((post) =>
+    isPostMade(liveStagesOf(tabsFor(post))),
+  ).length;
+  const postsToApprove = posts.filter((post) =>
+    liveStagesOf(tabsFor(post)).includes("IN_REVIEW"),
+  ).length;
   const heldChannels = platforms.filter((key) => !connected.includes(key));
   const instagramNeedsSchedule =
     card.scheduleEnabled === false &&
@@ -709,8 +837,8 @@ function PaneBody({
   const calendarHref = `/projects/${projectId}/takvim`;
 
   // ---- the footer of each step --------------------------------------------------
-  // How many pieces a click cannot make at once (the rest is one more tap).
-  const overBatch = Math.max(0, pieceCount - MAX_PRODUCTION_BATCH);
+  // Posts one tap cannot make at once (the rest is made after them).
+  const overBatch = Math.max(0, posts.length - nextRun.posts);
   let footer: ReactNode = null;
   if (!superseded && shown === "plan") {
     footer = draft ? (
@@ -718,7 +846,7 @@ function PaneBody({
         summary={COPY.planSummary(posts.length, pieceCount)}
         helper={
           overBatch
-            ? `${COPY.planHelper} ${COPY.planHelperBatch(MAX_PRODUCTION_BATCH)}`
+            ? `${COPY.planHelper} ${COPY.planHelperBatch(nextRun.posts)}`
             : COPY.planHelper
         }
         note={
@@ -768,10 +896,7 @@ function PaneBody({
   } else if (!superseded && shown === "content") {
     footer = (
       <PaneFooter
-        summary={COPY.readyOf(
-          progress.ready + progress.approved,
-          progress.total,
-        )}
+        summary={COPY.readyOf(postsMade, posts.length)}
         helper={COPY.reviewHelper}
         note={
           reason ??
@@ -816,7 +941,7 @@ function PaneBody({
   } else if (!superseded && shown === "publish" && !progress.allApproved) {
     footer = (
       <PaneFooter
-        summary={COPY.toApprove(progress.ready)}
+        summary={COPY.toApprove(postsToApprove)}
         helper={COPY.connectedOf(
           platforms.filter((key) => connected.includes(key)).length,
           platforms.length,
@@ -888,7 +1013,6 @@ function PaneBody({
         progress.allApproved ? (
           <PublishCalendar
             posts={reviewPosts}
-            total={progress.total}
             scheduleEnabled={card.scheduleEnabled}
             instagramNeedsSchedule={instagramNeedsSchedule}
             scheduleBusy={scheduleBusy}
@@ -899,7 +1023,7 @@ function PaneBody({
         ) : (
           <PublishReview
             posts={reviewPosts}
-            pieces={progress.ready}
+            toApprove={postsToApprove}
             timezone={timezone}
             scheduleEnabled={card.scheduleEnabled}
             heldChannels={heldChannels}
@@ -918,7 +1042,7 @@ function PaneBody({
               >
                 {COPY.postsCount(posts.length)}
               </span>
-              {` · ${COPY.adaptationsCount(pieceCount)}`}
+              {` · ${COPY.channelCount(pieceCount)}`}
             </p>
             <ViewToggle view={view} onChange={setView} />
           </div>
@@ -954,7 +1078,12 @@ function PaneBody({
           ) : (
             <ul className="space-y-2.5">
               {shownPosts.map((post) => {
-                const tabs = tabsOf(post);
+                const tabs = tabsFor(post);
+                // The pieces the post still has (a left-out channel stays put).
+                const livePieces = tabs
+                  .filter(isLiveDelivery)
+                  .map((tab) => tab.piece);
+                const postId = draft ? undefined : postIdOf(post);
                 const index = post.indices[0] ?? 0;
                 const item = sourceItems[index];
                 // A draft's post changes its idea; a saved one only while its single
@@ -1033,16 +1162,11 @@ function PaneBody({
                         : !draft &&
                             !superseded &&
                             host.active &&
-                            canMovePost(tabs.map((tab) => tab.piece))
+                            canMovePost(livePieces)
                           ? {
                               canRemove: false,
                               onMove: (date, time) =>
-                                moveMade(
-                                  post,
-                                  tabs.map((tab) => tab.piece),
-                                  date,
-                                  time,
-                                ),
+                                moveMade(post, livePieces, date, time),
                               // A made post does not leave the plan from here.
                               onRemove: () => undefined,
                             }
@@ -1074,6 +1198,23 @@ function PaneBody({
                     edit={
                       !draft && !superseded
                         ? { projectId, workId, active: host.active }
+                        : undefined
+                    }
+                    onLeaveOut={
+                      !superseded && !blocked
+                        ? (tab) => toggleLeftOut(post, tab)
+                        : undefined
+                    }
+                    approve={
+                      postId &&
+                      shown === "content" &&
+                      !superseded &&
+                      host.active &&
+                      canApprovePost(liveStagesOf(tabs))
+                        ? {
+                            onApprove: () => void approvePost(postId),
+                            busy: approvingPost === postId,
+                          }
                         : undefined
                     }
                   />

@@ -252,4 +252,20 @@ describe("buildCreativePrompt with a Post Style Kit", () => {
       buildCreativePrompt({ subject: "s", typography: { headline: "Hello" } }),
     ).toContain("Render exactly this text, character for character");
   });
+
+  it("words typeset afterwards: a textless picture that keeps their area calm", () => {
+    const prompt = buildCreativePrompt({
+      subject: "s",
+      textArea: "in the upper third of the frame",
+    });
+    expect(prompt).toContain(
+      "The post's headline is typeset onto the image afterwards in the upper third of the frame: keep that area calm, uncluttered and low-detail, with no text of any kind.",
+    );
+    expect(prompt).toContain("completely textless; the post's words are typeset onto it afterwards");
+    expect(prompt).not.toContain("TYPOGRAPHY:");
+    // Following example posts that carry text: their text areas stay empty.
+    expect(
+      buildCreativePrompt({ subject: "s", textArea: "centered", matchStyle: true }),
+    ).toContain("where the reference posts carry text, leave clean space instead");
+  });
 });

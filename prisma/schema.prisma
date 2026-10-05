@@ -1447,6 +1447,9 @@ model Task {
   // Publish tasks per project and window (calendar poll, publish paths).
   @@index([projectId, capability, createdAt])
   @@index([parentTaskId])
+  // The chat's progress poll: did any task of the project change since the
+  // page was rendered (src/server/chat/progress.ts).
+  @@index([projectId, updatedAt])
 }
 
 model TaskDependency {
@@ -1782,6 +1785,8 @@ model Creative {
   @@index([planId])
   @@index([postId])
   @@index([createdByTaskId])
+  // The chat's progress poll (src/server/chat/progress.ts).
+  @@index([projectId, updatedAt])
 }
 
 model CreativeVersion {

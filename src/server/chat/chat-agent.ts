@@ -47,10 +47,12 @@ import {
 } from "@/lib/works/work";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
 import { WorkRepository } from "@/server/repositories/work.repository";
+import { isModulesEnabled } from "@/server/works/flag";
 import { getProjectTimezone, todayInTimezone } from "./content-plan";
 import { utcToZonedDateTimeLocal } from "@/lib/timezone";
 import {
   MAX_OPTION_SLOTS,
+  briefPlatforms,
   describePlanSlots,
   latestPlanBrief,
   layoutPlanSlots,
@@ -429,6 +431,10 @@ export async function* runChatAgent(
     if (input.workId && !work) {
       throw new AgentelseError("NOT_FOUND", "This Work no longer exists.");
     }
+    // The module this chat is for while modules are on, else null (a general
+    // chat, and every turn outside a Work): it narrows the tools and adds one
+    // line to the context.
+    const moduleKey = work && isModulesEnabled() ? (work.module ?? null) : null;
     const context = await buildContext(input.projectId, input.ideaId, {
       recall: true,
       session: true,
@@ -498,6 +504,7 @@ export async function* runChatAgent(
     const tools = toolsForPhase(context.projectPhase, {
       guidedSetup: GUIDED_SETUP,
       ...(work ? { works: true } : {}),
+      ...(moduleKey ? { module: moduleKey } : {}),
     });
     const toolMap = new Map(tools.map((tool) => [tool.name, tool]));
     const openaiTools = [
@@ -553,9 +560,11 @@ export async function* runChatAgent(
         });
         if (slots.length >= 1 && slots.length <= MAX_OPTION_SLOTS) {
           // The note numbers the lines itself; describePlanSlots already did.
-          worksPlanSlots = describePlanSlots(slots).map((line) =>
-            line.replace(/^\d+\.\s/, ""),
-          );
+          // A slot is a post: its line names the brief's other platforms.
+          worksPlanSlots = describePlanSlots(
+            slots,
+            briefPlatforms(planBrief),
+          ).map((line) => line.replace(/^\d+\.\s/, ""));
           worksPlanFromEarlierBrief = !currentBrief;
         } else if (slots.length > MAX_OPTION_SLOTS) {
           worksPlanTooLarge = true;
@@ -597,6 +606,7 @@ export async function* runChatAgent(
           guidedSetup: tools.some((tool) => tool.name === "start_guided_setup"),
           nextSteps: nextSteps.map((step) => step.title),
           work: workForPrompt,
+          ...(moduleKey ? { module: moduleKey } : {}),
           ...(worksPlanSlots
             ? { worksPlanSlots, worksPlanFromEarlierBrief }
             : {}),

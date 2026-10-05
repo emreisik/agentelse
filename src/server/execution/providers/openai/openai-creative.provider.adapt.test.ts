@@ -25,6 +25,12 @@ vi.mock("@/server/media/style-references", async (original) => ({
   ...(await original<typeof import("@/server/media/style-references")>()),
   loadStyleReferences,
 }));
+// No storage behind the clean copies of a post with words.
+vi.mock("@/server/storage/asset-storage", () => ({
+  readAsset: vi.fn().mockResolvedValue(Buffer.from("png")),
+  putAsset: vi.fn().mockResolvedValue({ storageKey: "r2://clean.png", filename: "clean.png" }),
+  deleteAsset: vi.fn().mockResolvedValue(true),
+}));
 const readPictureForAdapting = vi.fn();
 vi.mock("@/server/media/adapt-picture", async (original) => ({
   ...(await original<typeof import("@/server/media/adapt-picture")>()),

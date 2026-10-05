@@ -3,14 +3,11 @@ import "server-only";
 import type { CapabilityKey, ExecutionProviderType } from "@prisma/client";
 
 import { isIntegrationConfigured } from "@/lib/env";
-import { prisma } from "@/lib/prisma";
 import {
-  GOOGLE_PROVIDER,
   fetchGa4Report,
   fetchSearchConsoleReport,
-  type GoogleAnalyticsMetadata,
-  type GoogleSearchConsoleMetadata,
 } from "@/server/integrations/google-client";
+import { findActiveGoogleConnections } from "@/server/integrations/google-connections";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
 import type {
   ExecutionAcceptedResult,
@@ -40,45 +37,6 @@ type StoredResult = {
 };
 
 const store = new Map<string, StoredResult>();
-
-type ActiveGoogleConnections = {
-  analytics: {
-    credential: { id: string; encryptedSecret: string };
-    propertyId: string;
-  } | null;
-  searchConsole: {
-    credential: { id: string; encryptedSecret: string };
-    siteUrl: string;
-  } | null;
-};
-
-// Loads both Google integrations for the project and keeps only those that
-// are ACTIVE and have a property/site selected.
-async function findActiveGoogleConnections(
-  projectId: string,
-): Promise<ActiveGoogleConnections> {
-  const credentials = await prisma.integrationCredential.findMany({
-    where: {
-      projectId,
-      provider: {
-        in: [GOOGLE_PROVIDER.analytics, GOOGLE_PROVIDER.search_console],
-      },
-      status: "ACTIVE",
-    },
-  });
-  const ga = credentials.find((c) => c.provider === GOOGLE_PROVIDER.analytics);
-  const gsc = credentials.find(
-    (c) => c.provider === GOOGLE_PROVIDER.search_console,
-  );
-  const propertyId = (ga?.metadata as GoogleAnalyticsMetadata | null)
-    ?.selectedGa4PropertyId;
-  const siteUrl = (gsc?.metadata as GoogleSearchConsoleMetadata | null)
-    ?.selectedSearchConsoleSite;
-  return {
-    analytics: ga && propertyId ? { credential: ga, propertyId } : null,
-    searchConsole: gsc && siteUrl ? { credential: gsc, siteUrl } : null,
-  };
-}
 
 export class GoogleApiProvider implements ExecutionProvider {
   readonly key = "google-api";

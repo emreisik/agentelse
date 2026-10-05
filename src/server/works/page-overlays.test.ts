@@ -29,6 +29,7 @@ import type {
 import {
   applyWorkOverlays,
   collectScheduledIdeas,
+  loadPostChannels,
   loadWorkActivity,
   loadWorkOverlayInputs,
   type WorkOverlayInputs,
@@ -314,5 +315,102 @@ describe("loadWorkActivity", () => {
     await expect(loadWorkActivity("p1", "w1")).resolves.toEqual({
       working: false,
     });
+  });
+});
+
+// docs/works.md "Posts": a creative card knows its post and the channels the
+// post goes to, so it never offers a second Facebook post.
+describe("the post of a creative card", () => {
+  beforeEach(() => {
+    creativeFindMany.mockReset();
+    getConnections.mockResolvedValue({});
+    scheduleCount.mockResolvedValue(0);
+  });
+
+  it("gives the newest card its post and the channels left in it", () => {
+    const inputs: WorkOverlayInputs = {
+      ...inputsOf([row("c1", { postId: "post1" })]),
+      postChannels: new Map([["post1", ["instagram", "facebook"]]]),
+    };
+    const out = applyWorkOverlays(ready, inputs, {
+      isNewestCreativeCard: true,
+    });
+    expect(out?.kind === "creative-ready" && out.postId).toBe("post1");
+    expect(out?.kind === "creative-ready" && out.postChannels).toEqual([
+      "instagram",
+      "facebook",
+    ]);
+  });
+
+  it("adds nothing to a piece without a post", () => {
+    const out = applyWorkOverlays(ready, inputsOf([row("c1")]), {
+      isNewestCreativeCard: true,
+    });
+    expect(out?.kind === "creative-ready" && "postId" in out).toBe(false);
+    expect(out?.kind === "creative-ready" && "postChannels" in out).toBe(
+      false,
+    );
+  });
+
+  it("lists each post's channels once, leaving out the left-out ones", async () => {
+    creativeFindMany.mockResolvedValue([
+      { id: "a", postId: "post1", channel: "instagram", excludedAt: null },
+      { id: "b", postId: "post1", channel: "instagram", excludedAt: null },
+      {
+        id: "c",
+        postId: "post1",
+        channel: "facebook",
+        excludedAt: new Date(),
+      },
+      { id: "d", postId: "post2", channel: "facebook", excludedAt: null },
+    ]);
+    const out = await loadPostChannels("p1", ["post1", "post2", "post1"]);
+    expect(out.get("post1")).toEqual(["instagram"]);
+    expect(out.get("post2")).toEqual(["facebook"]);
+    expect(
+      (creativeFindMany.mock.calls[0]?.[0] as { where: unknown }).where,
+    ).toEqual({ projectId: "p1", postId: { in: ["post1", "post2"] } });
+  });
+
+  it("asks nothing without posts and never throws", async () => {
+    await expect(loadPostChannels("p1", [])).resolves.toEqual(new Map());
+    expect(creativeFindMany).not.toHaveBeenCalled();
+    creativeFindMany.mockRejectedValue(new Error("db down"));
+    await expect(loadPostChannels("p1", ["post1"])).resolves.toEqual(
+      new Map(),
+    );
+  });
+
+  it("reads the channels of the posts of creative cards only", async () => {
+    const liveRow = (id: string, postId: string) => ({
+      id,
+      status: "IN_REVIEW",
+      platform: "INSTAGRAM",
+      channel: "instagram",
+      formatKey: "instagram.post",
+      scheduledFor: null,
+      planId: null,
+      postId,
+      excludedAt: null,
+      versions: [],
+    });
+    creativeFindMany
+      .mockResolvedValueOnce([liveRow("c1", "post1"), liveRow("s1", "post2")])
+      .mockResolvedValueOnce([
+        { id: "c1", postId: "post1", channel: "instagram", excludedAt: null },
+        { id: "f1", postId: "post1", channel: "facebook", excludedAt: null },
+      ]);
+    const out = await loadWorkOverlayInputs("p1", [
+      ready,
+      plan([item("i1")], ["s1"]),
+    ]);
+    expect(out.postChannels.get("post1")).toEqual(["instagram", "facebook"]);
+    const where = (
+      creativeFindMany.mock.calls[1]?.[0] as {
+        where: { postId: { in: string[] } };
+      }
+    ).where;
+    // A plan's slots are tabs of their post's slide: no share of their own.
+    expect(where.postId.in).toEqual(["post1"]);
   });
 });

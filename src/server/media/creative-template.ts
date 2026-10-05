@@ -4,8 +4,14 @@ import sharp from "sharp";
 
 import { prisma } from "@/lib/prisma";
 import { parseColorSwatches } from "@/lib/color-swatches";
+import type { TextPlacement } from "@/lib/layout-templates";
 import { readAsset, overwriteAsset } from "@/server/storage/asset-storage";
 import { trimTransparentBorders } from "@/server/media/logo-trim";
+import {
+  renderTextLayer,
+  type OnImageText,
+  type Rect,
+} from "@/server/media/creative-text";
 
 export type LogoPositionValue =
   "TOP_LEFT" | "TOP_RIGHT" | "BOTTOM_LEFT" | "BOTTOM_RIGHT" | "CENTER_BOTTOM";
@@ -37,6 +43,20 @@ export type TemplateConfig = {
 // call-time shape widens them.
 export type AppliedTemplateConfig = Omit<TemplateConfig, "logoPosition"> & {
   logoPosition: LogoPositionValue | "TOP_CENTER";
+};
+
+// The post's on-image words and how the layout sets them (creative-text.ts).
+export type TemplateText = OnImageText & {
+  placement: TextPlacement;
+  // The brand kit's font (a Google Fonts family); Inter when absent/unknown.
+  fontFamily?: string | null;
+  // The brand's dark colour for words on a light picture, and its accent for
+  // highlighted words.
+  darkInk?: string | null;
+  accentHex?: string | null;
+  // Percent of the height the platform's own UI covers (Story / Reel). Kept
+  // apart from `safeZone` below, which only a saved layout's logo uses.
+  safeZone?: { top?: number; bottom?: number };
 };
 
 // Matches BrandVisualIdentity's schema.prisma defaults exactly — a brand
@@ -72,7 +92,8 @@ function extractAccentColorHex(approvedColors: unknown): string | null {
 // onto the generated creative image, in the position/size the brand's
 // Visual Identity settings specify (see BrandVisualIdentity, brand-style-
 // context.ts) — the SAME layout on every single generation regardless of
-// which provider (OpenAI/OpenClaw) produced the base image. This is
+// which provider (OpenAI/OpenClaw) produced the base image. The post's words,
+// when it has any, are typeset here too (creative-text.ts). This is
 // the one place in the pipeline that GUARANTEES visual consistency; prompt
 // text alone can only nudge a stochastic model, never guarantee it.
 //
@@ -127,33 +148,42 @@ export async function applyBrandTemplate(input: {
   // margin apply to the mark itself. Set together with a saved post layout;
   // without it logos are placed as stored (the behaviour before layouts).
   trimLogo?: boolean;
-}): Promise<{ size: number } | null> {
+  // The post's words, typeset in the layout's headline zone, clear of the
+  // logo, the bar and the platform's UI. Absent = a picture without words.
+  text?: TemplateText;
+}): Promise<{ size: number; textDrawn?: boolean } | null> {
   const cfg: AppliedTemplateConfig = {
     ...DEFAULT_TEMPLATE_CONFIG,
     ...input.template,
   };
-  if (!cfg.enabled) return null;
+  // The words are the post's content, not its branding: they are set even
+  // where the brand switched its logo / bar compositing off.
+  const text = input.text?.headline.trim() ? input.text : undefined;
+  if (!cfg.enabled && !text) return null;
+  const branded = cfg.enabled;
 
-  const accentHex = cfg.accentBarEnabled
-    ? (cfg.accentBarColorHex ??
-      input.accentColors?.[0]?.hex ??
-      extractAccentColorHex(input.legacyApprovedColors))
-    : null;
+  const accentHex =
+    branded && cfg.accentBarEnabled
+      ? (cfg.accentBarColorHex ??
+        input.accentColors?.[0]?.hex ??
+        extractAccentColorHex(input.legacyApprovedColors))
+      : null;
 
   // Relaxed from the original "no logo -> bail out entirely": a brand with
   // no logo yet can still get a consistent accent-bar treatment. Only skip
   // when there's truly nothing to draw.
-  const hasLogo = Boolean(input.lightLogoAssetId || input.darkLogoAssetId);
-  if (!hasLogo && !accentHex) return null;
+  const hasLogo =
+    branded && Boolean(input.lightLogoAssetId || input.darkLogoAssetId);
+  if (!hasLogo && !accentHex && !text) return null;
 
   const [lightLogoAsset, darkLogoAsset] = await Promise.all([
-    input.lightLogoAssetId
+    hasLogo && input.lightLogoAssetId
       ? prisma.asset.findUnique({
           where: { id: input.lightLogoAssetId },
           select: { storageKey: true },
         })
       : null,
-    input.darkLogoAssetId
+    hasLogo && input.darkLogoAssetId
       ? prisma.asset.findUnique({
           where: { id: input.darkLogoAssetId },
           select: { storageKey: true },
@@ -162,7 +192,9 @@ export async function applyBrandTemplate(input: {
   ]);
   const lightLogoStorageKey = lightLogoAsset?.storageKey ?? null;
   const darkLogoStorageKey = darkLogoAsset?.storageKey ?? null;
-  if (!lightLogoStorageKey && !darkLogoStorageKey && !accentHex) return null;
+  if (!lightLogoStorageKey && !darkLogoStorageKey && !accentHex && !text) {
+    return null;
+  }
 
   const readLogo = async (storageKey: string) => {
     const buffer = await readAsset(storageKey);
@@ -181,6 +213,8 @@ export async function applyBrandTemplate(input: {
   const barOnBottom = Boolean(accentHex) && cfg.accentBarPosition === "BOTTOM";
 
   const composites: { input: Buffer; left: number; top: number }[] = [];
+  // Where the logo landed (null on the band, or no logo): the words keep clear.
+  let logoRect: Rect | null = null;
 
   if (accentHex && barHeight > 0) {
     const barSvg = `<svg width="${width}" height="${barHeight}"><rect width="${width}" height="${barHeight}" fill="${accentHex}" fill-opacity="${cfg.accentBarOpacity ?? DEFAULT_BAR_OPACITY}"/></svg>`;
@@ -215,7 +249,10 @@ export async function applyBrandTemplate(input: {
 
     if (onBar) {
       // A wide logo would overflow a slim band: scale it down to fit.
-      const maxLogoHeight = Math.max(1, Math.round(barHeight * ON_BAR_LOGO_FILL));
+      const maxLogoHeight = Math.max(
+        1,
+        Math.round(barHeight * ON_BAR_LOGO_FILL),
+      );
       if (logoHeight > maxLogoHeight) {
         logoWidth = Math.max(
           1,
@@ -323,14 +360,17 @@ export async function applyBrandTemplate(input: {
           1,
           Math.min(logoHeight, height - sampleTop),
         );
-        const stats = await sharp(baseBuffer)
+        // stats() measures the whole input, not the pipeline's extract: cut
+        // the region out first.
+        const region = await sharp(baseBuffer)
           .extract({
             left: sampleLeft,
             top: sampleTop,
             width: sampleWidth,
             height: sampleHeight,
           })
-          .stats();
+          .toBuffer();
+        const stats = await sharp(region).stats();
         const [r, g, b] = stats.channels;
         luminance =
           0.2126 * (r?.mean ?? 255) +
@@ -351,6 +391,34 @@ export async function applyBrandTemplate(input: {
             .toBuffer();
 
     composites.push({ input: resizedLogo, left, top });
+    if (!onBar) logoRect = { left, top, width: logoWidth, height: logoHeight };
+  }
+
+  let textDrawn = false;
+  if (text) {
+    const textSafe = text.safeZone ?? input.safeZone;
+    const layer = await renderTextLayer({
+      base: baseBuffer,
+      width,
+      height,
+      text,
+      placement: text.placement,
+      topInset:
+        (barOnTop ? barHeight : 0) +
+        Math.round(height * ((textSafe?.top ?? 0) / 100)),
+      bottomInset:
+        (barOnBottom ? barHeight : 0) +
+        Math.round(height * ((textSafe?.bottom ?? 0) / 100)),
+      logo: logoRect,
+      fontFamily: text.fontFamily,
+      darkInk: text.darkInk,
+      accent: text.accentHex ?? input.accentColors?.[0]?.hex ?? accentHex,
+    });
+    if (layer) {
+      // Under the bar and the logo, which stay crisp on top.
+      composites.unshift({ input: layer, left: 0, top: 0 });
+      textDrawn = true;
+    }
   }
 
   if (composites.length === 0) return null;
@@ -358,5 +426,5 @@ export async function applyBrandTemplate(input: {
   const outputBuffer = await sharp(baseBuffer).composite(composites).toBuffer();
   await overwriteAsset(input.storageKey, outputBuffer, input.mimeType);
 
-  return { size: outputBuffer.byteLength };
+  return { size: outputBuffer.byteLength, ...(text ? { textDrawn } : {}) };
 }

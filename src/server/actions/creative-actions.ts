@@ -35,6 +35,12 @@ import {
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import { readAsset } from "@/server/storage/asset-storage";
+import { onImageTextOf } from "@/server/media/adapt-picture";
+import { parseFontNames } from "@/lib/color-swatches";
+import {
+  FALLBACK_TEXT_PLACEMENT,
+  headlineZonePhrase,
+} from "@/lib/layout-templates";
 
 // Full detail behind one output — powers OutputPreviewDialog (opened from
 // the Outputs/Calendar right-panel tabs, which only carry the thin
@@ -321,6 +327,17 @@ export async function performCreativeRevision({
       hasHeadline: false,
     });
 
+    // A picture made from scratch carries the post's words again (its render
+    // recorded them, openai-creative.provider.ts), typeset by the compositing
+    // below: regenerating never drops them. An edit revises the finished
+    // picture, where they are already baked in.
+    const words = baseImage
+      ? undefined
+      : onImageTextOf(currentVersion?.generationMetadata);
+    const textPlacement = words
+      ? (layoutPlan.textPlacement ?? FALLBACK_TEXT_PLACEMENT)
+      : null;
+
     const prompt = baseImage
       ? instruction ||
         "Improve the overall visual quality while keeping the composition."
@@ -343,6 +360,10 @@ export async function performCreativeRevision({
           matchStyle: styleRefs.matchStyle,
           reservedZones: layoutPlan.reservedZones,
           layoutComposition: layoutPlan.composition,
+          // A textless picture with a calm area where the words go.
+          textArea: textPlacement
+            ? headlineZonePhrase(textPlacement.zone)
+            : undefined,
         });
 
     const generated = await generateCreativeImage(prompt, {
@@ -367,7 +388,16 @@ export async function performCreativeRevision({
     // to the AI as a reference instead — see step 2 above for why that
     // stopped). Best-effort: on failure, the raw AI image is kept as-is and
     // the action does not fail.
+    let textDrawn = false;
     try {
+      const fonts = textPlacement
+        ? await prisma.brandDossier
+            .findUnique({
+              where: { brandId: creative.brandId },
+              select: { approvedFonts: true },
+            })
+            .catch(() => null)
+        : null;
       const templated = await applyBrandTemplate({
         storageKey: generated.storageKey,
         mimeType: generated.mimeType,
@@ -382,8 +412,26 @@ export async function performCreativeRevision({
           ? safeZonePercent(platformFormat.safeZone, platformFormat.pixelSize)
           : undefined,
         trimLogo: Boolean(layoutPlan.layout),
+        ...(words && textPlacement
+          ? {
+              text: {
+                ...words,
+                placement: textPlacement,
+                fontFamily: parseFontNames(fonts?.approvedFonts)[0] ?? null,
+                darkInk: identity?.primaryColors?.[0]?.hex ?? null,
+                accentHex: identity?.accentColors?.[0]?.hex ?? null,
+                safeZone: safeZonePercent(
+                  platformFormat.safeZone,
+                  platformFormat.pixelSize,
+                ),
+              },
+            }
+          : {}),
       });
-      if (templated) generated.size = templated.size;
+      if (templated) {
+        generated.size = templated.size;
+        textDrawn = Boolean(templated.textDrawn);
+      }
     } catch (error) {
       console.error("[creative-actions] applyBrandTemplate failed:", error);
     }
@@ -430,6 +478,9 @@ export async function performCreativeRevision({
           // Which saved post layout the image was laid out with (null =
           // none): the next revision reads it back to stay consistent.
           layoutTemplate: layoutPlan.meta,
+          // The words set on this picture, so the next regenerate sets them
+          // again.
+          ...(words && textDrawn ? { onImageText: words } : {}),
         },
         revisionReason: baseImage
           ? `Image edited per instruction: ${instruction.slice(0, 200)}`

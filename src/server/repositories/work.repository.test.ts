@@ -25,10 +25,15 @@ function matches(row: Row, where: Record<string, unknown>): boolean {
       return (value as { none?: object }).none ? !has : has;
     }
     if (key === "id" && value && typeof value === "object") {
-      const { startsWith, lt } = value as { startsWith?: string; lt?: string };
+      const { startsWith, lt, not } = value as {
+        startsWith?: string;
+        lt?: string;
+        not?: string;
+      };
       return (
         (startsWith === undefined || row.id.startsWith(startsWith)) &&
-        (lt === undefined || row.id < lt)
+        (lt === undefined || row.id < lt) &&
+        (not === undefined || row.id !== not)
       );
     }
     if (key === "status" && value && typeof value === "object") {
@@ -136,8 +141,10 @@ vi.mock("@/lib/prisma", () => {
     options?: { isolationLevel?: string },
   ) => {
     store.txOptions.push(options);
+    // createOrReuseBlank takes an advisory lock first: one caller at a time here.
+    const $executeRaw = async () => 1;
     return typeof arg === "function"
-      ? arg({ work, command, creative })
+      ? arg({ work, command, creative, $executeRaw })
       : Promise.all(arg);
   };
   return {
@@ -419,4 +426,103 @@ describe("WorkRepository", () => {
       ]);
     });
   });
+
+  // Modules (src/lib/modules): a Work remembers what it is for; null is a
+  // general chat. Only an untouched Work changes module.
+  describe("module", () => {
+    const open = (extra: Record<string, unknown> = {}) =>
+      WorkRepository.createOrReuseBlank({
+        workspaceId: "ws",
+        projectId: "p1",
+        ...extra,
+      });
+
+    it("reads a stored module, and anything it does not know as a general chat", async () => {
+      const row = (id: string, module?: unknown): Row => ({
+        id,
+        workspaceId: "ws",
+        projectId: "p1",
+        title: "Chat",
+        summary: null,
+        status: "ACTIVE",
+        channels: [],
+        acknowledgedUnconnected: [],
+        lastActivityAt: new Date("2026-10-01T10:00:00Z"),
+        ...(module === undefined ? {} : { module }),
+      });
+      store.works.push(
+        row("wA", "ads"),
+        row("wB", "Social"),
+        row("wC", "general"),
+        row("wD", null),
+        row("wE"),
+      );
+      const modules = await Promise.all(
+        ["wA", "wB", "wC", "wD", "wE"].map(
+          async (id) => (await WorkRepository.get("p1", id))?.module,
+        ),
+      );
+      expect(modules).toEqual(["ads", null, null, null, null]);
+    });
+
+    it("a new chat opened for a module is that module's; a plain one is a general chat", async () => {
+      const social = await open({ module: "social" });
+      expect(social).toMatchObject({ reused: false, work: { module: "social" } });
+      expect(store.works[0]?.module).toBe("social");
+      store.works = [];
+      const plain = await open();
+      expect(plain.work.module).toBeNull();
+      expect(store.works[0]?.module).toBeNull();
+    });
+
+    it("the reused blank chat takes the module asked for, and a plain New Chat makes it general again", async () => {
+      const first = await open({ module: "social" });
+      const seo = await open({ module: "seo" });
+      expect(seo).toMatchObject({ reused: true, work: { id: first.work.id, module: "seo" } });
+      const plain = await open();
+      expect(plain).toMatchObject({ reused: true, work: { id: first.work.id, module: null } });
+      expect(store.works).toHaveLength(1);
+    });
+
+    it("a chat that has started is never reused, so it keeps its module", async () => {
+      const first = await open({ module: "social" });
+      store.commands.push({ id: "c1", projectId: "p1", workId: first.work.id });
+      const next = await open({ module: "ads" });
+      expect(next.reused).toBe(false);
+      expect(next.work.module).toBe("ads");
+      expect((await WorkRepository.get("p1", first.work.id))?.module).toBe("social");
+    });
+
+    it("setModule sets and clears the module of an untouched Work", async () => {
+      const blank = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+      expect(await WorkRepository.setModule("p1", blank.id, "social")).toBe(true);
+      expect((await WorkRepository.get("p1", blank.id))?.module).toBe("social");
+      expect(await WorkRepository.setModule("p1", blank.id, null)).toBe(true);
+      expect((await WorkRepository.get("p1", blank.id))?.module).toBeNull();
+    });
+
+    it("setModule writes nothing once the chat has started, or to a Work that is not a new chat", async () => {
+      const started = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+      store.commands.push({ id: "c1", projectId: "p1", workId: started.id });
+      const renamed = await WorkRepository.create({ workspaceId: "ws", projectId: "p1", title: "Ideas" });
+      const done = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+      await WorkRepository.setStatus("p1", done.id, "DONE");
+      const today = await WorkRepository.ensureToday({
+        workspaceId: "ws",
+        projectId: "p1",
+        dayKey: "2026-10-01",
+        channels: [],
+        acknowledgedUnconnected: [],
+      });
+      store.works.find((row) => row.id === today.id)!.title = "New Chat";
+      const blank = await WorkRepository.create({ workspaceId: "ws", projectId: "p1" });
+      for (const id of [started.id, renamed.id, done.id, today.id, "missing"]) {
+        expect(await WorkRepository.setModule("p1", id, "ads")).toBe(false);
+      }
+      // Another project's blank Work.
+      expect(await WorkRepository.setModule("p2", blank.id, "ads")).toBe(false);
+      expect(store.works.every((row) => row.module === undefined)).toBe(true);
+    });
+  });
 });
+

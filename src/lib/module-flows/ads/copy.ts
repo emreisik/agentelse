@@ -1,0 +1,134 @@
+import type { ChainLinkKey, ChainLinkState } from "./chain";
+import type { AdsAccountStatus } from "./state";
+
+// The Ads Manager flow card's words (UI chrome is English; the ad itself is in
+// the brand's language). Pure: the server actions answer with the same lines.
+
+export const ADS_FLOW_COPY = {
+  failed: "That didn't work. Try again.",
+  back: "Back",
+  next: "Next",
+
+  // Brief
+  platform: "Where to advertise",
+  meta: "Meta",
+  metaSub: "Facebook and Instagram",
+  google: "Google Ads",
+  soon: "Coming soon",
+  optionsLoading: "Loading your posts…",
+  optionsFailed: "Couldn't load your posts.",
+  retry: "Try again",
+  post: "Post to promote",
+  noPosts: "Make a post in the Social Media Planner first.",
+  openSocial: "Open Social Media Planner",
+  goal: "Goal",
+  budget: "Daily budget",
+  duration: "For",
+  days: (n: number) => `${n} days`,
+  total: (amount: string) => `About ${amount} in total.`,
+  audience: "Audience",
+  countries: "Countries",
+  ageFrom: "From age",
+  ageTo: "To age",
+  gender: "Gender",
+  link: "Website link",
+  button: "Button",
+  connect: "Connect Meta Ads",
+  finishSetup: "Finish Meta Ads setup",
+
+  // Plan
+  drafting: "Writing your ad from the post…",
+  notDrafted: "Not written with AI yet: these are your post's own words.",
+  write: "Write with AI",
+  rewrite: "Rewrite with AI",
+  campaignName: "Campaign name",
+  adSetName: "Ad set name",
+  adName: "Ad name",
+  primaryText: "Primary text",
+  characters: (count: number, max: number) => `${count}/${max}`,
+  flagged: (words: readonly string[]) =>
+    `Check the wording: ${words.map((word) => `“${word}”`).join(", ")} ${words.length === 1 ? "is" : "are"} on your brand's avoid list.`,
+  planReady: "Your ad is written.",
+
+  // Create
+  yourAd: "Your ad",
+  picture: "It uses your post's picture: nothing new is drawn.",
+
+  // Review
+  summary: {
+    goal: "Goal",
+    budget: "Budget",
+    audience: "Audience",
+    link: "Link",
+    post: "Post",
+    names: "Names",
+  },
+  launch: "Launch",
+  launching: "Launching…",
+  safety:
+    "Everything is created paused in your Meta Ads account, and each step waits for your approval first.",
+  noEndDate: (days: number) =>
+    `Meta gets no end date from here: once you turn it on, it runs until you pause it (planned: ${days} days).`,
+
+  // Launch
+  chainAria: "What is created in Meta",
+  approve: "Approve",
+  refresh: "Refresh",
+  checking: "Checking Meta…",
+  createdAll: "Created paused in your Meta Ads account.",
+  turnOn: "Turn it on in Ads Manager when you're ready.",
+  openAds: "Open Ads Manager",
+  relaunch: "Edit and launch again",
+  stopped: "This launch stopped.",
+  stillWorking: "Still working on it. Refresh to check again.",
+  approved: "Approved. Creating it in Meta…",
+  launched: "Launched. Approve the campaign to create it in Meta.",
+  loadFailed: "Couldn't read the launch. Try again.",
+  launchedAlready: "This ad was launched already.",
+  movedOn: "This card moved on. Refreshing.",
+  briefChanged: "The brief changed. Try again.",
+  postGone: "This post can't be used for an ad any more. Pick another one.",
+  stillGoing: "This launch is still going.",
+  accountChanged:
+    "The Meta ad account changed since the brief. Go back to the Brief and check the budget.",
+  notStarted: "The launch didn't start. Launch it again.",
+} as const;
+
+export const ADS_ACCOUNT_COPY: Readonly<
+  Record<Exclude<AdsAccountStatus, "ready">, { text: string; blocked: string }>
+> = {
+  "needs-connect": {
+    text: "Meta Ads isn't connected for this brand. Connect it to run ads from here.",
+    blocked: "Connect Meta Ads first.",
+  },
+  "needs-account": {
+    text: "Meta Ads is connected, but no ad account is picked yet.",
+    blocked: "Pick an ad account in Meta Ads first.",
+  },
+  "needs-page": {
+    text: "Pick the Facebook Page your ads run as.",
+    blocked: "Pick the Facebook Page your ads run as first.",
+  },
+};
+
+export const CHAIN_LINK_LABEL: Readonly<Record<ChainLinkKey, string>> = {
+  campaign: "Campaign",
+  adset: "Ad set",
+  ad: "Ad",
+};
+
+export const CHAIN_STATE_LABEL: Readonly<Record<ChainLinkState, string>> = {
+  waiting: "Waits for the step before",
+  preparing: "Getting it ready…",
+  approval: "Waiting for your approval",
+  running: "Creating in Meta…",
+  created: "Created, paused",
+  failed: "Failed",
+  declined: "Declined",
+  blocked: "Not created",
+};
+
+// The Meta Ads settings, opened on the Meta Ads connection.
+export function metaAdsSettingsHref(projectId: string): string {
+  return `/projects/${encodeURIComponent(projectId)}/integrations?integration=meta_ads`;
+}

@@ -1,18 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { MAX_POSTS_PER_RUN, type PlanItemStage } from "@/lib/journey";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 import {
   MAX_DAYS_AHEAD,
   approachOf,
+  canApprovePost,
   canMovePost,
   canOpenStep,
   canPlanPublishing,
   dayNumberOf,
+  deliveryLabelOf,
   formatDay,
   formatLineOf,
+  isLiveDelivery,
+  isPostMade,
+  leaveOutToggleOf,
+  liveStagesOf,
   moveDayChips,
   movePieces,
+  nextRunOf,
   nextSuggestion,
   pieceOf,
   piecesToMove,
@@ -24,7 +32,9 @@ import {
   weekDays,
   weekdayOf,
   zoneName,
+  type DeliveryTab,
   type PieceView,
+  type RunPiece,
 } from "./plan-pane";
 
 type PlanCard = Extract<IdeaEventCardData, { kind: "content-plan-draft" }>;
@@ -50,7 +60,16 @@ function plan(over: Partial<PlanCard> = {}): PlanCard {
 }
 
 const saved = (
-  stages: ("PLANNED" | "PRODUCING" | "FAILED" | "IN_REVIEW" | "REJECTED" | "APPROVED" | "PUBLISHED" | null)[],
+  stages: (
+    | "PLANNED"
+    | "PRODUCING"
+    | "FAILED"
+    | "IN_REVIEW"
+    | "REJECTED"
+    | "APPROVED"
+    | "PUBLISHED"
+    | null
+  )[],
 ) =>
   plan({
     state: "saved",
@@ -69,7 +88,15 @@ describe("progressOf and the three steps", () => {
 
   it("counts the pieces of a saved plan by what they wait for", () => {
     const progress = progressOf(
-      saved(["PLANNED", "FAILED", "PRODUCING", "IN_REVIEW", "APPROVED", "PUBLISHED", null]),
+      saved([
+        "PLANNED",
+        "FAILED",
+        "PRODUCING",
+        "IN_REVIEW",
+        "APPROVED",
+        "PUBLISHED",
+        null,
+      ]),
     );
     expect(progress).toEqual({
       draft: false,
@@ -84,9 +111,15 @@ describe("progressOf and the three steps", () => {
   });
 
   it("publishing can be planned once something is ready and nothing is being made", () => {
-    expect(canPlanPublishing(progressOf(saved(["IN_REVIEW", "PLANNED"])))).toBe(true);
-    expect(canPlanPublishing(progressOf(saved(["IN_REVIEW", "PRODUCING"])))).toBe(false);
-    expect(canPlanPublishing(progressOf(saved(["PLANNED", "PLANNED"])))).toBe(false);
+    expect(canPlanPublishing(progressOf(saved(["IN_REVIEW", "PLANNED"])))).toBe(
+      true,
+    );
+    expect(
+      canPlanPublishing(progressOf(saved(["IN_REVIEW", "PRODUCING"]))),
+    ).toBe(false);
+    expect(canPlanPublishing(progressOf(saved(["PLANNED", "PLANNED"])))).toBe(
+      false,
+    );
     expect(canPlanPublishing(progressOf(plan()))).toBe(false);
     const open = progressOf(saved(["IN_REVIEW", "PLANNED"]));
     expect(canOpenStep("content", open)).toBe(true);
@@ -160,10 +193,20 @@ describe("pieceOf", () => {
       state: "saved",
       items: [
         plan().items[0]!,
-        { ...plan().items[0]!, channel: "linkedin", formatKey: "linkedin.post" },
+        {
+          ...plan().items[0]!,
+          channel: "linkedin",
+          formatKey: "linkedin.post",
+        },
       ],
       slots: [
-        { id: "c0", stage: "IN_REVIEW", assetId: "a1", text: "Hello", when: "2026-10-05T12:00" },
+        {
+          id: "c0",
+          stage: "IN_REVIEW",
+          assetId: "a1",
+          text: "Hello",
+          when: "2026-10-05T12:00",
+        },
         null,
       ],
     });
@@ -189,7 +232,9 @@ describe("pieceOf", () => {
 describe("formats in plain words", () => {
   it("names the format and, for a picture or a video, its shape", () => {
     // The catalog's picture standard is 3:4 (Story and video 9:16).
-    expect(formatLineOf("instagram", "instagram.carousel")).toBe("Carousel · 3:4");
+    expect(formatLineOf("instagram", "instagram.carousel")).toBe(
+      "Carousel · 3:4",
+    );
     expect(formatLineOf("instagram", "instagram.story")).toBe("Story · 9:16");
     expect(formatLineOf("tiktok", "tiktok.video")).toBe("Video · 9:16");
     // Written posts have no shape.
@@ -203,7 +248,9 @@ describe("formats in plain words", () => {
   });
 
   it("says how each format is made, truthfully", () => {
-    expect(approachOf("instagram", "instagram.carousel")).toContain("cover picture");
+    expect(approachOf("instagram", "instagram.carousel")).toContain(
+      "cover picture",
+    );
     expect(approachOf("instagram", "instagram.reel")).toContain("script");
     expect(approachOf("x", "x.post")).toContain("280");
     expect(approachOf("linkedin")).toContain("written post");
@@ -215,9 +262,15 @@ describe("formats in plain words", () => {
 
 describe("dates", () => {
   it("a range reads as one line", () => {
-    expect(rangeLabel(["2026-10-11", "2026-10-05", "2026-10-07"])).toBe("Oct 5 – 11, 2026");
-    expect(rangeLabel(["2026-10-29", "2026-11-04"])).toBe("Oct 29 – Nov 4, 2026");
-    expect(rangeLabel(["2026-12-30", "2027-01-02"])).toBe("Dec 30, 2026 – Jan 2, 2027");
+    expect(rangeLabel(["2026-10-11", "2026-10-05", "2026-10-07"])).toBe(
+      "Oct 5 – 11, 2026",
+    );
+    expect(rangeLabel(["2026-10-29", "2026-11-04"])).toBe(
+      "Oct 29 – Nov 4, 2026",
+    );
+    expect(rangeLabel(["2026-12-30", "2027-01-02"])).toBe(
+      "Dec 30, 2026 – Jan 2, 2027",
+    );
     expect(rangeLabel(["2026-10-05", "2026-10-05"])).toBe("Oct 5, 2026");
     expect(rangeLabel([])).toBe("");
     expect(rangeLabel(["soon"])).toBe("");
@@ -251,7 +304,9 @@ describe("dates", () => {
 
 describe("nextSuggestion: what a tap on New idea does", () => {
   it("shows the first of the post's other ideas, then each one after it", () => {
-    expect(nextSuggestion({ pool: 3, current: null, canGenerate: true })).toEqual({
+    expect(
+      nextSuggestion({ pool: 3, current: null, canGenerate: true }),
+    ).toEqual({
       kind: "show",
       alt: 0,
     });
@@ -259,10 +314,12 @@ describe("nextSuggestion: what a tap on New idea does", () => {
       kind: "show",
       alt: 1,
     });
-    expect(nextSuggestion({ pool: 3, current: 1, canGenerate: false })).toEqual({
-      kind: "show",
-      alt: 2,
-    });
+    expect(nextSuggestion({ pool: 3, current: 1, canGenerate: false })).toEqual(
+      {
+        kind: "show",
+        alt: 2,
+      },
+    );
   });
 
   it("past the last idea it asks for more while that is allowed, else starts over", () => {
@@ -270,21 +327,27 @@ describe("nextSuggestion: what a tap on New idea does", () => {
       kind: "generate",
       showAlt: 3,
     });
-    expect(nextSuggestion({ pool: 3, current: 2, canGenerate: false })).toEqual({
-      kind: "show",
-      alt: 0,
-    });
+    expect(nextSuggestion({ pool: 3, current: 2, canGenerate: false })).toEqual(
+      {
+        kind: "show",
+        alt: 0,
+      },
+    );
   });
 
   it("a post with no other idea asks for some, and shows the first of them", () => {
-    expect(nextSuggestion({ pool: 0, current: null, canGenerate: true })).toEqual({
+    expect(
+      nextSuggestion({ pool: 0, current: null, canGenerate: true }),
+    ).toEqual({
       kind: "generate",
       showAlt: 0,
     });
   });
 
   it("nothing to show and nothing to ask for is null", () => {
-    expect(nextSuggestion({ pool: 0, current: null, canGenerate: false })).toBeNull();
+    expect(
+      nextSuggestion({ pool: 0, current: null, canGenerate: false }),
+    ).toBeNull();
   });
 });
 
@@ -345,7 +408,12 @@ describe("moving a made post", () => {
   const to = { date: "2026-10-06", time: "18:00" };
 
   it("a post can move while any piece is waiting, ready, approved or failed", () => {
-    for (const stage of ["PLANNED", "IN_REVIEW", "APPROVED", "FAILED"] as const) {
+    for (const stage of [
+      "PLANNED",
+      "IN_REVIEW",
+      "APPROVED",
+      "FAILED",
+    ] as const) {
       expect(canMovePost([piece({ stage })]), stage).toBe(true);
     }
   });
@@ -416,7 +484,10 @@ describe("moving a made post", () => {
     const mover = vi
       .fn()
       .mockResolvedValueOnce({ ok: true })
-      .mockResolvedValueOnce({ ok: false, message: "That day has already passed." })
+      .mockResolvedValueOnce({
+        ok: false,
+        message: "That day has already passed.",
+      })
       .mockResolvedValue({ ok: true });
 
     const result = await movePieces(
@@ -443,5 +514,208 @@ describe("moving a made post", () => {
       await movePieces([piece({ stage: "PUBLISHED" })], to, mover),
     ).toEqual({ ok: true, moved: 0 });
     expect(mover).not.toHaveBeenCalled();
+  });
+});
+
+// ---- posts: one idea, its channels as deliveries --------------------------------
+
+describe("a saved plan's Posts in its slots", () => {
+  it("a channel left out of its post is not a piece of the plan any more", () => {
+    const card = plan({
+      state: "saved",
+      slots: [
+        { id: "c0", stage: "APPROVED", postId: "p1" },
+        { id: "c1", stage: "IN_REVIEW", postId: "p1", excluded: true },
+      ],
+    });
+    expect(progressOf(card)).toMatchObject({
+      total: 1,
+      ready: 0,
+      approved: 1,
+      allApproved: true,
+    });
+  });
+
+  it("pieceOf carries the piece's Post and whether it is left out", () => {
+    const card = plan({
+      state: "saved",
+      slots: [{ id: "c0", stage: "IN_REVIEW", postId: "p1", excluded: true }],
+    });
+    expect(pieceOf(card, card.items[0]!, 0, "instagram")).toMatchObject({
+      creativeId: "c0",
+      postId: "p1",
+      excluded: true,
+    });
+  });
+});
+
+describe("one post's deliveries", () => {
+  const tab = (over: Partial<DeliveryTab> = {}): DeliveryTab => ({
+    channel: "instagram",
+    formatKey: "instagram.post",
+    ...over,
+  });
+  const made = (
+    stage: PlanItemStage,
+    over: Partial<PieceView> = {},
+  ): PieceView => ({
+    index: 0,
+    channel: "instagram",
+    formatKey: "instagram.post",
+    creativeId: "c0",
+    postId: "p1",
+    stage,
+    ...over,
+  });
+  // A piece whose record is gone since (its slot is empty).
+  const gone = (channel: "linkedin" | "facebook"): DeliveryTab => ({
+    channel,
+    formatKey: `${channel}.post`,
+    piece: { index: 3, channel, formatKey: `${channel}.post` },
+  });
+
+  it("names a Story next to its post, and a lone delivery by its channel", () => {
+    const tabs = [
+      tab(),
+      tab({ formatKey: "instagram.story" }),
+      tab({ channel: "facebook", formatKey: "facebook.post" }),
+    ];
+    expect(tabs.map((entry) => deliveryLabelOf(entry, tabs))).toEqual([
+      "Instagram",
+      "Instagram Story",
+      "Facebook",
+    ]);
+    const story = tab({ formatKey: "instagram.story" });
+    expect(deliveryLabelOf(story, [story])).toBe("Instagram");
+  });
+
+  it("the post is what is left in it: a left-out or gone delivery is not part of it", () => {
+    const tabs = [
+      tab({ piece: made("IN_REVIEW") }),
+      tab({
+        formatKey: "instagram.story",
+        piece: made("PLANNED", { creativeId: "c1" }),
+        leftOut: true,
+      }),
+      tab({
+        channel: "facebook",
+        formatKey: "facebook.post",
+        piece: made("APPROVED", { creativeId: "c2", channel: "facebook" }),
+      }),
+      gone("linkedin"),
+    ];
+    expect(tabs.map(isLiveDelivery)).toEqual([true, false, true, false]);
+    expect(liveStagesOf(tabs)).toEqual(["IN_REVIEW", "APPROVED"]);
+    expect(isPostMade(liveStagesOf(tabs))).toBe(true);
+    expect(canApprovePost(liveStagesOf(tabs))).toBe(true);
+    // A draft's deliveries have no piece yet: each is part of the post.
+    expect(
+      liveStagesOf([tab(), tab({ formatKey: "instagram.story" })]),
+    ).toEqual([undefined, undefined]);
+  });
+
+  it("Approve post: everything left is made and something of it waits", () => {
+    expect(canApprovePost(["IN_REVIEW", "APPROVED"])).toBe(true);
+    // A channel still to make, being made, failed or declined holds it.
+    for (const stage of [
+      "PLANNED",
+      "PRODUCING",
+      "FAILED",
+      "REJECTED",
+    ] as const) {
+      expect(canApprovePost(["IN_REVIEW", stage]), stage).toBe(false);
+    }
+    // Nothing waits for a decision.
+    expect(canApprovePost(["APPROVED", "PUBLISHED"])).toBe(false);
+    expect(isPostMade(["APPROVED", "PUBLISHED"])).toBe(true);
+    // A draft's post is not made.
+    expect(isPostMade([undefined])).toBe(false);
+    expect(isPostMade([])).toBe(false);
+  });
+
+  it("a draft's channel can be left out while another stays, and taken back in", () => {
+    const tabs = [tab(), tab({ formatKey: "instagram.story" })];
+    expect(tabs.map((entry) => leaveOutToggleOf(entry, tabs))).toEqual([
+      "leave",
+      "leave",
+    ]);
+    const story = tab({ formatKey: "instagram.story", leftOut: true });
+    const after = [tab(), story];
+    // The last channel left stays; the left-out one comes back.
+    expect(leaveOutToggleOf(after[0]!, after)).toBeNull();
+    expect(leaveOutToggleOf(story, after)).toBe("include");
+  });
+
+  it("a made piece changes only with its Post, before it is out, and never while it is made", () => {
+    const others = tab({
+      channel: "facebook",
+      formatKey: "facebook.post",
+      piece: made("IN_REVIEW", { creativeId: "c2", channel: "facebook" }),
+    });
+    const toggleFor = (piece: PieceView, leftOut = false) => {
+      const own = tab({ piece, ...(leftOut ? { leftOut } : {}) });
+      return leaveOutToggleOf(own, [own, others]);
+    };
+    expect(toggleFor(made("IN_REVIEW"))).toBe("leave");
+    expect(toggleFor(made("APPROVED"))).toBe("leave");
+    expect(toggleFor(made("PLANNED"), true)).toBe("include");
+    expect(toggleFor(made("PUBLISHED"))).toBeNull();
+    expect(toggleFor(made("PRODUCING"))).toBeNull();
+    // A plan saved before posts existed: its pieces have no Post.
+    expect(toggleFor(made("IN_REVIEW", { postId: undefined }))).toBeNull();
+    // A gone delivery does not count as one the post keeps.
+    const own = tab({ piece: made("IN_REVIEW") });
+    expect(leaveOutToggleOf(own, [own, gone("facebook")])).toBeNull();
+  });
+});
+
+describe("nextRunOf: what one Make tap makes", () => {
+  const piece = (
+    id: string,
+    post: string,
+    date: string,
+    stage: PlanItemStage = "PLANNED",
+  ): RunPiece => ({ id, post, stage, date });
+
+  it("takes whole posts, at most three of them", () => {
+    // Four posts of three channels each, all still to make.
+    const pieces = ["a", "b", "c", "d"].flatMap((post, day) =>
+      [1, 2, 3].map((n) => piece(`${post}${n}`, post, `2026-10-0${5 + day}`)),
+    );
+    const run = nextRunOf(pieces);
+    expect(run.posts).toBe(MAX_POSTS_PER_RUN);
+    expect(run.ids).toEqual([
+      "a1",
+      "a2",
+      "a3",
+      "b1",
+      "b2",
+      "b3",
+      "c1",
+      "c2",
+      "c3",
+    ]);
+  });
+
+  it("makes what a post still needs: a failed piece again, a made one never", () => {
+    const run = nextRunOf([
+      piece("a1", "a", "2026-10-05", "IN_REVIEW"),
+      piece("a2", "a", "2026-10-05", "FAILED"),
+      piece("b1", "b", "2026-10-06"),
+    ]);
+    expect(run).toEqual({ posts: 2, ids: ["a2", "b1"] });
+  });
+
+  it("stays within the earliest week, and is nothing when nothing is left to make", () => {
+    expect(
+      nextRunOf([
+        piece("a1", "a", "2026-10-05"),
+        piece("b1", "b", "2026-10-20"),
+      ]),
+    ).toEqual({ posts: 1, ids: ["a1"] });
+    expect(nextRunOf([piece("a1", "a", "2026-10-05", "IN_REVIEW")])).toEqual({
+      posts: 0,
+      ids: [],
+    });
   });
 });

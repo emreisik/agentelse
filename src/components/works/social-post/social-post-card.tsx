@@ -44,15 +44,11 @@ import { assetUrl } from "@/lib/asset-url";
 import {
   CHANNELS,
   isChannelKey,
-  resolveFormat,
   type ChannelKey,
 } from "@/lib/content-channels";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
-import type { ImageGenState } from "@/lib/image-progress";
-import type { PlanItemStage } from "@/lib/journey";
 import { stripCapabilityPrefix } from "@/lib/labels/core";
 import { cn } from "@/lib/utils";
-import { slotWhenLabel } from "@/lib/works/slot-rules";
 import { pieceTextOf } from "@/lib/works/piece-text";
 import { integrationsHref } from "@/lib/works/starter-cards";
 import {
@@ -63,13 +59,13 @@ import { reviseCreativeAction } from "@/server/actions/creative-actions";
 import type { FacebookShareState } from "@/server/commands/facebook-share";
 import type { CreativeCardData } from "@/types/creative-card";
 
-import { CreatingImage } from "./creating-image";
-
 // Every produced piece in a Work is shown as the post it will be (docs/works.md
 // "Social post card"): the account on top, the picture, one row of icon
 // actions, the caption, and the integrations it goes to as icons. Everything a
 // piece needs (approve, revise, learn, publish, share on Facebook) happens
-// inside this one card: nothing is stacked under it.
+// inside this one card: nothing is stacked under it. A piece of a plan in this
+// chat is a tab of its post's slide instead (post-slide.tsx); the shell, header
+// and caption below are shared with it.
 
 type ReadyCard = Extract<CreativeCardData, { kind: "creative-ready" }>;
 
@@ -101,24 +97,18 @@ export const SOCIAL_POST_COPY = {
   facebookSharing: "Sharing on Facebook…",
   facebookLater: "Approve it to share on your Facebook Page",
   facebookReconnect: "Facebook needs reconnecting",
-  needsContent: "Needs content",
-  making: "Making…",
-  makeFailed: "Couldn't make it",
 } as const;
 
-const STATUS: Record<string, { label: string; tone: WsTone }> = {
+// The status pill of a piece, by its Creative status.
+export const STATUS_PILLS: Readonly<
+  Record<string, { label: string; tone: WsTone }>
+> = {
   DRAFT: { label: "Draft", tone: "neutral" },
   IN_REVIEW: { label: "In review", tone: "waiting" },
   APPROVED: { label: "Approved", tone: "positive" },
   PUBLISHED: { label: "Published", tone: "positive" },
   REJECTED: { label: "Declined", tone: "danger" },
   ARCHIVED: { label: "Replaced", tone: "neutral" },
-};
-
-const STAGE: Partial<Record<PlanItemStage, { label: string; tone: WsTone }>> = {
-  PLANNED: { label: SOCIAL_POST_COPY.needsContent, tone: "neutral" },
-  PRODUCING: { label: SOCIAL_POST_COPY.making, tone: "waiting" },
-  FAILED: { label: SOCIAL_POST_COPY.makeFailed, tone: "danger" },
 };
 
 // A finished post the client can still pass a verdict on.
@@ -149,8 +139,15 @@ function thumbWidthOf(width: number, height: number): number {
 
 // ---- shell -----------------------------------------------------------------
 
+// "@biduniq" -> "B": the first letter or digit of the account.
 function initialOf(name: string): string {
-  return name.trim().charAt(0).toUpperCase() || "•";
+  return (
+    name
+      .trim()
+      .replace(/^[^\p{L}\p{N}]+/u, "")
+      .charAt(0)
+      .toUpperCase() || "•"
+  );
 }
 
 export function PostShell({
@@ -239,7 +236,7 @@ export function PostHeader({
 // The caption the way a feed shows it: the account in bold, two lines, "more".
 // Beside the picture (`compact`) the header right above already names the
 // account, so the caption is the text alone, three lines.
-function Caption({
+export function Caption({
   name,
   text,
   compact = false,
@@ -480,13 +477,26 @@ function subLine(
     .join(" · ");
 }
 
-export function SocialPostCard({
-  card,
-  variant = "single",
-}: {
-  card: ReadyCard;
-  variant?: PostVariant;
-}) {
+// A post with a Facebook delivery of its own goes to the Page through that one
+// (docs/works.md "Posts"): its other pieces offer no cross-post, so the post is
+// never on the Page twice. A Facebook piece shares itself; any other picture
+// can be cross-posted. The server refuses a second Facebook post anyway
+// (facebook-share.ts); `postChannels` are the channels left in the post
+// (page-overlays.ts).
+export function offersFacebookShare(input: {
+  channel?: ChannelKey;
+  isImage: boolean;
+  postChannels?: readonly string[];
+}): boolean {
+  if (input.channel === "facebook") return true;
+  return (
+    input.isImage &&
+    input.channel !== undefined &&
+    !(input.postChannels?.includes("facebook") ?? false)
+  );
+}
+
+export function SocialPostCard({ card }: { card: ReadyCard }) {
   const router = useRouter();
   const host = useWorkCardHost();
   const [localStatus, setLocalStatus] = useState<string | null>(null);
@@ -525,11 +535,16 @@ export function SocialPostCard({
   const canDecide = status === "IN_REVIEW" && Boolean(card.approvalId);
   const finished = status === "APPROVED" || status === "PUBLISHED";
   const facebookConnected = isConnected(host, "facebook");
-  // Facebook is a destination of its own pieces and a one-tap cross-post of
-  // every picture once the Page is connected.
+  // Facebook is a destination of its own pieces and a one-tap cross-post of a
+  // picture once the Page is connected, unless its post has its own Facebook
+  // delivery.
   const showFacebook =
     facebookConnected &&
-    (channel === "facebook" || (isImage && channel !== undefined));
+    offersFacebookShare({
+      channel,
+      isImage,
+      postChannels: card.postChannels,
+    });
   const ownConnected = channel ? isConnected(host, channel) : false;
 
   const decide = (to: "APPROVED" | "REJECTED") => {
@@ -633,7 +648,7 @@ export function SocialPostCard({
   );
 
   const sub = subLine(channel, formatLabel, card.plannedFor, host?.timezone);
-  const statusPill = STATUS[status] ?? {
+  const statusPill = STATUS_PILLS[status] ?? {
     label: status,
     tone: "neutral" as const,
   };
@@ -792,240 +807,74 @@ export function SocialPostCard({
     />
   );
 
-  if (variant === "single") {
-    // In the chat the post lies on its side: a small picture on the left, the
-    // account, caption and actions on the right, so a piece costs little
-    // height. The picture keeps its own shape inside a THUMB box.
-    const thumbWidth = thumbWidthOf(width, height);
-    const thumb =
-      isImage && card.assetId ? (
-        <ImageLightbox
-          src={assetUrl(card.assetId, "large")}
+  // In the chat the post lies on its side: a small picture on the left, the
+  // account, caption and actions on the right, so a piece costs little
+  // height. The picture keeps its own shape inside a THUMB box.
+  const thumbWidth = thumbWidthOf(width, height);
+  const thumb =
+    isImage && card.assetId ? (
+      <ImageLightbox
+        src={assetUrl(card.assetId, "large")}
+        alt={shownText}
+        title={stripCapabilityPrefix(card.title)}
+        className="block shrink-0 self-start overflow-hidden rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it */}
+        <img
+          src={assetUrl(card.assetId, "thumb")}
           alt={shownText}
-          title={stripCapabilityPrefix(card.title)}
-          className="block shrink-0 self-start overflow-hidden rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it */}
-          <img
-            src={assetUrl(card.assetId, "thumb")}
-            alt={shownText}
-            loading="lazy"
-            decoding="async"
-            style={{
-              width: thumbWidth,
-              aspectRatio: `${width} / ${height}`,
-              background: "var(--ws-hover)",
-            }}
-            className="block object-cover"
-          />
-        </ImageLightbox>
-      ) : !text ? (
-        <div
-          className="flex shrink-0 items-center justify-center self-start rounded-xl"
+          loading="lazy"
+          decoding="async"
           style={{
-            width: THUMB.width,
-            aspectRatio: "4 / 5",
+            width: thumbWidth,
+            aspectRatio: `${width} / ${height}`,
             background: "var(--ws-hover)",
-            color: "var(--ws-text-3)",
           }}
-        >
-          <ImageIcon aria-hidden className="size-5" />
-        </div>
-      ) : null;
-
-    return (
-      <PostShell variant="single" creativeId={card.creativeId}>
-        <div className="flex gap-3 p-3">
-          {thumb}
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <PostHeader
-              name={handle}
-              sub={sub}
-              status={statusPill}
-              menu={menu}
-              compact
-            />
-            <Caption name={handle} text={shownText} compact />
-            {result}
-            {actionRow("-mr-1 -mb-1 -ml-2 mt-auto")}
-          </div>
-        </div>
-
-        <div className="space-y-2 px-3 pb-3 empty:hidden">
-          {/* Only while a picture can still be picked: after approval the
-              card's own picture says it all. */}
-          {status === "IN_REVIEW" && hasVariants ? (
-            <CreativeVariantsStrip card={card} />
-          ) : null}
-          {controls}
-        </div>
-
-        {details}
-      </PostShell>
-    );
-  }
+          className="block object-cover"
+        />
+      </ImageLightbox>
+    ) : !text ? (
+      <div
+        className="flex shrink-0 items-center justify-center self-start rounded-xl"
+        style={{
+          width: THUMB.width,
+          aspectRatio: "4 / 5",
+          background: "var(--ws-hover)",
+          color: "var(--ws-text-3)",
+        }}
+      >
+        <ImageIcon aria-hidden className="size-5" />
+      </div>
+    ) : null;
 
   return (
-    <PostShell variant={variant} creativeId={card.creativeId}>
-      <PostHeader name={handle} sub={sub} status={statusPill} menu={menu} />
-
-      {isImage && card.assetId ? (
-        <ImageLightbox
-          src={assetUrl(card.assetId, "large")}
-          alt={shownText}
-          title={stripCapabilityPrefix(card.title)}
-          className="block"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image cannot optimize it */}
-          <img
-            src={assetUrl(card.assetId, "card")}
-            alt={shownText}
-            loading="lazy"
-            decoding="async"
-            style={{
-              aspectRatio: `${width} / ${height}`,
-              background: "var(--ws-hover)",
-            }}
-            className="block w-full object-cover"
+    <PostShell variant="single" creativeId={card.creativeId}>
+      <div className="flex gap-3 p-3">
+        {thumb}
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <PostHeader
+            name={handle}
+            sub={sub}
+            status={statusPill}
+            menu={menu}
+            compact
           />
-        </ImageLightbox>
-      ) : !text ? (
-        <div
-          className="flex aspect-[4/5] w-full items-center justify-center"
-          style={{ background: "var(--ws-hover)", color: "var(--ws-text-3)" }}
-        >
-          <ImageIcon aria-hidden className="size-6" />
+          <Caption name={handle} text={shownText} compact />
+          {result}
+          {actionRow("-mr-1 -mb-1 -ml-2 mt-auto")}
         </div>
-      ) : null}
+      </div>
 
-      {hasVariants ? (
-        <div className="px-3">
+      <div className="space-y-2 px-3 pb-3 empty:hidden">
+        {/* Only while a picture can still be picked: after approval the
+            card's own picture says it all. */}
+        {status === "IN_REVIEW" && hasVariants ? (
           <CreativeVariantsStrip card={card} />
-        </div>
-      ) : null}
-
-      {actionRow("px-1.5 pt-1")}
-
-      {result ? <div className="px-3 pt-1">{result}</div> : null}
-
-      {text ? (
-        <div className="flex-1 pt-1">
-          <Caption name={handle} text={text} />
-        </div>
-      ) : null}
-
-      <div className="space-y-2 px-3 pt-2 pb-3">{controls}</div>
+        ) : null}
+        {controls}
+      </div>
 
       {details}
-    </PostShell>
-  );
-}
-
-// ---- a planned piece that has no content yet --------------------------------
-
-export function PlannedPostCard({
-  name,
-  channel,
-  formatKey,
-  date,
-  time,
-  topic,
-  text,
-  assetId,
-  stage,
-  progress,
-  onOpen,
-}: {
-  name: string;
-  channel?: ChannelKey;
-  formatKey?: string;
-  date: string;
-  time: string;
-  topic: string;
-  text?: string;
-  assetId?: string;
-  stage: PlanItemStage | "PLANNED";
-  // A picture being made right now by a run in this chat: its live progress.
-  progress?: { imageGen?: ImageGenState; previewUrl?: string };
-  onOpen?: () => void;
-}) {
-  const format =
-    channel && formatKey ? resolveFormat(channel, formatKey) : undefined;
-  const status = STAGE[stage] ??
-    STATUS[stage] ?? { label: stage, tone: "neutral" as const };
-  const ratio =
-    format?.contentFormat === "STORY" || format?.contentFormat === "REEL"
-      ? "9 / 16"
-      : "3 / 4";
-  const sub = [
-    channel ? CHANNELS[channel].label : undefined,
-    format?.label,
-    slotWhenLabel(date, time),
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  return (
-    <PostShell variant="slide">
-      <PostHeader name={name} sub={sub} status={status} />
-      <button
-        type="button"
-        onClick={onOpen}
-        disabled={!onOpen}
-        className="relative block w-full outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-        style={{ aspectRatio: ratio, background: "var(--ws-hover)" }}
-      >
-        {assetId ? (
-          // eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>
-          <img
-            src={assetUrl(assetId, "card")}
-            alt={topic}
-            loading="lazy"
-            decoding="async"
-            className="absolute inset-0 size-full object-cover"
-          />
-        ) : stage === "PRODUCING" && progress?.imageGen ? (
-          <CreatingImage
-            state={progress.imageGen}
-            previewUrl={progress.previewUrl}
-          />
-        ) : (
-          <span
-            className={cn(
-              "absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center",
-              stage === "PRODUCING" && "animate-pulse",
-            )}
-            style={{ color: "var(--ws-text-3)" }}
-          >
-            {stage === "PRODUCING" ? (
-              <Loader2 aria-hidden className="size-5 animate-spin" />
-            ) : stage === "FAILED" ? (
-              <TriangleAlert aria-hidden className="size-5" />
-            ) : (
-              <ImageIcon aria-hidden className="size-5" />
-            )}
-            <span
-              className="line-clamp-3 text-xs font-medium"
-              style={{ color: "var(--ws-text-2)" }}
-            >
-              {topic}
-            </span>
-          </span>
-        )}
-      </button>
-      <div className="flex items-center px-1.5 pt-1">
-        <span className="ml-auto flex items-center">
-          {channel ? (
-            <DestinationIcon
-              channel={channel}
-              state="idle"
-              label={SOCIAL_POST_COPY.goesTo(CHANNELS[channel].label)}
-            />
-          ) : null}
-        </span>
-      </div>
-      <div className="flex-1 pt-1 pb-3">
-        <Caption name={name} text={text ?? topic} />
-      </div>
     </PostShell>
   );
 }

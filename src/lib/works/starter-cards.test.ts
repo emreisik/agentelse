@@ -6,6 +6,7 @@ import {
   MAX_STARTER_CARDS,
   chatDefaultChannels,
   integrationsHref,
+  moduleStarterCards,
   pendingHintFor,
   starterCards,
 } from "./starter-cards";
@@ -250,5 +251,54 @@ describe("starter cards of wave 1", () => {
       kind: "link",
       href: "/projects/p1/integrations?integration=tiktok&from=w9",
     });
+  });
+});
+
+// Modules on (MODULES_UI): the module tiles start the planning, the ideas, a post
+// and the performance report, so only the rows no module covers stay.
+describe("moduleStarterCards", () => {
+  const ids = (cards: ReturnType<typeof starterCards>) =>
+    moduleStarterCards(cards).map((c) => c.id);
+
+  it("keeps a decision waiting and drops what the tiles start", () => {
+    const cards = starterCards(
+      facts(["instagram", "linkedin"], { instagram: { connected: true } }, {
+        pendingApprovals: 2,
+        hasAnalytics: true,
+      }),
+    );
+    expect(cards.map((c) => c.id)).toEqual([
+      "plan-week",
+      "ideas",
+      "make-post",
+      "decisions",
+    ]);
+    expect(ids(cards)).toEqual(["decisions"]);
+  });
+
+  it("keeps the way to connect a channel, with its link", () => {
+    const cards = starterCards(
+      facts(["tiktok"], { tiktok: { connected: false } }, { fromWorkId: "w1" }),
+    );
+    expect(moduleStarterCards(cards)).toEqual([
+      expect.objectContaining({
+        id: "connect",
+        action: {
+          kind: "link",
+          href: "/projects/p1/integrations?integration=tiktok&from=w1",
+        },
+      }),
+    ]);
+    expect(ids(starterCards(facts([], {})))).toEqual(["connect-first"]);
+  });
+
+  it("keeps AI switched off, and drops the performance report", () => {
+    const connected = { instagram: { connected: true } };
+    expect(
+      ids(starterCards(facts(["instagram"], connected, { aiOff: true }))),
+    ).toEqual(["ai-off"]);
+    expect(
+      ids(starterCards(facts(["instagram"], connected, { hasAnalytics: true }))),
+    ).toEqual([]);
   });
 });

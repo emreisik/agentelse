@@ -12,3 +12,10 @@ export function isWorksEnabled(): boolean {
   const env = getEnv();
   return env.WORKS_UI && env.CHAT_ENGINE === "agent";
 }
+
+// Modules on/off (MODULES_UI, src/lib/modules), read the same way. A module is
+// remembered on its Work, so modules are on only while Works is: MODULES_UI on
+// its own changes nothing.
+export function isModulesEnabled(): boolean {
+  return getEnv().MODULES_UI && isWorksEnabled();
+}

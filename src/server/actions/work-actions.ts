@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { isRateLimited } from "@/lib/rate-limit";
 import { prisma } from "@/lib/prisma";
 import type { ChannelConnections, ChannelKey } from "@/lib/content-channels";
+import { parseModuleKey, type ModuleKey } from "@/lib/modules/catalog";
 import {
   WORK_TITLE_MAX,
   channelNeedsConnection,
@@ -19,13 +20,14 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 import { unconnectedOf } from "@/server/works/channel-defaults";
-import { isWorksEnabled } from "@/server/works/flag";
+import { isModulesEnabled, isWorksEnabled } from "@/server/works/flag";
 import { authorizeWorks, guardedAction } from "@/server/works/guard";
 
 // Actions of the Works surface (docs/works.md): open a Work, choose its
-// channels, complete / reopen / archive / rename / delete it. Each one is a
-// public POST: the flag, the session and the project access are checked here,
-// and every Work id is looked up WITH the project id (never trusted alone).
+// channels or its module, complete / reopen / archive / rename / delete it.
+// Each one is a public POST: the flag, the session and the project access are
+// checked here, and every Work id is looked up WITH the project id (never
+// trusted alone).
 
 export type WorkActionResult<T = object> =
   | ({ ok: true } & T)
@@ -36,6 +38,8 @@ const MESSAGE = {
   disabled: "Works aren't available.",
   rate: "Slow down for a moment.",
   notFound: "That Work no longer exists.",
+  modulesOff: "Modules aren't available.",
+  started: "This chat has already started.",
 } as const;
 
 const TODAY_REFUSAL =
@@ -45,6 +49,8 @@ const PER_WINDOW = 40;
 const CREATE_PER_WINDOW = 300;
 // A channel menu is made for quick multi-select: every tick is one store.
 const CHANNELS_PER_WINDOW = 120;
+// The New Chat screen's module tiles: one store per tap.
+const MODULE_PER_WINDOW = 120;
 const WINDOW_MS = 10 * 60_000;
 
 function validId(value: unknown): value is string {
@@ -66,6 +72,14 @@ async function authorize(
     return { ok: false, message: MESSAGE.rate };
   }
   return { ok: true, auth: { userId, workspaceId: access.workspaceId } };
+}
+
+// The module a client asks a new chat to be for (New Chat, `?module=`): a known
+// key while modules are on, else a general chat. The flag is read only when a
+// module is asked for.
+function requestedModule(value: unknown): ModuleKey | null {
+  const key = parseModuleKey(value);
+  return key && isModulesEnabled() ? key : null;
 }
 
 function refresh(projectId: string) {
@@ -98,11 +112,14 @@ async function guarded<T>(
 // has a Work nobody has written in (default title, no chat rows), that one is
 // opened instead of making another empty row, and other empty copies are
 // archived. `currentWorkId` is the Work the person is in: when it is the empty
-// one, they stay there.
+// one, they stay there. `module` is what the chat is for (src/lib/modules);
+// without one (or with modules off) it is a general chat, the reused empty one
+// included.
 export async function createWorkAction(
   projectId: string,
   channels?: unknown,
   currentWorkId?: unknown,
+  module?: unknown,
 ): Promise<WorkActionResult<{ workId: string }>> {
   return guarded("create", async () => {
     // Opening a project lands here. The call is idempotent (an empty chat is
@@ -124,6 +141,7 @@ export async function createWorkAction(
       // Only a channel choice needs the live connection read.
       acknowledgedUnconnected:
         chosen.length > 0 ? await unconnectedOf(projectId, chosen) : [],
+      module: requestedModule(module),
     });
     // No revalidation: an empty chat is not in Recents, and both callers move
     // to a freshly rendered URL, so re-reading the page they leave is waste.
@@ -158,6 +176,36 @@ export async function setWorkChannelsAction(
     if (!saved) return { ok: false, message: MESSAGE.notFound };
     refresh(projectId);
     return { ok: true, channels: chosen };
+  });
+}
+
+// The New Chat screen's choice of module (null: back to a general chat). Only
+// a chat nobody has written in changes module: one that has started keeps what
+// it is for.
+export async function setWorkModuleAction(
+  projectId: string,
+  workId: string,
+  module: unknown,
+): Promise<WorkActionResult<{ module: ModuleKey | null }>> {
+  return guarded("set-module", async () => {
+    if (!validId(workId)) return { ok: false, message: MESSAGE.failed };
+    const key = parseModuleKey(module);
+    // null is a choice (a general chat); anything else must be a module.
+    if (module !== null && !key) return { ok: false, message: MESSAGE.failed };
+    if (!isModulesEnabled()) return { ok: false, message: MESSAGE.modulesOff };
+    // Its own bucket: tapping through the tiles must not use up the one that
+    // guards complete / archive / rename / delete.
+    const gate = await authorize(projectId, {
+      name: "work-module",
+      limit: MODULE_PER_WINDOW,
+    });
+    if (!gate.ok) return gate;
+    if (!(await WorkRepository.setModule(projectId, workId, key))) {
+      const work = await WorkRepository.get(projectId, workId);
+      return { ok: false, message: work ? MESSAGE.started : MESSAGE.notFound };
+    }
+    refresh(projectId);
+    return { ok: true, module: key };
   });
 }
 

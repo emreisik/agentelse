@@ -4,14 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { useChatPackage } from "@/components/commands/chat-package-context";
-import { useWorkCardHost } from "@/components/works/work-card-host";
 import { useWorkspaceDetail } from "@/components/workspace/workspace-panel-toggle";
-import { isChannelKey } from "@/lib/content-channels";
 import { compactSpecOf } from "@/lib/works/compact-card";
+import { readyPostCount, slidePostsOf } from "@/lib/works/plan-posts";
 import { cn } from "@/lib/utils";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
-import { PlannedPostCard, SocialPostCard } from "./social-post-card";
+import { PostSlide } from "./post-slide";
 
 type PlanCard = Extract<IdeaEventCardData, { kind: "content-plan-draft" }>;
 
@@ -22,19 +21,14 @@ export const PLAN_POSTS_COPY = {
   next: "Next post",
 } as const;
 
-// A piece counts as "ready" once it has content (made, decided or out).
-const READY_STAGES: ReadonlySet<string> = new Set([
-  "IN_REVIEW",
-  "APPROVED",
-  "PUBLISHED",
-]);
-
 const SLIDE_WIDTH = "w-[min(78vw,276px)]";
 
-// Under the plan card in the chat: every piece of the saved plan as a social
-// post card, in the plan's own order, in one horizontal row (docs/works.md
-// "Plan posts"). A made piece is its full card (approve, revise, publish,
-// share); one still to make shows where it stands and opens the plan.
+// Under the plan card in the chat: the saved plan's POSTS in its own order, one
+// slide each, in one horizontal row (docs/works.md "Plan posts"). A post is one
+// idea: its channels (Instagram post, Story, Facebook...) are tabs of its
+// slide, never slides of their own, so a 3-post plan on three channels is
+// three slides. "k of n ready" counts posts whose every channel left in has
+// content.
 export function PlanPostsCarousel({
   card,
   commandId,
@@ -42,38 +36,13 @@ export function PlanPostsCarousel({
   card: PlanCard;
   commandId?: string;
 }) {
-  const host = useWorkCardHost();
   const pane = useWorkspaceDetail();
   // Pieces being made right now by a run pressed in this chat.
   const live = useChatPackage()?.pieces;
   const track = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ start: true, end: true });
 
-  const ids = card.state === "saved" ? (card.savedCreativeIds ?? []) : [];
-  const posts = new Map(
-    (card.posts ?? []).map((post) => [post.creativeId, post]),
-  );
-  const entries = card.items.flatMap((item, index) => {
-    const id = ids[index];
-    const slot = card.slots?.[index];
-    if (!id || item.removed || slot === null) return [];
-    const piece = live?.[id];
-    // A piece that just finished shows its card at once; the saved one takes
-    // over with the next page refresh.
-    const made =
-      piece?.state === "done" && piece.card?.kind === "creative-ready"
-        ? piece.card
-        : undefined;
-    return [
-      {
-        id,
-        item,
-        slot,
-        post: posts.get(id) ?? made,
-        making: piece?.state === "pending" ? piece : undefined,
-      },
-    ];
-  });
+  const posts = slidePostsOf(card, live);
 
   const measure = useCallback(() => {
     const el = track.current;
@@ -91,14 +60,11 @@ export function PlanPostsCarousel({
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [measure, entries.length]);
+  }, [measure, posts.length]);
 
-  if (entries.length === 0) return null;
+  if (posts.length === 0) return null;
 
-  const ready = entries.filter((entry) =>
-    READY_STAGES.has(entry.post?.status ?? entry.slot?.stage ?? ""),
-  ).length;
-  const name = host?.projectName ?? "Your brand";
+  const ready = readyPostCount(posts);
   const planTitle = compactSpecOf(card)?.title ?? card.title;
   const openPlan =
     pane && commandId ? () => pane.openDetail(commandId, planTitle) : undefined;
@@ -122,9 +88,9 @@ export function PlanPostsCarousel({
     >
       <div className="mb-2 flex items-center gap-2 px-1">
         <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
-          {PLAN_POSTS_COPY.ready(ready, entries.length)}
+          {PLAN_POSTS_COPY.ready(ready, posts.length)}
         </p>
-        {entries.length > 1 ? (
+        {posts.length > 1 ? (
           <span className="ml-auto flex gap-1">
             <button
               type="button"
@@ -160,33 +126,18 @@ export function PlanPostsCarousel({
         onScroll={measure}
         className="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
-        {entries.map(({ id, item, slot, post, making }) => (
+        {posts.map((post) => (
           <div
-            key={id}
+            key={post.key}
             data-plan-post
             className={cn("shrink-0 snap-start", SLIDE_WIDTH)}
           >
-            {post ? (
-              <SocialPostCard card={post} variant="slide" />
-            ) : (
-              <PlannedPostCard
-                name={
-                  (isChannelKey(item.channel) &&
-                    host?.accountLabels?.[item.channel]) ||
-                  name
-                }
-                channel={isChannelKey(item.channel) ? item.channel : undefined}
-                formatKey={item.formatKey}
-                date={slot?.when?.slice(0, 10) ?? item.date}
-                time={slot?.when?.slice(11, 16) ?? item.time}
-                topic={item.topic}
-                text={slot?.text}
-                assetId={slot?.assetId}
-                stage={making ? "PRODUCING" : (slot?.stage ?? "PLANNED")}
-                progress={making}
-                onOpen={openPlan}
-              />
-            )}
+            <PostSlide
+              post={post}
+              commandId={commandId}
+              topic={post.deliveries[0]?.item.topic ?? planTitle}
+              onOpenPlan={openPlan}
+            />
           </div>
         ))}
       </div>

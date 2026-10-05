@@ -7,6 +7,7 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
+import { MODULES, type ModuleKey } from "@/lib/modules/catalog";
 import type { WorkStatusValue } from "@/lib/works/work";
 import {
   createRecentsAnnouncer,
@@ -20,8 +21,10 @@ import {
   settledOf,
 } from "@/lib/works/work-activity";
 import { createWorkAction } from "@/server/actions/work-actions";
+import { ModuleIcon } from "@/components/modules/module-icon";
 import {
   SIDEBAR_ACTIVE_CLASS,
+  SIDEBAR_HEADING_CLASS,
   SIDEBAR_ITEM_CLASS,
   SIDEBAR_RAIL_ITEM_CLASS,
 } from "@/components/layout/sidebar-item";
@@ -30,12 +33,25 @@ import { RailTip } from "@/components/layout/sidebar-collapse";
 // The sidebar's conversations, like ChatGPT's (docs/works.md): "New Chat" on
 // top, the nav list under it, then "Recents", which fills the rest of the
 // sidebar (at least 60% of it) and scrolls on its own. Every conversation is a
-// Work with a title, a one-line subtitle and a status dot. A chat joins
+// Work with a title, a one-line subtitle and a status dot (a module chat's is
+// its module's icon). A chat joins
 // Recents with its first message; the blank one New Chat opens is not listed.
 // The views are pure (no hooks) so they render and test without a router;
 // WorkNav wires them up.
 
-export type SidebarWork = RecentRow;
+export type SidebarWork = RecentRow & {
+  // The module the chat is for (src/lib/modules); null or absent: a general
+  // chat. Always null while modules are off (sidebar-works.ts); a row announced
+  // before the server lists it carries it from the chat screen's announcement.
+  module?: ModuleKey | null;
+};
+
+// What the sidebar's Works part shows (sidebar-works.ts): Recents and whether
+// modules are on (MODULES_UI): the Modules group under New Chat.
+export type SidebarWorks = {
+  recents: readonly SidebarWork[];
+  modulesUi: boolean;
+};
 
 export const WORK_LIST_COPY = {
   heading: "Recents",
@@ -51,6 +67,14 @@ const DOT_CLASS: Record<WorkStatusValue, string> = {
   ACTIVE: "bg-emerald-500",
   DONE: "bg-violet-500",
   ARCHIVED: "bg-muted-foreground/40",
+};
+
+// A module chat's row shows its module's icon where the dot is, in the dot's
+// status colour.
+const MARK_CLASS: Record<WorkStatusValue, string> = {
+  ACTIVE: "text-emerald-500",
+  DONE: "text-violet-500",
+  ARCHIVED: "text-muted-foreground/40",
 };
 
 export function workHref(projectId: string, workId: string): string {
@@ -163,10 +187,7 @@ export function RecentsView({
   return (
     // At least 60% of the nav's height, more when the list above is short.
     <div className="flex min-h-[60%] flex-1 flex-col" data-slot="work-list">
-      <div
-        id={headingId}
-        className="shrink-0 px-2.5 pb-1 text-[10px] font-semibold tracking-[0.1em] text-sidebar-foreground/45 uppercase"
-      >
+      <div id={headingId} className={`shrink-0 ${SIDEBAR_HEADING_CLASS}`}>
         {WORK_LIST_COPY.heading}
       </div>
       {works.length === 0 ? (
@@ -205,18 +226,7 @@ export function RecentsView({
                           : WORK_LIST_COPY.fallbackSummary)}
                     </span>
                   </span>
-                  <span
-                    role="img"
-                    aria-label={
-                      work.status === "DONE"
-                        ? WORK_LIST_COPY.done
-                        : WORK_LIST_COPY.active
-                    }
-                    className={cn(
-                      "size-2 shrink-0 rounded-full",
-                      DOT_CLASS[work.status],
-                    )}
-                  />
+                  <StatusMark work={work} />
                 </Link>
               </li>
             );
@@ -224,6 +234,31 @@ export function RecentsView({
         </ul>
       )}
     </div>
+  );
+}
+
+// A row's status: the dot, or for a module chat its module's icon in the
+// dot's colour (named for both).
+function StatusMark({ work }: { work: SidebarWork }) {
+  const status =
+    work.status === "DONE" ? WORK_LIST_COPY.done : WORK_LIST_COPY.active;
+  if (!work.module) {
+    return (
+      <span
+        role="img"
+        aria-label={status}
+        className={cn("size-2 shrink-0 rounded-full", DOT_CLASS[work.status])}
+      />
+    );
+  }
+  return (
+    <span
+      role="img"
+      aria-label={`${MODULES[work.module].label}, ${status}`}
+      className={cn("flex shrink-0", MARK_CLASS[work.status])}
+    >
+      <ModuleIcon module={work.module} className="size-3.5" />
+    </span>
   );
 }
 

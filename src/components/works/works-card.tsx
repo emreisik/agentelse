@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Layers } from "lucide-react";
 
 import { WsEventCard } from "@/components/commands/ws-event-card";
+import { ModuleFlowCard } from "@/components/module-flows/module-flow-card";
 import { useCardFocus } from "@/components/works/card-focus";
 import { AdsInsightCard } from "@/components/works/ads-insight-card";
 import { DailyBriefCard } from "@/components/works/daily-brief-card";
@@ -31,6 +32,7 @@ export const WORKS_ONLY_KINDS: ReadonlySet<string> = new Set([
   "master-content",
   "daily-brief",
   "ads-insight",
+  "module-flow",
 ]);
 
 // A long card is a compact card in the chat that opens it in the pane on the
@@ -102,6 +104,8 @@ export function renderWorksCard(
       return <DailyBriefCard card={card} />;
     case "ads-insight":
       return inPane(card, commandId, <AdsInsightCard card={card} />);
+    case "module-flow":
+      return <ModuleFlowCard card={card} commandId={commandId} />;
     default:
       return null;
   }

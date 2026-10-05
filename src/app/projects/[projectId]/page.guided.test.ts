@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   enabled: false,
   worksOn: false,
+  modulesOn: false,
   ProjectChat: () => null,
   CalendarPanel: () => null,
   PanelShell: () => null,
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   getChannelConnections: vi.fn(),
   loadBriefExtras: vi.fn(),
   loadAdsPulse: vi.fn(),
+  moduleFlowTaskIds: vi.fn(),
   loadDiscoveryHost: vi.fn(),
   parseHubParams: vi.fn(),
   prisma: {
@@ -112,6 +114,7 @@ vi.mock("@/server/agency/journey/snapshot", () => ({
 // daily brief's extras and the ads pulse) are mocked; flag off none is called.
 vi.mock("@/server/works/flag", () => ({
   isWorksEnabled: () => mocks.worksOn,
+  isModulesEnabled: () => mocks.modulesOn,
 }));
 vi.mock("@/server/repositories/work.repository", () => ({
   WorkRepository: mocks.workRepo,
@@ -124,6 +127,10 @@ vi.mock("@/server/works/daily-brief", () => ({
 }));
 vi.mock("@/server/works/ads-pulse", () => ({
   loadAdsPulse: mocks.loadAdsPulse,
+}));
+// The Tasks module flow cards run (their own suite: flow-tasks.test.ts).
+vi.mock("@/server/modules/flow-tasks", () => ({
+  moduleFlowTaskIds: mocks.moduleFlowTaskIds,
 }));
 // Works overlays, the project timezone and the AI-off probe are Works-only
 // reads; mocked so the flag-off path runs without their IO modules.
@@ -166,6 +173,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.enabled = false;
   mocks.worksOn = false;
+  mocks.modulesOn = false;
   mocks.getPendingDecisions.mockResolvedValue([]);
   mocks.loadJourneySnapshot.mockResolvedValue(null);
   mocks.computeNextSteps.mockReturnValue([]);
@@ -183,6 +191,7 @@ beforeEach(() => {
   mocks.prisma.command.findMany.mockResolvedValue([]);
   mocks.prisma.user.findUnique.mockResolvedValue(null);
   mocks.prisma.task.findMany.mockResolvedValue([]);
+  mocks.moduleFlowTaskIds.mockResolvedValue(new Set());
 });
 
 describe("project page guided setup wiring", () => {
@@ -428,6 +437,34 @@ describe("project page Works wave 2", () => {
     expect(used.props.openWorkUntouched).toBe(false);
   });
 
+  // Modules (isModulesEnabled): an empty module chat marks its Modules line in
+  // the sidebar instead of New Chat; a used one, or modules off, marks none.
+  it("tells the sidebar the module of the new chat on screen, only while it is untouched", async () => {
+    mocks.modulesOn = true;
+    mocks.workRepo.get.mockResolvedValue(work({ module: "social" }));
+    mocks.workRepo.isUntouched.mockResolvedValue(true);
+    const fresh = (await renderWorkTree({ work: "w1" })) as { props: AnyProps };
+    expect(fresh.props.openWorkModule).toBe("social");
+    const chat = findPropsOf(fresh, mocks.ProjectChat) as {
+      workHost: { module: string | null; modulesUi: boolean };
+    };
+    expect(chat.workHost.modulesUi).toBe(true);
+    expect(chat.workHost.module).toBe("social");
+
+    mocks.workRepo.isUntouched.mockResolvedValue(false);
+    const used = (await renderWorkTree({ work: "w1" })) as { props: AnyProps };
+    expect(used.props.openWorkModule).toBeNull();
+
+    mocks.modulesOn = false;
+    mocks.workRepo.isUntouched.mockResolvedValue(true);
+    const off = (await renderWorkTree({ work: "w1" })) as { props: AnyProps };
+    expect(off.props.openWorkModule).toBeNull();
+    expect(
+      (findPropsOf(off, mocks.ProjectChat) as { workHost: { module: unknown } })
+        .workHost.module,
+    ).toBeNull();
+  });
+
   it("the Work's bar is told too: a new chat shows no actions, a used one does", async () => {
     mocks.workRepo.get.mockResolvedValue(work());
     mocks.workRepo.isUntouched.mockResolvedValue(true);
@@ -626,6 +663,121 @@ describe("project page Works wave 2", () => {
     }[];
     expect(steps[0]!.action.creativeIds).toEqual(["c2", "c3"]);
     expect(steps[0]!.action.count).toBe(2);
+  });
+
+  // Modules (docs/modules.md): Ads Manager, Analytics and SEO Manager run on
+  // one flow card, a SYSTEM row the module's start writes into the Work.
+  const flowRow = {
+    id: "flow1",
+    source: "SYSTEM",
+    rawText: "",
+    replyText: "Ads Manager",
+    replyStatus: "ANSWERED",
+    attachments: null,
+    parsedIntent: {
+      card: {
+        kind: "module-flow",
+        module: "ads",
+        title: "Ads Manager",
+        step: "deliver",
+        data: {},
+      },
+    },
+    createdAt: new Date("2026-10-01T08:00:00.000Z"),
+  };
+
+  it("in a Work, the chat lists the client's rows, plan drafts and the module flow card; no other SYSTEM row", async () => {
+    mocks.workRepo.get.mockResolvedValue(work());
+    await renderWork({ work: "w1" });
+    const chatQuery = mocks.prisma.command.findMany.mock.calls[0]?.[0] as {
+      where: { workId: string; OR: unknown[] };
+    };
+    expect(chatQuery.where.workId).toBe("w1");
+    expect(chatQuery.where.OR).toEqual([
+      { source: "WEB" },
+      {
+        source: "SYSTEM",
+        parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" },
+      },
+      {
+        source: "SYSTEM",
+        parsedIntent: { path: ["card", "kind"], equals: "module-flow" },
+      },
+    ]);
+
+    // Outside a Work (flag off): the client's own rows only, as before.
+    mocks.worksOn = false;
+    mocks.prisma.command.findMany.mockClear();
+    await renderPage({});
+    const general = mocks.prisma.command.findMany.mock.calls[0]?.[0] as {
+      where: Record<string, unknown>;
+    };
+    expect(general.where.source).toBe("WEB");
+    expect(general.where).not.toHaveProperty("OR");
+  });
+
+  it("a module chat shows its flow card, and the decisions of the Tasks it runs are not repeated under it", async () => {
+    mocks.modulesOn = true;
+    mocks.workRepo.get.mockResolvedValue(
+      work({ title: "Ads Manager", channels: [], module: "ads" }),
+    );
+    // The card is a row: the chat is a module chat, no longer the new one.
+    mocks.workRepo.isUntouched.mockResolvedValue(false);
+    mocks.prisma.command.findMany.mockResolvedValue([flowRow]);
+    mocks.getPendingDecisions.mockResolvedValue([
+      spendDecision("ap1", "camp"),
+      spendDecision("ap2", "set"),
+      spendDecision("ap3", "t3"),
+    ]);
+    mocks.prisma.task.findMany.mockResolvedValue([
+      {
+        id: "camp",
+        capability: "META_CAMPAIGN_CREATE",
+        command: { workId: "w1" },
+      },
+      { id: "set", capability: "META_ADSET_CREATE", command: null },
+      { id: "t3", capability: "CONTENT", command: { workId: "w1" } },
+    ]);
+    mocks.moduleFlowTaskIds.mockResolvedValue(new Set(["camp", "set"]));
+
+    const tree = (await renderWorkTree({ work: "w1" })) as {
+      props: AnyProps;
+    };
+    const chat = findPropsOf(tree, mocks.ProjectChat) as {
+      turns: { commandId: string; source: string; card?: AnyProps }[];
+    };
+    expect(chat.turns.map((t) => t.commandId)).toEqual([
+      "flow1",
+      "decision-ap3",
+    ]);
+    expect(chat.turns[0]).toMatchObject({
+      source: "SYSTEM",
+      card: { kind: "module-flow", module: "ads" },
+    });
+    expect(mocks.moduleFlowTaskIds).toHaveBeenCalledWith("p1", ["flow1"]);
+    // Not the new chat: the sidebar marks neither New Chat nor the module line.
+    expect(tree.props.openWorkUntouched).toBe(false);
+    expect(tree.props.openWorkModule).toBeNull();
+  });
+
+  it("the flow cards' Tasks are read only with a card and a decision on screen; a failed read hides nothing", async () => {
+    mocks.workRepo.get.mockResolvedValue(work());
+    mocks.getPendingDecisions.mockResolvedValue([spendDecision("ap1", "t1")]);
+    mocks.prisma.task.findMany.mockResolvedValue([
+      { id: "t1", capability: "CONTENT", command: { workId: "w1" } },
+    ]);
+    // A decision, no card.
+    await renderWork({ work: "w1" });
+    // A card, no decision.
+    mocks.getPendingDecisions.mockResolvedValue([]);
+    mocks.prisma.command.findMany.mockResolvedValue([flowRow]);
+    await renderWork({ work: "w1" });
+    expect(mocks.moduleFlowTaskIds).not.toHaveBeenCalled();
+
+    mocks.getPendingDecisions.mockResolvedValue([spendDecision("ap1", "t1")]);
+    mocks.moduleFlowTaskIds.mockRejectedValue(new Error("db down"));
+    const { turns } = await renderWork({ work: "w1" });
+    expect(turns.map((t) => t.commandId)).toEqual(["flow1", "decision-ap1"]);
   });
 
   it("flag off: next steps are the journey's own, untouched", async () => {

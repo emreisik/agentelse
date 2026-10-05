@@ -33,7 +33,8 @@ async function getDashboardData(workspaceId: string) {
   const [
     projects,
     runningAgents,
-    monthlyJobs,
+    monthlyActualCost,
+    monthlyEstimatedCost,
     tasksCompletedThisMonth,
     approvalsByProject,
     humanActionsByProject,
@@ -45,9 +46,20 @@ async function getDashboardData(workspaceId: string) {
       select: { id: true, name: true, status: true, domain: true },
     }),
     prisma.executionJob.count({ where: { workspaceId, status: "RUNNING" } }),
-    prisma.executionJob.findMany({
-      where: { workspaceId, createdAt: { gte: monthStart } },
-      select: { actualCost: true, estimatedCost: true },
+    // The month's cost, summed in the database (it used to read every job of
+    // the month to add them up here): a job counts its actual cost, or its
+    // estimate while it has none.
+    prisma.executionJob.aggregate({
+      where: {
+        workspaceId,
+        createdAt: { gte: monthStart },
+        actualCost: { not: null },
+      },
+      _sum: { actualCost: true },
+    }),
+    prisma.executionJob.aggregate({
+      where: { workspaceId, createdAt: { gte: monthStart }, actualCost: null },
+      _sum: { estimatedCost: true },
     }),
     prisma.task.count({
       where: {
@@ -111,10 +123,9 @@ async function getDashboardData(workspaceId: string) {
       runningAgents,
       waitingOnYou: totalApprovals + totalHumanActions,
       tasksCompletedThisMonth,
-      monthlyCost: monthlyJobs.reduce(
-        (sum, job) => sum + (job.actualCost ?? job.estimatedCost ?? 0),
-        0,
-      ),
+      monthlyCost:
+        (monthlyActualCost._sum.actualCost ?? 0) +
+        (monthlyEstimatedCost._sum.estimatedCost ?? 0),
     },
   };
 }

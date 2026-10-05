@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const revalidatePath = vi.hoisted(() => vi.fn());
 vi.mock("next/cache", () => ({ revalidatePath }));
 const enabled = vi.hoisted(() => vi.fn());
-vi.mock("@/server/works/flag", () => ({ isWorksEnabled: enabled }));
+const modulesOn = vi.hoisted(() => vi.fn());
+vi.mock("@/server/works/flag", () => ({
+  isWorksEnabled: enabled,
+  isModulesEnabled: modulesOn,
+}));
 const requireUser = vi.hoisted(() => vi.fn());
 const requireProjectAccess = vi.hoisted(() => vi.fn());
 vi.mock("@/server/security/tenant-context", () => ({
@@ -20,6 +24,7 @@ const repo = vi.hoisted(() => ({
   create: vi.fn(),
   createOrReuseBlank: vi.fn(),
   setChannels: vi.fn(),
+  setModule: vi.fn(),
   setStatus: vi.fn(),
   rename: vi.fn(),
   remove: vi.fn(),
@@ -50,6 +55,7 @@ const actions = await import("./work-actions");
 beforeEach(() => {
   vi.resetAllMocks();
   enabled.mockReturnValue(true);
+  modulesOn.mockReturnValue(true);
   limited.mockReturnValue(false);
   requireUser.mockResolvedValue({ userId: "u1" });
   requireProjectAccess.mockResolvedValue({ workspaceId: "ws1" });
@@ -196,6 +202,128 @@ describe("createWorkAction (New Chat is idempotent)", () => {
   it("turns a failing repository into a plain failure", async () => {
     repo.createOrReuseBlank.mockRejectedValue(new Error("db down"));
     expect(await actions.createWorkAction("p1")).toEqual({
+      ok: false,
+      message: "That didn't work. Try again.",
+    });
+  });
+});
+
+// Modules (src/lib/modules): New Chat opens a chat for a module, and the New
+// Chat screen changes it while the chat is still empty.
+describe("createWorkAction with a module", () => {
+  it("opens the blank Work for the module asked for", async () => {
+    expect(await actions.createWorkAction("p1", undefined, undefined, "social")).toEqual({
+      ok: true,
+      workId: "wNew",
+    });
+    expect(repo.createOrReuseBlank).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "p1", module: "social" }),
+    );
+  });
+
+  it("a plain New Chat is a general chat, without reading the modules flag", async () => {
+    await actions.createWorkAction("p1");
+    await actions.createWorkAction("p1", ["instagram"], "wHere");
+    for (const [arg] of repo.createOrReuseBlank.mock.calls) {
+      expect(arg).toMatchObject({ module: null });
+    }
+    expect(modulesOn).not.toHaveBeenCalled();
+  });
+
+  it("an unknown module, or modules off, opens a general chat instead of failing", async () => {
+    for (const bad of ["Social", "general", "", 7, { key: "ads" }, null]) {
+      expect(await actions.createWorkAction("p1", undefined, undefined, bad)).toMatchObject({
+        ok: true,
+      });
+      expect(repo.createOrReuseBlank).toHaveBeenLastCalledWith(
+        expect.objectContaining({ module: null }),
+      );
+    }
+    modulesOn.mockReturnValue(false);
+    await actions.createWorkAction("p1", undefined, undefined, "ads");
+    expect(repo.createOrReuseBlank).toHaveBeenLastCalledWith(
+      expect.objectContaining({ module: null }),
+    );
+  });
+});
+
+describe("setWorkModuleAction", () => {
+  beforeEach(() => {
+    repo.setModule.mockResolvedValue(true);
+  });
+
+  it("puts an untouched chat in a module, scoped to the project", async () => {
+    expect(await actions.setWorkModuleAction("p1", "w1", "seo")).toEqual({
+      ok: true,
+      module: "seo",
+    });
+    expect(repo.setModule).toHaveBeenCalledWith("p1", "w1", "seo");
+    expect(requireProjectAccess).toHaveBeenCalledWith("u1", "p1");
+    expect(revalidatePath).toHaveBeenCalledWith("/projects/p1");
+  });
+
+  it("null takes it back to a general chat", async () => {
+    expect(await actions.setWorkModuleAction("p1", "w1", null)).toEqual({
+      ok: true,
+      module: null,
+    });
+    expect(repo.setModule).toHaveBeenCalledWith("p1", "w1", null);
+  });
+
+  it("refuses an unknown module or a bad id, writing nothing", async () => {
+    for (const bad of ["Social", "general", "", undefined, 3]) {
+      expect(await actions.setWorkModuleAction("p1", "w1", bad)).toEqual({
+        ok: false,
+        message: "That didn't work. Try again.",
+      });
+    }
+    expect(await actions.setWorkModuleAction("p1", "", "social")).toMatchObject({
+      ok: false,
+    });
+    expect(repo.setModule).not.toHaveBeenCalled();
+  });
+
+  it("refuses while modules are off, before any other read", async () => {
+    modulesOn.mockReturnValue(false);
+    expect(await actions.setWorkModuleAction("p1", "w1", "social")).toEqual({
+      ok: false,
+      message: "Modules aren't available.",
+    });
+    expect(requireUser).not.toHaveBeenCalled();
+    expect(repo.setModule).not.toHaveBeenCalled();
+  });
+
+  it("has its own rate bucket and is refused when it is spent", async () => {
+    await actions.setWorkModuleAction("p1", "w1", "social");
+    expect(limited.mock.calls[0]?.[0]).toBe("work-module:u1");
+    expect(limited.mock.calls[0]?.[1]).toBeGreaterThanOrEqual(100);
+    limited.mockReturnValue(true);
+    expect(await actions.setWorkModuleAction("p1", "w1", "social")).toEqual({
+      ok: false,
+      message: "Slow down for a moment.",
+    });
+    expect(repo.setModule).toHaveBeenCalledTimes(1);
+  });
+
+  it("a chat that has started keeps its module; a missing one says so", async () => {
+    repo.setModule.mockResolvedValue(false);
+    repo.get.mockResolvedValueOnce({ id: "w1" });
+    expect(await actions.setWorkModuleAction("p1", "w1", "ads")).toEqual({
+      ok: false,
+      message: "This chat has already started.",
+    });
+    repo.get.mockResolvedValueOnce(null);
+    expect(await actions.setWorkModuleAction("p1", "w9", "ads")).toEqual({
+      ok: false,
+      message: "That Work no longer exists.",
+    });
+    expect(repo.get).toHaveBeenCalledWith("p1", "w9");
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("turns a failing repository into a plain failure", async () => {
+    repo.setModule.mockRejectedValue(new Error("db down"));
+    expect(await actions.setWorkModuleAction("p1", "w1", "social")).toEqual({
       ok: false,
       message: "That didn't work. Try again.",
     });

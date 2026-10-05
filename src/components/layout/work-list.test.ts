@@ -23,6 +23,7 @@ const {
   sidebarSelection,
   workHref,
 } = await import("./work-list");
+type SidebarWork = import("./work-list").SidebarWork;
 const { createRecentsAnnouncer, visibleRecents } = await import(
   "@/lib/works/recents-announcer"
 );
@@ -37,6 +38,16 @@ const WORKS = [
   },
   { id: "w2", title: "SEO · AF Treatment", summary: null, status: "DONE" },
 ] as const;
+
+// A Recents row's status dot (a module chat shows its icon instead).
+const DOT = /<span role="img" aria-label="[^"]*" class="size-2/g;
+
+// A module's icon as the shared map draws it (components/modules/module-icon).
+const { MODULE_ICONS } = await import("@/components/modules/module-icon");
+const iconOf = (module: keyof typeof MODULE_ICONS) =>
+  /lucide-[a-z0-9-]+/.exec(
+    renderToStaticMarkup(createElement(MODULE_ICONS[module])),
+  )?.[0] ?? "no-icon";
 
 const recents = (over: Partial<Parameters<typeof RecentsView>[0]> = {}) =>
   renderToStaticMarkup(
@@ -104,6 +115,41 @@ describe("RecentsView", () => {
 
   it("says so when there are no chats", () => {
     expect(recents({ works: [] })).toContain("No chats yet");
+  });
+
+  it("a module chat shows its module's icon where the dot is, in the dot's colour; a general chat keeps the dot", () => {
+    const html = recents({
+      works: [
+        {
+          id: "w1",
+          title: "Weekly Plan",
+          summary: null,
+          status: "ACTIVE",
+          module: "social",
+        },
+        {
+          id: "w2",
+          title: "Keywords",
+          summary: null,
+          status: "DONE",
+          module: "seo",
+        },
+        { id: "w3", title: "Hi", summary: null, status: "ACTIVE", module: null },
+      ],
+      activeWorkId: null,
+    });
+    expect(html).toMatch(
+      new RegExp(
+        `<span role="img" aria-label="Social Media Planner, Active" class="[^"]*\\btext-emerald-500\\b[^"]*"><svg[^>]*\\b${iconOf("social")}\\b`,
+      ),
+    );
+    expect(html).toMatch(
+      new RegExp(
+        `<span role="img" aria-label="SEO Manager, Completed" class="[^"]*\\btext-violet-500\\b[^"]*"><svg[^>]*\\b${iconOf("seo")}\\b`,
+      ),
+    );
+    // Only the general chat has a dot.
+    expect(html.match(DOT)).toEqual(['<span role="img" aria-label="Active" class="size-2']);
   });
 
   it("has no Today row and no New Chat button of its own", () => {
@@ -262,16 +308,17 @@ describe("applyNewWorkResult (what a New Chat tap does with the answer)", () => 
 
 describe("SidebarNav with Works (ChatGPT layout)", () => {
   const render = (
-    works?: readonly (typeof WORKS)[number][],
+    works?: readonly SidebarWork[],
     search = "",
     openWorkUntouched = false,
+    modulesUi = false,
   ) => {
     nav.pathname = "/projects/proj-1";
     nav.search = search;
     return renderToStaticMarkup(
       createElement(SidebarNav, {
         activeProjectId: "proj-1",
-        works,
+        works: works ? { recents: works, modulesUi } : undefined,
         openWorkUntouched,
       }),
     );
@@ -368,6 +415,35 @@ describe("SidebarNav with Works (ChatGPT layout)", () => {
     const html = render(undefined, "work=w1");
     expect(html).toContain('href="/projects/proj-1?panel=brand-brain"');
     expect(html).not.toContain("work=w1");
+  });
+
+  it("modules on: the Modules group under New Chat, and a module chat's row shows its module's icon", () => {
+    const html = render(
+      [{ ...WORKS[0], module: "social" }, WORKS[1]],
+      "work=w1",
+      false,
+      true,
+    );
+    const order = [
+      ">New Chat<",
+      ">Modules<",
+      ">Social Media Planner<",
+      "Brand Brain",
+      ">Recents<",
+      "Weekly Plan",
+    ].map((label) => html.indexOf(label));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(html).toContain('aria-label="Social Media Planner, Active"');
+    // The general chat keeps its dot.
+    expect(html.match(DOT)).toEqual(['<span role="img" aria-label="Completed" class="size-2']);
+  });
+
+  it("modules off: no Modules group, and every row has its dot", () => {
+    const html = render(WORKS, "work=w1");
+    expect(html).not.toContain("Modules");
+    expect(html).not.toContain("Social Media Planner");
+    expect(html.match(DOT)).toHaveLength(WORKS.length);
   });
 
   it("is unchanged without Works: Agency Desk first, no New Chat, no Recents", () => {

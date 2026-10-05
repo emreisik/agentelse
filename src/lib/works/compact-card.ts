@@ -128,7 +128,10 @@ export function compactSpecOf(card: IdeaEventCardData): CompactCardSpec | null {
           plural(card.options.length, "direction", "directions"),
           plural(card.slots.length, "post", "posts"),
         ]),
-        ...channelsOf(card.slots.map((slot) => slot.channel)),
+        ...channelsOf([
+          ...card.slots.map((slot) => slot.channel),
+          ...(card.platforms ?? []),
+        ]),
         status:
           card.state === "superseded"
             ? { label: COMPACT_COPY.replaced, tone: "neutral" }

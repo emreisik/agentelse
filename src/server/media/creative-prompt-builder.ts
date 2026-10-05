@@ -49,6 +49,10 @@ export type CreativePromptInput = {
   // on the image): the model renders that one headline itself instead of
   // producing a textless photo. Absent = the classic textless behavior.
   typography?: CreativeTypography;
+  // Where the post's words are typeset AFTER the render (creative-text.ts),
+  // e.g. "in the upper third of the frame": the picture stays textless and
+  // keeps that area calm for them.
+  textArea?: string;
   // The Post Style Kit's section for this render (lib/post-style.ts
   // postStyleSection): what the attached example and product pictures are, and
   // the brand's standing instructions. It rules over every other design choice.
@@ -91,6 +95,12 @@ const AVOID_TEXTLESS =
   "any text, words, letters, numbers, or typography anywhere in the " +
   "image (no headlines, captions, logos, or watermarks — the image must be " +
   "completely textless; captions are added separately, outside the image), ";
+
+// Textless too, but the post does carry words: we set them afterwards.
+const AVOID_TEXT_SET_AFTER =
+  "any text, words, letters, numbers, or typography anywhere in the " +
+  "image (no headlines, captions, logos, or watermarks — the image must be " +
+  "completely textless; the post's words are typeset onto it afterwards), ";
 
 const AVOID_EDITORIAL_TEXT =
   "any text other than the headline specified in " +
@@ -347,6 +357,7 @@ export function buildCreativePrompt({
   typography,
   postStyle,
   matchStyle,
+  textArea,
 }: CreativePromptInput): string {
   const { brandLine, styleAddition, avoidAddition, compositionAddition } =
     extractBrandStyle(brandContext);
@@ -387,8 +398,14 @@ export function buildCreativePrompt({
       `Keep the main subject clear of these areas, which are covered afterwards: ${reservedZones}`,
     );
   }
+  const wordsSetAfter = Boolean(textArea) && !typography;
+  if (wordsSetAfter) {
+    compositionParts.push(
+      `The post's headline is typeset onto the image afterwards ${textArea}: keep that area calm, uncluttered and low-detail, with no text of any kind${matchStyle ? " (where the reference posts carry text, leave clean space instead)" : ""}.`,
+    );
+  }
 
-  const avoid = `Avoid: ${typography ? AVOID_EDITORIAL_TEXT : AVOID_TEXTLESS}${AVOID_REST}`;
+  const avoid = `Avoid: ${typography ? AVOID_EDITORIAL_TEXT : wordsSetAfter ? AVOID_TEXT_SET_AFTER : AVOID_TEXTLESS}${AVOID_REST}`;
 
   return [
     `SUBJECT: ${subject}`,

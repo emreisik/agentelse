@@ -1,3 +1,5 @@
+import { isModuleKey, type ModuleKey } from "@/lib/modules/catalog";
+
 // The sidebar's Recents learn about a chat the moment something is sent in it
 // (docs/works.md), not when the reply ends: a turn that makes an image can take
 // a minute. The chat screen announces the send and, when the turn is over, that
@@ -12,18 +14,22 @@ export type WorkActivity = {
   workId: string;
   // What the list shows until the stored title arrives.
   title: string;
+  // The module the chat is for (src/lib/modules), so its row shows the
+  // module's icon at once; null or absent: a general chat.
+  module?: ModuleKey | null;
 };
 
 export type WorkSettled = { projectId: string; workId: string };
 
 export function isWorkActivity(value: unknown): value is WorkActivity {
   if (!value || typeof value !== "object") return false;
-  const { projectId, workId, title } = value as Record<string, unknown>;
+  const { projectId, workId, title, module } = value as Record<string, unknown>;
   return (
     typeof projectId === "string" &&
     typeof workId === "string" &&
     workId.length > 0 &&
-    typeof title === "string"
+    typeof title === "string" &&
+    (module === undefined || module === null || isModuleKey(module))
   );
 }
 

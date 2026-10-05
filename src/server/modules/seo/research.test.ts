@@ -1,0 +1,189 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  findActiveGoogleConnections: vi.fn(),
+  getFreshGoogleAccessToken: vi.fn(),
+  fetchSearchConsoleQueryRows: vi.fn(),
+  run: vi.fn(),
+  getBrandTwin: vi.fn(),
+}));
+
+vi.mock("@/server/integrations/google-connections", () => ({
+  findActiveGoogleConnections: mocks.findActiveGoogleConnections,
+}));
+vi.mock("@/server/integrations/google-token", () => ({
+  getFreshGoogleAccessToken: mocks.getFreshGoogleAccessToken,
+}));
+vi.mock("@/server/integrations/google-client", () => ({
+  fetchSearchConsoleQueryRows: mocks.fetchSearchConsoleQueryRows,
+}));
+vi.mock("@/server/reasoning/reasoning-service", () => ({
+  ReasoningService: { run: mocks.run, isMockMode: () => false },
+}));
+vi.mock("@/server/brand-twin/brand-twin", () => ({
+  getBrandTwin: mocks.getBrandTwin,
+}));
+vi.mock("@/server/brand/rule-language", () => ({
+  brandRuleLanguageOf: async () => "en",
+}));
+vi.mock("@/server/works/brand-rule-loader", () => ({
+  loadBrandRules: async () => null,
+}));
+
+import { AgentelseError } from "@/server/security/errors";
+
+import {
+  SEO_RESEARCH_COPY,
+  loadSeoQuickWins,
+  runSeoResearch,
+} from "./research";
+
+const SCOPE = { workspaceId: "ws1", projectId: "p1", brandId: "b1" };
+const BRIEF = {
+  topic: "Running shoes",
+  siteUrl: "https://example.com",
+  language: "en",
+  audience: "",
+};
+const CONNECTED = {
+  analytics: null,
+  searchConsole: {
+    credential: { id: "cred-1", encryptedSecret: "secret" },
+    siteUrl: "sc-domain:example.com",
+  },
+};
+const ANSWER = {
+  primaryKeyword: "running shoes",
+  secondaryKeywords: ["best running shoes"],
+  searchIntent: "commercial",
+  intentNote: "They compare.",
+  titleOptions: ["How to choose running shoes for your first race"],
+  metaDescription: "Meta.",
+  outline: [
+    { h2: "A", points: [] },
+    { h2: "B", points: [] },
+    { h2: "C", points: [] },
+  ],
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.getBrandTwin.mockResolvedValue(null);
+  mocks.findActiveGoogleConnections.mockResolvedValue(CONNECTED);
+  mocks.getFreshGoogleAccessToken.mockResolvedValue("token");
+  mocks.fetchSearchConsoleQueryRows.mockResolvedValue([
+    {
+      keys: ["page one"],
+      clicks: 40,
+      impressions: 900,
+      ctr: 0.04,
+      position: 2,
+    },
+    {
+      keys: ["close one"],
+      clicks: 3,
+      impressions: 700,
+      ctr: 0,
+      position: 11.3,
+    },
+    { keys: ["closer"], clicks: 1, impressions: 1500, ctr: 0, position: 8.4 },
+  ]);
+  mocks.run.mockResolvedValue({
+    output: ANSWER,
+    isMock: false,
+    reasoningCallId: "r",
+  });
+});
+
+describe("loadSeoQuickWins", () => {
+  it("reads 28 days of the site's queries and keeps the close ones", async () => {
+    expect(await loadSeoQuickWins("p1")).toEqual({
+      state: "ok",
+      items: [
+        { query: "closer", impressions: 1500, clicks: 1, position: 8.4 },
+        { query: "close one", impressions: 700, clicks: 3, position: 11.3 },
+      ],
+    });
+    expect(mocks.getFreshGoogleAccessToken).toHaveBeenCalledWith(
+      CONNECTED.searchConsole.credential,
+    );
+    expect(mocks.fetchSearchConsoleQueryRows).toHaveBeenCalledWith(
+      "token",
+      "sc-domain:example.com",
+      ["query"],
+      28,
+      1000,
+    );
+  });
+
+  it("says when Search Console is not connected, or could not be read", async () => {
+    mocks.findActiveGoogleConnections.mockResolvedValueOnce({
+      analytics: null,
+      searchConsole: null,
+    });
+    expect(await loadSeoQuickWins("p1")).toEqual({ state: "not-connected" });
+    mocks.getFreshGoogleAccessToken.mockRejectedValueOnce(
+      new Error("invalid_grant"),
+    );
+    expect(await loadSeoQuickWins("p1")).toEqual({ state: "failed" });
+  });
+});
+
+describe("runSeoResearch", () => {
+  it("researches with web search and folds the quick wins into the plan", async () => {
+    const result = await runSeoResearch({ scope: SCOPE, brief: BRIEF });
+    expect(result).toMatchObject({
+      ok: true,
+      plan: {
+        primaryKeyword: "running shoes",
+        quickWins: {
+          state: "ok",
+          items: [{ query: "closer" }, { query: "close one" }],
+        },
+      },
+    });
+    const [def, call] = mocks.run.mock.calls[0]!;
+    expect(def).toMatchObject({ purpose: "seo.research", webSearch: true });
+    expect(call).toMatchObject({
+      workspaceId: "ws1",
+      projectId: "p1",
+      brandId: "b1",
+      context: {
+        facts: {
+          topic: "Running shoes",
+          siteUrl: "https://example.com",
+          language: { code: "en", name: "English" },
+        },
+      },
+    });
+  });
+
+  it("maps a spent budget to its notice and a thin answer to a retry", async () => {
+    mocks.run.mockRejectedValueOnce(
+      new AgentelseError("BUDGET_EXCEEDED", "cap", {
+        meta: { limit: "dailyBudgetUsd" },
+      }),
+    );
+    const budget = await runSeoResearch({ scope: SCOPE, brief: BRIEF });
+    expect(budget).toMatchObject({ ok: false, code: "BUDGET" });
+    expect(budget.ok ? "" : budget.message).toMatch(/budget/i);
+
+    mocks.run.mockResolvedValueOnce({
+      output: { ...ANSWER, outline: [] },
+      isMock: false,
+      reasoningCallId: "r",
+    });
+    expect(await runSeoResearch({ scope: SCOPE, brief: BRIEF })).toEqual({
+      ok: false,
+      code: "FAILED",
+      message: SEO_RESEARCH_COPY.thin,
+    });
+
+    mocks.run.mockRejectedValueOnce(new Error("boom"));
+    expect(await runSeoResearch({ scope: SCOPE, brief: BRIEF })).toEqual({
+      ok: false,
+      code: "FAILED",
+      message: SEO_RESEARCH_COPY.failed,
+    });
+  });
+});

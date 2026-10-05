@@ -6,11 +6,10 @@ import type { KitTemplate } from "@/lib/brand-kit";
 // definitions. A layout drives two things at generation time:
 //
 //  1. DETERMINISTIC pixels, composited after the image exists (the logo, the
-//     colour bar / brand band) — identical on every post that uses it.
-//  2. A written brief for the image model (where the headline goes and how
-//     big it is, where to keep the scene calm, which areas the compositing
-//     will cover) — the model draws the headline itself, so the layout can
-//     only guide it, not guarantee it.
+//     colour bar / brand band and the post's headline, typeset in the
+//     headline zone) — identical on every post that uses it.
+//  2. A written brief for the image model (where to keep the scene calm,
+//     which areas the compositing will cover) — the model draws no text.
 //
 // Stored as JSON on BrandVisualIdentity.layoutTemplates. This module is pure
 // and client-safe: the same functions build the gallery previews, the
@@ -541,6 +540,26 @@ const CORNER_PHRASE: Record<LayoutLogoPosition, string> = {
   BOTTOM_RIGHT: "the bottom-right corner",
 };
 
+// Where a post's on-image words go and how big they are: a layout's headline
+// settings without the on/off switch. The words are typeset onto the picture
+// after it is made (creative-text.ts), never drawn by the image model.
+export type TextPlacement = Omit<LayoutTemplate["headline"], "enabled">;
+
+// Words a post carries when its layout has no headline zone (no saved
+// layouts, a layout without one, or compositing switched off): large and
+// centered in the upper third.
+export const FALLBACK_TEXT_PLACEMENT: TextPlacement = {
+  zone: "TOP",
+  align: "center",
+  maxLines: 3,
+  scale: "L",
+};
+
+// The zone in words, for the image model ("in the upper third of the frame").
+export function headlineZonePhrase(zone: HeadlineZone): string {
+  return ZONE_PHRASE[zone];
+}
+
 // Where and how the headline is set, for the TYPOGRAPHY block of the prompt.
 export function headlinePlacement(
   headline: LayoutTemplate["headline"],
@@ -613,7 +632,10 @@ function clampInt(value: number, min: number, max: number): number {
 // Switching the bar mode keeps the rest coherent: a line is thin, a band is
 // tall, and a logo can only sit ON a band, so leaving the band mode puts the
 // logo back in the corner.
-export function withBarMode(layout: LayoutTemplate, mode: BarMode): LayoutTemplate {
+export function withBarMode(
+  layout: LayoutTemplate,
+  mode: BarMode,
+): LayoutTemplate {
   if (mode === "none") {
     return {
       ...layout,
@@ -670,7 +692,10 @@ export function duplicateLayout(
 }
 
 // Removes a layout. The default and the last remaining layout cannot go.
-export function removeLayout(value: LayoutTemplates, id: string): LayoutTemplates | null {
+export function removeLayout(
+  value: LayoutTemplates,
+  id: string,
+): LayoutTemplates | null {
   if (value.items.length <= 1 || id === value.defaultId) return null;
   if (!value.items.some((item) => item.id === id)) return null;
   return { ...value, items: value.items.filter((item) => item.id !== id) };

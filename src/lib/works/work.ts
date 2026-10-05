@@ -4,6 +4,7 @@ import {
   type ChannelConnections,
   type ChannelKey,
 } from "@/lib/content-channels";
+import type { ModuleKey } from "@/lib/modules/catalog";
 import { channelOffers } from "./channel-offers";
 
 // Pure rules of a Work (docs/works.md): a titled, channel-scoped conversation.
@@ -38,6 +39,8 @@ export type WorkView = {
   status: WorkStatusValue;
   channels: ChannelKey[];
   acknowledgedUnconnected: ChannelKey[];
+  // The module it is for (src/lib/modules/catalog.ts); null = a general chat.
+  module: ModuleKey | null;
   lastActivityAt: string;
 };
 
@@ -232,7 +235,8 @@ export function todayDayKeyOf(workId: string): string | null {
   const key = match[1];
   const date = new Date(`${key}T00:00:00Z`);
   // Round trip rejects 2026-02-30 and friends.
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === key
+  return !Number.isNaN(date.getTime()) &&
+    date.toISOString().slice(0, 10) === key
     ? key
     : null;
 }
@@ -258,9 +262,7 @@ export function withWorkParam(
 }
 
 export type WorkParam =
-  | { kind: "none" }
-  | { kind: "today" }
-  | { kind: "id"; id: string };
+  { kind: "none" } | { kind: "today" } | { kind: "id"; id: string };
 
 // The `?work=` value: "today" is an alias, any other non-empty string is an id.
 export function resolveWorkParam(

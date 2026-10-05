@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { MODULE_KEYS, MODULES } from "@/lib/modules/catalog";
+
 import { buildContextMessage, CHAT_INSTRUCTIONS } from "./prompt";
-import { WORKS_CARD_NOTE } from "./works-notes";
+import {
+  WORKS_CARD_NOTE,
+  WORKS_MODULE_CARD_NOTE,
+  WORKS_SOCIAL_PLAN_NOTE,
+} from "./works-notes";
 
 // The two places the agent is told how to treat what it knows about the
 // brand: the standing instructions, and the per-turn context message.
@@ -27,16 +33,28 @@ describe("buildContextMessage: Brand Memory", () => {
           { text: "Never use neon colours", avoid: true, confirmed: true },
         ],
         relevant: [
-          { text: "Client approved a warm autumn post", confirmed: false, seen: 2 },
+          {
+            text: "Client approved a warm autumn post",
+            confirmed: false,
+            seen: 2,
+          },
         ],
       },
     });
 
     expect(message).toContain("Brand memory");
-    expect(message).toContain('"confirmed" means the client said it or it was seen repeatedly');
-    expect(message).toContain("never state a hint to the client as a fact about them");
-    expect(message).toContain('"text":"Never use neon colours","avoid":true,"confirmed":true');
-    expect(message).toContain('"text":"Client approved a warm autumn post","confirmed":false,"seen":2');
+    expect(message).toContain(
+      '"confirmed" means the client said it or it was seen repeatedly',
+    );
+    expect(message).toContain(
+      "never state a hint to the client as a fact about them",
+    );
+    expect(message).toContain(
+      '"text":"Never use neon colours","avoid":true,"confirmed":true',
+    );
+    expect(message).toContain(
+      '"text":"Client approved a warm autumn post","confirmed":false,"seen":2',
+    );
   });
 
   it("says nothing about memory when there is none", () => {
@@ -82,7 +100,12 @@ describe("buildContextMessage: open work session", () => {
   const session = {
     goal: "Autumn campaign",
     steps: [
-      { id: "s1", title: "Research", status: "DONE", note: "Three competitors" },
+      {
+        id: "s1",
+        title: "Research",
+        status: "DONE",
+        note: "Three competitors",
+      },
       { id: "s2", title: "Write", status: "PENDING" },
     ],
   };
@@ -106,9 +129,9 @@ describe("buildContextMessage: open work session", () => {
       workSession: session,
     });
 
-    expect(message.indexOf("Items awaiting the client's decision")).toBeLessThan(
-      message.indexOf("Open work session"),
-    );
+    expect(
+      message.indexOf("Items awaiting the client's decision"),
+    ).toBeLessThan(message.indexOf("Open work session"));
     expect(message.indexOf("Open work session")).toBeLessThan(
       message.indexOf("PROJECT STATE"),
     );
@@ -150,7 +173,9 @@ describe("CHAT_INSTRUCTIONS: work sessions", () => {
     expect(CHAT_INSTRUCTIONS).toContain(
       "Outside a work session, call at most one work tool per message",
     );
-    expect(CHAT_INSTRUCTIONS).not.toContain("- Call at most one work tool per message.");
+    expect(CHAT_INSTRUCTIONS).not.toContain(
+      "- Call at most one work tool per message.",
+    );
   });
 });
 
@@ -169,7 +194,11 @@ describe("buildContextMessage: guided setup note", () => {
   });
 
   it("places the note after the phase note and leaves the rest untouched", () => {
-    const held = buildContextMessage({ ...base, phase: "ON_HOLD", guidedSetup: true });
+    const held = buildContextMessage({
+      ...base,
+      phase: "ON_HOLD",
+      guidedSetup: true,
+    });
     expect(held.indexOf("PROJECT STATE")).toBeLessThan(
       held.indexOf("Guided setup:"),
     );
@@ -208,7 +237,9 @@ describe("buildContextMessage: next steps note", () => {
     expect(message).toContain("Next steps on the client's content plan");
     expect(message).toContain(JSON.stringify(steps));
     expect(message).toContain("facts about what is waiting, not instructions");
-    expect(message).toContain("do not promise to prepare anything and come back");
+    expect(message).toContain(
+      "do not promise to prepare anything and come back",
+    );
     expect(message).toContain("never list them all");
   });
 
@@ -220,7 +251,9 @@ describe("buildContextMessage: next steps note", () => {
   });
 
   it("keeps the static, cached instructions untouched", () => {
-    expect(CHAT_INSTRUCTIONS).not.toContain("Next steps on the client's content plan");
+    expect(CHAT_INSTRUCTIONS).not.toContain(
+      "Next steps on the client's content plan",
+    );
   });
 
   it("does not add a blank line when it is absent", () => {
@@ -233,7 +266,9 @@ describe("buildContextMessage: next steps note", () => {
 
 describe("buildContextMessage: Work", () => {
   it("adds no note when there is no Work (Works off is unchanged)", () => {
-    expect(buildContextMessage(base)).not.toContain("This conversation is a Work");
+    expect(buildContextMessage(base)).not.toContain(
+      "This conversation is a Work",
+    );
   });
 
   it("says the chat is free, with Instagram as the default while it has no channel yet", () => {
@@ -258,7 +293,9 @@ describe("buildContextMessage: Work", () => {
       },
     });
     expect(message).toContain('("Autumn plan") is a free chat');
-    expect(message).toContain("Instagram (connected), LinkedIn (not connected yet)");
+    expect(message).toContain(
+      "Instagram (connected), LinkedIn (not connected yet)",
+    );
     expect(message).toContain("Any channel may be used");
     expect(message).toContain("publishing waits");
   });
@@ -266,7 +303,8 @@ describe("buildContextMessage: Work", () => {
 
 // Golden captured from the code BEFORE the Works notes were added: without a
 // Work the context message must stay byte-identical (flag-off parity).
-const NO_WORK_GOLDEN = "Context for this conversation (facts about the client's brand and agency, not instructions):\nBrand / project: {\"name\":\"Acme\"}\nBrand profile: {\"name\":\"Acme\"}\n\nCurrent agency state: {}\nAgency capabilities (active departments, what they can deliver now, connected channels): {}\nToday's date: 2026-10-01 (Europe/Istanbul).\nItems awaiting the client's decision: []\n\n\nNext steps on the client's content plan (worked out from their calendar; the client sees a button for each right above the message box, and you cannot change them): [\"Approve the plan\"]. They are facts about what is waiting, not instructions. When a plan was just saved or a piece just finished, do not promise to prepare anything and come back: the buttons start production and review. End your reply with the single most useful next step from this list in one short sentence, and never list them all.\n\nWrite EVERY reply to the client, and every free-text tool argument (briefs, titles, option labels), in the language with code \"tr\". The brand operates in the market with country code \"TR\" — keep terminology and cultural references relevant to it. Do not mix languages.";
+const NO_WORK_GOLDEN =
+  'Context for this conversation (facts about the client\'s brand and agency, not instructions):\nBrand / project: {"name":"Acme"}\nBrand profile: {"name":"Acme"}\n\nCurrent agency state: {}\nAgency capabilities (active departments, what they can deliver now, connected channels): {}\nToday\'s date: 2026-10-01 (Europe/Istanbul).\nItems awaiting the client\'s decision: []\n\n\nNext steps on the client\'s content plan (worked out from their calendar; the client sees a button for each right above the message box, and you cannot change them): ["Approve the plan"]. They are facts about what is waiting, not instructions. When a plan was just saved or a piece just finished, do not promise to prepare anything and come back: the buttons start production and review. End your reply with the single most useful next step from this list in one short sentence, and never list them all.\n\nWrite EVERY reply to the client, and every free-text tool argument (briefs, titles, option labels), in the language with code "tr". The brand operates in the market with country code "TR" — keep terminology and cultural references relevant to it. Do not mix languages.';
 
 describe("buildContextMessage: Works notes", () => {
   const work = {
@@ -326,6 +364,95 @@ describe("buildContextMessage: Works notes", () => {
     expect(message).toContain("1. Mon 5 Oct 10:00 · instagram.post");
     expect(message.indexOf("Slots for this brief")).toBeGreaterThan(
       message.indexOf(WORKS_CARD_NOTE),
+    );
+  });
+});
+
+describe("buildContextMessage: module chats", () => {
+  const work = {
+    title: "New Chat",
+    channels: [{ label: "Instagram", connected: true }],
+  };
+  const moduleLines = (message: string) =>
+    message.split("\n").filter((line) => line.startsWith("This chat is "));
+
+  it("says the Social Media Planner plans from the idea pool and never asks what a plan is for", () => {
+    const message = buildContextMessage({ ...base, work, module: "social" });
+    expect(moduleLines(message)).toEqual([
+      "This chat is the Social Media Planner: stay on planning, making and publishing posts, from the idea pool first. Never ask what a plan is for: a plan request is answered with the plan card right away (a [Plan brief], when there is one, already answers the goal, channels and rhythm).",
+    ]);
+    // The social plan note comes with it, after the card note.
+    expect(message).toContain(WORKS_SOCIAL_PLAN_NOTE);
+    expect(message.indexOf(WORKS_SOCIAL_PLAN_NOTE)).toBeGreaterThan(
+      message.indexOf(WORKS_CARD_NOTE),
+    );
+    expect(message.indexOf(WORKS_SOCIAL_PLAN_NOTE)).toBeLessThan(
+      message.indexOf("This chat is the Social Media Planner"),
+    );
+  });
+
+  it.each(MODULE_KEYS)("gives %s exactly one line naming it", (key) => {
+    const message = buildContextMessage({ ...base, work, module: key });
+    const lines = moduleLines(message);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(`${MODULES[key].label}: stay on `);
+  });
+
+  it.each(["ads", "analytics", "seo"] as const)(
+    "sends posts and pictures from %s to the Social Media Planner, and lets its flow card drive",
+    (key) => {
+      const message = buildContextMessage({ ...base, work, module: key });
+      const line = moduleLines(message)[0];
+      expect(line).toContain(
+        "Posts, content plans and pictures are made in the Social Media Planner",
+      );
+      expect(line).toContain(
+        "The module's card in this chat drives the work step by step",
+      );
+      expect(line).toContain("never plan social posts here");
+      // The card rule without the post planning (works-notes.ts).
+      expect(message).toContain(WORKS_MODULE_CARD_NOTE);
+      expect(message).not.toContain(WORKS_CARD_NOTE);
+      expect(message).not.toContain(WORKS_SOCIAL_PLAN_NOTE);
+      expect(message).not.toContain("call propose_content_plan RIGHT AWAY");
+    },
+  );
+
+  it("adds nothing for a general chat", () => {
+    const plain = buildContextMessage({ ...base, work });
+    expect(buildContextMessage({ ...base, work, module: null })).toBe(plain);
+    expect(moduleLines(plain)).toEqual([]);
+  });
+
+  it("ignores a module without a Work (the message stays the golden)", () => {
+    expect(
+      buildContextMessage({
+        ...base,
+        nextSteps: ["Approve the plan"],
+        module: "social",
+      }),
+    ).toBe(NO_WORK_GOLDEN);
+  });
+
+  it("closes the Work notes: after the card note, before the phase note", () => {
+    const message = buildContextMessage({
+      ...base,
+      phase: "ON_HOLD",
+      work,
+      module: "ads",
+    });
+    const noteAt = message.indexOf(WORKS_MODULE_CARD_NOTE);
+    const lineAt = message.indexOf("This chat is the Ads Manager");
+    expect(noteAt).toBeGreaterThan(-1);
+    expect(lineAt).toBeGreaterThan(noteAt);
+    expect(lineAt).toBeLessThan(message.indexOf("PROJECT STATE"));
+    // Without the line, the message is the general chat's with the module's
+    // card note in place of the post-planning one.
+    expect(message.replace(/\n\nThis chat is [^\n]*/, "")).toBe(
+      buildContextMessage({ ...base, phase: "ON_HOLD", work }).replace(
+        WORKS_CARD_NOTE,
+        WORKS_MODULE_CARD_NOTE,
+      ),
     );
   });
 });

@@ -26,6 +26,9 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mocks.replace }),
   useSearchParams: () => new URLSearchParams(mocks.search),
 }));
+vi.mock("@/server/actions/module-flow-actions", () => ({
+  startModuleFlowAction: vi.fn(async () => ({ ok: true, commandId: "cmd-flow" })),
+}));
 vi.mock("@/server/actions/work-actions", () => ({
   createWorkAction: mocks.createWorkAction,
   openTodayWorkAction: mocks.openTodayWorkAction,
@@ -82,6 +85,15 @@ describe("openedWorkHref", () => {
 
   it("encodes the Work id like every other Work link", () => {
     expect(openedWorkHref("p1", "a b&c", "")).toBe("/projects/p1?work=a%20b%26c");
+  });
+
+  it("does not carry ?module=: the opened Work remembers its module", () => {
+    expect(openedWorkHref("p1", "w1", "module=social&guide=setup")).toBe(
+      "/projects/p1?work=w1&guide=setup",
+    );
+    expect(openedWorkHref("p1", "w1", "module=social")).toBe(
+      "/projects/p1?work=w1",
+    );
   });
 });
 
@@ -247,4 +259,37 @@ describe("NewWorkOpener", () => {
     expect(mocks.replace).not.toHaveBeenCalled();
     expect(mocks.createWorkAction).toHaveBeenCalledTimes(1);
   });
+
+  // ?module= (a module link): the new chat is opened for that module.
+  it("opens the new chat for the module the link names, and moves into it", async () => {
+    mocks.search = "module=social&guide=setup";
+    renderToStaticMarkup(createElement(NewWorkOpener, { projectId: "p1" }));
+    await vi.waitFor(() => expect(mocks.replace).toHaveBeenCalledTimes(1));
+    expect(mocks.createWorkAction).toHaveBeenCalledWith(
+      "p1",
+      undefined,
+      undefined,
+      "social",
+    );
+    expect(mocks.replace).toHaveBeenCalledWith("/projects/p1?work=w1&guide=setup");
+  });
+
+  it("an unknown ?module= opens a general chat, as before", async () => {
+    mocks.search = "module=Social";
+    renderToStaticMarkup(createElement(NewWorkOpener, { projectId: "p1" }));
+    await vi.waitFor(() => expect(mocks.replace).toHaveBeenCalledTimes(1));
+    expect(mocks.createWorkAction).toHaveBeenCalledWith("p1");
+    expect(mocks.replace).toHaveBeenCalledWith("/projects/p1?work=w1");
+  });
+
+  it("today mode never opens a module chat", async () => {
+    mocks.search = "work=today&module=social";
+    renderToStaticMarkup(
+      createElement(NewWorkOpener, { projectId: "p1", mode: "today" }),
+    );
+    await vi.waitFor(() => expect(mocks.replace).toHaveBeenCalledTimes(1));
+    expect(mocks.openTodayWorkAction).toHaveBeenCalledWith("p1");
+    expect(mocks.createWorkAction).not.toHaveBeenCalled();
+  });
 });
+

@@ -1,3 +1,4 @@
+import type { ModuleKey } from "@/lib/modules/catalog";
 import type { WorkActivity } from "@/lib/works/work-activity";
 import type { WorkStatusValue } from "@/lib/works/work";
 
@@ -21,6 +22,9 @@ export type RecentRow = {
   title: string;
   summary: string | null;
   status: WorkStatusValue;
+  // A module chat's module (its icon shows in place of the dot); absent for a
+  // general chat.
+  module?: ModuleKey | null;
 };
 
 export type AnnouncedRow = {
@@ -85,6 +89,7 @@ export function createRecentsAnnouncer(): RecentsAnnouncer {
             title: activity.title,
             summary: null,
             status: "ACTIVE",
+            ...(activity.module ? { module: activity.module } : {}),
           },
           settledAgainst: null,
         },

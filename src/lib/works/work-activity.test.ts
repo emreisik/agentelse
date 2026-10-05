@@ -38,6 +38,17 @@ describe("isWorkActivity", () => {
       expect(isWorkActivity(value)).toBe(false);
     }
   });
+
+  // A module chat's row shows its module's icon from the first message on.
+  it("carries the chat's module: a known one or none", () => {
+    const sent = { projectId: "p1", workId: "w1", title: "Plan" };
+    expect(isWorkActivity({ ...sent, module: "social" })).toBe(true);
+    expect(isWorkActivity({ ...sent, module: "ads" })).toBe(true);
+    expect(isWorkActivity({ ...sent, module: null })).toBe(true);
+    for (const value of ["Social", " ads", "", 1, {}]) {
+      expect(isWorkActivity({ ...sent, module: value })).toBe(false);
+    }
+  });
 });
 
 describe("announceWorkActivity", () => {
@@ -67,7 +78,13 @@ describe("announceWorkActivity", () => {
 describe("isWorkSettled", () => {
   it("accepts a project and a chat, rejects the rest", () => {
     expect(isWorkSettled({ projectId: "p1", workId: "w1" })).toBe(true);
-    for (const value of [null, "w1", { projectId: "p1" }, { projectId: "p1", workId: "" }, { workId: "w1" }]) {
+    for (const value of [
+      null,
+      "w1",
+      { projectId: "p1" },
+      { projectId: "p1", workId: "" },
+      { workId: "w1" },
+    ]) {
       expect(isWorkSettled(value)).toBe(false);
     }
   });
@@ -79,8 +96,16 @@ describe("what one project's sidebar takes from an event", () => {
   it("only its own project's well-formed activity", () => {
     expect(activityOf("p1", sent)).toEqual(sent);
     expect(activityOf("p2", sent)).toBeNull();
-    expect(activityOf("p1", { projectId: "p1", workId: "" , title: "x" })).toBeNull();
+    expect(
+      activityOf("p1", { projectId: "p1", workId: "", title: "x" }),
+    ).toBeNull();
     expect(activityOf("p1", undefined)).toBeNull();
+  });
+
+  it("keeps the module the chat screen sent", () => {
+    const planner = { ...sent, module: "social" as const };
+    expect(activityOf("p1", planner)).toEqual(planner);
+    expect(activityOf("p1", { ...sent, module: "nope" })).toBeNull();
   });
 
   it("only its own project's settled turns", () => {

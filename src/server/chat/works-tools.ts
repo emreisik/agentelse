@@ -24,8 +24,11 @@ import {
 } from "@/lib/works/idea-options";
 import {
   MAX_OPTION_SLOTS,
+  briefDeliveries,
+  briefPlatforms,
   describePlanSlots,
   layoutPlanSlots,
+  type PlanDeliveries,
   type PlanSlot,
 } from "@/lib/works/plan-layout";
 import {
@@ -33,6 +36,7 @@ import {
   buildOptionsCard,
   optionsShapeError,
   type PlanOptionsArgs,
+  type PlanOptionsCardData,
 } from "@/lib/works/plan-options";
 import {
   MasterContentArgsSchema,
@@ -43,8 +47,7 @@ import { parsePlanBrief, type PlanBrief } from "@/lib/plan-brief";
 import { foldForMatch } from "@/lib/text-fold";
 import { limitNoticeReplyText } from "@/server/commands/limit-notice";
 import { saveIdea } from "@/server/commands/strategic-request";
-import {
-} from "@/server/works/channel-gate";
+import {} from "@/server/works/channel-gate";
 
 import {
   getProjectTimezone,
@@ -320,7 +323,7 @@ const proposePlanOptions = defineWorksTool<PlanOptionsArgs>({
       return {
         result: {
           error: shape,
-          note: `The posts, in order:\n${describePlanSlots(slots).join("\n")}\nFix the options and call propose_plan_options again.`,
+          note: `The posts, in order:\n${describePlanSlots(slots, briefPlatforms(brief)).join("\n")}\nFix the options and call propose_plan_options again.`,
         },
       };
     }
@@ -382,13 +385,19 @@ const proposePlanOptions = defineWorksTool<PlanOptionsArgs>({
       kinds: ["content-plan-options"],
     });
 
-    // 10. The card ends the turn; the reply sentence is factual.
-    const card = buildOptionsCard({
-      args: { ...cleaned.args, goal: args.goal ?? brief.goal },
-      slots,
-      timezone,
-      brandCheck,
-    });
+    // 10. The card ends the turn; the reply sentence is factual. Every post
+    // goes to all the brief's social channels: they ride on the card as its
+    // platforms, with the Story switch, and the pick hands them to the plan
+    // (pickPlanOptionAction).
+    const card: PlanOptionsCardData & PlanDeliveries = {
+      ...buildOptionsCard({
+        args: { ...cleaned.args, goal: args.goal ?? brief.goal },
+        slots,
+        timezone,
+        brandCheck,
+      }),
+      ...briefDeliveries(brief),
+    };
     const channels = channelListText([
       ...new Set(brief.channels.map(({ channel }) => channel)),
     ]);
@@ -803,5 +812,5 @@ export const WORKS_DESCRIPTION_SUFFIX: Record<
   create_task:
     " In a Work, copy and briefs for a channel become planned calendar slots (LinkedIn, X, TikTok, Blog/SEO, Ads); an Instagram caption goes with its visual via generate_image. Publishing is not a task: approved pieces are published from their card.",
   propose_content_plan:
-    " In a Work (a free chat) this is THE planning tool: call it right away for any plan request (defaults for whatever the client left out: the default channels, 3 posts per week for the next 7 days from tomorrow), and again with the full updated plan to change it. A plan is general: ONE item per POST (never one per platform), every item on the first default channel with its natural format; the client chooses the platforms on the card, which makes each post for each of them. Give the plan a general title (for example \"Social media plan\"), never naming a platform, and each post a `purpose` (2-4 words on what it does for the plan, for example \"Introduce the product\"). It stops your turn: the card shows the plan.",
+    ' In a Work (a free chat) this is THE planning tool: call it right away for any plan request (defaults for whatever the client left out: the default channels, 3 posts per week for the next 7 days from tomorrow), and again with the full updated plan to change it. A plan is general: ONE item per POST (never one per platform), every item on the first default channel with its natural format; the client chooses the platforms on the card, which makes each post for each of them. With a `[Plan brief]`, the posts sit on its first social channel: its other social channels are where every post also goes, so they get no items of their own (only Blog/SEO and Ads items take their own channel). Give the plan a general title (for example "Social media plan"), never naming a platform, and each post a `purpose` (2-4 words on what it does for the plan, for example "Introduce the product"). It stops your turn: the card shows the plan.',
 };

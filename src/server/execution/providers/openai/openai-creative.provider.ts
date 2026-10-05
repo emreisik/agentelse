@@ -8,7 +8,13 @@ import type {
 } from "@prisma/client";
 import { z } from "zod";
 
+import { parseFontNames } from "@/lib/color-swatches";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
+import {
+  FALLBACK_TEXT_PLACEMENT,
+  headlineZonePhrase,
+  type TextPlacement,
+} from "@/lib/layout-templates";
 import { VARIANT_COUNT, VARIANT_QUALITY } from "@/lib/works/variants";
 import {
   emitCreativeProgress,
@@ -31,13 +37,16 @@ import {
 import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
 import {
   adaptPicturePrompt,
+  keepCleanPicture,
   readPictureForAdapting,
 } from "@/server/media/adapt-picture";
+import type { OnImageText } from "@/server/media/creative-text";
 import {
   loadStyleReferences,
   NO_STYLE_REFERENCES,
 } from "@/server/media/style-references";
 import { applyBrandTemplate } from "@/server/media/creative-template";
+import { deleteAsset } from "@/server/storage/asset-storage";
 import type { BrandVisualIdentityContext } from "@/server/media/brand-style-context";
 import type {
   ExecutionAcceptedResult,
@@ -64,14 +73,25 @@ const VariantOutputSchema = CreativeOutputSchema.extend({
   alternativeImagePrompts: z.array(z.string()).optional(),
 });
 
-// Only while the brand's Post Style Kit asks to follow its example posts: the
-// text step also writes the words the design carries on the image. The kit's
-// examples decide whether any are needed (empty = a post with no on-image text).
-const KitOutputSchema = CreativeOutputSchema.extend({
+// Only when the post carries words on its picture — its layout has a headline
+// zone, or the brand's Post Style Kit follows example posts with text: the
+// text step also writes them, and creative-text.ts typesets them onto the
+// picture afterwards (the image model never draws them). For a kit, its
+// examples decide whether any are needed (empty = a post with no words).
+const TEXT_FIELDS = {
   headline: z.string().optional(),
   highlight: z.string().optional(),
   lines: z.array(z.string()).max(6).optional(),
-});
+};
+const TextOutputSchema = CreativeOutputSchema.extend(TEXT_FIELDS);
+const VariantTextOutputSchema = VariantOutputSchema.extend(TEXT_FIELDS);
+
+// Why the text step writes on-image words: the layout's headline zone, or the
+// kit's examples.
+type TextMode = "layout" | "kit";
+
+// The most supporting lines set under a headline (creative-text.ts).
+const MAX_TEXT_LINES = 2;
 
 // The chat's inline generation (generate_image) has the conversation model
 // write the copy and image prompt itself — it already holds the brand
@@ -89,8 +109,8 @@ const PresetSchema = z.object({
   // examples and no product picture (lib/post-style.ts, style-references.ts).
   styleExampleIds: z.array(z.string().max(64)).max(3).optional(),
   productAssetIds: z.array(z.string().max(64)).max(3).optional(),
-  // Only when the client chose text on the image: one headline, rendered by
-  // the image model (see creative-prompt-builder.ts's TYPOGRAPHY block).
+  // Only when the client chose text on the image: one headline, typeset onto
+  // the picture afterwards in the layout's headline zone (creative-text.ts).
   // The brand logo is NOT part of this — applyBrandTemplate adds it below.
   overlay: z
     .object({
@@ -119,6 +139,11 @@ type StoredResult = {
   // The post's picture this one was adapted from (another format of the same
   // post): not a picture of its own, so it never becomes the post's picture.
   adaptedFrom?: string;
+  // The words typeset on the picture, and the picture as it was before they
+  // (and the logo / band) went on: the post's other formats are laid out from
+  // that clean picture and get the same words again (adapt-picture.ts).
+  onImageText?: OnImageText;
+  cleanPicture?: { storageKey: string; mimeType: string };
   errorMessage?: string;
 };
 
@@ -156,33 +181,42 @@ function clampVariantQuality(
   return quality === "low" ? "low" : VARIANT_QUALITY;
 }
 
-// The words a kit-following post carries on the image, from the text step's
-// answer (empty headline = the post has none).
-function kitOverlayOf(
-  parsed: unknown,
-): { headline: string; highlight?: string; lines?: string[] } | undefined {
-  const value = parsed as {
-    headline?: string;
-    highlight?: string;
-    lines?: string[];
+// The words a post carries on its picture, from the text step's answer or the
+// chat's preset (empty headline = the post has none).
+function overlayOf(value: unknown): OnImageText | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const words = value as {
+    headline?: unknown;
+    highlight?: unknown;
+    lines?: unknown;
   };
-  const headline = value.headline?.trim();
+  const headline =
+    typeof words.headline === "string" ? words.headline.trim() : "";
   if (!headline) return undefined;
-  const lines = (value.lines ?? [])
-    .map((line) => line.trim().slice(0, 80))
-    .filter(Boolean)
-    .slice(0, 6);
+  const lines = (Array.isArray(words.lines) ? words.lines : [])
+    .flatMap((line) =>
+      typeof line === "string" && line.trim() ? [line.trim().slice(0, 80)] : [],
+    )
+    .slice(0, MAX_TEXT_LINES);
+  const highlight =
+    typeof words.highlight === "string" ? words.highlight.trim() : "";
   return {
     headline: headline.slice(0, 120),
-    highlight: value.highlight?.trim() || undefined,
+    ...(highlight ? { highlight } : {}),
     ...(lines.length > 0 ? { lines } : {}),
   };
 }
 
+const TEXT_INSTRUCTION: Record<TextMode, string> = {
+  layout:
+    "The post's layout carries a short headline that is typeset onto the picture afterwards, exactly as you write it. ALSO produce: `headline` — the hook of this post in at most 6 words, specific to its idea (a concrete benefit, a number, a sharp question or a bold claim), never generic filler such as \"Discover our products\", in the same language as the caption, with no hashtags, emoji, quotation marks or full stop at the end; when the brief already gives an on-image headline, use it as written. `highlight` (optional): the one or two words of the headline that carry the hook, set in the brand's accent colour. `lines` (optional, at most one): a supporting line of at most 8 words (the offer, the date or the call to action), only when it adds something the headline does not say. Take every fact, price and claim from the brief: never invent prices, discounts or promises. `imagePrompt` describes a picture with no text at all.",
+  kit: "The brand's example posts carry designed text on the image, so ALSO produce: `headline` (the main on-image line, at most 6 words, in the same language as the caption; leave it empty if the examples carry no text), `highlight` (the words of it to emphasise, optional) and `lines` (at most 2 shorter texts the design has, such as a sub-headline, a price or a button label; empty if none). They are typeset onto the picture afterwards, so `imagePrompt` describes a picture with no text at all. Take every fact, price and claim from the brief: never invent prices, discounts or promises.",
+};
+
 function buildSystemPrompt(
   brandContext: unknown,
   alternativeCount?: number,
-  kitText?: boolean,
+  textMode?: TextMode,
 ): string {
   return [
     "You are Agentelse's creative engine for a digital agency.",
@@ -192,11 +226,7 @@ function buildSystemPrompt(
           `Also produce \`alternativeImagePrompts\`: exactly ${alternativeCount} more image prompts for the SAME post, each with a clearly different composition, light and framing from \`imagePrompt\` and from each other, all obeying the same brand rules.`,
         ]
       : []),
-    ...(kitText
-      ? [
-          "The brand's example posts carry designed text on the image, so ALSO produce: `headline` (the main on-image line, at most 8 words, in the brand language; leave it empty if the examples carry no text), `highlight` (the words of it to emphasise, optional) and `lines` (up to 3 shorter texts the design has, such as a sub-headline, a price or a button label; empty if none). Take every fact, price and claim from the brief: never invent prices, discounts or promises.",
-        ]
-      : []),
+    ...(textMode ? [TEXT_INSTRUCTION[textMode]] : []),
     "Respect any negativeBrief/approvedClaims entries in the brand context as hard constraints — never violate them.",
     localeInstruction(brandContext),
     "Brand context (JSON, may be partial):",
@@ -243,6 +273,7 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         logoAssetId?: string | null;
         darkLogoAssetId?: string | null;
         approvedColors?: unknown;
+        approvedFonts?: unknown;
         visualIdentity?: BrandVisualIdentityContext | null;
       };
       // The pictures this render follows: the brand's Post Style examples, then
@@ -264,35 +295,62 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
               ? preset.data.productAssetIds
               : undefined,
           });
-      // The text step also writes the design's on-image words when the kit asks
-      // to follow its examples (a post of an ordinary job stays textless; an
-      // adaptation already has its words in the picture).
-      const kitText =
-        !preset.success && !variantCount && !adaptFrom && styleRefs.matchStyle;
+      const platformFormat = getCreativePlatformFormat(
+        typeof input.platform === "string"
+          ? (input.platform as SocialPlatform)
+          : undefined,
+        // Story/Reel/etc, when the chat request named one explicitly —
+        // see command-service.ts's contentFormatPayloadExtra. Omitted =
+        // the platform's own default, same as before this existed.
+        typeof input.contentFormat === "string"
+          ? (input.contentFormat as CreativeContentFormat)
+          : undefined,
+      );
+      // Which post layout applies (the chat's pick, else the brand's
+      // default for this format) and what it means for the prompt and for
+      // the compositing below. No saved layouts = the brand's base template,
+      // exactly as before layouts existed. Decided before the text step: a
+      // layout with a headline zone is what asks it for the post's words.
+      const layoutPlan = planCreativeLayout({
+        visualIdentity: brandCtx.visualIdentity,
+        hasLogo: Boolean(brandCtx.logoAssetId || brandCtx.darkLogoAssetId),
+        requestedId: preset.success ? preset.data.layoutId : null,
+        pixelSize: platformFormat.pixelSize,
+        // The image model never draws the words: they are typeset below.
+        hasHeadline: false,
+      });
+
+      // The text step also writes the post's on-image words when its layout
+      // has a headline zone, or the kit follows example posts that carry text
+      // (a chat preset brings its own words; an adaptation reuses its post's).
+      const textMode: TextMode | undefined =
+        preset.success || adaptFrom
+          ? undefined
+          : layoutPlan.textPlacement
+            ? "layout"
+            : styleRefs.matchStyle
+              ? "kit"
+              : undefined;
+      const outputSchema = variantCount
+        ? textMode
+          ? VariantTextOutputSchema
+          : VariantOutputSchema
+        : textMode
+          ? TextOutputSchema
+          : CreativeOutputSchema;
       const parsed = preset.success
         ? preset.data
-        : (variantCount
-            ? VariantOutputSchema
-            : kitText
-              ? KitOutputSchema
-              : CreativeOutputSchema
-          ).parse(
+        : outputSchema.parse(
             (
               await runOpenAIStructured({
                 model: openaiModelForTier(),
                 system: buildSystemPrompt(
                   input.brandContext,
                   variantCount ? variantCount - 1 : undefined,
-                  kitText,
+                  textMode,
                 ),
                 user: brief,
-                jsonSchema: z.toJSONSchema(
-                  variantCount
-                    ? VariantOutputSchema
-                    : kitText
-                      ? KitOutputSchema
-                      : CreativeOutputSchema,
-                ),
+                jsonSchema: z.toJSONSchema(outputSchema),
                 // See gemini-creative.provider.ts's former history (now
                 // removed): a 3-field schema can still be cut off mid-JSON
                 // on a small budget when `copy`/`imagePrompt` are asked to
@@ -310,34 +368,23 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         ? clampVariantQuality(requestedQuality)
         : requestedQuality;
       const streamed = hasCreativeProgressListener(request.executionJobId);
+      // The words this picture carries: the chat's, the text step's, or (for
+      // another format of a post) the post's own.
       const overlay = preset.success
-        ? preset.data.overlay
-        : kitText
-          ? kitOverlayOf(parsed)
-          : undefined;
-
-      const platformFormat = getCreativePlatformFormat(
-        typeof input.platform === "string"
-          ? (input.platform as SocialPlatform)
-          : undefined,
-        // Story/Reel/etc, when the chat request named one explicitly —
-        // see command-service.ts's contentFormatPayloadExtra. Omitted =
-        // the platform's own default, same as before this existed.
-        typeof input.contentFormat === "string"
-          ? (input.contentFormat as CreativeContentFormat)
-          : undefined,
-      );
-      // Which post layout applies (the chat's pick, else the brand's
-      // default for this format) and what it means for the prompt and for
-      // the compositing below. No saved layouts = the brand's base template,
-      // exactly as before layouts existed.
-      const layoutPlan = planCreativeLayout({
-        visualIdentity: brandCtx.visualIdentity,
-        hasLogo: Boolean(brandCtx.logoAssetId || brandCtx.darkLogoAssetId),
-        requestedId: preset.success ? preset.data.layoutId : null,
-        pixelSize: platformFormat.pixelSize,
-        hasHeadline: Boolean(overlay),
-      });
+        ? overlayOf(preset.data.overlay)
+        : adaptFrom
+          ? adaptFrom.text
+          : textMode
+            ? overlayOf(parsed)
+            : undefined;
+      // Where they are typeset: the layout's headline zone, else (a layout
+      // without one, no saved layouts) large and centered in the upper third.
+      const textPlacement: TextPlacement | null = overlay
+        ? (layoutPlan.textPlacement ?? FALLBACK_TEXT_PLACEMENT)
+        : null;
+      const textArea = textPlacement
+        ? headlineZonePhrase(textPlacement.zone)
+        : undefined;
       const promptFor = (subject: string) =>
         buildCreativePrompt({
           subject,
@@ -351,15 +398,8 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
           matchStyle: styleRefs.matchStyle,
           reservedZones: layoutPlan.reservedZones,
           layoutComposition: layoutPlan.composition,
-          typography: overlay
-            ? {
-                ...overlay,
-                // The brand's own first accent colour, when configured, so the
-                // highlighted words match the palette.
-                accentHex: brandCtx.visualIdentity?.accentColors?.[0]?.hex,
-                placement: layoutPlan.headlinePlacement,
-              }
-            : undefined,
+          // A textless picture with a calm area where the words go.
+          textArea,
         });
       const finalImagePrompt = promptFor(parsed.imagePrompt);
       // One render. `live` = this is the picture the watcher sees streaming
@@ -402,10 +442,29 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
             })) ?? undefined)
           : undefined;
 
-      // Deterministic logo + accent-bar compositing — the ONE guarantee in
-      // this pipeline (prompt text alone is stochastic). Reads from the
-      // frozen context snapshot (brandCtx), never a live Brand Brain query
-      // — this execution's behavior must not change mid-flight from a
+      // The post's words as the compositing sets them: the brand kit's font
+      // and colours, clear of the platform's UI on a Story.
+      const identity = brandCtx.visualIdentity;
+      const templateText =
+        overlay && textPlacement
+          ? {
+              ...overlay,
+              placement: textPlacement,
+              fontFamily: parseFontNames(brandCtx.approvedFonts)[0] ?? null,
+              darkInk: identity?.primaryColors?.[0]?.hex ?? null,
+              accentHex: identity?.accentColors?.[0]?.hex ?? null,
+              safeZone: safeZonePercent(
+                platformFormat.safeZone,
+                platformFormat.pixelSize,
+              ),
+            }
+          : undefined;
+      let textDrawn = false;
+
+      // Deterministic logo + accent-bar + words compositing — the ONE
+      // guarantee in this pipeline (prompt text alone is stochastic). Reads
+      // from the frozen context snapshot (brandCtx), never a live Brand Brain
+      // query — this execution's behavior must not change mid-flight from a
       // concurrent Visual Identity edit (spec section 35). Best-effort: a
       // templating failure must never fail creative generation.
       const brandTemplated = async (
@@ -430,7 +489,9 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
                 )
               : undefined,
             trimLogo: Boolean(layoutPlan.layout),
+            text: templateText,
           });
+          if (templated?.textDrawn) textDrawn = true;
           if (templated) return { ...rendered, size: templated.size };
         } catch (error) {
           console.error(
@@ -443,6 +504,7 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
 
       let image: GeneratedCreativeImage | undefined;
       let alternatives: { image: GeneratedCreativeImage; label: string }[] = [];
+      let cleanPicture: { storageKey: string; mimeType: string } | undefined;
       if (variantCount) {
         // The main picture and the N-1 alternatives render concurrently; a
         // render that fails or returns nothing is dropped (billing is per
@@ -496,9 +558,11 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
                 formatLabel: platformFormat.contentFormatLabel,
                 safeZone: platformFormat.safeZone,
                 reservedZones: layoutPlan.reservedZones,
+                // The clean picture: its words are set again afterwards.
+                textArea: adaptFrom.text ? textArea : undefined,
               }),
               {
-                baseImage: adaptFrom,
+                baseImage: { data: adaptFrom.data, mimeType: adaptFrom.mimeType },
                 imageSize: platformFormat.pixelSize,
                 quality,
                 ...(streamed ? { skipGemini: true } : {}),
@@ -513,7 +577,18 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         image = await brandTemplated(adapted);
       } else {
         image = await renderRaw(finalImagePrompt, true);
-        if (image) image = await brandTemplated(image);
+        if (image) {
+          // The picture before its words, logo and band: the post's other
+          // formats are laid out from it (adapt-picture.ts).
+          if (templateText) cleanPicture = await keepCleanPicture(image);
+          image = await brandTemplated(image);
+          // No words went on after all (no room, a compositing error): the
+          // copy has nothing to give the other formats.
+          if (cleanPicture && !textDrawn) {
+            await deleteAsset(cleanPicture.storageKey);
+            cleanPicture = undefined;
+          }
+        }
       }
 
       store.set(request.correlationId, {
@@ -532,6 +607,8 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         ...(adaptFrom && typeof input.adaptFromAssetId === "string"
           ? { adaptedFrom: input.adaptFromAssetId }
           : {}),
+        ...(overlay && textDrawn ? { onImageText: overlay } : {}),
+        ...(cleanPicture && textDrawn ? { cleanPicture } : {}),
       });
     } catch (error) {
       store.set(request.correlationId, {
@@ -573,6 +650,8 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         layoutTemplate: record.layoutTemplate ?? null,
         ...(record.alternatives ? { alternatives: record.alternatives } : {}),
         ...(record.adaptedFrom ? { adaptedFrom: record.adaptedFrom } : {}),
+        ...(record.onImageText ? { onImageText: record.onImageText } : {}),
+        ...(record.cleanPicture ? { cleanPicture: record.cleanPicture } : {}),
       },
       isMock: false,
     };

@@ -16,6 +16,7 @@ import { toolBadgesFrom } from "@/components/hub-core/tool-badges";
 import { getAgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
 import { WorkspacePanelToggleProvider } from "@/components/workspace/workspace-panel-toggle";
 import { SETUP_STAGE, SETUP_STAGE_ORDER_UI } from "@/lib/labels";
+import type { ModuleKey } from "@/lib/modules/catalog";
 import { loadSidebarWorks } from "@/server/works/sidebar-works";
 
 export type ProjectNavBadges = {
@@ -143,6 +144,7 @@ export async function AppShell({
   projectId,
   rightPanel,
   openWorkUntouched,
+  openWorkModule,
 }: {
   children: React.ReactNode;
   projectId?: string;
@@ -150,6 +152,10 @@ export async function AppShell({
   // then marks New Chat, not clickable, instead of guessing from Recents (an
   // archived or old chat is not in Recents either, and is no new chat).
   openWorkUntouched?: boolean;
+  // Modules: that new chat's module (null: a general chat). The sidebar then
+  // marks the module's line, and New Chat stays clickable to go back to a
+  // general chat.
+  openWorkModule?: ModuleKey | null;
   // Brand Workspace shell (docs/brand-workspace-migration.md §7) — the
   // right panel's data (Brand/Files/Outputs/Calendar) lives outside what
   // this shell already fetches, so it's the caller's job. undefined at
@@ -191,6 +197,7 @@ export async function AppShell({
         toolBadges={toolBadgesFrom(projectBadges)}
         works={sidebarWorks}
         openWorkUntouched={openWorkUntouched}
+        openWorkModule={openWorkModule}
       />
       <SidebarBottom
         displayName={displayName}

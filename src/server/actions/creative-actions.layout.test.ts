@@ -10,6 +10,7 @@ const prismaMock = vi.hoisted(() => ({
   asset: { findUnique: vi.fn(), create: vi.fn() },
   task: { findUnique: vi.fn() },
   brand: { findUnique: vi.fn() },
+  brandDossier: { findUnique: vi.fn() },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -113,6 +114,7 @@ const templateArgs = () =>
     template: Record<string, unknown> | undefined;
     safeZone: unknown;
     trimLogo: boolean;
+    text?: Record<string, unknown>;
   };
 const versionMetadata = () =>
   (addVersion.mock.calls[0]![2] as { generationMetadata: Record<string, unknown> })
@@ -209,6 +211,34 @@ describe("performCreativeRevision with post layouts", () => {
 
     expect(versionMetadata().layoutTemplate).toMatchObject({ id: "story-full" });
     expect(templateArgs().safeZone).toEqual({ top: 13, bottom: 17.7 });
+  });
+
+  it("new: a regenerate sets the post's words again in the layout's headline zone", async () => {
+    const words = { headline: "Yeni sezon başladı", lines: ["Şimdi keşfet"] };
+    prismaMock.brandDossier.findUnique.mockResolvedValue({
+      approvedFonts: ["Playfair Display"],
+    });
+    applyBrandTemplate.mockResolvedValue({ size: 2, textDrawn: true });
+    await revise("new", { ...madeWith("headline-top"), onImageText: words });
+
+    expect(templateArgs().text).toMatchObject({
+      ...words,
+      placement: { zone: "TOP" },
+      fontFamily: "Playfair Display",
+      darkInk: "#0b1f3a",
+      accentHex: "#2dd4bf",
+    });
+    // Recorded again, so the next regenerate keeps them too.
+    expect(versionMetadata().onImageText).toEqual(words);
+  });
+
+  it("edit: words already baked into the pixels are not set a second time", async () => {
+    await revise("edit", {
+      ...madeWith("headline-top"),
+      onImageText: { headline: "Yeni sezon" },
+    });
+    expect(templateArgs().text).toBeUndefined();
+    expect(versionMetadata().onImageText).toBeUndefined();
   });
 
   it("brands without saved layouts revise exactly as before", async () => {

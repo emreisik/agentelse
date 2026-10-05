@@ -24,6 +24,7 @@ import {
   type SwapSlotState,
 } from "@/lib/works/plan-alternatives";
 import { creativeFieldsOfPlanItem } from "@/lib/works/plan-item-fields";
+import { deliveriesOfCard } from "@/lib/works/plan-layout";
 import { postKeyOf } from "@/lib/works/plan-platforms";
 import {
   optionItems,
@@ -327,9 +328,14 @@ export async function pickPlanOptionAction(
           return extra;
         });
 
+        // The brief's platforms and Story switch ride on the directions card
+        // (propose_plan_options): the plan's items are posts, and saving makes
+        // each one per platform (piecesOfPlan).
+        const deliveries = deliveriesOfCard(options);
         const next: PlanDraft = {
           ...draft,
           items,
+          ...deliveries,
           fromOption: { id: picked.id, label: picked.label },
           via: "options",
           alternativesMeta: { runs: 0 },
@@ -342,7 +348,10 @@ export async function pickPlanOptionAction(
           // The stored reply must not keep saying "Showed 3 plan directions".
           replyText: `Picked the direction "${picked.label}": ${count} ${
             count === 1 ? "post" : "posts"
-          } across ${channelLabels(items.map((item) => item.channel ?? ""))}.`,
+          } across ${channelLabels([
+            ...(deliveries.platforms ?? []),
+            ...items.map((item) => item.channel ?? ""),
+          ])}.`,
         };
       },
     });

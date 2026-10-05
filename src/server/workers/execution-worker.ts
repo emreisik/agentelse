@@ -63,6 +63,10 @@ let activeTick: Promise<void> | undefined;
 const PROVIDER_HEALTH_EVERY_MS = 30_000;
 let lastProviderHealthAt = 0;
 
+// See resolvePendingVerifications: the repair sweep, about once a minute.
+const VERIFICATION_REPAIR_EVERY_MS = 60_000;
+let lastVerificationRepairAt = 0;
+
 // Isolates tick stages from each other: errors are not swallowed, they're
 // written to AuditLog, but they never block the next stage.
 async function isolate(stage: string, run: () => Promise<unknown>) {
@@ -169,14 +173,23 @@ export const ExecutionWorker = {
     // Promise.all over the whole batch: some providers (e.g. OpenClaw) spawn
     // real CLI/browser processes, so unbounded fan-out risks colliding
     // sessions and provider rate limits, not just DB races.
+    // A rolling pool rather than fixed chunks: a lane takes the next event as
+    // soon as its own is done, so one slow dispatch (an image that takes two
+    // minutes) no longer holds the other slots of its chunk idle.
     let processed = 0;
-    for (let i = 0; i < batch.length; i += DISPATCH_CONCURRENCY) {
-      const chunk = batch.slice(i, i + DISPATCH_CONCURRENCY);
-      const results = await Promise.all(
-        chunk.map((event) => this.processDispatchEvent(event)),
-      );
-      processed += results.reduce((sum, count) => sum + count, 0);
-    }
+    let next = 0;
+    const lane = async () => {
+      while (next < batch.length) {
+        const event = batch[next++]!;
+        processed += await this.processDispatchEvent(event);
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(DISPATCH_CONCURRENCY, batch.length) },
+        lane,
+      ),
+    );
 
     return processed;
   },
@@ -310,25 +323,35 @@ export const ExecutionWorker = {
   // "completed" only gets a job to VERIFYING. This is what actually
   // confirms it and lets the Task finish. For mock providers the "evidence"
   // is the mock result payload itself, clearly labelled isMock.
-  async resolvePendingVerifications(limit = 20): Promise<number> {
+  // `repair: false` reads only the PENDING claims: the repair half (verified,
+  // but the job or its task never finished — an interrupted transition)
+  // checks nearly every verified row against its job and task, so the tick
+  // runs it about once a minute rather than on every pass.
+  async resolvePendingVerifications(
+    limit = 20,
+    options: { repair?: boolean } = {},
+  ): Promise<number> {
+    const repair = options.repair ?? true;
     const pending = await prisma.executionVerification.findMany({
-      where: {
-        OR: [
-          { status: "PENDING" },
-          {
-            status: "VERIFIED",
-            executionJob: {
-              OR: [
-                { status: "VERIFYING" },
-                {
-                  status: "COMPLETED",
-                  task: { status: { not: "COMPLETED" } },
+      where: repair
+        ? {
+            OR: [
+              { status: "PENDING" },
+              {
+                status: "VERIFIED",
+                executionJob: {
+                  OR: [
+                    { status: "VERIFYING" },
+                    {
+                      status: "COMPLETED",
+                      task: { status: { not: "COMPLETED" } },
+                    },
+                  ],
                 },
-              ],
-            },
-          },
-        ],
-      },
+              },
+            ],
+          }
+        : { status: "PENDING" },
       take: limit,
       include: { executionJob: true },
     });
@@ -423,7 +446,10 @@ export const ExecutionWorker = {
       }
       await this.processDispatchQueue();
       await this.pollRunningJobs();
-      await this.resolvePendingVerifications();
+      const repairDue =
+        Date.now() - lastVerificationRepairAt >= VERIFICATION_REPAIR_EVERY_MS;
+      if (repairDue) lastVerificationRepairAt = Date.now();
+      await this.resolvePendingVerifications(20, { repair: repairDue });
       // Agency OS loop — internally fault-isolated per step; a failing agency
       // stage never breaks execution processing (guarded here anyway).
       try {

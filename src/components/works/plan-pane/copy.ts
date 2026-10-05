@@ -34,8 +34,6 @@ export const PLAN_PANE_COPY = {
     `${names} isn't connected yet. The posts are made now; publishing starts once it is.`,
   // The list
   postsCount: (n: number) => `${n} ${n === 1 ? "post" : "posts"}`,
-  adaptationsCount: (n: number) =>
-    `${n} ${n === 1 ? "adaptation" : "adaptations"}`,
   viewAria: "View",
   list: "List",
   week: "Week",
@@ -64,6 +62,25 @@ export const PLAN_PANE_COPY = {
   swapped: "Idea changed.",
   noMoreIdeas: "No other ideas for this post.",
   expand: "Show details",
+  // A post's channels: each can be left out of it, the post keeps one.
+  leaveOut: "Leave out",
+  include: "Include",
+  leaveOutAria: (channel: string) => `Leave ${channel} out of this post`,
+  includeAria: (channel: string) => `Include ${channel} in this post`,
+  leftOut: "Left out",
+  // After a left-out tab's name, for screen readers.
+  leftOutTab: ", left out",
+  leftOutNote: "Left out of this post: it isn't made or posted.",
+  leftOutDone: "Channel left out.",
+  includedDone: "Channel included.",
+  keepOneChannel: "A post keeps at least one channel.",
+  // One Approve for the whole post.
+  approvePost: "Approve post",
+  postApproved: "Post approved.",
+  postReady: (channels: number) =>
+    channels === 1
+      ? "Its channel is ready."
+      : `All ${channels} channels are ready.`,
   // A piece
   textOf: (channel: string) => `${channel} text`,
   characters: (n: number) => `${n} ${n === 1 ? "character" : "characters"}`,
@@ -97,14 +114,16 @@ export const PLAN_PANE_COPY = {
   prepare: "Prepare content",
   continue: "Continue",
   addToCalendar: "Add to calendar",
-  planSummary: (posts: number, pieces: number) =>
-    `${posts} ${posts === 1 ? "post" : "posts"}, ${pieces} ${pieces === 1 ? "piece" : "pieces"}`,
+  planSummary: (posts: number, channels: number) =>
+    `${posts} ${posts === 1 ? "post" : "posts"} · ${channels} ${channels === 1 ? "channel" : "channels"}`,
   planHelper: "Every idea is adapted to each channel.",
-  planHelperBatch: (batch: number) =>
-    `The first ${batch} pieces are made now; the rest is one more tap.`,
+  planHelperBatch: (posts: number) =>
+    posts === 1
+      ? "The first post is made now; the rest after it."
+      : `The first ${posts} posts are made now; the rest after them.`,
   prepareNote: "Text and format are made separately for each channel.",
   readyOf: (ready: number, total: number) =>
-    `${ready} of ${total} ${total === 1 ? "piece" : "pieces"} ready`,
+    `${ready} of ${total} ${total === 1 ? "post" : "posts"} ready`,
   reviewHelper: "Review the texts and times.",
   makeMore: (n: number) => `Make ${n} more`,
   making: "Making content…",
@@ -112,10 +131,10 @@ export const PLAN_PANE_COPY = {
   producingBusy: "A run is already making content for this plan.",
   // Publish step
   reviewTitle: "Review the publish plan",
-  reviewMeta: (posts: number, pieces: number, zone: string) =>
+  reviewMeta: (posts: number, channels: number, zone: string) =>
     [
       `${posts} ${posts === 1 ? "post" : "posts"}`,
-      `${pieces} ${pieces === 1 ? "piece" : "pieces"}`,
+      `${channels} ${channels === 1 ? "channel" : "channels"}`,
       zone ? `${zone} time` : "",
     ]
       .filter(Boolean)
@@ -130,10 +149,12 @@ export const PLAN_PANE_COPY = {
     unconnected: "not connected",
   },
   holdLine:
-    "Pieces for a channel that isn't connected stay on the calendar until it is.",
+    "Posts for a channel that isn't connected stay on the calendar until it is.",
   approveLabel: (n: number) =>
-    `I approve these ${n} ${n === 1 ? "piece" : "pieces"} for the selected channels and times.`,
-  toApprove: (n: number) => `${n} ${n === 1 ? "piece" : "pieces"} to approve`,
+    n === 1
+      ? "I approve this post for the selected channels and times."
+      : `I approve these ${n} posts for the selected channels and times.`,
+  toApprove: (n: number) => `${n} ${n === 1 ? "post" : "posts"} to approve`,
   connectedOf: (connected: number, total: number) =>
     `${connected} of ${total} ${total === 1 ? "channel" : "channels"} connected`,
   approve: "Approve and schedule",
@@ -146,7 +167,7 @@ export const PLAN_PANE_COPY = {
   calendarTitle: "Publish calendar",
   seeContent: "See content",
   doneTitle: (n: number) =>
-    `${n} ${n === 1 ? "piece is" : "pieces are"} on the calendar.`,
+    `${n} ${n === 1 ? "post is" : "posts are"} on the calendar.`,
   doneBody: "Each channel's publish status is tracked on its own.",
   turnOnScheduled: "Turn on scheduled posting",
   turnOnLine:

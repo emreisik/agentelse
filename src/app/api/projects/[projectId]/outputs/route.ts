@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 
+import type { OutputPostsPayload } from "@/lib/calendar/output-posts";
 import { denyUnlessProjectMember } from "@/server/calendar/route-auth";
 import { getProjectTimezone } from "@/server/chat/content-plan";
 import { loadOutputs } from "@/server/outputs/load-outputs";
 
 // Sağ panel Outputs sekmesinin hafif okuma ucu: sekme açılınca ve 30 sn'de bir
 // okunur. Sayfayı yeniden render etmez (Server Action değil: onlar istemci
-// başına sıralı çalışır, bir okuma onay/ret yazmasını bekletirdi).
+// başına sıralı çalışır, bir okuma onay/ret yazmasını bekletirdi). Teslimat
+// başına satır ve postu gelir; panel aynı postun mecralarını tek kart yapar.
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ projectId: string }> },
@@ -17,7 +19,7 @@ export async function GET(
 
   const timezone = await getProjectTimezone(projectId);
   const payload = await loadOutputs({ projectId, timezone });
-  return NextResponse.json(payload, {
+  return NextResponse.json<OutputPostsPayload>(payload, {
     headers: { "Cache-Control": "no-store" },
   });
 }

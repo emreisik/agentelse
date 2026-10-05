@@ -150,11 +150,20 @@ export function RailTip({
 
 const noSubscribe = () => () => {};
 
+// The Modules group under New Chat (MODULES_UI): its lines, one per module.
+const MODULE_LINES = 4;
+
 // The project loading.tsx's docked sidebar, open or as the rail like the real
 // one. loading.tsx cannot read cookies() without losing its instant fallback,
 // so this reads document.cookie on the client (navigations); a full page load
-// shows the open shape until the page lands.
-export function DockedSidebarSkeleton() {
+// shows the open shape until the page lands. `modulesUi` (a plain env read in
+// loading.tsx) adds the Modules group: a heading and its lines, icons on the
+// rail.
+export function DockedSidebarSkeleton({
+  modulesUi = false,
+}: {
+  modulesUi?: boolean;
+}) {
   const collapsed = useSyncExternalStore(
     noSubscribe,
     () =>
@@ -167,9 +176,11 @@ export function DockedSidebarSkeleton() {
   if (collapsed) {
     return (
       <div className="hidden h-full w-14 shrink-0 flex-col items-center gap-2 overflow-hidden border-r border-sidebar-border bg-sidebar px-2 py-3 md:flex">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <Skeleton key={i} className="size-10 rounded-lg" />
-        ))}
+        {Array.from({ length: 8 + (modulesUi ? MODULE_LINES : 0) }).map(
+          (_, i) => (
+            <Skeleton key={i} className="size-10 rounded-lg" />
+          ),
+        )}
       </div>
     );
   }
@@ -183,7 +194,16 @@ export function DockedSidebarSkeleton() {
         <Skeleton className="h-[52px] w-full rounded-xl" />
       </div>
       <div className="flex flex-1 flex-col gap-2 p-3">
-        {Array.from({ length: 6 }).map((_, i) => (
+        <Skeleton className="h-8 w-full rounded-lg" />
+        {modulesUi ? (
+          <>
+            <Skeleton className="mt-1 ml-2.5 h-3 w-16" />
+            {Array.from({ length: MODULE_LINES }).map((_, i) => (
+              <Skeleton key={i} className="h-8 w-full rounded-lg" />
+            ))}
+          </>
+        ) : null}
+        {Array.from({ length: 5 }).map((_, i) => (
           <Skeleton key={i} className="h-8 w-full rounded-lg" />
         ))}
       </div>

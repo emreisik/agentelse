@@ -1,6 +1,8 @@
 // Deterministic calendar for plan directions (Works slice 2, spec 3.2.2).
 // The server fixes dates, channels, formats and times as a pure function of the
 // brief; the model only writes the ideas, so a pick needs no model call.
+// A slot is a POST (docs/works.md "Posts"): the brief's social channels are
+// not a slot each, they are where every post goes (briefDeliveries).
 // Pure and isomorphic.
 
 import {
@@ -10,12 +12,15 @@ import {
 } from "@/lib/content-channels";
 import { addDaysToKey, mondayOf } from "@/lib/content-plan-view";
 import {
+  briefRotation,
   parsePlanBrief,
   serializePlanBrief,
   type PlanBrief,
 } from "@/lib/plan-brief";
 
 import { cleanWorksTextOrNull } from "./clean-text";
+import { isSocialPlatform, orderedPlatforms } from "./plan-platforms";
+import { channelListText } from "./work";
 
 // 10 covers 5 per week x 2 weeks; 14 slots x 3 options came close to the model
 // output limit and a truncated tool call looped for several rounds.
@@ -31,12 +36,53 @@ const DAY_TIMES = ["10:00", "12:00", "15:00"] as const;
 const HORIZON_DAYS = 60;
 const THEME_MAX = 80;
 
+// One post of the plan, or one Blog/SEO or Ads piece. A post is drawn on the
+// first social channel of the brief; its other social channels are the card's
+// platforms, not slots of their own.
 export type PlanSlot = {
   date: string;
   time: string;
   channel: ChannelKey;
   formatKey: string;
 };
+
+// What a plan card drawn from a brief carries besides its posts: the social
+// platforms every post goes to and the Instagram Story switch (the plan
+// card's `platforms` and `instagramStory`, which saving expands with
+// piecesOfPlan).
+export type PlanDeliveries = {
+  platforms?: ChannelKey[];
+  instagramStory?: boolean;
+};
+
+function deliveries(platforms: ChannelKey[], story: boolean): PlanDeliveries {
+  if (platforms.length === 0) return {};
+  return story && platforms.includes("instagram")
+    ? { platforms, instagramStory: true }
+    : { platforms };
+}
+
+// The social channels of a brief, in catalog order: where every post of its
+// plan goes. Empty for a Blog/SEO or Ads only brief.
+export function briefPlatforms(
+  brief: Pick<PlanBrief, "channels">,
+): ChannelKey[] {
+  return orderedPlatforms(brief.channels.map(({ channel }) => channel));
+}
+
+export function briefDeliveries(brief: PlanBrief): PlanDeliveries {
+  return deliveries(briefPlatforms(brief), brief.story === true);
+}
+
+// The same, read back from a stored card (the directions card carries them to
+// the plan a pick makes of it). A card stored before them has neither.
+export function deliveriesOfCard(card: object): PlanDeliveries {
+  const stored = card as { platforms?: unknown; instagramStory?: unknown };
+  return deliveries(
+    Array.isArray(stored.platforms) ? orderedPlatforms(stored.platforms) : [],
+    stored.instagramStory === true,
+  );
+}
 
 // Weekdays are Monday-first indexes (0 = Mon ... 6 = Sun), like mondayOf.
 const WEEKDAY_PATTERN: Record<number, readonly number[]> = {
@@ -122,9 +168,9 @@ export function layoutPlanSlots({
     return [];
   }
 
-  const pairs = brief.channels.flatMap(({ channel, formats }) =>
-    formats.map((formatKey) => ({ channel, formatKey })),
-  );
+  // One place for all the posts (on the first social channel), one per
+  // Blog/SEO or Ads format.
+  const pairs = briefRotation(brief.channels);
   if (pairs.length === 0) return [];
 
   const slots: PlanSlot[] = [];
@@ -165,13 +211,23 @@ export function layoutPlanSlots({
 }
 
 // The numbered lines the model sees: '1. Mon 5 Oct 10:00 · instagram.post'.
-export function describePlanSlots(slots: readonly PlanSlot[]): string[] {
+// Given the plan's platforms, a post also says where else it goes
+// ('· also on Facebook and LinkedIn'), so its idea is written for all of them.
+export function describePlanSlots(
+  slots: readonly PlanSlot[],
+  platforms: readonly ChannelKey[] = [],
+): string[] {
   return slots.map((slot, index) => {
     const [y, m, d] = slot.date.split("-").map(Number);
     const day = new Date(Date.UTC(y!, m! - 1, d!));
     const weekday = WEEKDAY_NAMES[(day.getUTCDay() + 6) % 7]!;
     const month = MONTH_NAMES[day.getUTCMonth()]!;
-    return `${index + 1}. ${weekday} ${d} ${month} ${slot.time} · ${slot.formatKey}`;
+    const others = isSocialPlatform(slot.channel)
+      ? platforms.filter((key) => key !== slot.channel)
+      : [];
+    const also =
+      others.length > 0 ? ` · also on ${channelListText(others)}` : "";
+    return `${index + 1}. ${weekday} ${d} ${month} ${slot.time} · ${slot.formatKey}${also}`;
   });
 }
 

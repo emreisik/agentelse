@@ -6,11 +6,12 @@ import { prisma } from "@/lib/prisma";
 import { getEnv } from "@/lib/env";
 import { DEPARTMENT_KEY } from "@/lib/labels";
 import { findActiveRun, isRunLive } from "@/server/chat/run-registry";
+import { IN_FLIGHT_CARD_KINDS } from "@/server/chat/progress";
 import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
-import { AppShell } from "@/components/layout/app-shell";
+import { AppShell, preloadAppShell } from "@/components/layout/app-shell";
 import {
   entityHref,
   parseHubParams,
@@ -31,8 +32,12 @@ import { BrandSummaryPanel } from "@/components/workspace/brand-summary-panel";
 import { OutputsPanel } from "@/components/workspace/outputs-panel";
 import { CalendarPanel } from "@/components/workspace/calendar-panel";
 import { FilesPanel } from "@/components/workspace/files-panel";
+import { RememberWork } from "@/components/works/remember-work";
+import { foldPlanPosts } from "@/lib/works/plan-posts";
 import { getPendingDecisions } from "@/server/agency/pending-decisions";
 import { computeNextSteps } from "@/server/agency/journey/next-steps";
+import type { NextStep } from "@/lib/journey";
+import { IDEA_POOL_STATUSES } from "@/lib/idea-pool";
 import { withPlanSlots } from "@/server/agency/journey/plan-slots";
 import { loadJourneySnapshot } from "@/server/agency/journey/snapshot";
 import { GUIDE_PARAM, GUIDE_VALUE } from "@/lib/guided-setup/contract";
@@ -45,7 +50,7 @@ import {
 } from "@/server/chat/content-plan";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { WorkRepository } from "@/server/repositories/work.repository";
-import { isWorksEnabled } from "@/server/works/flag";
+import { isModulesEnabled, isWorksEnabled } from "@/server/works/flag";
 import {
   decisionBelongsToWork,
   workOwnersByTask,
@@ -53,6 +58,7 @@ import {
 } from "@/server/works/scope";
 import { loadBriefExtras } from "@/server/works/daily-brief";
 import { loadAdsPulse } from "@/server/works/ads-pulse";
+import { moduleFlowTaskIds } from "@/server/modules/flow-tasks";
 import {
   approvalIdOfCard,
   briefFactsFor,
@@ -145,10 +151,33 @@ function departmentKeyFromParsedIntent(
   return undefined;
 }
 
+const DEFAULT_TIMEZONE = "Europe/Istanbul";
+
+// Works: the project's timezone, its day and the Work the URL names (`today`
+// is the alias of the day's Today Work). Needs only the project id, so the
+// page starts it alongside the access check.
+async function readRequestedWork(
+  projectId: string,
+  requested: string | undefined,
+) {
+  const timezone = await getProjectTimezone(projectId).catch(
+    () => DEFAULT_TIMEZONE,
+  );
+  const todayKey = todayInTimezone(timezone);
+  const param = resolveWorkParam(requested, todayKey);
+  const work =
+    param.kind === "today"
+      ? await WorkRepository.findToday(projectId, todayKey)
+      : param.kind === "id"
+        ? await WorkRepository.get(projectId, param.id)
+        : null;
+  return { timezone, todayKey, param, work };
+}
+
 // Root of the in-project experience — now the project chat itself (like
 // ChatGPT's main screen: the left sidebar lists projects/chats, clicking a
 // project opens its chat). Modules like Departments/Work/Signals are reached
-// from the header's Advanced menu and the sidebar; when a panel is selected
+// from the sidebar; when a panel is selected
 // (`?panel=&sub=&entity=`, see hub-core-params.ts) that panel is rendered as
 // full-page content IN PLACE OF the chat — not a modal.
 export default async function ProjectChatPage({
@@ -160,7 +189,27 @@ export default async function ProjectChatPage({
 }) {
   const { projectId } = await params;
   const sp = await searchParams;
+  // Before any read: the chat's progress poll asks what changed after this.
+  const renderedAt = new Date().toISOString();
+  // The shell's own reads (sidebar, Recents, agency status) start now and run
+  // alongside the page's: AppShell renders only once the page's data is in, and
+  // would otherwise only then begin its round trips.
+  preloadAppShell(projectId);
   const { userId } = await requireUser();
+
+  const { panel, sub, entity } = parseHubParams(sp);
+  // The chat's first reads (the timezone, the Work the URL names) need only the
+  // project id, so they go out with the access check; nothing they read is
+  // used before it passes. Settled here too, so a failed check (notFound)
+  // never leaves it rejecting unobserved.
+  const workRead =
+    !panel && !entity && isWorksEnabled()
+      ? readRequestedWork(
+          projectId,
+          Array.isArray(sp.work) ? sp.work[0] : sp.work,
+        )
+      : null;
+  workRead?.catch(() => undefined);
 
   try {
     await requireProjectAccess(userId, projectId);
@@ -168,7 +217,6 @@ export default async function ProjectChatPage({
     notFound();
   }
 
-  const { panel, sub, entity } = parseHubParams(sp);
   // Opt-in escape hatch to the old, isolated per-idea thread view
   // (ProjectFlowView/IdeaFlow) — only used when something explicitly links
   // to it with &thread=1 (see the `entity` branch below).
@@ -221,15 +269,14 @@ export default async function ProjectChatPage({
   // the project's empty Work when there is one and moves into it. A stale
   // `?work=` goes back to the bare URL.
   let work: WorkView | null = null;
-  let timezone = "Europe/Istanbul";
+  let timezone = DEFAULT_TIMEZONE;
   let todayKey = "";
-  if (isWorksEnabled()) {
-    timezone = await getProjectTimezone(projectId).catch(() => timezone);
-    todayKey = todayInTimezone(timezone);
-    const requested = Array.isArray(sp.work) ? sp.work[0] : sp.work;
-    const param = resolveWorkParam(requested, todayKey);
-    if (param.kind === "today") {
-      work = await WorkRepository.findToday(projectId, todayKey);
+  if (workRead) {
+    const read = await workRead;
+    timezone = read.timezone;
+    todayKey = read.todayKey;
+    work = read.work;
+    if (read.param.kind === "today") {
       if (!work) {
         return (
           <AppShell projectId={projectId}>
@@ -237,8 +284,7 @@ export default async function ProjectChatPage({
           </AppShell>
         );
       }
-    } else if (param.kind === "id") {
-      work = await WorkRepository.get(projectId, param.id);
+    } else if (read.param.kind === "id") {
       if (!work) redirect(`/projects/${projectId}`);
     } else {
       return (
@@ -252,6 +298,10 @@ export default async function ProjectChatPage({
   const isToday = work ? isTodayWork(work) : false;
   const workDay = work ? todayDayKeyOf(work.id) : null;
   const staleDay = isToday && workDay !== todayKey;
+  // ?planIdea=<id> (the Ideas panel's "Plan in chat"): a step that asks the
+  // chat to plan that pool idea, run once on landing like ?next=. Only an
+  // idea of this project that is still in the pool. Read with the rest.
+  const planIdeaId = typeof sp.planIdea === "string" ? sp.planIdea : undefined;
 
   const [
     project,
@@ -264,6 +314,7 @@ export default async function ProjectChatPage({
     journey,
     creativeCommands,
     [connections, activity, briefExtras, adsPulse, untouched],
+    planIdea,
   ] = await Promise.all([
     prisma.project.findUnique({
       where: { id: projectId },
@@ -276,12 +327,38 @@ export default async function ProjectChatPage({
       // Ideas/Work panels, not here. ideaId: null drops messages typed
       // inside an idea's isolated thread; topic: null drops legacy scoped
       // threads (e.g. "BRAND_BRAIN" from the removed Brand Brain chat).
+      // In a Work, also the plan drafts Agentelse wrote itself (the weekly
+      // plan draft, weekly-plan-draft.ts): a SYSTEM row whose card is an
+      // ordinary content-plan-draft, saved and edited like any other. And a
+      // module's flow card (Ads Manager, Analytics, SEO Manager; docs/
+      // modules.md), the SYSTEM row its start writes and every step changes in
+      // place. No other SYSTEM row.
       where: {
         projectId,
         topic: null,
         ideaId: null,
-        source: "WEB",
-        ...(work ? { workId: work.id } : {}),
+        ...(work
+          ? {
+              workId: work.id,
+              OR: [
+                { source: "WEB" as const },
+                {
+                  source: "SYSTEM" as const,
+                  parsedIntent: {
+                    path: ["card", "kind"],
+                    equals: "content-plan-draft",
+                  },
+                },
+                {
+                  source: "SYSTEM" as const,
+                  parsedIntent: {
+                    path: ["card", "kind"],
+                    equals: "module-flow",
+                  },
+                },
+              ],
+            }
+          : { source: "WEB" as const }),
       },
       orderBy: { createdAt: "desc" },
       take: 72,
@@ -346,7 +423,9 @@ export default async function ProjectChatPage({
     // stale day. They depend on the Work alone, so they load with the rest.
     work
       ? Promise.all([
-          getChannelConnections(projectId).catch((): ChannelConnections => ({})),
+          getChannelConnections(projectId).catch(
+            (): ChannelConnections => ({}),
+          ),
           loadWorkActivity(projectId, work.id),
           isToday && !staleDay
             ? loadBriefExtras(projectId, timezone, todayKey)
@@ -364,6 +443,16 @@ export default async function ProjectChatPage({
           null,
           false,
         ] as const),
+    work && planIdeaId
+      ? prisma.idea.findFirst({
+          where: {
+            id: planIdeaId,
+            projectId,
+            status: { in: [...IDEA_POOL_STATUSES] },
+          },
+          select: { id: true, title: true },
+        })
+      : Promise.resolve(null),
   ]);
 
   if (!project) notFound();
@@ -386,7 +475,10 @@ export default async function ProjectChatPage({
   const newestCardByCreativeId = new Map<string, string>();
   for (const command of creativeCommands) {
     const card = cardFromParsedIntent(command.parsedIntent);
-    if (card?.kind === "creative-ready" && !newestCardByCreativeId.has(card.creativeId)) {
+    if (
+      card?.kind === "creative-ready" &&
+      !newestCardByCreativeId.has(card.creativeId)
+    ) {
       newestCardByCreativeId.set(card.creativeId, command.id);
     }
   }
@@ -450,35 +542,62 @@ export default async function ProjectChatPage({
   // Work at all; the others wait in the Work that asked for them. An unowned
   // real-money Meta proposal shows in a Work that chose ads, in Today, or in
   // every Work when no active Work covers ads.
-  const decisionTaskIdOf = (d: (typeof decisions)[number]): string | undefined =>
+  const decisionTaskIdOf = (
+    d: (typeof decisions)[number],
+  ): string | undefined =>
     "taskId" in d.card && typeof d.card.taskId === "string"
       ? d.card.taskId
       : undefined;
   const decisionTaskIds = work
     ? decisions.flatMap((d) => decisionTaskIdOf(d) ?? [])
     : [];
-  // The package rows and the decisions' owners are independent: one wait.
-  const [packageRowCommands, [decisionOwners, coverage]] = await Promise.all([
-    loadPackageRows(),
-    work
-      ? Promise.all([
-          workOwnersByTask(projectId, decisionTaskIds),
-          WorkRepository.channelCoverage(projectId).catch(() => []),
-        ])
-      : Promise.resolve([new Map<string, TaskOwner>(), []] as const),
-  ]);
+  // A module's flow card decides the Tasks it runs in place (the Ads Manager's
+  // launch chain, with an Approve per link): their decisions are not repeated
+  // under it. Read only when both are on screen.
+  const flowCommandIds = work
+    ? chatCommands.flatMap((command) =>
+        cardFromParsedIntent(command.parsedIntent)?.kind === "module-flow"
+          ? [command.id]
+          : [],
+      )
+    : [];
+  // The package rows, the decisions' owners and the flow cards' Tasks are
+  // independent: one wait.
+  const [packageRowCommands, [decisionOwners, coverage], flowTaskIds] =
+    await Promise.all([
+      loadPackageRows(),
+      work
+        ? Promise.all([
+            workOwnersByTask(projectId, decisionTaskIds),
+            WorkRepository.channelCoverage(projectId).catch(() => []),
+          ])
+        : Promise.resolve([new Map<string, TaskOwner>(), []] as const),
+      flowCommandIds.length > 0 && decisionTaskIds.length > 0
+        ? moduleFlowTaskIds(projectId, flowCommandIds).catch(
+            () => new Set<string>(),
+          )
+        : Promise.resolve(new Set<string>()),
+    ]);
   // A creative's card can match both queries — one row, one message.
   const rowsById = new Map(
     [...chatCommands, ...creativeCommands, ...packageRowCommands].map(
       (command) => [command.id, command] as const,
     ),
   );
+  // The rows whose work is still in flight (folded plan pieces included):
+  // the chat's progress poll asks whether they have settled, since they are
+  // rewritten in place without an update time (server/chat/progress.ts).
+  const inFlightCommandIds = [...rowsById.values()].flatMap((command) => {
+    const kind = cardFromParsedIntent(command.parsedIntent)?.kind;
+    return kind && IN_FLIGHT_CARD_KINDS.has(kind) ? [command.id] : [];
+  });
   const anyActiveWorkCoversAds = coverage.some(
     (w) => w.status === "ACTIVE" && w.channels.includes("ads"),
   );
   const workDecisions = decisions.filter((d) => {
     if (!work) return true;
     const taskId = decisionTaskIdOf(d);
+    if (taskId && flowTaskIds.has(taskId)) return false;
     return decisionBelongsToWork({
       workId: work.id,
       channels: work.channels,
@@ -491,12 +610,37 @@ export default async function ProjectChatPage({
   // Works only: live state of the cards on screen (the decision cards
   // included: a pending-decision creative card would promise "Approve &
   // publish" for a piece the hold rule will hold).
-  const overlayInputs = work
-    ? await loadWorkOverlayInputs(projectId, [
-        ...[...rowsById.values()].map((c) => cardFromParsedIntent(c.parsedIntent)),
-        ...workDecisions.map((d) => d.card),
-      ])
-    : null;
+  // A plan's pieces sit in the plan's own post carousel, never one message
+  // each (lib/works/plan-posts.ts). A loading or failed piece only knows its
+  // task, whose Command is the plan that started it. The overlays never change
+  // a card's kind, so the stored cards name the same tasks: read alongside.
+  const pieceTaskIds = work
+    ? [...rowsById.values()].flatMap((command) => {
+        const card = cardFromParsedIntent(command.parsedIntent);
+        return card?.kind === "creative-loading" ||
+          card?.kind === "creative-failed"
+          ? [card.taskId]
+          : [];
+      })
+    : [];
+  const [overlayInputs, pieceTasks] = await Promise.all([
+    work
+      ? loadWorkOverlayInputs(projectId, [
+          ...[...rowsById.values()].map((c) =>
+            cardFromParsedIntent(c.parsedIntent),
+          ),
+          ...workDecisions.map((d) => d.card),
+        ])
+      : Promise.resolve(null),
+    pieceTaskIds.length
+      ? prisma.task
+          .findMany({
+            where: { id: { in: pieceTaskIds }, projectId },
+            select: { id: true, commandId: true },
+          })
+          .catch(() => [])
+      : Promise.resolve([]),
+  ]);
   const stageByCreativeId = new Map(
     (journey?.items ?? []).map((item) => [item.id, item] as const),
   );
@@ -528,11 +672,7 @@ export default async function ProjectChatPage({
       }
       // The channel question is answered once the Work has channels: the card
       // then reads as a resolved line instead of asking again after a reload.
-      if (
-        work &&
-        card?.kind === "channel-select" &&
-        work.channels.length > 0
-      ) {
+      if (work && card?.kind === "channel-select" && work.channels.length > 0) {
         card = { ...card, selected: work.channels };
       }
       // Live overlays go last, so an older card the page archived above (a
@@ -577,6 +717,19 @@ export default async function ProjectChatPage({
         ]),
       )
     : baseNextSteps;
+
+  const chatNextSteps: NextStep[] = planIdea
+    ? [
+        {
+          key: `plan-idea-${planIdea.id}`,
+          tone: "next",
+          label: "Plan this idea",
+          title: `Plan "${planIdea.title}".`,
+          action: { kind: "plan_from_ideas", count: 1, idea: planIdea },
+        },
+        ...nextSteps,
+      ]
+    : nextSteps;
 
   // Live turns of a Work: the daily brief (Today, its own day only) and the
   // Meta Ads card. Built on every render from real rows and never stored.
@@ -636,19 +789,23 @@ export default async function ProjectChatPage({
   );
   const decisionTurns = (untouched ? [] : workDecisions)
     .filter((d) => !shownApprovalIds.has(d.approvalId))
-    .map(
-      (d): ChatTurn => ({
-        commandId: `decision-${d.approvalId}`,
-        source: "SYSTEM",
-        text: "",
-        reply: "Waiting for your decision",
-        replyStatus: null,
-        card: decisionCardOf(d),
-        attachments: [],
-        createdAt: d.createdAt,
-      }),
-    );
-  const turns = [...liveTurns, ...chatTurns, ...decisionTurns];
+    .map((d): ChatTurn => ({
+      commandId: `decision-${d.approvalId}`,
+      source: "SYSTEM",
+      text: "",
+      reply: "Waiting for your decision",
+      replyStatus: null,
+      card: decisionCardOf(d),
+      attachments: [],
+      createdAt: d.createdAt,
+    }));
+  const taskPlan = new Map(
+    pieceTasks.flatMap((task) =>
+      task.commandId ? [[task.id, task.commandId] as const] : [],
+    ),
+  );
+  const allTurns = [...liveTurns, ...chatTurns, ...decisionTurns];
+  const turns = work ? foldPlanPosts(allTurns, taskPlan) : allTurns;
 
   // The Work's header line and its empty screen (channel chooser / cards).
   let workHost: ReturnType<typeof buildWorkHost> | undefined;
@@ -664,6 +821,7 @@ export default async function ProjectChatPage({
       aiOff: ReasoningService.isMockMode(),
       pendingApprovals: decisionTurns.length,
       hasAnalytics,
+      modulesUi: isModulesEnabled(),
     });
     workHeader = (
       <WorkHeader
@@ -688,12 +846,19 @@ export default async function ProjectChatPage({
       publishTargets={publishTargets}
       turns={turns}
       discovery={discovery}
-      nextSteps={nextSteps}
-      autoNext={typeof sp.next === "string" ? sp.next : undefined}
+      nextSteps={chatNextSteps}
+      autoNext={
+        planIdea
+          ? "plan_from_ideas"
+          : typeof sp.next === "string"
+            ? sp.next
+            : undefined
+      }
       workHost={workHost}
       liveRunCommandId={
         findActiveRun(projectId, work?.id ?? null)?.commandId ?? undefined
       }
+      progress={{ since: renderedAt, inFlightIds: inFlightCommandIds }}
     />
   );
 
@@ -701,6 +866,8 @@ export default async function ProjectChatPage({
     <AppShell
       projectId={projectId}
       openWorkUntouched={untouched}
+      // Still empty, a module chat marks its Modules line instead of New Chat.
+      openWorkModule={untouched ? (workHost?.module ?? null) : null}
       rightPanel={
         <WorkspaceRightPanel
           brand={
@@ -732,6 +899,7 @@ export default async function ProjectChatPage({
     >
       {work ? (
         <div key={`work-${work.id}`} className="flex h-full flex-col">
+          <RememberWork projectId={projectId} workId={work.id} />
           {workHeader}
           <div className="relative min-h-0 flex-1">{chat}</div>
         </div>

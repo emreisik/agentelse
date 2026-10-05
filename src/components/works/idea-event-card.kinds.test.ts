@@ -38,6 +38,11 @@ vi.mock("@/server/actions/plan-options-actions", inert);
 vi.mock("@/server/actions/plan-draft-actions", inert);
 vi.mock("@/server/actions/plan-progress-actions", inert);
 vi.mock("@/server/actions/work-approve-actions", inert);
+vi.mock("@/server/actions/module-flow-actions", inert);
+vi.mock("@/server/actions/analytics-flow-actions", inert);
+vi.mock("@/server/actions/ads-flow-actions", inert);
+vi.mock("@/server/actions/seo-flow-actions", inert);
+vi.mock("@/server/actions/post-actions", inert);
 vi.mock("@/server/actions/publish-actions", inert);
 vi.mock("@/server/actions/schedule-slots-actions", inert);
 vi.mock("@/server/actions/slot-suggest-actions", inert);
@@ -263,6 +268,13 @@ const FIXTURES: Record<string, IdeaEventCardData> = {
     currency: "TRY",
     headline: "Spring: cost per lead is 38.20 TRY",
     chips: [{ label: "CPL", value: "38.20 TRY", tone: "neutral" }],
+  },
+  "module-flow": {
+    kind: "module-flow",
+    module: "analytics",
+    title: "Analytics",
+    step: "brief",
+    data: {},
   },
   "creative-loading": {
     kind: "creative-loading",

@@ -10,6 +10,7 @@ import type { IdeaOptionsCardData } from "@/lib/works/idea-options";
 import type { MasterContentCardData } from "@/lib/works/master-content";
 import type { DailyBrief } from "@/lib/works/daily-brief";
 import type { AdsInsightCardData } from "@/lib/works/ads-insight";
+import type { ModuleFlowCardData } from "@/lib/module-flows/card";
 
 // Representation of EVERY pipeline event in an idea's chat (origin
 // signal/finding, insight/opportunity, idea birth, council decision, work
@@ -254,6 +255,12 @@ export type IdeaEventCardData =
         brandFlags?: BrandFlag[];
         // Set by removeSlotAction.
         removed?: boolean;
+        // Works, draft: the deliveries this post leaves out, by format key
+        // ("instagram.story", "facebook.post"; docs/works.md "Posts"). Every
+        // item of the post carries the same list and its per-platform copies
+        // inherit it; saving never makes those deliveries (lib/works/
+        // plan-platforms.ts piecesOfPlan). A saved item may still carry it.
+        skipFormats?: string[];
       }[];
       // Claim + run cap of "More ideas" (Works only).
       alternativesMeta?: { runs: number; runningSince?: string };
@@ -396,6 +403,9 @@ export type IdeaEventCardData =
   | DailyBrief
   | AdsInsightCardData
   | GuidedSetupCardData
+  // Ads Manager / Analytics / SEO Manager: one card per module flow, changed
+  // in place step by step (src/lib/module-flows/card.ts).
+  | ModuleFlowCardData
   | CreativeCardData;
 
 const EVENT_KINDS = new Set([
@@ -427,6 +437,7 @@ const EVENT_KINDS = new Set([
   "master-content",
   "daily-brief",
   "ads-insight",
+  "module-flow",
 ]);
 
 const CREATIVE_KINDS = [

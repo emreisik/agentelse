@@ -21,6 +21,12 @@ vi.mock("@/server/actions/plan-draft-actions", () => ({
   movePlanPostAction: vi.fn(),
   removePlanPostAction: vi.fn(),
   setPlanPlatformsAction: vi.fn(),
+  setPlanInstagramStoryAction: vi.fn(),
+  setPlanPostSkipAction: vi.fn(),
+}));
+vi.mock("@/server/actions/post-actions", () => ({
+  approvePostAction: vi.fn(),
+  setDeliveryExcludedAction: vi.fn(),
 }));
 vi.mock("@/server/actions/plan-progress-actions", () => ({
   approvePlanItemsAction: vi.fn(),
@@ -221,8 +227,9 @@ describe("the social media plan pane: a draft (step 1)", () => {
     expect(out).toContain("Introduce the product · 2 channels");
     // No purpose: the format stands in.
     expect(out).toMatch(/Post · 3:4 · 2 channels/);
+    // One card per post; its channels are counted as deliveries.
     expect(out).toContain("3 posts");
-    expect(out).toContain("6 adaptations");
+    expect(out).toContain(" · 6 channels");
     expect(out).toContain(">Mon<");
     expect(out).toContain(">05<");
   });
@@ -255,7 +262,7 @@ describe("the social media plan pane: a draft (step 1)", () => {
   });
 
   it("ends with one primary action and the quieter one that only saves", () => {
-    expect(out).toContain("3 posts, 6 pieces");
+    expect(out).toContain("3 posts · 6 channels");
     expect(out).toContain("Every idea is adapted to each channel.");
     expect(out).toContain("Prepare content");
     expect(out).toContain("Add to calendar");
@@ -271,7 +278,7 @@ describe("the social media plan pane: a draft (step 1)", () => {
   it("without a choice every post goes where the plan drew it", () => {
     const legacy = paneHtml(draft({ platforms: undefined }));
     expect(legacy).toContain("3 posts");
-    expect(legacy).toContain("3 adaptations");
+    expect(legacy).toContain(" · 3 channels");
     expect(legacy).toContain("1 channel selected");
   });
 
@@ -373,8 +380,9 @@ describe("the social media plan pane: once the plan is made (step 2)", () => {
     expect(out).toContain("/projects/proj-1/takvim?creative=c0");
   });
 
-  it("says how far the pieces are and offers to plan publishing", () => {
-    expect(out).toContain("4 of 4 pieces ready");
+  it("says how far the posts are and offers to plan publishing", () => {
+    // A post is ready once every channel of it is made.
+    expect(out).toContain("2 of 2 posts ready");
     expect(out).toContain("Review the texts and times.");
     expect(out).toMatch(/<button(?![^>]*disabled="")[^>]*>Plan publishing/);
   });
@@ -394,7 +402,7 @@ describe("the social media plan pane: once the plan is made (step 2)", () => {
     expect(making).not.toContain("Plan publishing");
   });
 
-  it("pieces still to make: a Make more button carries the count", () => {
+  it("posts still to make: a Make more button carries how many", () => {
     const needs = paneHtml(
       saved([
         { id: "c0", stage: "IN_REVIEW", text: "x", when: "2026-10-05T12:00" },
@@ -403,9 +411,11 @@ describe("the social media plan pane: once the plan is made (step 2)", () => {
         { id: "c3", stage: "FAILED", when: "2026-10-07T18:30" },
       ]),
     );
-    expect(needs).toContain("Make 3 more");
+    // Both posts still have a channel to make (a tap makes whole posts).
+    expect(needs).toContain("Make 2 more");
     expect(needs).toContain('data-state="needs"');
     expect(needs).toContain("Needs content");
+    expect(needs).toContain("0 of 2 posts ready");
   });
 
   it("a piece that is approved shows its words and time as final", () => {
@@ -442,7 +452,7 @@ describe("the social media plan pane: everything decided (the last step)", () =>
 
   it("shows the publish calendar with all three steps done and a banner", () => {
     expect(out).toContain("Publish calendar");
-    expect(out).toContain("4 pieces are on the calendar.");
+    expect(out).toContain("2 posts are on the calendar.");
     expect(out).toContain(
       "Each channel&#x27;s publish status is tracked on its own.",
     );
@@ -666,7 +676,7 @@ describe("PublishReview and PublishCalendar", () => {
     html(
       createElement(PublishReview, {
         posts,
-        pieces: 2,
+        toApprove: 1,
         timezone: "Europe/Istanbul",
         scheduleEnabled: true,
         heldChannels: [],
@@ -680,7 +690,7 @@ describe("PublishReview and PublishCalendar", () => {
   it("lists each post with its channels, times and what really happens", () => {
     const out = review();
     expect(out).toContain("Review the publish plan");
-    expect(out).toContain("1 post · 2 pieces · Istanbul time");
+    expect(out).toContain("1 post · 3 channels · Istanbul time");
     expect(out).toContain("How the unique offer works");
     expect(out).toContain("12:00 · posts itself");
     expect(out).toContain("09:30 · you post it");
@@ -699,14 +709,17 @@ describe("PublishReview and PublishCalendar", () => {
   it("asks for the approval in one sentence and holds the channels that are not connected", () => {
     const out = review({ heldChannels: ["linkedin"] });
     expect(out).toContain(
-      "I approve these 2 pieces for the selected channels and times.",
+      "I approve this post for the selected channels and times.",
+    );
+    expect(review({ toApprove: 3 })).toContain(
+      "I approve these 3 posts for the selected channels and times.",
     );
     expect(out).toContain(
-      "LinkedIn: Pieces for a channel that isn&#x27;t connected stay on the calendar until it is.",
+      "LinkedIn: Posts for a channel that isn&#x27;t connected stay on the calendar until it is.",
     );
     expect(out).toContain('type="checkbox"');
     expect(review({ approved: true })).toContain("checked");
-    expect(review({ pieces: 0 })).toContain('disabled=""');
+    expect(review({ toApprove: 0 })).toContain('disabled=""');
   });
 
   it("the calendar says what each piece is now", () => {
@@ -719,7 +732,6 @@ describe("PublishReview and PublishCalendar", () => {
             stage: "APPROVED" as const,
           })),
         })),
-        total: 3,
         scheduleEnabled: true,
         instagramNeedsSchedule: false,
         scheduleBusy: false,
@@ -731,5 +743,288 @@ describe("PublishReview and PublishCalendar", () => {
     expect(out).toContain("you post it");
     expect(out).toContain("not connected");
     expect(out).toContain("See content");
+  });
+});
+
+// ---- posts: one idea, its channels as deliveries --------------------------------
+
+type Slot = NonNullable<PlanCard["slots"]>[number];
+
+describe("the social media plan pane: a channel left out of one draft post", () => {
+  // Instagram + Facebook with the Story switch on: three deliveries per post.
+  const host: WorkCardHostInput = {
+    ...HOST,
+    connectedChannels: ["instagram", "facebook"],
+  };
+  const plan = (first: Partial<PlanItem> = {}) =>
+    draft({
+      platforms: ["instagram", "facebook"],
+      instagramStory: true,
+      connections: {
+        instagram: { connected: true, accountLabel: "@biduniq" },
+        facebook: { connected: true, accountLabel: "Biduniq Page" },
+      },
+      items: [
+        item({ formatKey: "instagram.post", ...first }),
+        item({
+          date: "2026-10-07",
+          time: "18:30",
+          topic: "Second post",
+          formatKey: "instagram.post",
+          purpose: undefined,
+        }),
+      ],
+    });
+
+  it("shows every delivery of the post as a tab, each one it can leave out", () => {
+    const out = paneHtml(plan(), host);
+    expect(out).toContain("2 posts · 6 channels");
+    expect(out).toContain("Introduce the product · 3 channels");
+    expect(out).toContain("Instagram Story");
+    expect(out).toContain('data-leave-out="leave"');
+    expect(out).toContain('aria-label="Leave Instagram out of this post"');
+  });
+
+  it("a left-out delivery stays as a faded tab to take back in, and is not counted", () => {
+    const out = paneHtml(plan({ skipFormats: ["instagram.post"] }), host);
+    expect(out).toContain("2 posts · 5 channels");
+    expect(out).toContain("Introduce the product · 2 channels");
+    // The other post keeps all three.
+    expect(out).toContain("Post · 3:4 · 3 channels");
+    expect(out).toMatch(/data-left-out=""[^>]*opacity:0\.45/);
+    expect(out).toContain('aria-label="Include Instagram in this post"');
+    expect(out).toContain(
+      "Left out of this post: it isn&#x27;t made or posted.",
+    );
+  });
+
+  it("a Completed Work leaves nothing out", () => {
+    const out = paneHtml(plan(), { ...host, active: false });
+    expect(out).not.toContain("data-leave-out");
+  });
+});
+
+describe("the social media plan pane: a made post and its one Approve", () => {
+  // The saved fixture's two posts, each a Post with Instagram and LinkedIn.
+  const firstLinkedIn: Slot = {
+    id: "c1",
+    stage: "IN_REVIEW",
+    text: "A LinkedIn text.",
+    when: "2026-10-05T12:00",
+    postId: "p1",
+  };
+  const posted = (linkedIn: Slot = firstLinkedIn) =>
+    saved([
+      {
+        id: "c0",
+        stage: "IN_REVIEW",
+        assetId: "asset-1",
+        text: "Discover the offer in 3 steps.",
+        when: "2026-10-05T12:00",
+        postId: "p1",
+      },
+      linkedIn,
+      { id: "c2", stage: "PLANNED", when: "2026-10-07T18:30", postId: "p2" },
+      { id: "c3", stage: "PLANNED", when: "2026-10-07T18:30", postId: "p2" },
+    ]);
+
+  it("a post whose channels are all made has one Approve post", () => {
+    const out = paneHtml(posted());
+    expect(count(out, "data-approve-post")).toBe(1);
+    expect(out).toContain("Approve post");
+    expect(out).toContain("All 2 channels are ready.");
+    expect(out).toContain("1 of 2 posts ready");
+  });
+
+  it("not while a channel of it still needs content, nor for a plan saved before posts", () => {
+    const needs = paneHtml(
+      posted({ ...firstLinkedIn, stage: "PLANNED", text: undefined }),
+    );
+    expect(needs).not.toContain("Approve post");
+    // An older plan is approved on the last step, as before.
+    const older = paneHtml(
+      saved([
+        { id: "c0", stage: "IN_REVIEW", text: "x", when: "2026-10-05T12:00" },
+        { id: "c1", stage: "IN_REVIEW", text: "y", when: "2026-10-05T12:00" },
+        { id: "c2", stage: "IN_REVIEW", text: "z", when: "2026-10-07T18:30" },
+        { id: "c3", stage: "IN_REVIEW", text: "w", when: "2026-10-07T18:30" },
+      ]),
+    );
+    expect(older).not.toContain("Approve post");
+    expect(older).not.toContain("data-leave-out");
+  });
+
+  it("each channel of a made post has a quiet Leave out", () => {
+    const out = paneHtml(posted());
+    expect(out).toContain('data-leave-out="leave"');
+    expect(out).toContain('aria-label="Leave Instagram out of this post"');
+  });
+
+  it("a channel left out does not hold the post, nor count", () => {
+    const out = paneHtml(
+      posted({ ...firstLinkedIn, stage: "PLANNED", excluded: true }),
+    );
+    expect(out).toContain("Approve post");
+    expect(out).toContain("Its channel is ready.");
+    expect(out).toContain("Introduce the product · 1 channel");
+    expect(out).toContain("2 posts</span> · 3 channels");
+    expect(out).toMatch(/data-left-out=""[^>]*opacity:0\.45/);
+  });
+
+  it("a Completed Work approves and leaves out nothing", () => {
+    const out = paneHtml(posted(), { ...HOST, active: false });
+    expect(out).not.toContain("Approve post");
+    expect(out).not.toContain("data-leave-out");
+  });
+
+  it("the publish calendar lists an Instagram post and its Story apart, and a left-out channel not at all", () => {
+    const out = paneHtml(
+      saved(
+        [
+          {
+            id: "c0",
+            stage: "APPROVED",
+            when: "2026-10-05T12:00",
+            postId: "p1",
+          },
+          {
+            id: "c1",
+            stage: "APPROVED",
+            when: "2026-10-05T12:00",
+            postId: "p1",
+          },
+          {
+            id: "c2",
+            stage: "APPROVED",
+            when: "2026-10-07T18:30",
+            postId: "p2",
+          },
+          {
+            id: "c3",
+            stage: "PLANNED",
+            when: "2026-10-07T18:30",
+            postId: "p2",
+            excluded: true,
+          },
+        ],
+        {
+          platforms: ["instagram"],
+          instagramStory: true,
+          items: [
+            item({ formatKey: "instagram.post" }),
+            item({ formatKey: "instagram.story" }),
+            item({
+              date: "2026-10-07",
+              time: "18:30",
+              topic: "Second post",
+              formatKey: "instagram.post",
+            }),
+            item({
+              date: "2026-10-07",
+              time: "18:30",
+              topic: "Second post",
+              formatKey: "instagram.story",
+            }),
+          ],
+        },
+      ),
+    );
+    // The left-out Story is no piece of the plan: everything left is decided.
+    expect(out).toContain("Publish calendar");
+    expect(out).toContain("2 posts are on the calendar.");
+    const rows = out.slice(out.indexOf("Publish calendar"));
+    expect(count(rows, ">Instagram Story</span>")).toBe(1);
+    expect(count(rows, ">Instagram</span>")).toBe(2);
+  });
+});
+
+describe("PostCard: a post's channels and its one Approve", () => {
+  const made = (over: Record<string, unknown> = {}) => ({
+    index: 0,
+    channel: "instagram" as const,
+    formatKey: "instagram.post",
+    creativeId: "c0",
+    postId: "p1",
+    stage: "IN_REVIEW" as const,
+    text: "Hello.",
+    when: "2026-10-05T12:00",
+    ...over,
+  });
+  const tabs = (first: Record<string, unknown> = {}) => [
+    {
+      channel: "instagram" as const,
+      formatKey: "instagram.post",
+      piece: made(),
+      ...first,
+    },
+    {
+      channel: "instagram" as const,
+      formatKey: "instagram.story",
+      piece: made({ index: 1, creativeId: "c1", formatKey: "instagram.story" }),
+    },
+  ];
+  const card = (over: Record<string, unknown> = {}) =>
+    html(
+      createElement(PostCard, {
+        topic: "How the unique offer works",
+        idea: "Explain the idea with a simple example.",
+        date: "2026-10-05",
+        time: "12:00",
+        tabs: tabs(),
+        state: "ready",
+        open: true,
+        onToggle: () => undefined,
+        step: "content",
+        connected: ["instagram"],
+        timezone: "Europe/Istanbul",
+        today: "2026-10-03",
+        onLeaveOut: () => undefined,
+        ...over,
+      } as never),
+    );
+
+  it("a channel can be left out of the post, quietly, while another stays", () => {
+    const out = card();
+    expect(out).toContain('data-leave-out="leave"');
+    expect(out).toContain('aria-label="Leave Instagram out of this post"');
+    expect(out).toContain(">Leave out</button>");
+    expect(out).toContain("· 2 channels</span>");
+    expect(out).toContain("Instagram Story");
+  });
+
+  it("a left-out channel is faded, says so, and can be taken back in", () => {
+    const out = card({ tabs: tabs({ leftOut: true }) });
+    expect(out).toMatch(/data-left-out=""[^>]*opacity:0\.45/);
+    expect(out).toContain("Left out</span>");
+    expect(out).toContain(
+      "Left out of this post: it isn&#x27;t made or posted.",
+    );
+    expect(out).toContain('aria-label="Include Instagram in this post"');
+    expect(out).toContain(">Include</button>");
+    expect(out).toContain("· 1 channel</span>");
+    // Its words are not offered for editing.
+    expect(out).not.toContain("<textarea");
+  });
+
+  it("no toggle on the last channel left, on a posted one, or where nothing can change", () => {
+    expect(card({ tabs: tabs().slice(0, 1) })).not.toContain("data-leave-out");
+    expect(
+      card({ tabs: tabs({ piece: made({ stage: "PUBLISHED" }) }) }),
+    ).not.toContain("data-leave-out");
+    expect(card({ onLeaveOut: undefined })).not.toContain("data-leave-out");
+  });
+
+  it("one Approve for the whole post, busy while it runs", () => {
+    const out = card({ approve: { onApprove: () => undefined, busy: false } });
+    expect(out).toContain("data-approve-post");
+    expect(out).toContain("All 2 channels are ready.");
+    expect(out).toMatch(
+      /<button(?![^>]*disabled="")[^>]*>(?:(?!<\/button>)[\s\S])*Approve post<\/button>/,
+    );
+    const busy = card({ approve: { onApprove: () => undefined, busy: true } });
+    expect(busy).toMatch(
+      /<button[^>]*disabled=""[^>]*>(?:(?!<\/button>)[\s\S])*Approving…<\/button>/,
+    );
+    expect(card()).not.toContain("data-approve-post");
   });
 });

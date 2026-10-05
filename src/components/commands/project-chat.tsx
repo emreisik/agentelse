@@ -37,10 +37,17 @@ import { submitComposerShortcutAction } from "@/server/actions/composer-shortcut
 import { createSseParser } from "@/server/chat/sse";
 import type { ImageGenState } from "@/lib/image-progress";
 import type { ChatStreamEvent } from "@/server/chat/types";
-import { Thread } from "@/components/assistant-ui/thread";
+import {
+  Thread,
+  type ThreadComponents,
+} from "@/components/assistant-ui/thread";
 import { ComposerPlusMenu } from "@/components/commands/composer-plus-menu";
 import { ChatSendProvider } from "@/components/commands/chat-send-context";
 import { StarterRowsView } from "@/components/works/starter-rows";
+import { composerRoute } from "@/components/modules/composer-route";
+import { ModuleSuggestions } from "@/components/modules/module-suggestions";
+import { useModuleChoice } from "@/components/modules/use-module-choice";
+import type { ModuleKey } from "@/lib/modules/catalog";
 import { useCloseDetailOnLeave } from "@/components/works/use-close-detail-on-leave";
 import {
   WorkCardHostProvider,
@@ -57,21 +64,29 @@ import {
   announceWorkActivity,
   announceWorkSettled,
 } from "@/lib/works/work-activity";
-import type { StarterAction } from "@/lib/works/starter-cards";
+import {
+  moduleStarterCards,
+  type StarterAction,
+} from "@/lib/works/starter-cards";
 import {
   ChatPackageProvider,
   type PackageRunItem,
   type PackageRun,
 } from "@/components/commands/chat-package-context";
 import {
+  applyPlanPieceEvent,
+  dropPlanPieces,
   failPendingItems,
   finalTaskIds,
   isLocalItemSuperseded,
   isServerRowHidden,
   localItemTaskIds,
   needsProgressPoll,
+  openPlanPieces,
   PROGRESS_POLL_MS,
   reduceItemEvent,
+  settlePlanPieces,
+  type LivePlanPiece,
 } from "@/components/commands/package-run";
 import {
   isPlaceholderReply,
@@ -215,6 +230,9 @@ type LocalTurn = {
   // persisted chat row so the two never show at once.
   taskId?: string;
   department?: DepartmentKey;
+  // A plan run's piece: the plan (Command) whose post cards show it. In a Work
+  // with that plan in the chat it is made inside its card, not as a message.
+  planId?: string;
   createdAt: string;
 };
 
@@ -356,6 +374,149 @@ function attachmentSrc(
   return undefined;
 }
 
+// Equality of plain message data (strings, numbers, booleans, arrays and plain
+// objects such as cards). Anything else (a File, a Date) counts as equal only
+// when it is the same object.
+function sameData(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || !a || !b) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((value, index) => sameData(value, b[index]))
+    );
+  }
+  if (
+    Object.getPrototypeOf(a) !== Object.prototype ||
+    Object.getPrototypeOf(b) !== Object.prototype
+  ) {
+    return false;
+  }
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(right, key) &&
+        sameData(left[key], right[key]),
+    )
+  );
+}
+
+// assistant-ui converts each message once per object (its converter cache is
+// keyed by identity) and gives it its position as its id. A message equal to
+// the one at the same position last time keeps that object, so the bubbles
+// that did not change are not converted and re-rendered again (markdown
+// re-parsed) on every streamed token, send state change or refresh. Matched
+// by position on purpose: a reused object keeps its position-based id. A
+// discarded render only leaves candidates that are still compared by value.
+function createMessageStabilizer() {
+  let previous: FlatMessage[] = [];
+  return (messages: FlatMessage[]): FlatMessage[] => {
+    const before = previous;
+    previous = messages.map((message, index) => {
+      const old = before[index];
+      return old !== undefined &&
+        old.id === message.id &&
+        sameData(old, message)
+        ? old
+        : message;
+    });
+    return previous;
+  };
+}
+
+function useStableMessages(messages: FlatMessage[]): FlatMessage[] {
+  // One stabilizer per chat, for the component's life.
+  const [stabilize] = React.useState(createMessageStabilizer);
+  return React.useMemo(() => stabilize(messages), [stabilize, messages]);
+}
+
+// Thread's slots are component TYPES: one rebuilt on every render is a new
+// type to React, so whatever it held was unmounted and mounted again (an open
+// dialog refetched its data and replayed its animation, an open "+" menu
+// closed on the progress poll). These types never change; what they draw
+// comes through this context, so a change re-renders a slot in place.
+type ChatSlotRenderers = {
+  welcome: () => React.ReactNode;
+  plusMenu: () => React.ReactNode;
+  quickActions: () => React.ReactNode;
+  contextChip: () => React.ReactNode;
+  startSuggestions: () => React.ReactNode;
+};
+
+const ChatSlotsContext = React.createContext<ChatSlotRenderers | null>(null);
+
+function WelcomeSlot() {
+  return React.useContext(ChatSlotsContext)?.welcome() ?? null;
+}
+
+function PlusMenuSlot() {
+  return React.useContext(ChatSlotsContext)?.plusMenu() ?? null;
+}
+
+function QuickActionsSlot() {
+  return React.useContext(ChatSlotsContext)?.quickActions() ?? null;
+}
+
+function ContextChipSlot() {
+  return React.useContext(ChatSlotsContext)?.contextChip() ?? null;
+}
+
+function StartSuggestionsSlot() {
+  return React.useContext(ChatSlotsContext)?.startSuggestions() ?? null;
+}
+
+// The same objects on every render, so Thread's components context never
+// changes (every message and the composer read it).
+const THREAD_SLOTS: ThreadComponents = {
+  Welcome: WelcomeSlot,
+  ComposerPlusMenu: PlusMenuSlot,
+  QuickActions: QuickActionsSlot,
+  ContextChip: ContextChipSlot,
+};
+
+const THREAD_SLOTS_IN_WORK: ThreadComponents = {
+  ...THREAD_SLOTS,
+  StartSuggestions: StartSuggestionsSlot,
+};
+
+export type ChatProgress = {
+  // ISO time the page was rendered (before its reads).
+  since: string;
+  // Rows it showed in flight (they are rewritten in place when they settle).
+  inFlightIds: string[];
+};
+
+// Whether the page is out of date (api/projects/[id]/chat/progress). Any
+// failure answers yes, so the chat falls back to refreshing as it used to and
+// never sits on a stale "generating" row.
+async function pageIsOutOfDate(
+  projectId: string,
+  progress: ChatProgress | undefined,
+): Promise<boolean> {
+  if (!progress) return true;
+  try {
+    const query = new URLSearchParams({ since: progress.since });
+    if (progress.inFlightIds.length > 0) {
+      query.set("ids", progress.inFlightIds.join(","));
+    }
+    const response = await fetch(
+      `/api/projects/${projectId}/chat/progress?${query.toString()}`,
+      { cache: "no-store" },
+    );
+    if (!response.ok) return true;
+    const body = (await response.json()) as { changed?: unknown };
+    return body.changed !== false;
+  } catch {
+    return true;
+  }
+}
+
 export function ProjectChat({
   projectId,
   projectName,
@@ -371,6 +532,7 @@ export function ProjectChat({
   autoNext,
   workHost,
   liveRunCommandId,
+  progress,
 }: {
   projectId: string;
   projectName: string;
@@ -413,6 +575,11 @@ export function ProjectChat({
   // reloaded, or the chat opened again while it works): the chat follows it
   // live, with Stop. Agent engine only.
   liveRunCommandId?: string;
+  // When the page was rendered and which of its rows were still in flight:
+  // while work runs, the chat asks the light progress endpoint whether
+  // anything changed since, and refreshes only then. Absent: it refreshes on
+  // every poll, as before.
+  progress?: ChatProgress;
 }) {
   const router = useRouter();
   // Works on: every Works-only behaviour below hangs on this one flag.
@@ -474,9 +641,7 @@ export function ProjectChat({
   const streamingKeyRef = React.useRef<string | null>(null);
   const streamCommandRef = React.useRef<string | null>(null);
   const pendingCancelRef = React.useRef<string | null>(null);
-  const stopTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
+  const stopTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = React.useRef(true);
   // An edit in flight: the edited message and everything after it hide at
   // once (the server supersedes them; the refresh then leaves them out).
@@ -491,6 +656,9 @@ export function ProjectChat({
   const [packageRuns, setPackageRuns] = React.useState<
     Record<string, PackageRun>
   >({});
+  const [planPieces, setPlanPieces] = React.useState<
+    Readonly<Record<string, LivePlanPiece>>
+  >({});
   const attachmentAdapter = React.useMemo(
     () => new ProjectChatAttachmentAdapter(),
     [],
@@ -498,17 +666,20 @@ export function ProjectChat({
 
   // One open(): every entry point (URL, stream card, Welcome card, chip, "+"
   // menu, card launcher) calls it, and it is idempotent. Event handlers only.
-  const openGuided = React.useCallback<GuidedSetupApi["open"]>((_source, opts) => {
-    if (guidedOpenRef.current) return;
-    guidedOpenRef.current = true;
-    // Where focus returns when the sheet closes.
-    guidedOpenerRef.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    setGuidedSeed(opts?.seedCommandId);
-    setGuidedOpen(true);
-  }, []);
+  const openGuided = React.useCallback<GuidedSetupApi["open"]>(
+    (_source, opts) => {
+      if (guidedOpenRef.current) return;
+      guidedOpenRef.current = true;
+      // Where focus returns when the sheet closes.
+      guidedOpenerRef.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      setGuidedSeed(opts?.seedCommandId);
+      setGuidedOpen(true);
+    },
+    [],
+  );
   const closeGuided = React.useCallback(() => {
     guidedOpenRef.current = false;
     setGuidedOpen(false);
@@ -603,24 +774,45 @@ export function ProjectChat({
       new Map(turns.map((turn) => [turn.commandId, turn.replyStatus] as const)),
     [turns],
   );
-  const visibleLocal = localTurns.filter((turn) => {
-    // A settled turn gives way to its persisted row once that row is final.
-    // One that is still streaming stays: its row exists from the first token
-    // but only holds the client's message, so dropping the turn on a
-    // mid-stream page refresh would blank the reply that is being written; a
-    // stopped one stays until its row has the stopped reply.
-    if (
-      turn.state !== "pending" &&
-      turn.commandId &&
-      serverIds.has(turn.commandId) &&
-      serverStatus.get(turn.commandId) !== "RUNNING"
-    ) {
-      return false;
-    }
-    return !isLocalItemSuperseded(turn, finalServerTaskIds);
-  });
+  // Memoized: the message list below depends on it, and a new array on every
+  // render rebuilt that list (and every bubble) on any state change at all.
+  const visibleLocal = React.useMemo(
+    () =>
+      localTurns.filter((turn) => {
+        // A settled turn gives way to its persisted row once that row is
+        // final. One that is still streaming stays: its row exists from the
+        // first token but only holds the client's message, so dropping the
+        // turn on a mid-stream page refresh would blank the reply that is
+        // being written; a stopped one stays until its row has the stopped
+        // reply.
+        if (
+          turn.state !== "pending" &&
+          turn.commandId &&
+          serverIds.has(turn.commandId) &&
+          serverStatus.get(turn.commandId) !== "RUNNING"
+        ) {
+          return false;
+        }
+        return !isLocalItemSuperseded(turn, finalServerTaskIds);
+      }),
+    [localTurns, serverIds, serverStatus, finalServerTaskIds],
+  );
 
-  const messages = React.useMemo<FlatMessage[]>(() => {
+  // Saved plans in this chat: their pieces show in the plan's post cards.
+  const savedPlanIds = React.useMemo(
+    () =>
+      new Set(
+        turns.flatMap((turn) =>
+          turn.card?.kind === "content-plan-draft" &&
+          turn.card.state === "saved"
+            ? [turn.commandId]
+            : [],
+        ),
+      ),
+    [turns],
+  );
+
+  const freshMessages = React.useMemo<FlatMessage[]>(() => {
     const out: FlatMessage[] = [];
     // Both loops below feed the same flat, single-chat timeline (turns is
     // already chronological), so a single running "last day seen" cursor
@@ -734,6 +926,8 @@ export function ProjectChat({
       }
     }
     for (const turn of visibleLocal) {
+      // Made inside its card under the plan (PlanPostsCarousel), not here.
+      if (workHost && turn.planId && savedPlanIds.has(turn.planId)) continue;
       maybeDivider(turn.createdAt);
       if (turn.itemId !== undefined) {
         if (turn.state === "pending") {
@@ -819,7 +1013,8 @@ export function ProjectChat({
       }
     }
     return out;
-  }, [turns, visibleLocal, serverIds, workHost, editedFrom]);
+  }, [turns, visibleLocal, serverIds, workHost, editedFrom, savedPlanIds]);
+  const messages = useStableMessages(freshMessages);
 
   const convertMessage = React.useCallback(
     (message: FlatMessage): ThreadMessageLike => {
@@ -1385,7 +1580,12 @@ export function ProjectChat({
   }, [chatEngine, liveRunCommandId]);
 
   const sendMessage = React.useCallback(
-    (text: string, files: File[], options: { editOf?: string } = {}) => {
+    (
+      text: string,
+      files: File[],
+      // `module`: the one just chosen in this new chat (not on workHost yet).
+      options: { editOf?: string; module?: ModuleKey } = {},
+    ) => {
       if (!text && files.length === 0) return Promise.resolve();
       if (workHost && workHost.work.status !== "ACTIVE") {
         toast.info("Reopen this Work to continue.");
@@ -1422,11 +1622,14 @@ export function ProjectChat({
       // brief is no Recents row: it is not listed there at all.
       const workId = workHost.work.id;
       const listed = !isTodayWork(workHost.work);
+      const moduleKey = options.module ?? workHost.module;
       if (listed) {
         announceWorkActivity({
           projectId,
           workId,
           title: workTitleFrom(stripPlanBriefMarker(text)),
+          // A module chat's row shows its module's icon at once.
+          ...(moduleKey ? { module: moduleKey } : {}),
         });
       }
       // `go` runs at once (the turn is on screen before anything is awaited);
@@ -1477,6 +1680,22 @@ export function ProjectChat({
     [runTurn, sendMessage, chatEngine, projectId, ideaId, inWork],
   );
 
+  // Modules on (src/components/modules): the module a new chat is for. It goes
+  // on in the chat: once stored, the Social Media Planner's first message is
+  // sent through the normal send, as if typed.
+  const sendAsModule = React.useCallback(
+    (text: string, module: ModuleKey | null) =>
+      sendMessage(text, [], module ? { module } : {}),
+    [sendMessage],
+  );
+  const moduleChoice = useModuleChoice({
+    projectId,
+    workId: workHost?.work.id,
+    stored: workHost?.module ?? null,
+    send: sendAsModule,
+  });
+  const blankChat = messages.length === 0 && workHost?.work.status === "ACTIVE";
+
   const onNew = React.useCallback(
     async (message: AppendMessage) => {
       const text = message.content
@@ -1486,9 +1705,24 @@ export function ProjectChat({
       const files = (message.attachments ?? [])
         .map((attachment) => attachment.file)
         .filter((file): file is File => Boolean(file));
+      // A new chat with no module yet: words clearly for the Social Media
+      // Planner make it that module's chat, and the words are then sent as
+      // they are. Anything unsure goes to the chat as before
+      // (composer-route.ts).
+      const route = composerRoute({
+        modulesUi: workHost?.modulesUi === true,
+        blank: blankChat,
+        module: moduleChoice.module,
+        text,
+        hasFiles: files.length > 0,
+      });
+      if (route.kind === "module") {
+        await moduleChoice.choose(route.module, { words: text });
+        return;
+      }
       await sendMessage(text, files);
     },
-    [sendMessage],
+    [sendMessage, workHost?.modulesUi, blankChat, moduleChoice],
   );
 
   // "Refresh"/retry on an assistant bubble (thread.tsx's AssistantActionBar)
@@ -1550,7 +1784,10 @@ export function ProjectChat({
         toast.error("Message is empty.");
         return;
       }
-      setEditedFrom({ commandId: source.commandId, createdAt: source.createdAt });
+      setEditedFrom({
+        commandId: source.commandId,
+        createdAt: source.createdAt,
+      });
       await sendMessage(text, [], { editOf: source.commandId });
     },
     [messages, sendMessage],
@@ -1776,18 +2013,33 @@ export function ProjectChat({
   );
 
   // The new chat's suggestions under the composer: one line each, a tap does
-  // what the card's main button does.
-  const StartSuggestions = React.useCallback(
-    () =>
-      workHost ? (
+  // what the card's main button does. Modules on: the module tiles, with only
+  // the rows no module covers under them; a chosen module goes on in the chat
+  // and nothing hangs here (module-suggestions.tsx).
+  const StartSuggestions = React.useCallback(() => {
+    if (!workHost) return null;
+    const disabled = isSending || workHost.work.status !== "ACTIVE";
+    if (!workHost.modulesUi) {
+      return (
         <StarterRowsView
           cards={workHost.starterCards}
-          disabled={isSending || workHost.work.status !== "ACTIVE"}
+          disabled={disabled}
           onAct={actOnStarter}
         />
-      ) : null,
-    [workHost, isSending, actOnStarter],
-  );
+      );
+    }
+    return (
+      <ModuleSuggestions
+        projectId={projectId}
+        module={moduleChoice.module}
+        starting={moduleChoice.starting}
+        rows={moduleStarterCards(workHost.starterCards)}
+        disabled={disabled}
+        onChoose={moduleChoice.choose}
+        onAct={actOnStarter}
+      />
+    );
+  }, [workHost, isSending, actOnStarter, projectId, moduleChoice]);
 
   const PlusMenu = React.useCallback(
     () => (
@@ -1822,7 +2074,10 @@ export function ProjectChat({
           style={{ background: "var(--ws-approved)" }}
         />
         {/* The channel chip shares this row: on a phone the label gives way. */}
-        <span className="min-w-0 truncate" style={{ color: "var(--ws-text-3)" }}>
+        <span
+          className="min-w-0 truncate"
+          style={{ color: "var(--ws-text-3)" }}
+        >
           {projectName} context on
         </span>
       </span>
@@ -1855,11 +2110,15 @@ export function ProjectChat({
       const inRun = (turn: LocalTurn) =>
         turn.itemId !== undefined && turn.key.startsWith(`${runKey}:`);
       const notStarted = `Could not start the ${noun === "plan" ? "production" : "package"}.`;
+      const isPlan = noun === "plan";
       let itemIds: string[] = [];
       const startedAt = Date.now();
       const openItems = (items: PackageRunItem[]) => {
         const createdAt = new Date().toISOString();
         itemIds = items.map((item) => item.id);
+        if (isPlan) {
+          setPlanPieces((current) => openPlanPieces(current, items, startedAt));
+        }
         setPackageRuns((current) => ({
           ...current,
           [commandId]: { phase: "running", itemIds },
@@ -1880,6 +2139,7 @@ export function ProjectChat({
             imageGen: item.image
               ? { startedAt, partials: 0, done: false }
               : undefined,
+            ...(isPlan ? { planId: commandId } : {}),
           })),
         ]);
       };
@@ -1893,12 +2153,22 @@ export function ProjectChat({
       // Works: the header's "working" line comes from the server, so pull the
       // page once when the run is claimed.
       let refreshedForWork = false;
-      const settle = (message: string) =>
+      const settle = (message: string) => {
         setLocalTurns((current) => failPendingItems(current, inRun, message));
+        if (isPlan) {
+          setPlanPieces((current) =>
+            settlePlanPieces(current, itemIds, message),
+          );
+        }
+      };
       // The run never started (claim refused, request rejected): its
       // placeholder messages have nothing to report, the toast says why.
-      const withdraw = () =>
+      const withdraw = () => {
         setLocalTurns((current) => current.filter((turn) => !inRun(turn)));
+        if (isPlan) {
+          setPlanPieces((current) => dropPlanPieces(current, itemIds));
+        }
+      };
       const apply = (event: ChatStreamEvent) => {
         switch (event.type) {
           case "run.items":
@@ -1926,6 +2196,9 @@ export function ProjectChat({
                 inRun(turn) ? reduceItemEvent(turn, event) : turn,
               ),
             );
+            if (isPlan) {
+              setPlanPieces((current) => applyPlanPieceEvent(current, event));
+            }
             break;
           case "package.done":
             finished = true;
@@ -2016,13 +2289,7 @@ export function ProjectChat({
 
   // "Create selected" on a content-package card.
   const startContentPackage = React.useCallback(
-    ({
-      commandId,
-      items,
-    }: {
-      commandId: string;
-      items: PackageRunItem[];
-    }) =>
+    ({ commandId, items }: { commandId: string; items: PackageRunItem[] }) =>
       runProduction({
         commandId,
         endpoint: `/api/projects/${projectId}/chat/package`,
@@ -2042,11 +2309,11 @@ export function ProjectChat({
   // "Save & produce" / "Produce" on a saved content-plan card, and the "next
   // step" bar: the nearest week of the plan's empty slots.
   const startContentPlan = React.useCallback(
-    ({ commandId }: { commandId: string }) =>
+    ({ commandId, postId }: { commandId: string; postId?: string }) =>
       runProduction({
         commandId,
         endpoint: `/api/projects/${projectId}/chat/plan`,
-        body: { commandId },
+        body: postId ? { commandId, postId } : { commandId },
         noun: "plan",
       }),
     [projectId, runProduction],
@@ -2078,7 +2345,9 @@ export function ProjectChat({
         : `/projects/${projectId}`,
       { scroll: false },
     );
-    const kind = AUTO_RUN_NEXT_KINDS.find((candidate) => candidate === autoNext);
+    const kind = AUTO_RUN_NEXT_KINDS.find(
+      (candidate) => candidate === autoNext,
+    );
     const step = nextSteps?.find((candidate) => candidate.action.kind === kind);
     if (step) runNextStep(step);
     // A link that no longer has a step to run (done elsewhere, or opened in a
@@ -2113,30 +2382,35 @@ export function ProjectChat({
             <PlanResultsDialog
               projectId={projectId}
               onClose={closeResults}
-              onPlanNext={() => void sendMessage("Plan the next two weeks.", [])}
+              onPlanNext={() =>
+                void sendMessage("Plan the next two weeks.", [])
+              }
             />
           ) : null}
           {/* In a Work the suggestions under the composer replace these chips. */}
           {workHost ? null : (
-          <div className="scrollbar-none flex gap-2 overflow-x-auto px-1 pb-1">
-            {QUICK_ACTIONS.map(({ label, icon: Icon }) => (
-              <button
-                key={label}
-                type="button"
-                disabled={isSending}
-                onClick={() => sendMessage(label, [])}
-                className="flex shrink-0 items-center gap-1.5 rounded-[7px] border px-3 py-1.5 text-[11px] font-medium whitespace-nowrap shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-50 sm:text-xs"
-                style={{
-                  borderColor: "var(--ws-border)",
-                  background: "var(--ws-surface)",
-                  color: "var(--ws-text-2)",
-                }}
-              >
-                <Icon className="size-3.5" style={{ color: "var(--ws-olive)" }} />
-                {label}
-              </button>
-            ))}
-          </div>
+            <div className="scrollbar-none flex gap-2 overflow-x-auto px-1 pb-1">
+              {QUICK_ACTIONS.map(({ label, icon: Icon }) => (
+                <button
+                  key={label}
+                  type="button"
+                  disabled={isSending}
+                  onClick={() => sendMessage(label, [])}
+                  className="flex shrink-0 items-center gap-1.5 rounded-[7px] border px-3 py-1.5 text-[11px] font-medium whitespace-nowrap shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-50 sm:text-xs"
+                  style={{
+                    borderColor: "var(--ws-border)",
+                    background: "var(--ws-surface)",
+                    color: "var(--ws-text-2)",
+                  }}
+                >
+                  <Icon
+                    className="size-3.5"
+                    style={{ color: "var(--ws-olive)" }}
+                  />
+                  {label}
+                </button>
+              ))}
+            </div>
           )}
         </>
       ),
@@ -2162,8 +2436,9 @@ export function ProjectChat({
       start: startContentPackage,
       startPlan: startContentPlan,
       runs: packageRuns,
+      pieces: planPieces,
     }),
-    [startContentPackage, startContentPlan, packageRuns],
+    [startContentPackage, startContentPlan, packageRuns, planPieces],
   );
 
   // What the Works cards read (null outside a Work: they keep today's
@@ -2211,70 +2486,100 @@ export function ProjectChat({
   // A content-package piece whose live stream is gone (page reload, dropped
   // connection) is still being made on the server. Keep pulling the page while
   // the persisted chat shows work in flight (needsProgressPoll) and nothing
-  // live is driving it — neither a package run nor a streaming chat turn.
+  // live is driving it — neither a package run nor a streaming chat turn. Each
+  // tick first asks the light progress endpoint whether anything changed since
+  // the page was rendered; the whole page is re-rendered only then.
   const hasLiveItemRun = localTurns.some(
     (turn) => turn.itemId !== undefined && turn.state === "pending",
   );
   const isStreaming = streamingKey !== null;
+  // A poll refresh still rendering (a slow page) is not stacked with another:
+  // the next tick waits for it.
+  const [isPollRefreshing, startPollRefresh] = React.useTransition();
+  const pollRefreshingRef = React.useRef(false);
+  React.useEffect(() => {
+    pollRefreshingRef.current = isPollRefreshing;
+  }, [isPollRefreshing]);
   React.useEffect(() => {
     if (hasLiveItemRun || isStreaming) return undefined;
     if (!needsProgressPoll(turns, Date.now())) return undefined;
+    let asking = false;
+    let stopped = false;
     const timer = setInterval(() => {
-      if (!document.hidden) router.refresh();
+      if (document.hidden || asking || pollRefreshingRef.current) return;
+      asking = true;
+      void pageIsOutOfDate(projectId, progress)
+        .then((outOfDate) => {
+          if (outOfDate && !stopped) startPollRefresh(() => router.refresh());
+        })
+        .finally(() => {
+          asking = false;
+        });
     }, PROGRESS_POLL_MS);
-    return () => clearInterval(timer);
-  }, [turns, hasLiveItemRun, isStreaming, router]);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [turns, hasLiveItemRun, isStreaming, router, projectId, progress]);
 
   const sendFromCard = React.useCallback(
     (text: string) => sendMessage(text, []),
     [sendMessage],
   );
 
+  // What the stable slot components draw (see THREAD_SLOTS).
+  const slotRenderers = React.useMemo<ChatSlotRenderers>(
+    () => ({
+      welcome: Welcome,
+      plusMenu: PlusMenu,
+      quickActions: QuickActions,
+      contextChip: ContextChip,
+      startSuggestions: StartSuggestions,
+    }),
+    [Welcome, PlusMenu, QuickActions, ContextChip, StartSuggestions],
+  );
+
   const packageTree = (
-        <ChatPackageProvider value={chatPackage}>
-          <GuidedSetupProvider value={guidedApi}>
-            <DiscoveryProvider value={discoveryApi}>
-              <Thread
-                autoFocusComposer={!quietComposer}
-                components={{
-                  Welcome,
-                  ComposerPlusMenu: PlusMenu,
-                  QuickActions,
-                  ContextChip,
-                  StartSuggestions: inWork ? StartSuggestions : undefined,
-                }}
+    <ChatPackageProvider value={chatPackage}>
+      <GuidedSetupProvider value={guidedApi}>
+        <DiscoveryProvider value={discoveryApi}>
+          <ChatSlotsContext.Provider value={slotRenderers}>
+            <Thread
+              autoFocusComposer={!quietComposer}
+              components={inWork ? THREAD_SLOTS_IN_WORK : THREAD_SLOTS}
+            />
+          </ChatSlotsContext.Provider>
+          {guidedEnabled && guidedSetup ? (
+            <GuidedSetupBoundary onError={failGuided}>
+              <GuidedSetupSheet
+                projectId={projectId}
+                brandName={projectName}
+                languageCode={guidedSetup.languageCode}
+                chatEngine={chatEngine}
+                host={guidedSetup}
+                seedCommandId={guidedSeed}
+                openerRef={guidedOpenerRef}
+                onSummary={setGuidedSummary}
               />
-            {guidedEnabled && guidedSetup ? (
-              <GuidedSetupBoundary onError={failGuided}>
-                <GuidedSetupSheet
-                  projectId={projectId}
-                  brandName={projectName}
-                  languageCode={guidedSetup.languageCode}
-                  chatEngine={chatEngine}
-                  host={guidedSetup}
-                  seedCommandId={guidedSeed}
-                  openerRef={guidedOpenerRef}
-                  onSummary={setGuidedSummary}
-                />
-              </GuidedSetupBoundary>
-            ) : null}
-            {discoveryEnabled && discovery ? (
-              <GuidedSetupBoundary onError={failDiscovery}>
-                <DiscoverySheet
-                  projectId={projectId}
-                  open={discoveryOpen}
-                  onOpenChange={(next) => {
-                    if (!next) closeDiscovery();
-                  }}
-                  initialView={discovery.view}
-                  brandName={discovery.brandName}
-                  openerRef={discoveryOpenerRef}
-                />
-              </GuidedSetupBoundary>
-            ) : null}
-            </DiscoveryProvider>
-          </GuidedSetupProvider>
-        </ChatPackageProvider>
+            </GuidedSetupBoundary>
+          ) : null}
+          {discoveryEnabled && discovery ? (
+            <GuidedSetupBoundary onError={failDiscovery}>
+              <DiscoverySheet
+                projectId={projectId}
+                open={discoveryOpen}
+                onOpenChange={(next) => {
+                  if (!next) closeDiscovery();
+                }}
+                initialView={discovery.view}
+                brandName={discovery.brandName}
+                openerRef={discoveryOpenerRef}
+              />
+            </GuidedSetupBoundary>
+          ) : null}
+        </DiscoveryProvider>
+      </GuidedSetupProvider>
+    </ChatPackageProvider>
   );
 
   return (
@@ -2330,6 +2635,13 @@ export function buildWorkHostValue(input: {
     connectedChannels: workHost.channelOptions
       .filter((option) => option.connected)
       .map((option) => option.key),
+    accountLabels: Object.fromEntries(
+      workHost.channelOptions.flatMap((option) =>
+        option.connected && option.accountLabel
+          ? [[option.key, option.accountLabel]]
+          : [],
+      ),
+    ),
     openTab: input.openTab,
     runNextStep: input.runNextStep,
   };

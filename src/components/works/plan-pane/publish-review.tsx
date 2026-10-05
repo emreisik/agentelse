@@ -13,15 +13,19 @@ import {
 } from "@/lib/content-channels";
 import type { PlanItemStage } from "@/lib/journey";
 import { cn } from "@/lib/utils";
-import { formatDay, zoneName } from "@/lib/works/plan-pane";
+import { deliveryLabelOf, formatDay, zoneName } from "@/lib/works/plan-pane";
 
 import { PLAN_PANE_COPY as COPY } from "./copy";
 
 // The last step of the plan pane: the publish plan to review and approve, and,
-// once everything is decided, the publish calendar. Presentational.
+// once everything is decided, the publish calendar. One row per post, one line
+// per channel it goes to (a channel left out of the post is not listed).
+// Presentational.
 
 export type ReviewPiece = {
   channel: ChannelKey;
+  // An Instagram post and its Story are two lines of one channel.
+  formatKey?: string;
   stage?: PlanItemStage;
   // "YYYY-MM-DDTHH:mm" in the plan's zone.
   when?: string;
@@ -90,7 +94,7 @@ function PublishRows({
               const made = !NOT_MADE.has(piece.stage);
               return (
                 <li
-                  key={piece.channel}
+                  key={`${piece.channel}:${piece.formatKey ?? ""}`}
                   className="flex min-w-0 items-center gap-2 text-xs"
                   style={{ color: "var(--ws-text-2)" }}
                 >
@@ -101,7 +105,7 @@ function PublishRows({
                   />
                   <span className="min-w-0 truncate">
                     <span style={{ color: "var(--ws-text)" }}>
-                      {CHANNELS[piece.channel].label}
+                      {deliveryLabelOf(piece, post.pieces)}
                     </span>
                     {made && piece.when ? ` ${piece.when.slice(11, 16)}` : ""}
                     {` · ${tagOf(piece, scheduleEnabled, done)}`}
@@ -119,7 +123,7 @@ function PublishRows({
 // Step 3 before the decision.
 export function PublishReview({
   posts,
-  pieces,
+  toApprove,
   timezone,
   scheduleEnabled,
   heldChannels,
@@ -128,8 +132,8 @@ export function PublishReview({
   onEdit,
 }: {
   posts: readonly ReviewPost[];
-  // Pieces that wait for the decision.
-  pieces: number;
+  // Posts with something that waits for the decision.
+  toApprove: number;
   timezone: string;
   scheduleEnabled: boolean | undefined;
   // Selected channels with no account connected.
@@ -139,6 +143,7 @@ export function PublishReview({
   onEdit: () => void;
 }) {
   const checkId = useId();
+  const channels = posts.reduce((sum, post) => sum + post.pieces.length, 0);
   return (
     <section className="space-y-4">
       <div className="flex items-start justify-between gap-3">
@@ -150,7 +155,7 @@ export function PublishReview({
             {COPY.reviewTitle}
           </h4>
           <p className="mt-0.5 text-xs" style={{ color: "var(--ws-text-2)" }}>
-            {COPY.reviewMeta(posts.length, pieces, zoneName(timezone))}
+            {COPY.reviewMeta(posts.length, channels, zoneName(timezone))}
           </p>
         </div>
         <button
@@ -183,11 +188,11 @@ export function PublishReview({
           id={checkId}
           type="checkbox"
           checked={approved}
-          disabled={pieces === 0}
+          disabled={toApprove === 0}
           onChange={(event) => onApprovedChange(event.target.checked)}
           className="mt-0.5 size-4 shrink-0 accent-[var(--ws-text)]"
         />
-        {COPY.approveLabel(pieces)}
+        {COPY.approveLabel(toApprove)}
       </label>
     </section>
   );
@@ -196,7 +201,6 @@ export function PublishReview({
 // Step 3 once everything is decided.
 export function PublishCalendar({
   posts,
-  total,
   scheduleEnabled,
   instagramNeedsSchedule,
   scheduleBusy,
@@ -205,7 +209,6 @@ export function PublishCalendar({
   calendarHref,
 }: {
   posts: readonly ReviewPost[];
-  total: number;
   scheduleEnabled: boolean | undefined;
   // Instagram pieces are approved and connected, but scheduled posting is off.
   instagramNeedsSchedule: boolean;
@@ -246,7 +249,7 @@ export function PublishCalendar({
           style={{ color: "var(--ws-approved)" }}
         >
           <CircleCheck aria-hidden className="size-4" />
-          {COPY.doneTitle(total)}
+          {COPY.doneTitle(posts.length)}
         </p>
         <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
           {COPY.doneBody}

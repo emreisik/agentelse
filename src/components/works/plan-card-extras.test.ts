@@ -37,6 +37,11 @@ vi.mock("@/server/actions/work-approve-actions", () => ({
 vi.mock("@/server/actions/slot-text-actions", () => ({
   updateSlotTextAction: vi.fn(),
 }));
+vi.mock("@/server/actions/post-actions", () => ({
+  approvePostAction: vi.fn(),
+  setDeliveryExcludedAction: vi.fn(),
+  publishPostNowAction: vi.fn(),
+}));
 
 const { BrandCheck, parseReply, replyFailure } =
   await import("./plan-card-extras");

@@ -42,6 +42,17 @@ describe("visibleRecents", () => {
     });
   });
 
+  it("a module chat's row carries its module from the first message, so its icon shows at once", () => {
+    const a = createRecentsAnnouncer();
+    a.sync(L0);
+    a.announce({ ...activity("wAds", "Ads Manager"), module: "ads" });
+    a.announce(activity("wGeneral"));
+    const [general, ads] = visibleRecents(L0, a.getSnapshot());
+    expect(ads).toMatchObject({ id: "wAds", module: "ads" });
+    expect(general?.id).toBe("wGeneral");
+    expect(general).not.toHaveProperty("module");
+  });
+
   it("never lists a chat twice: the server's row wins once it has it", () => {
     const a = createRecentsAnnouncer();
     a.sync(L0);

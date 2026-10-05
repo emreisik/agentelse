@@ -133,4 +133,29 @@ describe("createOrReuseBlank: the blank Work changes under the tap", () => {
     expect(order[0]).toBe("lock");
     expect(order).toContain("read");
   });
+
+  // Modules: the blank Work opened is for what the tap asked for, on both paths.
+  const reopenOf = () =>
+    tx.work.updateMany.mock.calls
+      .map(([arg]) => arg as { where: Where; data: Record<string, unknown> })
+      .find(({ where }) => isReopen(where));
+
+  it("the reopened and the fresh Work both carry the module asked for", async () => {
+    tx.work.findFirst.mockResolvedValue(row("wGone"));
+    tx.work.updateMany.mockResolvedValue({ count: 0 });
+    await WorkRepository.createOrReuseBlank({ ...input, module: "social" });
+    expect(reopenOf()?.data).toMatchObject({ module: "social" });
+    expect(tx.work.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ module: "social" }),
+      }),
+    );
+  });
+
+  it("a plain tap makes the blank Work a general chat again", async () => {
+    tx.work.findFirst.mockResolvedValue({ ...row("wBlank"), module: "ads" });
+    tx.work.updateMany.mockResolvedValue({ count: 1 });
+    await WorkRepository.createOrReuseBlank(input);
+    expect(reopenOf()?.data).toMatchObject({ module: null });
+  });
 });

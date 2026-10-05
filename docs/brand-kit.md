@@ -36,7 +36,7 @@ Sayfanın tepesindeki renkli "hero" kartı ve "Agentelse fark etti" kartı yoktu
 | `formats`     | Uygun olduğu oranlar: `portrait` (Post 3:4), `square`, `landscape`, `vertical` (Story/Reel 9:16); boş = hepsi. |
 | `logo`        | Konum (4 köşe, alt orta, üst orta), boyut %, kenar boşluğu %, `onBand` (logo şeridin içinde).                        |
 | `bar`         | Kapalı / ince çizgi (`line`) / opak marka bandı (`band`); konum, yükseklik %, renk (rol ya da `#rrggbb`).      |
-| `headline`    | Bölge (üst, sol üst, orta, sol sütun, alt), hiza, en çok satır, ölçek. Görselde yazıyı **yapay zekâ çizer**.   |
+| `headline`    | Bölge (üst, sol üst, orta, sol sütun, alt), hiza, en çok satır, ölçek. Yazıyı **bizim kompozitimiz dizer** (`creative-text.ts`). |
 | `composition` | Görüntü modeline sahne yönergesi ("özneyi alt üçte ikide tut, üst üçte biri sakin bırak").                     |
 
 `buildPresetLayouts(base)` markanın mevcut şablon ayarından **deterministik** 7 hazır layout üretir (Classic, Headline on top, Left column, Center statement, Brand band, Story / Reel, Image only); LLM yoktur. Galeri (`layout-gallery.tsx`) canlı CSS önizlemesi (`layout-preview.tsx`, gerçek logo ve renklerle, kompozitle aynı yüzdelerle) gösterir; kullanıcı düzenler, çoğaltır, hazır haline sıfırlar, siler ve varsayılanı seçer. **Bir layout kartına tıklamak onu yeni postların varsayılanı yapar** (`setDefaultLayout`; seçili kart ve "Default" rozeti aynı yerde olur; eskiden tıklama yalnızca düzenleme için seçiyordu ve ayrı bir "Use as default" düğmesi gerekiyordu, bu yüzden kaydedilen "seçim" hiçbir şeyi değiştirmiyordu). Varsayılan bir post şekli için uygun değilse o şekil, o şekle göre yapılmış layout'u alır; galeri bunu varsayılanın yanında söyler (`defaultOverrides`). Kayıt: `updateLayoutTemplatesAction`. Mevcut postlar layout'unu korur; yalnızca yeni üretimler değişen varsayılanı izler.
@@ -44,7 +44,7 @@ Sayfanın tepesindeki renkli "hero" kartı ve "Agentelse fark etti" kartı yoktu
 **Nasıl uygulanır** (`src/server/media/creative-layout.ts`, `planCreativeLayout`): layout id verilmişse o; yoksa marka varsayılanı (formata uygunsa); uygun değilse tam o format için yapılmış layout; o da yoksa formata uyan ilk layout seçilir (`resolveLayout`). Sonuç üç şeydir:
 
 1. **Kesin kompozit:** `layoutToTemplateConfig` → `applyBrandTemplate`. Logo, şerit ve bant görüntü üretildikten **sonra** piksel-hassas eklenir (yapay zekâ çizmez). Bantta logo, bant rengine göre doğru varyantla (açık/koyu) bandın içine oturur; Story/Reel'de köşe logosu platformun kendi arayüz bantlarından (`safeZone`) uzak tutulur; layout kullanılırken logonun boş kenarları kırpılır (`trimLogo`), böylece "boyut %" ve "kenar boşluğu" görünen işarete uygulanır.
-2. **Prompt:** `reservedZones` (kompozitin kaplayacağı alanlar, yazıdan ve ana özneden boş bırakılır), `layoutComposition` (sahne yönergesi) ve başlık istendiyse `headlinePlacement`.
+2. **Prompt:** `reservedZones` (kompozitin kaplayacağı alanlar, yazıdan ve ana özneden boş bırakılır), `layoutComposition` (sahne yönergesi) ve yazı varsa `textArea` (görsel yazısız kalır; yazının geleceği alan sakin bırakılır).
 3. **Kayıt:** kullanılan layout `generationMetadata.layoutTemplate = {id, name}` ve `ExecutionJob.rawResult` içine yazılır.
 
 ## 4. Hangi yol layout'u nasıl seçer
@@ -88,7 +88,7 @@ Sütun yoksa `BrandVisualIdentity` okuyan her sorgu (marka stili, sohbet görsel
 
 ## 8. Bilinen sınırlar
 
-- Görsel üzerindeki yazıyı yapay zekâ çizer (bilerek): Türkçe karakter/yazım hatası olabilir; kısa başlık, `final` kalite ve yeniden üretme riski azaltır.
+- Görsel üzerindeki yazı (5 Ekim 2026'dan beri) **modele çizdirilmez**: layout'un başlık bölgesi varsa (ya da Post Style Kit `match` ise) metin adımı kısa bir başlık (en çok ~6 kelime, isteğe bağlı vurgu ve bir alt satır) yazar; `creative-text.ts` bunu SVG yollarıyla (gömülü Inter; markanın ilk fontu Google Fonts'ta varsa o) bölgeye dizer: sarma, sığdırma, kontrast rengi, gerektiğinde yumuşak perde. Türkçe/Kiril harfleri doğru çıkar. Postun diğer biçimleri (Story, Facebook) yazısız temiz kopyadan uyarlanır ve aynı yazı o biçimin kendi bölgesine yeniden dizilir. Studio'da baştan üretme ("Regenerate") yazıyı korur; düzenleme ("edit") yazısı zaten pikselde olan resmi düzeltir. Bölgesi olmayan layout'lar (Classic, Image only) bilerek yazısızdır.
 - Logo tonu (açık/koyu) piksel analiziyle bulunur; yanlışsa Brand Brain'den doğru yuvaya yükleyin.
 - Layout önizlemesi CSS ile yaklaşıktır; logo kenar boşluğu kırpma önizlemede yansımaz.
 - Studio'nun layout seçicisi yalnızca creative detay sayfasında görünür; takvim sayfasındaki gömülü Studio seçici göstermez (layout yine korunur).

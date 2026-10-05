@@ -1749,11 +1749,7 @@ describe("runChatAgent", () => {
     }
 
     expect(events.some((e) => e.type === "error")).toBe(false);
-    expect(recordReply).toHaveBeenCalledWith(
-      "cmd-1",
-      "Yarım kalan",
-      "STOPPED",
-    );
+    expect(recordReply).toHaveBeenCalledWith("cmd-1", "Yarım kalan", "STOPPED");
     // Whoever follows the run learns at once that it ended stopped.
     expect(events.at(-1)).toMatchObject({
       type: "done",
@@ -2453,6 +2449,43 @@ describe("runChatAgent: Works", () => {
     });
   });
 
+  // Modules (MODULES_UI, plan P4): a Work's module narrows the tools and adds
+  // its line to the developer note, only while modules are on.
+  describe("a module chat", () => {
+    const devNote = (requests: ChatModelRequest[]) =>
+      String((requests[0]!.input[0] as { content: string }).content);
+
+    beforeEach(() => {
+      workGet.mockResolvedValue({ ...workRow, channels: [], module: "ads" });
+    });
+
+    it("with modules on, an Ads Manager chat passes its module to the tools and the note", async () => {
+      envOverrides.MODULES_UI = true;
+      envOverrides.WORKS_UI = true;
+      envOverrides.CHAT_ENGINE = "agent";
+      const { model, requests } = scriptedModel([{ text: ["ok"] }]);
+      await collect(runChatAgent(workInput, { model }));
+
+      expect(toolsForPhaseSpy.mock.calls[0]![1]).toMatchObject({
+        works: true,
+        module: "ads",
+      });
+      expect(devNote(requests)).toContain("This chat is the Ads Manager");
+    });
+
+    it("with MODULES_UI unset, the same Work is a general chat: no module anywhere", async () => {
+      envOverrides.WORKS_UI = true;
+      envOverrides.CHAT_ENGINE = "agent";
+      const { model, requests } = scriptedModel([{ text: ["ok"] }]);
+      await collect(runChatAgent(workInput, { model }));
+
+      const options = toolsForPhaseSpy.mock.calls[0]![1];
+      expect(options).toMatchObject({ works: true });
+      expect(options).not.toHaveProperty("module");
+      expect(devNote(requests)).not.toContain("This chat is the");
+    });
+  });
+
   describe("plan brief and digest note", () => {
     const briefLine = serializePlanBrief({
       goal: "leads",
@@ -2489,6 +2522,29 @@ describe("runChatAgent: Works", () => {
       expect(note).toContain("1. ");
       expect(note).not.toContain("1. 1. ");
       expect(fallback).toBeUndefined();
+    });
+
+    it("draws one slot per post: the brief's other social channels are where each post also goes", async () => {
+      const wide = serializePlanBrief({
+        goal: "leads",
+        channels: [
+          { channel: "instagram", formats: ["instagram.post"] },
+          { channel: "facebook", formats: ["facebook.post"] },
+          { channel: "linkedin", formats: ["linkedin.post"] },
+        ],
+        story: true,
+        perWeek: 3,
+        weeks: 1,
+        start: day(1),
+        theme: undefined,
+      });
+      const { model, requests } = scriptedModel([{ text: ["ok"] }]);
+      await collect(runChatAgent({ ...workInput, message: wide }, { model }));
+      const note = devNote(requests);
+      expect(note).toContain("instagram.post · also on Facebook and LinkedIn");
+      expect(note).not.toContain("linkedin.post");
+      expect(note).not.toContain("facebook.post");
+      expect(note).toContain("Each option needs exactly 3 ideas");
     });
 
     it("says so in the note when the brief has more posts than directions can carry", async () => {
@@ -2740,9 +2796,11 @@ describe("runChatAgent: Works", () => {
 
     it("titles the Work right after the Command row is stored, before the brand scan and before the first event the client sees", async () => {
       const order: string[] = [];
-      workTouch.mockImplementation(async (_p: string, _w: string, patch: { titleIfDefault?: string }) => {
-        if (patch.titleIfDefault) order.push("title");
-      });
+      workTouch.mockImplementation(
+        async (_p: string, _w: string, patch: { titleIfDefault?: string }) => {
+          if (patch.titleIfDefault) order.push("title");
+        },
+      );
       const { model } = scriptedModel([{ text: ["Ok."] }]);
       const events = [];
       for await (const event of runChatAgent(workInput, { model })) {

@@ -23,6 +23,12 @@ vi.mock("@/server/media/brand-logo", () => ({
 vi.mock("@/server/media/creative-template", () => ({
   applyBrandTemplate: vi.fn().mockResolvedValue(null),
 }));
+// The clean copy a post with words keeps for its other formats: no storage.
+vi.mock("@/server/storage/asset-storage", () => ({
+  readAsset: vi.fn().mockResolvedValue(Buffer.from("png")),
+  putAsset: vi.fn().mockResolvedValue({ storageKey: "r2://clean.png", filename: "clean.png" }),
+  deleteAsset: vi.fn().mockResolvedValue(true),
+}));
 
 const { applyBrandTemplate } = await import("@/server/media/creative-template");
 const { DEFAULT_KIT_TEMPLATE } = await import("@/lib/brand-kit");
@@ -124,7 +130,7 @@ describe("OpenAiCreativeProvider inline generation", () => {
     expect(generateCreativeImage.mock.calls[0]![1].quality).toBeUndefined();
   });
 
-  it("headline mode: adds only the headline, no imposed style, and still composites the brand logo", async () => {
+  it("headline mode: the words are typeset onto a textless picture, with the brand logo", async () => {
     await new OpenAiCreativeProvider().execute({
       ...request({
         request: "brief",
@@ -139,15 +145,24 @@ describe("OpenAiCreativeProvider inline generation", () => {
     });
 
     const prompt = generateCreativeImage.mock.calls[0]![0] as string;
-    expect(prompt).toContain("TYPOGRAPHY:");
-    expect(prompt).toContain('"Klinik siteniz ilk soruları yanıtlıyor mu?"');
-    expect(prompt).toContain('"ilk soruları"');
+    // The image model never spells the words: it keeps their area calm.
+    expect(prompt).not.toContain("TYPOGRAPHY:");
+    expect(prompt).not.toContain("Klinik siteniz");
+    expect(prompt).toContain("completely textless");
+    expect(prompt).toContain(
+      "The post's headline is typeset onto the image afterwards in the upper third of the frame",
+    );
     // The design is the brand's, not a house style baked into the code.
     expect(prompt).not.toMatch(/marble|olive|glass panels|editorial concept photography/i);
     // No AI-drawn wordmark / site address: the logo is composited for real.
     expect(prompt).not.toMatch(/wordmark|letter-spaced/i);
-    expect(prompt).not.toContain("completely textless");
     expect(applyBrandTemplate).toHaveBeenCalledTimes(1);
+    // No saved layouts: large and centered in the upper third.
+    expect(vi.mocked(applyBrandTemplate).mock.calls[0]![0].text).toMatchObject({
+      headline: "Klinik siteniz ilk soruları yanıtlıyor mu?",
+      highlight: "ilk soruları",
+      placement: { zone: "TOP", align: "center", maxLines: 3, scale: "L" },
+    });
   });
 
   it("without an overlay the classic textless prompt and logo template are unchanged", async () => {
@@ -157,7 +172,9 @@ describe("OpenAiCreativeProvider inline generation", () => {
     const prompt = generateCreativeImage.mock.calls[0]![0] as string;
     expect(prompt).not.toContain("TYPOGRAPHY:");
     expect(prompt).toContain("completely textless");
+    expect(prompt).not.toContain("typeset onto the image afterwards");
     expect(applyBrandTemplate).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(applyBrandTemplate).mock.calls[0]![0].text).toBeUndefined();
   });
 });
 
@@ -259,9 +276,43 @@ describe("OpenAiCreativeProvider with post layouts", () => {
     );
 
     const prompt = generateCreativeImage.mock.calls[0]![0] as string;
-    expect(prompt).toContain("TYPOGRAPHY:");
-    expect(prompt).toContain("upper third of the frame");
-    expect(prompt).not.toContain("Place it on a calm area of the scene");
+    expect(prompt).not.toContain("TYPOGRAPHY:");
+    expect(prompt).toContain(
+      "typeset onto the image afterwards in the upper third of the frame",
+    );
+    expect(templateArgs().text).toMatchObject({
+      headline: "Sitenizi taratın",
+      highlight: "taratın",
+      placement: { zone: "TOP", align: "center", maxLines: 3, scale: "L" },
+      // The brand kit's colours: its dark primary for words on a light
+      // picture, its accent for the highlighted ones.
+      darkInk: "#0b1f3a",
+      accentHex: "#2dd4bf",
+    });
+  });
+
+  it("sets the words in the chosen layout's own zone", async () => {
+    await new OpenAiCreativeProvider().execute(
+      request({
+        request: "brief",
+        platform: "INSTAGRAM",
+        brandContext: brandContext(true),
+        preset: {
+          ...preset,
+          layoutId: "left-column",
+          overlay: { headline: "Sitenizi taratın" },
+        },
+      }),
+    );
+    expect(generateCreativeImage.mock.calls[0]![0]).toContain(
+      "in a column along the left side of the frame",
+    );
+    expect(templateArgs().text?.placement).toEqual({
+      zone: "LEFT_COLUMN",
+      align: "left",
+      maxLines: 4,
+      scale: "M",
+    });
   });
 
   it("brands without saved layouts keep the base template and record no layout", async () => {

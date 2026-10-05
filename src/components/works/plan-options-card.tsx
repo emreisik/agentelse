@@ -308,7 +308,13 @@ export function PlanOptionsCard({
   const chipReasonSeparate = !!chipReason && chipReason !== pickReason;
   const blocked = !!pickReason || anyBusy;
   const chipsBlocked = !!chipReason || anyBusy;
-  const channels = [...new Set(card.slots.map((slot) => slot.channel))];
+  // A post goes to every channel of the brief, not only its slot's own.
+  const channels = [
+    ...new Set([
+      ...card.slots.map((slot) => slot.channel),
+      ...(card.platforms ?? []),
+    ]),
+  ];
 
   const pick = (option: PlanOption) => {
     const button: CardButton = {

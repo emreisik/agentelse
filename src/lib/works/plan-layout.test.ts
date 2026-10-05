@@ -6,7 +6,10 @@ import type { PlanBrief } from "@/lib/plan-brief";
 import {
   ANCHOR_TIMES,
   MAX_OPTION_SLOTS,
+  briefDeliveries,
+  briefPlatforms,
   defaultPlanBrief,
+  deliveriesOfCard,
   describePlanSlots,
   latestPlanBrief,
   layoutPlanSlots,
@@ -90,25 +93,68 @@ describe("layoutPlanSlots counts and patterns", () => {
     expect(slots[0]!.date).toBe("2026-10-02");
   });
 
-  it("covers every channel when the total allows and rotates pairs", () => {
+  it("lays out one slot per post, not one per social channel", () => {
+    // 3 social channels x 3 posts: 3 slots, the channels are the platforms.
+    const b = brief({
+      channels: [
+        { channel: "instagram", formats: ["instagram.post"] },
+        { channel: "facebook", formats: ["facebook.post"] },
+        { channel: "linkedin", formats: ["linkedin.post"] },
+      ],
+    });
+    const slots = layoutPlanSlots({ brief: b, today: TODAY });
+    expect(slots).toHaveLength(3);
+    expect(slots.map((s) => s.formatKey)).toEqual([
+      "instagram.post",
+      "instagram.post",
+      "instagram.post",
+    ]);
+    expect(briefDeliveries(b)).toEqual({
+      platforms: ["instagram", "facebook", "linkedin"],
+    });
+  });
+
+  it("rotates the first social channel's formats; the others are platforms", () => {
     const b = brief({
       perWeek: 4,
       channels: [
         { channel: "instagram", formats: ["instagram.post", "instagram.reel"] },
         { channel: "linkedin", formats: ["linkedin.post"] },
-        { channel: "x", formats: ["x.post"] },
+        { channel: "x", formats: ["x.thread"] },
       ],
     });
     const slots = layoutPlanSlots({ brief: b, today: TODAY });
     expect(new Set(slots.map((s) => s.channel))).toEqual(
-      new Set(["instagram", "linkedin", "x"]),
+      new Set(["instagram"]),
     );
     expect(slots.map((s) => s.formatKey)).toEqual([
       "instagram.post",
       "instagram.reel",
-      "linkedin.post",
-      "x.post",
+      "instagram.post",
+      "instagram.reel",
     ]);
+    expect(briefPlatforms(b)).toEqual(["instagram", "linkedin", "x"]);
+  });
+
+  it("keeps a slot of their own for Blog/SEO and Ads", () => {
+    const b = brief({
+      perWeek: 4,
+      channels: [
+        { channel: "instagram", formats: ["instagram.post"] },
+        { channel: "facebook", formats: ["facebook.post"] },
+        { channel: "seo", formats: ["seo.article"] },
+      ],
+    });
+    const slots = layoutPlanSlots({ brief: b, today: TODAY });
+    expect(slots.map((s) => s.formatKey)).toEqual([
+      "instagram.post",
+      "seo.article",
+      "instagram.post",
+      "seo.article",
+    ]);
+    expect(briefDeliveries(b)).toEqual({
+      platforms: ["instagram", "facebook"],
+    });
   });
 
   it("is deterministic", () => {
@@ -233,9 +279,68 @@ describe("describePlanSlots", () => {
     });
     expect(describePlanSlots(slots)).toEqual([
       "1. Mon 5 Oct 10:00 · instagram.post",
-      "2. Wed 7 Oct 10:00 · linkedin.post",
+      "2. Wed 7 Oct 10:00 · instagram.post",
       "3. Fri 9 Oct 10:00 · instagram.post",
     ]);
+  });
+
+  it("says where else a post goes; a Blog/SEO piece goes nowhere else", () => {
+    const b = brief({
+      start: "2026-10-05",
+      perWeek: 2,
+      channels: [
+        { channel: "instagram", formats: ["instagram.post"] },
+        { channel: "facebook", formats: ["facebook.post"] },
+        { channel: "linkedin", formats: ["linkedin.post"] },
+        { channel: "seo", formats: ["seo.article"] },
+      ],
+    });
+    const slots = layoutPlanSlots({ brief: b, today: TODAY });
+    expect(describePlanSlots(slots, briefPlatforms(b))).toEqual([
+      "1. Tue 6 Oct 10:00 · instagram.post · also on Facebook and LinkedIn",
+      "2. Thu 8 Oct 10:00 · seo.article",
+    ]);
+  });
+});
+
+describe("plan deliveries", () => {
+  it("carries the Story switch only with Instagram among the platforms", () => {
+    expect(briefDeliveries(brief({ story: true }))).toEqual({
+      platforms: ["instagram", "linkedin"],
+      instagramStory: true,
+    });
+    expect(
+      briefDeliveries(
+        brief({
+          story: true,
+          channels: [{ channel: "linkedin", formats: ["linkedin.post"] }],
+        }),
+      ),
+    ).toEqual({ platforms: ["linkedin"] });
+  });
+
+  it("has no platforms for a Blog/SEO or Ads only brief", () => {
+    expect(
+      briefDeliveries(
+        brief({ channels: [{ channel: "seo", formats: ["seo.article"] }] }),
+      ),
+    ).toEqual({});
+  });
+
+  it("reads them back from a stored card, in catalog order", () => {
+    expect(
+      deliveriesOfCard({
+        kind: "content-plan-options",
+        platforms: ["linkedin", "nope", "instagram", "seo"],
+        instagramStory: true,
+      }),
+    ).toEqual({ platforms: ["instagram", "linkedin"], instagramStory: true });
+    // A card stored before them, or with a broken field, has none.
+    expect(deliveriesOfCard({ kind: "content-plan-options" })).toEqual({});
+    expect(deliveriesOfCard({ platforms: "instagram" })).toEqual({});
+    expect(
+      deliveriesOfCard({ platforms: ["linkedin"], instagramStory: true }),
+    ).toEqual({ platforms: ["linkedin"] });
   });
 });
 
@@ -243,7 +348,9 @@ describe("latestPlanBrief", () => {
   it("returns the newest brief and null when there is none", () => {
     const older = serializePlanBrief(brief({ perWeek: 2 }));
     const newer = serializePlanBrief(brief({ perWeek: 5 }));
-    expect(latestPlanBrief([older, "more playful", newer, "ok"])?.perWeek).toBe(5);
+    expect(latestPlanBrief([older, "more playful", newer, "ok"])?.perWeek).toBe(
+      5,
+    );
     expect(latestPlanBrief([older, "x"])?.perWeek).toBe(2);
     expect(latestPlanBrief(["hello", "more playful"])).toBeNull();
     expect(latestPlanBrief([])).toBeNull();
@@ -262,7 +369,10 @@ describe("defaultPlanBrief", () => {
       weeks: 1,
       start: TOMORROW,
     });
-    expect(b!.channels.map((c) => c.channel)).toEqual(["instagram", "linkedin"]);
+    expect(b!.channels.map((c) => c.channel)).toEqual([
+      "instagram",
+      "linkedin",
+    ]);
     expect(parsePlanBrief(serializePlanBrief(b!))).toEqual(b);
   });
 
@@ -285,7 +395,12 @@ describe("defaultPlanBrief", () => {
       weeks: 2,
       perWeek: 5,
     });
-    expect(b).toMatchObject({ start: TODAY, goal: "leads", weeks: 2, perWeek: 5 });
+    expect(b).toMatchObject({
+      start: TODAY,
+      goal: "leads",
+      weeks: 2,
+      perWeek: 5,
+    });
   });
 
   it("returns null for an unusable today or perWeek", () => {

@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 
-import { PLAN_GOALS } from "@/lib/content-channels";
+import { PLAN_GOALS, type ChannelKey } from "@/lib/content-channels";
 
 import type { BrandCheckState } from "./brand-rules";
 import { MAX_OPTION_SLOTS, OPTIONS_MAX, OPTIONS_MIN } from "./plan-layout";
@@ -39,6 +39,11 @@ export type PlanOptionsCardData = {
   brandCheck?: BrandCheckState;
   slots: PlanOptionSlot[];
   options: PlanOption[];
+  // The brief's social channels (each post goes to all of them) and its
+  // Instagram Story choice, carried to the plan a pick makes (plan-layout.ts
+  // briefDeliveries / deliveriesOfCard).
+  platforms?: ChannelKey[];
+  instagramStory?: boolean;
 };
 
 // No .transform anywhere: z.toJSONSchema must represent the tool schema.

@@ -75,7 +75,9 @@ export function chatDefaultChannels(
 }
 
 // The first tap takes 10-25 s: which pending line the chat shows meanwhile.
-export function pendingHintFor(messageText: string): "plan" | "ideas" | "generic" {
+export function pendingHintFor(
+  messageText: string,
+): "plan" | "ideas" | "generic" {
   if (messageText.includes("[Plan brief]")) return "plan";
   if (messageText.startsWith("Give me content ideas")) return "ideas";
   return "generic";
@@ -139,13 +141,20 @@ export function starterCards(facts: StarterFacts): StarterCard[] {
     });
 
     // Slot-first generation needs the model too, so it hides when AI is off.
-    const postChannel = channels.find((c) => CHANNELS[c.key].group === "social");
+    const postChannel = channels.find(
+      (c) => CHANNELS[c.key].group === "social",
+    );
     if (postChannel) {
       cards.push({
         id: "make-post",
         line: `Make one post for ${postChannel.label}`,
-        reason: copyText("starter.makePost.reason", { channel: postChannel.label }),
-        action: { kind: "send", text: `Make one post for ${postChannel.label}.` },
+        reason: copyText("starter.makePost.reason", {
+          channel: postChannel.label,
+        }),
+        action: {
+          kind: "send",
+          text: `Make one post for ${postChannel.label}.`,
+        },
       });
     }
   }
@@ -181,6 +190,23 @@ export function starterCards(facts: StarterFacts): StarterCard[] {
   }
 
   return cards.slice(0, MAX_STARTER_CARDS);
+}
+
+// With modules on (MODULES_UI) the New Chat's module tiles start the planning,
+// the ideas, a post and the performance report: of these rows only the ones no
+// module covers stay under the tiles (a decision waiting, a channel to connect,
+// AI switched off), in their order.
+export const MODULE_STARTER_IDS: readonly string[] = [
+  "decisions",
+  "connect",
+  "connect-first",
+  "ai-off",
+];
+
+export function moduleStarterCards(
+  cards: readonly StarterCard[],
+): StarterCard[] {
+  return cards.filter((card) => MODULE_STARTER_IDS.includes(card.id));
 }
 
 // A channel label for a key, for screens that only hold keys.

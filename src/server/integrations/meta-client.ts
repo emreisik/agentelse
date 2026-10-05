@@ -422,7 +422,10 @@ export async function exchangeInstagramLongLivedToken(
       expiresIn: result.expires_in ?? 60 * 24 * 60 * 60,
     };
   } catch (error) {
-    if (error instanceof MetaApiError && /unsupported request/i.test(error.message)) {
+    if (
+      error instanceof MetaApiError &&
+      /unsupported request/i.test(error.message)
+    ) {
       throw new MetaApiError(
         `${error.message}. ${PENDING_TESTER_HINT}`,
         error.metaErrorCode,
@@ -435,9 +438,7 @@ export async function exchangeInstagramLongLivedToken(
 
 // The account the token belongs to. `user_id` is the Instagram professional
 // account id every publishing call is addressed to (`id` is an app-scoped id).
-export async function fetchInstagramLoginProfile(
-  accessToken: string,
-): Promise<{
+export async function fetchInstagramLoginProfile(accessToken: string): Promise<{
   id: string;
   appScopedId?: string;
   username?: string;
@@ -838,7 +839,9 @@ export async function fetchInstagramAccountInsights(input: {
   });
   const result = await request<{
     data?: Array<{ name?: string; total_value?: { value?: number } }>;
-  }>(`${graphBaseFor(input.api)}/${input.igUserId}/insights?${params.toString()}`);
+  }>(
+    `${graphBaseFor(input.api)}/${input.igUserId}/insights?${params.toString()}`,
+  );
   const insights: InstagramAccountInsights = {};
   for (const row of result.data ?? []) {
     const metric = INSTAGRAM_INSIGHT_METRICS.find((name) => name === row.name);
@@ -1074,6 +1077,9 @@ export async function fetchMetaAdsInsights(input: {
 // A minimal required field set — not a full campaign wizard, just enough
 // surface for the scenario of an AI creating a draft campaign. Sending
 // `special_ad_categories` as an empty array is required by the Marketing API.
+// Without a campaign budget the ad sets carry it, and Graph v24+ refuses such
+// a campaign unless it says whether they share it (error 100, subcode
+// 4834011): each ad set keeps its own.
 export async function createMetaCampaign(input: {
   adAccountId: string;
   accessToken: string;
@@ -1091,6 +1097,8 @@ export async function createMetaCampaign(input: {
   });
   if (input.dailyBudgetCents !== undefined) {
     body.set("daily_budget", String(input.dailyBudgetCents));
+  } else {
+    body.set("is_adset_budget_sharing_enabled", "false");
   }
 
   const result = await request<{ id: string }>(
@@ -1280,19 +1288,21 @@ export function toInsightsRow(
             ),
         )[0]
     : undefined;
-  const topAction = leadAction ?? (row.actions ?? []).reduce<
-    { action_type: string; value: number } | undefined
-  >((best, a) => {
-    const value = Number(a.value);
-    // Skip a non-numeric value outright — `!best` alone would let a NaN
-    // become `best` on the first iteration and get stuck there forever,
-    // since every `value > NaN` comparison is false (NaN never loses a
-    // later round to a legitimate number).
-    if (Number.isNaN(value)) return best;
-    if (!best || value > best.value)
-      return { action_type: a.action_type, value };
-    return best;
-  }, undefined);
+  const topAction =
+    leadAction ??
+    (row.actions ?? []).reduce<
+      { action_type: string; value: number } | undefined
+    >((best, a) => {
+      const value = Number(a.value);
+      // Skip a non-numeric value outright — `!best` alone would let a NaN
+      // become `best` on the first iteration and get stuck there forever,
+      // since every `value > NaN` comparison is false (NaN never loses a
+      // later round to a legitimate number).
+      if (Number.isNaN(value)) return best;
+      if (!best || value > best.value)
+        return { action_type: a.action_type, value };
+      return best;
+    }, undefined);
 
   return {
     spend,
@@ -1707,6 +1717,15 @@ function buildTargetingSpec(targeting: MetaAdSetTargeting) {
   };
 }
 
+// Where an ad set's results happen, for the optimization goals Meta asks it of:
+// post engagement (an OUTCOME_ENGAGEMENT campaign) is on the post itself.
+// Traffic (LINK_CLICKS) and Awareness (REACH) send none.
+export function adSetDestinationType(
+  optimizationGoal: string,
+): string | undefined {
+  return optimizationGoal === "POST_ENGAGEMENT" ? "ON_POST" : undefined;
+}
+
 export async function createMetaAdSet(input: {
   adAccountId: string;
   accessToken: string;
@@ -1728,6 +1747,8 @@ export async function createMetaAdSet(input: {
     status: input.status,
     access_token: input.accessToken,
   });
+  const destinationType = adSetDestinationType(input.optimizationGoal);
+  if (destinationType) body.set("destination_type", destinationType);
 
   const result = await request<{ id: string }>(
     `${GRAPH_BASE}/${input.adAccountId}/adsets`,

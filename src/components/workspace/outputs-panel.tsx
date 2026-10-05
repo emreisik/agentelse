@@ -20,6 +20,20 @@ import { SourceMark } from "@/components/calendar/calendar-bits";
 import { OutputPreviewDialog } from "@/components/workspace/output-preview-dialog";
 import { assetUrl } from "@/lib/asset-url";
 import { addDaysToKey, formatDayLong } from "@/lib/calendar/grid";
+import {
+  applyDecision,
+  assetsOf,
+  countOutputEntries,
+  decisionOf,
+  filterOutputEntries,
+  groupOutputs,
+  sortOutputEntries,
+  type OutputDecision,
+  type OutputDelivery,
+  type OutputEntry,
+  type OutputPostsPayload,
+  type OutputVerdict,
+} from "@/lib/calendar/output-posts";
 import { relativeDayLabel } from "@/lib/calendar/panel-view";
 import type { CalendarSource } from "@/lib/calendar/types";
 import {
@@ -30,15 +44,9 @@ import {
   PHASE_META,
   PHASE_ORDER,
   activeOutputFilters,
-  countOutputs,
-  filterOutputs,
-  phaseOf,
-  sortOutputs,
   type OutputFilter,
-  type OutputItem,
   type OutputPhase,
   type OutputSort,
-  type OutputsPayload,
 } from "@/lib/outputs/panel";
 import { dayKeyInTimezone } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
@@ -46,13 +54,18 @@ import {
   approveApprovalAction,
   rejectApprovalAction,
 } from "@/server/actions/approval-actions";
+import { approvePostAction } from "@/server/actions/post-actions";
 
-// Sağ panelin Outputs sekmesi: projenin ürettiği her parça (arşiv hariç),
-// istemcide arama, durum/platform/biçim süzgeçleri, sıralama, kart üstünden
-// onay/ret, metin kopyalama, indirme ve çoklu seçimle toplu onay/indirme.
-// Veri kendi hafif ucundan gelir (/api/projects/[id]/outputs) ve 30 sn'de bir
-// tazelenir; eskiden sayfayla gelen son 24 parçaydı ve sayfa yenilenmeden
-// değişmiyordu.
+// Sağ panelin Outputs sekmesi: projenin ürettiği her şey (arşiv hariç), post
+// başına tek kart (docs/works.md "Posts"): bir postun mecra teslimatları
+// (Instagram post, Story, Facebook...) aynı kartta, postun görseli ve her
+// mecranın simgesiyle; postu olmayan parça kendi kartıdır
+// (lib/calendar/output-posts.ts). İstemcide arama, durum/platform/biçim
+// süzgeçleri (teslimatlarından biri uyan post görünür), sıralama, kart
+// üstünden onay (postun onayı bütün postu onaylar) ve ret, metin kopyalama,
+// indirme ve çoklu seçimle toplu onay/indirme. Veri kendi hafif ucundan gelir
+// (/api/projects/[id]/outputs) ve 30 sn'de bir tazelenir; eskiden sayfayla
+// gelen son 24 parçaydı ve sayfa yenilenmeden değişmiyordu.
 
 const POLL_MS = 30_000;
 const PAGE = 24;
@@ -86,14 +99,14 @@ function writeSort(projectId: string, sort: OutputSort) {
 async function fetchOutputs(
   projectId: string,
   signal?: AbortSignal,
-): Promise<OutputsPayload | null> {
+): Promise<OutputPostsPayload | null> {
   try {
     const response = await fetch(`/api/projects/${projectId}/outputs`, {
       signal,
       cache: "no-store",
     });
     if (!response.ok) return null;
-    return (await response.json()) as OutputsPayload;
+    return (await response.json()) as OutputPostsPayload;
   } catch {
     return null;
   }
@@ -106,7 +119,7 @@ function toggled<T>(set: ReadonlySet<T>, value: T): Set<T> {
   return next;
 }
 
-function headline(item: OutputItem): string {
+function headline(item: OutputDelivery): string {
   return item.title ?? item.preview ?? item.label;
 }
 
@@ -119,11 +132,59 @@ function downloadAsset(assetId: string) {
   link.remove();
 }
 
+// Tarayıcı art arda indirmeleri engellemesin diye aralıklı.
+function downloadAssets(assetIds: readonly string[]) {
+  assetIds.forEach((assetId, index) =>
+    setTimeout(() => downloadAsset(assetId), index * 350),
+  );
+}
+
 function copyText(text: string) {
   navigator.clipboard
     .writeText(text)
     .then(() => toast.success("Copied"))
     .catch(() => toast.error("Couldn't copy"));
+}
+
+type DecisionResult = { ok: true } | { ok: false; message: string };
+
+async function sendDecision(decision: OutputDecision): Promise<DecisionResult> {
+  try {
+    if (decision.kind === "approve-post") {
+      return await approvePostAction(decision.postId);
+    }
+    const formData = new FormData();
+    formData.set("approvalId", decision.approvalId);
+    return await (decision.kind === "approve"
+      ? approveApprovalAction(formData)
+      : rejectApprovalAction(formData));
+  } catch {
+    return { ok: false, message: "Couldn't reach the server. Try again." };
+  }
+}
+
+// Kartları sırayla karara bağlar (decisionOf): bir postun onayı mecra sayısı
+// kadar değil, tek approvePostAction çağrısıdır. Her başarılı kartta
+// `onDecided` (iyimser güncelleme); kararı olmayan kart atlanır.
+export async function decideEntries(
+  entries: readonly OutputEntry[],
+  to: OutputVerdict,
+  onDecided?: (entry: OutputEntry) => void,
+): Promise<{ done: number; failure: string | null }> {
+  let done = 0;
+  let failure: string | null = null;
+  for (const entry of entries) {
+    const decision = decisionOf(entry, to);
+    if (!decision) continue;
+    const result = await sendDecision(decision);
+    if (!result.ok) {
+      failure = result.message;
+      continue;
+    }
+    done += 1;
+    onDecided?.(entry);
+  }
+  return { done, failure };
 }
 
 export function OutputsPanel({
@@ -134,14 +195,15 @@ export function OutputsPanel({
   timezone: string;
 }) {
   // ── Veri ───────────────────────────────────────────────────────────────────
-  const [items, setItems] = useState<OutputItem[]>([]);
+  // Sunucu teslimat başına satır verir; kartlar (post başına bir) istemcide.
+  const [items, setItems] = useState<OutputDelivery[]>([]);
   const [truncated, setTruncated] = useState(false);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
   const busy = useRef(0);
 
-  const settle = useCallback((payload: OutputsPayload | null) => {
+  const settle = useCallback((payload: OutputPostsPayload | null) => {
     if (payload) {
       setItems(payload.items);
       setTruncated(payload.truncated);
@@ -178,6 +240,8 @@ export function OutputsPanel({
     };
   }, [reload]);
 
+  const entries = useMemo(() => groupOutputs(items), [items]);
+
   // ── Süzgeçler ──────────────────────────────────────────────────────────────
   const [filter, setFilter] = useState<OutputFilter>(EMPTY_OUTPUT_FILTER);
   // Panel yalnız sekme açılınca bağlanır (Base UI pasif sekmeyi render etmez).
@@ -189,38 +253,48 @@ export function OutputsPanel({
   const [limit, setLimit] = useState(PAGE);
 
   const visible = useMemo(
-    () => sortOutputs(filterOutputs(items, filter), sort),
-    [items, filter, sort],
+    () => sortOutputEntries(filterOutputEntries(entries, filter), sort),
+    [entries, filter, sort],
   );
+  // Şerit sayıları kart sayar: bir post, uyan her durumda bir kez. "All" o
+  // yüzden durumların toplamı değil, durum süzgeci olmadan uyan kartlardır.
   const phaseCounts = useMemo(
-    () => countOutputs(filterOutputs(items, filter, "phases"), (i) => i.phase),
-    [items, filter],
+    () => countOutputEntries(entries, filter, "phases", (d) => d.phase),
+    [entries, filter],
   );
-  const sourcePool = useMemo(
-    () => filterOutputs(items, filter, "sources"),
-    [items, filter],
+  const phaseTotal = useMemo(
+    () => filterOutputEntries(entries, filter, "phases").length,
+    [entries, filter],
   );
   const sourceCounts = useMemo(
-    () => countOutputs(sourcePool, (i) => i.source.key),
-    [sourcePool],
+    () => countOutputEntries(entries, filter, "sources", (d) => d.source.key),
+    [entries, filter],
   );
   const kindCounts = useMemo(
-    () => countOutputs(filterOutputs(items, filter, "kinds"), (i) => i.kind),
-    [items, filter],
+    () => countOutputEntries(entries, filter, "kinds", (d) => d.kind),
+    [entries, filter],
   );
-  // Platform şeridi: listede geçen her kaynak, en çok parçası olan önce.
+  // Platform şeridi: teslimatlarda geçen her kaynak, en çok kartı olan önce.
   const sources = useMemo(() => {
     const seen = new Map<string, CalendarSource>();
     for (const item of items) {
       if (!seen.has(item.source.key)) seen.set(item.source.key, item.source);
     }
-    const total = countOutputs(items, (i) => i.source.key);
+    const total = countOutputEntries(
+      entries,
+      EMPTY_OUTPUT_FILTER,
+      "sources",
+      (d) => d.source.key,
+    );
     return [...seen.values()].sort(
       (a, b) => (total.get(b.key) ?? 0) - (total.get(a.key) ?? 0),
     );
-  }, [items]);
+  }, [items, entries]);
 
-  const reviewable = items.filter((i) => i.phase === "review");
+  // "Needs review" şeridiyle aynı sayım: bir mecrası onay bekleyen kart.
+  const reviewable = entries.filter((entry) =>
+    entry.deliveries.some((delivery) => delivery.phase === "review"),
+  );
   const filterCount = filter.kinds.size + (filter.query.trim() ? 1 : 0);
   const anyFilter = activeOutputFilters(filter) > 0;
   const shown = visible.slice(0, limit);
@@ -228,43 +302,15 @@ export function OutputsPanel({
   // ── Onay / ret (iyimser) ───────────────────────────────────────────────────
   const [deciding, setDeciding] = useState<ReadonlySet<string>>(new Set());
   const decide = useCallback(
-    async (targets: OutputItem[], to: "APPROVED" | "REJECTED") => {
-      const ready = targets.filter((t) => t.approvalId);
+    async (targets: readonly OutputEntry[], to: OutputVerdict) => {
+      const ready = targets.filter((entry) => decisionOf(entry, to) !== null);
       if (ready.length === 0) return;
-      const ids = new Set(ready.map((t) => t.id));
+      const ids = new Set(ready.map((entry) => entry.id));
       setDeciding((prev) => new Set([...prev, ...ids]));
       busy.current += 1;
-      let done = 0;
-      let failure: string | null = null;
-      for (const target of ready) {
-        const formData = new FormData();
-        formData.set("approvalId", target.approvalId!);
-        try {
-          const result = await (to === "APPROVED"
-            ? approveApprovalAction(formData)
-            : rejectApprovalAction(formData));
-          if (!result.ok) {
-            failure = result.message;
-            continue;
-          }
-        } catch {
-          failure = "Couldn't reach the server. Try again.";
-          continue;
-        }
-        done += 1;
-        setItems((prev) =>
-          prev.map((i) =>
-            i.id === target.id
-              ? {
-                  ...i,
-                  status: to,
-                  phase: phaseOf(to, i.scheduledFor),
-                  approvalId: null,
-                }
-              : i,
-          ),
-        );
-      }
+      const { done, failure } = await decideEntries(ready, to, (entry) =>
+        setItems((prev) => applyDecision(prev, entry, to)),
+      );
       busy.current -= 1;
       setDeciding((prev) => {
         const next = new Set(prev);
@@ -284,18 +330,17 @@ export function OutputsPanel({
   // ── Çoklu seçim ────────────────────────────────────────────────────────────
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const picked = items.filter((i) => selected.has(i.id));
-  const pickedApprovable = picked.filter((i) => i.approvalId);
-  const pickedDownloadable = picked.filter((i) => i.assetId);
+  const picked = entries.filter((entry) => selected.has(entry.id));
+  const pickedApprovable = picked.filter(
+    (entry) => decisionOf(entry, "APPROVED") !== null,
+  );
+  // Postun her biçimi kendi görselidir (post 3:4, story 9:16): hepsi iner.
+  const pickedFiles = [...new Set(picked.flatMap((entry) => assetsOf(entry)))];
+  const allPicked =
+    visible.length > 0 && visible.every((entry) => selected.has(entry.id));
   const stopSelecting = () => {
     setSelecting(false);
     setSelected(new Set());
-  };
-  const bulkDownload = () => {
-    // Tarayıcı art arda indirmeleri engellemesin diye aralıklı.
-    pickedDownloadable.forEach((item, index) =>
-      setTimeout(() => downloadAsset(item.assetId!), index * 350),
-    );
   };
 
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -318,7 +363,7 @@ export function OutputsPanel({
             Made for your brand.
           </div>
         </div>
-        {items.length > 0 ? (
+        {entries.length > 0 ? (
           <button
             type="button"
             aria-pressed={selecting}
@@ -384,7 +429,7 @@ export function OutputsPanel({
           onClick={() => setFilter((prev) => ({ ...prev, phases: new Set() }))}
         >
           All
-          <Count>{[...phaseCounts.values()].reduce((a, b) => a + b, 0)}</Count>
+          <Count>{phaseTotal}</Count>
         </Chip>
         {PHASE_ORDER.filter(
           (phase) => phaseCounts.has(phase) || filter.phases.has(phase),
@@ -540,7 +585,7 @@ export function OutputsPanel({
           style={{ color: "var(--ws-text-3)" }}
         >
           <span>
-            {visible.length} of {items.length}
+            {visible.length} of {entries.length}
             {filterCount > 0 && !showFilters
               ? ` · ${filterCount} more filter${filterCount === 1 ? "" : "s"}`
               : ""}
@@ -600,12 +645,12 @@ export function OutputsPanel({
               className="text-xs font-medium"
               style={{ color: "var(--ws-text)" }}
             >
-              {items.length === 0
+              {entries.length === 0
                 ? "It starts with an idea."
                 : "Nothing matches these filters."}
             </p>
             <p className="text-[11px]" style={{ color: "var(--ws-text-3)" }}>
-              {items.length === 0
+              {entries.length === 0
                 ? "Ask Agentelse to create something."
                 : "Try another status, platform or search."}
             </p>
@@ -614,18 +659,18 @@ export function OutputsPanel({
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3">
-            {shown.map((item) => (
+            {shown.map((entry) => (
               <OutputCard
-                key={item.id}
-                item={item}
+                key={entry.id}
+                item={entry}
                 projectId={projectId}
                 todayKey={todayKey}
                 selecting={selecting}
-                selected={selected.has(item.id)}
-                deciding={deciding.has(item.id)}
-                onOpen={() => setPreviewId(item.id)}
-                onToggle={() => setSelected((prev) => toggled(prev, item.id))}
-                onDecide={(to) => void decide([item], to)}
+                selected={selected.has(entry.id)}
+                deciding={deciding.has(entry.id)}
+                onOpen={setPreviewId}
+                onToggle={() => setSelected((prev) => toggled(prev, entry.id))}
+                onDecide={(to) => void decide([entry], to)}
               />
             ))}
           </div>
@@ -647,7 +692,7 @@ export function OutputsPanel({
               className="text-center text-[10.5px]"
               style={{ color: "var(--ws-text-3)" }}
             >
-              Showing your latest {items.length} outputs.
+              Showing your latest {entries.length} outputs.
             </p>
           ) : null}
         </>
@@ -666,23 +711,19 @@ export function OutputsPanel({
             className="mr-auto pl-1 text-[11px] font-medium"
             style={{ color: "var(--ws-text)" }}
           >
-            {selected.size} selected
+            {picked.length} selected
           </span>
           <button
             type="button"
             onClick={() =>
               setSelected(
-                selected.size === visible.length
-                  ? new Set()
-                  : new Set(visible.map((i) => i.id)),
+                allPicked ? new Set() : new Set(visible.map((i) => i.id)),
               )
             }
             className="rounded-lg px-2 py-1 text-[11px] font-medium hover:bg-[var(--ws-hover)]"
             style={{ color: "var(--ws-text-2)" }}
           >
-            {selected.size === visible.length && visible.length > 0
-              ? "None"
-              : "All"}
+            {allPicked ? "None" : "All"}
           </button>
           <button
             type="button"
@@ -701,15 +742,13 @@ export function OutputsPanel({
           </button>
           <button
             type="button"
-            disabled={pickedDownloadable.length === 0}
-            onClick={bulkDownload}
+            disabled={pickedFiles.length === 0}
+            onClick={() => downloadAssets(pickedFiles)}
             className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium disabled:opacity-40"
             style={{ borderColor: "var(--ws-border)", color: "var(--ws-text)" }}
           >
             <Download className="size-3" /> Download
-            {pickedDownloadable.length > 0
-              ? ` ${pickedDownloadable.length}`
-              : ""}
+            {pickedFiles.length > 0 ? ` ${pickedFiles.length}` : ""}
           </button>
         </div>
       ) : null}
@@ -790,7 +829,7 @@ function FilterGroup({
   );
 }
 
-function whenLabel(item: OutputItem, todayKey: string): string | null {
+function whenLabel(item: OutputDelivery, todayKey: string): string | null {
   if (!item.scheduledLocal) return null;
   const day = item.scheduledLocal.slice(0, 10);
   const time = item.scheduledLocal.slice(11, 16);
@@ -798,7 +837,17 @@ function whenLabel(item: OutputItem, todayKey: string): string | null {
   return `${relative ?? formatDayLong(day).replace(/^\w+, /, "")} · ${time}`;
 }
 
-function OutputCard({
+// Postun ekran okuyucu metni: her mecra ve kendi durumu.
+function deliveriesText(deliveries: readonly OutputDelivery[]): string {
+  return deliveries
+    .map((delivery) => `${delivery.label}: ${PHASE_META[delivery.phase].label}`)
+    .join("; ");
+}
+
+// Bir kart: bir post (mecra teslimatları birlikte) ya da postu olmayan tek
+// parça. Kartın onayı postu onaylar; ret yalnız tek mecralı kartta, çok
+// mecralı postun bir mecrası simgesine dokunup kendi önizlemesinde reddedilir.
+export function OutputCard({
   item,
   projectId,
   todayKey,
@@ -809,19 +858,28 @@ function OutputCard({
   onToggle,
   onDecide,
 }: {
-  item: OutputItem;
+  item: OutputEntry;
   projectId: string;
   todayKey: string;
   selecting: boolean;
   selected: boolean;
   deciding: boolean;
-  onOpen: () => void;
+  // Açılacak parça: kartın kendisi (postun ilk mecrası) ya da simgesine
+  // dokunulan mecra.
+  onOpen: (creativeId: string) => void;
   onToggle: () => void;
-  onDecide: (to: "APPROVED" | "REJECTED") => void;
+  onDecide: (to: OutputVerdict) => void;
 }) {
   const phase = PHASE_META[item.phase];
   const when = whenLabel(item, todayKey);
-  const primary = selecting ? onToggle : onOpen;
+  const multi = item.deliveries.length > 1;
+  const files = assetsOf(item);
+  const canApprove = decisionOf(item, "APPROVED") !== null;
+  const canReject = decisionOf(item, "REJECTED") !== null;
+  // Çok mecralı postun erişilebilir adı her mecrayı ve durumunu sayar.
+  const name = multi
+    ? `${headline(item)}. ${deliveriesText(item.deliveries)}`
+    : headline(item);
 
   return (
     <div
@@ -833,10 +891,8 @@ function OutputCard({
     >
       <button
         type="button"
-        onClick={primary}
-        aria-label={
-          selecting ? `Select ${headline(item)}` : `Open ${headline(item)}`
-        }
+        onClick={selecting ? onToggle : () => onOpen(item.id)}
+        aria-label={selecting ? `Select ${name}` : `Open ${name}`}
         aria-pressed={selecting ? selected : undefined}
         className="relative block aspect-[4/5] w-full overflow-hidden text-left"
         style={{ background: "var(--ws-surface-2)" }}
@@ -862,11 +918,15 @@ function OutputCard({
           </span>
         ) : null}
 
-        <SourceMark
-          source={item.source}
-          decorative
-          className="absolute top-2 left-2 size-5 rounded-md shadow-sm ring-1 ring-black/5"
-        />
+        {/* Tek mecralı kartta mecra görselin köşesinde; postun mecraları
+            aşağıda simge sırasıyla. */}
+        {multi ? null : (
+          <SourceMark
+            source={item.source}
+            decorative
+            className="absolute top-2 left-2 size-5 rounded-md shadow-sm ring-1 ring-black/5"
+          />
+        )}
         {item.version && item.version > 1 ? (
           <span
             className="absolute bottom-2 left-2 rounded-full px-1.5 py-px text-[9.5px] font-medium backdrop-blur-sm"
@@ -887,17 +947,21 @@ function OutputCard({
       </button>
 
       {/* Hızlı eylemler: fare üstündeyken ya da klavyeyle odaklanınca */}
-      {!selecting && (item.assetId || item.text || item.scheduledFor) ? (
+      {!selecting && (item.text || files.length > 0 || item.scheduledFor) ? (
         <div className="absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
           {item.text ? (
             <QuickAction label="Copy text" onClick={() => copyText(item.text!)}>
               <Copy className="size-3" />
             </QuickAction>
           ) : null}
-          {item.assetId ? (
+          {files.length > 0 ? (
             <QuickAction
-              label="Download image"
-              onClick={() => downloadAsset(item.assetId!)}
+              label={
+                files.length > 1
+                  ? `Download ${files.length} images`
+                  : "Download image"
+              }
+              onClick={() => downloadAssets(files)}
             >
               <Download className="size-3" />
             </QuickAction>
@@ -916,12 +980,19 @@ function OutputCard({
       ) : null}
 
       <div className="flex flex-col gap-0.5 p-2.5">
-        <span
-          className="truncate text-[10px] font-medium tracking-wide uppercase"
-          style={{ color: "var(--ws-text-3)" }}
-        >
-          {item.label}
-        </span>
+        {multi ? (
+          <ChannelMarks
+            deliveries={item.deliveries}
+            onOpen={selecting ? undefined : onOpen}
+          />
+        ) : (
+          <span
+            className="truncate text-[10px] font-medium tracking-wide uppercase"
+            style={{ color: "var(--ws-text-3)" }}
+          >
+            {item.label}
+          </span>
+        )}
         <span
           className="truncate text-xs font-medium"
           style={{ color: "var(--ws-text)" }}
@@ -942,12 +1013,17 @@ function OutputCard({
           {when ? <span className="truncate">· {when}</span> : null}
         </span>
 
-        {item.approvalId && !selecting ? (
+        {canApprove && !selecting ? (
           <div className="mt-1.5 flex gap-1">
             <button
               type="button"
               disabled={deciding}
               onClick={() => onDecide("APPROVED")}
+              title={
+                multi
+                  ? "Approves every waiting channel of this post"
+                  : undefined
+              }
               className="inline-flex h-6 flex-1 items-center justify-center gap-1 rounded-md text-[10.5px] font-medium disabled:opacity-50"
               style={{
                 background: "var(--ws-accent)",
@@ -959,26 +1035,90 @@ function OutputCard({
               ) : (
                 <Check className="size-3" />
               )}
-              Approve
+              {multi ? "Approve post" : "Approve"}
             </button>
-            <button
-              type="button"
-              disabled={deciding}
-              onClick={() => onDecide("REJECTED")}
-              aria-label="Reject"
-              title="Reject"
-              className="inline-flex h-6 items-center justify-center rounded-md border px-1.5 disabled:opacity-50"
-              style={{
-                borderColor: "var(--ws-border)",
-                color: "var(--ws-text-3)",
-              }}
-            >
-              <X className="size-3" />
-            </button>
+            {canReject ? (
+              <button
+                type="button"
+                disabled={deciding}
+                onClick={() => onDecide("REJECTED")}
+                aria-label="Reject"
+                title="Reject"
+                className="inline-flex h-6 items-center justify-center rounded-md border px-1.5 disabled:opacity-50"
+                style={{
+                  borderColor: "var(--ws-border)",
+                  color: "var(--ws-text-3)",
+                }}
+              >
+                <X className="size-3" />
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
     </div>
+  );
+}
+
+// Postun mecraları: her teslimatın simgesi, köşesinde o teslimatın kendi
+// durumunun küçük noktası (takvimdeki DeliveryMarks gibi). Story yuvarlak
+// simgeyle aynı mecradaki posttan ayrılır. Dokununca o mecra kendi
+// önizlemesinde açılır (metni, uyarlanmış görseli, tek başına ret).
+function ChannelMarks({
+  deliveries,
+  onOpen,
+}: {
+  deliveries: readonly OutputDelivery[];
+  // Yoksa (seçim kipi) simgeler yalnız gösterilir.
+  onOpen?: (creativeId: string) => void;
+}) {
+  return (
+    <span className="-mx-0.5 -my-0.5 flex min-w-0 flex-wrap items-center gap-0.5">
+      {deliveries.map((delivery) => {
+        const label = `${delivery.label} · ${PHASE_META[delivery.phase].label}`;
+        const mark = (
+          <>
+            <SourceMark
+              source={delivery.source}
+              decorative
+              className={cn(
+                "size-4 rounded",
+                delivery.kind === "story" && "rounded-full",
+              )}
+            />
+            <span
+              aria-hidden
+              className="absolute right-0 bottom-0 size-1.5 rounded-full ring-1 ring-[var(--ws-surface)]"
+              style={{
+                background: PHASE_COLOR[PHASE_META[delivery.phase].tone],
+              }}
+            />
+          </>
+        );
+        return onOpen ? (
+          <button
+            key={delivery.id}
+            type="button"
+            data-delivery={delivery.id}
+            title={label}
+            aria-label={`Open ${label}`}
+            onClick={() => onOpen(delivery.id)}
+            className="relative inline-flex rounded-md p-0.5 transition-colors hover:bg-[var(--ws-hover)]"
+          >
+            {mark}
+          </button>
+        ) : (
+          <span
+            key={delivery.id}
+            data-delivery={delivery.id}
+            title={label}
+            className="relative inline-flex p-0.5"
+          >
+            {mark}
+          </span>
+        );
+      })}
+    </span>
   );
 }
 

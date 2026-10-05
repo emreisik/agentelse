@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { Check, ChevronDown, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useId, useState } from "react";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import {
   ChannelMark,
   ConnectionDot,
 } from "@/components/commands/channel-badge";
+import { WsStatusPill } from "@/components/commands/ws-event-card";
 import { Button } from "@/components/ui/button";
 import { TimePicker } from "@/components/ui/date-time-picker";
 import { StageDot } from "@/components/works/stage-dot";
@@ -21,11 +22,16 @@ import { cn } from "@/lib/utils";
 import {
   approachOf,
   dayNumberOf,
+  deliveryLabelOf,
   formatLineOf,
+  isLiveDelivery,
+  leaveOutToggleOf,
+  liveStagesOf,
   MOVABLE_STAGES,
   postStateOf,
   weekdayOf,
   zoneName,
+  type DeliveryTab,
   type PieceView,
   type PostState,
 } from "@/lib/works/plan-pane";
@@ -37,9 +43,11 @@ import { PLAN_PANE_COPY as COPY } from "./copy";
 import { MoveDay } from "./move-day";
 import { assetUrl } from "@/lib/asset-url";
 
-// One post of the plan as a card: its day, its idea, where it stands; opened it
-// shows the idea per channel and, once the plan is made, each piece's picture,
-// text and publish time to edit. ContentPlanPane owns the state and the actions.
+// One post of the plan as a card (docs/works.md "Posts"): its day, its idea,
+// where it stands; opened it shows the post per channel (each channel a tab, one
+// can be left out) and, once the plan is made, each channel's picture, text and
+// publish time to edit, with one Approve for the whole post. ContentPlanPane
+// owns the state and the actions.
 
 // A new idea for the post: the button on its card, and the idea that is
 // suggested instead while the person looks at it. Nothing changes until they
@@ -62,31 +70,14 @@ export type NewIdea = {
   onKeep: () => void;
 };
 
-export type CardTab = {
-  channel: ChannelKey;
-  formatKey?: string;
-  // Once the plan is saved: the piece made for this channel.
-  piece?: PieceView;
-};
+// One channel of the post: its format, the piece made for it once the plan is
+// saved, and whether it is left out of the post.
+export type CardTab = DeliveryTab;
 
 // A channel can have two pieces of one post (an Instagram post and its Story):
 // a tab is its channel and format.
 function tabKeyOf(tab: CardTab): string {
   return `${tab.channel}:${tab.formatKey ?? ""}`;
-}
-
-// "Instagram", or "Instagram Story" next to the post's own Instagram tab.
-function tabLabelOf(tab: CardTab, tabs: readonly CardTab[]): string {
-  const name = CHANNELS[tab.channel].label;
-  const twin = tabs.some(
-    (other) => other !== tab && other.channel === tab.channel,
-  );
-  const format = tab.formatKey
-    ? CHANNELS[tab.channel].formats.find((f) => f.key === tab.formatKey)
-    : undefined;
-  return twin && format && format !== CHANNELS[tab.channel].formats[0]
-    ? `${name} ${format.label}`
-    : name;
 }
 
 const STATE_COLOR: Record<PostState, string> = {
@@ -118,6 +109,8 @@ export function PostCard({
   move,
   newIdea,
   edit,
+  onLeaveOut,
+  approve,
 }: {
   topic: string;
   // What the post does for the plan; the subtitle's first part.
@@ -144,16 +137,25 @@ export function PostCard({
   newIdea?: NewIdea;
   // Only while the plan is made and the Work is open.
   edit?: { projectId: string; workId: string; active: boolean };
+  // A channel left out of the post or taken back in (each tab's quiet toggle);
+  // absent when nothing can change.
+  onLeaveOut?: (tab: CardTab) => void;
+  // One Approve for the whole post; present while it can be approved.
+  approve?: { onApprove: () => void; busy: boolean };
 }) {
   const [picked, setPicked] = useState<string | null>(null);
   const tab = tabs.find((entry) => tabKeyOf(entry) === picked) ?? tabs[0];
   const panelId = useId();
+  // The channels the post goes to: a left-out (or gone) one is not counted.
+  const live = tabs.filter(isLiveDelivery).length;
   const subtitle = [
     purpose ?? (tab ? formatLabelOf(tab) : ""),
-    COPY.channelCount(new Set(tabs.map((entry) => entry.channel)).size),
+    COPY.channelCount(live),
   ]
     .filter(Boolean)
     .join(" · ");
+  const toggle = tab && onLeaveOut ? leaveOutToggleOf(tab, tabs) : null;
+  const tabLabel = tab ? deliveryLabelOf(tab, tabs) : "";
 
   return (
     <li
@@ -276,11 +278,13 @@ export function PostCard({
                         type="button"
                         role="tab"
                         aria-selected={on}
+                        data-left-out={entry.leftOut ? "" : undefined}
                         onClick={() => setPicked(tabKeyOf(entry))}
                         className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                         style={{
                           background: on ? "var(--ws-hover)" : "transparent",
                           color: on ? "var(--ws-text)" : "var(--ws-text-2)",
+                          opacity: entry.leftOut ? 0.45 : 1,
                         }}
                       >
                         <ChannelMark
@@ -288,8 +292,10 @@ export function PostCard({
                           decorative
                           className="size-4"
                         />
-                        {tabLabelOf(entry, tabs)}
-                        {entry.piece?.stage ? (
+                        {deliveryLabelOf(entry, tabs)}
+                        {entry.leftOut ? (
+                          <span className="sr-only">{COPY.leftOutTab}</span>
+                        ) : entry.piece?.stage ? (
                           <StageDot stage={entry.piece.stage} />
                         ) : connected.includes(entry.channel) ? (
                           <ConnectionDot state="connected" />
@@ -305,21 +311,60 @@ export function PostCard({
                 className="space-y-3 border-t pt-3"
                 style={{ borderColor: "var(--ws-border)" }}
               >
-                <div className="flex items-center justify-between gap-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
                   <span
                     className="font-medium"
                     style={{ color: "var(--ws-text)" }}
                   >
                     {formatLabelOf(tab)}
                   </span>
-                  <span style={{ color: "var(--ws-text-2)" }}>
-                    {connected.includes(tab.channel)
-                      ? (connections?.[tab.channel]?.accountLabel ??
-                        COPY.connected)
-                      : COPY.notConnected}
+                  <span className="flex min-w-0 items-center gap-2">
+                    {tab.leftOut ? (
+                      <WsStatusPill label={COPY.leftOut} />
+                    ) : (
+                      <span
+                        className="truncate"
+                        style={{ color: "var(--ws-text-2)" }}
+                      >
+                        {connected.includes(tab.channel)
+                          ? (connections?.[tab.channel]?.accountLabel ??
+                            COPY.connected)
+                          : COPY.notConnected}
+                      </span>
+                    )}
+                    {toggle && onLeaveOut ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        data-leave-out={toggle}
+                        aria-label={
+                          toggle === "include"
+                            ? COPY.includeAria(tabLabel)
+                            : COPY.leaveOutAria(tabLabel)
+                        }
+                        onClick={() => onLeaveOut(tab)}
+                        className="min-h-8 rounded-md px-2 text-xs"
+                        style={{
+                          color:
+                            toggle === "include"
+                              ? "var(--ws-text)"
+                              : "var(--ws-text-2)",
+                        }}
+                      >
+                        {toggle === "include" ? COPY.include : COPY.leaveOut}
+                      </Button>
+                    ) : null}
                   </span>
                 </div>
-                {step === "content" && tab.piece ? (
+                {tab.leftOut ? (
+                  <p
+                    className="text-[13px] leading-relaxed"
+                    style={{ color: "var(--ws-text-2)" }}
+                  >
+                    {COPY.leftOutNote}
+                  </p>
+                ) : step === "content" && tab.piece ? (
                   <PieceEditor
                     key={tab.piece.creativeId ?? tabKeyOf(tab)}
                     piece={tab.piece}
@@ -335,6 +380,32 @@ export function PostCard({
                 )}
               </div>
             </>
+          ) : null}
+
+          {approve ? (
+            <div
+              data-approve-post
+              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t pt-3"
+              style={{ borderColor: "var(--ws-border)" }}
+            >
+              <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+                {COPY.postReady(live)}
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                className="min-h-9 rounded-lg px-3"
+                disabled={approve.busy}
+                onClick={approve.onApprove}
+              >
+                {approve.busy ? (
+                  <Loader2 aria-hidden className="size-4 animate-spin" />
+                ) : (
+                  <Check aria-hidden className="size-4" />
+                )}
+                {approve.busy ? COPY.approving : COPY.approvePost}
+              </Button>
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -782,7 +853,8 @@ function TimeRow({
   );
 }
 
-// A state of the post as the aggregated stages of its tabs.
+// A state of the post as the aggregated stages of its tabs (a channel left out
+// of it does not count).
 export function stateOfTabs(tabs: readonly CardTab[]): PostState {
-  return postStateOf(tabs.map((tab) => tab.piece?.stage));
+  return postStateOf(liveStagesOf(tabs));
 }

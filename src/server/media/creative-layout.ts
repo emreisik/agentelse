@@ -6,6 +6,7 @@ import {
   layoutToTemplateConfig,
   resolveLayout,
   type LayoutTemplate,
+  type TextPlacement,
 } from "@/lib/layout-templates";
 import { DEFAULT_KIT_TEMPLATE } from "@/lib/brand-kit";
 import type { BrandVisualIdentityContext } from "@/server/media/brand-style-context";
@@ -33,6 +34,9 @@ export type CreativeLayoutPlan = {
   composition: string | undefined;
   // How the on-image headline is set; only when a headline is requested.
   headlinePlacement: string | undefined;
+  // The layout's headline zone, when it has one: where the post's words are
+  // typeset (creative-text.ts). Null = the layout carries no words.
+  textPlacement: TextPlacement | null;
   // What to record on the creative version.
   meta: { id: string; name: string } | null;
 };
@@ -59,6 +63,7 @@ export function planCreativeLayout(input: {
       reservedZones: undefined,
       composition: undefined,
       headlinePlacement: input.hasHeadline ? FALLBACK_HEADLINE_PLACEMENT : undefined,
+      textPlacement: null,
       meta: null,
     };
   }
@@ -76,6 +81,7 @@ export function planCreativeLayout(input: {
       reservedZones: layoutReservedZones(classic, { hasLogo: input.hasLogo }),
       composition: undefined,
       headlinePlacement: undefined,
+      textPlacement: null,
       meta: null,
     };
   }
@@ -102,6 +108,14 @@ export function planCreativeLayout(input: {
         ? headlinePlacement(layout.headline)
         : FALLBACK_HEADLINE_PLACEMENT
       : undefined,
+    textPlacement: layout.headline.enabled
+      ? {
+          zone: layout.headline.zone,
+          align: layout.headline.align,
+          maxLines: layout.headline.maxLines,
+          scale: layout.headline.scale,
+        }
+      : null,
     meta: { id: layout.id, name: layout.name },
   };
 }

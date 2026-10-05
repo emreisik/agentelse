@@ -63,21 +63,26 @@ export const OutboxRepository = {
     // same PENDING row, only one can flip it to PROCESSING and receive it in
     // its claimed batch. SKIP LOCKED raw SQL would also work, but this keeps
     // the repository on Prisma's typed API and matches AgencyTrigger claims.
-    const claimed: Array<
-      (typeof candidates)[number] & { reclaimed: boolean }
-    > = [];
-    for (const event of candidates) {
-      const result = await prisma.outboxEvent.updateMany({
-        where: {
-          id: event.id,
-          status: event.status,
-          nextAttemptAt: { lte: claimCutoff },
-          ...(eventType ? { eventType } : {}),
-        },
-        data: { status: "PROCESSING", nextAttemptAt: leaseUntil },
-      });
-
-      if (result.count === 1) {
+    // The swaps go out together (each one is atomic on its own row; one after
+    // another they cost a round trip per event on every tick). The batch keeps
+    // the candidates' order.
+    const results = await Promise.all(
+      candidates.map((event) =>
+        prisma.outboxEvent.updateMany({
+          where: {
+            id: event.id,
+            status: event.status,
+            nextAttemptAt: { lte: claimCutoff },
+            ...(eventType ? { eventType } : {}),
+          },
+          data: { status: "PROCESSING", nextAttemptAt: leaseUntil },
+        }),
+      ),
+    );
+    const claimed: Array<(typeof candidates)[number] & { reclaimed: boolean }> =
+      [];
+    candidates.forEach((event, index) => {
+      if (results[index]?.count === 1) {
         claimed.push({
           ...event,
           status: "PROCESSING",
@@ -85,7 +90,7 @@ export const OutboxRepository = {
           reclaimed: event.status === "PROCESSING",
         });
       }
-    }
+    });
 
     return claimed;
   },

@@ -173,13 +173,17 @@ describe("propose_plan_options (W41 options-tool)", () => {
     expect(card.state).toBe("open");
     expect(card.goal).toBe("awareness");
     expect(card.brandCheck).toEqual({ state: "skipped" });
+    // One slot per post, on the first social channel; every post also goes
+    // to LinkedIn (the card's platforms), so LinkedIn has no slot of its own.
     const slots = card.slots as Loose[];
     expect(slots).toHaveLength(3);
     expect(slots.map((s) => s.formatKey)).toEqual([
       "instagram.post",
-      "linkedin.post",
+      "instagram.post",
       "instagram.post",
     ]);
+    expect(card.platforms).toEqual(["instagram", "linkedin"]);
+    expect(card).not.toHaveProperty("instagramStory");
     const options = card.options as Loose[];
     expect(options.map((o) => o.id)).toEqual(["a", "b"]);
     expect(options[0]!.basis).toBe("Clients ask how");
@@ -191,6 +195,17 @@ describe("propose_plan_options (W41 options-tool)", () => {
       workId: "work-1",
       kinds: ["content-plan-options"],
     });
+  });
+
+  it("carries the brief's Instagram Story switch to the card", async () => {
+    const out = await run(
+      optionsTool,
+      optionsArgs(),
+      ctx({ message: serializePlanBrief(brief({ story: true })) }),
+    );
+    const card = out.card as Loose;
+    expect(card.platforms).toEqual(["instagram", "linkedin"]);
+    expect(card.instagramStory).toBe(true);
   });
 
   it("refuses more than MAX_OPTION_SLOTS posts", async () => {
@@ -209,14 +224,20 @@ describe("propose_plan_options (W41 options-tool)", () => {
     const args = optionsArgs({
       options: [
         { label: "One", angle: "Angle one", ideas: [idea(1), idea(2)] },
-        { label: "Two", angle: "Angle two", ideas: [idea(3), idea(4), idea(5)] },
+        {
+          label: "Two",
+          angle: "Angle two",
+          ideas: [idea(3), idea(4), idea(5)],
+        },
       ],
     });
     const out = await run(optionsTool, args, ctx());
     const result = out.result as Loose;
     expect(out.card).toBeUndefined();
     expect(result.error).toContain("exactly 3 ideas");
-    expect(result.note).toContain("1. Fri 2 Oct 10:00 · instagram.post");
+    expect(result.note).toContain(
+      "1. Fri 2 Oct 10:00 · instagram.post · also on LinkedIn",
+    );
     expect(supersedeOpenPlanCards).not.toHaveBeenCalled();
   });
 
@@ -260,7 +281,7 @@ describe("propose_plan_options (W41 options-tool)", () => {
       ctx({ getBrandRules: async () => rules("garanti") }),
     );
     expect((out.result as Loose).error).toContain(
-      "option b idea 2 (2026-10-05, linkedin.post)",
+      "option b idea 2 (2026-10-05, instagram.post)",
     );
   });
 });

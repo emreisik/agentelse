@@ -4,6 +4,7 @@ import type { Prisma, WorkStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import type { ChannelKey } from "@/lib/content-channels";
+import { parseModuleKey, type ModuleKey } from "@/lib/modules/catalog";
 import {
   TODAY_WORK_PREFIX,
   WORK_DEFAULT_TITLE,
@@ -26,6 +27,7 @@ type WorkRow = {
   status: WorkStatus;
   channels: Prisma.JsonValue;
   acknowledgedUnconnected: Prisma.JsonValue;
+  module: string | null;
   lastActivityAt: Date;
 };
 
@@ -36,6 +38,7 @@ const SELECT = {
   status: true,
   channels: true,
   acknowledgedUnconnected: true,
+  module: true,
   lastActivityAt: true,
 } as const;
 
@@ -67,6 +70,8 @@ export function toWorkView(row: WorkRow): WorkView {
     status: row.status,
     channels: parseChannelKeys(row.channels),
     acknowledgedUnconnected: parseChannelKeys(row.acknowledgedUnconnected),
+    // A plain string column: anything but a known module is a general chat.
+    module: parseModuleKey(row.module),
     lastActivityAt: row.lastActivityAt.toISOString(),
   };
 }
@@ -110,6 +115,10 @@ export const WorkRepository = {
   // waits, then finds the Work the first one made. All reads and writes use the
   // transaction's own client (not the global one), so the lock and the rows
   // always share one connection.
+  //
+  // `module` is what the new chat is for (a module's start, src/lib/modules);
+  // none is a general chat. A reused blank Work takes it too: a plain New Chat
+  // tap turns an empty module chat back into a general one.
   async createOrReuseBlank(input: {
     workspaceId: string;
     projectId: string;
@@ -117,7 +126,9 @@ export const WorkRepository = {
     channels?: ChannelKey[];
     acknowledgedUnconnected?: ChannelKey[];
     currentWorkId?: string;
+    module?: ModuleKey | null;
   }): Promise<{ work: WorkView; reused: boolean; archived: number }> {
+    const moduleKey = input.module ?? null;
     return prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.projectId}:blank-work`}))`;
 
@@ -154,6 +165,7 @@ export const WorkRepository = {
           where: { AND: [blankWhere, { id: blank.id }] },
           data: {
             lastActivityAt: new Date(),
+            module: moduleKey,
             ...(channels.length > 0
               ? {
                   channels,
@@ -180,6 +192,7 @@ export const WorkRepository = {
           title: WORK_DEFAULT_TITLE,
           channels: input.channels ?? [],
           acknowledgedUnconnected: input.acknowledgedUnconnected ?? [],
+          module: moduleKey,
         },
         select: SELECT,
       });
@@ -194,6 +207,22 @@ export const WorkRepository = {
       where: { AND: [blankOf(projectId), { id: workId }] },
     });
     return count > 0;
+  },
+
+  // The New Chat screen's choice of module (null: back to a general chat). One
+  // conditional write on the isUntouched rule: once a chat has started, it
+  // keeps what it is for. false = nothing was written (gone, started, renamed,
+  // completed, a Today Work or another project's).
+  async setModule(
+    projectId: string,
+    workId: string,
+    module: ModuleKey | null,
+  ): Promise<boolean> {
+    const result = await prisma.work.updateMany({
+      where: { AND: [blankOf(projectId), { id: workId }] },
+      data: { module },
+    });
+    return result.count > 0;
   },
 
   async get(projectId: string, workId: string): Promise<WorkView | null> {

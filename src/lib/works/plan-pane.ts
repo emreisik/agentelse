@@ -4,7 +4,11 @@ import {
   type ChannelKey,
 } from "@/lib/content-channels";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
-import type { PlanItemStage } from "@/lib/journey";
+import {
+  MAX_POSTS_PER_RUN,
+  selectProductionBatch,
+  type PlanItemStage,
+} from "@/lib/journey";
 import { mondayOf, addDaysToKey } from "@/lib/content-plan-view";
 import type { DayPreset } from "@/lib/date-picker";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
@@ -151,6 +155,10 @@ export type PieceView = {
   text?: string;
   // "YYYY-MM-DDTHH:mm" in the plan's zone.
   when?: string;
+  // The Post this piece is a channel of (absent on plans saved before posts
+  // existed), and whether the channel is left out of it.
+  postId?: string;
+  excluded?: boolean;
 };
 
 type PlanItem = PlanCard["items"][number];
@@ -173,8 +181,139 @@ export function pieceOf(
           assetId: slot.assetId,
           text: slot.text,
           when: slot.when,
+          ...(slot.postId ? { postId: slot.postId } : {}),
+          ...(slot.excluded ? { excluded: true } : {}),
         }
       : {}),
+  };
+}
+
+// ---- one post, its deliveries ----------------------------------------------------
+
+// One delivery of a post as a tab of its card: its channel and format, the
+// piece once the plan is made, and whether it is left out of the post (a
+// draft skips its format; a made plan excludes its piece).
+export type DeliveryTab = {
+  channel: ChannelKey;
+  formatKey?: string;
+  piece?: PieceView;
+  leftOut?: boolean;
+};
+
+// "Instagram", or "Instagram Story" next to the post's own Instagram delivery.
+export function deliveryLabelOf(
+  tab: { channel: ChannelKey; formatKey?: string },
+  tabs: readonly { channel: ChannelKey; formatKey?: string }[],
+): string {
+  const name = CHANNELS[tab.channel].label;
+  const twin = tabs.some(
+    (other) =>
+      other.channel === tab.channel && other.formatKey !== tab.formatKey,
+  );
+  const format = tab.formatKey
+    ? resolveFormat(tab.channel, tab.formatKey)
+    : undefined;
+  return twin && format && format !== CHANNELS[tab.channel].formats[0]
+    ? `${name} ${format.label}`
+    : name;
+}
+
+// A delivery the post still has: not left out, and not gone (a made plan's
+// piece whose record was archived since: its slot is empty, and the server no
+// longer counts it either).
+export function isLiveDelivery(tab: DeliveryTab): boolean {
+  return !tab.leftOut && (!tab.piece || !!tab.piece.creativeId);
+}
+
+// The stages of the deliveries a post still has.
+export function liveStagesOf(
+  tabs: readonly DeliveryTab[],
+): (PlanItemStage | undefined)[] {
+  return tabs.filter(isLiveDelivery).map((tab) => tab.piece?.stage);
+}
+
+const CONTENT_STAGES: ReadonlySet<PlanItemStage> = new Set([
+  "IN_REVIEW",
+  "APPROVED",
+  "PUBLISHED",
+]);
+
+// A post is made once every delivery left in it has content.
+export function isPostMade(
+  stages: readonly (PlanItemStage | undefined)[],
+): boolean {
+  return (
+    stages.length > 0 &&
+    stages.every((stage) => !!stage && CONTENT_STAGES.has(stage))
+  );
+}
+
+// "Approve post": everything left in the post is made and something of it
+// waits for a decision.
+export function canApprovePost(
+  stages: readonly (PlanItemStage | undefined)[],
+): boolean {
+  return isPostMade(stages) && stages.includes("IN_REVIEW");
+}
+
+// What a delivery's quiet toggle offers: take a left-out one back in, or leave
+// one out while another stays (a post keeps at least one). A made piece needs
+// its Post (a plan saved before posts has none) and stays as it is while it is
+// being made or once it is out.
+export function leaveOutToggleOf(
+  tab: DeliveryTab,
+  tabs: readonly DeliveryTab[],
+): "leave" | "include" | null {
+  const piece = tab.piece;
+  if (piece) {
+    if (!piece.creativeId || !piece.postId) return null;
+    if (piece.stage === "PUBLISHED" || piece.stage === "PRODUCING") return null;
+  }
+  if (tab.leftOut) return "include";
+  return tabs.filter(isLiveDelivery).length > 1 ? "leave" : null;
+}
+
+// ---- what one "Make" tap makes ---------------------------------------------------
+
+export type RunPiece = {
+  id: string;
+  // The post the piece is a channel of (its Post, or its day, time and idea).
+  post: string;
+  stage: PlanItemStage;
+  date: string;
+};
+
+// The posts one tap makes, as the plan run picks them (plan-run.ts): the
+// pieces still to make of the earliest week (selectProductionBatch), taken as
+// whole posts, at most MAX_POSTS_PER_RUN of them. `ids`: every piece of those
+// posts still to make.
+export function nextRunOf(pieces: readonly RunPiece[]): {
+  posts: number;
+  ids: string[];
+} {
+  const postOf = new Map(pieces.map((piece) => [piece.id, piece.post]));
+  const batch = selectProductionBatch(
+    pieces.map((piece) => ({
+      id: piece.id,
+      planId: "plan",
+      stage: piece.stage,
+      date: piece.date,
+    })),
+  );
+  const posts = [...new Set(batch.flatMap((id) => postOf.get(id) ?? []))].slice(
+    0,
+    MAX_POSTS_PER_RUN,
+  );
+  const chosen = new Set(posts);
+  return {
+    posts: posts.length,
+    ids: pieces
+      .filter(
+        (piece) =>
+          chosen.has(piece.post) &&
+          (piece.stage === "PLANNED" || piece.stage === "FAILED"),
+      )
+      .map((piece) => piece.id),
   };
 }
 
@@ -324,9 +463,7 @@ export const MAX_DAYS_AHEAD = 60;
 export function moveDayChips(date: string, today: string): DayPreset[] {
   const last = addDaysToKey(today, MAX_DAYS_AHEAD);
   const first = mondayOf(date) > today ? mondayOf(date) : today;
-  return Array.from({ length: 7 }, (_, offset) =>
-    addDaysToKey(first, offset),
-  )
+  return Array.from({ length: 7 }, (_, offset) => addDaysToKey(first, offset))
     .filter((day) => day >= today && day <= last)
     .map((day) => ({
       key: day,

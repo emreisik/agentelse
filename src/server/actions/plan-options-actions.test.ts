@@ -403,6 +403,56 @@ describe("pickPlanOptionAction", () => {
     );
   });
 
+  it("hands the brief's platforms and Story switch to the plan: one item per post", async () => {
+    setRow(
+      "c1",
+      optionsCard({
+        slots: [
+          {
+            date: "2026-10-05",
+            time: "10:00",
+            channel: "instagram",
+            formatKey: "instagram.post",
+          },
+          {
+            date: "2026-10-07",
+            time: "10:00",
+            channel: "instagram",
+            formatKey: "instagram.post",
+          },
+        ],
+        platforms: ["instagram", "facebook", "linkedin"],
+        instagramStory: true,
+      }),
+    );
+    const res = await pickPlanOptionAction("c1", "a");
+    expect(res.ok).toBe(true);
+    const row = rowOf("c1");
+    const card = row.parsedIntent.card as {
+      platforms?: string[];
+      instagramStory?: boolean;
+      items: { channel?: string }[];
+    };
+    // Saving makes each post once per platform (piecesOfPlan).
+    expect(card.platforms).toEqual(["instagram", "facebook", "linkedin"]);
+    expect(card.instagramStory).toBe(true);
+    expect(card.items.map((item) => item.channel)).toEqual([
+      "instagram",
+      "instagram",
+    ]);
+    expect(row.replyText).toBe(
+      'Picked the direction "Education first": 2 posts across Instagram, Facebook and LinkedIn.',
+    );
+  });
+
+  it("a directions card stored before posts makes a plan without platforms", async () => {
+    setRow("c1", optionsCard());
+    await pickPlanOptionAction("c1", "a");
+    const card = rowOf("c1").parsedIntent.card;
+    expect(card).not.toHaveProperty("platforms");
+    expect(card).not.toHaveProperty("instagramStory");
+  });
+
   it("W17: supersedes other open plan cards of the SAME Work, then touches it", async () => {
     setRow("c1", optionsCard());
     await pickPlanOptionAction("c1", "a");

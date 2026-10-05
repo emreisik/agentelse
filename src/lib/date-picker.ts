@@ -29,14 +29,17 @@ import { dayKeyInTimezone } from "@/lib/timezone";
 
 // Saati olmayan bir güne ilk seçimde verilen varsayılan yayın saati.
 export const DEFAULT_PICKER_TIME = "10:00";
-export const DEFAULT_TIME_STEP = 5;
-// Hızlı saat kısayolları (içerik paylaşımı için sık seçilen saatler).
+// Saati ileri/geri alan düğmelerin adımı (dakika). Başka bir dakika elle yazılır.
+export const DEFAULT_TIME_STEP = 30;
+// Hızlı saat kısayolları (içerik paylaşımı için sık seçilen saatler): altılı,
+// panelde 3x2 oturur.
 export const DEFAULT_TIME_PRESETS: readonly string[] = [
   "09:00",
-  "12:00",
+  "11:00",
+  "13:00",
   "15:00",
   "18:00",
-  "21:00",
+  "20:00",
 ];
 
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -251,23 +254,26 @@ export function dayPresets(todayKey: string): DayPreset[] {
   ];
 }
 
-// Dakika sütunu: adıma göre ("00","05",...). Geçersiz adım varsayılana düşer.
-const VALID_STEPS = new Set([1, 5, 10, 15, 30]);
+// Saati bir adım ileri (+1) ya da geri (-1) alır. Adımın katına oturur: 18:20
+// +30 dk -> 18:30, -30 dk -> 18:00; 18:30 +30 dk -> 19:00. Günün dışına taşmaz:
+// 00:00'dan geri ya da son adımdan ileri gidilemezse null (düğme kapanır).
+// Geçersiz adım varsayılana düşer.
+const VALID_STEPS = new Set([1, 5, 10, 15, 30, 60]);
+const MINUTES_PER_DAY = 24 * 60;
 
-export function minuteOptions(step: number, current?: string): string[] {
+export function nudgeTime(
+  time: string,
+  direction: 1 | -1,
+  step: number = DEFAULT_TIME_STEP,
+): string | null {
+  const match = TIME_RE.exec(time);
+  if (!match) return null;
   const size = VALID_STEPS.has(step) ? step : DEFAULT_TIME_STEP;
-  const minutes: number[] = [];
-  for (let m = 0; m < 60; m += size) minutes.push(m);
-  // Izgarada olmayan bir dakika (ör. 10:07) seçiliyse yine görünsün.
-  const now = current === undefined ? NaN : Number(current);
-  if (Number.isInteger(now) && now >= 0 && now < 60 && !minutes.includes(now)) {
-    minutes.push(now);
-    minutes.sort((a, b) => a - b);
-  }
-  return minutes.map(pad2);
+  const total = Number(match[1]) * 60 + Number(match[2]);
+  const next =
+    direction > 0
+      ? (Math.floor(total / size) + 1) * size
+      : (Math.ceil(total / size) - 1) * size;
+  if (next < 0 || next >= MINUTES_PER_DAY) return null;
+  return `${pad2(Math.floor(next / 60))}:${pad2(next % 60)}`;
 }
-
-export const HOUR_OPTIONS: readonly string[] = Array.from(
-  { length: 24 },
-  (_, h) => pad2(h),
-);

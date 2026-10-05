@@ -10,6 +10,7 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { handsOnLevelFor } from "@/lib/weekly-draft";
 import { nextScanAt } from "@/server/agency/signals/scan-cadence";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
@@ -110,37 +111,20 @@ export async function updateSignalIntensityAction(
   }
 }
 
+// The limits the Autonomy settings still offer: the ones the chat-first flow
+// actually enforces (AI calls and spend per day, the idea pool's size). The
+// old pipeline's knobs (task limits, cooldowns, research concurrency, setup
+// auto-approval, NBA weights, autopilot modes) keep their stored values and
+// are no longer edited here.
 const AutonomyPolicySchema = z.object({
-  maxTasksPerDay: z.coerce.number().int().min(1).max(500),
   maxReasoningCallsPerDay: z.coerce.number().int().min(1).max(5000),
-  maxConcurrentResearchTasks: z.coerce.number().int().min(1).max(50),
-  maxOpenOpportunities: z.coerce.number().int().min(1).max(500),
   maxActiveIdeas: z.coerce.number().int().min(1).max(500),
-  taskCooldownHours: z.coerce.number().int().min(0).max(720),
   dailyBudgetUsd: z
     .union([z.literal(""), z.coerce.number().min(0)])
     .transform((v) => (v === "" ? null : v)),
-  setupAutoApprove: z.coerce.boolean(),
   unlimitedMode: z.coerce.boolean(),
-  autopilotMode: z.enum([
-    "REVIEW_EVERYTHING",
-    "CREATE_AUTOMATICALLY",
-    "AUTOPILOT",
-  ]),
+  weeklyAutoProduce: z.coerce.boolean(),
 });
-
-const WEIGHT_KEYS = [
-  "impact",
-  "goalAlignment",
-  "urgency",
-  "evidence",
-  "confidence",
-  "timing",
-  "originality",
-  "costPenalty",
-  "effortPenalty",
-  "riskPenalty",
-] as const;
 
 export async function updateAutonomyPolicyAction(
   formData: FormData,
@@ -151,38 +135,26 @@ export async function updateAutonomyPolicyAction(
     const access = await requireProjectAccess(userId, projectId);
 
     const parsed = AutonomyPolicySchema.parse({
-      maxTasksPerDay: formData.get("maxTasksPerDay"),
       maxReasoningCallsPerDay: formData.get("maxReasoningCallsPerDay"),
-      maxConcurrentResearchTasks: formData.get("maxConcurrentResearchTasks"),
-      maxOpenOpportunities: formData.get("maxOpenOpportunities"),
       maxActiveIdeas: formData.get("maxActiveIdeas"),
-      taskCooldownHours: formData.get("taskCooldownHours"),
       dailyBudgetUsd: formData.get("dailyBudgetUsd") ?? "",
-      setupAutoApprove: formData.get("setupAutoApprove") === "on",
       unlimitedMode: formData.get("unlimitedMode") === "on",
-      autopilotMode: formData.get("autopilotMode") ?? "AUTOPILOT",
+      weeklyAutoProduce: formData.get("weeklyAutoProduce") === "on",
     });
-
-    // Scoring weights: only accept known keys, each 0..1.
-    const weights: Record<string, number> = {};
-    let hasWeights = false;
-    for (const key of WEIGHT_KEYS) {
-      const raw = formData.get(`weight_${key}`);
-      if (raw === null || raw === "") continue;
-      const value = Number(raw);
-      if (!Number.isFinite(value) || value < 0 || value > 1) {
-        return {
-          ok: false,
-          message: `Invalid weight: ${key} (must be between 0 and 1)`,
-        };
-      }
-      weights[key] = value;
-      hasWeights = true;
-    }
+    // "Weekly plan draft" (weekly-plan-draft.ts) is the policy's hands-on
+    // level (lib/weekly-draft.ts handsOnLevelFor).
+    const current = await prisma.autonomyPolicy.findUnique({
+      where: { projectId },
+      select: { autopilotMode: true },
+    });
+    const autopilotMode = handsOnLevelFor(
+      formData.get("weeklyDraft") === "on",
+      current?.autopilotMode,
+    );
 
     await AutonomyPolicyRepository.update(projectId, {
       ...parsed,
-      ...(hasWeights ? { scoringWeights: weights } : {}),
+      autopilotMode,
     });
 
     await AuditLogRepository.record({

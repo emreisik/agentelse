@@ -10,15 +10,13 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 import { savePlanSlotsInTx } from "@/server/chat/save-plan-core";
-import { todayInTimezone, validatePlanDates } from "@/server/chat/content-plan";
-import { blocksOf, checkItems } from "@/lib/works/brand-rules";
+import { markIdeasPlanned } from "@/server/chat/idea-pool";
 import { copyText } from "@/lib/works/copy";
 import { isWorksEnabled } from "@/server/works/flag";
-import { assertWorkActive } from "@/server/works/guard";
-import { brandRuleLanguageOf } from "@/server/brand/rule-language";
-import { loadBrandRules } from "@/server/works/brand-rule-loader";
+import { assertPlanSaveable } from "@/server/works/plan-save-guards";
 
-type SaveOutcome = { ok: true; count: number } | { ok: false; error: string };
+type SaveOutcome =
+  { ok: true; count: number; ideaIds: string[] } | { ok: false; error: string };
 
 type PlanCardView = {
   timezone: string;
@@ -28,10 +26,10 @@ type PlanCardView = {
 // Narrow the stored card without trusting its shape.
 function planCardOf(parsedIntent: unknown): PlanCardView | null {
   const card = (parsedIntent as { card?: unknown } | null)?.card as
-    | { kind?: unknown; timezone?: unknown; items?: unknown }
-    | undefined;
+    { kind?: unknown; timezone?: unknown; items?: unknown } | undefined;
   if (!card || card.kind !== "content-plan-draft") return null;
-  if (typeof card.timezone !== "string" || !Array.isArray(card.items)) return null;
+  if (typeof card.timezone !== "string" || !Array.isArray(card.items))
+    return null;
   return { timezone: card.timezone, items: card.items };
 }
 
@@ -68,36 +66,30 @@ export async function saveContentPlanAction(
       });
       if (extra?.workId) {
         inWork = true;
-        // Every other plan edit refuses a Completed Work; saving an old draft
-        // would otherwise put DRAFT Creatives on the calendar of a closed one.
-        const active = await assertWorkActive(prisma, {
-          workId: extra.workId,
-          projectId: command.projectId,
-        });
-        if (!active.ok) return { ok: false, message: active.message };
         const card = planCardOf(extra.parsedIntent);
         if (card) {
-          if (validatePlanDates(card.items, todayInTimezone(card.timezone))) {
-            return { ok: false, code: "STALE", message: copyText("plan.stale") };
-          }
-          const rules = await loadBrandRules({
+          // Same guards a SYSTEM save runs (plan-save-guards.ts); this caller
+          // keeps today's behavior exactly: rules that can't be loaded let the
+          // save through (there is someone here to warn with "Save anyway" if
+          // a rule DOES fire, so "couldn't check" is not treated as blocked).
+          const guard = await assertPlanSaveable({
             projectId: command.projectId,
             brandId: access.defaultBrandId,
-            language: await brandRuleLanguageOf(command.projectId),
+            workId: extra.workId,
+            card,
+            allowIssues: options?.allowIssues,
           });
-          const blocks = blocksOf(checkItems(card.items, rules));
-          if (blocks.length > 0) {
-            if (!options?.allowIssues) {
-              return {
-                ok: false,
-                code: "BRAND_RULES",
-                message: copyText("brand.blockedSave"),
-              };
-            }
-            for (const block of blocks) {
-              matchedTerms.push(block.flag.matched.slice(0, 40));
-            }
+          if (!guard.ok) {
+            return {
+              ok: false,
+              code:
+                guard.code === "STALE" || guard.code === "BRAND_RULES"
+                  ? guard.code
+                  : undefined,
+              message: guard.message,
+            };
           }
+          matchedTerms.push(...guard.matchedTerms);
         }
       }
     }
@@ -116,13 +108,16 @@ export async function saveContentPlanAction(
           commandId,
         );
         return outcome.ok
-          ? { ok: true, count: outcome.count }
+          ? { ok: true, count: outcome.count, ideaIds: outcome.ideaIds }
           : { ok: false, error: outcome.error };
       },
       { isolationLevel: "Serializable" },
     );
 
     if (!saved.ok) return { ok: false, message: saved.error };
+
+    // The posts built from pool ideas take those ideas out of the pool.
+    await markIdeasPlanned(command.projectId!, saved.ideaIds);
 
     await AuditLogRepository.record({
       workspaceId: access.workspaceId,
@@ -135,7 +130,12 @@ export async function saveContentPlanAction(
       entityId: commandId,
       metadata:
         options?.allowIssues && matchedTerms.length > 0
-          ? { items: saved.count, allowIssues: true, matched: matchedTerms, userId }
+          ? {
+              items: saved.count,
+              allowIssues: true,
+              matched: matchedTerms,
+              userId,
+            }
           : { items: saved.count },
     }).catch(() => undefined);
 

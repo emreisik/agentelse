@@ -13,7 +13,6 @@ import { CardActions } from "@/components/works/card-actions";
 import { CardLiveRegion } from "@/components/works/live-region";
 import { SlotSuggestion } from "@/components/works/slot-suggestion";
 import { useCardAction } from "@/components/works/use-card-action";
-import { postVariants } from "@/components/works/variants-client";
 import {
   disabledReasonOf,
   useWorkCardHost,
@@ -24,9 +23,8 @@ import type { PlanItemStage } from "@/lib/journey";
 import { blocksOf } from "@/lib/works/brand-rules";
 import type { CardActionResult, CardButton } from "@/lib/works/card-action";
 import { copyText } from "@/lib/works/copy";
-import { isImagePiece, produceCostNote } from "@/lib/works/cost";
+import { produceCostNote } from "@/lib/works/cost";
 import { slotWhenLabel } from "@/lib/works/slot-rules";
-import { variantCostLabel } from "@/lib/works/variants";
 import {
   moveSlotAction,
   removeSlotAction,
@@ -107,25 +105,15 @@ export function PlannedSlotCard({
           if (!commandId || !chatPackage) {
             return { ok: false, message: copyText("kit.failed") };
           }
-          // The run streams for a while: do not hold the button for it.
-          void chatPackage.startPlan({ commandId });
+          // One post, one picture: only this post's channels are made, live
+          // in the chat. A plan saved before posts has no post id; its run
+          // takes the plan's one piece anyway. The run streams for a while:
+          // do not hold the button for it.
+          const postId = slot?.postId;
+          void chatPackage.startPlan(
+            postId ? { commandId, postId } : { commandId },
+          );
           return { ok: true };
-        }
-        case "slot:visuals": {
-          if (!commandId || !slot) {
-            return { ok: false, message: copyText("kit.failed") };
-          }
-          // The run streams for a while: report it through a refresh, not by
-          // holding the button.
-          void postVariants(host.projectId, {
-            commandId,
-            creativeId: slot.id,
-            more: false,
-          }).then((result) => {
-            if (result.ok) router.refresh();
-            else toast.error(result.message);
-          });
-          return { ok: true, message: copyText("variants.running") };
         }
         case "slot:time": {
           const next = !timeOpen;
@@ -267,12 +255,6 @@ export function PlannedSlotCard({
     ? `${CHANNELS[resolved.channel].label} ${resolved.format.label}`
     : (item.platform ?? "");
   const zone = host.timezone ?? card.timezone;
-  // Three pictures for the one image post of a plan, before producing it.
-  const canVisuals =
-    stage === "PLANNED" &&
-    !!slot &&
-    !!commandId &&
-    isImagePiece({ formatKey: item.formatKey, channel: resolved?.channel });
   const makesPicture = stage === "PLANNED" || stage === "FAILED";
 
   return (
@@ -304,30 +286,6 @@ export function PlannedSlotCard({
             <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
               {costLine}
             </p>
-          ) : null}
-          {canVisuals ? (
-            <div data-slot-visuals className="space-y-1">
-              <CardActions
-                buttons={[
-                  {
-                    id: "slot:visuals",
-                    label: copyText("variants.make"),
-                    emphasis: "secondary",
-                    action: { kind: "server", id: "slot:visuals" },
-                  },
-                ]}
-                onAct={run}
-                busyId={busyId}
-                disabledAll={produceReason !== null}
-              />
-              <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
-                {copyText("variants.costNote", {
-                  amount: variantCostLabel(
-                    item.formatKey === "instagram.story" ? "STORY" : "POST",
-                  ),
-                })}
-              </p>
-            </div>
           ) : null}
           {stage === "PLANNED" && slot && !confirming ? (
             <CardActions

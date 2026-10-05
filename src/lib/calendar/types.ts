@@ -55,6 +55,9 @@ export type CalendarItem = {
   preview: string | null;
   // Yayınlanmışsa, yayın görevinin tamamlandığı an (UTC ISO).
   publishedAt: string | null;
+  // Bir postun mecra teslimatıysa o post (docs/works.md "Posts"); aynı postun
+  // parçaları takvimde birlikte taşınır.
+  postId: string | null;
   facts: ItemFacts;
 };
 

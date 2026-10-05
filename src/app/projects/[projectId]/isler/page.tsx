@@ -15,13 +15,8 @@ export default async function IslerRedirect({
   const sp = await searchParams;
   redirect(
     legacyRouteHref(projectId, "isler", {
-      sub: typeof sp.tab === "string" ? sp.tab : "planlar",
-      entity:
-        typeof sp.plan === "string"
-          ? { kind: "workPlan", id: sp.plan }
-          : typeof sp.gorev === "string"
-            ? { kind: "task", id: sp.gorev }
-            : null,
+      sub: "tasks",
+      entity: typeof sp.gorev === "string" ? { kind: "task", id: sp.gorev } : null,
     }),
   );
 }

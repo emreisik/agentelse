@@ -8,24 +8,19 @@ export const PANEL_KEYS = [
   "brand-brain",
   "ideas",
   "work",
-  "departments",
-  "human-action",
   "settings",
   "library",
 ] as const;
 
 export type PanelKey = (typeof PANEL_KEYS)[number];
 
-// Panels with no primary sidebar entry of their own — the header's "Advanced"
-// menu (project-tools-menu.tsx) is where they live (the sidebar lists only
-// Settings among them, as one line at the bottom). Single source of truth for
-// that grouping so the sidebar and the menu can't drift apart. (Signals,
+// Panels that are not day-to-day work: the sidebar keeps them behind its
+// ••• Explore menu (sidebar-nav.tsx). (Signals,
 // Insights & Opportunities and Goals are tabs of Brand Brain now; pending
-// decisions have no panel: they are cards in the Agency Desk chat.)
+// decisions have no panel: they are cards in the chat.) Setup has no sidebar
+// entry: it is reached from the setup progress badge while a setup runs.
 export const ADVANCED_PANEL_KEYS = [
-  "setup",
-  "departments",
-  "human-action",
+  "work",
   "settings",
 ] as const satisfies readonly PanelKey[];
 
@@ -33,18 +28,14 @@ export function isAdvancedPanel(panel: PanelKey): boolean {
   return (ADVANCED_PANEL_KEYS as readonly PanelKey[]).includes(panel);
 }
 
-export const WORK_SUB_KEYS = [
-  "plans",
-  "tasks",
-  "cycles",
-  "measurements",
-] as const;
+// The Work panel is the task log now: the old pipeline's work plans, handoff
+// cycles and measurements are gone (nothing in the chat-first flow makes them).
+export const WORK_SUB_KEYS = ["tasks"] as const;
 export type WorkSubKey = (typeof WORK_SUB_KEYS)[number];
 
 export const SETTINGS_SUB_KEYS = [
   "autonomy",
   "publishing",
-  "decisions",
   "activity",
   "risk",
 ] as const;
@@ -56,10 +47,7 @@ export const BRAND_BRAIN_SUB_KEYS = [
   "visual-identity",
   "constitution",
   "goals",
-  "strategy",
-  "decisions",
   "intelligence",
-  "evidence",
   "learnings",
 ] as const;
 export type BrandBrainSubKey = (typeof BRAND_BRAIN_SUB_KEYS)[number];
@@ -75,17 +63,12 @@ const SUB_KEYS_BY_PANEL: Partial<Record<PanelKey, readonly string[]>> = {
 // is introduced.
 export const ENTITY_KINDS = [
   "idea",
-  "workPlan",
   "task",
   "signal",
   "finding",
   "insight",
   "opportunity",
   "goal",
-  "handoff",
-  "measurementPlan",
-  "department",
-  "decision",
   "constitution",
 ] as const;
 
@@ -123,26 +106,28 @@ const LEGACY_PANELS: Record<
   hedefler: { panel: "brand-brain", sub: "goals" },
   "marka-beyni": { panel: "brand-brain" },
   fikirler: { panel: "ideas" },
-  isler: {
-    panel: "work",
-    subs: {
-      planlar: "plans",
-      gorevler: "tasks",
-      devirler: "cycles",
-      olcumler: "measurements",
-    },
-  },
-  departmanlar: { panel: "departments" },
+  isler: { panel: "work", sub: "tasks" },
   ayarlar: {
     panel: "settings",
     subs: {
       otonomi: "autonomy",
-      kararlar: "decisions",
       aktivite: "activity",
       tehlike: "risk",
     },
   },
   kurulum: { panel: "setup" },
+};
+
+// Sub-tabs that were folded into another one: Strategy, Evidence and the
+// constitution version log live in the Constitution tab now; the Work panel's
+// retired boards fall back to the task log.
+const MERGED_SUBS: Partial<Record<PanelKey, Record<string, string>>> = {
+  "brand-brain": {
+    strategy: "constitution",
+    evidence: "constitution",
+    decisions: "constitution",
+  },
+  work: { plans: "tasks", cycles: "tasks", measurements: "tasks" },
 };
 
 // Rewrites an old `?panel=`/`?sub=` pair to the current one; anything that is
@@ -155,7 +140,7 @@ export function normalizeLegacyHubParams(sp: RawSearchParams): RawSearchParams {
   return {
     ...sp,
     panel: legacy.panel,
-    sub: legacy.sub ?? (subRaw ? legacy.subs?.[subRaw] ?? subRaw : undefined),
+    sub: legacy.sub ?? (subRaw ? (legacy.subs?.[subRaw] ?? subRaw) : undefined),
   };
 }
 
@@ -166,7 +151,10 @@ export function parseHubParams(rawParams: RawSearchParams): HubParams {
     ? (panelRaw as PanelKey)
     : null;
 
-  const subRaw = firstString(sp.sub);
+  const subRawGiven = firstString(sp.sub);
+  const subRaw =
+    (panel && subRawGiven ? MERGED_SUBS[panel]?.[subRawGiven] : undefined) ??
+    subRawGiven;
   const allowedSubs = panel ? SUB_KEYS_BY_PANEL[panel] : undefined;
   const sub = allowedSubs && allowedSubs.includes(subRaw ?? "") ? subRaw : null;
 
@@ -221,17 +209,12 @@ export function entityRefToParam(entity: EntityRef): string {
 // which panel+entity to open.
 export const ENTITY_PANEL: Record<EntityKind, PanelKey> = {
   idea: "ideas",
-  workPlan: "work",
   task: "work",
   signal: "brand-brain",
   finding: "brand-brain",
   insight: "brand-brain",
   opportunity: "brand-brain",
   goal: "brand-brain",
-  handoff: "work",
-  measurementPlan: "work",
-  department: "departments",
-  decision: "settings",
   constitution: "brand-brain",
 };
 

@@ -1,5 +1,8 @@
 import "server-only";
 
+import { cache } from "react";
+import type { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import {
   instagramLoginExpired,
@@ -36,14 +39,16 @@ export type PublishTarget =
   | { platform: "linkedin"; accountLabel: string }
   | { platform: "x"; accountLabel: string };
 
-async function getInstagramTargets(
-  projectId: string,
-): Promise<PublishTarget[]> {
-  const credential = await prisma.integrationCredential.findUnique({
-    where: {
-      projectId_provider: { projectId, provider: META_PROVIDER.instagram },
-    },
-  });
+// What a target is built from: never the secret itself.
+type CredentialRow = {
+  status: string;
+  metadata: Prisma.JsonValue | null;
+  accountLabel: string | null;
+};
+
+function instagramTargetsOf(
+  credential: CredentialRow | undefined,
+): PublishTarget[] {
   if (!credential || credential.status !== "ACTIVE") return [];
 
   const metadata = (credential.metadata ?? {}) as MetaInstagramMetadata;
@@ -69,6 +74,22 @@ async function getInstagramTargets(
 
 // Facebook needs a Page selected in its own integration (the Page the posts go
 // to); a Page picked in the Instagram or Meta Ads connection does not count.
+function facebookTargetOf(
+  credential: CredentialRow | null | undefined,
+): Extract<PublishTarget, { platform: "facebook" }> | null {
+  if (!credential || credential.status !== "ACTIVE") return null;
+  const metadata = (credential.metadata ?? {}) as Partial<MetaFacebookMetadata>;
+  const page = metadata.pages?.find(
+    (p) => p.pageId === metadata.selectedPageId,
+  );
+  if (!page) return null;
+  return {
+    platform: "facebook",
+    pageId: page.pageId,
+    accountLabel: page.pageName,
+  };
+}
+
 export async function getFacebookPublishTarget(
   projectId: string,
 ): Promise<Extract<PublishTarget, { platform: "facebook" }> | null> {
@@ -77,24 +98,17 @@ export async function getFacebookPublishTarget(
       projectId_provider: { projectId, provider: META_PROVIDER.facebook },
     },
   });
-  if (!credential || credential.status !== "ACTIVE") return null;
-  const metadata = (credential.metadata ?? {}) as Partial<MetaFacebookMetadata>;
-  const page = metadata.pages?.find((p) => p.pageId === metadata.selectedPageId);
-  if (!page) return null;
-  return { platform: "facebook", pageId: page.pageId, accountLabel: page.pageName };
+  return facebookTargetOf(credential);
 }
 
 // For each of TikTok/LinkedIn/X, simply being ACTIVE on the
 // IntegrationCredential is considered a sufficient target — unlike
 // Instagram, there's no extra "which Page/account is selected" step, since
 // the OAuth connection already links to a single user account.
-async function getSimpleCredentialTarget(
-  projectId: string,
+function simpleTargetOf(
+  credential: CredentialRow | undefined,
   provider: "tiktok" | "linkedin" | "x",
-): Promise<PublishTarget | null> {
-  const credential = await prisma.integrationCredential.findUnique({
-    where: { projectId_provider: { projectId, provider } },
-  });
+): PublishTarget | null {
   if (!credential || credential.status !== "ACTIVE") return null;
   return {
     platform: provider,
@@ -102,20 +116,40 @@ async function getSimpleCredentialTarget(
   } as PublishTarget;
 }
 
-export async function getPublishTargets(
-  projectId: string,
-): Promise<PublishTarget[]> {
-  const [instagram, tiktok, linkedin, x, facebook] = await Promise.all([
-    getInstagramTargets(projectId),
-    getSimpleCredentialTarget(projectId, "tiktok"),
-    getSimpleCredentialTarget(projectId, "linkedin"),
-    getSimpleCredentialTarget(projectId, "x"),
-    getFacebookPublishTarget(projectId),
-  ]);
-  // Facebook last: the first entry is a project's primary platform for image
-  // sizing (work-plan-builder.ts), and connecting Facebook must not change it
-  // for a project that already publishes elsewhere.
-  return [...instagram, tiktok, linkedin, x, facebook].filter(
-    (t): t is PublishTarget => t !== null,
-  );
-}
+const TARGET_PROVIDERS = [
+  META_PROVIDER.instagram,
+  "tiktok",
+  "linkedin",
+  "x",
+  META_PROVIDER.facebook,
+];
+
+// One read for every provider (it used to be one per provider, each with the
+// encrypted secret), and request-scoped: the chat page asks for the targets
+// from several places (the page, the pending decisions, the channel
+// connections the journey and the overlays read) and they share this result.
+// Outside a server render cache() is a pass-through.
+export const getPublishTargets = cache(
+  async (projectId: string): Promise<PublishTarget[]> => {
+    const rows = await prisma.integrationCredential.findMany({
+      where: { projectId, provider: { in: TARGET_PROVIDERS } },
+      select: {
+        provider: true,
+        status: true,
+        metadata: true,
+        accountLabel: true,
+      },
+    });
+    const byProvider = new Map(rows.map((row) => [row.provider, row] as const));
+    // Facebook last: the first entry is a project's primary platform for image
+    // sizing (work-plan-builder.ts), and connecting Facebook must not change it
+    // for a project that already publishes elsewhere.
+    return [
+      ...instagramTargetsOf(byProvider.get(META_PROVIDER.instagram)),
+      simpleTargetOf(byProvider.get("tiktok"), "tiktok"),
+      simpleTargetOf(byProvider.get("linkedin"), "linkedin"),
+      simpleTargetOf(byProvider.get("x"), "x"),
+      facebookTargetOf(byProvider.get(META_PROVIDER.facebook)),
+    ].filter((t): t is PublishTarget => t !== null);
+  },
+);

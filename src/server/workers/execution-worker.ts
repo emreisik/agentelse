@@ -57,6 +57,12 @@ const DISPATCH_CONCURRENCY = 5;
 const TICK_WATCHDOG_MS = 5 * 60_000;
 let activeTick: Promise<void> | undefined;
 
+// Provider health is computed over a 30-minute window of job results;
+// recomputing (and re-writing) it on every 10 s tick bought nothing. Every
+// third tick or so is plenty.
+const PROVIDER_HEALTH_EVERY_MS = 30_000;
+let lastProviderHealthAt = 0;
+
 // Isolates tick stages from each other: errors are not swallowed, they're
 // written to AuditLog, but they never block the next stage.
 async function isolate(stage: string, run: () => Promise<unknown>) {
@@ -411,7 +417,10 @@ export const ExecutionWorker = {
       // poll + verify).
       await isolate("scheduler", () => SchedulerService.runDueSchedules());
       await isolate("self-healing", () => SelfHealingService.run());
-      await isolate("provider-health", () => ProviderHealthService.refresh());
+      if (Date.now() - lastProviderHealthAt >= PROVIDER_HEALTH_EVERY_MS) {
+        lastProviderHealthAt = Date.now();
+        await isolate("provider-health", () => ProviderHealthService.refresh());
+      }
       await this.processDispatchQueue();
       await this.pollRunningJobs();
       await this.resolvePendingVerifications();

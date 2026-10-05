@@ -1,29 +1,13 @@
 import type { NextStep } from "@/lib/journey";
-import { IMAGE_PIECE_COST_USD } from "./cost";
 
-// The only place the creative-variant numbers live (spec 3.10.1).
+// The creative-variant numbers (spec 3.10.1). Nothing asks for new variants
+// any more (one post, one picture); a variants job already in flight still
+// reads them (the image provider, execution-service.ts), and pieces keep the
+// alternatives they were given.
 export const VARIANT_COUNT = 3;
 export const VARIANT_QUALITY = "medium" as const;
 // Two sets: 1 current picture + 5 alternatives = 6 pictures per piece.
-export const MAX_VARIANT_ALTERNATIVES = 5;
-
-const roundCents = (n: number) => Math.round(n * 100) / 100;
-
-export const VARIANT_COST_USD: Record<"post" | "story", number> = {
-  post: roundCents(VARIANT_COUNT * IMAGE_PIECE_COST_USD.post),
-  story: roundCents(VARIANT_COUNT * IMAGE_PIECE_COST_USD.story),
-};
-
-// SelfHealingService can requeue a failed job up to 3 times, so one tap could
-// cost up to 4x; variant jobs are skipped by the requeue.
-export const VARIANT_WORST_CASE_FACTOR = 4;
-
-export function variantCostLabel(
-  contentFormat: string | null | undefined,
-): string {
-  const isStory = contentFormat === "STORY" || contentFormat === "REEL";
-  return `$${VARIANT_COST_USD[isStory ? "story" : "post"].toFixed(2)}`;
-}
+const MAX_VARIANT_ALTERNATIVES = 5;
 
 export function remainingVariantSlots(alternativesCount: number): number {
   return Math.max(0, MAX_VARIANT_ALTERNATIVES - Math.max(0, alternativesCount));
@@ -51,7 +35,10 @@ export function parseAlternatives(metadata: unknown): CreativeAlternative[] {
     if (typeof raw.assetWidth === "number" && Number.isFinite(raw.assetWidth)) {
       alt.assetWidth = raw.assetWidth;
     }
-    if (typeof raw.assetHeight === "number" && Number.isFinite(raw.assetHeight)) {
+    if (
+      typeof raw.assetHeight === "number" &&
+      Number.isFinite(raw.assetHeight)
+    ) {
       alt.assetHeight = raw.assetHeight;
     }
     out.push(alt);

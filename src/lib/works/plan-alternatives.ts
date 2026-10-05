@@ -15,37 +15,82 @@ export type PlanAlternative = {
   captionIdea: string;
   /** Label of the direction the idea came from; absent for generated ones. */
   from?: string;
+  /**
+   * The pool idea this text came from: a pool post that was swapped away keeps
+   * its idea link here (and the slot's idea origin that named it), so the idea
+   * is neither consumed, judged nor shown as scheduled for a post that no
+   * longer uses it, and swapping back restores both.
+   */
+  ideaId?: string;
+  origin?: IdeaOrigin;
 };
+
+type IdeaOrigin = { kind: "idea"; ref: string };
 
 type SwappableItem = {
   topic: string;
   captionIdea: string;
   from?: string;
+  ideaId?: string;
+  origin?: unknown;
   alternatives?: PlanAlternative[];
 };
 
-function alt(topic: string, captionIdea: string, from: string | undefined): PlanAlternative {
-  return from ? { topic, captionIdea, from } : { topic, captionIdea };
+// The slot's origin when it names the very idea the slot is linked to.
+function ideaOriginOf(item: SwappableItem): IdeaOrigin | undefined {
+  const origin = item.origin as { kind?: unknown; ref?: unknown } | undefined;
+  return item.ideaId &&
+    origin?.kind === "idea" &&
+    origin.ref === item.ideaId
+    ? { kind: "idea", ref: item.ideaId }
+    : undefined;
+}
+
+function alt(
+  topic: string,
+  captionIdea: string,
+  from: string | undefined,
+  ideaId?: string,
+  origin?: IdeaOrigin,
+): PlanAlternative {
+  return {
+    topic,
+    captionIdea,
+    ...(from ? { from } : {}),
+    ...(ideaId ? { ideaId } : {}),
+    ...(ideaId && origin ? { origin } : {}),
+  };
 }
 
 /**
  * Swaps the item's idea with alternatives[altIndex]. The displaced idea takes the
- * SAME alternatives index (with the item's label), so a second swap restores both
- * the idea and its label. Only topic/captionIdea/from/alternatives change; the
- * caller recomputes brand flags (they are dropped here).
+ * SAME alternatives index (with the item's label, its pool idea link and the
+ * idea origin that named that idea), so a second swap restores all of them. Any
+ * other origin (a master, a brief, a creative: the slot's identity for
+ * schedule-slots) stays with the slot. The caller recomputes brand flags (they
+ * are dropped here).
  */
 export function swapItem<T extends SwappableItem>(item: T, altIndex: number): T | null {
   const list = item.alternatives ?? [];
   const chosen = Number.isInteger(altIndex) && altIndex >= 0 ? list[altIndex] : undefined;
   if (!chosen) return null;
   const next: Record<string, unknown> = { ...item };
+  const ideaOrigin = ideaOriginOf(item);
   delete next.brandFlags;
   delete next.from;
+  delete next.ideaId;
+  if (ideaOrigin) delete next.origin;
   if (chosen.from) next.from = chosen.from;
+  if (chosen.ideaId) {
+    next.ideaId = chosen.ideaId;
+    if (chosen.origin && next.origin === undefined) next.origin = chosen.origin;
+  }
   next.topic = chosen.topic;
   next.captionIdea = chosen.captionIdea;
   next.alternatives = list.map((a, i) =>
-    i === altIndex ? alt(item.topic, item.captionIdea, item.from) : a,
+    i === altIndex
+      ? alt(item.topic, item.captionIdea, item.from, item.ideaId, ideaOrigin)
+      : a,
   );
   return next as T;
 }

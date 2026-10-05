@@ -844,7 +844,9 @@ function OutputCard({
         {item.assetId ? (
           // eslint-disable-next-line @next/next/no-img-element -- source is /api/assets/<id>, next/image can't optimize it
           <img
-            src={assetUrl(item.assetId, "card")}
+            // A ~150px tile in a two-column grid: the 320px preview covers 2x
+            // screens (the 768px "card" size was ~5x the pixels).
+            src={assetUrl(item.assetId, "thumb")}
             alt=""
             loading="lazy"
             decoding="async"

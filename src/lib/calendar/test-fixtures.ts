@@ -36,6 +36,7 @@ export function item(
     assetId: null,
     preview: null,
     publishedAt: null,
+    postId: null,
     facts: facts(factOverrides),
     ...overrides,
   };

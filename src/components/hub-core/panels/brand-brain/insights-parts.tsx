@@ -29,7 +29,10 @@ import {
   councilDimensionLabel,
   stripCapabilityPrefix,
 } from "@/lib/labels";
-import { dismissOpportunityAction } from "@/server/actions/agency-strategy-actions";
+import {
+  dismissOpportunityAction,
+  opportunityToIdeasAction,
+} from "@/server/actions/agency-strategy-actions";
 import { ActionForm } from "@/components/shared/action-form";
 import { EmptyState } from "@/components/shared/empty-state";
 import { NbaScoreChip } from "@/components/shared/nba-score-chip";
@@ -511,18 +514,40 @@ function OpportunityCard({
         ) : null}
 
         {canDismiss ? (
-          <ActionForm
-            action={dismissOpportunityAction}
-            successMessage="Opportunity dismissed"
-            className="flex justify-end"
-          >
-            <input type="hidden" name="projectId" value={projectId} />
-            <input type="hidden" name="opportunityId" value={opportunity.id} />
-            <SubmitButton variant="ghost" size="xs">
-              <XCircle className="size-3" />
-              Dismiss
-            </SubmitButton>
-          </ActionForm>
+          <div className="flex justify-end gap-1">
+            {opportunity.status === "EVALUATED" ? (
+              <ActionForm
+                action={opportunityToIdeasAction}
+                successMessage="New ideas are in the idea pool"
+              >
+                <input type="hidden" name="projectId" value={projectId} />
+                <input
+                  type="hidden"
+                  name="opportunityId"
+                  value={opportunity.id}
+                />
+                <SubmitButton variant="outline" size="xs">
+                  <Lightbulb className="size-3" />
+                  Turn into ideas
+                </SubmitButton>
+              </ActionForm>
+            ) : null}
+            <ActionForm
+              action={dismissOpportunityAction}
+              successMessage="Opportunity dismissed"
+            >
+              <input type="hidden" name="projectId" value={projectId} />
+              <input
+                type="hidden"
+                name="opportunityId"
+                value={opportunity.id}
+              />
+              <SubmitButton variant="ghost" size="xs">
+                <XCircle className="size-3" />
+                Dismiss
+              </SubmitButton>
+            </ActionForm>
+          </div>
         ) : null}
       </CardContent>
     </Card>
@@ -584,14 +609,7 @@ export async function OpportunityDetail({
       : Promise.resolve([]),
   ]);
 
-  let decisionWorkPlan: { id: string; title: string } | null = null;
   let decisionTasks: { id: string; title: string }[] = [];
-  if (decision?.workPlanId) {
-    decisionWorkPlan = await prisma.workPlan.findUnique({
-      where: { id: decision.workPlanId },
-      select: { id: true, title: true },
-    });
-  }
   if (decision?.taskIds.length) {
     decisionTasks = await prisma.task.findMany({
       where: { id: { in: decision.taskIds } },
@@ -734,13 +752,6 @@ export async function OpportunityDetail({
                     ) : null,
                   )}
                 </div>
-              ) : null}
-              {decisionWorkPlan ? (
-                <CrossLinkChip
-                  projectId={projectId}
-                  entity={{ kind: "workPlan", id: decisionWorkPlan.id }}
-                  text={decisionWorkPlan.title}
-                />
               ) : null}
               {decisionTasks.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">

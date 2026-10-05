@@ -32,16 +32,54 @@ describe("swapItem", () => {
     const out = swapItem(base, 1)!;
     expect(out.topic).toBe("Customer story");
     expect(out.from).toBe("Proof first");
+    // The pool idea link goes with the displaced idea, not with the slot.
     expect(out.alternatives?.[1]).toEqual({
       topic: "Spring menu",
       captionIdea: "Show the new menu",
       from: "Education first",
+      ideaId: "i1",
     });
+    expect("ideaId" in out).toBe(false);
     expect(out.alternatives?.[0]).toEqual(base.alternatives[0]);
-    for (const k of ["date", "time", "channel", "formatKey", "origin", "ideaId"] as const) {
+    for (const k of ["date", "time", "channel", "formatKey", "origin"] as const) {
       expect(out[k]).toBe(base[k]);
     }
     expect("brandFlags" in out).toBe(false);
+  });
+
+  it("moves an idea origin that names the linked idea with it, and restores it on the way back", () => {
+    const pool = {
+      ...base,
+      ideaId: "i9",
+      origin: { kind: "idea" as const, ref: "i9" },
+    };
+    const out = swapItem(pool, 0)!;
+    expect("ideaId" in out).toBe(false);
+    expect("origin" in out).toBe(false);
+    expect(out.alternatives?.[0]).toEqual({
+      topic: "Spring menu",
+      captionIdea: "Show the new menu",
+      from: "Education first",
+      ideaId: "i9",
+      origin: { kind: "idea", ref: "i9" },
+    });
+    const back = swapItem(out, 0)!;
+    expect(back.ideaId).toBe("i9");
+    expect(back.origin).toEqual({ kind: "idea", ref: "i9" });
+  });
+
+  it("keeps any other origin with the slot", () => {
+    const master = { ...base, origin: { kind: "master" as const, ref: "m1" } };
+    const out = swapItem(master, 0)!;
+    expect(out.origin).toEqual({ kind: "master", ref: "m1" });
+    expect("ideaId" in out).toBe(false);
+  });
+
+  it("swapping back restores the pool idea link", () => {
+    const back = swapItem(swapItem(base, 1)!, 1)!;
+    expect(back.ideaId).toBe("i1");
+    expect(back.topic).toBe(base.topic);
+    expect(back.alternatives?.[1]).toEqual(base.alternatives[1]);
   });
 
   it("a second swap restores idea and label", () => {

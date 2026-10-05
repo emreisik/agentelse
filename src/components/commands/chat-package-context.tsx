@@ -3,6 +3,8 @@
 import { createContext, useContext } from "react";
 import type { DepartmentKey } from "@prisma/client";
 
+import type { LivePlanPiece } from "@/components/commands/package-run";
+
 // One ticked deliverable of a content-package card, as the chat needs it to
 // show a live message for it the moment "Create selected" is pressed.
 export type PackageRunItem = {
@@ -29,6 +31,8 @@ type StartContentPackage = (input: {
 // the plan. Same contract as StartContentPackage.
 type StartContentPlan = (input: {
   commandId: string;
+  // "Make this post": only this post's channels (docs/works.md "Posts").
+  postId?: string;
 }) => Promise<{ ok: boolean }>;
 
 // A package or plan pressed in this session: still running, or done, and which
@@ -43,6 +47,9 @@ type ChatPackage = {
   // chat, not by the card: assistant-ui keys messages by position, so a card
   // remounts (and would forget it was pressed) whenever the list shifts.
   runs: Readonly<Record<string, PackageRun>>;
+  // The pieces of the plan runs pressed in this session, by piece (creative)
+  // id, while they are made: the plan's post cards show their progress.
+  pieces?: Readonly<Record<string, LivePlanPiece>>;
 };
 
 // Provided by the project chat; null anywhere else (a card rendered outside

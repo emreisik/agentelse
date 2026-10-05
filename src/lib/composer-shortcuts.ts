@@ -7,7 +7,6 @@ import type { LucideIcon } from "lucide-react";
 import {
   BadgeCheck,
   BarChart3,
-  Building2,
   CalendarRange,
   FileText,
   Globe,
@@ -28,13 +27,8 @@ import {
   UserPlus,
 } from "lucide-react";
 
-import {
-  ALL_DEPARTMENT_KEYS_UI,
-  DEPARTMENT_KEY,
-  capabilityLabel,
-} from "@/lib/labels";
+import { capabilityLabel } from "@/lib/labels";
 import { PURPOSE_ICONS } from "@/features/dashboard/purpose-icons";
-import { entityHref } from "@/components/hub-core/hub-core-params";
 
 // The composer "+" menu's full catalog — departments, integrations, and
 // capability shortcuts, each either a pure navigation link or a
@@ -75,18 +69,6 @@ export type ComposerShortcut =
 
 const INTEGRATIONS_HREF = (projectId: string) =>
   `/projects/${projectId}/integrations`;
-
-export const DEPARTMENT_SHORTCUTS: ComposerShortcut[] =
-  ALL_DEPARTMENT_KEYS_UI.map((key) => ({
-    id: `department-${key}`,
-    label: DEPARTMENT_KEY[key].label,
-    // EnumMeta.icon is optional in general, but every DEPARTMENT_KEY entry
-    // sets one — Building2 is just a defensive fallback for the type.
-    icon: DEPARTMENT_KEY[key].icon ?? Building2,
-    kind: "navigate",
-    href: (projectId: string) =>
-      entityHref(projectId, { kind: "department", id: key }),
-  }));
 
 // Instagram/LinkedIn/X double as "Create {Platform} post" — the same
 // CREATE_SOCIAL_CREATIVE quick action the old ChatQuickActions pill row

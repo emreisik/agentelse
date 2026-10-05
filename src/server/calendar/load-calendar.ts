@@ -242,6 +242,7 @@ export async function loadCalendarData(input: {
       preview: clip(version?.caption || version?.copy, 160),
       publishedAt:
         result.stage === "published" && task?.state === "done" ? task.at : null,
+      postId: creative.postId ?? null,
       facts,
     };
   });

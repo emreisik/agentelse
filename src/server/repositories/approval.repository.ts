@@ -40,6 +40,12 @@ export const ApprovalRepository = {
     requestedByType: ActorType;
     requestedById?: string;
     expiresAt?: Date;
+    // false for an approval behind a SYSTEM-created task (an unattended
+    // weekly-plan-produce.ts run): the owner's "no background notifications"
+    // decision (docs/brand-brain-loop.md) covers this just like it covers
+    // the post's own result — the chat is where it's seen. Every other
+    // caller omits this and keeps today's Telegram ping exactly as it is.
+    notify?: boolean;
   }) {
     const approval = await prisma.approval.create({
       data: {
@@ -58,7 +64,7 @@ export const ApprovalRepository = {
       },
     });
 
-    await sendApprovalRequestToTelegram(approval);
+    if (input.notify ?? true) await sendApprovalRequestToTelegram(approval);
 
     return approval;
   },

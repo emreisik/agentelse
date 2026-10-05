@@ -75,7 +75,7 @@ describe("summarizeContinuation", () => {
         row({ goal: null }),
         row({ goal: "sales" }),
         row({ goal: "leads" }),
-        row({ channel: "facebook", formatKey: "facebook.post" }),
+        row({ channel: "youtube", formatKey: "youtube.short" }),
         row({ channel: "instagram", formatKey: "instagram.thread" }),
       ],
       "UTC",

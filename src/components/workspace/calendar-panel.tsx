@@ -30,10 +30,12 @@ import {
 } from "lucide-react";
 
 import {
+  DeliveryMarks,
   SourceMark,
   StageIcon,
   StagePill,
   ItemThumb,
+  deliveriesText,
 } from "@/components/calendar/calendar-bits";
 import { DRAG_TYPE, WEEKDAYS } from "@/components/calendar/calendar-day";
 import { fetchCalendar, fetchDetail } from "@/components/calendar/api";
@@ -50,7 +52,6 @@ import {
 } from "@/lib/calendar/grid";
 import {
   mergeFresh,
-  rescheduleItem,
   reuseUnchanged,
   type ItemCache,
 } from "@/lib/calendar/item";
@@ -60,16 +61,26 @@ import {
   EMPTY_FILTER,
   GLYPH_LABEL,
   PANEL_SORTS,
-  countBy,
+  countEntries,
   dayDots,
   filterItems,
   groupForSort,
   isFiltering,
   relativeDayLabel,
   sortItems,
+  type ItemGroup,
   type PanelFilter,
   type PanelSort,
 } from "@/lib/calendar/panel-view";
+import {
+  deliveriesOf,
+  groupPosts,
+  postGroupOf,
+  reschedulePost,
+  sourcesOf,
+  type EntryCache,
+  type PostEntry,
+} from "@/lib/calendar/posts";
 import {
   STAGE_META,
   STAGE_ORDER,
@@ -92,10 +103,13 @@ import { rescheduleCreativeAction } from "@/server/actions/creative-calendar-act
 // / Liste görünümü, platform (entegrasyon) çoklu süzgeci, durum ve biçim
 // süzgeçleri, arama, sıralama, sürükle-bırakla gün değiştirme. Gezinti ve
 // süzgeçler tamamen istemcide: eskiden her ay değişimi (`?calMonth=`) proje
-// sayfasını komple sunucuda yeniden render ediyordu.
+// sayfasını komple sunucuda yeniden render ediyordu. Panoda olduğu gibi post
+// başına bir satır (docs/works.md "Posts"): mecraları simgeleriyle, süzgeçler
+// teslimat başına; sürükleme bütün postu taşır.
 
 type PanelView = "month" | "week" | "list";
 type PanelItem = CalendarItem & { pending?: boolean };
+export type PanelEntry = PostEntry<PanelItem>;
 
 const POLL_MS = 30_000;
 const STORAGE_PREFIX = "ws-calendar:";
@@ -152,6 +166,25 @@ function toggled<T>(set: ReadonlySet<T>, value: T): Set<T> {
 
 function headline(item: CalendarItem): string {
   return item.title ?? item.preview ?? item.label;
+}
+
+function isMulti(item: PanelEntry): boolean {
+  return item.deliveries.length > 1;
+}
+
+// Satırın üstüne gelince okunan tam durum: postta her mecra kendi satırında.
+function rowTitle(item: PanelEntry, when: string): string {
+  const status = `${STAGE_META[item.stage].label}${item.reason ? ` — ${item.reason}` : ""}`;
+  if (!isMulti(item)) {
+    return [headline(item), `${item.label} · ${when}`, status].join("\n");
+  }
+  return [
+    headline(item),
+    `${when} · ${status}`,
+    ...item.deliveries.map(
+      (delivery) => `${delivery.label}: ${STAGE_META[delivery.stage].label}`,
+    ),
+  ].join("\n");
 }
 
 // Görünür aralık: ay görünümü ve liste ayın tam haftalarını, hafta görünümü
@@ -244,6 +277,13 @@ export function CalendarPanel({
   const busy = useRef(0);
   const dragRef = useRef<string | null>(null);
 
+  // Post başına bir girdi; değişmeyen girdi aynı nesne kalır (memo'lu satırlar).
+  const [entryCache] = useState<EntryCache<PanelItem>>(() => new Map());
+  const entries = useMemo(
+    () => groupPosts(items, entryCache),
+    [items, entryCache],
+  );
+
   const applyPayload = useCallback(
     (payload: CalendarPayload, loaded: string) => {
       setItems((prev) =>
@@ -313,11 +353,16 @@ export function CalendarPanel({
     },
     [firstKey, lastKey, range.focusMonth],
   );
-  const scoped = useMemo(() => items.filter(inFocus), [items, inFocus]);
+  const scoped = useMemo(() => entries.filter(inFocus), [entries, inFocus]);
   const visible = useMemo(() => filterItems(scoped, filter), [scoped, filter]);
 
+  // Sayılar post sayar: bir post, uyan teslimatlarının her değerinde bir kez.
   const sourceCounts = useMemo(
-    () => countBy(filterItems(scoped, filter, "sources"), (i) => i.source.key),
+    () => countEntries(scoped, filter, "sources", (d) => d.source.key),
+    [scoped, filter],
+  );
+  const sourceTotal = useMemo(
+    () => filterItems(scoped, filter, "sources").length,
     [scoped, filter],
   );
   const stagePool = useMemo(
@@ -325,11 +370,11 @@ export function CalendarPanel({
     [scoped, filter],
   );
   const stageCounts = useMemo(
-    () => countBy(stagePool, (i) => i.stage),
-    [stagePool],
+    () => countEntries(scoped, filter, "stages", (d) => d.stage),
+    [scoped, filter],
   );
   const glyphCounts = useMemo(
-    () => countBy(filterItems(scoped, filter, "glyphs"), (i) => i.glyph),
+    () => countEntries(scoped, filter, "glyphs", (d) => d.glyph),
     [scoped, filter],
   );
 
@@ -346,7 +391,7 @@ export function CalendarPanel({
     [visible],
   );
   const byDay = useMemo(() => {
-    const map = new Map<string, PanelItem[]>();
+    const map = new Map<string, PanelEntry[]>();
     for (const item of sortItems(scheduledVisible, "soonest")) {
       const bucket = map.get(item.localDay!);
       if (bucket) bucket.push(item);
@@ -357,14 +402,14 @@ export function CalendarPanel({
   // Ay ızgarasının noktaları odak dışı günleri de gösterir (soluk).
   const gridByDay = useMemo(() => {
     const map = new Map<string, CalendarItem[]>();
-    for (const item of filterItems(items, filter)) {
+    for (const item of filterItems(entries, filter)) {
       if (!item.localDay) continue;
       const bucket = map.get(item.localDay);
       if (bucket) bucket.push(item);
       else map.set(item.localDay, [item]);
     }
     return map;
-  }, [items, filter]);
+  }, [entries, filter]);
 
   // Platform şeridi: bağlı hesaplar + bu aralıkta parçası olan her kaynak.
   const sourceRows = useMemo(() => {
@@ -373,7 +418,9 @@ export function CalendarPanel({
       connected: boolean | null;
       account: string | null;
     };
-    const present = new Set(scoped.map((i) => i.source.key));
+    const present = new Set(
+      scoped.flatMap((entry) => sourcesOf(entry).map((source) => source.key)),
+    );
     const rows: Row[] = meta.connections
       .filter(
         (c) =>
@@ -388,10 +435,10 @@ export function CalendarPanel({
       }));
     const known = new Set(meta.connections.map((c) => c.source.key));
     const seen = new Set<string>();
-    for (const item of scoped) {
-      if (known.has(item.source.key) || seen.has(item.source.key)) continue;
-      seen.add(item.source.key);
-      rows.push({ source: item.source, connected: null, account: null });
+    for (const source of scoped.flatMap(sourcesOf)) {
+      if (known.has(source.key) || seen.has(source.key)) continue;
+      seen.add(source.key);
+      rows.push({ source, connected: null, account: null });
     }
     return rows;
   }, [meta.connections, scoped, filter.sources]);
@@ -401,14 +448,17 @@ export function CalendarPanel({
   );
   const scheduleOffNote =
     !meta.scheduleEnabled &&
-    scoped.some(
-      (i) => i.stage === "held" && i.source.key === "instagram" && i.localDay,
+    scoped.some((entry) =>
+      deliveriesOf(entry).some(
+        (d) => d.stage === "held" && d.source.key === "instagram" && d.localDay,
+      ),
     );
 
-  // Özet kutucukları: süzgeçlerin geri kalanına göre sayılır (durum hariç).
+  // Özet kutucukları: süzgeçlerin geri kalanına göre sayılır (durum hariç);
+  // her kutucuk, dokununca kaç post göstereceğini söyler.
   const tiles = useMemo(() => {
     const count = (stages: ReadonlySet<CalendarStage>) =>
-      stagePool.filter((i) => stages.has(i.stage)).length;
+      filterItems(stagePool, { ...filter, stages }).length;
     return [
       {
         key: "all",
@@ -436,16 +486,23 @@ export function CalendarPanel({
         stages: new Set<CalendarStage>(["published"]),
       },
     ];
-  }, [stagePool]);
+  }, [stagePool, filter]);
   const sameSet = (
     a: ReadonlySet<CalendarStage>,
     b: ReadonlySet<CalendarStage>,
   ) => a.size === b.size && [...a].every((x) => b.has(x));
 
-  const problems =
-    (stageCounts.get("failed") ?? 0) + (stageCounts.get("missed") ?? 0);
+  const problems = useMemo(
+    () =>
+      filterItems(stagePool, {
+        ...filter,
+        stages: new Set<CalendarStage>(["failed", "missed"]),
+      }).length,
+    [stagePool, filter],
+  );
 
   // ── Yazma: taşı / planla (iyimser, geri alınabilir) ────────────────────────
+  // Bir postun bütün mecraları birlikte taşınır; ret hepsini geri alır.
   const commitMove = async (
     item: PanelItem,
     localDateTime: string | null,
@@ -455,19 +512,33 @@ export function CalendarPanel({
       item.localDay && item.localTime
         ? `${item.localDay}T${item.localTime}`
         : null;
-    const moved: PanelItem = {
-      ...rescheduleItem(item, localDateTime, {
-        timezone,
-        scheduleEnabled: meta.scheduleEnabled,
-        now: new Date(),
-      }),
-      pending: true,
+    const plan = reschedulePost(itemsRef.current, item, localDateTime, {
+      timezone,
+      scheduleEnabled: meta.scheduleEnabled,
+      now: new Date(),
+    });
+    if (!plan.ok) {
+      toast.error(plan.reason);
+      return;
+    }
+    const moved = new Map<string, PanelItem>(
+      plan.moved.map((next) => [next.id, { ...next, pending: true }]),
+    );
+    const before = new Map<string, PanelItem>(
+      postGroupOf(itemsRef.current, item).map((prior) => [
+        prior.id,
+        { ...prior, pending: false },
+      ]),
+    );
+    const write = (next: ReadonlyMap<string, PanelItem>) =>
+      setItems((prev) => prev.map((i) => next.get(i.id) ?? i));
+    const stamp = () => {
+      const now = Date.now();
+      for (const id of moved.keys()) stamps.current.set(id, now);
     };
-    const replace = (next: PanelItem) =>
-      setItems((prev) => prev.map((i) => (i.id === next.id ? next : i)));
 
-    stamps.current.set(item.id, Date.now());
-    replace(moved);
+    stamp();
+    write(moved);
     busy.current += 1;
     let result: Awaited<ReturnType<typeof rescheduleCreativeAction>>;
     try {
@@ -481,15 +552,18 @@ export function CalendarPanel({
     } finally {
       busy.current -= 1;
     }
-    stamps.current.set(item.id, Date.now());
+    stamp();
 
     if (!result.ok) {
       toast.error(result.message);
-      replace({ ...item, pending: false });
+      write(before);
       return;
     }
-    const settled: PanelItem = { ...moved, pending: false };
-    replace(settled);
+    const settled = new Map<string, PanelItem>(
+      [...moved].map(([id, next]) => [id, { ...next, pending: false }]),
+    );
+    write(settled);
+    const lead = settled.get(item.id) ?? item;
     toast.success(
       localDateTime
         ? `Moved to ${formatDayLong(localDateTime.slice(0, 10))} · ${localDateTime.slice(11, 16)}`
@@ -499,7 +573,7 @@ export function CalendarPanel({
         : {
             action: {
               label: "Undo",
-              onClick: () => void moveRef.current(settled, previous, true),
+              onClick: () => void moveRef.current(lead, previous, true),
             },
           },
     );
@@ -536,6 +610,10 @@ export function CalendarPanel({
     void load();
   }, [openId, loadDetail, load]);
   const openItem = openId ? items.find((i) => i.id === openId) : undefined;
+  const openDeliveries = useMemo(
+    () => (openItem ? postGroupOf(items, openItem) : []),
+    [items, openItem],
+  );
 
   // ── Sürükle-bırak ──────────────────────────────────────────────────────────
   const [dragId, setDragId] = useState<string | null>(null);
@@ -545,7 +623,7 @@ export function CalendarPanel({
     setDragId(null);
     setOverKey(null);
   }, []);
-  const onDragStart = useCallback((event: DragEvent, item: PanelItem) => {
+  const onDragStart = useCallback((event: DragEvent, item: PanelEntry) => {
     if (!item.movable) {
       event.preventDefault();
       return;
@@ -617,7 +695,7 @@ export function CalendarPanel({
     }),
     [dropOnDay, dropOnTray],
   );
-  const dragged = dragId ? items.find((i) => i.id === dragId) : undefined;
+  const dragged = dragId ? entries.find((e) => e.id === dragId) : undefined;
 
   const rowProps = {
     projectId,
@@ -821,7 +899,7 @@ export function CalendarPanel({
           onClick={() => setFilter((prev) => ({ ...prev, sources: new Set() }))}
         >
           All
-          <Count>{[...sourceCounts.values()].reduce((a, b) => a + b, 0)}</Count>
+          <Count>{sourceTotal}</Count>
         </Chip>
         {sourceRows.map((row) => {
           const active = filter.sources.has(row.source.key);
@@ -1292,8 +1370,12 @@ export function CalendarPanel({
 
       {openItem ? (
         <CreativeDetail
-          key={openItem.id}
+          // Post başına anahtar: postun mecraları arasında geçince panel
+          // yeniden açılıp kapanmaz.
+          key={openItem.postId ?? openItem.id}
           item={openItem}
+          deliveries={openDeliveries}
+          onSwitch={openDetail}
           detail={details[openItem.id]}
           timezone={timezone}
           todayKey={todayKey}
@@ -1614,10 +1696,11 @@ function MonthGrid({
 type RowProps = {
   projectId: string;
   todayKey: string;
+  // Açık teslimatın kimliği: postunun satırı vurgulanır.
   openId: string | null;
   dragId: string | null;
   onOpen: (id: string) => void;
-  onDragStart: (event: DragEvent, item: PanelItem) => void;
+  onDragStart: (event: DragEvent, item: PanelEntry) => void;
   onDragEnd: () => void;
 };
 
@@ -1627,7 +1710,7 @@ function GroupedList({
   empty,
   rowProps,
 }: {
-  groups: ReturnType<typeof groupForSort>;
+  groups: ItemGroup<PanelEntry>[];
   todayKey: string;
   empty: string;
   rowProps: RowProps;
@@ -1663,11 +1746,14 @@ function GroupedList({
                 {group.kind === "stage" ? (
                   <StageIcon stage={first.stage} className="size-3" />
                 ) : (
-                  <SourceMark
-                    source={first.source}
-                    decorative
-                    className="size-3.5 rounded"
-                  />
+                  sourcesOf(first).map((source) => (
+                    <SourceMark
+                      key={source.key}
+                      source={source}
+                      decorative
+                      className="size-3.5 rounded"
+                    />
+                  ))
                 )}
                 <span
                   className="text-[11px] font-semibold"
@@ -1675,7 +1761,9 @@ function GroupedList({
                 >
                   {group.kind === "stage"
                     ? STAGE_META[first.stage].label
-                    : first.source.label}
+                    : sourcesOf(first)
+                        .map((source) => source.label)
+                        .join(" + ")}
                 </span>
                 <span
                   className="text-[10px] tabular-nums"
@@ -1708,9 +1796,10 @@ const EXPLAIN: ReadonlySet<CalendarStage> = new Set([
   "held",
 ]);
 
-// Tek parça satırı: tıklayınca detay paneli; taşınabilirse sürüklenir.
-// Cmd/Ctrl+tık tam takvimde açar (gerçek adres).
-const ItemRow = memo(function ItemRow({
+// Bir post (ya da postu olmayan tek parça) satırı: tıklayınca ilk mecranın
+// detayı; taşınabilirse sürüklenir ve bütün post taşınır. Cmd/Ctrl+tık tam
+// takvimde açar (gerçek adres).
+export const ItemRow = memo(function ItemRow({
   item,
   projectId,
   todayKey,
@@ -1720,9 +1809,11 @@ const ItemRow = memo(function ItemRow({
   onOpen,
   onDragStart,
   onDragEnd,
-}: RowProps & { item: PanelItem; showDate?: boolean }) {
-  const active = openId === item.id;
+}: RowProps & { item: PanelEntry; showDate?: boolean }) {
+  const active =
+    openId !== null && item.deliveries.some((delivery) => delivery.id === openId);
   const dragging = dragId === item.id;
+  const multi = isMulti(item);
   const when = item.localDay
     ? [
         showDate
@@ -1747,7 +1838,12 @@ const ItemRow = memo(function ItemRow({
       draggable={item.movable}
       onDragStart={(event) => onDragStart(event, item)}
       onDragEnd={onDragEnd}
-      title={`${headline(item)}\n${item.label} · ${when}\n${STAGE_META[item.stage].label}${item.reason ? ` — ${item.reason}` : ""}`}
+      title={rowTitle(item, when)}
+      aria-label={
+        multi
+          ? `${headline(item)}, ${when}, ${STAGE_META[item.stage].label}. ${deliveriesText(item.deliveries)}`
+          : undefined
+      }
       className={cn(
         "group flex items-center gap-2.5 rounded-xl border px-2 py-1.5 transition-colors hover:bg-[var(--ws-hover)]",
         item.movable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
@@ -1761,6 +1857,7 @@ const ItemRow = memo(function ItemRow({
       <ItemThumb
         assetId={item.assetId}
         source={item.source}
+        badge={!multi}
         className="size-9"
       />
       <div className="min-w-0 flex-1">
@@ -1776,7 +1873,14 @@ const ItemRow = memo(function ItemRow({
         >
           <span className="shrink-0 tabular-nums">{when}</span>
           <span aria-hidden>·</span>
-          <span className="truncate">{item.label}</span>
+          {multi ? (
+            <DeliveryMarks
+              deliveries={item.deliveries}
+              ringClassName="ring-[var(--ws-surface)]"
+            />
+          ) : (
+            <span className="truncate">{item.label}</span>
+          )}
         </div>
         {EXPLAIN.has(item.stage) && item.reason ? (
           <div className="mt-0.5 truncate text-[10.5px] text-destructive">

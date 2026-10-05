@@ -31,11 +31,22 @@ import {
 } from "@/lib/calendar/grid";
 import {
   mergeFresh,
-  rescheduleItem,
   reuseUnchanged,
   type ItemCache,
 } from "@/lib/calendar/item";
 import { isDroppableDay, resolveDrop } from "@/lib/calendar/move";
+import {
+  EMPTY_FILTER,
+  countEntries,
+  filterItems,
+  type PanelFilter,
+} from "@/lib/calendar/panel-view";
+import {
+  groupPosts,
+  postGroupOf,
+  reschedulePost,
+  type EntryCache,
+} from "@/lib/calendar/posts";
 import {
   STAGE_META,
   STAGE_ORDER,
@@ -56,6 +67,7 @@ import { DayCell, DRAG_TYPE, WEEKDAYS, type BoardDay } from "./calendar-day";
 import {
   RichCard,
   TrayCard,
+  type BoardEntry,
   type BoardItem,
   type DragHandlers,
 } from "./calendar-items";
@@ -101,7 +113,7 @@ const HOVER_INTENT_MS = 120;
 // Atanmamış tepsisinde ilk gösterilen kart sayısı (gerisi "Show all").
 const TRAY_LIMIT = 30;
 
-const NO_ITEMS: BoardItem[] = [];
+const NO_ITEMS: BoardEntry[] = [];
 
 // Panel açıkken adres paylaşılabilir/yenilenebilir olsun diye `?creative=`
 // adrese yazılır; ama Next yönlendiricisi tetiklenmez: `replaceState` sayfayı
@@ -130,7 +142,7 @@ function weekRowLabel(row: readonly BoardDay[], todayKey: string): string {
   return "Week";
 }
 
-function byTime(a: BoardItem, b: BoardItem): number {
+function byTime(a: BoardEntry, b: BoardEntry): number {
   return (
     (a.localTime ?? "").localeCompare(b.localTime ?? "") ||
     (a.title ?? a.label).localeCompare(b.title ?? b.label)
@@ -171,6 +183,14 @@ export function CalendarBoard(props: BoardProps) {
   }, [items]);
   // Uçuştaki yazma sayısı: bu sürerken yoklama yapılmaz.
   const busy = useRef(0);
+
+  // Post başına bir kart (docs/works.md "Posts"): aynı postun mecra
+  // teslimatları tek girdi olur; değişmeyen girdi aynı nesne kalır.
+  const [entryCache] = useState<EntryCache<BoardItem>>(() => new Map());
+  const entries = useMemo(
+    () => groupPosts(items, entryCache),
+    [items, entryCache],
+  );
 
   const applyPayload = useCallback(
     (payload: CalendarPayload) => {
@@ -228,45 +248,41 @@ export function CalendarBoard(props: BoardProps) {
   const [pickedDay, setPickedDay] = useState<string | null>(null);
   const [trayAll, setTrayAll] = useState(false);
 
-  // Her şerit diğer süzgece göre sayar: durum sayıları seçili platformu,
-  // platform sayıları seçili durumu yansıtır.
-  const sourceScoped = useMemo(
-    () => items.filter((i) => !sourceFilter || i.source.key === sourceFilter),
-    [items, sourceFilter],
-  );
-  const stageScoped = useMemo(
-    () => items.filter((i) => !stageFilter || i.stage === stageFilter),
-    [items, stageFilter],
+  // Süzgeçler teslimat başına çalışır: mecralarından biri uyan post görünür.
+  // Her şerit diğer süzgece göre sayar (durum sayıları seçili platformu,
+  // platform sayıları seçili durumu yansıtır); post her değerde bir kez.
+  const filter = useMemo<PanelFilter>(
+    () => ({
+      ...EMPTY_FILTER,
+      sources: new Set(sourceFilter ? [sourceFilter] : []),
+      stages: new Set(stageFilter ? [stageFilter] : []),
+    }),
+    [sourceFilter, stageFilter],
   );
   const visible = useMemo(
-    () => sourceScoped.filter((i) => !stageFilter || i.stage === stageFilter),
-    [sourceScoped, stageFilter],
+    () => filterItems(entries, filter),
+    [entries, filter],
   );
 
-  const stageCounts = useMemo(() => {
-    const counts = new Map<CalendarStage, number>();
-    for (const item of sourceScoped) {
-      counts.set(item.stage, (counts.get(item.stage) ?? 0) + 1);
-    }
-    return counts;
-  }, [sourceScoped]);
+  const stageCounts = useMemo(
+    () => countEntries(entries, filter, "stages", (d) => d.stage),
+    [entries, filter],
+  );
 
   const { connections, scheduleEnabled } = meta;
   const sourceRows = useMemo(() => {
-    const scopedCount = new Map<string, number>();
-    for (const item of stageScoped) {
-      scopedCount.set(
-        item.source.key,
-        (scopedCount.get(item.source.key) ?? 0) + 1,
-      );
-    }
-    const totalCount = new Map<string, number>();
-    for (const item of items) {
-      totalCount.set(
-        item.source.key,
-        (totalCount.get(item.source.key) ?? 0) + 1,
-      );
-    }
+    const scopedCount = countEntries(
+      entries,
+      filter,
+      "sources",
+      (d) => d.source.key,
+    );
+    const totalCount = countEntries(
+      entries,
+      EMPTY_FILTER,
+      "sources",
+      (d) => d.source.key,
+    );
     type Row = {
       source: CalendarSource;
       // null: bağlanacak bir hesabı yok (Blog/SEO gibi elle kanallar)
@@ -295,10 +311,10 @@ export function CalendarBoard(props: BoardProps) {
       });
     }
     return rows;
-  }, [connections, items, stageScoped]);
+  }, [connections, items, entries, filter]);
 
   const byDay = useMemo(() => {
-    const map = new Map<string, BoardItem[]>();
+    const map = new Map<string, BoardEntry[]>();
     for (const item of visible) {
       if (!item.localDay) continue;
       const bucket = map.get(item.localDay);
@@ -323,7 +339,8 @@ export function CalendarBoard(props: BoardProps) {
   // ── Yazma: taşı / planla ───────────────────────────────────────────────────
   // Yerel yeni hal ANINDA ekrana yazılır (durum aynı kurallarla istemcide
   // yeniden türetilir); arkada tek bir yazma gider. Sayfa yeniden render
-  // edilmez. Hata olursa eski hale dönülür.
+  // edilmez. Hata olursa eski hale dönülür. Bir postun bütün mecraları
+  // birlikte taşınır (sunucu da postu tek parça taşır); ret hepsini geri alır.
   const commitMove = async (
     item: BoardItem,
     localDateTime: string | null,
@@ -333,19 +350,33 @@ export function CalendarBoard(props: BoardProps) {
       item.localDay && item.localTime
         ? `${item.localDay}T${item.localTime}`
         : null;
-    const moved: BoardItem = {
-      ...rescheduleItem(item, localDateTime, {
-        timezone,
-        scheduleEnabled,
-        now: new Date(),
-      }),
-      pending: true,
+    const plan = reschedulePost(itemsRef.current, item, localDateTime, {
+      timezone,
+      scheduleEnabled,
+      now: new Date(),
+    });
+    if (!plan.ok) {
+      toast.error(plan.reason);
+      return;
+    }
+    const moved = new Map<string, BoardItem>(
+      plan.moved.map((next) => [next.id, { ...next, pending: true }]),
+    );
+    const before = new Map<string, BoardItem>(
+      postGroupOf(itemsRef.current, item).map((prior) => [
+        prior.id,
+        { ...prior, pending: false },
+      ]),
+    );
+    const write = (next: ReadonlyMap<string, BoardItem>) =>
+      setItems((prev) => prev.map((i) => next.get(i.id) ?? i));
+    const stamp = () => {
+      const now = Date.now();
+      for (const id of moved.keys()) stamps.current.set(id, now);
     };
-    const replace = (next: BoardItem) =>
-      setItems((prev) => prev.map((i) => (i.id === next.id ? next : i)));
 
-    stamps.current.set(item.id, Date.now());
-    replace(moved);
+    stamp();
+    write(moved);
     busy.current += 1;
     let result: Awaited<ReturnType<typeof rescheduleCreativeAction>>;
     try {
@@ -359,15 +390,18 @@ export function CalendarBoard(props: BoardProps) {
     } finally {
       busy.current -= 1;
     }
-    stamps.current.set(item.id, Date.now());
+    stamp();
 
     if (!result.ok) {
       toast.error(result.message);
-      replace({ ...item, pending: false });
+      write(before);
       return;
     }
-    const settled: BoardItem = { ...moved, pending: false };
-    replace(settled);
+    const settled = new Map<string, BoardItem>(
+      [...moved].map(([id, next]) => [id, { ...next, pending: false }]),
+    );
+    write(settled);
+    const lead = settled.get(item.id) ?? item;
     toast.success(
       localDateTime
         ? `Moved to ${formatDayLong(localDateTime.slice(0, 10))} · ${localDateTime.slice(11, 16)}`
@@ -377,7 +411,7 @@ export function CalendarBoard(props: BoardProps) {
         : {
             action: {
               label: "Undo",
-              onClick: () => void moveRef.current(settled, previous, true),
+              onClick: () => void moveRef.current(lead, previous, true),
             },
           },
     );
@@ -471,6 +505,17 @@ export function CalendarBoard(props: BoardProps) {
   }, [openId, loadDetail, refreshNow]);
 
   const openItem = openId ? items.find((i) => i.id === openId) : undefined;
+  // Açık teslimatın postu: detayda mecralar arasında geçilir, panoda postun
+  // kartı vurgulanır.
+  const openDeliveries = useMemo(
+    () => (openItem ? postGroupOf(items, openItem) : []),
+    [items, openItem],
+  );
+  const openEntryId = openItem
+    ? (entries.find((entry) =>
+        entry.deliveries.some((delivery) => delivery.id === openItem.id),
+      )?.id ?? null)
+    : null;
 
   // ── Sürükle-bırak ──────────────────────────────────────────────────────────
   const [dragId, setDragId] = useState<string | null>(null);
@@ -551,7 +596,7 @@ export function CalendarBoard(props: BoardProps) {
     });
   }, []);
 
-  const dragged = dragId ? items.find((i) => i.id === dragId) : undefined;
+  const dragged = dragId ? entries.find((e) => e.id === dragId) : undefined;
   const filtersOn = stageFilter !== null || sourceFilter !== null;
   const scheduleOffNote =
     !scheduleEnabled &&
@@ -559,7 +604,7 @@ export function CalendarBoard(props: BoardProps) {
       (i) => i.stage === "held" && i.source.key === "instagram" && i.localDay,
     );
   const trayItems = trayAll ? unscheduled : unscheduled.slice(0, TRAY_LIMIT);
-  const only = (list: BoardItem[], id: string | null) =>
+  const only = (list: BoardEntry[], id: string | null) =>
     id && list.some((i) => i.id === id) ? id : null;
 
   const cell = (day: BoardDay, cellView: CalendarView) => {
@@ -576,7 +621,7 @@ export function CalendarBoard(props: BoardProps) {
         over={overKey === day.key}
         selected={cellView === "month" && day.key === selectedDay}
         expanded={cellView === "week" ? true : expanded.has(day.key)}
-        activeId={only(dayItems, openId)}
+        activeId={only(dayItems, openEntryId)}
         draggingId={only(dayItems, dragId)}
         hrefPrefix={hrefs.creativePrefix}
         drag={drag}
@@ -853,7 +898,7 @@ export function CalendarBoard(props: BoardProps) {
                     key={item.id}
                     item={item}
                     href={`${hrefs.creativePrefix}${item.id}`}
-                    active={item.id === openId}
+                    active={item.id === openEntryId}
                     dragging={item.id === dragId}
                     drag={drag}
                     onOpen={openDetail}
@@ -950,7 +995,7 @@ export function CalendarBoard(props: BoardProps) {
                     key={item.id}
                     item={item}
                     href={`${hrefs.creativePrefix}${item.id}`}
-                    active={item.id === openId}
+                    active={item.id === openEntryId}
                     dragging={false}
                     drag={drag}
                     onOpen={openDetail}
@@ -968,8 +1013,12 @@ export function CalendarBoard(props: BoardProps) {
 
       {openItem ? (
         <CreativeDetail
-          key={openItem.id}
+          // Post başına anahtar: postun mecraları arasında geçince panel
+          // yeniden açılıp kapanmaz.
+          key={openItem.postId ?? openItem.id}
           item={openItem}
+          deliveries={openDeliveries}
+          onSwitch={openDetail}
           detail={details[openItem.id]}
           projectId={projectId}
           timezone={timezone}

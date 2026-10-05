@@ -1,14 +1,16 @@
 import "server-only";
 
 import { CHANNELS, isChannelKey, resolveFormat } from "@/lib/content-channels";
+import type {
+  OutputDelivery,
+  OutputPostsPayload,
+} from "@/lib/calendar/output-posts";
 import { sourceOf } from "@/lib/calendar/source";
 import {
   KIND_LABEL,
   kindOf,
   phaseOf,
-  type OutputItem,
   type OutputStatus,
-  type OutputsPayload,
 } from "@/lib/outputs/panel";
 import { prisma } from "@/lib/prisma";
 import { utcToZonedDateTimeLocal } from "@/lib/timezone";
@@ -43,19 +45,26 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 // Sağ panel Outputs sekmesinin verisi: arşivlenmemiş her parça (en yeniden),
-// son sürümü, bekleyen onayı ve yayın zamanı. Okuma anı bindirmesi, hiçbir şey
-// yazılmaz.
+// son sürümü, bekleyen onayı, yayın zamanı ve postu. Aynı postun teslimatları
+// istemcide tek kart olur (lib/calendar/output-posts.ts). Okuma anı
+// bindirmesi, hiçbir şey yazılmaz.
 export async function loadOutputs(input: {
   projectId: string;
   timezone: string;
-}): Promise<OutputsPayload> {
+}): Promise<OutputPostsPayload> {
   const [creatives, approvals] = await Promise.all([
     prisma.creative.findMany({
-      where: { projectId: input.projectId, status: { not: "ARCHIVED" } },
+      // A channel left out of its post is not an output.
+      where: {
+        projectId: input.projectId,
+        status: { not: "ARCHIVED" },
+        excludedAt: null,
+      },
       orderBy: { createdAt: "desc" },
       take: OUTPUTS_LIMIT + 1,
       select: {
         id: true,
+        postId: true,
         title: true,
         type: true,
         status: true,
@@ -100,7 +109,8 @@ export async function loadOutputs(input: {
   }
 
   const truncated = creatives.length > OUTPUTS_LIMIT;
-  const items = creatives.slice(0, OUTPUTS_LIMIT).map((creative): OutputItem => {
+  const shown = creatives.slice(0, OUTPUTS_LIMIT);
+  const items = shown.map((creative): OutputDelivery => {
     const version = creative.versions[0];
     const asset = version?.asset;
     const hasImage = Boolean(
@@ -130,6 +140,7 @@ export async function loadOutputs(input: {
 
     return {
       id: creative.id,
+      postId: creative.postId ?? null,
       title: creative.title,
       preview: clip(text, 140),
       text,

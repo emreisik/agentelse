@@ -16,7 +16,6 @@ import {
   COUNCIL_TYPE,
   IDEA_STATUS,
   TASK_STATUS,
-  WORK_PLAN_STATUS,
   stripCapabilityPrefix,
 } from "@/lib/labels";
 import { IdeaRepository } from "@/server/repositories/idea.repository";
@@ -51,9 +50,6 @@ export async function ProjectFlowView({
 }) {
   if (entity.kind === "idea") {
     return <IdeaFlow projectId={projectId} ideaId={entity.id} />;
-  }
-  if (entity.kind === "workPlan") {
-    return <WorkPlanFlow projectId={projectId} workPlanId={entity.id} />;
   }
   if (entity.kind === "task") {
     return <TaskFlow projectId={projectId} taskId={entity.id} />;
@@ -133,53 +129,6 @@ async function IdeaFlow({
       title={idea.title}
       statusBadge={<StatusBadge meta={IDEA_STATUS[idea.status]} />}
       backHref={`/projects/${projectId}#idea-${ideaId}`}
-    >
-      <FlowTimeline events={events} />
-    </FlowShell>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-async function WorkPlanFlow({
-  projectId,
-  workPlanId,
-}: {
-  projectId: string;
-  workPlanId: string;
-}) {
-  const workPlan = await WorkPlanRepository.findByIdInProject(
-    workPlanId,
-    projectId,
-  );
-  if (!workPlan) {
-    return (
-      <FlowShell projectId={projectId} title="Chat not found">
-        <EmptyState
-          icon={ClipboardList}
-          title="This work plan was not found"
-          hint="The record may have been deleted."
-        />
-      </FlowShell>
-    );
-  }
-
-  const events: FlowEvent[] = [
-    {
-      id: workPlan.id,
-      at: workPlan.createdAt,
-      icon: ClipboardList,
-      title: "Work plan created",
-      detail: workPlan.title,
-    },
-    ...taskEvents(workPlan.tasks),
-  ];
-
-  return (
-    <FlowShell
-      projectId={projectId}
-      title={workPlan.title}
-      statusBadge={<StatusBadge meta={WORK_PLAN_STATUS[workPlan.status]} />}
     >
       <FlowTimeline events={events} />
     </FlowShell>

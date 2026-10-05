@@ -58,7 +58,10 @@ export type ProductionContext = {
   workspaceId: string;
   projectId: string;
   brandId: string;
-  userId: string;
+  // null = an unattended run (weekly-plan-produce.ts): tasks are created as
+  // SYSTEM instead of as this user's. Every existing caller has a real
+  // session, so this stays non-null for them.
+  userId: string | null;
   // The Command row the tasks keep their lineage on (the package or the plan).
   commandId: string;
   // How long to look for the final card of a job another process ran.
@@ -233,8 +236,8 @@ export async function runProductionItem(
       targetPlatform: spec.targetPlatform,
       request: spec.request,
       title: spec.title,
-      createdByType: "USER",
-      createdByUserId: input.userId,
+      createdByType: input.userId ? "USER" : "SYSTEM",
+      createdByUserId: input.userId ?? undefined,
       departmentKey: spec.department,
       payloadExtra: spec.payloadExtra,
     });

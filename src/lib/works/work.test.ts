@@ -110,6 +110,7 @@ describe("channelOptions / helpers", () => {
     const options = channelOptions({ x: { connected: true } });
     expect(options.map((o) => o.key)).toEqual([
       "instagram",
+      "facebook",
       "tiktok",
       "linkedin",
       "x",

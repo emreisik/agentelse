@@ -204,7 +204,9 @@ export function toPlanItems(
       time: slot.time,
       channel: target.channel,
       formatKey: target.formatKey,
-      topic: text.topic,
+      // One idea, one post: every channel carries the master's title (the
+      // post's idea); its own words are its caption idea.
+      topic: master.title,
       captionIdea: text.captionIdea,
     });
   });

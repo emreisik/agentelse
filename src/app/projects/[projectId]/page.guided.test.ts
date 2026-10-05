@@ -49,7 +49,10 @@ vi.mock("@/server/security/tenant-context", () => ({
   requireUser: async () => ({ userId: "u1" }),
   requireProjectAccess: async () => undefined,
 }));
-vi.mock("@/components/layout/app-shell", () => ({ AppShell: () => null }));
+vi.mock("@/components/layout/app-shell", () => ({
+  AppShell: () => null,
+  preloadAppShell: () => undefined,
+}));
 vi.mock("@/components/hub-core/hub-core-params", () => ({
   parseHubParams: mocks.parseHubParams,
   entityHref: () => "/x",
@@ -219,7 +222,11 @@ describe("project page guided setup wiring", () => {
   });
 
   it("a panel opened from a chat gets that chat for its Back to chat link (Works on); off, none", async () => {
-    mocks.parseHubParams.mockReturnValue({ panel: "settings", sub: null, entity: null });
+    mocks.parseHubParams.mockReturnValue({
+      panel: "settings",
+      sub: null,
+      entity: null,
+    });
     mocks.worksOn = true;
     const on = await renderWorkTree({ panel: "settings", work: "w1" });
     expect(findPropsOf(on, mocks.PanelShell)?.workId).toBe("w1");
@@ -296,7 +303,9 @@ function findPropsOf(node: unknown, type: unknown): AnyProps | undefined {
   return undefined;
 }
 
-async function renderWorkTree(sp: Record<string, string | string[] | undefined>) {
+async function renderWorkTree(
+  sp: Record<string, string | string[] | undefined>,
+) {
   return ProjectChatPage({
     params: Promise.resolve({ projectId: "p1" }),
     searchParams: Promise.resolve(sp),
@@ -367,9 +376,8 @@ describe("project page Works wave 2", () => {
   it("?work=today with no Today Work yet renders the opener in today mode", async () => {
     mocks.workRepo.findToday.mockResolvedValue(null);
     const { element } = await renderWork({ work: "today" });
-    const opener = (
-      element as { props: { children: { props: AnyProps } } }
-    ).props.children;
+    const opener = (element as { props: { children: { props: AnyProps } } })
+      .props.children;
     expect(opener.props).toEqual({ projectId: "p1", mode: "today" });
     expect(mocks.workRepo.findToday).toHaveBeenCalledWith("p1", "2026-10-01");
   });
@@ -381,9 +389,8 @@ describe("project page Works wave 2", () => {
   it("a bare URL starts a new chat: the opener renders, no existing Work is opened", async () => {
     mocks.workRepo.listRecent.mockResolvedValue([work()]);
     const { element, chat } = await renderWork({});
-    const opener = (
-      element as { props: { children: { props: AnyProps } } }
-    ).props.children;
+    const opener = (element as { props: { children: { props: AnyProps } } })
+      .props.children;
     expect(opener.props).toEqual({ projectId: "p1" });
     expect(chat).toBeUndefined();
     expect(mocks.workRepo.get).not.toHaveBeenCalled();
@@ -395,9 +402,8 @@ describe("project page Works wave 2", () => {
 
   it("a blank ?work= is the bare URL too", async () => {
     const { element } = await renderWork({ work: "  " });
-    const opener = (
-      element as { props: { children: { props: AnyProps } } }
-    ).props.children;
+    const opener = (element as { props: { children: { props: AnyProps } } })
+      .props.children;
     expect(opener.props).toEqual({ projectId: "p1" });
   });
 
@@ -464,7 +470,9 @@ describe("project page Works wave 2", () => {
 
   it("a stale ?work= id still goes back to the bare URL", async () => {
     mocks.workRepo.get.mockResolvedValue(null);
-    await expect(renderWork({ work: "gone" })).rejects.toThrow("redirect:/projects/p1");
+    await expect(renderWork({ work: "gone" })).rejects.toThrow(
+      "redirect:/projects/p1",
+    );
   });
 
   it("Today of today: the brief then the ads card lead the conversation, never stored", async () => {
@@ -509,6 +517,25 @@ describe("project page Works wave 2", () => {
     const ads = await renderWork({ work: "w1" });
     expect(ads.turns.map((t) => t.commandId)).toEqual(["ads-w1"]);
     expect(mocks.loadBriefExtras).not.toHaveBeenCalled();
+  });
+
+  it("a new chat (untouched) stays empty: no ads card and no decision turns", async () => {
+    mocks.workRepo.get.mockResolvedValue(work({ channels: ["ads"] }));
+    mocks.workRepo.isUntouched.mockResolvedValue(true);
+    mocks.getPendingDecisions.mockResolvedValue([spendDecision("ap2", "t2")]);
+    mocks.prisma.task.findMany.mockResolvedValue([
+      { id: "t2", capability: "META_CAMPAIGN_UPDATE", command: null },
+    ]);
+    const fresh = await renderWork({ work: "w1" });
+    expect(fresh.turns).toEqual([]);
+
+    // Its first message makes it a chat: the cards show from then on.
+    mocks.workRepo.isUntouched.mockResolvedValue(false);
+    const used = await renderWork({ work: "w1" });
+    expect(used.turns.map((t) => t.commandId)).toEqual([
+      "ads-w1",
+      "decision-ap2",
+    ]);
   });
 
   it("a proposal shown on the ads card is not repeated as a decision turn", async () => {
@@ -562,7 +589,10 @@ describe("project page Works wave 2", () => {
 
   it("a bulk Approve leaves out pieces that still have picture alternatives", async () => {
     mocks.workRepo.get.mockResolvedValue(work());
-    mocks.loadJourneySnapshot.mockResolvedValue({ today: "2026-10-01", items: [] });
+    mocks.loadJourneySnapshot.mockResolvedValue({
+      today: "2026-10-01",
+      items: [],
+    });
     mocks.computeNextSteps.mockReturnValue([
       {
         key: "approve",
@@ -601,7 +631,10 @@ describe("project page Works wave 2", () => {
   it("flag off: next steps are the journey's own, untouched", async () => {
     mocks.worksOn = false;
     const steps = [{ key: "k", action: { kind: "plan_next", afterDate: "x" } }];
-    mocks.loadJourneySnapshot.mockResolvedValue({ today: "2026-10-01", items: [] });
+    mocks.loadJourneySnapshot.mockResolvedValue({
+      today: "2026-10-01",
+      items: [],
+    });
     mocks.computeNextSteps.mockReturnValue(steps);
     const { chatProps } = await renderPage({});
     expect(chatProps.nextSteps).toBe(steps);

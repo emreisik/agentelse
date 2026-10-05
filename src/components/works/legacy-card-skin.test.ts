@@ -310,7 +310,7 @@ describe("ContentPlanCard with a Work host", () => {
         {
           date: "2026-10-05",
           time: "10:00",
-          platform: "FACEBOOK",
+          platform: "YOUTUBE",
           topic: "Open day",
           captionIdea: "Come and see us",
         },

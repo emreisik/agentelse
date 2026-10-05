@@ -232,7 +232,11 @@ beforeEach(() => {
   mocks.transaction.mockImplementation(
     async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
-        creative: { updateMany: mocks.txCreativeUpdateMany },
+        creative: {
+          updateMany: mocks.txCreativeUpdateMany,
+          // A piece outside a post moves alone (post-move.ts).
+          findUnique: async () => ({ postId: null }),
+        },
         task: { findMany: mocks.txTaskFindMany },
         command: {
           findUnique: mocks.txCommandFindUnique,

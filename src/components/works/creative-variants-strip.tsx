@@ -2,7 +2,6 @@
 
 import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -10,13 +9,7 @@ import {
   disabledReasonOf,
   useWorkCardHost,
 } from "@/components/works/work-card-host";
-import { postVariants } from "@/components/works/variants-client";
 import { copyText } from "@/lib/works/copy";
-import {
-  remainingVariantSlots,
-  variantCostLabel,
-  VARIANT_COUNT,
-} from "@/lib/works/variants";
 import { adoptCreativeVariantAction } from "@/server/actions/creative-variant-actions";
 import type { CreativeCardData } from "@/types/creative-card";
 import { assetUrl } from "@/lib/asset-url";
@@ -25,17 +18,9 @@ type ReadyCard = Extract<CreativeCardData, { kind: "creative-ready" }>;
 
 // The pictures of one piece in review: the current one and its alternatives.
 // Picking is only possible before approval; afterwards nothing is interactive.
-// `planCommandId` is the plan row the piece belongs to (the variants route
-// needs it for "Make 3 more").
-export function CreativeVariantsStrip({
-  card,
-  planCommandId,
-}: {
-  card: ReadyCard;
-  planCommandId?: string;
-}) {
+// It never makes new pictures ("Make 3 more" is gone: one post, one picture).
+export function CreativeVariantsStrip({ card }: { card: ReadyCard }) {
   const host = useWorkCardHost();
-  const router = useRouter();
   const guard = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,15 +54,10 @@ export function CreativeVariantsStrip({
     );
   }
 
+  // Nothing to pick: no empty shell.
+  if (alternatives.length === 0) return null;
   const blocked = host ? disabledReasonOf(host, { kind: "server" }) : null;
   const disabled = blocked !== null || busy !== null;
-  const canMore =
-    !!planCommandId &&
-    // A whole set must fit: the server drops the pictures that do not (a paid
-    // picture thrown away).
-    remainingVariantSlots(alternatives.length) >= VARIANT_COUNT;
-  // Nothing to pick and nothing to make: no empty shell.
-  if (alternatives.length === 0 && !canMore) return null;
 
   const adopt = async (assetId: string): Promise<void> => {
     if (guard.current || blocked) return;
@@ -104,43 +84,12 @@ export function CreativeVariantsStrip({
     }
   };
 
-  const makeMore = async (): Promise<void> => {
-    if (guard.current || blocked || !host || !planCommandId) return;
-    guard.current = true;
-    setBusy("more");
-    setError(null);
-    try {
-      const result = await postVariants(host.projectId, {
-        commandId: planCommandId,
-        creativeId: card.creativeId,
-        more: true,
-      });
-      if (!result.ok) {
-        setError(result.message);
-        return;
-      }
-      router.refresh();
-      host.announce(copyText("variants.moreDone"));
-    } finally {
-      guard.current = false;
-      setBusy(null);
-    }
-  };
-
   const reasonId = `variants-reason-${card.creativeId}`;
   const shown = enlarged !== null ? pictures[enlarged] : undefined;
-  // A piece with nothing to pick from only offers "Make 3 more": the card above
-  // already shows its picture, so no second thumbnail and no "pick" note.
-  const hasAlternatives = alternatives.length > 0;
 
   return (
-    <div
-      data-variants-strip="review"
-      aria-busy={busy === "more" ? "true" : undefined}
-      className="mt-2 space-y-2"
-    >
-      {hasAlternatives ? (
-        <ul className="flex flex-wrap gap-3">
+    <div data-variants-strip="review" className="mt-2 space-y-2">
+      <ul className="flex flex-wrap gap-3">
           {pictures.map((picture, index) => {
             const i = index + 1;
             return (
@@ -192,43 +141,13 @@ export function CreativeVariantsStrip({
             );
           })}
         </ul>
-      ) : null}
-      {canMore ? (
-        <div className="space-y-1">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-disabled={disabled ? "true" : undefined}
-            aria-describedby={blocked ? reasonId : undefined}
-            onClick={() => {
-              if (!disabled) void makeMore();
-            }}
-            className={`min-h-11 rounded-lg px-4 ${disabled ? "opacity-50" : ""}`}
-          >
-            {busy === "more" ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-            ) : null}
-            {busy === "more"
-              ? copyText("variants.running")
-              : copyText("variants.makeMore")}
-          </Button>
-          <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
-            {copyText("variants.costNote", {
-              amount: variantCostLabel(card.contentFormat),
-            })}
-          </p>
-        </div>
-      ) : null}
-      {hasAlternatives ? (
-        <p
-          data-variants-footnote
-          className="text-xs"
-          style={{ color: "var(--ws-text-2)" }}
-        >
-          {copyText("variants.pickBefore")}
-        </p>
-      ) : null}
+      <p
+        data-variants-footnote
+        className="text-xs"
+        style={{ color: "var(--ws-text-2)" }}
+      >
+        {copyText("variants.pickBefore")}
+      </p>
       {blocked ? (
         <p
           id={reasonId}

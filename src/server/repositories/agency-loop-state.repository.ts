@@ -79,6 +79,56 @@ export const AgencyLoopStateRepository = {
     });
   },
 
+  // getOrCreate for many projects at once (the heartbeat, every tick): one
+  // read, plus one insert for the projects that have no row yet. Returns each
+  // project's loop status; a new row starts RUNNING (the column default).
+  async statusesFor(
+    scopes: readonly AgencyLoopScope[],
+  ): Promise<Map<string, AgencyLoopStatus>> {
+    const existing = await prisma.agencyLoopState.findMany({
+      where: { projectId: { in: scopes.map((scope) => scope.projectId) } },
+      select: { projectId: true, status: true },
+    });
+    const statuses = new Map<string, AgencyLoopStatus>(
+      existing.map((row) => [row.projectId, row.status] as const),
+    );
+    const missing = scopes.filter((scope) => !statuses.has(scope.projectId));
+    if (missing.length > 0) {
+      await prisma.agencyLoopState.createMany({
+        data: missing.map(({ workspaceId, projectId, brandId }) => ({
+          workspaceId,
+          projectId,
+          brandId,
+        })),
+        skipDuplicates: true,
+      });
+      for (const scope of missing) statuses.set(scope.projectId, "RUNNING");
+    }
+    return statuses;
+  },
+
+  // The batch forms of touch / setPaused / resumeFromPause below.
+  touchMany(projectIds: readonly string[]) {
+    return prisma.agencyLoopState.updateMany({
+      where: { projectId: { in: [...projectIds] } },
+      data: { lastTickAt: new Date() },
+    });
+  },
+
+  setPausedMany(projectIds: readonly string[], blockedReason: string) {
+    return prisma.agencyLoopState.updateMany({
+      where: { projectId: { in: [...projectIds] } },
+      data: { status: "PAUSED", blockedReason, lastTickAt: new Date() },
+    });
+  },
+
+  resumeFromPauseMany(projectIds: readonly string[]) {
+    return prisma.agencyLoopState.updateMany({
+      where: { projectId: { in: [...projectIds] } },
+      data: { status: "RUNNING", blockedReason: null, lastTickAt: new Date() },
+    });
+  },
+
   // A processed cycle for this project did something real this tick
   // (a handler ran and had a task/check/handoff to act on) — resets the
   // no-progress streak and clears any stale PAUSED/BLOCKED reason left

@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
   commandUpdate: vi.fn(),
   creativeFindFirst: vi.fn(),
   creativeUpdateMany: vi.fn(),
+  // The deliveries of the slot's post and the post's own write (Posts).
+  deliveries: { value: [] as Record<string, unknown>[] },
+  postUpdate: vi.fn(),
   taskFindMany: vi.fn(),
   requireUser: vi.fn(),
   requireProjectAccess: vi.fn(),
@@ -92,6 +95,13 @@ vi.mock("@/lib/prisma", () => {
       updateMany: (args: unknown) => {
         mocks.creativeUpdateMany(args);
         return Promise.resolve({ count: mocks.creativeUpdateCount.value });
+      },
+      findMany: async () => mocks.deliveries.value,
+    },
+    post: {
+      update: (args: unknown) => {
+        mocks.postUpdate(args);
+        return Promise.resolve({});
       },
     },
     task: {
@@ -259,6 +269,7 @@ beforeEach(() => {
   mocks.transactions.value = 0;
   mocks.workStatus.value = "ACTIVE";
   mocks.creative.value = { status: "DRAFT", currentVersionId: null };
+  mocks.deliveries.value = [];
   mocks.tasks.value = [];
   mocks.creativeUpdateCount.value = 1;
   mocks.isWorksEnabled.mockReturnValue(true);
@@ -686,6 +697,62 @@ describe("swapPlanItemAction", () => {
         data: { title: "X0", brief: "x0 caption" },
       });
       expect(mocks.revalidate).toHaveBeenCalledWith("/projects/p1/takvim");
+    });
+
+    it("gives the new idea to every channel of the post, and to the post", async () => {
+      const facebook = {
+        ...draftItem("T0", [
+          { topic: "X0", captionIdea: "x0 caption", from: "Patient stories" },
+        ]),
+        channel: "facebook",
+        formatKey: "facebook.post",
+        platform: "FACEBOOK",
+      };
+      const card = saved({ savedCreativeIds: ["cr0", "crF", "cr1"] });
+      card.items = [card.items[0]!, facebook, card.items[1]!];
+      setRow("c1", card);
+      mocks.creative.value = {
+        status: "DRAFT",
+        currentVersionId: null,
+        postId: "post-1",
+      };
+      mocks.deliveries.value = [
+        { id: "cr0", status: "DRAFT", currentVersionId: null },
+        { id: "crF", status: "DRAFT", currentVersionId: null },
+      ];
+
+      expect(await swapPlanItemAction("c1", 0, 0, "T0")).toEqual({ ok: true });
+
+      const items = (
+        rowOf("c1").parsedIntent.card as { items: Record<string, unknown>[] }
+      ).items;
+      expect(items[1]).toMatchObject({ topic: "X0", channel: "facebook" });
+      expect(items[2]!.topic).toBe("T1");
+      expect(
+        mocks.creativeUpdateMany.mock.calls.map((c) => c[0].where.id),
+      ).toEqual(["cr0", "crF"]);
+      expect(mocks.postUpdate).toHaveBeenCalledWith({
+        where: { id: "post-1" },
+        data: expect.objectContaining({ topic: "X0", idea: "x0 caption" }),
+      });
+    });
+
+    it("locks the new idea while another channel of the post has content", async () => {
+      setRow("c1", saved());
+      mocks.creative.value = {
+        status: "DRAFT",
+        currentVersionId: null,
+        postId: "post-1",
+      };
+      mocks.deliveries.value = [
+        { id: "cr0", status: "DRAFT", currentVersionId: null },
+        { id: "crS", status: "IN_REVIEW", currentVersionId: "v1" },
+      ];
+      expect(await swapPlanItemAction("c1", 0, 0, "T0")).toMatchObject({
+        ok: false,
+        code: "LOCKED",
+      });
+      expect(mocks.creativeUpdateMany).not.toHaveBeenCalled();
     });
 
     it("W18: a slot with a version is LOCKED, nothing written", async () => {

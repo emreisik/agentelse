@@ -26,7 +26,7 @@ describe("buildWorkHost", () => {
     const host = buildWorkHost(input([]));
     expect(host.starterCards[0]?.id).toBe("plan-week");
     expect(host.defaultChannels).toEqual(["instagram"]);
-    expect(host.channelOptions).toHaveLength(6);
+    expect(host.channelOptions).toHaveLength(7);
     expect(host.anyConnected).toBe(true);
   });
 

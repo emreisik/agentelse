@@ -15,6 +15,8 @@ vi.mock("@/server/repositories/audit-log.repository", () => ({
 const tx = {
   command: { findUnique: vi.fn(), update: vi.fn().mockResolvedValue(undefined) },
   creative: { create: vi.fn() },
+  // One Post per post of the plan (save-plan-core createPostsInTx).
+  post: { create: vi.fn(async () => ({ id: "post-1" })) },
 };
 const commandFindUnique = vi.fn();
 const workFindFirst = vi.fn();
@@ -214,7 +216,7 @@ describe("saveContentPlanAction", () => {
             {
               date: "2026-10-01",
               time: "10:00",
-              platform: "FACEBOOK",
+              platform: "YOUTUBE",
               format: "Live",
               topic: "Q&A",
               captionIdea: "Ask us",
@@ -227,7 +229,7 @@ describe("saveContentPlanAction", () => {
     await saveContentPlanAction("cmd-1");
     expect(tx.creative.create.mock.calls[0]![0].data).toMatchObject({
       type: "SOCIAL_POST",
-      platform: "FACEBOOK",
+      platform: "YOUTUBE",
       brief: "[Live] Ask us",
       channel: undefined,
       formatKey: undefined,

@@ -37,6 +37,8 @@ import {
   trimHistory,
 } from "./history";
 import { loadNextSteps } from "@/server/agency/journey/snapshot";
+import { loadIdeaPoolForPrompt } from "@/server/chat/idea-pool";
+import { MemoryService } from "@/server/memory/memory-service";
 import { buildContext } from "./context";
 import {
   workChannelStates,
@@ -561,10 +563,18 @@ export async function* runChatAgent(
       }
     }
     // What is waiting on the client's content plan (never throws: [] when
-    // there is nothing or the read failed).
-    const nextSteps = work
-      ? await loadNextSteps(input.projectId, { workId: work.id })
-      : await loadNextSteps(input.projectId);
+    // there is nothing or the read failed), and in a Work the idea pool a plan
+    // draws from first (never throws either).
+    const [nextSteps, ideaPool, postLessons] = await Promise.all([
+      work
+        ? loadNextSteps(input.projectId, { workId: work.id })
+        : loadNextSteps(input.projectId),
+      work ? loadIdeaPoolForPrompt(input.projectId) : Promise.resolve([]),
+      // What the client marked on published posts (never throws).
+      work
+        ? MemoryService.postLessons(context.brandId)
+        : Promise.resolve({ worked: [], didNotWork: [] }),
+    ]);
 
     const conversation = [
       {
@@ -591,6 +601,10 @@ export async function* runChatAgent(
             ? { worksPlanSlots, worksPlanFromEarlierBrief }
             : {}),
           ...(worksPlanTooLarge ? { worksPlanTooLarge } : {}),
+          ...(ideaPool.length > 0 ? { worksIdeaPool: ideaPool } : {}),
+          ...(postLessons.worked.length + postLessons.didNotWork.length > 0
+            ? { worksPostLessons: postLessons }
+            : {}),
           today: todayInTimezone(timezone),
           timezone,
           language: context.project.language || "tr",

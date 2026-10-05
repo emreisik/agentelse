@@ -1,7 +1,8 @@
 import type { PromptMemory } from "@/server/memory/relevance";
 
 import { skillCatalog } from "./skills/registry";
-import { worksNotes } from "./works-notes";
+import type { PromptIdea } from "./idea-pool";
+import { worksNotes, type PostLessons } from "./works-notes";
 import type { ChatPhase } from "./tools";
 
 // The chat agent's prompts. Two pieces, kept apart on purpose:
@@ -130,6 +131,10 @@ export function buildContextMessage(input: {
   worksPlanFromEarlierBrief?: boolean;
   // Works only: the brief has more posts than directions can carry.
   worksPlanTooLarge?: boolean;
+  // Works only: the project's idea pool, which a plan draws from first.
+  worksIdeaPool?: readonly PromptIdea[];
+  // Works only: what the client marked on published posts.
+  worksPostLessons?: PostLessons;
   // The project's "today" and scheduling timezone, so plans get real dates.
   today: string;
   timezone: string;
@@ -170,6 +175,8 @@ export function buildContextMessage(input: {
           planSlots: input.worksPlanSlots,
           fromEarlierBrief: input.worksPlanFromEarlierBrief,
           tooLarge: input.worksPlanTooLarge,
+          ideaPool: input.worksIdeaPool,
+          postLessons: input.worksPostLessons,
         }).map((note) => `\n${note}`)
       : []),
     phase ? `\n${phase}` : "",

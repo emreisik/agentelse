@@ -24,6 +24,8 @@ import { dossierSuggestDef } from "./prompts/dossier-suggest";
 import { discoveryExtendDef } from "./prompts/discovery-extend";
 import { planSlotAlternativesDef } from "./prompts/plan-slot-alternatives";
 import { contentAdaptMasterDef } from "./prompts/content-adapt-master";
+import { webSignalScanDef } from "./prompts/web-signal-scan";
+import { weeklyPlanDraftDef } from "./prompts/weekly-plan-draft";
 
 // reasoning-service.ts calls z.toJSONSchema(def.schema) on EVERY real
 // (non-mock) call, before the model is ever reached — a schema containing a
@@ -57,6 +59,8 @@ const DEFS: Record<string, { schema: z.ZodType }> = {
   discoveryExtendDef,
   planSlotAlternativesDef,
   contentAdaptMasterDef,
+  webSignalScanDef,
+  weeklyPlanDraftDef,
 };
 
 describe("reasoning def schemas are representable as JSON Schema", () => {

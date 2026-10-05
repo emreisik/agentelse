@@ -5,7 +5,7 @@ import { buildHubHref } from "@/components/hub-core/hub-core-params";
 const SCAN_GRADIENT =
   "linear-gradient(90deg, var(--special), var(--chart-3), var(--dept-intel), var(--special))";
 
-// Compact companion to the brand switcher in the Brand Workspace top bar —
+// Compact companion to the brand switcher in the sidebar —
 // replaces the old bottom-right floating SetupProgressWidget (a whole
 // separate always-on-top corner element) with something that lives right
 // next to the brand it's actually about. `stageLabel` is what the client
@@ -36,9 +36,8 @@ export function SetupProgressBadge({
       href={buildHubHref(projectId, { panel: "setup" })}
       scroll={false}
       title={`Setting up your agency — ${stageLabel ?? ""} (${percent}%)`}
-      // Deliberately NOT shrink-0: beside the brand switcher and the
-      // Advanced button it is the item that gives way first (stage label
-      // ellipsizes; dot and % stay), instead of crushing the brand name.
+      // Deliberately NOT shrink-0: beside the agency status pill it is the
+      // item that gives way first (stage label ellipsizes; dot and % stay).
       className="flex h-8 min-w-0 items-center gap-2 overflow-hidden rounded-full border px-3 text-xs font-medium shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)]"
       style={{
         borderColor: "var(--ws-border)",

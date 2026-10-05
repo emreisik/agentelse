@@ -40,7 +40,7 @@ const currency = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 
-// The header's agency readout: loop status, blocked reason, now/waiting
+// The sidebar's agency readout: loop status, blocked reason, now/waiting
 // counts, named active jobs, last progress / next wake and today's totals
 // (incl. AI cost) — everything the old header's separate "● Running"
 // dropdown showed, folded into this one "N active" pill. Polls the same
@@ -48,9 +48,13 @@ const currency = new Intl.NumberFormat("en-US", {
 export function ActiveWorkPopover({
   projectId,
   initial,
+  compact = false,
 }: {
   projectId: string;
   initial: AgencyStatusSnapshot | null;
+  // Inside the sidebar's brand card: no border, the dot and the count alone
+  // ("● 7"); a halted or idle loop still says its word ("Paused").
+  compact?: boolean;
 }) {
   const [snapshot, setSnapshot] = useState(initial);
   const [open, setOpen] = useState(false);
@@ -107,6 +111,7 @@ export function ActiveWorkPopover({
     statusLabel && (halted || activeCount === 0)
       ? statusLabel
       : `${activeCount} active`;
+  const showsStatus = triggerLabel === statusLabel;
   const pinging = status === "RUNNING" || (status === null && activeCount > 0);
 
   return (
@@ -116,14 +121,27 @@ export function ActiveWorkPopover({
           <button
             type="button"
             title={
-              status ? `Agency: ${AGENCY_LOOP_STATUS[status].label}` : undefined
+              compact
+                ? triggerLabel
+                : status
+                  ? `Agency: ${AGENCY_LOOP_STATUS[status].label}`
+                  : undefined
             }
-            className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)]"
-            style={{
-              borderColor: "var(--ws-border)",
-              background: "var(--ws-surface)",
-              color: "var(--ws-text)",
-            }}
+            aria-label={compact ? `Agency: ${triggerLabel}` : undefined}
+            className={
+              compact
+                ? "flex h-7 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[11px] font-medium whitespace-nowrap tabular-nums transition-colors hover:bg-[var(--ws-hover)] data-popup-open:bg-[var(--ws-hover)]"
+                : "flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-colors hover:bg-[var(--ws-hover)]"
+            }
+            style={
+              compact
+                ? { color: "var(--ws-text-2)" }
+                : {
+                    borderColor: "var(--ws-border)",
+                    background: "var(--ws-surface)",
+                    color: "var(--ws-text)",
+                  }
+            }
           />
         }
       >
@@ -139,10 +157,10 @@ export function ActiveWorkPopover({
             style={{ background: dotColor }}
           />
         </span>
-        {triggerLabel}
+        {compact && !showsStatus ? activeCount : triggerLabel}
       </PopoverTrigger>
       <PopoverContent
-        align="end"
+        align="start"
         sideOffset={8}
         // Capped to the space Base UI measures under the trigger, like
         // DropdownMenuContent — this popup now carries the status readout
@@ -272,7 +290,7 @@ export function ActiveWorkPopover({
                 className="mb-1 font-medium"
                 style={{ color: "var(--ws-text)" }}
               >
-                Today
+                Brand Brain today
               </p>
               <div className="grid grid-cols-2 gap-x-2 gap-y-1 tabular-nums">
                 <DetailRow
@@ -280,16 +298,8 @@ export function ActiveWorkPopover({
                   value={String(snapshot.today.signalsIngested)}
                 />
                 <DetailRow
-                  label="Opportunities"
-                  value={String(snapshot.today.opportunitiesCreated)}
-                />
-                <DetailRow
-                  label="Ideas"
+                  label="New ideas"
                   value={String(snapshot.today.ideasCreated)}
-                />
-                <DetailRow
-                  label="Tasks"
-                  value={String(snapshot.today.tasksCreated)}
                 />
                 <DetailRow
                   label="AI cost"

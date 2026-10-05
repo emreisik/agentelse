@@ -1,8 +1,10 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { ArrowLeft } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { withWorkParam } from "@/lib/works/work";
+import { lastWorkCookieName, parseLastWork } from "@/lib/works/last-work";
 import { buildHubHref, type EntityRef, type PanelKey } from "./hub-core-params";
 import { PANEL_LABEL } from "./lineage-map";
 import { HubBreadcrumb } from "./hub-breadcrumb";
@@ -11,8 +13,6 @@ import { LibraryPanel } from "./panels/library-panel";
 import { BrandBrainPanel } from "./panels/brand-brain-panel";
 import { IdeasPanel } from "./panels/ideas-panel";
 import { WorkPanel } from "./panels/work-panel";
-import { DepartmentsPanel } from "./panels/departments-panel";
-import { HumanActionPanel } from "./panels/human-action-panel";
 import { SettingsPanel } from "./panels/settings-panel";
 import type { PanelProps } from "./panels/panel-props";
 
@@ -24,8 +24,6 @@ const PANEL_COMPONENT: Record<
   "brand-brain": BrandBrainPanel,
   ideas: IdeasPanel,
   work: WorkPanel,
-  departments: DepartmentsPanel,
-  "human-action": HumanActionPanel,
   settings: SettingsPanel,
   library: LibraryPanel,
 };
@@ -48,25 +46,27 @@ export async function PanelShell({
   sub: string | null;
   entity: EntityRef | null;
   // Works on: the chat the panel was opened from; "Back to chat" returns to it.
+  // Without one (a link that did not carry it), the project's last open chat.
   workId?: string;
 }) {
   if (!panel) return null;
 
+  const backWorkId =
+    workId?.trim() ||
+    parseLastWork((await cookies()).get(lastWorkCookieName(projectId))?.value);
   const closeHref = withWorkParam(
     buildHubHref(projectId, {
       panel: null,
       sub: null,
       entity: null,
     }),
-    workId,
+    backWorkId,
   );
   const Panel = PANEL_COMPONENT[panel];
   // The list (kanban) view of the ideas and work panels uses its own
   // column/card overflow instead of page scrolling — this needs to be
   // distinguished from the normal long-scroll view that's used when an
-  // entity detail is open (entity=idea:ID, entity=task:ID, etc). All 4
-  // sub-tabs of work (plans/tasks/cycles/measurements) now share the same
-  // kanban system (see the *Board functions in work-panel.tsx).
+  // entity detail is open (entity=idea:ID, entity=task:ID, etc).
   const isBoard = (panel === "ideas" || panel === "work") && !entity;
 
   return (
@@ -94,17 +94,13 @@ export async function PanelShell({
           <ArrowLeft className="size-4" />
           Back to chat
         </Link>
-        {panel !== "work" && (
-          <>
-            <h1 className="mt-4 shrink-0 font-heading text-2xl font-semibold tracking-tight">
-              {PANEL_LABEL[panel]}
-            </h1>
-            {panel !== "ideas" && (
-              <div className="shrink-0">
-                <HubBreadcrumb projectId={projectId} panel={panel} />
-              </div>
-            )}
-          </>
+        <h1 className="mt-4 shrink-0 font-heading text-2xl font-semibold tracking-tight">
+          {PANEL_LABEL[panel]}
+        </h1>
+        {panel !== "ideas" && (
+          <div className="shrink-0">
+            <HubBreadcrumb projectId={projectId} panel={panel} />
+          </div>
         )}
         <div className={cn("mt-6", isBoard && "flex min-h-0 flex-1 flex-col")}>
           <Panel projectId={projectId} entity={entity} sub={sub} />

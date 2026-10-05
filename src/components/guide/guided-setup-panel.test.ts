@@ -530,7 +530,7 @@ describe("question rows (G40)", () => {
     const props = panelProps(panelViewOf(full), {}, spies);
     const html = renderPanel(props);
     expect(html).toContain("3 of 3 picked · You can pick up to 3");
-    expect(count(html, 'aria-disabled="true"')).toBe(3);
+    expect(count(html, 'aria-disabled="true"')).toBe(4);
     // A disabled row never calls onPick; a picked row still does (to untick).
     const list = elements(props);
     const rows = list.filter(

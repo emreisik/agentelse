@@ -22,6 +22,7 @@ import {
   approachOf,
   dayNumberOf,
   formatLineOf,
+  MOVABLE_STAGES,
   postStateOf,
   weekdayOf,
   zoneName,
@@ -67,6 +68,26 @@ export type CardTab = {
   // Once the plan is saved: the piece made for this channel.
   piece?: PieceView;
 };
+
+// A channel can have two pieces of one post (an Instagram post and its Story):
+// a tab is its channel and format.
+function tabKeyOf(tab: CardTab): string {
+  return `${tab.channel}:${tab.formatKey ?? ""}`;
+}
+
+// "Instagram", or "Instagram Story" next to the post's own Instagram tab.
+function tabLabelOf(tab: CardTab, tabs: readonly CardTab[]): string {
+  const name = CHANNELS[tab.channel].label;
+  const twin = tabs.some(
+    (other) => other !== tab && other.channel === tab.channel,
+  );
+  const format = tab.formatKey
+    ? CHANNELS[tab.channel].formats.find((f) => f.key === tab.formatKey)
+    : undefined;
+  return twin && format && format !== CHANNELS[tab.channel].formats[0]
+    ? `${name} ${format.label}`
+    : name;
+}
 
 const STATE_COLOR: Record<PostState, string> = {
   idea: "var(--ws-text-2)",
@@ -124,12 +145,12 @@ export function PostCard({
   // Only while the plan is made and the Work is open.
   edit?: { projectId: string; workId: string; active: boolean };
 }) {
-  const [picked, setPicked] = useState<ChannelKey | null>(null);
-  const tab = tabs.find((entry) => entry.channel === picked) ?? tabs[0];
+  const [picked, setPicked] = useState<string | null>(null);
+  const tab = tabs.find((entry) => tabKeyOf(entry) === picked) ?? tabs[0];
   const panelId = useId();
   const subtitle = [
     purpose ?? (tab ? formatLabelOf(tab) : ""),
-    COPY.channelCount(tabs.length),
+    COPY.channelCount(new Set(tabs.map((entry) => entry.channel)).size),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -248,14 +269,14 @@ export function PostCard({
                   className="flex flex-wrap gap-1.5"
                 >
                   {tabs.map((entry) => {
-                    const on = entry.channel === tab.channel;
+                    const on = tabKeyOf(entry) === tabKeyOf(tab);
                     return (
                       <button
-                        key={entry.channel}
+                        key={tabKeyOf(entry)}
                         type="button"
                         role="tab"
                         aria-selected={on}
-                        onClick={() => setPicked(entry.channel)}
+                        onClick={() => setPicked(tabKeyOf(entry))}
                         className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                         style={{
                           background: on ? "var(--ws-hover)" : "transparent",
@@ -267,7 +288,7 @@ export function PostCard({
                           decorative
                           className="size-4"
                         />
-                        {CHANNELS[entry.channel].label}
+                        {tabLabelOf(entry, tabs)}
                         {entry.piece?.stage ? (
                           <StageDot stage={entry.piece.stage} />
                         ) : connected.includes(entry.channel) ? (
@@ -300,7 +321,7 @@ export function PostCard({
                 </div>
                 {step === "content" && tab.piece ? (
                   <PieceEditor
-                    key={tab.piece.creativeId ?? tab.channel}
+                    key={tab.piece.creativeId ?? tabKeyOf(tab)}
                     piece={tab.piece}
                     channel={tab.channel}
                     timezone={timezone}
@@ -422,8 +443,8 @@ function formatLabelOf(tab: CardTab): string {
   return formatLineOf(tab.channel, tab.formatKey);
 }
 
-// The weekday and the day of the month. A draft's is a button that moves the
-// post (or drops it); a made plan's is plain.
+// The weekday, the day of the month and the time. A post that can still move has
+// a button here (a draft's can also drop it); one that cannot is plain.
 function DateBlock({
   date,
   time,
@@ -453,6 +474,14 @@ function DateBlock({
       >
         {dayNumberOf(date)}
       </span>
+      {time ? (
+        <span
+          className="mt-1.5 block text-[10px] leading-none tabular-nums"
+          style={{ color: "var(--ws-text-2)" }}
+        >
+          {time}
+        </span>
+      ) : null}
     </>
   );
   const shape =
@@ -511,7 +540,6 @@ function ApproachBox({
 // ---- a made piece: its picture, its words, its time ------------------------------
 
 const EDITABLE_TEXT_STAGES = new Set(["IN_REVIEW"]);
-const MOVABLE_STAGES = new Set(["PLANNED", "IN_REVIEW", "APPROVED", "FAILED"]);
 
 function PieceEditor({
   piece,

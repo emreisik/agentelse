@@ -53,6 +53,9 @@ vi.mock("@/server/actions/work-actions", () => ({
 vi.mock("@/server/actions/command-actions", () => ({
   submitChatMessageAction: vi.fn(),
 }));
+vi.mock("@/server/actions/post-result-actions", () => ({
+  recordPostVerdictAction: vi.fn(),
+}));
 vi.mock("@/server/actions/plan-progress-actions", () => ({
   approvePlanItemsAction: vi.fn(),
   enablePlanPublishingAction: vi.fn(),

@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BookOpen, CalendarDays, Layers, Paperclip, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   useWorkspacePanelToggle,
   type WorkspacePanelTabKey,
 } from "@/components/workspace/workspace-panel-toggle";
+import {
+  PANEL_TABS,
+  WorkspaceDock,
+} from "@/components/workspace/workspace-dock";
 import { COMPACT_COPY, DETAIL_PANE_ID } from "@/lib/works/compact-card";
 import { cn } from "@/lib/utils";
 
@@ -101,9 +104,25 @@ export function DetailPane({
 
 type TabKey = WorkspacePanelTabKey;
 
-const TAB_TRIGGER_CLASS =
-  "h-auto flex-none rounded-[6px] border-none px-2.5 py-1.5 text-[10.5px] font-medium shadow-none";
+// What a panel icon of the dock does: opens the panel on its panel (also in
+// the place a card took), closes it when that panel is the one on show, as in
+// Photoshop's dock, or else just switches to it.
+export function dockPanelAction(input: {
+  collapsed: boolean;
+  detailOpen: boolean;
+  current: TabKey;
+  picked: TabKey;
+}): "open" | "close" | "switch" {
+  if (input.collapsed || input.detailOpen) return "open";
+  return input.current === input.picked ? "close" : "switch";
+}
 
+// Photoshop's panel dock on the chat screen: the dock (workspace-dock.tsx) is
+// always at the right edge, and the panel opens beside it on the one its icon
+// names. No tab row and no labels of its own: the dock is the panel's tabs, so
+// the panel shows only what was asked for, under its name. Below lg the panel
+// is a right-side drawer with its own small icon row (the drawer covers the
+// dock); on a phone the dock is hidden and the slim bar opens the drawer.
 export function WorkspaceRightPanel({
   brand,
   files,
@@ -119,6 +138,7 @@ export function WorkspaceRightPanel({
     collapsed,
     toggle,
     isDesktop,
+    openTab,
     requestedTab,
     consumeRequestedTab,
     detail,
@@ -130,76 +150,40 @@ export function WorkspaceRightPanel({
   // The Work Summary Strip (project-chat.tsx) asks for a specific tab via
   // openTab() — derived rather than synced via an effect, so a pending
   // request always wins until the user explicitly changes tabs (see
-  // handleTabChange below, which consumes it then).
+  // selectTab below, which consumes it then).
   const tab = requestedTab ?? localTab;
+  const panels: Record<TabKey, ReactNode> = { brand, files, outputs, calendar };
+  const activeLabel =
+    PANEL_TABS.find((item) => item.key === tab)?.label ?? "Workspace panel";
 
-  function handleTabChange(value: string) {
-    setLocalTab(value as TabKey);
+  function selectTab(key: TabKey) {
+    setLocalTab(key);
     if (requestedTab) consumeRequestedTab();
   }
 
-  function tabStyle(key: TabKey): React.CSSProperties {
-    return tab === key
-      ? { background: "var(--ws-soft-green)", color: "var(--ws-accent)" }
-      : { color: "var(--ws-text-2)" };
+  function showTab(key: TabKey) {
+    const action = dockPanelAction({
+      collapsed,
+      detailOpen: Boolean(detail),
+      current: tab,
+      picked: key,
+    });
+    if (action === "close") {
+      toggle();
+    } else if (action === "open") {
+      setLocalTab(key);
+      openTab(key);
+    } else {
+      selectTab(key);
+    }
   }
 
-  const tabs = (
-    <Tabs
-      value={tab}
-      onValueChange={handleTabChange}
-      className="flex min-h-0 flex-1 flex-col"
-    >
-      <div
-        className="flex h-[46px] shrink-0 items-center border-b px-2.5"
-        style={{ borderColor: "var(--ws-border)" }}
-      >
-        <TabsList className="w-fit gap-1 bg-transparent p-0">
-          <TabsTrigger
-            value="brand"
-            className={TAB_TRIGGER_CLASS}
-            style={tabStyle("brand")}
-          >
-            <BookOpen className="size-3.5" />
-            Brand
-          </TabsTrigger>
-          <TabsTrigger
-            value="files"
-            className={TAB_TRIGGER_CLASS}
-            style={tabStyle("files")}
-          >
-            <Paperclip className="size-3.5" />
-            Files
-          </TabsTrigger>
-          <TabsTrigger
-            value="outputs"
-            className={TAB_TRIGGER_CLASS}
-            style={tabStyle("outputs")}
-          >
-            <Layers className="size-3.5" />
-            Outputs
-          </TabsTrigger>
-          <TabsTrigger
-            value="calendar"
-            className={TAB_TRIGGER_CLASS}
-            style={tabStyle("calendar")}
-          >
-            <CalendarDays className="size-3.5" />
-            Calendar
-          </TabsTrigger>
-        </TabsList>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <TabsContent value="brand">{brand}</TabsContent>
-        <TabsContent value="files">{files}</TabsContent>
-        <TabsContent value="outputs">{outputs}</TabsContent>
-        <TabsContent value="calendar">{calendar}</TabsContent>
-      </div>
-    </Tabs>
+  const body = (
+    <div className="min-h-0 flex-1 overflow-y-auto">{panels[tab]}</div>
   );
 
   // A long card of the chat opened in full: it takes the panel's place (also
-  // when the panel was collapsed), wider than the tabs.
+  // when the panel was collapsed), wider than the panel.
   const detailPane = detail ? (
     <DetailPane
       cardId={detail.id}
@@ -210,75 +194,129 @@ export function WorkspaceRightPanel({
     />
   ) : null;
 
-  // Below the 1024px breakpoint the panel is a right-side drawer (opened by
-  // the header's toggle button) instead of pushing the conversation column
-  // narrower.
+  const dock = (
+    <WorkspaceDock
+      activeTab={!collapsed && !detail ? tab : null}
+      panelOpen={!collapsed || Boolean(detail)}
+      onTogglePanel={toggle}
+      onPanel={showTab}
+      // Below md the phone's slim bar has the toggle instead.
+      className={isDesktop ? undefined : "hidden md:flex"}
+    />
+  );
+
   if (!isDesktop) {
     return (
-      <Sheet
-        open={detail ? true : !collapsed}
-        onOpenChange={(open) => {
-          if (detail) {
-            if (!open) closeDetail();
-            return;
-          }
-          if (open === collapsed) toggle();
-        }}
-      >
-        <SheetContent
-          side="right"
-          showCloseButton={!detail}
-          className={cn(
-            "flex flex-col gap-0 p-0",
-            detail
-              ? "data-[side=right]:w-full data-[side=right]:sm:max-w-[560px]"
-              : "w-[390px] max-w-[90vw]",
-          )}
-          style={{ background: "var(--ws-surface)" }}
+      <>
+        {dock}
+        <Sheet
+          open={detail ? true : !collapsed}
+          onOpenChange={(open) => {
+            if (detail) {
+              if (!open) closeDetail();
+              return;
+            }
+            if (open === collapsed) toggle();
+          }}
         >
-          <SheetTitle className="sr-only">
-            {detail ? detail.title : "Workspace panel"}
-          </SheetTitle>
-          {detailPane ?? tabs}
-        </SheetContent>
-      </Sheet>
+          <SheetContent
+            side="right"
+            showCloseButton={!detail}
+            className={cn(
+              "flex flex-col gap-0 p-0",
+              detail
+                ? "data-[side=right]:w-full data-[side=right]:sm:max-w-[560px]"
+                : "w-[390px] max-w-[90vw]",
+            )}
+            style={{ background: "var(--ws-surface)" }}
+          >
+            <SheetTitle className="sr-only">
+              {detail ? detail.title : activeLabel}
+            </SheetTitle>
+            {detailPane ?? (
+              <>
+                {/* The drawer covers the dock: its own icon row switches. */}
+                <div
+                  className="flex h-12 shrink-0 items-center gap-1 border-b px-2.5 pr-12"
+                  style={{ borderColor: "var(--ws-border)" }}
+                >
+                  {PANEL_TABS.map(({ key, label, icon: Icon }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => selectTab(key)}
+                      aria-label={label}
+                      aria-pressed={tab === key}
+                      className="flex size-8 items-center justify-center rounded-lg outline-none transition-colors hover:bg-[var(--ws-hover)] focus-visible:ring-2 focus-visible:ring-ring/50"
+                      style={
+                        tab === key
+                          ? {
+                              background: "var(--ws-soft-green)",
+                              color: "var(--ws-accent)",
+                            }
+                          : { color: "var(--ws-text-2)" }
+                      }
+                    >
+                      <Icon className="size-4" />
+                    </button>
+                  ))}
+                  <span
+                    className="ml-1.5 truncate text-xs font-semibold"
+                    style={{ color: "var(--ws-text)" }}
+                  >
+                    {activeLabel}
+                  </span>
+                </div>
+                {body}
+              </>
+            )}
+          </SheetContent>
+        </Sheet>
+      </>
     );
   }
 
-  if (detailPane) {
-    return (
-      <aside
-        className="my-3 mr-3 ml-0 flex w-[min(560px,46vw)] shrink-0 flex-col overflow-hidden rounded-2xl border shadow-[0_4px_24px_rgba(52,75,29,0.07)]"
-        style={{
-          borderColor: "var(--ws-border)",
-          background: "var(--ws-surface)",
-        }}
-      >
-        {detailPane}
-      </aside>
-    );
-  }
-
-  // Fully hidden when collapsed — no docked strip, no icon of its own. The
-  // header's PanelRight toggle (workspace-top-bar.tsx) is the only way to
-  // reopen it, via the shared useWorkspacePanelToggle context.
-  if (collapsed) {
-    return null;
-  }
-
-  // Floating card, not a docked sidebar: margin on every side (including
-  // the top/right/bottom against the viewport, and the left against the
-  // conversation column) plus a full rounded border and a soft shadow —
-  // it sits ON the --ws-bg canvas rather than being flush-mounted to it.
-  return (
+  // Floating card, not a docked sidebar: margin top and bottom against the
+  // viewport and a full rounded border with a soft shadow — it sits ON the
+  // --ws-bg canvas, the dock to its right.
+  const card = detailPane ? (
     <aside
-      className="my-3 mr-3 ml-0 flex w-[320px] shrink-0 flex-col overflow-hidden rounded-2xl border shadow-[0_4px_24px_rgba(52,75,29,0.07)] 2xl:w-[340px]"
+      className="my-3 flex w-[min(560px,46vw)] shrink-0 flex-col overflow-hidden rounded-2xl border shadow-[0_4px_24px_rgba(52,75,29,0.07)]"
       style={{
         borderColor: "var(--ws-border)",
         background: "var(--ws-surface)",
       }}
     >
-      {tabs}
+      {detailPane}
     </aside>
+  ) : collapsed ? null : (
+    <aside
+      aria-label={activeLabel}
+      className="my-3 flex w-[320px] shrink-0 flex-col overflow-hidden rounded-2xl border shadow-[0_4px_24px_rgba(52,75,29,0.07)] 2xl:w-[340px]"
+      style={{
+        borderColor: "var(--ws-border)",
+        background: "var(--ws-surface)",
+      }}
+    >
+      <div
+        className="flex h-10 shrink-0 items-center border-b px-3.5"
+        style={{ borderColor: "var(--ws-border)" }}
+      >
+        <h2
+          className="truncate text-xs font-semibold"
+          style={{ color: "var(--ws-text)" }}
+        >
+          {activeLabel}
+        </h2>
+      </div>
+      {body}
+    </aside>
+  );
+
+  return (
+    <>
+      {card}
+      {dock}
+    </>
   );
 }

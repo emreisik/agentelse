@@ -131,7 +131,7 @@ describe("planning tools", () => {
     expect(plan.parameters.properties.goal.enum).toContain("leads");
     expect(
       plan.parameters.properties.items.items.properties.channel.enum,
-    ).toEqual(["instagram", "tiktok", "linkedin", "x", "seo", "ads"]);
+    ).toEqual(["instagram", "facebook", "tiktok", "linkedin", "x", "seo", "ads"]);
   });
 
   it("does not offer planning on a project that is on hold", () => {

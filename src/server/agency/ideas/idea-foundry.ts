@@ -12,6 +12,7 @@ import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.
 import { IdeaRepository } from "@/server/repositories/idea.repository";
 import { OpportunityRepository } from "@/server/repositories/opportunity.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
+import { MemoryService } from "@/server/memory/memory-service";
 
 import {
   FOCUS_LENS_MIX,
@@ -24,6 +25,22 @@ import { DEFAULT_LENS_MIX, LENS_DEFINITIONS } from "./creative-lenses";
 // concept can't regenerate ideas forever — 3 total attempts (the original
 // plus two retries) before the opportunity is dismissed for good.
 const MAX_IDEA_ATTEMPTS_PER_OPPORTUNITY = 3;
+
+// The daily step: one run a day per project, a few ideas per run. A run that
+// failed is tried again after an hour (not every tick).
+const DAILY_IDEA_INTERVAL_MS = 20 * 60 * 60_000;
+const DAILY_IDEA_RETRY_MS = 60 * 60_000;
+const DAILY_IDEA_LENSES = 3;
+
+// Whether a recent generation call means the project was served today: a good
+// run within the daily interval, or any attempt within the last hour.
+export function dailyIdeaRunBlocks(
+  call: { createdAt: Date; status: string },
+  now: Date,
+): boolean {
+  if (call.status === "OK") return true;
+  return now.getTime() - call.createdAt.getTime() < DAILY_IDEA_RETRY_MS;
+}
 
 // Also shows what came BEFORE the idea's "zero point" in the chat: writes
 // the Signal(s)/Finding(s)/Insight+Opportunity chain that produced this idea
@@ -120,6 +137,9 @@ export const IdeaFoundry = {
       // Every other caller (the chat "generate ideas" command, the
       // scheduled weekly run) keeps the default (post to chat).
       postToChat?: boolean;
+      // At most this many lenses (so ideas) in one call; the rest stay for a
+      // later run (existsForOpportunityLens skips the ones already tried).
+      maxLenses?: number;
     },
   ): Promise<number> {
     const opportunity = await OpportunityRepository.findByIdInProject(
@@ -148,11 +168,14 @@ export const IdeaFoundry = {
       );
       if (!exists) lenses.push(lens);
     }
+    if (opts?.maxLenses !== undefined) lenses.splice(opts.maxLenses);
     if (lenses.length === 0) return 0;
 
-    const brand = await ConstitutionService.getBrandContext(
-      opportunity.brandId,
-    );
+    const [brand, postResults] = await Promise.all([
+      ConstitutionService.getBrandContext(opportunity.brandId),
+      // What the client marked as worked / did not work on published posts.
+      MemoryService.postLessons(opportunity.brandId),
+    ]);
 
     // For a performance-driven opportunity (see meta-performance-scanner.ts
     // — Track 1 feeds "performance" signals through this same
@@ -180,6 +203,9 @@ export const IdeaFoundry = {
           ...(performanceContext ? { performanceContext } : {}),
         },
         lenses,
+        ...(postResults.worked.length + postResults.didNotWork.length > 0
+          ? { postResults }
+          : {}),
         ...(opts?.feedback
           ? { revision: { priorIdea: opts.priorIdea, feedback: opts.feedback } }
           : {}),
@@ -250,6 +276,77 @@ export const IdeaFoundry = {
     }
 
     return created;
+  },
+
+  // The Brand Brain loop's daily idea step (agency-wiring.ts,
+  // "idea-generation"): each project gets at most one generation call a day,
+  // from its best evaluated opportunity, a few lenses at a time and quietly
+  // (no chat cards: the chat's next-step bar offers the pool instead). The
+  // pool cap (maxActiveIdeas, checked in generateForOpportunity before any
+  // call) and the daily AI budget bound it further. `limit` is how many
+  // projects one tick serves; the rest are served on the next ticks.
+  async generateDaily(limit = 3, now: Date = new Date()): Promise<number> {
+    const candidates = await prisma.opportunity.findMany({
+      where: {
+        status: "EVALUATED",
+        ideas: { none: { status: { notIn: ["ARCHIVED", "REJECTED"] } } },
+      },
+      orderBy: [{ nbaScore: "desc" }, { createdAt: "asc" }],
+      distinct: ["projectId"],
+      take: 50,
+      select: {
+        id: true,
+        title: true,
+        projectId: true,
+        _count: { select: { ideas: true } },
+      },
+    });
+    if (candidates.length === 0) return 0;
+
+    const recent = await prisma.reasoningCall.findMany({
+      where: {
+        purpose: ideaGenerationDef.purpose,
+        projectId: { in: candidates.map((c) => c.projectId) },
+        createdAt: { gte: new Date(now.getTime() - DAILY_IDEA_INTERVAL_MS) },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { projectId: true, createdAt: true, status: true },
+    });
+    const served = new Set(
+      recent
+        .filter((call) => dailyIdeaRunBlocks(call, now))
+        .map((call) => call.projectId),
+    );
+
+    let total = 0;
+    let used = 0;
+    for (const opportunity of candidates) {
+      if (used >= limit) break;
+      if (served.has(opportunity.projectId)) continue;
+      if (!(await isProjectAgencyActive(opportunity.projectId))) continue;
+      if (opportunity._count.ideas >= MAX_IDEA_ATTEMPTS_PER_OPPORTUNITY) {
+        await OpportunityRepository.transition(
+          opportunity.id,
+          opportunity.projectId,
+          "DISMISSED",
+        ).catch(() => undefined);
+        continue;
+      }
+      used += 1;
+      try {
+        total += await this.generateForOpportunity(
+          opportunity.id,
+          opportunity.projectId,
+          { postToChat: false, maxLenses: DAILY_IDEA_LENSES },
+        );
+      } catch (error) {
+        console.error(
+          `[idea-foundry] daily generation failed for opportunity ${opportunity.id} (${opportunity.title}):`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    return total;
   },
 
   // NBA-ranked EVALUATED opportunities without ideas get a generation pass.

@@ -182,6 +182,45 @@ export async function dismissOpportunityAction(
   }
 }
 
+// Brand Brain -> Intelligence: "Turn into ideas" on an opportunity. The same
+// generation the daily loop runs (a few lenses, no chat cards); the ideas land
+// in the pool. Bounded by the pool cap and the daily AI budget like the loop.
+export async function opportunityToIdeasAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    const projectId = String(formData.get("projectId"));
+    const opportunityId = String(formData.get("opportunityId"));
+    const { userId } = await requireUser();
+    const access = await requireProjectAccess(userId, projectId);
+
+    const created = await IdeaFoundry.generateForOpportunity(
+      opportunityId,
+      projectId,
+      { postToChat: false, maxLenses: 3 },
+    );
+    if (created === 0) {
+      return {
+        ok: false,
+        message:
+          "No new ideas: the idea pool is full or this opportunity was already used for ideas.",
+      };
+    }
+    await audit(
+      access.workspaceId,
+      projectId,
+      userId,
+      "opportunity.ideas_generated",
+      "Opportunity",
+      opportunityId,
+    );
+    revalidatePath(`/projects/${projectId}`);
+    return { ok: true };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
 export async function approveIdeaAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -191,7 +230,13 @@ export async function approveIdeaAction(
     const { userId } = await requireUser();
     const access = await requireProjectAccess(userId, projectId);
 
-    await IdeaRepository.transition(ideaId, projectId, "APPROVED");
+    // "Put forward": an idea anywhere before the shortlist is promoted there
+    // first (the state machine only reaches APPROVED from SHORTLISTED), so a
+    // raw idea from the chat can be put forward too. Plans pick APPROVED first.
+    const status = await IdeaRepository.promoteToShortlist(ideaId, projectId);
+    if (status === "SHORTLISTED") {
+      await IdeaRepository.transition(ideaId, projectId, "APPROVED");
+    }
     await audit(
       access.workspaceId,
       projectId,

@@ -95,11 +95,9 @@ type ImageBilling = {
   startedAt: number;
 };
 
-// The header's OpenAI balance (billing/openai-credit.ts) is a snapshot minus
-// every gpt-* ReasoningCall, and a high-quality render is the dearest thing
-// this app buys — so each one is logged. No workspace reaches this client;
-// "system" keeps the row out of per-workspace reports while the shared
-// key's balance still counts it. Never throws: a bookkeeping failure must
+// A high-quality render is the dearest thing this app buys, so each one is
+// logged as a ReasoningCall with its cost. No workspace reaches this client;
+// "system" keeps the row out of per-workspace reports. Never throws: a bookkeeping failure must
 // not cost the caller a render OpenAI already billed.
 async function recordImageSpend(
   usage: ImageUsage | undefined,

@@ -1,10 +1,12 @@
 import "server-only";
 
+import { cache } from "react";
 import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
 import { updateCommandCard } from "./card-store";
 import { dayKeyInTimezone } from "@/lib/timezone";
+import { IDEA_POOL_LABEL } from "@/lib/idea-pool";
 import {
   CHANNELS,
   CHANNEL_KEYS,
@@ -61,7 +63,8 @@ const needsChannel = (item: {
   platform?: string;
 }) => (item.channel && item.formatKey) || item.platform;
 const NEEDS_CHANNEL = {
-  message: "Each item needs `channel` and `formatKey` (or a legacy `platform`).",
+  message:
+    "Each item needs `channel` and `formatKey` (or a legacy `platform`).",
 };
 
 export const PlanItemSchema = PlanItemShape.refine(needsChannel, NEEDS_CHANNEL);
@@ -73,30 +76,58 @@ export const ContentPlanArgsSchema = z.object({
 });
 
 // What a Work's tool takes: the same plan, and per post a `purpose` (a few words
-// on what it does for the plan, the line under its title on the card). Only the
-// Work's variant of the tool uses it: every other tool definition stays byte-for-
-// byte what it was.
+// on what it does for the plan, the line under its title on the card) and the
+// `ideaId` of the pool idea it was built from (idea-pool.ts; checked by the
+// tool, an unknown id is dropped). Only the Work's variant of the tool uses
+// them: every other tool definition stays byte-for-byte what it was.
 export const WorksContentPlanArgsSchema = ContentPlanArgsSchema.extend({
   items: z
     .array(
-      PlanItemShape.extend({ purpose: z.string().optional() }).refine(
-        needsChannel,
-        NEEDS_CHANNEL,
-      ),
+      PlanItemShape.extend({
+        purpose: z.string().optional(),
+        ideaId: z.string().optional(),
+      }).refine(needsChannel, NEEDS_CHANNEL),
     )
     .min(1)
     .max(MAX_PLAN_ITEMS),
 });
 
+// Keeps an item's `ideaId` only when it names a pool idea of the project
+// (`valid`, see idea-pool.ts poolIdeaIds) and no earlier item used it: one idea
+// makes one post. Pure, so the rule is testable.
+export function keepPoolIdeaIds<T extends object>(
+  items: readonly T[],
+  valid: ReadonlySet<string>,
+): T[] {
+  const used = new Set<string>();
+  return items.map((item) => {
+    const raw = (item as { ideaId?: unknown }).ideaId;
+    const id = typeof raw === "string" ? raw.trim() : "";
+    if (!("ideaId" in item)) return item;
+    const next: Record<string, unknown> = { ...item };
+    delete next.ideaId;
+    if (id && valid.has(id) && !used.has(id)) {
+      used.add(id);
+      next.ideaId = id;
+    }
+    return next as T;
+  });
+}
+
 // Same convention as the content calendar and the publish queue: the
 // Instagram publishing schedule's timezone, Europe/Istanbul when unset.
-export async function getProjectTimezone(projectId: string): Promise<string> {
-  const schedule = await prisma.projectSchedule.findFirst({
-    where: { projectId, capability: "INSTAGRAM_PUBLISH" },
-    select: { timezone: true },
-  });
-  return schedule?.timezone ?? DEFAULT_TIMEZONE;
-}
+// Request-scoped (React cache): the chat page reads it from five places (the
+// page, the journey, the overlays, the right panel...), one read serves them
+// all. Outside a server render cache() is a plain pass-through.
+export const getProjectTimezone = cache(
+  async (projectId: string): Promise<string> => {
+    const schedule = await prisma.projectSchedule.findFirst({
+      where: { projectId, capability: "INSTAGRAM_PUBLISH" },
+      select: { timezone: true },
+    });
+    return schedule?.timezone ?? DEFAULT_TIMEZONE;
+  },
+);
 
 export function todayInTimezone(timezone: string, now = new Date()): string {
   return dayKeyInTimezone(now, timezone);
@@ -179,6 +210,15 @@ export function buildPlanCard(
         captionIdea: item.captionIdea.trim(),
         ...(item.purpose?.trim()
           ? { purpose: item.purpose.trim().slice(0, MAX_PURPOSE) }
+          : {}),
+        // A post built from a pool idea says so on the card ("From: Idea
+        // pool") and keeps the link, so saving the plan marks the idea planned.
+        ...(item.ideaId
+          ? {
+              ideaId: item.ideaId,
+              origin: { kind: "idea" as const, ref: item.ideaId },
+              from: IDEA_POOL_LABEL,
+            }
           : {}),
       };
     })
@@ -290,9 +330,7 @@ export async function supersedeOpenPlanCards(args: {
   exceptCommandId: string;
   workId: string;
   kinds: readonly (
-    | "content-plan-draft"
-    | "content-plan-options"
-    | "master-content"
+    "content-plan-draft" | "content-plan-options" | "master-content"
   )[];
 }): Promise<void> {
   await supersedeCards(args);

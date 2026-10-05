@@ -44,11 +44,13 @@ import {
   WorksContentPlanArgsSchema,
   buildPlanCard,
   getProjectTimezone,
+  keepPoolIdeaIds,
   supersedeOpenDrafts,
   todayInTimezone,
   validatePlanChannels,
   validatePlanDates,
 } from "./content-plan";
+import { poolIdeaIds } from "./idea-pool";
 import { loadPlanContinuation } from "@/server/agency/journey/continuation";
 import { startAgencySetupForProject } from "@/server/actions/agency-setup-actions";
 import { recordUserDecision } from "@/server/brand-twin/brand-twin-writes";
@@ -1714,6 +1716,17 @@ const proposeContentPlan = defineTool({
       const cleaned = cleanPlanText(ctx, args);
       if (!cleaned.ok) return cleaned.outcome;
       planArgs = cleaned.args;
+      // Posts built from the idea pool keep their idea only when it really is
+      // one of the project's pool ideas, once per plan (idea-pool.ts).
+      const named = planArgs.items.flatMap((item) =>
+        "ideaId" in item && typeof item.ideaId === "string" ? [item.ideaId] : [],
+      );
+      if (named.length > 0) {
+        const valid = await poolIdeaIds(ctx.projectId, named).catch(
+          () => new Set<string>(),
+        );
+        planArgs = { ...planArgs, items: keepPoolIdeaIds(planArgs.items, valid) };
+      }
     }
     // Brand rules (Works only): one repair round per turn, then the card
     // ships with flags. A failed rule load fails open (rules === null).

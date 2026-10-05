@@ -14,9 +14,12 @@ import {
 } from "@/server/agency/director/agency-director";
 import { WorkHandoffEngine } from "@/server/agency/handoffs/work-handoff-engine";
 import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
+import { WeeklyPlanDraft } from "@/server/agency/content/weekly-plan-draft";
+import { WeeklyPlanProduce } from "@/server/agency/content/weekly-plan-produce";
+import { legacyAgencyLoopMode } from "@/server/agency/legacy-loop";
 import { IntelligenceEngine } from "@/server/agency/intelligence/intelligence-engine";
+import { WebSignalScanner } from "@/server/agency/intelligence/web-signal-scanner";
 import { OpportunityEngine } from "@/server/agency/opportunities/opportunity-engine";
-import { SignalUniverse } from "@/server/agency/signals/signal-universe";
 import { registerSetupStageRunner } from "@/server/agency/setup/project-setup-orchestrator";
 import {
   registerAgencyTickStep,
@@ -144,13 +147,18 @@ registerAgencyTickStep({
   run: () => AgencyLoopHeartbeat.run(50),
 });
 
+// The Brand Brain's weekly look at the outside world (web-signal-scanner.ts):
+// one web-searching call per active project a week reports competitors' moves,
+// trends, cultural moments and news as sourced signals. It replaces the old
+// "signal-scans" step (generic OpenClaw web research per signal category,
+// SignalUniverse.runDueScans), which lost its provider with OpenClaw and only
+// created tasks that failed at once.
 registerAgencyTickStep({
-  name: "signal-scans",
-  run: () => SignalUniverse.runDueScans(10),
+  name: "web-signal-scan",
+  run: () => WebSignalScanner.runDueScans(2),
 });
 // Structured, real-Meta-Insights signal source — deliberately separate
-// from SignalUniverse.runDueScans (which fans out generic OpenClaw web
-// research per SignalCategory cadence, see scan-cadence.ts): this scans
+// from the weekly web scan above: this scans
 // connected Meta ad accounts directly via the Marketing API on its own
 // ~7h cadence and can also short-circuit straight to a Track 2 Approval
 // (see performance-optimizer.ts) for high-severity findings, something a
@@ -186,18 +194,41 @@ registerAgencyTickStep({
   name: "opportunity-evaluation",
   run: () => OpportunityEngine.evaluatePromotedInsights(10),
 });
-// No "idea-generation" tick step anymore — turning an EVALUATED opportunity
-// into an Idea is now on-demand only: a chat request
-// (GENERATE_IDEAS_FROM_OPPORTUNITIES, command-service.ts) calling
-// IdeaFoundry.generateForTopOpportunities directly. It has no schedule either:
-// the old weekly/monthly GENERATE_IDEAS ProjectSchedule was retired
-// (scheduler-service.ts switches a leftover row off). Signal scanning and
-// opportunity evaluation above keep running continuously so there's always a
-// ready, evaluated backlog when that request comes — only the final
-// conversion step stopped being tick-driven. IdeaFoundry.generateForOpportunity
-// (singular) is still used, unconditionally, by INITIAL_IDEA_PORTFOLIO above —
-// that's a one-time onboarding step, not the recurring generation this removal
-// targets.
+// The Brand Brain loop's idea step: every project with an evaluated
+// opportunity gets one quiet idea run a day (IdeaFoundry.generateDaily: a few
+// ideas, no chat cards, bounded by the idea pool cap and the daily AI budget).
+// The ideas wait in the pool; plans made in the chat draw from it first, and
+// the chat's next-step bar offers them. It runs only once the old pipeline is
+// wound down (LEGACY_AGENCY_LOOP=drain|off, an operator's switch): with the
+// loop `on`, the Council and the Director would turn these ideas into tasks and
+// work plans on their own instead of leaving them for the chat. With the loop
+// down, council-lite shortlists them LLM-free. The old weekly GENERATE_IDEAS
+// schedule stays retired (scheduler-service.ts switches a leftover row off).
+registerAgencyTickStep({
+  name: "idea-generation",
+  run: async () =>
+    legacyAgencyLoopMode() === "on" ? 0 : IdeaFoundry.generateDaily(3),
+});
+// Faz 4: every Sunday evening (project time) Agentelse drafts next week's plan
+// from the idea pool into a chat of its own (weekly-plan-draft.ts), unless the
+// owner switched it off in Settings -> Autonomy. A draft only: saving, making
+// and publishing stay the owner's taps. Works only; one lite call per project
+// a week; the "nothing due" path is two queries.
+registerAgencyTickStep({
+  name: "weekly-plan-draft",
+  run: () => WeeklyPlanDraft.runDue(2),
+});
+// Faz 5: once a weekly draft has sat untouched for a couple of hours,
+// weekly-plan-produce.ts saves it and starts production on its own — only for
+// a project whose owner opted into Settings -> Autonomy "Prepare it
+// automatically" (AutonomyPolicy.weeklyAutoProduce, default off). Approving,
+// scheduling and publishing stay the owner's taps exactly as they are for a
+// plan produced by hand. Same legacy-loop requirement as idea-generation.
+registerAgencyTickStep({
+  name: "weekly-plan-produce",
+  run: async () =>
+    legacyAgencyLoopMode() === "on" ? 0 : WeeklyPlanProduce.runDue(2),
+});
 registerAgencyTickStep({
   name: "council-evaluation",
   run: () => CouncilEngine.evaluatePendingIdeas(5),

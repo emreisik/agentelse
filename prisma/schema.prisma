@@ -1139,6 +1139,8 @@ model BrandLearning {
 
   @@index([projectId])
   @@index([brandId])
+  // Learning engine: a lesson by its source.
+  @@index([sourceType, sourceRef])
 }
 
 // Brand Workspace's structured preference/decision log (see docs/
@@ -1259,14 +1261,64 @@ model Work {
   // Channel keys chosen while NOT connected ("I'll connect later").
   acknowledgedUnconnected Json @default("[]")
 
+  // The module this Work is for (src/lib/modules/catalog.ts: "social", "ads",
+  // "analytics", "seo"). Null = a general chat. A plain string validated in
+  // the app, like Creative.channel.
+  module String?
+
   lastActivityAt DateTime @default(now())
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   commands Command[]
+  posts    Post[]
 
   @@index([projectId, status, lastActivityAt])
   @@index([workspaceId])
+}
+
+// One post: ONE idea and ONE picture, delivered to channels (docs/works.md
+// "Posts"). Each channel's piece is a Creative with this postId (its
+// delivery): its own format, caption, approval and publish state, so the
+// publishing code keeps working per delivery. The post's own state is derived
+// from its deliveries; only the post-level decisions are stored here.
+model Post {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+  workId      String?
+  // The plan's chat Command (same as Creative.planId, no FK); the pool idea.
+  planId      String?
+  ideaId      String?
+
+  // THE idea, and its caption idea / master message.
+  topic String
+  idea  String?
+  goal  String?
+
+  // When it goes out (its deliveries carry the same instant), and the zone
+  // the plan was drawn in.
+  scheduledFor DateTime?
+  timezone     String?
+
+  // THE picture: the first one rendered for the post; every other image
+  // delivery is this picture adapted to its own format.
+  pictureAssetId String?
+
+  approvedAt       DateTime?
+  approvedByUserId String?
+  archivedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  work       Work?      @relation(fields: [workId], references: [id], onDelete: SetNull)
+  deliveries Creative[]
+
+  @@index([projectId, scheduledFor])
+  @@index([planId])
+  @@index([workId])
 }
 
 model Command {
@@ -1322,6 +1374,8 @@ model Command {
   // so it needs its own composite index instead of relying on the
   // ideaId-narrowed query being naturally selective.
   @@index([projectId, createdAt])
+  // The chat page reads WEB and SYSTEM rows separately, newest first.
+  @@index([projectId, source, createdAt])
 }
 
 model Task {
@@ -1388,6 +1442,11 @@ model Task {
   @@index([projectId, status])
   @@index([projectId, fingerprint, createdAt])
   @@index([workPlanId])
+  // Plan/package pieces by their plan Command (chat page, journey, plan routes).
+  @@index([commandId])
+  // Publish tasks per project and window (calendar poll, publish paths).
+  @@index([projectId, capability, createdAt])
+  @@index([parentTaskId])
 }
 
 model TaskDependency {
@@ -1469,6 +1528,8 @@ model ExecutionJob {
   @@index([capability])
   @@index([createdAt])
   @@index([taskId])
+  // Provider health: each provider's results in the last window.
+  @@index([providerId, updatedAt])
 }
 
 // =============================================================================
@@ -1554,6 +1615,8 @@ model HumanInterventionRequest {
   @@index([brandId])
   @@index([status])
   @@index([createdAt])
+  @@index([taskId])
+  @@index([executionJobId])
 }
 
 // Ephemeral secret store for OTP/MFA codes. Never referenced from Task
@@ -1615,6 +1678,9 @@ model Approval {
   @@index([brandId])
   @@index([status])
   @@index([entityType, entityId])
+  // Open approvals of a project, oldest first (every chat page and turn).
+  @@index([projectId, status, createdAt])
+  @@index([taskId])
 }
 
 // =============================================================================
@@ -1651,6 +1717,8 @@ model Asset {
   @@index([workspaceId])
   @@index([projectId])
   @@index([brandId])
+  // Newest files of a project (right panel Files, Library).
+  @@index([projectId, createdAt])
 }
 
 model Creative {
@@ -1694,6 +1762,14 @@ model Creative {
   goal      String?
   planId    String?
 
+  // The post this piece is a channel delivery of (null: a piece on its own,
+  // treated as a post of one). `excludedAt`: the channel was left out of the
+  // post (undoable, unlike ARCHIVED); an excluded delivery is never made,
+  // approved or published.
+  postId     String?
+  post       Post?     @relation(fields: [postId], references: [id], onDelete: SetNull)
+  excludedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1704,6 +1780,8 @@ model Creative {
   @@index([projectId, scheduledFor])
   @@index([projectId, channel])
   @@index([planId])
+  @@index([postId])
+  @@index([createdByTaskId])
 }
 
 model CreativeVersion {
@@ -2191,6 +2269,9 @@ model OutboxEvent {
   @@index([status])
   @@index([nextAttemptAt])
   @@index([aggregateType, aggregateId])
+  // Worker claim: due events in a status.
+  @@index([status, nextAttemptAt])
+  @@index([executionJobId])
 }
 
 model DeadLetterJob {
@@ -2284,6 +2365,9 @@ model AuditLog {
   @@index([brandId])
   @@index([entityType, entityId])
   @@index([createdAt])
+  // Rate limits count one action over the last day.
+  @@index([action, createdAt])
+  @@index([projectId, createdAt])
 }
 
 // =============================================================================
@@ -2335,6 +2419,7 @@ model ProjectSetupStageRecord {
 
   @@unique([projectId, stage])
   @@index([projectId])
+  @@index([setupStateId])
 }
 
 // =============================================================================
@@ -2429,6 +2514,8 @@ model Signal {
   @@unique([projectId, fingerprint])
   @@index([projectId, status])
   @@index([projectId, category])
+  // Worker tick: the oldest signals in a status, across projects.
+  @@index([status, createdAt])
 }
 
 // =============================================================================
@@ -2488,6 +2575,8 @@ model Insight {
 
   @@unique([projectId, fingerprint])
   @@index([projectId, status])
+  // Worker tick: new insights across projects.
+  @@index([status, createdAt])
 }
 
 // =============================================================================
@@ -2526,6 +2615,8 @@ model Idea {
   @@index([projectId, status])
   @@index([projectId, fingerprint])
   @@index([opportunityId])
+  // Worker tick: ideas in a status across projects (council, director).
+  @@index([status, createdAt])
 }
 
 model CouncilEvaluation {
@@ -2727,6 +2818,7 @@ model WorkHandoff {
 
   @@index([projectId, status])
   @@index([workPlanId])
+  @@index([toTaskId])
 }
 
 // =============================================================================
@@ -2798,6 +2890,7 @@ model MeasurementCheck {
 
   @@index([status, dueAt])
   @@index([planId])
+  @@index([resultTaskId])
 }
 
 // =============================================================================
@@ -2877,6 +2970,15 @@ model AutonomyPolicy {
   // creative already goes through. Default AUTOPILOT preserves today's
   // exact behavior for every existing project (no regression on migrate).
   autopilotMode AutopilotMode @default(AUTOPILOT)
+
+  // Faz 5 (docs/brand-brain-loop.md): once the Sunday weekly draft (above)
+  // has sat untouched for a while, prepare it automatically — save it and
+  // start production — so the owner finds pieces waiting to approve instead
+  // of an empty draft. Independent of autopilotMode (never reused for this:
+  // see weekly-plan-draft.ts's header comment on why that field is already
+  // spoken for). Default off: an existing project opts in explicitly: this
+  // spends real money unattended, which "Weekly plan draft" alone does not.
+  weeklyAutoProduce Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3021,4 +3123,6 @@ model ReasoningCall {
 
   @@index([projectId, createdAt])
   @@index([purpose])
+  // Scanners: a project's latest call of one purpose.
+  @@index([projectId, purpose, createdAt])
 }

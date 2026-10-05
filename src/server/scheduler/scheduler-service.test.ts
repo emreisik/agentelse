@@ -192,4 +192,29 @@ describe("SchedulerService.runDueSchedules", () => {
     });
     expect(deadLetterCreate).not.toHaveBeenCalled();
   });
+
+  it("switches off a leftover weekly auto-plan row instead of rendering images on its own", async () => {
+    projectSchedule.findMany.mockResolvedValue([
+      schedule({
+        id: "sched-autoplan",
+        capability: "CREATE_CONTENT_PLAN",
+        scheduleType: "CRON",
+        cronExpression: "0 9 * * 1",
+        configuration: { mode: "AUTO_PLAN_GRID_WEEK", dailyImageCap: 3 },
+      }),
+    ]);
+
+    const ran = await SchedulerService.runDueSchedules();
+
+    expect(ran).toBe(0);
+    expect(planWeeklyInstagramContent).not.toHaveBeenCalled();
+    expect(planForCapability).not.toHaveBeenCalled();
+    expect(projectSchedule.update).toHaveBeenCalledWith({
+      where: { id: "sched-autoplan" },
+      data: {
+        enabled: false,
+        lastError: expect.stringContaining("Retired"),
+      },
+    });
+  });
 });

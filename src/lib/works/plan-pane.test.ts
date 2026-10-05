@@ -1,16 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 import {
+  MAX_DAYS_AHEAD,
   approachOf,
+  canMovePost,
   canOpenStep,
   canPlanPublishing,
   dayNumberOf,
   formatDay,
   formatLineOf,
+  moveDayChips,
+  movePieces,
   nextSuggestion,
   pieceOf,
+  piecesToMove,
   postStateOf,
   progressOf,
   rangeLabel,
@@ -19,6 +24,7 @@ import {
   weekDays,
   weekdayOf,
   zoneName,
+  type PieceView,
 } from "./plan-pane";
 
 type PlanCard = Extract<IdeaEventCardData, { kind: "content-plan-draft" }>;
@@ -279,5 +285,163 @@ describe("nextSuggestion: what a tap on New idea does", () => {
 
   it("nothing to show and nothing to ask for is null", () => {
     expect(nextSuggestion({ pool: 0, current: null, canGenerate: false })).toBeNull();
+  });
+});
+
+describe("moveDayChips: the days offered at the top of the move window", () => {
+  it("is the seven days of the post's own week, Monday first, one label each", () => {
+    // Today is a Sunday before the plan's week.
+    expect(moveDayChips("2026-10-07", "2026-10-04")).toEqual([
+      { key: "2026-10-05", label: "Mon 5" },
+      { key: "2026-10-06", label: "Tue 6" },
+      { key: "2026-10-07", label: "Wed 7" },
+      { key: "2026-10-08", label: "Thu 8" },
+      { key: "2026-10-09", label: "Fri 9" },
+      { key: "2026-10-10", label: "Sat 10" },
+      { key: "2026-10-11", label: "Sun 11" },
+    ]);
+  });
+
+  it("a week that has begun starts today: gone days are not offered", () => {
+    const chips = moveDayChips("2026-10-09", "2026-10-07");
+    expect(chips.map((chip) => chip.key)).toEqual([
+      "2026-10-07",
+      "2026-10-08",
+      "2026-10-09",
+      "2026-10-10",
+      "2026-10-11",
+      "2026-10-12",
+      "2026-10-13",
+    ]);
+  });
+
+  it("stops at the plan's horizon", () => {
+    const today = "2026-10-04";
+    // 60 days ahead is Dec 3, a Thursday: its week is Nov 30 - Dec 6.
+    const chips = moveDayChips("2026-12-03", today);
+    expect(chips.map((chip) => chip.key)).toEqual([
+      "2026-11-30",
+      "2026-12-01",
+      "2026-12-02",
+      "2026-12-03",
+    ]);
+    expect(MAX_DAYS_AHEAD).toBe(60);
+  });
+
+  it("is empty when no day of the week is left", () => {
+    expect(moveDayChips("2027-03-01", "2026-10-04")).toEqual([]);
+  });
+});
+
+describe("moving a made post", () => {
+  const piece = (over: Partial<PieceView> = {}): PieceView => ({
+    index: 0,
+    channel: "instagram",
+    creativeId: "c0",
+    stage: "IN_REVIEW",
+    when: "2026-10-05T12:00",
+    ...over,
+  });
+  const to = { date: "2026-10-06", time: "18:00" };
+
+  it("a post can move while any piece is waiting, ready, approved or failed", () => {
+    for (const stage of ["PLANNED", "IN_REVIEW", "APPROVED", "FAILED"] as const) {
+      expect(canMovePost([piece({ stage })]), stage).toBe(true);
+    }
+  });
+
+  it("not when every piece is being made, out, declined, or has no creative", () => {
+    expect(
+      canMovePost([
+        piece({ stage: "PRODUCING" }),
+        piece({ stage: "PUBLISHED" }),
+        piece({ stage: "REJECTED" }),
+        piece({ creativeId: undefined }),
+        undefined,
+      ]),
+    ).toBe(false);
+    expect(canMovePost([])).toBe(false);
+  });
+
+  it("one movable piece is enough: the others are left where they are", () => {
+    expect(
+      canMovePost([piece({ stage: "PUBLISHED" }), piece({ creativeId: "c1" })]),
+    ).toBe(true);
+    expect(
+      piecesToMove(
+        [
+          piece({ creativeId: "a" }),
+          piece({ creativeId: "b", stage: "PUBLISHED" }),
+          piece({ creativeId: "c", stage: "PRODUCING" }),
+          piece({ creativeId: "d", stage: "APPROVED" }),
+        ],
+        to,
+      ).map((p) => p.creativeId),
+    ).toEqual(["a", "d"]);
+  });
+
+  it("a piece already at the new day and time is not asked to move", () => {
+    const there = piece({ when: "2026-10-06T18:00" });
+    expect(piecesToMove([there, piece({ creativeId: "c1" })], to)).toEqual([
+      expect.objectContaining({ creativeId: "c1" }),
+    ]);
+    expect(piecesToMove([there], to)).toEqual([]);
+  });
+
+  it("moves the pieces one after the other, each to the new day and time", async () => {
+    const order: string[] = [];
+    let running = 0;
+    const mover = vi.fn(async (id: string) => {
+      running += 1;
+      expect(running).toBe(1); // never two at once: each rewrites the card
+      order.push(id);
+      await Promise.resolve();
+      running -= 1;
+      return { ok: true };
+    });
+
+    const result = await movePieces(
+      [piece({ creativeId: "a" }), piece({ creativeId: "b" })],
+      to,
+      mover,
+    );
+
+    expect(result).toEqual({ ok: true, moved: 2 });
+    expect(order).toEqual(["a", "b"]);
+    expect(mover).toHaveBeenNthCalledWith(1, "a", to);
+    expect(mover).toHaveBeenNthCalledWith(2, "b", to);
+  });
+
+  it("stops at the first piece that fails and says why", async () => {
+    const mover = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false, message: "That day has already passed." })
+      .mockResolvedValue({ ok: true });
+
+    const result = await movePieces(
+      [
+        piece({ creativeId: "a" }),
+        piece({ creativeId: "b" }),
+        piece({ creativeId: "c" }),
+      ],
+      to,
+      mover,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      moved: 1,
+      message: "That day has already passed.",
+    });
+    expect(mover).toHaveBeenCalledTimes(2);
+  });
+
+  it("nothing to move is a success that moved nothing", async () => {
+    const mover = vi.fn();
+    expect(
+      await movePieces([piece({ stage: "PUBLISHED" })], to, mover),
+    ).toEqual({ ok: true, moved: 0 });
+    expect(mover).not.toHaveBeenCalled();
   });
 });

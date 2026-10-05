@@ -11,6 +11,8 @@ const creativeFindMany = vi.fn();
 const creativeUpdateMany = vi.fn();
 const taskFindMany = vi.fn();
 const scheduleCount = vi.fn();
+const approvalFindMany = vi.fn();
+const postUpdate = vi.fn();
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     creative: {
@@ -23,6 +25,8 @@ vi.mock("@/lib/prisma", () => ({
       findMany: taskFindMany,
     },
     projectSchedule: { count: scheduleCount },
+    approval: { findMany: approvalFindMany },
+    post: { update: postUpdate },
   },
 }));
 
@@ -62,6 +66,10 @@ vi.mock("@/server/notifications/telegram-approval-notifier", () => ({
 }));
 const publishCreativeCore = vi.fn();
 vi.mock("@/server/commands/publish-creative", () => ({ publishCreativeCore }));
+const shareCreativeToFacebookCore = vi.fn();
+vi.mock("@/server/commands/facebook-share", () => ({
+  shareCreativeToFacebookCore,
+}));
 const getPublishTargets = vi.fn();
 vi.mock("@/server/integrations/meta-connection-status", () => ({
   getPublishTargets,
@@ -92,6 +100,7 @@ vi.mock("@/server/works/work-owned", () => ({ workOwnershipOf, ownedPlanIds }));
 const {
   autoPublishCreative,
   publishNextQueuedInstagramCreative,
+  publishRestOfPost,
   applyApprovalDecision,
 } = await import("./approval-decisions");
 
@@ -311,6 +320,7 @@ describe("publish queue: flag off (parity)", () => {
         projectId: "p1",
         platform: "INSTAGRAM",
         status: "APPROVED",
+        excludedAt: null,
         OR: [
           { scheduledFor: null },
           { scheduledFor: { lte: expect.any(Date) } },
@@ -530,5 +540,120 @@ describe("applyApprovalDecision: a Work piece that cannot auto-publish", () => {
         (c) => c[0].card?.kind === "publish-prompt",
       ),
     ).toBe(true);
+  });
+});
+
+describe("one approve per post (docs/works.md Posts)", () => {
+  const approval = (id: string, entityId: string) =>
+    ({
+      id,
+      workspaceId: "ws",
+      projectId: "p1",
+      brandId: "b1",
+      taskId: null,
+      entityType: "Creative",
+      entityId,
+      type: "CREATIVE_APPROVAL",
+      status: "PENDING",
+    }) as unknown as Parameters<typeof applyApprovalDecision>[0]["approval"];
+
+  beforeEach(async () => {
+    workCreative({ scheduledFor: null });
+    const base = creativeFindUnique.getMockImplementation()!;
+    creativeFindUnique.mockImplementation(
+      async (args: { select?: Record<string, unknown> }) =>
+        args.select && "postId" in args.select
+          ? { postId: "post-1" }
+          : base(args),
+    );
+    creativeFindMany.mockResolvedValue([{ id: "c2" }]);
+    approvalFindMany.mockResolvedValue([approval("ap2", "c2")]);
+    postUpdate.mockResolvedValue({});
+  });
+
+  it("approves the post's other waiting channels and records the post", async () => {
+    const { ApprovalRepository } = await import(
+      "@/server/repositories/approval.repository"
+    );
+    await applyApprovalDecision({
+      approval: approval("ap1", "c1"),
+      to: "APPROVED",
+      reviewedByUserId: "u1",
+      actorType: "USER",
+    });
+
+    expect(vi.mocked(ApprovalRepository.decide).mock.calls.map((c) => c[0])).toEqual([
+      "ap1",
+      "ap2",
+    ]);
+    // Never an excluded channel, never the one just approved.
+    expect(creativeFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          postId: "post-1",
+          id: { not: "c1" },
+          excludedAt: null,
+        }),
+      }),
+    );
+    expect(postUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "post-1" },
+        data: expect.objectContaining({ approvedByUserId: "u1" }),
+      }),
+    );
+  });
+
+  it("keeps a rejection with its own delivery", async () => {
+    const { ApprovalRepository } = await import(
+      "@/server/repositories/approval.repository"
+    );
+    await applyApprovalDecision({
+      approval: approval("ap1", "c1"),
+      to: "REJECTED",
+      reviewedByUserId: "u1",
+      actorType: "USER",
+    });
+    expect(ApprovalRepository.decide).toHaveBeenCalledTimes(1);
+    expect(approvalFindMany).not.toHaveBeenCalled();
+    expect(postUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("a post goes out together", () => {
+  it("posts the post's due Story and Facebook version, never a hand-posted format", async () => {
+    creativeFindUnique.mockResolvedValue({ postId: "post-1" });
+    creativeFindMany.mockResolvedValue([
+      { id: "story", channel: "instagram", platform: "INSTAGRAM", formatKey: "instagram.story" },
+      { id: "fb", channel: "facebook", platform: "FACEBOOK", formatKey: "facebook.post" },
+      { id: "reel", channel: "instagram", platform: "INSTAGRAM", formatKey: "instagram.reel" },
+    ]);
+    publishCreativeCore.mockResolvedValue({ ok: true, message: "ok" });
+    shareCreativeToFacebookCore.mockResolvedValue({ ok: true, message: "ok" });
+
+    await publishRestOfPost({ creativeId: "post", workspaceId: "ws", projectId: "p1" });
+
+    expect(creativeFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          postId: "post-1",
+          excludedAt: null,
+          status: "APPROVED",
+        }),
+      }),
+    );
+    expect(publishCreativeCore).toHaveBeenCalledTimes(1);
+    expect(publishCreativeCore).toHaveBeenCalledWith(
+      expect.objectContaining({ creativeId: "story", format: "STORIES" }),
+    );
+    expect(shareCreativeToFacebookCore).toHaveBeenCalledWith(
+      expect.objectContaining({ creativeId: "fb" }),
+    );
+  });
+
+  it("does nothing for a piece that is not part of a post", async () => {
+    creativeFindUnique.mockResolvedValue({ postId: null });
+    await publishRestOfPost({ creativeId: "solo", workspaceId: "ws", projectId: "p1" });
+    expect(creativeFindMany).not.toHaveBeenCalled();
   });
 });

@@ -82,6 +82,8 @@ export const CreativeRepository = {
       where: {
         projectId,
         status: { not: "ARCHIVED" },
+        // A channel left out of its post is not on the calendar.
+        excludedAt: null,
         OR: [
           { scheduledFor: { gte: range.from, lte: range.to } },
           {
@@ -114,6 +116,7 @@ export const CreativeRepository = {
         projectId,
         scheduledFor: { gte: range.from, lte: range.to },
         status: { notIn: ["ARCHIVED", "REJECTED"] },
+        excludedAt: null,
       },
       orderBy: { scheduledFor: "asc" },
       take: 500,

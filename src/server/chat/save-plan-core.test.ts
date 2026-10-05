@@ -7,6 +7,12 @@ import type { Prisma } from "@prisma/client";
 const tx = {
   command: { findUnique: vi.fn(), update: vi.fn().mockResolvedValue(undefined) },
   creative: { create: vi.fn() },
+  // One Post per post of the plan (save-plan-core createPostsInTx).
+  post: {
+    create: vi.fn<
+      (args: { data: Record<string, unknown> }) => Promise<{ id: string }>
+    >(async () => ({ id: "post-1" })),
+  },
 };
 
 const { savePlanSlotsInTx } = await import("./save-plan-core");
@@ -29,7 +35,7 @@ const card = (state: string, items: unknown[]) => ({
 const legacy = {
   date: "2026-10-01",
   time: "10:00",
-  platform: "FACEBOOK",
+  platform: "YOUTUBE",
   format: "Live",
   topic: "Q&A",
   captionIdea: "Ask us",
@@ -54,9 +60,59 @@ beforeEach(() => {
 });
 
 describe("savePlanSlotsInTx", () => {
+  it("makes ONE post of an idea's channel pieces, each a delivery of it", async () => {
+    const post = {
+      date: "2026-10-08",
+      time: "10:00",
+      topic: "Launch",
+      captionIdea: "Meet the colour",
+      channel: "instagram",
+      formatKey: "instagram.post",
+    };
+    let p = 0;
+    tx.post.create.mockImplementation(async () => ({ id: `post-${++p}` }));
+    tx.command.findUnique.mockResolvedValue({
+      projectId: "proj-1",
+      workId: "work-1",
+      parsedIntent: {
+        card: {
+          ...card("draft", [post, { ...post, topic: "Offer", time: "18:00" }]).card,
+          platforms: ["instagram", "facebook"],
+          instagramStory: true,
+        },
+      },
+    });
+
+    const out = await run();
+
+    expect(out.ok && out.count).toBe(6);
+    expect(tx.post.create).toHaveBeenCalledTimes(2);
+    expect(tx.post.create.mock.calls[0]![0].data).toMatchObject({
+      workId: "work-1",
+      planId: "cmd-1",
+      topic: "Launch",
+      idea: "Meet the colour",
+      timezone: "Europe/Istanbul",
+    });
+    const deliveries = tx.creative.create.mock.calls.map((c) => c[0].data);
+    expect(deliveries.map((d) => [d.formatKey, d.postId])).toEqual([
+      ["instagram.post", "post-1"],
+      ["instagram.story", "post-1"],
+      ["facebook.post", "post-1"],
+      ["instagram.post", "post-2"],
+      ["instagram.story", "post-2"],
+      ["facebook.post", "post-2"],
+    ]);
+  });
+
   it("writes aligned ids, card timezone dates and the saved card", async () => {
     const out = await run();
-    expect(out).toEqual({ ok: true, count: 2, creativeIds: ["cr-1", "cr-2"] });
+    expect(out).toEqual({
+      ok: true,
+      count: 2,
+      creativeIds: ["cr-1", "cr-2"],
+      ideaIds: [],
+    });
 
     const [a, b] = tx.creative.create.mock.calls.map((c) => c[0].data);
     expect(a).toMatchObject({
@@ -64,7 +120,7 @@ describe("savePlanSlotsInTx", () => {
       projectId: "proj-1",
       brandId: "brand-1",
       type: "SOCIAL_POST",
-      platform: "FACEBOOK",
+      platform: "YOUTUBE",
       goal: "leads",
       planId: "cmd-1",
       title: "Q&A",

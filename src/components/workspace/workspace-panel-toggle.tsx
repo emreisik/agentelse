@@ -17,14 +17,14 @@ const DESKTOP_QUERY = "(min-width: 1024px)";
 
 export type WorkspacePanelTabKey = "brand" | "files" | "outputs" | "calendar";
 
-// Shared open/closed state for the Brand Workspace right panel — the header's
-// "•••" button (workspace-top-bar.tsx) and the panel itself
-// (workspace-right-panel.tsx) are siblings in the tree (the header sits
-// above the row that holds the panel), so a plain prop can't connect them;
+// Shared open/closed state for the Brand Workspace right panel — the phone
+// bar's toggle button (workspace-sidebar.tsx) and the panel itself
+// (workspace-right-panel.tsx, which also opens and closes from its own edge)
+// are siblings in the tree, so a plain prop can't connect them;
 // this Context is the smallest thing that can. Responsive default (open on
 // desktop >=1024px, closed below it) comes from a live matchMedia
-// subscription; a manual toggle this session overrides it until the next
-// page load, and is remembered via localStorage.
+// subscription; a manual toggle (the dock at the right edge,
+// workspace-dock.tsx) overrides it and is remembered via localStorage.
 //
 // requestedTab/openTab: a THIRD sibling — the conversation column's Work
 // Summary Strip (project-chat.tsx) — needs to open the panel to a specific

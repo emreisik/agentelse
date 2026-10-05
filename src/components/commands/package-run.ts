@@ -99,7 +99,9 @@ export function failPendingItems<T extends ItemTurnFields>(
   );
 }
 
-export function taskIdOfCard(card: IdeaEventCardData | undefined): string | undefined {
+export function taskIdOfCard(
+  card: IdeaEventCardData | undefined,
+): string | undefined {
   if (!card || !("taskId" in card)) return undefined;
   return typeof card.taskId === "string" ? card.taskId : undefined;
 }
@@ -131,7 +133,9 @@ export function finalTaskIds(
   return ids;
 }
 
-export function localItemTaskIds(local: readonly ItemTurnFields[]): Set<string> {
+export function localItemTaskIds(
+  local: readonly ItemTurnFields[],
+): Set<string> {
   const ids = new Set<string>();
   for (const turn of local) {
     if (turn.itemId !== undefined && turn.taskId) ids.add(turn.taskId);
@@ -205,6 +209,24 @@ export function needsProgressPoll(
     return true;
   }
 
+  // A plan's pieces are folded into its card (lib/works/plan-posts.ts), so
+  // their "generating" rows are not in the list: the plan's slots tell.
+  if (
+    turns.some((turn) => {
+      const card = turn.card;
+      if (card?.kind !== "content-plan-draft" || !card.production) {
+        return false;
+      }
+      const startedAt = Date.parse(card.production.startedAt);
+      return (
+        now - startedAt < IN_PROGRESS_ROW_MAX_AGE_MS &&
+        (card.slots ?? []).some((slot) => slot?.stage === "PRODUCING")
+      );
+    })
+  ) {
+    return true;
+  }
+
   return turns.some((turn) => {
     const run = startedRunOf(turn.card);
     if (!run) return false;
@@ -243,4 +265,68 @@ function startedRunOf(
     };
   }
   return null;
+}
+
+// ---- a plan run's pieces, shown in the plan's own post cards ----------------
+//
+// In a Work a plan's pieces are not chat messages: each one is made live inside
+// its card under the plan (docs/works.md "Plan posts"). Keyed by piece id — a
+// plan run's item id is the piece's creative id, the same id the cards use.
+
+export type LivePlanPiece = ItemTurnFields & { itemId: string };
+
+type LivePlanPieces = Readonly<Record<string, LivePlanPiece>>;
+
+// The run announced its pieces: each starts (again, on a retry) as pending.
+export function openPlanPieces(
+  current: LivePlanPieces,
+  items: readonly { id: string; image: boolean }[],
+  startedAt: number,
+): LivePlanPieces {
+  const next = { ...current };
+  for (const item of items) {
+    next[item.id] = {
+      itemId: item.id,
+      state: "pending",
+      imageGen: item.image
+        ? { startedAt, partials: 0, done: false }
+        : undefined,
+    };
+  }
+  return next;
+}
+
+export function applyPlanPieceEvent(
+  current: LivePlanPieces,
+  event: ChatStreamEvent,
+): LivePlanPieces {
+  if (!("itemId" in event)) return current;
+  const piece = current[event.itemId];
+  if (!piece) return current;
+  return { ...current, [event.itemId]: reduceItemEvent(piece, event) };
+}
+
+// The stream ended without a word on these pieces (dropped connection, refused
+// claim): they stop showing live progress; the page's own state takes over.
+export function settlePlanPieces(
+  current: LivePlanPieces,
+  ids: readonly string[],
+  message: string,
+): LivePlanPieces {
+  const run = new Set(ids);
+  const settled = failPendingItems(
+    Object.values(current),
+    (piece) => run.has(piece.itemId),
+    message,
+  );
+  return Object.fromEntries(settled.map((piece) => [piece.itemId, piece]));
+}
+
+export function dropPlanPieces(
+  current: LivePlanPieces,
+  ids: readonly string[],
+): LivePlanPieces {
+  const next = { ...current };
+  for (const id of ids) delete next[id];
+  return next;
 }

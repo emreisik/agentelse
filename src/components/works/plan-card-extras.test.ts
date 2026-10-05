@@ -31,6 +31,9 @@ vi.mock("@/server/actions/plan-progress-actions", () => ({
   approvePlanItemsAction: vi.fn(),
   enablePlanPublishingAction: vi.fn(),
 }));
+vi.mock("@/server/actions/work-approve-actions", () => ({
+  approvePlansAction: vi.fn(),
+}));
 vi.mock("@/server/actions/slot-text-actions", () => ({
   updateSlotTextAction: vi.fn(),
 }));
@@ -363,9 +366,9 @@ describe("PlannedSlotCard: guard plan-extras (W78)", () => {
     expect(html).toContain("Needs content");
   });
 
-  it("PLANNED: Produce is the one primary, Change time is secondary, then the Open calendar link", () => {
+  it("PLANNED: Make post is the one primary, Change time is secondary, then the Open calendar link", () => {
     const html = slotHtml(one());
-    const produce = tagOf(html, "Produce");
+    const produce = tagOf(html, "Make post");
     expect(produce).toContain('data-emphasis="primary"');
     expect(produce).toContain("min-h-11");
     expect(tagOf(html, "Change time")).toContain('data-emphasis="secondary"');
@@ -389,7 +392,7 @@ describe("PlannedSlotCard: guard plan-extras (W78)", () => {
     );
     expect(tagOf(review, "Review")).toContain('data-emphasis="primary"');
     expect(review).toContain("Waiting for your decision");
-    expect(review).not.toContain("Produce");
+    expect(review).not.toContain("Make post");
     for (const stage of ["APPROVED", "PUBLISHED", "PRODUCING"] as const) {
       const html = slotHtml(one({}, { slots: [{ id: "c1", stage }] }));
       expect(html).not.toContain('data-emphasis="primary"');
@@ -436,7 +439,7 @@ describe("PlannedSlotCard: guard plan-extras (W78)", () => {
     expect(html).toContain("Removed from your calendar.");
     expect(html).toContain("border-dashed");
     expect(tagOf(html, "Open calendar")).toContain("min-h-11");
-    expect(html).not.toContain("Produce");
+    expect(html).not.toContain("Make post");
     expect(html).not.toContain("Change time");
     expect(html).not.toContain(">Remove<");
   });
@@ -449,16 +452,16 @@ describe("PlannedSlotCard: guard plan-extras (W78)", () => {
     expect(html).not.toContain("Keep it");
   });
 
-  it("blocks Produce while the plan is being produced and everything in a Completed Work, with one reason", () => {
+  it("blocks Make post while the plan is being produced and everything in a Completed Work, with one reason", () => {
     const producing = slotHtml(one(), {
       ...HOST,
       producing: new Set(["cmd-1"]),
     });
-    expect(tagOf(producing, "Produce")).toContain('aria-disabled="true"');
+    expect(tagOf(producing, "Make post")).toContain('aria-disabled="true"');
     expect(tagOf(producing, "Change time")).not.toContain("aria-disabled");
     expect(count(producing, "Making your pieces…")).toBe(1);
     const done = slotHtml(one(), { ...HOST, active: false });
-    expect(tagOf(done, "Produce")).toContain('aria-disabled="true"');
+    expect(tagOf(done, "Make post")).toContain('aria-disabled="true"');
     expect(tagOf(done, "Open calendar")).not.toContain("aria-disabled");
     expect(count(done, "This Work is completed. Reopen it to continue.")).toBe(
       1,

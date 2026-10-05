@@ -26,6 +26,8 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const BodySchema = z.object({
   // The plan's own chat Command (the plan card's row).
   commandId: z.string().min(1),
+  // "Make this post": only this post's deliveries, not the week.
+  postId: z.string().min(1).max(64).optional(),
 });
 
 export async function POST(
@@ -76,6 +78,7 @@ export async function POST(
         brandId: access.defaultBrandId,
         userId,
         commandId: body.commandId,
+        ...(body.postId ? { postId: body.postId } : {}),
       }),
   });
 }

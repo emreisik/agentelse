@@ -7,7 +7,6 @@ import {
   HeartPulse,
   Plus,
   Search,
-  UserRoundCog,
 } from "lucide-react";
 
 import {
@@ -117,13 +116,6 @@ export function DashboardCommandBar({ projects }: { projects: ProjectItem[] }) {
             >
               <Plus className="text-muted-foreground" />
               Create new project
-            </CommandItem>
-            <CommandItem
-              value="human actions"
-              onSelect={() => go("/human-actions")}
-            >
-              <UserRoundCog className="text-muted-foreground" />
-              View human actions
             </CommandItem>
             <CommandItem value="system health" onSelect={() => go("/health")}>
               <HeartPulse className="text-muted-foreground" />

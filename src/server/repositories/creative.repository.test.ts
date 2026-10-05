@@ -63,6 +63,7 @@ describe("CreativeRepository.listScheduledInRange", () => {
       projectId: "proj-1",
       scheduledFor: { gte: from, lte: to },
       status: { notIn: ["ARCHIVED", "REJECTED"] },
+      excludedAt: null,
     });
     expect(call.orderBy).toEqual({ scheduledFor: "asc" });
     expect(call.take).toBe(500);

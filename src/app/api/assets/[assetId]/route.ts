@@ -28,7 +28,10 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const asset = await prisma.asset.findUnique({ where: { id: assetId } });
+  const asset = await prisma.asset.findUnique({
+    where: { id: assetId },
+    select: { projectId: true, mimeType: true, storageKey: true },
+  });
   if (!asset) {
     console.error(`[api/assets] no Asset row for id ${assetId}`);
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -57,7 +60,10 @@ export async function GET(
         readAsset(asset.storageKey),
       );
       return new NextResponse(new Uint8Array(preview), {
-        headers: { "Content-Type": "image/webp", "Cache-Control": CACHE_CONTROL },
+        headers: {
+          "Content-Type": "image/webp",
+          "Cache-Control": CACHE_CONTROL,
+        },
       });
     } catch (error) {
       // A file sharp cannot read is still served as it is, below.
@@ -68,7 +74,10 @@ export async function GET(
   try {
     const file = await readAsset(asset.storageKey);
     return new NextResponse(new Uint8Array(file), {
-      headers: { "Content-Type": asset.mimeType, "Cache-Control": CACHE_CONTROL },
+      headers: {
+        "Content-Type": asset.mimeType,
+        "Cache-Control": CACHE_CONTROL,
+      },
     });
   } catch (error) {
     // Distinguishes the two ways this can fail: a `local-asset://` key means

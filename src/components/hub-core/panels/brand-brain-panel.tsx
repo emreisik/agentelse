@@ -4,10 +4,7 @@ import {
   BookOpen,
   ChevronDown,
   Compass,
-  FileSearch,
-  Gavel,
   Gem,
-  GitBranch,
   GraduationCap,
   Palette,
   ShieldCheck,
@@ -15,7 +12,7 @@ import {
   Type as FontIcon,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { ActorType, EvidenceSourceType } from "@prisma/client";
+import type { EvidenceSourceType } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
@@ -54,15 +51,6 @@ import { GoalsSection } from "./brand-brain/goals-section";
 import { IntelligenceSection } from "./brand-brain/intelligence-section";
 import type { PanelProps } from "./panel-props";
 
-const ACTOR_TYPE_LABEL: Record<ActorType, string> = {
-  USER: "User",
-  SYSTEM: "System",
-  AI: "AI",
-  OPENCLAW: "OpenClaw",
-  API: "API",
-  PARTNER: "Partner",
-};
-
 const EVIDENCE_SOURCE_LABEL: Record<EvidenceSourceType, string> = {
   WEB_PAGE: "Web Page",
   SCREENSHOT: "Screenshot",
@@ -82,11 +70,9 @@ const BRAND_BRAIN_TAB_LABEL: Record<BrandBrainSubKey, string> = {
   "visual-identity": "Visual Identity",
   constitution: "Constitution",
   goals: "Goals",
-  strategy: "Strategy",
-  decisions: "Decisions",
   intelligence: "Intelligence",
-  evidence: "Evidence",
-  learnings: "Learnings",
+  // The chat's brand memory: what the user decided and what the brand learned.
+  learnings: "Memory",
 };
 
 const BRAND_BRAIN_TAB_ICON: Record<BrandBrainSubKey, LucideIcon> = {
@@ -95,10 +81,7 @@ const BRAND_BRAIN_TAB_ICON: Record<BrandBrainSubKey, LucideIcon> = {
   "visual-identity": Palette,
   constitution: BookOpen,
   goals: Target,
-  strategy: GitBranch,
-  decisions: Gavel,
   intelligence: Compass,
-  evidence: FileSearch,
   learnings: GraduationCap,
 };
 
@@ -107,10 +90,10 @@ function isBrandBrainSub(value: string | null): value is BrandBrainSubKey {
 }
 
 // The "Brand Brain" node — everything the agency knows about the brand, in one
-// place: the constitution and brand assets, the goals it works toward
-// (Goals tab), what it has gathered about the market (Intelligence tab:
-// findings, insights, opportunities, signals), strategy versions, decisions,
-// evidence and learnings. Editing goes through BrandDossierEditSheet, the
+// place: the constitution (with its strategy versions and sources) and brand
+// assets, the goals it works toward (Goals tab), what it has gathered about the
+// market (Intelligence tab: findings, insights, opportunities, signals) and
+// the chat's brand memory. Editing goes through BrandDossierEditSheet, the
 // Visual Identity forms and the Goals tab's own approve/edit actions.
 // Records opened by a cross-link (ENTITY_PANEL / ENTITY_SUB) pick their tab;
 // a constitution opens its own detail view.
@@ -167,9 +150,6 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
 
   const [
     constitutionCount,
-    strategyCount,
-    decisionCount,
-    evidenceCount,
     learningCount,
     knowledge,
     proposedGoalCount,
@@ -178,9 +158,6 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
     opportunityCount,
   ] = await Promise.all([
     prisma.brandConstitution.count({ where: { brandId } }),
-    prisma.brandStrategyVersion.count({ where: { brandId } }),
-    prisma.brandDecision.count({ where: { brandId } }),
-    prisma.brandEvidence.count({ where: { brandId } }),
     prisma.brandLearning.count({ where: { projectId } }),
     countBrandKnowledge(brandId),
     prisma.projectGoal.count({ where: { projectId, status: "PROPOSED" } }),
@@ -198,10 +175,7 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
     constitution: constitutionCount,
     // Only the goals waiting for the client's decision: the tab says "needs you".
     goals: proposedGoalCount > 0 ? proposedGoalCount : undefined,
-    strategy: strategyCount,
-    decisions: decisionCount,
     intelligence: findingCount + insightCount + opportunityCount,
-    evidence: evidenceCount,
     learnings: learningCount,
   };
 
@@ -253,21 +227,23 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
           <PostStyleSection projectId={projectId} brandId={brandId} />
         </div>
       ) : activeSub === "constitution" ? (
-        <ConstitutionSection
-          projectId={projectId}
-          brandId={brandId}
-          focusedId={null}
-        />
+        <div className="space-y-8">
+          <ConstitutionSection
+            projectId={projectId}
+            brandId={brandId}
+            focusedId={null}
+          />
+          <SubSection title="Strategy versions">
+            <StrategyVersionsSection brandId={brandId} />
+          </SubSection>
+          <SubSection title="Sources">
+            <EvidenceSection brandId={brandId} />
+          </SubSection>
+        </div>
       ) : activeSub === "goals" ? (
         <GoalsSection projectId={projectId} entity={entity} />
       ) : activeSub === "intelligence" ? (
         <IntelligenceSection projectId={projectId} entity={entity} />
-      ) : activeSub === "strategy" ? (
-        <StrategyVersionsSection brandId={brandId} />
-      ) : activeSub === "decisions" ? (
-        <DecisionsSection brandId={brandId} />
-      ) : activeSub === "evidence" ? (
-        <EvidenceSection brandId={brandId} />
       ) : activeSub === "learnings" ? (
         <LearningsSection projectId={projectId} />
       ) : activeSub === "rules" ? (
@@ -305,19 +281,8 @@ async function ConstitutionSection({
       <EmptyState
         icon={BookOpen}
         title="Constitution not generated yet"
-        hint="The brand constitution is synthesized from research findings during stage 3 of setup."
-      >
-        <Link
-          href={buildHubHref(projectId, {
-            panel: "setup",
-            entity: null,
-          })}
-          scroll={false}
-          className="text-xs text-primary underline-offset-2 hover:underline"
-        >
-          Go to setup →
-        </Link>
-      </EmptyState>
+        hint="It is written from your website and the first conversation in the chat: start a chat about the brand and it appears here."
+      />
     );
   }
 
@@ -1075,7 +1040,9 @@ async function StrategyVersionsSection({ brandId }: { brandId: string }) {
 
   if (versions.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">No strategy versions.</p>
+      <p className="text-sm text-muted-foreground">
+        No strategy versions yet.
+      </p>
     );
   }
 
@@ -1102,51 +1069,6 @@ async function StrategyVersionsSection({ brandId }: { brandId: string }) {
 
 // ---------------------------------------------------------------------------
 
-async function DecisionsSection({ brandId }: { brandId: string }) {
-  const decisions = await prisma.brandDecision.findMany({
-    where: { brandId },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  });
-
-  if (decisions.length === 0) {
-    return <p className="text-sm text-muted-foreground">No brand decisions.</p>;
-  }
-
-  return (
-    <Card>
-      <CardContent className="divide-y divide-border/40">
-        {decisions.map((decision) => (
-          <div
-            key={decision.id}
-            className="space-y-1 py-2.5 first:pt-0 last:pb-0"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium">{decision.topic}</span>
-              <StatusBadge
-                meta={{
-                  label: ACTOR_TYPE_LABEL[decision.decidedByType],
-                  tone: "neutral",
-                }}
-                className="h-4 px-1.5 text-[10px]"
-              />
-            </div>
-            <p className="text-sm">{decision.decision}</p>
-            {decision.rationale ? (
-              <p className="text-xs text-muted-foreground">
-                {decision.rationale}
-              </p>
-            ) : null}
-            <p className="text-[11px] text-muted-foreground">
-              {timeAgo(decision.createdAt)}
-            </p>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
 // ---------------------------------------------------------------------------
 
 async function EvidenceSection({ brandId }: { brandId: string }) {
@@ -1166,7 +1088,11 @@ async function EvidenceSection({ brandId }: { brandId: string }) {
   });
 
   if (items.length === 0) {
-    return <p className="text-sm text-muted-foreground">No evidence.</p>;
+    return (
+      <p className="text-sm text-muted-foreground">
+        No sources recorded yet.
+      </p>
+    );
   }
 
   return (
@@ -1228,8 +1154,8 @@ async function LearningsSection({ projectId }: { projectId: string }) {
     return (
       <EmptyState
         icon={GraduationCap}
-        title="No learnings"
-        hint="As measurement results from completed work are analyzed, brand learnings accumulate here and feed into the context of subsequent work."
+        title="Nothing remembered yet"
+        hint="What you decide in the chat and what the brand learns from its posts are kept here, and the chat uses them in later work."
       />
     );
   }
@@ -1266,5 +1192,22 @@ async function LearningsSection({ projectId }: { projectId: string }) {
         ))}
       </CardContent>
     </Card>
+  );
+}
+
+// A titled block inside a tab (the Constitution tab's strategy versions and
+// sources).
+function SubSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      {children}
+    </section>
   );
 }

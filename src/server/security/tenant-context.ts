@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/auth";
@@ -14,13 +15,17 @@ export type AuthenticatedUser = {
 // Resolves the current session user. Every server action / route handler that
 // touches tenant-scoped data must call this first — there is no other place
 // authorization is checked.
-export async function requireUser(): Promise<AuthenticatedUser> {
+// Request-scoped (React cache): within one server render the page and the shell
+// around it share a single session read. Outside a render (route handlers,
+// server actions) cache() is a plain pass-through, so nothing is shared across
+// requests.
+export const requireUser = cache(async (): Promise<AuthenticatedUser> => {
   const session = await auth();
   if (!session?.user?.id) {
     throw new AgentelseError("LOGIN_REQUIRED", "Authentication required");
   }
   return { userId: session.user.id, email: session.user.email ?? null };
-}
+});
 
 // Page-level guard for route segments (layouts), as opposed to server
 // actions/route handlers: a stale or missing session must land the visitor
@@ -43,49 +48,61 @@ export async function requireUserOrRedirect(): Promise<AuthenticatedUser> {
 // bitypay browser profile, etc.) — every repository call for tenant data
 // must flow through the { workspaceId, projectId } it returns here rather
 // than IDs supplied directly by the caller.
-export async function requireProjectAccess(
-  userId: string,
-  projectId: string,
-): Promise<{ workspaceId: string; projectId: string; defaultBrandId: string }> {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: {
-      id: true,
-      workspaceId: true,
-      brands: { where: { isDefault: true }, select: { id: true }, take: 1 },
-    },
-  });
+// Runs on every page, route and poll, so its three reads go out together (one
+// round trip instead of three in a row): none needs another's result, because
+// the membership is matched through the project itself. Request-scoped like
+// requireUser.
+export const requireProjectAccess = cache(
+  async (
+    userId: string,
+    projectId: string,
+  ): Promise<{
+    workspaceId: string;
+    projectId: string;
+    defaultBrandId: string;
+  }> => {
+    const [project, membership, defaultBrand] = await Promise.all([
+      prisma.project.findUnique({
+        where: { id: projectId },
+        select: { id: true, workspaceId: true },
+      }),
+      // A membership of the workspace that owns this project (one SQL
+      // statement: the project is matched in a subquery).
+      prisma.workspaceMember.findFirst({
+        where: { userId, workspace: { projects: { some: { id: projectId } } } },
+        select: { id: true },
+      }),
+      prisma.brand.findFirst({
+        where: { projectId, isDefault: true },
+        select: { id: true },
+      }),
+    ]);
 
-  if (!project) {
-    throw new AgentelseError("NOT_FOUND", `Project ${projectId} not found`);
-  }
+    if (!project) {
+      throw new AgentelseError("NOT_FOUND", `Project ${projectId} not found`);
+    }
 
-  const membership = await prisma.workspaceMember.findUnique({
-    where: { workspaceId_userId: { workspaceId: project.workspaceId, userId } },
-    select: { id: true },
-  });
+    if (!membership) {
+      throw new AgentelseError(
+        "PERMISSION_DENIED",
+        `User ${userId} has no access to workspace ${project.workspaceId}`,
+      );
+    }
 
-  if (!membership) {
-    throw new AgentelseError(
-      "PERMISSION_DENIED",
-      `User ${userId} has no access to workspace ${project.workspaceId}`,
-    );
-  }
+    if (!defaultBrand) {
+      throw new AgentelseError(
+        "NOT_FOUND",
+        `Project ${projectId} has no default brand`,
+      );
+    }
 
-  const defaultBrandId = project.brands[0]?.id;
-  if (!defaultBrandId) {
-    throw new AgentelseError(
-      "NOT_FOUND",
-      `Project ${projectId} has no default brand`,
-    );
-  }
-
-  return {
-    workspaceId: project.workspaceId,
-    projectId: project.id,
-    defaultBrandId,
-  };
-}
+    return {
+      workspaceId: project.workspaceId,
+      projectId: project.id,
+      defaultBrandId: defaultBrand.id,
+    };
+  },
+);
 
 // Confirms `brandId` actually belongs to `projectId`. Every mutation that
 // receives both a projectId and a brandId from a client payload must call

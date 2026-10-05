@@ -7,13 +7,12 @@ import {
   fallbackDayFor,
   formatDayLabel,
   formatPickerValue,
-  HOUR_OPTIONS,
   isDayValue,
   isTimeValue,
   joinDateTime,
   keyboardDayStep,
-  minuteOptions,
   monthTitle,
+  nudgeTime,
   parseTimeInput,
   shiftDayByMonths,
   shiftView,
@@ -131,7 +130,7 @@ describe("aralık ve klavye", () => {
   });
 });
 
-describe("kısayollar ve saat sütunları", () => {
+describe("kısayollar ve saati ileri/geri alma", () => {
   it("gün kısayolları bugünden hesaplanır", () => {
     // 3 Ekim 2026 Cumartesi -> sonraki Pazartesi 5 Ekim
     expect(dayPresets("2026-10-03")).toEqual([
@@ -144,16 +143,34 @@ describe("kısayollar ve saat sütunları", () => {
     expect(dayPresets("2026-10-05")[2]!.key).toBe("2026-10-12");
   });
 
-  it("dakika sütunu adıma göre; ızgara dışı seçili dakika da görünür", () => {
-    expect(minuteOptions(15)).toEqual(["00", "15", "30", "45"]);
-    expect(minuteOptions(5)).toHaveLength(12);
-    expect(minuteOptions(7)).toHaveLength(12);
-    const withOdd = minuteOptions(15, "07");
-    expect(withOdd).toEqual(["00", "07", "15", "30", "45"]);
-    expect(minuteOptions(15, "15")).toHaveLength(4);
-    expect(HOUR_OPTIONS).toHaveLength(24);
-    expect(HOUR_OPTIONS[0]).toBe("00");
-    expect(HOUR_OPTIONS[23]).toBe("23");
+  it("saat varsayılan olarak yarım saat ileri/geri alınır", () => {
+    expect(nudgeTime("18:00", 1)).toBe("18:30");
+    expect(nudgeTime("18:30", 1)).toBe("19:00");
+    expect(nudgeTime("18:30", -1)).toBe("18:00");
+    expect(nudgeTime("18:00", -1)).toBe("17:30");
+  });
+
+  it("adımın katına oturur: aradaki bir dakika en yakın kata gider", () => {
+    expect(nudgeTime("18:20", 1)).toBe("18:30");
+    expect(nudgeTime("18:20", -1)).toBe("18:00");
+    expect(nudgeTime("10:07", 1, 15)).toBe("10:15");
+    expect(nudgeTime("10:07", -1, 15)).toBe("10:00");
+    expect(nudgeTime("10:00", 1, 60)).toBe("11:00");
+  });
+
+  it("günün dışına taşmaz: sınırda null", () => {
+    expect(nudgeTime("00:00", -1)).toBeNull();
+    expect(nudgeTime("00:10", -1)).toBe("00:00");
+    expect(nudgeTime("23:30", 1)).toBeNull();
+    expect(nudgeTime("23:10", 1)).toBe("23:30");
+    expect(nudgeTime("23:45", 1, 15)).toBeNull();
+  });
+
+  it("geçersiz saat null; geçersiz adım varsayılana düşer", () => {
+    expect(nudgeTime("", 1)).toBeNull();
+    expect(nudgeTime("25:00", 1)).toBeNull();
+    expect(nudgeTime("bozuk", -1)).toBeNull();
+    expect(nudgeTime("18:00", 1, 7)).toBe("18:30");
   });
 
   it("varsayılan saat geçerli bir saattir", () => {

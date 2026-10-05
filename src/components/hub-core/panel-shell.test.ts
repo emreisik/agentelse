@@ -8,8 +8,6 @@ for (const file of [
   "brand-brain-panel",
   "ideas-panel",
   "work-panel",
-  "departments-panel",
-  "human-action-panel",
   "settings-panel",
 ]) {
   const name = file
@@ -19,6 +17,14 @@ for (const file of [
   vi.doMock(`./panels/${file}`, () => ({ [name]: () => null }));
 }
 vi.mock("./hub-breadcrumb", () => ({ HubBreadcrumb: () => null }));
+// The project's last open chat, remembered in a cookie (last-work.ts).
+const cookieJar = new Map<string, string>();
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: (name: string) =>
+      cookieJar.has(name) ? { name, value: cookieJar.get(name)! } : undefined,
+  }),
+}));
 
 const { PanelShell } = await import("./panel-shell");
 
@@ -59,9 +65,22 @@ describe("PanelShell back link", () => {
     expect(await backHref("w1")).toBe("/projects/p1?work=w1");
   });
 
-  it("is the project root without one (Works off)", async () => {
+  it("is the project root without one and no remembered chat (Works off)", async () => {
+    cookieJar.clear();
     expect(await backHref()).toBe("/projects/p1");
     expect(await backHref("  ")).toBe("/projects/p1");
+  });
+
+  it("falls back to the project's last open chat when the link did not carry one", async () => {
+    cookieJar.clear();
+    cookieJar.set("ae_last_work_p1", "w9");
+    expect(await backHref()).toBe("/projects/p1?work=w9");
+    // The chat the link carried wins.
+    expect(await backHref("w1")).toBe("/projects/p1?work=w1");
+    // A malformed cookie is ignored.
+    cookieJar.set("ae_last_work_p1", "w9;evil=1");
+    expect(await backHref()).toBe("/projects/p1");
+    cookieJar.clear();
   });
 
   it("renders nothing without a panel", async () => {

@@ -210,7 +210,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
 
           <ThreadPrimitive.ViewportFooter
             className={cn(
-              "aui-thread-viewport-footer bg-background flex flex-col gap-4 overflow-visible pb-4 md:pb-6",
+              "aui-thread-viewport-footer bg-background flex flex-col gap-3 overflow-visible pb-3 md:pb-4",
               !isEmpty &&
                 "sticky bottom-0 mt-auto rounded-t-(--composer-radius)",
             )}
@@ -219,12 +219,6 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
             <ThreadFollowupSuggestions />
             {QuickActions ? <QuickActions /> : null}
             <Composer />
-            <p
-              className="px-1 text-center text-[10px]"
-              style={{ color: "var(--ws-text-3)" }}
-            >
-              ✳ Agentelse automatically uses your brand context.
-            </p>
             {StartSuggestions ? (
               // The rows hang below the composer from a zero-height anchor:
               // they do not count in the height of the vertically centred
@@ -352,15 +346,15 @@ const Composer: FC = () => {
         render={
           <div
             data-slot="aui_composer-shell"
-            className="border-[var(--ws-border)] data-[dragging=true]:border-ring focus-within:border-[var(--ws-border)] flex w-full flex-col gap-2 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_8px_35px_rgba(0,0,0,0.05)] transition-[border-color,box-shadow] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[var(--ws-hover)]"
+            className="border-[var(--ws-border)] data-[dragging=true]:border-ring focus-within:border-[var(--ws-border)] flex w-full flex-col gap-1 rounded-(--composer-radius) border bg-(--composer-bg) p-(--composer-padding) shadow-[0_8px_35px_rgba(0,0,0,0.05)] transition-[border-color,box-shadow] data-[dragging=true]:border-dashed data-[dragging=true]:bg-[var(--ws-hover)]"
           />
         }
       >
         <ComposerAttachments />
         <ComposerPrimitive.Input
           placeholder="Write down what's on your mind. Let's bring it to life…"
-          className="aui-composer-input caret-primary placeholder:text-muted-foreground/80 max-h-32 min-h-14 w-full resize-none bg-transparent px-2.5 py-1 text-base outline-none"
-          rows={2}
+          className="aui-composer-input caret-primary placeholder:text-muted-foreground/80 max-h-32 min-h-9 w-full resize-none bg-transparent px-2.5 py-1.5 text-base outline-none"
+          rows={1}
           autoFocus={autoFocus}
           enterKeyHint="send"
           aria-label="Message"

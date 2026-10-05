@@ -122,6 +122,61 @@ export function expandForPlatforms<T extends PlanLikeItem>(
   return out;
 }
 
+export const INSTAGRAM_POST = "instagram.post";
+export const INSTAGRAM_STORY = "instagram.story";
+
+// "Also as a Story" (the plan's one Instagram switch): every Instagram post
+// gets a Story of the same post (same day, time and idea) right after it. Its
+// picture is the post's own, adapted to 9:16 (plan-run.ts). A post that already
+// has a Story keeps just that one.
+export function withInstagramStories<T extends PlanLikeItem>(
+  items: readonly T[],
+): T[] {
+  const storied = new Set(
+    items.flatMap((item) =>
+      !item.removed && resolvePlanItem(item)?.format.key === INSTAGRAM_STORY
+        ? [postKeyOf(item)]
+        : [],
+    ),
+  );
+  const out: T[] = [];
+  for (const item of items) {
+    out.push(item);
+    const resolved = resolvePlanItem(item);
+    if (
+      item.removed ||
+      resolved?.channel !== "instagram" ||
+      resolved.format.key !== INSTAGRAM_POST ||
+      storied.has(postKeyOf(item))
+    ) {
+      continue;
+    }
+    storied.add(postKeyOf(item));
+    out.push({
+      ...item,
+      channel: "instagram",
+      platform: CHANNELS.instagram.platform,
+      formatKey: INSTAGRAM_STORY,
+      format: undefined,
+    });
+  }
+  return out;
+}
+
+// Every piece a plan makes on saving: one per post and platform, plus the
+// Instagram Stories when the switch is on.
+export function piecesOfPlan<T extends PlanLikeItem>(card: {
+  items: readonly T[];
+  platforms?: readonly string[];
+  instagramStory?: boolean;
+}): T[] {
+  const expanded =
+    card.platforms && card.platforms.length > 0
+      ? expandForPlatforms(card.items, card.platforms)
+      : [...card.items];
+  return card.instagramStory ? withInstagramStories(expanded) : expanded;
+}
+
 // What names a post among the others: its day, its time and its idea.
 export function postKeyOf(item: {
   date: string;

@@ -5,19 +5,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Project.status at all was SignalUniverse.runDueScans.
 
 const autonomyPolicy = { findMany: vi.fn() };
-const project = { findUnique: vi.fn() };
+const project = { findMany: vi.fn() };
 
 vi.mock("@/lib/prisma", () => ({
   prisma: { autonomyPolicy, project },
 }));
 
-const getOrCreate = vi.fn();
-const setPaused = vi.fn().mockResolvedValue(undefined);
-const resumeFromPause = vi.fn().mockResolvedValue(undefined);
-const touch = vi.fn().mockResolvedValue(undefined);
+const statusesFor = vi.fn();
+const setPausedMany = vi.fn().mockResolvedValue(undefined);
+const resumeFromPauseMany = vi.fn().mockResolvedValue(undefined);
+const touchMany = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
-  AgencyLoopStateRepository: { getOrCreate, setPaused, resumeFromPause, touch },
+  AgencyLoopStateRepository: {
+    statusesFor,
+    setPausedMany,
+    resumeFromPauseMany,
+    touchMany,
+  },
 }));
 
 const { AgencyLoopHeartbeat } =
@@ -32,44 +37,44 @@ beforeEach(() => {
 
 describe("AgencyLoopHeartbeat.run", () => {
   it("pauses the loop state when the project is PAUSED and wasn't already", async () => {
-    project.findUnique.mockResolvedValue({ status: "PAUSED" });
-    getOrCreate.mockResolvedValue({ status: "RUNNING" });
+    project.findMany.mockResolvedValue([{ id: "p-1", status: "PAUSED" }]);
+    statusesFor.mockResolvedValue(new Map([["p-1", "RUNNING"]]));
 
     await AgencyLoopHeartbeat.run();
 
-    expect(setPaused).toHaveBeenCalledWith("p-1", "Project is paused");
-    expect(resumeFromPause).not.toHaveBeenCalled();
-    expect(touch).not.toHaveBeenCalled();
+    expect(setPausedMany).toHaveBeenCalledWith(["p-1"], "Project is paused");
+    expect(resumeFromPauseMany).not.toHaveBeenCalled();
+    expect(touchMany).not.toHaveBeenCalled();
   });
 
   it("does not re-pause a loop state that's already PAUSED", async () => {
-    project.findUnique.mockResolvedValue({ status: "PAUSED" });
-    getOrCreate.mockResolvedValue({ status: "PAUSED" });
+    project.findMany.mockResolvedValue([{ id: "p-1", status: "PAUSED" }]);
+    statusesFor.mockResolvedValue(new Map([["p-1", "PAUSED"]]));
 
     await AgencyLoopHeartbeat.run();
 
-    expect(setPaused).not.toHaveBeenCalled();
+    expect(setPausedMany).not.toHaveBeenCalled();
   });
 
   it("resumes a PAUSED loop state once the project is ACTIVE again", async () => {
-    project.findUnique.mockResolvedValue({ status: "ACTIVE" });
-    getOrCreate.mockResolvedValue({ status: "PAUSED" });
+    project.findMany.mockResolvedValue([{ id: "p-1", status: "ACTIVE" }]);
+    statusesFor.mockResolvedValue(new Map([["p-1", "PAUSED"]]));
 
     await AgencyLoopHeartbeat.run();
 
-    expect(resumeFromPause).toHaveBeenCalledWith("p-1");
-    expect(setPaused).not.toHaveBeenCalled();
-    expect(touch).not.toHaveBeenCalled();
+    expect(resumeFromPauseMany).toHaveBeenCalledWith(["p-1"]);
+    expect(setPausedMany).not.toHaveBeenCalled();
+    expect(touchMany).not.toHaveBeenCalled();
   });
 
   it("just touches lastTickAt for a normal active, non-paused project", async () => {
-    project.findUnique.mockResolvedValue({ status: "ACTIVE" });
-    getOrCreate.mockResolvedValue({ status: "RUNNING" });
+    project.findMany.mockResolvedValue([{ id: "p-1", status: "ACTIVE" }]);
+    statusesFor.mockResolvedValue(new Map([["p-1", "RUNNING"]]));
 
     await AgencyLoopHeartbeat.run();
 
-    expect(touch).toHaveBeenCalledWith("p-1");
-    expect(setPaused).not.toHaveBeenCalled();
-    expect(resumeFromPause).not.toHaveBeenCalled();
+    expect(touchMany).toHaveBeenCalledWith(["p-1"]);
+    expect(setPausedMany).not.toHaveBeenCalled();
+    expect(resumeFromPauseMany).not.toHaveBeenCalled();
   });
 });

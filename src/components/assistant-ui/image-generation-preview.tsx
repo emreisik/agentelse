@@ -9,15 +9,12 @@ import {
   type ImageGenState,
 } from "@/lib/image-progress";
 
-// The live "image is being made" block in the chat (CHAT_ENGINE=agent's
-// generate_image): a blurred preview that sharpens as streamed previews
-// arrive, with an explicit 0-100% bar and the current stage. 100% appears
-// only when the render is really finished; the finished card then replaces
-// this block.
-export const ImageGenerationPreview: FC<{
-  state: ImageGenState;
-  previewUrl?: string;
-}> = ({ state, previewUrl }) => {
+// The 0-100% of a render in progress, ticking on its own between milestones
+// (see imageProgress). Also drives the plan posts' "Creating image" state.
+export function useImageProgress(state: ImageGenState): {
+  pct: number;
+  label: string;
+} {
   const [running, setRunning] = useState(() =>
     imageProgress(state, Date.now()),
   );
@@ -31,7 +28,19 @@ export const ImageGenerationPreview: FC<{
   }, [state]);
 
   // Derived at render so completion shows instantly, not on the next tick.
-  const view = state.done ? { pct: 100, label: "Done" } : running;
+  return state.done ? { pct: 100, label: "Done" } : running;
+}
+
+// The live "image is being made" block in the chat (CHAT_ENGINE=agent's
+// generate_image): a blurred preview that sharpens as streamed previews
+// arrive, with an explicit 0-100% bar and the current stage. 100% appears
+// only when the render is really finished; the finished card then replaces
+// this block.
+export const ImageGenerationPreview: FC<{
+  state: ImageGenState;
+  previewUrl?: string;
+}> = ({ state, previewUrl }) => {
+  const view = useImageProgress(state);
 
   return (
     <div

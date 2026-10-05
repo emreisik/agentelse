@@ -56,6 +56,7 @@ import { ContentPlanCard } from "@/components/commands/content-plan-card";
 import { PlanBriefWizard } from "@/components/commands/plan-brief-wizard";
 import { ChannelSelectCard } from "@/components/works/channel-select-card";
 import { PlanQuickLinks } from "@/components/works/plan-pane/quick-links";
+import { PlanPostsCarousel } from "@/components/works/social-post/plan-posts-carousel";
 import { useWorkCardHost } from "@/components/works/work-card-host";
 import {
   WORKS_ONLY_KINDS,
@@ -377,7 +378,10 @@ export function IdeaEventCard({
           card,
           commandId,
           <WorksPlanCard card={card} commandId={commandId} />,
-          <PlanQuickLinks projectId={host.projectId} workId={host.workId} />,
+          <>
+            <PlanPostsCarousel card={card} commandId={commandId} />
+            <PlanQuickLinks projectId={host.projectId} workId={host.workId} />
+          </>,
         )
       ) : (
         <ContentPlanCard card={card} commandId={commandId} />

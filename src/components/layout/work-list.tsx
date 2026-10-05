@@ -23,14 +23,17 @@ import { createWorkAction } from "@/server/actions/work-actions";
 import {
   SIDEBAR_ACTIVE_CLASS,
   SIDEBAR_ITEM_CLASS,
+  SIDEBAR_RAIL_ITEM_CLASS,
 } from "@/components/layout/sidebar-item";
+import { RailTip } from "@/components/layout/sidebar-collapse";
 
 // The sidebar's conversations, like ChatGPT's (docs/works.md): "New Chat" on
-// top, the nav groups under it, then "Recents", which fills the rest of the
-// sidebar and scrolls on its own. Every conversation is a Work with a title, a
-// one-line subtitle and a status dot. A chat joins Recents with its first
-// message; the blank one New Chat opens is not listed. The views are pure (no
-// hooks) so they render and test without a router; WorkNav wires them up.
+// top, the nav list under it, then "Recents", which fills the rest of the
+// sidebar (at least 60% of it) and scrolls on its own. Every conversation is a
+// Work with a title, a one-line subtitle and a status dot. A chat joins
+// Recents with its first message; the blank one New Chat opens is not listed.
+// The views are pure (no hooks) so they render and test without a router;
+// WorkNav wires them up.
 
 export type SidebarWork = RecentRow;
 
@@ -103,34 +106,47 @@ export function NewChatView({
   active,
   creating,
   onNew,
+  rail = false,
 }: {
   active: boolean;
   creating: boolean;
   onNew: () => void;
+  // The collapsed sidebar's icon rail: the icon alone, its label a tooltip.
+  rail?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onNew}
-      disabled={active || creating}
-      aria-current={active ? "page" : undefined}
-      className={cn(
-        SIDEBAR_ITEM_CLASS,
-        "w-full shrink-0 cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default",
-        active ? SIDEBAR_ACTIVE_CLASS : "hover:bg-sidebar-accent/60",
-        creating && "opacity-60",
-      )}
-    >
-      {creating ? (
-        <Loader2
-          aria-hidden="true"
-          className="size-4 shrink-0 animate-spin opacity-80"
-        />
-      ) : (
-        <SquarePen aria-hidden="true" className="size-4 shrink-0 opacity-80" />
-      )}
-      <span className="min-w-0 flex-1 truncate">{WORK_LIST_COPY.newWork}</span>
-    </button>
+    <RailTip label={WORK_LIST_COPY.newWork}>
+      <button
+        type="button"
+        onClick={onNew}
+        disabled={active || creating}
+        aria-current={active ? "page" : undefined}
+        aria-label={rail ? WORK_LIST_COPY.newWork : undefined}
+        className={cn(
+          rail ? SIDEBAR_RAIL_ITEM_CLASS : cn(SIDEBAR_ITEM_CLASS, "w-full"),
+          "shrink-0 cursor-pointer text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default",
+          active ? SIDEBAR_ACTIVE_CLASS : "hover:bg-sidebar-accent/60",
+          creating && "opacity-60",
+        )}
+      >
+        {creating ? (
+          <Loader2
+            aria-hidden="true"
+            className="size-4 shrink-0 animate-spin opacity-80"
+          />
+        ) : (
+          <SquarePen
+            aria-hidden="true"
+            className="size-4 shrink-0 opacity-80"
+          />
+        )}
+        {rail ? null : (
+          <span className="min-w-0 flex-1 truncate">
+            {WORK_LIST_COPY.newWork}
+          </span>
+        )}
+      </button>
+    </RailTip>
   );
 }
 
@@ -145,7 +161,8 @@ export function RecentsView({
 }) {
   const headingId = React.useId();
   return (
-    <div className="flex min-h-28 flex-1 flex-col" data-slot="work-list">
+    // At least 60% of the nav's height, more when the list above is short.
+    <div className="flex min-h-[60%] flex-1 flex-col" data-slot="work-list">
       <div
         id={headingId}
         className="shrink-0 px-2.5 pb-1 text-[10px] font-semibold tracking-[0.1em] text-sidebar-foreground/45 uppercase"
@@ -210,20 +227,21 @@ export function RecentsView({
   );
 }
 
-// New Chat, then the nav groups the sidebar passes in (`top`), then Recents,
-// then the bottom group (Settings).
+// New Chat and the nav list the sidebar passes in (`top`) as one block, then
+// Recents.
 export function WorkNav({
   projectId,
   works,
   openWorkUntouched,
   top,
-  bottom,
+  rail = false,
 }: {
   projectId: string;
   works: readonly SidebarWork[];
   openWorkUntouched: boolean;
   top: React.ReactNode;
-  bottom: React.ReactNode;
+  // The collapsed sidebar: New Chat as an icon, no Recents.
+  rail?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -289,14 +307,22 @@ export function WorkNav({
 
   return (
     <>
-      <NewChatView active={newChatActive} creating={creating} onNew={onNew} />
-      {top}
-      <RecentsView
-        projectId={projectId}
-        works={rows}
-        activeWorkId={activeWorkId}
-      />
-      {bottom}
+      <div className="shrink-0 space-y-0.5">
+        <NewChatView
+          active={newChatActive}
+          creating={creating}
+          onNew={onNew}
+          rail={rail}
+        />
+        {top}
+      </div>
+      {rail ? null : (
+        <RecentsView
+          projectId={projectId}
+          works={rows}
+          activeWorkId={activeWorkId}
+        />
+      )}
     </>
   );
 }

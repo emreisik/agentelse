@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { CreativeStatus } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import { utcToZonedDateTimeLocal } from "@/lib/timezone";
 import {
@@ -10,6 +12,7 @@ import {
   type LiveCreativeRow,
   type LiveInputs,
 } from "@/server/agency/journey/live-creative-state";
+import { deriveItemStage } from "@/server/agency/journey/plan-progress";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 // Read-time overlays of the Work page (spec 3.14 and 7). The stored cards are
@@ -22,6 +25,9 @@ export type WorkOverlayInputs = {
   liveRows: Map<string, LiveCreativeRow>;
   // Idea id -> where it stands on the calendar right now.
   scheduledIdeas: Map<string, ScheduledIdea>;
+  // Post id -> the channels of its deliveries that are not left out, for the
+  // posts of the creative cards on screen (docs/works.md "Posts").
+  postChannels: Map<string, string[]>;
 };
 
 type PlanCard = Extract<IdeaEventCardData, { kind: "content-plan-draft" }>;
@@ -94,6 +100,35 @@ export function collectScheduledIdeas(
   return scheduled;
 }
 
+// The channels of each post's deliveries that are not left out: the same set
+// the server checks before a Facebook share (facebook-share.ts). Never throws:
+// without it a card keeps offering the share and the server still refuses a
+// second Facebook post.
+export async function loadPostChannels(
+  projectId: string,
+  postIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const channels = new Map<string, string[]>();
+  if (postIds.length === 0) return channels;
+  try {
+    const deliveries = await prisma.creative.findMany({
+      where: { projectId, postId: { in: [...new Set(postIds)] } },
+      select: { id: true, postId: true, channel: true, excludedAt: true },
+    });
+    for (const delivery of deliveries) {
+      if (!delivery.postId || !delivery.channel || delivery.excludedAt) {
+        continue;
+      }
+      const own = channels.get(delivery.postId) ?? [];
+      if (!own.includes(delivery.channel)) own.push(delivery.channel);
+      channels.set(delivery.postId, own);
+    }
+  } catch {
+    return new Map();
+  }
+  return channels;
+}
+
 export async function loadWorkOverlayInputs(
   projectId: string,
   cards: readonly (IdeaEventCardData | undefined)[],
@@ -111,11 +146,59 @@ export async function loadWorkOverlayInputs(
     loadLiveInputs(projectId),
     loadLiveCreativeRows(projectId, [...ids]),
   ]);
+  // Only a creative card offers a Facebook share of its own.
+  const postIds = cards.flatMap((card) => {
+    if (card?.kind !== "creative-ready") return [];
+    const postId = liveRows.get(card.creativeId)?.postId;
+    return postId ? [postId] : [];
+  });
   return {
     live,
     liveRows,
     scheduledIdeas: collectScheduledIdeas(cards, liveRows, live.timezone),
+    postChannels: await loadPostChannels(projectId, postIds),
   };
+}
+
+// A channel left out of its post stays a tab of that post (faded, with
+// "Include"), but the journey reads only the channels left in, so its slot
+// arrives empty. Its own row brings it back; withLivePlan then marks it
+// excluded. Only beside a delivery of the same post that is on screen: an
+// orphan, or a plan whose journey could not be read, shows nothing new.
+export function withLeftOutSlots(
+  card: IdeaEventCardData,
+  rows: ReadonlyMap<string, LiveCreativeRow>,
+): IdeaEventCardData {
+  if (!isSavedPlan(card) || !card.slots?.includes(null)) return card;
+  const ids = card.savedCreativeIds ?? [];
+  const postsOnScreen = new Set(
+    card.slots.flatMap((slot) => {
+      const postId = slot ? rows.get(slot.id)?.postId : undefined;
+      return postId ? [postId] : [];
+    }),
+  );
+  let revived = false;
+  const slots = card.slots.map((slot, index) => {
+    if (slot) return slot;
+    const id = ids[index];
+    const row = id ? rows.get(id) : undefined;
+    if (!row?.excludedAt || !row.postId || !postsOnScreen.has(row.postId)) {
+      return slot;
+    }
+    // Never made or retried once left out: no task decides its stage.
+    const stage = deriveItemStage(
+      {
+        status: row.status as CreativeStatus,
+        currentVersionId: row.version ? row.id : null,
+      },
+      [],
+    );
+    if (!stage) return slot;
+    revived = true;
+    const assetId = row.version?.assetId;
+    return { id: row.id, stage, ...(assetId ? { assetId } : {}) };
+  });
+  return revived ? { ...card, slots } : card;
 }
 
 export function applyWorkOverlays(
@@ -125,12 +208,26 @@ export function applyWorkOverlays(
 ): IdeaEventCardData | undefined {
   if (!card) return card;
   switch (card.kind) {
-    case "creative-ready":
-      return withLiveCreativeState(card, inputs.liveRows, inputs.live, {
+    case "creative-ready": {
+      const next = withLiveCreativeState(card, inputs.liveRows, inputs.live, {
         isNewestCard: context?.isNewestCreativeCard,
       });
+      // An older card of a revised piece stays exactly as the page left it.
+      if (next === card || next.kind !== "creative-ready") return next;
+      const postId = inputs.liveRows.get(card.creativeId)?.postId;
+      const postChannels = postId ? inputs.postChannels.get(postId) : undefined;
+      return {
+        ...next,
+        ...(postId ? { postId } : {}),
+        ...(postChannels ? { postChannels } : {}),
+      };
+    }
     case "content-plan-draft":
-      return withLivePlan(card, inputs.live, inputs.liveRows);
+      return withLivePlan(
+        withLeftOutSlots(card, inputs.liveRows),
+        inputs.live,
+        inputs.liveRows,
+      );
     case "idea-options": {
       const scheduled: Record<string, ScheduledIdea> = {};
       for (const item of card.items) {

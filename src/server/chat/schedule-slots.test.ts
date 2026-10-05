@@ -22,6 +22,8 @@ const tx = {
     update: vi.fn(),
   },
   creative: { findMany: vi.fn(), create: vi.fn() },
+  // One Post per post of the plan (save-plan-core createPostsInTx).
+  post: { create: vi.fn(async () => ({ id: "post-1" })) },
 };
 type TxFn = (t: typeof tx) => unknown;
 const transaction = vi.fn<(fn: TxFn, opts?: unknown) => unknown>(async (fn) =>

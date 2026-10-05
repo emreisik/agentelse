@@ -4,10 +4,8 @@ import type { Prisma } from "@prisma/client";
 
 import { isChannelKey, type ChannelKey } from "@/lib/content-channels";
 import { prisma } from "@/lib/prisma";
-import { zonedDateTimeToUtc } from "@/lib/timezone";
 import type { BrandCheckState, BrandFlag } from "@/lib/works/brand-rules";
 import { copyText } from "@/lib/works/copy";
-import { creativeFieldsOfPlanItem } from "@/lib/works/plan-item-fields";
 import {
   isSlotOrigin,
   slotOriginKey,
@@ -17,7 +15,7 @@ import { sanitizeClickText } from "@/lib/works/slot-rules";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 import { buildPlanCard } from "./content-plan";
-import { savePlanSlotsInTx } from "./save-plan-core";
+import { createPostsInTx, savePlanSlotsInTx } from "./save-plan-core";
 
 // The ONE place that writes Creative.planId for Works (spec 3.4.2, 3.5.3):
 // buttons get a synthetic plan row (createSlots), the agent writes the card on
@@ -293,37 +291,23 @@ export async function findExistingSlots(
   return [...found.values()];
 }
 
+// One more slot on a saved card: a post of its own (one delivery).
 async function createSlotCreative(
   tx: Db,
   scope: SlotScope,
   commandId: string,
   card: Pick<PlanCard, "goal" | "timezone">,
   item: PlanItem,
+  workId: string | null,
 ): Promise<string> {
-  // Same fields as savePlanSlotsInTx writes for a saved plan item.
-  const fields = creativeFieldsOfPlanItem(item);
-  const creative = await tx.creative.create({
-    data: {
-      workspaceId: scope.workspaceId,
-      projectId: scope.projectId,
-      brandId: scope.brandId,
-      type: fields.type,
-      platform: fields.platform,
-      channel: fields.channel,
-      formatKey: fields.formatKey,
-      goal: card.goal,
-      planId: commandId,
-      title: fields.title,
-      brief: fields.brief,
-      status: "DRAFT",
-      scheduledFor: zonedDateTimeToUtc(
-        `${item.date}T${item.time}`,
-        card.timezone,
-      ),
-    },
-    select: { id: true },
+  const [creativeId] = await createPostsInTx(tx, scope, {
+    commandId,
+    workId,
+    goal: card.goal,
+    timezone: card.timezone,
+    items: [item],
   });
-  return creative.id;
+  return creativeId!;
 }
 
 async function createSlotsOnce(
@@ -488,7 +472,7 @@ export async function appendSlotInTx(
 ): Promise<{ creativeId: string }> {
   const row = await tx.command.findUnique({
     where: { id: commandId },
-    select: { parsedIntent: true, projectId: true },
+    select: { parsedIntent: true, projectId: true, workId: true },
   });
   const intent = row?.parsedIntent as
     Record<string, unknown> | null | undefined;
@@ -509,7 +493,14 @@ export async function appendSlotInTx(
 
   const [item] = buildSlotItems(card.title, card.timezone, [target]);
   if (!item) throw new SlotWriteError("Could not build the slot.");
-  const creativeId = await createSlotCreative(tx, scope, commandId, card, item);
+  const creativeId = await createSlotCreative(
+    tx,
+    scope,
+    commandId,
+    card,
+    item,
+    row.workId,
+  );
   await tx.command.update({
     where: { id: commandId },
     data: {

@@ -24,6 +24,7 @@ import {
   type SwapSlotState,
 } from "@/lib/works/plan-alternatives";
 import { creativeFieldsOfPlanItem } from "@/lib/works/plan-item-fields";
+import { postKeyOf } from "@/lib/works/plan-platforms";
 import {
   optionItems,
   type PlanOptionsCardData,
@@ -552,12 +553,17 @@ async function swapInTx(
       ? (peekCard.savedCreativeIds as unknown[])[index]
       : undefined;
 
+  // One idea, one post (docs/works.md "Posts"): a new idea is the post's, so
+  // it goes to every channel delivery of the post, and only while none of
+  // them has content or a job yet.
   let slotState: SwapSlotState = null;
+  let postId: string | null = null;
+  let postCreativeIds: string[] = [];
   if (typeof slotCreativeId === "string") {
     const [creative, tasks] = await Promise.all([
       tx.creative.findFirst({
         where: { id: slotCreativeId, projectId, planId: commandId },
-        select: { status: true, currentVersionId: true },
+        select: { status: true, currentVersionId: true, postId: true },
       }),
       tx.task.findMany({
         where: {
@@ -569,11 +575,25 @@ async function swapInTx(
       }),
     ]);
     if (creative) {
+      postId = creative.postId;
+      const deliveries = creative.postId
+        ? await tx.creative.findMany({
+            where: {
+              postId: creative.postId,
+              projectId,
+              planId: commandId,
+              status: { not: "ARCHIVED" },
+            },
+            select: { id: true, status: true, currentVersionId: true },
+          })
+        : [{ id: slotCreativeId, ...creative }];
+      postCreativeIds = deliveries.map((delivery) => delivery.id);
+      const busy = deliveries.find((delivery) => delivery.status !== "DRAFT");
       slotState = {
-        status: creative.status,
-        hasVersion: creative.currentVersionId !== null,
-        liveTask: tasks.some(
-          (task) => planCreativeIdOf(task.payload) === slotCreativeId,
+        status: busy?.status ?? "DRAFT",
+        hasVersion: deliveries.some((d) => d.currentVersionId !== null),
+        liveTask: tasks.some((task) =>
+          postCreativeIds.includes(planCreativeIdOf(task.payload) ?? ""),
         ),
         // Filled from the card inside the callback.
         inRunningClaim: false,
@@ -582,7 +602,9 @@ async function swapInTx(
   }
 
   let refusal: SwapRefusal | null = null;
-  let creativeWrite: { title: string; brief: string } | null = null;
+  const creativeWrites: { id: string; title: string; brief: string }[] = [];
+  let postWrite: { topic: string; idea: string; ideaId: string | null } | null =
+    null;
   let isSaved = false;
   const reject = (code: SwapRefusal["code"], message: string) => {
     refusal = { code, message };
@@ -616,8 +638,7 @@ async function swapInTx(
         const claimed =
           production?.state === "running" &&
           Date.now() - Date.parse(production.startedAt) < RUN_CLAIM_TTL_MS &&
-          typeof slotCreativeId === "string" &&
-          production.creativeIds.includes(slotCreativeId);
+          production.creativeIds.some((id) => postCreativeIds.includes(id));
         const check = canSwapSlot(
           "saved",
           slotState ? { ...slotState, inRunningClaim: claimed } : null,
@@ -630,18 +651,43 @@ async function swapInTx(
       const flags = brandFlagsOf([next], rules)[0] ?? [];
       if (flags.length > 0) next.brandFlags = flags;
 
+      // The post's other channel items (same day, time and idea on the card,
+      // or the same Post once saved) take the same idea.
+      const ids = plan.savedCreativeIds ?? [];
+      const key = postKeyOf(item);
+      const mates = new Set(
+        items.flatMap((entry, i) =>
+          i !== index &&
+          !entry.removed &&
+          (postKeyOf(entry) === key ||
+            (plan.state === "saved" && postCreativeIds.includes(ids[i] ?? "")))
+            ? [i]
+            : [],
+        ),
+      );
+      const nextItems = items.map((existing, i) =>
+        i === index ? next : mates.has(i) ? withIdeaOf(existing, next) : existing,
+      );
+
       if (plan.state === "saved") {
         // Production reads the Creative row, and every writer of a Creative
         // title is a path into brand memory: clean again.
-        const fields = creativeFieldsOfPlanItem(next);
-        const title = cleanWorksTextOrNull(fields.title, TOPIC_MAX);
-        const brief = cleanWorksTextOrNull(fields.brief, BRIEF_MAX);
-        if (!title || !brief) return reject("FAILED", FAILED_MESSAGE);
-        creativeWrite = { title, brief };
+        for (const at of [index, ...mates]) {
+          const id = ids[at];
+          const entry = nextItems[at];
+          if (typeof id !== "string" || !entry) continue;
+          const fields = creativeFieldsOfPlanItem(entry);
+          const title = cleanWorksTextOrNull(fields.title, TOPIC_MAX);
+          const brief = cleanWorksTextOrNull(fields.brief, BRIEF_MAX);
+          if (!title || !brief) return reject("FAILED", FAILED_MESSAGE);
+          creativeWrites.push({ id, title, brief });
+        }
+        postWrite = {
+          topic: next.topic,
+          idea: next.captionIdea,
+          ideaId: next.ideaId ?? null,
+        };
       }
-      const nextItems = items.map((existing, i) =>
-        i === index ? next : existing,
-      );
       return { ...plan, items: nextItems };
     },
   });
@@ -667,20 +713,50 @@ async function swapInTx(
     }
   }
 
-  const write = creativeWrite as { title: string; brief: string } | null;
-  if (isSaved && write && typeof slotCreativeId === "string") {
+  if (isSaved) {
     // Same transaction as the card: a taken slot rolls the card back too.
-    const updated = await tx.creative.updateMany({
-      where: {
-        id: slotCreativeId,
-        projectId,
-        planId: commandId,
-        status: "DRAFT",
-        currentVersionId: null,
-      },
-      data: { title: write.title, brief: write.brief },
-    });
-    if (updated.count !== 1) throw new SlotLockedError();
+    for (const write of creativeWrites) {
+      const updated = await tx.creative.updateMany({
+        where: {
+          id: write.id,
+          projectId,
+          planId: commandId,
+          status: "DRAFT",
+          currentVersionId: null,
+        },
+        data: { title: write.title, brief: write.brief },
+      });
+      if (updated.count !== 1) throw new SlotLockedError();
+    }
+    const idea = postWrite as {
+      topic: string;
+      idea: string;
+      ideaId: string | null;
+    } | null;
+    if (postId && idea) {
+      await tx.post.update({ where: { id: postId }, data: idea });
+    }
   }
   return { ok: true, saved: isSaved };
+}
+
+// The idea fields of `next` on another channel item of the same post: its
+// channel, format and time stay its own.
+const IDEA_FIELDS = [
+  "topic",
+  "captionIdea",
+  "from",
+  "ideaId",
+  "origin",
+  "alternatives",
+  "brandFlags",
+] as const;
+
+function withIdeaOf<T extends object>(item: T, next: T): T {
+  const out = { ...item } as unknown as Record<string, unknown>;
+  for (const key of IDEA_FIELDS) {
+    if (key in next) out[key] = (next as unknown as Record<string, unknown>)[key];
+    else delete out[key];
+  }
+  return out as T;
 }

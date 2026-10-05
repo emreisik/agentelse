@@ -26,6 +26,8 @@ export type PlanCreativeRow = {
   platform: string | null;
   // The latest version's image, when it has one.
   assetId?: string | null;
+  // The post it is a channel of.
+  postId?: string | null;
 };
 
 // A job that belongs to a plan slot (Task.payload.planCreativeId).
@@ -95,6 +97,7 @@ export function toJourneyItem(
     title: row.title?.trim() || "Untitled",
     assetId: row.assetId ?? undefined,
     platform: row.platform ?? undefined,
+    ...(row.postId ? { postId: row.postId } : {}),
   };
 }
 

@@ -169,7 +169,7 @@ describe("catalog plan items", () => {
           },
           {
             date: "2026-10-02",
-            platform: "FACEBOOK",
+            platform: "YOUTUBE",
             topic: "t",
             captionIdea: "c",
           },
@@ -182,9 +182,9 @@ describe("catalog plan items", () => {
       formatKey: "instagram.reel",
       format: "Reel",
     });
-    // Facebook is outside the catalog: only the platform survives.
+    // YouTube is outside the catalog: only the platform survives.
     expect(card.items[1]).toMatchObject({
-      platform: "FACEBOOK",
+      platform: "YOUTUBE",
       channel: undefined,
     });
   });

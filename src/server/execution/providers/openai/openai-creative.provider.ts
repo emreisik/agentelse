@@ -29,7 +29,14 @@ import {
   safeZonePercent,
 } from "@/server/media/creative-layout";
 import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
-import { loadStyleReferences } from "@/server/media/style-references";
+import {
+  adaptPicturePrompt,
+  readPictureForAdapting,
+} from "@/server/media/adapt-picture";
+import {
+  loadStyleReferences,
+  NO_STYLE_REFERENCES,
+} from "@/server/media/style-references";
 import { applyBrandTemplate } from "@/server/media/creative-template";
 import type { BrandVisualIdentityContext } from "@/server/media/brand-style-context";
 import type {
@@ -109,6 +116,9 @@ type StoredResult = {
   layoutTemplate?: { id: string; name: string } | null;
   // Variants job only: the extra renders of the same piece (never the main).
   alternatives?: { image: GeneratedCreativeImage; label: string }[];
+  // The post's picture this one was adapted from (another format of the same
+  // post): not a picture of its own, so it never becomes the post's picture.
+  adaptedFrom?: string;
   errorMessage?: string;
 };
 
@@ -219,6 +229,15 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
     const variantCount = variantCountOf(input.variantCount);
 
     try {
+      // Another format of a post that already has its picture (plan-run.ts,
+      // "one post, one picture"): that picture is re-laid out, never redrawn.
+      const adaptFrom =
+        typeof input.adaptFromAssetId === "string" && !variantCount
+          ? await readPictureForAdapting(input.adaptFromAssetId)
+          : undefined;
+      if (typeof input.adaptFromAssetId === "string" && !variantCount && !adaptFrom) {
+        throw new Error("The post's picture could not be read.");
+      }
       const preset = PresetSchema.safeParse(input.preset);
       const brandCtx = (input.brandContext ?? {}) as {
         logoAssetId?: string | null;
@@ -233,16 +252,23 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
       // model, never guarantee exact placement). A board or an example is
       // style to follow, never literal content to copy (see
       // creative-prompt-builder.ts).
-      const styleRefs = await loadStyleReferences({
-        visualIdentity: brandCtx.visualIdentity,
-        exampleIds: preset.success ? preset.data.styleExampleIds : undefined,
-        productAssetIds: preset.success
-          ? preset.data.productAssetIds
-          : undefined,
-      });
+      // An adaptation follows its own picture and nothing else.
+      const styleRefs = adaptFrom
+        ? NO_STYLE_REFERENCES
+        : await loadStyleReferences({
+            visualIdentity: brandCtx.visualIdentity,
+            exampleIds: preset.success
+              ? preset.data.styleExampleIds
+              : undefined,
+            productAssetIds: preset.success
+              ? preset.data.productAssetIds
+              : undefined,
+          });
       // The text step also writes the design's on-image words when the kit asks
-      // to follow its examples (a post of an ordinary job stays textless).
-      const kitText = !preset.success && !variantCount && styleRefs.matchStyle;
+      // to follow its examples (a post of an ordinary job stays textless; an
+      // adaptation already has its words in the picture).
+      const kitText =
+        !preset.success && !variantCount && !adaptFrom && styleRefs.matchStyle;
       const parsed = preset.success
         ? preset.data
         : (variantCount
@@ -461,6 +487,30 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
           image: alt,
           label: `Option ${i + 2}`,
         }));
+      } else if (adaptFrom) {
+        const adapted = isCreativeImageConfigured()
+          ? await generateCreativeImage(
+              adaptPicturePrompt({
+                pixelSize: platformFormat.pixelSize,
+                aspectRatio: platformFormat.aspectRatio,
+                formatLabel: platformFormat.contentFormatLabel,
+                safeZone: platformFormat.safeZone,
+                reservedZones: layoutPlan.reservedZones,
+              }),
+              {
+                baseImage: adaptFrom,
+                imageSize: platformFormat.pixelSize,
+                quality,
+                ...(streamed ? { skipGemini: true } : {}),
+              },
+            )
+          : null;
+        // A piece without its post's picture would not be the same post: fail
+        // the job (the slot can be made again) rather than finish it bare.
+        if (!adapted) {
+          throw new Error("The post's picture could not be adapted to this format.");
+        }
+        image = await brandTemplated(adapted);
       } else {
         image = await renderRaw(finalImagePrompt, true);
         if (image) image = await brandTemplated(image);
@@ -479,6 +529,9 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         contentFormat: platformFormat.contentFormat,
         layoutTemplate: layoutPlan.meta,
         ...(variantCount ? { alternatives } : {}),
+        ...(adaptFrom && typeof input.adaptFromAssetId === "string"
+          ? { adaptedFrom: input.adaptFromAssetId }
+          : {}),
       });
     } catch (error) {
       store.set(request.correlationId, {
@@ -519,6 +572,7 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
         contentFormat: record.contentFormat,
         layoutTemplate: record.layoutTemplate ?? null,
         ...(record.alternatives ? { alternatives: record.alternatives } : {}),
+        ...(record.adaptedFrom ? { adaptedFrom: record.adaptedFrom } : {}),
       },
       isMock: false,
     };

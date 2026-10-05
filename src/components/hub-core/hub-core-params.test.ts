@@ -32,19 +32,22 @@ describe("panels and Brand Brain tabs", () => {
     expect(BRAND_BRAIN_SUB_KEYS).toContain("intelligence");
   });
 
-  it("keeps the existing tabs, with Goals before Strategy and Intelligence before Evidence", () => {
+  it("keeps the tabs that are fed today; Strategy, Evidence and the version log live in Constitution", () => {
     expect([...BRAND_BRAIN_SUB_KEYS]).toEqual([
       "assets",
       "rules",
       "visual-identity",
       "constitution",
       "goals",
-      "strategy",
-      "decisions",
       "intelligence",
-      "evidence",
       "learnings",
     ]);
+    for (const merged of ["strategy", "evidence", "decisions"]) {
+      expect(p(`panel=brand-brain&sub=${merged}`)).toMatchObject({
+        panel: "brand-brain",
+        sub: "constitution",
+      });
+    }
   });
 
   it("accepts the new tabs as a sub", () => {
@@ -98,9 +101,7 @@ describe("opening a record", () => {
     expect(entityHref("p", { kind: "task", id: "t1" }, "tasks")).toBe(
       "/projects/p?panel=work&sub=tasks&entity=task%3At1",
     );
-    expect(entityHref("p", { kind: "goal", id: "g1" }, "strategy")).toContain(
-      "sub=strategy",
-    );
+    expect(entityHref("p", { kind: "goal", id: "g1" })).toContain("sub=goals");
   });
 });
 
@@ -128,17 +129,20 @@ describe("old links", () => {
     expect(p("panel=hedefler")).toMatchObject({ panel: "brand-brain", sub: "goals" });
     expect(p("panel=marka-beyni")).toMatchObject({ panel: "brand-brain", sub: null });
     expect(p("panel=fikirler").panel).toBe("ideas");
-    expect(p("panel=departmanlar").panel).toBe("departments");
+    // The departments panel is gone: an old link lands on the chat.
+    expect(p("panel=departmanlar").panel).toBeNull();
     expect(p("panel=kurulum").panel).toBe("setup");
   });
 
   it("maps the Turkish sub-tabs of Work and Settings", () => {
-    expect(p("panel=isler&sub=planlar")).toMatchObject({ panel: "work", sub: "plans" });
-    expect(p("panel=isler&sub=gorevler")).toMatchObject({ panel: "work", sub: "tasks" });
-    expect(p("panel=isler&sub=devirler")).toMatchObject({ panel: "work", sub: "cycles" });
-    expect(p("panel=isler&sub=olcumler")).toMatchObject({ panel: "work", sub: "measurements" });
+    // Work is the task log now: every old board lands there.
+    for (const old of ["planlar", "gorevler", "devirler", "olcumler"]) {
+      expect(p(`panel=isler&sub=${old}`)).toMatchObject({ panel: "work", sub: "tasks" });
+    }
+    expect(p("panel=work&sub=plans")).toMatchObject({ panel: "work", sub: "tasks" });
     expect(p("panel=ayarlar&sub=otonomi")).toMatchObject({ panel: "settings", sub: "autonomy" });
-    expect(p("panel=ayarlar&sub=kararlar")).toMatchObject({ panel: "settings", sub: "decisions" });
+    // The decisions tab is gone: the sub is dropped.
+    expect(p("panel=ayarlar&sub=kararlar")).toMatchObject({ panel: "settings", sub: null });
     expect(p("panel=ayarlar&sub=aktivite")).toMatchObject({ panel: "settings", sub: "activity" });
     expect(p("panel=ayarlar&sub=tehlike")).toMatchObject({ panel: "settings", sub: "risk" });
     // A sub the old panel never had is dropped, not mis-mapped.
@@ -176,7 +180,7 @@ describe("legacyRouteHref (the old standalone routes)", () => {
     // An old name nobody maps lands on the project root, not on a blank panel.
     expect(legacyRouteHref("p", "nope")).toBe("/projects/p");
     // Every href it makes parses back to a real panel.
-    for (const legacy of ["sinyaller", "icgoru-firsat", "hedefler", "marka-beyni", "fikirler", "isler", "departmanlar", "ayarlar", "kurulum"]) {
+    for (const legacy of ["sinyaller", "icgoru-firsat", "hedefler", "marka-beyni", "fikirler", "isler", "ayarlar", "kurulum"]) {
       const href = legacyRouteHref("p", legacy);
       expect(p(href.split("?")[1] ?? "").panel, legacy).not.toBeNull();
     }

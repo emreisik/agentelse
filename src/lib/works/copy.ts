@@ -36,14 +36,16 @@ export const WORKS_COPY = {
   "planOptions.replaced": "These directions were replaced by a newer card.",
   "planOptions.pickFailed": "Couldn't build the plan. Try again.",
   "planAlt.heading": "Other ideas",
-  "planAlt.helper": "One quick request covers every post. Nothing changes until you pick an idea.",
+  "planAlt.helper":
+    "One quick request covers every post. Nothing changes until you pick an idea.",
   "planAlt.get": "Get other ideas",
   "planAlt.getting": "Thinking of other ideas…",
   "planAlt.refresh": "More ideas",
   "planAlt.use": "Use this idea",
   "planAlt.current": "Current idea",
   "planAlt.from": "From: {label}",
-  "planAlt.readyFromOptions": "Ideas from the other directions are ready for each post.",
+  "planAlt.readyFromOptions":
+    "Ideas from the other directions are ready for each post.",
   "planAlt.post": "{day} · {channel}",
   "planAlt.locked": "Already made, so this idea can't change.",
   "planAlt.none": "No other idea fits this post yet.",
@@ -51,25 +53,29 @@ export const WORKS_COPY = {
   "planAlt.swapped": "Idea swapped. You can switch back.",
   "planAlt.limit": "You've used both idea refreshes for this plan.",
   "planAlt.busy": "Other ideas are already being prepared.",
-  "planAlt.mock": "Other ideas need the live AI model, which is switched off here.",
+  "planAlt.mock":
+    "Other ideas need the live AI model, which is switched off here.",
   "planAlt.failed": "Couldn't get other ideas. Try again.",
   "planAlt.stale": "That post changed. Refreshing.",
   "planAlt.live.ready": "Other ideas are ready.",
   "brand.heading": "Brand check",
   "brand.summary.one": "1 post needs a look",
   "brand.summary.many": "{n} posts need a look",
-  "brand.flag.never": "Mentions \"{matched}\" (your rule: {rule})",
+  "brand.flag.never": 'Mentions "{matched}" (your rule: {rule})',
   "brand.flag.preset": "Breaks your rule: {rule}",
-  "brand.flag.figure": "\"{matched}\" isn't in your approved claims",
-  "brand.flag.absolute": "\"{matched}\" is an absolute claim",
+  "brand.flag.figure": '"{matched}" isn\'t in your approved claims',
+  "brand.flag.absolute": '"{matched}" is an absolute claim',
   "brand.chip.block": "Against a brand rule",
   "brand.chip.warn": "Worth a check",
   "brand.saveAnyway": "Save anyway",
   "brand.addAnyway": "Add anyway",
-  "brand.blockedSave": "A brand rule stops this. Change the wording, or tap \"Save anyway\".",
-  "brand.blockedSchedule": "A brand rule stops this. Tap \"Add anyway\" to go ahead.",
+  "brand.blockedSave":
+    'A brand rule stops this. Change the wording, or tap "Save anyway".',
+  "brand.blockedSchedule":
+    'A brand rule stops this. Tap "Add anyway" to go ahead.',
   "brand.checked": "Checked against {n} brand rules.",
-  "brand.checkedNone": "No brand rules yet. Checked against the standard guardrails.",
+  "brand.checkedNone":
+    "No brand rules yet. Checked against the standard guardrails.",
   "brand.unavailable": "Brand rules couldn't be checked.",
   "brand.blockedNote": "These posts break a brand rule.",
   "ideaOptions.reasonDefault": "Ideas based on your brand profile.",
@@ -91,7 +97,7 @@ export const WORKS_COPY = {
   "ideaOptions.live.time": "Time {i} of {n}: {when}",
   "ideaOptions.alreadyElsewhere": "Already on your calendar.",
   "slot.added": "Added to your calendar",
-  "slot.produce": "Produce",
+  "slot.produce": "Make post",
   "slot.changeTime": "Change time",
   "slot.confirmTime": "Save time",
   "slot.review": "Review",
@@ -103,15 +109,21 @@ export const WORKS_COPY = {
   "slot.removeYes": "Remove",
   "slot.keep": "Keep it",
   "slot.removed": "Removed from your calendar.",
-  "slot.removeLocked": "This piece already has content, so it can't be removed here.",
+  "slot.removeLocked":
+    "This piece already has content, so it can't be removed here.",
   "slot.zone": "Times in {zone}",
   "slot.cost": "Making it costs about {cost}.",
   "publish.review.scheduled": "If you approve, it goes out on or after {when}.",
-  "publish.review.scheduledOff": "If you approve, it stays ready until you turn on scheduled posting.",
-  "publish.review.nextSlot": "If you approve, it goes out at the next scheduled slot.",
-  "publish.review.held": "If you approve, it waits on hold until you set a time.",
-  "publish.review.manual": "You post this one yourself. Approving marks it ready.",
-  "publish.review.locked": "{channel} isn't connected, so this can't post itself.",
+  "publish.review.scheduledOff":
+    "If you approve, it stays ready until you turn on scheduled posting.",
+  "publish.review.nextSlot":
+    "If you approve, it goes out at the next scheduled slot.",
+  "publish.review.held":
+    "If you approve, it waits on hold until you set a time.",
+  "publish.review.manual":
+    "You post this one yourself. Approving marks it ready.",
+  "publish.review.locked":
+    "{channel} isn't connected, so this can't post itself.",
   "publish.scheduled": "Goes out on or after {when}.",
   "publish.nextSlot": "Goes out at the next scheduled slot.",
   "publish.scheduledOff": "Planned for {when}, but scheduled posting is off.",
@@ -136,19 +148,27 @@ export const WORKS_COPY = {
   "journey.approve.label": "Approve {n}",
   "journey.approve.title": "{n} pieces are ready. Approve them in one go.",
   "journey.approve.done": "{approved} approved.",
-  "journey.approve.doneHeld": "{approved} approved. {held} on hold until you set a time.",
+  "journey.approve.doneHeld":
+    "{approved} approved. {held} on hold until you set a time.",
   "journey.approve.doneFailed": "{approved} approved, {failed} could not be.",
   "journey.approve.changed": "{n} more pieces are ready. Review them first.",
   "journey.approve.locked": "{n} skipped: their Work is completed.",
   "workHeader.channelsDialogTitle": "Channels for this Work",
-  "workHeader.channelsDialogNote": "Pieces you already made stay where they are.",
+  "workHeader.channelsDialogNote":
+    "Pieces you already made stay where they are.",
   "workHeader.channelsSaved": "Channels updated.",
-  "workHeader.deleteConfirm": "Delete this Work and its conversation? Pieces already made stay in your library.",
-  "workDelete.blocked": "This Work still has pieces on your calendar. Archive it instead.",
-  "workToday.locked": "Today's brief can't be completed, archived, renamed or deleted.",
-  "starter.planWeek.reason": "Pick one of three directions for a week of {named} content.",
-  "starter.ideas.reason": "Three ideas for {named}, written from your brand profile.",
-  "starter.makePost.reason": "One piece for {channel}, put on your calendar first.",
+  "workHeader.deleteConfirm":
+    "Delete this Work and its conversation? Pieces already made stay in your library.",
+  "workDelete.blocked":
+    "This Work still has pieces on your calendar. Archive it instead.",
+  "workToday.locked":
+    "Today's brief can't be completed, archived, renamed or deleted.",
+  "starter.planWeek.reason":
+    "Pick one of three directions for a week of {named} content.",
+  "starter.ideas.reason":
+    "Three ideas for {named}, written from your brand profile.",
+  "starter.makePost.reason":
+    "One piece for {channel}, put on your calendar first.",
   "starter.planWeek.visible": "Plan the week · from {when}",
   "starter.aiOff.title": "AI is switched off here",
   "starter.aiOff.reason": "AI features are turned off for this workspace.",
@@ -183,7 +203,7 @@ export const WORKS_COPY = {
   "master.adapting": "Adapting…",
   "master.readapt": "Re-adapt",
   "master.schedule": "Add to calendar",
-  "master.scheduleVisuals": "Add & make 3 visuals",
+  "master.scheduleMake": "Add & make",
   "master.chip.add": "+ Add",
   "master.chip.connect": "Connect",
   "master.chip.locked": "Publishing locked",
@@ -191,24 +211,22 @@ export const WORKS_COPY = {
   "master.noTargets": "Tick at least one channel.",
   "master.issues": "Worth a check",
   "master.adaptFailed": "Couldn't adapt the message. Try again.",
-  "master.adaptLimit": "This message was already adapted three times. Add it to the calendar as it is.",
+  "master.adaptLimit":
+    "This message was already adapted three times. Add it to the calendar as it is.",
   "master.channelOutside": "That channel is not part of this work.",
-  "master.adaptMock": "Adapting needs the live AI model, which is switched off here. You can still add the message to the calendar as it is.",
+  "master.adaptMock":
+    "Adapting needs the live AI model, which is switched off here. You can still add the message to the calendar as it is.",
   "master.adaptBusy": "Already adapting in another tab.",
   "master.checkAgain": "Check again",
-  "master.panelNote": "Other channels follow on the next free day.",
+  "master.panelNote": "All channels are planned for this time.",
   "master.scheduled": "Added to your calendar.",
-  "variants.make": "Make 3 visuals",
-  "variants.makeMore": "Make 3 more",
-  "variants.costNote": "Makes 3 pictures, about {amount}.",
-  "variants.running": "Making 3 visuals…",
   "variants.use": "Use this one",
   "variants.current": "Current",
-  "variants.pickBefore": "Pick before approving. Once approved, the picture is locked.",
+  "variants.pickBefore":
+    "Pick before approving. Once approved, the picture is locked.",
   "variants.adopted": "Picture updated.",
-  "variants.moreDone": "More pictures are ready.",
-  "variants.locked": "Approved, so the picture can't change. Ask for a change instead.",
-  "variants.limit": "That's the most options for this piece.",
+  "variants.locked":
+    "Approved, so the picture can't change. Ask for a change instead.",
   "variants.failed": "Couldn't make the visuals. Try again.",
   "variants.alt": "Visual {i} of {n}",
   "variants.useAria": "Use visual {i} of {n}",
@@ -261,16 +279,21 @@ export const WORKS_COPY = {
   "ads.approved": "Approved.",
   "ads.preview": "Preview campaign",
   "ads.open": "Open Ads Manager",
-  "ads.state.needsConnect": "Connect Meta Ads to see cost per lead and budget suggestions.",
+  "ads.state.needsConnect":
+    "Connect Meta Ads to see cost per lead and budget suggestions.",
   "ads.connect": "Connect Meta Ads",
-  "ads.state.needsAccount": "Meta Ads is connected, but no ad account is selected.",
+  "ads.state.needsAccount":
+    "Meta Ads is connected, but no ad account is selected.",
   "ads.pickAccount": "Pick an ad account",
-  "ads.state.noData": "The first check runs within a few hours. You can check now.",
-  "ads.state.nothing": "No active campaign with spend and a daily budget in the last 7 days. Campaigns with a lifetime budget aren't checked.",
+  "ads.state.noData":
+    "The first check runs within a few hours. You can check now.",
+  "ads.state.nothing":
+    "No active campaign with spend and a daily budget in the last 7 days. Campaigns with a lifetime budget aren't checked.",
   "ads.state.stale": "These numbers are from {date} and may be out of date.",
   "ads.reconnect": "Reconnect Meta Ads",
   "ads.asOf": "As of {date}",
-  "ads.changed": "The budget changed since this was proposed. Dismiss it; a new suggestion can follow the next check.",
+  "ads.changed":
+    "The budget changed since this was proposed. Dismiss it; a new suggestion can follow the next check.",
   "ads.dismiss": "Dismiss",
   "ads.failed": "Couldn't read Meta Ads. Try again.",
   "cta.connected": "{channel} is connected.",
@@ -291,7 +314,9 @@ export function copyText(
   const text: string = WORKS_COPY[key];
   if (!values) return text;
   return text.replace(/\{([A-Za-z0-9_]+)\}/g, (whole, name: string) =>
-    Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : whole,
+    Object.prototype.hasOwnProperty.call(values, name)
+      ? String(values[name])
+      : whole,
   );
 }
 

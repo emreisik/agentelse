@@ -3,7 +3,6 @@ import Link from "next/link";
 import { Compass } from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
-import { isLegacyUnitEnabled } from "@/server/agency/legacy-loop";
 import { EmptyState } from "@/components/shared/empty-state";
 import { buttonVariants } from "@/components/ui/button";
 import type { EntityRef } from "../../hub-core-params";
@@ -24,7 +23,6 @@ import {
 import {
   FindingDetail,
   FindingsSection,
-  ProfileSection,
   SignalDetail,
   SignalsSection,
 } from "./signals-parts";
@@ -84,11 +82,7 @@ export async function IntelligenceSection({
     opportunities,
     signals,
   };
-  // The scan-intensity control only means something while the background
-  // scan runs (LEGACY_AGENCY_LOOP=on); otherwise it is hidden, not wrong.
-  const scansRunning = isLegacyUnitEnabled("signal-scans");
-
-  if (intelligenceIsEmpty(counts) && !scansRunning) {
+  if (intelligenceIsEmpty(counts)) {
     return <NothingGathered projectId={projectId} />;
   }
 
@@ -102,7 +96,6 @@ export async function IntelligenceSection({
 
   return (
     <div className="space-y-4">
-      {intelligenceIsEmpty(counts) ? <NothingGathered projectId={projectId} /> : null}
       {INTELLIGENCE_SECTIONS.filter((key) => counts[key] > 0).map((key) => (
         <details
           key={key}
@@ -129,27 +122,6 @@ export async function IntelligenceSection({
           <div className="px-4 pb-4">{body[key]}</div>
         </details>
       ))}
-      {scansRunning ? (
-        <details className="group rounded-xl ring-1 ring-foreground/10">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
-            <span>
-              <span className="text-sm font-medium">Scan intensity</span>
-              <span className="block text-xs text-muted-foreground">
-                How often the background scan looks at each signal category.
-              </span>
-            </span>
-            <span
-              aria-hidden
-              className="text-xs text-muted-foreground group-open:hidden"
-            >
-              Show
-            </span>
-          </summary>
-          <div className="px-4 pb-4">
-            <ProfileSection projectId={projectId} />
-          </div>
-        </details>
-      ) : null}
     </div>
   );
 }

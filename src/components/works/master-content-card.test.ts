@@ -22,6 +22,12 @@ vi.mock("react", async () => {
 const router = vi.hoisted(() => ({ refresh: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+// canMake = chatPackage !== null (master-content-card.tsx): a chat package is
+// what lets "Add & make" start the plan run right after the commit.
+const startPlan = vi.hoisted(() => vi.fn());
+vi.mock("@/components/commands/chat-package-context", () => ({
+  useChatPackage: () => ({ startPlan }),
+}));
 
 const actions = vi.hoisted(() => ({
   scheduleMasterAction: vi.fn(),
@@ -73,7 +79,7 @@ const {
   mapAdaptResponse,
   mapScheduleMasterResult,
   scheduleOptionsOf,
-  visualsRequestOf,
+  startMaking,
 } = await import("./master-content-card");
 const { WorkCardHostProvider } = await import("./work-card-host");
 
@@ -196,13 +202,13 @@ describe("MasterContentCard states (W93 master-card-ui)", () => {
     expect(html).not.toContain("Re-adapt");
   });
 
-  it("adapted: Add to calendar (primary) + Add & make 3 visuals + quiet Re-adapt, with the cost line", () => {
+  it("adapted: Add to calendar (primary) + Add & make + quiet Re-adapt, with the cost line", () => {
     const html = render(ADAPTED);
     expect(html).toContain("Adapted");
     expect(emphases(html)).toEqual(["primary", "secondary", "quiet"]);
-    expect(html).toContain("Add &amp; make 3 visuals");
+    expect(html).toContain("Add &amp; make");
     expect(html).toContain("Re-adapt");
-    expect(html).toContain("Makes 3 pictures, about $0.24.");
+    expect(html).toContain("Making it costs about $0.08.");
     expect(html).not.toContain("Adapt to channels");
   });
 
@@ -228,13 +234,13 @@ describe("MasterContentCard states (W93 master-card-ui)", () => {
     expect(render(DRAFT)).not.toContain("data-target-row");
   });
 
-  it("a card without a picture channel has no visuals button and no cost line", () => {
+  it("a card without a picture channel offers Add & make but no cost line", () => {
     const html = render({
       ...ADAPTED,
       targets: ADAPTED.targets.filter((t) => t.channel !== "instagram"),
     });
-    expect(emphases(html)).toEqual(["primary", "quiet"]);
-    expect(html).not.toContain("make 3 visuals");
+    expect(emphases(html)).toEqual(["primary", "secondary", "quiet"]);
+    expect(html).toContain("Add &amp; make");
     expect(html).not.toContain("Makes 3 pictures");
   });
 
@@ -290,17 +296,18 @@ describe("MasterContentCard chips (master-card-ui)", () => {
     expect(count(html, "Publishing locked")).toBe(1);
   });
 
-  it("channels outside the Work are dashed + Add buttons; Facebook and Email are never chips", () => {
+  it("channels outside the Work are dashed + Add buttons; Email is never a chip", () => {
     const html = render();
-    expect(count(html, 'data-chip-state="outside"')).toBe(3);
+    expect(count(html, 'data-chip-state="outside"')).toBe(4);
+    expect(html).toContain("+ Add Facebook");
     expect(html).toContain("+ Add TikTok");
     expect(html).toContain("+ Add X");
     expect(html).toContain("+ Add Ads");
     expect(html).toContain("border-dashed");
-    expect(html).not.toMatch(/Facebook|Email/);
+    expect(html).not.toMatch(/Email/);
     // One chip per catalog channel, nothing more.
     expect(count(html, "data-chip=")).toBe(count(html, 'data-chip-state="'));
-    expect(count(html, "data-chip=")).toBe(6);
+    expect(count(html, "data-chip=")).toBe(7);
   });
 
   it("every chip is at least 44 px tall", () => {
@@ -324,9 +331,9 @@ describe("MasterSchedulePanelView (W93 schedule panel)", () => {
     index: 0,
     timezone: "Europe/Istanbul",
     loading: false,
-    othersFollow: true,
-    canVisuals: true,
-    costLine: "Makes 3 pictures, about $0.24.",
+    manyChannels: true,
+    canMake: true,
+    costLine: "Making it costs about $0.08.",
     brandBlocked: false,
     busyId: null,
     error: null,
@@ -339,12 +346,12 @@ describe("MasterSchedulePanelView (W93 schedule panel)", () => {
       createElement(MasterSchedulePanelView, { ...PANEL, ...over }),
     );
 
-  it("shows the lead channel's suggestion, the zone, the other-channels note and Cancel BEFORE any commit", () => {
+  it("shows the lead channel's suggestion, the zone, the many-channels note and Cancel BEFORE any commit", () => {
     const html = panel();
     expect(html).toContain("Instagram");
     expect(html).toContain("Fri 2 Oct, 11:00 suggested");
     expect(html).toContain("Times in Europe/Istanbul");
-    expect(html).toContain("Other channels follow on the next free day.");
+    expect(html).toContain("All channels are planned for this time.");
     expect(html).toContain("Other time");
     expect(html).toContain("Cancel");
     expect(html).toContain("Add to calendar");
@@ -353,8 +360,8 @@ describe("MasterSchedulePanelView (W93 schedule panel)", () => {
   it("keeps the button budget: three buttons, one primary (Add to calendar)", () => {
     const html = panel();
     expect(emphases(html)).toEqual(["primary", "secondary", "quiet"]);
-    expect(html).toContain("Add &amp; make 3 visuals");
-    expect(html).toContain("Makes 3 pictures, about $0.24.");
+    expect(html).toContain("Add &amp; make");
+    expect(html).toContain("Making it costs about $0.08.");
   });
 
   it("shows the second suggestion once the index moved", () => {
@@ -364,10 +371,10 @@ describe("MasterSchedulePanelView (W93 schedule panel)", () => {
   it("has no Other time for a single suggestion and no note for a single channel", () => {
     const html = panel({
       slots: [{ date: "2026-10-02", time: "11:00" }],
-      othersFollow: false,
+      manyChannels: false,
     });
     expect(html).not.toContain("Other time");
-    expect(html).not.toContain("Other channels follow");
+    expect(html).not.toContain("All channels are planned");
   });
 
   it("blocks the buttons with a visible reason while loading and when no day is free", () => {
@@ -379,15 +386,15 @@ describe("MasterSchedulePanelView (W93 schedule panel)", () => {
     expect(empty).toContain('aria-disabled="true"');
   });
 
-  it("turns the primary into Add anyway after a brand block and drops the picture variant", () => {
+  it("turns the primary into Add anyway after a brand block and drops the make option", () => {
     const html = panel({ brandBlocked: true });
     expect(html).toContain("Add anyway");
-    expect(html).not.toContain("make 3 visuals");
+    expect(html).not.toContain("Add &amp; make");
     expect(emphases(html)).toEqual(["primary", "quiet"]);
   });
 
-  it("has no visuals variant when no channel makes a picture", () => {
-    const html = panel({ canVisuals: false, costLine: null });
+  it("has no make option when no channel makes a picture", () => {
+    const html = panel({ canMake: false, costLine: null });
     expect(emphases(html)).toEqual(["primary", "quiet"]);
   });
 });
@@ -396,13 +403,13 @@ describe("masterButtons budget (W93)", () => {
   const states = ["draft", "adapted"] as const;
   it("is never more than three buttons with at most one primary, in every combination", () => {
     for (const state of states) {
-      for (const canVisuals of [true, false]) {
+      for (const canMake of [true, false]) {
         for (const canReadapt of [true, false]) {
           for (const checkAgain of [true, false]) {
             const buttons = masterButtons({
               state,
               busyId: null,
-              canVisuals,
+              canMake,
               canReadapt,
               checkAgain,
               disabledReason: null,
@@ -422,7 +429,7 @@ describe("masterButtons budget (W93)", () => {
     const draft = masterButtons({
       state: "draft",
       busyId: null,
-      canVisuals: true,
+      canMake: true,
       canReadapt: true,
       checkAgain: true,
       disabledReason: null,
@@ -435,20 +442,20 @@ describe("masterButtons budget (W93)", () => {
     const adapted = masterButtons({
       state: "adapted",
       busyId: null,
-      canVisuals: true,
+      canMake: true,
       canReadapt: true,
       checkAgain: true,
       disabledReason: null,
     });
     expect(adapted.map((b) => b.label)).toEqual([
       "Add to calendar",
-      "Add & make 3 visuals",
+      "Add & make",
       "Check again",
     ]);
     const without = masterButtons({
       state: "draft",
       busyId: null,
-      canVisuals: true,
+      canMake: true,
       canReadapt: true,
       checkAgain: false,
       disabledReason: null,
@@ -460,7 +467,7 @@ describe("masterButtons budget (W93)", () => {
     const buttons = masterButtons({
       state: "draft",
       busyId: "adapt",
-      canVisuals: false,
+      canMake: false,
       canReadapt: true,
       checkAgain: false,
       disabledReason: null,
@@ -485,9 +492,9 @@ describe("taps (W93: two taps, dates before the commit)", () => {
     expect(actions.scheduleMasterAction).not.toHaveBeenCalled();
   });
 
-  it("Add & make 3 visuals opens the same panel and does NOT commit", async () => {
+  it("Add & make opens the same panel and does NOT commit", async () => {
     render(ADAPTED);
-    clicks.get("Add & make 3 visuals")?.();
+    clicks.get("Add & make")?.();
     await vi.waitFor(() =>
       expect(actions.suggestSlotsAction).toHaveBeenCalledTimes(1),
     );
@@ -613,13 +620,6 @@ describe("mapScheduleMasterResult", () => {
       }),
     ).toEqual({
       kind: "ok",
-      slots: [
-        {
-          channel: "instagram",
-          formatKey: "instagram.post",
-          creativeId: "cr1",
-        },
-      ],
     });
     expect(
       mapScheduleMasterResult(
@@ -657,57 +657,56 @@ describe("mapScheduleMasterResult", () => {
   });
 });
 
-describe("the commit call (consent and paid-image wiring)", () => {
+describe("the commit call (consent and the brand override)", () => {
   const shown = { date: "2026-10-02", time: "11:00" };
 
   it("sends the suggestion shown as the lead slot, and nothing else on a first press", () => {
     expect(
-      scheduleOptionsOf({ shown, brandBlocked: false, withVisuals: false }),
+      scheduleOptionsOf({ shown, brandBlocked: false, andMake: false }),
     ).toEqual({ leadSlot: shown });
     expect(
       scheduleOptionsOf({
         shown: undefined,
         brandBlocked: false,
-        withVisuals: false,
+        andMake: false,
       }),
     ).toEqual({});
   });
 
   it("sends allowIssues only on the Add anyway press after a brand block", () => {
     expect(
-      scheduleOptionsOf({ shown, brandBlocked: true, withVisuals: false }),
+      scheduleOptionsOf({ shown, brandBlocked: true, andMake: false }),
     ).toEqual({ leadSlot: shown, allowIssues: true });
-    // Never together with visuals, never before the block.
+    // Never together with making, never before the block.
     expect(
-      scheduleOptionsOf({ shown, brandBlocked: true, withVisuals: true }),
+      scheduleOptionsOf({ shown, brandBlocked: true, andMake: true }),
     ).toEqual({ leadSlot: shown });
     expect(
-      scheduleOptionsOf({ shown, brandBlocked: false, withVisuals: false }),
+      scheduleOptionsOf({ shown, brandBlocked: false, andMake: false }),
     ).not.toHaveProperty("allowIssues");
   });
+});
 
-  const slots = [
-    { channel: "linkedin", formatKey: "linkedin.post", creativeId: "text-1" },
-    { channel: "instagram", formatKey: "instagram.post", creativeId: "img-1" },
-    { channel: "instagram", formatKey: "instagram.story", creativeId: "img-2" },
-  ];
-
-  it("plain Add to calendar never asks for paid visuals", () => {
+describe("startMaking (one post, one picture: the chat's own plan run makes it)", () => {
+  it("starts the plan run only on Add & make, and only with a chat package", () => {
+    const startPlan = vi.fn();
     expect(
-      visualsRequestOf({ withVisuals: false, commandId: "cmd1", slots }),
-    ).toBeNull();
-  });
-
-  it("Add & make 3 visuals asks once, for the first image piece, as a first set", () => {
-    expect(
-      visualsRequestOf({ withVisuals: true, commandId: "cmd1", slots }),
-    ).toEqual({ commandId: "cmd1", creativeId: "img-1", more: false });
-    expect(
-      visualsRequestOf({
-        withVisuals: true,
+      startMaking({
+        andMake: true,
         commandId: "cmd1",
-        slots: [slots[0]!],
+        chatPackage: { startPlan },
       }),
-    ).toBeNull();
+    ).toBe(true);
+    expect(startPlan).toHaveBeenCalledWith({ commandId: "cmd1" });
+    expect(
+      startMaking({
+        andMake: false,
+        commandId: "cmd1",
+        chatPackage: { startPlan },
+      }),
+    ).toBe(false);
+    expect(
+      startMaking({ andMake: true, commandId: "cmd1", chatPackage: null }),
+    ).toBe(false);
   });
 });

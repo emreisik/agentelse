@@ -32,12 +32,14 @@ vi.mock("@/server/actions/command-actions", inert);
 vi.mock("@/server/actions/content-plan-actions", inert);
 vi.mock("@/server/actions/creative-actions", inert);
 vi.mock("@/server/actions/creative-rating-actions", inert);
+vi.mock("@/server/actions/post-result-actions", inert);
 vi.mock("@/server/actions/facebook-share-actions", inert);
 vi.mock("@/server/actions/creative-variant-actions", inert);
 vi.mock("@/server/actions/human-action-actions", inert);
 vi.mock("@/server/actions/plan-options-actions", inert);
 vi.mock("@/server/actions/plan-draft-actions", inert);
 vi.mock("@/server/actions/plan-progress-actions", inert);
+vi.mock("@/server/actions/work-approve-actions", inert);
 vi.mock("@/server/actions/publish-actions", inert);
 vi.mock("@/server/actions/schedule-slots-actions", inert);
 vi.mock("@/server/actions/slot-suggest-actions", inert);
@@ -54,9 +56,8 @@ const { ChatPackageProvider } =
   await import("@/components/commands/chat-package-context");
 const { WorkCardHostProvider } = await import("./work-card-host");
 const { WORKS_ONLY_KINDS } = await import("./works-card");
-const { cardDigest, DIGEST_CHAR_LIMIT } = await import(
-  "@/lib/works/card-digest"
-);
+const { cardDigest, DIGEST_CHAR_LIMIT } =
+  await import("@/lib/works/card-digest");
 
 import type { WorkCardHostInput } from "./work-card-host";
 
@@ -156,7 +157,11 @@ describe("wave-2 kinds through works-card (W113)", () => {
   });
 
   it("partial shapes render", () => {
-    const sparseAds = { kind: "ads-insight", state: "no-data", chips: [] } as AdsInsightCardData;
+    const sparseAds = {
+      kind: "ads-insight",
+      state: "no-data",
+      chips: [],
+    } as AdsInsightCardData;
     const sparseMaster = {
       ...MASTER,
       targets: [],
@@ -217,7 +222,11 @@ describe("the plan card master header", () => {
   it("appears only with card.master", () => {
     expect(html(plan, true)).not.toContain("data-master-header");
     const out = html(
-      { ...plan, via: "master", master: { title: "A", message: "Hello there" } },
+      {
+        ...plan,
+        via: "master",
+        master: { title: "A", message: "Hello there" },
+      },
       true,
     );
     expect(out).toContain("data-master-header");
@@ -256,10 +265,10 @@ describe("the creative card variants strip", () => {
     versionNumber: 1,
   } as CreativeCardData as IdeaEventCardData;
 
-  it("offers Make 3 more through the real card when the overlay set the plan id", () => {
+  it("never offers Make 3 more, even on a piece of a plan", () => {
     const out = html({ ...ready, planId: "plan-1" } as IdeaEventCardData, true);
-    expect(out).toContain("data-variants-strip");
-    expect(out).toContain("Make 3 more");
+    expect(out).not.toContain("data-variants-strip");
+    expect(out).not.toContain("Make 3 more");
   });
 
   it("does not mount a dead strip for a piece with no plan id and no alternatives", () => {
@@ -268,7 +277,10 @@ describe("the creative card variants strip", () => {
 
   it("keeps the strip (Use this one) for alternatives, but no Make 3 more without a plan id", () => {
     const out = html(
-      { ...ready, alternatives: [{ assetId: "a1" }, { assetId: "a2" }] } as IdeaEventCardData,
+      {
+        ...ready,
+        alternatives: [{ assetId: "a1" }, { assetId: "a2" }],
+      } as IdeaEventCardData,
       true,
     );
     expect(out).toContain("Use this one");
@@ -299,7 +311,8 @@ describe("the creative card variants strip", () => {
   });
 });
 
-describe("Make 3 visuals on the compact slot card", () => {
+// One post, one picture: the compact slot card never offers three pictures.
+describe("Make 3 visuals is retired on the compact slot card", () => {
   const one = (formatKey: string, channel: string, stage: string): PlanCard =>
     ({
       kind: "content-plan-draft",
@@ -321,16 +334,18 @@ describe("Make 3 visuals on the compact slot card", () => {
       slots: [{ id: "c0", stage }],
     }) as PlanCard;
 
-  it("is offered for a PLANNED image slot with the cost line", () => {
+  it("a PLANNED image slot offers one Make post with the one-picture cost", () => {
     const out = html(one("instagram.post", "instagram", "PLANNED"), true);
-    expect(out).toContain("Make 3 visuals");
-    expect(out).toContain("Makes 3 pictures, about $");
+    expect(out).not.toContain("Make 3 visuals");
+    expect(out).not.toContain("Makes 3 pictures");
+    expect(out).toContain("Make post");
+    expect(out).toContain("Making it costs about $");
   });
 
   it("is not offered for a text channel or a produced slot", () => {
-    expect(html(one("linkedin.post", "linkedin", "PLANNED"), true)).not.toContain(
-      "Make 3 visuals",
-    );
+    expect(
+      html(one("linkedin.post", "linkedin", "PLANNED"), true),
+    ).not.toContain("Make 3 visuals");
     expect(
       html(one("instagram.post", "instagram", "IN_REVIEW"), true),
     ).not.toContain("Make 3 visuals");

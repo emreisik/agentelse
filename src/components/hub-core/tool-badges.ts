@@ -1,14 +1,11 @@
 import type { PanelKey } from "./hub-core-params";
 
-// The counts the sidebar and the Advanced menu put on their entries, derived
+// The counts the sidebar puts on its entries, derived
 // from the project's nav badge data (app-shell.tsx reads it once) instead of a
 // separate query each.
 export type ToolBadgeCounts = {
   setupWaitingClient: number;
-  pendingHumanActions: number;
   proposedGoals: number;
-  proposedHandoffs: number;
-  awaitingPlans: number;
 };
 
 export function toolBadgesFrom(
@@ -23,11 +20,6 @@ export function toolBadgesFrom(
   // the Brand Brain entry.
   if (counts.proposedGoals > 0) {
     badges["brand-brain"] = counts.proposedGoals;
-  }
-  const workBadge = counts.proposedHandoffs + counts.awaitingPlans;
-  if (workBadge > 0) badges.work = workBadge;
-  if (counts.pendingHumanActions > 0) {
-    badges["human-action"] = counts.pendingHumanActions;
   }
   return badges;
 }

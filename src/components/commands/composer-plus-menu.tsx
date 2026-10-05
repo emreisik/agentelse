@@ -29,7 +29,6 @@ import {
 } from "@/components/ui/command";
 import {
   CAPABILITY_SHORTCUTS,
-  DEPARTMENT_SHORTCUTS,
   INTEGRATION_SHORTCUTS,
   shortcutsForWork,
   type ComposerShortcut,
@@ -176,19 +175,6 @@ export function ComposerPlusMenu({
                   <PaperclipIcon className="size-4" />
                   Add photos &amp; files
                 </CommandItem>
-              </CommandGroup>
-              <CommandSeparator />
-              <CommandGroup heading="Departments">
-                {DEPARTMENT_SHORTCUTS.map((shortcut) => (
-                  <CommandItem
-                    key={shortcut.id}
-                    value={shortcut.label}
-                    onSelect={() => runShortcut(shortcut)}
-                  >
-                    <shortcut.icon className="size-4" />
-                    {shortcut.label}
-                  </CommandItem>
-                ))}
               </CommandGroup>
               <CommandSeparator />
               <CommandGroup heading="Integrations">

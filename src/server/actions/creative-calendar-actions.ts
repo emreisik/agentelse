@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { zonedDateTimeToUtc } from "@/lib/timezone";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
-import { CreativeRepository } from "@/server/repositories/creative.repository";
+import { movePostInTx } from "@/server/works/post-move";
 import {
   requireProjectAccess,
   requireUser,
@@ -20,6 +20,35 @@ const DATETIME_LOCAL_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 // approval-actions.ts (approve/reject): this action never touches status,
 // versions, or the approval pipeline, it only ever moves a creative
 // between days/times (or back to "Unscheduled" when date is empty).
+// The statuses a piece can still be moved in (a posted one stays put).
+const MOVABLE_STATUSES = ["DRAFT", "IN_REVIEW", "APPROVED", "REJECTED"];
+const POST_OUT_MESSAGE =
+  "Part of this post is already posted, so it can't be moved.";
+
+// A post moves as one (docs/works.md "Posts"): its other channels and its own
+// time move with the piece, never one channel alone. A piece outside a post
+// moves alone, as before.
+async function schedulePost(
+  creativeId: string,
+  projectId: string,
+  date: Date | null,
+): Promise<"ok" | "missing" | "out"> {
+  return prisma.$transaction(async (tx) => {
+    const post = await movePostInTx(tx, {
+      creativeId,
+      projectId,
+      scheduledFor: date,
+      movable: MOVABLE_STATUSES,
+    });
+    if (!post.ok) return "out";
+    const { count } = await tx.creative.updateMany({
+      where: { id: creativeId, projectId },
+      data: { scheduledFor: date },
+    });
+    return count === 0 ? "missing" : "ok";
+  });
+}
+
 export async function assignCreativeDateAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -58,13 +87,13 @@ export async function assignCreativeDateAction(
     const timezone = schedule?.timezone ?? "Europe/Istanbul";
 
     const date = dateRaw ? zonedDateTimeToUtc(dateRaw, timezone) : null;
-    const { count } = await CreativeRepository.setScheduledFor(
-      creativeId,
-      creative.projectId,
-      date,
-    );
-    if (count === 0) {
-      return { ok: false, message: "Creative not found in this project." };
+    const scheduled = await schedulePost(creativeId, creative.projectId, date);
+    if (scheduled !== "ok") {
+      return {
+        ok: false,
+        message:
+          scheduled === "out" ? POST_OUT_MESSAGE : "Creative not found in this project.",
+      };
     }
 
     await AuditLogRepository.record({
@@ -158,13 +187,13 @@ export async function rescheduleCreativeAction(input: {
       };
     }
 
-    const { count } = await CreativeRepository.setScheduledFor(
-      creativeId,
-      creative.projectId,
-      date,
-    );
-    if (count === 0) {
-      return { ok: false, message: "Creative not found in this project." };
+    const scheduled = await schedulePost(creativeId, creative.projectId, date);
+    if (scheduled !== "ok") {
+      return {
+        ok: false,
+        message:
+          scheduled === "out" ? POST_OUT_MESSAGE : "Creative not found in this project.",
+      };
     }
 
     await AuditLogRepository.record({

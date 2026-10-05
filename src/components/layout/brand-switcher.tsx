@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check, ChevronDown, Plus } from "lucide-react";
 
+import { cn } from "@/lib/utils";
+
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,7 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-// The header's brand switcher (projects -> /projects/{id}) — grouped label,
+// The sidebar's brand switcher (projects -> /projects/{id}) — grouped label,
 // serif-letter avatar rows, active-brand check and a trailing "Add brand"
 // row, which a plain <Select> list couldn't express.
 // --ws-* tokens throughout (globals.css, grayscale, aliased to the app's
@@ -39,11 +41,15 @@ function Avatar({ name, size = 24 }: { name: string; size?: number }) {
 export function BrandSwitcher({
   projects,
   activeProjectId,
+  compact = false,
 }: {
   projects: { id: string; name: string; status: string }[];
   // Undefined on workspace-wide pages (dashboard, approvals, health...) —
   // the trigger then reads "Select brand" and the list works as a jump-in.
   activeProjectId?: string;
+  // The collapsed sidebar's icon rail: the brand's letter tile alone; the
+  // list opens to the right.
+  compact?: boolean;
 }) {
   const router = useRouter();
   const active = projects.find((p) => p.id === activeProjectId);
@@ -54,35 +60,55 @@ export function BrandSwitcher({
         render={
           <button
             type="button"
-            // min-w-28 = 74px of fixed parts (avatar, chevron, padding) +
-            // ~38px of the name — a floor so neighbours can't squeeze it
-            // into an unreadable sliver.
-            className="flex min-w-28 items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-[var(--ws-hover)]"
+            // The sidebar's full width; the name truncates, the chevron stays
+            // on the right edge.
+            className={cn(
+              "flex items-center rounded-lg transition-colors hover:bg-[var(--ws-hover)]",
+              compact
+                ? "size-10 justify-center"
+                : "w-full min-w-0 gap-2 px-2 py-1.5",
+            )}
+            aria-label={
+              compact ? `Brand: ${active?.name ?? "select brand"}` : undefined
+            }
+            title={compact ? (active?.name ?? "Select brand") : undefined}
           />
         }
       >
-        {active ? <Avatar name={active.name} size={28} /> : null}
-        <span className="min-w-0 text-left leading-tight">
-          <span
-            className="block max-w-36 truncate text-sm font-semibold"
-            style={{ color: "var(--ws-text)" }}
-          >
-            {active?.name ?? "Select brand"}
-          </span>
-          <span
-            className="block truncate text-[11px]"
+        {active ? (
+          <Avatar name={active.name} size={28} />
+        ) : compact ? (
+          <ChevronDown
+            className="size-4"
             style={{ color: "var(--ws-text-2)" }}
-          >
-            Brand workspace
-          </span>
-        </span>
-        <ChevronDown
-          className="size-3.5 shrink-0"
-          style={{ color: "var(--ws-text-2)" }}
-        />
+          />
+        ) : null}
+        {compact ? null : (
+          <>
+            <span className="min-w-0 flex-1 text-left leading-tight">
+              <span
+                className="block truncate text-sm font-semibold"
+                style={{ color: "var(--ws-text)" }}
+              >
+                {active?.name ?? "Select brand"}
+              </span>
+              <span
+                className="block truncate text-[11px]"
+                style={{ color: "var(--ws-text-2)" }}
+              >
+                Brand workspace
+              </span>
+            </span>
+            <ChevronDown
+              className="size-3.5 shrink-0"
+              style={{ color: "var(--ws-text-2)" }}
+            />
+          </>
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
+        side={compact ? "right" : "bottom"}
         className="w-[300px] rounded-[14px] border p-2 shadow-lg"
         style={{
           borderColor: "var(--ws-border)",

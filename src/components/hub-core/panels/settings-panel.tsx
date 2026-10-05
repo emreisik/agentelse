@@ -1,36 +1,21 @@
 import Link from "next/link";
 import {
-  Activity,
-  ArrowLeft,
   CalendarClock,
-  Gavel,
   Infinity as InfinityIcon,
   ShieldCheck,
-  Sparkles,
 } from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
-import { shortDate, timeAgo } from "@/lib/dates";
-import {
-  AGENCY_DECISION_SUBJECT,
-  AGENCY_DECISION_TYPE,
-  AGENCY_TRIGGER_STATUS,
-  AGENCY_TRIGGER_TYPE,
-  APPROVAL_LEVEL,
-  councilDimensionLabel,
-} from "@/lib/labels";
+import { timeAgo } from "@/lib/dates";
 import { updateAutonomyPolicyAction } from "@/server/actions/agency-config-actions";
-import {
-  updateAutoContentPlanScheduleAction,
-  updateInstagramPublishScheduleAction,
-} from "@/server/actions/publish-schedule-actions";
+import { WEEKLY_AUTO_PRODUCE_COPY, weeklyDraftOn } from "@/lib/weekly-draft";
+import { updateInstagramPublishScheduleAction } from "@/server/actions/publish-schedule-actions";
 import { ProjectDeletionService } from "@/server/projects/project-deletion.service";
 import { ActionForm } from "@/components/shared/action-form";
 import { DeleteProjectCard } from "@/components/projects/delete-project-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { LiveRefresh } from "@/components/shared/live-refresh";
-import { ScoreBar } from "@/components/shared/score-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,42 +28,20 @@ import {
   buildHubHref,
   type SettingsSubKey,
 } from "../hub-core-params";
-import { CrossLinkChip } from "../primitives/cross-link-chip";
-import { FieldGrid, type FieldSpec } from "../primitives/field-grid";
-import { DEFAULT_LENS_MIX } from "@/server/agency/ideas/creative-lenses";
 import type { PanelProps } from "./panel-props";
 
 const SUB_LABEL: Record<SettingsSubKey, string> = {
   autonomy: "Autonomy",
   publishing: "Publishing",
-  decisions: "Decisions",
   activity: "Activity",
   risk: "Danger Zone",
 };
 
-const WEIGHT_LABELS: Record<string, string> = {
-  impact: "Impact",
-  goalAlignment: "Goal Alignment",
-  urgency: "Urgency",
-  evidence: "Evidence",
-  confidence: "Confidence",
-  timing: "Timing",
-  originality: "Originality",
-  costPenalty: "Cost Penalty",
-  effortPenalty: "Effort Penalty",
-  riskPenalty: "Risk Penalty",
-};
-
-export async function SettingsPanel({ projectId, sub, entity }: PanelProps) {
+export async function SettingsPanel({ projectId, sub }: PanelProps) {
   const activeSub: SettingsSubKey =
     sub && (SETTINGS_SUB_KEYS as readonly string[]).includes(sub)
       ? (sub as SettingsSubKey)
       : "autonomy";
-
-  const [decisionCount, triggerCount] = await Promise.all([
-    prisma.agencyDecision.count({ where: { projectId } }),
-    prisma.agencyTrigger.count({ where: { projectId } }),
-  ]);
 
   return (
     <div className="space-y-6 py-6">
@@ -86,12 +49,6 @@ export async function SettingsPanel({ projectId, sub, entity }: PanelProps) {
         <div className="flex items-center gap-1 border-b border-foreground/10">
           {SETTINGS_SUB_KEYS.map((key) => {
             const isActive = key === activeSub;
-            const count =
-              key === "decisions"
-                ? decisionCount
-                : key === "activity"
-                  ? triggerCount
-                  : undefined;
             return (
               <Link
                 key={key}
@@ -109,18 +66,6 @@ export async function SettingsPanel({ projectId, sub, entity }: PanelProps) {
                 )}
               >
                 {SUB_LABEL[key]}
-                {count !== undefined ? (
-                  <span
-                    className={cn(
-                      "flex h-4 min-w-4 items-center justify-center rounded-4xl px-1 text-[10px] font-medium tabular-nums",
-                      isActive
-                        ? "bg-primary/15 text-primary"
-                        : "bg-muted text-muted-foreground",
-                    )}
-                  >
-                    {count}
-                  </span>
-                ) : null}
               </Link>
             );
           })}
@@ -132,8 +77,6 @@ export async function SettingsPanel({ projectId, sub, entity }: PanelProps) {
 
       {activeSub === "publishing" ? (
         <PublishingTab projectId={projectId} />
-      ) : activeSub === "decisions" ? (
-        <DecisionsTab projectId={projectId} entity={entity} />
       ) : activeSub === "activity" ? (
         <ActivityTab projectId={projectId} />
       ) : activeSub === "risk" ? (
@@ -146,28 +89,6 @@ export async function SettingsPanel({ projectId, sub, entity }: PanelProps) {
 }
 
 // ---------------------------------------------------------------------------
-
-const AUTOPILOT_MODE_OPTIONS: Array<{
-  value: "REVIEW_EVERYTHING" | "CREATE_AUTOMATICALLY" | "AUTOPILOT";
-  label: string;
-  hint: string;
-}> = [
-  {
-    value: "REVIEW_EVERYTHING",
-    label: "Review everything",
-    hint: "Agentelse creates work; nothing is scheduled until you review it.",
-  },
-  {
-    value: "CREATE_AUTOMATICALLY",
-    label: "Create automatically, ask before publishing",
-    hint: "Agentelse creates and schedules work, but still asks before it can publish.",
-  },
-  {
-    value: "AUTOPILOT",
-    label: "Autopilot",
-    hint: "Agentelse creates, schedules and publishes within the limits below.",
-  },
-];
 
 async function AutonomyTab({ projectId }: { projectId: string }) {
   const now = new Date();
@@ -196,15 +117,10 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
       <EmptyState
         icon={ShieldCheck}
         title="No autonomy policy"
-        hint="The policy is created in step 8 of setup; manage the agency's daily limits from here."
+        hint="The policy is created with the project; manage the agency's daily limits from here."
       />
     );
   }
-
-  const weights =
-    policy.scoringWeights && typeof policy.scoringWeights === "object"
-      ? (policy.scoringWeights as Record<string, number>)
-      : {};
 
   const limitFields: Array<{
     name: string;
@@ -213,40 +129,16 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
     hint: string;
   }> = [
     {
-      name: "maxTasksPerDay",
-      label: "Daily task limit",
-      value: policy.maxTasksPerDay,
-      hint: "The maximum number of tasks the agency can create in a day",
-    },
-    {
       name: "maxReasoningCallsPerDay",
-      label: "Daily reasoning limit",
+      label: "Daily AI call limit",
       value: policy.maxReasoningCallsPerDay,
-      hint: "The number of AI calls that can be made in a day",
-    },
-    {
-      name: "maxConcurrentResearchTasks",
-      label: "Concurrent research limit",
-      value: policy.maxConcurrentResearchTasks,
-      hint: "The number of research tasks running at the same time",
-    },
-    {
-      name: "maxOpenOpportunities",
-      label: "Open opportunity limit",
-      value: policy.maxOpenOpportunities,
-      hint: "The number of opportunities that can stay open at the same time",
+      hint: "AI calls per day, shared by the chat and the background loop",
     },
     {
       name: "maxActiveIdeas",
-      label: "Active idea limit",
+      label: "Idea pool size",
       value: policy.maxActiveIdeas,
-      hint: "The number of ideas alive at the same time",
-    },
-    {
-      name: "taskCooldownHours",
-      label: "Task cooldown period (hours)",
-      value: policy.taskCooldownHours,
-      hint: "The time to wait before the same work item can be recreated",
+      hint: "How many ideas can wait in the pool; new ideas stop when it is full",
     },
   ];
 
@@ -261,7 +153,7 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
 
         <Card size="sm">
           <CardHeader>
-            <CardTitle className="text-base">Daily Limits</CardTitle>
+            <CardTitle className="text-base">Daily limits</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
             {limitFields.map((field) => (
@@ -297,57 +189,51 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
                 </span>
               </p>
             </div>
-            <div className="flex items-center gap-3 pt-6">
-              <Switch
-                key={`setupAutoApprove-${policy.setupAutoApprove}`}
-                id="policy-setupAutoApprove"
-                name="setupAutoApprove"
-                defaultChecked={policy.setupAutoApprove}
-              />
-              <div>
-                <Label htmlFor="policy-setupAutoApprove">
-                  Setup auto-approval
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  The system automatically approves decisions during the setup
-                  stages
-                </p>
-              </div>
-            </div>
           </CardContent>
         </Card>
 
         <Card size="sm">
-          <CardHeader>
-            <CardTitle className="text-base">Autopilot</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Only governs autonomously-created content (today: weekly auto
-              content planning below) — human-requested work is unaffected.
-            </p>
+          <CardHeader className="flex flex-row items-center gap-2 space-y-0">
+            <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10">
+              <CalendarClock className="size-4 text-primary" />
+            </span>
+            <CardTitle className="text-base">Weekly plan draft</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-2.5">
-            {AUTOPILOT_MODE_OPTIONS.map((option) => (
-              <label
-                key={option.value}
-                className="flex cursor-pointer items-start gap-3 rounded-lg border border-input p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/5"
-              >
-                <input
-                  type="radio"
-                  name="autopilotMode"
-                  value={option.value}
-                  defaultChecked={policy.autopilotMode === option.value}
-                  className="mt-0.5"
-                />
-                <span className="space-y-0.5">
-                  <span className="block text-sm font-medium">
-                    {option.label}
-                  </span>
-                  <span className="block text-xs text-muted-foreground">
-                    {option.hint}
-                  </span>
-                </span>
-              </label>
-            ))}
+          <CardContent className="flex items-start gap-3">
+            <Switch
+              key={`weeklyDraft-${policy.autopilotMode}`}
+              id="policy-weeklyDraft"
+              name="weeklyDraft"
+              defaultChecked={weeklyDraftOn(policy.autopilotMode)}
+            />
+            <div className="space-y-1">
+              <Label htmlFor="policy-weeklyDraft">
+                Draft next week&apos;s plan every Sunday evening
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Agentelse plans next week from your idea pool in a chat of its
+                own and points to it from every chat. Nothing is saved, made or
+                published until you approve it.
+              </p>
+            </div>
+          </CardContent>
+          <CardContent className="flex items-start gap-3 border-t pt-4">
+            <Switch
+              key={`weeklyAutoProduce-${policy.weeklyAutoProduce}`}
+              id="policy-weeklyAutoProduce"
+              name="weeklyAutoProduce"
+              defaultChecked={policy.weeklyAutoProduce}
+            />
+            <div className="space-y-1">
+              <Label htmlFor="policy-weeklyAutoProduce">
+                {WEEKLY_AUTO_PRODUCE_COPY.settingsLabel}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {WEEKLY_AUTO_PRODUCE_COPY.settingsDescription} Only while
+                &quot;Draft next week&apos;s plan every Sunday evening&quot;
+                above is also on.
+              </p>
+            </div>
           </CardContent>
         </Card>
 
@@ -386,35 +272,6 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
           </CardContent>
         </Card>
 
-        <Card size="sm">
-          <CardHeader>
-            <CardTitle className="text-base">NBA Score Weights</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Between 0-1; a field left blank uses the engine&apos;s default.
-              Penalties lower the score.
-            </p>
-          </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-4">
-            {Object.entries(WEIGHT_LABELS).map(([key, label]) => (
-              <div key={key} className="space-y-1.5">
-                <Label htmlFor={`weight-${key}`} className="text-xs">
-                  {label}
-                </Label>
-                <Input
-                  id={`weight-${key}`}
-                  name={`weight_${key}`}
-                  type="number"
-                  step="0.05"
-                  min={0}
-                  max={1}
-                  defaultValue={weights[key] ?? ""}
-                  placeholder="default"
-                />
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
         <div className="sticky bottom-4 flex justify-end">
           <SubmitButton>Save</SubmitButton>
         </div>
@@ -435,49 +292,15 @@ function cronToTime(cronExpression: string | null): string {
   return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
 }
 
-// Same idea as cronToTime, but for the auto content plan's single weekly
-// row ("M H * * D") — also reads the day-of-week field back out.
-function cronToWeekly(cronExpression: string | null): {
-  time: string;
-  day: string;
-} {
-  if (!cronExpression) return { time: "09:00", day: "1" };
-  const [minute, hour, , , dow] = cronExpression.split(" ");
-  if (!hour || !minute) return { time: "09:00", day: "1" };
-  return {
-    time: `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`,
-    day: dow && /^[0-6]$/.test(dow) ? dow : "1",
-  };
-}
-
-const WEEKDAY_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "1", label: "Monday" },
-  { value: "2", label: "Tuesday" },
-  { value: "3", label: "Wednesday" },
-  { value: "4", label: "Thursday" },
-  { value: "5", label: "Friday" },
-  { value: "6", label: "Saturday" },
-  { value: "0", label: "Sunday" },
-];
-
 async function PublishingTab({ projectId }: { projectId: string }) {
-  const [schedules, queuedCount, autoPlanSchedule, shortlistedCount] =
-    await Promise.all([
-      prisma.projectSchedule.findMany({
-        where: { projectId, capability: "INSTAGRAM_PUBLISH" },
-      }),
-      prisma.creative.count({
-        where: { projectId, platform: "INSTAGRAM", status: "APPROVED" },
-      }),
-      prisma.projectSchedule.findFirst({
-        where: {
-          projectId,
-          capability: "CREATE_CONTENT_PLAN",
-          configuration: { path: ["mode"], equals: "AUTO_PLAN_GRID_WEEK" },
-        },
-      }),
-      prisma.idea.count({ where: { projectId, status: "SHORTLISTED" } }),
-    ]);
+  const [schedules, queuedCount] = await Promise.all([
+    prisma.projectSchedule.findMany({
+      where: { projectId, capability: "INSTAGRAM_PUBLISH" },
+    }),
+    prisma.creative.count({
+      where: { projectId, platform: "INSTAGRAM", status: "APPROVED" },
+    }),
+  ]);
 
   const bySlot = new Map<number, (typeof schedules)[number]>();
   for (const schedule of schedules) {
@@ -486,22 +309,6 @@ async function PublishingTab({ projectId }: { projectId: string }) {
   }
   const enabled = schedules.some((schedule) => schedule.enabled);
   const timezone = schedules[0]?.timezone ?? "Europe/Istanbul";
-
-  const autoPlanEnabled = autoPlanSchedule?.enabled ?? false;
-  const autoPlanTimezone = autoPlanSchedule?.timezone ?? timezone;
-  const { time: autoPlanTime, day: autoPlanDay } = cronToWeekly(
-    autoPlanSchedule?.cronExpression ?? null,
-  );
-  const autoPlanCapRaw = (
-    autoPlanSchedule?.configuration as { dailyImageCap?: unknown } | null
-  )?.dailyImageCap;
-  const autoPlanCap = typeof autoPlanCapRaw === "number" ? autoPlanCapRaw : 3;
-  const autoPlanLensMix =
-    (
-      autoPlanSchedule?.configuration as {
-        lensMix?: Record<string, number>;
-      } | null
-    )?.lensMix ?? {};
 
   return (
     <div className="space-y-6">
@@ -534,10 +341,11 @@ async function PublishingTab({ projectId }: { projectId: string }) {
                   Enable scheduled publishing
                 </Label>
                 <p className="text-xs text-muted-foreground">
-                  When on, an approved Instagram creative no longer publishes
-                  immediately — it waits in a queue and goes out at the next
-                  slot below, oldest approved first. When off, approval
-                  publishes immediately, same as today.
+                  When on, approved Instagram posts go out at the slots below: a
+                  planned post at the first slot after its planned time, oldest
+                  first. When off, approving a post with no planned time
+                  publishes it right away, and planned posts wait until this is
+                  turned on.
                 </p>
               </div>
             </div>
@@ -585,442 +393,6 @@ async function PublishingTab({ projectId }: { projectId: string }) {
           <SubmitButton>Save</SubmitButton>
         </div>
       </ActionForm>
-
-      <ActionForm
-        action={updateAutoContentPlanScheduleAction}
-        successMessage="Auto content planning updated"
-        className="space-y-4"
-      >
-        <input type="hidden" name="projectId" value={projectId} />
-
-        <Card size="sm">
-          <CardHeader className="flex flex-row items-center gap-2 space-y-0">
-            <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10">
-              <Sparkles className="size-4 text-primary" />
-            </span>
-            <CardTitle className="text-base">Auto Content Planning</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="flex items-start gap-3">
-              <Switch
-                key={`auto-plan-enabled-${autoPlanEnabled}`}
-                id="auto-plan-enabled"
-                name="enabled"
-                defaultChecked={autoPlanEnabled}
-              />
-              <div className="space-y-1">
-                <Label htmlFor="auto-plan-enabled">
-                  Plan new Instagram posts automatically, every week
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  When on, once a week the agency turns its own shortlisted
-                  ideas into real images and schedules them — no manual request
-                  needed. Capped at the daily limit below (× 7 days/week).{" "}
-                  {shortlistedCount} idea
-                  {shortlistedCount === 1 ? "" : "s"} currently shortlisted and
-                  eligible.
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="auto-plan-day">Day of week</Label>
-                <select
-                  id="auto-plan-day"
-                  name="dayOfWeek"
-                  defaultValue={autoPlanDay}
-                  className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
-                >
-                  {WEEKDAY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="auto-plan-time">Time</Label>
-                <TimePicker
-                  id="auto-plan-time"
-                  name="time"
-                  defaultValue={autoPlanTime}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="auto-plan-cap">Max images/day</Label>
-                <Input
-                  id="auto-plan-cap"
-                  name="dailyImageCap"
-                  type="number"
-                  min={1}
-                  max={10}
-                  defaultValue={autoPlanCap}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="auto-plan-timezone">Timezone</Label>
-              <Input
-                id="auto-plan-timezone"
-                name="timezone"
-                defaultValue={autoPlanTimezone}
-                placeholder="Europe/Istanbul"
-              />
-            </div>
-
-            <div className="space-y-1.5 border-t border-border pt-4">
-              <Label>Content mix (optional)</Label>
-              <p className="text-xs text-muted-foreground">
-                Relative weights — leave all at 0 to keep picking purely by
-                score (default). E.g. Product 3, Brand 1 aims for roughly 3
-                product posts per 1 brand post.
-              </p>
-              <div className="grid grid-cols-2 gap-3 pt-1 sm:grid-cols-3">
-                {DEFAULT_LENS_MIX.map((lens) => (
-                  <div key={lens} className="space-y-1">
-                    <Label
-                      htmlFor={`lens-weight-${lens}`}
-                      className="text-xs font-normal text-muted-foreground"
-                    >
-                      {lens.charAt(0) + lens.slice(1).toLowerCase()}
-                    </Label>
-                    <Input
-                      id={`lens-weight-${lens}`}
-                      name={`lensWeight_${lens}`}
-                      type="number"
-                      min={0}
-                      max={10}
-                      step={1}
-                      defaultValue={autoPlanLensMix[lens] ?? 0}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="sticky bottom-4 flex justify-end">
-          <SubmitButton>Save</SubmitButton>
-        </div>
-      </ActionForm>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-// AgencyDecision.inputsSnapshot (agency-director.ts) — a free-form JSON
-// snapshot, only one shape of which (the council fan-out on an idea
-// decision) is worth a dedicated render; anything else in there (or on
-// non-IDEA decisions, which don't set this field the same way) is
-// silently ignored rather than guessed at.
-function parseCouncilRecommendations(
-  inputsSnapshot: unknown,
-): { council: string; recommendation: string; overallScore: number | null }[] {
-  if (!inputsSnapshot || typeof inputsSnapshot !== "object") return [];
-  const raw = (inputsSnapshot as { councilRecommendations?: unknown })
-    .councilRecommendations;
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((entry): entry is Record<string, unknown> => {
-      return (
-        Boolean(entry) &&
-        typeof entry === "object" &&
-        typeof (entry as { council?: unknown }).council === "string" &&
-        typeof (entry as { recommendation?: unknown }).recommendation ===
-          "string"
-      );
-    })
-    .map((entry) => ({
-      council: entry.council as string,
-      recommendation: entry.recommendation as string,
-      overallScore:
-        typeof entry.overallScore === "number" ? entry.overallScore : null,
-    }));
-}
-
-async function DecisionsTab({
-  projectId,
-  entity,
-}: {
-  projectId: string;
-  entity: PanelProps["entity"];
-}) {
-  if (entity && entity.kind === "decision") {
-    return <DecisionDetail projectId={projectId} decisionId={entity.id} />;
-  }
-
-  const decisions = await prisma.agencyDecision.findMany({
-    where: { projectId },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  });
-
-  if (decisions.length === 0) {
-    return (
-      <EmptyState
-        icon={Gavel}
-        title="No decisions"
-        hint="As the agency director makes decisions about opportunities and ideas, they're logged here with their rationale."
-      />
-    );
-  }
-
-  const opportunityIds = decisions
-    .filter((d) => d.subjectType === "OPPORTUNITY")
-    .map((d) => d.subjectId);
-  const ideaIds = decisions
-    .filter((d) => d.subjectType === "IDEA")
-    .map((d) => d.subjectId);
-  const [opportunities, ideas] = await Promise.all([
-    opportunityIds.length
-      ? prisma.opportunity.findMany({
-          where: { id: { in: opportunityIds } },
-          select: { id: true, title: true },
-        })
-      : [],
-    ideaIds.length
-      ? prisma.idea.findMany({
-          where: { id: { in: ideaIds } },
-          select: { id: true, title: true },
-        })
-      : [],
-  ]);
-  const subjectTitle = new Map([
-    ...opportunities.map((o) => [o.id, o.title] as const),
-    ...ideas.map((i) => [i.id, i.title] as const),
-  ]);
-
-  return (
-    <Card size="sm">
-      <CardContent className="divide-y divide-foreground/5">
-        {decisions.map((decision) => {
-          const breakdown =
-            decision.scoreBreakdown &&
-            typeof decision.scoreBreakdown === "object"
-              ? (decision.scoreBreakdown as Record<string, unknown>)
-              : null;
-          // Written by agency-director.ts on every idea decision
-          // (reject/backlog/create) but never rendered anywhere — the one
-          // place that would show WHY beyond the one-line rationale
-          // string (which council(s) actually recommended what, and at
-          // what confidence).
-          const councilRecommendations = parseCouncilRecommendations(
-            decision.inputsSnapshot,
-          );
-          return (
-            <div key={decision.id} className="space-y-2 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusBadge meta={AGENCY_DECISION_TYPE[decision.decision]} />
-                <StatusBadge
-                  meta={AGENCY_DECISION_SUBJECT[decision.subjectType]}
-                  className="h-4 px-1.5 text-[10px]"
-                />
-                {decision.approvalLevel ? (
-                  <StatusBadge
-                    meta={APPROVAL_LEVEL[decision.approvalLevel]}
-                    className="h-4 px-1.5 text-[10px]"
-                  />
-                ) : null}
-                {decision.isMock ? (
-                  <StatusBadge
-                    meta={{ label: "Demo", tone: "special" }}
-                    className="h-4 px-1.5 text-[10px]"
-                  />
-                ) : null}
-                <span className="text-xs text-muted-foreground">
-                  {timeAgo(decision.createdAt)}
-                </span>
-              </div>
-              <Link
-                href={buildHubHref(projectId, {
-                  panel: "settings",
-                  sub: "decisions",
-                  entity: { kind: "decision", id: decision.id },
-                })}
-                scroll={false}
-                className="block text-sm font-medium underline-offset-2 hover:underline"
-              >
-                {subjectTitle.get(decision.subjectId) ??
-                  `${AGENCY_DECISION_SUBJECT[decision.subjectType].label} record`}
-              </Link>
-              <details>
-                <summary className="cursor-pointer text-xs text-muted-foreground">
-                  Rationale
-                </summary>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {decision.rationale}
-                </p>
-                {breakdown ? (
-                  <div className="mt-2 grid max-w-md grid-cols-2 gap-x-4 gap-y-1">
-                    {Object.entries(breakdown).map(([key, val]) =>
-                      typeof val === "number" ? (
-                        <ScoreBar
-                          key={key}
-                          value={val}
-                          label={councilDimensionLabel(key)}
-                        />
-                      ) : null,
-                    )}
-                  </div>
-                ) : null}
-                {councilRecommendations.length > 0 ? (
-                  <div className="mt-2 max-w-md space-y-1">
-                    {councilRecommendations.map((rec, index) => (
-                      <div
-                        key={`${rec.council}-${index}`}
-                        className="flex items-center justify-between gap-3 text-xs"
-                      >
-                        <span className="text-muted-foreground">
-                          {rec.council}
-                        </span>
-                        <span className="flex items-center gap-2">
-                          <span className="font-medium text-foreground">
-                            {rec.recommendation}
-                          </span>
-                          {rec.overallScore != null ? (
-                            <span className="text-muted-foreground">
-                              {Math.round(rec.overallScore * 100) / 100}
-                            </span>
-                          ) : null}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </details>
-              {decision.workPlanId ? (
-                <CrossLinkChip
-                  projectId={projectId}
-                  entity={{ kind: "workPlan", id: decision.workPlanId }}
-                  text="Created work plan"
-                  sub="plans"
-                />
-              ) : null}
-            </div>
-          );
-        })}
-      </CardContent>
-    </Card>
-  );
-}
-
-async function DecisionDetail({
-  projectId,
-  decisionId,
-}: {
-  projectId: string;
-  decisionId: string;
-}) {
-  const decision = await prisma.agencyDecision.findUnique({
-    where: { id: decisionId },
-  });
-
-  if (!decision || decision.projectId !== projectId) {
-    return (
-      <EmptyState
-        icon={Gavel}
-        title="Decision not found"
-        hint="It may have been deleted."
-      />
-    );
-  }
-
-  const subjectTitle = await (async () => {
-    if (decision.subjectType === "OPPORTUNITY") {
-      const o = await prisma.opportunity.findUnique({
-        where: { id: decision.subjectId },
-        select: { title: true },
-      });
-      return o?.title;
-    }
-    if (decision.subjectType === "IDEA") {
-      const i = await prisma.idea.findUnique({
-        where: { id: decision.subjectId },
-        select: { title: true },
-      });
-      return i?.title;
-    }
-    return undefined;
-  })();
-
-  const fields: FieldSpec[] = [
-    {
-      type: "badge",
-      label: "Decision",
-      meta: AGENCY_DECISION_TYPE[decision.decision],
-    },
-    {
-      type: "badge",
-      label: "Subject Type",
-      meta: AGENCY_DECISION_SUBJECT[decision.subjectType],
-    },
-    {
-      type: "badge",
-      label: "Approval Level",
-      meta: decision.approvalLevel
-        ? APPROVAL_LEVEL[decision.approvalLevel]
-        : undefined,
-      fallback: "—",
-    },
-    { type: "boolean", label: "Demo Data (mock)", value: decision.isMock },
-    {
-      type: "date",
-      label: "Created",
-      value: decision.createdAt,
-      relative: true,
-    },
-    { type: "text", label: "Rationale", value: decision.rationale },
-  ];
-
-  return (
-    <div className="space-y-6">
-      <Link
-        href={buildHubHref(projectId, {
-          panel: "settings",
-          sub: "decisions",
-          entity: null,
-        })}
-        scroll={false}
-        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft className="size-3.5" />
-        Back to list
-      </Link>
-
-      <Card size="sm">
-        <CardContent className="space-y-3">
-          <h3 className="font-heading text-lg font-semibold text-foreground">
-            {subjectTitle ??
-              `${AGENCY_DECISION_SUBJECT[decision.subjectType].label} record`}
-          </h3>
-          <FieldGrid fields={fields} />
-          {decision.workPlanId ? (
-            <CrossLinkChip
-              projectId={projectId}
-              entity={{ kind: "workPlan", id: decision.workPlanId }}
-              text="Created work plan"
-              sub="plans"
-            />
-          ) : null}
-          {decision.taskIds.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5">
-              {decision.taskIds.map((taskId) => (
-                <CrossLinkChip
-                  key={taskId}
-                  projectId={projectId}
-                  entity={{ kind: "task", id: taskId }}
-                  text={`Task ${taskId.slice(0, 8)}`}
-                  sub="tasks"
-                />
-              ))}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
     </div>
   );
 }
@@ -1028,53 +400,25 @@ async function DecisionDetail({
 // ---------------------------------------------------------------------------
 
 async function ActivityTab({ projectId }: { projectId: string }) {
-  const now = new Date();
-  const since = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const [stats, reasoningGroups, statusGroups, recentCalls, triggers] =
-    await Promise.all([
-      prisma.agencyDailyStat.findMany({
-        where: { projectId, date: { gte: since } },
-        orderBy: { date: "asc" },
-      }),
-      prisma.reasoningCall.groupBy({
-        by: ["purpose", "isMock"],
-        where: { projectId },
-        _count: { id: true },
-        _sum: { costUsd: true },
-        _avg: { durationMs: true },
-      }),
-      prisma.reasoningCall.groupBy({
-        by: ["status"],
-        where: { projectId },
-        _count: { id: true },
-      }),
-      prisma.reasoningCall.findMany({
-        where: { projectId },
-        orderBy: { createdAt: "desc" },
-        take: 25,
-      }),
-      prisma.agencyTrigger.findMany({
-        where: { projectId },
-        orderBy: { createdAt: "desc" },
-        take: 20,
-      }),
-    ]);
-
-  const series: Array<{
-    key:
-      | "tasksCreated"
-      | "signalsIngested"
-      | "opportunitiesCreated"
-      | "ideasCreated"
-      | "reasoningCalls";
-    label: string;
-  }> = [
-    { key: "tasksCreated", label: "Tasks" },
-    { key: "signalsIngested", label: "Signals" },
-    { key: "opportunitiesCreated", label: "Opportunities" },
-    { key: "ideasCreated", label: "Ideas" },
-    { key: "reasoningCalls", label: "AI Calls" },
-  ];
+  const [reasoningGroups, statusGroups, recentCalls] = await Promise.all([
+    prisma.reasoningCall.groupBy({
+      by: ["purpose", "isMock"],
+      where: { projectId },
+      _count: { id: true },
+      _sum: { costUsd: true },
+      _avg: { durationMs: true },
+    }),
+    prisma.reasoningCall.groupBy({
+      by: ["status"],
+      where: { projectId },
+      _count: { id: true },
+    }),
+    prisma.reasoningCall.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+    }),
+  ]);
 
   const totalCalls = reasoningGroups.reduce((sum, g) => sum + g._count.id, 0);
   const mockCalls = reasoningGroups
@@ -1105,49 +449,6 @@ async function ActivityTab({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-4">
-      {stats.length === 0 ? (
-        <EmptyState
-          icon={Activity}
-          title="No activity data"
-          hint="Daily statistics accumulate here once the agency starts working."
-        />
-      ) : (
-        <Card size="sm">
-          <CardHeader>
-            <CardTitle className="text-base">Last 30 Days</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {series.map((serie) => {
-              const max = Math.max(...stats.map((s) => s[serie.key]), 1);
-              const total = stats.reduce((sum, s) => sum + s[serie.key], 0);
-              return (
-                <div key={serie.key}>
-                  <div className="mb-1 flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">{serie.label}</span>
-                    <span className="font-medium tabular-nums">{total}</span>
-                  </div>
-                  <div className="flex h-8 items-end gap-px">
-                    {stats.map((stat) => (
-                      <div
-                        key={stat.id}
-                        title={`${shortDate(stat.date)}: ${stat[serie.key]}`}
-                        className={cn(
-                          "min-w-0 flex-1 rounded-t-sm",
-                          stat[serie.key] > 0 ? "bg-primary/70" : "bg-muted",
-                        )}
-                        style={{
-                          height: `${Math.max(6, (stat[serie.key] / max) * 100)}%`,
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      )}
-
       <Card size="sm">
         <CardHeader>
           <div className="flex items-center justify-between gap-3">
@@ -1262,63 +563,6 @@ async function ActivityTab({ projectId }: { projectId: string }) {
                 </div>
               ) : null}
             </>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card size="sm">
-        <CardHeader>
-          <CardTitle className="text-base">Triggers</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {triggers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No triggers yet.</p>
-          ) : (
-            <div className="divide-y divide-foreground/5">
-              {triggers.map((trigger) => (
-                <div key={trigger.id} className="space-y-1.5 py-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <StatusBadge meta={AGENCY_TRIGGER_TYPE[trigger.type]} />
-                      {trigger.error ? (
-                        <span className="min-w-0 truncate text-xs text-destructive">
-                          {trigger.error}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <StatusBadge
-                        meta={AGENCY_TRIGGER_STATUS[trigger.status]}
-                        className="h-4 px-1.5 text-[10px]"
-                      />
-                      <span className="text-xs text-muted-foreground">
-                        {timeAgo(trigger.createdAt)}
-                      </span>
-                    </div>
-                  </div>
-                  <details>
-                    <summary className="cursor-pointer text-xs text-muted-foreground">
-                      Details
-                    </summary>
-                    <FieldGrid
-                      className="mt-1"
-                      fields={[
-                        {
-                          type: "date",
-                          label: "Scheduled For",
-                          value: trigger.scheduledFor,
-                        },
-                        {
-                          type: "date",
-                          label: "Processed At",
-                          value: trigger.processedAt,
-                        },
-                      ]}
-                    />
-                  </details>
-                </div>
-              ))}
-            </div>
           )}
         </CardContent>
       </Card>

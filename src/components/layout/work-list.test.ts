@@ -277,16 +277,15 @@ describe("SidebarNav with Works (ChatGPT layout)", () => {
     );
   };
 
-  it("New Chat on top, then Create and Channels, then Recents, then Settings", () => {
+  it("New Chat on top, then the nav list and Explore, then Recents", () => {
     const html = render(WORKS, "work=w1");
     const order = [
       ">New Chat<",
       "Brand Brain",
       "Content Calendar",
-      "Connectors",
+      ">Explore<",
       ">Recents<",
       "Weekly Plan",
-      ">Settings<",
     ].map((label) => html.indexOf(label));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
@@ -300,11 +299,11 @@ describe("SidebarNav with Works (ChatGPT layout)", () => {
     expect(html).not.toContain('href="/projects/proj-1"');
   });
 
-  it("the nav groups keep their height; only Recents takes what is left", () => {
+  it("New Chat and the nav list are one block that keeps its height; only Recents takes what is left", () => {
     const html = render(WORKS, "work=w1");
     expect(html).toMatch(/<nav class="[^"]*\bmin-h-0\b[^"]*"/);
-    expect(html.match(/class="space-y-0.5 shrink-0"/g)).toHaveLength(2);
-    expect(html).toContain('class="space-y-0.5 mt-auto shrink-0"');
+    expect(html.match(/class="shrink-0 space-y-0.5"/g)).toHaveLength(1);
+    expect(html).not.toContain("mt-auto");
   });
 
   // The chain that gives Recents the height the groups leave (and its own
@@ -320,7 +319,7 @@ describe("SidebarNav with Works (ChatGPT layout)", () => {
       expect(nav, `nav ${token}`).toContain(token);
     }
     const recentsBox = classesOf(/<div [^>]*data-slot="work-list"[^>]*>/);
-    for (const token of ["flex", "min-h-28", "flex-1", "flex-col"]) {
+    for (const token of ["flex", "min-h-[60%]", "flex-1", "flex-col"]) {
       expect(recentsBox, `recents box ${token}`).toContain(token);
     }
     const list = classesOf(/<ul [^>]*aria-labelledby[^>]*>/);
@@ -353,8 +352,7 @@ describe("SidebarNav with Works (ChatGPT layout)", () => {
   it("with Works, the panels keep the chat they were opened from, so Back to chat returns to it", () => {
     const html = render(WORKS, "work=w1");
     expect(html).toContain('href="/projects/proj-1?panel=brand-brain&amp;work=w1"');
-    expect(html).toContain('href="/projects/proj-1?panel=settings&amp;work=w1"');
-    expect(html).toContain('href="/projects/proj-1?panel=work&amp;sub=tasks&amp;work=w1"');
+    expect(html).toContain('href="/projects/proj-1?panel=ideas&amp;work=w1"');
     // Pages that are not panels are left alone.
     expect(html).toContain('href="/projects/proj-1/takvim"');
   });
@@ -381,7 +379,7 @@ describe("SidebarNav with Works (ChatGPT layout)", () => {
     expect(html.indexOf("Agency Desk")).toBeLessThan(
       html.indexOf("Brand Brain"),
     );
-    expect(html).toContain('class="space-y-0.5 mt-auto"');
-    expect(html).not.toMatch(/class="space-y-0.5[^"]*shrink-0/);
+    expect(html).toContain(">Explore<");
+    expect(html).not.toContain("shrink-0 space-y-0.5");
   });
 });

@@ -104,7 +104,10 @@ vi.mock("@/server/actions/agency-setup-actions", () => ({
 }));
 const rememberMemory = vi.fn();
 vi.mock("@/server/memory/memory-service", () => ({
-  MemoryService: { remember: rememberMemory },
+  MemoryService: {
+    remember: rememberMemory,
+    postLessons: vi.fn().mockResolvedValue({ worked: [], didNotWork: [] }),
+  },
 }));
 const startSession = vi.fn();
 const updateSession = vi.fn();

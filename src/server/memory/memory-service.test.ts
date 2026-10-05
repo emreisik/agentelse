@@ -649,3 +649,90 @@ describe("MemoryService.recall", () => {
     expect(relevant[0]).toMatchObject({ id: "m", source: "OTHER", seen: 1 });
   });
 });
+
+// Faz 4: the owner's verdict on a published post. The lesson names the post
+// and the verdict, never a number; a second verdict replaces the first; a
+// verdict is a reaction to an output, never a client rule (USER_EXPLICIT would
+// make an "avoid" a Save-blocking brand rule).
+describe("MemoryService.rememberPostResult", () => {
+  beforeEach(() => {
+    creative.findFirst.mockResolvedValue({
+      title: "Clinic tour",
+      channel: "instagram",
+      formatKey: "instagram.post",
+      brief: null,
+    });
+  });
+
+  it("records 'worked' as a works memory and 'didn't work' as an avoid memory", async () => {
+    await MemoryService.rememberPostResult({
+      scope,
+      creativeId: "cr-9",
+      verdict: "WORKED",
+    });
+    expect(learning.deleteMany).toHaveBeenCalledWith({
+      where: { brandId: "brand-1", sourceRef: "creative:cr-9:result" },
+    });
+    expect(learning.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        insight:
+          'Published post "Clinic tour" (instagram.post) worked: the client marked its results as good. Make more posts like it.',
+        polarity: "WORKS",
+        sourceType: "OUTPUT_ACCEPTED",
+        sourceRef: "creative:cr-9:result",
+      }),
+    });
+
+    learning.create.mockClear();
+    await MemoryService.rememberPostResult({
+      scope,
+      creativeId: "cr-9",
+      verdict: "DIDNT",
+      note: "too salesy",
+    });
+    const data = learning.create.mock.calls[0]![0].data;
+    expect(data).toMatchObject({ polarity: "AVOID", sourceType: "OUTPUT_REJECTED" });
+    expect(data.insight).toContain("did not work");
+    expect(data.insight).toContain("Client's note: too salesy");
+    expect(data.sourceType).not.toBe("USER_EXPLICIT");
+  });
+
+  it("never throws and writes nothing for an unknown post", async () => {
+    creative.findFirst.mockResolvedValue(null);
+    expect(
+      await MemoryService.rememberPostResult({ scope, creativeId: "x", verdict: "WORKED" }),
+    ).toBeNull();
+    creative.findFirst.mockRejectedValue(new Error("db down"));
+    expect(
+      await MemoryService.rememberPostResult({ scope, creativeId: "x", verdict: "WORKED" }),
+    ).toBeNull();
+    expect(learning.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("MemoryService.postLessons", () => {
+  it("returns the newest post-result lessons split by verdict", async () => {
+    learning.findMany.mockResolvedValue([
+      { insight: "A worked", polarity: "WORKS" },
+      { insight: "B did not work", polarity: "AVOID" },
+    ]);
+    expect(await MemoryService.postLessons("brand-1", 8)).toEqual({
+      worked: ["A worked"],
+      didNotWork: ["B did not work"],
+    });
+    expect(learning.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          brandId: "brand-1",
+          sourceRef: { startsWith: "creative:", endsWith: ":result" },
+        },
+        take: 8,
+      }),
+    );
+    learning.findMany.mockRejectedValue(new Error("db down"));
+    expect(await MemoryService.postLessons("brand-1")).toEqual({
+      worked: [],
+      didNotWork: [],
+    });
+  });
+});

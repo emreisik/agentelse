@@ -100,18 +100,20 @@ describe("old standalone routes", () => {
       kind: "idea",
       id: "i1",
     });
+    // The departments panel is gone: the old page lands on the project.
     expect(await follow(() => import("./departmanlar/page"))).toBe(
-      "/projects/proj-1?panel=departments",
+      "/projects/proj-1",
     );
+    // Work is the task log: every old board lands there.
     expect(await follow(() => import("./isler/page"))).toBe(
-      "/projects/proj-1?panel=work&sub=plans",
-    );
-    expect(await follow(() => import("./isler/page"), { tab: "gorevler" })).toBe(
       "/projects/proj-1?panel=work&sub=tasks",
     );
-    expect(parse(await follow(() => import("./isler/page"), { plan: "w1" })).entity).toEqual({
-      kind: "workPlan",
-      id: "w1",
+    expect(await follow(() => import("./isler/page"), { tab: "planlar" })).toBe(
+      "/projects/proj-1?panel=work&sub=tasks",
+    );
+    expect(parse(await follow(() => import("./isler/page"), { gorev: "t1" })).entity).toEqual({
+      kind: "task",
+      id: "t1",
     });
     expect(await follow(() => import("./ayarlar/page"))).toBe(
       "/projects/proj-1?panel=settings&sub=autonomy",
@@ -128,7 +130,6 @@ describe("old standalone routes", () => {
       () => import("./zeka/page"),
       () => import("./beyin/page"),
       () => import("./fikirler/page"),
-      () => import("./departmanlar/page"),
       () => import("./isler/page"),
       () => import("./ayarlar/page"),
     ];

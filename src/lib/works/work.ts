@@ -94,6 +94,8 @@ export function integrationParamOf(key: ChannelKey): string | undefined {
   switch (key) {
     case "instagram":
       return "instagram";
+    case "facebook":
+      return "facebook";
     case "ads":
       return "meta_ads";
     case "tiktok":

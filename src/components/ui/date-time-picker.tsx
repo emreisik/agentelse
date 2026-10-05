@@ -32,6 +32,7 @@ import {
   viewOfDay,
   withDay,
   withTime,
+  type DayPreset,
   type ViewMonth,
 } from "@/lib/date-picker";
 import { cn } from "@/lib/utils";
@@ -227,6 +228,7 @@ function DayPane({
   min,
   max,
   marks,
+  presets,
   onViewChange,
   onSelect,
 }: {
@@ -235,6 +237,9 @@ function DayPane({
   min?: string | null;
   max?: string | null;
   marks?: Record<string, number>;
+  // Takvimin üstündeki gün kısayolları; verilmezse bugünden hesaplanan dört
+  // genel kısayol (Today, Tomorrow, ...).
+  presets?: readonly DayPreset[];
   onViewChange?: DayOptions["onViewChange"];
   onSelect: (day: string) => void;
 }) {
@@ -255,8 +260,10 @@ function DayPane({
 
   return (
     <div className="space-y-2.5">
-      <div className="flex flex-wrap gap-1">
-        {dayPresets(today).map((preset) => {
+      {/* Takvimle aynı genişlik: yedi gün çipi tek satıra yayılıp paneli
+          takvimden geniş yapmasın, iki satıra sarılsın. */}
+      <div className="flex max-w-[17.5rem] flex-wrap gap-1">
+        {(presets ?? dayPresets(today)).map((preset) => {
           const enabled = dayInRange(preset.key, min, max);
           const active = preset.key === selected;
           return (
@@ -387,7 +394,7 @@ export function TimePicker({
   // tıklamada kaydetmek yerine, seçim bitince bir kez.)
   onCommit?: (time: string) => void;
   clearable?: boolean;
-  // Dakika sütununun adımı (1, 5, 10, 15, 30).
+  // −/+ düğmelerinin adımı, dakika (1, 5, 10, 15, 30, 60).
   step?: number;
   presets?: readonly string[];
 }) {
@@ -401,6 +408,14 @@ export function TimePicker({
     if (next) openedWith.current = current;
     else if (onCommit && current !== openedWith.current) onCommit(current);
     setOpen(next);
+  }
+
+  // Bir kısayola dokunuldu ya da yazıp Enter'a basıldı: seçim bitti. Saat
+  // olayın kendisinden gelir (state bu olayda henüz yenilenmemiştir), kaydet
+  // ve kapat.
+  function settle(next: string) {
+    if (onCommit && next !== openedWith.current) onCommit(next);
+    setOpen(false);
   }
 
   return (
@@ -420,7 +435,8 @@ export function TimePicker({
         onChange={setCurrent}
         step={step}
         presets={presets}
-        onEnter={() => handleOpenChange(false)}
+        onPreset={settle}
+        onEnter={settle}
       />
       <Footer
         lead={field.timezone ? `Times in ${field.timezone}` : undefined}
@@ -454,6 +470,7 @@ export function DateTimePanel({
   disablePast,
   marks,
   onViewChange,
+  dayShortcuts,
   step = DEFAULT_TIME_STEP,
   timePresets = DEFAULT_TIME_PRESETS,
   defaultTime = DEFAULT_PICKER_TIME,
@@ -461,7 +478,9 @@ export function DateTimePanel({
   // "YYYY-MM-DDTHH:mm" ya da boş.
   value: string;
   onChange: (value: string) => void;
-  onDone: () => void;
+  // Bitti (Done ya da saatte Enter). Değer, seçimin son halidir: çağıran onu
+  // kullansın, çünkü onChange'in state'i Enter olayında henüz yenilenmemiştir.
+  onDone: (value: string) => void;
   clearable?: boolean;
   onClear?: () => void;
   // Alt çubuğun solu; verilmezse "Times in <timezone>".
@@ -473,6 +492,9 @@ export function DateTimePanel({
   step?: number;
   timePresets?: readonly string[];
   defaultTime?: string;
+  // Takvimin üstündeki gün kısayolları (ör. planın haftası); verilmezse genel
+  // dört kısayol.
+  dayShortcuts?: readonly DayPreset[];
 }) {
   // Bugün, panel açıldığı anda bir kez okunur.
   const [today] = useState(() => todayOverride ?? todayKeyIn(timezone));
@@ -488,6 +510,7 @@ export function DateTimePanel({
           min={lowest}
           max={max}
           marks={marks}
+          presets={dayShortcuts}
           onViewChange={onViewChange}
           onSelect={(day) => onChange(withDay(value, day, defaultTime))}
         />
@@ -499,7 +522,11 @@ export function DateTimePanel({
             }
             step={step}
             presets={timePresets}
-            onEnter={onDone}
+            onEnter={(time) => {
+              const next = withTime(value, time, fallbackDayFor(today, lowest));
+              onChange(next);
+              onDone(next);
+            }}
           />
         </div>
       </div>
@@ -509,7 +536,7 @@ export function DateTimePanel({
         }
         canClear={Boolean(clearable && parts)}
         onClear={onClear ?? (() => onChange(""))}
-        onDone={onDone}
+        onDone={() => onDone(value)}
       />
     </>
   );

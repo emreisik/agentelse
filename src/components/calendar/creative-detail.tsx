@@ -10,7 +10,13 @@ import type { CalendarDetail, CalendarItem } from "@/lib/calendar/types";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { cn } from "@/lib/utils";
 
-import { SourceMark, StageIcon, StagePill, TONE_CARD } from "./calendar-bits";
+import {
+  SourceMark,
+  StageIcon,
+  StagePill,
+  TONE_CARD,
+  TONE_DOT,
+} from "./calendar-bits";
 import { CopyButton } from "./copy-button";
 import { DecisionButtons } from "./decision-buttons";
 import { CalendarDetailSheet } from "./detail-sheet";
@@ -68,11 +74,73 @@ export type DetailState =
   | null
   | CalendarDetail;
 
+// Postun mecraları arasında geçiş: her teslimatın kendi metni, görseli ve
+// durumu vardır; zamanı ve onayı postundur.
+function DeliverySwitcher({
+  deliveries,
+  activeId,
+  onSwitch,
+}: {
+  deliveries: readonly CalendarItem[];
+  activeId: string;
+  onSwitch: (id: string) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Channels of this post"
+      className="scrollbar-none -my-1 flex min-w-0 gap-1 overflow-x-auto py-1"
+    >
+      {deliveries.map((delivery) => {
+        const active = delivery.id === activeId;
+        const meta = STAGE_META[delivery.stage];
+        return (
+          <button
+            key={delivery.id}
+            type="button"
+            aria-pressed={active}
+            title={`${delivery.label} · ${meta.label}`}
+            onClick={() => {
+              if (!active) onSwitch(delivery.id);
+            }}
+            className={cn(
+              "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2 text-xs font-medium whitespace-nowrap transition-colors",
+              active
+                ? "border-foreground bg-accent text-foreground"
+                : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <SourceMark
+              source={delivery.source}
+              decorative
+              className={cn(
+                "size-4",
+                delivery.glyph === "story" && "rounded-full",
+              )}
+            />
+            {delivery.label}
+            <span
+              aria-hidden
+              className={cn("size-1.5 rounded-full", TONE_DOT[meta.tone])}
+            />
+            <span className="sr-only">, {meta.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // Takvimdeki bir parçanın sağdan açılan detayı. Kimlik, durum, zaman ve görsel
 // pano verisinden ANINDA gelir (sunucuya gitmeden); tam metin, künye ve bekleyen
-// onay tembel yüklenir ve gelene kadar iskelet gösterilir.
+// onay tembel yüklenir ve gelene kadar iskelet gösterilir. Parça bir postun
+// teslimatıysa başlıkta postun mecraları arasında geçilir (`deliveries`,
+// `onSwitch`); çağıran, geçişte paneli yeniden kurmasın diye anahtarı post
+// başına verir.
 export function CreativeDetail({
   item,
+  deliveries,
+  onSwitch,
   detail,
   projectId,
   timezone,
@@ -81,6 +149,9 @@ export function CreativeDetail({
   onDecided,
 }: {
   item: CalendarItem;
+  // Parçanın postunun bütün teslimatları (parçanın kendisi dahil), varsa.
+  deliveries?: readonly CalendarItem[];
+  onSwitch?: (creativeId: string) => void;
   detail: DetailState;
   // Planlı gün noktaları için; verilmezse seçici noktasız çalışır.
   projectId?: string;
@@ -97,6 +168,19 @@ export function CreativeDetail({
   const meta = STAGE_META[item.stage];
   const loading = detail === undefined;
   const title = item.title ?? item.preview ?? item.label;
+  const siblings = deliveries && deliveries.length > 1 ? deliveries : null;
+  // Post tek parça taşınır: bir mecrası yayındaysa (ya da şu an gidiyorsa)
+  // hiçbirinin günü değişmez.
+  const movable =
+    item.movable && (siblings ?? []).every((delivery) => delivery.movable);
+  const lockNote =
+    item.stage === "published"
+      ? "Already posted, so its day can't be changed."
+      : item.stage === "publishing"
+        ? "Being sent right now. Its day can't be changed."
+        : siblings?.some((delivery) => delivery.stage === "published")
+          ? "Part of this post is already posted, so its day can't be changed."
+          : "Part of this post is being sent right now. Its day can't be changed.";
   const dateTime = (iso: string, withTime: boolean) =>
     new Intl.DateTimeFormat("en-US", {
       timeZone: timezone,
@@ -117,16 +201,27 @@ export function CreativeDetail({
   let footer: ReactNode = null;
   if (item.stage === "needs-approval") {
     // Onay kaydı ayrıntıyla gelir; o gelene kadar düğmeler pasif görünür.
+    // Postta tek onay yeter: sunucu bekleyen diğer mecraları da onaylar.
     footer =
       loading || detail?.approvalId ? (
-        <DecisionButtons
-          approvalId={detail?.approvalId ?? null}
-          onDone={onDecided}
-        />
+        <>
+          {siblings ? (
+            <p className="mb-2 text-[11px] text-muted-foreground">
+              Approving also approves the post&apos;s other channels waiting
+              for review.
+            </p>
+          ) : null}
+          <DecisionButtons
+            key={item.id}
+            approvalId={detail?.approvalId ?? null}
+            onDone={onDecided}
+          />
+        </>
       ) : null;
   } else if (MARKABLE.has(item.stage) && item.facts.status === "APPROVED") {
     footer = (
       <MarkPostedButton
+        key={item.id}
         creativeId={item.id}
         className="w-full"
         onDone={onDecided}
@@ -138,10 +233,18 @@ export function CreativeDetail({
     <CalendarDetailSheet
       onClose={onClose}
       eyebrow={
-        <>
-          <SourceMark source={item.source} decorative />
-          <span className="truncate">{item.label}</span>
-        </>
+        siblings && onSwitch ? (
+          <DeliverySwitcher
+            deliveries={siblings}
+            activeId={item.id}
+            onSwitch={onSwitch}
+          />
+        ) : (
+          <>
+            <SourceMark source={item.source} decorative />
+            <span className="truncate">{item.label}</span>
+          </>
+        )
       }
       title={title}
       subline={
@@ -200,11 +303,11 @@ export function CreativeDetail({
       </section>
 
       <Card label="Schedule">
-        {item.movable ? (
+        {movable ? (
           <SchedulePicker
-            // Yerel yeni zaman gelince (ya da bir hata onu geri alınca) alanlar
-            // onunla baştan kurulur.
-            key={`${item.localDay}T${item.localTime}`}
+            // Yerel yeni zaman gelince (ya da bir hata onu geri alınca) ya da
+            // postun başka mecrasına geçilince alanlar baştan kurulur.
+            key={`${item.id}|${item.localDay}T${item.localTime}`}
             projectId={projectId}
             creativeId={item.id}
             timezone={timezone}
@@ -213,11 +316,7 @@ export function CreativeDetail({
             onSave={onSchedule}
           />
         ) : (
-          <p className="text-xs text-muted-foreground">
-            {item.stage === "published"
-              ? "Already posted, so its day can't be changed."
-              : "Being sent right now. Its day can't be changed."}
-          </p>
+          <p className="text-xs text-muted-foreground">{lockNote}</p>
         )}
       </Card>
 

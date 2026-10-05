@@ -46,15 +46,6 @@ const envSchema = z.object({
   // and the fallback execution provider when Gemini is unconfigured or
   // circuit-broken by ProviderHealthService.
   OPENAI_API_KEY: z.string().optional().default(""),
-  // OpenAI has no balance API for regular keys. The header shows
-  // OPENAI_CREDIT_BALANCE (USD, as of OPENAI_CREDIT_BALANCE_AS_OF) minus the
-  // cost of every OpenAI ReasoningCall recorded since then. After topping up,
-  // set both to the new balance and the moment you read it.
-  OPENAI_CREDIT_BALANCE: z.string().optional().default("9.88"),
-  OPENAI_CREDIT_BALANCE_AS_OF: z
-    .string()
-    .optional()
-    .default("2026-09-29T16:17:00Z"),
   OPENAI_MODEL: z.string().optional().default("gpt-5.6-luna"),
   // Model tiers: prompts select "lite"/"pro" via ReasoningDef.tier, and
   // which model that maps to lives here — so changing a model doesn't

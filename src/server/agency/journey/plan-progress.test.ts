@@ -111,7 +111,7 @@ describe("toJourneyItem", () => {
 
   it("an unknown format or channel falls back to a manual hand-off", () => {
     const item = toJourneyItem(
-      row({ channel: "facebook", formatKey: "facebook.post" }),
+      row({ channel: "youtube", formatKey: "youtube.short" }),
       [],
       "UTC",
     );

@@ -7,7 +7,7 @@ import {
 import { isAgentelseError } from "@/server/security/errors";
 import { getAgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
 
-// Lightweight polling target for the header's ActiveWorkPopover — same split as
+// Lightweight polling target for the sidebar's ActiveWorkPopover — same split as
 // setup-status's route: SSR the first paint (AppShell), poll this JSON
 // endpoint afterward instead of a full-page LiveRefresh.
 export async function GET(

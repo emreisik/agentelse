@@ -26,6 +26,9 @@ vi.mock("@/server/actions/plan-progress-actions", () => ({
   approvePlanItemsAction: vi.fn(),
   enablePlanPublishingAction: vi.fn(),
 }));
+vi.mock("@/server/actions/work-approve-actions", () => ({
+  approvePlansAction: vi.fn(),
+}));
 vi.mock("@/server/actions/schedule-slots-actions", () => ({
   moveSlotAction: vi.fn(),
   removeSlotAction: vi.fn(),
@@ -42,7 +45,8 @@ const { PostCard, IdeaSuggestion } = await import("./post-card");
 const { PublishReview, PublishCalendar } = await import("./publish-review");
 const { ChatPackageProvider } =
   await import("@/components/commands/chat-package-context");
-const { WorkCardHostProvider } = await import("@/components/works/work-card-host");
+const { WorkCardHostProvider } =
+  await import("@/components/works/work-card-host");
 
 import type { WorkCardHostInput } from "@/components/works/work-card-host";
 
@@ -121,7 +125,9 @@ function draft(over: Partial<PlanCard> = {}): PlanCard {
         topic: "3 things to know before bidding",
         captionIdea: "Answer the questions people ask first.",
         purpose: "Answer questions",
-        alternatives: [{ topic: "Another take", captionIdea: "A different way in." }],
+        alternatives: [
+          { topic: "Another take", captionIdea: "A different way in." },
+        ],
       }),
       item({
         date: "2026-10-10",
@@ -192,9 +198,13 @@ describe("the social media plan pane: a draft (step 1)", () => {
     expect(count(out, 'aria-current="step"')).toBe(1);
   });
 
-  it("lists the channels as checkboxes: the chosen ones checked, an unconnected one dashed with a way to connect", () => {
-    expect(count(out, 'role="checkbox"')).toBe(4);
-    expect(out).toMatch(/role="checkbox" aria-checked="true"[^>]*>[\s\S]*?Instagram/);
+  it("lists only connected (or chosen) channels as checkboxes: an unconnected chosen one dashed with a way to connect", () => {
+    // Instagram is connected, LinkedIn is chosen but not connected; the rest stay out.
+    expect(count(out, 'role="checkbox"')).toBe(2);
+    expect(out).not.toContain("TikTok");
+    expect(out).toMatch(
+      /role="checkbox" aria-checked="true"[^>]*>[\s\S]*?Instagram/,
+    );
     expect(out).toContain("2 channels selected");
     expect(out).toContain("border-dashed");
     expect(out).toContain('aria-label="Connect LinkedIn"');
@@ -249,7 +259,9 @@ describe("the social media plan pane: a draft (step 1)", () => {
     expect(out).toContain("Every idea is adapted to each channel.");
     expect(out).toContain("Prepare content");
     expect(out).toContain("Add to calendar");
-    expect(out).toContain("Text and format are made separately for each channel.");
+    expect(out).toContain(
+      "Text and format are made separately for each channel.",
+    );
   });
 
   it("names the posts' day and time through a move control, not through a channel", () => {
@@ -265,28 +277,83 @@ describe("the social media plan pane: a draft (step 1)", () => {
 
   it("a Completed Work blocks the buttons and says why", () => {
     const done = paneHtml(draft(), { ...HOST, active: false });
-    expect(done).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?Prepare content/);
+    expect(done).toMatch(
+      /<button[^>]*disabled=""[^>]*>[\s\S]*?Prepare content/,
+    );
     expect(done).toContain("This Work is completed. Reopen it to continue.");
   });
 });
 
 describe("the social media plan pane: once the plan is made (step 2)", () => {
   const made = saved([
-    { id: "c0", stage: "IN_REVIEW", assetId: "asset-1", text: "Discover the offer in 3 steps.", when: "2026-10-05T12:00" },
-    { id: "c1", stage: "IN_REVIEW", text: "A LinkedIn text.", when: "2026-10-05T12:00" },
-    { id: "c2", stage: "IN_REVIEW", assetId: "asset-2", text: "Second post.", when: "2026-10-07T18:30" },
-    { id: "c3", stage: "IN_REVIEW", text: "Second LinkedIn.", when: "2026-10-07T18:30" },
+    {
+      id: "c0",
+      stage: "IN_REVIEW",
+      assetId: "asset-1",
+      text: "Discover the offer in 3 steps.",
+      when: "2026-10-05T12:00",
+    },
+    {
+      id: "c1",
+      stage: "IN_REVIEW",
+      text: "A LinkedIn text.",
+      when: "2026-10-05T12:00",
+    },
+    {
+      id: "c2",
+      stage: "IN_REVIEW",
+      assetId: "asset-2",
+      text: "Second post.",
+      when: "2026-10-07T18:30",
+    },
+    {
+      id: "c3",
+      stage: "IN_REVIEW",
+      text: "Second LinkedIn.",
+      when: "2026-10-07T18:30",
+    },
   ]);
   const out = paneHtml(made);
 
-  it("is at the content step: the plan is done, no move and no refresh any more", () => {
+  it("is at the content step: the plan is done, no idea swap and no refresh any more", () => {
     expect(out).toContain('data-step="content"');
     expect(out).toContain('data-state="ready"');
     expect(out).toContain(">Ready<");
     expect(out).not.toContain("New idea</span>");
-    expect(out).not.toContain("Move: ");
     // The channels are locked to what was made.
     expect(out).toMatch(/role="checkbox" aria-checked="true" disabled=""/);
+  });
+
+  it("a post's day block shows its time and moves the whole post, not one channel", () => {
+    // The time sits under the day, so day and time are read (and changed) in one place.
+    expect(out).toMatch(
+      /aria-label="Move: Mon 5 Oct 12:00"[^>]*>[\s\S]*?>05<\/span><span[^>]*>12:00<\/span>/,
+    );
+    expect(out).toContain("Move: Wed 7 Oct 18:30");
+    // One control per post (two posts), none per piece.
+    expect(count(out, "Move: ")).toBe(2);
+  });
+
+  it("only a post that still has a piece to move offers the move", () => {
+    const mixed = paneHtml(
+      saved([
+        { id: "c0", stage: "IN_REVIEW", text: "x", when: "2026-10-05T12:00" },
+        { id: "c1", stage: "APPROVED", text: "y", when: "2026-10-05T12:00" },
+        { id: "c2", stage: "PUBLISHED", text: "z", when: "2026-10-07T18:30" },
+        { id: "c3", stage: "PRODUCING", when: "2026-10-07T18:30" },
+      ]),
+    );
+    // First post: both pieces can move. Second: one is out, one is being made.
+    expect(mixed).toContain("Move: Mon 5 Oct 12:00");
+    expect(mixed).not.toContain("Move: Wed 7 Oct 18:30");
+    // Its day block is still there, with the time, only not a control.
+    expect(mixed).toMatch(/<span[^>]*>07<\/span><span[^>]*>18:30<\/span>/);
+  });
+
+  it("a completed Work moves nothing", () => {
+    const done = paneHtml(made, { ...HOST, active: false });
+    expect(done).not.toContain("Move: ");
+    expect(done).toMatch(/<span[^>]*>05<\/span><span[^>]*>12:00<\/span>/);
   });
 
   it("opens the first post on its pieces: picture, words, time", () => {
@@ -344,7 +411,13 @@ describe("the social media plan pane: once the plan is made (step 2)", () => {
   it("a piece that is approved shows its words and time as final", () => {
     const approved = paneHtml(
       saved([
-        { id: "c0", stage: "APPROVED", assetId: "a", text: "Final words.", when: "2026-10-05T12:00" },
+        {
+          id: "c0",
+          stage: "APPROVED",
+          assetId: "a",
+          text: "Final words.",
+          when: "2026-10-05T12:00",
+        },
         { id: "c1", stage: "IN_REVIEW", text: "x", when: "2026-10-05T12:00" },
         { id: "c2", stage: "IN_REVIEW", text: "y", when: "2026-10-07T18:30" },
         { id: "c3", stage: "IN_REVIEW", text: "z", when: "2026-10-07T18:30" },
@@ -370,7 +443,9 @@ describe("the social media plan pane: everything decided (the last step)", () =>
   it("shows the publish calendar with all three steps done and a banner", () => {
     expect(out).toContain("Publish calendar");
     expect(out).toContain("4 pieces are on the calendar.");
-    expect(out).toContain("Each channel&#x27;s publish status is tracked on its own.");
+    expect(out).toContain(
+      "Each channel&#x27;s publish status is tracked on its own.",
+    );
     expect(out).not.toContain('aria-current="step"');
     expect(out).toContain("Open calendar");
   });
@@ -454,7 +529,10 @@ describe("the social media plan pane: a new idea for a post", () => {
 });
 
 describe("PostCard and the idea suggested instead", () => {
-  const card = (newIdea?: Record<string, unknown>, over: Record<string, unknown> = {}) =>
+  const card = (
+    newIdea?: Record<string, unknown>,
+    over: Record<string, unknown> = {},
+  ) =>
     html(
       createElement(PostCard, {
         topic: "How the unique offer works",
@@ -560,9 +638,27 @@ describe("PublishReview and PublishCalendar", () => {
       date: "2026-10-05",
       topic: "How the unique offer works",
       pieces: [
-        { channel: "instagram" as const, stage: "IN_REVIEW" as const, when: "2026-10-05T12:00", mode: "auto" as const, connected: true },
-        { channel: "linkedin" as const, stage: "IN_REVIEW" as const, when: "2026-10-05T09:30", mode: "manual" as const, connected: true },
-        { channel: "tiktok" as const, stage: "PLANNED" as const, when: "2026-10-05T09:30", mode: "manual" as const, connected: false },
+        {
+          channel: "instagram" as const,
+          stage: "IN_REVIEW" as const,
+          when: "2026-10-05T12:00",
+          mode: "auto" as const,
+          connected: true,
+        },
+        {
+          channel: "linkedin" as const,
+          stage: "IN_REVIEW" as const,
+          when: "2026-10-05T09:30",
+          mode: "manual" as const,
+          connected: true,
+        },
+        {
+          channel: "tiktok" as const,
+          stage: "PLANNED" as const,
+          when: "2026-10-05T09:30",
+          mode: "manual" as const,
+          connected: false,
+        },
       ],
     },
   ];
@@ -594,14 +690,20 @@ describe("PublishReview and PublishCalendar", () => {
   });
 
   it("an Instagram piece is not claimed to post itself while scheduled posting is off", () => {
-    expect(review({ scheduleEnabled: false })).toContain("turn on scheduled posting");
+    expect(review({ scheduleEnabled: false })).toContain(
+      "turn on scheduled posting",
+    );
     expect(review({ scheduleEnabled: false })).not.toContain("posts itself");
   });
 
   it("asks for the approval in one sentence and holds the channels that are not connected", () => {
     const out = review({ heldChannels: ["linkedin"] });
-    expect(out).toContain("I approve these 2 pieces for the selected channels and times.");
-    expect(out).toContain("LinkedIn: Pieces for a channel that isn&#x27;t connected stay on the calendar until it is.");
+    expect(out).toContain(
+      "I approve these 2 pieces for the selected channels and times.",
+    );
+    expect(out).toContain(
+      "LinkedIn: Pieces for a channel that isn&#x27;t connected stay on the calendar until it is.",
+    );
     expect(out).toContain('type="checkbox"');
     expect(review({ approved: true })).toContain("checked");
     expect(review({ pieces: 0 })).toContain('disabled=""');

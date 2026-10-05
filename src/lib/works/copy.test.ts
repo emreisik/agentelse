@@ -94,6 +94,8 @@ const NEW_COMPONENT_FILES = [
   "card-focus.tsx",
   // Under a finished post: the like / not-quite row (sentences in its own table).
   "creative-rating.tsx",
+  // Under a published post: live numbers and the worked / didn't-work verdict.
+  "post-result.tsx",
   // The social media plan pane: every sentence is in plan-pane/copy.ts.
   "plan-pane/plan-pane.tsx",
   "plan-pane/pane-parts.tsx",

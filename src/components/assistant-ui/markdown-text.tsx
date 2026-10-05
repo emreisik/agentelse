@@ -15,10 +15,14 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
 
+// Module-level so every render passes the same array (an inline one is a new
+// prop each time).
+const REMARK_PLUGINS = [remarkGfm];
+
 const MarkdownTextImpl = () => {
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={REMARK_PLUGINS}
       className="aui-md"
       components={defaultComponents}
       defer

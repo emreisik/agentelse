@@ -27,7 +27,7 @@ export default async function AkisRedirect({
     if (
       separatorIndex > 0 &&
       id &&
-      (kind === "idea" || kind === "workPlan" || kind === "task")
+      (kind === "idea" || kind === "task")
     ) {
       redirect(entityHref(projectId, { kind, id }));
     }

@@ -2,7 +2,6 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { encodeSseEvent } from "@/server/chat/sse";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 // The server renderer refuses startTransition; a tap must still run its action.
@@ -52,7 +51,8 @@ vi.mock("@/components/ui/button", async () => {
   return {
     buttonVariants: () => "",
     Button: (props: { onClick?: () => void; children?: unknown }) => {
-      if (props.onClick) clicks.set(textOf(props.children).trim(), props.onClick);
+      if (props.onClick)
+        clicks.set(textOf(props.children).trim(), props.onClick);
       return h("button", null, props.children as ReactNode);
     },
   };
@@ -60,38 +60,42 @@ vi.mock("@/components/ui/button", async () => {
 
 const { PlannedSlotCard } = await import("./planned-slot-card");
 const { WorkCardHostProvider } = await import("./work-card-host");
-const { ChatPackageProvider } = await import(
-  "@/components/commands/chat-package-context"
-);
+const { ChatPackageProvider } =
+  await import("@/components/commands/chat-package-context");
 
 type PlanCard = Extract<IdeaEventCardData, { kind: "content-plan-draft" }>;
+type Slot = NonNullable<NonNullable<PlanCard["slots"]>[number]>;
 
-const CARD: PlanCard = {
-  kind: "content-plan-draft",
-  title: "One post",
-  timezone: "Europe/Istanbul",
-  state: "saved",
-  via: "idea",
-  items: [
-    {
-      date: "2026-10-05",
-      time: "10:00",
-      platform: "INSTAGRAM",
-      channel: "instagram",
-      formatKey: "instagram.post",
-      topic: "Studio",
-      captionIdea: "Look",
-    },
-  ],
-  slots: [{ id: "slot-creative-1", stage: "PLANNED" }],
-};
+const startPlan = vi.fn().mockResolvedValue({ ok: true });
 
-function render(): void {
+function card(slot: Slot): PlanCard {
+  return {
+    kind: "content-plan-draft",
+    title: "One post",
+    timezone: "Europe/Istanbul",
+    state: "saved",
+    via: "idea",
+    items: [
+      {
+        date: "2026-10-05",
+        time: "10:00",
+        platform: "INSTAGRAM",
+        channel: "instagram",
+        formatKey: "instagram.post",
+        topic: "Studio",
+        captionIdea: "Look",
+      },
+    ],
+    slots: [slot],
+  };
+}
+
+function render(plan: PlanCard): string {
   clicks.clear();
-  renderToStaticMarkup(
+  return renderToStaticMarkup(
     createElement(
       ChatPackageProvider,
-      { value: { start: vi.fn(), startPlan: vi.fn(), runs: {} } },
+      { value: { start: vi.fn(), startPlan, runs: {} } },
       createElement(
         WorkCardHostProvider,
         {
@@ -107,7 +111,7 @@ function render(): void {
             runNextStep: () => undefined,
           },
         },
-        createElement(PlannedSlotCard, { card: CARD, commandId: "plan-1" }),
+        createElement(PlannedSlotCard, { card: plan, commandId: "plan-1" }),
       ),
     ),
   );
@@ -115,56 +119,47 @@ function render(): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  startPlan.mockResolvedValue({ ok: true });
 });
 
-describe("PlannedSlotCard Make 3 visuals tap", () => {
-  it("posts the plan id, this slot's creative id and more:false once", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        encodeSseEvent({ type: "package.done", started: 1, failed: 0 }),
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
-      ),
-    );
+describe("PlannedSlotCard Make post tap (one post, one picture)", () => {
+  it("makes only this post, live through the chat's plan run, and calls no variants route", async () => {
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     try {
-      render();
-      const tap = clicks.get("Make 3 visuals");
-      expect(tap).toBeTypeOf("function");
-      tap?.();
-      await vi.waitFor(() => expect(router.refresh).toHaveBeenCalledTimes(1));
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(url).toBe("/api/projects/p1/chat/variants");
-      expect(JSON.parse(String(init.body))).toEqual({
+      const html = render(
+        card({ id: "slot-creative-1", stage: "PLANNED", postId: "post-1" }),
+      );
+      // One picture: the old three-picture offer is gone.
+      expect(html).not.toContain("Make 3 visuals");
+      expect(html).not.toContain("Makes 3 pictures");
+      expect(html).toContain("Making it costs about $0.08.");
+      clicks.get("Make post")?.();
+      await vi.waitFor(() => expect(startPlan).toHaveBeenCalledTimes(1));
+      expect(startPlan).toHaveBeenCalledWith({
         commandId: "plan-1",
-        creativeId: "slot-creative-1",
-        more: false,
+        postId: "post-1",
       });
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  it("a budget refusal (SSE error on HTTP 200) does not refresh as if it worked", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        encodeSseEvent({
-          type: "error",
-          code: "BUDGET",
-          message: "Daily budget reached.",
-        }),
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
-      ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    try {
-      render();
-      clicks.get("Make 3 visuals")?.();
-      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(router.refresh).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllGlobals();
-    }
+  it("a plan saved before posts (no post id) makes the plan's one piece", async () => {
+    render(card({ id: "slot-creative-1", stage: "PLANNED" }));
+    clicks.get("Make post")?.();
+    await vi.waitFor(() => expect(startPlan).toHaveBeenCalledTimes(1));
+    expect(startPlan).toHaveBeenCalledWith({ commandId: "plan-1" });
+  });
+
+  it("Try again on a failed post makes the same post again", async () => {
+    render(card({ id: "slot-creative-1", stage: "FAILED", postId: "post-1" }));
+    clicks.get("Try again")?.();
+    await vi.waitFor(() => expect(startPlan).toHaveBeenCalledTimes(1));
+    expect(startPlan).toHaveBeenCalledWith({
+      commandId: "plan-1",
+      postId: "post-1",
+    });
   });
 });

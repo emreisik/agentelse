@@ -6,8 +6,6 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { computeNextRunAt } from "@/server/scheduler/scheduler-service";
-import { DEFAULT_LENS_MIX } from "@/server/agency/ideas/creative-lenses";
-import type { ContentMix } from "@/server/agency/content/instagram-week-planner";
 import {
   requireProjectAccess,
   requireUser,
@@ -28,10 +26,25 @@ function fail(error: unknown): ActionResult {
 const SLOT_COUNT = 3;
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
+// An IANA zone the runtime knows ("Europe/Istanbul", "UTC"); "UTC+3" passes
+// cron-parser but not Intl, and every date shown or planned in the project's
+// time goes through Intl.
+function isKnownTimezone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const ScheduleSchema = z.object({
   projectId: z.string().min(1),
   enabled: z.boolean(),
-  timezone: z.string().min(1),
+  timezone: z
+    .string()
+    .min(1)
+    .refine(isKnownTimezone, "Use a timezone name like Europe/Istanbul or UTC"),
   slots: z
     .array(z.string().regex(TIME_RE, "Use HH:mm").or(z.literal("")))
     .length(SLOT_COUNT),
@@ -42,130 +55,6 @@ const ScheduleSchema = z.object({
 // scheduler-service.ts and approval-decisions.ts's
 // publishNextQueuedInstagramCreative.
 const PUBLISH_QUEUE_MODE = "PUBLISH_NEXT_READY";
-
-// The marker that tells SchedulerService.runDueSchedules to run the fully
-// autonomous weekly Instagram planner — see instagram-week-planner.ts.
-const AUTO_PLAN_GRID_WEEK_MODE = "AUTO_PLAN_GRID_WEEK";
-const AUTO_PLAN_DAY_RE = /^[0-6]$/;
-
-const AutoContentPlanSchema = z.object({
-  projectId: z.string().min(1),
-  enabled: z.boolean(),
-  timezone: z.string().min(1),
-  dayOfWeek: z.string().regex(AUTO_PLAN_DAY_RE, "Invalid day"),
-  time: z.string().regex(TIME_RE, "Use HH:mm"),
-  dailyImageCap: z.coerce.number().int().min(1).max(10),
-  // Content-mix weights (spec: ContentProgram), one per DEFAULT_LENS_MIX
-  // lens — the same 6-lens set idea generation's own diversity default
-  // already uses, rather than exposing all 16 CreativeLens values. All-zero
-  // (the default) means "no mix configured", preserving the original pure
-  // nbaScore-ranked behavior — see instagram-week-planner.ts's
-  // selectIdeasForWeek.
-  lensWeights: z.record(z.string(), z.coerce.number().min(0).max(10)),
-});
-
-// Settings → Publishing "Auto content planning" card's action — one
-// ProjectSchedule row (capability CREATE_CONTENT_PLAN, configuration.mode
-// AUTO_PLAN_GRID_WEEK), the same one-row-per-project shape as the
-// Instagram publish schedule but with a single weekly cron instead of up
-// to 3 daily slots. Off by default: creating this action does not create
-// the row until the user explicitly enables and saves.
-export async function updateAutoContentPlanScheduleAction(
-  formData: FormData,
-): Promise<ActionResult> {
-  try {
-    const projectId = String(formData.get("projectId"));
-    const lensWeights = Object.fromEntries(
-      DEFAULT_LENS_MIX.map((lens) => [
-        lens,
-        formData.get(`lensWeight_${lens}`) ?? 0,
-      ]),
-    );
-    const parsed = AutoContentPlanSchema.parse({
-      projectId,
-      enabled: formData.get("enabled") === "on",
-      timezone: String(formData.get("timezone") ?? "").trim() || "UTC",
-      dayOfWeek: String(formData.get("dayOfWeek") ?? "1"),
-      time: String(formData.get("time") ?? "").trim() || "09:00",
-      dailyImageCap: formData.get("dailyImageCap") ?? 3,
-      lensWeights,
-    });
-    const lensMix: ContentMix = Object.fromEntries(
-      Object.entries(parsed.lensWeights).filter(([, weight]) => weight > 0),
-    ) as ContentMix;
-
-    const { userId } = await requireUser();
-    const access = await requireProjectAccess(userId, projectId);
-
-    const [hour, minute] = parsed.time.split(":");
-    const cronExpression = `${minute} ${hour} * * ${parsed.dayOfWeek}`;
-    const nextRunAt = computeNextRunAt({
-      scheduleType: "CRON",
-      cronExpression,
-      timezone: parsed.timezone,
-      configuration: null,
-    });
-
-    const existing = await prisma.projectSchedule.findFirst({
-      where: {
-        projectId,
-        capability: "CREATE_CONTENT_PLAN",
-        configuration: { path: ["mode"], equals: AUTO_PLAN_GRID_WEEK_MODE },
-      },
-      select: { id: true },
-    });
-
-    const configuration = {
-      mode: AUTO_PLAN_GRID_WEEK_MODE,
-      dailyImageCap: parsed.dailyImageCap,
-      ...(Object.keys(lensMix).length > 0 ? { lensMix } : {}),
-    };
-
-    if (existing) {
-      await prisma.projectSchedule.update({
-        where: { id: existing.id },
-        data: {
-          cronExpression,
-          timezone: parsed.timezone,
-          enabled: parsed.enabled,
-          nextRunAt,
-          configuration,
-        },
-      });
-    } else {
-      await prisma.projectSchedule.create({
-        data: {
-          workspaceId: access.workspaceId,
-          projectId,
-          brandId: access.defaultBrandId,
-          name: "Auto Instagram content planning — weekly",
-          capability: "CREATE_CONTENT_PLAN",
-          scheduleType: "CRON",
-          cronExpression,
-          timezone: parsed.timezone,
-          configuration,
-          enabled: parsed.enabled,
-          nextRunAt,
-        },
-      });
-    }
-
-    await AuditLogRepository.record({
-      workspaceId: access.workspaceId,
-      projectId,
-      actorType: "USER",
-      actorId: userId,
-      action: "auto_content_plan_schedule.updated",
-      entityType: "ProjectSchedule",
-      entityId: projectId,
-    });
-
-    revalidatePath(`/projects/${projectId}`);
-    return { ok: true };
-  } catch (error) {
-    return fail(error);
-  }
-}
 
 export async function updateInstagramPublishScheduleAction(
   formData: FormData,

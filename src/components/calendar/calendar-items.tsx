@@ -3,22 +3,34 @@
 import { memo, type DragEvent, type MouseEvent } from "react";
 import { GripVertical, Lock } from "lucide-react";
 
+import type { PostEntry } from "@/lib/calendar/posts";
 import { STAGE_META } from "@/lib/calendar/stage";
 import type { CalendarItem } from "@/lib/calendar/types";
 import { cn } from "@/lib/utils";
 
-import { ItemThumb, StageIcon, StagePill, TONE_BORDER } from "./calendar-bits";
+import {
+  DeliveryMarks,
+  ItemThumb,
+  StageIcon,
+  StagePill,
+  TONE_BORDER,
+  deliveriesText,
+} from "./calendar-bits";
 
 // Panodaki bir parça: sunucu verisi + yalnız istemcide anlamlı "taşınıyor" işareti.
 export type BoardItem = CalendarItem & { pending?: boolean };
 
+// Panodaki bir kart: bir post (bütün mecra teslimatlarıyla) ya da postu
+// olmayan tek parça. Kimliği ilk teslimatındır (adres, sürükleme, detay).
+export type BoardEntry = PostEntry<BoardItem>;
+
 export type DragHandlers = {
-  onDragStart: (event: DragEvent, item: BoardItem) => void;
+  onDragStart: (event: DragEvent, item: BoardEntry) => void;
   onDragEnd: () => void;
 };
 
 type ChipProps = {
-  item: BoardItem;
+  item: BoardEntry;
   // Yeni sekmede açma ve sağ tık için gerçek bir adres (?creative=).
   href: string;
   active: boolean;
@@ -30,26 +42,41 @@ type ChipProps = {
 };
 
 // Başlığı olmayan parçada kısa metin ya da etiket gösterilir.
-function headline(item: BoardItem): string {
+function headline(item: BoardEntry): string {
   return item.title ?? item.preview ?? item.label;
 }
 
+// Birden çok mecralı post: kartta etiket yerine mecra simgeleri durur.
+function isMulti(item: BoardEntry): boolean {
+  return item.deliveries.length > 1;
+}
+
 // Fare üstüne gelince okunan tam durum cümlesi.
-function tooltip(item: BoardItem): string {
+function tooltip(item: BoardEntry): string {
   const meta = STAGE_META[item.stage];
   const when =
     item.localDay && item.localTime
       ? `${item.localDay} ${item.localTime}`
       : "No day yet";
-  return [
-    headline(item),
-    `${item.label} · ${when}`,
-    `${meta.label}${item.reason ? ` — ${item.reason}` : ""}`,
-  ].join("\n");
+  const status = `${meta.label}${item.reason ? ` — ${item.reason}` : ""}`;
+  if (isMulti(item)) {
+    return [
+      headline(item),
+      `${when} · ${status}`,
+      ...item.deliveries.map(
+        (delivery) =>
+          `${delivery.label}: ${STAGE_META[delivery.stage].label}`,
+      ),
+    ].join("\n");
+  }
+  return [headline(item), `${item.label} · ${when}`, status].join("\n");
 }
 
-function ariaLabel(item: BoardItem): string {
+function ariaLabel(item: BoardEntry): string {
   const when = item.localTime ? `, ${item.localTime}` : "";
+  if (isMulti(item)) {
+    return `${headline(item)}${when}, ${STAGE_META[item.stage].label}. ${deliveriesText(item.deliveries)}`;
+  }
   return `${headline(item)}, ${item.label}${when}, ${STAGE_META[item.stage].label}`;
 }
 
@@ -75,7 +102,7 @@ function openOnPlainClick(
   onOpen(id);
 }
 
-function dragProps(item: BoardItem, drag: DragHandlers) {
+function dragProps(item: BoardEntry, drag: DragHandlers) {
   return {
     draggable: item.movable,
     onDragStart: (event: DragEvent) => drag.onDragStart(event, item),
@@ -113,17 +140,35 @@ export const CompactChip = memo(function CompactChip({
       <ItemThumb
         assetId={item.assetId}
         source={item.source}
+        badge={!isMulti(item)}
         className="size-6"
       />
       <span className="min-w-0 flex-1">
         <span className="block truncate font-medium">{headline(item)}</span>
-        <span className="block truncate text-[10px] text-muted-foreground">
-          {item.overdue ? (
-            <span className="font-medium text-destructive">Overdue · </span>
-          ) : null}
-          {item.localTime ? `${item.localTime} · ` : ""}
-          {item.label}
-        </span>
+        {isMulti(item) ? (
+          <span className="flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground">
+            {item.overdue ? (
+              <span className="shrink-0 font-medium text-destructive">
+                Overdue ·
+              </span>
+            ) : null}
+            {item.localTime ? (
+              <span className="shrink-0">{item.localTime} ·</span>
+            ) : null}
+            <DeliveryMarks
+              deliveries={item.deliveries}
+              ringClassName="ring-card"
+            />
+          </span>
+        ) : (
+          <span className="block truncate text-[10px] text-muted-foreground">
+            {item.overdue ? (
+              <span className="font-medium text-destructive">Overdue · </span>
+            ) : null}
+            {item.localTime ? `${item.localTime} · ` : ""}
+            {item.label}
+          </span>
+        )}
       </span>
       <StageIcon stage={item.stage} />
     </a>
@@ -161,14 +206,27 @@ export const RichCard = memo(function RichCard({
         <ItemThumb
           assetId={item.assetId}
           source={item.source}
+          badge={!isMulti(item)}
           className="size-10"
         />
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-medium">{headline(item)}</p>
-          <p className="truncate text-[11px] text-muted-foreground">
-            {item.localTime ? `${item.localTime} · ` : ""}
-            {item.label}
-          </p>
+          {isMulti(item) ? (
+            <p className="mt-0.5 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+              {item.localTime ? (
+                <span className="shrink-0">{item.localTime} ·</span>
+              ) : null}
+              <DeliveryMarks
+                deliveries={item.deliveries}
+                ringClassName="ring-card"
+              />
+            </p>
+          ) : (
+            <p className="truncate text-[11px] text-muted-foreground">
+              {item.localTime ? `${item.localTime} · ` : ""}
+              {item.label}
+            </p>
+          )}
         </div>
         {item.movable ? (
           <GripVertical
@@ -229,6 +287,7 @@ export const TrayCard = memo(function TrayCard({
       <ItemThumb
         assetId={item.assetId}
         source={item.source}
+        badge={!isMulti(item)}
         className="size-8"
       />
       <span className="min-w-0 flex-1">
@@ -237,7 +296,14 @@ export const TrayCard = memo(function TrayCard({
         </span>
         <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
           <StageIcon stage={item.stage} className="size-3" />
-          <span className="truncate">{STAGE_META[item.stage].label}</span>
+          {isMulti(item) ? (
+            <DeliveryMarks
+              deliveries={item.deliveries}
+              ringClassName="ring-card"
+            />
+          ) : (
+            <span className="truncate">{STAGE_META[item.stage].label}</span>
+          )}
         </span>
       </span>
     </a>

@@ -19,6 +19,8 @@ const store = {
 const tx = {
   command: { findUnique: vi.fn(), update: vi.fn(), create: vi.fn() },
   creative: { create: vi.fn() },
+  // One Post per post of the plan (save-plan-core createPostsInTx).
+  post: { create: vi.fn(async () => ({ id: "post-1" })) },
 };
 const transaction = vi.fn<
   (fn: (t: typeof tx) => unknown, opts?: unknown) => unknown

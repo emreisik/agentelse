@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/server/actions/plan-progress-actions", () => ({
   getPlanResultsAction: vi.fn(),
 }));
+vi.mock("@/server/actions/post-result-actions", () => ({
+  recordPostVerdictAction: vi.fn(),
+}));
 
 const { PlanResultsList } = await import("./plan-results-dialog");
 

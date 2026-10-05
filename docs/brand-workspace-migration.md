@@ -55,15 +55,15 @@ Repo içinde "Brand Workspace" veya "workspace v2" terimine dair **hiçbir önce
 
 ### 3.3 İkincil / "Advanced" adayları (şu an Tools dropdown'da)
 
-| Öğe                                                                 | Sınıflandırma                                         | Not                                                                                                     |
-| ------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Setup panel + `setup-stage-show.tsx` + `setup-progress-widget.tsx`  | KEEP (davranış zaten doğru)                           | Aktivasyon öncesi ambient FAB, sonrasında Tools dropdown içinde kalıyor — dokunulmuyor                  |
-| Signals panel + `signals-list-filters.tsx`                          | **Brand Brain → Intelligence sekmesi** (taşındı)      | Ham sinyal verisi, Findings / Insights / Opportunities ile aynı sekmede (bkz. §7)                        |
-| Insights & Opportunities panel                                      | **Brand Brain → Intelligence sekmesi** (taşındı)      | Finding → Insight → Opportunity zinciri tek sekmede                                                      |
-| Goals panel                                                         | **Brand Brain → Goals sekmesi** (taşındı)             | Her sohbet turunda markanın `currentFocus`u olan hedefler; onay rozeti Brand Brain girdisinde            |
-| Departments panel                                                   | **MOVE TO ADVANCED**                                  | Ajans-içi konfigürasyon, client-facing değil                                                            |
-| Settings panel (autonomy/publishing/decisions/activity/risk)        | **MOVE TO ADVANCED**                                  | Zaten config amaçlı, mevcut konumunu resmileştiriyoruz                                                  |
-| `project-tools-menu.tsx` (System/Insight Chain/Production grupları) | **EXTEND** → kalıcı "Advanced" alanına dönüştürülecek | Geçici dropdown yerine kendi route'u olan bir bölüm                                                     |
+| Öğe                                                                 | Sınıflandırma                                         | Not                                                                                           |
+| ------------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Setup panel + `setup-stage-show.tsx` + `setup-progress-widget.tsx`  | KEEP (davranış zaten doğru)                           | Aktivasyon öncesi ambient FAB, sonrasında Tools dropdown içinde kalıyor — dokunulmuyor        |
+| Signals panel + `signals-list-filters.tsx`                          | **Brand Brain → Intelligence sekmesi** (taşındı)      | Ham sinyal verisi, Findings / Insights / Opportunities ile aynı sekmede (bkz. §7)             |
+| Insights & Opportunities panel                                      | **Brand Brain → Intelligence sekmesi** (taşındı)      | Finding → Insight → Opportunity zinciri tek sekmede                                           |
+| Goals panel                                                         | **Brand Brain → Goals sekmesi** (taşındı)             | Her sohbet turunda markanın `currentFocus`u olan hedefler; onay rozeti Brand Brain girdisinde |
+| Departments panel                                                   | **MOVE TO ADVANCED**                                  | Ajans-içi konfigürasyon, client-facing değil                                                  |
+| Settings panel (autonomy/publishing/decisions/activity/risk)        | **MOVE TO ADVANCED**                                  | Zaten config amaçlı, mevcut konumunu resmileştiriyoruz                                        |
+| `project-tools-menu.tsx` (System/Insight Chain/Production grupları) | **EXTEND** → kalıcı "Advanced" alanına dönüştürülecek | Geçici dropdown yerine kendi route'u olan bir bölüm                                           |
 
 ### 3.4 Altyapı / routing katmanı
 
@@ -345,9 +345,9 @@ Silinenler: `/izgara` route'u (`page.tsx`), `grid-split-studio.tsx`, `creative-g
 
 Sidebar'daki "Insights" grubu (Signals, Insights & Opportunities, Goals) kalktı; üç panel Brand Brain'in sekmeleri oldu, böylece markayla ilgili bilinen her şey tek yerde:
 
-| Sekme | İçerik | Eski panel |
-| --- | --- | --- |
-| **Goals** | Hedefler; onay bekleyenler üstte (Approve / Reject / Edit). PROPOSED sayısı sekmede ve sidebar'daki Brand Brain girdisinde rozet. | Goals |
+| Sekme            | İçerik                                                                                                                                                                                                                                                                             | Eski panel                        |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| **Goals**        | Hedefler; onay bekleyenler üstte (Approve / Reject / Edit). PROPOSED sayısı sekmede ve sidebar'daki Brand Brain girdisinde rozet.                                                                                                                                                  | Goals                             |
 | **Intelligence** | Findings, Insights, Opportunities, Signals bölümleri (`<details>`); hepsi boşsa "Nothing gathered yet" kartı (ajandan araştırma iste, Meta Ads / GA bağla). "Scan intensity" yalnızca `LEGACY_AGENCY_LOOP=on` iken görünür (taramanın sıklığını belirler; `drain/off`ta işlevsiz). | Signals, Insights & Opportunities |
 
 Brand Brain sekme sırası: `assets, rules, visual-identity, constitution, goals, strategy, decisions, intelligence, evidence, learnings` (`BRAND_BRAIN_SUB_KEYS`). Bir kayıt (signal, finding, insight, opportunity, goal) kendi sekmesinde açılır (`ENTITY_PANEL` hepsi `brand-brain`, `ENTITY_SUB` sekmeyi söyler; `entityHref` kullanır).
@@ -362,9 +362,10 @@ Bilinen sınırlar: Goals sekmesinde onaylamak setup'ın GOAL_GENERATION aşamas
 
 Sidebar'daki "System" grubu (Setup, Departments, Human Action, Settings) kaldırıldı. Sidebar artık: Agency Desk, Create (Brand Brain, Ideas, Work, Library, Content Calendar), Channels (Ads Manager, Connectors) ve altta başlıksız tek satır **Settings**. Works açıkken (ChatGPT düzeni, docs/works.md): en üstte **New Chat**, sonra Create ve Channels, sonra kalan yüksekliği dolduran ve kendi içinde kayan **Recents**, en altta Settings; Agency Desk ve Today yok, proje her zaman yeni sohbetle açılır.
 
+_Güncelleme (4 Eki 2026): Üst bar ve **Advanced** menüsü (`workspace-top-bar.tsx`, `project-tools-menu.tsx`) kalktı. Task log ve Settings artık sidebar'daki **••• Explore** menüsünde (docs/works.md). Setup'a kurulum sürerken sidebar'daki ilerleme rozetinden gidilir. Aşağıdaki maddeler 30 Eylül'deki durumu anlatır._
+
 - **Setup, Departments, Human Action** yalnızca başlıktaki **Advanced** menüsünde (rozet noktasıyla; `ADVANCED_PANEL_KEYS`, `project-tools-menu.tsx`, `project-tools-menu.test.ts` ikisinin senkronunu sabitler). Erişim kesilmedi.
 - **Settings** sidebar'da kalıyor, çünkü yayın saatleri (Publishing), harcama tavanları ve Autopilot (Autonomy), aktivite/harcama dökümü ve proje silme (Danger Zone) yalnızca orada; içerik yolculuğunun "Turn on scheduled posting" adımının yazdığı slotlar da yalnızca orada düzenlenir. Advanced menüsünde de durur.
 - **Departments** ölüye yakın (mod ayarı neredeyse hiçbir şeyi etkilemiyor, yeni projede veri yok) ama silinmedi: composer "+" menüsündeki Departments grubu ve eski bağlantılar çalışır.
 
 **Bilinen açık (ayrı iş):** `human-action-required` kartı SYSTEM satırı olarak yazılıyor ama Agency Desk yalnızca WEB satırlarını, creative-ready ve paket satırlarını yüklüyor; bu yüzden OTP/CAPTCHA/MANUAL_BROWSER isteğini çözmenin tek yolu Human Action paneli (Advanced menüsü + rozet) ve workspace geneli `/human-actions` sayfası. Bekleyen istekleri Agency Desk'e onay kartı gibi basmak ayrı yapılacak; o zaman panel gereksizleşir. Ayrıca derin araştırmanın (ENRICHMENT) hedef onayı ve başarısız aşamayı yeniden deneme yalnızca Setup panelinde yapılabiliyor; Setup'a giden yol (top-bar rozeti, sağ-alt FAB, Advanced menüsü) korunmalı.
-

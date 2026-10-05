@@ -31,10 +31,10 @@ describe("creativeFieldsOfPlanItem", () => {
   });
   it("keeps an unknown legacy platform with the format folded into the brief", () => {
     expect(
-      creativeFieldsOfPlanItem({ ...base, platform: "FACEBOOK", format: "Photo" }),
+      creativeFieldsOfPlanItem({ ...base, platform: "YOUTUBE", format: "Photo" }),
     ).toEqual({
       type: "SOCIAL_POST",
-      platform: "FACEBOOK",
+      platform: "YOUTUBE",
       channel: undefined,
       formatKey: undefined,
       title: "T",

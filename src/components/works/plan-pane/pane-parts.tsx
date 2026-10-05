@@ -182,26 +182,36 @@ export function PlanStepper({
   );
 }
 
-// The channels a plan goes to: a box, the platform's own mark and its name. A
-// channel with no account connected is dashed with a "+" that goes to connect
-// it; it can still be ticked (the posts are made, publishing waits).
+// The channels a plan goes to: only the accounts this project has connected,
+// each an equal tile (box, the platform's mark, its name and the connected
+// account). More are added from Accounts. A ticked channel that is not
+// connected (the plan's Instagram default before anything is connected) stays
+// visible, so nothing chosen is ever hidden; its tile offers to connect it.
 export function ChannelChips({
   active,
   connected,
   locked,
   onToggle,
+  story,
   connectHrefOf,
+  accountOf,
 }: {
   active: readonly ChannelKey[];
   connected: readonly ChannelKey[];
   // A saved plan: the choice is made.
   locked: boolean;
   onToggle: (key: ChannelKey) => void;
+  // "+ Story" on the Instagram tile: each post also goes out as a Story.
+  story?: { on: boolean; onToggle: () => void };
   connectHrefOf: (key: ChannelKey) => string;
+  // The connected account's name ("@biduniq", the Page's name).
+  accountOf: (key: ChannelKey) => string | undefined;
 }) {
-  const shown = locked
-    ? SOCIAL_PLATFORMS.filter((key) => active.includes(key))
-    : SOCIAL_PLATFORMS;
+  const shown = SOCIAL_PLATFORMS.filter((key) =>
+    locked
+      ? active.includes(key)
+      : connected.includes(key) || active.includes(key),
+  );
   return (
     <div className="space-y-2">
       <div className="flex items-baseline justify-between gap-3">
@@ -218,16 +228,17 @@ export function ChannelChips({
       <div
         role="group"
         aria-label={COPY.channelsAria}
-        className="flex flex-wrap gap-2"
+        className="grid grid-cols-1 gap-2 sm:grid-cols-2"
       >
         {shown.map((key) => {
           const on = active.includes(key);
           const linked = connected.includes(key);
+          const account = linked ? accountOf(key) : undefined;
           return (
             <div
               key={key}
               className={cn(
-                "inline-flex min-h-10 items-center rounded-xl border transition-colors",
+                "flex h-14 min-w-0 items-center rounded-xl border transition-colors",
                 !linked && "border-dashed",
               )}
               style={{
@@ -241,10 +252,7 @@ export function ChannelChips({
                 aria-checked={on}
                 disabled={locked}
                 onClick={() => onToggle(key)}
-                className={cn(
-                  "inline-flex min-h-10 items-center gap-2 rounded-xl pl-2.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default",
-                  linked || locked ? "pr-3" : "pr-1.5",
-                )}
+                className="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-xl px-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default"
                 style={{ color: "var(--ws-text)" }}
               >
                 <span
@@ -262,15 +270,60 @@ export function ChannelChips({
                 >
                   {on ? <Check className="size-3" strokeWidth={3} /> : null}
                 </span>
-                <ChannelMark channel={key} decorative className="size-5" />
-                {CHANNELS[key].label}
+                <ChannelMark
+                  channel={key}
+                  decorative
+                  className="size-6 shrink-0"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm leading-tight font-medium">
+                    {CHANNELS[key].label}
+                  </span>
+                  <span
+                    className="block truncate text-xs leading-tight"
+                    style={{ color: "var(--ws-text-2)" }}
+                  >
+                    {linked ? (account ?? COPY.connected) : COPY.notConnected}
+                  </span>
+                </span>
               </button>
+              {key === "instagram" && on && story && (!locked || story.on) ? (
+                <button
+                  type="button"
+                  aria-pressed={story.on}
+                  aria-label={COPY.storyAria}
+                  title={COPY.storyAria}
+                  disabled={locked}
+                  onClick={story.onToggle}
+                  className="mr-2 inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default"
+                  style={
+                    story.on
+                      ? {
+                          background: "var(--ws-text)",
+                          borderColor: "var(--ws-text)",
+                          color: "var(--ws-surface)",
+                        }
+                      : {
+                          background: "var(--ws-surface)",
+                          borderColor: "var(--ws-border)",
+                          color: "var(--ws-text-2)",
+                        }
+                  }
+                >
+                  {story.on ? (
+                    <Check aria-hidden className="size-3" strokeWidth={3} />
+                  ) : (
+                    <Plus aria-hidden className="size-3" />
+                  )}
+                  {COPY.story}
+                </button>
+              ) : null}
               {!linked && !locked ? (
                 <Link
                   href={connectHrefOf(key)}
                   aria-label={COPY.connectChannel(CHANNELS[key].label)}
                   title={COPY.connectChannel(CHANNELS[key].label)}
-                  className="mr-1 grid size-8 place-items-center rounded-lg outline-none hover:bg-[var(--ws-hover)] focus-visible:ring-2 focus-visible:ring-ring/50"
+                  className="mr-2 grid size-8 shrink-0 place-items-center rounded-lg outline-none hover:bg-[var(--ws-surface)] focus-visible:ring-2 focus-visible:ring-ring/50"
                   style={{ color: "var(--ws-text-2)" }}
                 >
                   <Plus aria-hidden className="size-3.5" />

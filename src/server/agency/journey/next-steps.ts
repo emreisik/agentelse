@@ -2,12 +2,15 @@ import {
   PLAN_RUNWAY_DAYS,
   addDaysKey,
   channelLabel,
+  MAX_POSTS_PER_RUN,
+  postCountOf,
   publishesItself,
   type JourneyItem,
   type JourneySnapshot,
   type NextStep,
 } from "@/lib/journey";
 import { CHANNELS } from "@/lib/content-channels";
+import { WEEKLY_DRAFT_COPY } from "@/lib/weekly-draft";
 
 import { selectProductionBatch } from "./plan-progress";
 
@@ -35,9 +38,57 @@ function isManualNow(item: JourneyItem, snapshot: JourneySnapshot): boolean {
   );
 }
 
+// The weekly plan draft waits in its own chat: open it.
+function weeklyDraftStep(draft: { workId: string; count: number }): NextStep {
+  return {
+    key: "weekly-draft",
+    tone: "next",
+    label: WEEKLY_DRAFT_COPY.stepLabel,
+    title: WEEKLY_DRAFT_COPY.stepTitle(draft.count),
+    action: { kind: "open_weekly_draft", workId: draft.workId, count: draft.count },
+  };
+}
+
+// Published posts waiting for the owner's "Worked / Didn't work".
+function verdictStep(awaiting: number): NextStep {
+  return {
+    key: "results",
+    tone: "next",
+    label: `See results (${awaiting})`,
+    title: `${count(awaiting, "published post is", "published posts are")} waiting for your verdict: did it work?`,
+    action: { kind: "show_results", count: awaiting },
+  };
+}
+
+// Ideas waiting in the pool and no plan to put them in: plan from them.
+function planFromIdeasStep(pool: number): NextStep {
+  return {
+    key: "plan-from-ideas",
+    tone: "next",
+    label: "Plan from ideas",
+    title: `${count(pool, "idea is", "ideas are")} ready in the idea pool.`,
+    action: { kind: "plan_from_ideas", count: pool },
+  };
+}
+
 export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
   const { items, today } = snapshot;
-  if (items.length === 0) return [];
+  const pool = snapshot.ideaPool ?? 0;
+  const draft = snapshot.weeklyDraft;
+  const awaiting = snapshot.awaitingVerdict ?? 0;
+  // A drafted week stands in for "plan from ideas" and "plan the next weeks":
+  // the plan is already made, it only waits for the owner. A chat that holds
+  // an unsaved draft of its own is not offered a new plan either (it would
+  // replace the draft). Published posts waiting for a verdict are asked about
+  // in every chat.
+  if (items.length === 0) {
+    const lead = draft
+      ? [weeklyDraftStep(draft)]
+      : pool > 0 && !snapshot.openDraftHere
+        ? [planFromIdeasStep(pool)]
+        : [];
+    return awaiting > 0 ? [...lead, verdictStep(awaiting)] : lead;
+  }
 
   const steps: NextStep[] = [];
   const at = (stage: JourneyItem["stage"]) =>
@@ -56,7 +107,7 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
       key: "produce-retry",
       tone: "blocker",
       label: "Try again",
-      title: `${count(failed.length, "piece", "pieces")} could not be made.`,
+      title: `${count(postCountOf(failed), "post", "posts")} could not be made.`,
       action: {
         kind: "produce_plan",
         planId: batch[0]!.planId,
@@ -74,8 +125,8 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
     steps.push({
       key: "publish-manual",
       tone: "blocker",
-      label: `Publish ${dueManual.length}`,
-      title: `${count(dueManual.length, "piece is", "pieces are")} yours to post today.`,
+      label: `Publish ${postCountOf(dueManual)}`,
+      title: `${count(postCountOf(dueManual), "post is", "posts are")} yours to post today.`,
       action: {
         kind: "publish_manual",
         creativeIds: dueManual.map((item) => item.id),
@@ -94,12 +145,15 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
       .filter((item) => planIds.includes(item.planId))
       .slice(0, MAX_APPROVE_PIECES)
       .map((item) => item.id);
-    if (creativeIds.length >= 2) {
+    const posts = postCountOf(
+      inReview.filter((item) => creativeIds.includes(item.id)),
+    );
+    if (creativeIds.length >= 2 && posts >= 2) {
       steps.push({
         key: "approve",
         tone: "next",
-        label: `Approve ${creativeIds.length}`,
-        title: `${creativeIds.length} pieces are ready. Approve them in one go.`,
+        label: `Approve ${posts}`,
+        title: `${posts} posts are ready. Approve them in one go.`,
         action: {
           kind: "approve_plan",
           planIds,
@@ -114,8 +168,8 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
     steps.push({
       key: "review",
       tone: "next",
-      label: `Review ${inReview.length}`,
-      title: `${count(inReview.length, "piece is", "pieces are")} ready for your decision.`,
+      label: `Review ${postCountOf(inReview)}`,
+      title: `${count(postCountOf(inReview), "post is", "posts are")} ready for your decision.`,
       action: {
         kind: "review_queue",
         creativeId: inReview[0]!.id,
@@ -131,8 +185,8 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
     steps.push({
       key: "produce",
       tone: "next",
-      label: `Produce ${batch.length}`,
-      title: `${count(batch.length, "planned piece has", "planned pieces have")} no content yet${span}.`,
+      label: `Produce ${Math.min(postCountOf(batch), MAX_POSTS_PER_RUN)}`,
+      title: `${count(postCountOf(batch), "planned post has", "planned posts have")} no content yet${span}.`,
       action: {
         kind: "produce_plan",
         planId: batch[0]!.planId,
@@ -196,15 +250,20 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
     .filter(Boolean)
     .sort();
   const lastDate = dates[dates.length - 1];
-  if (lastDate && lastDate <= addDaysKey(today, PLAN_RUNWAY_DAYS)) {
+  if (draft) {
+    steps.push(weeklyDraftStep(draft));
+  } else if (lastDate && lastDate <= addDaysKey(today, PLAN_RUNWAY_DAYS)) {
     steps.push({
       key: "plan-next",
       tone: "next",
       label: "Plan the next weeks",
       title:
-        lastDate < today
+        (lastDate < today
           ? "Your plan has ended."
-          : `Your plan runs until ${lastDate}.`,
+          : `Your plan runs until ${lastDate}.`) +
+        (pool > 0
+          ? ` ${count(pool, "idea is", "ideas are")} ready in the pool.`
+          : ""),
       action: { kind: "plan_next", afterDate: lastDate },
     });
   }
@@ -212,7 +271,11 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
   // What the measurement loop has to say about pieces that went out. Last on
   // purpose: informative, never the thing standing between the plan and its
   // next piece.
-  if (snapshot.results.length > 0) {
+  // Published posts the owner has not judged yet come first: their verdict is
+  // what the brand learns from (post-results.ts).
+  if (awaiting > 0) {
+    steps.push(verdictStep(awaiting));
+  } else if (snapshot.results.length > 0) {
     const n = snapshot.results.length;
     steps.push({
       key: "results",

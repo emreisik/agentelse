@@ -145,6 +145,8 @@ describe("nextStepHref", () => {
       "enable_scheduled_publish",
       "publish_manual",
       "plan_next",
+      "plan_from_ideas",
+      "open_weekly_draft",
       "show_results",
     ];
     expect([...NEXT_STEP_KINDS].sort()).toEqual([...kinds].sort());

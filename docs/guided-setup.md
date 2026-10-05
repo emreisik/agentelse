@@ -12,11 +12,11 @@ Ekranın ortasında açılan bir pencere (Base UI Drawer üzerinde): yazı yazma
 
 **Güven eşikleri:** model her alan için skor ve kanıt türü (`site`, `web`, `both`, `inferred`) bildirir; sunucu skora tek başına güvenmez, kanıta göre tavanlar: `inferred` 70, `site` 90, `web` 90, `both` 100.
 
-| Skor | Katman | Ne olur |
-| ---- | ------ | ------- |
-| 85 ve üstü | Found (accepted) | Otomatik kabul, dossier'ye yazılır |
-| 60-84 | Check (assumed) | Varsayım olarak gösterilir, yazılmaz; "+" çipi ile eklenir; onboarding'i asla durdurmaz |
-| 60 altı | Not found (unknown) | Boş bırakılır; bu turda soru sorulmaz |
+| Skor       | Katman              | Ne olur                                                                                 |
+| ---------- | ------------------- | --------------------------------------------------------------------------------------- |
+| 85 ve üstü | Found (accepted)    | Otomatik kabul, dossier'ye yazılır                                                      |
+| 60-84      | Check (assumed)     | Varsayım olarak gösterilir, yazılmaz; "+" çipi ile eklenir; onboarding'i asla durdurmaz |
+| 60 altı    | Not found (unknown) | Boş bırakılır; bu turda soru sorulmaz                                                   |
 
 `approvedClaims` her zaman boştur; web'den gelen hiçbir şey iddia, kural ya da bellek satırı olmaz.
 
@@ -99,7 +99,7 @@ Sayaç satırları (`guided_setup.discovery.started`) **çalışma alanı düzey
 
 ### Sahip kapıları (açmadan önce)
 
-- P0 dağıtımdaki değerleri oku (`CHAT_ENGINE`, `OPENAI_CREDIT_BALANCE`) ve OpenAI projesinde **sert aylık limit** olduğunu doğrula.
+- P0 dağıtımdaki `CHAT_ENGINE` değerini oku, kalan krediye OpenAI panelinden bak (`OPENAI_CREDIT_BALANCE` 4 Eki 2026'da kalktı) ve OpenAI projesinde **sert aylık limit** olduğunu doğrula.
 - P1 CI'da `store.integration.test.ts` ve `limits.integration.test.ts` yeşil (Postgres 16).
 - P2 Railway'de `after()` probu (60-150 sn iş, deploy sırasında SIGTERM).
 - P3 tek sandbox projede (Web Health değil) bir çalıştırma, `GUIDED_SETUP_DISCOVERY` = o çalışma alanının kimliği; `finished` DONE, süre ~75 sn altı, maliyet beklenen aralıkta.
@@ -118,12 +118,12 @@ Sheet'in kendi satırları sayfa alıntısı **saklamaz**; yalnızca seçilen se
 
 `GUIDED_SETUP` açıkken `/projects/new` ekranındaki ana düğme bir **onaydır**: sunucu, proje oluştuktan sonra yanıttan sonra (`after()`) şunları başlatır (`src/server/brand/intake-start.ts`). Düğmenin etiketi ve altındaki not, neyin başlayacağını söyleyen **aynı fonksiyondan** gelir (`src/lib/intake-offer.ts`): not yalnızca gerçekten harcama başlıyorsa "AI credit" der.
 
-| Durum | Düğme | Başlayan |
-| ----- | ----- | -------- |
-| Site yazılmadı | Create and continue | Hiçbir şey (not: "Add a website and we can also read…") |
-| Site var, gerçek model + OpenAI anahtarı | Create and read my website | Marka kimliği taraması |
-| Site var, ücretli araştırma da açık (`GUIDED_SETUP_DISCOVERY` bu çalışma alanını kapsıyor) | Create and set up with AI | Kimlik taraması + marka araştırması |
-| Mock mod ya da anahtar yok | Create and continue | Hiçbir şey |
+| Durum                                                                                      | Düğme                      | Başlayan                                                |
+| ------------------------------------------------------------------------------------------ | -------------------------- | ------------------------------------------------------- |
+| Site yazılmadı                                                                             | Create and continue        | Hiçbir şey (not: "Add a website and we can also read…") |
+| Site var, gerçek model + OpenAI anahtarı                                                   | Create and read my website | Marka kimliği taraması                                  |
+| Site var, ücretli araştırma da açık (`GUIDED_SETUP_DISCOVERY` bu çalışma alanını kapsıyor) | Create and set up with AI  | Kimlik taraması + marka araştırması                     |
+| Mock mod ya da anahtar yok                                                                 | Create and continue        | Hiçbir şey                                              |
 
 - **Kimlik taraması** (`src/server/brand/site-scan/auto-identity.ts`): Brand sekmesindeki "Scan site" ile aynı tarama (logo, renkler, fontlar, stil). Sonuç bir modalda onaya sunulmak yerine doğrudan marka kitine yazılır, ama **yalnızca hâlâ boş olan** yere: sizin koyduğunuz logo, renk, font ya da stil asla ezilmez (yazmadan hemen önce yeniden okunur). Her şey doluysa tarama hiç çalışmaz, maliyet yoktur. Sayfanın ya da modelin yazdığı hiçbir şeye güvenilmez: renkler altı haneli hex olarak, stil alanları listelerle doğrulanır, serbest metinler link/işaret/talimat taşıyorsa bütünüyle atılır, logo çözülüp yeniden kodlanır; ikon ya da sosyal görsel logo sayılmaz.
 - **Sınırlar:** bir proje otomatik olarak **bir kez** taranır; kullanıcı başına 10, çalışma alanı başına 20 otomatik tarama / 24 saat (çalışma alanı düzeyinde denetim satırları, proje silinince silinmez). Bir tarama yaklaşık 0,01–0,04 dolardır.

@@ -130,6 +130,20 @@ export function useRunNextStep({
       case "plan_next":
         onSend(`Plan the next two weeks, starting after ${action.afterDate}.`);
         return;
+      case "open_weekly_draft":
+        router.push(
+          `/projects/${projectId}?work=${encodeURIComponent(action.workId)}`,
+        );
+        return;
+      case "plan_from_ideas":
+        // The chat sees the pool (works-notes.ts) and links each post to its
+        // idea; a named idea is asked for by title and id.
+        onSend(
+          action.idea
+            ? `Plan a post from the pool idea "${action.idea.title}" (idea ${action.idea.id}).`
+            : "Plan the next week from the ideas in the idea pool.",
+        );
+        return;
       case "enable_scheduled_publish":
         startTransition(async () => {
           const result = await enablePlanPublishingAction(projectId);

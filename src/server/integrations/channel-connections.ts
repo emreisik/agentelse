@@ -1,5 +1,7 @@
 import "server-only";
 
+import { cache } from "react";
+
 import { prisma } from "@/lib/prisma";
 import type { ChannelConnections } from "@/lib/content-channels";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
@@ -10,7 +12,7 @@ import { META_PROVIDER } from "@/server/integrations/meta-client";
 // the plan never promises a destination that card would refuse. Blog/SEO is
 // left out on purpose: there is nothing to connect, it is always a hand-off.
 // Google Ads has no integration yet, so "ads" means the Meta Ads connection.
-export async function getChannelConnections(
+async function readChannelConnections(
   projectId: string,
 ): Promise<ChannelConnections> {
   const [targets, metaAds] = await Promise.all([
@@ -27,6 +29,7 @@ export async function getChannelConnections(
     targets.map((target) => [target.platform, target]),
   );
   const instagram = byPlatform.get("instagram");
+  const facebook = byPlatform.get("facebook");
   const tiktok = byPlatform.get("tiktok");
   const linkedin = byPlatform.get("linkedin");
   const x = byPlatform.get("x");
@@ -37,6 +40,14 @@ export async function getChannelConnections(
       accountLabel:
         instagram && "igUsername" in instagram && instagram.igUsername
           ? `@${instagram.igUsername}`
+          : undefined,
+    },
+    // The Page selected in the Facebook connection (its name is the label).
+    facebook: {
+      connected: facebook !== undefined,
+      accountLabel:
+        facebook && "accountLabel" in facebook
+          ? facebook.accountLabel
           : undefined,
     },
     tiktok: {
@@ -64,3 +75,8 @@ export async function getChannelConnections(
     },
   };
 }
+
+// Request-scoped (React cache): the chat page reads the connections from four
+// places (the page, the journey, the card overlays, the account card) and
+// they share one read. Outside a server render cache() is a pass-through.
+export const getChannelConnections = cache(readChannelConnections);

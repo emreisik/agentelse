@@ -847,15 +847,22 @@ async function materializeCreativeFromResult(
   const result = (rawResult ?? {}) as Record<string, unknown>;
   const isVariantResult = Array.isArray(result.alternatives);
 
+  // Set only on the branch below (Works, or a variants result) — a job
+  // outside Works never reads it, so `notify` on the approval created further
+  // down stays its default (true) for every job this didn't touch.
+  let unattended = false;
+
   // "Make 3 more" (variantsOnly) attaches to the piece already in review: it
   // must never reach the claim / Creative / Approval path below. The Task is
   // read only for a variants result (or with Works on, whose route is the only
-  // writer of the key), so every other job keeps today's exact queries.
+  // writer of the key), so every other job keeps today's exact queries — this
+  // adds a column to that same read, not a second one.
   if (isVariantResult || isWorksEnabled()) {
     const task = await prisma.task.findUnique({
       where: { id: job.taskId },
-      select: { payload: true },
+      select: { payload: true, createdByType: true },
     });
+    unattended = task?.createdByType === "SYSTEM";
     if (isVariantsOnly(task?.payload)) {
       const creativeId = planCreativeIdOf(task?.payload);
       const mainImage = generatedImageFrom(result.image);
@@ -1023,11 +1030,27 @@ async function materializeCreativeFromResult(
     throw error;
   }
 
+  // One post, one picture (docs/works.md "Posts"): a picture drawn for a
+  // delivery (not adapted from its post's) is the post's picture, the one its
+  // other formats adapt. Best-effort: the piece itself is already saved.
+  if (planSlot?.postId && asset && typeof result.adaptedFrom !== "string") {
+    await prisma.post
+      .update({
+        where: { id: planSlot.postId },
+        data: { pictureAssetId: asset.id },
+      })
+      .catch((error) =>
+        console.error("[execution-service] post picture not recorded:", error),
+      );
+  }
+
   // A Creative reaching IN_REVIEW is exactly what the Agency Desk's
   // decisions cards in the Agency Desk chat are for (spec sections 28/66) — without
   // this, generated creatives were invisible outside the project page.
   // Routed through ApprovalRepository.create (not a direct prisma call) so
-  // this also gets the same Telegram notification every other approval does.
+  // this also gets the same Telegram notification every other approval does —
+  // except a SYSTEM-created task (weekly-plan-produce.ts): the owner sees it
+  // in the chat, same as its post's own result.
   const approval = await ApprovalRepository.create({
     workspaceId: job.workspaceId,
     projectId: job.projectId,
@@ -1037,6 +1060,7 @@ async function materializeCreativeFromResult(
     entityId: creative.id,
     type: "CREATIVE_APPROVAL",
     requestedByType: "AI",
+    notify: !unattended,
   });
 
   // If the creative is linked to an idea (a work-plan chain, or a command

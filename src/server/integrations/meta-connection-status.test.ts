@@ -6,21 +6,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // connection that is not ACTIVE, and shows Facebook only for a Page selected in the
 // Facebook integration itself.
 
-const findUnique = vi.fn();
+const findMany = vi.fn();
 vi.mock("@/lib/prisma", () => ({
-  prisma: { integrationCredential: { findUnique } },
+  prisma: { integrationCredential: { findMany } },
 }));
 
 const { getPublishTargets } = await import("./meta-connection-status");
 
 const row = (status: string, metadata: unknown) => ({ status, metadata, accountLabel: null });
 
+// Rows per provider; a provider without an entry has no row. Answers the one
+// findMany the targets are read with, for the providers it asks for.
+function rowsByProvider(rows: Record<string, unknown>) {
+  findMany.mockImplementation(
+    async ({ where }: { where: { provider: { in: string[] } } }) =>
+      where.provider.in.flatMap((provider) =>
+        rows[provider] ? [{ provider, ...(rows[provider] as object) }] : [],
+      ),
+  );
+}
+
 // Instagram is the only provider with a row in these tests.
 function onlyInstagram(instagramRow: unknown) {
-  findUnique.mockImplementation(
-    async ({ where }: { where: { projectId_provider: { provider: string } } }) =>
-      where.projectId_provider.provider === "instagram" ? instagramRow : null,
-  );
+  rowsByProvider(instagramRow ? { instagram: instagramRow } : {});
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -92,14 +100,6 @@ describe("getPublishTargets: Instagram", () => {
     expect(await getPublishTargets("proj-1")).toEqual([]);
   });
 });
-
-// Rows per provider; a provider without an entry has no row.
-function rowsByProvider(rows: Record<string, unknown>) {
-  findUnique.mockImplementation(
-    async ({ where }: { where: { projectId_provider: { provider: string } } }) =>
-      rows[where.projectId_provider.provider] ?? null,
-  );
-}
 
 describe("getPublishTargets: Facebook", () => {
   const facebookPages = {

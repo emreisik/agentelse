@@ -78,11 +78,10 @@ describe("chipStates", () => {
     expect(by("tiktok").state).toBe("outside");
     expect(by("tiktok").connectHref).toBeUndefined();
   });
-  it("labels only seo as Website and never offers facebook or email", () => {
+  it("labels only seo as Website and never offers email", () => {
     expect(by("seo").label).toBe("Website");
     expect(by("instagram").label).toBe(CHANNELS.instagram.label);
     expect(CHANNELS.seo.label).not.toBe("Website");
-    expect(chips.map((c) => c.key as string)).not.toContain("facebook");
     expect(chips.map((c) => c.key as string)).not.toContain("email");
   });
 });
@@ -108,7 +107,8 @@ describe("fallbackAdaptation / toPlanItems", () => {
       { title: "Title", message: "Msg" },
     );
     expect(items).toEqual([
-      { date: "2026-10-05", time: "10:00", channel: "instagram", formatKey: "instagram.post", topic: "A", captionIdea: "B" },
+      // One idea, one post: every channel carries the master's title.
+      { date: "2026-10-05", time: "10:00", channel: "instagram", formatKey: "instagram.post", topic: "Title", captionIdea: "B" },
       { date: "2026-10-06", time: "11:00", channel: "linkedin", formatKey: "linkedin.post", topic: "Title", captionIdea: "Msg" },
     ]);
   });
@@ -119,7 +119,7 @@ describe("MasterContentArgsSchema", () => {
     expect(MasterContentArgsSchema.safeParse({ title: "a", message: "b" }).success).toBe(true);
     expect(MasterContentArgsSchema.safeParse({ title: "", message: "b" }).success).toBe(false);
     expect(MasterContentArgsSchema.safeParse({ title: "a", message: "b".repeat(601) }).success).toBe(false);
-    expect(MasterContentArgsSchema.safeParse({ title: "a", message: "b", channels: ["facebook"] }).success).toBe(false);
+    expect(MasterContentArgsSchema.safeParse({ title: "a", message: "b", channels: ["email"] }).success).toBe(false);
     expect(MasterContentArgsSchema.safeParse({ title: "a", message: "b", goal: "leads" }).success).toBe(true);
   });
   it("converts to JSON schema", () => {

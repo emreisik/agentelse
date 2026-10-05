@@ -43,8 +43,91 @@ const keys = (snapshot: JourneySnapshot) =>
   computeNextSteps(snapshot).map((step) => step.key);
 
 describe("computeNextSteps", () => {
+  it("counts a post's channels once (docs/works.md Posts)", () => {
+    const post = { postId: "post-1" };
+    const steps = computeNextSteps(
+      snap([
+        item("IN_REVIEW", "2026-10-03", post),
+        item("IN_REVIEW", "2026-10-03", { ...post, channel: "facebook" }),
+        item("IN_REVIEW", "2026-10-03", post),
+        item("PLANNED", "2026-10-04", { postId: "post-2" }),
+        item("PLANNED", "2026-10-04", { postId: "post-2" }),
+      ]),
+    );
+    expect(steps.find((step) => step.key === "review")).toMatchObject({
+      label: "Review 1",
+      title: "1 post is ready for your decision.",
+    });
+    expect(steps.find((step) => step.key === "produce")?.label).toBe(
+      "Produce 1",
+    );
+  });
+
   it("has nothing to say before there is a plan", () => {
     expect(computeNextSteps(snap([]))).toEqual([]);
+    expect(computeNextSteps(snap([], { ideaPool: 0 }))).toEqual([]);
+  });
+
+  it("with ideas in the pool and no plan, offers to plan from them", () => {
+    expect(computeNextSteps(snap([], { ideaPool: 4 }))).toEqual([
+      {
+        key: "plan-from-ideas",
+        tone: "next",
+        label: "Plan from ideas",
+        title: "4 ideas are ready in the idea pool.",
+        action: { kind: "plan_from_ideas", count: 4 },
+      },
+    ]);
+  });
+
+  it("points to the weekly draft instead of offering to plan from ideas", () => {
+    const draft = { workId: "wkplan_p_2026-10-05", count: 3 };
+    expect(computeNextSteps(snap([], { ideaPool: 4, weeklyDraft: draft }))).toEqual([
+      {
+        key: "weekly-draft",
+        tone: "next",
+        label: "Review next week's plan",
+        title: "Next week's plan is ready: 3 posts from your idea pool.",
+        action: { kind: "open_weekly_draft", workId: draft.workId, count: 3 },
+      },
+    ]);
+    // With a running plan it replaces "Plan the next weeks".
+    const keys = computeNextSteps(
+      snap([item("PUBLISHED", "2026-10-02")], { ideaPool: 1, weeklyDraft: draft }),
+    ).map((step) => step.key);
+    expect(keys).toContain("weekly-draft");
+    expect(keys).not.toContain("plan-next");
+  });
+
+  it("does not offer a new plan in a chat that holds an unsaved draft", () => {
+    expect(computeNextSteps(snap([], { ideaPool: 3, openDraftHere: true }))).toEqual([]);
+  });
+
+  it("asks for verdicts in a chat without plan items too", () => {
+    expect(
+      computeNextSteps(snap([], { ideaPool: 2, awaitingVerdict: 1 })).map((step) => step.key),
+    ).toEqual(["plan-from-ideas", "results"]);
+    expect(
+      computeNextSteps(snap([], { awaitingVerdict: 1 })).map((step) => step.key),
+    ).toEqual(["results"]);
+  });
+
+  it("asks for the verdict on published posts before any measured result", () => {
+    const step = computeNextSteps(
+      snap([item("PUBLISHED", "2026-10-02")], { awaitingVerdict: 2 }),
+    ).find((candidate) => candidate.key === "results");
+    expect(step).toMatchObject({
+      label: "See results (2)",
+      title: "2 published posts are waiting for your verdict: did it work?",
+      action: { kind: "show_results", count: 2 },
+    });
+  });
+
+  it("a plan running out mentions the ideas waiting in the pool", () => {
+    const step = computeNextSteps(
+      snap([item("PUBLISHED", "2026-10-02")], { ideaPool: 1 }),
+    ).find((candidate) => candidate.key === "plan-next");
+    expect(step?.title).toContain("1 idea is ready in the pool.");
   });
 
   it("a freshly saved plan: produce the nearest week first", () => {
@@ -349,7 +432,7 @@ describe("computeNextSteps, Work-scoped snapshot", () => {
     expect(steps[0]).toMatchObject({
       tone: "next",
       label: "Approve 2",
-      title: "2 pieces are ready. Approve them in one go.",
+      title: "2 posts are ready. Approve them in one go.",
       action: {
         kind: "approve_plan",
         planIds: ["plan-1"],

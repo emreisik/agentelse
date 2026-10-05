@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { ChatStreamEvent } from "@/server/chat/types";
 
 import {
+  applyPlanPieceEvent,
+  dropPlanPieces,
   failPendingItems,
   finalTaskIds,
   isFinalTaskCard,
@@ -10,7 +12,9 @@ import {
   isServerRowHidden,
   localItemTaskIds,
   needsProgressPoll,
+  openPlanPieces,
   reduceItemEvent,
+  settlePlanPieces,
   taskIdOfCard,
   type ItemTurnFields,
 } from "./package-run";
@@ -298,5 +302,56 @@ describe("needsProgressPoll", () => {
     expect(needsProgressPoll([started({ state: "draft" })], NOW)).toBe(false);
     expect(needsProgressPoll([started({ startedAt: undefined })], NOW)).toBe(false);
     expect(needsProgressPoll([], NOW)).toBe(false);
+  });
+});
+
+describe("plan pieces (made inside the plan's post cards)", () => {
+  const opened = openPlanPieces(
+    {},
+    [
+      { id: "c1", image: true },
+      { id: "c2", image: false },
+    ],
+    1000,
+  );
+
+  it("opens each announced piece as pending; only pictures get progress", () => {
+    expect(opened.c1).toMatchObject({ state: "pending", itemId: "c1" });
+    expect(opened.c1?.imageGen).toEqual({
+      startedAt: 1000,
+      partials: 0,
+      done: false,
+    });
+    expect(opened.c2?.imageGen).toBeUndefined();
+  });
+
+  it("follows the item events of its own piece only", () => {
+    const partial: ChatStreamEvent = {
+      type: "item.partial",
+      itemId: "c1",
+      index: 0,
+      dataUrl: "data:image/png;base64,AA",
+    };
+    const next = applyPlanPieceEvent(opened, partial);
+    expect(next.c1?.previewUrl).toBe("data:image/png;base64,AA");
+    expect(next.c1?.imageGen?.partials).toBe(1);
+    expect(next.c2).toBe(opened.c2);
+    // Another run's piece: nothing changes.
+    expect(applyPlanPieceEvent(opened, { ...partial, itemId: "x" })).toBe(
+      opened,
+    );
+  });
+
+  it("settles the run's pending pieces and drops a withdrawn run", () => {
+    const done = applyPlanPieceEvent(opened, {
+      type: "item.done",
+      itemId: "c2",
+      ok: true,
+      reply: "Done",
+    });
+    const settled = settlePlanPieces(done, ["c1", "c2"], "Dropped");
+    expect(settled.c1).toMatchObject({ state: "error", imageGen: undefined });
+    expect(settled.c2?.state).toBe("done");
+    expect(dropPlanPieces(settled, ["c1"])).not.toHaveProperty("c1");
   });
 });

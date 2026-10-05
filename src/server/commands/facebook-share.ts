@@ -357,6 +357,44 @@ export async function readFacebookShareState(
   return { kind: "ready", pageName: target.accountLabel };
 }
 
+// One post goes to the Page once (docs/works.md "Posts"). A channel left out of
+// its post is never shared. A post with its own Facebook delivery goes out
+// through that delivery, so its other pieces are not cross-posted. A
+// Facebook delivery whose post was already cross-posted from another piece
+// (before posts had Facebook deliveries) is not posted a second time.
+async function postFacebookConflict(creative: {
+  id: string;
+  projectId: string;
+  postId: string | null;
+  channel: string | null;
+  excludedAt: Date | null;
+}): Promise<string | null> {
+  if (creative.excludedAt) return "This channel was left out of its post.";
+  if (!creative.postId) return null;
+  const siblings = await prisma.creative.findMany({
+    where: {
+      postId: creative.postId,
+      projectId: creative.projectId,
+      id: { not: creative.id },
+    },
+    select: { id: true, channel: true, excludedAt: true },
+  });
+  if (creative.channel !== "facebook") {
+    return siblings.some((s) => s.channel === "facebook" && !s.excludedAt)
+      ? "This post has its own Facebook version: share that one."
+      : null;
+  }
+  for (const sibling of siblings) {
+    if (sibling.channel === "facebook") continue;
+    const share = await findLatestShare(creative.projectId, sibling.id);
+    const outcome = outcomeOf(share);
+    if (outcome === "posted" || outcome === "sharing") {
+      return "This post is already on your Facebook Page.";
+    }
+  }
+  return null;
+}
+
 export async function shareCreativeToFacebookCore(
   input: ShareInput,
 ): Promise<FacebookShareResult> {
@@ -381,6 +419,8 @@ export async function shareCreativeToFacebookCore(
       message: "Approve this piece before sharing it on Facebook.",
     };
   }
+  const twice = await postFacebookConflict(creative);
+  if (twice) return { ok: false, message: twice };
 
   const target = await getFacebookPublishTarget(projectId);
   if (!target) {

@@ -234,11 +234,22 @@ export type IdeaEventCardData =
         // What the post does for the plan, in a few words ("Introduce the
         // product"): the line under its title on the card.
         purpose?: string;
-        // Other takes on the same slot (other directions, "More ideas").
-        alternatives?: { topic: string; captionIdea: string; from?: string }[];
+        // Other takes on the same slot (other directions, "More ideas"). A pool
+        // post that was swapped away keeps its idea link and idea origin here
+        // (src/lib/works/plan-alternatives.ts).
+        alternatives?: {
+          topic: string;
+          captionIdea: string;
+          from?: string;
+          ideaId?: string;
+          origin?: { kind: "idea"; ref: string };
+        }[];
         // Source label of the idea when it came from a direction.
         from?: string;
-        origin?: { kind: "idea" | "master" | "brief" | "creative"; ref: string };
+        origin?: {
+          kind: "idea" | "master" | "brief" | "creative";
+          ref: string;
+        };
         ideaId?: string;
         brandFlags?: BrandFlag[];
         // Set by removeSlotAction.
@@ -256,6 +267,9 @@ export type IdeaEventCardData =
       // piece per post and platform (lib/works/plan-platforms.ts). Absent: each
       // item keeps the channel it names.
       platforms?: string[];
+      // Works: each Instagram post also goes out as a Story, made from the
+      // post's own picture (lib/works/plan-platforms.ts withInstagramStories).
+      instagramStory?: boolean;
       savedCreativeIds?: string[];
       // Production of the saved slots (plan-run.ts): set when a run is claimed
       // so a double click or a second tab cannot start the same pieces twice.
@@ -274,16 +288,21 @@ export type IdeaEventCardData =
       // null = a slot whose piece is gone (archived or deleted).
       // Works adds what the pane edits and reads: the piece's text and its
       // publish time (the zone of the plan, "YYYY-MM-DDTHH:mm").
-      slots?: (
-        | {
-            id: string;
-            stage: PlanItemStage;
-            assetId?: string;
-            text?: string;
-            when?: string;
-          }
-        | null
-      )[];
+      slots?: ({
+        id: string;
+        stage: PlanItemStage;
+        assetId?: string;
+        text?: string;
+        when?: string;
+        // The post this piece is a channel of, and whether that channel was
+        // left out of it (docs/works.md "Posts").
+        postId?: string;
+        excluded?: boolean;
+      } | null)[];
+      // Render-time only (Works): the plan's finished pieces as their chat
+      // cards. The page folds them into the plan's post carousel instead of
+      // one chat message each (lib/works/plan-posts.ts). Never stored.
+      posts?: Extract<CreativeCardData, { kind: "creative-ready" }>[];
     }
   // The plan wizard (start_plan_brief): a step-by-step card that collects
   // goal, channels, formats and rhythm, then sends them back as ONE chat

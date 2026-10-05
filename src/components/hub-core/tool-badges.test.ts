@@ -4,10 +4,7 @@ import { toolBadgesFrom, type ToolBadgeCounts } from "./tool-badges";
 
 const counts = (over: Partial<ToolBadgeCounts> = {}): ToolBadgeCounts => ({
   setupWaitingClient: 0,
-  pendingHumanActions: 0,
   proposedGoals: 0,
-  proposedHandoffs: 0,
-  awaitingPlans: 0,
   ...over,
 });
 
@@ -25,16 +22,9 @@ describe("toolBadgesFrom", () => {
     expect(toolBadgesFrom(counts({ proposedGoals: 3 }))).not.toHaveProperty("goals");
   });
 
-  it("badges the other entries with what waits there", () => {
-    expect(
-      toolBadgesFrom(
-        counts({
-          setupWaitingClient: 1,
-          pendingHumanActions: 2,
-          proposedHandoffs: 3,
-          awaitingPlans: 4,
-        }),
-      ),
-    ).toEqual({ setup: 1, "human-action": 2, work: 7 });
+  it("badges setup while a stage waits for the client", () => {
+    expect(toolBadgesFrom(counts({ setupWaitingClient: 1 }))).toEqual({
+      setup: 1,
+    });
   });
 });

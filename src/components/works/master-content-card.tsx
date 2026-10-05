@@ -2,18 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Megaphone } from "lucide-react";
 import { toast } from "sonner";
 
 import { ChannelMark } from "@/components/commands/channel-badge";
+import { useChatPackage } from "@/components/commands/chat-package-context";
 import { WsTag } from "@/components/commands/ws-event-card";
 import { Button } from "@/components/ui/button";
 import { ActionCard } from "@/components/works/action-card";
 import { CardActions } from "@/components/works/card-actions";
 import { SlotSuggestion } from "@/components/works/slot-suggestion";
 import { useCardAction } from "@/components/works/use-card-action";
-import { postVariants } from "@/components/works/variants-client";
 import {
   disabledReasonOf,
   useWorkCardHost,
@@ -22,7 +21,7 @@ import { isChannelKey, type ChannelKey } from "@/lib/content-channels";
 import { cn } from "@/lib/utils";
 import type { CardActionResult, CardButton } from "@/lib/works/card-action";
 import { brandCheckText, copyText } from "@/lib/works/copy";
-import { isImagePiece } from "@/lib/works/cost";
+import { formatUsd, pieceCostUsd } from "@/lib/works/cost";
 import {
   MAX_ADAPT_RUNS,
   chipStates,
@@ -32,7 +31,6 @@ import {
 } from "@/lib/works/master-content";
 import { slotWhenLabel } from "@/lib/works/slot-rules";
 import { integrationsHref } from "@/lib/works/starter-cards";
-import { variantCostLabel } from "@/lib/works/variants";
 import {
   addMasterChannelAction,
   scheduleMasterAction,
@@ -56,9 +54,9 @@ const ADAPT = "adapt";
 const READAPT = "readapt";
 const CHECK = "check";
 const OPEN_SCHEDULE = "open-schedule";
-const OPEN_VISUALS = "open-visuals";
+const OPEN_MAKE = "open-make";
 const COMMIT = "commit";
-const COMMIT_VISUALS = "commit-visuals";
+const COMMIT_MAKE = "commit-make";
 const CANCEL = "cancel";
 const TOGGLE_PREFIX = "toggle:";
 const ADD_PREFIX = "add:";
@@ -73,7 +71,7 @@ type Panel = {
   timezone: string;
   loading: boolean;
   // The last press was stopped by a brand rule; the primary becomes
-  // "Add anyway" and the picture variant goes away (money stays explicit).
+  // "Add anyway" and "Add & make" goes away (money stays explicit).
   brandBlocked: boolean;
   // The label of the button that opened the panel, for focus on Cancel.
   opener: string;
@@ -81,36 +79,29 @@ type Panel = {
 
 // ---- pure helpers (SSR-testable) -------------------------------------------
 
-// The first ticked channel that makes a picture; it sets the cost line and is
-// where "3 visuals" will run.
-export function firstImageTarget(
-  targets: MasterContentCardData["targets"],
-): MasterContentCardData["targets"][number] | undefined {
-  return targets.find(
-    (target) =>
-      target.included && isImagePiece({ formatKey: target.formatKey }),
-  );
-}
-
-export function visualsCostLine(
+// What "Add & make" spends on pictures over the ticked channels: the post's
+// one picture, and each other picture format adapted from it (a paid call of
+// its own). Null when no ticked channel makes a picture.
+export function makeCostLine(
   targets: MasterContentCardData["targets"],
 ): string | null {
-  const target = firstImageTarget(targets);
-  if (!target) return null;
-  return copyText("variants.costNote", {
-    amount: variantCostLabel(
-      target.formatKey === "instagram.story" ? "STORY" : "POST",
-    ),
-  });
+  const total = targets
+    .filter((target) => target.included)
+    .reduce(
+      (sum, target) => sum + pieceCostUsd({ formatKey: target.formatKey }),
+      0,
+    );
+  return total > 0 ? copyText("slot.cost", { cost: formatUsd(total) }) : null;
 }
 
 // The card's own button row. Draft: Adapt (primary) + Add to calendar.
-// Adapted: Add to calendar (primary) + Add & make 3 visuals + quiet Re-adapt.
+// Adapted: Add to calendar (primary) + Add & make + quiet Re-adapt.
 // "Check again" takes the quiet slot after a BUSY answer. Never more than three.
 export function masterButtons(input: {
   state: "draft" | "adapted";
   busyId: string | null;
-  canVisuals: boolean;
+  // The chat can make the post right after the commit.
+  canMake: boolean;
   canReadapt: boolean;
   checkAgain: boolean;
   disabledReason: string | null;
@@ -155,13 +146,13 @@ export function masterButtons(input: {
       action: server(OPEN_SCHEDULE),
       ...reason,
     },
-    ...(input.canVisuals
+    ...(input.canMake
       ? [
           {
-            id: OPEN_VISUALS,
-            label: copyText("master.scheduleVisuals"),
+            id: OPEN_MAKE,
+            label: copyText("master.scheduleMake"),
             emphasis: "secondary" as const,
-            action: server(OPEN_VISUALS),
+            action: server(OPEN_MAKE),
             ...reason,
           },
         ]
@@ -240,10 +231,7 @@ export function mapAdaptResponse(
 }
 
 export type MasterScheduleOutcome =
-  | {
-      kind: "ok";
-      slots: { channel: string; formatKey: string; creativeId: string }[];
-    }
+  | { kind: "ok" }
   | { kind: "stale"; channel?: string; slot?: SlotPair; message: string }
   | { kind: "brand"; message: string }
   // Another tab already turned the card into a plan: refresh instead.
@@ -252,49 +240,44 @@ export type MasterScheduleOutcome =
 
 // The body of the commit call: the suggestion the person is looking at leads,
 // and the brand-rule override rides only on the "Add anyway" press after a
-// brand block (never on the first press, never together with visuals).
+// brand block (never on the first press, never together with making).
 export function scheduleOptionsOf(input: {
   shown: SlotPair | undefined;
   brandBlocked: boolean;
-  withVisuals: boolean;
+  andMake: boolean;
 }): { leadSlot?: SlotPair; allowIssues?: true } {
   return {
     ...(input.shown
       ? { leadSlot: { date: input.shown.date, time: input.shown.time } }
       : {}),
-    ...(input.brandBlocked && !input.withVisuals ? { allowIssues: true } : {}),
+    ...(input.brandBlocked && !input.andMake ? { allowIssues: true } : {}),
   };
 }
 
-// The paid first set of visuals after a commit: only when the person chose
-// "Add & make 3 visuals", and only for the first image piece.
-export function visualsRequestOf(input: {
-  withVisuals: boolean;
+type PlanStarter = Pick<
+  NonNullable<ReturnType<typeof useChatPackage>>,
+  "startPlan"
+>;
+
+// After a commit, "Add & make" makes the post right away, live in the chat:
+// the master's Command is now the saved plan, so the chat's plan run takes it
+// (one picture, the other formats adapted from it). Plain "Add to calendar"
+// makes nothing. True when a run was started.
+export function startMaking(input: {
+  andMake: boolean;
   commandId: string;
-  slots: readonly { formatKey: string; creativeId: string }[];
-}): { commandId: string; creativeId: string; more: false } | null {
-  if (!input.withVisuals) return null;
-  const image = input.slots.find((slot) =>
-    isImagePiece({ formatKey: slot.formatKey }),
-  );
-  return image
-    ? { commandId: input.commandId, creativeId: image.creativeId, more: false }
-    : null;
+  chatPackage: PlanStarter | null;
+}): boolean {
+  if (!input.andMake || !input.chatPackage) return false;
+  // The run streams for a while: the card does not wait for it.
+  void input.chatPackage.startPlan({ commandId: input.commandId });
+  return true;
 }
 
 export function mapScheduleMasterResult(
   result: ScheduleMasterResult,
 ): MasterScheduleOutcome {
-  if (result.ok) {
-    return {
-      kind: "ok",
-      slots: result.slots.map((slot) => ({
-        channel: slot.channel,
-        formatKey: slot.formatKey,
-        creativeId: slot.creativeId,
-      })),
-    };
-  }
+  if (result.ok) return { kind: "ok" };
   switch (result.code) {
     case "STALE": {
       const suggestion = result.suggestion;
@@ -520,8 +503,8 @@ export function MasterSchedulePanelView({
   index,
   timezone,
   loading,
-  othersFollow,
-  canVisuals,
+  manyChannels,
+  canMake,
   costLine,
   brandBlocked,
   busyId,
@@ -535,9 +518,9 @@ export function MasterSchedulePanelView({
   index: number;
   timezone?: string;
   loading: boolean;
-  // More than one channel is ticked: the others follow on the next free day.
-  othersFollow: boolean;
-  canVisuals: boolean;
+  // More than one channel is ticked: one post, so they all share this time.
+  manyChannels: boolean;
+  canMake: boolean;
   costLine: string | null;
   brandBlocked: boolean;
   busyId: string | null;
@@ -567,13 +550,13 @@ export function MasterSchedulePanelView({
       action: { kind: "server", id: COMMIT },
       ...reason,
     },
-    ...(canVisuals && !brandBlocked
+    ...(canMake && !brandBlocked
       ? [
           {
-            id: COMMIT_VISUALS,
-            label: copyText("master.scheduleVisuals"),
+            id: COMMIT_MAKE,
+            label: copyText("master.scheduleMake"),
             emphasis: "secondary" as const,
-            action: { kind: "server" as const, id: COMMIT_VISUALS },
+            action: { kind: "server" as const, id: COMMIT_MAKE },
             ...reason,
           },
         ]
@@ -615,13 +598,13 @@ export function MasterSchedulePanelView({
           onOther={onOther}
           zone={timezone}
         />
-        {othersFollow ? (
+        {manyChannels ? (
           <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
             {copyText("master.panelNote")}
           </p>
         ) : null}
       </div>
-      {costLine && canVisuals && !brandBlocked ? (
+      {costLine && canMake && !brandBlocked ? (
         <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
           {costLine}
         </p>
@@ -692,7 +675,7 @@ export function MasterContentCard({
   commandId: string;
 }) {
   const host = useWorkCardHost();
-  const router = useRouter();
+  const chatPackage = useChatPackage();
   const [panel, setPanel] = useState<Panel | null>(null);
   // The route answered BUSY: another tab is adapting.
   const [adaptBusy, setAdaptBusy] = useState(false);
@@ -791,7 +774,7 @@ export function MasterContentCard({
     );
   };
 
-  const commit = async (withVisuals: boolean): Promise<CardActionResult> => {
+  const commit = async (andMake: boolean): Promise<CardActionResult> => {
     if (!host || !panel) {
       return { ok: false, message: copyText("kit.failed") };
     }
@@ -809,7 +792,7 @@ export function MasterContentCard({
           scheduleOptionsOf({
             shown,
             brandBlocked: panel.brandBlocked,
-            withVisuals,
+            andMake,
           }),
         ),
       );
@@ -820,22 +803,13 @@ export function MasterContentCard({
     if (outcome.kind === "ok") {
       toast.success(copyText("master.scheduled"));
       setPanel(null);
-      let message = copyText("master.scheduled");
-      const visuals = visualsRequestOf({
-        withVisuals,
-        commandId,
-        slots: outcome.slots,
-      });
-      if (visuals) {
-        message = `${message} ${copyText("variants.running")}`;
-        // Not awaited: the card is already the plan, and the run reports
-        // itself through the refreshed creative.
-        void postVariants(host.projectId, visuals).then((result) => {
-          if (result.ok) router.refresh();
-          else toast.error(result.message);
-        });
-      }
-      return { ok: true, message };
+      const making = startMaking({ andMake, commandId, chatPackage });
+      return {
+        ok: true,
+        message: making
+          ? `${copyText("master.scheduled")} ${copyText("kit.reasonRun")}`
+          : copyText("master.scheduled"),
+      };
     }
     host.cancelFocus(commandId);
     if (outcome.kind === "refresh") {
@@ -881,8 +855,8 @@ export function MasterContentCard({
         setAdaptBusy(false);
         return { ok: true, refresh: true };
       }
-      if (id === COMMIT || id === COMMIT_VISUALS) {
-        return commit(id === COMMIT_VISUALS);
+      if (id === COMMIT || id === COMMIT_MAKE) {
+        return commit(id === COMMIT_MAKE);
       }
       if (id.startsWith(TOGGLE_PREFIX)) {
         const [channel, flag] = id.slice(TOGGLE_PREFIX.length).split(":");
@@ -943,8 +917,9 @@ export function MasterContentCard({
     chips.find((chip) => chip.key === channel)?.label ?? channel;
   const anyBusy = busyId !== null;
   const chipsBlocked = !!hostReason || anyBusy;
-  const canVisuals = firstImageTarget(card.targets) !== undefined;
-  const costLine = visualsCostLine(card.targets);
+  // Outside the chat nothing could make the post: no "Add & make" there.
+  const canMake = chatPackage !== null;
+  const costLine = makeCostLine(card.targets);
   const shownError = localError ?? error;
 
   const onToggle = (chip: MasterChip) => {
@@ -977,7 +952,7 @@ export function MasterContentCard({
   };
 
   const onAct = (button: CardButton) => {
-    if (button.id === OPEN_SCHEDULE || button.id === OPEN_VISUALS) {
+    if (button.id === OPEN_SCHEDULE || button.id === OPEN_MAKE) {
       void openPanel(button);
       return;
     }
@@ -1019,8 +994,8 @@ export function MasterContentCard({
         index={panel.index}
         timezone={panel.timezone}
         loading={panel.loading}
-        othersFollow={includedCount > 1}
-        canVisuals={canVisuals}
+        manyChannels={includedCount > 1}
+        canMake={canMake}
         costLine={costLine}
         brandBlocked={panel.brandBlocked}
         busyId={busyId}
@@ -1037,7 +1012,7 @@ export function MasterContentCard({
           buttons={masterButtons({
             state: card.state === "adapted" ? "adapted" : "draft",
             busyId,
-            canVisuals,
+            canMake,
             canReadapt: adaptRunsLeft,
             checkAgain: adaptBusy,
             disabledReason: hostReason,
@@ -1047,7 +1022,7 @@ export function MasterContentCard({
           error={shownError}
           disabledReason={hostReason}
         />
-        {card.state === "adapted" && canVisuals && costLine ? (
+        {card.state === "adapted" && canMake && costLine ? (
           <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
             {costLine}
           </p>

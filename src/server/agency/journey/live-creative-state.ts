@@ -12,6 +12,7 @@ import type { CreativeCardData } from "@/types/creative-card";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
 import { getProjectTimezone } from "@/server/chat/content-plan";
+import { countEnabledPublishSchedules } from "@/server/chat/publish-schedule";
 import { ownedPlanIds } from "@/server/works/work-owned";
 import { swapCurrentPicture } from "@/server/execution/variant-card";
 
@@ -32,6 +33,10 @@ export type LiveCreativeRow = {
   // the overlay must not promise a hold for it. Absent (hand-built rows) counts
   // as owned. loadLiveCreativeRows always sets it.
   owned?: boolean;
+  // The post it is a channel of, and whether that channel was left out of it
+  // (docs/works.md "Posts"). Absent on hand-built rows.
+  postId?: string | null;
+  excludedAt?: Date | null;
   version: {
     version: number;
     assetId: string | null;
@@ -52,11 +57,8 @@ export type LiveInputs = {
 export async function loadLiveInputs(projectId: string): Promise<LiveInputs> {
   const [connections, scheduleCount, timezone] = await Promise.all([
     getChannelConnections(projectId).catch((): ChannelConnections => ({})),
-    prisma.projectSchedule
-      .count({
-        where: { projectId, capability: "INSTAGRAM_PUBLISH", enabled: true },
-      })
-      .catch(() => 0),
+    // Shared with the journey and the pending decisions within a render.
+    countEnabledPublishSchedules(projectId).catch(() => 0),
     getProjectTimezone(projectId).catch(() => "Europe/Istanbul"),
   ]);
   const connectedPlatforms = new Set<string>(
@@ -91,6 +93,8 @@ export async function loadLiveCreativeRows(
         formatKey: true,
         scheduledFor: true,
         planId: true,
+        postId: true,
+        excludedAt: true,
         versions: {
           orderBy: { version: "desc" },
           take: 1,
@@ -111,6 +115,8 @@ export async function loadLiveCreativeRows(
         scheduledFor: row.scheduledFor,
         planId: row.planId,
         owned: row.planId !== null && ownedPlans.has(row.planId),
+        postId: row.postId,
+        excludedAt: row.excludedAt,
         version: row.versions[0] ?? null,
       });
     }
@@ -230,6 +236,8 @@ export function withLivePlan(
         ...slot,
         ...(text ? { text } : {}),
         ...(when ? { when } : {}),
+        ...(row.postId ? { postId: row.postId } : {}),
+        ...(row.excludedAt ? { excluded: true } : {}),
       };
     }),
   };

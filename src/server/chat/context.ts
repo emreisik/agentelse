@@ -71,6 +71,9 @@ export async function buildContext(
 ) {
   const recall = options.recall === true;
   const legacyGate = options.legacyGate === true;
+  // Needs nothing below: read alongside the batch instead of after the memory
+  // recall (it was the last round trip before the first token).
+  const connectedTargetsRead = getPublishTargets(projectId).catch(() => []);
   const [
     project,
     brandTwin,
@@ -262,7 +265,7 @@ export async function buildContext(
 
   // What the agency can hand the client right now (active departments'
   // deliverables + connected channels) — the chat agent proposes only these.
-  const connectedTargets = await getPublishTargets(projectId).catch(() => []);
+  const connectedTargets = await connectedTargetsRead;
   const agency = buildAgencyCapabilities([
     ...new Set(connectedTargets.map((t) => t.platform)),
   ]);
@@ -270,9 +273,7 @@ export async function buildContext(
   // Works only: what the cards on screen say, as ONE note the agent places
   // after the history (history.ts stays untouched, so its prefix never moves).
   // Computed from the newest-first rows before parsedIntent is stripped.
-  const cardDigestNote = options.workId
-    ? buildCardDigestNote(recent)
-    : null;
+  const cardDigestNote = options.workId ? buildCardDigestNote(recent) : null;
 
   return {
     brandId,

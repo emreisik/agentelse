@@ -17,6 +17,8 @@ const tx = {
   creative: { findMany: vi.fn() },
   task: { findMany: vi.fn() },
   work: { findFirst: vi.fn() },
+  // The picture each post already has (none unless a test says so).
+  post: { findMany: vi.fn().mockResolvedValue([]) },
 };
 const isWorksEnabled = vi.fn(() => false);
 vi.mock("@/server/works/flag", () => ({ isWorksEnabled }));
@@ -25,6 +27,8 @@ vi.mock("@/server/projects/activation", () => ({ ensureProjectActive }));
 const commandFindUnique = vi.fn();
 const commandFindFirst = vi.fn();
 const commandUpdate = vi.fn().mockResolvedValue(undefined);
+const creativeFindUnique = vi.fn();
+const versionFindUnique = vi.fn();
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     command: {
@@ -32,6 +36,8 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: commandFindFirst,
       update: commandUpdate,
     },
+    creative: { findUnique: creativeFindUnique },
+    creativeVersion: { findUnique: versionFindUnique },
     $transaction: async (fn: (t: typeof tx) => unknown) => fn(tx),
   },
 }));
@@ -46,14 +52,13 @@ const auditRecord = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/server/repositories/audit-log.repository", () => ({
   AuditLogRepository: { record: auditRecord },
 }));
+const checkAndIncrement = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/server/repositories/autonomy-policy.repository", () => ({
+  AutonomyPolicyRepository: { checkAndIncrement },
+}));
 
-const {
-  claimPlanProduction,
-  productionFor,
-  runContentPlan,
-  runSingleSlotVariants,
-  RUN_CLAIM_TTL_MS,
-} = await import("./plan-run");
+const { claimPlanProduction, productionFor, runContentPlan, RUN_CLAIM_TTL_MS } =
+  await import("./plan-run");
 const { CHANNELS } = await import("@/lib/content-channels");
 
 import type { ChatStreamEvent } from "./types";
@@ -75,6 +80,8 @@ const slotRow = (
   title: `Topic ${id}`,
   platform: "INSTAGRAM",
   brief: `Idea ${id}`,
+  postId: null as string | null,
+  excludedAt: null as Date | null,
   ...over,
 });
 
@@ -115,6 +122,7 @@ beforeEach(() => {
   tx.command.update.mockResolvedValue(undefined);
   commandUpdate.mockResolvedValue(undefined);
   auditRecord.mockResolvedValue(undefined);
+  checkAndIncrement.mockResolvedValue(undefined);
   ensureProjectActive.mockResolvedValue({ usable: true });
   isWorksEnabled.mockReturnValue(false);
 });
@@ -318,20 +326,20 @@ describe("claimPlanProduction", () => {
     expect(claim.ok && claim.slots.map((slot) => slot.id)).toEqual(["a"]);
   });
 
-  it("caps one click at seven slots", async () => {
+  it("caps one click at three posts (one paid picture each)", async () => {
     const many = Array.from({ length: 10 }, (_, i) =>
       slotRow(`s${i}`, "2026-10-02"),
     );
     setup(many, planCard({ savedCreativeIds: many.map((row) => row.id) }));
     const claim = await claimPlanProduction(claimInput);
-    expect(claim.ok && claim.slots).toHaveLength(7);
+    expect(claim.ok && claim.slots).toHaveLength(3);
   });
 
   it("skips a slot the catalog cannot produce", async () => {
     setup([
       slotRow("a", "2026-10-01", {
-        channel: "facebook",
-        formatKey: "facebook.post",
+        channel: "youtube",
+        formatKey: "youtube.short",
       }),
       slotRow("b", "2026-10-02"),
     ]);
@@ -413,6 +421,143 @@ describe("claimPlanProduction", () => {
       ok: false,
       message: "There is nothing left to produce in this plan.",
     });
+  });
+});
+
+// One post on Instagram and Facebook: two pieces, one picture.
+const sharedPost = () => {
+  const item = {
+    date: "2026-10-01",
+    time: "10:00",
+    topic: "Launch",
+    captionIdea: "Meet the new colour",
+  };
+  return {
+    rows: [
+      slotRow("a", "2026-10-01"),
+      slotRow("b", "2026-10-01", {
+        channel: "facebook",
+        formatKey: "facebook.post",
+        platform: "FACEBOOK",
+      }),
+    ],
+    card: planCard({
+      savedCreativeIds: ["a", "b"],
+      items: [
+        { ...item, channel: "instagram", formatKey: "instagram.post" },
+        { ...item, channel: "facebook", formatKey: "facebook.post" },
+      ],
+    }),
+  };
+};
+
+describe("one post, one picture", () => {
+  const base = {
+    workspaceId: "ws-1",
+    projectId: "proj-1",
+    brandId: "brand-1",
+    userId: "user-1",
+    commandId: "plan-1",
+    finalCardPolls: { tries: 1, everyMs: 0 },
+  };
+
+  async function collect(): Promise<ChatStreamEvent[]> {
+    const events: ChatStreamEvent[] = [];
+    for await (const event of runContentPlan(base)) events.push(event);
+    return events;
+  }
+
+  it("claims a post's pieces together: the first renders, the other waits for it", async () => {
+    const { rows, card } = sharedPost();
+    setup(rows, card);
+    const claim = await claimPlanProduction(claimInput);
+    expect(
+      claim.ok && claim.slots.map((slot) => [slot.id, slot.picture]),
+    ).toEqual([
+      ["a", undefined],
+      ["b", { kind: "wait", leadId: "a" }],
+    ]);
+  });
+
+  it("adapts every image delivery from the picture its post already has", async () => {
+    const { rows, card } = sharedPost();
+    setup(
+      rows.map((row) => ({ ...row, postId: "post-1" })),
+      card,
+    );
+    tx.post.findMany.mockResolvedValueOnce([
+      { id: "post-1", pictureAssetId: "asset-1" },
+    ]);
+    const claim = await claimPlanProduction(claimInput);
+    expect(claim.ok && claim.slots.map((slot) => slot.picture)).toEqual([
+      { kind: "adapt", assetId: "asset-1" },
+      { kind: "adapt", assetId: "asset-1" },
+    ]);
+  });
+
+  it("never makes an excluded channel, and makes only the asked post", async () => {
+    const { rows, card } = sharedPost();
+    setup(
+      [
+        { ...rows[0]!, postId: "post-1" },
+        { ...rows[1]!, postId: "post-1", excludedAt: NOW },
+      ],
+      card,
+    );
+    const claim = await claimPlanProduction({
+      ...claimInput,
+      onlyPostId: "post-1",
+    });
+    expect(claim.ok && claim.slots.map((slot) => slot.id)).toEqual(["a"]);
+  });
+
+  it("makes the other format from the post's finished picture", async () => {
+    const { rows, card } = sharedPost();
+    setup(rows, card);
+    let n = 0;
+    planForCapability.mockImplementation(async () => {
+      n += 1;
+      return {
+        task: { id: `task-${n}`, riskLevel: "LOW" },
+        job: { id: `job-${n}` },
+        dispatched: true,
+      };
+    });
+    driveJobInline.mockResolvedValue({
+      status: "COMPLETED",
+      errorMessage: null,
+    });
+    commandFindFirst.mockResolvedValue(null);
+    creativeFindUnique.mockResolvedValue({ currentVersionId: "v-a" });
+    versionFindUnique.mockResolvedValue({ assetId: "asset-a" });
+
+    await collect();
+
+    const extras = planForCapability.mock.calls.map((c) => c[0].payloadExtra);
+    expect(extras[0]).not.toHaveProperty("adaptFromAssetId");
+    expect(extras[1]).toMatchObject({
+      planCreativeId: "b",
+      adaptFromAssetId: "asset-a",
+    });
+  });
+
+  it("never makes a second picture when the post's picture failed", async () => {
+    const { rows, card } = sharedPost();
+    setup(rows, card);
+    planForCapability.mockResolvedValue({
+      task: { id: "task-1", riskLevel: "LOW" },
+      job: { id: "job-1" },
+      dispatched: true,
+    });
+    driveJobInline.mockResolvedValue({ status: "FAILED", errorMessage: "x" });
+    commandFindFirst.mockResolvedValue(null);
+
+    const events = await collect();
+
+    expect(planForCapability).toHaveBeenCalledTimes(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "item.done", itemId: "b", ok: false }),
+    );
   });
 });
 
@@ -509,6 +654,8 @@ describe("runContentPlan", () => {
         quality: "medium",
       },
     });
+    // One post, one picture: a job never asks for several.
+    expect(calls[0].payloadExtra).not.toHaveProperty("variantCount");
     expect(calls[1]).toMatchObject({
       capability: "CREATE_COPY",
       targetPlatform: "LINKEDIN",
@@ -575,10 +722,30 @@ describe("runContentPlan", () => {
   });
 
   it("runs at most three pieces at a time", async () => {
-    const many = Array.from({ length: 7 }, (_, i) =>
-      slotRow(`s${i}`, "2026-10-02"),
+    // Three posts of text deliveries (3 + 2 + 2): nothing waits for a picture.
+    const posts = ["p1", "p1", "p1", "p2", "p2", "p3", "p3"];
+    const many = posts.map((postId, i) =>
+      slotRow(`s${i}`, "2026-10-02", {
+        postId,
+        channel: "linkedin",
+        formatKey: "linkedin.post",
+        platform: "LINKEDIN",
+      }),
     );
-    setup(many, planCard({ savedCreativeIds: many.map((row) => row.id) }));
+    setup(
+      many,
+      planCard({
+        savedCreativeIds: many.map((row) => row.id),
+        items: posts.map((postId) => ({
+          date: "2026-10-02",
+          time: "10:00",
+          topic: postId,
+          captionIdea: "x",
+          channel: "linkedin",
+          formatKey: "linkedin.post",
+        })),
+      }),
+    );
     planTasks();
     let running = 0;
     let peak = 0;
@@ -611,6 +778,55 @@ describe("runContentPlan", () => {
       started: 0,
       failed: 1,
     });
+  });
+
+  it("an unattended run (userId null) reserves the batch's dollars against the project's daily cap first", async () => {
+    setup(
+      [slotRow("a", "2026-10-01"), slotRow("b", "2026-10-02")],
+      planCard({ savedCreativeIds: ["a", "b"] }),
+    );
+    planTasks();
+    const events: ChatStreamEvent[] = [];
+    for await (const event of runContentPlan({ ...base, userId: null })) {
+      events.push(event);
+    }
+    expect(checkAndIncrement).toHaveBeenCalledWith(
+      { workspaceId: "ws-1", projectId: "proj-1", brandId: "brand-1" },
+      "tasksCreated",
+      2,
+      expect.any(Number),
+    );
+    expect(events[0]).toMatchObject({ type: "run.items" });
+    expect(planForCapability).toHaveBeenCalledTimes(2);
+    // A SYSTEM run, not a USER one — in the tasks it dispatches and the
+    // audit row it leaves.
+    const calls = planForCapability.mock.calls.map((c) => c[0]);
+    expect(calls[0]).toMatchObject({
+      createdByType: "SYSTEM",
+      createdByUserId: undefined,
+    });
+    expect(auditRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ actorType: "SYSTEM", actorId: undefined }),
+    );
+  });
+
+  it("an unattended run over the daily budget starts nothing and releases the claim", async () => {
+    setup([slotRow("a", "2026-10-01")], planCard({ savedCreativeIds: ["a"] }));
+    planTasks();
+    checkAndIncrement.mockRejectedValue(new Error("BUDGET_EXCEEDED"));
+    commandFindUnique.mockResolvedValue({
+      parsedIntent: { card: planCard({ production: { state: "running" } }) },
+    });
+    const events: ChatStreamEvent[] = [];
+    for await (const event of runContentPlan({ ...base, userId: null })) {
+      events.push(event);
+    }
+    expect(planForCapability).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      { type: "error", code: "PLAN", message: expect.any(String) },
+    ]);
+    const written = commandUpdate.mock.calls.at(-1)![0].data.parsedIntent.card;
+    expect(written.production).toBeUndefined();
   });
 
   it("refuses a paused project and a refused claim without starting anything", async () => {
@@ -646,132 +862,5 @@ describe("master line in the slot request", () => {
     const without = await claimPlanProduction(claimInput);
     if (!without.ok) throw new Error("claim");
     expect(without.slots[0]!.request).not.toContain("Master message");
-  });
-});
-
-describe("claimPlanProduction onlyCreativeId", () => {
-  const only = { ...claimInput, onlyCreativeId: "b", variantCount: 3 };
-
-  it("claims exactly that slot, ignoring the week batch", async () => {
-    setup([slotRow("a", "2026-10-01"), slotRow("b", "2026-10-03")]);
-    const claim = await claimPlanProduction(only);
-    if (!claim.ok) throw new Error("claim");
-    expect(claim.slots.map((slot) => slot.id)).toEqual(["b"]);
-    expect(tx.command.update).toHaveBeenCalledWith({
-      where: { id: "plan-1" },
-      data: {
-        parsedIntent: {
-          card: expect.objectContaining({
-            production: {
-              state: "running",
-              creativeIds: ["b"],
-              startedAt: NOW.toISOString(),
-            },
-          }),
-        },
-      },
-    });
-  });
-
-  it("retries a failed slot", async () => {
-    setup([slotRow("b", "2026-10-03")], planCard(), [
-      {
-        status: "FAILED",
-        payload: { planCreativeId: "b" },
-        updatedAt: NOW,
-      },
-    ]);
-    expect((await claimPlanProduction(only)).ok).toBe(true);
-  });
-
-  it("refuses a slot that is not producible as an image", async () => {
-    setup([
-      slotRow("b", "2026-10-03", {
-        channel: "linkedin",
-        formatKey: "linkedin.post",
-        platform: "LINKEDIN",
-      }),
-    ]);
-    expect(await claimPlanProduction(only)).toEqual({
-      ok: false,
-      message: "This piece can't be made in three versions.",
-    });
-    setup([slotRow("b", "2026-10-03", { currentVersionId: "v1" })]);
-    expect((await claimPlanProduction(only)).ok).toBe(false);
-    setup([slotRow("a", "2026-10-03")]);
-    expect((await claimPlanProduction(only)).ok).toBe(false);
-    expect(tx.command.update).not.toHaveBeenCalled();
-  });
-
-  it("refuses a slot with a job in flight", async () => {
-    setup([slotRow("b", "2026-10-03")], planCard(), [
-      { status: "RUNNING", payload: { planCreativeId: "b" }, updatedAt: NOW },
-    ]);
-    expect(await claimPlanProduction(only)).toEqual({
-      ok: false,
-      message: "This plan is already being produced.",
-    });
-    expect(tx.command.update).not.toHaveBeenCalled();
-  });
-});
-
-describe("runSingleSlotVariants", () => {
-  const base = {
-    workspaceId: "ws-1",
-    projectId: "proj-1",
-    brandId: "brand-1",
-    userId: "user-1",
-    commandId: "plan-1",
-    finalCardPolls: { tries: 1, everyMs: 0 },
-  };
-
-  function planOk() {
-    planForCapability.mockResolvedValue({
-      task: { id: "task-1", riskLevel: "LOW" },
-      job: { id: "job-1" },
-      dispatched: true,
-    });
-    driveJobInline.mockResolvedValue({ status: "COMPLETED", errorMessage: null });
-    commandFindFirst.mockResolvedValue(null);
-  }
-
-  it("runs one job with variantCount and medium quality; batch runs never do", async () => {
-    setup([slotRow("a", "2026-10-01"), slotRow("b", "2026-10-03")]);
-    planOk();
-    const events: ChatStreamEvent[] = [];
-    for await (const e of runSingleSlotVariants({ ...base, creativeId: "b" }))
-      events.push(e);
-    expect(planForCapability).toHaveBeenCalledTimes(1);
-    expect(planForCapability.mock.calls[0]![0].payloadExtra).toEqual({
-      planCreativeId: "b",
-      contentFormat: "FEED_PORTRAIT",
-      quality: "medium",
-      variantCount: 3,
-    });
-    expect(events[0]).toMatchObject({ type: "run.items" });
-    expect(events.at(-1)).toMatchObject({ type: "package.done" });
-
-    vi.clearAllMocks();
-    setup([slotRow("a", "2026-10-01")]);
-    planOk();
-    for await (const e of runContentPlan(base)) void e;
-    expect(planForCapability.mock.calls[0]![0].payloadExtra).not.toHaveProperty(
-      "variantCount",
-    );
-  });
-
-  it("refuses without starting anything when the slot cannot be claimed", async () => {
-    setup([slotRow("a", "2026-10-01")]);
-    const events: ChatStreamEvent[] = [];
-    for await (const e of runSingleSlotVariants({ ...base, creativeId: "zz" }))
-      events.push(e);
-    expect(events).toEqual([
-      {
-        type: "error",
-        code: "PLAN",
-        message: "This piece can't be made in three versions.",
-      },
-    ]);
-    expect(planForCapability).not.toHaveBeenCalled();
   });
 });

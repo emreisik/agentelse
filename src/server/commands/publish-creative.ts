@@ -59,6 +59,9 @@ export async function publishCreativeCore(
   );
 }
 
+// A channel left out of its post (docs/works.md "Posts") is never posted.
+const EXCLUDED_MESSAGE = "This channel was left out of its post.";
+
 const EXPLICIT_REFUSAL = {
   MANUAL_FORMAT:
     "This format is posted by hand, so it can't be sent to Instagram from here.",
@@ -91,6 +94,7 @@ async function publishInstagramCreative(
     include: { versions: { orderBy: { version: "desc" }, take: 1 } },
   });
   if (!creative) return { ok: false, message: "Creative not found." };
+  if (creative.excludedAt) return { ok: false, message: EXCLUDED_MESSAGE };
   // Works only: these three refusals close holes for every creative (another
   // project's piece, a piece nobody approved).
   if (tx && creative.projectId !== projectId) {
@@ -291,6 +295,7 @@ export async function publishCreativeToSocialCore(input: {
     },
   });
   if (!creative) return { ok: false, message: "Creative not found." };
+  if (creative.excludedAt) return { ok: false, message: EXCLUDED_MESSAGE };
 
   const targets = await getPublishTargets(projectId);
   const hasTarget = targets.some((t) => t.platform === platform);

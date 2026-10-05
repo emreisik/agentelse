@@ -151,7 +151,7 @@ const PRE_CHANGE_DEFINITIONS: Record<
     descriptionSha:
       "8d57c6047dc2703c96ee4392702b67cd48afdecd1f763ed6808bac5f3533a3a9",
     parameters:
-      '{"type":"object","properties":{"title":{"type":"string","minLength":1},"goal":{"type":"string","enum":["awareness","leads","sales","engagement","traffic"]},"items":{"minItems":1,"maxItems":30,"type":"array","items":{"type":"object","properties":{"date":{"type":"string","pattern":"^\\\\d{4}-\\\\d{2}-\\\\d{2}$"},"time":{"type":"string","pattern":"^([01]\\\\d|2[0-3]):[0-5]\\\\d$"},"channel":{"type":"string","enum":["instagram","tiktok","linkedin","x","seo","ads"]},"formatKey":{"type":"string"},"platform":{"type":"string","enum":["INSTAGRAM","TIKTOK","LINKEDIN","X","FACEBOOK","YOUTUBE","PINTEREST"]},"format":{"type":"string"},"topic":{"type":"string","minLength":1},"captionIdea":{"type":"string","minLength":1}},"required":["date","topic","captionIdea"],"additionalProperties":false}}},"required":["title","items"],"additionalProperties":false}',
+      '{"type":"object","properties":{"title":{"type":"string","minLength":1},"goal":{"type":"string","enum":["awareness","leads","sales","engagement","traffic"]},"items":{"minItems":1,"maxItems":30,"type":"array","items":{"type":"object","properties":{"date":{"type":"string","pattern":"^\\\\d{4}-\\\\d{2}-\\\\d{2}$"},"time":{"type":"string","pattern":"^([01]\\\\d|2[0-3]):[0-5]\\\\d$"},"channel":{"type":"string","enum":["instagram","facebook","tiktok","linkedin","x","seo","ads"]},"formatKey":{"type":"string"},"platform":{"type":"string","enum":["INSTAGRAM","TIKTOK","LINKEDIN","X","FACEBOOK","YOUTUBE","PINTEREST"]},"format":{"type":"string"},"topic":{"type":"string","minLength":1},"captionIdea":{"type":"string","minLength":1}},"required":["date","topic","captionIdea"],"additionalProperties":false}}},"required":["title","items"],"additionalProperties":false}',
   },
   propose_content_package: {
     descriptionLength: 990,
@@ -294,7 +294,7 @@ describe("the Works tool list", () => {
     ).toBe(false);
   });
 
-  it("a Work's plan tool takes one more field per post, its purpose, and nothing else changes", () => {
+  it("a Work's plan tool takes two more fields per post, its purpose and its pool idea, and nothing else changes", () => {
     type Params = {
       properties: {
         title: unknown;
@@ -307,14 +307,19 @@ describe("the Works tool list", () => {
     const plain = toOpenAITools([defaultTool("propose_content_plan")])[0] as {
       parameters: Params;
     };
-    const { purpose, ...rest } = works.parameters.properties.items.items.properties;
+    const { purpose, ideaId, ...rest } =
+      works.parameters.properties.items.items.properties;
     expect(purpose).toBeDefined();
+    expect(ideaId).toBeDefined();
     expect(rest).toEqual(plain.parameters.properties.items.items.properties);
     expect(works.parameters.properties.title).toEqual(
       plain.parameters.properties.title,
     );
     expect(
       "purpose" in plain.parameters.properties.items.items.properties,
+    ).toBe(false);
+    expect(
+      "ideaId" in plain.parameters.properties.items.items.properties,
     ).toBe(false);
   });
 });

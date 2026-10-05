@@ -14,7 +14,9 @@ export type PublishBlock =
   | "MANUAL_FORMAT"
   | "NO_TIME"
   | "PAST_TIME"
-  | "WRONG_PLATFORM";
+  | "WRONG_PLATFORM"
+  // The channel was left out of its post (Creative.excludedAt).
+  | "EXCLUDED";
 
 export type PublishTiming = "none" | "future" | "due" | "stale";
 
@@ -36,6 +38,8 @@ export type PublishFacts = {
   scheduledFor: Date | null;
   // Lowercase provider names: instagram, tiktok, linkedin...
   connectedPlatforms: ReadonlySet<string>;
+  // Left out of its post: never published.
+  excluded?: boolean;
 };
 
 export type PublishDecision =
@@ -54,6 +58,7 @@ export function canPublishNow(
   mode: "auto" | "explicit",
   now: Date = new Date(),
 ): PublishDecision {
+  if (facts.excluded) return { ok: false, reason: "EXCLUDED" };
   if (facts.status !== "APPROVED") return { ok: false, reason: "NOT_APPROVED" };
   // Only Instagram is auto-publishable.
   if (facts.platform?.toUpperCase() !== "INSTAGRAM") {

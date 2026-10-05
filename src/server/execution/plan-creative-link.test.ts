@@ -136,7 +136,23 @@ describe("fillPlanCreativeWithText", () => {
       entityId: "slot-1",
       type: "CREATIVE_APPROVAL",
       requestedByType: "AI",
+      notify: true,
     });
+  });
+
+  it("does not notify Telegram for a SYSTEM-created task (weekly-plan-produce.ts)", async () => {
+    taskFindUnique.mockResolvedValue({
+      payload: { planCreativeId: "slot-1" },
+      createdByType: "SYSTEM",
+    });
+    await fillPlanCreativeWithText({
+      taskId: "task-1",
+      projectId: "proj-1",
+      text: "Hook",
+    });
+    expect(approvalCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ notify: false }),
+    );
   });
 
   it("does nothing for an empty result", async () => {

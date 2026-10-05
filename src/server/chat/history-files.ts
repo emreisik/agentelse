@@ -54,26 +54,34 @@ export async function loadRecentHistoryFiles(
     select: { id: true, storageKey: true, mimeType: true },
   });
 
+  // Downloaded together (at most MAX_FILES; one after another they held up
+  // every turn), then the byte budget is applied in the same order as before.
+  const buffers = await Promise.all(
+    assets.map((asset) =>
+      readAsset(asset.storageKey).catch((error: unknown) => {
+        // A missing file must not fail the turn; the model still sees the
+        // "[attached: name]" note from the history text.
+        console.error(
+          "[chat-history-files] could not read asset",
+          asset.id,
+          error,
+        );
+        return null;
+      }),
+    ),
+  );
+
   const files = new Map<string, HistoryFile>();
   let totalBytes = 0;
-  for (const asset of assets) {
-    try {
-      const buffer = await readAsset(asset.storageKey);
-      totalBytes += buffer.length;
-      if (totalBytes > MAX_TOTAL_BYTES) break;
-      files.set(asset.id, {
-        mimeType: asset.mimeType,
-        data: buffer.toString("base64"),
-      });
-    } catch (error) {
-      // A missing file must not fail the turn; the model still sees the
-      // "[attached: name]" note from the history text.
-      console.error(
-        "[chat-history-files] could not read asset",
-        asset.id,
-        error,
-      );
-    }
+  for (const [index, asset] of assets.entries()) {
+    const buffer = buffers[index];
+    if (!buffer) continue;
+    totalBytes += buffer.length;
+    if (totalBytes > MAX_TOTAL_BYTES) break;
+    files.set(asset.id, {
+      mimeType: asset.mimeType,
+      data: buffer.toString("base64"),
+    });
   }
   return files;
 }

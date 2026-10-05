@@ -31,11 +31,7 @@ import {
   validateSlotTargets,
   type SlotTargetInput,
 } from "@/lib/works/slot-rules";
-import {
-  channelNeedsConnection,
-  workSummaryFrom,
-  type WorkView,
-} from "@/lib/works/work";
+import { channelNeedsConnection, workSummaryFrom } from "@/lib/works/work";
 import { brandRuleLanguageOf } from "@/server/brand/rule-language";
 import { updateCardInTx, updateCommandCard } from "@/server/chat/card-store";
 import { buildPlanCard, getProjectTimezone } from "@/server/chat/content-plan";
@@ -132,7 +128,6 @@ const REPLY_TITLE_MAX = 60;
 const TOPIC_MAX = 120;
 const CAPTION_MAX = 300;
 const MATCHED_ECHO_MAX = 40;
-const DAY_MS = 24 * 60 * 60_000;
 
 // Thrown inside the transaction so everything written so far rolls back.
 class MasterTxRefusal extends Error {
@@ -233,12 +228,6 @@ function clockOf(timezone: string): { today: string; nowLocal: string } {
   return { today: nowLocal.slice(0, 10), nowLocal };
 }
 
-// Calendar arithmetic on a "YYYY-MM-DD" key (no timezone involved).
-function nextDay(date: string): string {
-  const ms = Date.parse(`${date}T00:00:00.000Z`);
-  return new Date(ms + DAY_MS).toISOString().slice(0, 10);
-}
-
 async function freshSuggestion(
   projectId: string,
   channel: string,
@@ -337,19 +326,18 @@ type SlotChoice =
   | { ok: true; slots: { date: string; time: string }[] }
   | Extract<ScheduleMasterResult, { ok: false }>;
 
-// Lead channel: the slot the person SAW when it is still valid and free, else
-// the first free one. Every further channel: the next free slot of its own
-// channel on a LATER day than the one before it, so one message never lands
-// on two feeds in the same minute.
+// The slot the person SAW (on the lead channel) when it is still valid and
+// free, else the first free one. One message is ONE post (docs/works.md
+// "Posts"): every channel delivers it at that same time, never spread over
+// later days.
 async function chooseSlots(input: {
   projectId: string;
-  work: WorkView;
   targets: readonly MasterContentCardData["targets"][number][];
   lead: MasterContentCardData["targets"][number];
   leadSlot?: { date: string; time: string };
   timezone: string;
 }): Promise<SlotChoice> {
-  const { projectId, work, targets, lead, leadSlot, timezone } = input;
+  const { projectId, targets, lead, leadSlot, timezone } = input;
   const clock = clockOf(timezone);
 
   let first: { date: string; time: string } | undefined;
@@ -403,26 +391,8 @@ async function chooseSlots(input: {
     return { ok: false, code: "FAILED", message: copyText("slot.noFree") };
   }
 
-  const slots: { date: string; time: string }[] = [];
-  let previous = first;
-  for (const target of targets) {
-    if (target === lead) {
-      slots.push(first);
-      continue;
-    }
-    const suggested = await loadSuggestedSlots(projectId, {
-      channel: target.channel,
-      startFrom: nextDay(previous.date),
-      count: 1,
-    });
-    const slot = suggested.slots[0];
-    if (!slot) {
-      return { ok: false, code: "FAILED", message: copyText("slot.noFree") };
-    }
-    slots.push(slot);
-    previous = slot;
-  }
-  return { ok: true, slots };
+  const at = first;
+  return { ok: true, slots: targets.map(() => at) };
 }
 
 export async function toggleMasterTargetAction(
@@ -760,7 +730,6 @@ export async function scheduleMasterAction(
       const timezone = await getProjectTimezone(projectId);
       const chosen = await chooseSlots({
         projectId,
-        work,
         targets: included,
         lead,
         leadSlot,
@@ -830,7 +799,8 @@ export async function scheduleMasterAction(
                 )
                   .map((item, i) => ({
                     ...item,
-                    topic: currentTexts[i]?.topic ?? item.topic,
+                    // The post's idea stays the master's title (toPlanItems):
+                    // each channel's own words are its caption idea.
                     captionIdea:
                       currentTexts[i]?.captionIdea ?? item.captionIdea,
                     index: i,

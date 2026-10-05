@@ -2,23 +2,20 @@
 
 import {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent,
 } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Minus, Plus } from "lucide-react";
 
 import { addDaysToKey } from "@/lib/calendar/grid";
 import {
   dayInRange,
-  DEFAULT_PICKER_TIME,
-  HOUR_OPTIONS,
   keyboardDayStep,
-  minuteOptions,
   monthShortName,
   monthTitle,
+  nudgeTime,
   parseTimeInput,
   shiftDayByMonths,
   shiftView,
@@ -276,68 +273,16 @@ export function CalendarPanel({
 
 // ── Saat ────────────────────────────────────────────────────────────────────
 
-const COLUMN_ITEM =
-  "flex h-7 w-full items-center justify-center rounded-md text-xs tabular-nums outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60";
+// Saat seçimi KAYDIRMASIZ ve tek bakışta: ortada yazılan/gösterilen saat, iki
+// yanında adım düğmeleri (−/+), altında tek dokunuşluk sık saatler. Başka bir
+// dakika (18:45) elle yazılır; yukarı/aşağı ok tuşları da adım atar.
 
-function TimeColumn({
-  label,
-  options,
-  current,
-  onPick,
-}: {
-  label: string;
-  options: readonly string[];
-  current: string | null;
-  onPick: (option: string) => void;
-}) {
-  const listRef = useRef<HTMLDivElement>(null);
+const NUDGE_BUTTON =
+  "inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-input text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40";
 
-  // Açılışta seçili satır ortada görünsün. scrollIntoView YOK: o, sayfanın
-  // kendisini de kaydırırdı; yalnız bu listenin scrollTop'u ayarlanır.
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    const active = list?.querySelector<HTMLElement>("[data-active='true']");
-    if (list && active) {
-      list.scrollTop =
-        active.offsetTop - list.clientHeight / 2 + active.clientHeight / 2;
-    }
-    // Yalnız ilk yerleşimde (boş bağımlılık): tıklarken liste kaymasın.
-  }, []);
-
-  return (
-    <div className="min-w-0 flex-1">
-      <div className="mb-1 text-center text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-        {label}
-      </div>
-      <div
-        ref={listRef}
-        role="listbox"
-        aria-label={label}
-        className="h-36 space-y-0.5 overflow-y-auto overscroll-contain rounded-lg border border-border p-0.5"
-      >
-        {options.map((option) => {
-          const active = option === current;
-          return (
-            <button
-              key={option}
-              type="button"
-              role="option"
-              aria-selected={active}
-              data-active={active}
-              onClick={() => onPick(option)}
-              className={cn(
-                COLUMN_ITEM,
-                active &&
-                  "bg-primary font-semibold text-primary-foreground hover:bg-primary/90",
-              )}
-            >
-              {option}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
+// "30 minutes" / "1 hour": adım düğmelerinin erişilebilir adı.
+function stepWords(step: number): string {
+  return step === 60 ? "1 hour" : `${step} minutes`;
 }
 
 export function TimePanel({
@@ -345,18 +290,34 @@ export function TimePanel({
   onChange,
   step,
   presets,
+  onPreset,
   onEnter,
 }: {
   // "HH:mm" ya da boş.
   value: string;
   onChange: (time: string) => void;
+  // −/+ düğmelerinin ve ok tuşlarının adımı (dakika).
   step: number;
   presets: readonly string[];
-  // Yazarken Enter: seçimi uygula ve seçiciyi kapat.
-  onEnter?: () => void;
+  // Bir kısayol saate dokunuldu (değer onChange ile zaten iletildi). Başka
+  // seçilecek şeyi olmayan alan burada kapanır; gün de seçiliyorsa açık kalır.
+  onPreset?: (time: string) => void;
+  // Yazıp Enter: seçimi uygula. Değer, yazılan (anlaşılan) saattir; çağıran
+  // bunu kullansın, çünkü onChange'in state'i bu olayda henüz yenilenmemiştir.
+  onEnter?: (time: string) => void;
 }) {
-  const [hour, minute] = value ? value.split(":") : [null, null];
   const [draft, setDraft] = useState<string | null>(null);
+
+  // Yazılmakta olan metin anlaşılıyorsa o, yoksa değer: düğmeler buradan adım atar.
+  const base = (draft !== null ? parseTimeInput(draft) : null) ?? value;
+  const earlier = nudgeTime(base, -1, step);
+  const later = nudgeTime(base, 1, step);
+
+  function nudge(next: string | null) {
+    if (!next) return;
+    setDraft(null);
+    onChange(next);
+  }
 
   function commitDraft(): string | null {
     if (draft === null) return value || null;
@@ -367,49 +328,69 @@ export function TimePanel({
   }
 
   return (
-    <div className="w-44 space-y-2" data-slot="time-panel">
-      <input
-        data-time-input
-        inputMode="numeric"
-        autoComplete="off"
-        aria-label="Time (HH:mm)"
-        placeholder="HH:mm"
-        value={draft ?? value}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commitDraft}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter") return;
-          event.preventDefault();
-          if (commitDraft()) onEnter?.();
-        }}
-        className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-center text-sm tabular-nums transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-      />
-      <div className="flex gap-1.5">
-        <TimeColumn
-          label="Hour"
-          options={HOUR_OPTIONS}
-          current={hour}
-          onPick={(h) => onChange(`${h}:${minute ?? "00"}`)}
+    <div className="w-48 space-y-2.5" data-slot="time-panel">
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          aria-label={`${stepWords(step)} earlier`}
+          disabled={!earlier}
+          onClick={() => nudge(earlier)}
+          className={NUDGE_BUTTON}
+        >
+          <Minus aria-hidden className="size-4" />
+        </button>
+        <input
+          data-time-input
+          inputMode="numeric"
+          autoComplete="off"
+          aria-label="Time (HH:mm)"
+          placeholder="HH:mm"
+          value={draft ?? value}
+          onChange={(event) => {
+            const text = event.target.value;
+            setDraft(text);
+            // Anlaşılan her saat hemen iletilir: panel Enter'a basılmadan
+            // (dışarı tıklayarak) kapansa da yazılan saat kaybolmaz.
+            const parsed = parseTimeInput(text);
+            if (parsed && parsed !== value) onChange(parsed);
+          }}
+          onBlur={commitDraft}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              const time = commitDraft();
+              if (time) onEnter?.(time);
+            } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              event.preventDefault();
+              nudge(event.key === "ArrowUp" ? later : earlier);
+            }
+          }}
+          className="h-9 min-w-0 flex-1 rounded-lg border border-input bg-transparent px-2 text-center text-base font-medium tabular-nums transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
         />
-        <TimeColumn
-          label="Min"
-          options={minuteOptions(step, minute ?? undefined)}
-          current={minute}
-          onPick={(m) =>
-            onChange(`${hour ?? DEFAULT_PICKER_TIME.slice(0, 2)}:${m}`)
-          }
-        />
+        <button
+          type="button"
+          aria-label={`${stepWords(step)} later`}
+          disabled={!later}
+          onClick={() => nudge(later)}
+          className={NUDGE_BUTTON}
+        >
+          <Plus aria-hidden className="size-4" />
+        </button>
       </div>
       {presets.length > 0 ? (
-        <div className="flex flex-wrap gap-1">
+        <div className="grid grid-cols-3 gap-1.5">
           {presets.map((preset) => (
             <button
               key={preset}
               type="button"
               aria-pressed={preset === value}
-              onClick={() => onChange(preset)}
+              onClick={() => {
+                setDraft(null);
+                onChange(preset);
+                onPreset?.(preset);
+              }}
               className={cn(
-                "h-6 rounded-full border px-2 text-[11px] font-medium tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
+                "h-8 rounded-lg border text-xs font-medium tabular-nums outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
                 preset === value
                   ? "border-foreground bg-foreground text-background"
                   : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",

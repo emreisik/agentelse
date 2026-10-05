@@ -38,13 +38,19 @@ export function stageFromFacts(
   });
 }
 
+export type RescheduleContext = {
+  timezone: string;
+  scheduleEnabled: boolean;
+  now: Date;
+};
+
 // Parçayı yeni bir yerel gün+saate (ya da null: günü kaldır) taşınmış haliyle
 // döndürür; durum, neden, gecikme ve taşınabilirlik yeniden türetilir.
-export function rescheduleItem(
-  item: CalendarItem,
+export function rescheduleItem<T extends CalendarItem>(
+  item: T,
   localDateTime: string | null,
-  context: { timezone: string; scheduleEnabled: boolean; now: Date },
-): CalendarItem {
+  context: RescheduleContext,
+): T {
   const scheduledFor = localDateTime
     ? zonedDateTimeToUtc(localDateTime, context.timezone)
     : null;

@@ -37,7 +37,15 @@ export const CREATIVE_RATING_COPY = {
 
 type Phase = "idle" | "reasons" | "liked" | "disliked";
 
-export function CreativeRating({ creativeId }: { creativeId: string }) {
+export function CreativeRating({
+  creativeId,
+  inline = false,
+}: {
+  creativeId: string;
+  // Inside a social post card's action row: two icons only; an answer or the
+  // "what was off" panel takes a line of its own.
+  inline?: boolean;
+}) {
   const COPY = CREATIVE_RATING_COPY;
   const [phase, setPhase] = useState<Phase>("idle");
   const [reasons, setReasons] = useState<DislikeReasonKey[]>([]);
@@ -91,7 +99,10 @@ export function CreativeRating({ creativeId }: { creativeId: string }) {
     return (
       <div
         data-creative-rating
-        className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
+        className={cn(
+          "flex flex-wrap items-center gap-x-3 gap-y-1 text-xs",
+          inline ? "order-last basis-full px-1 pt-1" : "mt-1.5",
+        )}
         style={{ color: quiet }}
       >
         <span className="inline-flex items-center gap-1.5" role="status">
@@ -119,7 +130,10 @@ export function CreativeRating({ creativeId }: { creativeId: string }) {
     return (
       <div
         data-creative-rating
-        className="mt-1.5 space-y-2 rounded-xl border p-2.5"
+        className={cn(
+          "space-y-2 rounded-xl border p-2.5",
+          inline ? "order-last mt-1 basis-full" : "mt-1.5",
+        )}
         style={{ borderColor: "var(--ws-border)" }}
       >
         <p className="text-xs font-medium" style={{ color: "var(--ws-text)" }}>
@@ -192,7 +206,7 @@ export function CreativeRating({ creativeId }: { creativeId: string }) {
   return (
     <div
       data-creative-rating
-      className="mt-1.5 flex items-center gap-1"
+      className={cn("flex items-center gap-1", !inline && "mt-1.5")}
       style={{ color: quiet }}
     >
       <button
@@ -219,7 +233,7 @@ export function CreativeRating({ creativeId }: { creativeId: string }) {
       >
         <ThumbsDown aria-hidden className="size-4" />
       </button>
-      <span className="ml-1 text-[11px]">{COPY.hint}</span>
+      {inline ? null : <span className="ml-1 text-[11px]">{COPY.hint}</span>}
     </div>
   );
 }

@@ -1,11 +1,17 @@
-import Link from "next/link";
+import { cache } from "react";
+import { cookies } from "next/headers";
 
 import { prisma } from "@/lib/prisma";
-import { getOpenAiCredit } from "@/server/billing/openai-credit";
 import { requireUser } from "@/server/security/tenant-context";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { SetupProgressWidget } from "@/components/layout/setup-progress-widget";
-import { WorkspaceTopBar } from "@/components/layout/workspace-top-bar";
+import {
+  MobileSidebar,
+  SidebarBottom,
+  SidebarTop,
+} from "@/components/layout/workspace-sidebar";
+import { SidebarShell } from "@/components/layout/sidebar-collapse";
+import { SIDEBAR_COLLAPSED_COOKIE } from "@/components/layout/sidebar-item";
 import { toolBadgesFrom } from "@/components/hub-core/tool-badges";
 import { getAgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
 import { WorkspacePanelToggleProvider } from "@/components/workspace/workspace-panel-toggle";
@@ -20,87 +26,80 @@ export type ProjectNavBadges = {
   // next tick picking up the following one. Null alongside setupPercent.
   setupStageLabel: string | null;
   setupWaitingClient: number;
-  pendingHumanActions: number;
   proposedGoals: number;
-  proposedHandoffs: number;
-  awaitingPlans: number;
-  systemErrors: number;
 };
 
-async function getSidebarData(userId: string, projectId?: string) {
+async function getSidebarData(userId: string) {
   const membership = await prisma.workspaceMember.findFirst({
     where: { userId },
-    include: {
-      workspace: { include: { projects: { orderBy: { name: "asc" } } } },
+    select: {
+      workspace: {
+        select: {
+          name: true,
+          projects: {
+            orderBy: { name: "asc" },
+            select: { id: true, name: true, status: true },
+          },
+        },
+      },
       user: { select: { name: true, email: true } },
     },
   });
-  const workspace = membership?.workspace ?? null;
-  const displayName = membership?.user.name ?? membership?.user.email ?? null;
-  if (!workspace) {
-    return {
-      workspace: null,
-      displayName,
-      projectBadges: null as ProjectNavBadges | null,
-    };
-  }
-
-  const [openDeadLetters, projectSpecific] = await Promise.all([
-    // System Health badge: an unresolved dead-letter record = an
-    // unaddressed error. Must be shown even without a project context, so
-    // it's read at the shell level.
-    prisma.deadLetterJob.count({ where: { resolvedAt: null } }),
-    projectId ? getProjectBadges(projectId) : Promise.resolve(null),
-  ]);
-
-  const projectBadges: ProjectNavBadges = {
-    ...(projectSpecific ?? EMPTY_PROJECT_BADGES),
-    systemErrors: openDeadLetters,
-  };
-
   return {
-    workspace,
-    displayName,
-    projectBadges,
+    workspace: membership?.workspace ?? null,
+    displayName: membership?.user.name ?? membership?.user.email ?? null,
   };
+}
+
+// Everything the shell shows, read in one batch (the sidebar, the project's
+// badges, its agency status and its Recents do not depend on each other).
+// Request-scoped: the project chat page starts it before its own reads
+// (preloadAppShell) so the two overlap. AppShell renders only once the page's
+// data is in and would otherwise only then begin these round trips.
+const loadShellData = cache(async (projectId: string | null) => {
+  const { userId, email } = await requireUser();
+  const [sidebar, projectBadges, agencyStatus, sidebarWorks] =
+    await Promise.all([
+      getSidebarData(userId),
+      projectId ? getProjectBadges(projectId) : EMPTY_PROJECT_BADGES,
+      projectId ? getAgencyStatusSnapshot(projectId) : null,
+      // The sidebar's Recents (docs/works.md); undefined with Works off, or
+      // when the read fails: the nav is then as before.
+      projectId ? loadSidebarWorks(projectId) : undefined,
+    ]);
+  return {
+    email,
+    ...sidebar,
+    // No workspace: no badges either, as before.
+    projectBadges: sidebar.workspace ? projectBadges : null,
+    agencyStatus,
+    sidebarWorks,
+  };
+});
+
+// Starts the shell's reads ahead of AppShell (see loadShellData). A failure
+// surfaces where AppShell awaits the same promise.
+export function preloadAppShell(projectId?: string): void {
+  loadShellData(projectId ?? null).catch(() => undefined);
 }
 
 const EMPTY_PROJECT_BADGES: ProjectNavBadges = {
   setupPercent: null,
   setupStageLabel: null,
   setupWaitingClient: 0,
-  pendingHumanActions: 0,
   proposedGoals: 0,
-  proposedHandoffs: 0,
-  awaitingPlans: 0,
-  systemErrors: 0,
 };
 
-// Project-context sidebar badge data: setup progress, pending
-// human-actions/goals/handoffs/plans — one Promise.all. (Pending decisions are
-// cards in the Agency Desk chat, so they have no badge here.)
-async function getProjectBadges(
-  projectId: string,
-): Promise<Omit<ProjectNavBadges, "systemErrors">> {
-  const [
-    setupState,
-    pendingHumanActions,
-    proposedGoals,
-    proposedHandoffs,
-    awaitingPlans,
-  ] = await Promise.all([
+// Project-context sidebar badge data: setup progress and goals waiting for
+// the client — one Promise.all. (Pending decisions are cards in the chat, so
+// they have no badge here.)
+async function getProjectBadges(projectId: string): Promise<ProjectNavBadges> {
+  const [setupState, proposedGoals] = await Promise.all([
     prisma.projectSetupState.findUnique({
       where: { projectId },
       include: { stageRecords: { select: { stage: true, status: true } } },
     }),
-    prisma.humanInterventionRequest.count({
-      where: { projectId, status: "PENDING" },
-    }),
     prisma.projectGoal.count({ where: { projectId, status: "PROPOSED" } }),
-    prisma.workHandoff.count({ where: { projectId, status: "PROPOSED" } }),
-    prisma.workPlan.count({
-      where: { projectId, status: "AWAITING_APPROVAL" },
-    }),
   ]);
 
   let setupPercent: number | null = null;
@@ -135,10 +134,7 @@ async function getProjectBadges(
     setupPercent,
     setupStageLabel,
     setupWaitingClient,
-    pendingHumanActions,
     proposedGoals,
-    proposedHandoffs,
-    awaitingPlans,
   };
 }
 
@@ -161,46 +157,55 @@ export async function AppShell({
   // — only the project root's plain-chat view passes it.
   rightPanel?: React.ReactNode;
 }) {
-  const { userId, email } = await requireUser();
-  const [{ workspace, displayName, projectBadges }, agencyStatus] =
-    await Promise.all([
-      getSidebarData(userId, projectId),
-      projectId ? getAgencyStatusSnapshot(projectId) : Promise.resolve(null),
-    ]);
-  const sidebarVisible = Boolean(projectId);
-  // The sidebar's Recents (docs/works.md); undefined with Works off, or when the
-  // read fails: the nav is then as before.
-  const sidebarWorks = projectId ? await loadSidebarWorks(projectId) : undefined;
+  const {
+    email,
+    workspace,
+    displayName,
+    projectBadges,
+    agencyStatus,
+    sidebarWorks,
+  } = await loadShellData(projectId ?? null);
 
   // Only the project chat root passes a right panel (pixel spec §15) — it
-  // alone gets the panel-toggle context and the header's toggle button.
+  // alone gets the panel-toggle context (the panel's own edge toggle, and the
+  // phone bar's).
   const isWorkspaceRoot = Boolean(rightPanel);
 
-  // One header for every page. Its one counter, open system errors, is
-  // workspace-wide (dead letters), so it is the same with or without a project.
-  const openaiCredit = await getOpenAiCredit().catch(() => null);
-  const header = (
-    <WorkspaceTopBar
-      projectId={projectId}
-      projects={workspace?.projects ?? []}
-      counts={{ errors: projectBadges?.systemErrors ?? 0 }}
-      toolBadges={toolBadgesFrom(projectBadges)}
-      setupPercent={projectBadges?.setupPercent ?? null}
-      setupStageLabel={projectBadges?.setupStageLabel ?? null}
-      agencyStatus={agencyStatus}
-      displayName={displayName}
-      workspaceName={workspace?.name ?? null}
-      email={email}
-      showLogo={!sidebarVisible}
-      hasRightPanel={isWorkspaceRoot}
-      openaiCredit={openaiCredit}
-    />
+  // No top bar: the sidebar (workspace-sidebar.tsx) is on every signed-in
+  // page, so the content gets the full height.
+  // Collapsed to the icon rail (sidebar-collapse.tsx) — read here so the
+  // first paint already has the right width.
+  const sidebarCollapsed =
+    (await cookies()).get(SIDEBAR_COLLAPSED_COOKIE)?.value === "collapsed";
+  const sidebar = (
+    <>
+      <SidebarTop
+        projectId={projectId}
+        projects={workspace?.projects ?? []}
+        setupPercent={projectBadges?.setupPercent ?? null}
+        setupStageLabel={projectBadges?.setupStageLabel ?? null}
+        agencyStatus={agencyStatus}
+      />
+      <SidebarNav
+        activeProjectId={projectId}
+        toolBadges={toolBadgesFrom(projectBadges)}
+        works={sidebarWorks}
+        openWorkUntouched={openWorkUntouched}
+      />
+      <SidebarBottom
+        displayName={displayName}
+        workspaceName={workspace?.name ?? null}
+        email={email}
+      />
+    </>
   );
 
-  const body = (
-    <div className="flex min-w-0 flex-1 flex-col">
-      {header}
-      <div className="flex min-w-0 flex-1 overflow-hidden">
+  const shell = (
+    <div className="flex h-dvh flex-col overflow-hidden md:flex-row">
+      <SidebarShell defaultCollapsed={sidebarCollapsed}>{sidebar}</SidebarShell>
+      <MobileSidebar hasRightPanel={isWorkspaceRoot}>{sidebar}</MobileSidebar>
+
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {/* FAB stack anchors to this wrapper's corner (relative), not the
             viewport (fixed) — so it tracks <main>'s box when a rightPanel
             pushes it left, with no state shared between the two. */}
@@ -222,38 +227,11 @@ export async function AppShell({
     </div>
   );
 
-  return (
-    <div className="flex h-screen overflow-hidden">
-      {sidebarVisible ? (
-        <aside className="flex h-full w-64 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar">
-          {/* Same 72px as WorkspaceTopBar so the two bottom borders form one
-              continuous line; 22px = SidebarNav's px-3 + item px-2.5, which
-              puts the wordmark on the nav icons' column. */}
-          <Link
-            href="/dashboard"
-            className="flex h-[72px] shrink-0 items-center border-b border-sidebar-border px-[22px] transition-opacity hover:opacity-80"
-          >
-            <img
-              src="/logo.png"
-              alt="Agentelse"
-              className="h-7 object-contain"
-            />
-          </Link>
-
-          <SidebarNav
-            activeProjectId={projectId}
-            toolBadges={toolBadgesFrom(projectBadges)}
-            works={sidebarWorks}
-            openWorkUntouched={openWorkUntouched}
-          />
-        </aside>
-      ) : null}
-
-      {isWorkspaceRoot ? (
-        <WorkspacePanelToggleProvider>{body}</WorkspacePanelToggleProvider>
-      ) : (
-        body
-      )}
-    </div>
+  // The provider wraps the sidebar too: its toggle and the panel are
+  // siblings that share the open/closed state.
+  return isWorkspaceRoot ? (
+    <WorkspacePanelToggleProvider>{shell}</WorkspacePanelToggleProvider>
+  ) : (
+    shell
   );
 }

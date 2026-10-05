@@ -51,6 +51,7 @@ export function FormatGlyphIcon({
 // the planner and the pieces. (The legacy chat keeps its coloured badge below.)
 const BRAND_OF: Partial<Record<ChannelKey, BrandKey>> = {
   instagram: "instagram",
+  facebook: "facebook",
   tiktok: "tiktok",
   linkedin: "linkedin",
   x: "x",

@@ -61,9 +61,16 @@ async function fetchShareState(
 export function FacebookShareRow({
   creativeId,
   className,
+  collapsed = false,
+  onState,
 }: {
   creativeId: string;
   className?: string;
+  // Inside a social post card the row stays folded behind the card's Facebook
+  // icon: it keeps reading (and polling) its state but draws nothing.
+  collapsed?: boolean;
+  // Every state the row reads, so the icon can show it (posted, sharing...).
+  onState?: (kind: FacebookShareState["kind"]) => void;
 }) {
   const host = useWorkCardHost();
   const projectId = useParams<{ projectId: string }>()?.projectId;
@@ -84,12 +91,17 @@ export function FacebookShareRow({
   const rowRef = useRef<HTMLDivElement>(null);
 
   // A share the worker finished while this row was polling is announced.
+  const onStateRef = useRef(onState);
+  useEffect(() => {
+    onStateRef.current = onState;
+  }, [onState]);
   const apply = useCallback((next: FacebookShareState) => {
     if (lastKind.current === "sharing" && next.kind === "posted") {
       toast.success(`Shared on Facebook (${next.pageName}).`);
     }
     lastKind.current = next.kind;
     setState(next);
+    onStateRef.current?.(next.kind);
   }, []);
 
   const load = useCallback(async (): Promise<FacebookShareState | null> => {
@@ -153,6 +165,7 @@ export function FacebookShareRow({
   }, [mode]);
 
   const current: FacebookShareState = state ?? { kind: "unavailable" };
+  if (collapsed) return null;
   if (current.kind === "unavailable" && !error && !readError) return null;
 
   // Inside a Work, the same rule as the publish line above: nothing changes in

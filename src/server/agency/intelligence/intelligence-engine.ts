@@ -164,82 +164,110 @@ export const IntelligenceEngine = {
     return created;
   },
 
-  // Projects that have promoted signals not yet folded into any insight.
-  // Candidate selection looks at both PROMOTED signals and NOT-YET-PROCESSED
-  // findings. When only signals were considered, a project with hundreds of
-  // findings from research (but whose signal scan hadn't produced a signal
-  // yet) was never selected, and the insight chain never started.
-  async projectsNeedingInsights(limit = 5) {
+  // Projects with material (a promoted signal or a finding) newer than their
+  // last synthesis attempt. Every attempt is one LLM call, so "newer than the
+  // last attempt" is what keeps a project from being re-synthesized on every
+  // tick from the same promoted signals (PROMOTED is final: they never leave
+  // the pool). Comparing against the last ATTEMPT, not the last insight, also
+  // covers a run whose insights were all duplicates. The longest-waiting
+  // projects go first, so a few projects can't starve the rest.
+  async projectsNeedingInsights(limit = 5, now: Date = new Date()) {
     const { prisma } = await import("@/lib/prisma");
 
-    const bySignal = await prisma.signal.groupBy({
-      by: ["workspaceId", "projectId", "brandId"],
-      where: { status: "PROMOTED" },
-      _count: { id: true },
-      orderBy: { projectId: "asc" },
-      take: limit,
-    });
-
-    const candidates = new Map<
-      string,
-      {
-        workspaceId: string;
-        projectId: string;
-        brandId: string;
-        promotedCount: number;
-      }
-    >();
-    for (const group of bySignal) {
-      candidates.set(group.projectId, {
-        workspaceId: group.workspaceId,
-        projectId: group.projectId,
-        brandId: group.brandId,
-        promotedCount: group._count.id,
-      });
-    }
-
-    if (candidates.size < limit) {
-      const byFinding = await prisma.finding.groupBy({
+    const [bySignal, byFinding] = await Promise.all([
+      prisma.signal.groupBy({
+        by: ["workspaceId", "projectId", "brandId"],
+        where: { status: "PROMOTED" },
+        _max: { updatedAt: true },
+      }),
+      prisma.finding.groupBy({
         by: ["workspaceId", "projectId", "brandId"],
         _max: { createdAt: true },
-        orderBy: { projectId: "asc" },
-        take: limit * 4,
-      });
+      }),
+    ]);
 
-      for (const group of byFinding) {
-        if (candidates.size >= limit) break;
-        if (candidates.has(group.projectId)) continue;
-
-        // If the latest finding is newer than the latest insight, there's
-        // unprocessed material. Without this check, the same project would
-        // get re-synthesized on every tick, burning through the quota for nothing.
-        const latestInsight = await prisma.insight.findFirst({
-          where: { projectId: group.projectId },
-          orderBy: { createdAt: "desc" },
-          select: { createdAt: true },
-        });
-        const latestFinding = group._max.createdAt;
-        if (!latestFinding) continue;
-        if (latestInsight && latestInsight.createdAt >= latestFinding) continue;
-
-        candidates.set(group.projectId, {
+    const newest = new Map<
+      string,
+      { workspaceId: string; projectId: string; brandId: string; at: Date }
+    >();
+    const note = (
+      group: { workspaceId: string; projectId: string; brandId: string },
+      at: Date | null | undefined,
+    ) => {
+      if (!at) return;
+      const known = newest.get(group.projectId);
+      if (!known || at > known.at) {
+        newest.set(group.projectId, {
           workspaceId: group.workspaceId,
           projectId: group.projectId,
           brandId: group.brandId,
-          promotedCount: 0,
+          at,
         });
       }
-    }
+    };
+    for (const group of bySignal) note(group, group._max.updatedAt);
+    for (const group of byFinding) note(group, group._max.createdAt);
+    if (newest.size === 0) return [];
+
+    const lastAttempts = await prisma.reasoningCall.findMany({
+      where: {
+        purpose: insightSynthesisDef.purpose,
+        projectId: { in: [...newest.keys()] },
+      },
+      orderBy: { createdAt: "desc" },
+      distinct: ["projectId"],
+      select: { projectId: true, createdAt: true, status: true },
+    });
+    const lastAttemptOf = new Map(
+      lastAttempts.map((call) => [call.projectId, call] as const),
+    );
+
+    const due = [...newest.values()]
+      .map((material) => ({
+        material,
+        lastAttempt: lastAttemptOf.get(material.projectId) ?? null,
+      }))
+      .filter(({ material, lastAttempt }) =>
+        needsInsightSynthesis(material.at, lastAttempt, now),
+      )
+      .sort(
+        (a, b) =>
+          (a.lastAttempt?.createdAt.getTime() ?? 0) -
+          (b.lastAttempt?.createdAt.getTime() ?? 0),
+      )
+      .slice(0, limit)
+      .map(({ material }) => ({
+        workspaceId: material.workspaceId,
+        projectId: material.projectId,
+        brandId: material.brandId,
+      }));
 
     // This candidate list is dispatched 1:1 into synthesizeInsights(scope)
     // by the tick step wiring (agency-wiring.ts), one call per project, with
     // no further filtering there — so a paused-project candidate must be
     // dropped here to keep that dispatch from ever seeing it. Same silent
     // "try again next tick" behavior as signal-universe.ts's own skip.
-    const all = [...candidates.values()];
     const activeFlags = await Promise.all(
-      all.map((candidate) => isProjectAgencyActive(candidate.projectId)),
+      due.map((candidate) => isProjectAgencyActive(candidate.projectId)),
     );
-    return all.filter((_, index) => activeFlags[index]);
+    return due.filter((_, index) => activeFlags[index]);
   },
 };
+
+// A failed attempt is retried after this long even without new material, so
+// one transient error doesn't strand what is already there.
+const FAILED_SYNTHESIS_RETRY_MS = 60 * 60_000;
+
+// Whether a project's newest material still needs a synthesis run.
+export function needsInsightSynthesis(
+  newestMaterialAt: Date,
+  lastAttempt: { createdAt: Date; status: string } | null,
+  now: Date,
+): boolean {
+  if (!lastAttempt) return true;
+  if (newestMaterialAt > lastAttempt.createdAt) return true;
+  return (
+    lastAttempt.status !== "OK" &&
+    now.getTime() - lastAttempt.createdAt.getTime() > FAILED_SYNTHESIS_RETRY_MS
+  );
+}

@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { stripCapabilityPrefix } from "@/lib/labels/core";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
+import { countEnabledPublishSchedules } from "@/server/chat/publish-schedule";
 import {
   approvalCategory,
   buildApprovalDetails,
@@ -49,63 +50,61 @@ export async function getPendingDecisions(
 
   const [tasks, creatives, publishScheduleCount, brand, publishTargets] =
     await Promise.all([
-    taskIds.length
-      ? prisma.task.findMany({
-          where: { id: { in: taskIds }, projectId },
-          select: {
-            id: true,
-            title: true,
-            capability: true,
-            riskLevel: true,
-            departmentKey: true,
-            payload: true,
-          },
-        })
-      : Promise.resolve([]),
-    creativeIds.length
-      ? prisma.creative.findMany({
-          where: { id: { in: creativeIds }, projectId },
-          select: {
-            id: true,
-            title: true,
-            status: true,
-            platform: true,
-            scheduledFor: true,
-            createdByTaskId: true,
-            currentVersionId: true,
-            versions: {
-              orderBy: { version: "desc" },
-              take: 1,
-              select: {
-                id: true,
-                version: true,
-                caption: true,
-                copy: true,
-                contentFormat: true,
-                asset: {
-                  select: {
-                    id: true,
-                    mimeType: true,
-                    width: true,
-                    height: true,
+      taskIds.length
+        ? prisma.task.findMany({
+            where: { id: { in: taskIds }, projectId },
+            select: {
+              id: true,
+              title: true,
+              capability: true,
+              riskLevel: true,
+              departmentKey: true,
+              payload: true,
+            },
+          })
+        : Promise.resolve([]),
+      creativeIds.length
+        ? prisma.creative.findMany({
+            where: { id: { in: creativeIds }, projectId },
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              platform: true,
+              scheduledFor: true,
+              createdByTaskId: true,
+              currentVersionId: true,
+              versions: {
+                orderBy: { version: "desc" },
+                take: 1,
+                select: {
+                  id: true,
+                  version: true,
+                  caption: true,
+                  copy: true,
+                  contentFormat: true,
+                  asset: {
+                    select: {
+                      id: true,
+                      mimeType: true,
+                      width: true,
+                      height: true,
+                    },
                   },
                 },
               },
             },
-          },
-        })
-      : Promise.resolve([]),
-    // Same check autoPublishCreative makes — decides whether approving a
-    // creative takes a calendar slot or publishes right away.
-    prisma.projectSchedule.count({
-      where: { projectId, capability: "INSTAGRAM_PUBLISH", enabled: true },
-    }),
-    prisma.brand.findFirst({
-      where: { id: first.brandId },
-      select: { name: true },
-    }),
-    getPublishTargets(projectId),
-  ]);
+          })
+        : Promise.resolve([]),
+      // Same check autoPublishCreative makes — decides whether approving a
+      // creative takes a calendar slot or publishes right away.
+      countEnabledPublishSchedules(projectId),
+      prisma.brand.findFirst({
+        where: { id: first.brandId },
+        select: { name: true },
+      }),
+      getPublishTargets(projectId),
+    ]);
 
   const taskById = new Map(tasks.map((t) => [t.id, t]));
   const creativeById = new Map(creatives.map((c) => [c.id, c]));

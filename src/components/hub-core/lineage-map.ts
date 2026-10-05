@@ -13,9 +13,7 @@ export const PANEL_LABEL: Record<PanelKey, string> = {
   setup: "Setup",
   "brand-brain": "Brand Brain",
   ideas: "Ideas",
-  work: "Work",
-  departments: "Departments",
-  "human-action": "Human Action Center",
+  work: "Task log",
   settings: "Settings",
   library: "Library",
 };
@@ -33,18 +31,11 @@ export const RELATION_LABEL: Record<LineageRelation, string> = {
 export const LINEAGE: Record<PanelKey, LineageEdge[]> = {
   setup: [],
   // Signals, insights, opportunities and goals are tabs of Brand Brain now, so
-  // the whole derivation chain reads as "Brand Brain feeds Ideas".
+  // the whole derivation chain reads as "Brand Brain feeds Ideas"; ideas feed
+  // the plans made in the chat.
   "brand-brain": [{ panel: "ideas", relation: "feeds" }],
-  ideas: [
-    { panel: "brand-brain", relation: "fedBy" },
-    { panel: "work", relation: "feeds" },
-  ],
-  work: [
-    { panel: "ideas", relation: "fedBy" },
-    { panel: "departments", relation: "relatesTo" },
-  ],
-  departments: [{ panel: "work", relation: "relatesTo" }],
-  "human-action": [{ panel: "work", relation: "relatesTo" }],
+  ideas: [{ panel: "brand-brain", relation: "fedBy" }],
+  work: [],
   settings: [],
   library: [],
 };

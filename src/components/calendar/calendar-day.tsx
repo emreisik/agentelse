@@ -4,13 +4,14 @@ import { memo, type DragEvent } from "react";
 
 import { formatDayLong, type CalendarView } from "@/lib/calendar/grid";
 import { isDroppableDay } from "@/lib/calendar/move";
-import { STAGE_META, type StageTone } from "@/lib/calendar/stage";
+import { STAGE_META } from "@/lib/calendar/stage";
 import { cn } from "@/lib/utils";
 
+import { TONE_DOT } from "./calendar-bits";
 import {
   CompactChip,
   RichCard,
-  type BoardItem,
+  type BoardEntry,
   type DragHandlers,
 } from "./calendar-items";
 
@@ -29,21 +30,14 @@ export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 // sürüklemesi hücrelerde bırakma hedefi gibi davranmaz.
 export const DRAG_TYPE = "application/x-calendar-item";
 
+// Ay hücresinde gösterilen kart (post) sayısı; gerisi "+N more".
 const MONTH_CHIP_LIMIT = 3;
-
-const TONE_DOT: Record<StageTone, string> = {
-  positive: "bg-success",
-  active: "bg-primary",
-  waiting: "bg-warning",
-  neutral: "bg-muted-foreground/50",
-  danger: "bg-destructive",
-  special: "bg-special",
-};
 
 export type DayCellProps = {
   day: BoardDay;
   view: CalendarView;
-  items: BoardItem[];
+  // Günün kartları: post başına bir girdi.
+  items: BoardEntry[];
   inFocus: boolean;
   todayKey: string;
   // Bir sürükleme sürerken bu gün bırakmaya uygun değil (geçmiş).
@@ -51,8 +45,9 @@ export type DayCellProps = {
   over: boolean;
   selected: boolean;
   expanded: boolean;
-  // Yalnız bu hücredeki açık / sürüklenen parçanın kimliği (başka hücrelerde
-  // null): yoksa açık parça değişince bütün hücreler yeniden render olur.
+  // Yalnız bu hücredeki açık / sürüklenen kartın (girdinin) kimliği; başka
+  // hücrelerde null: yoksa açık parça değişince bütün hücreler yeniden render
+  // olur.
   activeId: string | null;
   draggingId: string | null;
   hrefPrefix: string;
@@ -75,7 +70,7 @@ function DayCellView(props: DayCellProps) {
   const overflow = items.length - shown.length;
 
   const chip = (
-    item: BoardItem,
+    item: BoardEntry,
     Chip: typeof CompactChip | typeof RichCard,
   ) => (
     <Chip
@@ -197,7 +192,10 @@ function DayCellView(props: DayCellProps) {
   );
 }
 
-function sameItems(a: readonly BoardItem[], b: readonly BoardItem[]): boolean {
+function sameItems(
+  a: readonly BoardEntry[],
+  b: readonly BoardEntry[],
+): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
@@ -207,7 +205,8 @@ function sameItems(a: readonly BoardItem[], b: readonly BoardItem[]): boolean {
 }
 
 // Özel karşılaştırma: gün kovaları her yeni veride yeni dizi olur, ama içindeki
-// parça NESNELERİ değişmediyse hücre yeniden render edilmez.
+// girdi NESNELERİ değişmediyse hücre yeniden render edilmez (girdiler
+// groupPosts'un önbelleğinden gelir).
 export const DayCell = memo(DayCellView, (prev, next) => {
   const keys = Object.keys(next) as (keyof DayCellProps)[];
   for (const key of keys) {

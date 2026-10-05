@@ -68,7 +68,7 @@ describe("legacy plan items", () => {
   });
 
   it("returns undefined for platforms outside the catalog", () => {
-    expect(legacyToFormat("FACEBOOK", "Live")).toBeUndefined();
+    expect(legacyToFormat("PINTEREST", "Pin")).toBeUndefined();
     expect(resolvePlanItem({ platform: "YOUTUBE" })).toBeUndefined();
   });
 

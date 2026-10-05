@@ -44,7 +44,7 @@ describe("ChannelPickerView", () => {
   it("marks chosen channels as pressed", () => {
     const html = view({ selected: ["instagram"] });
     expect(html.match(/aria-pressed="true"/g)).toHaveLength(1);
-    expect(html.match(/aria-pressed="false"/g)).toHaveLength(5);
+    expect(html.match(/aria-pressed="false"/g)).toHaveLength(6);
   });
 
   it("explains 'connect later' only when an unconnected channel is chosen", () => {

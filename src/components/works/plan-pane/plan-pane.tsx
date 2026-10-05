@@ -45,8 +45,10 @@ import {
   swapItem,
 } from "@/lib/works/plan-alternatives";
 import {
+  canMovePost,
   canOpenStep,
   canPlanPublishing,
+  movePieces,
   nextSuggestion,
   pieceOf,
   progressOf,
@@ -55,14 +57,17 @@ import {
   stepStates,
   todayIn,
   type PaneStep,
+  type PieceView,
 } from "@/lib/works/plan-pane";
 import { worksPublishMode } from "@/lib/works/plan-publish-truth";
 import {
   activePlatformsOf,
-  expandForPlatforms,
   formatFor,
   groupPosts,
+  INSTAGRAM_POST,
+  INSTAGRAM_STORY,
   orderedPlatforms,
+  piecesOfPlan,
   postKeyOf,
 } from "@/lib/works/plan-platforms";
 import { integrationsHref } from "@/lib/works/starter-cards";
@@ -70,14 +75,14 @@ import { saveContentPlanAction } from "@/server/actions/content-plan-actions";
 import {
   movePlanPostAction,
   removePlanPostAction,
+  setPlanInstagramStoryAction,
   setPlanPlatformsAction,
   type PlanDraftResult,
 } from "@/server/actions/plan-draft-actions";
 import { swapPlanItemAction } from "@/server/actions/plan-options-actions";
-import {
-  approvePlanItemsAction,
-  enablePlanPublishingAction,
-} from "@/server/actions/plan-progress-actions";
+import { moveSlotAction } from "@/server/actions/schedule-slots-actions";
+import { enablePlanPublishingAction } from "@/server/actions/plan-progress-actions";
+import { approvePlansAction } from "@/server/actions/work-approve-actions";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 import { PLAN_PANE_COPY as COPY } from "./copy";
@@ -189,17 +194,29 @@ function PaneBody({
     (_current, next: ChannelKey[]) => next,
   );
   const platforms = choice ?? activePlatformsOf(card);
+  // "Also as a Story" on Instagram (one switch for the whole plan).
+  const [story, applyStory] = useOptimistic(
+    Boolean(card.instagramStory),
+    (_current, next: boolean) => next,
+  );
+  // What saving would make right now (one piece per post and platform, plus
+  // the Stories).
+  const draftPieces = useMemo(
+    () =>
+      piecesOfPlan({
+        items: draftItems,
+        platforms: choice ?? undefined,
+        instagramStory: story,
+      }),
+    [draftItems, choice, story],
+  );
 
   const sourceItems = draftItems;
   const posts = useMemo(() => groupPosts(sourceItems), [sourceItems]);
   const pieceCount = useMemo(
     () =>
-      draft
-        ? (choice ? expandForPlatforms(draftItems, choice) : draftItems).filter(
-            (item) => !item.removed,
-          ).length
-        : card.items.filter((item) => !item.removed).length,
-    [draft, choice, draftItems, card.items],
+      (draft ? draftPieces : card.items).filter((item) => !item.removed).length,
+    [draft, draftPieces, card.items],
   );
 
   // ---- steps -----------------------------------------------------------------
@@ -257,21 +274,27 @@ function PaneBody({
         }),
       );
       const channels = choice ? platforms : own.length > 0 ? own : platforms;
-      return channels.map((channel) => ({
-        channel,
-        formatKey:
+      return channels.flatMap((channel) => {
+        const formatKey =
           firstChannel === channel
             ? first?.formatKey
-            : formatFor(channel, first?.formatKey),
-      }));
+            : formatFor(channel, first?.formatKey);
+        const tab = { channel, formatKey };
+        return story && channel === "instagram" && formatKey === INSTAGRAM_POST
+          ? [tab, { channel, formatKey: INSTAGRAM_STORY }]
+          : [tab];
+      });
     }
-    const seen = new Set<ChannelKey>();
+    // One tab per piece: a channel can have two (an Instagram post and its
+    // Story).
+    const seen = new Set<string>();
     const tabs: CardTab[] = [];
     for (const index of post.indices) {
       const item = card.items[index];
       const channel = item ? resolvePlanItem(item)?.channel : undefined;
-      if (!item || !channel || seen.has(channel)) continue;
-      seen.add(channel);
+      const key = `${channel}:${item?.formatKey ?? ""}`;
+      if (!item || !channel || seen.has(key)) continue;
+      seen.add(key);
       tabs.push({
         channel,
         formatKey: item.formatKey,
@@ -301,6 +324,33 @@ function PaneBody({
     });
   };
 
+  // A made plan's post: each of its pieces moves to the new day and time, one
+  // after the other (a piece is its own creative). The open card follows the
+  // post to its new place.
+  const moveMade = (
+    post: (typeof posts)[number],
+    pieces: readonly (PieceView | undefined)[],
+    date: string,
+    time: string,
+  ) => {
+    startEdit(async () => {
+      const result = await movePieces(pieces, { date, time }, (id, to) =>
+        moveSlotAction(projectId, workId, id, to).catch(() => ({
+          ok: false,
+        })),
+      );
+      if (result.moved > 0) {
+        setOpenKey(postKeyOf({ date, time, topic: post.topic }));
+      }
+      if (result.ok) {
+        if (result.moved > 0) host.announce(COPY.moved);
+        return;
+      }
+      toast.error(result.message ?? COPY.moveFailed);
+      router.refresh();
+    });
+  };
+
   const togglePlatform = (key: ChannelKey) => {
     const next = platforms.includes(key)
       ? platforms.filter((platform) => platform !== key)
@@ -315,14 +365,22 @@ function PaneBody({
     );
   };
 
+  const toggleStory = () => {
+    const next = !story;
+    edit(
+      () => applyStory(next),
+      (id) => setPlanInstagramStoryAction(id, next),
+    );
+  };
+
   // A new idea for a post: its other ideas one after the other, each shown as a
   // suggestion the person approves ("Use this idea") before the post changes.
   // A post with none gets some first (one paid round for the whole plan).
   const [suggesting, setSuggesting] = useState<IdeaPointer | null>(null);
   // Ideas that were asked for: shown as soon as the refreshed plan has them.
-  const [waiting, setWaiting] = useState<(IdeaPointer & { base: number }) | null>(
-    null,
-  );
+  const [waiting, setWaiting] = useState<
+    (IdeaPointer & { base: number }) | null
+  >(null);
   const [generating, setGenerating] = useState<number | null>(null);
   const swapping = useRef(false);
 
@@ -461,11 +519,11 @@ function PaneBody({
   const viewItems = useMemo(
     () =>
       toViewItems(
-        draft && choice ? expandForPlatforms(draftItems, choice) : sourceItems,
+        draft ? draftPieces : sourceItems,
         card.connections,
         card.slots,
       ),
-    [draft, choice, draftItems, sourceItems, card.connections, card.slots],
+    [draft, draftPieces, sourceItems, card.connections, card.slots],
   );
   const producing =
     host.producing.has(commandId ?? "") ||
@@ -555,8 +613,19 @@ function PaneBody({
 
   const approveAll = () => {
     if (!commandId) return;
+    // Only the pieces this pane actually shows right now (approvePlansAction
+    // itself then also drops any with unchosen picture alternatives): a
+    // piece that finished producing after this last loaded is neither
+    // approved nor silently skipped — the whole call is refused instead, so
+    // a refresh brings it into view before anything is decided.
+    const shown = (card.savedCreativeIds ?? []).filter(
+      (id, index) => id && !card.items[index]?.removed,
+    );
     startTransition(async () => {
-      const result = await approvePlanItemsAction(commandId);
+      const result = await approvePlansAction(projectId, {
+        planIds: [commandId],
+        creativeIds: shown,
+      });
       if (result.ok) {
         toast.success(COPY.approvedToast(result.approved, result.failed));
         setApproved(false);
@@ -706,7 +775,9 @@ function PaneBody({
         helper={COPY.reviewHelper}
         note={
           reason ??
-          (producibleNow > 0 && !producing ? (costLine ?? undefined) : undefined)
+          (producibleNow > 0 && !producing
+            ? (costLine ?? undefined)
+            : undefined)
         }
       >
         {producing || progress.making > 0 ? (
@@ -799,7 +870,11 @@ function PaneBody({
         connected={connected}
         locked={!draft || !editable}
         onToggle={togglePlatform}
+        story={{ on: story, onToggle: toggleStory }}
         connectHrefOf={(key) => connectHrefOf(key)}
+        accountOf={(key) =>
+          host.accountLabels?.[key] ?? card.connections?.[key]?.accountLabel
+        }
       />
       {draft && heldChannels.length > 0 ? (
         <p className="-mt-2 text-xs" style={{ color: "var(--ws-text-2)" }}>
@@ -837,7 +912,10 @@ function PaneBody({
         <section className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[13px]" style={{ color: "var(--ws-text-2)" }}>
-              <span className="font-semibold" style={{ color: "var(--ws-text)" }}>
+              <span
+                className="font-semibold"
+                style={{ color: "var(--ws-text)" }}
+              >
                 {COPY.postsCount(posts.length)}
               </span>
               {` · ${COPY.adaptationsCount(pieceCount)}`}
@@ -952,7 +1030,23 @@ function PaneBody({
                                   ),
                               ),
                           }
-                        : undefined
+                        : !draft &&
+                            !superseded &&
+                            host.active &&
+                            canMovePost(tabs.map((tab) => tab.piece))
+                          ? {
+                              canRemove: false,
+                              onMove: (date, time) =>
+                                moveMade(
+                                  post,
+                                  tabs.map((tab) => tab.piece),
+                                  date,
+                                  time,
+                                ),
+                              // A made post does not leave the plan from here.
+                              onRemove: () => undefined,
+                            }
+                          : undefined
                     }
                     newIdea={
                       swappable
@@ -961,7 +1055,8 @@ function PaneBody({
                             busy:
                               generating === index ||
                               (waiting?.index === index && !arrived),
-                            disabled: generating !== null && generating !== index,
+                            disabled:
+                              generating !== null && generating !== index,
                             suggestion: shownFor
                               ? {
                                   topic: shownFor.alt.topic,
@@ -1059,4 +1154,3 @@ function PaneFooter({
     </div>
   );
 }
-

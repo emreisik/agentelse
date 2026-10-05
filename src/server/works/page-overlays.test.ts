@@ -114,6 +114,7 @@ function inputsOf(
     live,
     liveRows,
     scheduledIdeas: collectScheduledIdeas(cards, liveRows, live.timezone),
+    postChannels: new Map(),
   };
 }
 

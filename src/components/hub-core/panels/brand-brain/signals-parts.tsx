@@ -1,24 +1,17 @@
-// The raw input layer of the Brand Brain's Intelligence tab: signals, the
-// findings extracted from them, and the scan-intensity profile. Composed by
-// intelligence-section.tsx, which also decides when the profile is shown.
+// The raw input layer of the Brand Brain's Intelligence tab: signals and the
+// findings extracted from them. Composed by intelligence-section.tsx.
 import Link from "next/link";
-import { ArrowLeft, RadioTower, SlidersHorizontal } from "lucide-react";
-import type { SignalIntensity } from "@prisma/client";
+import { ArrowLeft, RadioTower } from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
-import { shortDate, timeAgo } from "@/lib/dates";
 import {
   SIGNAL_CATEGORY,
-  SIGNAL_INTENSITY,
-  SIGNAL_INTENSITY_HINT,
   SIGNAL_STATUS,
   FACT_CLASSIFICATION,
   FINDING_SOURCE_TYPE,
   stripCapabilityPrefix,
 } from "@/lib/labels";
-import { updateSignalIntensityAction } from "@/server/actions/agency-config-actions";
 import { EmptyState } from "@/components/shared/empty-state";
-import { ModeSwitcher } from "@/components/shared/mode-switcher";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -294,87 +287,6 @@ export async function FindingDetail({
           <FieldGrid fields={fields} />
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-export async function ProfileSection({ projectId }: { projectId: string }) {
-  const profiles = await prisma.projectSignalProfile.findMany({
-    where: { projectId },
-    orderBy: { category: "asc" },
-  });
-
-  if (profiles.length === 0) {
-    return (
-      <EmptyState
-        icon={SlidersHorizontal}
-        title="No signal profile"
-        hint="No categories are being watched yet. They appear once the project's setup has created its signal profile."
-      />
-    );
-  }
-
-  const intensityOptions = (
-    Object.keys(SIGNAL_INTENSITY) as SignalIntensity[]
-  ).map((intensity) => ({
-    value: intensity,
-    label: SIGNAL_INTENSITY[intensity].label,
-    hint: SIGNAL_INTENSITY_HINT[intensity],
-  }));
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {profiles.map((profile) => {
-        const categoryMeta = SIGNAL_CATEGORY[profile.category];
-        const CategoryIcon = categoryMeta.icon;
-        return (
-          <Card key={profile.id} size="sm">
-            <CardContent className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
-                    {CategoryIcon ? (
-                      <CategoryIcon className="size-4" />
-                    ) : (
-                      <RadioTower className="size-4" />
-                    )}
-                  </span>
-                  <span className="truncate text-sm font-medium">
-                    {categoryMeta.label}
-                  </span>
-                </div>
-                <ModeSwitcher
-                  value={profile.intensity}
-                  options={intensityOptions}
-                  action={updateSignalIntensityAction}
-                  hiddenFields={{
-                    projectId,
-                    category: profile.category,
-                  }}
-                  fieldName="intensity"
-                  successMessage={`${categoryMeta.label} intensity updated`}
-                />
-              </div>
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{SIGNAL_INTENSITY_HINT[profile.intensity]}</span>
-                <span>
-                  {profile.lastScanAt
-                    ? `Last: ${timeAgo(profile.lastScanAt)}`
-                    : "Not scanned yet"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>Next scan</span>
-                <span className="tabular-nums">
-                  {profile.nextScanAt ? shortDate(profile.nextScanAt) : "—"}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })}
     </div>
   );
 }

@@ -33,8 +33,15 @@ export function SetupProgressWidget({
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
+    // Once setup has activated there is nothing left to show: polling stops
+    // for good (until the next server render drops the widget), and a slow
+    // answer never overlaps the next tick.
+    let done = false;
+    let inFlight = false;
 
     const poll = async () => {
+      if (inFlight || done) return;
+      inFlight = true;
       try {
         const res = await fetch(`/api/projects/${projectId}/setup-status`, {
           cache: "no-store",
@@ -45,13 +52,19 @@ export function SetupProgressWidget({
           activated: boolean;
         };
         setPercent(data.activated ? null : data.percent);
+        if (data.activated) {
+          done = true;
+          stop();
+        }
       } catch {
         // Transient network hiccup — next poll retries, nothing to show here.
+      } finally {
+        inFlight = false;
       }
     };
 
     const start = () => {
-      if (timer) return;
+      if (timer || done) return;
       timer = setInterval(poll, POLL_MS);
     };
     const stop = () => {

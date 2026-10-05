@@ -7,7 +7,12 @@ import { ALLOWED_ASSET_WIDTHS } from "@/lib/asset-url";
 // result is WebP, never wider than the original. Each (asset, width) is made
 // once per process and kept in a small LRU, since assets never change.
 
-const RESIZABLE = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
+const RESIZABLE = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/avif",
+]);
 
 export function parseAssetWidth(raw: string | null): number | null {
   if (!raw) return null;
@@ -33,6 +38,11 @@ function remember(key: string, value: Buffer) {
   }
 }
 
+// Previews being made right now. The same picture is often asked for by
+// several cards at once (chat, Outputs, Calendar): they share one download of
+// the original and one resize instead of each doing both.
+const inFlight = new Map<string, Promise<Buffer>>();
+
 export async function assetThumbnail(
   assetId: string,
   width: number,
@@ -46,16 +56,25 @@ export async function assetThumbnail(
     cache.set(key, hit);
     return hit;
   }
-  const resized = await sharp(await readOriginal())
-    .rotate()
-    .resize({ width, withoutEnlargement: true })
-    .webp({ quality: 80 })
-    .toBuffer();
-  remember(key, resized);
-  return resized;
+  const pending = inFlight.get(key);
+  if (pending) return pending;
+  const making = (async () => {
+    const resized = await sharp(await readOriginal())
+      .rotate()
+      .resize({ width, withoutEnlargement: true })
+      .webp({ quality: 80 })
+      .toBuffer();
+    remember(key, resized);
+    return resized;
+  })().finally(() => {
+    inFlight.delete(key);
+  });
+  inFlight.set(key, making);
+  return making;
 }
 
 export function clearAssetThumbnailCache() {
   cache.clear();
+  inFlight.clear();
   cachedBytes = 0;
 }

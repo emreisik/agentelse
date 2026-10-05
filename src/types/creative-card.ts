@@ -75,6 +75,12 @@ export type CreativeCardData =
       // "Make 3 more" posts it to the variants route. Never persisted.
       planId?: string;
       plannedFor?: string; // ISO
+      // Render-time only (Works): the post this piece is a delivery of and the
+      // channel keys of that post's deliveries that are not left out
+      // (page-overlays.ts). A post with its own Facebook delivery goes to the
+      // Page through it, never as a cross-post of another piece. Never persisted.
+      postId?: string;
+      postChannels?: string[];
       // Other variants of the same piece (written by the variants materialize
       // step, Works only); absent on every older row.
       alternatives?: {

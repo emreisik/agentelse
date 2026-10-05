@@ -126,6 +126,8 @@ const tx = {
   },
   work: { findFirst: mocks.workFindFirst },
   creative: { create: mocks.creativeCreate },
+  // One Post per post of the plan (save-plan-core createPostsInTx).
+  post: { create: vi.fn(async () => ({ id: "post-1" })) },
 };
 
 function work(over: Record<string, unknown> = {}) {
@@ -316,13 +318,12 @@ describe("master-schedule: rewrites the same Command into a saved plan", () => {
           time: "10:00",
           creativeId: "cr1",
         },
-        // The lead (instagram: connected social) takes the first slot, the
-        // other channel follows on a later day.
+        // One message is ONE post: every channel at the lead's time.
         {
           channel: "linkedin",
           formatKey: "linkedin.post",
-          date: "2026-10-03",
-          time: "12:00",
+          date: "2026-10-02",
+          time: "10:00",
           creativeId: "cr2",
         },
       ],
@@ -344,9 +345,10 @@ describe("master-schedule: rewrites the same Command into a saved plan", () => {
     });
     expect(card.savedCreativeIds).toEqual(["cr1", "cr2"]);
     expect(card.brandCheck).toEqual({ state: "checked", rules: 0 });
+    // The post's idea is the master's title; each channel keeps its words.
     expect(card.items.map((i) => [i.channel, i.topic, i.captionIdea])).toEqual([
-      ["instagram", "IG topic", "IG caption"],
-      ["linkedin", "LI topic", "LI caption"],
+      ["instagram", "Autumn menu", "IG caption"],
+      ["linkedin", "Autumn menu", "LI caption"],
     ]);
     // One origin per item: master:<commandId>.
     for (const item of card.items) {
@@ -446,7 +448,7 @@ describe("master-schedule: rewrites the same Command into a saved plan", () => {
         entityId: CMD,
         metadata: {
           channels: ["instagram", "linkedin"],
-          dates: ["2026-10-02", "2026-10-03"],
+          dates: ["2026-10-02", "2026-10-02"],
         },
       }),
     );
@@ -467,7 +469,7 @@ describe("master-schedule: rewrites the same Command into a saved plan", () => {
 });
 
 describe("master-schedule: the slot the person saw", () => {
-  it("uses a valid, free leadSlot for the lead channel and staggers the rest after it", async () => {
+  it("uses a valid, free leadSlot for the whole post", async () => {
     const result = await scheduleMasterAction(CMD, {
       leadSlot: { date: "2026-10-05", time: "11:00" },
     });
@@ -475,16 +477,10 @@ describe("master-schedule: the slot the person saw", () => {
       ok: true,
       slots: [
         { channel: "instagram", date: "2026-10-05", time: "11:00" },
-        // From the day after the lead's day.
-        { channel: "linkedin", date: "2026-10-06" },
+        { channel: "linkedin", date: "2026-10-05", time: "11:00" },
       ],
     });
-    expect(mocks.loadSuggestedSlots).toHaveBeenCalledTimes(1);
-    expect(mocks.loadSuggestedSlots).toHaveBeenCalledWith(PROJECT, {
-      channel: "linkedin",
-      startFrom: "2026-10-06",
-      count: 1,
-    });
+    expect(mocks.loadSuggestedSlots).not.toHaveBeenCalled();
   });
 
   it("without a leadSlot the lead gets the first suggestion", async () => {
@@ -563,19 +559,15 @@ describe("master-schedule: the slot the person saw", () => {
       linkedin: { connected: true },
     });
     await scheduleMasterAction(CMD);
-    expect(mocks.loadSuggestedSlots).toHaveBeenNthCalledWith(1, PROJECT, {
+    // Only the lead's time is looked up: the post goes out together.
+    expect(mocks.loadSuggestedSlots).toHaveBeenCalledTimes(1);
+    expect(mocks.loadSuggestedSlots).toHaveBeenCalledWith(PROJECT, {
       channel: "linkedin",
-      count: 1,
-    });
-    // Instagram, the other one, follows from the next day.
-    expect(mocks.loadSuggestedSlots).toHaveBeenNthCalledWith(2, PROJECT, {
-      channel: "instagram",
-      startFrom: "2026-10-03",
       count: 1,
     });
   });
 
-  it("never puts two channels on the same day, even with three targets", async () => {
+  it("puts every channel of the message on one post, at one time", async () => {
     setCard(
       masterCard({
         targets: [
@@ -586,8 +578,9 @@ describe("master-schedule: the slot the person saw", () => {
     );
     const result = await scheduleMasterAction(CMD);
     expect(result.ok).toBe(true);
-    const days = storedCard().items.map((item) => item.date);
-    expect(new Set(days).size).toBe(3);
+    const times = storedCard().items.map((item) => `${item.date}T${item.time}`);
+    expect(times).toHaveLength(3);
+    expect(new Set(times).size).toBe(1);
   });
 
   it("fails visibly when no free slot exists", async () => {
@@ -1000,7 +993,7 @@ describe("addMasterChannelAction", () => {
 
   it("refuses an unknown channel, a completed Work and a scheduled card, before changing the Work", async () => {
     expect(
-      await addMasterChannelAction(PROJECT, WORK, CMD, "facebook"),
+      await addMasterChannelAction(PROJECT, WORK, CMD, "email"),
     ).toMatchObject({ ok: false, code: "FAILED" });
     mocks.workGet.mockResolvedValue(work({ status: "DONE" }));
     expect(

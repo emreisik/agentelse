@@ -25,19 +25,14 @@ vi.mock("@/components/ui/sheet", () => {
     SheetTitle: ({ children }: Props) => createElement("h1", null, children),
   };
 });
-vi.mock("@/components/ui/tabs", () => {
-  type Props = Record<string, unknown> & { children?: ReactNode };
-  const pass = ({ children }: Props) => createElement("div", null, children);
-  return { Tabs: pass, TabsList: pass, TabsTrigger: pass, TabsContent: pass };
-});
-
-const { WorkspaceRightPanel, DetailPane, closeOnEscape } =
+const { WorkspaceRightPanel, closeOnEscape, dockPanelAction } =
   await import("./workspace-right-panel");
 
 const base = {
   collapsed: false,
   toggle: vi.fn(),
   isDesktop: true,
+  openTab: vi.fn(),
   requestedTab: null,
   consumeRequestedTab: vi.fn(),
   detail: null,
@@ -67,15 +62,45 @@ beforeEach(() => {
 });
 
 describe("WorkspaceRightPanel on a desktop", () => {
-  it("shows the tabs as before", () => {
+  it("open: only the panel on show, under its name, no tab row; the dock beside it", () => {
     const html = render();
     expect(html).toContain("BRAND-TAB");
+    expect(html).not.toContain("FILES-TAB");
     expect(html).toContain("w-[320px]");
+    expect(html).toMatch(/<h2[^>]*>Brand<\/h2>/);
+    expect(html).toContain('aria-label="Workspace dock"');
+    expect(html.indexOf("BRAND-TAB")).toBeLessThan(
+      html.indexOf('aria-label="Workspace dock"'),
+    );
     expect(html).not.toContain("workspace-detail");
   });
 
-  it("is hidden when collapsed, as before", () => {
-    expect(render({ collapsed: true })).toBe("");
+  it("collapsed: only the dock is left, with the panel's toggle and its four panels, nothing else", () => {
+    const html = render({ collapsed: true });
+    expect(html).not.toContain("BRAND-TAB");
+    expect(html).not.toContain("w-[320px]");
+    expect(html).toContain('aria-label="Open panel"');
+    expect(html).toContain('aria-expanded="false"');
+    for (const label of ["Brand", "Files", "Outputs", "Calendar"]) {
+      expect(html).toContain(`aria-label="${label}" aria-pressed="false"`);
+    }
+    expect(html.match(/<button/g)).toHaveLength(5);
+    expect(html).not.toContain('aria-haspopup="menu"');
+    expect(html).toContain("w-12");
+  });
+
+  it("open: the dock's toggle closes it, and the panel on show is the pressed icon", () => {
+    const html = render();
+    expect(html).toContain('aria-label="Close panel"');
+    expect(html).toContain('aria-label="Brand" aria-pressed="true"');
+    expect(html).toContain('aria-label="Files" aria-pressed="false"');
+  });
+
+  it("a panel asked for (the Work Summary Strip's openTab) is the one on show", () => {
+    const html = render({ requestedTab: "outputs" });
+    expect(html).toContain("OUTPUTS-TAB");
+    expect(html).not.toContain("BRAND-TAB");
+    expect(html).toContain('aria-label="Outputs" aria-pressed="true"');
   });
 
   it("an open card takes the panel's place: wider, with its own scrolling body, the tabs gone", () => {
@@ -117,11 +142,22 @@ describe("WorkspaceRightPanel on a desktop", () => {
 });
 
 describe("WorkspaceRightPanel below the desktop breakpoint", () => {
-  it("is the same drawer as before for the tabs", () => {
-    render({ isDesktop: false, collapsed: false });
+  it("is the same drawer as before, with its own icon row (it covers the dock)", () => {
+    const html = render({ isDesktop: false, collapsed: false });
     expect(panel.sheet[0]?.open).toBe(true);
     expect(panel.content[0]?.showCloseButton).toBe(true);
     expect(String(panel.content[0]?.className)).toContain("w-[390px]");
+    const drawer = html.slice(html.indexOf("data-drawer"));
+    expect(drawer).toContain('aria-label="Brand" aria-pressed="true"');
+    expect(drawer).toContain('aria-label="Calendar" aria-pressed="false"');
+    expect(drawer).toContain("BRAND-TAB");
+  });
+
+  it("keeps the dock from md up, hidden on a phone (the slim bar opens the drawer there)", () => {
+    const html = render({ isDesktop: false, collapsed: true });
+    expect(html).toMatch(
+      /<nav aria-label="Workspace dock" class="[^"]*hidden md:flex/,
+    );
   });
 
   it("a card opens the drawer even when the panel was collapsed, wide, with one close button of its own", () => {
@@ -165,6 +201,30 @@ describe("WorkspaceRightPanel below the desktop breakpoint", () => {
   });
 });
 
+describe("dockPanelAction (Photoshop's dock)", () => {
+  it("opens the panel on the icon picked while it is closed or a card has its place", () => {
+    for (const state of [
+      { collapsed: true, detailOpen: false },
+      { collapsed: false, detailOpen: true },
+      { collapsed: true, detailOpen: true },
+    ]) {
+      expect(
+        dockPanelAction({ ...state, current: "brand", picked: "brand" }),
+      ).toBe("open");
+    }
+  });
+
+  it("closes it when the icon is the panel on show, else switches", () => {
+    const open = { collapsed: false, detailOpen: false };
+    expect(
+      dockPanelAction({ ...open, current: "brand", picked: "brand" }),
+    ).toBe("close");
+    expect(
+      dockPanelAction({ ...open, current: "brand", picked: "files" }),
+    ).toBe("switch");
+  });
+});
+
 describe("DetailPane", () => {
   const keyEvent = (key: string, inside = true) => {
     const stop = vi.fn();
@@ -199,5 +259,4 @@ describe("DetailPane", () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(outside.stop).not.toHaveBeenCalled();
   });
-
 });

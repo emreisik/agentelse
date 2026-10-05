@@ -6,6 +6,7 @@ import {
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import type { PlanItemStage } from "@/lib/journey";
 import { mondayOf, addDaysToKey } from "@/lib/content-plan-view";
+import type { DayPreset } from "@/lib/date-picker";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 // The social media plan pane's rules (docs/works.md), kept out of the
@@ -49,9 +50,11 @@ export function progressOf(card: PlanCard): PaneProgress {
       allApproved: false,
     };
   }
+  // A channel left out of its post is not a piece of the plan any more.
+  const live = card.slots.filter((slot) => slot && !slot.excluded);
   const count = (...stages: PlanItemStage[]) =>
-    card.slots!.filter((slot) => slot && stages.includes(slot.stage)).length;
-  const total = card.slots.filter(Boolean).length;
+    live.filter((slot) => slot && stages.includes(slot.stage)).length;
+  const total = live.length;
   const approved = count("APPROVED", "PUBLISHED");
   return {
     draft: false,
@@ -201,6 +204,8 @@ const APPROACH: Readonly<Record<string, string>> = {
     "A reel script: the hook for the first seconds, scene by scene, with on-screen text.",
   "instagram.story":
     "One vertical picture with a short caption, made for stories.",
+  "facebook.post":
+    "One picture with a caption for your Page, shared from its card with one tap.",
   "tiktok.video":
     "A video concept: the hook for the first 2 seconds, a short script, on-screen text and a caption.",
   "linkedin.post":
@@ -309,17 +314,88 @@ export function todayIn(timezone: string): string {
   }
 }
 
-// The times offered when a post moves (its own time is offered too).
-export const MOVE_TIMES = [
-  "09:00",
-  "11:00",
-  "13:00",
-  "15:00",
-  "18:00",
-  "20:00",
-] as const;
 // The calendar reads a plan up to this far ahead (validatePlanDates).
 export const MAX_DAYS_AHEAD = 60;
+
+// The days offered at the top of the move window: the seven days of the post's
+// own week, one tap each ("Mon 5"). Days already gone and days past the plan's
+// horizon are left out, so a week that has begun starts today. Empty when no
+// day is left (the window then shows its general shortcuts).
+export function moveDayChips(date: string, today: string): DayPreset[] {
+  const last = addDaysToKey(today, MAX_DAYS_AHEAD);
+  const first = mondayOf(date) > today ? mondayOf(date) : today;
+  return Array.from({ length: 7 }, (_, offset) =>
+    addDaysToKey(first, offset),
+  )
+    .filter((day) => day >= today && day <= last)
+    .map((day) => ({
+      key: day,
+      label: `${weekdayOf(day)} ${Number(dayNumberOf(day))}`,
+    }));
+}
+
+// ---- moving a made post -------------------------------------------------------
+
+// A piece can still change its day and time while it waits for content, is
+// ready, approved or failed; one being made or already out cannot (the server
+// checks again).
+export const MOVABLE_STAGES: ReadonlySet<PlanItemStage> = new Set([
+  "PLANNED",
+  "IN_REVIEW",
+  "APPROVED",
+  "FAILED",
+]);
+
+// The pieces of a post that can be moved to `to`: made (they have a creative),
+// in a stage that allows it, and not there already.
+export function piecesToMove(
+  pieces: readonly (PieceView | undefined)[],
+  to: { date: string; time: string },
+): PieceView[] {
+  return pieces.filter(
+    (piece): piece is PieceView =>
+      !!piece &&
+      !!piece.creativeId &&
+      !!piece.stage &&
+      MOVABLE_STAGES.has(piece.stage) &&
+      piece.when !== `${to.date}T${to.time}`,
+  );
+}
+
+// Whether a post has any piece that could move at all (its day block is a
+// control then, whatever day it is moved to).
+export function canMovePost(
+  pieces: readonly (PieceView | undefined)[],
+): boolean {
+  return pieces.some(
+    (piece) =>
+      !!piece?.creativeId && !!piece.stage && MOVABLE_STAGES.has(piece.stage),
+  );
+}
+
+export type PieceMover = (
+  creativeId: string,
+  to: { date: string; time: string },
+) => Promise<{ ok: boolean; message?: string }>;
+
+// Moves the pieces of a post one after the other: each move rewrites the plan's
+// card, so they cannot run side by side. Stops at the first that fails and says
+// why; `moved` is how many had moved by then.
+export async function movePieces(
+  pieces: readonly (PieceView | undefined)[],
+  to: { date: string; time: string },
+  move: PieceMover,
+): Promise<
+  { ok: true; moved: number } | { ok: false; moved: number; message?: string }
+> {
+  let moved = 0;
+  for (const piece of piecesToMove(pieces, to)) {
+    const result = await move(piece.creativeId!, to);
+    if (!result.ok) return { ok: false, moved, message: result.message };
+    moved += 1;
+  }
+  return { ok: true, moved };
+}
 
 // ---- a new idea for a post -----------------------------------------------------
 

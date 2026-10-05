@@ -129,6 +129,7 @@ export const IdeaChatRepository = {
 
     const existing = await prisma.command.findFirst({
       where: {
+        projectId: input.projectId,
         ideaId,
         source: "SYSTEM",
         parsedIntent: { path: ["card", "taskId"], equals: input.taskId },
@@ -212,6 +213,7 @@ export const IdeaChatRepository = {
 
     const existing = await prisma.command.findFirst({
       where: {
+        projectId: input.projectId,
         ideaId,
         source: "SYSTEM",
         parsedIntent: { path: ["card", "taskId"], equals: input.taskId },
@@ -260,6 +262,7 @@ export const IdeaChatRepository = {
 
     const existing = await prisma.command.findFirst({
       where: {
+        projectId: input.projectId,
         ideaId,
         source: "SYSTEM",
         parsedIntent: { path: ["card", "taskId"], equals: input.taskId },
@@ -351,6 +354,7 @@ export const IdeaChatRepository = {
   }): Promise<void> {
     const existing = await prisma.command.findFirst({
       where: {
+        projectId: input.projectId,
         ideaId: input.ideaId,
         source: "SYSTEM",
         parsedIntent: {
@@ -450,9 +454,12 @@ export const IdeaChatRepository = {
     publishError?: string;
     publishedAt?: Date;
   }): Promise<boolean> {
-    const ideaId = await IdeaChatRepository.resolveIdeaIdForTask(input.taskId);
+    const { ideaId, projectId } = await IdeaChatRepository.resolveTaskThread(
+      input.taskId,
+    );
     const existing = await prisma.command.findFirst({
       where: {
+        projectId,
         ideaId,
         source: "SYSTEM",
         parsedIntent: {
@@ -657,21 +664,36 @@ export const IdeaChatRepository = {
   // wrote from that idea's thread, that's the task's "real" context; we
   // only fall back to the work-plan chain if that path isn't available.
   async resolveIdeaIdForTask(taskId: string): Promise<string | null> {
+    return (await IdeaChatRepository.resolveTaskThread(taskId)).ideaId;
+  },
+
+  // resolveIdeaIdForTask plus the task's project, read in the same task query:
+  // a card lookup scoped by the project stays inside it even when the task has
+  // no idea lineage (ideaId null).
+  async resolveTaskThread(
+    taskId: string,
+  ): Promise<{ ideaId: string | null; projectId: string | undefined }> {
     const task = await prisma.task.findUnique({
       where: { id: taskId },
-      select: { workPlanId: true, commandId: true },
+      select: { workPlanId: true, commandId: true, projectId: true },
     });
-    if (!task) return null;
+    if (!task) return { ideaId: null, projectId: undefined };
+    const { projectId } = task;
 
     if (task.commandId) {
       const command = await prisma.command.findUnique({
         where: { id: task.commandId },
         select: { ideaId: true },
       });
-      if (command?.ideaId) return command.ideaId;
+      if (command?.ideaId) return { ideaId: command.ideaId, projectId };
     }
 
-    if (!task.workPlanId) return null;
-    return IdeaChatRepository.resolveIdeaIdForWorkPlan(task.workPlanId);
+    if (!task.workPlanId) return { ideaId: null, projectId };
+    return {
+      ideaId: await IdeaChatRepository.resolveIdeaIdForWorkPlan(
+        task.workPlanId,
+      ),
+      projectId,
+    };
   },
 };

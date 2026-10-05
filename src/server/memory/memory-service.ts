@@ -11,6 +11,7 @@ import {
   type CreativeRating,
 } from "@/lib/creative-rating";
 import { readLayoutMeta } from "@/server/media/creative-layout";
+import { postResultInsight, type PostVerdict } from "@/lib/post-results";
 
 import {
   DEFAULT_CONFIDENCE,
@@ -83,6 +84,11 @@ function creativeLabel(creative: {
   if (!title) return null;
   const where = creative.formatKey ?? creative.channel;
   return where ? `"${title}" (${where})` : `"${title}"`;
+}
+
+// The memory row of a post's result verdict: one per post.
+export function postResultSourceRef(creativeId: string): string {
+  return `creative:${creativeId}:result`;
 }
 
 export const MemoryService = {
@@ -276,6 +282,83 @@ export const MemoryService = {
         error instanceof Error ? error.message : error,
       );
       return null;
+    }
+  },
+
+  // The client judged how a PUBLISHED post did ("Worked" / "Didn't work", Faz
+  // 4). The lesson carries the verdict and the post's own name, never its
+  // numbers (they are read live and not stored). Like a rating, a second
+  // verdict on the same post replaces the first. A verdict is the client's
+  // reaction to an output, so it starts as a hint and is confirmed only by
+  // repetition (relevance.ts isConfirmed); it is never a USER_EXPLICIT rule.
+  // Never throws: marking a result must not be able to break the card.
+  async rememberPostResult(input: {
+    scope: MemoryScope;
+    creativeId: string;
+    verdict: PostVerdict;
+    note?: string | null;
+  }): Promise<RememberResult | null> {
+    try {
+      const creative = await prisma.creative.findFirst({
+        where: { id: input.creativeId, projectId: input.scope.projectId },
+        select: { title: true, channel: true, formatKey: true, brief: true },
+      });
+      if (!creative) return null;
+      const name = creativeName(creative);
+      if (!name) return null;
+      const sourceRef = postResultSourceRef(input.creativeId);
+      await prisma.brandLearning.deleteMany({
+        where: { brandId: input.scope.brandId, sourceRef },
+      });
+      return await MemoryService.remember({
+        scope: input.scope,
+        insight: postResultInsight({
+          verdict: input.verdict,
+          name,
+          note: input.note,
+        }),
+        polarity: input.verdict === "WORKED" ? "WORKS" : "AVOID",
+        source: input.verdict === "WORKED" ? "OUTPUT_ACCEPTED" : "OUTPUT_REJECTED",
+        sourceRef,
+      });
+    } catch (error) {
+      console.error(
+        "[memory] could not record a post result:",
+        error instanceof Error ? error.message : error,
+      );
+      return null;
+    }
+  },
+
+  // The newest post-result lessons of a brand (what the client marked as worked
+  // / did not work), for the prompts that plan and invent: the daily ideas,
+  // the weekly plan draft and the chat's planning note. Never throws.
+  async postLessons(
+    brandId: string,
+    limit = 8,
+  ): Promise<{ worked: string[]; didNotWork: string[] }> {
+    try {
+      const rows = await prisma.brandLearning.findMany({
+        where: {
+          brandId,
+          sourceRef: { startsWith: "creative:", endsWith: ":result" },
+        },
+        orderBy: { createdAt: "desc" },
+        take: limit,
+        select: { insight: true, polarity: true },
+      });
+      return {
+        worked: rows.filter((r) => r.polarity === "WORKS").map((r) => r.insight),
+        didNotWork: rows
+          .filter((r) => r.polarity === "AVOID")
+          .map((r) => r.insight),
+      };
+    } catch (error) {
+      console.error(
+        "[memory] could not read post lessons:",
+        error instanceof Error ? error.message : error,
+      );
+      return { worked: [], didNotWork: [] };
     }
   },
 

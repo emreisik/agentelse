@@ -188,6 +188,17 @@ export async function setPlanPlatformsAction(
   });
 }
 
+// "Also as a Story": each Instagram post also goes out as a Story.
+export async function setPlanInstagramStoryAction(
+  commandId: string,
+  on: boolean,
+): Promise<PlanDraftResult> {
+  return editDraft(commandId, "plan-instagram-story", (plan) => {
+    if (typeof on !== "boolean") return fail("RANGE", MESSAGE.range);
+    return { card: { ...plan, instagramStory: on } };
+  });
+}
+
 // One post (its position in the items, and its idea to be sure it is the same
 // one) to another day and time.
 export async function movePlanPostAction(

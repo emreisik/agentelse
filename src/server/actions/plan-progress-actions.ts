@@ -27,6 +27,7 @@ import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
+import { recordPublishedIdeaLink } from "@/server/agency/learning/post-results";
 
 // Clicks that move a saved content plan along (the plan card and the
 // "next step" bar). Every one is a plain approval/state change the client
@@ -311,6 +312,15 @@ export async function markCreativePublishedAction(
       entityType: "Creative",
       entityId: creativeId,
     }).catch(() => undefined);
+    // The pool idea this piece was built from, kept apart from the plan card
+    // for the owner's later "Worked / Didn't work" (post-results.ts). Never
+    // throws.
+    await recordPublishedIdeaLink({
+      workspaceId: access.workspaceId,
+      projectId: creative.projectId,
+      creativeId,
+      taskId: creative.createdByTaskId,
+    });
 
     revalidatePath(`/projects/${creative.projectId}`);
     revalidatePath(`/projects/${creative.projectId}/takvim`);

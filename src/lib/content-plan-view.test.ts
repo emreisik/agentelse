@@ -89,11 +89,11 @@ describe("plan view model", () => {
   });
 
   it("keeps an unknown platform visible without a channel", () => {
-    const [facebook] = toViewItems(
-      [{ date: "2026-10-01", time: "10:00", platform: "FACEBOOK", topic: "t", captionIdea: "c" }],
+    const [youtube] = toViewItems(
+      [{ date: "2026-10-01", time: "10:00", platform: "YOUTUBE", topic: "t", captionIdea: "c" }],
       undefined,
     );
-    expect(facebook).toMatchObject({ platform: "FACEBOOK", channel: undefined });
+    expect(youtube).toMatchObject({ platform: "YOUTUBE", channel: undefined });
   });
 });
 

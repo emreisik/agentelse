@@ -40,7 +40,7 @@ describe("intelligence tab state", () => {
     expect(sectionOfEntity("insight")).toBe("insights");
     expect(sectionOfEntity("opportunity")).toBe("opportunities");
     expect(sectionOfEntity("signal")).toBe("signals");
-    for (const other of ["goal", "idea", "task", "constitution", "department"] as const) {
+    for (const other of ["goal", "idea", "task", "constitution"] as const) {
       expect(sectionOfEntity(other)).toBeNull();
     }
   });

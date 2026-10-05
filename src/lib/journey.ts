@@ -40,7 +40,15 @@ export type JourneyItem = {
   // autoPublishCreative); every other channel is a hand-off or a one-click
   // share the client makes.
   platform?: string;
+  // The post this piece is a channel of (docs/works.md "Posts"); absent on
+  // pieces saved before posts, each a post of its own.
+  postId?: string;
 };
+
+// How many posts the items are: the channel pieces of one post count once.
+export function postCountOf(items: readonly Pick<JourneyItem, "id" | "postId">[]): number {
+  return new Set(items.map((item) => item.postId ?? item.id)).size;
+}
 
 // What the measurement loop reported about one published plan piece, in its
 // own words (journey/results.ts). Never computed here.
@@ -70,6 +78,17 @@ export type JourneySnapshot = {
   // True when the snapshot was read for one Work (only that Work's plans):
   // switches on the approve step and the visible connect step.
   workScoped?: boolean;
+  // How many ideas wait in the idea pool (lib/idea-pool.ts): with no plan yet,
+  // the chat offers to plan from them.
+  ideaPool?: number;
+  // Published plan pieces of the last 30 days the owner has not judged yet
+  // ("Worked" / "Didn't work", lib/post-results.ts).
+  awaitingVerdict?: number;
+  // The weekly plan draft waiting in its own chat (weekly-plan-draft.ts), when
+  // the snapshot was read from another chat.
+  weeklyDraft?: { workId: string; count: number };
+  // Work-scoped: this chat holds an unsaved plan draft.
+  openDraftHere?: boolean;
 };
 
 export type NextStepAction =
@@ -91,6 +110,15 @@ export type NextStepAction =
   | { kind: "publish_manual"; creativeIds: string[] }
   // Start the plan wizard for the next stretch.
   | { kind: "plan_next"; afterDate: string }
+  // Ask the chat for a plan built from the idea pool; with an idea, a post
+  // from that one idea (the Ideas panel's "Plan in chat").
+  | {
+      kind: "plan_from_ideas";
+      count: number;
+      idea?: { id: string; title: string };
+    }
+  // Open the chat that holds the weekly plan draft.
+  | { kind: "open_weekly_draft"; workId: string; count: number }
   // What the measurement loop reported about published pieces.
   | { kind: "show_results"; count: number };
 
@@ -112,6 +140,9 @@ export type NextStep = {
 // One click produces at most this many pieces, all from the nearest days:
 // image calls are slow and paid, and the request has a time limit.
 export const MAX_PRODUCTION_BATCH = 7;
+// Posts one "Produce" click makes: each costs one paid picture, its other
+// formats are adaptations of it (plan-run.ts).
+export const MAX_POSTS_PER_RUN = 3;
 
 // A plan that ends within this many days gets its successor suggested.
 export const PLAN_RUNWAY_DAYS = 3;
@@ -190,6 +221,8 @@ export function nextStepHref(
       return workId
         ? integrationsHref(projectId, action.channel, { fromWorkId: workId })
         : `/projects/${projectId}/integrations`;
+    case "open_weekly_draft":
+      return `/projects/${projectId}?work=${encodeURIComponent(action.workId)}`;
     default:
       return workId
         ? `/projects/${projectId}?work=${encodeURIComponent(workId)}&next=${action.kind}`
@@ -228,6 +261,8 @@ export const NEXT_STEP_KINDS: readonly NextStepAction["kind"][] = [
   "enable_scheduled_publish",
   "publish_manual",
   "plan_next",
+  "plan_from_ideas",
+  "open_weekly_draft",
   "show_results",
 ];
 

@@ -6,8 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // follows (see agency-director.ts, opportunity-engine.ts, council-engine.ts).
 
 const opportunity = { findMany: vi.fn() };
+const reasoningCall = { findMany: vi.fn().mockResolvedValue([]) };
 vi.mock("@/lib/prisma", () => ({
-  prisma: { opportunity },
+  prisma: { opportunity, reasoningCall },
 }));
 
 const isProjectAgencyActive = vi.fn().mockResolvedValue(true);
@@ -61,7 +62,9 @@ vi.mock("@/server/repositories/idea-chat.repository", () => ({
   IdeaChatRepository: { postSystemMessage },
 }));
 
-const { IdeaFoundry } = await import("@/server/agency/ideas/idea-foundry");
+const { IdeaFoundry, dailyIdeaRunBlocks } = await import(
+  "@/server/agency/ideas/idea-foundry"
+);
 
 function candidate(overrides: Record<string, unknown> = {}) {
   return {
@@ -76,6 +79,7 @@ function candidate(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   isProjectAgencyActive.mockResolvedValue(true);
+  reasoningCall.findMany.mockResolvedValue([]);
 });
 
 describe("IdeaFoundry.generateForTopOpportunities (paused-project guard, audit scenario L)", () => {
@@ -236,5 +240,89 @@ describe("IdeaFoundry.generateForOpportunity (postToChat option)", () => {
     expect(created).toBe(1);
     expect(ideaCreate).toHaveBeenCalled();
     expect(postSystemMessage).not.toHaveBeenCalled();
+  });
+});
+
+// What these suites prove: the Brand Brain's daily idea step serves each
+// project at most once a day (a failed run is retried after an hour, not every
+// tick), quietly (no chat cards) and a few lenses at a time, and serves at most
+// `limit` projects per tick.
+describe("IdeaFoundry.generateDaily", () => {
+  const NOW = new Date("2026-10-04T12:00:00Z");
+
+  it("runs once for a project not served today, quietly and three lenses at a time", async () => {
+    opportunity.findMany.mockResolvedValue([candidate()]);
+    const generate = vi
+      .spyOn(IdeaFoundry, "generateForOpportunity")
+      .mockResolvedValue(3);
+
+    expect(await IdeaFoundry.generateDaily(3, NOW)).toBe(3);
+    expect(generate).toHaveBeenCalledWith("opp-1", "proj-1", {
+      postToChat: false,
+      maxLenses: 3,
+    });
+    expect(reasoningCall.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ purpose: "idea.generate" }),
+      }),
+    );
+    generate.mockRestore();
+  });
+
+  it("skips a project already served today and serves at most `limit` projects", async () => {
+    opportunity.findMany.mockResolvedValue([
+      candidate({ id: "o-done", projectId: "p-done" }),
+      candidate({ id: "o-a", projectId: "p-a" }),
+      candidate({ id: "o-b", projectId: "p-b" }),
+    ]);
+    reasoningCall.findMany.mockResolvedValue([
+      { projectId: "p-done", createdAt: new Date("2026-10-04T02:00:00Z"), status: "OK" },
+    ]);
+    const generate = vi
+      .spyOn(IdeaFoundry, "generateForOpportunity")
+      .mockResolvedValue(1);
+
+    await IdeaFoundry.generateDaily(1, NOW);
+
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledWith("o-a", "p-a", expect.anything());
+    generate.mockRestore();
+  });
+
+  it("does nothing without an evaluated opportunity", async () => {
+    opportunity.findMany.mockResolvedValue([]);
+    expect(await IdeaFoundry.generateDaily(3, NOW)).toBe(0);
+    expect(reasoningCall.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a failed run blocks the project for an hour, a good one for the day", () => {
+    const at = (iso: string) => new Date(iso);
+    expect(dailyIdeaRunBlocks({ createdAt: at("2026-10-04T01:00:00Z"), status: "OK" }, NOW)).toBe(true);
+    expect(dailyIdeaRunBlocks({ createdAt: at("2026-10-04T11:30:00Z"), status: "ERROR" }, NOW)).toBe(true);
+    expect(dailyIdeaRunBlocks({ createdAt: at("2026-10-04T10:30:00Z"), status: "ERROR" }, NOW)).toBe(false);
+  });
+});
+
+describe("IdeaFoundry.generateForOpportunity (maxLenses)", () => {
+  it("asks for at most maxLenses lenses in one call", async () => {
+    opportunityFindByIdInProject.mockResolvedValue({
+      id: "opp-1",
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      brandId: "b-1",
+      title: "An opportunity",
+      description: "Why it matters",
+      category: "TREND",
+      status: "EVALUATED",
+    });
+    reasoningRun.mockResolvedValue({ output: { ideas: [] }, isMock: true });
+
+    await IdeaFoundry.generateForOpportunity("opp-1", "proj-1", {
+      postToChat: false,
+      maxLenses: 2,
+    });
+
+    const context = reasoningRun.mock.calls[0]![1].context as { lenses: string[] };
+    expect(context.lenses).toHaveLength(2);
   });
 });

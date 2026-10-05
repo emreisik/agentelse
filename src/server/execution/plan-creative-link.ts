@@ -25,7 +25,11 @@ export function planCreativeIdOf(payload: unknown): string | undefined {
 export async function claimPlanCreative(input: {
   taskId: string;
   projectId: string;
-}): Promise<{ id: string; platform: SocialPlatform | null } | null> {
+}): Promise<{
+  id: string;
+  platform: SocialPlatform | null;
+  postId: string | null;
+} | null> {
   const task = await prisma.task.findUnique({
     where: { id: input.taskId },
     select: { payload: true },
@@ -46,7 +50,7 @@ export async function claimPlanCreative(input: {
 
   return prisma.creative.findUnique({
     where: { id: creativeId },
-    select: { id: true, platform: true },
+    select: { id: true, platform: true, postId: true },
   });
 }
 
@@ -75,10 +79,16 @@ export async function fillPlanCreativeWithText(input: {
   if (!slot) return false;
 
   try {
-    const creative = await prisma.creative.findUniqueOrThrow({
-      where: { id: slot.id },
-      select: { workspaceId: true, projectId: true, brandId: true },
-    });
+    const [creative, task] = await Promise.all([
+      prisma.creative.findUniqueOrThrow({
+        where: { id: slot.id },
+        select: { workspaceId: true, projectId: true, brandId: true },
+      }),
+      prisma.task.findUnique({
+        where: { id: input.taskId },
+        select: { createdByType: true },
+      }),
+    ]);
     const version = await prisma.creativeVersion.create({
       data: {
         creativeId: slot.id,
@@ -101,6 +111,7 @@ export async function fillPlanCreativeWithText(input: {
       entityId: slot.id,
       type: "CREATIVE_APPROVAL",
       requestedByType: "AI",
+      notify: task?.createdByType !== "SYSTEM",
     });
     return true;
   } catch (error) {

@@ -814,13 +814,14 @@ describe("start", () => {
     const view = await h.service.start({ access: ACCESS });
     expect(view.channels.map((c) => c.id)).toEqual([
       "channel.instagram",
+      "channel.facebook",
       "channel.tiktok",
       "channel.linkedin",
       "channel.x",
       "channel.seo",
       "channel.ads",
     ]);
-    const [instagram, tiktok, , , seo] = view.channels;
+    const [instagram, , tiktok, , , seo] = view.channels;
     expect(instagram).toMatchObject({
       label: "Instagram",
       hint: "Connected as @acme",
@@ -844,7 +845,7 @@ describe("start", () => {
     });
     const view = await h.service.start({ access: ACCESS });
     expect(view.channels[0]?.hint).toBe("Connected");
-    expect(view.channels[2]?.hint).toBe("Connected");
+    expect(view.channels[3]?.hint).toBe("Connected");
   });
 
   it("clips a long account label to 40 characters", async () => {
@@ -854,7 +855,7 @@ describe("start", () => {
       },
     });
     const view = await h.service.start({ access: ACCESS });
-    const hint = view.channels[3]?.hint ?? "";
+    const hint = view.channels[4]?.hint ?? "";
     expect(hint.startsWith("Connected as @aaa")).toBe(true);
     expect(Array.from(hint).length).toBeLessThanOrEqual(
       "Connected as ".length + 41,

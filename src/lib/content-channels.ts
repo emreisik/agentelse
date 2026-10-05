@@ -14,6 +14,7 @@ import type { DeliverableKey } from "@/server/chat/deliverables";
 
 export const CHANNEL_KEYS = [
   "instagram",
+  "facebook",
   "tiktok",
   "linkedin",
   "x",
@@ -112,6 +113,27 @@ export const CHANNELS: Record<ChannelKey, ChannelDef> = {
         creativeType: "SOCIAL_POST",
         contentFormat: "STORY",
         deliverable: "instagram_post",
+        publish: "auto",
+      },
+    ],
+  },
+  facebook: {
+    key: "facebook",
+    label: "Facebook",
+    short: "FB",
+    color: "#0866ff",
+    group: "social",
+    platform: "FACEBOOK",
+    formats: [
+      {
+        key: "facebook.post",
+        label: "Post",
+        glyph: "image",
+        creativeType: "SOCIAL_POST",
+        contentFormat: "FEED_PORTRAIT",
+        // Made like an Instagram post (one picture + caption), sized for the feed.
+        deliverable: "instagram_post",
+        // Goes to the connected Page with one tap on the piece's card.
         publish: "auto",
       },
     ],
@@ -279,6 +301,7 @@ export function defaultFormat(channel: ChannelKey): ChannelFormat {
 
 const PLATFORM_TO_CHANNEL: Partial<Record<SocialPlatform, ChannelKey>> = {
   INSTAGRAM: "instagram",
+  FACEBOOK: "facebook",
   TIKTOK: "tiktok",
   LINKEDIN: "linkedin",
   X: "x",
@@ -286,8 +309,8 @@ const PLATFORM_TO_CHANNEL: Partial<Record<SocialPlatform, ChannelKey>> = {
 
 // Plans saved before channels existed only have a platform and a free-text
 // format ("Carousel", "Reel", "Static post"). Map them onto the catalog so
-// old cards keep rendering; a platform the catalog does not cover (Facebook,
-// YouTube, Pinterest) yields undefined and the card falls back to the raw
+// old cards keep rendering; a platform the catalog does not cover (YouTube,
+// Pinterest) yields undefined and the card falls back to the raw
 // platform name.
 export function legacyToFormat(
   platform: string,

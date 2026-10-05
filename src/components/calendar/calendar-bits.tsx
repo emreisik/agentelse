@@ -21,7 +21,7 @@ import {
   type CalendarStage,
   type StageTone,
 } from "@/lib/calendar/stage";
-import type { CalendarSource } from "@/lib/calendar/types";
+import type { CalendarItem, CalendarSource } from "@/lib/calendar/types";
 import { cn } from "@/lib/utils";
 import { assetUrl } from "@/lib/asset-url";
 
@@ -65,6 +65,16 @@ export const TONE_PILL: Record<StageTone, string> = {
   neutral: "bg-muted text-muted-foreground ring-foreground/10",
   danger: "bg-destructive/10 text-destructive ring-destructive/25",
   special: "bg-special/15 text-special ring-special/25",
+};
+
+// Küçük durum noktası (dar ekranda gün noktaları, teslimat simgesinin köşesi).
+export const TONE_DOT: Record<StageTone, string> = {
+  positive: "bg-success",
+  active: "bg-primary",
+  waiting: "bg-warning",
+  neutral: "bg-muted-foreground/50",
+  danger: "bg-destructive",
+  special: "bg-special",
 };
 
 // Detay panelindeki durum kartının hafif tonlu zemini.
@@ -171,15 +181,18 @@ export function SourceMark({
 }
 
 // Parçanın görseli; üstünde platformun küçük marka rozeti. Görsel yoksa
-// platform simgesi karoyu doldurur.
+// platform simgesi karoyu doldurur. Birden çok mecralı postta rozet yok
+// (`badge={false}`): mecralar kartta DeliveryMarks ile yazılır.
 export function ItemThumb({
   assetId,
   source,
   className,
+  badge = true,
 }: {
   assetId: string | null;
   source: CalendarSource;
   className?: string;
+  badge?: boolean;
 }) {
   return (
     <span className={cn("relative inline-flex size-8 shrink-0", className)}>
@@ -196,11 +209,67 @@ export function ItemThumb({
           <ImageOff className="size-[45%]" aria-hidden />
         </span>
       )}
-      <SourceMark
-        source={source}
-        decorative
-        className="absolute -right-1 -bottom-1 size-[45%] min-w-3 rounded-full bg-background text-[6px] ring-1 ring-background"
-      />
+      {badge ? (
+        <SourceMark
+          source={source}
+          decorative
+          className="absolute -right-1 -bottom-1 size-[45%] min-w-3 rounded-full bg-background text-[6px] ring-1 ring-background"
+        />
+      ) : null}
     </span>
   );
+}
+
+// Bir postun teslimatları: her mecranın simgesi, köşesinde o teslimatın kendi
+// durumunun küçük noktası. Renk tek işaret değil: durum simgenin başlığında ve
+// kartın erişilebilir adında yazılı. Story yuvarlak simgeyle aynı mecradaki
+// posttan ayrılır.
+export function DeliveryMarks({
+  deliveries,
+  className,
+  ringClassName = "ring-background",
+}: {
+  deliveries: readonly CalendarItem[];
+  className?: string;
+  // Noktanın çevresi kartın zeminiyle aynı renk olsun.
+  ringClassName?: string;
+}) {
+  return (
+    <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>
+      {deliveries.map((delivery) => {
+        const meta = STAGE_META[delivery.stage];
+        return (
+          <span
+            key={delivery.id}
+            title={`${delivery.label} · ${meta.label}`}
+            className="relative inline-flex"
+          >
+            <SourceMark
+              source={delivery.source}
+              decorative
+              className={cn(
+                "size-3.5 rounded",
+                delivery.glyph === "story" && "rounded-full",
+              )}
+            />
+            <span
+              aria-hidden
+              className={cn(
+                "absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-1",
+                TONE_DOT[meta.tone],
+                ringClassName,
+              )}
+            />
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+// Postun ekran okuyucu ve başlık (title) metni: her teslimat ve kendi durumu.
+export function deliveriesText(deliveries: readonly CalendarItem[]): string {
+  return deliveries
+    .map((delivery) => `${delivery.label}: ${STAGE_META[delivery.stage].label}`)
+    .join("; ");
 }

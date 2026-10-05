@@ -20,7 +20,8 @@
     "test:watch": "vitest",
     "db:seed:agency": "tsx prisma/dev-seed-agency.ts",
     "assets:migrate-to-r2": "tsx prisma/migrate-assets-to-r2.ts",
-    "db:reset:agency": "tsx prisma/reset-agency.ts"
+    "db:reset:agency": "tsx prisma/reset-agency.ts",
+    "db:backfill:posts": "tsx prisma/backfill-posts.ts"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.14",

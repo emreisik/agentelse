@@ -1,12 +1,22 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { IDEA_POOL_STATUSES } from "@/lib/idea-pool";
+import {
+  WEEKLY_WORK_PREFIX,
+  weekOfWeeklyWork,
+  weeklyCommandId,
+} from "@/lib/weekly-draft";
 import type { JourneySnapshot } from "@/lib/journey";
+import { addDaysToKey } from "@/lib/content-plan-view";
+import { zonedDateTimeToUtc } from "@/lib/timezone";
+import { countAwaitingVerdict } from "@/server/agency/learning/post-results";
 import {
   getProjectTimezone,
   todayInTimezone,
 } from "@/server/chat/content-plan";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
+import { countEnabledPublishSchedules } from "@/server/chat/publish-schedule";
 
 import { computeNextSteps } from "./next-steps";
 import { loadPlanResults } from "./results";
@@ -52,19 +62,25 @@ export async function loadJourneySnapshot(
   options?: JourneyOptions,
 ): Promise<JourneySnapshot | null> {
   try {
-    const timezone = await getProjectTimezone(projectId);
     const workId = options?.workId;
-    const workPlanIds = workId
-      ? await loadWorkPlanIds(projectId, workId)
-      : undefined;
-    const creatives =
-      workPlanIds && workPlanIds.length === 0
+    // Every read below needs only the project (and the Work), so they all go
+    // out together; only the plan tasks wait for the plan slots, and the
+    // weekly draft for the timezone. They used to run in four rounds, about
+    // eleven round trips end to end, the longest wait of the chat page.
+    const timezoneRead = getProjectTimezone(projectId);
+    const creativesRead = (async () => {
+      const workPlanIds = workId
+        ? await loadWorkPlanIds(projectId, workId)
+        : undefined;
+      return workPlanIds && workPlanIds.length === 0
         ? []
-        : await prisma.creative.findMany({
+        : prisma.creative.findMany({
             where: {
               projectId,
               planId: workPlanIds ? { in: workPlanIds } : { not: null },
               status: { not: "ARCHIVED" },
+              // A channel left out of its post is no piece of the plan.
+              excludedAt: null,
             },
             orderBy: [{ scheduledFor: { sort: "asc", nulls: "last" } }],
             take: MAX_SLOTS,
@@ -78,6 +94,7 @@ export async function loadJourneySnapshot(
               formatKey: true,
               title: true,
               platform: true,
+              postId: true,
               versions: {
                 orderBy: { version: "desc" },
                 take: 1,
@@ -85,26 +102,57 @@ export async function loadJourneySnapshot(
               },
             },
           });
-
-    const planIds = [
-      ...new Set(
-        creatives.flatMap((creative) =>
-          creative.planId ? [creative.planId] : [],
+    })();
+    const taskRowsRead = creativesRead.then((creatives) => {
+      const planIds = [
+        ...new Set(
+          creatives.flatMap((creative) =>
+            creative.planId ? [creative.planId] : [],
+          ),
         ),
-      ),
-    ];
-    const [taskRows, connections, schedules, results] = await Promise.all([
-      planIds.length
+      ];
+      return planIds.length
         ? prisma.task.findMany({
             where: { projectId, commandId: { in: planIds } },
             select: { status: true, payload: true, updatedAt: true },
           })
-        : Promise.resolve([]),
+        : [];
+    });
+    const weeklyDraftRead = timezoneRead.then((timezone) =>
+      loadWeeklyDraft(projectId, todayInTimezone(timezone), timezone, workId),
+    );
+
+    const [
+      timezone,
+      creatives,
+      taskRows,
+      connections,
+      schedules,
+      results,
+      ideaPool,
+      weeklyDraft,
+      awaitingVerdict,
+      openDraftHere,
+    ] = await Promise.all([
+      timezoneRead,
+      creativesRead,
+      taskRowsRead,
       getChannelConnections(projectId),
-      prisma.projectSchedule.count({
-        where: { projectId, capability: "INSTAGRAM_PUBLISH", enabled: true },
-      }),
+      countEnabledPublishSchedules(projectId),
       loadPlanResults(projectId),
+      prisma.idea.count({
+        where: {
+          projectId,
+          status: { in: [...IDEA_POOL_STATUSES] },
+          isMock: false,
+        },
+      }),
+      weeklyDraftRead,
+      // Published posts of the last 30 days still waiting for the owner's
+      // verdict on how they did: project-wide, the same posts the results
+      // dialog lists (post-results.ts).
+      countAwaitingVerdict(projectId).catch(() => 0),
+      workId ? hasOpenDraft(projectId, workId) : Promise.resolve(false),
     ]);
 
     const tasks: PlanTaskRow[] = taskRows.flatMap((task) => {
@@ -133,6 +181,10 @@ export async function loadJourneySnapshot(
       publishScheduleEnabled: schedules > 0,
       results,
       ...(workId ? { workScoped: true } : {}),
+      ideaPool,
+      awaitingVerdict,
+      ...(weeklyDraft ? { weeklyDraft } : {}),
+      ...(openDraftHere ? { openDraftHere } : {}),
     };
   } catch (error) {
     console.error("[journey] snapshot failed:", error);
@@ -148,4 +200,83 @@ export async function loadNextSteps(
 ) {
   const snapshot = await loadJourneySnapshot(projectId, options);
   return snapshot ? computeNextSteps(snapshot) : [];
+}
+
+// The weekly plan draft (weekly-plan-draft.ts) still waiting in its own chat:
+// the newest weekly chat whose card is unsaved and whose week has not begun
+// (Save refuses a past day). Not pointed to from the draft's own chat. Never
+// throws: no pointer on a failed read.
+async function loadWeeklyDraft(
+  projectId: string,
+  today: string,
+  timezone: string,
+  currentWorkId: string | undefined,
+): Promise<{ workId: string; count: number } | undefined> {
+  try {
+    const work = await prisma.work.findFirst({
+      where: {
+        projectId,
+        status: "ACTIVE",
+        id: { startsWith: `${WEEKLY_WORK_PREFIX}${projectId}_` },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (!work || work.id === currentWorkId) return undefined;
+    const monday = weekOfWeeklyWork(projectId, work.id);
+    if (!monday || monday < today) return undefined;
+    const command = await prisma.command.findFirst({
+      where: { id: weeklyCommandId(projectId, monday), projectId },
+      select: { parsedIntent: true },
+    });
+    const card = (command?.parsedIntent as { card?: unknown } | null)?.card as
+      | { kind?: unknown; state?: unknown; items?: unknown }
+      | undefined;
+    if (card?.kind !== "content-plan-draft" || card.state !== "draft") {
+      return undefined;
+    }
+    const count = Array.isArray(card.items)
+      ? card.items.filter(
+          (item) => !(item as { removed?: unknown } | null)?.removed,
+        ).length
+      : 0;
+    if (count === 0) return undefined;
+    // The week got planned elsewhere meanwhile: saving the draft too would
+    // double-book it, so it is no longer pointed to.
+    const planned = await prisma.creative.count({
+      where: {
+        projectId,
+        status: { notIn: ["ARCHIVED", "REJECTED"] },
+        scheduledFor: {
+          gte: zonedDateTimeToUtc(`${monday}T00:00`, timezone),
+          lt: zonedDateTimeToUtc(`${addDaysToKey(monday, 7)}T00:00`, timezone),
+        },
+      },
+    });
+    return planned > 0 ? undefined : { workId: work.id, count };
+  } catch (error) {
+    console.error("[journey] weekly draft read failed:", error);
+    return undefined;
+  }
+}
+
+// Whether this chat holds a plan draft nobody has saved yet: its own bar must
+// not offer to plan again (that would replace the draft).
+async function hasOpenDraft(projectId: string, workId: string): Promise<boolean> {
+  try {
+    const open = await prisma.command.count({
+      where: {
+        projectId,
+        workId,
+        AND: [
+          { parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" } },
+          { parsedIntent: { path: ["card", "state"], equals: "draft" } },
+        ],
+      },
+    });
+    return open > 0;
+  } catch (error) {
+    console.error("[journey] open draft read failed:", error);
+    return false;
+  }
 }

@@ -93,6 +93,8 @@ function statusFromSamples(
   return rate >= DOWN_FAILURE_RATE ? "UNAVAILABLE" : "DEGRADED";
 }
 
+let definitionsSynced: Promise<void> | undefined;
+
 export const ProviderHealthService = {
   // Guarantees a ProviderDefinition row exists for every provider in the
   // registry — health and incident records depend on it.
@@ -115,24 +117,48 @@ export const ProviderHealthService = {
   // called on every tick; a write only produces an incident when the status
   // actually changes.
   async refresh(now = new Date()): Promise<ProviderHealthSnapshot[]> {
-    await this.syncDefinitions();
+    // The registry and each provider's isConfigured (env, read once per
+    // process) do not change while the process runs: the definition rows are
+    // written once, not on every refresh. A failed sync is retried next time.
+    definitionsSynced ??= this.syncDefinitions().catch((error: unknown) => {
+      definitionsSynced = undefined;
+      throw error;
+    });
+    await definitionsSynced;
 
     const since = new Date(now.getTime() - WINDOW_MS);
     const definitions = await prisma.providerDefinition.findMany({
       include: { health: true },
     });
+    // Every provider's results in the window in one read (it used to be one
+    // read per provider), newest first, split per provider below.
+    const windowJobs = definitions.length
+      ? await prisma.executionJob.findMany({
+          where: {
+            providerId: { in: definitions.map((definition) => definition.key) },
+            updatedAt: { gte: since },
+            status: { in: ["COMPLETED", "FAILED"] },
+          },
+          select: {
+            providerId: true,
+            status: true,
+            errorMessage: true,
+            updatedAt: true,
+          },
+          orderBy: { updatedAt: "desc" },
+        })
+      : [];
+    const jobsByProvider = new Map<string, typeof windowJobs>();
+    for (const job of windowJobs) {
+      if (!job.providerId) continue;
+      const jobs = jobsByProvider.get(job.providerId);
+      if (jobs) jobs.push(job);
+      else jobsByProvider.set(job.providerId, [job]);
+    }
     const snapshots: ProviderHealthSnapshot[] = [];
 
     for (const definition of definitions) {
-      const jobs = await prisma.executionJob.findMany({
-        where: {
-          providerId: definition.key,
-          updatedAt: { gte: since },
-          status: { in: ["COMPLETED", "FAILED"] },
-        },
-        select: { status: true, errorMessage: true, updatedAt: true },
-        orderBy: { updatedAt: "desc" },
-      });
+      const jobs = jobsByProvider.get(definition.key) ?? [];
 
       // Only errors that are evidence the provider is ACTUALLY broken
       // (classifyError().degradesProvider) feed the circuit breaker —

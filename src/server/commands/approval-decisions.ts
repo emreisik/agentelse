@@ -182,6 +182,7 @@ const SKIP_MESSAGE: Record<
   NO_ASSET: "This creative has no image to publish",
   MANUAL_FORMAT: "This format is posted by hand",
   WRONG_PLATFORM: "Not an Instagram creative",
+  EXCLUDED: "Left out of its post",
 };
 
 // Works only: the auto-publish decision for a Work-owned creative. It never
@@ -200,6 +201,7 @@ async function autoPublishWorkOwned(input: {
         platform: true,
         formatKey: true,
         scheduledFor: true,
+        excludedAt: true,
         versions: {
           orderBy: { version: "desc" },
           take: 1,
@@ -219,6 +221,7 @@ async function autoPublishWorkOwned(input: {
       hasAsset: Boolean(creative.versions[0]?.assetId),
       scheduledFor: creative.scheduledFor,
       connectedPlatforms: new Set(targets.map((t) => t.platform)),
+      excluded: Boolean(creative.excludedAt),
     },
     "auto",
   );
@@ -404,6 +407,8 @@ async function findNextQueuedInstagramCreativeId(
         projectId,
         platform: "INSTAGRAM",
         status: "APPROVED",
+        // A channel left out of its post is never released.
+        excludedAt: null,
         OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }],
       },
       orderBy: [
@@ -461,6 +466,8 @@ async function findNextQueuedForWorks(
         projectId,
         platform: "INSTAGRAM",
         status: "APPROVED",
+        // A channel left out of its post is never released.
+        excludedAt: null,
         OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }],
       },
       orderBy: [
@@ -554,6 +561,11 @@ export async function publishNextQueuedInstagramCreative(input: {
       actorUserId: AUTO_PUBLISH_ACTOR_ID,
     });
     if (!result.ok) return;
+    await publishRestOfPost({
+      creativeId,
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+    });
 
     await maybeProposeMetaCampaign({
       creativeId,
@@ -578,6 +590,68 @@ export async function publishNextQueuedInstagramCreative(input: {
     }
   } catch (error) {
     console.error("[approval-decisions] scheduled publish failed:", error);
+  }
+}
+
+// The formats the queue posts by itself (a carousel or a reel is posted by hand).
+const AUTO_FORMATS: ReadonlySet<string> = new Set([
+  "instagram.post",
+  "instagram.story",
+]);
+
+// A post goes out together (docs/works.md "Posts"): once the queue has posted
+// one delivery, the post's other approved deliveries that are due follow in
+// the same tick (its Story, its Facebook version) instead of waiting for later
+// slots. Each publish keeps its own lock and refusals; never throws.
+export async function publishRestOfPost(input: {
+  creativeId: string;
+  workspaceId: string;
+  projectId: string;
+}): Promise<void> {
+  try {
+    const creative = await prisma.creative.findUnique({
+      where: { id: input.creativeId },
+      select: { postId: true },
+    });
+    if (!creative?.postId) return;
+    const siblings = await prisma.creative.findMany({
+      where: {
+        postId: creative.postId,
+        projectId: input.projectId,
+        id: { not: input.creativeId },
+        excludedAt: null,
+        status: "APPROVED",
+        OR: [{ scheduledFor: null }, { scheduledFor: { lte: new Date() } }],
+      },
+      select: { id: true, channel: true, platform: true, formatKey: true },
+    });
+    for (const sibling of siblings) {
+      const scope = {
+        creativeId: sibling.id,
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        actorUserId: AUTO_PUBLISH_ACTOR_ID,
+      };
+      if (sibling.channel === "facebook") {
+        // Loaded here: facebook-share reaches the command service, which this
+        // module must not import at load time.
+        const { shareCreativeToFacebookCore } = await import(
+          "@/server/commands/facebook-share"
+        );
+        await shareCreativeToFacebookCore(scope);
+      } else if (
+        sibling.platform === "INSTAGRAM" &&
+        sibling.formatKey &&
+        AUTO_FORMATS.has(sibling.formatKey)
+      ) {
+        await publishCreativeCore({
+          ...scope,
+          format: sibling.formatKey === "instagram.story" ? "STORIES" : "FEED",
+        });
+      }
+    }
+  } catch (error) {
+    console.error("[approval-decisions] post's other channels not posted:", error);
   }
 }
 
@@ -753,8 +827,14 @@ export async function applyApprovalDecision(input: {
   to: "APPROVED" | "REJECTED";
   reviewedByUserId: string;
   actorType: ActorType;
+  // Internal: the other deliveries of an approved post (approveRestOfPost).
+  // They neither fan out again nor add chat lines of their own; their cards
+  // still show the new status.
+  fanOut?: boolean;
+  quiet?: boolean;
 }): Promise<void> {
   const { approval, to, reviewedByUserId, actorType } = input;
+  const quiet = input.quiet === true;
 
   // A task that can never run is not approved into a failure. Approving is
   // terminal (the approval cannot be decided again), and the dispatch that
@@ -858,8 +938,9 @@ export async function applyApprovalDecision(input: {
 
         // If approved, drop a SEPARATE turn into the chat instead of
         // updating the same row — the creative-ready card already carries
-        // the image/title, this is a distinct follow-up event.
-        if (to === "APPROVED") {
+        // the image/title, this is a distinct follow-up event. One line per
+        // post: its other deliveries stay quiet.
+        if (to === "APPROVED" && !quiet) {
           if (autoPublishResult?.status === "PUBLISHED") {
             // Auto-published above — no question needed, just confirm it
             // happened (this is what used to be a silent "sat there for 11
@@ -976,4 +1057,83 @@ export async function applyApprovalDecision(input: {
     entityType: "Approval",
     entityId: approval.id,
   });
+
+  if (
+    to === "APPROVED" &&
+    approval.entityType === "Creative" &&
+    input.fanOut !== false
+  ) {
+    // Never undoes the decision above: a delivery that cannot follow stays
+    // waiting on its own card.
+    await approveRestOfPost({ approval, reviewedByUserId, actorType }).catch(
+      (error) =>
+        console.error("[approval-decisions] post fan-out failed:", error),
+    );
+  }
+}
+
+// One approve per post (docs/works.md "Posts"): approving one delivery of a
+// post approves its other channels that are waiting too (never an excluded
+// one), each through this same decision path, so publishing, memory and cards
+// behave exactly as if each had been approved by hand. Every entry point (the
+// card, Telegram, the chat's decide_approval, the bulk approvals) goes through
+// here. A rejection stays with its own delivery. Best-effort per delivery.
+async function approveRestOfPost(input: {
+  approval: Approval;
+  reviewedByUserId: string;
+  actorType: ActorType;
+}): Promise<void> {
+  const { approval } = input;
+  const creative = await prisma.creative.findUnique({
+    where: { id: approval.entityId },
+    select: { postId: true },
+  });
+  if (!creative?.postId) return;
+  const siblings = await prisma.creative.findMany({
+    where: {
+      postId: creative.postId,
+      projectId: approval.projectId,
+      id: { not: approval.entityId },
+      excludedAt: null,
+    },
+    select: { id: true },
+  });
+  const waiting = siblings.length
+    ? await prisma.approval.findMany({
+        where: {
+          projectId: approval.projectId,
+          entityType: "Creative",
+          entityId: { in: siblings.map((sibling) => sibling.id) },
+          status: "PENDING",
+        },
+      })
+    : [];
+  for (const sibling of waiting) {
+    try {
+      await applyApprovalDecision({
+        approval: sibling,
+        to: "APPROVED",
+        reviewedByUserId: input.reviewedByUserId,
+        actorType: input.actorType,
+        fanOut: false,
+        quiet: true,
+      });
+    } catch (error) {
+      console.error(
+        `[approval-decisions] post ${creative.postId}: delivery ${sibling.entityId} not approved:`,
+        error,
+      );
+    }
+  }
+  await prisma.post
+    .update({
+      where: { id: creative.postId },
+      data: {
+        approvedAt: new Date(),
+        approvedByUserId: input.reviewedByUserId,
+      },
+    })
+    .catch((error) =>
+      console.error("[approval-decisions] post approval not recorded:", error),
+    );
 }

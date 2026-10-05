@@ -31,6 +31,9 @@ export type WorkCardHostValue = {
   // Channels the PROJECT has connected, independent of the Work's own channel
   // list: a held piece may belong to a channel the Work no longer covers.
   connectedChannels?: readonly ChannelKey[];
+  // The connected account per channel ("@biduniq", the Page's name): the
+  // social post card's header reads it like the real post would.
+  accountLabels?: Partial<Record<ChannelKey, string>>;
   openTab: (tab: "outputs" | "calendar") => void;
   runNextStep: (step: NextStep) => void;
   // Speaks a message in the ONE live region below; survives a card replacement.

@@ -8,14 +8,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const creativeFindMany = vi.fn();
 const taskFindMany = vi.fn();
 const commandFindMany = vi.fn();
+const commandCount = vi.fn().mockResolvedValue(0);
 const scheduleCount = vi.fn();
+const ideaCount = vi.fn();
+const workFindFirst = vi.fn();
+const auditFindMany = vi.fn();
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     creative: { findMany: creativeFindMany },
     task: { findMany: taskFindMany },
-    command: { findMany: commandFindMany },
+    command: { findMany: commandFindMany, count: commandCount },
     projectSchedule: { count: scheduleCount },
+    idea: { count: ideaCount },
+    work: { findFirst: workFindFirst },
+    auditLog: { findMany: auditFindMany },
   },
+}));
+// The results count has its own suite (post-results.test.ts).
+const countAwaitingVerdict = vi.fn();
+vi.mock("@/server/agency/learning/post-results", () => ({
+  countAwaitingVerdict,
 }));
 
 vi.mock("@/server/chat/content-plan", () => ({
@@ -52,6 +64,10 @@ beforeEach(() => {
   taskFindMany.mockResolvedValue([]);
   commandFindMany.mockResolvedValue([]);
   scheduleCount.mockResolvedValue(0);
+  ideaCount.mockResolvedValue(0);
+  workFindFirst.mockResolvedValue(null);
+  auditFindMany.mockResolvedValue([]);
+  countAwaitingVerdict.mockResolvedValue(0);
   getChannelConnections.mockResolvedValue({ instagram: { connected: true } });
   loadPlanResults.mockResolvedValue([]);
 });
@@ -65,6 +81,7 @@ describe("loadJourneySnapshot", () => {
           projectId: "proj-1",
           planId: { not: null },
           status: { not: "ARCHIVED" },
+          excludedAt: null,
         },
       }),
     );
@@ -80,6 +97,7 @@ describe("loadJourneySnapshot", () => {
         projectId: "proj-1",
         planId: { not: null },
         status: { not: "ARCHIVED" },
+        excludedAt: null,
       },
       orderBy: [{ scheduledFor: { sort: "asc", nulls: "last" } }],
       take: 300,
@@ -93,6 +111,7 @@ describe("loadJourneySnapshot", () => {
         formatKey: true,
         title: true,
         platform: true,
+        postId: true,
         versions: {
           orderBy: { version: "desc" },
           take: 1,
@@ -124,6 +143,7 @@ describe("loadJourneySnapshot", () => {
           projectId: "proj-1",
           planId: { in: ["plan-1", "plan-2"] },
           status: { not: "ARCHIVED" },
+          excludedAt: null,
         },
       }),
     );

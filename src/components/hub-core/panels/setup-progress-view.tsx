@@ -15,7 +15,6 @@ import { ActionForm } from "@/components/shared/action-form";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { buildHubHref } from "../hub-core-params";
-import { CrossLinkChip } from "../primitives/cross-link-chip";
 import type { SetupStageEntry } from "./setup-stage-show";
 
 // The 12-stage ProjectSetupState/ProjectSetupStageRecord progress view
@@ -181,16 +180,11 @@ export async function getSetupProgressView(
       return (
         <div className="space-y-3">
           <p className="text-sm font-medium">Prepared work plan</p>
-          <div className="flex flex-wrap gap-1.5">
+          <ul className="space-y-1 text-sm text-muted-foreground">
             {pendingPlans.map((plan) => (
-              <CrossLinkChip
-                key={plan.id}
-                projectId={projectId}
-                entity={{ kind: "workPlan", id: plan.id }}
-                text={plan.title}
-              />
+              <li key={plan.id}>{plan.title}</li>
             ))}
-          </div>
+          </ul>
           {approveButton}
         </div>
       );
@@ -253,8 +247,11 @@ function stageLink(
       };
     case "BASELINE_AUDITS":
       return {
-        href: buildHubHref(projectId, { panel: "departments" }),
-        label: "View audits →",
+        href: buildHubHref(projectId, {
+          panel: "brand-brain",
+          sub: "intelligence",
+        }),
+        label: "View findings →",
       };
     case "GOAL_GENERATION":
       return {
@@ -263,8 +260,8 @@ function stageLink(
       };
     case "AGENCY_CONFIGURATION":
       return {
-        href: buildHubHref(projectId, { panel: "departments" }),
-        label: "View departments →",
+        href: buildHubHref(projectId, { panel: "settings" }),
+        label: "View settings →",
       };
     case "AUTONOMY_CONFIGURATION":
       return {

@@ -1,6 +1,6 @@
 "use server";
 
-import type { IdeaStatus } from "@prisma/client";
+import type { IdeaStatus, Prisma } from "@prisma/client";
 
 import {
   CHANNELS,
@@ -40,6 +40,7 @@ import { WorkRepository } from "@/server/repositories/work.repository";
 import { brandRuleLanguageOf } from "@/server/brand/rule-language";
 import { loadBrandRules } from "@/server/works/brand-rule-loader";
 import { loadSuggestedSlots } from "@/server/works/free-slot-loader";
+import { movePostInTx } from "@/server/works/post-move";
 import {
   GUARD_MESSAGE,
   authorizeWorks,
@@ -103,6 +104,8 @@ export type RemoveSlotResult =
 
 const SCHEDULE_BUCKET = { bucket: "slots", limit: 30 } as const;
 const MOVABLE_STATUSES = ["DRAFT", "IN_REVIEW", "APPROVED"] as const;
+const POST_OUT_MESSAGE =
+  "Part of this post is already out, so it can't move.";
 const TERMINAL_TASK_STATUSES = ["COMPLETED", "FAILED", "CANCELLED"] as const;
 const TOPIC_MAX = 120;
 const CAPTION_MAX = 300;
@@ -527,6 +530,57 @@ async function slotOfWork(
   return { creative, planId: plan.id, card };
 }
 
+// The other channels of a removed piece's post that have no content and no job
+// are archived with it; once none of the post is left, the post is archived
+// too. Returns the ids archived here.
+async function removePostMatesInTx(
+  tx: Prisma.TransactionClient,
+  input: {
+    creativeId: string;
+    projectId: string;
+    busy: (creativeId: string) => boolean;
+  },
+): Promise<string[]> {
+  const self = await tx.creative.findUnique({
+    where: { id: input.creativeId },
+    select: { postId: true },
+  });
+  if (!self?.postId) return [];
+  const mates = await tx.creative.findMany({
+    where: {
+      postId: self.postId,
+      projectId: input.projectId,
+      id: { not: input.creativeId },
+      status: { not: "ARCHIVED" },
+    },
+    select: { id: true, status: true, currentVersionId: true },
+  });
+  const free = mates
+    .filter(
+      (mate) =>
+        mate.status === "DRAFT" && !mate.currentVersionId && !input.busy(mate.id),
+    )
+    .map((mate) => mate.id);
+  if (free.length > 0) {
+    await tx.creative.updateMany({
+      where: {
+        id: { in: free },
+        projectId: input.projectId,
+        status: "DRAFT",
+        currentVersionId: null,
+      },
+      data: { status: "ARCHIVED" },
+    });
+  }
+  if (free.length === mates.length) {
+    await tx.post.update({
+      where: { id: self.postId },
+      data: { archivedAt: new Date() },
+    });
+  }
+  return free;
+}
+
 function taskTargets(payload: unknown, creativeId: string): boolean {
   return (
     (payload as { planCreativeId?: unknown } | null)?.planCreativeId ===
@@ -613,6 +667,15 @@ export async function moveSlotAction(
           if (moved.count !== 1) {
             throw new SlotTxRefusal("LOCKED", INVALID_MESSAGE);
           }
+          // The post moves as one: its other channels and its own time.
+          const post = await movePostInTx(tx, {
+            creativeId: creativeIdOk.data,
+            projectId,
+            scheduledFor,
+            movable: MOVABLE_STATUSES,
+          });
+          if (!post.ok) throw new SlotTxRefusal("LOCKED", POST_OUT_MESSAGE);
+          const movedIds = new Set([creativeIdOk.data, ...post.moved]);
           const written = await updateCardInTx(tx, {
             commandId: slot.planId,
             projectId,
@@ -631,10 +694,13 @@ export async function moveSlotAction(
               ) {
                 return { reject: INVALID_MESSAGE };
               }
+              const ids = card.savedCreativeIds ?? [];
               return {
                 ...card,
                 items: card.items.map((entry, i) =>
-                  i === at ? { ...entry, date: to.date, time: to.time } : entry,
+                  movedIds.has(ids[i] ?? "")
+                    ? { ...entry, date: to.date, time: to.time }
+                    : entry,
                 ),
               };
             },
@@ -763,6 +829,16 @@ async function removeSlot(
           if (archived.count !== 1) {
             throw new SlotTxRefusal("LOCKED", locked.message);
           }
+          // The post goes as one: its other channels without content go too,
+          // and a post with nothing left is archived.
+          const removedIds = new Set([
+            creativeIdOk.data,
+            ...(await removePostMatesInTx(tx, {
+              creativeId: creativeIdOk.data,
+              projectId,
+              busy: (id) => tasks.some((task) => taskTargets(task.payload, id)),
+            })),
+          ]);
           const written = await updateCardInTx(tx, {
             commandId: slot.planId,
             projectId,
@@ -772,8 +848,8 @@ async function removeSlot(
               if (card.kind !== "content-plan-draft") {
                 return { reject: INVALID_MESSAGE };
               }
-              const at =
-                card.savedCreativeIds?.indexOf(creativeIdOk.data) ?? -1;
+              const ids = card.savedCreativeIds ?? [];
+              const at = ids.indexOf(creativeIdOk.data);
               if (at < 0 || !card.items[at]) return { reject: INVALID_MESSAGE };
               // A production run holds this slot (it creates the Task only
               // after claiming): removing now would let the render write into
@@ -783,14 +859,14 @@ async function removeSlot(
                 production?.state === "running" &&
                 Date.now() - Date.parse(production.startedAt) <
                   RUN_CLAIM_TTL_MS &&
-                production.creativeIds.includes(creativeIdOk.data)
+                production.creativeIds.some((id) => removedIds.has(id))
               ) {
                 return { reject: locked.message };
               }
               return {
                 ...card,
                 items: card.items.map((entry, i) =>
-                  i === at ? { ...entry, removed: true } : entry,
+                  removedIds.has(ids[i] ?? "") ? { ...entry, removed: true } : entry,
                 ),
               };
             },

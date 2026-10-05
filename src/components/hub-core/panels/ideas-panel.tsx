@@ -1,78 +1,62 @@
-import { Lightbulb } from "lucide-react";
-import type { CreativeLens, DepartmentKey } from "@prisma/client";
+import Link from "next/link";
+import { ArrowUpRight, Lightbulb, MessageSquarePlus } from "lucide-react";
+import type { IdeaStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { timeAgo } from "@/lib/dates";
+import { IDEA_STATUS } from "@/lib/labels";
 import {
-  AGENCY_DECISION_TYPE,
-  COUNCIL_RECOMMENDATION,
-  COUNCIL_TYPE,
-  CREATIVE_LENS,
-  DEPARTMENT_COLOR,
-  DEPARTMENT_KEY,
-  IDEA_STATUS,
-  councilDimensionLabel,
-} from "@/lib/labels";
+  IDEA_POOL_STATUSES,
+  IDEA_PLANNED_STATUSES,
+  ideaPlanHref,
+} from "@/lib/idea-pool";
 import {
   approveIdeaAction,
   archiveIdeaAction,
-  rejectIdeaAction,
-  reviseIdeaAction,
 } from "@/server/actions/agency-strategy-actions";
-import { IDEA_TRANSITIONS } from "@/server/state-machine/transitions";
 import { ActionForm } from "@/components/shared/action-form";
 import { EmptyState } from "@/components/shared/empty-state";
-import { NbaScoreChip } from "@/components/shared/nba-score-chip";
-import { ScoreBar } from "@/components/shared/score-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { SubmitButton } from "@/components/shared/submit-button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { buildHubHref } from "../hub-core-params";
 import { CrossLinkChip } from "../primitives/cross-link-chip";
 import { EntityDetailSheet } from "../primitives/entity-detail-sheet";
-import { FieldGrid, type FieldSpec } from "../primitives/field-grid";
-import { IdeaLensBoard, type IdeaBoardItem } from "./idea-lens-board";
 import type { PanelProps } from "./panel-props";
 
-type IdeaConcept = {
-  bigIdea?: string;
-  executionSketch?: string;
-  departmentsInvolved?: string[];
+// The idea pool: what the Brand Brain loop and the chat came up with, waiting
+// to be planned. A plan made in the chat draws from here first; an idea that
+// made it onto the calendar moves to "Planned". The old pipeline's lenses,
+// NBA scores and council marks are gone from view (Works ideas have none).
+
+type IdeaRow = {
+  id: string;
+  title: string;
+  description: string;
+  status: IdeaStatus;
+  createdAt: Date;
+  opportunity: { id: string; title: string } | null;
 };
 
-function parseConcept(concept: unknown): IdeaConcept | null {
-  return concept && typeof concept === "object"
-    ? (concept as IdeaConcept)
-    : null;
-}
+const SELECT = {
+  id: true,
+  title: true,
+  description: true,
+  status: true,
+  createdAt: true,
+  opportunity: { select: { id: true, title: true } },
+} as const;
 
-// A SINGLE department that's enough for quick scanning in card/list view —
-// concept.departmentsInvolved can carry more than one, the first is used.
-// The detail view lists all of them as badges (see IdeaDetail).
-function primaryDepartment(
-  concept: IdeaConcept | null,
-): DepartmentKey | undefined {
-  const key = concept?.departmentsInvolved?.[0];
-  return key && key in DEPARTMENT_KEY ? (key as DepartmentKey) : undefined;
-}
-
-// Reference: src/app/projects/[projectId]/ideas/page.tsx (page+IdeaSheet).
-// In HUB CORE the lens filter + kanban were moved into the `IdeaLensBoard`
-// client component (see the comment in that file); this component only
-// fetches data and renders the full detail when entity=idea:ID is present.
 export async function IdeasPanel({ projectId, entity }: PanelProps) {
   const ideaId = entity && entity.kind === "idea" ? entity.id : null;
   return (
     <>
-      <IdeaListView projectId={projectId} />
+      <IdeaPool projectId={projectId} />
       {ideaId ? (
         <EntityDetailSheet
-          title="Idea details"
-          closeHref={buildHubHref(projectId, {
-            panel: "ideas",
-            entity: null,
-          })}
+          title="Idea"
+          closeHref={buildHubHref(projectId, { panel: "ideas", entity: null })}
         >
           <IdeaDetail projectId={projectId} ideaId={ideaId} />
         </EntityDetailSheet>
@@ -81,65 +65,152 @@ export async function IdeasPanel({ projectId, entity }: PanelProps) {
   );
 }
 
-async function IdeaListView({ projectId }: { projectId: string }) {
-  const ideas = await prisma.idea.findMany({
-    where: { projectId },
-    orderBy: [{ nbaScore: "desc" }, { createdAt: "desc" }],
-    take: 200,
-    select: {
-      id: true,
-      title: true,
-      lens: true,
-      status: true,
-      nbaScore: true,
-      isMock: true,
-      concept: true,
-      councilEvaluations: {
-        select: { id: true, councilType: true, recommendation: true },
-      },
-    },
-  });
+async function IdeaPool({ projectId }: { projectId: string }) {
+  const [pool, planned, archived] = await Promise.all([
+    prisma.idea.findMany({
+      where: { projectId, status: { in: [...IDEA_POOL_STATUSES] } },
+      // Put-forward ideas first, then the newest.
+      orderBy: [{ createdAt: "desc" }],
+      take: 100,
+      select: SELECT,
+    }),
+    prisma.idea.findMany({
+      where: { projectId, status: { in: [...IDEA_PLANNED_STATUSES] } },
+      orderBy: { updatedAt: "desc" },
+      take: 30,
+      select: SELECT,
+    }),
+    prisma.idea.findMany({
+      where: { projectId, status: { in: ["ARCHIVED", "REJECTED", "LEARNED"] } },
+      orderBy: { updatedAt: "desc" },
+      take: 30,
+      select: SELECT,
+    }),
+  ]);
+  const ordered = [
+    ...pool.filter((idea) => idea.status === "APPROVED"),
+    ...pool.filter((idea) => idea.status !== "APPROVED"),
+  ];
 
-  if (ideas.length === 0) {
+  if (ordered.length + planned.length + archived.length === 0) {
     return (
       <div className="py-6">
         <EmptyState
           icon={Lightbulb}
-          title="No ideas"
-          hint="The idea workshop runs opportunities through 16 creative lenses to generate ideas; the initial portfolio is created in stage 10 of setup."
+          title="No ideas yet"
+          hint="The Brand Brain turns what it learns about your market into ideas every day, and ideas you save in the chat land here too. Plans made in the chat draw from this pool first."
         />
       </div>
     );
   }
 
-  const lensCounts = await prisma.idea.groupBy({
-    by: ["lens"],
-    where: { projectId },
-    _count: { id: true },
-  });
-  const usedLenses = lensCounts
-    .filter((l) => l.lens !== null)
-    .map((l) => ({ lens: l.lens as CreativeLens, count: l._count.id }));
-
-  const boardItems: IdeaBoardItem[] = ideas.map((idea) => ({
-    id: idea.id,
-    title: idea.title,
-    lens: idea.lens,
-    status: idea.status,
-    nbaScore: idea.nbaScore,
-    isMock: idea.isMock,
-    department: primaryDepartment(parseConcept(idea.concept)),
-    councilDots: idea.councilEvaluations,
-  }));
-
   return (
-    <div className="flex h-full min-h-0 flex-col pb-6">
-      <IdeaLensBoard
+    <div className="space-y-8 pb-10">
+      <p className="text-sm text-muted-foreground">
+        Plans made in the chat draw from this pool first. Put an idea forward to
+        have it picked before the others.
+      </p>
+      <IdeaGroup
+        title="In the pool"
         projectId={projectId}
-        ideas={boardItems}
-        usedLenses={usedLenses}
+        ideas={ordered}
+        empty="The pool is empty: new ideas arrive as the Brand Brain learns."
+        actions
       />
+      {planned.length > 0 ? (
+        <IdeaGroup title="Planned" projectId={projectId} ideas={planned} />
+      ) : null}
+      {archived.length > 0 ? (
+        <details className="group">
+          <summary className="cursor-pointer text-sm font-semibold text-muted-foreground">
+            Archive ({archived.length})
+          </summary>
+          <div className="mt-3">
+            <IdeaGroup projectId={projectId} ideas={archived} />
+          </div>
+        </details>
+      ) : null}
     </div>
+  );
+}
+
+function IdeaGroup({
+  title,
+  projectId,
+  ideas,
+  empty,
+  actions = false,
+}: {
+  title?: string;
+  projectId: string;
+  ideas: IdeaRow[];
+  empty?: string;
+  actions?: boolean;
+}) {
+  return (
+    <section className="space-y-2">
+      {title ? (
+        <h2 className="text-sm font-semibold text-foreground">
+          {title}{" "}
+          <span className="font-normal text-muted-foreground">
+            ({ideas.length})
+          </span>
+        </h2>
+      ) : null}
+      {ideas.length === 0 && empty ? (
+        <p className="text-sm text-muted-foreground">{empty}</p>
+      ) : (
+        <ul className="divide-y divide-border rounded-xl ring-1 ring-foreground/10">
+          {ideas.map((idea) => (
+            <li
+              key={idea.id}
+              data-idea={idea.id}
+              className="flex items-start gap-3 px-4 py-3"
+            >
+              <Link
+                href={buildHubHref(projectId, {
+                  panel: "ideas",
+                  entity: { kind: "idea", id: idea.id },
+                })}
+                scroll={false}
+                className="min-w-0 flex-1"
+              >
+                <span className="block truncate text-sm font-medium text-foreground">
+                  {idea.title}
+                </span>
+                <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
+                  {idea.description}
+                </span>
+                <span className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                  <StatusBadge
+                    meta={IDEA_STATUS[idea.status]}
+                    className="h-4 px-1.5 text-[10px]"
+                  />
+                  <span>
+                    {idea.opportunity
+                      ? "From the Brand Brain"
+                      : "From the chat"}
+                  </span>
+                  <span>{timeAgo(idea.createdAt)}</span>
+                </span>
+              </Link>
+              {actions ? (
+                <Link
+                  href={ideaPlanHref(projectId, idea.id)}
+                  className={cn(
+                    buttonVariants({ variant: "outline", size: "sm" }),
+                    "shrink-0",
+                  )}
+                >
+                  <MessageSquarePlus className="size-3.5" />
+                  Plan in chat
+                </Link>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -152,10 +223,7 @@ async function IdeaDetail({
 }) {
   const idea = await prisma.idea.findFirst({
     where: { id: ideaId, projectId },
-    include: {
-      opportunity: { select: { id: true, title: true } },
-      councilEvaluations: { orderBy: { createdAt: "asc" } },
-    },
+    select: { ...SELECT, updatedAt: true },
   });
 
   if (!idea) {
@@ -166,50 +234,10 @@ async function IdeaDetail({
     );
   }
 
-  const decision = await prisma.agencyDecision.findFirst({
-    where: { projectId, subjectType: "IDEA", subjectId: idea.id },
-    orderBy: { createdAt: "desc" },
-  });
-
-  const concept = parseConcept(idea.concept);
-  const conceptDepartment = primaryDepartment(concept);
-
-  const lensMeta = idea.lens ? CREATIVE_LENS[idea.lens] : null;
-  const allowedIdeaTransitions = IDEA_TRANSITIONS[idea.status];
-  const canApprove = allowedIdeaTransitions.includes("APPROVED");
-  const canReject = allowedIdeaTransitions.includes("REJECTED");
-  const canArchive = allowedIdeaTransitions.includes("ARCHIVED");
-  // Same gate as Archive — "not working, try a different angle" only makes
-  // sense while the idea hasn't already progressed past being archivable.
-  const canRevise = canArchive;
-
-  const fields: FieldSpec[] = [
-    { type: "badge", label: "Status", meta: IDEA_STATUS[idea.status] },
-    {
-      type: "badge",
-      label: "Lens",
-      meta: lensMeta ?? undefined,
-      fallback: idea.lens ?? undefined,
-    },
-    {
-      type: "text",
-      label: "NBA Score",
-      value: idea.nbaScore !== null ? idea.nbaScore.toFixed(2) : null,
-    },
-    { type: "boolean", label: "Demo (isMock)", value: idea.isMock },
-    {
-      type: "date",
-      label: "Created",
-      value: idea.createdAt,
-      relative: true,
-    },
-    {
-      type: "date",
-      label: "Updated",
-      value: idea.updatedAt,
-      relative: true,
-    },
-  ];
+  const inPool = (IDEA_POOL_STATUSES as readonly IdeaStatus[]).includes(
+    idea.status,
+  );
+  const canArchive = idea.status !== "ARCHIVED" && idea.status !== "REJECTED";
 
   return (
     <div className="space-y-6 py-6">
@@ -217,186 +245,53 @@ async function IdeaDetail({
         <h2 className="font-heading text-xl font-semibold text-foreground">
           {idea.title}
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">{idea.description}</p>
+        <p className="mt-2 text-sm whitespace-pre-line text-muted-foreground">
+          {idea.description}
+        </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <StatusBadge meta={IDEA_STATUS[idea.status]} />
-        {lensMeta ? <StatusBadge meta={lensMeta} showIcon /> : null}
-        <NbaScoreChip value={idea.nbaScore} />
-        {idea.isMock ? (
-          <StatusBadge meta={{ label: "Demo", tone: "special" }} />
-        ) : null}
+        <span>Added {timeAgo(idea.createdAt)}</span>
       </div>
 
       {idea.opportunity ? (
         <CrossLinkChip
           projectId={projectId}
           entity={{ kind: "opportunity", id: idea.opportunity.id }}
-          text={`Source opportunity: ${idea.opportunity.title}`}
+          text={`From the opportunity: ${idea.opportunity.title}`}
         />
       ) : null}
 
-      {concept ? (
-        <div
-          className="space-y-3 rounded-lg border-l-[3px] border-l-transparent bg-secondary/50 p-3"
-          style={
-            conceptDepartment
-              ? { borderLeftColor: DEPARTMENT_COLOR[conceptDepartment] }
-              : undefined
-          }
-        >
-          {concept.bigIdea ? (
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">
-                Big Idea
-              </p>
-              <p className="mt-0.5 text-sm">{concept.bigIdea}</p>
-            </div>
-          ) : null}
-          {concept.executionSketch ? (
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">
-                Execution Sketch
-              </p>
-              <p className="mt-0.5 text-sm">{concept.executionSketch}</p>
-            </div>
-          ) : null}
-          {concept.departmentsInvolved?.length ? (
-            <div className="flex flex-wrap gap-1.5">
-              {concept.departmentsInvolved.map((dept) => (
-                <StatusBadge
-                  key={dept}
-                  meta={DEPARTMENT_KEY[dept as DepartmentKey]}
-                  accentColor={DEPARTMENT_COLOR[dept as DepartmentKey]}
-                  fallback={dept}
-                  className="h-4 px-1.5 text-[10px]"
-                  showIcon
-                />
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      <FieldGrid fields={fields} />
-
-      {idea.councilEvaluations.length > 0 ? (
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-foreground">
-            Council evaluations
-          </p>
-          {idea.councilEvaluations.map((evaluation) => {
-            const scores =
-              evaluation.scores && typeof evaluation.scores === "object"
-                ? (evaluation.scores as Record<string, unknown>)
-                : {};
-            return (
-              <Card key={evaluation.id} size="sm">
-                <CardContent className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <StatusBadge meta={COUNCIL_TYPE[evaluation.councilType]} />
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-semibold tabular-nums">
-                        {evaluation.overallScore.toFixed(1)}/10
-                      </span>
-                      <StatusBadge
-                        meta={COUNCIL_RECOMMENDATION[evaluation.recommendation]}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                    {Object.entries(scores).map(([key, val]) =>
-                      typeof val === "number" ? (
-                        <ScoreBar
-                          key={key}
-                          value={val}
-                          max={10}
-                          label={councilDimensionLabel(key)}
-                        />
-                      ) : null,
-                    )}
-                  </div>
-                  {evaluation.rationale ? (
-                    <p className="text-xs text-muted-foreground">
-                      {evaluation.rationale}
-                    </p>
-                  ) : null}
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 pt-2 font-mono text-[10px] text-muted-foreground">
-                    <span>{evaluation.isMock ? "Demo data" : "Real data"}</span>
-                    <span>{timeAgo(evaluation.createdAt)}</span>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      ) : null}
-
-      {decision ? (
-        <div className="space-y-1.5 rounded-lg bg-accent/40 p-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium">Agency decision</span>
-            <StatusBadge meta={AGENCY_DECISION_TYPE[decision.decision]} />
-          </div>
-          <p className="text-xs text-muted-foreground">{decision.rationale}</p>
-        </div>
-      ) : null}
-
-      {idea.workPlanId ? (
-        <CrossLinkChip
-          projectId={projectId}
-          entity={{ kind: "workPlan", id: idea.workPlanId }}
-          text="Go to work plan"
-          sub="plans"
-        />
-      ) : null}
-
-      {canRevise ? (
-        <ActionForm
-          action={reviseIdeaAction}
-          successMessage="Idea revised — a new attempt is starting"
-          className="space-y-1.5 border-t border-border pt-3"
-        >
-          <input type="hidden" name="projectId" value={projectId} />
-          <input type="hidden" name="ideaId" value={idea.id} />
-          <div className="flex items-start gap-1.5">
-            <Textarea
-              name="feedback"
-              placeholder="Not quite right — what should change? e.g. 'too generic, lean into the launch angle instead'"
-              className="min-h-16 text-xs"
-            />
-            <SubmitButton variant="secondary" size="xs" className="shrink-0">
-              Revise
+      <div className="flex flex-wrap gap-2">
+        {inPool ? (
+          <Link
+            href={ideaPlanHref(projectId, idea.id)}
+            className={buttonVariants({ size: "sm" })}
+          >
+            <ArrowUpRight className="size-3.5" />
+            Plan in chat
+          </Link>
+        ) : null}
+        {inPool && idea.status !== "APPROVED" ? (
+          <ActionForm
+            action={approveIdeaAction}
+            successMessage="Put forward: plans pick it first"
+          >
+            <input type="hidden" name="projectId" value={projectId} />
+            <input type="hidden" name="ideaId" value={idea.id} />
+            <SubmitButton size="sm" variant="outline">
+              Put forward
             </SubmitButton>
-          </div>
-        </ActionForm>
-      ) : null}
-
-      <div className="flex items-center justify-end gap-1.5 border-t border-border pt-3">
+          </ActionForm>
+        ) : null}
         {canArchive ? (
           <ActionForm action={archiveIdeaAction} successMessage="Idea archived">
             <input type="hidden" name="projectId" value={projectId} />
             <input type="hidden" name="ideaId" value={idea.id} />
-            <SubmitButton variant="ghost" size="xs">
+            <SubmitButton size="sm" variant="ghost">
               Archive
             </SubmitButton>
-          </ActionForm>
-        ) : null}
-        {canReject ? (
-          <ActionForm action={rejectIdeaAction} successMessage="Idea rejected">
-            <input type="hidden" name="projectId" value={projectId} />
-            <input type="hidden" name="ideaId" value={idea.id} />
-            <SubmitButton variant="outline" size="xs">
-              Reject
-            </SubmitButton>
-          </ActionForm>
-        ) : null}
-        {canApprove ? (
-          <ActionForm action={approveIdeaAction} successMessage="Idea approved">
-            <input type="hidden" name="projectId" value={projectId} />
-            <input type="hidden" name="ideaId" value={idea.id} />
-            <SubmitButton size="xs">Approve</SubmitButton>
           </ActionForm>
         ) : null}
       </div>

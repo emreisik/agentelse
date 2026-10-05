@@ -3,14 +3,9 @@
 import type { ReactNode } from "react";
 import { Layers } from "lucide-react";
 
-import { CreativeCard } from "@/components/commands/creative-card";
 import { WsEventCard } from "@/components/commands/ws-event-card";
-import { FacebookShareRow } from "@/components/integrations/facebook-share-row";
 import { useCardFocus } from "@/components/works/card-focus";
 import { AdsInsightCard } from "@/components/works/ads-insight-card";
-import { CreativePublishLine } from "@/components/works/creative-publish-line";
-import { CreativeRating } from "@/components/works/creative-rating";
-import { CreativeVariantsStrip } from "@/components/works/creative-variants-strip";
 import { DailyBriefCard } from "@/components/works/daily-brief-card";
 import { MasterContentCard } from "@/components/works/master-content-card";
 import { IdeaOptionsCard } from "@/components/works/idea-options-card";
@@ -18,6 +13,7 @@ import { ContentPlanPane } from "@/components/works/plan-pane/plan-pane";
 import { PlanOptionsCard } from "@/components/works/plan-options-card";
 import { PaneCard } from "@/components/works/pane-card";
 import { PlannedSlotCard } from "@/components/works/planned-slot-card";
+import { SocialPostCard } from "@/components/works/social-post/social-post-card";
 import type { WorkCardHostValue } from "@/components/works/work-card-host";
 import { compactSpecOf, isSingleSlotPlan } from "@/lib/works/compact-card";
 import { copyText } from "@/lib/works/copy";
@@ -49,7 +45,16 @@ export function inPane(
   below?: ReactNode,
 ): ReactNode {
   const spec = compactSpecOf(card);
-  if (!spec) return element;
+  if (!spec) {
+    return below ? (
+      <>
+        {element}
+        {below}
+      </>
+    ) : (
+      element
+    );
+  }
   const id = commandId ?? spec.title;
   return (
     <PaneCard key={`pane-${id}`} cardId={id} spec={spec} below={below}>
@@ -102,13 +107,6 @@ export function renderWorksCard(
   }
 }
 
-// A post the client can still pass a verdict on: finished, not replaced.
-const RATED_STATUSES: ReadonlySet<string> = new Set([
-  "IN_REVIEW",
-  "APPROVED",
-  "PUBLISHED",
-]);
-
 const MASTER_LINE_MAX = 140;
 
 function clip(text: string): string {
@@ -159,6 +157,8 @@ export function WorksPlanCard({
   );
 }
 
+// Every finished piece in a Work is a social post card: approving, revising,
+// publishing and sharing all happen inside it (social-post/social-post-card.tsx).
 export function WorksCreativeCard({
   card,
 }: {
@@ -168,24 +168,7 @@ export function WorksCreativeCard({
   const focusRef = useCardFocus(card.creativeId);
   return (
     <div ref={focusRef} tabIndex={-1} className="outline-none">
-      <CreativeCard card={card} />
-      {(card.alternatives?.length ?? 0) > 0 ||
-      (card.status === "IN_REVIEW" && card.assetId && card.planId) ? (
-        <CreativeVariantsStrip card={card} planCommandId={card.planId} />
-      ) : null}
-      <CreativePublishLine card={card} />
-      {/* What the brand learns from this post (a finished one only). */}
-      {RATED_STATUSES.has(card.status) ? (
-        <CreativeRating creativeId={card.creativeId} />
-      ) : null}
-      {/* A cross-post on the project's Facebook Page; renders nothing when no
-          Page is connected. Only a finished piece can be shared, and only
-          here when the publish line owns publishing: otherwise the card's
-          own share list already carries the Facebook row. */}
-      {card.publishLine &&
-      (card.status === "APPROVED" || card.status === "PUBLISHED") ? (
-        <FacebookShareRow creativeId={card.creativeId} className="mt-2" />
-      ) : null}
+      <SocialPostCard card={card} />
     </div>
   );
 }

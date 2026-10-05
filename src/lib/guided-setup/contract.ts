@@ -309,6 +309,7 @@ export const GOAL_PRESETS: Record<
 // added by the server from getChannelConnections and travels as Option.hint).
 export const CHANNEL_HINTS: Record<ChannelKey, string> = {
   instagram: "Photos, Reels and Stories",
+  facebook: "Posts on your Facebook Page",
   tiktok: "Short videos",
   linkedin: "Posts for professionals",
   x: "Short posts and threads",

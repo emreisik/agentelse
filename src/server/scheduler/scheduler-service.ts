@@ -5,10 +5,6 @@ import { CronExpressionParser } from "cron-parser";
 import { prisma } from "@/lib/prisma";
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { publishNextQueuedInstagramCreative } from "@/server/commands/approval-decisions";
-import {
-  planWeeklyInstagramContent,
-  weeklyPlanConfigFromSchedule,
-} from "@/server/agency/content/instagram-week-planner";
 import { DeadLetterRepository } from "@/server/repositories/dead-letter.repository";
 
 // Same constants/shape as execution-worker.ts's own retry/backoff (not
@@ -32,11 +28,14 @@ function backoffMs(attempt: number): number {
 // Settings → Publishing tab (settings-panel.tsx) that creates these rows.
 const PUBLISH_QUEUE_MODE = "PUBLISH_NEXT_READY";
 
-// A ProjectSchedule with capability CREATE_CONTENT_PLAN and this marker
-// runs the fully-autonomous weekly Instagram planner instead of a normal
-// capability run — see instagram-week-planner.ts and the Settings ->
-// Publishing "Auto content planning" card (settings-panel.tsx).
+// A ProjectSchedule with capability CREATE_CONTENT_PLAN and this marker was
+// the Settings "Auto content planning" card's weekly Instagram planner. The
+// card is gone: plans are made in the chat, from the idea pool. A row left
+// behind is switched off the first time it comes due (same as the retired
+// idea-generation schedule below), so it never renders images on its own.
 const AUTO_PLAN_GRID_WEEK_MODE = "AUTO_PLAN_GRID_WEEK";
+const RETIRED_AUTO_PLAN_NOTE =
+  "Retired: content plans are made in the chat, from the idea pool.";
 
 // The Settings "Idea Generation Frequency" card is gone: turning an evaluated
 // opportunity into ideas is on demand only (a chat request). A row it left
@@ -120,17 +119,11 @@ export const SchedulerService = {
           schedule.capability === "CREATE_CONTENT_PLAN" &&
           config.mode === AUTO_PLAN_GRID_WEEK_MODE
         ) {
-          const { dailyImageCap, lensMix } =
-            weeklyPlanConfigFromSchedule(config);
-          await planWeeklyInstagramContent(
-            {
-              workspaceId: schedule.workspaceId,
-              projectId: schedule.projectId,
-              brandId: schedule.brandId,
-            },
-            dailyImageCap,
-            { lensMix },
-          );
+          await prisma.projectSchedule.update({
+            where: { id: schedule.id },
+            data: { enabled: false, lastError: RETIRED_AUTO_PLAN_NOTE },
+          });
+          continue;
         } else {
           const requestText =
             typeof config.request === "string" ? config.request : schedule.name;

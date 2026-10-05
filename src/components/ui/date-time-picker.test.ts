@@ -28,7 +28,7 @@ vi.mock("@/components/ui/popover", () => ({
     createElement("div", { "data-popover": "" }, props.children),
 }));
 
-const { DatePicker, DateTimePicker, TimePicker } =
+const { DatePicker, DateTimePanel, DateTimePicker, TimePicker } =
   await import("./date-time-picker");
 const { CalendarPanel, TimePanel } = await import("./date-time-panels");
 
@@ -86,7 +86,7 @@ describe("DateTimePicker", () => {
       defaultValue: "2026-10-07T10:00",
       min: "2026-10-05",
     });
-    expect(out).toMatch(/data-day="2026-10-04"[^>]*disabled/);
+    expect(out).toMatch(/data-day="2026-10-04"[^>]*disabled=""/);
     expect(out).not.toMatch(/data-day="2026-10-05"[^>]*disabled=""/);
   });
 
@@ -186,37 +186,119 @@ describe("CalendarPanel", () => {
 
   it("alt sınırdan önceki günler kapalı", () => {
     const out = panel({ min: "2026-10-05" });
-    expect(out).toMatch(/data-day="2026-10-04"[^>]*disabled/);
+    expect(out).toMatch(/data-day="2026-10-04"[^>]*disabled=""/);
   });
 });
 
 describe("TimePanel", () => {
-  it("saat ve dakika sütunları, yazma alanı ve kısayollar", () => {
-    const out = html(
+  const panel = (extra: Record<string, unknown> = {}) =>
+    html(
       createElement(TimePanel, {
         value: "14:25",
         onChange: () => undefined,
-        step: 5,
+        step: 30,
         presets: ["09:00", "18:00"],
+        ...extra,
       }),
     );
+
+  it("kaydırma listesi yok: yazma alanı, −/+ düğmeleri ve kısayollar", () => {
+    const out = panel();
     expect(out).toContain('aria-label="Time (HH:mm)"');
     expect(out).toContain('value="14:25"');
-    // 24 saat + 12 dakika (5'er) seçeneği
-    expect((out.match(/role="option"/g) ?? []).length).toBe(36);
-    expect(out).toMatch(/role="option"[^>]*aria-selected="true"[^>]*>14</);
+    expect(out).toContain('aria-label="30 minutes earlier"');
+    expect(out).toContain('aria-label="30 minutes later"');
     expect(out).toContain(">09:00<");
+    expect(out).toContain(">18:00<");
+    // Eski Hour/Min kaydırma sütunları gitti.
+    expect(out).not.toContain('role="listbox"');
+    expect(out).not.toContain('role="option"');
+    expect(out).not.toMatch(/>(Hour|Min)</);
   });
 
-  it("ızgara dışı dakika (07) görünür ve seçili", () => {
-    const out = html(
-      createElement(TimePanel, {
-        value: "10:07",
+  it("seçili kısayol işaretlenir, ötekiler değil", () => {
+    const out = panel({ value: "18:00" });
+    expect(out).toMatch(/aria-pressed="true"[^>]*>18:00</);
+    expect(out).toMatch(/aria-pressed="false"[^>]*>09:00</);
+  });
+
+  it("düğme adı adımı söyler", () => {
+    expect(panel({ step: 15 })).toContain('aria-label="15 minutes later"');
+    expect(panel({ step: 60 })).toContain('aria-label="1 hour earlier"');
+  });
+
+  it("adım düğmeleri günün sınırında kapanır; ortada ikisi de açık", () => {
+    expect(panel({ value: "00:00" })).toMatch(
+      /aria-label="30 minutes earlier"[^>]*disabled=""/,
+    );
+    expect(panel({ value: "00:00" })).not.toMatch(
+      /aria-label="30 minutes later"[^>]*disabled=""/,
+    );
+    expect(panel({ value: "23:30" })).toMatch(
+      /aria-label="30 minutes later"[^>]*disabled=""/,
+    );
+    const middle = panel();
+    expect(middle).not.toMatch(/minutes earlier"[^>]*disabled=""/);
+    expect(middle).not.toMatch(/minutes later"[^>]*disabled=""/);
+  });
+
+  it("saat yokken adım düğmeleri kapalı, kısayollar açık", () => {
+    const out = panel({ value: "" });
+    expect(out).toMatch(/minutes earlier"[^>]*disabled=""/);
+    expect(out).toMatch(/minutes later"[^>]*disabled=""/);
+    expect(out).not.toMatch(/disabled=""[^>]*>(09:00|18:00)</);
+  });
+
+  it("kısayol listesi boşsa kısayol alanı çizilmez", () => {
+    expect(panel({ presets: [] })).not.toContain("grid-cols-3");
+  });
+});
+
+describe("DateTimePanel", () => {
+  const panel = (extra: Record<string, unknown> = {}) =>
+    html(
+      createElement(DateTimePanel, {
+        value: "2026-10-07T18:00",
         onChange: () => undefined,
-        step: 15,
-        presets: [],
+        onDone: () => undefined,
+        today: "2026-10-04",
+        min: "2026-10-04",
+        max: "2026-12-03",
+        ...extra,
       }),
     );
-    expect(out).toMatch(/aria-selected="true"[^>]*>07</);
+
+  it("takvimin üstünde genel gün kısayolları, yanında kaydırmasız saat paneli", () => {
+    const out = panel();
+    for (const label of ["Today", "Tomorrow", "Next Mon", "In a week"]) {
+      expect(out).toContain(label);
+    }
+    expect(out).toContain('data-slot="time-panel"');
+    expect(out).toContain('aria-label="30 minutes later"');
+    expect(out).not.toContain('role="listbox"');
+  });
+
+  it("dayShortcuts verilince genel kısayolların yerine geçer", () => {
+    const out = panel({
+      dayShortcuts: [
+        { key: "2026-10-05", label: "Mon 5" },
+        { key: "2026-10-06", label: "Tue 6" },
+      ],
+    });
+    expect(out).toContain(">Mon 5<");
+    expect(out).toContain(">Tue 6<");
+    expect(out).not.toContain(">Tomorrow<");
+    expect(out).not.toContain(">In a week<");
+  });
+
+  it("seçili günün çipi işaretlenir; aralık dışı çip kapalı", () => {
+    const out = panel({
+      dayShortcuts: [
+        { key: "2026-10-03", label: "Sat 3" },
+        { key: "2026-10-07", label: "Wed 7" },
+      ],
+    });
+    expect(out).toMatch(/aria-pressed="true"[^>]*>Wed 7</);
+    expect(out).toMatch(/disabled=""[^>]*>Sat 3</);
   });
 });

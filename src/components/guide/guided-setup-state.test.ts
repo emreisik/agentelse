@@ -277,6 +277,7 @@ describe("picking (G39)", () => {
     const v = panel(model, "question");
     expect(v.count).toEqual({ picked: 3, max: 3 });
     expect(v.rows.filter((r) => r.disabled).map((r) => r.id)).toEqual([
+      "channel.facebook",
       "channel.x",
       "channel.seo",
       "channel.ads",

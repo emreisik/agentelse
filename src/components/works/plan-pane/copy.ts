@@ -28,6 +28,8 @@ export const PLAN_PANE_COPY = {
   keepOne: "Keep at least one channel.",
   selected: (n: number) => `${n} ${n === 1 ? "channel" : "channels"} selected`,
   connectChannel: (name: string) => `Connect ${name}`,
+  story: "Story",
+  storyAria: "Also share each Instagram post as a Story",
   notConnectedLine: (names: string) =>
     `${names} isn't connected yet. The posts are made now; publishing starts once it is.`,
   // The list
@@ -78,6 +80,8 @@ export const PLAN_PANE_COPY = {
   locked: "Approved: the text and time are final.",
   textFailed: "The text could not be saved.",
   timeFailed: "The time could not be changed.",
+  moved: "Post moved.",
+  moveFailed: "The post could not be moved.",
   // States of a post
   state: {
     idea: "Idea",

@@ -116,7 +116,6 @@ import {
 } from "@/lib/guided-setup/contract";
 import type { WorkspaceResumeStats } from "@/components/workspace/workspace-right-panel-data";
 import { dayKey, dayLabel } from "@/lib/dates";
-import { requestOpenAiCreditRefresh } from "@/lib/openai-credit-events";
 import { assetUrl } from "@/lib/asset-url";
 
 // The sheet, its panel, reducer and the sanitizer regexes load on demand, and
@@ -1107,7 +1106,6 @@ export function ProjectChat({
             break;
           case "done":
             finished = true;
-            requestOpenAiCreditRefresh();
             patch((turn) => ({
               ...turn,
               state: "done",
@@ -1923,7 +1921,6 @@ export function ProjectChat({
           case "item.partial":
           case "item.done":
             claimed = true;
-            if (event.type === "item.done") requestOpenAiCreditRefresh();
             setLocalTurns((current) =>
               current.map((turn) =>
                 inRun(turn) ? reduceItemEvent(turn, event) : turn,
@@ -1932,7 +1929,6 @@ export function ProjectChat({
             break;
           case "package.done":
             finished = true;
-            requestOpenAiCreditRefresh();
             started = event.started;
             // Every item that ran has reported by now; one still waiting was
             // skipped when the run was claimed.

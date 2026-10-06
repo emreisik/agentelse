@@ -185,9 +185,10 @@ export function ManualPublishDialog({
         <DialogHeader>
           <DialogTitle>Post these yourself</DialogTitle>
           <DialogDescription>
-            Agentelse can&apos;t post these formats for you, so nothing is sent
-            to the account from here. Copy the text, download the image, post it
-            on the account, then mark it as posted.
+            These don&apos;t go out by themselves: the format is posted by hand,
+            or its account isn&apos;t connected. Nothing is sent to the account
+            from here. Copy the text, download the image, post it on the
+            account, then mark it as posted.
           </DialogDescription>
         </DialogHeader>
         {error ? (

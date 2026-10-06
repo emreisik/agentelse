@@ -223,8 +223,9 @@ export function CreativeDetail({
     footer = (
       <>
         <p className="mb-2 text-[11px] text-muted-foreground">
-          Agentelse can&apos;t post this format for you. Post it on the account
-          yourself, then mark it here.
+          {item.stage === "manual"
+            ? "Agentelse can't post this format for you. Post it on the account yourself, then mark it here."
+            : "It didn't go out. Move it to a new time, or post it yourself and mark it here."}
         </p>
         <MarkPostedButton
           key={item.id}

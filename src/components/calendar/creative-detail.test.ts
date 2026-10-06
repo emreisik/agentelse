@@ -156,6 +156,14 @@ describe("CreativeDetail", () => {
     expect(render()).not.toContain("I posted it myself");
   });
 
+  it("'kendin paylaş' cümlesi yalnız elle paylaşılan parçada, kaçırılanda nötr metin", () => {
+    const manual = render({ item: item({ stage: "manual" }) });
+    expect(manual).toContain("can&#x27;t post this format");
+    const missed = render({ item: item({ stage: "missed" }) });
+    expect(missed).toContain("It didn&#x27;t go out. Move it to a new time");
+    expect(missed).not.toContain("can&#x27;t post this format");
+  });
+
   it("yayınlanmış parça salt okunurdur: tarih formu yok, yayın anı var", () => {
     const html = render({
       item: item(

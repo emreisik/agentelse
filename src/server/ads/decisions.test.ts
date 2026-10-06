@@ -21,6 +21,12 @@ vi.mock("@/server/integrations/meta/launch-writes", () => ({ readBack: vi.fn() }
 vi.mock("@/server/integrations/meta/call-context", () => ({
   withMetaCallContext: (_c: unknown, run: () => unknown) => run(),
 }));
+const notify = vi.hoisted(() => ({
+  applied: vi.fn(async () => undefined),
+  failed: vi.fn(async () => undefined),
+  undone: vi.fn(async () => undefined),
+}));
+vi.mock("@/server/ads/autopilot-notify", () => ({ AutopilotNotify: notify }));
 
 import { AdsDecisions, changeOf } from "./decisions";
 
@@ -65,6 +71,48 @@ describe("AdsDecisions lifecycle", () => {
     db.jobFindFirst.mockResolvedValue({ errorCode: "META:VALIDATION:100" });
     await AdsDecisions.onTaskTerminal("t1", "FAILED");
     expect(db.decisionUpdateMany.mock.calls[2]![0].data.status).toBe("FAILED");
+  });
+
+  it("reports an automatic change after it lands, and a failed one as critical (F7)", async () => {
+    db.decisionFindFirst.mockResolvedValue({
+      id: "d3",
+      evidence: {},
+      rollbackOfId: null,
+      autonomy: "GUARDED",
+    });
+    await AdsDecisions.onTaskCompleted("t3", now);
+    expect(notify.applied).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "d3" }),
+      now,
+    );
+
+    db.decisionFindFirst.mockResolvedValue({ id: "d4", approvalId: null, autonomy: "GUARDED" });
+    db.jobFindFirst.mockResolvedValue({ errorCode: "META:TRANSIENT:2" });
+    await AdsDecisions.onTaskTerminal("t4", "FAILED");
+    expect(notify.failed).toHaveBeenCalledWith(expect.objectContaining({ id: "d4" }));
+  });
+
+  it("does not announce suggestions a person approved", async () => {
+    db.decisionFindFirst.mockResolvedValue({
+      id: "d5",
+      evidence: {},
+      rollbackOfId: null,
+      autonomy: "SUGGEST",
+    });
+    await AdsDecisions.onTaskCompleted("t5", now);
+    expect(notify.applied).not.toHaveBeenCalled();
+  });
+
+  it("closes the automatic-change notice when it is undone", async () => {
+    db.decisionFindFirst.mockResolvedValue({
+      id: "d6",
+      evidence: {},
+      rollbackOfId: "d3",
+      projectId: "p1",
+      autonomy: "SUGGEST",
+    });
+    await AdsDecisions.onTaskCompleted("t6", now);
+    expect(notify.undone).toHaveBeenCalledWith("d3", "p1", now);
   });
 
   it("reads a change defensively", () => {

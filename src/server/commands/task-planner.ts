@@ -62,6 +62,11 @@ export type PlanCapabilityInput = {
   // Only lowers the plain L3 publish floor; spend (L4) and any explicit
   // per-project override still apply.
   contentApproved?: boolean;
+  // Meta Ads otomatik pilotu (F7): yalnız AdsAutopilot doldurur; seviye
+  // istisnası approval-policy.ts'te (autopilotLowers).
+  adsAutonomy?: "SUGGEST" | "GUARDED" | "FULL";
+  riskReducing?: boolean;
+  autoBudgetRaise?: boolean;
 };
 
 // Turns a single resolved capability into a Task, and either dispatches it
@@ -84,6 +89,9 @@ export const TaskPlanner = {
       createdByType: input.createdByType,
       riskLevel,
       approvalOverrides: input.approvalOverrides,
+      adsAutonomy: input.adsAutonomy,
+      riskReducing: input.riskReducing,
+      autoBudgetRaise: input.autoBudgetRaise,
     });
     // Caller-supplied level may only RAISE strictness, never lower it.
     const requestedLevel = input.approvalLevel

@@ -17,7 +17,9 @@ export type GuardFinding = {
     | "DELIVERY_ISSUE"
     | "BILLING_HOLD"
     | "REVIEW_SLOW"
-    | "NO_DELIVERY";
+    | "NO_DELIVERY"
+    // G2 (F7): onaylı zarf doldu.
+    | "ENVELOPE_REACHED";
   severity: "INFO" | "WARN" | "CRITICAL";
   externalId: string;
   title: string;

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { AdsAccount, AdsObject, Prisma } from "@prisma/client";
 
+import { onPlatformGoal } from "@/lib/ads/autopilot";
 import { AdsFlags, type OptimizerMode } from "@/lib/ads/flags";
 import { parseLaunchSpec } from "@/lib/ads/launch-spec";
 import { toMinorUnits } from "@/lib/ads/money";
@@ -26,6 +27,7 @@ import { AdsAlerts } from "@/server/ads/guard/alerts";
 import { IdeaEngine } from "@/server/ideas/idea-engine";
 import { claimPeriodic } from "@/server/observability/periodic";
 
+import { AdsAutopilot } from "./autopilot";
 import { AdsDecisions } from "./decisions";
 
 // Optimizasyon motoru (docs/meta-ads-plan.md §3.5, F4): aynadan özellikler →
@@ -281,6 +283,7 @@ export const AdsOptimizer = {
             ? campaigns.get(object.campaignExternalId)
             : undefined,
           name: object.name,
+          optimizationGoal: object.optimizationGoal,
         });
       }
     };
@@ -379,6 +382,7 @@ export const AdsOptimizer = {
       adAccountId: string;
       campaign?: AdsObject;
       name: string;
+      optimizationGoal?: string | null;
     },
   ): Promise<void> {
     if (decision.kind === "CREATIVE_REFRESH") {
@@ -416,6 +420,18 @@ export const AdsOptimizer = {
         detail: decision.explanation,
         data: { decisionId: decision.id },
       });
+      return;
+    }
+    // F7: proje Ads autopilot'ı açıksa ve kapılar geçiyorsa karar
+    // kendiliğinden uygulanır (sonradan bildirim + Undo); değilse öneri.
+    if (
+      await AdsAutopilot.tryDecision(decision, {
+        brandId: input.brandId,
+        adAccountId: input.adAccountId,
+        currency: input.currency,
+        onPlatformResult: onPlatformGoal(input.optimizationGoal),
+      })
+    ) {
       return;
     }
     await AdsDecisions.propose(decision, {

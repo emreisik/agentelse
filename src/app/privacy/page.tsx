@@ -255,7 +255,14 @@ const SECTIONS: PolicySection[] = [
           <li>
             <span className="text-foreground">ads_management</span> — to create
             and update campaigns, ad sets and ads in the ad account you choose,
-            when you ask for it or approve it.
+            when you ask for it or approve it. If a workspace owner or admin
+            turns on Ads autopilot for a project, Agentelse may also pause ads or
+            lower their budgets on its own to protect your spend (and, in Full
+            auto, raise a budget by a limited amount within the monthly cap they
+            set); each such change is reported to you and can be undone.
+            Agentelse may also add a safety rule to your ad account that pauses
+            an Agentelse campaign when it spends more than twice its daily budget
+            in a day; the rule is removed when you disconnect.
           </li>
           <li>
             <span className="text-foreground">ads_read</span> — to read how
@@ -289,7 +296,9 @@ const SECTIONS: PolicySection[] = [
           We keep the daily figures for 400 days, and for individual ads for 180
           days, so we can show trends, pace your budget and warn you about
           problems; a campaign that no longer exists in Meta is removed from our
-          copy after 90 days. If you run lead ads, the details people send stay
+          copy after 90 days. When Meta notifies us that an ad&rsquo;s status
+          changed (for example, it was rejected), we keep that notice for 14
+          days. If you run lead ads, the details people send stay
           in Meta (Leads Center); Agentelse only counts how many arrived and
           never reads or stores them. Page access tokens are derived when needed
           and never stored. We use this data only to publish and manage what you

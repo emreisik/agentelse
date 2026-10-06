@@ -3154,6 +3154,16 @@ model AutonomyPolicy {
   // spends real money unattended, which "Weekly plan draft" alone does not.
   weeklyAutoProduce Boolean @default(false)
 
+  // Meta Ads otomatik pilotu (docs/meta-ads-plan.md §1.2, F7): SUGGEST her
+  // yazmayı onaya sorar; GUARDED yalnız riski azaltan eylemleri (duraklatma,
+  // en çok %30 bütçe düşürme) kendisi yapar ve sonradan bildirir; FULL ayrıca
+  // aylık tavan içinde sınırlı bütçe artışı yapar (önkoşullu). Yalnız
+  // OWNER/ADMIN değiştirir; her değişiklik AuditLog'a yazılır.
+  adsAutonomy        AdsAutonomyLevel @default(SUGGEST)
+  // FULL'ün aylık harcama tavanı (reklam hesabı para biriminin alt
+  // biriminde). Boşken FULL açılamaz.
+  adsMonthlyCapMinor BigInt?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3374,6 +3384,14 @@ model AdsAccount {
   syncLeaseUntil      DateTime?
   syncLeaseOwner      String?
   consecutiveFailures Int       @default(0)
+
+  // Webhook aboneliği (F7): SUBSCRIBED | POLLING_ONLY (hesabın admin
+  // token'ı yok) | FAILED; null = denenmedi. Yoklama her durumda yedektir.
+  webhookStatus    String?
+  webhookCheckedAt DateTime?
+  lastWebhookAt    DateTime?
+  // Ad Rules sigortası (F7, isteğe bağlı): adrules_history son okuması.
+  rulesHistoryAt   DateTime?
 
   projects AdsAccountProject[]
 
@@ -3714,4 +3732,29 @@ model AdsDecision {
   @@index([projectId, status])
   @@index([adsAccountId, externalId, ruleKey])
   @@index([status, evaluateAfter])
+}
+
+// Gelen Meta Ads webhook olayları (docs/meta-ads-plan.md F7): imza doğrulanınca
+// yazılır ve hemen 200 dönülür; ajans tick'i 2 dk bekletip nesneyi hedefli
+// okuyarak işler. Gövdede olay kimliği yok: dedupeKey = sha256(entry.id +
+// entry.time + alan + nesne + değer). 5 denemeden sonra DEAD; 14 gün saklanır.
+model AdsWebhookEvent {
+  id                  String    @id @default(cuid())
+  receivedAt          DateTime  @default(now())
+  // "act_<id>"
+  adAccountExternalId String
+  field               String
+  objectExternalId    String?
+  objectLevel         String?
+  payload             Json
+  dedupeKey           String    @unique
+  // PENDING | DONE | SKIPPED | DEAD
+  status              String    @default("PENDING")
+  attempts            Int       @default(0)
+  leaseUntil          DateTime?
+  lastError           String?
+  processedAt         DateTime?
+
+  @@index([status, receivedAt])
+  @@index([receivedAt])
 }

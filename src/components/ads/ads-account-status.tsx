@@ -32,6 +32,9 @@ export type AdsAccountStatusProps = {
   accountTimeLabel: string | null;
   runningCampaigns: number;
   alerts: AdsStatusAlert[];
+  // F7: webhook aboneliği. "polling" = hesapta admin yok, uyarılar yoklamayla
+  // (en geç ~1 saat) gelir; null = webhook kapalı ya da henüz denenmedi.
+  realtime?: "on" | "polling" | null;
 };
 
 const SEVERITY_TONE: Record<AdsStatusAlert["severity"], string> = {
@@ -121,6 +124,13 @@ export function AdsAccountStatus(props: AdsAccountStatusProps) {
             <span className="text-muted-foreground">
               {props.updatedText}
               {props.accountTimeLabel ? ` · ${props.accountTimeLabel}` : ""}
+            </span>
+          ) : null}
+          {props.realtime === "on" ? (
+            <span className="text-muted-foreground">Real-time alerts on</span>
+          ) : props.realtime === "polling" ? (
+            <span className="text-muted-foreground">
+              Real-time alerts need an admin of this ad account
             </span>
           ) : null}
         </div>

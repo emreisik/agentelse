@@ -14,6 +14,7 @@ import { addDays, safeTimezone } from "@/lib/ads/sync-plan";
 import { prisma } from "@/lib/prisma";
 import { dayKeyInTimezone } from "@/lib/timezone";
 import { AdsAccounts } from "@/server/ads/accounts";
+import { AutopilotNotify } from "@/server/ads/autopilot-notify";
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { withMetaCallContext } from "@/server/integrations/meta/call-context";
 import { readBack } from "@/server/integrations/meta/launch-writes";
@@ -171,7 +172,7 @@ export const AdsDecisions = {
     if (!decision) return;
     const offsite = /offsite/i.test(JSON.stringify(decision.evidence ?? {}));
     const lag = offsite ? MATURITY_DAYS.offsite : MATURITY_DAYS.onPlatform;
-    await prisma.adsDecision.updateMany({
+    const applied = await prisma.adsDecision.updateMany({
       where: {
         id: decision.id,
         status: { in: ["PROPOSED", "APPROVED", "APPLYING", "SHADOW"] },
@@ -187,6 +188,16 @@ export const AdsDecisions = {
         where: { id: decision.rollbackOfId },
         data: { status: "ROLLED_BACK" },
       });
+      await AutopilotNotify.undone(decision.rollbackOfId, decision.projectId, now).catch(
+        () => undefined,
+      );
+    }
+    // Otomatik pilot eylemi sonradan bildirilir (F7).
+    if (
+      applied.count === 1 &&
+      (decision.autonomy === "GUARDED" || decision.autonomy === "FULL")
+    ) {
+      await AutopilotNotify.applied(decision, now).catch(() => undefined);
     }
   },
 
@@ -217,13 +228,21 @@ export const AdsDecisions = {
             : status === "CANCELLED"
               ? "EXPIRED"
               : "FAILED";
-    await prisma.adsDecision.updateMany({
+    const moved = await prisma.adsDecision.updateMany({
       where: {
         id: decision.id,
         status: { in: ["PROPOSED", "APPROVED", "APPLYING"] },
       },
       data: { status: next },
     });
+    // Başarısız otomatik eylem CRITICAL'dır (insan devralmalı).
+    if (
+      moved.count === 1 &&
+      next === "FAILED" &&
+      (decision.autonomy === "GUARDED" || decision.autonomy === "FULL")
+    ) {
+      await AutopilotNotify.failed(decision).catch(() => undefined);
+    }
   },
 
   // Uygulanan değer Meta'da gerçekten öyle mi (2-5 dk sonra geri okuma)?

@@ -18,6 +18,10 @@ export function isPublicPath(pathname: string): boolean {
     // itself (see meta-data-requests.ts) and answers 400 without a valid one.
     pathname === "/api/integrations/meta/deauthorize" ||
     pathname === "/api/integrations/meta/data-deletion" ||
+    // Meta Ads webhook'u (docs/meta-ads-plan.md F7): oturum yok; GET doğrulama
+    // jetonunu, POST X-Hub-Signature-256 imzasını kendisi doğrular, aksi hâlde
+    // 403 / 401 döner.
+    pathname === "/api/webhooks/meta-ads" ||
     pathname === "/api/auth" ||
     pathname.startsWith("/api/auth/") ||
     // Has its own signed-token verification (see

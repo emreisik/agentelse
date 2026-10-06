@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   CalendarClock,
+  Gauge,
   Infinity as InfinityIcon,
   ShieldCheck,
 } from "lucide-react";
@@ -9,6 +10,15 @@ import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/dates";
 import { updateAutonomyPolicyAction } from "@/server/actions/agency-config-actions";
+import { updateAdsAutopilotAction } from "@/server/actions/ads-autopilot-actions";
+import {
+  fullPrerequisitesMet,
+  missingFullPrerequisites,
+  type AutonomyLevel,
+} from "@/lib/ads/autopilot";
+import { AdsFlags } from "@/lib/ads/flags";
+import { toMajorUnits } from "@/lib/ads/money";
+import { AdsAutopilot } from "@/server/ads/autopilot";
 import { WEEKLY_AUTO_PRODUCE_COPY, weeklyDraftOn } from "@/lib/weekly-draft";
 import { updateInstagramPublishScheduleAction } from "@/server/actions/publish-schedule-actions";
 import { ProjectDeletionService } from "@/server/projects/project-deletion.service";
@@ -276,7 +286,158 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
           <SubmitButton>Save</SubmitButton>
         </div>
       </ActionForm>
+
+      {AdsFlags.autopilot() ? (
+        <AdsAutopilotCard
+          projectId={projectId}
+          level={policy.adsAutonomy}
+          monthlyCapMinor={
+            policy.adsMonthlyCapMinor === null
+              ? null
+              : Number(policy.adsMonthlyCapMinor)
+          }
+        />
+      ) : null}
     </div>
+  );
+}
+
+// Ads autopilot (docs/meta-ads-plan.md §1.2, F7): proje bazında açık rıza.
+// Ayrı form: yalnız OWNER/ADMIN kaydedebilir (sunucu denetler).
+const ADS_LEVELS: {
+  value: AutonomyLevel;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "SUGGEST",
+    label: "Suggest only",
+    hint: "Agentelse suggests every change. Nothing changes in Meta until you approve it.",
+  },
+  {
+    value: "GUARDED",
+    label: "Guarded auto",
+    hint: "Agentelse pauses ads that overspend or bring no messages or leads, and lowers budgets by up to 30%, on its own. It never raises a budget or starts an ad. You get a message each time and can undo it.",
+  },
+  {
+    value: "FULL",
+    label: "Full auto",
+    hint: "Everything in Guarded auto, plus budget raises of up to 20% at most every 3 days, within your monthly cap.",
+  },
+];
+
+async function AdsAutopilotCard({
+  projectId,
+  level,
+  monthlyCapMinor,
+}: {
+  projectId: string;
+  level: AutonomyLevel;
+  monthlyCapMinor: number | null;
+}) {
+  const prerequisites = await AdsAutopilot.fullPrerequisites(projectId);
+  const fullReady = fullPrerequisitesMet({
+    ...prerequisites,
+    // Tavan bu formda girilebilir: FULL seçilebilirliği ona bağlanmaz.
+    monthlyCapSet: true,
+  });
+  const missing = missingFullPrerequisites(prerequisites);
+  const currency = prerequisites.currency;
+  return (
+    <ActionForm
+      action={updateAdsAutopilotAction}
+      successMessage="Ads autopilot updated"
+      className="space-y-4"
+    >
+      <input type="hidden" name="projectId" value={projectId} />
+      <Card size="sm">
+        <CardHeader className="flex flex-row items-center gap-2 space-y-0">
+          <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10">
+            <Gauge className="size-4 text-primary" />
+          </span>
+          <CardTitle className="text-base">Ads autopilot</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {ADS_LEVELS.map((option) => {
+            const disabled = option.value === "FULL" && !fullReady;
+            return (
+              <label
+                key={option.value}
+                className={cn(
+                  "flex items-start gap-3 rounded-lg border border-foreground/10 p-3",
+                  disabled
+                    ? "cursor-not-allowed opacity-60"
+                    : "cursor-pointer hover:bg-muted/40",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="adsAutonomy"
+                  value={option.value}
+                  defaultChecked={level === option.value}
+                  disabled={disabled}
+                  className="mt-1 accent-primary"
+                />
+                <span className="space-y-1">
+                  <span className="block text-sm font-medium">
+                    {option.label}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    {option.hint}
+                  </span>
+                  {option.value === "FULL" && missing.length > 0 ? (
+                    <span className="block text-xs text-muted-foreground">
+                      Still needed: {missing.join("; ")}.
+                    </span>
+                  ) : null}
+                </span>
+              </label>
+            );
+          })}
+        </CardContent>
+        <CardContent className="grid gap-4 border-t pt-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="ads-monthly-cap">
+              Monthly ad spending cap{currency ? ` (${currency})` : ""}
+            </Label>
+            <Input
+              id="ads-monthly-cap"
+              name="adsMonthlyCap"
+              type="number"
+              step="0.01"
+              min={0}
+              defaultValue={
+                monthlyCapMinor === null
+                  ? ""
+                  : toMajorUnits(monthlyCapMinor, currency)
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              Optional. When this month&apos;s spend reaches it, Agentelse
+              alerts you and, in Guarded or Full auto, pauses its campaigns.
+              Full auto needs it.
+            </p>
+          </div>
+          <div className="flex items-start gap-3">
+            <input
+              id="ads-autopilot-consent"
+              type="checkbox"
+              name="adsAutopilotConsent"
+              defaultChecked={level !== "SUGGEST"}
+              className="mt-1 accent-primary"
+            />
+            <Label htmlFor="ads-autopilot-consent" className="text-xs font-normal leading-relaxed text-muted-foreground">
+              I let Agentelse make these changes to this project&apos;s Meta
+              ads on its own. Only workspace owners and admins can turn this
+              on.
+            </Label>
+          </div>
+        </CardContent>
+      </Card>
+      <div className="flex justify-end">
+        <SubmitButton>Save autopilot</SubmitButton>
+      </div>
+    </ActionForm>
   );
 }
 

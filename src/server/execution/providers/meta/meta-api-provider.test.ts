@@ -7,6 +7,9 @@ const prismaMocks = vi.hoisted(() => ({
   assetFindFirst: vi.fn(),
   executionJobFindUnique: vi.fn(),
   executionJobUpdate: vi.fn(),
+  taskFindUnique: vi.fn(),
+  autonomyPolicyFindUnique: vi.fn(),
+  adsObjectUpdateMany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -21,6 +24,9 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: prismaMocks.executionJobFindUnique,
       update: prismaMocks.executionJobUpdate,
     },
+    task: { findUnique: prismaMocks.taskFindUnique },
+    autonomyPolicy: { findUnique: prismaMocks.autonomyPolicyFindUnique },
+    adsObject: { updateMany: prismaMocks.adsObjectUpdateMany },
   },
 }));
 
@@ -57,6 +63,7 @@ const metaClientMocks = vi.hoisted(() => ({
   fetchMetaObjectAccountId: vi.fn(),
   createMetaAdSet: vi.fn(),
   updateMetaCampaign: vi.fn(),
+  updateMetaAdSet: vi.fn(),
   findMetaObjectsByTag: vi.fn(),
 }));
 vi.mock("@/server/integrations/meta-client", async (importOriginal) => {
@@ -77,6 +84,7 @@ vi.mock("@/server/integrations/meta-client", async (importOriginal) => {
     updateMetaAd: metaClientMocks.updateMetaAd,
     createMetaAdSet: metaClientMocks.createMetaAdSet,
     updateMetaCampaign: metaClientMocks.updateMetaCampaign,
+    updateMetaAdSet: metaClientMocks.updateMetaAdSet,
     findMetaObjectsByTag: metaClientMocks.findMetaObjectsByTag,
     // Nesne-hesap doğrulaması (F0b): varsayılan olarak nesne seçili hesaptadır.
     fetchMetaObjectAccountId: (...args: unknown[]) =>
@@ -164,6 +172,14 @@ const operations = vi.hoisted(() => {
 vi.mock("@/server/ads/operations", () => ({
   AdsOperations: operations.AdsOperations,
 }));
+
+// F7: Meta'daki güncel değerin geri okunması (CAS).
+const launchWriteMocks = vi.hoisted(() => ({ readBack: vi.fn() }));
+vi.mock("@/server/integrations/meta/launch-writes", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/server/integrations/meta/launch-writes")>();
+  return { ...actual, readBack: launchWriteMocks.readBack };
+});
 
 import { MetaApiProvider } from "@/server/execution/providers/meta/meta-api-provider";
 import { MetaApiError } from "@/server/integrations/meta-client";
@@ -1531,5 +1547,162 @@ describe("MetaApiProvider intent log (docs/meta-ads-plan.md F1)", () => {
       errorCode: "META:VALIDATION:100/1885272",
       retryable: false,
     });
+  });
+});
+
+// F7 savunma derinliği (docs/meta-ads-plan.md §1.2): karar katmanından
+// bağımsız olarak yürütücü, güvenlik eyleminde harcamayı artıran ve
+// insansız bütçe yazmasında sınır dışı her isteği reddeder.
+describe("MetaApiProvider autopilot defence (docs/meta-ads-plan.md F7)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    envMocks.configured = true;
+    prismaMocks.credentialFindUnique.mockResolvedValue(activeCredential);
+    prismaMocks.adsObjectUpdateMany.mockResolvedValue({ count: 1 });
+    metaClientMocks.updateMetaAdSet.mockResolvedValue(undefined);
+    metaClientMocks.updateMetaCampaign.mockResolvedValue(undefined);
+    // Sistemin açtığı, onaysız (otomatik pilot) görev.
+    prismaMocks.taskFindUnique.mockResolvedValue({
+      createdByType: "SYSTEM",
+      requiresApproval: false,
+    });
+  });
+
+  function request(
+    capability: ExecutionRequest["capability"],
+    payload: Record<string, unknown>,
+    correlationId: string,
+  ): ExecutionRequest {
+    return {
+      executionJobId: `job-${correlationId}`,
+      correlationId,
+      idempotencyKey: `idem-${correlationId}`,
+      capability,
+      context: { ...context, capability },
+      payload: { adAccountId: "act_1", ...payload },
+    };
+  }
+
+  const cut = (to: number, extra: Record<string, unknown> = {}) => ({
+    action: "BUDGET_DOWN",
+    targets: [{ level: "ADSET", id: "adset-1" }],
+    expectedDailyBudgetCents: 10_000,
+    toDailyBudgetCents: to,
+    decisionId: "decision-1",
+    autopilot: "GUARDED",
+    ...extra,
+  });
+
+  it("a safety action never activates anything", async () => {
+    const provider = new MetaApiProvider();
+    await provider.execute(
+      request("META_SAFETY_ACTION", { action: "ACTIVATE", targets: [{ level: "ADSET", id: "adset-1" }] }, "sa-1"),
+    );
+    await provider.execute(
+      request("META_SAFETY_ACTION", { action: "PAUSE", status: "ACTIVE", targets: [] }, "sa-2"),
+    );
+    for (const id of ["sa-1", "sa-2"]) {
+      expect(await provider.getStatus(id)).toMatchObject({
+        status: "FAILED",
+        errorCode: "META:AUTOPILOT:refused",
+      });
+    }
+    expect(metaClientMocks.updateMetaAdSet).not.toHaveBeenCalled();
+    expect(metaClientMocks.updateMetaAd).not.toHaveBeenCalled();
+  });
+
+  it("lowers a budget by up to 30% when Meta still has the suggested value", async () => {
+    launchWriteMocks.readBack.mockResolvedValue({ daily_budget: "10000" });
+    const provider = new MetaApiProvider();
+    await provider.execute(request("META_SAFETY_ACTION", cut(7_500), "sa-3"));
+    expect(metaClientMocks.updateMetaAdSet).toHaveBeenCalledWith(
+      expect.objectContaining({ adSetId: "adset-1", dailyBudgetCents: 7_500 }),
+    );
+    expect(await provider.getStatus("sa-3")).toMatchObject({
+      status: "COMPLETED",
+      rawResult: { lowered: [{ id: "adset-1", from: 10_000, to: 7_500 }] },
+    });
+  });
+
+  it("refuses a system cut deeper than 30% and any 'cut' that raises the budget", async () => {
+    launchWriteMocks.readBack.mockResolvedValue({ daily_budget: "10000" });
+    const provider = new MetaApiProvider();
+    await provider.execute(request("META_SAFETY_ACTION", cut(5_000), "sa-4"));
+    await provider.execute(request("META_SAFETY_ACTION", cut(12_000), "sa-5"));
+    // Kullanıcının kendi tıklaması bile artışı geçiremez.
+    prismaMocks.taskFindUnique.mockResolvedValue({
+      createdByType: "USER",
+      requiresApproval: false,
+    });
+    await provider.execute(request("META_SAFETY_ACTION", cut(12_000), "sa-6"));
+    for (const id of ["sa-4", "sa-5", "sa-6"]) {
+      expect(await provider.getStatus(id)).toMatchObject({
+        status: "FAILED",
+        errorCode: "META:AUTOPILOT:refused",
+      });
+    }
+    expect(metaClientMocks.updateMetaAdSet).not.toHaveBeenCalled();
+  });
+
+  it("does not cut a budget that changed in Meta since the decision", async () => {
+    launchWriteMocks.readBack.mockResolvedValue({ daily_budget: "15000" });
+    const provider = new MetaApiProvider();
+    await provider.execute(request("META_SAFETY_ACTION", cut(7_500), "sa-7"));
+    expect(await provider.getStatus("sa-7")).toMatchObject({
+      status: "FAILED",
+      errorCode: "META:STATE:superseded",
+    });
+    expect(metaClientMocks.updateMetaAdSet).not.toHaveBeenCalled();
+  });
+
+  it("an unattended budget write runs only as a Full auto raise of at most 20%", async () => {
+    launchWriteMocks.readBack.mockResolvedValue({ daily_budget: "10000" });
+    const raise = (to: number, extra: Record<string, unknown> = {}) => ({
+      adSetId: "adset-1",
+      currentDailyBudgetCents: 10_000,
+      proposedDailyBudgetCents: to,
+      expectedDailyBudgetCents: 10_000,
+      autopilot: "FULL",
+      ...extra,
+    });
+    const provider = new MetaApiProvider();
+
+    prismaMocks.autonomyPolicyFindUnique.mockResolvedValue({ adsAutonomy: "GUARDED" });
+    await provider.execute(request("META_ADSET_UPDATE", raise(12_000), "up-1"));
+    prismaMocks.autonomyPolicyFindUnique.mockResolvedValue({ adsAutonomy: "FULL" });
+    await provider.execute(request("META_ADSET_UPDATE", raise(15_000), "up-2"));
+    await provider.execute(
+      request("META_ADSET_UPDATE", raise(12_000, { autopilot: undefined }), "up-3"),
+    );
+    await provider.execute(
+      request("META_ADSET_UPDATE", raise(12_000, { proposedStatus: "ACTIVE" }), "up-4"),
+    );
+    for (const id of ["up-1", "up-2", "up-3", "up-4"]) {
+      expect(await provider.getStatus(id)).toMatchObject({
+        status: "FAILED",
+        errorCode: "META:AUTOPILOT:refused",
+      });
+    }
+    expect(metaClientMocks.updateMetaAdSet).not.toHaveBeenCalled();
+
+    await provider.execute(request("META_ADSET_UPDATE", raise(12_000), "up-5"));
+    expect(metaClientMocks.updateMetaAdSet).toHaveBeenCalledWith(
+      expect.objectContaining({ adSetId: "adset-1", dailyBudgetCents: 12_000 }),
+    );
+    expect(await provider.getStatus("up-5")).toMatchObject({ status: "COMPLETED" });
+  });
+
+  it("a write a person approved is not touched by the autopilot guard", async () => {
+    prismaMocks.taskFindUnique.mockResolvedValue({
+      createdByType: "SYSTEM",
+      requiresApproval: true,
+    });
+    const provider = new MetaApiProvider();
+    await provider.execute(
+      request("META_ADSET_UPDATE", { adSetId: "adset-1", proposedDailyBudgetCents: 30_000 }, "up-6"),
+    );
+    expect(metaClientMocks.updateMetaAdSet).toHaveBeenCalledWith(
+      expect.objectContaining({ adSetId: "adset-1", dailyBudgetCents: 30_000 }),
+    );
   });
 });

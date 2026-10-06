@@ -37,9 +37,12 @@ import { LaunchWatchdog } from "@/server/ads/guard/launch-watchdog";
 import { AdsDecisions } from "@/server/ads/decisions";
 import { AdsOptimizer } from "@/server/ads/optimizer";
 import { refreshAdsGoals } from "@/server/ads/goals";
+import { AdsInsurance } from "@/server/ads/insurance";
 import { AdsReports } from "@/server/ads/reports/weekly";
 import { claimPeriodic } from "@/server/observability/periodic";
 import { AdsSync } from "@/server/ads/sync/runner";
+import { AdsWebhookSubscriptions } from "@/server/ads/webhook-subscriptions";
+import { AdsWebhooks } from "@/server/ads/webhooks";
 import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
 import { StrategyEngine } from "@/server/agency/strategy/strategy-service";
 import { MetaAdSetChainRelay } from "@/server/agency/meta-ads/meta-adset-chain-relay";
@@ -183,6 +186,23 @@ registerAgencyTickStep({
 registerAgencyTickStep({
   name: "meta-launch-watchdog",
   run: () => LaunchWatchdog.run(),
+});
+// F7 (META_ADS_WEBHOOKS): incoming ad webhooks are read 2 minutes after they
+// arrive (one targeted read per object, then the guard for that account);
+// subscriptions are checked once a day. Polling stays as the fallback.
+registerAgencyTickStep({
+  name: "meta-ads-webhooks",
+  run: () => AdsWebhooks.processDue(50),
+});
+registerAgencyTickStep({
+  name: "meta-ads-webhook-subscriptions",
+  run: () => AdsWebhookSubscriptions.runDue(),
+});
+// F7 (META_ADS_RULES, optional): Meta-side safety rule per running Agentelse
+// campaign (created, re-thresholded on budget changes, removed when done).
+registerAgencyTickStep({
+  name: "meta-ads-rules",
+  run: () => AdsInsurance.runDue(),
 });
 // F4 (META_ADS_OPTIMIZER=shadow|on): rules over the mirror once a day per
 // account, and the decisions' lifecycle (expiry, read-back, matured

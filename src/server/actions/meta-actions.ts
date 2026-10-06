@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { ensureAdsAccountRow } from "@/server/ads/accounts";
+import { AdsInsurance } from "@/server/ads/insurance";
 import { decryptSecret } from "@/server/security/crypto";
 import {
   requireProjectAccess,
@@ -276,6 +277,20 @@ export async function disconnectMetaAction(
 
     const credential = await loadCredential(projectId, service);
     if (!credential) return { ok: true };
+
+    // Agentelse safety rules (Ad Rules, F7) are removed first, while the
+    // token still works; one that can't be removed is listed on /health.
+    if (service === "ads" && credential.encryptedSecret) {
+      await AdsInsurance.removeForProject(
+        projectId,
+        decryptSecret(credential.encryptedSecret),
+      ).catch((error: unknown) => {
+        console.error(
+          "[meta-actions] safety rules could not be removed:",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }
 
     // Meta Ads (K18): only the ads permissions are taken back at Meta, and
     // only when this person has no other active Meta Ads connection. Meta

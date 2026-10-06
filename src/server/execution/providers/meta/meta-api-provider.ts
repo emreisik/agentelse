@@ -63,6 +63,7 @@ import {
 import { AdsOperations } from "@/server/ads/operations";
 import { LaunchExecutor } from "@/server/ads/launch/executor";
 import { readBack } from "@/server/integrations/meta/launch-writes";
+import { isBoundedRaise } from "@/lib/ads/autopilot";
 import { taggedName } from "@/lib/ads/operation-tag";
 import {
   loadProviderResult,
@@ -434,7 +435,9 @@ export function adSetTimeWindow(
   return { start, end: start + Math.round(days * 24 * 3600) };
 }
 
-function readDsa(value: unknown): { beneficiary: string; payor: string } | null {
+function readDsa(
+  value: unknown,
+): { beneficiary: string; payor: string } | null {
   if (!value || typeof value !== "object") return null;
   const { beneficiary, payor } = value as Record<string, unknown>;
   if (typeof beneficiary !== "string" || typeof payor !== "string") return null;
@@ -529,26 +532,101 @@ async function decisionSuperseded(
   accessToken: string,
 ): Promise<StoredResult | null> {
   const expectedBudget =
-    typeof payload.expectedDailyBudgetCents === "number" ? payload.expectedDailyBudgetCents : null;
-  const expectedStatus = typeof payload.expectedStatus === "string" ? payload.expectedStatus : null;
+    typeof payload.expectedDailyBudgetCents === "number"
+      ? payload.expectedDailyBudgetCents
+      : null;
+  const expectedStatus =
+    typeof payload.expectedStatus === "string" ? payload.expectedStatus : null;
   if (expectedBudget === null && expectedStatus === null) return null;
   const fields = [
     ...(expectedBudget !== null ? ["daily_budget"] : []),
     ...(expectedStatus !== null ? ["configured_status"] : []),
   ].join(",");
-  const read = await readBack<{ daily_budget?: string; configured_status?: string }>(
-    objectId,
-    accessToken,
-    fields,
-  );
-  const budgetMoved = expectedBudget !== null && Number(read.daily_budget ?? NaN) !== expectedBudget;
-  const statusMoved = expectedStatus !== null && read.configured_status !== expectedStatus;
+  const read = await readBack<{
+    daily_budget?: string;
+    configured_status?: string;
+  }>(objectId, accessToken, fields);
+  const budgetMoved =
+    expectedBudget !== null &&
+    Number(read.daily_budget ?? NaN) !== expectedBudget;
+  const statusMoved =
+    expectedStatus !== null && read.configured_status !== expectedStatus;
   if (!budgetMoved && !statusMoved) return null;
   return {
     status: "FAILED",
-    errorMessage: "This changed in Meta since it was suggested, so it wasn't applied.",
+    errorMessage:
+      "This changed in Meta since it was suggested, so it wasn't applied.",
     errorCode: "META:STATE:superseded",
   };
+}
+
+// Otomatik pilotun savunma derinliği (docs/meta-ads-plan.md §1.2, F7): kim
+// başlatırsa başlatsın güvenlik eylemi harcamayı artıramaz; insansız (onaysız,
+// sistemin açtığı) kampanya / ad set yazması yalnız FULL'ün sınırlı bütçe
+// artışı olabilir. Karar katmanı aynı sınırları zaten uygular; bu katman bir
+// hata ya da yanlış çağrıya karşı ikinci kilittir.
+const SAFETY_ACTIONS: ReadonlySet<string> = new Set([
+  "PAUSE",
+  "PAUSE_ALL",
+  "BUDGET_DOWN",
+  "DISCARD_LAUNCH",
+]);
+
+function autopilotRefused(why: string): StoredResult {
+  return {
+    status: "FAILED",
+    errorMessage: `Agentelse refused this automatic change: ${why}`,
+    errorCode: "META:AUTOPILOT:refused",
+  };
+}
+
+async function unattendedTask(taskId: string): Promise<boolean> {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { createdByType: true, requiresApproval: true },
+  });
+  return Boolean(
+    task && task.createdByType !== "USER" && !task.requiresApproval,
+  );
+}
+
+async function refuseUnattendedSpendWrite(
+  taskId: string,
+  projectId: string,
+  payload: Record<string, unknown>,
+): Promise<StoredResult | null> {
+  if (!(await unattendedTask(taskId))) return null;
+  if (payload.autopilot !== "FULL")
+    return autopilotRefused("nobody approved it.");
+  if (AdsFlags.writesDisabled())
+    return autopilotRefused("ad changes are paused.");
+  if (
+    payload.status !== undefined ||
+    payload.proposedStatus !== undefined ||
+    payload.targeting !== undefined ||
+    payload.creativeId !== undefined
+  ) {
+    return autopilotRefused("only the budget may change on its own.");
+  }
+  const from = payload.expectedDailyBudgetCents;
+  const to = payload.proposedDailyBudgetCents;
+  if (
+    !isBoundedRaise({
+      ruleKey: "O3_SCALE",
+      kind: "BUDGET_UP",
+      fromBudgetMinor: typeof from === "number" ? from : null,
+      toBudgetMinor: typeof to === "number" ? to : null,
+    })
+  ) {
+    return autopilotRefused("a budget raise can be at most 20%.");
+  }
+  const policy = await prisma.autonomyPolicy.findUnique({
+    where: { projectId },
+    select: { adsAutonomy: true },
+  });
+  if (policy?.adsAutonomy !== "FULL")
+    return autopilotRefused("Full auto is off.");
+  return null;
 }
 
 export class MetaApiProvider implements ExecutionProvider {
@@ -585,7 +663,8 @@ export class MetaApiProvider implements ExecutionProvider {
       );
     }
     if (capability === "INSTAGRAM_PUBLISH") {
-      const igMetadata = credential.metadata as Partial<MetaInstagramMetadata> | null;
+      const igMetadata =
+        credential.metadata as Partial<MetaInstagramMetadata> | null;
       // Past its 60 days an Instagram Login token is dead: do not even try.
       return (
         !instagramLoginExpired(igMetadata) &&
@@ -1022,83 +1101,104 @@ export class MetaApiProvider implements ExecutionProvider {
 
     try {
       return await withMetaCallContext(callContext, async () => {
-      switch (request.capability) {
-        case "INSTAGRAM_PUBLISH":
-          return await this.publishInstagram(
-            credential.metadata as MetaInstagramMetadata,
-            accessToken,
-            payload,
-          );
-        case "FACEBOOK_PUBLISH":
-          return await this.publishFacebook(
-            credential.metadata as MetaFacebookMetadata,
-            accessToken,
-            payload,
-          );
-        case "META_ADS_ANALYSIS":
-          return await this.analyzeAds(metadata, accessToken, payload);
-        case "META_CAMPAIGN_CREATE":
-          return await this.createCampaign(
-            metadata,
-            accessToken,
-            payload,
-            intent,
-          );
-        case "META_CAMPAIGN_UPDATE":
-          return await this.updateWithIntent(
-            intent,
-            "UPDATE_CAMPAIGN",
-            payload.campaignId,
-            callContext.account,
-            payload,
-            accessToken,
-            () => this.updateCampaign(metadata, accessToken, payload),
-          );
-        case "META_ADSET_CREATE":
-          return await this.createAdSet(metadata, accessToken, payload, intent);
-        case "META_ADSET_UPDATE":
-          return await this.updateWithIntent(
-            intent,
-            "UPDATE_ADSET",
-            payload.adSetId,
-            callContext.account,
-            payload,
-            accessToken,
-            () => this.updateAdSet(metadata, accessToken, payload),
-          );
-        case "META_AD_CREATE":
-          return await this.createAd(
-            metadata,
-            accessToken,
-            payload,
+        if (
+          request.capability === "META_CAMPAIGN_UPDATE" ||
+          request.capability === "META_ADSET_UPDATE"
+        ) {
+          const refused = await refuseUnattendedSpendWrite(
+            request.context.taskId,
             request.context.projectId,
-            intent,
-          );
-        case "META_SAFETY_ACTION":
-          return await this.safetyAction(metadata, accessToken, payload, intent);
-        case "META_AD_UPDATE":
-          // Video never reaches here — see execute()'s special case above.
-          return await this.updateWithIntent(
-            intent,
-            "UPDATE_AD",
-            payload.adId,
-            callContext.account,
             payload,
-            accessToken,
-            () =>
-              this.updateAd(
-                metadata,
-                accessToken,
-                payload,
-                request.context.projectId,
-              ),
           );
-        default:
-          return {
-            status: "FAILED",
-            errorMessage: `MetaApiProvider does not support capability ${request.capability}`,
-          } satisfies StoredResult;
-      }
+          if (refused) return refused;
+        }
+        switch (request.capability) {
+          case "INSTAGRAM_PUBLISH":
+            return await this.publishInstagram(
+              credential.metadata as MetaInstagramMetadata,
+              accessToken,
+              payload,
+            );
+          case "FACEBOOK_PUBLISH":
+            return await this.publishFacebook(
+              credential.metadata as MetaFacebookMetadata,
+              accessToken,
+              payload,
+            );
+          case "META_ADS_ANALYSIS":
+            return await this.analyzeAds(metadata, accessToken, payload);
+          case "META_CAMPAIGN_CREATE":
+            return await this.createCampaign(
+              metadata,
+              accessToken,
+              payload,
+              intent,
+            );
+          case "META_CAMPAIGN_UPDATE":
+            return await this.updateWithIntent(
+              intent,
+              "UPDATE_CAMPAIGN",
+              payload.campaignId,
+              callContext.account,
+              payload,
+              accessToken,
+              () => this.updateCampaign(metadata, accessToken, payload),
+            );
+          case "META_ADSET_CREATE":
+            return await this.createAdSet(
+              metadata,
+              accessToken,
+              payload,
+              intent,
+            );
+          case "META_ADSET_UPDATE":
+            return await this.updateWithIntent(
+              intent,
+              "UPDATE_ADSET",
+              payload.adSetId,
+              callContext.account,
+              payload,
+              accessToken,
+              () => this.updateAdSet(metadata, accessToken, payload),
+            );
+          case "META_AD_CREATE":
+            return await this.createAd(
+              metadata,
+              accessToken,
+              payload,
+              request.context.projectId,
+              intent,
+            );
+          case "META_SAFETY_ACTION":
+            return await this.safetyAction(
+              metadata,
+              accessToken,
+              payload,
+              intent,
+            );
+          case "META_AD_UPDATE":
+            // Video never reaches here — see execute()'s special case above.
+            return await this.updateWithIntent(
+              intent,
+              "UPDATE_AD",
+              payload.adId,
+              callContext.account,
+              payload,
+              accessToken,
+              () =>
+                this.updateAd(
+                  metadata,
+                  accessToken,
+                  payload,
+                  request.context.projectId,
+                ),
+            );
+          default:
+            return {
+              status: "FAILED",
+              errorMessage: `MetaApiProvider does not support capability ${request.capability}`,
+            } satisfies StoredResult;
+        }
       });
     } catch (error) {
       // Meta answers code 190 when the token expired or was revoked. Flag the
@@ -1181,7 +1281,10 @@ export class MetaApiProvider implements ExecutionProvider {
       };
     }
 
-    const pageAccessToken = await fetchPageAccessToken(page.pageId, accessToken);
+    const pageAccessToken = await fetchPageAccessToken(
+      page.pageId,
+      accessToken,
+    );
     const { postId } = await publishFacebookPagePost({
       pageId: page.pageId,
       pageAccessToken,
@@ -1333,9 +1436,12 @@ export class MetaApiProvider implements ExecutionProvider {
     request: ExecutionRequest,
     payload: Record<string, unknown>,
   ): Promise<void> {
-    const launchId = typeof payload.launchId === "string" ? payload.launchId : null;
+    const launchId =
+      typeof payload.launchId === "string" ? payload.launchId : null;
     const mode =
-      payload.mode === "activate" || payload.mode === "discard" ? payload.mode : "create";
+      payload.mode === "activate" || payload.mode === "discard"
+        ? payload.mode
+        : "create";
     const launch = launchId
       ? await prisma.adsLaunch.findFirst({
           where: { id: launchId, projectId: request.context.projectId },
@@ -1406,21 +1512,48 @@ export class MetaApiProvider implements ExecutionProvider {
       typeof payload.adAccountId === "string"
         ? payload.adAccountId
         : metadata.selectedAdAccountId;
+    // Güvenlik eylemi yalnız durdurur ya da azaltır (F7 savunma derinliği).
+    const action = typeof payload.action === "string" ? payload.action : "";
+    if (!SAFETY_ACTIONS.has(action) || payload.status === "ACTIVE") {
+      return autopilotRefused("a safety action can only pause or lower spend.");
+    }
+    if (action === "BUDGET_DOWN") {
+      if (!rawAccount) {
+        return { status: "FAILED", errorMessage: "No ad account is selected" };
+      }
+      return this.safetyBudgetDown(
+        normalizeAdAccountId(rawAccount),
+        accessToken,
+        payload,
+        intent,
+      );
+    }
     // Yarım lansmanın temizliği ("Discard", §3.4 telafi): riski azaltır.
-    if (payload.action === "DISCARD_LAUNCH" && typeof payload.launchId === "string") {
+    if (
+      payload.action === "DISCARD_LAUNCH" &&
+      typeof payload.launchId === "string"
+    ) {
       const launch = await prisma.adsLaunch.findFirst({
         where: { id: payload.launchId, projectId: intent.projectId },
         select: { id: true },
       });
-      if (!launch) return { status: "FAILED", errorMessage: "Launch not found" };
+      if (!launch)
+        return { status: "FAILED", errorMessage: "Launch not found" };
       const result = await LaunchExecutor.advance(launch.id, "discard", {
         actorType: intent.actorType,
       });
       return result.status === "COMPLETED"
         ? { status: "COMPLETED", rawResult: result.rawResult }
         : result.status === "FAILED"
-          ? { status: "FAILED", errorMessage: result.errorMessage ?? "Couldn't discard it." }
-          : { status: "FAILED", errorMessage: "Meta is busy. Try discarding again in a minute.", retryable: true };
+          ? {
+              status: "FAILED",
+              errorMessage: result.errorMessage ?? "Couldn't discard it.",
+            }
+          : {
+              status: "FAILED",
+              errorMessage: "Meta is busy. Try discarding again in a minute.",
+              retryable: true,
+            };
     }
     if (!rawAccount) {
       return { status: "FAILED", errorMessage: "No ad account is selected" };
@@ -1431,13 +1564,18 @@ export class MetaApiProvider implements ExecutionProvider {
       const campaigns = await listMetaCampaigns({ adAccountId, accessToken });
       targets = campaigns
         .filter((campaign) => campaign.status === "ACTIVE")
-        .map((campaign) => ({ level: "CAMPAIGN" as const, id: campaign.campaignId }));
+        .map((campaign) => ({
+          level: "CAMPAIGN" as const,
+          id: campaign.campaignId,
+        }));
     } else if (Array.isArray(payload.targets)) {
       for (const raw of payload.targets) {
         const target = raw as { level?: unknown; id?: unknown };
         if (
           typeof target.id === "string" &&
-          (target.level === "CAMPAIGN" || target.level === "ADSET" || target.level === "AD")
+          (target.level === "CAMPAIGN" ||
+            target.level === "ADSET" ||
+            target.level === "AD")
         ) {
           targets.push({ level: target.level, id: target.id });
         }
@@ -1459,18 +1597,34 @@ export class MetaApiProvider implements ExecutionProvider {
           status: "PAUSED",
           level: target.level,
           executionJobId: intent.executionJobId,
-          ...(typeof payload.reason === "string" ? { reason: payload.reason } : {}),
+          ...(typeof payload.reason === "string"
+            ? { reason: payload.reason }
+            : {}),
         },
-        ...(typeof payload.decisionId === "string" ? { decisionId: payload.decisionId } : {}),
+        ...(typeof payload.decisionId === "string"
+          ? { decisionId: payload.decisionId }
+          : {}),
       });
       await AdsOperations.markSent(op.id);
       try {
         if (target.level === "CAMPAIGN") {
-          await updateMetaCampaign({ campaignId: target.id, accessToken, status: "PAUSED" });
+          await updateMetaCampaign({
+            campaignId: target.id,
+            accessToken,
+            status: "PAUSED",
+          });
         } else if (target.level === "ADSET") {
-          await updateMetaAdSet({ adSetId: target.id, accessToken, status: "PAUSED" });
+          await updateMetaAdSet({
+            adSetId: target.id,
+            accessToken,
+            status: "PAUSED",
+          });
         } else {
-          await updateMetaAd({ adId: target.id, accessToken, status: "PAUSED" });
+          await updateMetaAd({
+            adId: target.id,
+            accessToken,
+            status: "PAUSED",
+          });
         }
         await AdsOperations.succeed(op.id, target.id);
         paused.push(target.id);
@@ -1498,6 +1652,95 @@ export class MetaApiProvider implements ExecutionProvider {
       };
     }
     return { status: "COMPLETED", rawResult: { paused, failed } };
+  }
+
+  // Bütçe düşürme (Guarded auto, F7): önerildiği andaki bütçe Meta'da hâlâ
+  // aynıysa (CAS) ve yeni değer gerçekten daha düşükse yazılır. Sistem en çok
+  // %30 düşürür (kullanıcının kendi tıklaması bu sınıra bağlı değildir).
+  private async safetyBudgetDown(
+    adAccountId: string,
+    accessToken: string,
+    payload: Record<string, unknown>,
+    intent: IntentContext,
+  ): Promise<StoredResult> {
+    const raw = Array.isArray(payload.targets)
+      ? (payload.targets[0] as { level?: unknown; id?: unknown } | undefined)
+      : undefined;
+    const level =
+      raw?.level === "CAMPAIGN" || raw?.level === "ADSET" ? raw.level : null;
+    const id = typeof raw?.id === "string" ? raw.id : null;
+    const expected = readBudgetCents(payload.expectedDailyBudgetCents);
+    const to = readBudgetCents(payload.toDailyBudgetCents);
+    if (!level || !id || expected === undefined || to === undefined) {
+      return {
+        status: "FAILED",
+        errorMessage:
+          "Lowering a budget needs the ad set or campaign, its current and its new daily budget.",
+      };
+    }
+    const read = await readBack<{ daily_budget?: string }>(
+      id,
+      accessToken,
+      "daily_budget",
+    );
+    const current = Number(read.daily_budget ?? NaN);
+    if (current !== expected) {
+      return {
+        status: "FAILED",
+        errorMessage:
+          "This changed in Meta since it was suggested, so it wasn't applied.",
+        errorCode: "META:STATE:superseded",
+      };
+    }
+    const floor =
+      intent.actorType === "USER" ? 1 : Math.ceil(current * (1 - 0.3));
+    if (!Number.isInteger(to) || to >= current || to < floor) {
+      return autopilotRefused("a budget can only go down, by at most 30%.");
+    }
+    const { op } = await AdsOperations.begin({
+      workspaceId: intent.workspaceId,
+      projectId: intent.projectId,
+      kind: level === "CAMPAIGN" ? "UPDATE_CAMPAIGN" : "UPDATE_ADSET",
+      actorType: intent.actorType,
+      executionJobId: intent.executionJobId,
+      adAccountExternalId: adAccountId,
+      targetExternalId: id,
+      request: { dailyBudgetCents: to },
+      previousState: { dailyBudgetCents: current },
+      ...(typeof payload.decisionId === "string"
+        ? { decisionId: payload.decisionId }
+        : {}),
+    });
+    await AdsOperations.markSent(op.id);
+    try {
+      if (level === "CAMPAIGN") {
+        await updateMetaCampaign({
+          campaignId: id,
+          accessToken,
+          dailyBudgetCents: to,
+        });
+      } else {
+        await updateMetaAdSet({
+          adSetId: id,
+          accessToken,
+          dailyBudgetCents: to,
+        });
+      }
+      await AdsOperations.succeed(op.id, id);
+    } catch (error) {
+      await AdsOperations.fail(op.id, error);
+      throw error;
+    }
+    await prisma.adsObject
+      .updateMany({
+        where: { externalId: id },
+        data: { dailyBudgetMinor: BigInt(to) },
+      })
+      .catch(() => undefined);
+    return {
+      status: "COMPLETED",
+      rawResult: { lowered: [{ id, from: current, to }] },
+    };
   }
 
   // Güncelleme yazmasının niyet kaydı (docs/meta-ads-plan.md §3.1, §3.2):
@@ -1542,9 +1785,16 @@ export class MetaApiProvider implements ExecutionProvider {
     try {
       const result = await run();
       if (opId) {
-        await (result.status === "COMPLETED"
-          ? AdsOperations.succeed(opId, typeof target === "string" ? target : undefined)
-          : AdsOperations.fail(opId, new Error(result.errorMessage ?? "failed"))
+        await (
+          result.status === "COMPLETED"
+            ? AdsOperations.succeed(
+                opId,
+                typeof target === "string" ? target : undefined,
+              )
+            : AdsOperations.fail(
+                opId,
+                new Error(result.errorMessage ?? "failed"),
+              )
         ).catch(() => undefined);
       }
       return result;

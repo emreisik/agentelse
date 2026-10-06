@@ -10,6 +10,7 @@ import {
   type GuardFinding,
   type GuardObject,
 } from "@/lib/ads/guard-rules";
+import { envelopeMinor, parseLaunchSpec } from "@/lib/ads/launch-spec";
 import { formatMoney } from "@/lib/ads/money";
 import { nameWithoutTag } from "@/lib/ads/operation-tag";
 import { addDays, safeTimezone, weekStartSunday } from "@/lib/ads/sync-plan";
@@ -17,6 +18,7 @@ import { tokenWarningDays } from "@/lib/ads/token-health";
 import { metaWorkExcludedHere } from "@/lib/local-worker-policy";
 import { prisma } from "@/lib/prisma";
 import { dayKeyInTimezone } from "@/lib/timezone";
+import { AdsAutopilot } from "@/server/ads/autopilot";
 import type { SyncContext, SyncProject } from "@/server/ads/sync/context";
 import type { MetaTokenHealth } from "@/server/integrations/meta-client";
 import { claimPeriodic } from "@/server/observability/periodic";
@@ -52,6 +54,8 @@ export const OBJECT_ALERT_KINDS = [
   "REVIEW_SLOW",
   "NO_DELIVERY",
   "PROJECT_PAUSED_ADS_RUNNING",
+  "ENVELOPE_REACHED",
+  "MONTHLY_CAP_REACHED",
 ] as const;
 
 const PERIODIC_EVERY_MS = 15 * 60_000;
@@ -158,6 +162,166 @@ async function raiseFor(
   }
 }
 
+// G2 (docs/meta-ads-plan.md §6): lansman kampanyasının etkinleştirmeden bu
+// yana harcaması onaylı zarfa ulaştı (Meta'daki spend_cap zarfın %110'u,
+// ad set end_time zarfın sonu; bu bekçi %100'de durdurur).
+async function envelopeFindings(ctx: SyncContext, objects: AdsObject[]): Promise<GuardFinding[]> {
+  const launches = await prisma.adsLaunch.findMany({
+    where: {
+      adAccountExternalId: ctx.externalId,
+      status: "ACTIVE",
+      campaignExternalId: { not: null },
+    },
+    select: { campaignExternalId: true, spec: true, activatedAt: true, createdAt: true },
+  });
+  const out: GuardFinding[] = [];
+  for (const launch of launches) {
+    const campaign = objects.find(
+      (object) =>
+        object.level === "CAMPAIGN" &&
+        object.externalId === launch.campaignExternalId &&
+        object.configuredStatus === "ACTIVE" &&
+        !object.goneAt,
+    );
+    const spec = parseLaunchSpec(launch.spec);
+    if (!campaign || !spec) continue;
+    const envelope = envelopeMinor(spec);
+    const since = dayKeyInTimezone(launch.activatedAt ?? launch.createdAt, ctx.timezone);
+    const spent = await prisma.adsInsightDaily.aggregate({
+      where: {
+        adsAccountId: ctx.account.id,
+        level: "CAMPAIGN",
+        externalId: campaign.externalId,
+        date: { gte: dateOf(since) },
+      },
+      _sum: { spendMinor: true },
+    });
+    const spendMinor = Number(spent._sum.spendMinor ?? 0);
+    if (envelope <= 0 || spendMinor < envelope) continue;
+    out.push({
+      kind: "ENVELOPE_REACHED",
+      severity: "CRITICAL",
+      externalId: campaign.externalId,
+      title: `Approved budget used up: ${nameWithoutTag(campaign.name)}`,
+      detail: `It spent ${formatMoney(spendMinor, ctx.currency)} of the ${formatMoney(envelope, ctx.currency)} you approved. Pause it, or approve more budget before it keeps spending.`,
+      data: { envelopeMinor: envelope, spendMinor },
+    });
+  }
+  return out;
+}
+
+async function monthlyCapFindings(
+  ctx: SyncContext,
+  objects: AdsObject[],
+  open: Map<string, Set<string>>,
+): Promise<void> {
+  const policies = await prisma.autonomyPolicy.findMany({
+    where: {
+      projectId: { in: ctx.projects.map((project) => project.projectId) },
+      adsMonthlyCapMinor: { not: null },
+    },
+    select: { projectId: true, adsMonthlyCapMinor: true },
+  });
+  if (policies.length === 0) return;
+  const mtd = await prisma.adsInsightDaily.aggregate({
+    where: {
+      adsAccountId: ctx.account.id,
+      level: "ACCOUNT",
+      date: { gte: dateOf(`${ctx.today.slice(0, 7)}-01`) },
+    },
+    _sum: { spendMinor: true },
+  });
+  const spent = Number(mtd._sum.spendMinor ?? 0);
+  for (const policy of policies) {
+    const cap = Number(policy.adsMonthlyCapMinor ?? 0);
+    const project = ctx.projects.find((row) => row.projectId === policy.projectId);
+    if (!project || cap <= 0 || spent < cap) continue;
+    const running = objects.filter(
+      (object) =>
+        object.level === "CAMPAIGN" &&
+        object.createdByAgentelse &&
+        object.projectId === project.projectId &&
+        object.configuredStatus === "ACTIVE" &&
+        !object.goneAt,
+    );
+    if (running.length === 0) continue;
+    const dedupeKey = `MONTHLY_CAP_REACHED:${ctx.externalId}:${ctx.today.slice(0, 7)}`;
+    open.get(project.projectId)?.add(dedupeKey);
+    await AdsAlerts.raise(
+      {
+        workspaceId: project.workspaceId,
+        projectId: project.projectId,
+        adsAccountId: ctx.account.id,
+        externalId: ctx.externalId,
+        kind: "MONTHLY_CAP_REACHED",
+        severity: "CRITICAL",
+        dedupeKey,
+        title: "This month's ad spending cap is reached",
+        detail: `Spent ${formatMoney(spent, ctx.currency)} this month against your cap of ${formatMoney(cap, ctx.currency)}. Pause your Agentelse campaigns or raise the cap in Settings.`,
+        data: { capMinor: cap, spendMinor: spent },
+      },
+      ctx.now,
+    );
+    for (const campaign of running) {
+      await autoPause(
+        ctx,
+        campaign,
+        "G2_MONTHLY_CAP",
+        `Paused "${nameWithoutTag(campaign.name)}": this month's ad spend reached your cap of ${formatMoney(cap, ctx.currency)}.`,
+        { capMinor: cap, spendMinor: spent },
+      );
+    }
+  }
+}
+
+function autoPauseText(
+  finding: GuardFinding,
+  campaign: AdsObject,
+  currency: string | null,
+): string {
+  const name = nameWithoutTag(campaign.name);
+  const data = (finding.data ?? {}) as Record<string, unknown>;
+  const money = (value: unknown) => formatMoney(Number(value ?? 0), currency);
+  if (finding.kind === "ENVELOPE_REACHED") {
+    return `Paused "${name}": it spent ${money(data.spendMinor)}, the ${money(data.envelopeMinor)} you approved is used up.`;
+  }
+  return data.breach === "weekly"
+    ? `Paused "${name}": it spent ${money(data.weekSpendMinor)} since Sunday, more than its weekly budget allows.`
+    : `Paused "${name}": it spent ${money(data.todaySpendMinor)} today against a daily budget of ${money(data.budgetMinor)}.`;
+}
+
+async function autoPause(
+  ctx: SyncContext,
+  campaign: AdsObject,
+  ruleKey: "G1_RUNAWAY" | "G2_ENVELOPE" | "G2_MONTHLY_CAP",
+  explanation: string,
+  evidence: Record<string, unknown>,
+): Promise<void> {
+  const project =
+    ctx.projects.find((row) => row.projectId === campaign.projectId) ?? ctx.projects[0];
+  if (!project?.brandId) return;
+  try {
+    await AdsAutopilot.tryGuardPause({
+      workspaceId: project.workspaceId,
+      projectId: project.projectId,
+      brandId: project.brandId,
+      account: ctx.account,
+      level: "CAMPAIGN",
+      externalId: campaign.externalId,
+      ruleKey,
+      explanation,
+      evidence,
+      dayKey: ctx.today,
+      now: ctx.now,
+    });
+  } catch (error) {
+    console.error(
+      `[ads-guard] automatic pause failed for ${campaign.externalId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
 export const AdsGuard = {
   async evaluateAccount(ctx: SyncContext): Promise<void> {
     if (ctx.projects.length === 0) return;
@@ -254,8 +418,34 @@ export const AdsGuard = {
       });
     }
 
+    // G2 (F7): lansmanın onaylı zarfı doldu.
+    findings.push(...(await envelopeFindings(ctx, objects)));
+
     for (const finding of findings) {
       await raiseFor(ctx.projects, ctx, finding, open, projectOf);
+    }
+
+    // G2: projenin aylık tavanı (Settings → Autonomy → Ads autopilot).
+    await monthlyCapFindings(ctx, objects, open);
+
+    // F7: kaçak harcama ve dolan zarf, Ads autopilot açıksa kendiliğinden
+    // duraklatılır (kapılar ve günlük sınır AdsAutopilot'ta).
+    for (const finding of findings) {
+      const ruleKey =
+        finding.kind === "RUNAWAY_SPEND"
+          ? ("G1_RUNAWAY" as const)
+          : finding.kind === "ENVELOPE_REACHED"
+            ? ("G2_ENVELOPE" as const)
+            : null;
+      const campaign = objects.find(
+        (object) =>
+          object.level === "CAMPAIGN" &&
+          object.externalId === finding.externalId &&
+          object.configuredStatus === "ACTIVE" &&
+          !object.goneAt,
+      );
+      if (!ruleKey || !campaign) continue;
+      await autoPause(ctx, campaign, ruleKey, autoPauseText(finding, campaign, ctx.currency), finding.data ?? {});
     }
 
     // Bugün gelen lead'ler (gün başına tek uyarı, sayı güncellenir; önceki

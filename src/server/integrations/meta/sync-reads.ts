@@ -230,6 +230,31 @@ export async function readObjectStatus(
   }
 }
 
+// Webhook işleyicisinin hedefli okuması (F7): tek nesne, seviyesinin alan
+// listesiyle (aynanın eşleyicisi aynı ham biçimi bekler). Nesne yoksa null.
+export async function readMirrorObject(
+  objectId: string,
+  level: "CAMPAIGN" | "ADSET" | "AD",
+  accessToken: string,
+): Promise<Record<string, unknown> | null> {
+  const fields =
+    level === "CAMPAIGN" ? CAMPAIGN_FIELDS : level === "ADSET" ? ADSET_FIELDS : AD_FIELDS;
+  try {
+    return await metaFetch<Record<string, unknown>>(
+      url(objectId, { fields, access_token: accessToken }),
+    );
+  } catch (error) {
+    if (
+      error instanceof MetaApiError &&
+      error.metaErrorCode === 100 &&
+      error.metaErrorSubcode === 33
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export type RawInsight = {
   date_start?: string;
   date_stop?: string;

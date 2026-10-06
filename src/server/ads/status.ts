@@ -1,5 +1,6 @@
 import "server-only";
 
+import { AdsFlags } from "@/lib/ads/flags";
 import { safeTimezone } from "@/lib/ads/sync-plan";
 import { timeAgo } from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
@@ -40,6 +41,13 @@ export async function loadAdsAccountStatus(
         ? `Account time (${accountTimezone})`
         : null,
     runningCampaigns: running,
+    realtime: !AdsFlags.webhooks()
+      ? null
+      : account.webhookStatus === "SUBSCRIBED"
+        ? "on"
+        : account.webhookStatus === "POLLING_ONLY"
+          ? "polling"
+          : null,
     alerts: alerts.map((alert) => ({
       id: alert.id,
       severity: alert.severity,

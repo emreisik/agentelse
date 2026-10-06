@@ -47,6 +47,8 @@ const TELEGRAM_KIND_TEXT: Record<string, string> = {
   TOKEN_INVALID: "the Meta Ads connection stopped working",
   ALL_ADS_REJECTED: "all ads were rejected",
   ENVELOPE_REACHED: "a campaign reached its approved budget",
+  MONTHLY_CAP_REACHED: "this month's ad spending cap is reached",
+  AUTO_ACTION_FAILED: "an automatic protection step didn't go through",
 };
 
 function escapeHtml(value: string): string {

@@ -32,10 +32,14 @@ const LEVEL_4_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>(
 
 // Güvenlik eylemi (Pause / Pause all; docs/meta-ads-plan.md §3.9): kullanıcının
 // kendi tıklaması onaydır (L0); sistemin önerdiği duraklatma Suggest modunda
-// onay ister (L4). Guarded/Full auto F7'de autopilot'tan geçer.
+// onay ister (L4).
 const SAFETY_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "META_SAFETY_ACTION",
 ]);
+
+// FULL otomatik pilotun sınırlı bütçe artışı yalnız bu yazmalardan geçer.
+const AUTO_RAISE_CAPABILITIES: ReadonlySet<CapabilityKey> =
+  new Set<CapabilityKey>(["META_ADSET_UPDATE", "META_CAMPAIGN_UPDATE"]);
 
 export type ApprovalLevelContext = {
   createdByType: ActorType;
@@ -43,7 +47,35 @@ export type ApprovalLevelContext = {
   // Per-project overrides from AutonomyPolicy.approvalOverrides, shape:
   // { [capability]: ApprovalLevel } — may only RAISE a level, never lower it.
   approvalOverrides?: Partial<Record<string, ApprovalLevel>> | null;
+  // Meta Ads otomatik pilotu (docs/meta-ads-plan.md §1.2, F7). Yalnız
+  // AdsAutopilot doldurur; kapıları (bayrak, token, ayna, günlük sınır,
+  // kural listesi) o geçirmiştir ve yürütücü aynı sınırları yeniden denetler.
+  adsAutonomy?: "SUGGEST" | "GUARDED" | "FULL";
+  // Duraklatma ya da en çok %30 bütçe düşürme.
+  riskReducing?: boolean;
+  // FULL: aylık tavan içinde en çok %20 bütçe artışı.
+  autoBudgetRaise?: boolean;
 };
+
+// "Yalnız yükseltir" kuralının yazılı ve testli istisnaları (F7): sistemin
+// otomatik pilot eylemi, sahibin proje bazında verdiği açık izinle (Settings
+// → Autonomy → Ads autopilot) L1'e iner. Başka hiçbir yol seviyeyi düşürmez.
+function autopilotLowers(
+  capability: CapabilityKey,
+  context: ApprovalLevelContext,
+): boolean {
+  if (context.createdByType !== "SYSTEM") return false;
+  if (SAFETY_CAPABILITIES.has(capability)) {
+    return (
+      (context.adsAutonomy === "GUARDED" || context.adsAutonomy === "FULL") &&
+      context.riskReducing === true
+    );
+  }
+  if (AUTO_RAISE_CAPABILITIES.has(capability)) {
+    return context.adsAutonomy === "FULL" && context.autoBudgetRaise === true;
+  }
+  return false;
+}
 
 const LEVEL_ORDER: ApprovalLevel[] = [
   "LEVEL_0_AUTO_OBSERVE",
@@ -75,7 +107,9 @@ export const ApprovalPolicy = {
   ): ApprovalLevel {
     let level: ApprovalLevel;
 
-    if (SAFETY_CAPABILITIES.has(capability)) {
+    if (autopilotLowers(capability, context)) {
+      level = "LEVEL_1_INTERNAL_AUTOMATIC";
+    } else if (SAFETY_CAPABILITIES.has(capability)) {
       level =
         context.createdByType === "USER"
           ? "LEVEL_0_AUTO_OBSERVE"

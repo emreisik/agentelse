@@ -18,6 +18,7 @@ import { nameWithoutTag, tagOfName } from "@/lib/ads/operation-tag";
 import { resultActionTypeForGoal } from "@/lib/ads/results";
 import { prisma } from "@/lib/prisma";
 import { AdsAlerts } from "@/server/ads/guard/alerts";
+import { AdsInsurance } from "@/server/ads/insurance";
 import {
   listAccountStructure,
   readObjectStatus,
@@ -101,6 +102,15 @@ export type StructureResult = {
 };
 
 export async function syncStructure(ctx: SyncContext): Promise<StructureResult> {
+  // F7: Agentelse safety kurallarının yürütmeleri drift kararından önce
+  // niyet kaydına yazılır (kuralın duraklatması "Changed in Ads Manager"
+  // sayılmaz).
+  await AdsInsurance.syncHistory(ctx).catch((error: unknown) => {
+    console.error(
+      `[ads-sync] rule history failed for ${ctx.externalId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  });
   const listed = await listAccountStructure(ctx.externalId, ctx.accessToken);
   const existing = await prisma.adsObject.findMany({
     where: { adsAccountId: ctx.account.id },

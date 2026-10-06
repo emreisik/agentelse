@@ -173,6 +173,10 @@ const envSchema = z.object({
   // Google, it's derived from NEXT_PUBLIC_APP_URL.
   META_APP_ID: z.string().optional().default(""),
   META_APP_SECRET: z.string().optional().default(""),
+  // Meta Ads webhook'u (docs/meta-ads-plan.md F7): uygulama aboneliğinin
+  // doğrulama jetonu (GET hub.verify_token). Boşken abonelik kurulmaz; ayna
+  // yoklaması her durumda sürer.
+  META_ADS_WEBHOOK_VERIFY_TOKEN: z.string().optional().default(""),
   // "Instagram API with Instagram Login": connects an Instagram professional
   // account directly, with no Facebook account or Page. It lives in the SAME
   // Meta app (App Dashboard > Instagram > API setup with Instagram login) but

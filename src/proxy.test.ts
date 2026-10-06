@@ -14,6 +14,7 @@ describe("proxy public path matching", () => {
     "/data-deletion",
     "/api/integrations/meta/deauthorize",
     "/api/integrations/meta/data-deletion",
+    "/api/webhooks/meta-ads",
   ])("allows %s", (pathname) => {
     expect(isPublicPath(pathname)).toBe(true);
   });
@@ -29,6 +30,8 @@ describe("proxy public path matching", () => {
     "/data-deletion/extra",
     "/api/healthz",
     "/api/health/details",
+    "/api/webhooks/meta-ads/extra",
+    "/api/webhooks/other",
   ])(
     "protects %s",
     (pathname) => {

@@ -15,6 +15,7 @@ Plan: [meta-ads-plan.md](meta-ads-plan.md). Bu dosya, planın uygulanmış hâli
 | F4 — Optimizasyon v2 | Kodlandı | `META_ADS_OPTIMIZER=shadow` → `on` |
 | F5b — Planlama ve formlar | Kodlandı (Leads izin bekliyor) | `META_ADS_PLANNER=true` (+ v2) |
 | F6 — Raporlama ve öğrenme | Kodlandı | `META_ADS_REPORTS=true` (+ ayna) |
+| F7 — Webhook ve otonomi | Kodlandı | `META_ADS_WEBHOOKS=true`, `META_ADS_AUTOPILOT=true`, isteğe bağlı `META_ADS_RULES=true` |
 
 Kod dışı adımlar sahipte (aşağıda "Sahip adımları").
 
@@ -246,6 +247,35 @@ Bayrak: `META_ADS_REPORTS=true` (ayna açık olmalı).
 - **Brand sekmesi "Ads" kartı** (K22): sağ dok → Brand: son 7 gün harcama, sonuç, maliyet, çalışan kampanya, dikkat isteyen uyarı sayısı ve tazelik; "Open" Ads sayfasına götürür. Ayna kapalıysa görünmez.
 - **Bilinçli sapma**: rapor metinleri şablondur (LLM özeti bağlanmadı; her sayı aynadan).
 
+## F7 — Webhook ve koruma raylı otonomi
+
+Migration: `20261006180000_add_ads_autonomy_and_webhook_events` (`AutonomyPolicy.adsAutonomy` + `adsMonthlyCapMinor`, `AdsAccount` webhook alanları, `AdsWebhookEvent`).
+
+### Webhook (`META_ADS_WEBHOOKS=true`)
+
+- **Uç** `src/app/api/webhooks/meta-ads/route.ts` (oturumsuz, `public-paths.ts`'te): GET yalnız `META_ADS_WEBHOOK_VERIFY_TOKEN` tutarsa `hub.challenge` döner; POST ham gövdenin `X-Hub-Signature-256` HMAC'i `META_APP_SECRET` ile tutmazsa 401. Olaylar `AdsWebhookEvent`'e yazılır ve hemen 200 dönülür (bayrak kapalıyken de 200: Meta başarısız teslimatta aboneliği düşürür). Gövde en çok 512 KB.
+- **Tekilleştirme**: gövdede olay kimliği yok; `dedupeKey` = sha256(hesap + zaman + alan + nesne + değerin anahtar sırasından bağımsız JSON'u) (`src/lib/ads/webhooks.ts`, testli). Yük anahtarları belgede kesin değil: nesne kimliği `ad_object_id` / `object_id` / `id`… sırasıyla okunur; yeni değer hiçbir zaman gövdeden alınmaz.
+- **İşleyici** (`src/server/ads/webhooks.ts`, tick adımı `meta-ads-webhooks`): olaylar 2 dk bekletilir (art arda olaylar tek okumada birleşir), her nesne hedefli okunur ve aynanın yalnız durum alanları (effective status, issues, review feedback, delivery checks) tazelenir; ardından o hesabın bekçileri hemen koşar: ret ve teslimat sorunu uyarısı yoklamayı beklemeden gelir. Bütçe / durum gibi izlenen alanlar yazılmaz (drift kararı yapı senkronunda kalır). `creative_fatigue` → INFO uyarı. 5 denemeden sonra DEAD (/health "Meta Ads clean-up"). 14 gün saklanır.
+- **Abonelik** (`src/server/ads/webhook-subscriptions.ts`, tick adımı `meta-ads-webhook-subscriptions`): uygulama aboneliği (object `ad_account`, alanlar `effective_status`, `with_issues_ad_objects`, `in_process_ad_objects`, `creative_fatigue`, `ad_recommendations`) günde bir doğrulanır, yoksa kurulur; her hesap günde bir `subscribed_apps` ile denetlenir, düşmüşse yeniden abone olunur. Hesapta MANAGE görevi yoksa "polling only": Ads sayfası başlığı "Real-time alerts need an admin of this ad account" der (abone olunca "Real-time alerts on"). Yoklama her durumda yedektir.
+
+### Otomatik pilot (`META_ADS_AUTOPILOT=true`)
+
+- **Ayar**: Settings → Autonomy → "Ads autopilot" kartı: Suggest only (varsayılan) / Guarded auto / Full auto, aylık harcama tavanı ve onay kutusu. Yalnız workspace OWNER/ADMIN kaydeder; Suggest dışı seviye onay kutusu ister; her değişiklik AuditLog'a (`ads_autopilot.updated`).
+- **Guarded auto** (`src/lib/ads/autopilot.ts`, testli): kendiliğinden yalnız riski azaltanlar: kaçak harcamada (G1) ve onaylı zarf / aylık tavan dolunca (G2) kampanyayı, platform içi sonuçta (mesaj, anında form) sonuçsuz harcamada (G3) ad set'i duraklatma; yüksek CPA'da (O2) bütçeyi en çok %30 düşürme (aynı nesnede 72 saatte bir). Bütçe artışı, etkinleştirme, hedefleme / kreatif değişikliği, yeni kampanya asla. Kural listesi dışındaki kararlar (O5 kaybeden reklam, kreatif yenileme…) öneri kalır.
+- **Full auto**: ek olarak O3'te en çok %20 bütçe artışı (72 saatte bir, hesap saatiyle 18:00'den sonra yok, ay sonuna kadarki ek maliyetle aylık tavanı aşmıyorsa). Önkoşullar kartta satır satır: standard access, süresi dolmayan (system user) token, sağlıklı hesap ve izleme, en az 30 günlük geçmiş, aylık tavan. Önkoşullar tutmadan seçilemez.
+- **Kapılar**: bayrak, sağlıklı token, taze ayna (2 saat), acil durdurma (yalnız duraklatma), proje başına 24 saatte en çok 5 otomatik eylem (aşılırsa karar insan onayına düşer). Otomatik olmayan kararın gerekçesi kanıtına yazılır (`evidence.autopilot`).
+- **Yol**: riski azaltan eylem `META_SAFETY_ACTION` görevidir (`PAUSE` ya da yeni `BUDGET_DOWN`), Full artışı `META_ADSET_UPDATE` / `META_CAMPAIGN_UPDATE`; görev hemen satır içinde sürülür. Karar `autonomy = GUARDED|FULL`, `status = APPLYING` olur; uygulanınca Ads kartında "Auto-paused · <reklam>" / "Budget lowered automatically · <reklam>" uyarısı ve Ads sohbetinde mesaj; kartın Undo'su geri alır (geri alınınca uyarı kapanır, 3 günde kendiliğinden kapanır). Başarısız otomatik eylem CRITICAL (Telegram).
+- **Onay politikası istisnası** (`approval-policy.ts`, testli): "yalnız yükseltir" kuralının yazılı tek istisnası: SYSTEM + `META_SAFETY_ACTION` + GUARDED/FULL + `riskReducing` → L1; SYSTEM + FULL + `autoBudgetRaise` → yalnız kampanya / ad set güncellemesinde L1. Proje override'ı yine yükseltir.
+- **Savunma derinliği** (`meta-api-provider.ts`, testli): güvenlik eylemi yalnız `PAUSE`, `PAUSE_ALL`, `BUDGET_DOWN`, `DISCARD_LAUNCH`; `ACTIVE` hiçbir zaman. `BUDGET_DOWN` Meta'daki güncel bütçeyi geri okur (CAS; değiştiyse SUPERSEDED), yalnız düşüşü ve sistemde en çok %30'u yazar. İnsansız (sistemin açtığı, onaysız) kampanya / ad set yazması yalnız `autopilot: "FULL"`, yalnız bütçe, en çok %20 ve proje o an FULL ise geçer.
+- **Arşivleme otomatik değil** (bilinçli sapma): Meta'da arşiv geri alınamaz, her otomatik eylem ise geri alınabilir olmalı. Yetim kampanya uyarısı öneri kalır.
+- **G2** (`watchdogs.ts`): lansmanın etkinleştirmeden bu yana harcaması onaylı zarfa ulaşınca `ENVELOPE_REACHED` (CRITICAL); ay içi harcama projenin aylık tavanına ulaşınca ve Agentelse kampanyası hâlâ açıksa `MONTHLY_CAP_REACHED` (CRITICAL). Guarded / Full'de ikisi de kampanyayı duraklatır. Tavan her seviyede uyarı üretir.
+
+### Ad Rules sigortası (`META_ADS_RULES=true`, isteğe bağlı)
+
+- `src/server/ads/insurance.ts` + `src/server/integrations/meta/ad-rules.ts`: çalışan her lansman kampanyasına "Agentelse safety · <kampanya>" adlı SCHEDULE kuralı (yarım saatte bir; kimlik filtreli: `campaign.id IN [..]`; "bugünkü harcama > eşik → PAUSE"). Eşik = 2 × bugün yürürlükte olmuş en yüksek günlük bütçe (`src/lib/ads/insurance.ts`, testli): düşürmede o gün eski değer kalır, gece yarısından sonra iner; artışta hemen yükselir. Kural kimliği `AdsLaunch.guards.ruleId`'de.
+- Lansman bitince / kampanya gidince kural silinir; Disconnect'te izinlerden önce silinir, silinemeyen /health "Meta Ads clean-up"ta listelenir.
+- Kural yürütmeleri yapı senkronunun başında `adrules_history`'den okunur, RULE aktörlü `AdsOperation` olur (drift sayılmaz) ve "Paused by Agentelse safety rule: …" uyarısı açılır.
+
 ## Sahip adımları (kod dışı)
 
 1. **Birikim raporunu oku**: yeni bir terminal sekmesinde, repo klasöründe `npm run db:report:backlog`. Çıktıyı Claude'a yapıştır.
@@ -263,3 +293,6 @@ Bayrak: `META_ADS_REPORTS=true` (ayna açık olmalı).
 13. **F4 gölge mod**: `META_ADS_OPTIMIZER=shadow`; en az 30 karar ya da 4 hafta sonra kararları birlikte inceleyin (kabul ≥ %60 → `on`).
 14. **Leads**: Meta App Review'da `pages_manage_ads` onaylanınca `src/lib/ads/objectives.ts` → `READY_RECIPES.leads_instant_form = true` (tek satır); test hesabında bir form lansmanı.
 15. **F6**: `META_ADS_REPORTS=true`; ilk haftalık rapor Pazartesi 08:00'de Ads sohbetinde.
+16. **F7 webhook**: Railway web servisine `META_ADS_WEBHOOK_VERIFY_TOKEN=<rastgele uzun değer>` ve `META_ADS_WEBHOOKS=true`. Uygulama aboneliği ertesi tick'te kendiliğinden kurulur (Meta, `https://<uygulama>/api/webhooks/meta-ads` adresini doğrular); istersen App Dashboard → Webhooks → Ad Account'tan kontrol et. Ads sayfası başlığında "Real-time alerts on" görünmeli; admin olmayan hesapta "Real-time alerts need an admin of this ad account". Webhook'lar uygulama Live moddayken gelir (plan §7).
+17. **F7 otomatik pilot**: önce Meta App Review'daki `ads_management` kullanım açıklamasına otomatik koruma eylemlerini ekle (gizlilik metni güncellendi: "If a workspace owner or admin turns on Ads autopilot…"). Sonra `META_ADS_AUTOPILOT=true` ve Settings → Autonomy → Ads autopilot → "Guarded auto" + onay kutusu. Full auto, önkoşullar tutunca (F8'in system user bağlantısı dahil) açılabilir.
+18. **F7 Ad Rules (isteğe bağlı)**: önce test reklam hesabında `META_ADS_RULES=true` ile bir lansman; Ads Manager → Automated rules'da "Agentelse safety · …" kuralını gör, Graph Explorer'da `/{rule_id}/preview` ile hangi nesnelere uygulandığını kontrol et ve token iptalinden sonra kuralın çalışıp çalışmadığını not et (plan §3.9). Sonra canlıda aç.

@@ -21,6 +21,8 @@ import {
   requireWorkspaceMembership,
 } from "@/server/security/tenant-context";
 import { buildSystemHealthReport } from "@/server/observability/health-report";
+import { prisma } from "@/lib/prisma";
+import { AdsInsurance } from "@/server/ads/insurance";
 import { isPlatformOperator } from "@/server/security/operator";
 import {
   clearProviderIncidentAction,
@@ -89,6 +91,12 @@ export default async function HealthPage() {
     );
   }
   const report = await buildSystemHealthReport(workspaceId);
+  // Meta Ads F7: Disconnect'te silinemeyen güvenlik kuralları ve 5 denemede
+  // işlenemeyen webhook olayları (operatör elle bakar).
+  const [leftoverRules, deadWebhooks] = await Promise.all([
+    AdsInsurance.undeletable().catch(() => []),
+    prisma.adsWebhookEvent.count({ where: { status: "DEAD" } }).catch(() => 0),
+  ]);
 
   const healthy =
     report.totals.failedJobs === 0 &&
@@ -342,6 +350,43 @@ export default async function HealthPage() {
             </CardContent>
           </Card>
         </div>
+
+        {leftoverRules.length > 0 || deadWebhooks > 0 ? (
+          <Card>
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0">
+              <span className="flex size-7 items-center justify-center rounded-lg bg-accent">
+                <AlertTriangle className="size-4" />
+              </span>
+              <CardTitle className="text-base">Meta Ads clean-up</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {deadWebhooks > 0 ? (
+                <p className="text-muted-foreground">
+                  {deadWebhooks} ad webhook event
+                  {deadWebhooks === 1 ? "" : "s"} failed 5 times. Polling
+                  still covers them.
+                </p>
+              ) : null}
+              {leftoverRules.map((rule) => (
+                <div
+                  key={rule.launchId}
+                  className="rounded-lg bg-accent/40 px-3 py-2"
+                >
+                  <p>
+                    Safety rule{" "}
+                    <span className="font-mono text-xs">{rule.ruleId}</span>{" "}
+                    couldn&apos;t be deleted at Disconnect (project{" "}
+                    <span className="font-mono text-xs">{rule.projectId}</span>
+                    ). Delete it in Ads Manager → Automated rules.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {timeAgo(new Date(rule.at))}
+                  </p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader className="flex flex-row items-center gap-2 space-y-0">

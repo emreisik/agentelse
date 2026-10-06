@@ -146,3 +146,118 @@ describe("ApprovalPolicy — project overrides", () => {
     );
   });
 });
+
+// F7 (docs/meta-ads-plan.md §1.2): "yalnız yükseltir" kuralının yazılı ve
+// testle sabitlenmiş istisnası. Başka hiçbir bağlam seviyeyi düşürmez.
+describe("ApprovalPolicy — Ads autopilot exception", () => {
+  it("Guarded auto runs a system safety action that reduces risk without a human (L1)", () => {
+    for (const adsAutonomy of ["GUARDED", "FULL"] as const) {
+      const level = ApprovalPolicy.resolveLevel("META_SAFETY_ACTION", {
+        createdByType: "SYSTEM",
+        adsAutonomy,
+        riskReducing: true,
+      });
+      expect(level).toBe("LEVEL_1_INTERNAL_AUTOMATIC");
+      expect(isAutoExecutable(level)).toBe(true);
+    }
+  });
+
+  it("without the project's consent or without risk reduction the system still needs L4", () => {
+    const cases = [
+      { adsAutonomy: "SUGGEST" as const, riskReducing: true },
+      { adsAutonomy: "GUARDED" as const, riskReducing: false },
+      { adsAutonomy: "GUARDED" as const },
+      { riskReducing: true },
+    ];
+    for (const context of cases) {
+      expect(
+        ApprovalPolicy.resolveLevel("META_SAFETY_ACTION", {
+          createdByType: "SYSTEM",
+          ...context,
+        }),
+      ).toBe("LEVEL_4_CRITICAL");
+    }
+  });
+
+  it("only Full auto lowers a budget write, and only as a bounded raise", () => {
+    expect(
+      ApprovalPolicy.resolveLevel("META_ADSET_UPDATE", {
+        createdByType: "SYSTEM",
+        adsAutonomy: "FULL",
+        autoBudgetRaise: true,
+      }),
+    ).toBe("LEVEL_1_INTERNAL_AUTOMATIC");
+    expect(
+      ApprovalPolicy.resolveLevel("META_ADSET_UPDATE", {
+        createdByType: "SYSTEM",
+        adsAutonomy: "GUARDED",
+        autoBudgetRaise: true,
+      }),
+    ).toBe("LEVEL_4_CRITICAL");
+    // riskReducing never lowers a plain spend write: cuts go through the
+    // safety action, whose provider refuses anything that raises spend.
+    expect(
+      ApprovalPolicy.resolveLevel("META_ADSET_UPDATE", {
+        createdByType: "SYSTEM",
+        adsAutonomy: "FULL",
+        riskReducing: true,
+      }),
+    ).toBe("LEVEL_4_CRITICAL");
+  });
+
+  it("the exception never applies to other capabilities or to people", () => {
+    for (const capability of [
+      "META_CAMPAIGN_CREATE",
+      "META_ADSET_CREATE",
+      "META_LAUNCH",
+      "META_AD_UPDATE",
+      "INSTAGRAM_PUBLISH",
+      "WEBSITE_UPDATE",
+    ] as const) {
+      const withAutopilot = ApprovalPolicy.resolveLevel(capability, {
+        createdByType: "SYSTEM",
+        adsAutonomy: "FULL",
+        riskReducing: true,
+        autoBudgetRaise: true,
+      });
+      expect(withAutopilot).toBe(
+        ApprovalPolicy.resolveLevel(capability, { createdByType: "SYSTEM" }),
+      );
+    }
+    for (const capability of [
+      "META_CAMPAIGN_CREATE",
+      "META_ADSET_CREATE",
+      "META_LAUNCH",
+      "META_AD_UPDATE",
+    ] as const) {
+      expect(
+        isAutoExecutable(
+          ApprovalPolicy.resolveLevel(capability, {
+            createdByType: "SYSTEM",
+            adsAutonomy: "FULL",
+            riskReducing: true,
+            autoBudgetRaise: true,
+          }),
+        ),
+      ).toBe(false);
+    }
+    expect(
+      ApprovalPolicy.resolveLevel("META_ADSET_UPDATE", {
+        createdByType: "USER",
+        adsAutonomy: "FULL",
+        autoBudgetRaise: true,
+      }),
+    ).toBe("LEVEL_4_CRITICAL");
+  });
+
+  it("a project override still raises it back", () => {
+    expect(
+      ApprovalPolicy.resolveLevel("META_SAFETY_ACTION", {
+        createdByType: "SYSTEM",
+        adsAutonomy: "GUARDED",
+        riskReducing: true,
+        approvalOverrides: { META_SAFETY_ACTION: "LEVEL_4_CRITICAL" },
+      }),
+    ).toBe("LEVEL_4_CRITICAL");
+  });
+});

@@ -82,12 +82,30 @@ export const AdsLaunchSpecSchema = z.object({
   recipe: z.string(),
   specialAdCategories: z.array(z.string()).max(4),
   campaignName: z.string().min(1).max(400),
-  budget: z.object({
-    mode: z.literal("DAILY"),
-    dailyMinor: z.number().int().positive(),
-    // Bitiş, kurulum anında hesap saatiyle hesaplanır: start + gün, 23:59.
-    durationDays: z.number().int().min(1).max(31),
-  }),
+  budget: z.discriminatedUnion("mode", [
+    z.object({
+      mode: z.literal("DAILY"),
+      dailyMinor: z.number().int().positive(),
+      // Bitiş, kurulum anında hesap saatiyle hesaplanır: start + gün, 23:59.
+      durationDays: z.number().int().min(1).max(31),
+    }),
+    // F5b: toplam tutar günlere esnek dağılır (lifetime_budget).
+    z.object({
+      mode: z.literal("FIXED"),
+      lifetimeMinor: z.number().int().positive(),
+      durationDays: z.number().int().min(1).max(31),
+    }),
+  ]),
+  // F5b: mevcut ad set'e reklam ekleme (kampanya ve ad set kurulmaz).
+  existingAdSetId: z.string().regex(/^\d+$/).optional(),
+  // F5b: anında form (Leads); Sayfa token'ıyla kurulur.
+  leadForm: z
+    .object({
+      privacyUrl: z.string().url(),
+      higherIntent: z.boolean(),
+      name: z.string().min(1).max(200),
+    })
+    .optional(),
   adSets: z
     .array(
       z.object({
@@ -188,7 +206,16 @@ export function specHash(spec: AdsLaunchSpec): string {
 }
 
 export function envelopeMinor(spec: Pick<AdsLaunchSpec, "budget">): number {
-  return spec.budget.dailyMinor * spec.budget.durationDays;
+  return spec.budget.mode === "FIXED"
+    ? spec.budget.lifetimeMinor
+    : spec.budget.dailyMinor * spec.budget.durationDays;
+}
+
+// Günlük ortalama (fizibilite, tahmin ve asgari bütçe için).
+export function averageDailyMinor(spec: Pick<AdsLaunchSpec, "budget">): number {
+  return spec.budget.mode === "FIXED"
+    ? Math.floor(spec.budget.lifetimeMinor / spec.budget.durationDays)
+    : spec.budget.dailyMinor;
 }
 
 // Kampanya spend_cap'i (§3.4): max(asgari, zarf × 1,1). Meta'nın kendi
@@ -350,7 +377,7 @@ export function validateLaunchSpec(
       });
     }
     const minimum = minimumDailyBudget(facts, adSet.optimizationGoal);
-    if (minimum && spec.budget.dailyMinor < minimum) {
+    if (!spec.existingAdSetId && minimum && averageDailyMinor(spec) < minimum) {
       issues.push({
         rule: "P1",
         field: "budget.dailyMinor",

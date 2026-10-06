@@ -17,6 +17,7 @@ import { dayKeyInTimezone, zonedDateTimeToUtc } from "@/lib/timezone";
 import { AdsAccounts } from "@/server/ads/accounts";
 import { AdsOperations, type OperationKind } from "@/server/ads/operations";
 import {
+  fetchPageAccessToken,
   findMetaObjectsByTag,
   MetaApiError,
   uploadMetaAdImage,
@@ -33,6 +34,7 @@ import {
   postAdSet,
   postCampaign,
   postCreative,
+  postLeadForm,
   readBack,
   setObjectStatus,
 } from "@/server/integrations/meta/launch-writes";
@@ -320,6 +322,33 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
     }
   }
 
+  // 1b) Anında form (Leads): Sayfa token'ıyla, kreatiflerden önce.
+  if (spec.leadForm && !ctx.progress.leadForm) {
+    const form = spec.leadForm;
+    const outcome = await step(ctx, {
+      kind: "CREATE_CREATIVE",
+      stepKey: "leadform",
+      request: { name: form.name, higherIntent: form.higherIntent },
+      send: async () => {
+        const pageToken = await fetchPageAccessToken(spec.pageId, ctx.accessToken);
+        const created = await postLeadForm({
+          pageId: spec.pageId,
+          pageAccessToken: pageToken,
+          name: form.name,
+          privacyUrl: form.privacyUrl,
+          higherIntent: form.higherIntent,
+          followUpUrl: spec.ads[0]?.creative.link,
+        });
+        if (!created.id) throw new MetaApiError("Meta did not return the form id");
+        return created.id;
+      },
+    });
+    if (outcome.kind === "pending") return { status: "RUNNING" };
+    if (outcome.kind === "failed") return failLaunch(ctx.launch, outcome.error);
+    ctx.progress.leadForm = outcome.id;
+    await save(ctx);
+  }
+
   // 2) Kreatifler.
   ctx.progress.creatives = ctx.progress.creatives ?? {};
   for (const [index, ad] of spec.ads.entries()) {
@@ -342,6 +371,7 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
           headline: ad.creative.headline,
           urlTags: ad.urlTags,
           messaging: ad.creative.messaging,
+          ...(ctx.progress.leadForm ? { leadFormId: ctx.progress.leadForm } : {}),
         };
         const withFeatures =
           spec.creativeFeatures.send && !ctx.progress.featuresFallback;
@@ -371,6 +401,26 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
     if (outcome.kind === "failed") return failLaunch(ctx.launch, outcome.error);
     ctx.progress.creatives[index] = outcome.id;
     await save(ctx);
+  }
+
+  // F5b: mevcut ad set'e ekleme — kampanya ve ad set kurulmaz; reklamlar o
+  // ad set'e eklenir ve incelemeden sonra yayına girer (bütçe değişmez).
+  if (spec.existingAdSetId && !ctx.progress.campaign) {
+    const parent = await readBack<{ campaign_id?: string }>(
+      spec.existingAdSetId,
+      ctx.accessToken,
+      "campaign_id",
+    );
+    if (!parent.campaign_id) {
+      return failLaunch(ctx.launch, {
+        step: "campaign",
+        class: "STATE",
+        message: "The ad set to add to is gone. Pick another one.",
+      });
+    }
+    ctx.progress.campaign = parent.campaign_id;
+    ctx.progress.adSets = { 0: spec.existingAdSetId };
+    await save(ctx, { campaignExternalId: parent.campaign_id });
   }
 
   // 3) Kampanya (PAUSED, spend_cap).
@@ -426,7 +476,7 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
       edge: "adsets",
       parentExternalId: ctx.progress.campaign,
       request: {
-        dailyBudgetMinor: spec.budget.dailyMinor,
+        budget: spec.budget,
         endTime: ctx.progress.endTime,
         optimizationGoal: adSet.optimizationGoal,
       },
@@ -436,7 +486,9 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
           accessToken: ctx.accessToken,
           campaignId: ctx.progress.campaign!,
           name: tagged(adSet.name),
-          dailyBudgetMinor: spec.budget.dailyMinor,
+          ...(spec.budget.mode === "FIXED"
+            ? { lifetimeBudgetMinor: spec.budget.lifetimeMinor }
+            : { dailyBudgetMinor: spec.budget.dailyMinor }),
           startTime: ctx.progress.startTime!,
           endTime: ctx.progress.endTime!,
           optimizationGoal: adSet.optimizationGoal,
@@ -492,6 +544,13 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
     if (outcome.kind === "failed") return failLaunch(ctx.launch, outcome.error);
     ctx.progress.ads[index] = outcome.id;
     await save(ctx);
+  }
+
+  // Mevcut ad set'e eklenen reklamlar: frenler o ad set'indir; reklamlar
+  // ACTIVE kuruldu, kampanyada açma yazması yapılmaz.
+  if (spec.existingAdSetId) {
+    await AdsLaunches.transition(ctx.launch.id, ["CREATING"], "ACTIVE", { activatedAt: ctx.now });
+    return completedResult(ctx.launch, ctx.progress, "ACTIVE");
   }
 
   // 6) Geri okuma: frenler gerçekten yazıldı mı?

@@ -13,6 +13,7 @@ import {
   adsLaunchPayload,
   briefChangesPlan,
   briefIssue,
+  needsLaunchV2,
   normalizeBudget,
   parseAdsFlowState,
   planIssue,
@@ -144,6 +145,16 @@ export async function saveAdsBriefAction(
       const given = parsed.data;
       const source = await findSourcePost(projectId, given.creativeId);
       if (!source) return failed(ADS_FLOW_COPY.postGone);
+      // F5b: ek postlar (kreatif çeşitliliği), ana postla aynı kurallarla.
+      const extraIds = [...new Set(given.extraCreativeIds ?? [])].filter(
+        (id) => id !== given.creativeId,
+      );
+      const extraSources = [];
+      for (const id of extraIds) {
+        const extra = await findSourcePost(projectId, id);
+        if (!extra) return failed(ADS_FLOW_COPY.postGone);
+        extraSources.push(extra);
+      }
 
       // The budget as Meta will hold it in the ad account's currency.
       const dailyBudget = normalizeBudget(given.dailyBudget, account.currency);
@@ -163,6 +174,15 @@ export async function saveAdsBriefAction(
         ...(given.trafficEvent && !given.messages
           ? { trafficEvent: given.trafficEvent }
           : {}),
+        // F5b
+        ...(given.kpi ? { kpi: given.kpi } : {}),
+        ...(given.audienceMode ? { audienceMode: given.audienceMode } : {}),
+        ...(given.budgetMode ? { budgetMode: given.budgetMode } : {}),
+        ...(given.existingAdSetId ? { existingAdSetId: given.existingAdSetId } : {}),
+        ...(given.leadForm && given.objective === "OUTCOME_LEADS"
+          ? { leadForm: given.leadForm }
+          : {}),
+        ...(extraSources.length > 0 ? { extraSources } : {}),
         source,
         ...(account.currency ? { currency: account.currency } : {}),
         ...(account.pageName ? { pageName: account.pageName } : {}),
@@ -356,8 +376,9 @@ export async function launchAdsAction(
       if (!brief || !plan || viewStepOf(found.card.step, stored) !== "review") {
         return failed(ADS_FLOW_COPY.movedOn);
       }
-      // Eski üç onaylı zincir mesaj hedefini kuramaz (F5a yalnız v2'de).
-      if (brief.messages) return failed(ADS_FLOW_COPY.messagesNeedV2);
+      // Eski üç onaylı zincir mesaj, form, sabit bütçe, çoklu post ya da
+      // mevcut ad set kuramaz (F5a/F5b yalnız v2'de).
+      if (needsLaunchV2(brief)) return failed(ADS_FLOW_COPY.messagesNeedV2);
 
       const account = await loadAdsAccount(projectId);
       const blocked = accountBlock(account);

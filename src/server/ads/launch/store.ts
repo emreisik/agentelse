@@ -27,6 +27,8 @@ export type LaunchProgress = {
   };
   // Meta AI özellik listesi reddedildi: kreatif onsuz kuruldu.
   featuresFallback?: boolean;
+  // F5b: anında formun kimliği.
+  leadForm?: string;
 };
 
 export type LaunchError = {

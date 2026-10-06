@@ -60,14 +60,14 @@ describe("validateLaunchSpec", () => {
   });
 
   it("blocks a budget below Meta's minimum (P1)", () => {
-    const issues = validateLaunchSpec({ ...spec, budget: { ...spec.budget, dailyMinor: 1_000 } }, facts);
+    const issues = validateLaunchSpec({ ...spec, budget: { mode: "DAILY", dailyMinor: 1_000, durationDays: 7 } }, facts);
     expect(issues[0]).toMatchObject({ rule: "P1", severity: "block" });
     expect(issues[0]?.message).toContain("35 TRY");
   });
 
   it("reads the goal's minimum from minimum_budgets", () => {
     const issues = validateLaunchSpec(
-      { ...spec, budget: { ...spec.budget, dailyMinor: 4_000 } },
+      { ...spec, budget: { mode: "DAILY", dailyMinor: 4_000, durationDays: 7 } },
       { ...facts, minimumBudgets: [{ currency: "TRY", min_daily_budget_high_freq: 5_000 }] },
     );
     expect(blockingIssues(issues).map((issue) => issue.rule)).toEqual(["P1"]);
@@ -143,7 +143,7 @@ describe("specHash", () => {
   it("changes with money or audience, not with the ad's words", () => {
     const base = specHash(spec);
     expect(specHash({ ...spec, ads: [{ ...spec.ads[0]!, creative: { ...spec.ads[0]!.creative, message: "New words" } }] })).toBe(base);
-    expect(specHash({ ...spec, budget: { ...spec.budget, dailyMinor: 30_000 } })).not.toBe(base);
+    expect(specHash({ ...spec, budget: { mode: "DAILY", dailyMinor: 30_000, durationDays: 7 } })).not.toBe(base);
     expect(specHash({ ...spec, adSets: [{ ...spec.adSets[0]!, targeting: { countries: ["DE"] } }] })).not.toBe(base);
   });
 });

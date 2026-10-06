@@ -103,3 +103,54 @@ describe("recipes and spec (F5a)", () => {
     expect(story.link_data.link).toBe("https://fb.com/messenger_doc/");
   });
 });
+
+describe("F5b spec fields", () => {
+  const brief: AdsBrief = {
+    ...base,
+    objective: "OUTCOME_TRAFFIC",
+    link: "https://example.com",
+    source: { creativeId: "c1", assetId: "a1", title: "Spring", caption: "Spring menu #new https://x.y" },
+    budgetMode: "fixed",
+    audienceMode: "suggest",
+    ageMin: 30,
+    ageMax: 50,
+    kpi: { mode: "max", maxCost: 4 },
+    extraSources: [{ creativeId: "c2", assetId: "a2", title: "Summer", caption: "Cold drinks are back" }],
+  };
+  const context = {
+    adAccountId: "act_1",
+    currency: "TRY",
+    timezone: "Europe/Istanbul",
+    pageId: "9",
+    minCampaignSpendCapMinor: null,
+    dsaBeneficiary: null,
+    dsaPayor: null,
+  };
+
+  it("spreads a fixed budget, suggests the audience and carries the target", () => {
+    const spec = launchSpecFromFlow({
+      brief,
+      plan: { campaignName: "Spring", adSetName: "TR", adName: "Ad", primaryText: "Hello" },
+      context,
+      activate: true,
+    });
+    expect(spec.budget).toEqual({ mode: "FIXED", lifetimeMinor: 14_000, durationDays: 7 });
+    expect(spec.adSets[0]).toMatchObject({
+      advantageAudience: 1,
+      targeting: { ageMin: 25, ageMax: 65 },
+    });
+    expect(spec.kpi).toEqual({ metric: "COST_PER_CLICK", target: 4 });
+    expect(spec.ads).toHaveLength(2);
+    expect(spec.ads[1]?.creative).toMatchObject({ imageAssetId: "a2", message: "Cold drinks are back" });
+  });
+
+  it("adds to an existing ad set without a new campaign", () => {
+    const spec = launchSpecFromFlow({
+      brief: { ...brief, existingAdSetId: "123" },
+      plan: { campaignName: "Spring", adSetName: "TR", adName: "Ad", primaryText: "Hello" },
+      context,
+      activate: true,
+    });
+    expect(spec.existingAdSetId).toBe("123");
+  });
+});

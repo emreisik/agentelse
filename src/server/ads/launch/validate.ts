@@ -3,7 +3,14 @@ import "server-only";
 import type { AdsLaunch, Prisma } from "@prisma/client";
 
 import { normalizeAdAccountId } from "@/lib/ads/account-id";
+import { estimatedGrossMinor } from "@/lib/ads/fees";
+import { NARROW_AUDIENCE, weeklyResultsRange } from "@/lib/ads/forecast";
+import { learningBudget, learningFeasible } from "@/lib/ads/kpi";
+import { formatMoney, toMinorUnits } from "@/lib/ads/money";
+import { recipeByKey } from "@/lib/ads/objectives";
+import { resultLabel } from "@/lib/ads/results";
 import {
+  averageDailyMinor,
   blockingIssues,
   envelopeMinor,
   specHash,
@@ -19,6 +26,7 @@ import { AdsAccounts } from "@/server/ads/accounts";
 import { adsAccountAssets } from "@/server/ads/account-assets";
 import { AdsMirror } from "@/server/ads/mirror-reads";
 import {
+  buildTargetingSpec,
   MetaApiError,
   uploadMetaAdImage,
 } from "@/server/integrations/meta-client";
@@ -30,6 +38,7 @@ import {
   objectStorySpec,
   postCampaign,
   postCreative,
+  reachEstimate,
 } from "@/server/integrations/meta/launch-writes";
 import { readAccountHealth } from "@/server/integrations/meta/sync-reads";
 import { readAsset } from "@/server/storage/asset-storage";
@@ -54,6 +63,13 @@ export type LaunchValidation = {
   issues: LaunchIssue[];
   // Bilgi notları (mesaj hedefinde otomatik yanıt, LPV açıklaması...).
   notes: string[];
+  // F5b: tahmin (yönlendirici) ve konum ücretiyle brüt fatura (KDV hariç).
+  forecast?: {
+    reach: { lower: number; upper: number } | null;
+    weeklyResults: [number, number] | null;
+    resultLabel: string;
+  };
+  grossMinor?: number;
   previews: { format: string; src: string }[];
   envelopeMinor: number;
   spendCapMinor: number | null;
@@ -203,10 +219,58 @@ export async function prepareLaunch(input: {
           message: "Connect an Instagram account to this ad account to get messages on Instagram.",
         });
       }
+      // F5b: öğrenme fizibilitesi (haftada ~50 sonuç), tahmin ve brüt fatura.
+      const recipe = recipeByKey(spec.recipe);
+      const daily = averageDailyMinor(spec);
+      const targetMinor = spec.kpi ? toMinorUnits(spec.kpi.target, spec.currency) : null;
+      if (targetMinor && !learningFeasible(daily, targetMinor) && !spec.existingAdSetId) {
+        notes.push(
+          `At this budget Meta will likely stay in "learning limited" (it needs about 50 results a week). A daily budget near ${formatMoney(learningBudget(targetMinor), spec.currency)} or a more frequent goal, such as messages, helps.`,
+        );
+      }
+      const mirrorAccount = await AdsMirror.accountFor(input.projectId).catch(() => null);
+      const baseline = mirrorAccount
+        ? (await AdsMirror.insightsByObject(mirrorAccount, "ACCOUNT", "last_28d", { now }).catch(() => null))?.get(
+            mirrorAccount.externalId,
+          )
+        : undefined;
+      const baselineMinor =
+        baseline?.costPerResult !== undefined && baseline.resultLabel === resultLabel(recipe?.resultActionType)
+          ? toMinorUnits(baseline.costPerResult, spec.currency)
+          : null;
+      const weeklyResults = weeklyResultsRange({
+        dailyBudgetMinor: daily,
+        baselineCostMinor: baselineMinor,
+        targetCostMinor: targetMinor,
+      });
+      let reach: { lower: number; upper: number } | null = null;
+      if (!spec.existingAdSetId && spec.adSets[0]) {
+        try {
+          reach = await reachEstimate({
+            adAccountId,
+            accessToken: account.accessToken,
+            targetingSpec: buildTargetingSpec(spec.adSets[0].targeting, {
+              advantageAudience: spec.adSets[0].advantageAudience,
+            }) as Record<string, unknown>,
+          });
+        } catch {
+          reach = null;
+        }
+        if (reach && reach.upper < NARROW_AUDIENCE) {
+          notes.push("This audience is narrow (under 100,000 people): results may cost more.");
+        }
+      }
+      const countries = spec.adSets.flatMap((adSet) => adSet.targeting.countries);
       const validation: LaunchValidation = {
         checkedAt: now.toISOString(),
         issues,
         notes,
+        forecast: {
+          reach,
+          weeklyResults,
+          resultLabel: resultLabel(recipe?.resultActionType),
+        },
+        grossMinor: estimatedGrossMinor(envelopeMinor(spec), countries),
         previews: [],
         envelopeMinor: envelopeMinor(spec),
         spendCapMinor: spec.guards.campaignSpendCapMinor,
@@ -238,9 +302,10 @@ export async function prepareLaunch(input: {
           }
         }
 
-        // Meta ön kontrolü: kampanya ve her kreatif (validate_only).
+        // Meta ön kontrolü: kampanya ve her kreatif (validate_only). Mevcut
+        // ad set'e eklemede kampanya kurulmaz.
         try {
-          await postCampaign({
+          if (!spec.existingAdSetId) await postCampaign({
             adAccountId,
             accessToken: account.accessToken,
             name: spec.campaignName,

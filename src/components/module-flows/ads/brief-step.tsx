@@ -47,6 +47,11 @@ import {
   type AdsSourcePost,
 } from "@/lib/module-flows/ads/state";
 import type { CardButton } from "@/lib/works/card-action";
+import {
+  learningBudget,
+  learningFeasible,
+  targetCost,
+} from "@/lib/ads/kpi";
 import { loadAdsBriefOptionsAction } from "@/server/actions/ads-flow-actions";
 
 import {
@@ -357,6 +362,34 @@ function BriefForm({
     brief?.messages?.replyTime ?? "hour",
   );
   const messages = messagesOn && options.goals?.messages;
+  // F5b (planner açıkken): kitle modu, bütçe modu, KPI, ek postlar, mevcut
+  // ad set.
+  const planner = Boolean(options.goals);
+  const [audienceMode, setAudienceMode] = useState<"suggest" | "limit">(
+    brief?.audienceMode ?? (planner ? "suggest" : "limit"),
+  );
+  const [budgetMode, setBudgetMode] = useState<"daily" | "fixed">(
+    brief?.budgetMode ?? "daily",
+  );
+  const [kpiMode, setKpiMode] = useState<"none" | "value" | "max">(
+    brief?.kpi?.mode ?? "none",
+  );
+  const [saleValue, setSaleValue] = useState(
+    brief?.kpi?.mode === "value" ? String(brief.kpi.saleValue) : "",
+  );
+  const [closeOutOfTen, setCloseOutOfTen] = useState(
+    brief?.kpi?.mode === "value" ? String(brief.kpi.closeOutOfTen) : "",
+  );
+  const [maxCost, setMaxCost] = useState(
+    brief?.kpi?.mode === "max" ? String(brief.kpi.maxCost) : "",
+  );
+  const [extraIds, setExtraIds] = useState<string[]>(
+    brief?.extraSources?.map((source) => source.creativeId) ?? [],
+  );
+  const [existingAdSetId, setExistingAdSetId] = useState(
+    brief?.existingAdSetId ?? "",
+  );
+  const adding = planner && Boolean(existingAdSetId);
   const [budget, setBudget] = useState(brief ? String(brief.dailyBudget) : "");
   const [days, setDays] = useState<AdsDuration>(
     brief?.days ?? DEFAULT_ADS_DURATION,
@@ -388,10 +421,28 @@ function BriefForm({
     objective === "OUTCOME_TRAFFIC" && options.goals?.landingPageViews
       ? "LANDING_PAGE_VIEWS"
       : undefined;
+  const budgetNumber = numberOf(budget);
+  const enteredDaily =
+    planner && budgetMode === "fixed" ? budgetNumber / days : budgetNumber;
+  const kpi =
+    kpiMode === "value" && numberOf(saleValue) > 0 && numberOf(closeOutOfTen) > 0
+      ? {
+          mode: "value" as const,
+          saleValue: numberOf(saleValue),
+          closeOutOfTen: numberOf(closeOutOfTen),
+        }
+      : kpiMode === "max" && numberOf(maxCost) > 0
+        ? { mode: "max" as const, maxCost: numberOf(maxCost) }
+        : undefined;
+  const target = targetCost(kpi);
   const input: Partial<AdsBriefInput> & Record<string, unknown> = {
     creativeId: creativeId ?? undefined,
     objective: messages ? "OUTCOME_ENGAGEMENT" : objective,
-    dailyBudget: numberOf(budget),
+    // Mevcut ad set'e eklemede bütçe o ad set'indir (bu değer kullanılmaz).
+    dailyBudget:
+      adding && !(Number.isFinite(enteredDaily) && enteredDaily > 0)
+        ? 1
+        : enteredDaily,
     days,
     countries,
     ageMin: numberOf(ageMin),
@@ -412,12 +463,23 @@ function BriefForm({
         }
       : {}),
     ...(trafficEvent && !messages ? { trafficEvent } : {}),
+    ...(planner ? { audienceMode } : {}),
+    ...(planner && budgetMode === "fixed" ? { budgetMode } : {}),
+    ...(kpi && !adding ? { kpi } : {}),
+    ...(planner && extraIds.length > 0
+      ? { extraCreativeIds: extraIds.filter((id) => id !== creativeId) }
+      : {}),
+    ...(adding ? { existingAdSetId } : {}),
   };
   const issue = briefIssue(input);
-  const daily = numberOf(budget);
+  const daily = enteredDaily;
   const total =
     Number.isFinite(daily) && daily > 0
       ? formatBudget(normalizeBudget(daily * days, currency), currency)
+      : null;
+  const feasibilityNote =
+    target && Number.isFinite(daily) && daily > 0 && !learningFeasible(daily, target)
+      ? COPY.feasibility(formatBudget(learningBudget(target), currency))
       : null;
 
   const buttons: CardButton[] = [
@@ -446,6 +508,74 @@ function BriefForm({
           onChange={setCreativeId}
         />
       </Section>
+
+      {planner && options.posts.length > 1 ? (
+        <Section label={COPY.morePosts} hint={COPY.morePostsHint}>
+          <div role="group" aria-label={COPY.morePosts} className="flex flex-wrap gap-1.5">
+            {options.posts
+              .filter((post) => post.creativeId !== creativeId)
+              .slice(0, 8)
+              .map((post) => {
+                const on = extraIds.includes(post.creativeId);
+                return (
+                  <Chip
+                    key={post.creativeId}
+                    active={on}
+                    onClick={() =>
+                      setExtraIds((ids) =>
+                        on
+                          ? ids.filter((id) => id !== post.creativeId)
+                          : ids.length >= 2
+                            ? ids
+                            : [...ids, post.creativeId],
+                      )
+                    }
+                  >
+                    {post.title || COPY.post}
+                  </Chip>
+                );
+              })}
+          </div>
+        </Section>
+      ) : null}
+
+      {planner && options.adSets?.length ? (
+        <Section label={COPY.where}>
+          <div className="space-y-2">
+            <div role="group" aria-label={COPY.where} className="flex flex-wrap gap-1.5">
+              <Chip active={!adding} onClick={() => setExistingAdSetId("")}>
+                {COPY.newCampaign}
+              </Chip>
+              <Chip
+                active={adding}
+                onClick={() => setExistingAdSetId(options.adSets![0]!.id)}
+              >
+                {COPY.addToAdSet}
+              </Chip>
+            </div>
+            {adding ? (
+              <>
+                <select
+                  aria-label={COPY.addToAdSet}
+                  value={existingAdSetId}
+                  onChange={(event) => setExistingAdSetId(event.target.value)}
+                  className={FIELD_CLASS}
+                  style={FIELD_STYLE}
+                >
+                  {options.adSets.map((adSet) => (
+                    <option key={adSet.id} value={adSet.id}>
+                      {adSet.campaignName ? `${adSet.campaignName} · ${adSet.name}` : adSet.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+                  {COPY.addToAdSetHint}
+                </p>
+              </>
+            ) : null}
+          </div>
+        </Section>
+      ) : null}
 
       <Section label={COPY.goal}>
         <div
@@ -517,6 +647,14 @@ function BriefForm({
             </button>
           ) : null}
         </div>
+        {options.recommended ? (
+          <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+            {COPY.recommended(
+              options.recommended.goal === "MESSAGES" ? COPY.messagesGoal : ADS_OBJECTIVE_META.OUTCOME_TRAFFIC.label,
+              options.recommended.reason,
+            )}
+          </p>
+        ) : null}
         {!messages && objective === "OUTCOME_TRAFFIC" && options.goals ? (
           <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
             {options.goals.landingPageViews ? COPY.lpvOn : COPY.noPixel}
@@ -568,12 +706,31 @@ function BriefForm({
         </Section>
       ) : null}
 
+      {adding ? null : (
       <Section
-        label={currency ? `${COPY.budget} (${currency})` : COPY.budget}
+        label={
+          planner && budgetMode === "fixed"
+            ? currency
+              ? `${COPY.totalBudget} (${currency})`
+              : COPY.totalBudget
+            : currency
+              ? `${COPY.budget} (${currency})`
+              : COPY.budget
+        }
         htmlFor={budgetId}
         hint={total ? COPY.total(total) : undefined}
       >
         <div className="space-y-2">
+          {planner ? (
+            <div role="group" aria-label={COPY.budgetMode} className="flex flex-wrap gap-1.5">
+              <Chip active={budgetMode === "daily"} onClick={() => setBudgetMode("daily")}>
+                {COPY.perDay}
+              </Chip>
+              <Chip active={budgetMode === "fixed"} onClick={() => setBudgetMode("fixed")}>
+                {COPY.inTotal}
+              </Chip>
+            </div>
+          ) : null}
           <input
             id={budgetId}
             type="number"
@@ -604,11 +761,102 @@ function BriefForm({
               </Chip>
             ))}
           </div>
+          {feasibilityNote ? (
+            <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+              {feasibilityNote}
+            </p>
+          ) : null}
         </div>
       </Section>
+      )}
 
+      {planner && !adding ? (
+        <Section label={COPY.target} hint={target ? COPY.targetIs(formatBudget(target, currency)) : COPY.targetHint}>
+          <div className="space-y-2">
+            <div role="group" aria-label={COPY.target} className="flex flex-wrap gap-1.5">
+              <Chip active={kpiMode === "none"} onClick={() => setKpiMode("none")}>
+                {COPY.targetSkip}
+              </Chip>
+              <Chip active={kpiMode === "value"} onClick={() => setKpiMode("value")}>
+                {COPY.targetFromNumbers}
+              </Chip>
+              <Chip active={kpiMode === "max"} onClick={() => setKpiMode("max")}>
+                {COPY.targetMax}
+              </Chip>
+            </div>
+            {kpiMode === "value" ? (
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="space-y-1">
+                  <span className="block text-xs" style={{ color: "var(--ws-text-2)" }}>
+                    {COPY.saleValue}
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="any"
+                    value={saleValue}
+                    onChange={(event) => setSaleValue(event.target.value)}
+                    className={`${FIELD_CLASS} w-32`}
+                    style={FIELD_STYLE}
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="block text-xs" style={{ color: "var(--ws-text-2)" }}>
+                    {COPY.closeRate}
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    max={10}
+                    step="any"
+                    value={closeOutOfTen}
+                    onChange={(event) => setCloseOutOfTen(event.target.value)}
+                    className={`${FIELD_CLASS} w-20`}
+                    style={FIELD_STYLE}
+                  />
+                </label>
+              </div>
+            ) : kpiMode === "max" ? (
+              <label className="block space-y-1">
+                <span className="block text-xs" style={{ color: "var(--ws-text-2)" }}>
+                  {COPY.maxCost}
+                </span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  step="any"
+                  value={maxCost}
+                  onChange={(event) => setMaxCost(event.target.value)}
+                  className={`${FIELD_CLASS} w-32`}
+                  style={FIELD_STYLE}
+                />
+              </label>
+            ) : null}
+          </div>
+        </Section>
+      ) : null}
+
+      {adding ? null : (
       <Section label={COPY.audience}>
         <div className="space-y-3">
+          {planner ? (
+            <div className="space-y-1">
+              <div role="group" aria-label={COPY.audienceMode} className="flex flex-wrap gap-1.5">
+                <Chip active={audienceMode === "suggest"} onClick={() => setAudienceMode("suggest")}>
+                  {COPY.suggest}
+                </Chip>
+                <Chip active={audienceMode === "limit"} onClick={() => setAudienceMode("limit")}>
+                  {COPY.limitTo}
+                </Chip>
+              </div>
+              <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+                {audienceMode === "suggest" ? COPY.suggestHint : COPY.limitHint}
+              </p>
+            </div>
+          ) : null}
           <div className="space-y-1">
             <span className="text-xs" style={{ color: "var(--ws-text-2)" }}>
               {COPY.countries}
@@ -669,6 +917,7 @@ function BriefForm({
           </div>
         </div>
       </Section>
+      )}
 
       {showDsa ? (
         <Section label={COPY.dsa}>

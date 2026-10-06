@@ -4,7 +4,9 @@ import {
   LAUNCH_SPEC_VERSION,
   type AdsLaunchSpec,
 } from "@/lib/ads/launch-spec";
+import { kpiMetricFor, targetCost } from "@/lib/ads/kpi";
 import { toMinorUnits } from "@/lib/ads/money";
+import { adTextFrom, clipWords } from "./state";
 import {
   defaultRecipeFor,
   recipeByKey,
@@ -64,6 +66,10 @@ export function launchSpecFromFlow(input: {
 }): AdsLaunchSpec {
   const { brief, plan, context } = input;
   const recipe = recipeForBrief(brief);
+  // F5b: "Suggest" (varsayılan, Advantage+ audience açık) ya da "Limit to".
+  const advantageAudience: 0 | 1 = brief.audienceMode === "suggest" ? 1 : 0;
+  const target = targetCost(brief.kpi);
+  const metric = kpiMetricFor(recipe.resultActionType);
   const messaging = brief.messages?.app;
   const promotedObject: Record<string, string> | undefined =
     recipe.promoted === "page" || recipe.promoted === "page_whatsapp"
@@ -94,7 +100,20 @@ export function launchSpecFromFlow(input: {
     recipe: recipe.key,
     specialAdCategories: [],
     campaignName: plan.campaignName,
-    budget: { mode: "DAILY", dailyMinor, durationDays: brief.days },
+    budget:
+      brief.budgetMode === "fixed"
+        ? { mode: "FIXED", lifetimeMinor: dailyMinor * brief.days, durationDays: brief.days }
+        : { mode: "DAILY", dailyMinor, durationDays: brief.days },
+    ...(brief.existingAdSetId ? { existingAdSetId: brief.existingAdSetId } : {}),
+    ...(brief.objective === "OUTCOME_LEADS" && brief.leadForm
+      ? {
+          leadForm: {
+            privacyUrl: brief.leadForm.privacyUrl,
+            higherIntent: brief.leadForm.higherIntent,
+            name: clipWords(`${plan.campaignName} form`, 200),
+          },
+        }
+      : {}),
     adSets: [
       {
         name: plan.adSetName,
@@ -107,9 +126,13 @@ export function launchSpecFromFlow(input: {
           ageMin: brief.ageMin,
           ageMax: brief.ageMax,
           ...(genders ? { genders } : {}),
+          // Advantage+ audience açıkken en küçük yaş ≤ 25 ve en büyük 65 (P3):
+          // Brief'in yaşları burada öneridir, sert sınır değil.
+          ...(advantageAudience === 1
+            ? { ageMin: Math.min(brief.ageMin, 25), ageMax: 65 }
+            : {}),
         },
-        // Brief'teki yaş ve cinsiyet sert sınırdır.
-        advantageAudience: 0,
+        advantageAudience,
         ...(dsa ? { dsa } : {}),
       },
     ],
@@ -121,12 +144,27 @@ export function launchSpecFromFlow(input: {
           imageAssetId: brief.source.assetId,
           message: plan.primaryText,
           // Mesaj reklamında bağlantıyı uygulamanın adresi belirler.
-          link: brief.link || "https://www.facebook.com/",
+          link: brief.link || brief.leadForm?.privacyUrl || "https://www.facebook.com/",
           callToAction: brief.callToAction,
           ...(messaging ? { messaging } : {}),
         },
         urlTags: DEFAULT_URL_TAGS,
       },
+      // F5b: ek postlar aynı ad set'te ayrı reklamlar (kreatif çeşitliliği);
+      // metinleri kendi açıklamalarından.
+      ...(brief.extraSources ?? []).map((source, index) => ({
+        name: clipWords(`${source.title || plan.adName} ${index + 2}`, 400),
+        adSetIndex: 0,
+        creative: {
+          imageAssetId: source.assetId,
+          message:
+            clipWords(adTextFrom(source.caption ?? ""), 125, true) || plan.primaryText,
+          link: brief.link || brief.leadForm?.privacyUrl || "https://www.facebook.com/",
+          callToAction: brief.callToAction,
+          ...(messaging ? { messaging } : {}),
+        },
+        urlTags: DEFAULT_URL_TAGS,
+      })),
     ],
     guards: {
       campaignSpendCapMinor: campaignSpendCap(
@@ -136,6 +174,7 @@ export function launchSpecFromFlow(input: {
     },
     creativeFeatures: { send: true, multiAdvertiser: "OPT_OUT" },
     activate: input.activate,
+    ...(target ? { kpi: { metric: metric.metric, target } } : {}),
   };
 }
 
@@ -153,7 +192,25 @@ export type AdsLaunchCheck = {
   timezone: string;
   featuresFallback: boolean;
   notes: string[];
+  // F5b: "About 120,000–150,000 people", "Expected: 25–40 conversations a
+  // week (directional)", brüt fatura (konum ücretiyle, KDV hariç).
+  reach: string | null;
+  expected: string | null;
+  gross: string | null;
+  // F5b: mevcut ad set'e ekleme (yeni bütçe onaylanmaz).
+  adding: boolean;
 };
+
+const COUNT = new Intl.NumberFormat("en-US");
+
+export function reachText(reach: { lower: number; upper: number } | null): string | null {
+  return reach ? `About ${COUNT.format(reach.lower)}–${COUNT.format(reach.upper)} people` : null;
+}
+
+export function expectedText(range: [number, number] | null, label: string): string | null {
+  if (!range) return null;
+  return `Expected: ${COUNT.format(range[0])}–${COUNT.format(range[1])} ${label.toLowerCase()} a week (directional)`;
+}
 
 export const PREVIEW_LABEL: Readonly<Record<string, string>> = {
   MOBILE_FEED_STANDARD: "Facebook feed",

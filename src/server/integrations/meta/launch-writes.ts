@@ -71,7 +71,9 @@ export async function postAdSet(input: {
   accessToken: string;
   campaignId: string;
   name: string;
-  dailyBudgetMinor: number;
+  // Günlük ya da toplam (FIXED) bütçe: Meta ikisini birden almaz.
+  dailyBudgetMinor?: number;
+  lifetimeBudgetMinor?: number;
   startTime: number;
   endTime: number;
   optimizationGoal: string;
@@ -88,7 +90,10 @@ export async function postAdSet(input: {
   return post(`${input.adAccountId}/adsets`, {
     name: input.name,
     campaign_id: input.campaignId,
-    daily_budget: String(input.dailyBudgetMinor),
+    daily_budget:
+      input.dailyBudgetMinor !== undefined ? String(input.dailyBudgetMinor) : undefined,
+    lifetime_budget:
+      input.lifetimeBudgetMinor !== undefined ? String(input.lifetimeBudgetMinor) : undefined,
     start_time: String(input.startTime),
     end_time: String(input.endTime),
     billing_event: input.billingEvent,
@@ -133,6 +138,8 @@ export type CreativeInput = {
   headline?: string;
   urlTags?: string;
   messaging?: "WHATSAPP" | "MESSENGER" | "INSTAGRAM_DIRECT";
+  // F5b: anında formun kimliği (CTA formu açar).
+  leadFormId?: string;
   // K14: Meta AI dönüşümleri açıkça; reddedilirse gönderilmeden denenir.
   features?: { send: boolean; multiAdvertiser: "OPT_IN" | "OPT_OUT" };
   validateOnly?: boolean;
@@ -158,9 +165,26 @@ export function objectStorySpec(input: Pick<
   | "callToAction"
   | "headline"
   | "messaging"
+  | "leadFormId"
 >) {
   const messaging = input.messaging ? MESSAGING_CTA[input.messaging] : null;
   const link = messaging?.link ?? input.link;
+  if (input.leadFormId) {
+    return {
+      page_id: input.pageId,
+      ...(input.instagramUserId ? { instagram_user_id: input.instagramUserId } : {}),
+      link_data: {
+        image_hash: input.imageHash,
+        link,
+        message: input.message,
+        ...(input.headline ? { name: input.headline } : {}),
+        call_to_action: {
+          type: "SIGN_UP",
+          value: { lead_gen_form_id: input.leadFormId },
+        },
+      },
+    };
+  }
   return {
     page_id: input.pageId,
     ...(input.instagramUserId ? { instagram_user_id: input.instagramUserId } : {}),
@@ -290,4 +314,47 @@ export function previewSrcOf(html: string): string | null {
   } catch {
     return null;
   }
+}
+
+// Anında form (F5b, Leads): Sayfa token'ıyla `/{page_id}/leadgen_forms`.
+// `pages_manage_ads` izni gerekir (App Review, plan §7). "Higher intent":
+// gönderimden önce bir inceleme ekranı (alan adı doğrulanmalı).
+export async function postLeadForm(input: {
+  pageId: string;
+  pageAccessToken: string;
+  name: string;
+  privacyUrl: string;
+  higherIntent: boolean;
+  followUpUrl?: string;
+}): Promise<Created> {
+  return post(`${input.pageId}/leadgen_forms`, {
+    name: input.name,
+    questions: JSON.stringify([{ type: "FULL_NAME" }, { type: "PHONE" }, { type: "EMAIL" }]),
+    privacy_policy: JSON.stringify({ url: input.privacyUrl, link_text: "Privacy policy" }),
+    follow_up_action_url: input.followUpUrl ?? input.privacyUrl,
+    is_optimized_for_quality: input.higherIntent ? "true" : "false",
+    access_token: input.pageAccessToken,
+  });
+}
+
+// Kitle aralığı (`reachestimate`): `-1` Meta'nın tahmin vermediği anlamına
+// gelir.
+export async function reachEstimate(input: {
+  adAccountId: string;
+  accessToken: string;
+  targetingSpec: Record<string, unknown>;
+}): Promise<{ lower: number; upper: number } | null> {
+  const params = new URLSearchParams({
+    targeting_spec: JSON.stringify(input.targetingSpec),
+    access_token: input.accessToken,
+  });
+  const body = await metaFetch<{
+    data?: { users_lower_bound?: number; users_upper_bound?: number };
+  }>(`${GRAPH_BASE}/${input.adAccountId}/reachestimate?${params.toString()}`);
+  const lower = body.data?.users_lower_bound;
+  const upper = body.data?.users_upper_bound;
+  if (typeof lower !== "number" || typeof upper !== "number" || lower < 0 || upper < 0) {
+    return null;
+  }
+  return { lower, upper };
 }

@@ -162,3 +162,43 @@ export function isValidCombination(input: {
       (recipe.destinationType ?? null) === (input.destinationType ?? null),
   );
 }
+
+// Kod düzeyindeki hazır listesi (F5a/F5b bayrağı açıkken bile her amaç ayrı
+// açılır): anında form `pages_manage_ads` (App Review) gelene, satış amacı
+// piksel olayları test hesabında doğrulanana kadar kapalı.
+export const READY_RECIPES: Readonly<Record<string, boolean>> = {
+  traffic_link_clicks: true,
+  traffic_landing_page_views: true,
+  awareness_reach: true,
+  engagement_post: true,
+  messages_messenger: true,
+  messages_instagram: true,
+  messages_whatsapp: true,
+  leads_instant_form: false,
+  sales_purchase: false,
+};
+
+export function recipeReady(key: string): boolean {
+  return READY_RECIPES[key] === true;
+}
+
+// Önerilen hedef (docs/meta-ads-plan.md §3.3 amaç karar ağacı, sade sürüm):
+// site ve piksel varsa trafik (açılış sayfası); yoksa yerel işletme için mesaj.
+export function recommendedGoal(input: {
+  hasPixel: boolean;
+  messagesOffered: boolean;
+}): { goal: "TRAFFIC" | "MESSAGES"; reason: string } {
+  if (input.hasPixel) {
+    return {
+      goal: "TRAFFIC",
+      reason: "Your site has the Meta Pixel, so Meta can find people who actually read your page.",
+    };
+  }
+  if (input.messagesOffered) {
+    return {
+      goal: "MESSAGES",
+      reason: "Without the Pixel on your site, chats are the result Meta can count best.",
+    };
+  }
+  return { goal: "TRAFFIC", reason: "Sends people to your website." };
+}

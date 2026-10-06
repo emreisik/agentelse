@@ -20,7 +20,10 @@ export const ADS_OBJECTIVES = [
   "OUTCOME_AWARENESS",
   "OUTCOME_ENGAGEMENT",
 ] as const;
-export type AdsObjective = (typeof ADS_OBJECTIVES)[number];
+// F5b: anında form (Leads) yalnız v2 ve izin geldiğinde sunulur; seçici
+// listesinde değil, Brief onu ayrı kartla açar.
+export const ADS_ALL_OBJECTIVES = [...ADS_OBJECTIVES, "OUTCOME_LEADS"] as const;
+export type AdsObjective = (typeof ADS_ALL_OBJECTIVES)[number];
 
 export const ADS_BILLING_EVENT = "IMPRESSIONS";
 
@@ -47,6 +50,12 @@ export const ADS_OBJECTIVE_META: Readonly<
     hint: "More likes, comments and shares.",
     optimizationGoal: "POST_ENGAGEMENT",
     goalLabel: "post engagement",
+  },
+  OUTCOME_LEADS: {
+    label: "Leads",
+    hint: "People send their details in a form on the ad.",
+    optimizationGoal: "LEAD_GENERATION",
+    goalLabel: "leads",
   },
 };
 
@@ -166,8 +175,23 @@ export function targetsEuEea(countries: readonly string[]): boolean {
 
 const dsaField = z.string().trim().max(512).optional();
 
+const kpiField = z
+  .discriminatedUnion("mode", [
+    z.object({
+      mode: z.literal("value"),
+      saleValue: z.number().finite().positive().max(100_000_000),
+      closeOutOfTen: z.number().min(0.1).max(10),
+      marketingShare: z.number().min(0.01).max(1).optional(),
+    }),
+    z.object({
+      mode: z.literal("max"),
+      maxCost: z.number().finite().positive().max(100_000_000),
+    }),
+  ])
+  .optional();
+
 const briefFields = z.object({
-  objective: z.enum(ADS_OBJECTIVES),
+  objective: z.enum(ADS_ALL_OBJECTIVES),
   // Major units of the ad account's currency ("20" = 20 TRY a day).
   dailyBudget: z.number().finite().positive().max(ADS_LIMITS.maxDailyBudget),
   days: z.literal(ADS_DURATIONS),
@@ -197,7 +221,26 @@ const briefFields = z.object({
     })
     .optional(),
   trafficEvent: z.enum(["LINK_CLICKS", "LANDING_PAGE_VIEWS"]).optional(),
+  // F5b: hedef maliyet (başabaş formülü ya da doğrudan üst sınır).
+  kpi: kpiField,
+  // "Suggest": yaş / cinsiyet Meta'ya öneri (Advantage+ audience açık);
+  // "Limit to": sert sınır.
+  audienceMode: z.enum(["suggest", "limit"]).optional(),
+  // "fixed": toplam bütçe günlere esnek dağılır (lifetime_budget).
+  budgetMode: z.enum(["daily", "fixed"]).optional(),
+  // Mevcut ad set'e reklam ekleme (yeni kampanya açılmaz).
+  existingAdSetId: z.string().regex(/^\d+$/).max(32).optional(),
+  // Anında form (Leads).
+  leadForm: z
+    .object({
+      privacyUrl: z.string().max(ADS_LIMITS.link).refine(isWebLink),
+      higherIntent: z.boolean(),
+    })
+    .optional(),
 });
+
+const leadsNeedForm = (value: { objective: string; leadForm?: unknown }) =>
+  value.objective !== "OUTCOME_LEADS" || Boolean(value.leadForm);
 
 // Bağlantı mesaj hedefi dışında zorunludur; mesaj hedefi Engagement
 // amacıyla kurulur, WhatsApp'ta numara istenir.
@@ -222,7 +265,12 @@ const dsaWhenEu = (value: {
 
 // What the Brief sends: the fields plus the post picked to promote.
 export const AdsBriefInputSchema = briefFields
-  .extend({ creativeId: idField })
+  .extend({
+    creativeId: idField,
+    // F5b: en çok iki ek post (kreatif çeşitliliği: aynı ad set'te 2-3 reklam).
+    extraCreativeIds: z.array(idField).max(2).optional(),
+  })
+  .refine(leadsNeedForm, { path: ["leadForm"] })
   .refine(agesInOrder, { path: ["ageMax"] })
   .refine(dsaWhenEu, { path: ["dsaBeneficiary"] })
   .refine(linkWhenNeeded, { path: ["link"] })
@@ -253,6 +301,8 @@ const AdsBriefSchema = briefFields
     // The ad account the Brief was written for (its currency): the launch
     // is refused if another account is selected since.
     adAccountId: z.string().max(64).optional(),
+    // F5b: ek postlar (sunucu dondurur, ana post gibi).
+    extraSources: z.array(AdsSourceSchema).max(2).optional(),
   })
   .refine(agesInOrder, { path: ["ageMax"] })
   .refine(linkWhenNeeded, { path: ["link"] });
@@ -387,6 +437,11 @@ export type AdsBriefOptions = {
   };
   // Hesapta son 7 günde olay gönderen bir Meta Pixel var mı?
   hasPixel?: boolean;
+  // F5b: Leads (anında form) sunuluyor mu; önerilen hedef; reklam eklenebilen
+  // açık ad set'ler (aynadan).
+  leads?: boolean;
+  recommended?: { goal: "TRAFFIC" | "MESSAGES"; reason: string };
+  adSets?: { id: string; name: string; campaignName: string }[];
 };
 
 // A project's markets as ad countries: the ones the targeting list knows.
@@ -413,6 +468,7 @@ export const ADS_BRIEF_ISSUE = {
   link: "Enter your website link, starting with https://.",
   dsa: "Ads shown in the EU must say who benefits from the ad and who pays for it.",
   whatsapp: "Enter the WhatsApp number your Facebook Page uses.",
+  leadForm: "Add the link to your privacy policy: Meta shows it on the form.",
   other: "Check the brief.",
 } as const;
 
@@ -425,6 +481,7 @@ const ISSUE_ORDER: readonly [string, string][] = [
   ["dsaBeneficiary", ADS_BRIEF_ISSUE.dsa],
   ["dsaPayor", ADS_BRIEF_ISSUE.dsa],
   ["messages", ADS_BRIEF_ISSUE.whatsapp],
+  ["leadForm", ADS_BRIEF_ISSUE.leadForm],
   ["ageMin", ADS_BRIEF_ISSUE.ages],
   ["ageMax", ADS_BRIEF_ISSUE.ages],
   ["link", ADS_BRIEF_ISSUE.link],
@@ -632,4 +689,17 @@ export function adsLaunchPayload(brief: AdsBrief, plan: AdsPlanInput) {
       },
     },
   };
+}
+
+// Eski üç onaylı zincirin kuramadığı Brief: mesaj, form, sabit bütçe, ek
+// postlar ya da mevcut ad set (F5a/F5b yalnız güvenli lansman v2'de).
+export function needsLaunchV2(brief: AdsBrief): boolean {
+  return Boolean(
+    brief.messages ||
+      brief.objective === "OUTCOME_LEADS" ||
+      brief.budgetMode === "fixed" ||
+      brief.extraSources?.length ||
+      brief.existingAdSetId ||
+      brief.audienceMode === "suggest",
+  );
 }

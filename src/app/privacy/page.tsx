@@ -289,13 +289,16 @@ const SECTIONS: PolicySection[] = [
           We keep the daily figures for 400 days, and for individual ads for 180
           days, so we can show trends, pace your budget and warn you about
           problems; a campaign that no longer exists in Meta is removed from our
-          copy after 90 days. Page access tokens are derived when needed and
-          never stored. We use this data only to publish and manage what you ask
-          for and to show and analyze your results. Campaign performance figures
-          may be processed by our AI provider to produce recommendations, and so
-          may the names of your connected Page and accounts, so the assistant
-          knows where it can publish (see How AI is used with your data). We do
-          not sell this data and we do not use it to train AI models.
+          copy after 90 days. If you run lead ads, the details people send stay
+          in Meta (Leads Center); Agentelse only counts how many arrived and
+          never reads or stores them. Page access tokens are derived when needed
+          and never stored. We use this data only to publish and manage what you
+          ask for and to show and analyze your results. Campaign performance
+          figures may be processed by our AI provider to produce
+          recommendations, and so may the names of your connected Page and
+          accounts, so the assistant knows where it can publish (see How AI is
+          used with your data). We do not sell this data and we do not use it to
+          train AI models.
         </p>
         <p>
           You can stop Agentelse from using either connection with Connectors

@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { AdsFlags } from "@/lib/ads/flags";
 import {
   adSetEndTime,
+  averageDailyMinor,
   blockingIssues,
   envelopeMinor,
   parseLaunchSpec,
@@ -18,7 +19,9 @@ import { prisma } from "@/lib/prisma";
 import { dayKeyInTimezone, zonedDateTimeToUtc } from "@/lib/timezone";
 import { ADS_FLOW_COPY } from "@/lib/module-flows/ads/copy";
 import {
+  expectedText,
   launchSpecFromFlow,
+  reachText,
   type AdsLaunchCheck,
   type LaunchBuildContext,
 } from "@/lib/module-flows/ads/launch";
@@ -33,6 +36,7 @@ import {
 import { AdsAccounts } from "@/server/ads/accounts";
 import { driveLaunchInline } from "@/server/ads/launch/drive";
 import { AdsLaunches } from "@/server/ads/launch/store";
+import { upsertAdsGoal } from "@/server/ads/goals";
 import {
   prepareLaunch,
   type LaunchValidation,
@@ -111,6 +115,16 @@ function checkOf(
     timezone: spec.timezone,
     featuresFallback: Boolean(validation.featuresFallback),
     notes: validation.notes ?? [],
+    reach: reachText(validation.forecast?.reach ?? null),
+    expected: expectedText(
+      validation.forecast?.weeklyResults ?? null,
+      validation.forecast?.resultLabel ?? "results",
+    ),
+    gross:
+      validation.grossMinor !== undefined && validation.grossMinor > envelopeMinor(spec)
+        ? formatMoney(validation.grossMinor, spec.currency)
+        : null,
+    adding: Boolean(spec.existingAdSetId),
   };
 }
 
@@ -140,7 +154,8 @@ function summaryOf(
   return {
     currency: spec.currency,
     envelopeMinor: envelopeMinor(spec),
-    dailyMinor: spec.budget.dailyMinor,
+    dailyMinor: averageDailyMinor(spec),
+    budgetMode: spec.budget.mode,
     days: spec.budget.durationDays,
     spendCapMinor: spec.guards.campaignSpendCapMinor,
     objective: `${objective.label} · ${objective.goalLabel}`,
@@ -149,6 +164,8 @@ function summaryOf(
     ...(pageName ? { page: pageName } : {}),
     timezone: spec.timezone,
     activate: spec.activate,
+    ...(spec.existingAdSetId ? { addingTo: spec.existingAdSetId } : {}),
+    ...(spec.leadForm ? { leadForm: true } : {}),
   };
 }
 
@@ -353,6 +370,14 @@ export async function launchAdsV2Action(
           ),
           adAccountId: spec.adAccountId,
         });
+        // F5b: Brief'teki KPI hedefi ProjectGoal olur (kullanıcı onaylı).
+        await upsertAdsGoal({
+          workspaceId: gate.auth.workspaceId,
+          projectId,
+          brandId: gate.auth.defaultBrandId,
+          userId: gate.auth.userId,
+          spec,
+        }).catch(() => undefined);
         refresh(projectId);
         return {
           ok: true,

@@ -13,6 +13,7 @@ Plan: [meta-ads-plan.md](meta-ads-plan.md). Bu dosya, planın uygulanmış hâli
 | F3 — Güvenli lansman v2 | Kodlandı | `META_ADS_LAUNCH_V2=true` |
 | F5a — Mesaj ve trafik amaçları | Kodlandı | `META_ADS_PLANNER=true` (+ v2) |
 | F4 — Optimizasyon v2 | Kodlandı | `META_ADS_OPTIMIZER=shadow` → `on` |
+| F5b — Planlama ve formlar | Kodlandı (Leads izin bekliyor) | `META_ADS_PLANNER=true` (+ v2) |
 
 Kod dışı adımlar sahipte (aşağıda "Sahip adımları").
 
@@ -217,6 +218,22 @@ Bayrak: `META_ADS_OPTIMIZER` = `off` (varsayılan) / `shadow` / `on`. Ayna (`MET
 - **Kart**: önerinin "Why" satırı (kanıttaki sayılarla şablon metin); son 7 günde uygulanan değişikliğe tek dokunuşla **Undo** (OWNER/ADMIN'in tıklaması onaydır).
 - **Bilinçli sapmalar**: açıklamalar şablon metindir (LLM katmanı bağlanmadı; sayılar kanıttan gelir). `ProjectGoal.currentValue` güncellenmiyor (hedef anahtarları yalnız reklam sayısına denk gelmiyor). Eski `performance-optimizer` / `meta-performance-rules` / `meta-performance-scanner` dosyaları, bayraklar canlıda açılıp en az iki hafta sorunsuz çalışana kadar silinmedi (ayna açıkken zaten atlanıyorlar).
 
+## F5b — Planlama motoru ve formlar
+
+Bayrak: `META_ADS_PLANNER=true` ve `META_ADS_LAUNCH_V2=true`. Her amaç ayrıca kod düzeyindeki hazır listesiyle açılır (`READY_RECIPES`, `src/lib/ads/objectives.ts`).
+
+- **KPI hedefi** (`src/lib/ads/kpi.ts`): Brief'te "Your target": "From my numbers" (ortalama satış değeri × 10'da kaçı müşteri olur × %30 pazarlama payı = başabaş; hedef başabaşın %70'i) ya da "Max cost". Hedef spec'in `kpi`'ına gider, F4 kuralları önce bunu kullanır; onaylanan lansmanda `ProjectGoal` (`ads.cpl` / `ads.cpa` / `ads.cost_per_conversation` / `ads.cost_per_click`) ACTIVE + USER onaylı yazılır, güncel değeri haftada bir aynadan güncellenir.
+- **Öğrenme fizibilitesi**: günlük bütçe < hedef × 50/7 ise Brief'te ve Review'da "learning limited" uyarısı ve önerilen bütçe.
+- **Kitle**: "Suggest to Meta" (varsayılan; Advantage+ audience açık, yaş en çok 25 ile başlar ve 65+'ya açılır, Brief'in yaşları öneridir) ya da "Limit to these" (sert sınır).
+- **Bütçe**: "Per day" ya da "In total" (FIXED: `lifetime_budget`, Meta iyi günlerde daha çok harcar; bitiş yine ad set `end_time`).
+- **Kreatif çeşitliliği**: en çok 2 ek post aynı ad set'te ayrı reklam olur (metni kendi açıklamasından).
+- **Mevcut ad set'e ekleme**: "Where: Add to an ad set" — kampanya ve ad set kurulmaz, bütçe değişmez; reklamlar ACTIVE eklenir, incelemeden sonra yayına girer.
+- **Tahmin** (Review): `reachestimate` kitle aralığı ("About 120,000–150,000 people", 100 binin altı "dar kitle" notu) ve hesabın 28 günlük maliyetinden "Expected: 25–40 … a week (directional)".
+- **Ücret** (`src/lib/ads/fees.ts`, tarihli): konum ücretiyle tahmini fatura ("plus VAT where it applies"; KDV hesaplanmaz).
+- **Leads** (anında form): spec, yürütücü adımı (`/{page_id}/leadgen_forms`, Sayfa token'ı, Higher intent), CTA ve günlük "New leads today: N — open Leads Center" bildirimi kodlandı; `pages_manage_ads` App Review'dan geçene kadar `READY_RECIPES.leads_instant_form = false` (Brief'te görünmez). Lead'lerin kişisel verisi okunmaz ve saklanmaz (gizlilik metni güncellendi).
+- **Önerilen hedef**: piksel varsa Traffic, yoksa Messages (gerekçesiyle).
+- **Henüz yok**: carousel ve video modülde (eski sihirbazda duruyor), iki oranlı `asset_feed_spec` (test hesabında doğrulanana kadar tek görsel + `adapt_to_placement`), Instagram profil hedefi, içerik planındaki `ads.campaign` parçasına "Make this ad" köprüsü, mesai saatleriyle zamanlama.
+
 ## Sahip adımları (kod dışı)
 
 1. **Birikim raporunu oku**: yeni bir terminal sekmesinde, repo klasöründe `npm run db:report:backlog`. Çıktıyı Claude'a yapıştır.
@@ -232,3 +249,4 @@ Bayrak: `META_ADS_OPTIMIZER` = `off` (varsayılan) / `shadow` / `on`. Ayna (`MET
 11. **F3'ü aç**: `META_ADS_LAUNCH_V2=true` (modüller açıkken eski formlar gizlenir). Önce test reklam hesabında bir lansman: Review'da önizlemeler ve "Meta checked…" görünmeli; Launch'ta üç halka "Created", ardından "Live". Uygulama dev moddayken reklam adımı 1885183 ile düşer (plan §7): gerçek müşteri öncesi Live mod + Full tier.
 12. **F5a**: `META_ADS_PLANNER=true` (v2 açıkken). Brief'te "Messages" kartı görünmeli; test hesabında bir WhatsApp ve bir Messenger lansmanı.
 13. **F4 gölge mod**: `META_ADS_OPTIMIZER=shadow`; en az 30 karar ya da 4 hafta sonra kararları birlikte inceleyin (kabul ≥ %60 → `on`).
+14. **Leads**: Meta App Review'da `pages_manage_ads` onaylanınca `src/lib/ads/objectives.ts` → `READY_RECIPES.leads_instant_form = true` (tek satır); test hesabında bir form lansmanı.

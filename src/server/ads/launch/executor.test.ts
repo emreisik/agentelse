@@ -301,6 +301,21 @@ describe("LaunchExecutor.advance", () => {
     expect(state.calls).not.toContain("status:ACTIVE");
   });
 
+  it("adds ads to an existing ad set without a campaign or an ad set write", async () => {
+    freshLaunch({ spec: { ...spec, existingAdSetId: "777" } });
+    meta.readBack.mockImplementation(async (id: string, _t: string, fields: string) => {
+      state.calls.push(`readBack:${fields}`);
+      return id === "777" ? { campaign_id: "c9" } : {};
+    });
+    const { result } = await runToEnd();
+    expect(result.status).toBe("COMPLETED");
+    expect(meta.postCampaign).not.toHaveBeenCalled();
+    expect(meta.postAdSet).not.toHaveBeenCalled();
+    expect(meta.postAd.mock.calls[0]![0]).toMatchObject({ adSetId: "777", status: "ACTIVE" });
+    expect(state.calls).not.toContain("status:ACTIVE");
+    expect(state.launch?.status).toBe("ACTIVE");
+  });
+
   it("discards a never-delivered campaign by deleting it", async () => {
     freshLaunch({ status: "FAILED", progress: { campaign: "c1" }, campaignExternalId: "c1" });
     meta.lifetimeImpressions.mockResolvedValue(0);

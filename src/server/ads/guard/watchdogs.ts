@@ -28,6 +28,21 @@ import { AdsAlerts } from "./alerts";
 // proje duraklatılmış ama reklam çalışıyor); runPeriodic tick adımıdır
 // (senkron nabzı, token, takılan yazma, yetim nesne).
 
+// F5b: yeni lead bildirimi (kişisel veri yok; yalnız insights'taki lead
+// sayısı). Lead'ler Meta'nın Leads Center'ında; Agentelse yalnız haber verir.
+export function leadsToday(
+  rows: readonly { level: string; date: Date; actions: unknown }[],
+  today: Date,
+): number {
+  let total = 0;
+  for (const row of rows) {
+    if (row.level !== "ACCOUNT" || row.date.getTime() !== today.getTime()) continue;
+    const actions = (row.actions ?? {}) as Record<string, number>;
+    total += Number(actions.lead ?? actions["onsite_conversion.lead_grouped"] ?? 0) || 0;
+  }
+  return total;
+}
+
 export const OBJECT_ALERT_KINDS = [
   "RUNAWAY_SPEND",
   "AD_DISAPPROVED",
@@ -162,7 +177,14 @@ export const AdsGuard = {
     const since = weekStart < yesterday ? weekStart : yesterday;
     const rows = await prisma.adsInsightDaily.findMany({
       where: { adsAccountId: ctx.account.id, date: { gte: dateOf(since) } },
-      select: { level: true, externalId: true, date: true, spendMinor: true, impressions: true },
+      select: {
+        level: true,
+        externalId: true,
+        date: true,
+        spendMinor: true,
+        impressions: true,
+        actions: true,
+      },
     });
     if (ctx.account.lastInsightsAt) {
       const impressionsByAdSet = new Map<string, number>();
@@ -234,6 +256,41 @@ export const AdsGuard = {
 
     for (const finding of findings) {
       await raiseFor(ctx.projects, ctx, finding, open, projectOf);
+    }
+
+    // Bugün gelen lead'ler (gün başına tek uyarı, sayı güncellenir; önceki
+    // günlerinki kapanır).
+    const leads = leadsToday(rows, dateOf(ctx.today));
+    const todayLeadsKey = `NEW_LEADS:${ctx.externalId}:${ctx.today}`;
+    for (const project of ctx.projects) {
+      await AdsAlerts.resolveMissing(
+        {
+          projectId: project.projectId,
+          kinds: ["NEW_LEADS"],
+          stillOpen: new Set(leads > 0 ? [todayLeadsKey] : []),
+          adsAccountId: ctx.account.id,
+        },
+        ctx.now,
+      );
+    }
+    if (leads > 0) {
+      for (const project of ctx.projects) {
+        await AdsAlerts.raise(
+          {
+            workspaceId: project.workspaceId,
+            projectId: project.projectId,
+            adsAccountId: ctx.account.id,
+            externalId: ctx.externalId,
+            kind: "NEW_LEADS",
+            severity: "INFO",
+            dedupeKey: todayLeadsKey,
+            title: `New leads today: ${leads}`,
+            detail: "Open Leads Center in Meta Business Suite to reply while they're fresh.",
+            data: { count: leads },
+          },
+          ctx.now,
+        );
+      }
     }
 
     // Proje Agentelse'te duraklatılmış ama reklamlar Meta'da harcıyor.

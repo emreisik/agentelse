@@ -286,6 +286,13 @@ function launchDetails(
   const currency = typeof summary.currency === "string" ? summary.currency : undefined;
   const rows: { label: string; value: string }[] = [];
   const mode = p.mode === "activate" ? "activate" : p.mode === "discard" ? "discard" : "create";
+  if (typeof summary.addingTo === "string") {
+    rows.push({
+      label: "What happens",
+      value: "New ads are added to an ad set that's already running. Its budget, schedule and audience stay as they are.",
+    });
+    return rows;
+  }
   if (mode === "activate") {
     rows.push({ label: "What happens", value: "The campaign is turned on in Meta. Delivery starts after Meta's review." });
   } else if (mode === "discard") {
@@ -295,10 +302,20 @@ function launchDetails(
     rows.push({ label: "Total budget (net)", value: formatMoney(summary.envelopeMinor, currency) });
   }
   if (typeof summary.dailyMinor === "number" && typeof summary.days === "number") {
-    rows.push({
-      label: "Daily budget",
-      value: `${formatMoney(summary.dailyMinor, currency)} for ${summary.days} day${summary.days === 1 ? "" : "s"}`,
-    });
+    rows.push(
+      summary.budgetMode === "FIXED"
+        ? {
+            label: "Budget",
+            value: `Spread over ${summary.days} day${summary.days === 1 ? "" : "s"}; Meta spends more on better days`,
+          }
+        : {
+            label: "Daily budget",
+            value: `${formatMoney(summary.dailyMinor, currency)} for ${summary.days} day${summary.days === 1 ? "" : "s"}`,
+          },
+    );
+  }
+  if (summary.leadForm === true) {
+    rows.push({ label: "Form", value: "An instant form (name, phone, email) is created on your Page." });
   }
   if (typeof summary.spendCapMinor === "number") {
     rows.push({ label: "Campaign spending limit", value: formatMoney(summary.spendCapMinor, currency) });

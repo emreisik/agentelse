@@ -1,6 +1,9 @@
 import "server-only";
 
 import { AdsFlags } from "@/lib/ads/flags";
+import { recipeReady, recommendedGoal } from "@/lib/ads/objectives";
+import { nameWithoutTag } from "@/lib/ads/operation-tag";
+import { AdsMirror } from "@/server/ads/mirror-reads";
 import { isValidDomain, normalizeDomain } from "@/lib/domain";
 import { prisma } from "@/lib/prisma";
 import {
@@ -48,10 +51,38 @@ export async function loadAdsBriefOptions(
     return { account, posts, defaults };
   }
   const assets = await adsAccountAssets(projectId).catch(() => null);
+  // Reklam eklenebilen açık ad set'ler (ayna senkronlandıysa).
+  const mirror = await AdsMirror.accountFor(projectId).catch(() => null);
+  const [adSetRows, campaignRows] = mirror
+    ? await Promise.all([
+        AdsMirror.objects(mirror, "ADSET"),
+        AdsMirror.objects(mirror, "CAMPAIGN"),
+      ])
+    : [[], []];
+  const campaignName = new Map(campaignRows.map((row) => [row.externalId, row.name]));
+  const now = Date.now();
+  const adSets = adSetRows
+    .filter(
+      (row) =>
+        row.configuredStatus === "ACTIVE" &&
+        (!row.endTime || row.endTime.getTime() > now),
+    )
+    .slice(0, 20)
+    .map((row) => ({
+      id: row.externalId,
+      name: nameWithoutTag(row.name),
+      campaignName: nameWithoutTag(campaignName.get(row.campaignExternalId ?? "") ?? ""),
+    }));
   return {
     account,
     posts,
     defaults,
+    leads: recipeReady("leads_instant_form"),
+    recommended: recommendedGoal({
+      hasPixel: Boolean(assets?.hasPixel),
+      messagesOffered: true,
+    }),
+    ...(adSets.length > 0 ? { adSets } : {}),
     goals: {
       messages: true,
       messageApps: [

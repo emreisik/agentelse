@@ -36,6 +36,7 @@ import { AdsGuard } from "@/server/ads/guard/watchdogs";
 import { LaunchWatchdog } from "@/server/ads/guard/launch-watchdog";
 import { AdsDecisions } from "@/server/ads/decisions";
 import { AdsOptimizer } from "@/server/ads/optimizer";
+import { refreshAdsGoals } from "@/server/ads/goals";
 import { claimPeriodic } from "@/server/observability/periodic";
 import { AdsSync } from "@/server/ads/sync/runner";
 import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
@@ -194,7 +195,9 @@ registerAgencyTickStep({
     const expired = await AdsDecisions.expireDue();
     const verified = await AdsDecisions.verifyDue(10);
     const evaluated = await AdsDecisions.evaluateDue(20);
-    return expired + verified + evaluated;
+    // F5b: reklam KPI hedeflerinin güncel değeri (haftada bir, kendi kilidiyle).
+    const goals = await refreshAdsGoals();
+    return expired + verified + evaluated + goals;
   },
 });
 registerAgencyTickStep({

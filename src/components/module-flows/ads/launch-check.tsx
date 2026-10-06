@@ -177,11 +177,24 @@ export function LaunchCheckPanel({
           </div>
         </div>
       ) : null}
+      {check.reach || check.expected ? (
+        <div className="space-y-0.5 text-sm" style={{ color: "var(--ws-text)" }}>
+          {check.reach ? <p>{check.reach}</p> : null}
+          {check.expected ? <p>{check.expected}</p> : null}
+        </div>
+      ) : null}
       <div className="space-y-1 text-xs" style={{ color: "var(--ws-text-2)" }}>
-        <p>{COPY.envelope(check.envelope)}</p>
-        <p>{COPY.pacing}</p>
-        {check.spendCap ? <p>{COPY.spendCap(check.spendCap)}</p> : null}
-        <p>{COPY.endsOn(check.endsOn)}</p>
+        {check.adding ? (
+          <p>{COPY.addsToExisting}</p>
+        ) : (
+          <>
+            <p>{COPY.envelope(check.envelope)}</p>
+            {check.gross ? <p>{COPY.gross(check.gross)}</p> : null}
+            <p>{COPY.pacing}</p>
+            {check.spendCap ? <p>{COPY.spendCap(check.spendCap)}</p> : null}
+            <p>{COPY.endsOn(check.endsOn)}</p>
+          </>
+        )}
         {check.featuresFallback ? <p>{COPY.featuresOff}</p> : null}
         {check.notes.map((note) => (
           <p key={note}>{note}</p>

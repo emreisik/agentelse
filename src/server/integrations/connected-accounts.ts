@@ -53,8 +53,10 @@ export async function loadConnectedAccounts(
     // The Facebook Page comes from the Facebook integration only: a Page an
     // Instagram connection or an ad account happens to use is not "Facebook
     // connected".
-    const facebookMeta = (active(META_PROVIDER.facebook)?.metadata ??
-      null) as { selectedPageId?: string; selectedPageName?: string } | null;
+    const facebookMeta = (active(META_PROVIDER.facebook)?.metadata ?? null) as {
+      selectedPageId?: string;
+      selectedPageName?: string;
+    } | null;
     const facebookPage =
       facebookMeta?.selectedPageId !== undefined
         ? { name: facebookMeta.selectedPageName }
@@ -65,6 +67,14 @@ export async function loadConnectedAccounts(
     } | null;
     const searchConsole = (active(GOOGLE_PROVIDERS.searchConsole)?.metadata ??
       null) as { selectedSearchConsoleSite?: string } | null;
+    // Süresi dolan Google bağlantısı "bağlı değil" sayılmaz: kart onu
+    // "yeniden bağlanmalı" diye gösterir (google-token.ts invalid_grant'te
+    // EXPIRED yazar).
+    const expired = (provider: string) =>
+      credentials.some(
+        (credential) =>
+          credential.provider === provider && credential.status === "EXPIRED",
+      );
 
     return buildConnectedAccounts({
       instagram: {
@@ -79,11 +89,13 @@ export async function loadConnectedAccounts(
       ga4: {
         linked: ga4 !== null,
         selected: Boolean(ga4?.selectedGa4PropertyId),
+        expired: expired(GOOGLE_PROVIDERS.ga4),
         label: ga4?.selectedGa4PropertyName,
       },
       searchConsole: {
         linked: searchConsole !== null,
         selected: Boolean(searchConsole?.selectedSearchConsoleSite),
+        expired: expired(GOOGLE_PROVIDERS.searchConsole),
         label: searchConsole?.selectedSearchConsoleSite,
       },
       website,

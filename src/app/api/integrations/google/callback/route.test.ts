@@ -123,7 +123,10 @@ describe("Google OAuth callback", () => {
     });
     // Daha önce koparılmış satıra yeniden bağlanma.
     mocks.findUnique.mockResolvedValue({
-      metadata: { disconnectedAt: "2026-10-01T00:00:00.000Z" },
+      metadata: {
+        disconnectedAt: "2026-10-01T00:00:00.000Z",
+        googleHealth: { state: "NEEDS_RECONNECT", checkedAt: "2026-10-01" },
+      },
     });
 
     const location = locationOf(await callback());
@@ -141,6 +144,7 @@ describe("Google OAuth callback", () => {
       connectedEmail: "owner@example.com",
     });
     expect(write.update.metadata).not.toHaveProperty("disconnectedAt");
+    expect(write.update.metadata).not.toHaveProperty("googleHealth");
   });
 
   it("still connects when Google leaves the scope field out", async () => {

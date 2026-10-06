@@ -14,7 +14,10 @@ import {
 } from "lucide-react";
 
 import { BrandIdentityLine } from "@/components/brand/brand-kit-sections";
-import { BrandIcon, type BrandKey } from "@/components/integrations/brand-icons";
+import {
+  BrandIcon,
+  type BrandKey,
+} from "@/components/integrations/brand-icons";
 import { CardTitle } from "@/components/workspace/card-title";
 import type {
   ConnectedAccount,
@@ -68,12 +71,20 @@ export function brandSummaryRows(brand: BrandTwin): SummaryRow[] {
   const sector = brand.businessModel?.trim() || brand.positioning?.trim();
   if (sector) rows.push({ key: "sector", label: "Sektör", value: sector });
   if (brand.audience.length > 0) {
-    rows.push({ key: "audience", label: "Hedef kitle", value: brand.audience.join(", ") });
+    rows.push({
+      key: "audience",
+      label: "Hedef kitle",
+      value: brand.audience.join(", "),
+    });
   }
   const tone = toneOfVoice(brand.voice);
   if (tone) rows.push({ key: "tone", label: "Ses tonu", value: tone });
   if (brand.markets.length > 0) {
-    rows.push({ key: "markets", label: "Pazarlar", value: brand.markets.join(", ") });
+    rows.push({
+      key: "markets",
+      label: "Pazarlar",
+      value: brand.markets.join(", "),
+    });
   }
   return rows;
 }
@@ -154,7 +165,10 @@ export function BrandSummaryCard({
             href={editHref}
             scroll={false}
             className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors hover:bg-[var(--ws-hover)]"
-            style={{ borderColor: "var(--ws-border)", color: "var(--ws-text-2)" }}
+            style={{
+              borderColor: "var(--ws-border)",
+              color: "var(--ws-text-2)",
+            }}
           >
             <Pencil className="size-2.5" />
             Düzenle
@@ -187,7 +201,10 @@ export function BrandSummaryCard({
       {isMock ? (
         <p
           className="mt-2.5 inline-flex w-fit rounded-full px-2 py-0.5 text-[10px] font-medium"
-          style={{ background: "var(--ws-soft-green)", color: "var(--ws-accent)" }}
+          style={{
+            background: "var(--ws-soft-green)",
+            color: "var(--ws-accent)",
+          }}
         >
           Örnek marka profili
         </p>
@@ -270,17 +287,26 @@ const ACCOUNT_BRAND: Partial<Record<ConnectedAccountKey, BrandKey>> = {
 // "Instagram · @webhealth": the hover text and the accessible name of an
 // account's icon, since the row shows no words.
 export function accountTitle(account: ConnectedAccount): string {
-  return [account.label, account.detail].filter(Boolean).join(" · ");
+  return [
+    account.label,
+    account.detail,
+    account.state === "reconnect" ? "yeniden bağlanmalı" : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 // Only what is really linked: a half-set-up Google account (no property or
-// site chosen yet), one not linked at all, and the website are left out.
+// site chosen yet), one not linked at all, and the website are left out. A
+// lapsed connection stays, marked, so it isn't silently missing.
 export function linkedAccounts(
   accounts: ConnectedAccount[],
 ): (ConnectedAccount & { brand: BrandKey })[] {
   return accounts.flatMap((account) => {
     const brand = ACCOUNT_BRAND[account.key];
-    return account.state === "connected" && brand ? [{ ...account, brand }] : [];
+    const shown =
+      account.state === "connected" || account.state === "reconnect";
+    return shown && brand ? [{ ...account, brand }] : [];
   });
 }
 
@@ -308,7 +334,10 @@ export function ConnectedAccountsCard({
             <Link
               href={href}
               className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors hover:bg-[var(--ws-hover)]"
-              style={{ borderColor: "var(--ws-border)", color: "var(--ws-text-2)" }}
+              style={{
+                borderColor: "var(--ws-border)",
+                color: "var(--ws-text-2)",
+              }}
             >
               <Settings2 className="size-2.5" />
               Yönet
@@ -342,7 +371,7 @@ export function ConnectedAccountsCard({
                 title={accountTitle(account)}
                 aria-label={accountTitle(account)}
                 data-account={account.key}
-                className="flex size-8 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--ws-hover)]"
+                className="relative flex size-8 items-center justify-center rounded-lg border transition-colors hover:bg-[var(--ws-hover)]"
                 style={{
                   borderColor: "var(--ws-border)",
                   background: "var(--ws-surface-2)",
@@ -350,6 +379,13 @@ export function ConnectedAccountsCard({
                 }}
               >
                 <BrandIcon brand={account.brand} className="size-4" />
+                {account.state === "reconnect" ? (
+                  <span
+                    aria-hidden
+                    data-reconnect
+                    className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-amber-500"
+                  />
+                ) : null}
               </Link>
             </li>
           ))}

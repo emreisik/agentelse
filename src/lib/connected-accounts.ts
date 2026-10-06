@@ -15,10 +15,12 @@ export const CONNECTED_ACCOUNT_KEYS = [
 ] as const;
 export type ConnectedAccountKey = (typeof CONNECTED_ACCOUNT_KEYS)[number];
 
-// connected — linked and usable; active — the website is set (nothing to
-// link); setup — linked, but a choice is missing (which GA4 property, which
-// Search Console site); off — not linked.
-export type ConnectedAccountState = "connected" | "active" | "setup" | "off";
+// connected — linked and usable; reconnect — linked, but the sign-in has
+// lapsed (a Google connection gone EXPIRED) and must be renewed; active — the
+// website is set (nothing to link); setup — linked, but a choice is missing
+// (which GA4 property, which Search Console site); off — not linked.
+export type ConnectedAccountState =
+  "connected" | "reconnect" | "active" | "setup" | "off";
 
 export type ConnectedAccount = {
   key: ConnectedAccountKey;
@@ -28,13 +30,21 @@ export type ConnectedAccount = {
   detail?: string;
 };
 
+// `expired`: the connection exists but its sign-in lapsed (status EXPIRED).
+type GoogleAccountInput = {
+  linked: boolean;
+  selected: boolean;
+  expired?: boolean;
+  label?: string;
+};
+
 export type ConnectedAccountsInput = {
   instagram: { connected: boolean; label?: string };
   // The Page selected in the Facebook integration; null = none.
   facebookPage: { name?: string } | null;
   metaAds: { connected: boolean; label?: string };
-  ga4: { linked: boolean; selected: boolean; label?: string };
-  searchConsole: { linked: boolean; selected: boolean; label?: string };
+  ga4: GoogleAccountInput;
+  searchConsole: GoogleAccountInput;
   website: string | null;
   // Shown only once connected: they are not part of the standard set.
   others: Partial<
@@ -47,8 +57,11 @@ const OTHER_LABEL = { tiktok: "TikTok", linkedin: "LinkedIn", x: "X" } as const;
 function google(
   key: "ga4" | "search-console",
   label: string,
-  account: { linked: boolean; selected: boolean; label?: string },
+  account: GoogleAccountInput,
 ): ConnectedAccount {
+  if (account.expired) {
+    return { key, label, state: "reconnect", detail: account.label };
+  }
   if (!account.linked) return { key, label, state: "off" };
   return account.selected
     ? { key, label, state: "connected", detail: account.label }

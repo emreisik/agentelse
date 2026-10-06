@@ -41,10 +41,24 @@ import {
 import {
   disconnectGoogleAction,
   refreshGoogleListsAction,
+  reuseGoogleConnectionAction,
   selectGa4PropertyAction,
   selectSearchConsoleSiteAction,
   testGoogleConnectionAction,
 } from "@/server/actions/google-actions";
+import {
+  listReusableGoogleConnections,
+  type GoogleReuseOption,
+} from "@/server/integrations/google-reuse";
+import type {
+  GoogleConnectionHealthRecord,
+  GoogleConnectionHealthState,
+} from "@/server/integrations/google-connection-health";
+import { GOOGLE_RESOURCE_NOUN } from "@/server/integrations/google/services";
+import {
+  rankSearchConsoleSites,
+  searchConsoleSiteCoversDomain,
+} from "@/lib/search-console-site";
 import {
   disconnectMetaAction,
   selectMetaAdAccountAction,
@@ -64,6 +78,7 @@ import {
   testXConnectionAction,
 } from "@/server/actions/x-actions";
 import {
+  isWorkspaceManager,
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
@@ -83,7 +98,10 @@ import { WorkRepository } from "@/server/repositories/work.repository";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
 import { singleReturnTarget } from "./works-return";
 import { channelOffers } from "@/lib/works/channel-offers";
-import { WorkReturnLink, WorkReturnLinks } from "@/components/works/work-return-link";
+import {
+  WorkReturnLink,
+  WorkReturnLinks,
+} from "@/components/works/work-return-link";
 import { ChannelOfferBanner } from "@/components/works/channel-offer-banner";
 import { offersFor } from "@/components/works/channel-offers-for";
 
@@ -130,7 +148,11 @@ async function renderWorksReturn(projectId: string, from: unknown) {
     return (
       <>
         {single ? (
-          <WorkReturnLink projectId={projectId} workId={single.id} title={single.title} />
+          <WorkReturnLink
+            projectId={projectId}
+            workId={single.id}
+            title={single.title}
+          />
         ) : null}
         <WorkReturnLinks projectId={projectId} links={back} />
         <ChannelOfferBanner projectId={projectId} channels={offers} />
@@ -138,6 +160,30 @@ async function renderWorksReturn(projectId: string, from: unknown) {
     );
   } catch {
     return null;
+  }
+}
+
+// "Use existing connection": bağlı olmayan Google diyaloğunda aynı
+// workspace'te başka projelere bağlı Google hesapları önerilir. Liste başka
+// projelerin Google e-postalarını gösterdiği ve eylem yalnız OWNER/ADMIN'e
+// açık olduğu için yalnız onlara hesaplanır; hata sayfayı bozmaz.
+async function googleReuseOptionsFor(
+  userId: string,
+  projectId: string,
+  service: GoogleService | null,
+  credential: IntegrationCredential | null,
+): Promise<GoogleReuseOption[]> {
+  if (!service || credential?.status === "ACTIVE") return [];
+  try {
+    const { workspaceId } = await requireProjectAccess(userId, projectId);
+    if (!(await isWorkspaceManager(userId, workspaceId))) return [];
+    return await listReusableGoogleConnections({
+      workspaceId,
+      projectId,
+      service,
+    });
+  } catch {
+    return [];
   }
 }
 
@@ -160,7 +206,7 @@ export default async function EntegrasyonlarPage({
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: { name: true },
+    select: { name: true, domain: true },
   });
   if (!project) notFound();
 
@@ -282,7 +328,9 @@ export default async function EntegrasyonlarPage({
       label: META_SERVICE_LABEL.instagram,
       connected:
         instagramCredential?.status === "ACTIVE" &&
-        !instagramLoginExpired(instagramCredential?.metadata as MetaInstagramMetadata),
+        !instagramLoginExpired(
+          instagramCredential?.metadata as MetaInstagramMetadata,
+        ),
       node: (
         <MetaTile
           key={META_PROVIDER.instagram}
@@ -417,6 +465,16 @@ export default async function EntegrasyonlarPage({
   const openX = sp.integration === "x";
   const googleError =
     typeof sp.googleError === "string" ? sp.googleError : null;
+  const googleReuseOptions = await googleReuseOptionsFor(
+    userId,
+    projectId,
+    openGoogleService,
+    openGoogleService === "analytics"
+      ? analyticsCredential
+      : openGoogleService === "search_console"
+        ? searchConsoleCredential
+        : null,
+  );
   const metaError = typeof sp.metaError === "string" ? sp.metaError : null;
   const metaDetail = visibleMetaDetail(metaError, sp.metaDetail);
   const tiktokError =
@@ -542,6 +600,8 @@ export default async function EntegrasyonlarPage({
             }
             closeHref={closeHref}
             googleError={googleError}
+            reuseOptions={googleReuseOptions}
+            projectDomain={project.domain}
           />
         ) : null}
 
@@ -713,7 +773,11 @@ function TelegramDialog({
       title="Telegram"
       header={
         <div className="flex items-center gap-2.5">
-          <BrandTile brand="telegram" className="size-8" iconClassName="size-[18px]" />
+          <BrandTile
+            brand="telegram"
+            className="size-8"
+            iconClassName="size-[18px]"
+          />
           <div className="min-w-0">
             <p className="text-sm font-semibold">Telegram</p>
             <p className="text-xs text-muted-foreground">
@@ -832,7 +896,30 @@ const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   state_invalid:
     "The connection request expired or is invalid, please try again.",
   unauthorized: "Your session has expired, please sign in again and retry.",
+  scope_missing:
+    "Google access wasn't allowed. Connect again and tick the box to allow it.",
 };
+
+// Günlük bağlantı sağlığının (google-connection-health.ts) bulduğu sorunlar.
+// Süresi dolan bağlantı zaten "Needs reconnection" görünür; kota ve geçici
+// hatalar kullanıcının sorunu değildir, gösterilmez.
+function googleHealthNotice(
+  state: GoogleConnectionHealthState,
+  service: GoogleService,
+): string | null {
+  const label = GOOGLE_SERVICE_LABEL[service];
+  const noun = GOOGLE_RESOURCE_NOUN[service];
+  switch (state) {
+    case "NEEDS_PERMISSION":
+      return `Agentelse no longer has permission to read ${label}. Reconnect and tick the box.`;
+    case "ACCESS_LOST":
+      return `Your Google account can no longer see the selected ${noun}. Choose another one, or reconnect with an account that has access.`;
+    case "GONE":
+      return `The selected ${noun} no longer exists in ${label}.`;
+    default:
+      return null;
+  }
+}
 
 const GOOGLE_SERVICE_UI: Record<
   GoogleService,
@@ -926,12 +1013,16 @@ function GoogleDialog({
   credential,
   closeHref,
   googleError,
+  reuseOptions,
+  projectDomain,
 }: {
   service: GoogleService;
   projectId: string;
   credential: IntegrationCredential | null;
   closeHref: string;
   googleError: string | null;
+  reuseOptions: GoogleReuseOption[];
+  projectDomain: string | null;
 }) {
   const connected = credential?.status === "ACTIVE";
   const expired = credential?.status === "EXPIRED";
@@ -939,6 +1030,13 @@ function GoogleDialog({
   const title = GOOGLE_SERVICE_LABEL[service];
   const ui = GOOGLE_SERVICE_UI[service];
   const hiddenFields = { projectId, service };
+  const health = (
+    credential?.metadata as {
+      googleHealth?: GoogleConnectionHealthRecord;
+    } | null
+  )?.googleHealth;
+  const healthNotice =
+    connected && health ? googleHealthNotice(health.state, service) : null;
 
   return (
     <EntityDialog
@@ -946,7 +1044,11 @@ function GoogleDialog({
       title={title}
       header={
         <div className="flex items-center gap-2.5">
-          <BrandTile brand={ui.brand} className="size-8" iconClassName="size-[18px]" />
+          <BrandTile
+            brand={ui.brand}
+            className="size-8"
+            iconClassName="size-[18px]"
+          />
           <div className="min-w-0">
             <p className="text-sm font-semibold">{title}</p>
             <p className="text-xs text-muted-foreground">{ui.description}</p>
@@ -991,6 +1093,12 @@ function GoogleDialog({
             </a>
           ) : (
             <>
+              {healthNotice ? (
+                <p className="rounded-lg bg-amber-500/10 p-2.5 text-xs text-amber-700 dark:text-amber-400">
+                  {healthNotice}
+                </p>
+              ) : null}
+
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-medium text-muted-foreground">
@@ -1024,6 +1132,7 @@ function GoogleDialog({
                       credential.metadata as GoogleSearchConsoleMetadata
                     }
                     hiddenFields={hiddenFields}
+                    projectDomain={projectDomain}
                   />
                 )}
               </div>
@@ -1032,8 +1141,7 @@ function GoogleDialog({
                 service={service}
                 metadata={
                   credential.metadata as
-                    | GoogleAnalyticsMetadata
-                    | GoogleSearchConsoleMetadata
+                    GoogleAnalyticsMetadata | GoogleSearchConsoleMetadata
                 }
               />
 
@@ -1086,7 +1194,66 @@ function GoogleDialog({
           </a>
         </EmptyState>
       )}
+
+      {!connected ? (
+        <GoogleReuseList
+          projectId={projectId}
+          service={service}
+          options={reuseOptions}
+        />
+      ) : null}
     </EntityDialog>
+  );
+}
+
+// Aynı workspace'te başka projeye bağlı Google hesapları: Google onay
+// ekranına gitmeden bu projeye bağlanır (reuseGoogleConnectionAction).
+function GoogleReuseList({
+  projectId,
+  service,
+  options,
+}: {
+  projectId: string;
+  service: GoogleService;
+  options: GoogleReuseOption[];
+}) {
+  if (options.length === 0) return null;
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] font-medium text-muted-foreground">
+        Or use a Google account already connected in this workspace
+      </p>
+      <ul className="divide-y divide-foreground/5 rounded-lg ring-1 ring-foreground/10">
+        {options.map((option) => (
+          <li
+            key={option.credentialId}
+            className="flex items-center justify-between gap-2 px-3 py-2"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-xs font-medium">{option.email}</p>
+              <p className="truncate text-[11px] text-muted-foreground">
+                Connected in {option.projectName}
+              </p>
+            </div>
+            <ActionForm
+              action={reuseGoogleConnectionAction}
+              successMessage={`${GOOGLE_SERVICE_LABEL[service]} connected`}
+            >
+              <input type="hidden" name="projectId" value={projectId} />
+              <input type="hidden" name="service" value={service} />
+              <input
+                type="hidden"
+                name="sourceCredentialId"
+                value={option.credentialId}
+              />
+              <SubmitButton variant="outline" size="xs">
+                Use
+              </SubmitButton>
+            </ActionForm>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -1126,9 +1293,11 @@ function Ga4PropertySelect({
 function SearchConsoleSiteSelect({
   metadata,
   hiddenFields,
+  projectDomain,
 }: {
   metadata: GoogleSearchConsoleMetadata;
   hiddenFields: Record<string, string>;
+  projectDomain: string | null;
 }) {
   const sites = metadata.searchConsoleSites ?? [];
   if (sites.length === 0) {
@@ -1138,20 +1307,32 @@ function SearchConsoleSiteSelect({
       </p>
     );
   }
+  const selected = metadata.selectedSearchConsoleSite;
+  const mismatch =
+    selected && projectDomain
+      ? !searchConsoleSiteCoversDomain(selected, projectDomain)
+      : false;
   return (
-    <SearchableSelect
-      value={metadata.selectedSearchConsoleSite ?? ""}
-      placeholder="Select a site…"
-      searchPlaceholder="Search sites…"
-      options={sites.map((s) => ({
-        value: s.siteUrl,
-        ...formatSearchConsoleSite(s.siteUrl),
-      }))}
-      action={selectSearchConsoleSiteAction}
-      hiddenFields={hiddenFields}
-      fieldName="siteUrl"
-      successMessage="Search Console site updated"
-    />
+    <>
+      <SearchableSelect
+        value={selected ?? ""}
+        placeholder="Select a site…"
+        searchPlaceholder="Search sites…"
+        options={rankSearchConsoleSites(sites, projectDomain).map((s) => ({
+          value: s.siteUrl,
+          ...formatSearchConsoleSite(s.siteUrl),
+        }))}
+        action={selectSearchConsoleSiteAction}
+        hiddenFields={hiddenFields}
+        fieldName="siteUrl"
+        successMessage="Search Console site updated"
+      />
+      {mismatch ? (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+          {`This site doesn’t cover the project’s website (${projectDomain}). Reports will describe a different site.`}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -1366,19 +1547,17 @@ function MetaDialog({
   const instagramLoginConfigured =
     service === "instagram" && isIntegrationConfigured("INSTAGRAM_LOGIN");
   // Instagram can be connected two ways; Meta Ads only through Facebook.
-  const configured =
-    facebookConfigured || instagramLoginConfigured;
+  const configured = facebookConfigured || instagramLoginConfigured;
   const title = META_SERVICE_LABEL[service];
   const ui = META_SERVICE_UI[service];
   const hiddenFields = { projectId, service };
   const metadata = (credential?.metadata ?? {}) as
-    | MetaInstagramMetadata
-    | MetaFacebookMetadata
-    | MetaAdsMetadata;
+    MetaInstagramMetadata | MetaFacebookMetadata | MetaAdsMetadata;
   const adsMetadata = metadata as MetaAdsMetadata;
   const igMetadata = metadata as MetaInstagramMetadata;
   // Connected (or last connected) through Instagram Login: no Page involved.
-  const viaInstagram = service === "instagram" && igMetadata.login === "instagram";
+  const viaInstagram =
+    service === "instagram" && igMetadata.login === "instagram";
 
   return (
     <EntityDialog
@@ -1386,7 +1565,11 @@ function MetaDialog({
       title={title}
       header={
         <div className="flex items-center gap-2.5">
-          <BrandTile brand={ui.brand} className="size-8" iconClassName="size-[18px]" />
+          <BrandTile
+            brand={ui.brand}
+            className="size-8"
+            iconClassName="size-[18px]"
+          />
           <div className="min-w-0">
             <p className="text-sm font-semibold">{title}</p>
             <p className="text-xs text-muted-foreground">{ui.description}</p>
@@ -1710,7 +1893,11 @@ function TikTokDialog({
       title="TikTok"
       header={
         <div className="flex items-center gap-2.5">
-          <BrandTile brand="tiktok" className="size-8" iconClassName="size-[18px]" />
+          <BrandTile
+            brand="tiktok"
+            className="size-8"
+            iconClassName="size-[18px]"
+          />
           <div className="min-w-0">
             <p className="text-sm font-semibold">TikTok</p>
             <p className="text-xs text-muted-foreground">
@@ -1886,7 +2073,11 @@ function LinkedInDialog({
       title="LinkedIn"
       header={
         <div className="flex items-center gap-2.5">
-          <BrandTile brand="linkedin" className="size-8" iconClassName="size-[18px]" />
+          <BrandTile
+            brand="linkedin"
+            className="size-8"
+            iconClassName="size-[18px]"
+          />
           <div className="min-w-0">
             <p className="text-sm font-semibold">LinkedIn</p>
             <p className="text-xs text-muted-foreground">

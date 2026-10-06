@@ -843,7 +843,7 @@ Mevcut testler korunur ve taşınır: `quick-wins.test.ts`, `on-page.test.ts`, `
 
 ### SC-F1 — Bağlantı ve kimlik · M
 
-**Durum (6 Ekim):** Ortak bölüm 1, GA-F1 ile birlikte yapıldı ([google-connections.md](google-connections.md)). Search Console'a özgü site önerisi ve alan adı uyarısı, `GoogleGrant` ve Connectors diyaloğu ise bölüm 2'de; `integrations/page.tsx`'teki commit'siz değişiklik bekleniyor.
+**Durum (6 Ekim):** Bölüm 1 ve 2, GA-F1 ile birlikte yapıldı ([google-connections.md](google-connections.md)). Search Console'a özgü olanlar: site listesinde projenin sitesini kapsayan mülkler ve Domain mülkü önce, seçili site projenin sitesini kapsamıyorsa uyarı, `scope_missing` mesajı, günlük sağlık uyarıları, "Use existing connection". Plandan fark: `GoogleGrant` kurulmadı; refresh token kopyalanarak paylaşılıyor, bu yüzden `GscSiteLink` yalnız `credentialId` taşır (GA planı GA-F1 durum notu). "Delete data now" SC-F2 tablolarıyla gelir.
 
 **Amaç:** GA-F1 ile aynı; Search Console'a özgü site doğrulamasıyla.
 

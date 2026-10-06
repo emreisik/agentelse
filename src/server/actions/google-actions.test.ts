@@ -21,8 +21,9 @@ vi.mock("@/server/security/tenant-context", () => ({
 const findUnique = vi.fn();
 const update = vi.fn();
 const updateMany = vi.fn();
+const upsert = vi.fn();
 vi.mock("@/lib/prisma", () => ({
-  prisma: { integrationCredential: { findUnique, update, updateMany } },
+  prisma: { integrationCredential: { findUnique, update, updateMany, upsert } },
 }));
 const recordAudit = vi.fn();
 vi.mock("@/server/repositories/audit-log.repository", () => ({
@@ -52,6 +53,7 @@ vi.mock("@/server/integrations/google-client", async (importOriginal) => ({
 const {
   disconnectGoogleAction,
   refreshGoogleListsAction,
+  reuseGoogleConnectionAction,
   selectGa4PropertyAction,
   testGoogleConnectionAction,
 } = await import("./google-actions");
@@ -101,6 +103,7 @@ beforeEach(() => {
   fetchSearchConsoleSiteList.mockResolvedValue({ searchConsoleSites: [SITE] });
   update.mockResolvedValue({});
   updateMany.mockResolvedValue({ count: 1 });
+  upsert.mockResolvedValue({ id: "cred-new" });
   isWorkspaceManager.mockResolvedValue(true);
   disconnectGoogleCredential.mockResolvedValue({ revokedAtGoogle: true });
 });
@@ -274,5 +277,143 @@ describe("disconnectGoogleAction", () => {
       ok: true,
     });
     expect(disconnectGoogleCredential).not.toHaveBeenCalled();
+  });
+});
+
+// Başka projede bağlı Search Console hesabı (kaynak) ve bu projenin satırı.
+const sourceRow = (over: Record<string, unknown> = {}) => ({
+  id: "cred-src",
+  workspaceId: "ws-1",
+  projectId: "proj-2",
+  provider: "google_search_console",
+  status: "ACTIVE",
+  encryptedSecret: "encrypted-src",
+  accountLabel: "owner@example.com",
+  metadata: {
+    connectedEmail: "owner@example.com",
+    googleSub: "sub-1",
+    searchConsoleSites: [SITE],
+    selectedSearchConsoleSite: "sc-domain:other-client.com",
+  },
+  ...over,
+});
+
+function credentialRows(source: unknown, target: unknown) {
+  findUnique.mockImplementation(
+    async ({ where }: { where: { id?: string } }) =>
+      where.id ? source : target,
+  );
+}
+
+const reuseForm = (sourceCredentialId = "cred-src") => {
+  const data = form("search_console");
+  data.set("sourceCredentialId", sourceCredentialId);
+  return data;
+};
+
+const CANT_USE = { ok: false, message: "That connection can't be used here." };
+
+describe("reuseGoogleConnectionAction", () => {
+  it("is for owners and admins only", async () => {
+    isWorkspaceManager.mockResolvedValue(false);
+    credentialRows(sourceRow(), null);
+
+    expect(await reuseGoogleConnectionAction(reuseForm())).toEqual({
+      ok: false,
+      message: "Only workspace owners and admins can change this.",
+    });
+    expect(getFreshGoogleAccessToken).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("only takes a live connection of the same service from another project of this workspace", async () => {
+    for (const source of [
+      null,
+      sourceRow({ workspaceId: "ws-other" }),
+      sourceRow({ provider: "google_analytics" }),
+      sourceRow({ status: "EXPIRED" }),
+      sourceRow({ encryptedSecret: "" }),
+      sourceRow({ projectId: "proj-1" }),
+    ]) {
+      credentialRows(source, null);
+      expect(await reuseGoogleConnectionAction(reuseForm())).toEqual(CANT_USE);
+    }
+    expect(getFreshGoogleAccessToken).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a live connection of this project", async () => {
+    credentialRows(sourceRow(), gscRow("ACTIVE"));
+
+    expect(await reuseGoogleConnectionAction(reuseForm())).toEqual({
+      ok: false,
+      message:
+        "Google Search Console is already connected here. Disconnect it first.",
+    });
+    expect(getFreshGoogleAccessToken).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("copies the encrypted token and the account, not the other project's site", async () => {
+    const source = sourceRow();
+    credentialRows(source, null);
+
+    expect(await reuseGoogleConnectionAction(reuseForm())).toEqual({
+      ok: true,
+    });
+    expect(getFreshGoogleAccessToken).toHaveBeenCalledWith(source);
+
+    const write = upsert.mock.calls[0]?.[0];
+    expect(write.where).toEqual({
+      projectId_provider: {
+        projectId: "proj-1",
+        provider: "google_search_console",
+      },
+    });
+    expect(write.create).toMatchObject({
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      brandId: "brand-1",
+      accountLabel: "owner@example.com",
+      encryptedSecret: "encrypted-src",
+      status: "ACTIVE",
+      metadata: {
+        connectedEmail: "owner@example.com",
+        googleSub: "sub-1",
+        searchConsoleSites: [SITE],
+      },
+    });
+    expect(write.create.metadata.selectedSearchConsoleSite).toBeUndefined();
+    expect(recordAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "integration_credential.connected",
+        entityId: "cred-new",
+        metadata: {
+          provider: "google_search_console",
+          reusedFromCredentialId: "cred-src",
+        },
+      }),
+    );
+  });
+
+  it("brings back a lapsed connection with its own site, without the stale health mark", async () => {
+    credentialRows(sourceRow(), {
+      ...gscRow("EXPIRED"),
+      metadata: {
+        ...gscRow("EXPIRED").metadata,
+        googleHealth: { state: "NEEDS_RECONNECT", checkedAt: "2026-10-05" },
+      },
+    });
+
+    expect(await reuseGoogleConnectionAction(reuseForm())).toEqual({
+      ok: true,
+    });
+    const write = upsert.mock.calls[0]?.[0];
+    expect(write.update).toMatchObject({
+      encryptedSecret: "encrypted-src",
+      status: "ACTIVE",
+      metadata: { selectedSearchConsoleSite: SITE.siteUrl },
+    });
+    expect(write.update.metadata).not.toHaveProperty("googleHealth");
   });
 });

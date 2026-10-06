@@ -907,7 +907,15 @@ Mevcut testler korunur: `meta-google-scopes.test.ts` (kapsam izolasyonu), `googl
 
 ### GA-F1 — Bağlantı ve kimlik · M
 
-**Durum (6 Ekim):** Bölüm 1 yapıldı, uygulanan hâl [google-connections.md](google-connections.md)'de: ortak çekirdek, izin doğrulama, PKCE, hesap kimliği, Disconnect + akıllı iptal, roller, kiracıya özel sağlık, günlük bağlantı sağlığı, gizlilik ve veri silme metni. Bölüm 2 bekliyor: `GoogleGrant` + "Use existing connection", Connectors diyaloğundaki yeni durumlar ve mesajlar, bağlı hesaplar kartı. `integrations/page.tsx`'te başka bir oturumun commit'siz değişikliği var. Uygulamada plandan iki fark: (1) `GoogleGrant` gelene kadar Google hesap kimliği ve sağlık durumu `IntegrationCredential.metadata`'da (`googleSub`, `googleHealth`) tutuluyor; akıllı iptal de bunlara bakıyor. (2) İlk mülk/site seçimini bağlantıyı kuran her üye yapabiliyor; yalnız değiştirmek OWNER/ADMIN istiyor. `pii.ts` ambarla birlikte GA-F2'ye kaldı.
+**Durum (6 Ekim):** Bölüm 1 ve bölüm 2 yapıldı; uygulanan hâl [google-connections.md](google-connections.md)'de. Bölüm 1: ortak çekirdek, izin doğrulama, PKCE, hesap kimliği, Disconnect + akıllı iptal, roller, kiracıya özel sağlık, günlük bağlantı sağlığı, gizlilik ve veri silme metni. Bölüm 2: "Use existing connection", Connectors diyaloğunda `scope_missing` mesajı ve sağlık uyarıları, Search Console site/alan adı uyarısı, bağlı hesaplar kartında "yeniden bağlanmalı".
+
+Uygulamada plandan farklar (GA-F2 ve sonrası bunlara göre yazılır):
+
+1. **`GoogleGrant` tablosu yok.** 100 token sınırı, "Use existing connection"ın mevcut bağlantının şifreli refresh token'ını kopyalamasıyla çözüldü; şema değişmedi, `GOOGLE_GRANT_SHARING` bayrağı da yok. Hesap kimliği ve sağlık durumu `IntegrationCredential.metadata`'da (`googleSub`, `connectedEmail`, `googleHealth`); akıllı iptal aynı şifreli token, `googleSub` ya da e-postayla eşleştirir. Bu yüzden §4'teki `IntegrationCredential.grantId` ve `GaPropertyLink.grantId` / `GscSiteLink.grantId` kolonları **kurulmaz**; bağ tabloları yalnız `credentialId` taşır. Token sağlığı `google-grant-health` yerine `google-connection-health` adımıdır (bağlantı başına, günde bir).
+2. **Eski `_ga`/`_gsc` çiftleri** taşınmadı: aynı şifreli token'ı paylaşan iki satır olarak çalışır; akıllı iptal onları birbirinin eşi sayar.
+3. İlk mülk/site seçimini bağlantıyı kuran her üye yapabiliyor; değiştirmek, Disconnect ve "Use existing connection" OWNER/ADMIN istiyor.
+4. Kabul ölçütündeki "3 projede tek refresh token", bağlantılar "Use existing connection" ile kurulduğunda geçerli (üç satır aynı token'ı taşır); her projede ayrı OAuth yapılırsa Google ayrı token verir.
+5. Bağlı hesaplar kartı Türkçe kaldı (sağ panelin tamamı Türkçe). GA4 için alan adı uyarısı yok (mülk listesi alan adı taşımıyor). `pii.ts` ambarla birlikte GA-F2'ye kaldı; "Delete data now" ambar tablolarıyla gelir.
 
 **Amaç:** Bağlantıyı doğru, ayrı, güvenli ve doğrulanabilir kılmak.
 

@@ -63,7 +63,10 @@ describe("loadConnectedAccounts", () => {
     expect(accounts["meta-ads"]?.state).toBe("off");
     expect(accounts.ga4?.state).toBe("off");
     expect(accounts["search-console"]?.state).toBe("off");
-    expect(accounts.website).toMatchObject({ state: "active", detail: "webhealth.com.tr" });
+    expect(accounts.website).toMatchObject({
+      state: "active",
+      detail: "webhealth.com.tr",
+    });
   });
 
   it("Instagram and Meta Ads come from the shared channel connections", async () => {
@@ -74,8 +77,14 @@ describe("loadConnectedAccounts", () => {
       }),
     );
     const accounts = await byKey();
-    expect(accounts.instagram).toMatchObject({ state: "connected", detail: "@webhealth" });
-    expect(accounts["meta-ads"]).toMatchObject({ state: "connected", detail: "Web Health Ads" });
+    expect(accounts.instagram).toMatchObject({
+      state: "connected",
+      detail: "@webhealth",
+    });
+    expect(accounts["meta-ads"]).toMatchObject({
+      state: "connected",
+      detail: "Web Health Ads",
+    });
   });
 
   it("the Facebook Page comes from the Facebook integration, once a Page is selected", async () => {
@@ -86,7 +95,10 @@ describe("loadConnectedAccounts", () => {
         metadata: { selectedPageId: "p1", selectedPageName: "Web Health" },
       },
     ]);
-    expect((await byKey()).facebook).toMatchObject({ state: "connected", detail: "Web Health" });
+    expect((await byKey()).facebook).toMatchObject({
+      state: "connected",
+      detail: "Web Health",
+    });
 
     // Connected but no Page chosen yet: nothing to claim.
     credentialFindMany.mockResolvedValue([
@@ -96,7 +108,11 @@ describe("loadConnectedAccounts", () => {
 
     // A revoked connection claims nothing.
     credentialFindMany.mockResolvedValue([
-      { provider: "facebook", status: "REVOKED", metadata: { selectedPageId: "p1" } },
+      {
+        provider: "facebook",
+        status: "REVOKED",
+        metadata: { selectedPageId: "p1" },
+      },
     ]);
     expect((await byKey()).facebook?.state).toBe("off");
   });
@@ -111,7 +127,10 @@ describe("loadConnectedAccounts", () => {
       {
         provider: "meta_ads",
         status: "ACTIVE",
-        metadata: { selectedPageId: "p9", selectedPageName: "Web Health Ads Page" },
+        metadata: {
+          selectedPageId: "p9",
+          selectedPageName: "Web Health Ads Page",
+        },
       },
     ]);
     expect((await byKey()).facebook?.state).toBe("off");
@@ -122,12 +141,18 @@ describe("loadConnectedAccounts", () => {
       {
         provider: "google_analytics",
         status: "ACTIVE",
-        metadata: { selectedGa4PropertyId: "123", selectedGa4PropertyName: "Web Health" },
+        metadata: {
+          selectedGa4PropertyId: "123",
+          selectedGa4PropertyName: "Web Health",
+        },
       },
       { provider: "google_search_console", status: "ACTIVE", metadata: {} },
     ]);
     const accounts = await byKey();
-    expect(accounts.ga4).toMatchObject({ state: "connected", detail: "Web Health" });
+    expect(accounts.ga4).toMatchObject({
+      state: "connected",
+      detail: "Web Health",
+    });
     expect(accounts["search-console"]?.state).toBe("setup");
   });
 
@@ -140,6 +165,19 @@ describe("loadConnectedAccounts", () => {
       },
     ]);
     expect((await byKey()).ga4?.state).toBe("off");
+  });
+
+  it("a Google connection gone EXPIRED is shown as needing a reconnect", async () => {
+    credentialFindMany.mockResolvedValue([
+      {
+        provider: "google_search_console",
+        status: "EXPIRED",
+        metadata: { selectedSearchConsoleSite: "sc-domain:webhealth.com.tr" },
+      },
+    ]);
+    const accounts = await byKey();
+    expect(accounts["search-console"]?.state).toBe("reconnect");
+    expect(accounts.ga4?.state).toBe("off");
   });
 
   it("a failure is no rows, never an error", async () => {

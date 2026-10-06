@@ -51,10 +51,22 @@ describe("buildConnectedAccounts", () => {
       metaAds: { connected: true, label: "Web Health Ads" },
       website: "webhealth.com.tr",
     });
-    expect(accounts[0]).toMatchObject({ state: "connected", detail: "@webhealth" });
-    expect(accounts[1]).toMatchObject({ state: "connected", detail: "Web Health" });
-    expect(accounts[2]).toMatchObject({ state: "connected", detail: "Web Health Ads" });
-    expect(accounts[5]).toMatchObject({ state: "active", detail: "webhealth.com.tr" });
+    expect(accounts[0]).toMatchObject({
+      state: "connected",
+      detail: "@webhealth",
+    });
+    expect(accounts[1]).toMatchObject({
+      state: "connected",
+      detail: "Web Health",
+    });
+    expect(accounts[2]).toMatchObject({
+      state: "connected",
+      detail: "Web Health Ads",
+    });
+    expect(accounts[5]).toMatchObject({
+      state: "active",
+      detail: "webhealth.com.tr",
+    });
   });
 
   it("a name is never shown for an account that is not connected", () => {
@@ -72,11 +84,35 @@ describe("buildConnectedAccounts", () => {
       states({
         ...none,
         ga4: { linked: true, selected: false },
-        searchConsole: { linked: true, selected: true, label: "sc-domain:webhealth.com.tr" },
+        searchConsole: {
+          linked: true,
+          selected: true,
+          label: "sc-domain:webhealth.com.tr",
+        },
       }),
     ).toMatchObject({ ga4: "setup", "search-console": "connected" });
     // Chosen but the link is gone: off, not connected.
-    expect(states({ ...none, ga4: { linked: false, selected: true } }).ga4).toBe("off");
+    expect(
+      states({ ...none, ga4: { linked: false, selected: true } }).ga4,
+    ).toBe("off");
+  });
+
+  it("a Google connection whose sign-in lapsed is 'reconnect', not off", () => {
+    const accounts = buildConnectedAccounts({
+      ...none,
+      searchConsole: {
+        linked: false,
+        selected: false,
+        expired: true,
+        label: "sc-domain:webhealth.com.tr",
+      },
+    });
+    expect(accounts[4]).toMatchObject({
+      key: "search-console",
+      state: "reconnect",
+      detail: "sc-domain:webhealth.com.tr",
+    });
+    expect(accounts[3]?.state).toBe("off");
   });
 
   it("TikTok, LinkedIn and X show up only once connected", () => {

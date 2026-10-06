@@ -24,6 +24,7 @@ import {
   type GoogleSearchConsoleMetadata,
   type GoogleService,
 } from "@/server/integrations/google-client";
+import { buildGoogleConnectionMetadata } from "@/server/integrations/google-connection-metadata";
 import { disconnectGoogleCredential } from "@/server/integrations/google-disconnect";
 import { googleErrorUserMessage } from "@/server/integrations/google/error-catalog";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
@@ -326,6 +327,106 @@ export async function refreshGoogleListsAction(
 
     revalidatePath(`/projects/${projectId}/integrations`);
     return listError ? { ok: false, message: listError } : { ok: true };
+  } catch (error) {
+    return fail(error, service);
+  }
+}
+
+// "Use existing connection" (GK5): aynı workspace'te başka bir projede bağlı
+// olan Google hesabını OAuth'a gitmeden bu projeye bağlar; şifreli refresh
+// token kopyalanır (google-reuse.ts). Bir Google hesabının erişimini başka
+// projeye taşıdığı için yalnız OWNER/ADMIN. Seçim kaynaktan kopyalanmaz: her
+// proje kendi mülkünü ya da sitesini seçer.
+export async function reuseGoogleConnectionAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  let service: GoogleService | undefined;
+  try {
+    const scope = await resolveScope(formData);
+    service = scope.service;
+    const { projectId, userId, access } = scope;
+    if (!(await isWorkspaceManager(userId, access.workspaceId))) {
+      return MANAGERS_ONLY;
+    }
+
+    const provider = GOOGLE_PROVIDER[service];
+    const sourceId = String(formData.get("sourceCredentialId") ?? "");
+    const source = sourceId
+      ? await prisma.integrationCredential.findUnique({
+          where: { id: sourceId },
+        })
+      : null;
+    if (
+      !source ||
+      source.workspaceId !== access.workspaceId ||
+      source.provider !== provider ||
+      source.status !== "ACTIVE" ||
+      !source.encryptedSecret ||
+      source.projectId === projectId
+    ) {
+      return { ok: false, message: "That connection can't be used here." };
+    }
+
+    // Canlı bağlantının üzerine yazılmaz: önce Disconnect. Bu projede daha
+    // önce kopmuş ya da süresi dolmuş bir bağlantı varsa erişilebilen seçimi
+    // ve tarama kayıtları korunur (OAuth dönüşü gibi).
+    const existing = await loadCredential(projectId, service);
+    if (existing?.status === "ACTIVE") {
+      return {
+        ok: false,
+        message: `${GOOGLE_SERVICE_LABEL[service]} is already connected here. Disconnect it first.`,
+      };
+    }
+
+    // Token hâlâ geçerli mi; geçersizse kaynak EXPIRED olur ve hata döner.
+    const accessToken = await getFreshGoogleAccessToken(source);
+    const identity = (source.metadata ?? {}) as {
+      connectedEmail?: string;
+      googleSub?: string;
+    };
+    const metadata = await buildGoogleConnectionMetadata(
+      service,
+      accessToken,
+      {
+        connectedEmail: identity.connectedEmail,
+        googleSub: identity.googleSub,
+      },
+      (existing?.metadata ?? {}) as Record<string, unknown>,
+    );
+
+    const credential = await prisma.integrationCredential.upsert({
+      where: { projectId_provider: { projectId, provider } },
+      create: {
+        workspaceId: access.workspaceId,
+        projectId,
+        brandId: access.defaultBrandId,
+        provider,
+        accountLabel: source.accountLabel,
+        encryptedSecret: source.encryptedSecret,
+        metadata,
+        status: "ACTIVE",
+      },
+      update: {
+        accountLabel: source.accountLabel,
+        encryptedSecret: source.encryptedSecret,
+        metadata,
+        status: "ACTIVE",
+      },
+    });
+
+    await AuditLogRepository.record({
+      workspaceId: access.workspaceId,
+      projectId,
+      actorType: "USER",
+      actorId: userId,
+      action: "integration_credential.connected",
+      entityType: "IntegrationCredential",
+      entityId: credential.id,
+      metadata: { provider, reusedFromCredentialId: source.id },
+    });
+
+    revalidatePath(`/projects/${projectId}/integrations`);
+    return { ok: true };
   } catch (error) {
     return fail(error, service);
   }

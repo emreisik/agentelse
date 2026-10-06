@@ -45,7 +45,7 @@ type GoogleScanBookkeeping = {
 // Hangi Google hesabıyla bağlanıldığı. `googleSub` (userinfo `id`) Google'da
 // iptalin güvenli olup olmadığına karar verirken kullanılır
 // (google-disconnect.ts); e-posta değişse de aynı kalır.
-type GoogleAccountIdentity = {
+export type GoogleAccountIdentity = {
   connectedEmail?: string;
   googleSub?: string;
 };

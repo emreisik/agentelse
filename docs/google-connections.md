@@ -4,11 +4,11 @@ Planlar: [google-analytics-plan.md](google-analytics-plan.md), [google-search-co
 
 ## Durum (6 Ekim 2026)
 
-| Parça                                                                                                                                                                                       | Durum                                                                              |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| GA-F0 / SC-F0: koparılmış bağlantı Test ile geri gelmiyor                                                                                                                                   | Yapıldı (9b5794c)                                                                  |
-| GA-F1 / SC-F1 bölüm 1: çekirdek, izin doğrulama, PKCE, hesap kimliği, gerçek Disconnect + akıllı iptal, roller, kiracıya özel sağlık, günlük bağlantı sağlığı, gizlilik ve veri silme metni | Yapıldı                                                                            |
-| GA-F1 / SC-F1 bölüm 2: `GoogleGrant` tablosu + "Use existing connection" (100 token sınırı), Connectors diyaloğunda yeni durumlar ve mesajlar, bağlı hesaplar kartı                         | Bekliyor: `integrations/page.tsx`'te başka bir oturumun commit'siz değişikliği var |
+| Parça                                                                                                                                                                                                            | Durum             |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| GA-F0 / SC-F0: koparılmış bağlantı Test ile geri gelmiyor                                                                                                                                                        | Yapıldı (9b5794c) |
+| GA-F1 / SC-F1 bölüm 1: çekirdek, izin doğrulama, PKCE, hesap kimliği, gerçek Disconnect + akıllı iptal, roller, kiracıya özel sağlık, günlük bağlantı sağlığı, gizlilik ve veri silme metni                      | Yapıldı           |
+| GA-F1 / SC-F1 bölüm 2: "Use existing connection" (100 token sınırı; `GoogleGrant` tablosu yerine token kopyalama), Connectors diyaloğunda yeni durumlar ve mesajlar, site/alan adı uyarısı, bağlı hesaplar kartı | Yapıldı           |
 
 Ayrı entegrasyon ilkesi: iki ayrı kutucuk, iki ayrı onay ekranı (her biri yalnız kendi izni), ayrı token, seçim, Disconnect ve veri. Tek Google Cloud projesi ve tek doğrulama; sitemap gönderimi yok, iki entegrasyon da salt okunur.
 
@@ -28,8 +28,18 @@ Ayrı entegrasyon ilkesi: iki ayrı kutucuk, iki ayrı onay ekranı (her biri ya
 
 - Start: PKCE doğrulayıcısı imzalı state'te taşınır (TikTok/X deseni). State oturum kullanıcısına bağlı olduğu için çalınan bir kod başka oturumda kullanılamaz.
 - Callback: token yanıtındaki `scope` alanında servisin izni yoksa (kullanıcı onay ekranında kutuyu kaldırdıysa) bağlantı kurulmaz; `googleError=scope_missing` ile dönülür. Token iptal edilmez, çünkü iptal Cloud projesi düzeyindedir ve aynı hesabın diğer bağlantısını koparırdı. Yanıtta `scope` hiç yoksa bağlantı kurulur.
-- Metadata'ya hesap kimliği (`googleSub`) ve e-posta yazılır; yeniden bağlanınca `disconnectedAt` işareti düşer.
-- Arayüz notu: Connectors diyaloğu `scope_missing` kodunu henüz tanımıyor ve genel "Something went wrong" mesajını gösteriyor. Özel mesaj, bölüm 2'de diyalogla birlikte gelecek.
+- Metadata'ya hesap kimliği (`googleSub`) ve e-posta yazılır. Metadata'yı `google-connection-metadata.ts` kurar (OAuth dönüşü ve "Use existing connection" ortak): liste tazelenir, hâlâ erişilebilen seçim ve tarama kayıtları korunur, `disconnectedAt` işareti ve eski token'ın `googleHealth` kaydı düşer.
+- Connectors diyaloğu `scope_missing` için açık mesaj gösterir: "Google access wasn't allowed. Connect again and tick the box to allow it."
+
+## Use existing connection (`google-reuse.ts`, `reuseGoogleConnectionAction`)
+
+Google, bir Google hesabı × OAuth istemcisi için en çok 100 canlı refresh token tutar; aşılınca en eskisi uyarısız düşer. Ajans aynı hesapla çok projeye bağlanınca bu sınır dolardı. Planın `GoogleGrant` tablosu yerine şema değiştirmeyen bir yol uygulandı:
+
+- Bağlı olmayan (ya da süresi dolmuş) Google diyaloğunda, aynı workspace'te başka projelere bağlı **aynı servisin** canlı bağlantıları listelenir ("Or use a Google account already connected in this workspace"). Her Google hesabı bir kez görünür (önce `googleSub`, yoksa e-posta), yanında hangi projede bağlı olduğu yazar; en çok 20.
+- "Use" şifreli refresh token'ı ve hesap etiketini kopyalar, Google onay ekranına gidilmez, yeni token üretilmez. Seçim kaynaktan kopyalanmaz: her proje kendi mülkünü ya da sitesini seçer (bu projenin eski seçimi hâlâ erişilebilirse korunur).
+- Kaynak aynı workspace'te, aynı serviste, ACTIVE, token'lı ve başka projede olmalı; bu projede canlı bağlantı varsa üzerine yazılmaz ("Disconnect it first"). Kopyalamadan önce token yenilenir: geçersizse kaynak EXPIRED olur ve hata döner.
+- Yalnız OWNER/ADMIN: liste başka projelerin Google e-postalarını gösterdiği için de yalnız onlara hesaplanır. Denetim kaydı `integration_credential.connected` + `reusedFromCredentialId`.
+- Aynı token'ı paylaşan satırları akıllı iptal zaten tanır (aynı şifreli token): birini koparmak diğerlerini bozmaz, Google'da iptal yapılmaz. Token'ı yenilenen satırlardan biri `invalid_grant` alırsa yalnız o satır EXPIRED olur; diğerleri kendi ilk çağrılarında aynı sonuca varır.
 
 ## Disconnect (`google-disconnect.ts`)
 
@@ -41,13 +51,20 @@ Ayrı entegrasyon ilkesi: iki ayrı kutucuk, iki ayrı onay ekranı (her biri ya
 ## Roller
 
 - Connect ve ilk mülk/site seçimi: her üye (bağlayan üye seçimini de yapabilsin diye).
-- Seçili mülkü ya da siteyi değiştirmek ve Disconnect: OWNER/ADMIN. Diğer üyeler "Only workspace owners and admins can change this." görür.
+- Seçili mülkü ya da siteyi değiştirmek, Disconnect ve "Use existing connection": OWNER/ADMIN. Diğer üyeler "Only workspace owners and admins can change this." görür.
+
+## Site ve alan adı (Search Console)
+
+- Site listesinde projenin web sitesini (`Project.domain`) kapsayan mülkler önce, onların içinde Domain mülkü önce gelir (`src/lib/search-console-site.ts`).
+- Seçili site projenin sitesini kapsamıyorsa diyalog uyarır: "This site doesn't cover the project's website (…). Reports will describe a different site." Domain mülkü alan adını ve alt alan adlarını, URL önekli mülk yalnız kendi host'unu kapsar; "www." farkı eşleşme sayılır.
+- GA4 için alan adı uyarısı yok: mülk listesi alan adı taşımıyor (veri akışlarının `defaultUri`'si okunmuyor). GA-F2'de veri akışları okununca eklenebilir.
 
 ## Sağlık
 
 - **Kiracıya özel sağlık:** `GoogleApiProvider` başarısızlıkta `GOOGLE:<SINIF>` kodu döndürür. `provider-health.service.ts` → `failureDegrades` bu koda bakar: bir müşterinin AUTH, SCOPE_MISSING, PERMISSION ya da NOT_FOUND hatası paylaşılan `google-api` sağlığını düşürmez; yalnız TRANSIENT, SERVER_ERROR ve API_DISABLED düşürür.
-- **Günlük bağlantı sağlığı** (`google-connection-health.ts`, tick adımı `google-connection-health`, odak ayarından bağımsız): her ACTIVE Google bağlantısı günde bir kez kontrol edilir. Token yenilenir (süresi dolmuşsa satır EXPIRED olur), liste okunur (izin ve erişim sınanır) ve seçili mülk/site hâlâ listede mi bakılır. Sonuç metadata'nın `googleHealth` anahtarına `jsonb_set` ile yazılır: `OK`, `NEEDS_RECONNECT`, `NEEDS_PERMISSION`, `ACCESS_LOST`, `GONE`, `RATE_LIMITED`, `CHECK_FAILED`. Seçim kendiliğinden değiştirilmez. Bu durumlar bölüm 2'de Connectors diyaloğunda gösterilecek.
+- **Günlük bağlantı sağlığı** (`google-connection-health.ts`, tick adımı `google-connection-health`, odak ayarından bağımsız): her ACTIVE Google bağlantısı günde bir kez kontrol edilir. Token yenilenir (süresi dolmuşsa satır EXPIRED olur), liste okunur (izin ve erişim sınanır) ve seçili mülk/site hâlâ listede mi bakılır. Sonuç metadata'nın `googleHealth` anahtarına `jsonb_set` ile yazılır: `OK`, `NEEDS_RECONNECT`, `NEEDS_PERMISSION`, `ACCESS_LOST`, `GONE`, `RATE_LIMITED`, `CHECK_FAILED`. Seçim kendiliğinden değiştirilmez. Connectors diyaloğu bağlı bağlantıda `NEEDS_PERMISSION`, `ACCESS_LOST` ve `GONE` için uyarı gösterir; `NEEDS_RECONNECT` zaten "Needs reconnection" rozetiyle görünür, `RATE_LIMITED` ve `CHECK_FAILED` kullanıcının sorunu olmadığı için gösterilmez.
 - Süresi dolan token: `invalid_grant` → bağlantı EXPIRED; REVOKED bir satır EXPIRED'a düşmez.
+- **Bağlı hesaplar kartı** (sağ panel, `brand-overview-cards.tsx`): süresi dolan GA4 / Search Console bağlantısı kaybolmaz, amber noktalı ikonla ve "yeniden bağlanmalı" ipucuyla görünür (`ConnectedAccountState` = `reconnect`). Plan metni İngilizceye çevirmeyi öneriyordu; sağ panelin tamamı Türkçe olduğu için kart Türkçe kaldı.
 
 ## Gizlilik
 
@@ -56,7 +73,7 @@ Ayrı entegrasyon ilkesi: iki ayrı kutucuk, iki ayrı onay ekranı (her biri ya
 
 ## Testler
 
-`src/server/integrations/google/*.test.ts` (hata kataloğu, ağ kapısı ve tekrarlar, OAuth, iptal kuralı, token önbelleği, servisler), `google-disconnect.test.ts`, `google-connection-health.test.ts`, `google-actions.test.ts`, `api/integrations/google/callback/route.test.ts`, `privacy/page.test.ts` (Google bölümü ve Limited Use cümlesi).
+`src/server/integrations/google/*.test.ts` (hata kataloğu, ağ kapısı ve tekrarlar, OAuth, iptal kuralı, token önbelleği, servisler), `google-disconnect.test.ts`, `google-connection-health.test.ts`, `google-reuse.test.ts`, `google-connection-metadata.test.ts`, `google-actions.test.ts` ("Use existing connection" dahil), `api/integrations/google/callback/route.test.ts`, `lib/search-console-site.test.ts`, `connected-accounts` testleri ve `brand-summary-panel.test.ts` (yeniden bağlanma işareti), `privacy/page.test.ts` (Google bölümü ve Limited Use cümlesi).
 
 ## Sahip adımları (kod dışı)
 

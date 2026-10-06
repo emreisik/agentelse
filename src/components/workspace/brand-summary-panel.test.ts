@@ -101,7 +101,9 @@ function render(
 function between(html: string, from: string, to?: string) {
   const start = html.indexOf(from);
   expect(start).toBeGreaterThanOrEqual(0);
-  return to ? html.slice(start, html.indexOf(to, start + from.length)) : html.slice(start);
+  return to
+    ? html.slice(start, html.indexOf(to, start + from.length))
+    : html.slice(start);
 }
 
 const fullKit = {
@@ -113,12 +115,22 @@ const fullKit = {
 };
 
 const accounts: ConnectedAccount[] = [
-  { key: "instagram", label: "Instagram", state: "connected", detail: "@webhealth" },
+  {
+    key: "instagram",
+    label: "Instagram",
+    state: "connected",
+    detail: "@webhealth",
+  },
   { key: "facebook", label: "Facebook", state: "connected" },
   { key: "meta-ads", label: "Meta Ads", state: "off" },
   { key: "ga4", label: "Google Analytics 4", state: "setup" },
   { key: "search-console", label: "Search Console", state: "connected" },
-  { key: "website", label: "Website", state: "active", detail: "webhealth.com.tr" },
+  {
+    key: "website",
+    label: "Website",
+    state: "active",
+    detail: "webhealth.com.tr",
+  },
 ];
 
 describe("BrandSummaryPanel (cards)", () => {
@@ -163,7 +175,11 @@ describe("BrandSummaryPanel (cards)", () => {
 
   it("shows the name once, the site, the verified tick and an edit link into Brand Brain", () => {
     const html = render(twin(), fullKit);
-    const card = between(html, 'data-card="brand-summary"', 'data-card="collapsible-Marka kiti"');
+    const card = between(
+      html,
+      'data-card="brand-summary"',
+      'data-card="collapsible-Marka kiti"',
+    );
     expect(card).toContain("webhealth.com.tr");
     expect(card).toContain("Düzenle");
     expect(card).toContain("panel=brand-brain");
@@ -179,12 +195,19 @@ describe("BrandSummaryPanel (cards)", () => {
       twin({
         businessModel: "Sağlık turizmi",
         audience: ["Yurt dışı hastalar", "Aileler"],
-        voice: { personality: "Profesyonel, net", toneOfVoice: "net, güvenilir" },
+        voice: {
+          personality: "Profesyonel, net",
+          toneOfVoice: "net, güvenilir",
+        },
         markets: ["Türkiye", "Almanya"],
       }),
       fullKit,
     );
-    const card = between(full, 'data-card="brand-summary"', 'data-card="collapsible-Marka kiti"');
+    const card = between(
+      full,
+      'data-card="brand-summary"',
+      'data-card="collapsible-Marka kiti"',
+    );
     expect(card).toContain("Sektör");
     expect(card).toContain("Sağlık turizmi");
     expect(card).toContain("Hedef kitle");
@@ -200,8 +223,18 @@ describe("BrandSummaryPanel (cards)", () => {
       twin({ markets: [], voice: { personality: null, toneOfVoice: null } }),
       { ...fullKit, identity: null, legacyColors: [] },
     );
-    const sparseCard = between(sparse, 'data-card="brand-summary"', 'data-card="collapsible-Marka kiti"');
-    for (const label of ["Sektör", "Hedef kitle", "Ses tonu", "Pazarlar", "Renkler"]) {
+    const sparseCard = between(
+      sparse,
+      'data-card="brand-summary"',
+      'data-card="collapsible-Marka kiti"',
+    );
+    for (const label of [
+      "Sektör",
+      "Hedef kitle",
+      "Ses tonu",
+      "Pazarlar",
+      "Renkler",
+    ]) {
       expect(sparseCard).not.toContain(label);
     }
   });
@@ -218,7 +251,11 @@ describe("BrandSummaryPanel (cards)", () => {
         }),
       },
     );
-    const card = between(html, 'data-card="brand-summary"', 'data-card="collapsible-Marka kiti"');
+    const card = between(
+      html,
+      'data-card="brand-summary"',
+      'data-card="collapsible-Marka kiti"',
+    );
     expect(card).toContain("Premium klinik");
     const colors = between(card, 'data-row="brand-colors"');
     expect(colors.match(/ring-1 ring-black\/10/g)).toHaveLength(5);
@@ -242,15 +279,25 @@ describe("BrandSummaryPanel (cards)", () => {
   });
 
   it("says when the brand is still being learned, and when it is an example", () => {
-    const html = render(twin({ confidence: "low", isMock: true }), fullKit, null);
+    const html = render(
+      twin({ confidence: "low", isMock: true }),
+      fullKit,
+      null,
+    );
     expect(html).toContain("Marka profili yeni başlıyor");
     expect(html).toContain("Örnek marka profili");
-    expect(render(twin({ confidence: "high" }), fullKit)).not.toContain("Marka hâlâ öğreniliyor");
+    expect(render(twin({ confidence: "high" }), fullKit)).not.toContain(
+      "Marka hâlâ öğreniliyor",
+    );
   });
 
   it("shows only the accounts that are really linked, as icons linking to the integrations page", () => {
     const html = render(twin(), fullKit, "webhealth.com.tr", accounts);
-    const card = between(html, 'data-card="connected-accounts"', 'data-card="brand-summary"');
+    const card = between(
+      html,
+      'data-card="connected-accounts"',
+      'data-card="brand-summary"',
+    );
     expect(card).toContain('title="Instagram · @webhealth"');
     expect(card).toContain('data-account="facebook"');
     expect(card).toContain('data-account="search-console"');
@@ -261,6 +308,23 @@ describe("BrandSummaryPanel (cards)", () => {
     expect(card.match(/data-account="/g)).toHaveLength(3);
     expect(card).toContain('href="/projects/proj-1/integrations"');
     expect(card).toContain("Yönet");
+    expect(card).not.toContain("data-reconnect");
+  });
+
+  it("keeps a lapsed Google connection on the card, marked to reconnect", () => {
+    const html = render(twin(), fullKit, null, [
+      { key: "instagram", label: "Instagram", state: "off" },
+      { key: "ga4", label: "GA4", state: "reconnect", detail: "Web Health" },
+    ]);
+    const card = between(
+      html,
+      'data-card="connected-accounts"',
+      'data-card="brand-summary"',
+    );
+    expect(card).toContain('data-account="ga4"');
+    expect(card).toContain('title="GA4 · Web Health · yeniden bağlanmalı"');
+    expect(card).toContain("data-reconnect");
+    expect(card).not.toContain("Henüz bağlı hesap yok.");
   });
 
   it("invites a connection when nothing is linked, and says so when the accounts could not be read", () => {
@@ -269,12 +333,18 @@ describe("BrandSummaryPanel (cards)", () => {
       { key: "ga4", label: "Google Analytics 4", state: "setup" },
       { key: "website", label: "Website", state: "active", detail: "x.com" },
     ]);
-    const card = between(html, 'data-card="connected-accounts"', 'data-card="brand-summary"');
+    const card = between(
+      html,
+      'data-card="connected-accounts"',
+      'data-card="brand-summary"',
+    );
     expect(card).toContain("Henüz bağlı hesap yok.");
     expect(card).toContain("Hesap bağla");
     expect(card).not.toContain("data-account=");
     expect(card).not.toContain("Yönet");
-    expect(render(twin(), fullKit, null, [])).toContain("Hesap durumu şu an okunamadı.");
+    expect(render(twin(), fullKit, null, [])).toContain(
+      "Hesap durumu şu an okunamadı.",
+    );
   });
 });
 
@@ -283,7 +353,10 @@ describe("BrandSummaryPanel (visual brand kit)", () => {
     const html = render(twin(), fullKit);
     expect(html).toContain('data-kit="logo-on-light"');
     expect(html).toContain('data-kit="logo-on-dark"');
-    const onLight = html.slice(html.indexOf('data-kit="logo-on-light"'), html.indexOf('data-kit="logo-on-dark"'));
+    const onLight = html.slice(
+      html.indexOf('data-kit="logo-on-light"'),
+      html.indexOf('data-kit="logo-on-dark"'),
+    );
     expect(onLight).toContain("/api/assets/logo-dark");
     expect(onLight).toMatch(/background-color:\s*#ffffff/i);
     const onDark = html.slice(html.indexOf('data-kit="logo-on-dark"'));
@@ -327,20 +400,28 @@ describe("BrandSummaryPanel (visual brand kit)", () => {
     // No layouts saved yet: the brand's own template shown as the default
     // "Classic", with the suggested set beside it.
     expect(html).toContain("Classic");
-    expect(html).toContain("no headline · logo bottom-right corner · thin bar bottom");
+    expect(html).toContain(
+      "no headline · logo bottom-right corner · thin bar bottom",
+    );
     expect(html).toContain("Set up layouts");
     expect(html).toContain("Suggested layouts, not saved yet");
-    expect(html.match(/data-kit="layout-thumb"/g)!.length).toBeGreaterThanOrEqual(6);
+    expect(
+      html.match(/data-kit="layout-thumb"/g)!.length,
+    ).toBeGreaterThanOrEqual(6);
   });
 
   it("shows the saved default layout and says posts follow it", () => {
     const layouts = buildPresetLayouts(DEFAULT_KIT_TEMPLATE);
     const html = render(twin(), {
       ...fullKit,
-      identity: identity({ layoutTemplates: { ...layouts, defaultId: "bottom-band" } }),
+      identity: identity({
+        layoutTemplates: { ...layouts, defaultId: "bottom-band" },
+      }),
     });
     expect(html).toContain("Brand band");
-    expect(html).toContain("headline bottom, left · logo bottom-left corner · brand band bottom");
+    expect(html).toContain(
+      "headline bottom, left · logo bottom-left corner · brand band bottom",
+    );
     expect(html).toContain("Edit layouts");
     expect(html).toContain("New posts follow these layouts");
     expect(html).not.toContain("Suggested layouts, not saved yet");
@@ -370,7 +451,9 @@ describe("BrandSummaryPanel (visual brand kit)", () => {
     // The summary card shows the colours it has too.
     expect(between(html, 'data-row="brand-colors"')).toContain("#123456");
     // Default post template applies when no identity row exists.
-    expect(html).toContain("no headline · logo bottom-right corner · thin bar bottom");
+    expect(html).toContain(
+      "no headline · logo bottom-right corner · thin bar bottom",
+    );
   });
 
   it("invites a scan when there is nothing visual yet", () => {
@@ -387,8 +470,12 @@ describe("BrandSummaryPanel (visual brand kit)", () => {
     expect(html).not.toContain("COLORS");
     // With nothing to show, the kit card opens by itself so the invitation is
     // seen, and it is the only scan button on the page.
-    expect(html).toMatch(/<details[^>]*\sopen=""[^>]*data-card="collapsible-Marka kiti"/);
-    expect(html).not.toMatch(/<details[^>]*\sopen=""[^>]*data-card="collapsible-Marka stratejisi"/);
+    expect(html).toMatch(
+      /<details[^>]*\sopen=""[^>]*data-card="collapsible-Marka kiti"/,
+    );
+    expect(html).not.toMatch(
+      /<details[^>]*\sopen=""[^>]*data-card="collapsible-Marka stratejisi"/,
+    );
     expect(html.match(/Scan site/g)).toBeNull();
     // The strategy text is still reachable.
     expect(html).toContain("Marka stratejisi");
@@ -396,7 +483,14 @@ describe("BrandSummaryPanel (visual brand kit)", () => {
 
   it("derives a kit from the twin when none is passed, and handles a missing brand", () => {
     const html = render(
-      twin({ visualDNA: { description: null, colors: [{ hex: "#e11d48" }], fonts: [], logoAssetId: "logo-x" } }),
+      twin({
+        visualDNA: {
+          description: null,
+          colors: [{ hex: "#e11d48" }],
+          fonts: [],
+          logoAssetId: "logo-x",
+        },
+      }),
       null,
     );
     expect(html).toContain("#E11D48");

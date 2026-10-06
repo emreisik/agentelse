@@ -39,6 +39,16 @@ export const ADS_FLOW_COPY = {
   dsaBeneficiary: "Who benefits from this ad?",
   dsaPayor: "Who pays for it?",
   button: "Button",
+  // F5a
+  messagesGoal: "Messages",
+  messagesHint: "People start a chat with you.",
+  messagesWhere: "Where people message you",
+  whatsappNumber: "WhatsApp number your Facebook Page uses",
+  replyTime: "How fast you usually reply",
+  lpvOn: "Meta optimizes for landing page views: people who wait for your page to load.",
+  noPixel:
+    "No Meta Pixel sent events from your website this week, so Meta optimizes for link clicks, which brings more accidental taps. Add the Pixel to optimize for landing page views.",
+  messagesNeedV2: "Messages ads need the new launch. Turn it on first.",
   connect: "Connect Meta Ads",
   finishSetup: "Finish Meta Ads setup",
 

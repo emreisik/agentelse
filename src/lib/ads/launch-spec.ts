@@ -119,6 +119,9 @@ export const AdsLaunchSpecSchema = z.object({
           link: z.string().url(),
           callToAction: z.string(),
           headline: z.string().max(255).optional(),
+          // F5a: mesaj reklamı (CTA sohbeti açar; bağlantı uygulamanın kendi
+          // adresidir).
+          messaging: z.enum(["WHATSAPP", "MESSENGER", "INSTAGRAM_DIRECT"]).optional(),
         }),
         urlTags: z.string().max(1000),
       }),

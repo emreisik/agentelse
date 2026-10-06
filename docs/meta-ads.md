@@ -11,6 +11,8 @@ Plan: [meta-ads-plan.md](meta-ads-plan.md). Bu dosya, planın uygulanmış hâli
 | F1 — Erişim katmanı ve hesap modeli | Kodlandı | — |
 | F2 — Ayna ve sürekli denetim | Kodlandı | `META_ADS_SYNC=true` |
 | F3 — Güvenli lansman v2 | Kodlandı | `META_ADS_LAUNCH_V2=true` |
+| F5a — Mesaj ve trafik amaçları | Kodlandı | `META_ADS_PLANNER=true` (+ v2) |
+| F4 — Optimizasyon v2 | Kodlandı | `META_ADS_OPTIMIZER=shadow` → `on` |
 
 Kod dışı adımlar sahipte (aşağıda "Sahip adımları").
 
@@ -161,7 +163,7 @@ Bayrak: `META_ADS_SYNC=true` (kapalıyken her şey eski canlı yolla çalışır
 
 ### Pause all (`META_SAFETY_ACTION`)
 
-- Yeni yetenek (migration `20261006140100_add_meta_safety_action_capability`, `20261006150000_add_ads_launch`, `20261006150100_add_meta_launch_capability`). Kullanıcının tıklaması onaydır (L0); sistemin önerdiği duraklatma L4. İş satır içinde sürülür (`driveJobInline`), P0 şeridinde koşar.
+- Yeni yetenek (migration `20261006140100_add_meta_safety_action_capability`, `20261006150000_add_ads_launch`, `20261006150100_add_meta_launch_capability`, `20261006160000_add_ads_decision`). Kullanıcının tıklaması onaydır (L0); sistemin önerdiği duraklatma L4. İş satır içinde sürülür (`driveJobInline`), P0 şeridinde koşar.
 - "PAUSE_ALL": açık her kampanya tek yazmayla durur (alt nesneler durumu miras alır); "PAUSE": verilen nesneler. Her yazma `SET_STATUS` olarak niyet günlüğüne düşer; ayna hemen güncellenir.
 - **Acil durdurma** `META_ADS_WRITES_DISABLED=true`: reklam yazmaları durur, yalnız duraklatma ve okumalar geçer.
 
@@ -191,6 +193,30 @@ Bayrak: `META_ADS_LAUNCH_V2=true` (kapalıyken Ads kartı eski üç onaylı zinc
 - Modüller ve v2 açıkken sohbetteki "kampanya kur" isteği ve Ads sayfasının "Create an ad" düğmesi Ads kartını açar; eski oluşturma formları gizlenir. Ölü `maybeProposeMetaCampaign` silindi.
 - **Henüz yok**: Instagram kimliği seçimi (P9; IG yerleşimleri Sayfa kimliğiyle çalışır), marka düzeyinde UTM / Meta AI / DSA ayarları (varsayılanlar kullanılıyor), video kreatif (F5b).
 
+## F5a — Mesaj ve trafik amaçları
+
+Bayrak: `META_ADS_PLANNER=true` ve `META_ADS_LAUNCH_V2=true` (mesaj hedefi eski zincirde yok).
+
+- **Amaç tablosu** (`src/lib/ads/objectives.ts`): Traffic (link tıklaması / açılış sayfası görüntüleme), Awareness, Engagement, Messages (WhatsApp, Messenger, Instagram Direct; CONVERSATIONS), F5b için Leads ve Sales. P2 doğrulayıcısı bu tablodan okur.
+- **Brief**: "Messages" kartı; nereden yazılacağı (WhatsApp / Messenger / Instagram), WhatsApp'ta Sayfanın kullandığı numara, ortalama yanıt süresi (kullanıcının beyanı). Mesaj hedefinde bağlantı ve buton sorulmaz. Traffic'te son 7 günde olay gönderen piksel varsa açılış sayfası görüntüleme seçilir; yoksa "Meta optimizes for link clicks…" uyarısı.
+- **Kurulum**: mesaj ad set'i `promoted_object.page_id` (+ WhatsApp numarası) ile; kreatif CTA'sı WHATSAPP_MESSAGE / MESSAGE_PAGE / INSTAGRAM_MESSAGE (`app_destination`; test hesabında doğrulanmalı).
+- **Instagram kimliği (P9, kısmi)**: reklam hesabının kullanabildiği Instagram hesabı (`act_x/instagram_accounts`) varsa reklama `instagram_user_id` olarak gider; Instagram Direct yalnız o varken sunulur. Hesap başına 15 dk önbellek (`src/server/ads/account-assets.ts`).
+- Review notu: mesaj hedefinde "Instant Reply ve Away message kurun".
+- **Bilinçli sapma**: mesai saatleriyle zamanlama (`adset_schedule`) sunulmuyor; akış günlük bütçeyle kurulduğu için Meta'nın kuralı (yalnız `lifetime_budget`) gereği.
+
+## F4 — Optimizasyon v2
+
+Bayrak: `META_ADS_OPTIMIZER` = `off` (varsayılan) / `shadow` / `on`. Ayna (`META_ADS_SYNC`) açık olmalı.
+
+- **Kurallar** (`src/lib/ads/rules/`, saf ve testli): pencere özellikleri (bugün, dün, 3 / 7 gün, önceki 7 gün, 28 gün taban; sıklık `windowStats`'tan), G3 sonuçsuz harcama (≥ 1.000 gösterim; site dışı dönüşümde son gün hariç), O2 yüksek CPA (−%25, bugünkü harcamanın %110'u ve asgari bütçe tabanı), O3 ölçek (+%20; sıklık < 2,5, ≥ 10 sonuç), O4 yorgunluk (en az iki sinyal), O5 kaybeden reklam (Meta harcamayı zaten çekiyorsa önerilmez), O6 düşük CTR, O7 zayıf açılış, O8 learning limited, O13 zayıf izlenme, O14 kreatif ritmi. Birden çok bulgu birlikte döner.
+- **Hedef CPA**: lansmanın KPI'ı (F5b) → ad set'in kendi 28 günlük tabanı (≥ 10 sonuç) → hesabın tabanı. Hedef yoksa hedef isteyen kurallar susar.
+- **Kapılar**: öğrenme koruması (LEARNING ya da son anlamlı düzenlemeden 72 sa; acil G kuralları hariç), 24 saatte bir bütçe değişikliği, haftada iki anlamlı düzenleme, reddedilen karar 14 gün susar (sorguyla).
+- **Kayıt** (`AdsDecision`, migration `20261006160000_add_ads_decision`): parmak izi kural + nesne + ISO haftası. `shadow`'da yalnız SHADOW kaydı. `on`'da para / durum kararı sistem önerisi olarak META_*_UPDATE görevi (L4), yorgunluk ve ritim fikir havuzuna 3 konsept isteği (otomatik görsel yok), bilgi kararı Ads sayfasında "SUGGESTION" uyarısı.
+- **Uygulama**: CAS — önerildiği andaki bütçe / durum Meta'da değiştiyse yazılmaz, karar SUPERSEDED. Görev kancaları kararı APPLIED / REJECTED / EXPIRED / FAILED yapar; 3 dk sonra geri okuma → VERIFIED.
+- **Değerlendirme** (`ads-decision-lifecycle`, 30 dk): uygulamadan 7 gün sonra + olgunluk (site dışı dönüşüm 7, platform içi 2 gün); önce / sonra 7'şer gün, Poisson kapısı → WORKED / DIDNT / INCONCLUSIVE. İşe yaramayan bütçe artışına geri alma önerisi.
+- **Kart**: önerinin "Why" satırı (kanıttaki sayılarla şablon metin); son 7 günde uygulanan değişikliğe tek dokunuşla **Undo** (OWNER/ADMIN'in tıklaması onaydır).
+- **Bilinçli sapmalar**: açıklamalar şablon metindir (LLM katmanı bağlanmadı; sayılar kanıttan gelir). `ProjectGoal.currentValue` güncellenmiyor (hedef anahtarları yalnız reklam sayısına denk gelmiyor). Eski `performance-optimizer` / `meta-performance-rules` / `meta-performance-scanner` dosyaları, bayraklar canlıda açılıp en az iki hafta sorunsuz çalışana kadar silinmedi (ayna açıkken zaten atlanıyorlar).
+
 ## Sahip adımları (kod dışı)
 
 1. **Birikim raporunu oku**: yeni bir terminal sekmesinde, repo klasöründe `npm run db:report:backlog`. Çıktıyı Claude'a yapıştır.
@@ -204,3 +230,5 @@ Bayrak: `META_ADS_LAUNCH_V2=true` (kapalıyken Ads kartı eski üç onaylı zinc
 7. **Onay süresi backfill'i**: deploy'dan sonra `npm run db:backfill:approval-expiry` (kuru) → çıktıyı kontrol et → `npm run db:backfill:approval-expiry -- --apply`.
 10. **F2'yi aç**: önce test reklam hesabıyla Railway web servisine `META_ADS_SYNC=true`. İlk senkron hesabın 90 gününü çeker; Ads sayfasında "Updated … ago" görünmeli. Gerçek müşteri hesaplarında açmak Full tier onayına bağlı (plan §7).
 11. **F3'ü aç**: `META_ADS_LAUNCH_V2=true` (modüller açıkken eski formlar gizlenir). Önce test reklam hesabında bir lansman: Review'da önizlemeler ve "Meta checked…" görünmeli; Launch'ta üç halka "Created", ardından "Live". Uygulama dev moddayken reklam adımı 1885183 ile düşer (plan §7): gerçek müşteri öncesi Live mod + Full tier.
+12. **F5a**: `META_ADS_PLANNER=true` (v2 açıkken). Brief'te "Messages" kartı görünmeli; test hesabında bir WhatsApp ve bir Messenger lansmanı.
+13. **F4 gölge mod**: `META_ADS_OPTIMIZER=shadow`; en az 30 karar ya da 4 hafta sonra kararları birlikte inceleyin (kabul ≥ %60 → `on`).

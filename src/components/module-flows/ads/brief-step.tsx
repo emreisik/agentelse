@@ -19,8 +19,11 @@ import {
   ADS_CTA_LABEL,
   ADS_DURATIONS,
   ADS_LIMITS,
+  ADS_MESSAGE_APP_LABEL,
   ADS_OBJECTIVES,
   ADS_OBJECTIVE_META,
+  ADS_REPLY_TIMES,
+  ADS_REPLY_TIME_LABEL,
   DEFAULT_ADS_DURATION,
   DEFAULT_AGE_MAX,
   DEFAULT_AGE_MIN,
@@ -38,7 +41,9 @@ import {
   type AdsDuration,
   type AdsFlowState,
   type AdsGender,
+  type AdsMessageApp,
   type AdsObjective,
+  type AdsReplyTime,
   type AdsSourcePost,
 } from "@/lib/module-flows/ads/state";
 import type { CardButton } from "@/lib/works/card-action";
@@ -339,6 +344,19 @@ function BriefForm({
   const [objective, setObjective] = useState<AdsObjective>(
     brief?.objective ?? "OUTCOME_TRAFFIC",
   );
+  // F5a: mesaj hedefi Engagement amacıyla, CONVERSATIONS olayıyla kurulur.
+  const messageApps = options.goals?.messageApps ?? [];
+  const [messagesOn, setMessagesOn] = useState(Boolean(brief?.messages));
+  const [messageApp, setMessageApp] = useState<AdsMessageApp>(
+    brief?.messages?.app ?? messageApps[0] ?? "WHATSAPP",
+  );
+  const [whatsappNumber, setWhatsappNumber] = useState(
+    brief?.messages?.whatsappNumber ?? "",
+  );
+  const [replyTime, setReplyTime] = useState<AdsReplyTime>(
+    brief?.messages?.replyTime ?? "hour",
+  );
+  const messages = messagesOn && options.goals?.messages;
   const [budget, setBudget] = useState(brief ? String(brief.dailyBudget) : "");
   const [days, setDays] = useState<AdsDuration>(
     brief?.days ?? DEFAULT_ADS_DURATION,
@@ -366,18 +384,34 @@ function BriefForm({
   );
   const showDsa = targetsEuEea(countries);
 
+  const trafficEvent =
+    objective === "OUTCOME_TRAFFIC" && options.goals?.landingPageViews
+      ? "LANDING_PAGE_VIEWS"
+      : undefined;
   const input: Partial<AdsBriefInput> & Record<string, unknown> = {
     creativeId: creativeId ?? undefined,
-    objective,
+    objective: messages ? "OUTCOME_ENGAGEMENT" : objective,
     dailyBudget: numberOf(budget),
     days,
     countries,
     ageMin: numberOf(ageMin),
     ageMax: numberOf(ageMax),
     gender,
-    link: withScheme(link),
+    link: messages ? "" : withScheme(link),
     callToAction: cta,
     ...(showDsa ? { dsaBeneficiary, dsaPayor } : {}),
+    ...(messages
+      ? {
+          messages: {
+            app: messageApp,
+            ...(messageApp === "WHATSAPP" && whatsappNumber.trim()
+              ? { whatsappNumber: whatsappNumber.trim() }
+              : {}),
+            replyTime,
+          },
+        }
+      : {}),
+    ...(trafficEvent && !messages ? { trafficEvent } : {}),
   };
   const issue = briefIssue(input);
   const daily = numberOf(budget);
@@ -421,14 +455,17 @@ function BriefForm({
         >
           {ADS_OBJECTIVES.map((key) => {
             const meta = ADS_OBJECTIVE_META[key];
-            const on = objective === key;
+            const on = !messages && objective === key;
             return (
               <button
                 key={key}
                 type="button"
                 role="radio"
                 aria-checked={on}
-                onClick={() => setObjective(key)}
+                onClick={() => {
+                  setMessagesOn(false);
+                  setObjective(key);
+                }}
                 className="flex min-h-11 items-start gap-2 rounded-xl border px-3 py-2 text-left transition-colors outline-none hover:bg-[var(--ws-hover)] focus-visible:ring-2 focus-visible:ring-ring/50"
                 style={{
                   borderColor: on ? "var(--ws-accent)" : "var(--ws-border)",
@@ -457,8 +494,79 @@ function BriefForm({
               </button>
             );
           })}
+          {options.goals?.messages ? (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={Boolean(messages)}
+              onClick={() => setMessagesOn(true)}
+              className="flex min-h-11 items-start gap-2 rounded-xl border px-3 py-2 text-left transition-colors outline-none hover:bg-[var(--ws-hover)] focus-visible:ring-2 focus-visible:ring-ring/50"
+              style={{
+                borderColor: messages ? "var(--ws-accent)" : "var(--ws-border)",
+              }}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium" style={{ color: "var(--ws-text)" }}>
+                  {COPY.messagesGoal}
+                </span>
+                <span className="block text-xs" style={{ color: "var(--ws-text-2)" }}>
+                  {COPY.messagesHint}
+                </span>
+              </span>
+              {messages ? <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0" /> : null}
+            </button>
+          ) : null}
         </div>
+        {!messages && objective === "OUTCOME_TRAFFIC" && options.goals ? (
+          <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+            {options.goals.landingPageViews ? COPY.lpvOn : COPY.noPixel}
+          </p>
+        ) : null}
       </Section>
+
+      {messages ? (
+        <Section label={COPY.messagesWhere}>
+          <div className="space-y-2">
+            <div role="group" aria-label={COPY.messagesWhere} className="flex flex-wrap gap-1.5">
+              {messageApps.map((app) => (
+                <Chip key={app} active={messageApp === app} onClick={() => setMessageApp(app)}>
+                  {ADS_MESSAGE_APP_LABEL[app]}
+                </Chip>
+              ))}
+            </div>
+            {messageApp === "WHATSAPP" ? (
+              <label className="block space-y-1">
+                <span className="block text-xs" style={{ color: "var(--ws-text-2)" }}>
+                  {COPY.whatsappNumber}
+                </span>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  placeholder="+90 5xx xxx xx xx"
+                  maxLength={20}
+                  value={whatsappNumber}
+                  onChange={(event) => setWhatsappNumber(event.target.value)}
+                  className={FIELD_CLASS}
+                  style={FIELD_STYLE}
+                />
+              </label>
+            ) : null}
+            <div className="space-y-1">
+              <span className="block text-xs" style={{ color: "var(--ws-text-2)" }}>
+                {COPY.replyTime}
+              </span>
+              <div role="group" aria-label={COPY.replyTime} className="flex flex-wrap gap-1.5">
+                {ADS_REPLY_TIMES.map((value) => (
+                  <Chip key={value} active={replyTime === value} onClick={() => setReplyTime(value)}>
+                    {ADS_REPLY_TIME_LABEL[value]}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Section>
+      ) : null}
 
       <Section
         label={currency ? `${COPY.budget} (${currency})` : COPY.budget}
@@ -604,6 +712,7 @@ function BriefForm({
         </Section>
       ) : null}
 
+      {messages ? null : (
       <Section label={COPY.link} htmlFor={linkId}>
         <input
           id={linkId}
@@ -620,6 +729,9 @@ function BriefForm({
         />
       </Section>
 
+      )}
+
+      {messages ? null : (
       <Section label={COPY.button}>
         <div
           role="group"
@@ -637,6 +749,7 @@ function BriefForm({
           ))}
         </div>
       </Section>
+      )}
 
       <CardActions
         buttons={buttons}

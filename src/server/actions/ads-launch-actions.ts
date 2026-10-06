@@ -110,6 +110,7 @@ function checkOf(
     endsOn: endsOnText(spec, now),
     timezone: spec.timezone,
     featuresFallback: Boolean(validation.featuresFallback),
+    notes: validation.notes ?? [],
   };
 }
 

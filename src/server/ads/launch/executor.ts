@@ -341,6 +341,7 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
           callToAction: ad.creative.callToAction,
           headline: ad.creative.headline,
           urlTags: ad.urlTags,
+          messaging: ad.creative.messaging,
         };
         const withFeatures =
           spec.creativeFeatures.send && !ctx.progress.featuresFallback;

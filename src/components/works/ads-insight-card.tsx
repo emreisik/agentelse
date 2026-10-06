@@ -25,6 +25,7 @@ import {
 import {
   pauseAllAdsFromCardAction,
   refreshAdsPulseAction,
+  undoAdsDecisionFromCardAction,
 } from "@/server/actions/work-ads-actions";
 
 // The Meta Ads card (spec 3.12.5). Live data, never stored. Every state has
@@ -167,6 +168,24 @@ export function AdsInsightCard({
     }
   };
 
+  const undo = async (decisionId: string) => {
+    setBusyId("ads:undo");
+    setError(null);
+    try {
+      const result = await undoAdsDecisionFromCardAction(projectId, decisionId);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      host.announce(copyText("ads.undone"));
+      router.refresh();
+    } catch {
+      setError(copyText("ads.failed"));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const pauseAll = async () => {
     setBusyId("ads:pauseAllConfirm");
     setError(null);
@@ -193,6 +212,9 @@ export function AdsInsightCard({
 
   const onAct = (button: CardButton) => {
     switch (button.id) {
+      case "ads:undo":
+        if (card.undo) void undo(card.undo.decisionId);
+        return;
       case "ads:pauseAll":
         setConfirmPause(true);
         return;
@@ -301,6 +323,10 @@ export function AdsInsightCard({
     buttons.push(
       linkButton("ads:open", copyText("ads.open"), "quiet", adsHref(projectId)),
     );
+  }
+  // F4: son uygulanan değişikliği geri al.
+  if (connected && card.undo && !proposal) {
+    buttons.push(serverButton("ads:undo", copyText("ads.undo"), "quiet"));
   }
   // Pause all: açık kampanya varken her zaman erişilebilir (F2).
   if (connected && card.pauseAll && !confirmPause) {
@@ -454,6 +480,12 @@ export function AdsInsightCard({
                 proposal.proposedStatus,
               )}
             </p>
+            {proposal.reason ? (
+              <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+                <span className="font-medium">{copyText("ads.why")}: </span>
+                {proposal.reason}
+              </p>
+            ) : null}
             <CardActions buttons={rowButtons} busyId={busyId} onAct={onAct} />
           </div>
         ) : null}

@@ -158,6 +158,11 @@ export async function saveAdsBriefAction(
         gender: given.gender,
         link: given.link.trim(),
         callToAction: given.callToAction,
+        // F5a: mesaj hedefi ve trafikte optimize edilen olay.
+        ...(given.messages ? { messages: given.messages } : {}),
+        ...(given.trafficEvent && !given.messages
+          ? { trafficEvent: given.trafficEvent }
+          : {}),
         source,
         ...(account.currency ? { currency: account.currency } : {}),
         ...(account.pageName ? { pageName: account.pageName } : {}),
@@ -351,6 +356,8 @@ export async function launchAdsAction(
       if (!brief || !plan || viewStepOf(found.card.step, stored) !== "review") {
         return failed(ADS_FLOW_COPY.movedOn);
       }
+      // Eski üç onaylı zincir mesaj hedefini kuramaz (F5a yalnız v2'de).
+      if (brief.messages) return failed(ADS_FLOW_COPY.messagesNeedV2);
 
       const account = await loadAdsAccount(projectId);
       const blocked = accountBlock(account);

@@ -358,3 +358,45 @@ export async function readWindowStats(input: {
     )
   ).items as never;
 }
+
+// Reklam hesabının kullanabildiği Instagram hesapları (P9: reklamın IG
+// kimliği; boşsa IG yerleşimleri Sayfa kimliğiyle çalışır).
+export async function readAdAccountInstagram(
+  adAccountId: string,
+  accessToken: string,
+): Promise<{ id: string; username?: string }[]> {
+  const body = await metaFetch<{ data?: { id: string; username?: string }[] }>(
+    url(`${adAccountId}/instagram_accounts`, {
+      fields: "id,username",
+      limit: "25",
+      access_token: accessToken,
+    }),
+  );
+  return body.data ?? [];
+}
+
+// Hesabın pikselleri ve son 7 günde olay gelip gelmediği (açılış sayfası
+// görüntüleme optimizasyonu ancak piksel varken anlamlıdır).
+export async function readPixelSummary(
+  adAccountId: string,
+  accessToken: string,
+  now: Date = new Date(),
+): Promise<{ pixels: number; firedLast7d: boolean }> {
+  const body = await metaFetch<{
+    data?: { id: string; last_fired_time?: string; is_unavailable?: boolean }[];
+  }>(
+    url(`${adAccountId}/adspixels`, {
+      fields: "id,last_fired_time,is_unavailable",
+      access_token: accessToken,
+    }),
+  );
+  const pixels = (body.data ?? []).filter((pixel) => !pixel.is_unavailable);
+  const weekAgo = now.getTime() - 7 * 24 * 60 * 60_000;
+  return {
+    pixels: pixels.length,
+    firedLast7d: pixels.some(
+      (pixel) =>
+        Boolean(pixel.last_fired_time) && Date.parse(pixel.last_fired_time!) >= weekAgo,
+    ),
+  };
+}

@@ -5,7 +5,11 @@ import {
   type AdsLaunchSpec,
 } from "@/lib/ads/launch-spec";
 import { toMinorUnits } from "@/lib/ads/money";
-import { defaultRecipeFor } from "@/lib/ads/objectives";
+import {
+  defaultRecipeFor,
+  recipeByKey,
+  type AdsRecipe,
+} from "@/lib/ads/objectives";
 
 import {
   targetsEuEea,
@@ -27,6 +31,31 @@ export type LaunchBuildContext = {
   dsaPayor: string | null;
 };
 
+// Brief'in hedefi → tarif (F5a: mesaj ve açılış sayfası görüntüleme).
+export function recipeForBrief(
+  brief: Pick<AdsBrief, "objective" | "messages" | "trafficEvent">,
+): AdsRecipe {
+  if (brief.messages) {
+    const key =
+      brief.messages.app === "WHATSAPP"
+        ? "messages_whatsapp"
+        : brief.messages.app === "INSTAGRAM_DIRECT"
+          ? "messages_instagram"
+          : "messages_messenger";
+    return recipeByKey(key)!;
+  }
+  if (brief.objective === "OUTCOME_TRAFFIC" && brief.trafficEvent === "LANDING_PAGE_VIEWS") {
+    return recipeByKey("traffic_landing_page_views")!;
+  }
+  return defaultRecipeFor(brief.objective);
+}
+
+// WhatsApp numarası Meta'ya yalnız rakam olarak gider (ülke koduyla).
+export function whatsappDigits(number: string | undefined): string | undefined {
+  const digits = number?.replace(/[^0-9]/g, "");
+  return digits && digits.length >= 6 ? digits : undefined;
+}
+
 export function launchSpecFromFlow(input: {
   brief: AdsBrief;
   plan: AdsPlanInput;
@@ -34,7 +63,17 @@ export function launchSpecFromFlow(input: {
   activate: boolean;
 }): AdsLaunchSpec {
   const { brief, plan, context } = input;
-  const recipe = defaultRecipeFor(brief.objective);
+  const recipe = recipeForBrief(brief);
+  const messaging = brief.messages?.app;
+  const promotedObject: Record<string, string> | undefined =
+    recipe.promoted === "page" || recipe.promoted === "page_whatsapp"
+      ? {
+          page_id: context.pageId,
+          ...(messaging === "WHATSAPP" && whatsappDigits(brief.messages?.whatsappNumber)
+            ? { whatsapp_phone_number: whatsappDigits(brief.messages?.whatsappNumber)! }
+            : {}),
+        }
+      : undefined;
   const dailyMinor = toMinorUnits(brief.dailyBudget, context.currency);
   const genders: (1 | 2)[] | undefined =
     brief.gender === "men" ? [1] : brief.gender === "women" ? [2] : undefined;
@@ -62,6 +101,7 @@ export function launchSpecFromFlow(input: {
         optimizationGoal: recipe.optimizationGoal,
         billingEvent: recipe.billingEvent,
         ...(recipe.destinationType ? { destinationType: recipe.destinationType } : {}),
+        ...(promotedObject ? { promotedObject } : {}),
         targeting: {
           countries: brief.countries,
           ageMin: brief.ageMin,
@@ -80,8 +120,10 @@ export function launchSpecFromFlow(input: {
         creative: {
           imageAssetId: brief.source.assetId,
           message: plan.primaryText,
-          link: brief.link,
+          // Mesaj reklamında bağlantıyı uygulamanın adresi belirler.
+          link: brief.link || "https://www.facebook.com/",
           callToAction: brief.callToAction,
+          ...(messaging ? { messaging } : {}),
         },
         urlTags: DEFAULT_URL_TAGS,
       },
@@ -110,6 +152,7 @@ export type AdsLaunchCheck = {
   endsOn: string;
   timezone: string;
   featuresFallback: boolean;
+  notes: string[];
 };
 
 export const PREVIEW_LABEL: Readonly<Record<string, string>> = {

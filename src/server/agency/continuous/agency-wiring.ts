@@ -34,6 +34,9 @@ import { AdsDigest } from "@/server/ads/guard/digest";
 import { AdsRetention } from "@/server/ads/guard/retention";
 import { AdsGuard } from "@/server/ads/guard/watchdogs";
 import { LaunchWatchdog } from "@/server/ads/guard/launch-watchdog";
+import { AdsDecisions } from "@/server/ads/decisions";
+import { AdsOptimizer } from "@/server/ads/optimizer";
+import { claimPeriodic } from "@/server/observability/periodic";
 import { AdsSync } from "@/server/ads/sync/runner";
 import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
 import { StrategyEngine } from "@/server/agency/strategy/strategy-service";
@@ -176,6 +179,23 @@ registerAgencyTickStep({
 registerAgencyTickStep({
   name: "meta-launch-watchdog",
   run: () => LaunchWatchdog.run(),
+});
+// F4 (META_ADS_OPTIMIZER=shadow|on): rules over the mirror once a day per
+// account, and the decisions' lifecycle (expiry, read-back, matured
+// evaluation) every 30 minutes.
+registerAgencyTickStep({
+  name: "meta-ads-optimizer",
+  run: () => AdsOptimizer.runDue(2),
+});
+registerAgencyTickStep({
+  name: "ads-decision-lifecycle",
+  run: async () => {
+    if (!(await claimPeriodic("ads.decisions", 30 * 60_000))) return 0;
+    const expired = await AdsDecisions.expireDue();
+    const verified = await AdsDecisions.verifyDue(10);
+    const evaluated = await AdsDecisions.evaluateDue(20);
+    return expired + verified + evaluated;
+  },
 });
 registerAgencyTickStep({
   name: "ads-daily-digest",
@@ -389,5 +409,14 @@ registerAgencyTickStep({
   name: "strategy-synthesis",
   run: () => StrategyEngine.resynthesizeDue(5),
 });
+
+// F4: an optimization decision follows its task (applied, rejected, expired,
+// superseded by a CAS miss).
+registerTaskCompletedHandler(async (taskId) => {
+  await AdsDecisions.onTaskCompleted(taskId);
+}, "ads-decision-applied");
+registerTaskTerminalHandler(async (taskId, status) => {
+  await AdsDecisions.onTaskTerminal(taskId, status);
+}, "ads-decision-terminal");
 
 export const AGENCY_WIRING_LOADED = true;

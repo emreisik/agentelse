@@ -46,7 +46,11 @@ export type AdsInsightCardData = {
     // offered (the proposal is an absolute budget applied as is).
     state: "pending" | "changed";
     changeText: string;
+    // F4: the rule's own explanation ("why"), numbers from the evidence.
+    reason?: string;
   };
+  // F4: the newest applied change of the last 7 days, undone in one tap.
+  undo?: { decisionId: string; text: string };
   // Further pending proposals the card does not show.
   more?: number;
   // F2: açık CRITICAL/WARN uyarılar ve "Pause all" (çalışan kampanya varsa).
@@ -319,6 +323,7 @@ export type AdsPulse = {
   alerts?: AdsPulseAlert[];
   runningCampaigns?: number;
   staleAfterMs?: number;
+  undo?: { decisionId: string; text: string };
 };
 
 function dateText(iso: string): string {
@@ -377,6 +382,7 @@ function proposalOf(
             currency,
             first.proposedStatus,
           ),
+          ...(first.reason ? { reason: first.reason } : {}),
         },
     ...(more > 0 ? { more } : {}),
   };
@@ -490,6 +496,7 @@ export function buildAdsInsight(
     ...(pulse.runningCampaigns
       ? { pauseAll: { campaigns: pulse.runningCampaigns } }
       : {}),
+    ...(pulse.undo ? { undo: pulse.undo } : {}),
   };
 
   if (stale) {

@@ -183,6 +183,9 @@ export function LaunchCheckPanel({
         {check.spendCap ? <p>{COPY.spendCap(check.spendCap)}</p> : null}
         <p>{COPY.endsOn(check.endsOn)}</p>
         {check.featuresFallback ? <p>{COPY.featuresOff}</p> : null}
+        {check.notes.map((note) => (
+          <p key={note}>{note}</p>
+        ))}
       </div>
     </div>
   );

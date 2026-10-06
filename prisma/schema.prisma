@@ -3493,3 +3493,71 @@ model AdsLaunch {
   @@index([projectId, status])
   @@index([status, updatedAt])
 }
+
+// Optimizasyon kararının durumu (docs/meta-ads-plan.md §3.5).
+enum AdsDecisionStatus {
+  SHADOW
+  PROPOSED
+  APPROVED
+  REJECTED
+  EXPIRED
+  SUPERSEDED
+  APPLYING
+  APPLIED
+  VERIFIED
+  FAILED
+  ROLLED_BACK
+}
+
+// Reklam otonomisi (F7): Suggest (öneri), Guarded (yalnız riski azaltan
+// otomatik), Full (zarf içinde otomatik).
+enum AdsAutonomyLevel {
+  SUGGEST
+  GUARDED
+  FULL
+}
+
+// Optimizasyon karar kaydı (F4): her değişiklik öneri → onay → uygulama →
+// geri okuma → değerlendirme → geri alma zincirini izler. Gölge modda yalnız
+// SHADOW yazılır. Kurallar deterministiktir; metin yalnız açıklamadır.
+model AdsDecision {
+  id           String            @id @default(cuid())
+  workspaceId  String
+  projectId    String
+  adsAccountId String
+  level        AdsLevel
+  externalId   String
+  // "O2_HIGH_CPA"
+  ruleKey      String
+  ruleVersion  Int
+  // PAUSE, BUDGET_DOWN, BUDGET_UP, CREATIVE_REFRESH, ARCHIVE, NOTIFY, ROLLBACK
+  kind         String
+  severity     AdsSeverity
+  status       AdsDecisionStatus
+  autonomy     AdsAutonomyLevel  @default(SUGGEST)
+  // Pencereler, metrikler, geçen kapılar.
+  evidence     Json
+  explanation  String
+  // { field, from, to }: "from" uygulamada CAS için.
+  change       Json?
+  // kural + nesne + hafta
+  fingerprint  String            @unique
+  approvalId   String?
+  taskId       String?
+  expiresAt    DateTime?
+  appliedAt    DateTime?
+  verifiedAt   DateTime?
+  // Olgunluk gecikmesiyle değerlendirme zamanı.
+  evaluateAfter DateTime?
+  evaluatedAt  DateTime?
+  // WORKED | DIDNT | INCONCLUSIVE
+  outcome      String?
+  outcomeData  Json?
+  rollbackOfId String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([projectId, status])
+  @@index([adsAccountId, externalId, ruleKey])
+  @@index([status, evaluateAfter])
+}

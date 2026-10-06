@@ -9,6 +9,11 @@ import {
   pauseAllAdsAction,
   type PauseResult,
 } from "@/server/actions/ads-guard-actions";
+import { after } from "next/server";
+import { AdsAccounts } from "@/server/ads/accounts";
+import { AdsDecisions } from "@/server/ads/decisions";
+import { driveLaunchInline } from "@/server/ads/launch/drive";
+import { applyApprovalDecision } from "@/server/commands/approval-decisions";
 import { buildAdsDigest } from "@/lib/works/ads-insight";
 import { copyText } from "@/lib/works/copy";
 import {
@@ -220,4 +225,59 @@ export async function pauseAllAdsFromCardAction(
   projectId: string,
 ): Promise<PauseResult> {
   return pauseAllAdsAction(projectId);
+}
+
+// F4 "Undo": the newest applied change goes back to its previous value. The
+// rollback is a task of its own; an owner's or admin's tap approves it at
+// once and it runs right after the response.
+export async function undoAdsDecisionFromCardAction(
+  projectId: string,
+  decisionId: string,
+): Promise<{ ok: true; waitingAdmin?: boolean } | { ok: false; message: string }> {
+  return guardedAction(
+    "ads-undo",
+    async (): Promise<{ ok: true; waitingAdmin?: boolean } | { ok: false; message: string }> => {
+      const gate = await authorizeWorks(projectId, BUCKET);
+      if (!gate.ok) return { ok: false, message: gate.message };
+      if (!validId(decisionId)) return { ok: false, message: copyText("ads.failed") };
+      const decision = await prisma.adsDecision.findFirst({
+        where: { id: decisionId, projectId },
+        select: { id: true },
+      });
+      if (!decision) return { ok: false, message: copyText("ads.undoGone") };
+      const account = await AdsAccounts.resolve(projectId);
+      const rolled = await AdsDecisions.rollback(decision.id, {
+        actor: "USER",
+        userId: gate.auth.userId,
+        currency: account.currency ?? null,
+      });
+      if (!rolled) return { ok: false, message: copyText("ads.undoGone") };
+      const approval = await prisma.approval.findFirst({
+        where: { taskId: rolled.taskId, status: "PENDING" },
+      });
+      if (approval) {
+        try {
+          await applyApprovalDecision({
+            approval,
+            to: "APPROVED",
+            reviewedByUserId: gate.auth.userId,
+            actorType: "USER",
+          });
+        } catch {
+          refreshWorkPages(projectId);
+          return { ok: true, waitingAdmin: true };
+        }
+      }
+      const job = await prisma.executionJob.findFirst({
+        where: { taskId: rolled.taskId },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+      // The same inline driver as a launch: claims the dispatch, starts the
+      // job and follows it; the worker takes over if the budget runs out.
+      if (job) after(() => driveLaunchInline(job.id, 60_000));
+      refreshWorkPages(projectId);
+      return { ok: true };
+    },
+  );
 }

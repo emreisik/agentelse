@@ -5,6 +5,7 @@ import { isDelivering } from "@/lib/ads/mirror";
 import { nameWithoutTag } from "@/lib/ads/operation-tag";
 import { prisma } from "@/lib/prisma";
 import { AdsAlerts } from "@/server/ads/guard/alerts";
+import { AdsDecisions } from "@/server/ads/decisions";
 import { AdsMirror } from "@/server/ads/mirror-reads";
 import {
   MAX_DIGEST_CAMPAIGNS,
@@ -196,10 +197,11 @@ async function loadMirror(
   if (!AdsFlags.sync()) return null;
   const account = await AdsMirror.accountFor(projectId);
   if (!account?.lastStructureAt) return null;
-  const [campaigns, insights, alerts] = await Promise.all([
+  const [campaigns, insights, alerts, undoable] = await Promise.all([
     AdsMirror.objects(account, "CAMPAIGN"),
     AdsMirror.insightsByObject(account, "CAMPAIGN", "last_7d", { now }),
     AdsAlerts.listOpen(projectId, 5),
+    AdsDecisions.undoable(projectId, now).catch(() => null),
   ]);
   const adSets = await AdsMirror.objects(account, "ADSET");
   const running = campaigns.filter(
@@ -238,6 +240,9 @@ async function loadMirror(
     lastScanAt: at,
     failureCount: account.consecutiveFailures,
     runningCampaigns: running.length,
+    ...(undoable
+      ? { undo: { decisionId: undoable.id, text: undoable.explanation } }
+      : {}),
     // Teslimat sürerken ayna 30 dakikada bir tazelenir: 2 saatten eskisi bayat.
     staleAfterMs: running.length > 0 ? 2 * 60 * 60_000 : undefined,
     alerts: alerts

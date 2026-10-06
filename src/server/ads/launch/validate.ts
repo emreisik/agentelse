@@ -16,6 +16,7 @@ import { safeTimezone } from "@/lib/ads/sync-plan";
 import type { LaunchBuildContext } from "@/lib/module-flows/ads/launch";
 import { prisma } from "@/lib/prisma";
 import { AdsAccounts } from "@/server/ads/accounts";
+import { adsAccountAssets } from "@/server/ads/account-assets";
 import { AdsMirror } from "@/server/ads/mirror-reads";
 import {
   MetaApiError,
@@ -51,6 +52,8 @@ const PREVIEW_FORMATS = [
 export type LaunchValidation = {
   checkedAt: string;
   issues: LaunchIssue[];
+  // Bilgi notları (mesaj hedefinde otomatik yanıt, LPV açıklaması...).
+  notes: string[];
   previews: { format: string; src: string }[];
   envelopeMinor: number;
   spendCapMinor: number | null;
@@ -158,11 +161,14 @@ export async function prepareLaunch(input: {
       const facts = await accountFacts(input.projectId, adAccountId, account.accessToken, now);
       const currency = facts.currency ?? account.currency ?? null;
       if (!currency) return { ok: false as const, message: "Meta didn't say which currency this ad account uses." };
+      // P9: reklam hesabının Instagram kimliği (yoksa Sayfa kimliği).
+      const assets = await adsAccountAssets(input.projectId, now).catch(() => null);
       const spec = input.build({
         adAccountId,
         currency,
         timezone: safeTimezone(facts.timezone),
         pageId: account.pageId!,
+        ...(assets?.instagramUserId ? { instagramUserId: assets.instagramUserId } : {}),
         minCampaignSpendCapMinor: facts.minCampaignSpendCapMinor,
         dsaBeneficiary: facts.dsaBeneficiary ?? null,
         dsaPayor: facts.dsaPayor ?? null,
@@ -179,9 +185,28 @@ export async function prepareLaunch(input: {
         delete progress.images;
       }
 
+      const messaging = spec.ads.find((ad) => ad.creative.messaging)?.creative.messaging;
+      const notes: string[] = [];
+      if (messaging) {
+        notes.push(
+          "Set an Instant Reply and an Away message in Meta Business Suite so people get an answer outside your hours.",
+        );
+      }
+      if (spec.adSets.some((adSet) => adSet.optimizationGoal === "LANDING_PAGE_VIEWS")) {
+        notes.push("Meta shows the ad to people likely to wait for your page to load, not just to tap.");
+      }
+      if (messaging === "INSTAGRAM_DIRECT" && !spec.instagramUserId) {
+        issues.push({
+          rule: "P9",
+          field: "adSets.0.destinationType",
+          severity: "block",
+          message: "Connect an Instagram account to this ad account to get messages on Instagram.",
+        });
+      }
       const validation: LaunchValidation = {
         checkedAt: now.toISOString(),
         issues,
+        notes,
         previews: [],
         envelopeMinor: envelopeMinor(spec),
         spendCapMinor: spec.guards.campaignSpendCapMinor,
@@ -242,6 +267,7 @@ export async function prepareLaunch(input: {
             callToAction: ad.creative.callToAction,
             headline: ad.creative.headline,
             urlTags: ad.urlTags,
+            messaging: ad.creative.messaging,
             validateOnly: true,
           };
           try {
@@ -275,6 +301,7 @@ export async function prepareLaunch(input: {
               link: first.creative.link,
               callToAction: first.creative.callToAction,
               headline: first.creative.headline,
+              messaging: first.creative.messaging,
             }),
             ...(spec.creativeFeatures.send && !progress.featuresFallback
               ? { degrees_of_freedom_spec: creativeFeaturesSpec() }

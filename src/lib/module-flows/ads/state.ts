@@ -72,6 +72,27 @@ export const ADS_CTA_LABEL: Readonly<Record<AdsCallToAction, string>> = {
   GET_OFFER: "Get offer",
 };
 
+// F5a: mesaj hedefi (CONVERSATIONS). Instagram Direct yalnız reklam hesabının
+// kullanabildiği bir Instagram hesabı varken sunulur.
+export const ADS_MESSAGE_APPS = ["WHATSAPP", "MESSENGER", "INSTAGRAM_DIRECT"] as const;
+export type AdsMessageApp = (typeof ADS_MESSAGE_APPS)[number];
+
+export const ADS_MESSAGE_APP_LABEL: Readonly<Record<AdsMessageApp, string>> = {
+  WHATSAPP: "WhatsApp",
+  MESSENGER: "Messenger",
+  INSTAGRAM_DIRECT: "Instagram",
+};
+
+// Mesajlara ortalama yanıt süresi (kullanıcının beyanı; plan ve özet için).
+export const ADS_REPLY_TIMES = ["minutes", "hour", "day"] as const;
+export type AdsReplyTime = (typeof ADS_REPLY_TIMES)[number];
+
+export const ADS_REPLY_TIME_LABEL: Readonly<Record<AdsReplyTime, string>> = {
+  minutes: "Within minutes",
+  hour: "Within an hour",
+  day: "Within a day",
+};
+
 export const ADS_GENDERS = ["all", "men", "women"] as const;
 export type AdsGender = (typeof ADS_GENDERS)[number];
 
@@ -157,12 +178,36 @@ const briefFields = z.object({
   ageMin: z.number().int().min(ADS_LIMITS.minAge).max(ADS_LIMITS.maxAge),
   ageMax: z.number().int().min(ADS_LIMITS.minAge).max(ADS_LIMITS.maxAge),
   gender: z.enum(ADS_GENDERS),
-  link: z.string().max(ADS_LIMITS.link).refine(isWebLink),
+  // Mesaj hedefinde bağlantı yoktur (kişi sohbete gider): boş olabilir.
+  link: z.string().max(ADS_LIMITS.link),
   callToAction: z.enum(ADS_CTAS),
   // DSA: "Who benefits from this ad?" / "Who pays for it?" (yalnız AB/AEA).
   dsaBeneficiary: dsaField,
   dsaPayor: dsaField,
+  // F5a: mesaj hedefi ve trafikte optimize edilen olay.
+  messages: z
+    .object({
+      app: z.enum(ADS_MESSAGE_APPS),
+      whatsappNumber: z
+        .string()
+        .trim()
+        .regex(/^\+?[0-9][0-9 ()-]{5,19}$/)
+        .optional(),
+      replyTime: z.enum(ADS_REPLY_TIMES).optional(),
+    })
+    .optional(),
+  trafficEvent: z.enum(["LINK_CLICKS", "LANDING_PAGE_VIEWS"]).optional(),
 });
+
+// Bağlantı mesaj hedefi dışında zorunludur; mesaj hedefi Engagement
+// amacıyla kurulur, WhatsApp'ta numara istenir.
+const linkWhenNeeded = (value: { link: string; messages?: unknown }) =>
+  Boolean(value.messages) ? !value.link || isWebLink(value.link) : isWebLink(value.link);
+const messagesOnEngagement = (value: { objective: string; messages?: unknown }) =>
+  !value.messages || value.objective === "OUTCOME_ENGAGEMENT";
+const whatsappNumberGiven = (value: {
+  messages?: { app: string; whatsappNumber?: string };
+}) => value.messages?.app !== "WHATSAPP" || Boolean(value.messages.whatsappNumber);
 
 const agesInOrder = (value: { ageMin: number; ageMax: number }) =>
   value.ageMin <= value.ageMax;
@@ -179,7 +224,10 @@ const dsaWhenEu = (value: {
 export const AdsBriefInputSchema = briefFields
   .extend({ creativeId: idField })
   .refine(agesInOrder, { path: ["ageMax"] })
-  .refine(dsaWhenEu, { path: ["dsaBeneficiary"] });
+  .refine(dsaWhenEu, { path: ["dsaBeneficiary"] })
+  .refine(linkWhenNeeded, { path: ["link"] })
+  .refine(messagesOnEngagement, { path: ["objective"] })
+  .refine(whatsappNumberGiven, { path: ["messages"] });
 export type AdsBriefInput = z.infer<typeof AdsBriefInputSchema>;
 
 // The post the ad is made from, frozen by the server when the Brief is saved:
@@ -206,7 +254,8 @@ const AdsBriefSchema = briefFields
     // is refused if another account is selected since.
     adAccountId: z.string().max(64).optional(),
   })
-  .refine(agesInOrder, { path: ["ageMax"] });
+  .refine(agesInOrder, { path: ["ageMax"] })
+  .refine(linkWhenNeeded, { path: ["link"] });
 export type AdsBrief = z.infer<typeof AdsBriefSchema>;
 
 const nameField = z.string().trim().min(1).max(ADS_LIMITS.name);
@@ -330,6 +379,14 @@ export type AdsBriefOptions = {
   account: AdsAccountView;
   posts: AdsSourcePost[];
   defaults: { link?: string; countries: string[] };
+  // F5a: sunulan hedefler (bayrak + hazır liste) ve hesabın durumu.
+  goals?: {
+    messages: boolean;
+    messageApps: AdsMessageApp[];
+    landingPageViews: boolean;
+  };
+  // Hesapta son 7 günde olay gönderen bir Meta Pixel var mı?
+  hasPixel?: boolean;
 };
 
 // A project's markets as ad countries: the ones the targeting list knows.
@@ -355,6 +412,7 @@ export const ADS_BRIEF_ISSUE = {
   ages: "Ages run from 13 to 65, the first not above the second.",
   link: "Enter your website link, starting with https://.",
   dsa: "Ads shown in the EU must say who benefits from the ad and who pays for it.",
+  whatsapp: "Enter the WhatsApp number your Facebook Page uses.",
   other: "Check the brief.",
 } as const;
 
@@ -366,6 +424,7 @@ const ISSUE_ORDER: readonly [string, string][] = [
   ["countries", ADS_BRIEF_ISSUE.countries],
   ["dsaBeneficiary", ADS_BRIEF_ISSUE.dsa],
   ["dsaPayor", ADS_BRIEF_ISSUE.dsa],
+  ["messages", ADS_BRIEF_ISSUE.whatsapp],
   ["ageMin", ADS_BRIEF_ISSUE.ages],
   ["ageMax", ADS_BRIEF_ISSUE.ages],
   ["link", ADS_BRIEF_ISSUE.link],
@@ -495,12 +554,14 @@ export function defaultAdsPlan(
   brief: Pick<
     AdsBrief,
     "source" | "objective" | "countries" | "ageMin" | "ageMax" | "gender"
-  >,
+  > & Partial<Pick<AdsBrief, "messages">>,
 ): AdsPlanInput {
   const caption = adTextFrom(brief.source.caption ?? "");
   const topic =
     clipWords(brief.source.title || caption || "Post", 60) || "Post";
-  const goal = ADS_OBJECTIVE_META[brief.objective].label;
+  const goal = brief.messages
+    ? "Messages"
+    : ADS_OBJECTIVE_META[brief.objective].label;
   return {
     campaignName: clipWords(`${topic} · ${goal}`, ADS_LIMITS.name),
     adSetName: clipWords(

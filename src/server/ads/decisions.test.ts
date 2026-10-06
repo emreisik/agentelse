@@ -1,0 +1,79 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const db = vi.hoisted(() => ({
+  decisionFindFirst: vi.fn(),
+  decisionUpdateMany: vi.fn(),
+  approvalFindUnique: vi.fn(),
+  jobFindFirst: vi.fn(),
+}));
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    adsDecision: { findFirst: db.decisionFindFirst, updateMany: db.decisionUpdateMany },
+    approval: { findUnique: db.approvalFindUnique },
+    executionJob: { findFirst: db.jobFindFirst },
+  },
+}));
+vi.mock("@/server/ads/accounts", () => ({ AdsAccounts: {} }));
+vi.mock("@/server/commands/task-planner", () => ({ TaskPlanner: {} }));
+vi.mock("@/server/integrations/meta/launch-writes", () => ({ readBack: vi.fn() }));
+vi.mock("@/server/integrations/meta/call-context", () => ({
+  withMetaCallContext: (_c: unknown, run: () => unknown) => run(),
+}));
+
+import { AdsDecisions, changeOf } from "./decisions";
+
+const now = new Date("2026-10-06T10:00:00Z");
+
+describe("AdsDecisions lifecycle", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db.decisionUpdateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("applies on completion and waits for mature data before judging", async () => {
+    db.decisionFindFirst.mockResolvedValue({ id: "d1", evidence: { offsite: true }, rollbackOfId: null });
+    await AdsDecisions.onTaskCompleted("t1", now);
+    const data = db.decisionUpdateMany.mock.calls[0]![0].data;
+    expect(data.status).toBe("APPLIED");
+    // 7-day after window + 7 days of maturity for off-site conversions.
+    expect(data.evaluateAfter.toISOString()).toBe("2026-10-20T10:00:00.000Z");
+  });
+
+  it("marks the original rolled back when an undo lands", async () => {
+    db.decisionFindFirst.mockResolvedValue({ id: "d2", evidence: {}, rollbackOfId: "d1" });
+    await AdsDecisions.onTaskCompleted("t2", now);
+    expect(db.decisionUpdateMany.mock.calls[1]![0]).toEqual({
+      where: { id: "d1" },
+      data: { status: "ROLLED_BACK" },
+    });
+  });
+
+  it("maps a stopped task to the decision's end", async () => {
+    db.decisionFindFirst.mockResolvedValue({ id: "d1", approvalId: "ap1" });
+    db.approvalFindUnique.mockResolvedValue({ status: "REJECTED" });
+    db.jobFindFirst.mockResolvedValue(null);
+    await AdsDecisions.onTaskTerminal("t1", "CANCELLED");
+    expect(db.decisionUpdateMany.mock.calls[0]![0].data.status).toBe("REJECTED");
+
+    db.approvalFindUnique.mockResolvedValue({ status: "APPROVED" });
+    db.jobFindFirst.mockResolvedValue({ errorCode: "META:STATE:superseded" });
+    await AdsDecisions.onTaskTerminal("t1", "FAILED");
+    expect(db.decisionUpdateMany.mock.calls[1]![0].data.status).toBe("SUPERSEDED");
+
+    db.jobFindFirst.mockResolvedValue({ errorCode: "META:VALIDATION:100" });
+    await AdsDecisions.onTaskTerminal("t1", "FAILED");
+    expect(db.decisionUpdateMany.mock.calls[2]![0].data.status).toBe("FAILED");
+  });
+
+  it("reads a change defensively", () => {
+    expect(changeOf({ change: { field: "dailyBudgetMinor", from: 1, to: 2 } })).toEqual({
+      field: "dailyBudgetMinor",
+      from: 1,
+      to: 2,
+    });
+    expect(changeOf({ change: null })).toBeNull();
+    expect(changeOf({ change: { field: "status" } })).toBeNull();
+  });
+});

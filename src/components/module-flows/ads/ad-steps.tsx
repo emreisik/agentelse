@@ -6,6 +6,7 @@ import { assetUrl } from "@/lib/asset-url";
 import { ADS_FLOW_COPY } from "@/lib/module-flows/ads/copy";
 import {
   ADS_CTA_LABEL,
+  ADS_MESSAGE_APP_LABEL,
   ADS_OBJECTIVE_META,
   audienceLine,
   linkDomain,
@@ -120,14 +121,21 @@ export function AdsCreateStep({
 
 export function AdsSummary({ brief, plan }: Pick<StepProps, "brief" | "plan">) {
   const objective = ADS_OBJECTIVE_META[brief.objective];
+  const goal = brief.messages
+    ? `${COPY.messagesGoal} · ${ADS_MESSAGE_APP_LABEL[brief.messages.app]}`
+    : brief.trafficEvent === "LANDING_PAGE_VIEWS"
+      ? `${objective.label} · landing page views`
+      : `${objective.label} · ${objective.goalLabel}`;
   const rows: [string, string][] = [
-    [COPY.summary.goal, `${objective.label} · ${objective.goalLabel}`],
+    [COPY.summary.goal, goal],
     [COPY.summary.budget, spendLine(brief)],
     [COPY.summary.audience, audienceLine(brief)],
-    [
-      COPY.summary.link,
-      `${linkDomain(brief.link)} · ${ADS_CTA_LABEL[brief.callToAction]}`,
-    ],
+    brief.messages
+      ? [COPY.summary.link, ADS_MESSAGE_APP_LABEL[brief.messages.app]]
+      : [
+          COPY.summary.link,
+          `${linkDomain(brief.link)} · ${ADS_CTA_LABEL[brief.callToAction]}`,
+        ],
     [COPY.summary.post, brief.source.title],
     [
       COPY.summary.names,

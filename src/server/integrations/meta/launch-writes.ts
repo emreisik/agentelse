@@ -132,24 +132,46 @@ export type CreativeInput = {
   callToAction: string;
   headline?: string;
   urlTags?: string;
+  messaging?: "WHATSAPP" | "MESSENGER" | "INSTAGRAM_DIRECT";
   // K14: Meta AI dönüşümleri açıkça; reddedilirse gönderilmeden denenir.
   features?: { send: boolean; multiAdvertiser: "OPT_IN" | "OPT_OUT" };
   validateOnly?: boolean;
 };
 
+// Mesaj reklamının CTA'sı ve bağlantısı (F5a; test hesabında doğrulanmalı):
+// kişi uygulamadaki sohbete gider.
+export const MESSAGING_CTA: Readonly<
+  Record<"WHATSAPP" | "MESSENGER" | "INSTAGRAM_DIRECT", { type: string; link: string }>
+> = {
+  WHATSAPP: { type: "WHATSAPP_MESSAGE", link: "https://api.whatsapp.com/send" },
+  MESSENGER: { type: "MESSAGE_PAGE", link: "https://fb.com/messenger_doc/" },
+  INSTAGRAM_DIRECT: { type: "INSTAGRAM_MESSAGE", link: "https://www.instagram.com/" },
+};
+
 export function objectStorySpec(input: Pick<
   CreativeInput,
-  "pageId" | "instagramUserId" | "imageHash" | "message" | "link" | "callToAction" | "headline"
+  | "pageId"
+  | "instagramUserId"
+  | "imageHash"
+  | "message"
+  | "link"
+  | "callToAction"
+  | "headline"
+  | "messaging"
 >) {
+  const messaging = input.messaging ? MESSAGING_CTA[input.messaging] : null;
+  const link = messaging?.link ?? input.link;
   return {
     page_id: input.pageId,
     ...(input.instagramUserId ? { instagram_user_id: input.instagramUserId } : {}),
     link_data: {
       image_hash: input.imageHash,
-      link: input.link,
+      link,
       message: input.message,
       ...(input.headline ? { name: input.headline } : {}),
-      call_to_action: { type: input.callToAction, value: { link: input.link } },
+      call_to_action: messaging
+        ? { type: messaging.type, value: { app_destination: input.messaging } }
+        : { type: input.callToAction, value: { link } },
     },
   };
 }

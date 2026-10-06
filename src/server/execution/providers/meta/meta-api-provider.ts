@@ -62,6 +62,7 @@ import {
 } from "@/server/integrations/meta/error-catalog";
 import { AdsOperations } from "@/server/ads/operations";
 import { LaunchExecutor } from "@/server/ads/launch/executor";
+import { readBack } from "@/server/integrations/meta/launch-writes";
 import { taggedName } from "@/lib/ads/operation-tag";
 import {
   loadProviderResult,
@@ -518,6 +519,36 @@ function updateRequestSummary(
     if (payload[key] !== undefined) summary[key] = payload[key];
   }
   return summary;
+}
+
+// F4 CAS: kararın beklediği değer (bütçe ya da durum) Meta'da hâlâ öyle mi?
+// Beklenen alan yoksa (elle düzenleme, eski öneri) kontrol yapılmaz.
+async function decisionSuperseded(
+  objectId: string,
+  payload: Record<string, unknown>,
+  accessToken: string,
+): Promise<StoredResult | null> {
+  const expectedBudget =
+    typeof payload.expectedDailyBudgetCents === "number" ? payload.expectedDailyBudgetCents : null;
+  const expectedStatus = typeof payload.expectedStatus === "string" ? payload.expectedStatus : null;
+  if (expectedBudget === null && expectedStatus === null) return null;
+  const fields = [
+    ...(expectedBudget !== null ? ["daily_budget"] : []),
+    ...(expectedStatus !== null ? ["configured_status"] : []),
+  ].join(",");
+  const read = await readBack<{ daily_budget?: string; configured_status?: string }>(
+    objectId,
+    accessToken,
+    fields,
+  );
+  const budgetMoved = expectedBudget !== null && Number(read.daily_budget ?? NaN) !== expectedBudget;
+  const statusMoved = expectedStatus !== null && read.configured_status !== expectedStatus;
+  if (!budgetMoved && !statusMoved) return null;
+  return {
+    status: "FAILED",
+    errorMessage: "This changed in Meta since it was suggested, so it wasn't applied.",
+    errorCode: "META:STATE:superseded",
+  };
 }
 
 export class MetaApiProvider implements ExecutionProvider {
@@ -1020,6 +1051,7 @@ export class MetaApiProvider implements ExecutionProvider {
             payload.campaignId,
             callContext.account,
             payload,
+            accessToken,
             () => this.updateCampaign(metadata, accessToken, payload),
           );
         case "META_ADSET_CREATE":
@@ -1031,6 +1063,7 @@ export class MetaApiProvider implements ExecutionProvider {
             payload.adSetId,
             callContext.account,
             payload,
+            accessToken,
             () => this.updateAdSet(metadata, accessToken, payload),
           );
         case "META_AD_CREATE":
@@ -1051,6 +1084,7 @@ export class MetaApiProvider implements ExecutionProvider {
             payload.adId,
             callContext.account,
             payload,
+            accessToken,
             () =>
               this.updateAd(
                 metadata,
@@ -1476,8 +1510,15 @@ export class MetaApiProvider implements ExecutionProvider {
     target: unknown,
     adAccountId: string | undefined,
     payload: Record<string, unknown>,
+    accessToken: string,
     run: () => Promise<StoredResult>,
   ): Promise<StoredResult> {
+    // Optimizasyon kararı (F4) CAS'le uygulanır: önerildiği andaki değer
+    // Meta'da değiştiyse yazılmaz; karar SUPERSEDED olur.
+    if (typeof target === "string") {
+      const superseded = await decisionSuperseded(target, payload, accessToken);
+      if (superseded) return superseded;
+    }
     let opId: string | null = null;
     try {
       const { op } = await AdsOperations.begin({

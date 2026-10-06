@@ -1,11 +1,14 @@
 import "server-only";
 
+import { AdsFlags } from "@/lib/ads/flags";
 import { isValidDomain, normalizeDomain } from "@/lib/domain";
 import { prisma } from "@/lib/prisma";
 import {
   defaultAdsCountries,
   type AdsBriefOptions,
 } from "@/lib/module-flows/ads/state";
+
+import { adsAccountAssets } from "@/server/ads/account-assets";
 
 import { loadAdsAccount } from "./account";
 import { listSourcePosts } from "./source-posts";
@@ -38,5 +41,26 @@ export async function loadAdsBriefOptions(
     listSourcePosts(projectId, options),
     projectDefaults(projectId),
   ]);
-  return { account, posts, defaults };
+  // F5a (META_ADS_PLANNER, güvenli lansman v2 ile): mesaj hedefi ve açılış
+  // sayfası görüntüleme. Instagram Direct yalnız reklam hesabının bir IG
+  // kimliği varken; LPV yalnız son 7 günde olay gönderen piksel varken.
+  if (!AdsFlags.planner() || !AdsFlags.launchV2() || account.status !== "ready") {
+    return { account, posts, defaults };
+  }
+  const assets = await adsAccountAssets(projectId).catch(() => null);
+  return {
+    account,
+    posts,
+    defaults,
+    goals: {
+      messages: true,
+      messageApps: [
+        "WHATSAPP",
+        "MESSENGER",
+        ...(assets?.instagramUserId ? (["INSTAGRAM_DIRECT"] as const) : []),
+      ],
+      landingPageViews: Boolean(assets?.hasPixel),
+    },
+    hasPixel: Boolean(assets?.hasPixel),
+  };
 }

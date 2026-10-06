@@ -2,7 +2,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/env", () => ({ getEnv: () => ({ AUTH_SECRET: "auth-secret" }) }));
+vi.mock("@/lib/env", () => ({
+  getEnv: () => ({ AUTH_SECRET: "auth-secret" }),
+}));
 
 const { default: DataDeletionPage } = await import("./page");
 const { createDeletionCode } = await import("@/lib/meta-signed-request");
@@ -57,7 +59,9 @@ describe("data deletion page", () => {
 
   it("also explains how to erase the Facebook Page and Meta Ads records", async () => {
     const html = await render();
-    expect(html).toContain("How to delete your Facebook Page and Meta Ads data");
+    expect(html).toContain(
+      "How to delete your Facebook Page and Meta Ads data",
+    );
     expect(html).toContain("Page access tokens are never stored");
     expect(html).toContain("Connectors &gt; Facebook &gt; Disconnect");
     expect(html).toContain("Connectors &gt; Meta Ads &gt; Disconnect");
@@ -65,8 +69,18 @@ describe("data deletion page", () => {
     expect(html).toContain("/privacy#facebook-and-meta-ads");
   });
 
+  it("says Disconnect deletes the stored Search Console history, and how to delete it without disconnecting", async () => {
+    const html = await render();
+    expect(html).toContain("deletes the search history Agentelse stored");
+    expect(html).toContain("Delete stored data");
+  });
+
   it("ignores a made-up or tampered code and just shows the instructions", async () => {
-    for (const bad of ["abc", createDeletionCode(1, "other-secret", now), "x".repeat(35)]) {
+    for (const bad of [
+      "abc",
+      createDeletionCode(1, "other-secret", now),
+      "x".repeat(35),
+    ]) {
       const html = await render(bad);
       expect(html).not.toContain("deletion-status");
       expect(html).toContain("How to delete your Instagram data");

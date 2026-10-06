@@ -47,6 +47,24 @@ vi.mock("@/server/integrations/google-client", async (importOriginal) => ({
   fetchSearchConsoleQueryRows,
 }));
 
+// Ambar okuyucuları: varsayılan null, yani mevcut testler canlı yolda kalır.
+const readGaModuleSections = vi.fn();
+vi.mock("@/server/modules/analytics/ga-sections", () => ({
+  readGaModuleSections,
+}));
+const readGaWindow = vi.fn();
+vi.mock("@/server/website-analytics/readers", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/server/website-analytics/readers")
+  >()),
+  readGaWindow,
+}));
+const readSearchConsoleWarehouse = vi.fn();
+vi.mock("@/server/seo/readers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/seo/readers")>()),
+  readSearchConsoleWarehouse,
+}));
+
 const { collectReport } = await import("./collect");
 const { MetaApiError } = await import("@/server/integrations/meta-client");
 const { GoogleApiError } = await import("@/server/integrations/google-client");
@@ -163,6 +181,9 @@ beforeEach(() => {
     adAccountId: "act_1",
   });
   findActiveGoogleConnections.mockResolvedValue(googleConnections);
+  readGaModuleSections.mockResolvedValue({});
+  readGaWindow.mockResolvedValue(null);
+  readSearchConsoleWarehouse.mockResolvedValue(null);
   getFreshGoogleAccessToken.mockResolvedValue("google-token");
   fetchSearchConsoleReport.mockResolvedValue({
     clicks: 320,
@@ -377,6 +398,97 @@ describe("collectReport", () => {
       { source: "ga4", ok: false, reason: "not_connected" },
       { source: "searchConsole", ok: false, reason: "expired" },
     ]);
+  });
+
+  it("warehouse window branch spreads GA module lists (GA-F2b)", async () => {
+    const window = {
+      days: 28,
+      from: "2026-09-07",
+      to: "2026-10-04",
+      totals: {
+        dailyActiveUsersSum: 900,
+        newUsers: 300,
+        sessions: 20,
+        engagedSessions: 12,
+        engagementSec: 600,
+        sessionDurationSec: 1200,
+        screenPageViews: 50,
+        keyEvents: 2,
+        revenueMicros: BigInt(0),
+        transactions: 0,
+      },
+      users: { activeUsers: 400, newUsers: 300 },
+      currencyCode: null,
+    };
+    readGaWindow.mockResolvedValue(window);
+    const channels = [
+      {
+        channel: "Organic Search",
+        sessions: 10,
+        share: 50,
+        engagementRate: 60,
+        keyEvents: 1,
+      },
+    ];
+    readGaModuleSections.mockResolvedValue({ channels });
+    const report = await collectReport("p1", 28, ["ga4"], NOW);
+    expect(report.sections[0]).toMatchObject({ ok: true, channels });
+    expect(readGaModuleSections).toHaveBeenCalledWith({
+      projectId: "p1",
+      propertyId: "123",
+      window,
+    });
+    // Ambar yeterliyse Google'a gidilmez.
+    expect(getFreshGoogleAccessToken).not.toHaveBeenCalled();
+  });
+
+  it("live fallback never reads GA module lists", async () => {
+    readGaWindow.mockResolvedValue(null);
+    await collectReport("p1", 28, ["ga4"], NOW);
+    expect(readGaModuleSections).not.toHaveBeenCalled();
+  });
+
+  it("reads Search Console from the warehouse first, with no token refresh (SC-F2)", async () => {
+    readSearchConsoleWarehouse.mockResolvedValue({
+      days: 28,
+      from: "2026-09-06",
+      to: "2026-10-03",
+      metrics: [
+        { key: "sc.clicks", value: 320 },
+        { key: "sc.impressions", value: 12000 },
+        { key: "sc.nonBrandClicks", value: 200 },
+        { key: "sc.brandClicks", value: 120 },
+      ],
+      queries: [
+        {
+          query: "running shoes",
+          clicks: 120,
+          impressions: 4000,
+          ctr: 3,
+          position: 3.2,
+        },
+      ],
+    });
+    const report = await collectReport("p1", 28, ["searchConsole"], NOW);
+    expect(report.sections[0]).toMatchObject({
+      ok: true,
+      account: "biduniq.com",
+      days: 28,
+      metrics: [
+        { key: "sc.clicks", value: 320 },
+        { key: "sc.impressions", value: 12000 },
+        { key: "sc.nonBrandClicks", value: 200 },
+        { key: "sc.brandClicks", value: 120 },
+      ],
+      queries: [{ query: "running shoes", clicks: 120 }],
+    });
+    expect(readSearchConsoleWarehouse).toHaveBeenCalledWith({
+      projectId: "p1",
+      siteUrl: "sc-domain:biduniq.com",
+      days: 28,
+    });
+    expect(getFreshGoogleAccessToken).not.toHaveBeenCalled();
+    expect(fetchSearchConsoleReport).not.toHaveBeenCalled();
   });
 
   it("says a Meta rate limit and an unfinished setup plainly", async () => {

@@ -54,6 +54,8 @@ import { GoogleAnalyticsScanner } from "@/server/agency/performance/google-analy
 import { GoogleConnectionHealth } from "@/server/integrations/google-connection-health";
 import { GaRetention } from "@/server/website-analytics/retention";
 import { GaSync } from "@/server/website-analytics/sync/runner";
+import { GscRetention } from "@/server/seo/retention";
+import { GscSync } from "@/server/seo/sync/runner";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
 import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
 import { WorkPlanProgressor } from "@/server/agency/work-plans/work-plan-progressor";
@@ -308,6 +310,16 @@ registerAgencyTickStep({
 registerAgencyTickStep({
   name: "ga-retention",
   run: () => GaRetention.runDue(),
+});
+// SC-F2 (GSC_SYNC): Search Console ambarının senkronu (≤3 site bir tick'te,
+// site başına CAS kilidi, kota yöneticisi, 90 sn süre) ve günlük saklama
+// temizliği (SK3 arşivi). Bayrak kapalıyken senkron hemen 0 döner; saklama
+// yalnız ambarda bağ kaldıysa (bayrak sonradan kapatıldı) çalışır. Odak ayarı
+// bunları kapatmaz.
+registerAgencyTickStep({ name: "gsc-sync", run: () => GscSync.runDue(3) });
+registerAgencyTickStep({
+  name: "seo-retention",
+  run: () => GscRetention.runDue(),
 });
 registerAgencyTickStep({
   name: "signal-processing",

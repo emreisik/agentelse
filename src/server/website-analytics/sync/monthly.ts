@@ -4,6 +4,11 @@ import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import {
+  addonBackfillDone,
+  addonKey,
+  readAddonState,
+} from "@/lib/website-analytics/addon-backfill";
+import {
   GA_TOTALS_SCHEDULE,
   monthlyUsersRequest,
 } from "@/lib/website-analytics/catalog";
@@ -15,19 +20,26 @@ import {
   monthStart,
   previousMonthStart,
 } from "@/lib/website-analytics/days";
+import { GaFlags } from "@/lib/website-analytics/flags";
 import { dimensionOf, metricOf } from "@/lib/website-analytics/response";
 import { finalThrough } from "@/lib/website-analytics/schedule";
-import { aggregateSlices } from "@/lib/website-analytics/slices";
+import {
+  aggregateSlices,
+  type GaStoredSlice,
+} from "@/lib/website-analytics/slices";
 
 import type { GaSyncContext } from "./context";
 import { GaQuotaDeferred, runGaRequests } from "./requests";
-import { readSlices, sumTotals } from "../store";
+import { gaActiveAddonKeys } from "./weekly";
+import { readMergedSlices, readSlices, sumTotals } from "../store";
 
 // Ay özetleri (GaMonthlySummary; docs/google-analytics-plan.md §4): uzun dönem
 // eğilimi ve geçen yılla karşılaştırma için. Yalnız bütün günleri kesinleşmiş
 // (atıf penceresi dahil) ve günlük toplamları eksiksiz aylar özetlenir.
 // Toplanabilir metrikler günlüklerden, tekil kullanıcılar ay başına tek
-// tarih aralığıyla (4 ay tek istekte) Google'dan gelir.
+// tarih aralığıyla (4 ay tek istekte) Google'dan gelir. GA_WEEKLY açıkken
+// açılış sayfaları günlük + haftalık dilimlerden okunur (95 günden eski aylar
+// da dolu olur); haftalık geçmiş henüz yüklenirken eksik günlü ay bekler.
 
 const MONTHS_BACK = 13;
 const ATTRIBUTION_WINDOW = 13;
@@ -42,6 +54,35 @@ function monthsToSummarize(lastFinal: string): string[] {
     month = previousMonthStart(month);
   }
   return months;
+}
+
+const LANDING_WEEK_KEY = addonKey("week", "landing_page");
+
+// Ayın açılış sayfası dilimleri; null = haftalık geçmiş bekleniyor, ay bu
+// turda özetlenmez.
+async function landingSlices(
+  ctx: GaSyncContext,
+  month: { start: string; end: string },
+  weeklyActive: boolean,
+): Promise<GaStoredSlice[] | null> {
+  if (!GaFlags.weekly()) {
+    return readSlices(ctx.link.id, "landing_page", month.start, month.end);
+  }
+  const merged = await readMergedSlices(
+    ctx.link.id,
+    "landing_page",
+    month.start,
+    month.end,
+    { edgeWeeks: "majority" },
+  );
+  if (
+    merged.plan.missingDays > 0 &&
+    weeklyActive &&
+    !addonBackfillDone(readAddonState(ctx.link.backfill), LANDING_WEEK_KEY)
+  ) {
+    return null;
+  }
+  return merged.slices;
 }
 
 export async function syncMonthly(ctx: GaSyncContext): Promise<number> {
@@ -75,11 +116,27 @@ export async function syncMonthly(ctx: GaSyncContext): Promise<number> {
   }
   if (candidates.length === 0) return 0;
 
+  // Haftalık açılış sayfası geçmişi yüklenirken eksik günlü aylar bekler
+  // (rapor ya da haftalık çekimi düşmüşse beklenmez).
+  const weeklyActive =
+    GaFlags.weekly() &&
+    gaActiveAddonKeys(ctx.link.catalog, ctx.disabled).includes(
+      LANDING_WEEK_KEY,
+    );
+  const ready: {
+    start: string;
+    end: string;
+    landing: GaStoredSlice[];
+  }[] = [];
+  for (const month of candidates) {
+    const landing = await landingSlices(ctx, month, weeklyActive);
+    if (landing) ready.push({ ...month, landing });
+  }
+  if (ready.length === 0) return 0;
+
   let users: Map<string, Record<string, number>>;
   try {
-    const [outcome] = await runGaRequests(ctx, [
-      monthlyUsersRequest(candidates),
-    ]);
+    const [outcome] = await runGaRequests(ctx, [monthlyUsersRequest(ready)]);
     if (!outcome?.ok) return 0;
     users = new Map(
       outcome.report.rows.map((row) => [
@@ -97,7 +154,7 @@ export async function syncMonthly(ctx: GaSyncContext): Promise<number> {
     throw error;
   }
 
-  for (const month of candidates) {
+  for (const month of ready) {
     const rows = await prisma.gaDailyTotal.findMany({
       where: {
         linkId: ctx.link.id,
@@ -111,7 +168,7 @@ export async function syncMonthly(ctx: GaSyncContext): Promise<number> {
       ["sessions", "engagedSessions", "keyEvents", "totalRevenue"],
     );
     const pages = aggregateSlices(
-      await readSlices(ctx.link.id, "landing_page", month.start, month.end),
+      month.landing,
       ["landingPage"],
       ["sessions", "engagedSessions", "keyEvents"],
     ).slice(0, TOP_PAGES);
@@ -140,5 +197,5 @@ export async function syncMonthly(ctx: GaSyncContext): Promise<number> {
       update: data,
     });
   }
-  return candidates.length;
+  return ready.length;
 }

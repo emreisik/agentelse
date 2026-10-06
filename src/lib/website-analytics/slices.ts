@@ -14,6 +14,7 @@ import type { GaParsedReport, GaQuality } from "./response";
 export type GaSliceRow = (string | number)[];
 
 export type GaDaySlice = {
+  // Gün; haftalık (WEEK) dilimde haftanın Pazartesi'si.
   day: string;
   dimensionHeaders: string[];
   metricHeaders: string[];
@@ -27,41 +28,62 @@ export type GaDaySlice = {
 
 const TEXT_DIMENSIONS = new Set(["pageTitle", "searchTerm"]);
 
-function cleanDimension(name: string, value: string, spec: GaReportSpec) {
-  if (!spec.pathDimensions.includes(name)) return value;
+function cleanDimension(
+  name: string,
+  value: string,
+  pathDimensions: readonly string[],
+) {
+  if (!pathDimensions.includes(name)) return value;
   return TEXT_DIMENSIONS.has(name)
     ? maskGoogleText(value)
     : maskGooglePath(value);
 }
 
-// Yanıtı `days` günlerine böler. Maskeleme sonrası aynılaşan satırlar
-// birleşir; her gün ana metriğe göre sıralanıp `rowsPerDay`'e kırpılır.
-// Satırı olmayan gün boş dilim olarak döner: o günün çekildiği bilinsin.
-export function splitReportByDay(
+export type GaSplitOptions = {
+  // Dönem başına tutulan en çok satır; null = hepsi.
+  rowLimit: number | null;
+  orderBy: string;
+  pathDimensions: readonly string[];
+  // Dönemi taşıyan boyut ("date", "isoYearIsoWeek"); null = boyut yok, bütün
+  // satırlar periodKey(undefined)'ın döndürdüğü döneme yazılır.
+  periodDimension: string | null;
+  periodKey: (value: string | undefined) => string | null;
+};
+
+// Yanıtı `periods` dönemlerine (gün ya da hafta) böler. Maskeleme sonrası
+// aynılaşan satırlar birleşir; her dönem ana metriğe göre sıralanıp
+// `rowLimit`'e kırpılır, kırpılanların toplamı otherRow'a yazılır. Satırı
+// olmayan dönem boş dilim olarak döner: o dönemin çekildiği bilinsin.
+export function splitReportByPeriod(
   report: GaParsedReport,
-  spec: GaReportSpec,
-  days: string[],
+  options: GaSplitOptions,
+  periods: string[],
 ): GaDaySlice[] {
-  const dateIndex = report.dimensionHeaders.indexOf("date");
+  const periodIndex =
+    options.periodDimension === null
+      ? -1
+      : report.dimensionHeaders.indexOf(options.periodDimension);
   const dimensionIndexes = report.dimensionHeaders
     .map((name, index) => ({ name, index }))
-    .filter(({ name }) => name !== "date");
+    .filter(({ name }) => name !== options.periodDimension);
   const dimensionHeaders = dimensionIndexes.map(({ name }) => name);
   const metricHeaders = report.metricHeaders;
-  const orderIndex = Math.max(0, metricHeaders.indexOf(spec.orderBy));
+  const orderIndex = Math.max(0, metricHeaders.indexOf(options.orderBy));
   // Google satır sınırına takıldıysa en küçük satırlar hiç gelmedi.
   const cutByGoogle = report.rowCount > report.rows.length;
 
-  const wanted = new Set(days);
-  const byDay = new Map<string, Map<string, GaSliceRow>>();
+  const wanted = new Set(periods);
+  const byPeriod = new Map<string, Map<string, GaSliceRow>>();
   for (const row of report.rows) {
-    const day = gaDateKey(row.dimensions[dateIndex]);
-    if (!day || !wanted.has(day)) continue;
+    const period = options.periodKey(
+      periodIndex < 0 ? undefined : row.dimensions[periodIndex],
+    );
+    if (!period || !wanted.has(period)) continue;
     const dimensions = dimensionIndexes.map(({ name, index }) =>
-      cleanDimension(name, row.dimensions[index] ?? "", spec),
+      cleanDimension(name, row.dimensions[index] ?? "", options.pathDimensions),
     );
     const key = JSON.stringify(dimensions);
-    const rows = byDay.get(day) ?? new Map<string, GaSliceRow>();
+    const rows = byPeriod.get(period) ?? new Map<string, GaSliceRow>();
     const existing = rows.get(key);
     if (existing) {
       row.metrics.forEach((value, index) => {
@@ -71,16 +93,16 @@ export function splitReportByDay(
     } else {
       rows.set(key, [...dimensions, ...row.metrics]);
     }
-    byDay.set(day, rows);
+    byPeriod.set(period, rows);
   }
 
-  return days.map((day) => {
-    const all = [...(byDay.get(day)?.values() ?? [])].sort(
+  return periods.map((period) => {
+    const all = [...(byPeriod.get(period)?.values() ?? [])].sort(
       (a, b) =>
         Number(b[dimensionHeaders.length + orderIndex] ?? 0) -
         Number(a[dimensionHeaders.length + orderIndex] ?? 0),
     );
-    const keep = spec.rowsPerDay ? all.slice(0, spec.rowsPerDay) : all;
+    const keep = options.rowLimit ? all.slice(0, options.rowLimit) : all;
     const dropped = all.slice(keep.length);
     const otherRow =
       dropped.length > 0
@@ -93,7 +115,7 @@ export function splitReportByDay(
           )
         : null;
     return {
-      day,
+      day: period,
       dimensionHeaders,
       metricHeaders,
       rows: keep,
@@ -102,6 +124,25 @@ export function splitReportByDay(
       otherRow,
     };
   });
+}
+
+// Yanıtı `days` günlerine böler (`date` boyutu; gün başına `rowsPerDay`).
+export function splitReportByDay(
+  report: GaParsedReport,
+  spec: GaReportSpec,
+  days: string[],
+): GaDaySlice[] {
+  return splitReportByPeriod(
+    report,
+    {
+      rowLimit: spec.rowsPerDay,
+      orderBy: spec.orderBy,
+      pathDimensions: spec.pathDimensions,
+      periodDimension: "date",
+      periodKey: gaDateKey,
+    },
+    days,
+  );
 }
 
 export type GaStoredSlice = {

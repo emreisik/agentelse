@@ -223,6 +223,77 @@ describe("AnalyticsFlow", () => {
     expect(html).toContain("Rebuild");
   });
 
+  it("Review: Google Analytics channels, landing pages and key events when the report has them", () => {
+    const ga4 = {
+      source: "ga4" as const,
+      ok: true as const,
+      account: null,
+      days: 28,
+      currency: null,
+      metrics: [{ key: "ga.sessions" as const, value: 1200 }],
+      results: [],
+      campaigns: [],
+      queries: [],
+    };
+    const html = render("review", {
+      ...flow,
+      report: {
+        ...report,
+        sections: [
+          report.sections[0],
+          {
+            ...ga4,
+            channels: [
+              {
+                channel: "Organic Search",
+                sessions: 540,
+                share: 45,
+                engagementRate: 62.5,
+                keyEvents: 1,
+              },
+              {
+                channel: "Email",
+                sessions: 20,
+                share: null,
+                engagementRate: null,
+                keyEvents: 3,
+              },
+            ],
+            landingPages: [
+              {
+                page: "/pricing",
+                sessions: 1234,
+                engagementRate: 58,
+                keyEvents: 3,
+              },
+            ],
+            keyEvents: [{ name: "generate_lead", count: 15 }],
+          },
+        ],
+      },
+    });
+    expect(html).toContain(">Channels<");
+    expect(html).toContain("Organic Search");
+    expect(html).toContain("45% of sessions · 1 key event");
+    expect(html).toContain(">3 key events<");
+    expect(html).toContain(">Top landing pages<");
+    expect(html).toContain("/pricing");
+    expect(html).toContain("58% engaged · 3 key events");
+    expect(html).toContain(">1,234<");
+    expect(html).toContain(">Key events<");
+    expect(html).toContain("generate_lead");
+    expect(html).toContain(">15<");
+
+    // The same section without the lists shows nothing new.
+    const plain = render("review", {
+      ...flow,
+      report: { ...report, sections: [report.sections[0], ga4] },
+    });
+    expect(plain).not.toContain(">Channels<");
+    expect(plain).not.toContain(">Top landing pages<");
+    expect(plain).not.toContain(">Key events<");
+  });
+
   it("Review: nothing to share without numbers, and the summary's absence explained", () => {
     const html = render("review", {
       ...flow,

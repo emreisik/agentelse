@@ -125,6 +125,60 @@ function tablesOf(
       },
     });
   }
+  const percentOrDash = (value: number | null) =>
+    value !== null ? formatPercent(value) : "—";
+  const channels = section.channels ?? [];
+  if (channels.length > 0) {
+    tables.push({
+      title: COPY.channelsHeading,
+      table: {
+        columns: [
+          COPY.channelColumn,
+          COPY.sessionsColumn,
+          COPY.shareColumn,
+          COPY.engagementColumn,
+          COPY.keyEventsColumn,
+        ],
+        rows: channels.map((channel) => [
+          channel.channel,
+          formatCount(channel.sessions),
+          percentOrDash(channel.share),
+          percentOrDash(channel.engagementRate),
+          formatCount(channel.keyEvents),
+        ]),
+      },
+    });
+  }
+  const landingPages = section.landingPages ?? [];
+  if (landingPages.length > 0) {
+    tables.push({
+      title: COPY.landingPagesHeading,
+      table: {
+        columns: [
+          COPY.pageColumn,
+          COPY.sessionsColumn,
+          COPY.engagementColumn,
+          COPY.keyEventsColumn,
+        ],
+        rows: landingPages.map((page) => [
+          page.page,
+          formatCount(page.sessions),
+          percentOrDash(page.engagementRate),
+          formatCount(page.keyEvents),
+        ]),
+      },
+    });
+  }
+  const keyEvents = section.keyEvents ?? [];
+  if (keyEvents.length > 0) {
+    tables.push({
+      title: COPY.keyEventsHeading,
+      table: {
+        columns: [COPY.eventColumn, COPY.keyEventsColumn],
+        rows: keyEvents.map((event) => [event.name, formatCount(event.count)]),
+      },
+    });
+  }
   return tables;
 }
 

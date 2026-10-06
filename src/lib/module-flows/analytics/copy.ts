@@ -5,6 +5,11 @@
 
 import type { AnalyticsSource, FailReason, SourceStatus } from "./catalog";
 
+// "1 key event", "3 key events" (the count comes formatted).
+function keyEventsText(count: string): string {
+  return count === "1" ? "1 key event" : `${count} key events`;
+}
+
 export const ANALYTICS_COPY = {
   // The card
   readOnly: "This card can't be changed here.",
@@ -50,9 +55,22 @@ export const ANALYTICS_COPY = {
   resultsHeading: "Results",
   campaignsHeading: "Top campaigns",
   queriesHeading: "Top searches",
+  channelsHeading: "Channels",
+  landingPagesHeading: "Top landing pages",
+  keyEventsHeading: "Key events",
   costEach: (cost: string) => `${cost} each`,
   clicks: (clicks: string) => `${clicks} clicks`,
   position: (position: string) => `position ${position}`,
+  // "42% of sessions · 3 key events"; the share part only when known.
+  channelSub: (share: string | null, keyEvents: string) =>
+    [share ? `${share} of sessions` : null, keyEventsText(keyEvents)]
+      .filter(Boolean)
+      .join(" · "),
+  // "58% engaged · 3 key events"
+  pageSub: (engaged: string | null, keyEvents: string) =>
+    [engaged ? `${engaged} engaged` : null, keyEventsText(keyEvents)]
+      .filter(Boolean)
+      .join(" · "),
   openIntegrations: "Open integrations",
   instagramWindow: (days: number) =>
     `Instagram gives at most ${days} days at a time.`,
@@ -101,6 +119,13 @@ export const ANALYTICS_COPY = {
   impressions: "Impressions",
   ctr: "CTR",
   positionColumn: "Position",
+  channelColumn: "Channel",
+  pageColumn: "Page",
+  sessionsColumn: "Sessions",
+  shareColumn: "Share",
+  engagementColumn: "Engaged",
+  keyEventsColumn: "Key events",
+  eventColumn: "Event",
   unavailable: (reason: string) => `Couldn't be read. ${reason}`,
 } as const;
 

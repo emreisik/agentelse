@@ -2,6 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import {
+  GA_OPTIONAL_DAILY_REPORTS,
   GA_REPORTS,
   GA_TOTALS_SCHEDULE,
   ROLLING_USERS_KEY,
@@ -12,6 +13,10 @@ import {
   GaFlags,
   gaGlobalWorkAllowedHere,
 } from "@/lib/website-analytics/flags";
+import {
+  GA_WEEKLY_REPORTS,
+  GA_WINDOW_REPORTS,
+} from "@/lib/website-analytics/weekly";
 import { GOOGLE_PROVIDER } from "@/server/integrations/google-client";
 import { claimPeriodic } from "@/server/observability/periodic";
 
@@ -19,10 +24,35 @@ import { claimPeriodic } from "@/server/observability/periodic";
 // `ga-retention`): günde bir, yalnız süresi dolmuş satırlar silinir.
 // Birincilliğini kaybetmiş bağlar (seçim değişti) 30 gün sonra, bağlantısı
 // kalmamış bağlar (kopmuş, silinmiş) hemen verisiyle birlikte silinir.
+// Haftalık (WEEK) dilimler Pazar'ı saklama süresinden çıkınca silinir;
+// GA_WEEKLY kapalıyken de (400 gün sözü bayraktan bağımsızdır).
 
 const EVERY_MS = 24 * 3_600_000;
 const MONTHLY_KEEP_DAYS = 3 * 366;
 const STALE_LINK_DAYS = 30;
+
+// WEEK dilimi, haftasının Pazar'ı saklama süresinin dışına düşünce silinir:
+// periodStart < today-(retentionDays+6). today UTC günüdür (bir günlük kayma
+// önemsiz).
+export async function deleteExpiredWeekSlices(
+  now: Date = new Date(),
+): Promise<number> {
+  const today = now.toISOString().slice(0, 10);
+  let deleted = 0;
+  for (const spec of [...GA_WEEKLY_REPORTS, ...GA_WINDOW_REPORTS]) {
+    const result = await prisma.gaReportSlice.deleteMany({
+      where: {
+        reportKey: spec.key,
+        grain: "WEEK",
+        periodStart: {
+          lt: dayKeyToDate(addDays(today, -(spec.retentionDays + 6))),
+        },
+      },
+    });
+    deleted += result.count;
+  }
+  return deleted;
+}
 
 export const GaRetention = {
   async runDue(now: Date = new Date()): Promise<number> {
@@ -32,7 +62,7 @@ export const GaRetention = {
     const before = (days: number) => dayKeyToDate(addDays(today, -days));
     let deleted = 0;
 
-    for (const spec of GA_REPORTS) {
+    for (const spec of [...GA_REPORTS, ...GA_OPTIONAL_DAILY_REPORTS]) {
       const result = await prisma.gaReportSlice.deleteMany({
         where: {
           reportKey: spec.key,
@@ -42,6 +72,7 @@ export const GaRetention = {
       });
       deleted += result.count;
     }
+    deleted += await deleteExpiredWeekSlices(now);
     deleted += (
       await prisma.gaReportSlice.deleteMany({
         where: {

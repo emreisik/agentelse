@@ -14,6 +14,7 @@ import { disconnectGoogleCredential } from "@/server/integrations/google-disconn
 import { describeIntegration } from "@/test-support/integration-suite";
 
 import { buildWebsiteReport } from "../report";
+import { ensureGaLinkForProject } from "./links";
 import { GaSync } from "./runner";
 
 // Google Analytics ambarı gerçek Postgres'e karşı (yalnız CI ve yerel tek
@@ -69,6 +70,9 @@ describeIntegration("GA warehouse sync (mock Google)", () => {
   });
 
   it("syncs metadata, the last days and the history into the warehouse", async () => {
+    // Bağ doğrudan kurulur: runDue'nun periyodik bağ eşitlemesi (ga.links
+    // kilidi) aynı veritabanındaki başka bir test dosyasınca alınmış olabilir.
+    await ensureGaLinkForProject(fixture.projectId);
     // Geri doldurma tur başına en çok 10 istek: birkaç tur sürer.
     for (let round = 0; round < 10; round += 1) {
       await GaSync.runDue(3, new Date());

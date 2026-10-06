@@ -11,6 +11,7 @@ import { fetchSearchConsoleQueryRows } from "@/server/integrations/google-client
 import { findActiveGoogleConnections } from "@/server/integrations/google-connections";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
+import { readQuickWinRows } from "@/server/seo/readers";
 
 import {
   brandFacts,
@@ -44,6 +45,13 @@ export async function loadSeoQuickWins(
   try {
     const { searchConsole } = await findActiveGoogleConnections(projectId);
     if (!searchConsole) return { state: "not-connected" };
+    // Ambar (GSC_SYNC) son 4 tam haftayı kapsıyorsa Google'a gidilmez; yalnız
+    // markasız sorgular. Okunamazsa ya da eksikse bugünkü canlı yol.
+    const stored = await readQuickWinRows({
+      projectId,
+      siteUrl: searchConsole.siteUrl,
+    }).catch(() => null);
+    if (stored) return { state: "ok", items: pickQuickWins(stored) };
     const accessToken = await getFreshGoogleAccessToken(
       searchConsole.credential,
     );

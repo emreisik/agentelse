@@ -1,0 +1,99 @@
+{
+  "rows": [
+    {
+      "keys": [
+        "2026-09-26"
+      ],
+      "clicks": 41,
+      "impressions": 1873,
+      "ctr": 0.0218900160170849,
+      "position": 6.82
+    },
+    {
+      "keys": [
+        "2026-09-27"
+      ],
+      "clicks": 35,
+      "impressions": 1610,
+      "ctr": 0.0217391304347826,
+      "position": 7.11
+    },
+    {
+      "keys": [
+        "2026-09-28"
+      ],
+      "clicks": 52,
+      "impressions": 2204,
+      "ctr": 0.0235934664246824,
+      "position": 6.54
+    },
+    {
+      "keys": [
+        "2026-09-29"
+      ],
+      "clicks": 58,
+      "impressions": 2391,
+      "ctr": 0.0242576327896278,
+      "position": 6.47
+    },
+    {
+      "keys": [
+        "2026-09-30"
+      ],
+      "clicks": 55,
+      "impressions": 2288,
+      "ctr": 0.0240384615384615,
+      "position": 6.61
+    },
+    {
+      "keys": [
+        "2026-10-01"
+      ],
+      "clicks": 49,
+      "impressions": 2150,
+      "ctr": 0.0227906976744186,
+      "position": 6.73
+    },
+    {
+      "keys": [
+        "2026-10-02"
+      ],
+      "clicks": 47,
+      "impressions": 2049,
+      "ctr": 0.022938018545632,
+      "position": 6.9
+    },
+    {
+      "keys": [
+        "2026-10-03"
+      ],
+      "clicks": 38,
+      "impressions": 1702,
+      "ctr": 0.0223266745005875,
+      "position": 7.02
+    },
+    {
+      "keys": [
+        "2026-10-04"
+      ],
+      "clicks": 33,
+      "impressions": 1541,
+      "ctr": 0.0214146658014276,
+      "position": 7.25
+    },
+    {
+      "keys": [
+        "2026-10-05"
+      ],
+      "clicks": 12,
+      "impressions": 744,
+      "ctr": 0.0161290322580645,
+      "position": 7.8
+    }
+  ],
+  "responseAggregationType": "byProperty",
+  "metadata": {
+    "first_incomplete_date": "2026-10-04",
+    "first_incomplete_hour": "2026-10-04T00:00:00-07:00"
+  }
+}

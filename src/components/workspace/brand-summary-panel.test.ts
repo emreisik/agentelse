@@ -346,6 +346,26 @@ describe("BrandSummaryPanel (cards)", () => {
       "Hesap durumu şu an okunamadı.",
     );
   });
+
+  it("leaves the markup unchanged without searchOverview (GSC_SYNC off)", () => {
+    const panel = (searchOverview?: boolean) =>
+      renderToStaticMarkup(
+        createElement(BrandSummaryPanel, {
+          projectId: "proj-1",
+          brand: twin(),
+          website: "webhealth.com.tr",
+          kit: buildBrandKit(fullKit),
+          connections: accounts,
+          ...(searchOverview === undefined ? {} : { searchOverview }),
+        }),
+      );
+    const before = render(twin(), fullKit, "webhealth.com.tr", accounts);
+    expect(panel()).toBe(before);
+    expect(panel(false)).toBe(before);
+    // Açıkken kart kendi verisini sayfa çizildikten sonra çeker; sunucu
+    // çiziminde yer kaplamaz.
+    expect(panel(true)).toBe(before);
+  });
 });
 
 describe("BrandSummaryPanel (visual brand kit)", () => {

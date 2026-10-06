@@ -12,6 +12,7 @@ import { googleErrorCode } from "@/server/integrations/google/error-catalog";
 import { findActiveGoogleConnections } from "@/server/integrations/google-connections";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
 import { readGaWindow } from "@/server/website-analytics/readers";
+import { readSearchConsoleTotals } from "@/server/seo/readers";
 import type {
   ExecutionAcceptedResult,
   ExecutionPolicyContext,
@@ -112,12 +113,10 @@ export class GoogleApiProvider implements ExecutionProvider {
             )
           : Promise.resolve(null),
         searchConsole
-          ? getFreshGoogleAccessToken(searchConsole.credential).then((token) =>
-              fetchSearchConsoleReport(
-                token,
-                searchConsole.siteUrl,
-                REPORT_WINDOW_DAYS,
-              ),
+          ? readSearchConsole(
+              request.context.projectId,
+              searchConsole.siteUrl,
+              searchConsole.credential,
             )
           : Promise.resolve(null),
       ]);
@@ -154,6 +153,22 @@ async function readGa4(
   }
   const token = await getFreshGoogleAccessToken(credential);
   return fetchGa4Report(token, propertyId, REPORT_WINDOW_DAYS);
+}
+
+// SC-F2: ambar 28 kesin günü kapsıyorsa Google'a gidilmez.
+async function readSearchConsole(
+  projectId: string,
+  siteUrl: string,
+  credential: { id: string; encryptedSecret: string },
+): Promise<Awaited<ReturnType<typeof fetchSearchConsoleReport>>> {
+  const stored = await readSearchConsoleTotals({
+    projectId,
+    siteUrl,
+    days: REPORT_WINDOW_DAYS,
+  }).catch(() => null);
+  if (stored) return stored;
+  const token = await getFreshGoogleAccessToken(credential);
+  return fetchSearchConsoleReport(token, siteUrl, REPORT_WINDOW_DAYS);
 }
 
 function summarize(

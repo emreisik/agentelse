@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   GA_MAX_ROWS,
+  GA_OPTIONAL_DAILY_KEYS,
+  GA_OPTIONAL_DAILY_REPORTS,
   GA_REPORTS,
   GA_TOTALS_METRICS,
   gaReportSpec,
@@ -62,6 +64,41 @@ describe("GA report catalog", () => {
       { startDate: "2026-09-08", endDate: "2026-10-05", name: "d28" },
       { startDate: "2026-07-08", endDate: "2026-10-05", name: "d90" },
     ]);
+  });
+
+  it("finds google_ads among the optional reports without growing the base catalog", () => {
+    expect(GA_REPORTS).toHaveLength(10);
+    expect(GA_REPORTS.some((spec) => spec.key === "google_ads")).toBe(false);
+    const ads = gaReportSpec("google_ads");
+    expect(ads).toBe(GA_OPTIONAL_DAILY_REPORTS[0]);
+    expect(ads).toMatchObject({
+      key: "google_ads",
+      version: 1,
+      dimensions: ["sessionGoogleAdsCampaignName"],
+      orderBy: "advertiserAdCost",
+      rowsPerDay: 100,
+      revisionDays: 7,
+      retentionDays: 400,
+      backfillDays: 400,
+      chunkDays: 90,
+      pathDimensions: [],
+    });
+    expect(ads?.filter).toEqual({
+      notExpression: {
+        filter: {
+          fieldName: "sessionGoogleAdsCampaignName",
+          inListFilter: { values: ["(not set)"] },
+        },
+      },
+    });
+    const request = sliceRequest(ads!, "2026-09-29", "2026-10-05");
+    expect(request.dimensionFilter).toEqual(ads!.filter);
+    expect(request.dimensions?.map((d) => d.name)).toEqual([
+      "date",
+      "sessionGoogleAdsCampaignName",
+    ]);
+    expect(GA_OPTIONAL_DAILY_KEYS).toEqual(["google_ads"]);
+    expect(gaReportSpec("nope")).toBeUndefined();
   });
 
   it("asks at most four months of unique users at once", () => {

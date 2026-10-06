@@ -18,6 +18,7 @@ import { WorkspacePanelToggleProvider } from "@/components/workspace/workspace-p
 import { SETUP_STAGE, SETUP_STAGE_ORDER_UI } from "@/lib/labels";
 import type { ModuleKey } from "@/lib/modules/catalog";
 import { GaFlags } from "@/lib/website-analytics/flags";
+import { GscFlags } from "@/lib/seo/flags";
 import { loadSidebarWorks } from "@/server/works/sidebar-works";
 import { WorkerStrip } from "@/components/layout/worker-strip";
 import { Heartbeat } from "@/server/observability/heartbeat";
@@ -245,6 +246,7 @@ export async function AppShell({
         openWorkUntouched={openWorkUntouched}
         openWorkModule={openWorkModule}
         websitePage={GaFlags.websitePage()}
+        searchPage={GscFlags.searchPage()}
       />
       <SidebarBottom
         displayName={displayName}

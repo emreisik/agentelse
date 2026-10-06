@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { TOTALS_KEY } from "@/lib/website-analytics/backfill";
 import {
+  GA_OPTIONAL_DAILY_REPORTS,
   GA_REPORTS,
   GA_TOTALS_SCHEDULE,
   ROLLING_USERS_KEY,
@@ -14,7 +15,12 @@ import {
   totalsRequest,
   type GaRunReportRequest,
 } from "@/lib/website-analytics/catalog";
+import {
+  gaOptionalReportEnabled,
+  withDisabledReport,
+} from "@/lib/website-analytics/catalog-state";
 import { addDays } from "@/lib/website-analytics/days";
+import { GaFlags } from "@/lib/website-analytics/flags";
 import { finalThrough } from "@/lib/website-analytics/schedule";
 import type { GoogleApiError } from "@/server/integrations/google/errors";
 
@@ -36,16 +42,30 @@ export async function disableReport(
   error: GoogleApiError,
 ): Promise<void> {
   ctx.disabled.add(key);
-  const catalog = {
-    ...((ctx.link.catalog ?? {}) as Record<string, unknown>),
-    [key]: { reason: error.message.slice(0, 300), at: ctx.now.toISOString() },
-  };
+  // Saklanan biçim korunur (v1 düz harita ya da katalog denetiminin v2'si).
+  const catalog = withDisabledReport(
+    ctx.link.catalog,
+    key,
+    error.message.slice(0, 300),
+    ctx.now.toISOString(),
+  );
   ctx.link = await prisma.gaPropertyLink.update({
     where: { id: ctx.link.id },
     data: { catalog: catalog as Prisma.InputJsonValue },
   });
   console.warn(
     `[ga-sync] report ${key} dropped for property ${ctx.link.propertyId}: ${error.message}`,
+  );
+}
+
+// Katalog denetiminin açtığı isteğe bağlı günlük raporlar (google_ads).
+function optionalDailyReports(ctx: GaSyncContext) {
+  if (!GaFlags.catalogChecks()) return [];
+  return GA_OPTIONAL_DAILY_REPORTS.filter(
+    (spec) =>
+      spec.key === "google_ads" &&
+      gaOptionalReportEnabled(ctx.link.catalog, "google_ads") &&
+      !ctx.disabled.has(spec.key),
   );
 }
 
@@ -60,7 +80,7 @@ export async function syncDaily(
     start: totalsStart,
     request: totalsRequest(totalsStart, end),
   });
-  for (const spec of GA_REPORTS) {
+  for (const spec of [...GA_REPORTS, ...optionalDailyReports(ctx)]) {
     if (ctx.disabled.has(spec.key)) continue;
     const start = addDays(ctx.today, -spec.revisionDays);
     plans.push({
@@ -132,7 +152,7 @@ export async function finalizeDays(ctx: GaSyncContext): Promise<void> {
     data: { isFinal: true },
   });
   const byWindow = new Map<number, string[]>();
-  for (const spec of GA_REPORTS) {
+  for (const spec of [...GA_REPORTS, ...optionalDailyReports(ctx)]) {
     byWindow.set(spec.revisionDays, [
       ...(byWindow.get(spec.revisionDays) ?? []),
       spec.key,

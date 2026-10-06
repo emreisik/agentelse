@@ -64,6 +64,12 @@ import {
   readWebsiteLinkInfo,
   type WebsiteLinkInfo,
 } from "@/server/website-analytics/report";
+import { GscFlags } from "@/lib/seo/flags";
+import { readSearchLinkInfo, type SearchLinkInfo } from "@/server/seo/report";
+import {
+  SearchConsoleWarehouseCard,
+  SEARCH_CONSOLE_RETENTION_NOTICE,
+} from "@/components/search-analytics/search-console-warehouse-card";
 import {
   disconnectMetaAction,
   selectMetaAdAccountAction,
@@ -485,6 +491,18 @@ export default async function EntegrasyonlarPage({
     openGoogleService === "analytics" && GaFlags.sync()
       ? await readWebsiteLinkInfo(projectId).catch(() => null)
       : null;
+  // GSC ambarı (GSC_SYNC): "Final data through …", arşiv ayarı, saklanan veriyi
+  // silme ve marka terimleri; okunamazsa kart boş durumla görünür.
+  const gscWarehouse =
+    openGoogleService === "search_console" && GscFlags.sync()
+      ? await readSearchLinkInfo(projectId).catch(() => null)
+      : null;
+  const gscCanManage =
+    openGoogleService === "search_console" && GscFlags.sync()
+      ? await requireProjectAccess(userId, projectId)
+          .then(({ workspaceId }) => isWorkspaceManager(userId, workspaceId))
+          .catch(() => false)
+      : false;
   const metaError = typeof sp.metaError === "string" ? sp.metaError : null;
   const metaDetail = visibleMetaDetail(metaError, sp.metaDetail);
   const tiktokError =
@@ -615,6 +633,10 @@ export default async function EntegrasyonlarPage({
             warehouse={gaWarehouse}
             warehouseOn={GaFlags.sync()}
             websitePage={GaFlags.websitePage()}
+            searchWarehouse={gscWarehouse}
+            searchWarehouseOn={GscFlags.sync()}
+            searchCanManage={gscCanManage}
+            searchPage={GscFlags.searchPage()}
           />
         ) : null}
 
@@ -1031,6 +1053,10 @@ function GoogleDialog({
   warehouse = null,
   warehouseOn = false,
   websitePage = false,
+  searchWarehouse = null,
+  searchWarehouseOn = false,
+  searchCanManage = false,
+  searchPage = false,
 }: {
   service: GoogleService;
   projectId: string;
@@ -1043,6 +1069,12 @@ function GoogleDialog({
   warehouse?: WebsiteLinkInfo | null;
   warehouseOn?: boolean;
   websitePage?: boolean;
+  // Search Console ambarı (GSC_SYNC): kesin veri günü, arşiv, silme, marka
+  // terimleri; yönetim yalnız OWNER/ADMIN.
+  searchWarehouse?: SearchLinkInfo | null;
+  searchWarehouseOn?: boolean;
+  searchCanManage?: boolean;
+  searchPage?: boolean;
 }) {
   const connected = credential?.status === "ACTIVE";
   const expired = credential?.status === "EXPIRED";
@@ -1166,6 +1198,17 @@ function GoogleDialog({
                 />
               ) : null}
 
+              {service === "search_console" && searchWarehouseOn ? (
+                <SearchConsoleWarehouseCard
+                  projectId={projectId}
+                  info={searchWarehouse}
+                  canManage={searchCanManage}
+                  searchHref={
+                    searchPage ? `/projects/${projectId}/arama` : null
+                  }
+                />
+              ) : null}
+
               <GoogleLastTestResult
                 service={service}
                 metadata={
@@ -1226,8 +1269,14 @@ function GoogleDialog({
 
       {service === "analytics" && warehouseOn && !connected ? (
         <p className="text-[11px] text-muted-foreground">
-          Agentelse keeps daily summaries of your Google Analytics data to build
-          reports. Disconnecting deletes them.
+          Agentelse keeps daily, weekly and monthly summaries of your Google
+          Analytics data to build reports. Disconnecting deletes them.
+        </p>
+      ) : null}
+
+      {service === "search_console" && searchWarehouseOn && !connected ? (
+        <p className="text-[11px] text-muted-foreground">
+          {SEARCH_CONSOLE_RETENTION_NOTICE}
         </p>
       ) : null}
 

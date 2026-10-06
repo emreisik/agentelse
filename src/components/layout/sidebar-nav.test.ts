@@ -203,6 +203,29 @@ describe("SidebarNav: Modules (MODULES_UI)", () => {
     expect(exploreGroups(false, true)[1]).toEqual(EXPLORE[1]);
   });
 
+  it("GSC_SEARCH_PAGE adds the Search page right before Connectors", () => {
+    const labels = (groups: ReturnType<typeof exploreGroups>, index: number) =>
+      groups[index]?.map((item) => item.label);
+    expect(labels(exploreGroups(false, false, true), 0)).toEqual([
+      "Ads Manager",
+      "Search",
+      "Connectors",
+    ]);
+    expect(labels(exploreGroups(false, true, true), 0)).toEqual([
+      "Ads Manager",
+      "Website",
+      "Search",
+      "Connectors",
+    ]);
+    expect(labels(exploreGroups(true, true, true), 0)).toEqual([
+      "Ads account",
+      "Website",
+      "Search",
+      "Connectors",
+    ]);
+    expect(exploreGroups(false, false, true)[1]).toEqual(EXPLORE[1]);
+  });
+
   it("on: the group sits right under New Chat, before the pages and Recents", () => {
     const html = open(true);
     const order = [

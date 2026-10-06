@@ -10,7 +10,9 @@ import { GoogleApiError } from "@/server/integrations/google/errors";
 // her yanıttan sonra mülkün bütün bağlarına yazılır; bozuk bir rapor (400)
 // toplu çağrıyı düşürünce istekler tek tek denenir ve yalnız o rapor
 // "geçersiz" döner; kota yetmezse Google'a hiç gidilmez; sunucu hataları
-// sayılır, 429 blok süresi saklanır.
+// sayılır, 429 blok süresi saklanır. API sayaçlarının (recordGaApiOutcome)
+// iddiaları data-api'yi taklit etmeyen
+// src/server/integrations/google-analytics/data-api.test.ts'te.
 
 const mocks = vi.hoisted(() => ({
   updateMany: vi.fn(),

@@ -15,6 +15,7 @@ import {
   Megaphone,
   MessagesSquare,
   Plug,
+  Search,
   Settings2,
   Sparkles,
   type LucideIcon,
@@ -58,7 +59,7 @@ type NavItem = {
   icon: LucideIcon;
 } & (
   | { panel: PanelKey; sub?: string }
-  | { route: "takvim" | "integrations" | "ads" | "site" }
+  | { route: "takvim" | "integrations" | "ads" | "site" | "arama" }
   | { home: true }
 );
 
@@ -119,12 +120,30 @@ function withWebsite(groups: NavItem[][]): NavItem[][] {
   );
 }
 
+// GSC_SEARCH_PAGE: the Search Console "Search" page sits right before
+// Connectors (after Website when both are on).
+const SEARCH_ITEM: NavItem = { label: "Search", icon: Search, route: "arama" };
+
+function withSearch(groups: NavItem[][]): NavItem[][] {
+  return groups.map((group, index) =>
+    index === 0
+      ? group.flatMap((item) =>
+          "route" in item && item.route === "integrations"
+            ? [SEARCH_ITEM, item]
+            : [item],
+        )
+      : group,
+  );
+}
+
 export function exploreGroups(
   modulesUi: boolean,
   websitePage = false,
+  searchPage = false,
 ): NavItem[][] {
   const groups = modulesUi ? EXPLORE_WITH_MODULES : EXPLORE;
-  return websitePage ? withWebsite(groups) : groups;
+  const withSite = websitePage ? withWebsite(groups) : groups;
+  return searchPage ? withSearch(withSite) : withSite;
 }
 
 export const MODULES_COPY = { heading: "Modules", soon: "Soon" } as const;
@@ -199,6 +218,7 @@ export function SidebarNav({
   openWorkUntouched = false,
   openWorkModule = null,
   websitePage = false,
+  searchPage = false,
 }: {
   activeProjectId?: string;
   toolBadges?: Partial<Record<PanelKey, number>>;
@@ -211,6 +231,8 @@ export function SidebarNav({
   openWorkModule?: ModuleKey | null;
   // GA_WEBSITE_PAGE: Explore lists the "Website" page.
   websitePage?: boolean;
+  // GSC_SEARCH_PAGE: Explore lists the "Search" page.
+  searchPage?: boolean;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -272,7 +294,7 @@ export function SidebarNav({
     sent: sentWorkId !== null && sentWorkId === openWorkId,
   });
   const primary = PRIMARY.filter((item) => !(works && "home" in item));
-  const explore = exploreGroups(modulesUi, websitePage).map((group) =>
+  const explore = exploreGroups(modulesUi, websitePage, searchPage).map((group) =>
     group.map((item) => ({ item, ...resolve(item) })),
   );
 

@@ -324,6 +324,15 @@ export function WebsiteReportBody({ report }: { report: WebsiteReport }) {
         currency={currency}
         empty="No landing pages in this period."
       />
+      {report.siteSearch ? (
+        <WebsiteTableCard
+          title="Site search"
+          firstColumn="Search term"
+          table={report.siteSearch}
+          currency={currency}
+          empty="No site searches in these weeks."
+        />
+      ) : null}
       {report.notes.length > 0 ? (
         <ul className="space-y-1 text-xs text-muted-foreground">
           {report.notes.map((note) => (

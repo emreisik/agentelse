@@ -2,6 +2,7 @@ import "server-only";
 
 import { GoogleApiError } from "@/server/integrations/google/errors";
 import { googleFetchJson } from "@/server/integrations/google/http";
+import { recordGaApiOutcome } from "@/server/website-analytics/api-counters";
 
 import { gaMockMode } from "./data-api";
 import { mockGaPropertyDetails } from "./mock";
@@ -40,12 +41,22 @@ export type GaPropertyDetails = {
   googleAdsLinks: number | null;
 };
 
-function get<T>(accessToken: string, path: string): Promise<T> {
-  return googleFetchJson<T>(
-    `${ADMIN_BASE}/${path}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } },
-    { kind: "admin" },
-  );
+// Her Admin API çağrısı /health sayaçlarına yazılır (yalnız sayı).
+async function get<T>(accessToken: string, path: string): Promise<T> {
+  try {
+    const result = await googleFetchJson<T>(
+      `${ADMIN_BASE}/${path}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { kind: "admin" },
+    );
+    recordGaApiOutcome("ok");
+    return result;
+  } catch (error) {
+    recordGaApiOutcome(
+      error instanceof GoogleApiError ? error.errorClass : "UNKNOWN",
+    );
+    throw error;
+  }
 }
 
 // Yardımcı okuma: izin ya da bulunamadı hatasında null (ör. key event'leri

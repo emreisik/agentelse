@@ -196,7 +196,10 @@ export default async function DataDeletionPage({
             . Disconnecting deletes that connection&rsquo;s stored token and the
             Google data in it right away: the connected email address and
             account id, the properties or sites you could choose from, the one
-            you chose and your last test result. It also removes
+            you chose and your last test result. For Search Console it also
+            deletes the search history Agentelse stored: daily totals,
+            breakdowns, and weekly and monthly query and page summaries. It
+            also removes
             Agentelse&rsquo;s access in your Google account, unless the same
             Google account is still used by your other Agentelse Google
             connection. You can remove that access yourself in your Google
@@ -205,6 +208,14 @@ export default async function DataDeletionPage({
               Security &gt; Third-party apps and services
             </span>
             .
+          </p>
+          <p>
+            You can also delete that stored Search Console history without
+            disconnecting: open{" "}
+            <span className="text-foreground">
+              Connectors &gt; Google Search Console &gt; Delete stored data
+            </span>
+            . The last 16 months then load again from Google.
           </p>
           <p>
             To also erase reports and suggestions Agentelse built from your

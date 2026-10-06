@@ -82,6 +82,16 @@ export const METRIC_DEFS = {
     label: "Avg. position",
     format: "position",
   },
+  "sc.nonBrandClicks": {
+    source: "searchConsole",
+    label: "Non-brand clicks",
+    format: "count",
+  },
+  "sc.brandClicks": {
+    source: "searchConsole",
+    label: "Brand clicks",
+    format: "count",
+  },
 } as const satisfies Record<string, MetricDef>;
 
 export type MetricKey = keyof typeof METRIC_DEFS;
@@ -116,6 +126,22 @@ export type ReportQuery = {
   ctr: number;
   position: number;
 };
+// Google Analytics (warehouse only): rates and shares in percent units, null
+// where there is nothing to divide by.
+export type ReportChannel = {
+  channel: string;
+  sessions: number;
+  share: number | null;
+  engagementRate: number | null;
+  keyEvents: number;
+};
+export type ReportLandingPage = {
+  page: string;
+  sessions: number;
+  engagementRate: number | null;
+  keyEvents: number;
+};
+export type ReportKeyEvent = { name: string; count: number };
 
 export type OkSection = {
   source: AnalyticsSource;
@@ -129,6 +155,12 @@ export type OkSection = {
   results: ReportResult[];
   campaigns: ReportCampaign[];
   queries: ReportQuery[];
+  // Optional lists: present only when non-empty, so a report without them
+  // (stored before, or built with the lists off) keeps exactly its old shape.
+  // Read them as `section.channels ?? []`.
+  channels?: ReportChannel[];
+  landingPages?: ReportLandingPage[];
+  keyEvents?: ReportKeyEvent[];
 };
 export type FailedSection = {
   source: AnalyticsSource;
@@ -163,10 +195,14 @@ export const SUMMARY_LIMITS = {
 export const MAX_RESULTS = 3;
 export const MAX_CAMPAIGNS = 3;
 export const MAX_QUERIES = 5;
+export const MAX_CHANNELS = 6;
+export const MAX_LANDING_PAGES = 5;
+export const MAX_KEY_EVENTS = 5;
 const MAX_METRICS = 8;
 const LABEL_MAX = 80;
 const NAME_MAX = 120;
 const QUERY_MAX = 200;
+const PAGE_MAX = 200;
 const ACCOUNT_MAX = 120;
 const NOTE_MAX = 600;
 
@@ -191,6 +227,11 @@ export function okSection(
     results: fields.results ?? [],
     campaigns: fields.campaigns ?? [],
     queries: fields.queries ?? [],
+    ...(fields.channels?.length ? { channels: fields.channels } : {}),
+    ...(fields.landingPages?.length
+      ? { landingPages: fields.landingPages }
+      : {}),
+    ...(fields.keyEvents?.length ? { keyEvents: fields.keyEvents } : {}),
   };
 }
 
@@ -229,6 +270,26 @@ const querySchema = z.object({
   impressions: count,
   ctr: count,
   position: count,
+});
+
+const channelSchema = z.object({
+  channel: z.string().trim().min(1).max(LABEL_MAX),
+  sessions: count,
+  share: count.nullable(),
+  engagementRate: count.nullable(),
+  keyEvents: count,
+});
+
+const landingPageSchema = z.object({
+  page: z.string().trim().min(1).max(PAGE_MAX),
+  sessions: count,
+  engagementRate: count.nullable(),
+  keyEvents: count,
+});
+
+const keyEventSchema = z.object({
+  name: z.string().trim().min(1).max(LABEL_MAX),
+  count,
 });
 
 const metricSchema = z.object({ key: z.string(), value: z.number() });
@@ -284,6 +345,13 @@ export function readSection(raw: unknown): ReportSection | null {
   if (!head.success) return null;
   const record = raw as Record<string, unknown>;
   const currency = isCurrencyCode(record.currency) ? record.currency : null;
+  const channels = listOf(record.channels, channelSchema, MAX_CHANNELS);
+  const landingPages = listOf(
+    record.landingPages,
+    landingPageSchema,
+    MAX_LANDING_PAGES,
+  );
+  const keyEvents = listOf(record.keyEvents, keyEventSchema, MAX_KEY_EVENTS);
   return {
     source: head.data.source,
     ok: true,
@@ -294,6 +362,9 @@ export function readSection(raw: unknown): ReportSection | null {
     results: listOf(record.results, resultSchema, MAX_RESULTS),
     campaigns: listOf(record.campaigns, campaignSchema, MAX_CAMPAIGNS),
     queries: listOf(record.queries, querySchema, MAX_QUERIES),
+    ...(channels.length > 0 ? { channels } : {}),
+    ...(landingPages.length > 0 ? { landingPages } : {}),
+    ...(keyEvents.length > 0 ? { keyEvents } : {}),
   };
 }
 

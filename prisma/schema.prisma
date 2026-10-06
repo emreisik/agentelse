@@ -2333,6 +2333,307 @@ model GaMonthlySummary {
   @@index([projectId, month])
 }
 
+// ---------------------------------------------------------------------------
+// Search Console ambarı (docs/google-search-console-plan.md SC-F2,
+// docs/search-analytics.md). Mevcut modellere ilişki yok: proje silme
+// projectId kolonlu her tabloyu kendisi temizler; Gsc* tabloları kendi
+// aralarında cascade'lidir. Disconnect bağı (credentialId) siler.
+// ---------------------------------------------------------------------------
+
+model GscSiteLink {
+  id           String  @id @default(cuid())
+  workspaceId  String
+  projectId    String
+  credentialId String
+  // "sc-domain:example.com" ya da "https://www.example.com/"
+  siteUrl      String
+  // Projenin şu an seçili sitesi. Seçim değişince eski bağ false olur,
+  // demotedAt yazılır, senkron durur ve 30 gün sonra seo-retention'da silinir.
+  isPrimary    Boolean   @default(true)
+  demotedAt    DateTime?
+  isMock       Boolean   @default(false)
+
+  // DOMAIN | URL_PREFIX
+  propertyType    String?
+  // siteOwner | siteFullUser | siteRestrictedUser
+  permissionLevel String?
+  // Site projenin alan adını kapsıyor mu (null: projede alan adı yok).
+  domainMatch     Boolean?
+  // { empty: [searchType...], disabledSlices: [kind...], appearancePerDay, checkedAt }
+  searchTypes     Json?
+  // { v: 1, auto: [], user: [], removed: [], updatedAt } (src/lib/seo/brand-terms.ts)
+  brandTerms      Json?
+  // Günlük marka serisinin tamamlandığı terimlerin özeti ("none", "error" ya da
+  // brandTermsHash); güncel terimlerin özetine eşitse ayrım hazırdır.
+  brandSeriesHash     String?
+  // GscQuery.isBrand'in en son tamamen hesaplandığı terimlerin özeti; null:
+  // bir sonraki senkronda yeniden sınıflandır.
+  brandClassifiedHash String?
+  // SK3 (a): Google'ın 16 ayından eski veri saklanır; false: yalnız son 16 ay.
+  archive         Boolean @default(true)
+
+  // OK | AUTH | NEEDS_PERMISSION | ACCESS_LOST | GONE | API_DISABLED |
+  // DEGRADED | UNKNOWN
+  health       String  @default("UNKNOWN")
+  healthReason String?
+
+  // Kota yöneticisi (src/lib/seo/governor.ts); aynı siteUrl'nin aynı kipteki
+  // birincil bağlarına yazılır.
+  rateLimitedUntil  DateTime?
+  loadLimitedUntil  DateTime?
+  heavyLimitedUntil DateTime?
+  // { day: PT günü (YYYY-MM-DD), count }
+  loadErrors        Json?
+
+  // Kilit ve "şu zamana kadar deneme" (geri çekilme, kota bekletmesi).
+  syncLeaseUntil      DateTime?
+  syncLeaseOwner      String?
+  consecutiveFailures Int       @default(0)
+  lastSyncError       String?
+  lastMetadataAt      DateTime?
+  lastDailyAt         DateTime?
+  // Son tamamlanan günlük pencere: "2026-10-06@18" (PT günü + saat)
+  lastDailySlot       String?
+  // Kesinleşen son PT günü (YYYY-MM-DD)
+  lastFinalDate       String?
+  lastFreshAt         DateTime?
+  // Son çekilen haftanın Pazartesi'si ve ayın ilk günü (YYYY-MM-DD)
+  lastWeeklyWeek      String?
+  lastMonthlyMonth    String?
+  // Geri doldurma durumu: ana geçmiş, boşluklar, ağır kuyruk, marka özeti
+  // (src/lib/seo/backfill.ts)
+  backfill            Json?
+  backfillDoneAt      DateTime?
+
+  dailyTotals    GscDailyTotal[]
+  slices         GscDailySlice[]
+  queries        GscQuery[]
+  pages          GscPage[]
+  weeklyQueries  GscWeeklyQuery[]
+  weeklyPages    GscWeeklyPage[]
+  weeklyPairs    GscWeeklyQueryPage[]
+  monthlyQueries GscMonthlyQuery[]
+  monthlyPages   GscMonthlyPage[]
+  periodFetches  GscPeriodFetch[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, siteUrl])
+  @@index([siteUrl])
+  @@index([credentialId])
+  @@index([isPrimary, syncLeaseUntil])
+}
+
+// Arama türü başına günlük toplam (KPI'ların tek kaynağı). Gün PT'dir.
+model GscDailyTotal {
+  id                    String   @id @default(cuid())
+  linkId                String
+  projectId             String
+  date                  DateTime @db.Date
+  // web | image | video | news | discover | googleNews
+  searchType            String
+  clicks                Int      @default(0)
+  impressions           Int      @default(0)
+  // position × impressions
+  positionWeighted      Float    @default(0)
+  // Yalnız web: marka terimi içeren sorguların toplamı (null: henüz yok)
+  brandClicks           Int?
+  brandImpressions      Int?
+  brandPositionWeighted Float?
+  // dataState=all ile çekildi; kesinleşince üzerine yazılır
+  fresh                 Boolean  @default(false)
+  fetchedAt             DateTime
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, date, searchType])
+  @@index([projectId, date])
+}
+
+// Günlük kırılımlar (ülke ilk 50, cihaz, arama görünümü; yalnız kesin günler)
+// ve 16 aydan eski aylar için aylık toplamları ("<kind>_month", date = ayın 1'i).
+model GscDailySlice {
+  id        String   @id @default(cuid())
+  linkId    String
+  projectId String
+  // country | device | appearance | country_month | device_month | appearance_month
+  kind      String
+  date      DateTime @db.Date
+  // [[key, clicks, impressions, positionWeighted], ...] tıklamaya göre
+  rows      Json
+  // [clicks, impressions, positionWeighted]: kırpılan satırların toplamı
+  other     Json?
+  rowCount  Int      @default(0)
+  truncated Boolean  @default(false)
+  fetchedAt DateTime
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, kind, date])
+  @@index([projectId, date])
+}
+
+// Sorgu sözlüğü (PII maskelenmiş metin).
+model GscQuery {
+  id            String   @id @default(cuid())
+  linkId        String
+  projectId     String
+  text          String
+  textHash      String
+  isBrand       Boolean  @default(false)
+  // SC-F4
+  intent        String?
+  language      String?
+  clusterId     String?
+  firstSeenWeek DateTime @db.Date
+  lastSeenWeek  DateTime @db.Date
+
+  link    GscSiteLink          @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  weekly  GscWeeklyQuery[]
+  pairs   GscWeeklyQueryPage[]
+  monthly GscMonthlyQuery[]
+
+  @@unique([linkId, textHash])
+  @@index([linkId, lastSeenWeek])
+  @@index([projectId])
+}
+
+// Sayfa sözlüğü (sorgu dizesi atılmış, yol maskelenmiş URL).
+model GscPage {
+  id            String   @id @default(cuid())
+  linkId        String
+  projectId     String
+  url           String
+  urlHash       String
+  path          String
+  pageGroup     String?
+  firstSeenWeek DateTime @db.Date
+  lastSeenWeek  DateTime @db.Date
+
+  link    GscSiteLink          @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  weekly  GscWeeklyPage[]
+  pairs   GscWeeklyQueryPage[]
+  monthly GscMonthlyPage[]
+
+  @@unique([linkId, urlHash])
+  @@index([linkId, lastSeenWeek])
+  @@index([projectId])
+}
+
+model GscWeeklyQuery {
+  id               String   @id @default(cuid())
+  linkId           String
+  projectId        String
+  // Pazartesi (PT haftası)
+  weekStart        DateTime @db.Date
+  queryId          String
+  clicks           Int
+  impressions      Int
+  positionWeighted Float
+
+  link  GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  query GscQuery    @relation(fields: [queryId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, weekStart, queryId])
+  @@index([projectId, weekStart])
+}
+
+model GscWeeklyPage {
+  id               String   @id @default(cuid())
+  linkId           String
+  projectId        String
+  weekStart        DateTime @db.Date
+  pageId           String
+  clicks           Int
+  impressions      Int
+  positionWeighted Float
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  page GscPage     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, weekStart, pageId])
+  @@index([projectId, weekStart])
+}
+
+model GscWeeklyQueryPage {
+  id               String   @id @default(cuid())
+  linkId           String
+  projectId        String
+  weekStart        DateTime @db.Date
+  queryId          String
+  pageId           String
+  clicks           Int
+  impressions      Int
+  positionWeighted Float
+
+  link  GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  query GscQuery    @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  page  GscPage     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, weekStart, queryId, pageId])
+  @@index([projectId, weekStart])
+}
+
+model GscMonthlyQuery {
+  id               String   @id @default(cuid())
+  linkId           String
+  projectId        String
+  // Ayın ilk günü (PT)
+  month            DateTime @db.Date
+  queryId          String
+  clicks           Int
+  impressions      Int
+  positionWeighted Float
+
+  link  GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  query GscQuery    @relation(fields: [queryId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, month, queryId])
+  @@index([projectId, month])
+}
+
+model GscMonthlyPage {
+  id               String   @id @default(cuid())
+  linkId           String
+  projectId        String
+  month            DateTime @db.Date
+  pageId           String
+  clicks           Int
+  impressions      Int
+  positionWeighted Float
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  page GscPage     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, month, pageId])
+  @@index([projectId, month])
+}
+
+// Hangi haftalık/aylık özetin çekildiği: idempotent senkron, kırpılma
+// işareti ve anonim pay için satır toplamları.
+model GscPeriodFetch {
+  id             String   @id @default(cuid())
+  linkId         String
+  projectId      String
+  // WEEK | MONTH
+  grain          String
+  periodStart    DateTime @db.Date
+  // query | page | query_page
+  key            String
+  rowCount       Int      @default(0)
+  truncated      Boolean  @default(false)
+  rowClicks      Int      @default(0)
+  rowImpressions Int      @default(0)
+  pages          Int      @default(0)
+  fetchedAt      DateTime
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, grain, periodStart, key])
+  @@index([projectId, periodStart])
+}
+
 model Skill {
   id   String @id @default(cuid())
   name String

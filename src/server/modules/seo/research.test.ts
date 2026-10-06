@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   fetchSearchConsoleQueryRows: vi.fn(),
   run: vi.fn(),
   getBrandTwin: vi.fn(),
+  readQuickWinRows: vi.fn(),
 }));
 
 vi.mock("@/server/integrations/google-connections", () => ({
@@ -16,6 +17,9 @@ vi.mock("@/server/integrations/google-token", () => ({
 }));
 vi.mock("@/server/integrations/google-client", () => ({
   fetchSearchConsoleQueryRows: mocks.fetchSearchConsoleQueryRows,
+}));
+vi.mock("@/server/seo/readers", () => ({
+  readQuickWinRows: mocks.readQuickWinRows,
 }));
 vi.mock("@/server/reasoning/reasoning-service", () => ({
   ReasoningService: { run: mocks.run, isMockMode: () => false },
@@ -69,6 +73,7 @@ const ANSWER = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getBrandTwin.mockResolvedValue(null);
+  mocks.readQuickWinRows.mockResolvedValue(null);
   mocks.findActiveGoogleConnections.mockResolvedValue(CONNECTED);
   mocks.getFreshGoogleAccessToken.mockResolvedValue("token");
   mocks.fetchSearchConsoleQueryRows.mockResolvedValue([
@@ -126,6 +131,49 @@ describe("loadSeoQuickWins", () => {
       new Error("invalid_grant"),
     );
     expect(await loadSeoQuickWins("p1")).toEqual({ state: "failed" });
+  });
+
+  it("reads the warehouse first and never calls Google when it has the weeks", async () => {
+    mocks.readQuickWinRows.mockResolvedValueOnce([
+      { keys: ["stored close"], clicks: 2, impressions: 800, position: 9.26 },
+      { keys: ["stored top"], clicks: 90, impressions: 2000, position: 1.5 },
+    ]);
+    expect(await loadSeoQuickWins("p1")).toEqual({
+      state: "ok",
+      items: [
+        { query: "stored close", impressions: 800, clicks: 2, position: 9.3 },
+      ],
+    });
+    expect(mocks.readQuickWinRows).toHaveBeenCalledWith({
+      projectId: "p1",
+      siteUrl: "sc-domain:example.com",
+    });
+    expect(mocks.getFreshGoogleAccessToken).not.toHaveBeenCalled();
+    expect(mocks.fetchSearchConsoleQueryRows).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the live path when the warehouse has nothing or throws", async () => {
+    expect(await loadSeoQuickWins("p1")).toMatchObject({ state: "ok" });
+    expect(mocks.fetchSearchConsoleQueryRows).toHaveBeenCalledTimes(1);
+
+    mocks.readQuickWinRows.mockRejectedValueOnce(new Error("db down"));
+    expect(await loadSeoQuickWins("p1")).toEqual({
+      state: "ok",
+      items: [
+        { query: "closer", impressions: 1500, clicks: 1, position: 8.4 },
+        { query: "close one", impressions: 700, clicks: 3, position: 11.3 },
+      ],
+    });
+    expect(mocks.fetchSearchConsoleQueryRows).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not read the warehouse when Search Console is not connected", async () => {
+    mocks.findActiveGoogleConnections.mockResolvedValueOnce({
+      analytics: null,
+      searchConsole: null,
+    });
+    expect(await loadSeoQuickWins("p1")).toEqual({ state: "not-connected" });
+    expect(mocks.readQuickWinRows).not.toHaveBeenCalled();
   });
 });
 

@@ -5,6 +5,7 @@ import type { GaPropertyLink } from "@prisma/client";
 import { finalThrough } from "@/lib/website-analytics/schedule";
 import { GA_TOTALS_SCHEDULE } from "@/lib/website-analytics/catalog";
 import { safeTimezone } from "@/lib/website-analytics/days";
+import { GaFlags } from "@/lib/website-analytics/flags";
 import {
   resolveWebsitePeriod,
   type WebsitePeriod,
@@ -13,6 +14,7 @@ import {
 import { mergeQuality, qualityNotes } from "@/lib/website-analytics/response";
 import {
   aggregateSlices,
+  droppedTotals,
   type GaStoredSlice,
 } from "@/lib/website-analytics/slices";
 import {
@@ -22,6 +24,8 @@ import {
   sumTotals,
   type GaPeriodTotals,
 } from "@/lib/website-analytics/totals";
+import { SITE_SEARCH_KEY } from "@/lib/website-analytics/weekly";
+import { weekSunday, weeksInside } from "@/lib/website-analytics/weeks";
 import { dayKeyInTimezone } from "@/lib/timezone";
 
 import {
@@ -30,6 +34,7 @@ import {
   readDailyTotals,
   readRollingUsers,
   readSlices,
+  readWeekSlices,
   type GaDayTotals,
 } from "./store";
 
@@ -88,11 +93,15 @@ export type WebsiteReport = {
   channels: WebsiteTable;
   landingPages: WebsiteTable;
   keyEvents: WebsiteTable;
+  // Site içi arama (GA_WEEKLY): yalnız dönemin içinde kalan ve çekilmiş tam
+  // haftalar; bayrak kapalıysa ya da hafta yoksa null.
+  siteSearch: WebsiteTable | null;
   notes: string[];
 };
 
 const TOP_PAGES = 10;
 const TOP_EVENTS = 10;
+const TOP_SEARCHES = 10;
 
 function linkInfo(
   link: GaPropertyLink,
@@ -272,6 +281,50 @@ function keyEventsTable(slices: GaStoredSlice[]): WebsiteTable {
   };
 }
 
+// Haftalık not için "Oct 5" (gün anahtarı zaten mülk saatinde).
+function weekLabel(day: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${day}T00:00:00.000Z`));
+}
+
+// Site araması haftalık saklanır: dönemin tam haftaları toplanır, ilk 10
+// terim gösterilir, kalanlar ve kırpılanlar "Other" satırında.
+async function siteSearchTable(
+  linkId: string,
+  period: { from: string; to: string },
+): Promise<WebsiteTable | null> {
+  if (!GaFlags.weekly()) return null;
+  const mondays = weeksInside(period.from, period.to);
+  const first = mondays[0];
+  const last = mondays.at(-1);
+  if (!first || !last) return null;
+  const slices = await readWeekSlices(linkId, SITE_SEARCH_KEY, first, last);
+  if (slices.length === 0) return null;
+  const rows = aggregateSlices(slices, ["searchTerm"], ["eventCount"]);
+  const rest =
+    rows
+      .slice(TOP_SEARCHES)
+      .reduce((sum, row) => sum + (row.values[0] ?? 0), 0) +
+    (droppedTotals(slices, ["eventCount"])[0] ?? 0);
+  const firstMonday = slices[0]!.day;
+  const lastMonday = slices.at(-1)!.day;
+  return {
+    columns: [{ label: "Searches", format: "count" }],
+    rows: rows.slice(0, TOP_SEARCHES).map((row) => ({
+      label: row.key[0] || "(not set)",
+      values: [row.values[0] ?? 0],
+    })),
+    other: rest > 0 ? [rest] : null,
+    notes: [
+      ...notesOf(slices),
+      `Weekly data: ${weekLabel(firstMonday)} – ${weekLabel(weekSunday(lastMonday))}.`,
+    ],
+  };
+}
+
 function trend(rows: GaDayTotals[]): WebsiteTrendPoint[] {
   return rows.map((row) => ({
     day: row.day,
@@ -308,13 +361,14 @@ export async function buildWebsiteReport(
 
   const today = dayKeyInTimezone(now, info.timeZone);
   const period = resolveWebsitePeriod(periodKey, today);
-  const [currentRows, previousRows, channel, landing, events] =
+  const [currentRows, previousRows, channel, landing, events, siteSearch] =
     await Promise.all([
       readDailyTotals(link.id, period.from, period.to),
       readDailyTotals(link.id, period.previous.from, period.previous.to),
       readSlices(link.id, "channel", period.from, period.to),
       readSlices(link.id, "landing_page", period.from, period.to),
       readSlices(link.id, "events", period.from, period.to),
+      siteSearchTable(link.id, period),
     ]);
   const current = sumTotals(currentRows);
   const previous = sumTotals(previousRows);
@@ -360,6 +414,7 @@ export async function buildWebsiteReport(
       channels: channelsTable(channel, current),
       landingPages: landingPagesTable(landing, current),
       keyEvents: keyEventsTable(events),
+      siteSearch,
       notes,
     },
   };

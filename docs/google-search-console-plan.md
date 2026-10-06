@@ -1,6 +1,6 @@
 # Agentelse · Google Search Console ve SEO Motoru: Mimari ve Uygulama Planı
 
-Durum: Plan (6 Ekim 2026) — henüz uygulanmadı.
+Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 ve sonrası henüz uygulanmadı.
 
 > **Kapsam:** Google Search Console (GSC) entegrasyonu ve onun üzerine kurulan SEO motoru. Bu plan şunları kapsar: bağlantı ve kimlik; arama ambarı ve kalıcı arşiv; indeks ve teknik sağlık denetimi (URL Inspection, sitemap, robots, kendi site tarayıcımız, Core Web Vitals); SEO fırsat motoru; raporlama ve planlama; öneri → uygulama → ölçüm döngüsü. Sonraki aşamalarda içerik planı, CMS üzerinden onaylı uygulama ve AI arama görünürlüğü gelir.
 >
@@ -870,6 +870,22 @@ Mevcut testler korunur ve taşınır: `quick-wins.test.ts`, `on-page.test.ts`, `
 **Görünür değişiklik:** Search Console diyaloğunda site kartı ve alan adı uyarısı.
 
 ### SC-F2 — Arama ambarı · L
+
+**Durum (6 Ekim):** Uygulandı (`GSC_SYNC`, `GSC_SEARCH_PAGE` bayraklı, canlı denenmedi); uygulanan hâl [search-analytics.md](search-analytics.md)'de. Plandan farklar:
+
+- `grantId` yok (GA-F1 notu); bağ yalnız `credentialId` taşır.
+- Fazladan tablo `GscPeriodFetch`: hangi hafta/ay özetinin çekildiği, kırpılma bayrağı ve satır toplamları (anonim pay buradan).
+- Pozisyonlar her yerde `positionWeighted` (pozisyon × gösterim) olarak saklanır; CTR ve dönem pozisyonu okurken hesaplanır.
+- Marka ayrımı Google tarafında regex süzgeciyle (Unicode sınırları, `\b` yok) günlük seri olarak tutulur; terim değişince 90 günlük geri doldurma parçalarıyla yeniden çekilir.
+- query×page dışında her istek ≤ 90 gün; böylece "heavy" kota bloğu toplamları hiç durdurmaz.
+- Uzlaştırma bekçisi yerine boşluk tespiti + boşluk geri doldurması.
+- Marka terimi düzenleme Settings yerine Search sayfasında ve Connectors'ta.
+- Arşiv anahtarı ve "Delete stored data" Connectors'ta.
+- Günlük kırılımlar 16 aydan sonra aylık satırlara toplanır.
+- Site değişince eski bağ `demotedAt` ile işaretlenir, 30 gün sonra silinir.
+- Kademeli açılış için `GSC_ROLLOUT_PROJECTS`.
+
+Ertelenenler: saatlik erken uyarı sorgusu, sitemap senkronu (SC-F3), uzlaştırma uyarısı, Analytics modülünde en iyi sayfalar, haftalık görsel (image) özetleri, "All history" dönemi.
 
 **Amaç:** Arama verisini eksiksiz, doğru tarihli ve kalıcı hale getirmek; tüm okuyucuları tek kaynağa bağlamak.
 

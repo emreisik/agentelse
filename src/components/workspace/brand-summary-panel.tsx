@@ -26,6 +26,9 @@ import {
 } from "@/components/workspace/brand-overview-cards";
 import { InstagramOverviewCard } from "@/components/workspace/instagram-overview-card";
 import { AdsOverviewCard } from "@/components/workspace/ads-overview-card";
+import { WebsiteOverviewCard } from "@/components/workspace/website-overview-card";
+import { SearchOverviewCard } from "@/components/search-analytics/search-overview-card";
+import { GaFlags } from "@/lib/website-analytics/flags";
 import { buildHubHref } from "@/components/hub-core/hub-core-params";
 import {
   allPaletteHexes,
@@ -47,6 +50,7 @@ export function BrandSummaryPanel({
   website,
   kit,
   connections = [],
+  searchOverview = false,
 }: {
   projectId: string;
   brand: BrandTwin | null;
@@ -56,6 +60,8 @@ export function BrandSummaryPanel({
   kit?: BrandKit | null;
   // Where the project's accounts stand (Bağlı hesaplar), read by the page.
   connections?: ConnectedAccount[];
+  // GSC_SYNC sunucuda okunur: kapalıyken kart ve isteği hiç yok.
+  searchOverview?: boolean;
 }) {
   if (!brand) {
     return (
@@ -106,6 +112,25 @@ export function BrandSummaryPanel({
         (account) => account.key === "meta-ads" && account.state === "connected",
       ) ? (
         <AdsOverviewCard projectId={projectId} />
+      ) : null}
+
+      {/* Website (GA-F2): Google Analytics ambarından son 28 gün. */}
+      {GaFlags.sync() &&
+      GaFlags.websitePage() &&
+      GaFlags.brandCard() &&
+      connections.some(
+        (account) => account.key === "ga4" && account.state === "connected",
+      ) ? (
+        <WebsiteOverviewCard projectId={projectId} />
+      ) : null}
+
+      {/* Search Console (SC-F2): yalnız ambar açıkken ve senkron başladıysa görünür. */}
+      {searchOverview &&
+      connections.some(
+        (account) =>
+          account.key === "search-console" && account.state === "connected",
+      ) ? (
+        <SearchOverviewCard projectId={projectId} />
       ) : null}
 
       <CollapsibleCard

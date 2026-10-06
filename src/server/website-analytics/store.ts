@@ -9,9 +9,15 @@ import {
   type RollingWindow,
 } from "@/lib/website-analytics/catalog";
 import { dateToDayKey, dayKeyToDate } from "@/lib/website-analytics/days";
+import { GaFlags } from "@/lib/website-analytics/flags";
 import type { GaQuality } from "@/lib/website-analytics/response";
 import type { GaSliceRow, GaStoredSlice } from "@/lib/website-analytics/slices";
 import type { GaTotalsRow } from "@/lib/website-analytics/totals";
+import {
+  planSliceSources,
+  type GaSlicePlan,
+} from "@/lib/website-analytics/weekly";
+import { isoWeekMonday } from "@/lib/website-analytics/weeks";
 
 export { sumTotals } from "@/lib/website-analytics/totals";
 
@@ -63,22 +69,18 @@ export async function readDailyTotals(
   }));
 }
 
-export async function readSlices(
-  linkId: string,
-  reportKey: string,
-  from: string,
-  to: string,
-): Promise<GaStoredSlice[]> {
-  const rows = await prisma.gaReportSlice.findMany({
-    where: {
-      linkId,
-      reportKey,
-      grain: "DAY",
-      periodStart: { gte: dayKeyToDate(from), lte: dayKeyToDate(to) },
-    },
-    orderBy: { periodStart: "asc" },
-  });
-  return rows.map((row) => ({
+type SliceRecord = {
+  periodStart: Date;
+  dimensionHeaders: string[];
+  metricHeaders: string[];
+  rows: unknown;
+  truncated: boolean;
+  otherRow: unknown;
+  quality: unknown;
+};
+
+function storedSlice(row: SliceRecord): GaStoredSlice {
+  return {
     day: dateToDayKey(row.periodStart),
     dimensionHeaders: row.dimensionHeaders,
     metricHeaders: row.metricHeaders,
@@ -86,7 +88,93 @@ export async function readSlices(
     truncated: row.truncated,
     otherRow: (row.otherRow ?? null) as number[] | null,
     quality: (row.quality ?? {}) as GaQuality,
-  }));
+  };
+}
+
+async function readGrain(
+  linkId: string,
+  reportKey: string,
+  grain: "DAY" | "WEEK",
+  from: string,
+  to: string,
+): Promise<GaStoredSlice[]> {
+  const rows = await prisma.gaReportSlice.findMany({
+    where: {
+      linkId,
+      reportKey,
+      grain,
+      periodStart: { gte: dayKeyToDate(from), lte: dayKeyToDate(to) },
+    },
+    orderBy: { periodStart: "asc" },
+  });
+  return rows.map(storedSlice);
+}
+
+export async function readSlices(
+  linkId: string,
+  reportKey: string,
+  from: string,
+  to: string,
+): Promise<GaStoredSlice[]> {
+  return readGrain(linkId, reportKey, "DAY", from, to);
+}
+
+// Haftalık dilimler (grain WEEK); .day haftanın Pazartesi'sidir.
+export async function readWeekSlices(
+  linkId: string,
+  reportKey: string,
+  fromMonday: string,
+  toMonday: string,
+): Promise<GaStoredSlice[]> {
+  return readGrain(linkId, reportKey, "WEEK", fromMonday, toMonday);
+}
+
+export type GaMergedSlices = { slices: GaStoredSlice[]; plan: GaSlicePlan };
+
+// [from, to] için günler ve haftalar tek tabloda (planSliceSources: hiçbir
+// gün iki kez sayılmaz). GA_WEEKLY kapalıyken yalnız günler okunur; plan
+// eksik günleri yine söyler. Dönen dilimler zaman sırasındadır; WEEK
+// dilimlerini plan.weeks'ten ayırt edin.
+export async function readMergedSlices(
+  linkId: string,
+  reportKey: string,
+  from: string,
+  to: string,
+  options: { edgeWeeks?: "exclude" | "majority" } = {},
+): Promise<GaMergedSlices> {
+  const weekly = GaFlags.weekly();
+  const [days, weeks] = await Promise.all([
+    readSlices(linkId, reportKey, from, to),
+    weekly
+      ? readWeekSlices(linkId, reportKey, isoWeekMonday(from), isoWeekMonday(to))
+      : Promise.resolve([]),
+  ]);
+  const plan = planSliceSources({
+    from,
+    to,
+    dayKeys: new Set(days.map((slice) => slice.day)),
+    weekStarts: new Set(weeks.map((slice) => slice.day)),
+    edgeWeeks: options.edgeWeeks ?? "exclude",
+  });
+  const chosenDays = new Set(plan.days);
+  const chosenWeeks = new Set(plan.weeks);
+  const slices = [
+    ...days.filter((slice) => chosenDays.has(slice.day)),
+    ...weeks.filter((slice) => chosenWeeks.has(slice.day)),
+  ].sort((a, b) => a.day.localeCompare(b.day));
+  return { slices, plan };
+}
+
+// Raporun en yeni WEEK dilimi (search_console penceresi); yoksa null.
+export async function readLatestWindowSlice(
+  linkId: string,
+  reportKey: string,
+): Promise<GaStoredSlice | null> {
+  const row = await prisma.gaReportSlice.findFirst({
+    where: { linkId, reportKey, grain: "WEEK" },
+    orderBy: { periodStart: "desc" },
+  });
+  return row ? storedSlice(row) : null;
 }
 
 // `end`'de biten 7/28/90 günlük tekil kullanıcılar; o gün için yoksa null.

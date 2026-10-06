@@ -27,6 +27,8 @@ import {
 import { GaFlags } from "@/lib/website-analytics/flags";
 import { buildGoogleConnectionMetadata } from "@/server/integrations/google-connection-metadata";
 import { ensureGaLinkForProject } from "@/server/website-analytics/sync/links";
+import { GscFlags } from "@/lib/seo/flags";
+import { ensureGscLinkForProject } from "@/server/seo/sync/links";
 import { disconnectGoogleCredential } from "@/server/integrations/google-disconnect";
 import { googleErrorUserMessage } from "@/server/integrations/google/error-catalog";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
@@ -199,6 +201,16 @@ export async function selectSearchConsoleSiteAction(
       where: { id: credential.id, status: { not: "REVOKED" } },
       data: { metadata: nextMetadata },
     });
+    // Ambar (GSC_SYNC): yeni sitenin bağı hemen birincil olur, eskisinin
+    // senkronu durur (30 gün sonra silinir); veri bir sonraki tick'te gelir.
+    if (GscFlags.sync()) {
+      await ensureGscLinkForProject(projectId).catch((error: unknown) => {
+        console.error(
+          "[google-actions] GSC link could not be updated:",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }
 
     revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };

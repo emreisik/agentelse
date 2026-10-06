@@ -8,6 +8,7 @@ import {
 import {
   MAX_QUERIES,
   failedSection,
+  isMetricKey,
   okSection,
   type ReportMetric,
   type ReportQuery,
@@ -28,6 +29,8 @@ import {
   readGaWindow,
   type GaWindow,
 } from "@/server/website-analytics/readers";
+import { readSearchConsoleWarehouse } from "@/server/seo/readers";
+import { readGaModuleSections } from "./ga-sections";
 
 // The Google sections of a report. Google Analytics reads the GA4 Data API with
 // its own request (google-client.ts's fetchGa4Report only knows two metrics):
@@ -189,6 +192,11 @@ export async function collectGa4(
       return okSection("ga4", {
         days: period,
         metrics: ga4MetricsFromWindow(window),
+        ...(await readGaModuleSections({
+          projectId: projectId ?? "",
+          propertyId: connection.propertyId,
+          window,
+        })),
       });
     }
     const token = await getFreshGoogleAccessToken(connection.credential);
@@ -209,9 +217,30 @@ export async function collectGa4(
 export async function collectSearchConsole(
   connection: ActiveGoogleConnections["searchConsole"],
   period: AnalyticsPeriod,
+  projectId?: string,
 ): Promise<ReportSection> {
   if (!connection) return failedSection("searchConsole", "not_connected");
   try {
+    // Ambar pencereyi eksiksiz kapsıyorsa (GSC_SYNC) belirteç yenilenmez,
+    // Google'a çağrı yapılmaz; kesin günler PT, marka ayrımı hazırsa eklenir.
+    const stored = projectId
+      ? await readSearchConsoleWarehouse({
+          projectId,
+          siteUrl: connection.siteUrl,
+          days: period,
+        }).catch(() => null)
+      : null;
+    if (stored) {
+      const metrics: ReportMetric[] = stored.metrics.flatMap((metric) =>
+        isMetricKey(metric.key) ? [{ key: metric.key, value: metric.value }] : [],
+      );
+      return okSection("searchConsole", {
+        days: period,
+        account: siteLabel(connection.siteUrl) || null,
+        metrics,
+        queries: stored.queries.slice(0, MAX_QUERIES),
+      });
+    }
     const token = await getFreshGoogleAccessToken(connection.credential);
     const [totals, rows] = await Promise.all([
       fetchSearchConsoleReport(token, connection.siteUrl, period),

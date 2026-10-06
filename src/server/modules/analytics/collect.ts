@@ -57,7 +57,7 @@ export async function collectReport(
       case "searchConsole": {
         const connections = await google;
         if (!connections) return failedSection("searchConsole", "error");
-        return collectSearchConsole(connections.searchConsole, period);
+        return collectSearchConsole(connections.searchConsole, period, projectId);
       }
     }
   };

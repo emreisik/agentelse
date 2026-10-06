@@ -16,14 +16,21 @@ import {
   type GaParsedReport,
   type GaQuality,
 } from "@/lib/website-analytics/response";
-import { splitReportByDay } from "@/lib/website-analytics/slices";
+import { splitReportByDay, type GaDaySlice } from "@/lib/website-analytics/slices";
+import {
+  splitReportByWeek,
+  splitWindowReport,
+  type GaWeeklySpec,
+  type GaWindowSpec,
+} from "@/lib/website-analytics/weekly";
 
 import type { GaSyncContext } from "./context";
 
 // Ambara yazım (docs/google-analytics-plan.md §3.3): günlük toplamlar ve
 // rapor dilimleri tek ifadeli toplu upsert ile (geri doldurmada yüzlerce
 // satır tek gidiş-dönüşte). Aynı gün yeniden çekilince (revizyon) üzerine
-// yazılır.
+// yazılır. Haftalık dilimler (grain WEEK, periodStart = Pazartesi) yalnız
+// kesinleşmiş haftalar için yazılır ve hep kesindir.
 
 const ROWS_PER_STATEMENT = 200;
 
@@ -134,6 +141,7 @@ export async function writeTotals(
 
 type SliceInput = {
   reportKey: string;
+  grain: "DAY" | "WEEK";
   specVersion: number;
   day: string;
   dimensionHeaders: string[];
@@ -154,7 +162,7 @@ async function upsertSlices(
   for (const part of chunks(slices, ROWS_PER_STATEMENT)) {
     const values = part.map(
       (slice) =>
-        Prisma.sql`(${randomUUID()}, ${ctx.link.id}, ${ctx.link.projectId}, ${slice.reportKey}, 'DAY', ${slice.day}::date, ${slice.specVersion}::int, ${slice.dimensionHeaders}::text[], ${slice.metricHeaders}::text[], ${json(slice.rows)}::jsonb, ${slice.rowCount}::int, ${slice.truncated}, ${slice.otherRow === null ? null : json(slice.otherRow)}::jsonb, ${json(slice.quality)}::jsonb, ${slice.isFinal}, ${fetchedAt})`,
+        Prisma.sql`(${randomUUID()}, ${ctx.link.id}, ${ctx.link.projectId}, ${slice.reportKey}, ${slice.grain}, ${slice.day}::date, ${slice.specVersion}::int, ${slice.dimensionHeaders}::text[], ${slice.metricHeaders}::text[], ${json(slice.rows)}::jsonb, ${slice.rowCount}::int, ${slice.truncated}, ${slice.otherRow === null ? null : json(slice.otherRow)}::jsonb, ${json(slice.quality)}::jsonb, ${slice.isFinal}, ${fetchedAt})`,
     );
     await prisma.$executeRaw`
       INSERT INTO "GaReportSlice" ("id", "linkId", "projectId", "reportKey", "grain", "periodStart", "specVersion", "dimensionHeaders", "metricHeaders", "rows", "rowCount", "truncated", "otherRow", "quality", "isFinal", "fetchedAt")
@@ -185,6 +193,7 @@ export async function writeSlices(
   if (days.length === 0) return;
   const slices = splitReportByDay(report, spec, days).map((slice) => ({
     reportKey: spec.key,
+    grain: "DAY" as const,
     specVersion: spec.version,
     day: slice.day,
     dimensionHeaders: slice.dimensionHeaders,
@@ -215,6 +224,7 @@ export async function writeRollingUsers(
   await upsertSlices(ctx, [
     {
       reportKey: ROLLING_USERS_KEY,
+      grain: "DAY",
       specVersion: 1,
       day: end,
       dimensionHeaders: ["window"],
@@ -226,5 +236,63 @@ export async function writeRollingUsers(
       quality: report.quality,
       isFinal: false,
     },
+  ]);
+}
+
+function weekInput(
+  reportKey: string,
+  specVersion: number,
+  report: GaParsedReport,
+  slice: GaDaySlice,
+): SliceInput {
+  return {
+    reportKey,
+    grain: "WEEK",
+    specVersion,
+    day: slice.day,
+    dimensionHeaders: slice.dimensionHeaders,
+    metricHeaders: slice.metricHeaders,
+    rows: slice.rows,
+    rowCount: slice.rowCount,
+    truncated: slice.truncated,
+    otherRow: slice.otherRow,
+    quality: {
+      ...report.quality,
+      ...(slice.truncated ? { truncated: true } : {}),
+    },
+    isFinal: true,
+  };
+}
+
+// Raporu `weeks` (Pazartesi'ler) haftalarının dilimlerine böler ve yazar.
+export async function writeWeekSlices(
+  ctx: GaSyncContext,
+  spec: GaWeeklySpec,
+  report: GaParsedReport,
+  weeks: string[],
+): Promise<void> {
+  if (weeks.length === 0) return;
+  await upsertSlices(
+    ctx,
+    splitReportByWeek(report, spec, weeks).map((slice) =>
+      weekInput(spec.key, spec.version, report, slice),
+    ),
+  );
+}
+
+// `monday` haftasının Pazar'ında biten pencere tek WEEK dilimi olarak.
+export async function writeWindowSlice(
+  ctx: GaSyncContext,
+  spec: GaWindowSpec,
+  report: GaParsedReport,
+  monday: string,
+): Promise<void> {
+  await upsertSlices(ctx, [
+    weekInput(
+      spec.key,
+      spec.version,
+      report,
+      splitWindowReport(report, spec, monday),
+    ),
   ]);
 }

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { readReport, reportHasNumbers, type ReportData } from "./report";
+import {
+  okSection,
+  readReport,
+  reportHasNumbers,
+  type ReportData,
+} from "./report";
 import {
   BUILD_STALE_MS,
   analyticsCardData,
@@ -127,6 +132,191 @@ describe("readReport", () => {
       watchouts: [],
       nextSteps: [],
     });
+  });
+
+  it("round-trips Google Analytics channels, landing pages and key events", () => {
+    const withLists: ReportData = {
+      ...report,
+      sections: [
+        report.sections[0]!,
+        {
+          source: "ga4",
+          ok: true,
+          account: null,
+          days: 28,
+          currency: null,
+          metrics: [{ key: "ga.sessions", value: 300 }],
+          results: [],
+          campaigns: [],
+          queries: [],
+          channels: [
+            {
+              channel: "Organic Search",
+              sessions: 120,
+              share: 40,
+              engagementRate: 61.5,
+              keyEvents: 3,
+            },
+            {
+              channel: "Direct",
+              sessions: 0,
+              share: null,
+              engagementRate: null,
+              keyEvents: 0,
+            },
+          ],
+          landingPages: [
+            {
+              page: "/pricing",
+              sessions: 80,
+              engagementRate: null,
+              keyEvents: 2,
+            },
+          ],
+          keyEvents: [{ name: "generate_lead", count: 5 }],
+        },
+      ],
+    };
+    expect(readReport(withLists)).toEqual(withLists);
+    expect(readReport(JSON.parse(JSON.stringify(withLists)))).toEqual(
+      withLists,
+    );
+  });
+
+  it("reads an older report without the lists back as it was, with no new keys", () => {
+    const stored = JSON.parse(JSON.stringify(report)) as unknown;
+    const read = readReport(stored);
+    expect(read).toEqual(report);
+    for (const section of read?.sections ?? []) {
+      expect("channels" in section).toBe(false);
+      expect("landingPages" in section).toBe(false);
+      expect("keyEvents" in section).toBe(false);
+    }
+    expect(JSON.stringify(read)).toBe(JSON.stringify(report));
+  });
+
+  it("drops malformed list rows and leaves out a list with none left", () => {
+    const read = readReport({
+      ...report,
+      sections: [
+        {
+          source: "ga4",
+          ok: true,
+          days: 28,
+          metrics: [{ key: "ga.sessions", value: 10 }],
+          channels: [
+            {
+              channel: "  Organic Search ",
+              sessions: 5,
+              share: 50,
+              engagementRate: null,
+              keyEvents: 1,
+            },
+            {
+              channel: "",
+              sessions: 5,
+              share: 50,
+              engagementRate: null,
+              keyEvents: 1,
+            },
+            {
+              channel: "Direct",
+              sessions: -1,
+              share: 50,
+              engagementRate: null,
+              keyEvents: 1,
+            },
+            { channel: "Email", sessions: 1, keyEvents: 0 },
+          ],
+          landingPages: [
+            { page: 42, sessions: 1, engagementRate: null, keyEvents: 0 },
+          ],
+          keyEvents: "generate_lead",
+        },
+      ],
+    });
+    expect(read?.sections).toEqual([
+      {
+        source: "ga4",
+        ok: true,
+        account: null,
+        days: 28,
+        currency: null,
+        metrics: [{ key: "ga.sessions", value: 10 }],
+        results: [],
+        campaigns: [],
+        queries: [],
+        channels: [
+          {
+            channel: "Organic Search",
+            sessions: 5,
+            share: 50,
+            engagementRate: null,
+            keyEvents: 1,
+          },
+        ],
+      },
+    ]);
+    const section = read?.sections[0];
+    expect(section && "landingPages" in section).toBe(false);
+    expect(section && "keyEvents" in section).toBe(false);
+  });
+
+  it("caps the stored lists", () => {
+    const rows = (count: number) => Array.from({ length: count }, (_, i) => i);
+    const read = readReport({
+      ...report,
+      sections: [
+        {
+          source: "ga4",
+          ok: true,
+          days: 28,
+          metrics: [],
+          channels: rows(9).map((i) => ({
+            channel: `c${i}`,
+            sessions: 1,
+            share: null,
+            engagementRate: null,
+            keyEvents: 0,
+          })),
+          landingPages: rows(9).map((i) => ({
+            page: `/p${i}`,
+            sessions: 1,
+            engagementRate: null,
+            keyEvents: 0,
+          })),
+          keyEvents: rows(9).map((i) => ({ name: `e${i}`, count: 1 })),
+        },
+      ],
+    });
+    const section = read?.sections[0];
+    expect(section?.ok).toBe(true);
+    if (!section?.ok) return;
+    expect(section.channels).toHaveLength(6);
+    expect(section.landingPages).toHaveLength(5);
+    expect(section.keyEvents).toHaveLength(5);
+  });
+
+  it("okSection adds a list only when it has rows", () => {
+    expect(okSection("ga4", { days: 7, channels: [], keyEvents: [] })).toEqual(
+      {
+        source: "ga4",
+        ok: true,
+        account: null,
+        days: 7,
+        currency: null,
+        metrics: [],
+        results: [],
+        campaigns: [],
+        queries: [],
+      },
+    );
+    const section = okSection("ga4", {
+      days: 7,
+      keyEvents: [{ name: "generate_lead", count: 2 }],
+    });
+    expect(section.keyEvents).toEqual([{ name: "generate_lead", count: 2 }]);
+    expect("channels" in section).toBe(false);
   });
 
   it("knows a report with no numbers", () => {

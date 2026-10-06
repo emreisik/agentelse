@@ -6,7 +6,9 @@ import {
   type GaParsedReport,
   type GaRawReport,
 } from "@/lib/website-analytics/response";
+import { GoogleApiError } from "@/server/integrations/google/errors";
 import { googleFetchJson } from "@/server/integrations/google/http";
+import { recordGaApiOutcome } from "@/server/website-analytics/api-counters";
 
 import { mockGaReport } from "./mock";
 
@@ -14,13 +16,29 @@ import { mockGaReport } from "./mock";
 // istekte `returnPropertyQuota` istenir; kota yöneticisi yanıttaki
 // `propertyQuota`'yı saklar. `batchRunReports` aynı mülk için en çok 5 isteği
 // tek HTTP çağrısında toplar (token yine istek başına sayılır). Ağ kapısı,
-// zaman aşımı ve güvenli tekrar google/http.ts'te.
+// zaman aşımı ve güvenli tekrar google/http.ts'te. Her çağrının sonucu
+// (istek sayısıyla) /health sayaçlarına yazılır; mock çağrılar da sayılır.
 
 const DATA_BASE = "https://analyticsdata.googleapis.com/v1beta";
 export const GA_BATCH_SIZE = 5;
 
 export function gaMockMode(): boolean {
   return process.env.AGENTELSE_PROVIDER_MODE === "mock";
+}
+
+// Çağrıyı yürütür ve sonucunu sayar: başarıda istek sayısı kadar "ok",
+// hatada bir kez hata sınıfı.
+async function counted<T>(requests: number, run: () => Promise<T>): Promise<T> {
+  try {
+    const result = await run();
+    recordGaApiOutcome("ok", requests);
+    return result;
+  } catch (error) {
+    recordGaApiOutcome(
+      error instanceof GoogleApiError ? error.errorClass : "UNKNOWN",
+    );
+    throw error;
+  }
 }
 
 function headers(accessToken: string): Record<string, string> {
@@ -35,17 +53,19 @@ export async function runGaReport(
   propertyId: string,
   request: GaRunReportRequest,
 ): Promise<GaParsedReport> {
-  if (gaMockMode()) return parseGaReport(mockGaReport(propertyId, request));
-  const raw = await googleFetchJson<GaRawReport>(
-    `${DATA_BASE}/properties/${encodeURIComponent(propertyId)}:runReport`,
-    {
-      method: "POST",
-      headers: headers(accessToken),
-      body: JSON.stringify(request),
-    },
-    { kind: "report" },
-  );
-  return parseGaReport(raw);
+  return counted(1, async () => {
+    if (gaMockMode()) return parseGaReport(mockGaReport(propertyId, request));
+    const raw = await googleFetchJson<GaRawReport>(
+      `${DATA_BASE}/properties/${encodeURIComponent(propertyId)}:runReport`,
+      {
+        method: "POST",
+        headers: headers(accessToken),
+        body: JSON.stringify(request),
+      },
+      { kind: "report" },
+    );
+    return parseGaReport(raw);
+  });
 }
 
 // En çok 5 istek; yanıtlar istek sırasıyla döner. Biri geçersizse Google
@@ -62,20 +82,22 @@ export async function runGaReportBatch(
   if (requests.length === 1) {
     return [await runGaReport(accessToken, propertyId, requests[0]!)];
   }
-  if (gaMockMode()) {
-    return requests.map((request) =>
-      parseGaReport(mockGaReport(propertyId, request)),
+  return counted(requests.length, async () => {
+    if (gaMockMode()) {
+      return requests.map((request) =>
+        parseGaReport(mockGaReport(propertyId, request)),
+      );
+    }
+    const raw = await googleFetchJson<{ reports?: GaRawReport[] }>(
+      `${DATA_BASE}/properties/${encodeURIComponent(propertyId)}:batchRunReports`,
+      {
+        method: "POST",
+        headers: headers(accessToken),
+        body: JSON.stringify({ requests }),
+      },
+      { kind: "report" },
     );
-  }
-  const raw = await googleFetchJson<{ reports?: GaRawReport[] }>(
-    `${DATA_BASE}/properties/${encodeURIComponent(propertyId)}:batchRunReports`,
-    {
-      method: "POST",
-      headers: headers(accessToken),
-      body: JSON.stringify({ requests }),
-    },
-    { kind: "report" },
-  );
-  const reports = raw?.reports ?? [];
-  return requests.map((_, index) => parseGaReport(reports[index] ?? null));
+    const reports = raw?.reports ?? [];
+    return requests.map((_, index) => parseGaReport(reports[index] ?? null));
+  });
 }

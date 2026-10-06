@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   update: vi.fn(),
   deleteLinks: vi.fn(),
+  deleteGscLinks: vi.fn(),
   revokeGoogleToken: vi.fn(),
 }));
 
@@ -15,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     integrationCredential: { findMany: mocks.findMany, update: mocks.update },
     gaPropertyLink: { deleteMany: mocks.deleteLinks },
+    gscSiteLink: { deleteMany: mocks.deleteGscLinks },
   },
 }));
 vi.mock("@/server/security/crypto", () => ({
@@ -42,6 +44,7 @@ beforeEach(() => {
   mocks.findMany.mockResolvedValue([]);
   mocks.update.mockResolvedValue({});
   mocks.deleteLinks.mockResolvedValue({ count: 1 });
+  mocks.deleteGscLinks.mockResolvedValue({ count: 1 });
   mocks.revokeGoogleToken.mockResolvedValue(undefined);
 });
 
@@ -54,8 +57,11 @@ function expectWiped() {
       metadata: { disconnectedAt: expect.any(String) },
     },
   });
-  // Google Analytics ambarı da bağla birlikte gider.
+  // Google Analytics ve Search Console ambarları da bağla birlikte gider.
   expect(mocks.deleteLinks).toHaveBeenCalledWith({
+    where: { credentialId: "cred-ga" },
+  });
+  expect(mocks.deleteGscLinks).toHaveBeenCalledWith({
     where: { credentialId: "cred-ga" },
   });
 }

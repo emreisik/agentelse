@@ -13,6 +13,20 @@ export const GaFlags = {
   sync: () => on("GA_SYNC"),
   // "Website" sayfası (/projects/[projectId]/site).
   websitePage: () => on("GA_WEBSITE_PAGE"),
+  // GA-F2 bölüm 2 bayrakları; her biri ayrıca sync() ister (çağıran ikisini
+  // de sınar).
+  // Haftalık dilimler, site_search, DAY+WEEK birleşik okuma, haftalıktan ay
+  // özetleri ve Website sayfasının "Site search" tablosu.
+  weekly: () => on("GA_WEEKLY"),
+  // Haftalık getMetadata/checkCompatibility denetimi ve isteğe bağlı
+  // google_ads / search_console raporları.
+  catalogChecks: () => on("GA_CATALOG_CHECKS"),
+  // "Today so far" ve "Right now" (ayrıca websitePage() ister).
+  live: () => on("GA_LIVE"),
+  // Analytics modülündeki kanal / açılış sayfası / key event listeleri.
+  moduleSections: () => on("GA_MODULE_SECTIONS"),
+  // Brand sekmesindeki Website kartı (ayrıca websitePage() ister).
+  brandCard: () => on("GA_BRAND_CARD"),
 };
 
 type GaSyncEnvironment = {

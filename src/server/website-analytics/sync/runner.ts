@@ -5,6 +5,14 @@ import type { GaPropertyLink, Prisma } from "@prisma/client";
 import { backoffMs } from "@/lib/ads/sync-plan";
 import { prisma } from "@/lib/prisma";
 import { dayKeyInTimezone } from "@/lib/timezone";
+import {
+  addonStageDue,
+  readAddonState,
+} from "@/lib/website-analytics/addon-backfill";
+import {
+  gaCatalogCheckDue,
+  gaDisabledReports,
+} from "@/lib/website-analytics/catalog-state";
 import { hourInTimezone, safeTimezone } from "@/lib/website-analytics/days";
 import { GaFlags, gaSyncAllowedFor } from "@/lib/website-analytics/flags";
 import type {
@@ -27,20 +35,26 @@ import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
 import { Heartbeat } from "@/server/observability/heartbeat";
 import { claimPeriodic } from "@/server/observability/periodic";
 
+import { flushGaApiCounters } from "../api-counters";
+
 import { syncBackfill } from "./backfill";
+import { syncCatalogChecks } from "./catalog-checks";
 import type { GaSyncContext } from "./context";
 import { finalizeDays, syncDaily } from "./daily";
 import { ensureGaLinks } from "./links";
 import { syncMetadata } from "./metadata";
 import { syncMonthly } from "./monthly";
 import { GaQuotaDeferred } from "./requests";
+import { gaActiveAddonKeys, syncAddons } from "./weekly";
 
 // GA senkronu (docs/google-analytics-plan.md §3.3, §5): `ga-sync` tick adımı.
 // Tick başına vadesi gelen en çok 3 bağ; bağ başına 5 dakikalık CAS kilidi
 // (syncLeaseUntil aynı zamanda "şu zamana kadar deneme": geri çekilme, kota
-// bekletmesi). Sıra: metadata → günlük çekim + revizyon → kesinleşme →
-// geri doldurma → ay özetleri. PAUSED/CLOSED projede yalnız metadata okunur.
-// AGENCY_FOCUS bu adımı kapatmaz.
+// bekletmesi). Sıra: metadata → katalog denetimi → günlük çekim + revizyon
+// → kesinleşme → geri doldurma → eklentiler (haftalık, google_ads,
+// search_console; yalnız temel geçmiş bitince) → ay özetleri. PAUSED/CLOSED
+// projede yalnız metadata ve katalog denetimi çalışır. AGENCY_FOCUS bu adımı
+// kapatmaz. Turun sonunda API sayaçları yazılır.
 
 const CANDIDATES = 25;
 const LINKS_EVERY_MS = 2 * 60_000;
@@ -87,22 +101,60 @@ async function release(
   });
 }
 
-function stagesFor(link: GaPropertyLink, now: Date): GaStages {
-  return dueGaStages(
+// GA-F2 bölüm 2 aşamaları (schedule.ts değişmez).
+type GaTurnStages = GaStages & { catalog: boolean; addons: boolean };
+
+function stagesFor(
+  link: GaPropertyLink,
+  now: Date,
+  paused: boolean,
+): GaTurnStages {
+  const timeZone = safeTimezone(link.timeZone);
+  const due = dueGaStages(
     {
       lastMetadataAt: link.lastMetadataAt,
       lastDailyAt: link.lastDailyAt,
       lastDailyDate: link.lastDailyDate,
       backfillDone: link.backfillDoneAt !== null,
     },
-    { now, timeZone: safeTimezone(link.timeZone) },
+    { now, timeZone },
   );
+  // Katalog denetimi duraklatılmış projede de çalışır.
+  const catalog =
+    GaFlags.catalogChecks() && gaCatalogCheckDue(link.catalog, now);
+  if (paused) {
+    return {
+      metadata: due.metadata,
+      daily: false,
+      backfill: false,
+      catalog,
+      addons: false,
+    };
+  }
+  const addons =
+    link.lastDailyAt !== null &&
+    link.backfillDoneAt !== null &&
+    addonStageDue(
+      readAddonState(link.backfill),
+      gaActiveAddonKeys(link.catalog, gaDisabledReports(link.catalog)),
+      dayKeyInTimezone(now, timeZone),
+    );
+  return { ...due, catalog, addons };
 }
 
 export const GaSync = {
   // Tick adımı.
   async runDue(limit = 3, now: Date = new Date()): Promise<number> {
     if (!GaFlags.sync()) return 0;
+    try {
+      return await this.runCandidates(limit, now);
+    } finally {
+      // Turun Google çağrı sayaçları (/health); yazamazsa tur düşmez.
+      await flushGaApiCounters();
+    }
+  },
+
+  async runCandidates(limit: number, now: Date): Promise<number> {
     await Heartbeat.beat(HEARTBEAT_KEY, now);
     if (await claimPeriodic("ga.links", LINKS_EVERY_MS, now)) {
       await ensureGaLinks().catch((error: unknown) => {
@@ -162,12 +214,11 @@ export const GaSync = {
         }
         continue;
       }
-      const due = stagesFor(link, now);
       const paused = project.status === "PAUSED" || project.status === "CLOSED";
-      const stages: GaStages = paused
-        ? { metadata: due.metadata, daily: false, backfill: false }
-        : due;
-      if (!anyGaStageDue(stages)) continue;
+      const stages = stagesFor(link, now, paused);
+      if (!anyGaStageDue(stages) && !stages.catalog && !stages.addons) {
+        continue;
+      }
 
       const owner = `ga-sync:${process.pid}:${now.getTime()}:${link.id}`;
       if (!(await claim(link.id, owner, now))) continue;
@@ -181,7 +232,7 @@ export const GaSync = {
   async syncLink(
     link: GaPropertyLink,
     credential: CredentialRow,
-    stages: GaStages,
+    stages: GaTurnStages,
     owner: string,
     now: Date,
     lane: GaLane,
@@ -194,7 +245,7 @@ export const GaSync = {
       today: dayKeyInTimezone(now, timeZone),
       now,
       lane,
-      disabled: new Set(Object.keys((link.catalog ?? {}) as object)),
+      disabled: gaDisabledReports(link.catalog),
       quota: (link.lastQuota ?? null) as StoredGaQuota | null,
       serverErrors: (link.serverErrorsHour ?? null) as GaServerErrors | null,
       rateLimitedUntil: link.rateLimitedUntil,
@@ -205,6 +256,8 @@ export const GaSync = {
         : await getFreshGoogleAccessToken(credential);
       // Günlük çekimin günü mülkün saat dilimine bağlı: önce metadata.
       if (stages.metadata || !link.timeZone) await syncMetadata(ctx);
+      // GA-F2b: haftalık katalog denetimi (getMetadata/checkCompatibility).
+      if (stages.catalog) await syncCatalogChecks(ctx);
       if (stages.daily) {
         const { yesterdayIn } = await syncDaily(ctx);
         const complete = dailyAttemptCompletes({
@@ -221,7 +274,10 @@ export const GaSync = {
         await finalizeDays(ctx);
       }
       if (stages.backfill) await syncBackfill(ctx);
-      if (stages.daily || stages.backfill) await syncMonthly(ctx);
+      if (stages.addons) await syncAddons(ctx);
+      if (stages.daily || stages.backfill || stages.addons) {
+        await syncMonthly(ctx);
+      }
       await release(link.id, owner, {
         syncLeaseUntil: null,
         consecutiveFailures: 0,
@@ -261,7 +317,13 @@ export const GaSync = {
     await this.syncLink(
       link,
       credential,
-      { metadata: !link.lastMetadataAt, daily: true, backfill: false },
+      {
+        metadata: !link.lastMetadataAt,
+        daily: true,
+        backfill: false,
+        catalog: false,
+        addons: false,
+      },
       owner,
       now,
       "P1",

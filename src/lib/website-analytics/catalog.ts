@@ -36,11 +36,16 @@ export const GA_REPORT_KEYS = [
 ] as const;
 export type GaReportKey = (typeof GA_REPORT_KEYS)[number];
 
+// Katalog denetiminin açtığı isteğe bağlı günlük raporlar (GA-F2 bölüm 2;
+// GA_CATALOG_CHECKS). GA_REPORTS'ta ve temel geri doldurmada yoktur.
+export const GA_OPTIONAL_DAILY_KEYS = ["google_ads"] as const;
+export type GaOptionalDailyKey = (typeof GA_OPTIONAL_DAILY_KEYS)[number];
+
 // GA Data API FilterExpression (JSON olduğu gibi gönderilir).
 export type GaFilterExpression = Record<string, unknown>;
 
 export type GaReportSpec = {
-  key: GaReportKey;
+  key: GaReportKey | GaOptionalDailyKey;
   // Boyut/metrik listesi değişince artar; eski dilimler okunurken ayrılır.
   version: number;
   // `date` her isteğe ayrıca eklenir.
@@ -218,8 +223,42 @@ export const GA_REPORTS: readonly GaReportSpec[] = [
   },
 ];
 
+// Google Ads kampanya maliyeti (mülk Google Ads'e bağlıysa ve katalog
+// denetimi alanları uyumlu bulduysa açılır). Günlük, 400 gün; geri doldurma
+// temel geçmişten sonra eklenti durumuyla (addon-backfill.ts) yapılır.
+export const GA_OPTIONAL_DAILY_REPORTS: readonly GaReportSpec[] = [
+  {
+    key: "google_ads",
+    version: 1,
+    dimensions: ["sessionGoogleAdsCampaignName"],
+    metrics: [
+      "advertiserAdCost",
+      "advertiserAdClicks",
+      "sessions",
+      "keyEvents",
+      "totalRevenue",
+    ],
+    orderBy: "advertiserAdCost",
+    rowsPerDay: 100,
+    filter: {
+      notExpression: {
+        filter: {
+          fieldName: "sessionGoogleAdsCampaignName",
+          inListFilter: { values: ["(not set)"] },
+        },
+      },
+    },
+    ...LONG,
+    pathDimensions: [],
+  },
+];
+
+// Önce temel katalog, sonra isteğe bağlı günlük raporlar.
 export function gaReportSpec(key: string): GaReportSpec | undefined {
-  return GA_REPORTS.find((spec) => spec.key === key);
+  return (
+    GA_REPORTS.find((spec) => spec.key === key) ??
+    GA_OPTIONAL_DAILY_REPORTS.find((spec) => spec.key === key)
+  );
 }
 
 export const GA_TOTALS_SCHEDULE = LONG;

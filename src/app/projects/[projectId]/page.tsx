@@ -29,6 +29,7 @@ import { isIdeaEventCardData } from "@/types/idea-event-card";
 import { getWorkspaceRightPanelData } from "@/components/workspace/workspace-right-panel-data";
 import { WorkspaceRightPanel } from "@/components/workspace/workspace-right-panel";
 import { BrandSummaryPanel } from "@/components/workspace/brand-summary-panel";
+import { GscFlags } from "@/lib/seo/flags";
 import { OutputsPanel } from "@/components/workspace/outputs-panel";
 import { CalendarPanel } from "@/components/workspace/calendar-panel";
 import { FilesPanel } from "@/components/workspace/files-panel";
@@ -877,6 +878,7 @@ export default async function ProjectChatPage({
               website={rightPanelData.website}
               kit={rightPanelData.brandKit}
               connections={rightPanelData.connections}
+              searchOverview={GscFlags.sync()}
             />
           }
           files={

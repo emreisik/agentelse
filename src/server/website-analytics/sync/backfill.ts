@@ -17,11 +17,11 @@ import {
   sliceRequest,
   totalsRequest,
 } from "@/lib/website-analytics/catalog";
-import { dayKeyInTimezone } from "@/lib/timezone";
 
 import type { GaSyncContext } from "./context";
 import { disableReport } from "./daily";
 import { runGaRequests } from "./requests";
+import { gaPropertyCreatedDay } from "./weekly";
 import { dayList, writeSlices, writeTotals } from "./write";
 
 // Geri doldurma (docs/google-analytics-plan.md §3.3): bağlanınca bir kez,
@@ -38,10 +38,17 @@ async function saveState(
   done: boolean,
 ): Promise<void> {
   const next = done ? { ...state, doneAt: ctx.now.toISOString() } : state;
+  // Var olan JSON'a birleşir: eklenti durumu (`addons`) korunur.
+  const existing =
+    ctx.link.backfill &&
+    typeof ctx.link.backfill === "object" &&
+    !Array.isArray(ctx.link.backfill)
+      ? (ctx.link.backfill as Record<string, unknown>)
+      : {};
   ctx.link = await prisma.gaPropertyLink.update({
     where: { id: ctx.link.id },
     data: {
-      backfill: next as unknown as Prisma.InputJsonValue,
+      backfill: { ...existing, ...next } as unknown as Prisma.InputJsonValue,
       ...(done ? { backfillDoneAt: ctx.now } : {}),
     },
   });
@@ -52,9 +59,7 @@ export async function syncBackfill(ctx: GaSyncContext): Promise<boolean> {
     parseBackfillState(ctx.link.backfill) ??
     initialBackfill({
       today: ctx.today,
-      propertyCreated: ctx.link.propertyCreatedAt
-        ? dayKeyInTimezone(ctx.link.propertyCreatedAt, ctx.timeZone)
-        : null,
+      propertyCreated: gaPropertyCreatedDay(ctx),
       now: ctx.now,
     });
 

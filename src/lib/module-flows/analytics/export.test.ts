@@ -201,3 +201,101 @@ describe("summaryFactsOf", () => {
     expect(JSON.stringify(facts)).not.toMatch(/biduniq/i);
   });
 });
+
+describe("Google Analytics lists in the exports", () => {
+  const ga4 = {
+    source: "ga4" as const,
+    ok: true as const,
+    account: null,
+    days: 90,
+    currency: null,
+    metrics: [{ key: "ga.sessions" as const, value: 1200 }],
+    results: [],
+    campaigns: [],
+    queries: [],
+  };
+  const withLists: ReportData = {
+    ...report,
+    sections: [
+      ...report.sections.slice(0, 3),
+      {
+        ...ga4,
+        channels: [
+          {
+            channel: "Organic Search",
+            sessions: 540,
+            share: 45,
+            engagementRate: 62.5,
+            keyEvents: 12,
+          },
+          {
+            channel: "Email",
+            sessions: 0,
+            share: null,
+            engagementRate: null,
+            keyEvents: 0,
+          },
+        ],
+        landingPages: [
+          {
+            page: "/pricing|<b>",
+            sessions: 1234,
+            engagementRate: 58.25,
+            keyEvents: 3,
+          },
+        ],
+        keyEvents: [{ name: "generate_lead", count: 15 }],
+      },
+    ],
+  };
+  const without: ReportData = {
+    ...report,
+    sections: [...report.sections.slice(0, 3), ga4],
+  };
+
+  it("adds the three tables to Markdown, with — for an unknown rate", () => {
+    const md = buildReportMarkdown(withLists);
+    expect(md).toContain("### Channels");
+    expect(md).toContain(
+      "| Channel | Sessions | Share | Engaged | Key events |",
+    );
+    expect(md).toContain("| Organic Search | 540 | 45% | 62.5% | 12 |");
+    expect(md).toContain("| Email | 0 | — | — | 0 |");
+    expect(md).toContain("### Top landing pages");
+    expect(md).toContain("| Page | Sessions | Engaged | Key events |");
+    expect(md).toContain("| /pricing\\|\\<b\\> | 1,234 | 58.25% | 3 |");
+    expect(md).toContain("### Key events");
+    expect(md).toContain("| Event | Key events |");
+    expect(md).toContain("| generate\\_lead | 15 |");
+  });
+
+  it("adds them to the print view, escaped", () => {
+    const html = buildReportPrintHtml(withLists);
+    expect(html).toContain("<h3>Channels</h3>");
+    expect(html).toContain("<h3>Top landing pages</h3>");
+    expect(html).toContain("<h3>Key events</h3>");
+    expect(html).toContain("<td>/pricing|&lt;b&gt;</td>");
+    expect(html).toContain('<td class="num">—</td>');
+    expect(html).not.toContain("/pricing|<b>");
+  });
+
+  it("keeps the plain text to the summary and key numbers", () => {
+    // Copy summary never carried tables (searches neither): the lists add
+    // nothing to it.
+    expect(buildReportPlainText(withLists)).toBe(
+      buildReportPlainText(without),
+    );
+  });
+
+  it("is unchanged without the lists", () => {
+    const md = buildReportMarkdown(without);
+    expect(md).not.toContain("### Channels");
+    expect(md).not.toContain("### Top landing pages");
+    expect(md).not.toContain("### Key events");
+    const html = buildReportPrintHtml(without);
+    expect(html).not.toContain("<h3>Channels</h3>");
+    // A stored report read back without the lists exports byte for byte the
+    // same as before.
+    expect(buildReportMarkdown(JSON.parse(JSON.stringify(without)))).toBe(md);
+  });
+});

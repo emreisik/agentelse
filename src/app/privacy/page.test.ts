@@ -165,6 +165,22 @@ describe("privacy policy: Google Analytics and Search Console section", () => {
     expect(google).toContain("up to 400 days");
     expect(google).toContain("never individual visitors");
     expect(google).toContain("are masked");
+    expect(google).toContain("weekly summaries");
+    expect(google).toContain("up to 36 months");
+    expect(google).toContain("top 50 landing pages");
+    expect(google).toContain("search words are masked");
+    expect(google).toContain("are not stored");
+  });
+
+  it("says which Search Console summaries are kept, how long beyond Google's 16 months, and masked", () => {
+    expect(google).toContain("For Google Search Console we also keep summaries");
+    expect(google).toContain("including data older than the 16 months Google keeps");
+    expect(google).toContain("weekly query and page summaries for 36 months");
+    expect(google).toContain("keep only the last 16 months");
+    expect(google).toContain("delete the stored history anytime");
+    expect(google).toContain("deleted after 30 days");
+    expect(google).toContain("Searches Google hides for privacy never reach us");
+    expect(google).toContain("in search queries and addresses are masked");
   });
 
   it("says Disconnect deletes right away and when Google access is kept", () => {

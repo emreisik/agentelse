@@ -39,6 +39,21 @@ export type SummaryFactsSection = {
     ctr: string;
     position: string;
   }[];
+  // Google Analytics lists (warehouse only); shares and rates as shown.
+  topChannels?: {
+    channel: string;
+    sessions: string;
+    share?: string;
+    engagementRate?: string;
+    keyEvents: string;
+  }[];
+  topLandingPages?: {
+    page: string;
+    sessions: string;
+    engagementRate?: string;
+    keyEvents: string;
+  }[];
+  keyEvents?: { name: string; count: string }[];
 };
 
 export type SummaryFacts = {
@@ -88,6 +103,36 @@ function sectionFacts(section: OkSection): SummaryFactsSection {
       impressions: formatCount(query.impressions),
       ctr: formatPercent(query.ctr),
       position: formatPosition(query.position),
+    }));
+  }
+  const channels = section.channels ?? [];
+  if (channels.length > 0) {
+    facts.topChannels = channels.map((channel) => ({
+      channel: channel.channel,
+      sessions: formatCount(channel.sessions),
+      ...(channel.share !== null ? { share: formatPercent(channel.share) } : {}),
+      ...(channel.engagementRate !== null
+        ? { engagementRate: formatPercent(channel.engagementRate) }
+        : {}),
+      keyEvents: formatCount(channel.keyEvents),
+    }));
+  }
+  const landingPages = section.landingPages ?? [];
+  if (landingPages.length > 0) {
+    facts.topLandingPages = landingPages.map((page) => ({
+      page: page.page,
+      sessions: formatCount(page.sessions),
+      ...(page.engagementRate !== null
+        ? { engagementRate: formatPercent(page.engagementRate) }
+        : {}),
+      keyEvents: formatCount(page.keyEvents),
+    }));
+  }
+  const keyEvents = section.keyEvents ?? [];
+  if (keyEvents.length > 0) {
+    facts.keyEvents = keyEvents.map((event) => ({
+      name: event.name,
+      count: formatCount(event.count),
     }));
   }
   return facts;

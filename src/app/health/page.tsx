@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   HeartPulse,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
   Wrench,
@@ -24,6 +25,8 @@ import { buildSystemHealthReport } from "@/server/observability/health-report";
 import { prisma } from "@/lib/prisma";
 import { AdsInsurance } from "@/server/ads/insurance";
 import { isPlatformOperator } from "@/server/security/operator";
+import { loadGaHealthCounters } from "@/server/website-analytics/health-counters";
+import { GaHealthCard } from "@/components/website-analytics/ga-health-card";
 import {
   clearProviderIncidentAction,
   dismissDeadLetterAction,
@@ -92,10 +95,41 @@ export default async function HealthPage() {
   }
   const report = await buildSystemHealthReport(workspaceId);
   // Meta Ads F7: Disconnect'te silinemeyen güvenlik kuralları ve 5 denemede
-  // işlenemeyen webhook olayları (operatör elle bakar).
-  const [leftoverRules, deadWebhooks] = await Promise.all([
+  // işlenemeyen webhook olayları (operatör elle bakar). GA-F2b: Google
+  // Analytics sayaçları (yalnız sayılar, GA_SYNC kapalıyken null). SC-F2:
+  // dikkat isteyen, geçmişi yüklenen ve Google kotasını bekleyen siteler.
+  const now = new Date();
+  const [
+    leftoverRules,
+    deadWebhooks,
+    gaCounters,
+    gscAttention,
+    gscBackfilling,
+    gscQuotaWaiting,
+  ] = await Promise.all([
     AdsInsurance.undeletable().catch(() => []),
     prisma.adsWebhookEvent.count({ where: { status: "DEAD" } }).catch(() => 0),
+    loadGaHealthCounters().catch(() => null),
+    prisma.gscSiteLink
+      .count({
+        where: { isPrimary: true, health: { notIn: ["OK", "UNKNOWN"] } },
+      })
+      .catch(() => 0),
+    prisma.gscSiteLink
+      .count({ where: { isPrimary: true, backfillDoneAt: null } })
+      .catch(() => 0),
+    prisma.gscSiteLink
+      .count({
+        where: {
+          isPrimary: true,
+          OR: [
+            { rateLimitedUntil: { gt: now } },
+            { loadLimitedUntil: { gt: now } },
+            { heavyLimitedUntil: { gt: now } },
+          ],
+        },
+      })
+      .catch(() => 0),
   ]);
 
   const healthy =
@@ -384,6 +418,36 @@ export default async function HealthPage() {
                   </p>
                 </div>
               ))}
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {gaCounters ? <GaHealthCard counters={gaCounters} /> : null}
+
+        {gscAttention > 0 || gscBackfilling > 0 || gscQuotaWaiting > 0 ? (
+          <Card>
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0">
+              <span className="flex size-7 items-center justify-center rounded-lg bg-accent">
+                <Search className="size-4" />
+              </span>
+              <CardTitle className="text-base">Search Console data</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <StatTile
+                label="Sites needing attention"
+                value={gscAttention}
+                tone="danger"
+              />
+              <StatTile
+                label="History loading"
+                value={gscBackfilling}
+                tone="neutral"
+              />
+              <StatTile
+                label="Waiting on Google quota"
+                value={gscQuotaWaiting}
+                tone="waiting"
+              />
             </CardContent>
           </Card>
         ) : null}

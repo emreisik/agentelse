@@ -27,6 +27,7 @@ import {
   WebsitePeriodSelector,
   WebsiteReportBody,
 } from "@/components/website-analytics/website-report-view";
+import { WebsiteLiveStrip } from "@/components/website-analytics/website-live-strip";
 
 // "Website" sayfası (docs/google-analytics-plan.md §3.9, GA-F2 v1): Google
 // Analytics ambarından karşılaştırmalı KPI'lar, günlük trend, kanallar,
@@ -172,6 +173,9 @@ export default async function WebsitePage({
         ) : (
           <>
             <HealthNotice link={result.report.link} />
+            {GaFlags.live() && GaFlags.sync() ? (
+              <WebsiteLiveStrip projectId={projectId} />
+            ) : null}
             {result.report.period.days === 0 ? (
               <EmptyState
                 icon={Globe}

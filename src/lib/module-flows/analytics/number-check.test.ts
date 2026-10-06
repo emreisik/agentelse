@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { summaryFactsOf } from "./facts";
 import {
   allowedNumbersOf,
   checkSummaryNumbers,
@@ -82,6 +83,45 @@ describe("the number check", () => {
     expect(keepSupportedSentences("Keep posting Reels.", allowed)).toBe(
       "Keep posting Reels.",
     );
+  });
+
+  it("allows a channel share from the facts and drops an invented one", () => {
+    const facts = summaryFactsOf({
+      period: 28,
+      builtAt: "2026-10-05T12:00:00.000Z",
+      sections: [
+        {
+          source: "ga4",
+          ok: true,
+          account: null,
+          days: 28,
+          currency: null,
+          metrics: [{ key: "ga.sessions", value: 1200 }],
+          results: [],
+          campaigns: [],
+          queries: [],
+          channels: [
+            {
+              channel: "Organic Search",
+              sessions: 540,
+              share: 45,
+              engagementRate: 62.5,
+              keyEvents: 12,
+            },
+          ],
+          keyEvents: [{ name: "generate_lead", count: 15 }],
+        },
+      ],
+      summary: null,
+      summaryNote: null,
+    });
+    const gaAllowed = allowedNumbersOf(facts);
+    expect(
+      keepSupportedSentences(
+        "Organic Search brought 45% of sessions. Paid Search brought 73% of sessions. Leads hit 15.",
+        gaAllowed,
+      ),
+    ).toBe("Organic Search brought 45% of sessions. Leads hit 15.");
   });
 
   it("returns the summary without unsupported sentences, or null when none is left", () => {

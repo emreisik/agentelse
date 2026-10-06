@@ -112,10 +112,13 @@ export async function disconnectGoogleCredential(
       metadata: { disconnectedAt: new Date().toISOString() },
     },
   });
-  // Google Analytics ambarı (bağ, günlük toplamlar, dilimler, ay özetleri):
-  // bağ silinince verisi cascade ile gider. Search Console bağlantısının
-  // eşleşen bağı yoktur.
+  // Google Analytics ambarı (Ga*) ve Search Console ambarı (Gsc*: bağ, günlük
+  // toplamlar, kırılımlar, sözlükler, haftalık/aylık özetler) bağ silinince
+  // cascade ile gider; gizlilik metni "right away" der.
   await prisma.gaPropertyLink.deleteMany({
+    where: { credentialId: credential.id },
+  });
+  await prisma.gscSiteLink.deleteMany({
     where: { credentialId: credential.id },
   });
   return { revokedAtGoogle };

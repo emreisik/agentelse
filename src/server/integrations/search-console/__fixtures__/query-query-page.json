@@ -1,0 +1,75 @@
+{
+  "rows": [
+    {
+      "keys": [
+        "acme shoes",
+        "https://www.example.com/"
+      ],
+      "clicks": 112,
+      "impressions": 1405,
+      "ctr": 0.0797153024911032,
+      "position": 1.21
+    },
+    {
+      "keys": [
+        "acme store near me",
+        "https://www.example.com/contact"
+      ],
+      "clicks": 38,
+      "impressions": 512,
+      "ctr": 0.07421875,
+      "position": 1.84
+    },
+    {
+      "keys": [
+        "running shoes",
+        "https://www.example.com/products/running-shoes"
+      ],
+      "clicks": 27,
+      "impressions": 3120,
+      "ctr": 0.0086538461538462,
+      "position": 9.42
+    },
+    {
+      "keys": [
+        "best trail running shoes",
+        "https://www.example.com/blog/trail-running-shoes"
+      ],
+      "clicks": 19,
+      "impressions": 1877,
+      "ctr": 0.0101225359616409,
+      "position": 7.65
+    },
+    {
+      "keys": [
+        "ışıklı ayakkabı fiyatları",
+        "https://www.example.com/products/kids"
+      ],
+      "clicks": 6,
+      "impressions": 402,
+      "ctr": 0.0149253731343284,
+      "position": 11.3
+    },
+    {
+      "keys": [
+        "shoe size guide",
+        "https://www.example.com/size-guide"
+      ],
+      "clicks": 14,
+      "impressions": 936,
+      "ctr": 0.014957264957265,
+      "position": 5.18
+    },
+    {
+      "keys": [
+        "running shoes",
+        "https://www.example.com/blog/trail-running-shoes"
+      ],
+      "clicks": 3,
+      "impressions": 610,
+      "ctr": 0.0049180327868852,
+      "position": 14.2
+    }
+  ],
+  "responseAggregationType": "byPage"
+}

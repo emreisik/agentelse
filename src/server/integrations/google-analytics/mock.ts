@@ -3,6 +3,7 @@ import "server-only";
 import type { GaRunReportRequest } from "@/lib/website-analytics/catalog";
 import { addDays, daysInRange } from "@/lib/website-analytics/days";
 import type { GaRawReport } from "@/lib/website-analytics/response";
+import { isoYearIsoWeekKey } from "@/lib/website-analytics/weeks";
 
 import type { GaPropertyDetails } from "./admin-api";
 
@@ -39,6 +40,15 @@ const VALUES: Record<string, string[]> = {
   deviceCategory: ["desktop", "mobile", "tablet"],
   country: ["Turkey", "Germany", "United States"],
   newVsReturning: ["new", "returning"],
+  // GA-F2 bölüm 2: site araması (e-posta maskelenmeli), Google Ads ve Search
+  // Console (sorgu dizesi atılmalı).
+  searchTerm: ["pricing", "opening hours", "jane@example.com", "contact"],
+  sessionGoogleAdsCampaignName: ["Brand - Search", "Generic - Search"],
+  landingPagePlusQueryString: [
+    "/",
+    "/pricing?utm_source=news",
+    "/blog/how-to-start",
+  ],
 };
 
 // Basit belirlenimci "rastgele": aynı girdi aynı sayıyı verir.
@@ -88,6 +98,18 @@ function metricValue(
       return Math.round(base * 0.01);
     case "totalRevenue":
       return Math.round(base * 0.01 * 45 * 100) / 100;
+    case "advertiserAdCost":
+      return Math.round(base * 0.35 * 100) / 100;
+    case "advertiserAdClicks":
+      return Math.round(base * 0.3);
+    case "organicGoogleSearchClicks":
+      return Math.round(base * 0.2);
+    case "organicGoogleSearchImpressions":
+      return Math.round(base * 4);
+    case "organicGoogleSearchClickThroughRate":
+      return 0.05;
+    case "organicGoogleSearchAveragePosition":
+      return 8 + 10 * seed;
     default:
       return Math.round(base);
   }
@@ -137,7 +159,11 @@ export function mockGaReport(
     };
   }
 
-  const others = dimensions.filter((name) => name !== "date");
+  // Gün ve hafta boyutları gün başına değer alır (haftalık istekte her gün
+  // kendi haftasının anahtarıyla gelir; bölücü aynı haftayı toplar).
+  const others = dimensions.filter(
+    (name) => name !== "date" && name !== "isoYearIsoWeek",
+  );
   const width = Math.max(1, ...others.map((name) => VALUES[name]?.length ?? 1));
   for (const day of expandDays(request)) {
     const sessions = daySessions(propertyId, day);
@@ -150,7 +176,9 @@ export function mockGaReport(
           value:
             name === "date"
               ? day.replaceAll("-", "")
-              : (VALUES[name]?.[index % (VALUES[name]?.length ?? 1)] ??
+              : name === "isoYearIsoWeek"
+                ? isoYearIsoWeekKey(day)
+                : (VALUES[name]?.[index % (VALUES[name]?.length ?? 1)] ??
                 "(not set)"),
         })),
         metricValues: metrics.map((name) => ({

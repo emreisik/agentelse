@@ -378,10 +378,37 @@ const SECTIONS: PolicySection[] = [
           website&rsquo;s figures (such as users, sessions, engagement and key
           events, broken down by channel, landing page, page, event, device and
           country), so reports and trends load quickly: up to 400 days, and 95
-          days for page and campaign detail. These are totals, never individual
+          days for page and campaign detail, after which page, source, campaign,
+          device and country detail is kept only as weekly summaries for up to
+          400 days. Monthly summaries (totals, channels and your top 50 landing
+          pages) are kept for up to 36 months. We also keep weekly summaries of
+          the words visitors search for on your site (up to 400 days) and, when
+          your property is linked to Google Ads or Search Console, ad cost and
+          click summaries per campaign (up to 400 days) and Google Search clicks
+          per landing page (95 days). These are totals, never individual
           visitors. Page addresses are stored without query strings, and email
-          addresses, phone numbers and similar personal details in them are
-          masked.
+          addresses, phone numbers and similar personal details in them and in
+          search words are masked. The &ldquo;Today so far&rdquo; and &ldquo;Right
+          now&rdquo; figures are read from Google while you look at them and are
+          not stored.
+        </p>
+        <p>
+          For Google Search Console we also keep summaries of how your site
+          appears in Google Search: daily totals (clicks, impressions and
+          average position) by search type, country, device and search
+          appearance, and weekly and monthly totals for your search queries and
+          pages. Agentelse keeps your Search Console history, including data
+          older than the 16 months Google keeps: daily totals and monthly
+          summaries for as long as the connection exists, weekly query and page
+          summaries for 36 months, query-by-page detail for 16 months, and daily
+          breakdowns for 16 months, after which we keep them only as monthly
+          breakdowns. In Connectors you can choose to keep only the last 16
+          months, or delete the stored history anytime; disconnecting deletes it
+          all right away. If you choose a different site, the previous
+          site&rsquo;s data is deleted after 30 days. Searches Google hides for
+          privacy never reach us. Page addresses are stored without query
+          strings, and email addresses, phone numbers and similar personal
+          details in search queries and addresses are masked.
         </p>
         <p>
           Agentelse&rsquo;s use of information received from Google APIs will

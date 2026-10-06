@@ -17,6 +17,7 @@ import {
   formatBuiltAt,
   formatCount,
   formatMoney,
+  formatPercent,
   formatPosition,
 } from "@/lib/module-flows/analytics/format";
 import {
@@ -294,6 +295,41 @@ function OkSectionBody({
           main: query.query,
           value: COPY.clicks(formatCount(query.clicks)),
           sub: COPY.position(formatPosition(query.position)),
+        }))}
+      />
+      <RowList
+        title={COPY.channelsHeading}
+        rows={(section.channels ?? []).map((channel, index) => ({
+          key: `${index}`,
+          main: channel.channel,
+          value: formatCount(channel.sessions),
+          sub: COPY.channelSub(
+            channel.share !== null ? formatPercent(channel.share) : null,
+            formatCount(channel.keyEvents),
+          ),
+        }))}
+      />
+      <RowList
+        title={COPY.landingPagesHeading}
+        rows={(section.landingPages ?? []).map((page, index) => ({
+          key: `${index}`,
+          main: page.page,
+          value: formatCount(page.sessions),
+          sub: COPY.pageSub(
+            page.engagementRate !== null
+              ? formatPercent(page.engagementRate)
+              : null,
+            formatCount(page.keyEvents),
+          ),
+        }))}
+      />
+      <RowList
+        title={COPY.keyEventsHeading}
+        rows={(section.keyEvents ?? []).map((event, index) => ({
+          key: `${index}`,
+          main: event.name,
+          value: formatCount(event.count),
+          sub: null,
         }))}
       />
       {note ? (

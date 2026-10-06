@@ -51,7 +51,7 @@ const COPY = ADS_FLOW_COPY;
 
 export const ADS_STATUS: Readonly<
   Record<
-    "approval" | "working" | "created" | "stopped",
+    "approval" | "working" | "created" | "stopped" | "live" | "discarded",
     { label: string; tone: WsTone }
   >
 > = {
@@ -59,12 +59,16 @@ export const ADS_STATUS: Readonly<
   working: { label: "Creating…", tone: "waiting" },
   created: { label: "Created, paused", tone: "positive" },
   stopped: { label: "Stopped", tone: "danger" },
+  live: { label: "Live", tone: "positive" },
+  discarded: { label: "Discarded", tone: "neutral" },
 };
 
 function statusOf(
   chain: AdsChain | null,
   complete: boolean,
 ): { label: string; tone: WsTone } | undefined {
+  if (chain?.v2?.live) return ADS_STATUS.live;
+  if (chain?.v2?.status === "DISCARDED") return ADS_STATUS.discarded;
   if (complete) return ADS_STATUS.created;
   if (!chain) return undefined;
   if (chain.stopped) return ADS_STATUS.stopped;

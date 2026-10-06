@@ -1,5 +1,7 @@
 import "server-only";
 
+import { metaWorkExcludedHere } from "@/lib/local-worker-policy";
+
 // A thin, real Telegram Bot API wrapper — no SDK, plain `fetch` (same
 // pattern as openai-image-client.ts and the OpenClaw clients). No mock:
 // every call is a real HTTP request, and on failure it throws an error
@@ -18,12 +20,39 @@ type TelegramResponse<T> =
 // may need to keep Telegram open for `timeoutMs` — otherwise the default
 // 8s prevents a hung network request from delaying the sequential tick
 // chain in `agency-wiring.ts`.
+// Canlı veritabanını paylaşan yerel geliştirme süreci gerçek kullanıcılara
+// mesaj göndermez ve canlı onay güncellemelerini (getUpdates) tüketmez
+// (docs/meta-ads-plan.md F0b, K19). Bağlantı denemesi (getMe) serbesttir.
+const DEV_BLOCKED_METHODS = new Set([
+  "sendMessage",
+  "sendPhoto",
+  "editMessageText",
+  "editMessageReplyMarkup",
+  "deleteMessage",
+  "answerCallbackQuery",
+  "getUpdates",
+]);
+
+function blockedInLocalDevelopment(path: string): boolean {
+  const method = path.split("?")[0] ?? path;
+  return (
+    DEV_BLOCKED_METHODS.has(method) &&
+    process.env.ALLOW_DEV_NOTIFICATIONS !== "true" &&
+    metaWorkExcludedHere(process.env)
+  );
+}
+
 async function request<T>(
   token: string,
   path: string,
   init?: RequestInit,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
+  if (blockedInLocalDevelopment(path)) {
+    throw new TelegramApiError(
+      "Telegram messages are off in local development against the shared database (set ALLOW_DEV_NOTIFICATIONS=true to allow).",
+    );
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
@@ -88,10 +117,11 @@ export function telegramGetChat(
   return request<TelegramChatInfo>(token, `getChat?${qs.toString()}`);
 }
 
-export type TelegramInlineKeyboardButton = {
-  text: string;
-  callback_data: string;
-};
+export type TelegramInlineKeyboardButton =
+  | { text: string; callback_data: string }
+  // Uygulamaya açılan bağlantı düğmesi (ör. L4 onayı için "Review in
+  // Agentelse"); geri çağrı üretmez.
+  | { text: string; url: string };
 export type TelegramReplyMarkup = {
   inline_keyboard: TelegramInlineKeyboardButton[][];
 };

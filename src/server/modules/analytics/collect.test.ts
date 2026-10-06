@@ -26,7 +26,7 @@ vi.mock("@/server/integrations/meta-client", async (importOriginal) => ({
 
 const resolveConnection = vi.fn();
 vi.mock("@/server/integrations/meta-ads-query", () => ({
-  MetaAdsQuery: { resolveConnection },
+  MetaAdsQuery: { resolveConnection, noteFailure: vi.fn() },
 }));
 
 const findActiveGoogleConnections = vi.fn();

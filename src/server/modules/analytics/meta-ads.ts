@@ -13,6 +13,9 @@ import {
   type ReportResult,
   type ReportSection,
 } from "@/lib/module-flows/analytics/report";
+import { AdsFlags } from "@/lib/ads/flags";
+import { nameWithoutTag } from "@/lib/ads/operation-tag";
+import { AdsMirror } from "@/server/ads/mirror-reads";
 import { MetaAdsQuery } from "@/server/integrations/meta-ads-query";
 import {
   MetaApiError,
@@ -160,7 +163,10 @@ export function accountMetrics(row: AccountRow | null): ReportMetric[] {
   const metrics: ReportMetric[] = [
     { key: "ads.spend", value: spend },
     { key: "ads.impressions", value: impressions },
-    { key: "ads.reach", value: amount(row?.reach) },
+    // Aynadan okunan çok günlük aralıkta tekil erişim bilinmez: gösterilmez.
+    ...(row && row.reach === undefined
+      ? []
+      : [{ key: "ads.reach" as const, value: amount(row?.reach) }]),
     { key: "ads.clicks", value: clicks },
   ];
   // Rates only where there is something to divide: Meta's own figures.
@@ -224,10 +230,64 @@ export function topCampaigns(
     }));
 }
 
+// F2: hesap ve kampanya rakamları aynadan (Meta'ya çağrı yok). Ayna kapalıysa
+// ya da hesap henüz senkronlanmadıysa null: canlı yol kullanılır.
+async function collectFromMirror(
+  projectId: string,
+  period: AnalyticsPeriod,
+): Promise<ReportSection | null> {
+  if (!AdsFlags.sync()) return null;
+  const account = await AdsMirror.accountFor(projectId);
+  if (!account?.lastStructureAt) return null;
+  const preset = META_DATE_PRESET[period];
+  const [totalsById, campaigns] = await Promise.all([
+    AdsMirror.insightsByObject(account, "ACCOUNT", preset),
+    AdsMirror.campaigns(account, preset),
+  ]);
+  const total = totalsById.get(account.externalId);
+  const totals: AccountRow | null = total
+    ? {
+        account_currency: account.currency ?? undefined,
+        account_name: account.name ?? undefined,
+        spend: String(total.spend),
+        impressions: String(total.impressions),
+        ...(total.reach !== undefined ? { reach: String(total.reach) } : {}),
+        clicks: String(total.clicks),
+        ctr: String(total.ctr),
+        cpc: String(total.cpc),
+      }
+    : null;
+  const delivered = campaigns
+    .filter((campaign) => campaign.insights && campaign.insights.spend > 0)
+    .map((campaign) => ({
+      name: nameWithoutTag(campaign.name).slice(0, NAME_MAX) || COPY.campaign,
+      insights: campaign.insights!,
+    }));
+  const currency = isCurrencyCode(account.currency) ? account.currency : null;
+  return okSection("metaAds", {
+    days: period,
+    account: account.name ? account.name.slice(0, NAME_MAX) : null,
+    currency,
+    metrics: accountMetrics(totals),
+    results: resultsByKind(delivered),
+    campaigns: topCampaigns(delivered),
+  });
+}
+
 export async function collectMetaAds(
   projectId: string,
   period: AnalyticsPeriod,
 ): Promise<ReportSection> {
+  const mirrored = await collectFromMirror(projectId, period).catch(
+    (error: unknown) => {
+      console.error(
+        "[analytics] meta ads mirror read failed:",
+        error instanceof Error ? error.message : error,
+      );
+      return null;
+    },
+  );
+  if (mirrored) return mirrored;
   const connection = await MetaAdsQuery.resolveConnection(projectId);
   if (connection.status === "NOT_CONNECTED") {
     return failedSection("metaAds", "not_connected");
@@ -266,6 +326,7 @@ export async function collectMetaAds(
       campaigns: topCampaigns(delivered),
     });
   } catch (error) {
+    await MetaAdsQuery.noteFailure(connection, error);
     const reason = metaFailReason(error);
     if (reason === "error") {
       console.error(

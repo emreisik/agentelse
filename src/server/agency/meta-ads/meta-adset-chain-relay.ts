@@ -26,6 +26,19 @@ function readPendingAd(payload: unknown): PendingAd | null {
   return { name: pendingAd.name, raw: pendingAd };
 }
 
+function accountContextOf(payload: unknown): {
+  adAccountId?: string;
+  currency?: string;
+} {
+  const record = (payload ?? {}) as Record<string, unknown>;
+  return {
+    ...(typeof record.adAccountId === "string"
+      ? { adAccountId: record.adAccountId }
+      : {}),
+    ...(typeof record.currency === "string" ? { currency: record.currency } : {}),
+  };
+}
+
 // TASK_COMPLETED fan-out for the combined AdSet+Ad wizard (see
 // createMetaAdSetWithAdAction in meta-ads-actions.ts): the user fills out
 // one form, but a META_AD_CREATE Task can't be planned until Meta has
@@ -82,6 +95,9 @@ export const MetaAdSetChainRelay = {
       payloadExtra: {
         ...pendingAd.raw,
         adSetId,
+        // Onay anındaki reklam hesabı ve para birimi reklam halkasına da
+        // geçer (nesne-hesap doğrulaması, docs/meta-ads-plan.md F0b).
+        ...accountContextOf(task.payload),
       },
     });
   },

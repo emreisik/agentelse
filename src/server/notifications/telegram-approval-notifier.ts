@@ -1,5 +1,7 @@
 import "server-only";
 
+import { appUrl } from "@/lib/app-url";
+
 import type { Approval, ApprovalStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
@@ -86,6 +88,7 @@ export async function sendApprovalRequestToTelegram(approval: {
   entityType: string;
   entityId: string;
   type: string;
+  level?: string | null;
 }): Promise<void> {
   try {
     const credential = await findActiveTelegramCredential(approval.projectId);
@@ -94,6 +97,38 @@ export async function sendApprovalRequestToTelegram(approval: {
     if (!metadata.chatId) return;
 
     const token = decryptSecret(credential.encryptedSecret);
+
+    // Harcama (L4) onayı Telegram'dan verilmez: mesajda Approve/Reject
+    // düğmesi yerine uygulamaya bağlantı olur ve mesaj yalnız Agentelse'in
+    // kendi verisini (görev adı) taşır; Meta'dan okunan veri gitmez
+    // (docs/meta-ads-plan.md F0b, K5, K8).
+    if (approval.level === "LEVEL_4_CRITICAL") {
+      const label = await resolveApprovalLabel(approval);
+      const sent = await telegramSendMessage(
+        token,
+        metadata.chatId,
+        `💳 Spending approval waiting: ${label}\nA workspace owner or admin approves it in Agentelse.`,
+        {
+          replyMarkup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Review in Agentelse",
+                  url: appUrl(`/projects/${approval.projectId}`).toString(),
+                },
+              ],
+            ],
+          },
+        },
+      );
+      if (sent.message_id) {
+        await prisma.approval.update({
+          where: { id: approval.id },
+          data: { telegramMessageId: String(sent.message_id) },
+        });
+      }
+      return;
+    }
     const replyMarkup = buildKeyboard(
       approval.id,
       metadata.allowedApproverIds ?? [],

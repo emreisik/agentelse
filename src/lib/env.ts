@@ -150,6 +150,9 @@ const envSchema = z.object({
   SENTRY_DSN: z.string().optional().default(""),
 
   CRON_SECRET: z.string().optional().default(""),
+  // Platform operators (comma-separated user ids): only they see /health and
+  // run its platform-wide actions (docs/meta-ads-plan.md F1).
+  OPERATOR_USER_IDS: z.string().optional().default(""),
   TEMPORARY_SECRET_ENCRYPTION_KEY: z.string().optional().default(""),
 
   // Telegram Bot API — notification channel for dead letters that require

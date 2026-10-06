@@ -239,9 +239,14 @@ describe("adsLaunchPayload", () => {
       name: PLAN.campaignName,
       objective: "OUTCOME_ENGAGEMENT",
       status: "PAUSED",
+      currency: "TRY",
       __pendingAdSet: {
         name: PLAN.adSetName,
         dailyBudgetCents: 2000,
+        // F0b: the end date is set from this when the ad set is created.
+        durationDays: 7,
+        advantageAudience: 0,
+        currency: "TRY",
         billingEvent: "IMPRESSIONS",
         optimizationGoal: "POST_ENGAGEMENT",
         targeting: {
@@ -263,6 +268,38 @@ describe("adsLaunchPayload", () => {
     });
     // The budget lives on the ad set only (Meta takes one or the other).
     expect(payload).not.toHaveProperty("dailyBudgetCents");
+  });
+
+  it("pins the Brief's ad account on every link and sends the EU disclosure (F0b)", () => {
+    const payload = adsLaunchPayload(
+      {
+        ...BRIEF,
+        adAccountId: "act_7",
+        dsaBeneficiary: "Cafe Lale",
+        dsaPayor: "Cafe Lale GmbH",
+      },
+      PLAN,
+    );
+    expect(payload).toMatchObject({
+      adAccountId: "act_7",
+      __pendingAdSet: {
+        adAccountId: "act_7",
+        dsa: { beneficiary: "Cafe Lale", payor: "Cafe Lale GmbH" },
+      },
+    });
+  });
+
+  it("sends no EU disclosure outside the EU", () => {
+    const payload = adsLaunchPayload(
+      {
+        ...BRIEF,
+        countries: ["TR"],
+        dsaBeneficiary: "Cafe Lale",
+        dsaPayor: "Cafe Lale",
+      },
+      PLAN,
+    );
+    expect(payload.__pendingAdSet).not.toHaveProperty("dsa");
   });
 
   it("targets every gender by leaving genders out", () => {

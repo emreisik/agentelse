@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   exchangeMetaAuthCode: vi.fn(),
   exchangeForLongLivedToken: vi.fn(),
   fetchMetaAccountName: vi.fn(),
+  fetchMetaUserIdentity: vi.fn(),
   fetchMetaPageList: vi.fn(),
   fetchMetaAdAccountList: vi.fn(),
 }));
@@ -68,6 +69,7 @@ vi.mock("@/server/integrations/meta-client", async (importOriginal) => {
     exchangeMetaAuthCode: mocks.exchangeMetaAuthCode,
     exchangeForLongLivedToken: mocks.exchangeForLongLivedToken,
     fetchMetaAccountName: mocks.fetchMetaAccountName,
+    fetchMetaUserIdentity: mocks.fetchMetaUserIdentity,
     fetchMetaPageList: mocks.fetchMetaPageList,
     fetchMetaAdAccountList: mocks.fetchMetaAdAccountList,
   };
@@ -276,6 +278,8 @@ describe("callback (Facebook route) over an earlier Instagram Login connection",
     mocks.exchangeMetaAuthCode.mockResolvedValue({ accessToken: "short", expiresIn: 3600 });
     mocks.exchangeForLongLivedToken.mockResolvedValue({ accessToken: "long", expiresIn: 5184000 });
     mocks.fetchMetaAccountName.mockResolvedValue("Emre");
+    // F1: the Facebook route reads the person's app-scoped id with the name.
+    mocks.fetchMetaUserIdentity.mockResolvedValue({ id: "fb-1", name: "Emre" });
     mocks.fetchMetaPageList.mockResolvedValue({
       pages: [{ pageId: "p1", pageName: "Web Health", instagramBusinessAccountId: "ig-1", instagramUsername: "wh" }],
     });
@@ -350,6 +354,8 @@ describe("callback (Facebook route)", () => {
     mocks.exchangeMetaAuthCode.mockResolvedValue({ accessToken: "short", expiresIn: 3600 });
     mocks.exchangeForLongLivedToken.mockResolvedValue({ accessToken: "long", expiresIn: 5184000 });
     mocks.fetchMetaAccountName.mockResolvedValue("Emre");
+    // F1: the Facebook route reads the person's app-scoped id with the name.
+    mocks.fetchMetaUserIdentity.mockResolvedValue({ id: "fb-1", name: "Emre" });
     mocks.fetchMetaPageList.mockResolvedValue({
       pages: [{ pageId: "p1", pageName: "Web Health", instagramBusinessAccountId: "ig-1" }],
     });

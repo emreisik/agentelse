@@ -1,3 +1,5 @@
+import { AdsAccounts } from "@/server/ads/accounts";
+import { adPerformance, adsOverview } from "@/server/chat/ads-read";
 import "server-only";
 
 import { z, type ZodType } from "zod";
@@ -300,6 +302,15 @@ export function outcomeFromSubmission(
       return {
         status: "APPROVAL_HANDLED",
         result: { outcome: "approval_decided" },
+      };
+    case "APPROVAL_ON_CARD":
+      return {
+        status: "ANSWERED",
+        result: {
+          outcome: "approve_on_card",
+          note: "Nothing was approved: spending on ads is approved only on its card, by a workspace owner or admin. Tell the client to approve it on the card above.",
+        },
+        appendReply: "Approve it on the card above.",
       };
     case "FORM_REQUIRED":
       return {
@@ -1587,19 +1598,92 @@ const getConnectedPlatforms = defineTool({
     "List the social channels actually connected for this brand (with account labels). Use before planning content so you only plan for channels that can publish, or to ask which to focus on.",
   schema: EmptyArgs,
   async execute(_args, ctx) {
-    const targets = await getPublishTargets(ctx.projectId);
+    const [targets, ads] = await Promise.all([
+      getPublishTargets(ctx.projectId),
+      // Meta Ads readiness (docs/meta-ads-plan.md F1): the agent can tell
+      // "connect Meta Ads" / "pick an ad account" apart from "ready".
+      AdsAccounts.resolve(ctx.projectId).catch(() => null),
+    ]);
     return {
       result: {
         connected: targets.map((t) => ({
           platform: t.platform,
           account: "accountLabel" in t ? t.accountLabel : undefined,
         })),
+        metaAds: ads
+          ? {
+              status: ads.status,
+              ...(ads.adAccountName ? { adAccount: ads.adAccountName } : {}),
+              ...(ads.currency ? { currency: ads.currency } : {}),
+              ...(ads.pageName ? { runsAs: ads.pageName } : {}),
+              ...(ads.healthStatus && ads.healthStatus !== "UNKNOWN"
+                ? { health: ads.healthStatus }
+                : {}),
+            }
+          : undefined,
         note:
           targets.length === 0
             ? "No channel is connected yet; a plan can still be drafted, but it cannot be published automatically."
             : undefined,
       },
     };
+  },
+});
+
+// Meta Ads okumaları (docs/meta-ads-plan.md F2): "CPA neden arttı?" gibi
+// sorular sayıyla yanıtlanır, tahminle değil.
+const getAdsOverview = defineTool({
+  name: "get_ads_overview",
+  label: "Checking your ads…",
+  kind: "read",
+  phases: ["ACTIVE"],
+  description:
+    "Meta Ads at a glance: account health, the campaigns with their state, daily budget and the last 7 days (spend, results, cost per result), and the open ad alerts. Use before answering any question about the client's ads, their spend or their results.",
+  schema: EmptyArgs,
+  async execute(_args, ctx) {
+    try {
+      return { result: await adsOverview(ctx.projectId) };
+    } catch (error) {
+      return {
+        result: {
+          status: "error",
+          note: error instanceof Error ? error.message : "Couldn't read Meta Ads.",
+        },
+      };
+    }
+  },
+});
+
+const AdPerformanceArgs = z.object({
+  level: z.enum(["campaign", "adset", "ad"]),
+  parentId: z
+    .string()
+    .optional()
+    .describe("Campaign id for level=adset, ad set id for level=ad."),
+  period: z
+    .enum(["last_7d", "last_14d", "last_30d", "last_90d", "this_month"])
+    .optional(),
+});
+
+const getAdPerformance = defineTool({
+  name: "get_ad_performance",
+  label: "Reading ad results…",
+  kind: "read",
+  phases: ["ACTIVE"],
+  description:
+    "Meta Ads results by level: campaigns, the ad sets of one campaign, or the ads of one ad set, for a period (default last 7 days). Use to explain what is working, what isn't and why a cost changed.",
+  schema: AdPerformanceArgs,
+  async execute(args, ctx) {
+    try {
+      return { result: await adPerformance(ctx.projectId, args) };
+    } catch (error) {
+      return {
+        result: {
+          status: "error",
+          note: error instanceof Error ? error.message : "Couldn't read Meta Ads.",
+        },
+      };
+    }
   },
 });
 
@@ -1969,6 +2053,8 @@ const ALL_TOOLS: readonly ChatTool[] = [
   getBrandProfile,
   getVisualIdentity,
   getConnectedPlatforms,
+  getAdsOverview,
+  getAdPerformance,
   startPlanBrief,
   startGuidedSetup,
   proposeContentPlan,

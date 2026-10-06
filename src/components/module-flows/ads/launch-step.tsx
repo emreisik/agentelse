@@ -24,6 +24,11 @@ import {
   loadAdsLaunchAction,
   relaunchAdsAction,
 } from "@/server/actions/ads-flow-actions";
+import {
+  discardAdsLaunchAction,
+  retryAdsLaunchAction,
+  turnOnAdsLaunchAction,
+} from "@/server/actions/ads-launch-actions";
 
 import { LoadingLine, type StepActions } from "./parts";
 
@@ -284,7 +289,28 @@ export function AdsLaunchStep({
   };
 
   const footer: CardButton[] = [];
-  if (chain.complete) {
+  const v2 = chain.v2;
+  const serverButton = (
+    id: string,
+    label: string,
+    emphasis: CardButton["emphasis"],
+  ): CardButton => ({
+    id,
+    label,
+    emphasis,
+    action: { kind: "server", id },
+    disabledReason: gate ?? undefined,
+  });
+  if (v2 && v2.canRetry) {
+    footer.push(serverButton("launch:retry", COPY.retry, "primary"));
+    footer.push(serverButton("launch:discard", COPY.discard, "quiet"));
+  } else if (v2 && v2.canTurnOn) {
+    footer.push(serverButton("launch:turnon", COPY.turnOnNow, "primary"));
+    footer.push(serverButton("launch:discard", COPY.discard, "quiet"));
+  }
+  if (v2 && (v2.canRetry || v2.canTurnOn)) {
+    // v2'nin kendi düğmeleri yukarıda.
+  } else if (chain.complete) {
     footer.push({
       id: "launch:open",
       label: COPY.openAds,
@@ -316,7 +342,25 @@ export function AdsLaunchStep({
   }
 
   const onFooter = (button: CardButton) => {
-    if (button.id === "launch:refresh") {
+    if (button.id === "launch:retry") {
+      void actions
+        .run(button.id, () => retryAdsLaunchAction(projectId, commandId), {
+          announce: COPY.approved,
+        })
+        .then(() => read.reload());
+    } else if (button.id === "launch:turnon") {
+      void actions
+        .run(button.id, () => turnOnAdsLaunchAction(projectId, commandId), {
+          announce: COPY.approved,
+        })
+        .then(() => read.reload());
+    } else if (button.id === "launch:discard") {
+      void actions
+        .run(button.id, () => discardAdsLaunchAction(projectId, commandId), {
+          announce: COPY.discarded,
+        })
+        .then(() => read.reload());
+    } else if (button.id === "launch:refresh") {
       void refresh();
     } else if (button.id === "launch:relaunch") {
       void actions.run(
@@ -370,7 +414,9 @@ export function AdsLaunchStep({
                   buttons={[
                     {
                       id: `approve:${link.key}`,
-                      label: `${COPY.approve} ${CHAIN_LINK_LABEL[link.key].toLowerCase()}`,
+                      label: v2
+                        ? COPY.approveLaunch
+                        : `${COPY.approve} ${CHAIN_LINK_LABEL[link.key].toLowerCase()}`,
                       emphasis: "primary",
                       action: { kind: "server", id: `approve:${link.key}` },
                       disabledReason: gate ?? undefined,
@@ -385,7 +431,35 @@ export function AdsLaunchStep({
         })}
       </ol>
 
-      {chain.complete ? (
+      {v2 && (v2.live || v2.status === "CREATED_PAUSED" || v2.status === "DISCARDED") ? (
+        <div className="space-y-0.5 text-sm" role="status">
+          <p className="font-medium" style={{ color: "var(--ws-text)" }}>
+            {v2.live
+              ? COPY.live
+              : v2.status === "DISCARDED"
+                ? COPY.discarded
+                : COPY.createdPaused}
+          </p>
+          {v2.live && v2.endsAt ? (
+            <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+              {COPY.liveUntil(
+                new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(
+                  new Date(v2.endsAt),
+                ),
+              )}
+            </p>
+          ) : null}
+        </div>
+      ) : v2 && v2.status === "FAILED" ? (
+        <div className="space-y-0.5 text-sm" role="status">
+          <p style={{ color: "var(--ws-text)" }}>{COPY.stopped}</p>
+          {v2.message ? (
+            <p className="text-xs break-words" style={{ color: "var(--ws-text-2)" }}>
+              {v2.message}
+            </p>
+          ) : null}
+        </div>
+      ) : chain.complete ? (
         <div className="space-y-0.5 text-sm" role="status">
           <p className="font-medium" style={{ color: "var(--ws-text)" }}>
             {COPY.createdAll}

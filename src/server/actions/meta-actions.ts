@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
+import { ensureAdsAccountRow } from "@/server/ads/accounts";
 import { decryptSecret } from "@/server/security/crypto";
 import {
   requireProjectAccess,
@@ -15,6 +16,7 @@ import {
   MetaApiError,
   fetchMetaAdsInsights,
   parseMetaService,
+  revokeMetaPermission,
   verifyFacebookPageAccess,
   verifyInstagramAccess,
   type MetaAdsMetadata,
@@ -96,15 +98,11 @@ export async function selectMetaPageAction(
       return { ok: false, message: "Invalid Page selection" };
     }
 
-    await prisma.integrationCredential.update({
-      where: { id: credential.id },
-      data: {
-        metadata: {
-          ...metadata,
-          selectedPageId: page.pageId,
-          selectedPageName: page.pageName,
-        },
-      },
+    // Key by key (jsonb_set): a whole-object write would put back what a
+    // scan or another tab changed meanwhile (docs/meta-ads-plan.md F1).
+    await writeMetadataKeys(credential.id, {
+      selectedPageId: page.pageId,
+      selectedPageName: page.pageName,
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);
@@ -132,14 +130,27 @@ export async function selectMetaAdAccountAction(
       return { ok: false, message: "Invalid ad account selection" };
     }
 
-    const nextMetadata: MetaAdsMetadata = {
-      ...metadata,
+    // A closed or disabled account cannot run ads: it is not picked.
+    if (account.accountStatus !== undefined && account.accountStatus !== 1) {
+      return {
+        ok: false,
+        message:
+          "This ad account can't run ads right now (closed or disabled in Meta). Pick another one.",
+      };
+    }
+    await writeMetadataKeys(credential.id, {
       selectedAdAccountId: account.adAccountId,
       selectedAdAccountName: account.adAccountName,
-    };
-    await prisma.integrationCredential.update({
-      where: { id: credential.id },
-      data: { metadata: nextMetadata },
+    });
+    // The account model follows the choice (src/server/ads/accounts.ts).
+    await ensureAdsAccountRow({
+      workspaceId: credential.workspaceId,
+      projectId,
+      brandId: credential.brandId,
+      credentialId: credential.id,
+      externalId: account.adAccountId,
+      name: account.adAccountName,
+      currency: account.currency,
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);
@@ -266,10 +277,29 @@ export async function disconnectMetaAction(
     const credential = await loadCredential(projectId, service);
     if (!credential) return { ok: true };
 
+    // Meta Ads (K18): only the ads permissions are taken back at Meta, and
+    // only when this person has no other active Meta Ads connection. Meta
+    // keeps one grant per person and app, so a full revoke would cut their
+    // Facebook and Instagram connections too.
+    const revokedAtMeta =
+      service === "ads" ? await revokeAdsPermissions(credential) : false;
+
+    // For Meta Ads our side forgets the token at once, with the account choice
+    // and the scan's numbers. The row stays REVOKED so the tile can say
+    // what was connected.
     await prisma.integrationCredential.update({
       where: { id: credential.id },
-      data: { status: "REVOKED" },
+      data: {
+        status: "REVOKED",
+        ...(service === "ads" ? { encryptedSecret: "" } : {}),
+      },
     });
+    if (service === "ads") {
+      await deleteMetadataKeys(credential.id, ADS_METADATA_KEYS);
+      await prisma.adsAccountProject
+        .deleteMany({ where: { projectId } })
+        .catch(() => undefined);
+    }
 
     await AuditLogRepository.record({
       workspaceId: access.workspaceId,
@@ -279,12 +309,79 @@ export async function disconnectMetaAction(
       action: "integration_credential.disconnected",
       entityType: "IntegrationCredential",
       entityId: credential.id,
-      metadata: { provider: META_PROVIDER[service] },
+      metadata: {
+        provider: META_PROVIDER[service],
+        ...(service === "ads" ? { adsPermissionsRevokedAtMeta: revokedAtMeta } : {}),
+      },
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
     return fail(error);
+  }
+}
+
+// Ads-only metadata a Disconnect removes (docs/meta-ads-plan.md K18).
+const ADS_METADATA_KEYS = [
+  "selectedAdAccountId",
+  "selectedAdAccountName",
+  "adAccounts",
+  "previousScanSnapshot",
+  "adsDigest",
+  "lastAdsPerformanceScanAt",
+  "adsPerformanceScanFailureCount",
+  "lastTestResult",
+];
+
+async function writeMetadataKeys(
+  credentialId: string,
+  values: Record<string, unknown>,
+): Promise<void> {
+  for (const [key, value] of Object.entries(values)) {
+    await prisma.$executeRaw`UPDATE "IntegrationCredential" SET metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), ${[key]}::text[], ${JSON.stringify(value)}::jsonb) WHERE id = ${credentialId}`;
+  }
+}
+
+async function deleteMetadataKeys(
+  credentialId: string,
+  keys: readonly string[],
+): Promise<void> {
+  await prisma.$executeRaw`UPDATE "IntegrationCredential" SET metadata = coalesce(metadata, '{}'::jsonb) - ${[...keys]}::text[] WHERE id = ${credentialId}`;
+}
+
+// true: ads_management and ads_read were taken back at Meta. Never throws:
+// a failed revoke must not keep the user from disconnecting.
+async function revokeAdsPermissions(credential: {
+  id: string;
+  encryptedSecret: string;
+  metadata: unknown;
+}): Promise<boolean> {
+  const userId = (credential.metadata as { appScopedUserId?: unknown } | null)
+    ?.appScopedUserId;
+  if (typeof userId !== "string" || !userId || !credential.encryptedSecret) {
+    return false;
+  }
+  try {
+    const others = await prisma.integrationCredential.count({
+      where: {
+        id: { not: credential.id },
+        provider: META_PROVIDER.ads,
+        status: "ACTIVE",
+        metadata: { path: ["appScopedUserId"], equals: userId },
+      },
+    });
+    if (others > 0) return false;
+    const accessToken = decryptSecret(credential.encryptedSecret);
+    for (const permission of ["ads_management", "ads_read"]) {
+      await revokeMetaPermission({ userId, permission, accessToken });
+    }
+    return true;
+  } catch (error) {
+    console.error(
+      "[meta-actions] ads permissions could not be revoked at Meta:",
+      error instanceof Error ? error.message : error,
+    );
+    return false;
   }
 }

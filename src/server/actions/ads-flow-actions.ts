@@ -10,13 +10,13 @@ import {
   ADS_BRIEF_ISSUE,
   AdsBriefInputSchema,
   AdsPlanInputSchema,
-  adsFlowData,
   adsLaunchPayload,
   briefChangesPlan,
   briefIssue,
   normalizeBudget,
   parseAdsFlowState,
   planIssue,
+  targetsEuEea,
   viewStepOf,
   type AdsAccountView,
   type AdsBrief,
@@ -24,26 +24,20 @@ import {
   type AdsFlowState,
   type AdsPlan,
 } from "@/lib/module-flows/ads/state";
-import {
-  isModuleFlowCard,
-  MODULE_FLOW_STEPS,
-  type ModuleFlowCardData,
-  type ModuleFlowStep,
-} from "@/lib/module-flows/card";
+import { MODULE_FLOW_STEPS } from "@/lib/module-flows/card";
 import { brandRuleLanguageOf } from "@/server/brand/rule-language";
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { loadAdsAccount } from "@/server/modules/ads/account";
 import { loadAdsBriefOptions } from "@/server/modules/ads/brief-options";
-import { loadAdsChain } from "@/server/modules/ads/chain";
+import { loadAdsChain, loadLaunchChain } from "@/server/modules/ads/chain";
+import { readAdsCard, writeAdsCard } from "@/server/modules/ads/flow-card";
 import { draftAdsPlan } from "@/server/modules/ads/draft-plan";
 import { findSourcePost } from "@/server/modules/ads/source-posts";
-import { updateModuleFlowCard } from "@/server/modules/flow-card";
 import {
   GUARD_MESSAGE,
   assertWorkActive,
   authorizeWorks,
   guardedAction,
-  idSchema,
 } from "@/server/works/guard";
 
 // The Ads Manager flow's actions (docs/modules.md "Ads Manager"): one card in
@@ -74,15 +68,6 @@ export type DraftAdsPlanResult =
 export type AdsLaunchResult =
   { ok: true; chain: AdsChain } | { ok: false; message: string };
 
-type AdsCard = {
-  commandId: string;
-  card: ModuleFlowCardData;
-  workId: string | null;
-};
-
-type Decision =
-  { step: ModuleFlowStep; state: AdsFlowState } | { reject: string };
-
 function failed(message: string = GUARD_MESSAGE.failed) {
   return { ok: false as const, message };
 }
@@ -105,41 +90,9 @@ function withoutLaunch(state: AdsFlowState): AdsFlowState {
   return next;
 }
 
-// The card of this Command, only when it is an Ads Manager card of this
-// project.
-async function readAdsCard(
-  projectId: string,
-  commandId: unknown,
-): Promise<AdsCard | null> {
-  const id = idSchema.safeParse(commandId);
-  if (!id.success) return null;
-  const row = await prisma.command.findFirst({
-    where: { id: id.data, projectId },
-    select: { parsedIntent: true, workId: true },
-  });
-  const card = (row?.parsedIntent as { card?: unknown } | null)?.card;
-  if (!row || !isModuleFlowCard(card) || card.module !== "ads") return null;
-  return { commandId: id.data, card, workId: row.workId };
-}
-
-// One write of the card: `decide` reads the stored state and returns the next
-// step and state, or refuses.
-function writeCard(
-  projectId: string,
-  commandId: string,
-  decide: (card: ModuleFlowCardData, state: AdsFlowState) => Decision,
-) {
-  return updateModuleFlowCard({
-    commandId,
-    projectId,
-    module: "ads",
-    update: (card) => {
-      const decided = decide(card, parseAdsFlowState(card.data));
-      if ("reject" in decided) return decided;
-      return { ...card, step: decided.step, data: adsFlowData(decided.state) };
-    },
-  });
-}
+// The card's read / write helpers live in src/server/modules/ads/flow-card.ts
+// (shared with the launch v2 actions).
+const writeCard = writeAdsCard;
 
 // ---- Brief ---------------------------------------------------------------------
 
@@ -208,6 +161,16 @@ export async function saveAdsBriefAction(
         source,
         ...(account.currency ? { currency: account.currency } : {}),
         ...(account.pageName ? { pageName: account.pageName } : {}),
+        ...(account.adAccountId ? { adAccountId: account.adAccountId } : {}),
+        // DSA: yalnız AB/AEA hedefinde saklanır ve ad set'e gider.
+        ...(targetsEuEea(given.countries) &&
+        given.dsaBeneficiary &&
+        given.dsaPayor
+          ? {
+              dsaBeneficiary: given.dsaBeneficiary.trim(),
+              dsaPayor: given.dsaPayor.trim(),
+            }
+          : {}),
       };
 
       let hasPlan = false;
@@ -397,6 +360,11 @@ export async function launchAdsAction(
       if ((account.currency ?? null) !== (brief.currency ?? null)) {
         return failed(ADS_FLOW_COPY.accountChanged);
       }
+      // Another ad account since the Brief: the campaign would be built in
+      // an account nobody looked at (docs/meta-ads-plan.md F0b).
+      if (brief.adAccountId && account.adAccountId !== brief.adAccountId) {
+        return failed(ADS_FLOW_COPY.accountChanged);
+      }
       // The ad's picture is the post's asset: it must still be there.
       const picture = await prisma.asset.findFirst({
         where: { id: brief.source.assetId, projectId },
@@ -493,10 +461,14 @@ export async function loadAdsLaunchAction(
       if (!found) return failed();
       const launch = parseAdsFlowState(found.card.data).launch;
       if (!launch) return failed(ADS_FLOW_COPY.movedOn);
-      const chain = await loadAdsChain(projectId, {
-        commandId: found.commandId,
-        launch,
-      });
+      // v2: tek lansman kaydı.
+      const chain = launch.launchId
+        ? await loadLaunchChain(projectId, launch.launchId)
+        : await loadAdsChain(projectId, {
+            commandId: found.commandId,
+            launch,
+          });
+      if (!chain) return failed(ADS_FLOW_COPY.movedOn);
       if (chain.complete && !launch.completedAt) {
         const completedAt = new Date().toISOString();
         const write = await writeCard(
@@ -533,11 +505,19 @@ export async function relaunchAdsAction(
       if (!found) return failed();
       const launch = parseAdsFlowState(found.card.data).launch;
       if (!launch) return { ok: true };
-      const chain = await loadAdsChain(projectId, {
-        commandId: found.commandId,
-        launch,
-      });
+      const chain = launch.launchId
+        ? await loadLaunchChain(projectId, launch.launchId)
+        : await loadAdsChain(projectId, {
+            commandId: found.commandId,
+            launch,
+          });
+      if (!chain) return failed(ADS_FLOW_COPY.movedOn);
       if (!chain.stopped) return failed(ADS_FLOW_COPY.stillGoing);
+      // v2: Meta'da yarım kalan nesneler varken yeni lansman açılmaz; önce
+      // "Discard" (yetim nesne kalmasın).
+      if (chain.v2 && chain.v2.status === "FAILED" && chain.campaignId) {
+        return failed(ADS_FLOW_COPY.discardFirst);
+      }
 
       const write = await writeCard(projectId, found.commandId, (_c, state) =>
         state.launch?.claimId === launch.claimId

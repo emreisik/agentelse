@@ -42,3 +42,32 @@ export function shouldStartProductionWorker(
     env.ENABLE_INPROCESS_WORKER === "true"
   );
 }
+
+type MetaWorkEnvironment = {
+  NODE_ENV?: string;
+  DATABASE_URL?: string;
+};
+
+// Tek kullanımlık yerel Postgres: localhost ya da Unix soketi (?host=/...).
+export function isLocalDatabaseUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const socketHost = parsed.searchParams.get("host");
+    if (socketHost?.startsWith("/")) return true;
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(
+      parsed.hostname,
+    );
+  } catch {
+    return false;
+  }
+}
+
+// Yerel geliştirme süreci canlı veritabanını paylaşırken Meta işlerini ve
+// Meta tick adımlarını hiç almaz (docs/meta-ads-plan.md F0b, K19): aksi hâlde
+// gerçek müşteri token'larıyla yerelden harcama yapılabilir ya da canlı bir
+// lansman yerel işçide FAILED olabilirdi. Yerel tek kullanımlık veritabanında
+// her şey çalışır.
+export function metaWorkExcludedHere(env: MetaWorkEnvironment): boolean {
+  return env.NODE_ENV === "development" && !isLocalDatabaseUrl(env.DATABASE_URL);
+}

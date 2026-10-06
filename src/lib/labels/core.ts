@@ -246,6 +246,8 @@ const CAPABILITY_LABELS: Partial<Record<CapabilityKey, string>> = {
   META_CAMPAIGN_UPDATE: "Meta Campaign Update",
   META_ADSET_CREATE: "Meta Ad Set Creation",
   META_AD_CREATE: "Meta Ad Creation",
+  META_SAFETY_ACTION: "Meta Pause",
+  META_LAUNCH: "Meta Launch",
   WEBSITE_UPDATE: "Website Update",
   PR_OUTREACH: "PR Outreach",
   ANALYTICS_ANALYSIS: "Analytics Analysis",

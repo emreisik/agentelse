@@ -1,9 +1,11 @@
 import "server-only";
 
+import { AdsFlags } from "@/lib/ads/flags";
 import { prisma } from "@/lib/prisma";
-import { decryptSecret } from "@/server/security/crypto";
+import { AdsAccounts } from "@/server/ads/accounts";
+import { AdsMirror } from "@/server/ads/mirror-reads";
+import { markMetaCredentialExpiredOn } from "@/server/integrations/meta-credential-health";
 import {
-  META_PROVIDER,
   fetchMetaLevelInsights,
   listMetaAdSets,
   listMetaAds,
@@ -11,7 +13,6 @@ import {
   type MetaAdSetSummary,
   type MetaAdSummary,
   type MetaCampaignSummary,
-  type MetaAdsMetadata,
   type MetaInsightsRow,
 } from "@/server/integrations/meta-client";
 
@@ -43,29 +44,68 @@ export function isDatePreset(value: string): value is DatePreset {
 export type MetaAdsConnectionState =
   | { status: "NOT_CONNECTED" }
   | { status: "NO_AD_ACCOUNT" }
-  | { status: "READY"; accessToken: string; adAccountId: string };
+  | {
+      status: "READY";
+      accessToken: string;
+      adAccountId: string;
+      // Which connection the token came from: a 190 answer marks it EXPIRED
+      // (noteFailure, docs/meta-ads-plan.md F0b).
+      credentialId: string;
+    };
 
+// One source for the account: src/server/ads/accounts.ts (docs/meta-ads-plan.md
+// F1). The reads only need a connected account; the Page matters to the
+// ad creative, not to a report.
 async function resolveConnection(
   projectId: string,
 ): Promise<MetaAdsConnectionState> {
-  const credential = await prisma.integrationCredential.findUnique({
-    where: { projectId_provider: { projectId, provider: META_PROVIDER.ads } },
-  });
-  if (!credential || credential.status !== "ACTIVE") {
-    return { status: "NOT_CONNECTED" };
-  }
-  const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
-  if (!metadata.selectedAdAccountId) {
-    return { status: "NO_AD_ACCOUNT" };
-  }
+  const account = await AdsAccounts.resolveWithToken(projectId);
+  if (account.status === "needs-connect") return { status: "NOT_CONNECTED" };
+  if (account.status === "needs-account") return { status: "NO_AD_ACCOUNT" };
+  if (!("accessToken" in account)) return { status: "NOT_CONNECTED" };
   return {
     status: "READY",
-    accessToken: decryptSecret(credential.encryptedSecret),
-    adAccountId: metadata.selectedAdAccountId,
+    accessToken: account.accessToken,
+    adAccountId: account.adAccountId,
+    credentialId: account.credentialId,
   };
 }
 
-type ReadyConnection = Extract<MetaAdsConnectionState, { status: "READY" }>;
+// Every reader that catches a Meta error calls this: a 190 (token expired or
+// revoked) marks the connection EXPIRED so the Integrations tile asks for a
+// reconnect, instead of each screen failing while it still says Connected.
+// Never throws.
+async function noteFailure(
+  conn: { credentialId: string },
+  error: unknown,
+): Promise<void> {
+  await markMetaCredentialExpiredOn(error, conn.credentialId);
+}
+
+// The reads need only the token and the account; a 190 is noted with
+// noteFailure on the full READY state.
+type ReadyConnection = Pick<
+  Extract<MetaAdsConnectionState, { status: "READY" }>,
+  "accessToken" | "adAccountId"
+> & { credentialId?: string };
+
+// META_ADS_SYNC açıkken ve hesap en az bir kez senkronlanmışken okumalar
+// aynadan yapılır (docs/meta-ads-plan.md §3.2); bayrak kapatılınca eski
+// canlı yol döner.
+async function mirrorAccountFor(conn: ReadyConnection) {
+  if (!AdsFlags.sync()) return null;
+  try {
+    return await prisma.adsAccount.findFirst({
+      where: {
+        externalId: conn.adAccountId,
+        lastStructureAt: { not: null },
+        ...(conn.credentialId ? { credentialId: conn.credentialId } : {}),
+      },
+    });
+  } catch {
+    return null;
+  }
+}
 
 // campaigns/adSets/ads all take an already-resolved connection rather than
 // a projectId — resolveConnection() does a Prisma lookup + decryptSecret,
@@ -79,6 +119,7 @@ type ReadyConnection = Extract<MetaAdsConnectionState, { status: "READY" }>;
 // with the inventory listing call since neither depends on the other.
 export const MetaAdsQuery = {
   resolveConnection,
+  noteFailure,
 
   async campaigns(
     conn: ReadyConnection,
@@ -88,6 +129,8 @@ export const MetaAdsQuery = {
     // the two calls run concurrently and nothing changes.
     options?: { preferLeadForLeadsCampaigns?: boolean },
   ): Promise<WithInsights<MetaCampaignSummary>[]> {
+    const mirror = await mirrorAccountFor(conn);
+    if (mirror) return AdsMirror.campaigns(mirror, datePreset);
     const baseInsights = {
       adAccountId: conn.adAccountId,
       accessToken: conn.accessToken,
@@ -129,9 +172,14 @@ export const MetaAdsQuery = {
     campaignId: string,
     datePreset: DatePreset = DEFAULT_DATE_PRESET,
   ): Promise<WithInsights<MetaAdSetSummary>[]> {
+    // Envanter canlı kalır (düzenleme formu hedeflemeyi ister); rakamlar
+    // ayna varsa aynadan.
+    const mirror = await mirrorAccountFor(conn);
     const [adSets, insights] = await Promise.all([
       listMetaAdSets({ campaignId, accessToken: conn.accessToken }),
-      fetchMetaLevelInsights({
+      mirror
+        ? AdsMirror.insightsByObject(mirror, "ADSET", datePreset)
+        : fetchMetaLevelInsights({
         adAccountId: conn.adAccountId,
         accessToken: conn.accessToken,
         level: "adset",
@@ -150,9 +198,12 @@ export const MetaAdsQuery = {
     adSetId: string,
     datePreset: DatePreset = DEFAULT_DATE_PRESET,
   ): Promise<WithInsights<MetaAdSummary>[]> {
+    const mirror = await mirrorAccountFor(conn);
     const [ads, insights] = await Promise.all([
       listMetaAds({ adSetId, accessToken: conn.accessToken }),
-      fetchMetaLevelInsights({
+      mirror
+        ? AdsMirror.insightsByObject(mirror, "AD", datePreset)
+        : fetchMetaLevelInsights({
         adAccountId: conn.adAccountId,
         accessToken: conn.accessToken,
         level: "ad",

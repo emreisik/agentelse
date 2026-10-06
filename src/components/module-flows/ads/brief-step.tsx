@@ -30,6 +30,7 @@ import {
   genderToggleValue,
   normalizeBudget,
   withScheme,
+  targetsEuEea,
   type AdsBrief,
   type AdsBriefInput,
   type AdsBriefOptions,
@@ -356,6 +357,14 @@ function BriefForm({
   const [cta, setCta] = useState<AdsCallToAction>(
     brief?.callToAction ?? "LEARN_MORE",
   );
+  // DSA: istenir yalnız AB/AEA hedefinde; Sayfa adı makul ilk değerdir.
+  const [dsaBeneficiary, setDsaBeneficiary] = useState(
+    brief?.dsaBeneficiary ?? options.account.pageName ?? "",
+  );
+  const [dsaPayor, setDsaPayor] = useState(
+    brief?.dsaPayor ?? options.account.pageName ?? "",
+  );
+  const showDsa = targetsEuEea(countries);
 
   const input: Partial<AdsBriefInput> & Record<string, unknown> = {
     creativeId: creativeId ?? undefined,
@@ -368,6 +377,7 @@ function BriefForm({
     gender,
     link: withScheme(link),
     callToAction: cta,
+    ...(showDsa ? { dsaBeneficiary, dsaPayor } : {}),
   };
   const issue = briefIssue(input);
   const daily = numberOf(budget);
@@ -388,6 +398,8 @@ function BriefForm({
 
   const budgetId = `${baseId}-budget`;
   const linkId = `${baseId}-link`;
+  const dsaBeneficiaryId = `${baseId}-dsa-beneficiary`;
+  const dsaPayorId = `${baseId}-dsa-payor`;
   const ageMinId = `${baseId}-age-min`;
   const ageMaxId = `${baseId}-age-max`;
 
@@ -549,6 +561,48 @@ function BriefForm({
           </div>
         </div>
       </Section>
+
+      {showDsa ? (
+        <Section label={COPY.dsa}>
+          <div className="space-y-2">
+            <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
+              {COPY.dsaHint}
+            </p>
+            <label htmlFor={dsaBeneficiaryId} className="block space-y-1">
+              <span
+                className="block text-xs"
+                style={{ color: "var(--ws-text-2)" }}
+              >
+                {COPY.dsaBeneficiary}
+              </span>
+              <input
+                id={dsaBeneficiaryId}
+                maxLength={512}
+                value={dsaBeneficiary}
+                onChange={(event) => setDsaBeneficiary(event.target.value)}
+                className={FIELD_CLASS}
+                style={FIELD_STYLE}
+              />
+            </label>
+            <label htmlFor={dsaPayorId} className="block space-y-1">
+              <span
+                className="block text-xs"
+                style={{ color: "var(--ws-text-2)" }}
+              >
+                {COPY.dsaPayor}
+              </span>
+              <input
+                id={dsaPayorId}
+                maxLength={512}
+                value={dsaPayor}
+                onChange={(event) => setDsaPayor(event.target.value)}
+                className={FIELD_CLASS}
+                style={FIELD_STYLE}
+              />
+            </label>
+          </div>
+        </Section>
+      ) : null}
 
       <Section label={COPY.link} htmlFor={linkId}>
         <input

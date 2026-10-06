@@ -18,7 +18,9 @@ import {
   launchAdsAction,
   setAdsStepAction,
 } from "@/server/actions/ads-flow-actions";
+import { launchAdsV2Action } from "@/server/actions/ads-launch-actions";
 
+import { LaunchCheckPanel, useLaunchCheck } from "./launch-check";
 import type { StepActions } from "./parts";
 
 // Steps 3 and 4. Create: the ad is the post's own picture with the Plan's text,
@@ -160,41 +162,91 @@ export function AdsReviewStep({
   actions,
   brandName,
 }: StepProps) {
-  const buttons: CardButton[] = [
-    backButton(gate, "review:back"),
-    {
-      id: "review:launch",
-      label: actions.busyId === "review:launch" ? COPY.launching : COPY.launch,
-      emphasis: "primary",
-      action: { kind: "server", id: "review:launch" },
-      disabledReason: gate ?? undefined,
-    },
-  ];
+  // Güvenli lansman v2 açıksa Meta'nın ön kontrolü ve tek onay; değilse eski
+  // zincir (üç ayrı onay).
+  const { state: check, reload } = useLaunchCheck(projectId, commandId, !gate);
+  // Bayrak sorulana kadar (idle) ve kapalıysa (off) eski Review; soruluyorken
+  // yalnız Back görünür.
+  const v2 = check.status !== "off" && check.status !== "idle";
+  const v2Blocked =
+    check.status !== "ready" || !check.check.ready ? COPY.checkingMeta : undefined;
+  const buttons: CardButton[] = check.status === "loading"
+    ? [backButton(gate, "review:back")]
+    : v2
+    ? [
+        backButton(gate, "review:back"),
+        {
+          id: "review:paused",
+          label: COPY.createPaused,
+          emphasis: "quiet",
+          action: { kind: "server", id: "review:paused" },
+          disabledReason: gate ?? (check.status === "ready" && check.check.ready ? undefined : v2Blocked),
+        },
+        {
+          id: "review:launch",
+          label: actions.busyId === "review:launch" ? COPY.approvingLaunch : COPY.approveLaunch,
+          emphasis: "primary",
+          action: { kind: "server", id: "review:launch" },
+          disabledReason: gate ?? (check.status === "ready" && check.check.ready ? undefined : v2Blocked),
+        },
+      ]
+    : [
+        backButton(gate, "review:back"),
+        {
+          id: "review:launch",
+          label: actions.busyId === "review:launch" ? COPY.launching : COPY.launch,
+          emphasis: "primary",
+          action: { kind: "server", id: "review:launch" },
+          disabledReason: gate ?? undefined,
+        },
+      ];
+  const onAct = (button: CardButton) => {
+    if (button.id === "review:back") {
+      void actions.run(
+        button.id,
+        () => setAdsStepAction(projectId, commandId, "create"),
+        { moves: true },
+      );
+      return;
+    }
+    if (!v2) {
+      void actions.run(button.id, () => launchAdsAction(projectId, commandId), {
+        moves: true,
+        announce: COPY.launched,
+      });
+      return;
+    }
+    void actions.run(
+      button.id,
+      async () => {
+        const result = await launchAdsV2Action(projectId, commandId, {
+          activate: button.id === "review:launch",
+        });
+        return result;
+      },
+      { moves: true, announce: COPY.approved },
+    );
+  };
   return (
     <div className="space-y-3">
       <AdsSummary brief={brief} plan={plan} />
-      <AdPreview brief={brief} plan={plan} brandName={brandName} />
-      <div className="space-y-1 text-xs" style={{ color: "var(--ws-text-2)" }}>
-        <p>{COPY.safety}</p>
-        <p>{COPY.noEndDate(brief.days)}</p>
-      </div>
+      {v2 ? (
+        <LaunchCheckPanel state={check} onRetry={reload} />
+      ) : null}
+      {v2 && check.status === "ready" && check.check.previews.length > 0 ? null : (
+        <AdPreview brief={brief} plan={plan} brandName={brandName} />
+      )}
+      {v2 ? null : (
+        <div className="space-y-1 text-xs" style={{ color: "var(--ws-text-2)" }}>
+          <p>{COPY.safety}</p>
+          <p>{COPY.endDate(brief.days)}</p>
+        </div>
+      )}
       <CardActions
         buttons={buttons}
         busyId={actions.busyId}
         error={actions.error}
-        onAct={(button) =>
-          button.id === "review:back"
-            ? void actions.run(
-                button.id,
-                () => setAdsStepAction(projectId, commandId, "create"),
-                { moves: true },
-              )
-            : void actions.run(
-                button.id,
-                () => launchAdsAction(projectId, commandId),
-                { moves: true, announce: COPY.launched },
-              )
-        }
+        onAct={onAct}
       />
     </div>
   );

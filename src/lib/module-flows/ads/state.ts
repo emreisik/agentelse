@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { ChannelKey } from "@/lib/content-channels";
 import { SUPPORTED_COUNTRIES, countryLabel } from "@/lib/locales";
 import type { ModuleFlowStep } from "@/lib/module-flows/card";
-import { ZERO_DECIMAL_CURRENCIES } from "@/lib/works/ads-insight";
+import { minorUnitOffset, toMinorUnits } from "@/lib/ads/money";
 
 // The Ads Manager flow's own state (docs/modules.md "Ads Manager"): what the
 // one module-flow card keeps in `data` from Brief to Launch, so a reopened chat
@@ -130,6 +130,21 @@ export function withScheme(value: string): string {
   return `https://${text.replace(/^\/+/, "")}`;
 }
 
+// AB + AEA: buradaki ülkelerde gösterilen reklam, faydalanıcı ve ödeyici
+// beyanı (DSA) ister; eksikse ad set adımı düşer ve yarım zincir kalır
+// (docs/meta-ads-plan.md F0b, P5).
+export const EU_EEA_COUNTRIES: readonly string[] = [
+  "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR",
+  "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK",
+  "SI", "ES", "SE", "IS", "LI", "NO",
+];
+
+export function targetsEuEea(countries: readonly string[]): boolean {
+  return countries.some((code) => EU_EEA_COUNTRIES.includes(code));
+}
+
+const dsaField = z.string().trim().max(512).optional();
+
 const briefFields = z.object({
   objective: z.enum(ADS_OBJECTIVES),
   // Major units of the ad account's currency ("20" = 20 TRY a day).
@@ -144,15 +159,27 @@ const briefFields = z.object({
   gender: z.enum(ADS_GENDERS),
   link: z.string().max(ADS_LIMITS.link).refine(isWebLink),
   callToAction: z.enum(ADS_CTAS),
+  // DSA: "Who benefits from this ad?" / "Who pays for it?" (yalnız AB/AEA).
+  dsaBeneficiary: dsaField,
+  dsaPayor: dsaField,
 });
 
 const agesInOrder = (value: { ageMin: number; ageMax: number }) =>
   value.ageMin <= value.ageMax;
 
+const dsaWhenEu = (value: {
+  countries: string[];
+  dsaBeneficiary?: string;
+  dsaPayor?: string;
+}) =>
+  !targetsEuEea(value.countries) ||
+  (Boolean(value.dsaBeneficiary?.trim()) && Boolean(value.dsaPayor?.trim()));
+
 // What the Brief sends: the fields plus the post picked to promote.
 export const AdsBriefInputSchema = briefFields
   .extend({ creativeId: idField })
-  .refine(agesInOrder, { path: ["ageMax"] });
+  .refine(agesInOrder, { path: ["ageMax"] })
+  .refine(dsaWhenEu, { path: ["dsaBeneficiary"] });
 export type AdsBriefInput = z.infer<typeof AdsBriefInputSchema>;
 
 // The post the ad is made from, frozen by the server when the Brief is saved:
@@ -175,6 +202,9 @@ const AdsBriefSchema = briefFields
       .regex(/^[A-Z]{3}$/)
       .optional(),
     pageName: z.string().max(200).optional(),
+    // The ad account the Brief was written for (its currency): the launch
+    // is refused if another account is selected since.
+    adAccountId: z.string().max(64).optional(),
   })
   .refine(agesInOrder, { path: ["ageMax"] });
 export type AdsBrief = z.infer<typeof AdsBriefSchema>;
@@ -202,6 +232,8 @@ const AdsLaunchSchema = z.object({
   startedAt: z.string().max(40),
   campaignTaskId: idField.optional(),
   completedAt: z.string().max(40).optional(),
+  // Güvenli lansman v2 (docs/meta-ads-plan.md F3): lansman kaydı.
+  launchId: idField.optional(),
 });
 export type AdsLaunch = z.infer<typeof AdsLaunchSchema>;
 
@@ -283,6 +315,7 @@ export type AdsAccountView = {
   currency?: string;
   pageName?: string;
   adAccountName?: string;
+  adAccountId?: string;
 };
 
 export type AdsSourcePost = {
@@ -321,6 +354,7 @@ export const ADS_BRIEF_ISSUE = {
   countries: "Pick at least one country.",
   ages: "Ages run from 13 to 65, the first not above the second.",
   link: "Enter your website link, starting with https://.",
+  dsa: "Ads shown in the EU must say who benefits from the ad and who pays for it.",
   other: "Check the brief.",
 } as const;
 
@@ -330,6 +364,8 @@ const ISSUE_ORDER: readonly [string, string][] = [
   ["dailyBudget", ADS_BRIEF_ISSUE.budget],
   ["days", ADS_BRIEF_ISSUE.other],
   ["countries", ADS_BRIEF_ISSUE.countries],
+  ["dsaBeneficiary", ADS_BRIEF_ISSUE.dsa],
+  ["dsaPayor", ADS_BRIEF_ISSUE.dsa],
   ["ageMin", ADS_BRIEF_ISSUE.ages],
   ["ageMax", ADS_BRIEF_ISSUE.ages],
   ["link", ADS_BRIEF_ISSUE.link],
@@ -366,13 +402,11 @@ export function planIssue(input: unknown): string | null {
 
 // Meta budgets are minor units with the currency's offset: 100 for most, 1 for
 // the currencies Meta counts in whole units (JPY, KRW, HUF...). An unknown
-// currency is Meta's default, 100.
-export function minorUnitOffset(currency?: string): 1 | 100 {
-  return currency && ZERO_DECIMAL_CURRENCIES.includes(currency) ? 1 : 100;
-}
+// currency is Meta's default, 100. The one source is src/lib/ads/money.ts.
+export { minorUnitOffset };
 
 export function budgetMinorUnits(major: number, currency?: string): number {
-  return Math.round(major * minorUnitOffset(currency));
+  return toMinorUnits(major, currency);
 }
 
 // The budget as Meta will hold it, back in major units ("12.345" -> 12.35).
@@ -490,14 +524,34 @@ export function defaultAdsPlan(
 export function adsLaunchPayload(brief: AdsBrief, plan: AdsPlanInput) {
   const genders =
     brief.gender === "men" ? [1] : brief.gender === "women" ? [2] : undefined;
+  // The account and currency the Brief was written in travel with every link
+  // of the chain: a write is refused when the selection changed since
+  // (docs/meta-ads-plan.md F0b).
+  const account = {
+    ...(brief.adAccountId ? { adAccountId: brief.adAccountId } : {}),
+    ...(brief.currency ? { currency: brief.currency } : {}),
+  };
+  const dsa =
+    targetsEuEea(brief.countries) && brief.dsaBeneficiary && brief.dsaPayor
+      ? { dsa: { beneficiary: brief.dsaBeneficiary, payor: brief.dsaPayor } }
+      : {};
   return {
     name: plan.campaignName,
     objective: brief.objective,
     status: "PAUSED",
+    ...account,
     __pendingAdSet: {
       name: plan.adSetName,
       // Minor units of the ad account's currency (the provider's field name).
       dailyBudgetCents: budgetMinorUnits(brief.dailyBudget, brief.currency),
+      // The end date is set when the ad set is created, `days` after it:
+      // the chain may wait on three approvals, so a date fixed at launch
+      // would cut the plan short or already be past.
+      durationDays: brief.days,
+      // 0: the Brief's ages and gender are hard limits, as today.
+      advantageAudience: 0,
+      ...account,
+      ...dsa,
       billingEvent: ADS_BILLING_EVENT,
       optimizationGoal: ADS_OBJECTIVE_META[brief.objective].optimizationGoal,
       targeting: {

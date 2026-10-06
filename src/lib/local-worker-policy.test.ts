@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isLocalDatabaseUrl,
+  metaWorkExcludedHere,
   shouldStartLocalWorker,
   shouldStartProductionWorker,
 } from "./local-worker-policy";
@@ -72,5 +74,45 @@ describe("production in-process worker policy", () => {
     },
   ])("does not start for %o", (env) => {
     expect(shouldStartProductionWorker(env)).toBe(false);
+  });
+});
+
+describe("Meta work in local development (F0b, K19)", () => {
+  it("treats localhost and a Unix socket as a disposable local database", () => {
+    expect(
+      isLocalDatabaseUrl("postgresql://postgres@localhost:5432/agentelse_test"),
+    ).toBe(true);
+    expect(
+      isLocalDatabaseUrl(
+        "postgresql://postgres@localhost/agentelse_test?host=/private/tmp/pg/sock",
+      ),
+    ).toBe(true);
+    expect(
+      isLocalDatabaseUrl(
+        "postgresql://u:p@ep-cool-name-pooler.eu-central-1.aws.neon.tech/neondb",
+      ),
+    ).toBe(false);
+    expect(isLocalDatabaseUrl(undefined)).toBe(false);
+  });
+
+  it("keeps Meta work off a dev process that shares the live database", () => {
+    expect(
+      metaWorkExcludedHere({
+        NODE_ENV: "development",
+        DATABASE_URL: "postgresql://u:p@ep-x.neon.tech/neondb",
+      }),
+    ).toBe(true);
+    expect(
+      metaWorkExcludedHere({
+        NODE_ENV: "development",
+        DATABASE_URL: "postgresql://postgres@127.0.0.1/agentelse_test",
+      }),
+    ).toBe(false);
+    expect(
+      metaWorkExcludedHere({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://u:p@ep-x.neon.tech/neondb",
+      }),
+    ).toBe(false);
   });
 });

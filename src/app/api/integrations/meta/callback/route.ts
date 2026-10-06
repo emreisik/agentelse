@@ -1,3 +1,5 @@
+import { AdsAccounts } from "@/server/ads/accounts";
+import { checkCredentialToken } from "@/server/ads/token-health";
 import { NextResponse } from "next/server";
 
 import { appUrl } from "@/lib/app-url";
@@ -18,7 +20,7 @@ import {
   exchangeInstagramLongLivedToken,
   exchangeMetaAuthCode,
   fetchInstagramLoginProfile,
-  fetchMetaAccountName,
+  fetchMetaUserIdentity,
   fetchMetaAdAccountList,
   fetchMetaPageList,
   parseMetaService,
@@ -213,16 +215,23 @@ export async function GET(request: Request) {
   // Even if a list fails (e.g. permission wasn't granted for that Page), the
   // connection is still established — the error message is stored in the
   // metadata and shown in the dialog.
+  // Facebook route: the person's app-scoped id is kept with the name. Meta's
+  // deauthorize / data-deletion requests name the person by it, and
+  // Disconnect revokes the ads permissions on it (docs/meta-ads-plan.md F1).
+  const facebookIdentity = instagramProfile
+    ? null
+    : await fetchMetaUserIdentity(longLivedToken.accessToken);
   const connectedName = instagramProfile
     ? instagramProfile.username
       ? `@${instagramProfile.username}`
       : null
-    : await fetchMetaAccountName(longLivedToken.accessToken);
+    : (facebookIdentity?.name ?? null);
   const connection = {
     connectedName: connectedName ?? undefined,
     longLivedTokenExpiresAt: new Date(
       Date.now() + longLivedToken.expiresIn * 1000,
     ).toISOString(),
+    ...(facebookIdentity?.id ? { appScopedUserId: facebookIdentity.id } : {}),
   };
   // A fresh Instagram Login row replaces whatever a previous Facebook-route
   // connection held (its Page list and selection mean nothing here).
@@ -268,6 +277,17 @@ export async function GET(request: Request) {
       status: "ACTIVE",
     },
   });
+
+  // The token is checked once right away (validity, expiry, granted scopes):
+  // the tile shows a missing permission at once, not a day later. Meta Ads
+  // also gets its account row (src/server/ads/accounts.ts). Neither can fail
+  // the connection.
+  if (!instagramProfile) {
+    await checkCredentialToken(credential).catch(() => null);
+  }
+  if (service === "ads") {
+    await AdsAccounts.resolve(state.projectId).catch(() => null);
+  }
 
   await AuditLogRepository.record({
     workspaceId: access.workspaceId,

@@ -1,12 +1,15 @@
 import "server-only";
 
+import { AdsFlags } from "@/lib/ads/flags";
 import type {
   ActorType,
+  ApprovalLevel,
   CapabilityKey,
   CommandSource,
   DepartmentKey,
 } from "@prisma/client";
 
+import { isMetaSpendWrite } from "@/lib/execution-backlog";
 import { prisma } from "@/lib/prisma";
 import { AgentelseError } from "@/server/security/errors";
 import {
@@ -27,7 +30,7 @@ import type { NeedsInput } from "@/server/commands/needs-input";
 import { missingCapabilityInput } from "@/server/execution/capability-input";
 import { MemoryService } from "@/server/memory/memory-service";
 import { ensureProjectActive } from "@/server/projects/activation";
-import { isWorksEnabled } from "@/server/works/flag";
+import { isModulesEnabled, isWorksEnabled } from "@/server/works/flag";
 import { performCreativeRevision } from "@/server/actions/creative-actions";
 import { createStrategicIdea } from "@/server/commands/strategic-request";
 import { IdeaEngine } from "@/server/ideas/idea-engine";
@@ -95,6 +98,9 @@ export type SubmitCommandResult =
       candidates?: { projectId: string; name: string }[];
     }
   | { status: "APPROVAL_HANDLED"; commandId: string; approvalId: string }
+  // Para harcatan bir onay (Meta yazması ya da L4) sohbetten verilmez:
+  // kartında, OWNER/ADMIN tarafından verilir (docs/meta-ads-plan.md F0b).
+  | { status: "APPROVAL_ON_CARD"; commandId: string; approvalId: string }
   | { status: "UNKNOWN_INTENT"; commandId: string }
   // The project is on hold (PAUSED or CLOSED), so it can't take new work. A
   // project that simply hasn't run setup is NOT on hold: ensureProjectActive
@@ -167,6 +173,11 @@ const FORM_REQUIRED_CAPABILITIES: ReadonlySet<CapabilityKey> =
 // still have to be entered explicitly, since free text can't be trusted to
 // map onto those reliably.
 function adsFormHref(projectId: string, brief: string): string {
+  // F3: modüller ve güvenli lansman v2 açıkken eski form yerine Ads kartı
+  // (tek onaylı lansman) açılır (docs/meta-ads-plan.md F3 "Eski yol").
+  if (isModulesEnabled() && AdsFlags.launchV2()) {
+    return `/projects/${projectId}?module=ads`;
+  }
   const params = new URLSearchParams({ create: "campaign", brief });
   return `/projects/${projectId}/ads?${params.toString()}`;
 }
@@ -244,6 +255,14 @@ export const CommandService = {
               note,
             })
           : undefined;
+
+      if (intent.decision === "APPROVE" && (await spendsMoney(approval))) {
+        return {
+          status: "APPROVAL_ON_CARD",
+          commandId: command.id,
+          approvalId: approval.id,
+        };
+      }
 
       if (intent.decision === "APPROVE") {
         // A task that can never run is not approved into a failure: check first,
@@ -691,4 +710,19 @@ async function findLatestPendingApproval(
   }
 
   return pending[0] ?? null;
+}
+
+// Sohbetteki "approve" en son bekleyen onayı seçer; para harcatan bir onayı
+// (L4 ya da Meta yazması) bu körlükle vermek yanlış öğeyi onaylayabilir.
+async function spendsMoney(approval: {
+  level: ApprovalLevel | null;
+  taskId: string | null;
+}): Promise<boolean> {
+  if (approval.level === "LEVEL_4_CRITICAL") return true;
+  if (!approval.taskId) return false;
+  const task = await prisma.task.findUnique({
+    where: { id: approval.taskId },
+    select: { capability: true },
+  });
+  return task ? isMetaSpendWrite(task.capability) : false;
 }

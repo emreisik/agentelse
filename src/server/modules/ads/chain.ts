@@ -2,10 +2,13 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import {
+  chainFromLaunch,
   chainOf,
   type AdsChain,
   type ChainTaskFacts,
 } from "@/lib/module-flows/ads/chain";
+import { parseLaunchSpec } from "@/lib/ads/launch-spec";
+import { errorOf, progressOf } from "@/server/ads/launch/store";
 import { ADS_FLOW_COPY } from "@/lib/module-flows/ads/copy";
 import type { AdsLaunch } from "@/lib/module-flows/ads/state";
 import { taskFingerprint } from "@/server/agency/fingerprint";
@@ -133,6 +136,9 @@ export async function loadAdsChain(
       ...(own.some((approval) => approval.status === "REJECTED")
         ? { rejected: true }
         : {}),
+      ...(own.some((approval) => approval.status === "EXPIRED")
+        ? { expired: true }
+        : {}),
       ...(job?.errorMessage ? { error: job.errorMessage } : {}),
       ...(typeof metaId === "string" && metaId ? { metaId } : {}),
     };
@@ -143,4 +149,35 @@ export async function loadAdsChain(
     factsOf(tasks[1], 1),
     factsOf(tasks[2], 2),
   ]);
+}
+
+// Güvenli lansman v2 (F3): kart halkaları lansman kaydından okunur.
+export async function loadLaunchChain(
+  projectId: string,
+  launchId: string,
+): Promise<AdsChain | null> {
+  const launch = await prisma.adsLaunch.findFirst({
+    where: { id: launchId, projectId },
+  });
+  if (!launch) return null;
+  const spec = parseLaunchSpec(launch.spec);
+  const approvals = launch.currentTaskId
+    ? await prisma.approval.findMany({
+        where: { projectId, taskId: launch.currentTaskId },
+        select: { id: true, status: true },
+      })
+    : [];
+  const pending = approvals.find((approval) => approval.status === "PENDING");
+  const declined = approvals.some((approval) => approval.status === "REJECTED");
+  const error = errorOf(launch);
+  return chainFromLaunch({
+    launchId: launch.id,
+    status: launch.status,
+    progress: progressOf(launch),
+    adSetCount: spec?.adSets.length ?? 1,
+    adCount: spec?.ads.length ?? 1,
+    ...(pending ? { pendingApprovalId: pending.id } : {}),
+    ...(declined && launch.status === "AWAITING_APPROVAL" ? { declined: true } : {}),
+    error: error ? { step: error.step, message: error.message } : null,
+  });
 }

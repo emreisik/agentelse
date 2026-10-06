@@ -119,3 +119,17 @@ describe("boost", () => {
     expect(boostAdHref("p1", "cr 1")).toBe("/projects/p1?module=ads&post=cr+1");
   });
 });
+
+describe("chainOf: an approval that ran out (F0b)", () => {
+  it("says the approval expired instead of a bare cancel", () => {
+    const chain = chainOf([
+      { status: "CANCELLED", expired: true },
+      null,
+      null,
+    ]);
+    expect(chain.links[0]).toMatchObject({
+      state: "failed",
+      reason: expect.stringContaining("ran out after 72 hours"),
+    });
+  });
+});

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const prismaMocks = vi.hoisted(() => ({
   credentialFindUnique: vi.fn(),
   credentialUpdate: vi.fn(),
+  credentialUpdateMany: vi.fn(),
   assetFindFirst: vi.fn(),
   executionJobFindUnique: vi.fn(),
   executionJobUpdate: vi.fn(),
@@ -13,6 +14,7 @@ vi.mock("@/lib/prisma", () => ({
     integrationCredential: {
       findUnique: prismaMocks.credentialFindUnique,
       update: prismaMocks.credentialUpdate,
+      updateMany: prismaMocks.credentialUpdateMany,
     },
     asset: { findFirst: prismaMocks.assetFindFirst },
     executionJob: {
@@ -52,6 +54,10 @@ const metaClientMocks = vi.hoisted(() => ({
   createMetaCarouselAdCreative: vi.fn(),
   uploadMetaAdImage: vi.fn(),
   updateMetaAd: vi.fn(),
+  fetchMetaObjectAccountId: vi.fn(),
+  createMetaAdSet: vi.fn(),
+  updateMetaCampaign: vi.fn(),
+  findMetaObjectsByTag: vi.fn(),
 }));
 vi.mock("@/server/integrations/meta-client", async (importOriginal) => {
   const actual =
@@ -69,8 +75,95 @@ vi.mock("@/server/integrations/meta-client", async (importOriginal) => {
     createMetaCarouselAdCreative: metaClientMocks.createMetaCarouselAdCreative,
     uploadMetaAdImage: metaClientMocks.uploadMetaAdImage,
     updateMetaAd: metaClientMocks.updateMetaAd,
+    createMetaAdSet: metaClientMocks.createMetaAdSet,
+    updateMetaCampaign: metaClientMocks.updateMetaCampaign,
+    findMetaObjectsByTag: metaClientMocks.findMetaObjectsByTag,
+    // Nesne-hesap doğrulaması (F0b): varsayılan olarak nesne seçili hesaptadır.
+    fetchMetaObjectAccountId: (...args: unknown[]) =>
+      metaClientMocks.fetchMetaObjectAccountId(...args) ??
+      Promise.resolve("act_1"),
   };
 });
+
+// F1: results live in ExecutionJob.rawResult and Meta writes go through the
+// intent log. Both are replaced by plain in-memory fakes (not vi.fn, so the
+// per-describe vi.resetAllMocks() keeps them working).
+vi.mock("@/server/execution/providers/meta/provider-results", () => {
+  const results = new Map<string, unknown>();
+  return {
+    saveProviderResult: async (correlationId: string, result: unknown) => {
+      results.set(correlationId, result);
+    },
+    loadProviderResult: async (correlationId: string) =>
+      results.get(correlationId),
+  };
+});
+const operations = vi.hoisted(() => {
+  type Op = {
+    id: string;
+    tag: string;
+    kind: string;
+    status: string;
+    executionJobId?: string;
+    projectId: string;
+    adAccountExternalId?: string;
+    resultExternalId?: string;
+    sentAt?: Date;
+    createdAt: Date;
+    error?: unknown;
+  };
+  const rows = new Map<string, Op>();
+  let seq = 0;
+  return {
+    rows,
+    AdsOperations: {
+      begin: async (input: {
+        kind: string;
+        executionJobId?: string;
+        projectId: string;
+        adAccountExternalId?: string;
+      }) => {
+        const existing = [...rows.values()].find(
+          (op) =>
+            op.executionJobId === input.executionJobId && op.kind === input.kind,
+        );
+        if (existing && input.executionJobId) {
+          return { op: existing, resumed: true };
+        }
+        seq += 1;
+        const op: Op = {
+          id: `op-${seq}`,
+          tag: `agx:t${String(seq).padStart(5, "0")}`,
+          kind: input.kind,
+          status: "PENDING",
+          executionJobId: input.executionJobId,
+          projectId: input.projectId,
+          adAccountExternalId: input.adAccountExternalId,
+          createdAt: new Date(),
+        };
+        rows.set(op.id, op);
+        return { op, resumed: false };
+      },
+      markSent: async (id: string) =>
+        Object.assign(rows.get(id)!, { status: "SENT", sentAt: new Date() }),
+      succeed: async (id: string, resultExternalId?: string) =>
+        Object.assign(rows.get(id)!, { status: "SUCCEEDED", resultExternalId }),
+      reconciled: async (id: string, resultExternalId: string) =>
+        Object.assign(rows.get(id)!, { status: "RECONCILED", resultExternalId }),
+      unknown: async (id: string, error: unknown) =>
+        Object.assign(rows.get(id)!, { status: "UNKNOWN", error }),
+      fail: async (id: string, error: unknown) =>
+        Object.assign(rows.get(id)!, {
+          status: "FAILED",
+          error: { message: error instanceof Error ? error.message : String(error) },
+        }),
+      find: async (id: string) => rows.get(id) ?? null,
+    },
+  };
+});
+vi.mock("@/server/ads/operations", () => ({
+  AdsOperations: operations.AdsOperations,
+}));
 
 import { MetaApiProvider } from "@/server/execution/providers/meta/meta-api-provider";
 import { MetaApiError } from "@/server/integrations/meta-client";
@@ -1060,15 +1153,15 @@ describe("MetaApiProvider INSTAGRAM_PUBLISH", () => {
 
     it("marks the connection EXPIRED, so the Connectors tile asks for a reconnect", async () => {
       prismaMocks.credentialFindUnique.mockResolvedValue(row);
-      prismaMocks.credentialUpdate.mockResolvedValue({});
+      prismaMocks.credentialUpdateMany.mockResolvedValue({ count: 1 });
       metaClientMocks.publishInstagramPost.mockRejectedValue(
         new MetaApiError("Error validating access token: Session has expired", 190),
       );
       const provider = new MetaApiProvider();
       await provider.execute(publishRequest());
 
-      expect(prismaMocks.credentialUpdate).toHaveBeenCalledWith({
-        where: { id: "cred-9" },
+      expect(prismaMocks.credentialUpdateMany).toHaveBeenCalledWith({
+        where: { id: "cred-9", status: "ACTIVE" },
         data: { status: "EXPIRED" },
       });
       expect(await provider.getStatus("corr-ig")).toMatchObject({
@@ -1083,12 +1176,21 @@ describe("MetaApiProvider INSTAGRAM_PUBLISH", () => {
         new MetaApiError("Media container could not be processed", 100),
       );
       await new MetaApiProvider().execute(publishRequest());
-      expect(prismaMocks.credentialUpdate).not.toHaveBeenCalled();
+      expect(prismaMocks.credentialUpdateMany).not.toHaveBeenCalled();
+    });
+
+    it("leaves the connection alone for 190/492 (the Page token owner lost the Page role)", async () => {
+      prismaMocks.credentialFindUnique.mockResolvedValue(row);
+      metaClientMocks.publishInstagramPost.mockRejectedValue(
+        new MetaApiError("The user must be an administrator of the Page", 190, 492),
+      );
+      await new MetaApiProvider().execute(publishRequest());
+      expect(prismaMocks.credentialUpdateMany).not.toHaveBeenCalled();
     });
 
     it("still reports the publish failure when flagging the connection itself fails", async () => {
       prismaMocks.credentialFindUnique.mockResolvedValue(row);
-      prismaMocks.credentialUpdate.mockRejectedValue(new Error("db down"));
+      prismaMocks.credentialUpdateMany.mockRejectedValue(new Error("db down"));
       metaClientMocks.publishInstagramPost.mockRejectedValue(
         new MetaApiError("Invalid OAuth access token", 190),
       );
@@ -1219,5 +1321,215 @@ describe("MetaApiProvider FACEBOOK_PUBLISH", () => {
       "FAILED",
     );
     expect(metaClientMocks.publishFacebookPagePost).not.toHaveBeenCalled();
+  });
+});
+
+describe("MetaApiProvider ad set and update safety (docs/meta-ads-plan.md F0b)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    envMocks.configured = true;
+    prismaMocks.credentialFindUnique.mockResolvedValue(activeCredential);
+    metaClientMocks.createMetaAdSet.mockResolvedValue({ adSetId: "adset-9" });
+    metaClientMocks.updateMetaCampaign.mockResolvedValue(undefined);
+  });
+
+  function request(
+    capability: ExecutionRequest["capability"],
+    payload: Record<string, unknown>,
+    correlationId: string,
+  ): ExecutionRequest {
+    return {
+      executionJobId: `job-${correlationId}`,
+      correlationId,
+      idempotencyKey: `idem-${correlationId}`,
+      capability,
+      context,
+      payload,
+    };
+  }
+
+  const adSetPayload = {
+    campaignId: "camp-1",
+    name: "Spring",
+    dailyBudgetCents: 2000,
+    billingEvent: "IMPRESSIONS",
+    optimizationGoal: "LINK_CLICKS",
+    targeting: { countries: ["TR"], ageMin: 25, ageMax: 45 },
+  };
+
+  it("sends an end time durationDays after creation and an explicit advantage_audience=0", async () => {
+    const provider = new MetaApiProvider();
+    const before = Math.floor(Date.now() / 1000);
+    await provider.execute(
+      request(
+        "META_ADSET_CREATE",
+        { ...adSetPayload, durationDays: 7, adAccountId: "act_1" },
+        "as-1",
+      ),
+    );
+
+    const input = metaClientMocks.createMetaAdSet.mock.calls[0]?.[0] as {
+      startTime: number;
+      endTime: number;
+      advantageAudience: number;
+    };
+    expect(input.advantageAudience).toBe(0);
+    expect(input.startTime).toBeGreaterThanOrEqual(before);
+    expect(input.endTime - input.startTime).toBe(7 * 24 * 3600);
+    expect(await provider.getStatus("as-1")).toMatchObject({
+      status: "COMPLETED",
+      rawResult: { adSetId: "adset-9", endTime: expect.any(String) },
+    });
+  });
+
+  it("refuses to build the ad set when the selected ad account changed since approval", async () => {
+    const provider = new MetaApiProvider();
+    await provider.execute(
+      request(
+        "META_ADSET_CREATE",
+        { ...adSetPayload, durationDays: 7, adAccountId: "act_2" },
+        "as-2",
+      ),
+    );
+    expect(metaClientMocks.createMetaAdSet).not.toHaveBeenCalled();
+    expect(await provider.getStatus("as-2")).toMatchObject({
+      status: "FAILED",
+      errorMessage: "Ad account changed since approval",
+    });
+  });
+
+  it("refuses to update a campaign that belongs to another ad account", async () => {
+    metaClientMocks.fetchMetaObjectAccountId.mockResolvedValue("act_999");
+    const provider = new MetaApiProvider();
+    await provider.execute(
+      request(
+        "META_CAMPAIGN_UPDATE",
+        { campaignId: "foreign-camp", status: "PAUSED" },
+        "cu-1",
+      ),
+    );
+    expect(metaClientMocks.updateMetaCampaign).not.toHaveBeenCalled();
+    expect(await provider.getStatus("cu-1")).toMatchObject({
+      status: "FAILED",
+      errorMessage: expect.stringContaining("another ad account"),
+    });
+  });
+});
+
+describe("MetaApiProvider intent log (docs/meta-ads-plan.md F1)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    envMocks.configured = true;
+    prismaMocks.credentialFindUnique.mockResolvedValue(activeCredential);
+  });
+
+  function adSetRequest(correlationId: string, executionJobId: string) {
+    return {
+      executionJobId,
+      correlationId,
+      idempotencyKey: `idem-${correlationId}`,
+      capability: "META_ADSET_CREATE" as const,
+      context,
+      payload: {
+        campaignId: "camp-1",
+        name: "Spring",
+        dailyBudgetCents: 2000,
+        billingEvent: "IMPRESSIONS",
+        optimizationGoal: "LINK_CLICKS",
+        targeting: { countries: ["TR"] },
+        durationDays: 7,
+      },
+    };
+  }
+
+  it("tags the object's name so a lost reply can be found again", async () => {
+    metaClientMocks.createMetaAdSet.mockResolvedValue({ adSetId: "as-1" });
+    const provider = new MetaApiProvider();
+    await provider.execute(adSetRequest("il-1", "job-il-1"));
+
+    const name = (
+      metaClientMocks.createMetaAdSet.mock.calls[0]![0] as { name: string }
+    ).name;
+    expect(name).toMatch(/^Spring \[agx:[a-z0-9]{6}\]$/);
+    expect(await provider.getStatus("il-1")).toMatchObject({
+      status: "COMPLETED",
+      rawResult: { adSetId: "as-1" },
+    });
+  });
+
+  it("does not create a second ad set when the same job runs again", async () => {
+    metaClientMocks.createMetaAdSet.mockResolvedValue({ adSetId: "as-2" });
+    const provider = new MetaApiProvider();
+    await provider.execute(adSetRequest("il-2a", "job-il-2"));
+    // A stalled dispatch is recovered and the same job executes again.
+    await provider.execute(adSetRequest("il-2b", "job-il-2"));
+
+    expect(metaClientMocks.createMetaAdSet).toHaveBeenCalledTimes(1);
+    expect(await provider.getStatus("il-2b")).toMatchObject({
+      status: "COMPLETED",
+      rawResult: { adSetId: "as-2" },
+    });
+  });
+
+  it("keeps a create whose reply was lost RUNNING, then finds it by its tag", async () => {
+    metaClientMocks.createMetaAdSet.mockRejectedValue(
+      new MetaApiError("Could not reach Meta API: socket hang up"),
+    );
+    const provider = new MetaApiProvider();
+    await provider.execute(adSetRequest("il-3", "job-il-3"));
+
+    // Too early to search: still running, no blind retry.
+    expect(await provider.getStatus("il-3")).toMatchObject({ status: "RUNNING" });
+    expect(metaClientMocks.createMetaAdSet).toHaveBeenCalledTimes(1);
+
+    const op = [...operations.rows.values()].find(
+      (row) => row.executionJobId === "job-il-3",
+    )!;
+    expect(op.status).toBe("UNKNOWN");
+    op.sentAt = new Date(Date.now() - 40_000);
+    metaClientMocks.findMetaObjectsByTag.mockResolvedValue(["as-found"]);
+
+    expect(await provider.getStatus("il-3")).toMatchObject({
+      status: "COMPLETED",
+      rawResult: { adSetId: "as-found", operationTag: op.tag },
+    });
+    expect(metaClientMocks.findMetaObjectsByTag).toHaveBeenCalledWith(
+      expect.objectContaining({ edge: "adsets", tag: op.tag }),
+    );
+  });
+
+  it("gives up without a blind retry when nothing carries the tag", async () => {
+    metaClientMocks.createMetaAdSet.mockRejectedValue(
+      new MetaApiError("Meta API request timed out (30000ms)"),
+    );
+    const provider = new MetaApiProvider();
+    await provider.execute(adSetRequest("il-4", "job-il-4"));
+    const op = [...operations.rows.values()].find(
+      (row) => row.executionJobId === "job-il-4",
+    )!;
+    op.sentAt = new Date(Date.now() - 200_000);
+    metaClientMocks.findMetaObjectsByTag.mockResolvedValue([]);
+
+    expect(await provider.getStatus("il-4")).toMatchObject({
+      status: "FAILED",
+      errorMessage: expect.stringContaining("Nothing was created"),
+    });
+    expect(metaClientMocks.createMetaAdSet).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails a validation error at once, with Meta's own message and a structured code", async () => {
+    metaClientMocks.createMetaAdSet.mockRejectedValue(
+      new MetaApiError("Invalid parameter", 100, 1885272, {
+        userMessage: "Your budget is too low.",
+      }),
+    );
+    const provider = new MetaApiProvider();
+    await provider.execute(adSetRequest("il-5", "job-il-5"));
+    expect(await provider.getStatus("il-5")).toMatchObject({
+      status: "FAILED",
+      errorMessage: "Your budget is too low.",
+      errorCode: "META:VALIDATION:100/1885272",
+      retryable: false,
+    });
   });
 });

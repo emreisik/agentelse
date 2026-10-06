@@ -34,6 +34,7 @@ import {
 } from "@/server/execution/plan-creative-link";
 import { isWorksEnabled } from "@/server/works/flag";
 import { ProviderRegistry } from "@/server/execution/provider-registry";
+import { BacklogGate } from "@/server/execution/backlog-gate";
 import {
   mergeCardAlternatives,
   type CardPicture,
@@ -156,6 +157,14 @@ export const ExecutionService = {
     }
 
     if (job.status !== "QUEUED") return job;
+
+    // Kesintiden kalan bayat Meta yazmaları sağlayıcıya hiç ulaşmaz
+    // (backlog-gate.ts; docs/meta-ads-plan.md F0a).
+    if (await BacklogGate.cancelIfStale(job)) {
+      return prisma.executionJob.findUniqueOrThrow({
+        where: { id: executionJobId },
+      });
+    }
 
     const context: ExecutionPolicyContext = {
       workspaceId: job.workspaceId,

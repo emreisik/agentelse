@@ -138,6 +138,8 @@ const BRIEF: AdsBrief = {
   source: SOURCE,
   currency: "TRY",
   pageName: "Cafe Lale",
+  // F0b: the Brief pins the ad account it was written for.
+  adAccountId: "act_1",
 };
 
 const PLAN: AdsPlan = {
@@ -289,6 +291,7 @@ describe("loadAdsBriefOptionsAction", () => {
     const { account, posts, defaults } = result.options;
     expect(account).toEqual({
       status: "ready",
+      adAccountId: "act_1",
       currency: "TRY",
       adAccountName: "Main",
       pageName: "Cafe Lale",
@@ -352,6 +355,29 @@ describe("saveAdsBriefAction", () => {
       },
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith(`/projects/${PROJECT}`);
+  });
+
+  it("asks who benefits and who pays when an EU country is targeted (F0b)", async () => {
+    const result = await saveAdsBriefAction(PROJECT, CMD, {
+      ...INPUT,
+      countries: ["TR", "DE"],
+    });
+    expect(result).toEqual({
+      ok: false,
+      message:
+        "Ads shown in the EU must say who benefits from the ad and who pays for it.",
+    });
+    const saved = await saveAdsBriefAction(PROJECT, CMD, {
+      ...INPUT,
+      countries: ["DE"],
+      dsaBeneficiary: "Cafe Lale",
+      dsaPayor: "Cafe Lale GmbH",
+    });
+    expect(saved).toEqual({ ok: true, hasPlan: false });
+    expect(data().brief).toMatchObject({
+      dsaBeneficiary: "Cafe Lale",
+      dsaPayor: "Cafe Lale GmbH",
+    });
   });
 
   it("refuses an incomplete brief with the reason", async () => {

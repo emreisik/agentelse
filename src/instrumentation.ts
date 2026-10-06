@@ -14,6 +14,7 @@
 // jobs with stale pre-fix code and writing the images to its own disk — see
 // local-worker-policy.ts's comment for the incident this closed.
 import {
+  metaWorkExcludedHere,
   shouldStartLocalWorker,
   shouldStartProductionWorker,
 } from "@/lib/local-worker-policy";
@@ -51,7 +52,16 @@ export async function register() {
     }
 
     const isDevWorker = shouldStartLocalWorker(process.env);
-    if (!isDevWorker && !shouldStartProductionWorker(process.env)) return;
+    const isProdWorker = shouldStartProductionWorker(process.env);
+    // İşçinin bu süreçte açık olup olmadığı ve Meta işlerini alıp almadığı
+    // deploy logunda tek satırda görünür (docs/meta-ads-plan.md F0b): 1 Ekim
+    // kesintisi tam da bu satır olmadığı için günlerce fark edilmedi.
+    console.log(
+      `[boot] worker=${isDevWorker || isProdWorker ? "on" : "off"} META=${
+        metaWorkExcludedHere(process.env) ? "skipped-locally" : "on"
+      }`,
+    );
+    if (!isDevWorker && !isProdWorker) return;
 
     const { ExecutionWorker } =
       await import("@/server/workers/execution-worker");

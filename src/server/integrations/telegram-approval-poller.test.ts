@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const credentialFindMany = vi.fn();
 const credentialUpdate = vi.fn();
 const approvalFindFirst = vi.fn();
+// F1: the per-bot poll lease (one statement, returns rows changed).
+const executeRaw = vi.fn();
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     integrationCredential: {
@@ -14,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
       update: credentialUpdate,
     },
     approval: { findFirst: approvalFindFirst },
+    $executeRaw: executeRaw,
   },
 }));
 vi.mock("@/server/security/crypto", () => ({
@@ -58,6 +61,7 @@ const click = (action: "approve" | "reject") => [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  executeRaw.mockResolvedValue(1);
   credentialFindMany.mockResolvedValue([credential]);
   credentialUpdate.mockResolvedValue(undefined);
   approvalFindFirst.mockResolvedValue({ id: "appr-1", projectId: "proj-1" });
@@ -127,5 +131,16 @@ describe("pollTelegramApprovals: a decision that cannot be applied", () => {
       expect.objectContaining({ to: "REJECTED" }),
     );
     expect(answered().text).toBe("❌ Rejected");
+  });
+});
+
+describe("pollTelegramApprovals: one process per bot (F1)", () => {
+  it("leaves a bot alone while another process holds its poll lease", async () => {
+    executeRaw.mockResolvedValue(0);
+    credentialFindMany.mockResolvedValue([
+      { id: "tg-1", projectId: "p1", encryptedSecret: "x", metadata: {} },
+    ]);
+    await pollTelegramApprovals();
+    expect(getUpdates).not.toHaveBeenCalled();
   });
 });

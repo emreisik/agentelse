@@ -1,12 +1,21 @@
 import "server-only";
 
 import { getEnv, isIntegrationConfigured } from "@/lib/env";
+import { metaWorkExcludedHere } from "@/lib/local-worker-policy";
 
 // A direct HTTP call to the Telegram Bot API — no SDK required. If
 // configuration is missing (see env.ts), it's a silent no-op: a missing
 // optional integration must never break the system.
 export async function sendTelegramMessage(text: string): Promise<void> {
   if (!isIntegrationConfigured("TELEGRAM")) return;
+  // Canlı veritabanını paylaşan yerel süreç operatöre mesaj göndermez
+  // (docs/meta-ads-plan.md F0b, K19).
+  if (
+    process.env.ALLOW_DEV_NOTIFICATIONS !== "true" &&
+    metaWorkExcludedHere(process.env)
+  ) {
+    return;
+  }
 
   const env = getEnv();
   try {

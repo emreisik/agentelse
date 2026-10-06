@@ -11,6 +11,7 @@ import {
   classifyError,
   isAutoRecoverable,
 } from "@/server/observability/error-classifier";
+import { isMetaSpendWrite } from "@/server/execution/backlog-gate";
 
 // Automatic recovery. Its scope is deliberately narrow: it repairs the
 // system's OWN operational state (a stuck job, a job that landed in the
@@ -180,7 +181,9 @@ export const SelfHealingService = {
           workspaceId: true,
           projectId: true,
           status: true,
+          capability: true,
           requestPayload: true,
+          taskId: true,
         },
       });
       // Requeuing a job that's already completed/cancelled would be wrong —
@@ -203,6 +206,15 @@ export const SelfHealingService = {
         continue;
       }
 
+      // Bir Meta yazması Meta'da nesneyi kurmuş ama yanıtı kaybetmiş
+      // olabilir; kör tekrar çift kampanya / ad set kurar. Niyet günlüğüyle
+      // uzlaştırma gelene kadar (docs/meta-ads-plan.md F1) bunlar insana
+      // kalır.
+      if (isMetaSpendWrite(job.capability)) {
+        skipped += 1;
+        continue;
+      }
+
       await prisma.$transaction(async (tx) => {
         // Puts the already-legal FAILED -> QUEUED transition
         // (state-machine/transitions.ts) to its first actual use: without
@@ -218,6 +230,13 @@ export const SelfHealingService = {
         await tx.executionJob.updateMany({
           where: { id: job.id, status: "FAILED" },
           data: { status: "QUEUED" },
+        });
+        // Ölü mektuba düşen dispatch görevi de FAILED yapmıştı
+        // (failDeadLetteredDispatch); FAILED -> RUNNING yasak olduğu için
+        // startExecution onu yeniden çalıştıramazdı. FAILED -> QUEUED yasal.
+        await tx.task.updateMany({
+          where: { id: job.taskId, status: "FAILED" },
+          data: { status: "QUEUED", completedAt: null },
         });
 
         await OutboxRepository.enqueue(tx, {

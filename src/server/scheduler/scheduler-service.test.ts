@@ -5,7 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // no cooldown, and one broken schedule must not block the rest of the
 // batch. Same mocking pattern as work-plan-progressor.test.ts.
 
-const projectSchedule = { findMany: vi.fn(), update: vi.fn() };
+const projectSchedule = {
+  findMany: vi.fn(),
+  update: vi.fn(),
+  // F1: the CAS claim on nextRunAt.
+  updateMany: vi.fn(),
+};
 vi.mock("@/lib/prisma", () => ({
   prisma: { projectSchedule },
 }));
@@ -57,6 +62,29 @@ beforeEach(() => {
   vi.clearAllMocks();
   planForCapability.mockResolvedValue(undefined);
   projectSchedule.update.mockResolvedValue({});
+  projectSchedule.updateMany.mockResolvedValue({ count: 1 });
+});
+
+describe("SchedulerService.runDueSchedules claim (F1)", () => {
+  it("skips a schedule another process already claimed", async () => {
+    projectSchedule.findMany.mockResolvedValue([schedule()]);
+    projectSchedule.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(SchedulerService.runDueSchedules()).resolves.toBe(0);
+    expect(planForCapability).not.toHaveBeenCalled();
+  });
+
+  it("claims on the nextRunAt it read before running", async () => {
+    const row = schedule();
+    projectSchedule.findMany.mockResolvedValue([row]);
+
+    await SchedulerService.runDueSchedules();
+    expect(projectSchedule.updateMany).toHaveBeenCalledWith({
+      where: { id: row.id, enabled: true, nextRunAt: row.nextRunAt },
+      data: { nextRunAt: expect.any(Date) },
+    });
+    expect(planForCapability).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("SchedulerService.runDueSchedules", () => {

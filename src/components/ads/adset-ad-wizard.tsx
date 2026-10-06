@@ -25,6 +25,7 @@ import { GENDER_OPTIONS } from "@/lib/meta-ad-targeting-data";
 import { useObjectUrl, useObjectUrls } from "@/lib/use-object-url";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-time-picker";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Form,
@@ -151,6 +152,11 @@ const schema = z
     dailyBudget: z
       .string()
       .refine((v) => Number(v) > 0, "Enter a daily budget greater than 0"),
+    // Zorunlu bitiş: ad set Meta tarafında bu gün biter, sunucumuz düşse de
+    // harcama süresiz devam etmez (docs/meta-ads-plan.md F0b).
+    endDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day the ads should stop"),
     billingEvent: z.enum(BILLING_EVENTS),
     optimizationGoal: z.enum(OPTIMIZATION_GOALS),
     countries: z.array(z.string()).min(1, "Select at least one country"),
@@ -186,7 +192,13 @@ const STEPS: { id: StepId; title: string }[] = [
 ];
 
 const STEP_FIELDS: Record<StepId, (keyof FormValues)[]> = {
-  budget: ["name", "dailyBudget", "billingEvent", "optimizationGoal"],
+  budget: [
+    "name",
+    "dailyBudget",
+    "endDate",
+    "billingEvent",
+    "optimizationGoal",
+  ],
   targeting: ["countries", "ageMin", "ageMax"],
   format: [],
   // Triggering the top-level "ad" key validates its whole nested subtree
@@ -279,6 +291,7 @@ export function AdSetAdWizard({
     defaultValues: {
       name: "",
       dailyBudget: "",
+      endDate: "",
       billingEvent: "IMPRESSIONS",
       optimizationGoal: "LINK_CLICKS",
       countries: [],
@@ -347,6 +360,7 @@ export function AdSetAdWizard({
       formData.set("campaignId", campaignId);
       formData.set("name", values.name.trim());
       formData.set("dailyBudget", values.dailyBudget);
+      formData.set("endDate", values.endDate);
       formData.set("billingEvent", values.billingEvent);
       formData.set("optimizationGoal", values.optimizationGoal);
       values.countries.forEach((c) => formData.append("countries", c));
@@ -593,6 +607,29 @@ function BudgetStep({ form }: { form: UseFormReturn<FormValues> }) {
                 placeholder="10.00"
               />
             </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
+        name="endDate"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>End date</FormLabel>
+            <FormControl>
+              <DatePicker
+                value={field.value}
+                onChange={field.onChange}
+                disablePast
+                placeholder="The day the ads stop"
+                aria-label="End date"
+              />
+            </FormControl>
+            <p className="text-[11px] text-muted-foreground">
+              Meta stops the ad set at the end of this day, even if nobody
+              pauses it.
+            </p>
             <FormMessage />
           </FormItem>
         )}
@@ -1036,7 +1073,9 @@ function ReviewStep({
     { label: "Ad set name", value: values.name.trim() || "—", stepIndex: 0 },
     {
       label: "Daily budget",
-      value: values.dailyBudget ? `${values.dailyBudget} / day` : "—",
+      value: values.dailyBudget
+        ? `${values.dailyBudget} / day${values.endDate ? `, until ${values.endDate}` : ""}`
+        : "—",
       stepIndex: 0,
     },
     {

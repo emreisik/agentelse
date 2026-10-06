@@ -18,6 +18,14 @@ import { WorkspacePanelToggleProvider } from "@/components/workspace/workspace-p
 import { SETUP_STAGE, SETUP_STAGE_ORDER_UI } from "@/lib/labels";
 import type { ModuleKey } from "@/lib/modules/catalog";
 import { loadSidebarWorks } from "@/server/works/sidebar-works";
+import { WorkerStrip } from "@/components/layout/worker-strip";
+import { Heartbeat } from "@/server/observability/heartbeat";
+import {
+  HEARTBEAT_KEYS,
+  heartbeatLevel,
+  lastSignOfLife,
+} from "@/lib/heartbeat";
+import { getProjectTimezone } from "@/server/chat/content-plan";
 
 export type ProjectNavBadges = {
   setupPercent: number | null; // null = activated / no setup
@@ -44,12 +52,19 @@ async function getSidebarData(userId: string) {
         },
       },
       user: { select: { name: true, email: true } },
+      role: true,
     },
   });
   return {
     workspace: membership?.workspace ?? null,
     displayName: membership?.user.name ?? membership?.user.email ?? null,
+    role: membership?.role ?? null,
   };
+}
+
+// İşçi nabzı yalnız OWNER/ADMIN'e gösterilir; okuma başarısızsa şerit çıkmaz.
+async function getWorkerHeartbeat() {
+  return Heartbeat.read(HEARTBEAT_KEYS.WORKER_TICK).catch(() => undefined);
 }
 
 // Everything the shell shows, read in one batch (the sidebar, the project's
@@ -59,15 +74,25 @@ async function getSidebarData(userId: string) {
 // data is in and would otherwise only then begin these round trips.
 const loadShellData = cache(async (projectId: string | null) => {
   const { userId, email } = await requireUser();
-  const [sidebar, projectBadges, agencyStatus, sidebarWorks] =
-    await Promise.all([
-      getSidebarData(userId),
-      projectId ? getProjectBadges(projectId) : EMPTY_PROJECT_BADGES,
-      projectId ? getAgencyStatusSnapshot(projectId) : null,
-      // The sidebar's Recents (docs/works.md); undefined with Works off, or
-      // when the read fails: the nav is then as before.
-      projectId ? loadSidebarWorks(projectId) : undefined,
-    ]);
+  const [
+    sidebar,
+    projectBadges,
+    agencyStatus,
+    sidebarWorks,
+    workerHeartbeat,
+    timeZone,
+  ] = await Promise.all([
+    getSidebarData(userId),
+    projectId ? getProjectBadges(projectId) : EMPTY_PROJECT_BADGES,
+    projectId ? getAgencyStatusSnapshot(projectId) : null,
+    // The sidebar's Recents (docs/works.md); undefined with Works off, or
+    // when the read fails: the nav is then as before.
+    projectId ? loadSidebarWorks(projectId) : undefined,
+    getWorkerHeartbeat(),
+    projectId
+      ? getProjectTimezone(projectId).catch(() => "UTC")
+      : Promise.resolve("UTC"),
+  ]);
   return {
     email,
     ...sidebar,
@@ -75,6 +100,8 @@ const loadShellData = cache(async (projectId: string | null) => {
     projectBadges: sidebar.workspace ? projectBadges : null,
     agencyStatus,
     sidebarWorks,
+    workerHeartbeat,
+    timeZone,
   };
 });
 
@@ -167,10 +194,30 @@ export async function AppShell({
     email,
     workspace,
     displayName,
+    role,
     projectBadges,
     agencyStatus,
     sidebarWorks,
+    workerHeartbeat,
+    timeZone,
   } = await loadShellData(projectId ?? null);
+
+  // İşçi şeridi (docs/meta-ads-plan.md F0b): yalnız OWNER/ADMIN, yalnız
+  // nabız eskiyse. Okuma başarısızsa (undefined) şerit çıkmaz.
+  const now = new Date();
+  const workerLevel =
+    workerHeartbeat === undefined
+      ? "ok"
+      : heartbeatLevel(workerHeartbeat, now);
+  const workerStrip =
+    (role === "OWNER" || role === "ADMIN") && workerLevel !== "ok" ? (
+      <WorkerStrip
+        level={workerLevel}
+        since={workerHeartbeat ? lastSignOfLife(workerHeartbeat) : null}
+        timeZone={timeZone}
+        now={now}
+      />
+    ) : null;
 
   // Only the project chat root passes a right panel (pixel spec §15) — it
   // alone gets the panel-toggle context (the panel's own edge toggle, and the
@@ -216,8 +263,9 @@ export async function AppShell({
         {/* FAB stack anchors to this wrapper's corner (relative), not the
             viewport (fixed) — so it tracks <main>'s box when a rightPanel
             pushes it left, with no state shared between the two. */}
-        <div className="relative min-w-0 flex-1 overflow-hidden">
-          <main className="h-full overflow-y-auto bg-background">
+        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+          {workerStrip}
+          <main className="min-h-0 flex-1 overflow-y-auto bg-background">
             {children}
           </main>
           {projectId && projectBadges?.setupPercent != null ? (

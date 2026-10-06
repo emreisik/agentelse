@@ -32,7 +32,10 @@ export async function searchMetaCitiesAction(
       query: query.trim(),
       accessToken: conn.accessToken,
     });
-  } catch {
+  } catch (error) {
+    // The search answers empty, but an expired token is not swallowed: the
+    // connection is marked for a reconnect (docs/meta-ads-plan.md F0b).
+    await MetaAdsQuery.noteFailure(conn, error);
     return [];
   }
 }
@@ -57,7 +60,8 @@ export async function searchMetaLocalesAction(
       query: query.trim(),
       accessToken: conn.accessToken,
     });
-  } catch {
+  } catch (error) {
+    await MetaAdsQuery.noteFailure(conn, error);
     return [];
   }
 }

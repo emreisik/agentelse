@@ -1,6 +1,14 @@
 "use server";
 
+import { markMetaCredentialExpiredOn } from "@/server/integrations/meta-credential-health";
+import { AdsFlags } from "@/lib/ads/flags";
 import { prisma } from "@/lib/prisma";
+import { AdsMirror } from "@/server/ads/mirror-reads";
+import { AdsSync } from "@/server/ads/sync/runner";
+import {
+  pauseAllAdsAction,
+  type PauseResult,
+} from "@/server/actions/ads-guard-actions";
 import { buildAdsDigest } from "@/lib/works/ads-insight";
 import { copyText } from "@/lib/works/copy";
 import {
@@ -78,6 +86,21 @@ export async function refreshAdsPulseAction(
       });
       if (!work) {
         return { ok: false, code: "NOT_FOUND", message: "Work not found." };
+      }
+
+      // F2: with the mirror on, "Check performance" refreshes the mirror
+      // (P1 lane, at most every 5 minutes per account) instead of writing a
+      // digest of its own; the card then reads the mirror.
+      if (AdsFlags.sync()) {
+        const mirror = await AdsMirror.accountFor(projectId);
+        if (mirror?.lastStructureAt) {
+          const state = await AdsSync.refreshNow(projectId);
+          if (state === "refreshed") {
+            refreshWorkPages(projectId);
+            return { ok: true, state: "refreshed" };
+          }
+          return { ok: true, state: "throttled" };
+        }
       }
 
       // No decryption here: the id and the stored digest only.
@@ -169,6 +192,9 @@ export async function refreshAdsPulseAction(
           error instanceof MetaApiError &&
           error.metaErrorCode === META_TOKEN_ERROR
         ) {
+          // The connection itself says so too (F0b): the Integrations tile
+          // asks for a reconnect.
+          await markMetaCredentialExpiredOn(error, credential.id);
           return {
             ok: false,
             code: "RECONNECT",
@@ -186,4 +212,12 @@ export async function refreshAdsPulseAction(
       return { ok: true, state: "refreshed" };
     },
   );
+}
+
+// The Meta Ads card's "Pause all" (F2): the same safety action as the Ads
+// page, so the card keeps one actions module.
+export async function pauseAllAdsFromCardAction(
+  projectId: string,
+): Promise<PauseResult> {
+  return pauseAllAdsAction(projectId);
 }

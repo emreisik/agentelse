@@ -1,5 +1,6 @@
 "use client";
 
+import { toMajorUnits } from "@/lib/ads/money";
 import { ActionForm } from "@/components/shared/action-form";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { Input } from "@/components/ui/input";
@@ -14,10 +15,16 @@ import type { MetaCampaignSummary } from "@/server/integrations/meta-client";
 export function CampaignEditForm({
   projectId,
   campaign,
+  currency,
 }: {
   projectId: string;
   campaign: MetaCampaignSummary;
+  currency?: string;
 }) {
+  // ABO: bütçe ad set'lerde; kampanyaya daily_budget yazmak yapıyı bozar,
+  // bu yüzden alan yalnız kampanya bütçeli (CBO) iken görünür
+  // (docs/meta-ads-plan.md F0b).
+  const hasCampaignBudget = campaign.dailyBudgetCents !== undefined;
   return (
     <ActionForm
       action={updateMetaCampaignAction}
@@ -26,20 +33,24 @@ export function CampaignEditForm({
     >
       <input type="hidden" name="projectId" value={projectId} />
       <input type="hidden" name="campaignId" value={campaign.campaignId} />
-      <Field label="Daily budget">
-        <Input
-          name="dailyBudget"
-          type="number"
-          min="1"
-          step="0.01"
-          required
-          defaultValue={
-            campaign.dailyBudgetCents !== undefined
-              ? (campaign.dailyBudgetCents / 100).toFixed(2)
-              : undefined
-          }
-        />
-      </Field>
+      {hasCampaignBudget ? (
+        <Field label={currency ? `Daily budget (${currency})` : "Daily budget"}>
+          <Input
+            name="dailyBudget"
+            type="number"
+            min="1"
+            step="0.01"
+            required
+            defaultValue={String(
+              toMajorUnits(campaign.dailyBudgetCents ?? 0, currency),
+            )}
+          />
+        </Field>
+      ) : (
+        <p className="text-[11px] text-muted-foreground">
+          This campaign&apos;s budget is set on its ad sets.
+        </p>
+      )}
       <Field label="Status">
         <select
           name="status"

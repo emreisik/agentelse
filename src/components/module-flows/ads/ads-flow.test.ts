@@ -27,6 +27,7 @@ const inert = vi.hoisted(
     ),
 );
 vi.mock("@/server/actions/ads-flow-actions", inert);
+vi.mock("@/server/actions/ads-launch-actions", inert);
 vi.mock("@/server/actions/approval-actions", inert);
 
 const { AdsFlow, AdsFlowCard } = await import("./ads-flow");
@@ -299,7 +300,9 @@ describe("Create and Review", () => {
     expect(html).toContain("Turkey · 18–65+ · All genders");
     expect(html).toContain("cafelale.com · Learn more");
     expect(html).toContain("created paused in your Meta Ads account");
-    expect(html).toContain("runs until you pause it (planned: 7 days)");
+    expect(html).toContain(
+      "Runs 7 days from creation, then Meta stops it by itself.",
+    );
     expect(html).toMatch(/data-emphasis="primary"[^>]*>(<[^>]+>)*Launch/);
     expect(primaries(html)).toBe(1);
   });

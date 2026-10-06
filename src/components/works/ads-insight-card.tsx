@@ -22,7 +22,10 @@ import {
   approveApprovalAction,
   rejectApprovalAction,
 } from "@/server/actions/approval-actions";
-import { refreshAdsPulseAction } from "@/server/actions/work-ads-actions";
+import {
+  pauseAllAdsFromCardAction,
+  refreshAdsPulseAction,
+} from "@/server/actions/work-ads-actions";
 
 // The Meta Ads card (spec 3.12.5). Live data, never stored. Every state has
 // exactly one primary action; an amount is printed only when the currency is
@@ -86,6 +89,7 @@ export function AdsInsightCard({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reconnect, setReconnect] = useState(false);
+  const [confirmPause, setConfirmPause] = useState(false);
   if (!host) return null;
 
   const { projectId, workId } = host;
@@ -163,8 +167,41 @@ export function AdsInsightCard({
     }
   };
 
+  const pauseAll = async () => {
+    setBusyId("ads:pauseAllConfirm");
+    setError(null);
+    try {
+      const result = await pauseAllAdsFromCardAction(projectId);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setConfirmPause(false);
+      host.announce(
+        result.message ??
+          (result.paused === 0
+            ? copyText("ads.pausedNothing")
+            : copyText("ads.pausedAll", { n: String(result.paused) })),
+      );
+      router.refresh();
+    } catch {
+      setError(copyText("ads.failed"));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const onAct = (button: CardButton) => {
     switch (button.id) {
+      case "ads:pauseAll":
+        setConfirmPause(true);
+        return;
+      case "ads:pauseAllConfirm":
+        void pauseAll();
+        return;
+      case "ads:pauseAllCancel":
+        setConfirmPause(false);
+        return;
       case "ads:review":
         setReviewing(true);
         return;
@@ -265,6 +302,21 @@ export function AdsInsightCard({
       linkButton("ads:open", copyText("ads.open"), "quiet", adsHref(projectId)),
     );
   }
+  // Pause all: açık kampanya varken her zaman erişilebilir (F2).
+  if (connected && card.pauseAll && !confirmPause) {
+    buttons.push(serverButton("ads:pauseAll", copyText("ads.pauseAll"), "quiet"));
+  }
+  const pauseButtons: CardButton[] =
+    confirmPause && card.pauseAll
+      ? [
+          serverButton(
+            "ads:pauseAllConfirm",
+            copyText("ads.pauseAllConfirm", { n: String(card.pauseAll.campaigns) }),
+            "primary",
+          ),
+          serverButton("ads:pauseAllCancel", copyText("ads.cancel"), "quiet"),
+        ]
+      : [];
 
   const text = stateText(card, date);
   const showApprovalRow = proposal?.state === "pending" && reviewing;
@@ -282,10 +334,11 @@ export function AdsInsightCard({
         serverButton("ads:dismiss", copyText("ads.dismiss"), "quiet"),
       ]
     : [];
-  // Only one primary may exist: with the row open the footer has none.
-  const footer = showApprovalRow
-    ? buttons.filter((button) => button.emphasis !== "primary")
-    : buttons;
+  // Only one primary may exist: with a row open the footer has none.
+  const footer =
+    showApprovalRow || pauseButtons.length > 0
+      ? buttons.filter((button) => button.emphasis !== "primary")
+      : buttons;
 
   return (
     <ActionCard
@@ -308,6 +361,43 @@ export function AdsInsightCard({
       }
     >
       <div className="space-y-2">
+        {card.alerts && card.alerts.length > 0 ? (
+          <ul className="space-y-1.5" aria-label={copyText("ads.alerts")}>
+            {card.alerts.map((alert) => (
+              <li
+                key={alert.id}
+                className="flex items-start gap-2 rounded-xl border px-2.5 py-2 text-sm"
+                style={{
+                  borderColor:
+                    alert.severity === "CRITICAL"
+                      ? "var(--destructive)"
+                      : "var(--ws-border)",
+                  color: "var(--ws-text)",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  className="mt-1.5 size-1.5 shrink-0 rounded-full"
+                  style={{
+                    background:
+                      alert.severity === "CRITICAL"
+                        ? "var(--destructive)"
+                        : "var(--ws-text-3)",
+                  }}
+                />
+                {alert.title}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {pauseButtons.length > 0 ? (
+          <div
+            className="rounded-xl border p-2.5"
+            style={{ borderColor: "var(--ws-border)" }}
+          >
+            <CardActions buttons={pauseButtons} busyId={busyId} onAct={onAct} />
+          </div>
+        ) : null}
         {text ? (
           <p className="text-sm" style={{ color: "var(--ws-text)" }}>
             {text}

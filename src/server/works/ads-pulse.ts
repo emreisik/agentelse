@@ -1,6 +1,11 @@
 import "server-only";
 
+import { AdsFlags } from "@/lib/ads/flags";
+import { isDelivering } from "@/lib/ads/mirror";
+import { nameWithoutTag } from "@/lib/ads/operation-tag";
 import { prisma } from "@/lib/prisma";
+import { AdsAlerts } from "@/server/ads/guard/alerts";
+import { AdsMirror } from "@/server/ads/mirror-reads";
 import {
   MAX_DIGEST_CAMPAIGNS,
   type AdsDigest,
@@ -181,8 +186,76 @@ async function loadCredential(
   };
 }
 
-export async function loadAdsPulse(projectId: string): Promise<AdsPulse> {
-  const [credential, proposals] = await Promise.all([
+// META_ADS_SYNC açıkken kartın rakamları aynadan gelir (docs/meta-ads-plan.md
+// F2): son 7 günün kampanya toplamları, açık uyarılar ve çalışan kampanya
+// sayısı ("Pause all"). Ayna yoksa ya da hiç senkronlanmamışsa null.
+async function loadMirror(
+  projectId: string,
+  now: Date,
+): Promise<Pick<AdsPulse, "digest" | "lastScanAt" | "failureCount" | "alerts" | "runningCampaigns" | "staleAfterMs"> | null> {
+  if (!AdsFlags.sync()) return null;
+  const account = await AdsMirror.accountFor(projectId);
+  if (!account?.lastStructureAt) return null;
+  const [campaigns, insights, alerts] = await Promise.all([
+    AdsMirror.objects(account, "CAMPAIGN"),
+    AdsMirror.insightsByObject(account, "CAMPAIGN", "last_7d", { now }),
+    AdsAlerts.listOpen(projectId, 5),
+  ]);
+  const adSets = await AdsMirror.objects(account, "ADSET");
+  const running = campaigns.filter(
+    (campaign) =>
+      campaign.configuredStatus === "ACTIVE" &&
+      (!campaign.endTime || campaign.endTime.getTime() > now.getTime()),
+  );
+  const rows: AdsDigestCampaign[] = [];
+  for (const campaign of running) {
+    const row = insights.get(campaign.externalId);
+    if (!row || row.spend <= 0) continue;
+    const own = campaign.dailyBudgetMinor === null ? 0 : Number(campaign.dailyBudgetMinor);
+    const children = adSets
+      .filter((adSet) => adSet.campaignExternalId === campaign.externalId && isDelivering(adSet, now))
+      .reduce((sum, adSet) => sum + Number(adSet.dailyBudgetMinor ?? 0), 0);
+    rows.push({
+      id: campaign.externalId,
+      name: nameWithoutTag(campaign.name),
+      dailyBudgetCents: own || children,
+      spend: row.spend,
+      ...(row.resultLabel ? { resultLabel: row.resultLabel } : {}),
+      ...(row.resultCount !== undefined ? { resultCount: row.resultCount } : {}),
+      ...(row.costPerResult !== undefined ? { costPerResult: row.costPerResult } : {}),
+      ...(row.ctr ? { ctr: row.ctr } : {}),
+    });
+  }
+  rows.sort((a, b) => b.spend - a.spend);
+  const at = (account.lastInsightsAt ?? account.lastStructureAt).toISOString();
+  return {
+    digest: {
+      at,
+      currency: account.currency ?? "",
+      campaigns: rows.slice(0, MAX_DIGEST_CAMPAIGNS),
+      adAccountId: account.externalId,
+    },
+    lastScanAt: at,
+    failureCount: account.consecutiveFailures,
+    runningCampaigns: running.length,
+    // Teslimat sürerken ayna 30 dakikada bir tazelenir: 2 saatten eskisi bayat.
+    staleAfterMs: running.length > 0 ? 2 * 60 * 60_000 : undefined,
+    alerts: alerts
+      .filter((alert) => alert.severity !== "INFO")
+      .slice(0, 3)
+      .map((alert) => ({
+        id: alert.id,
+        severity: alert.severity,
+        title: alert.title,
+      })),
+  };
+}
+
+export async function loadAdsPulse(
+  projectId: string,
+  now: Date = new Date(),
+): Promise<AdsPulse> {
+  const [credential, proposals, mirror] = await Promise.all([
     loadCredential(projectId).catch((error: unknown) => {
       console.error(
         "[works] ads pulse credential read failed:",
@@ -197,6 +270,16 @@ export async function loadAdsPulse(projectId: string): Promise<AdsPulse> {
       );
       return [] as AdsPulseProposal[];
     }),
+    loadMirror(projectId, now).catch((error: unknown) => {
+      console.error(
+        "[works] ads pulse mirror read failed:",
+        error instanceof Error ? error.message : error,
+      );
+      return null;
+    }),
   ]);
+  if (mirror && credential.connected && credential.hasAccount) {
+    return { ...credential, ...mirror, proposals };
+  }
   return { ...credential, proposals };
 }

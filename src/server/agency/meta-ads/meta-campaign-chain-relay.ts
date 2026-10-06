@@ -11,6 +11,17 @@ type PendingAdSet = {
   billingEvent: string;
   optimizationGoal: string;
   targeting: { countries: string[] };
+  // Ad set'in kaç gün çalışacağı: bitiş tarihi ad set kurulurken (zincir üç
+  // ayrı onay bekleyebildiği için Launch anında değil) hesaplanır
+  // (docs/meta-ads-plan.md F0b). Mutlak bir tarih taşınsaydı plan kısalır ya
+  // da geçmişte kalırdı.
+  durationDays?: number;
+  advantageAudience?: 0 | 1;
+  dsa?: { beneficiary: string; payor: string };
+  // Onay anındaki reklam hesabı ve para birimi; ad set başka bir hesaba
+  // kurulamaz (nesne-hesap doğrulaması).
+  adAccountId?: string;
+  currency?: string;
   // Everything META_AD_CREATE needs once the AdSet exists — carried
   // through untouched, exactly like meta-adset-chain-relay.ts's own
   // `pendingAd.raw` does for the human-wizard path.
@@ -103,6 +114,8 @@ export const MetaCampaignChainRelay = {
       createdByType: "SYSTEM",
       departmentKey: "PERFORMANCE_MARKETING",
       fingerprint,
+      // Alanlar tek tek kopyalanır: yeni bir alan buraya eklenmezse Meta'ya
+      // ulaşmaz (bitiş tarihi bu yüzden kayboluyordu).
       payloadExtra: {
         campaignId,
         name: pendingAdSet.name,
@@ -111,6 +124,18 @@ export const MetaCampaignChainRelay = {
         optimizationGoal: pendingAdSet.optimizationGoal,
         targeting: pendingAdSet.targeting,
         pendingAd: pendingAdSet.pendingAd,
+        ...(typeof pendingAdSet.durationDays === "number"
+          ? { durationDays: pendingAdSet.durationDays }
+          : {}),
+        ...(pendingAdSet.advantageAudience === 0 ||
+        pendingAdSet.advantageAudience === 1
+          ? { advantageAudience: pendingAdSet.advantageAudience }
+          : {}),
+        ...(pendingAdSet.dsa ? { dsa: pendingAdSet.dsa } : {}),
+        ...(pendingAdSet.adAccountId
+          ? { adAccountId: pendingAdSet.adAccountId }
+          : {}),
+        ...(pendingAdSet.currency ? { currency: pendingAdSet.currency } : {}),
       },
     });
   },

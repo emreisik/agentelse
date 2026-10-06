@@ -10,6 +10,7 @@ describe("proxy public path matching", () => {
     "/api/auth/session",
     "/api/auth/callback/credentials",
     "/api/cron/worker",
+    "/api/health",
     "/data-deletion",
     "/api/integrations/meta/deauthorize",
     "/api/integrations/meta/data-deletion",
@@ -26,6 +27,8 @@ describe("proxy public path matching", () => {
     "/api/integrations/meta/start",
     "/api/integrations/meta/callback",
     "/data-deletion/extra",
+    "/api/healthz",
+    "/api/health/details",
   ])(
     "protects %s",
     (pathname) => {

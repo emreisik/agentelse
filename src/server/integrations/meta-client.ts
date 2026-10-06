@@ -8,10 +8,18 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import { getEnv } from "@/lib/env";
+import { MetaApiError } from "@/server/integrations/meta/errors";
+import { metaFetch } from "@/server/integrations/meta/graph";
+import {
+  GRAPH_API_VERSION,
+  GRAPH_BASE,
+} from "@/server/integrations/meta/version";
+import type { ResultSource } from "@/lib/ads/results";
+import { normalizeAdAccountId } from "@/lib/ads/account-id";
 
-const GRAPH_API_VERSION = "v26.0";
+// Tek sürüm sabiti ve tek çekirdek (docs/meta-ads-plan.md F1): sürüm
+// meta/version.ts'te, bütün çağrılar meta/graph.ts'teki metaFetch'ten geçer.
 const AUTHORIZE_URL = `https://www.facebook.com/${GRAPH_API_VERSION}/dialog/oauth`;
-const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
 // "Instagram API with Instagram Login": the same Instagram Content Publishing,
 // but the grant is made on Instagram's own consent screen and the token is the
@@ -35,7 +43,6 @@ function graphBaseFor(api: InstagramApi): string {
   return api === "instagram" ? INSTAGRAM_GRAPH_BASE : GRAPH_BASE;
 }
 
-const DEFAULT_TIMEOUT_MS = 8_000;
 
 // Instagram, Facebook and Meta Ads are three integrations: each asks only for
 // the scopes that service needs and keeps its own long-lived token and
@@ -117,11 +124,31 @@ export type MetaAdAccount = {
   adAccountId: string;
   adAccountName: string;
   currency: string;
+  // F1: read with the list so a closed or blocked account cannot be picked.
+  accountStatus?: number;
+  timezoneName?: string;
 };
 
 type MetaConnectionInfo = {
   connectedName?: string;
   longLivedTokenExpiresAt?: string;
+  // Facebook route: the person's app-scoped Facebook user id. Meta's
+  // deauthorize / data-deletion requests name the person by it, and
+  // Disconnect revokes the ads permissions on it (docs/meta-ads-plan.md F1).
+  appScopedUserId?: string;
+  // Latest token check (debug_token + /me/permissions), see token-health.ts.
+  tokenHealth?: MetaTokenHealth;
+};
+
+export type MetaTokenHealth = {
+  checkedAt: string;
+  isValid: boolean;
+  expiresAt?: string;
+  dataAccessExpiresAt?: string;
+  missingScopes: string[];
+  // Ad accounts the ads_management grant covers (granular_scopes target_ids);
+  // empty = all the person can reach.
+  adAccountTargets?: string[];
 };
 
 // provider "instagram": `pages` only lists Pages that have a linked
@@ -204,20 +231,9 @@ export type MetaAdsMetadata = MetaConnectionInfo & {
   >;
 };
 
-export class MetaApiError extends Error {
-  readonly metaErrorCode?: number;
-  readonly metaErrorSubcode?: number;
-  constructor(
-    message: string,
-    metaErrorCode?: number,
-    metaErrorSubcode?: number,
-  ) {
-    super(message);
-    this.name = "MetaApiError";
-    this.metaErrorCode = metaErrorCode;
-    this.metaErrorSubcode = metaErrorSubcode;
-  }
-}
+// The error class lives in meta/errors.ts (code, subcode, user message,
+// blame_field_specs, fbtrace_id); re-exported so every existing import works.
+export { MetaApiError };
 
 // There is no separate META_OAUTH_REDIRECT_URI env var — it's derived from
 // the existing NEXT_PUBLIC_APP_URL, and this path must be registered as
@@ -227,9 +243,9 @@ function redirectUri(): string {
 }
 
 // Meta's throttling codes: 4 = the app's request limit, 17 = the user's,
-// 32 = a Page's, 613 = a call-specific limit, 80001-80014 = business use case
-// limits. They clear by themselves (usually within the hour); retrying right
-// away only keeps the counter full.
+// 32 = a Page's, 613 = a call-specific limit, 80000-80014 = business use case
+// limits (80000 = ads insights). They clear by themselves (usually within the
+// hour); retrying right away only keeps the counter full.
 const RATE_LIMIT_CODES = new Set([4, 17, 32, 613]);
 
 export function isMetaRateLimit(error: unknown): boolean {
@@ -237,56 +253,18 @@ export function isMetaRateLimit(error: unknown): boolean {
     return false;
   }
   const code = error.metaErrorCode;
-  return RATE_LIMIT_CODES.has(code) || (code >= 80001 && code <= 80014);
+  return RATE_LIMIT_CODES.has(code) || (code >= 80000 && code <= 80014);
 }
 
+// Every call goes through the one Graph core (meta/graph.ts): per-account
+// quota governor, appsecret_proof, usage headers and a structured error.
+// Reads default to 15 s, writes to 30 s; uploads pass their own timeout.
 async function request<T>(
   url: string,
   init?: RequestInit,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  timeoutMs?: number,
 ): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let res: Response;
-  try {
-    res = await fetch(url, { ...init, signal: controller.signal });
-  } catch (error) {
-    const isAbort = error instanceof Error && error.name === "AbortError";
-    throw new MetaApiError(
-      isAbort
-        ? `Meta API request timed out (${timeoutMs}ms)`
-        : `Could not reach Meta API: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  } finally {
-    clearTimeout(timer);
-  }
-
-  let body: unknown = null;
-  try {
-    body = await res.json();
-  } catch {
-    // Empty body — not a problem, res.ok is checked below.
-  }
-
-  if (!res.ok) {
-    const errorBody = body as {
-      error?: { message?: string; code?: number; error_subcode?: number };
-      // The Instagram Login token endpoint answers in this flatter shape.
-      error_message?: string;
-      code?: number;
-    } | null;
-    const message =
-      errorBody?.error?.message ??
-      errorBody?.error_message ??
-      `Meta API error (HTTP ${res.status})`;
-    throw new MetaApiError(
-      message,
-      errorBody?.error?.code ?? errorBody?.code,
-      errorBody?.error?.error_subcode,
-    );
-  }
-
-  return body as T;
+  return metaFetch<T>(url, init, timeoutMs);
 }
 
 export function buildMetaAuthorizeUrl(
@@ -570,17 +548,113 @@ export async function verifyFacebookPageAccess(
 export async function listAdAccounts(
   accessToken: string,
 ): Promise<MetaAdAccount[]> {
-  const result = await request<{
-    data?: Array<{ id: string; name?: string; currency?: string }>;
-  }>(
-    `${GRAPH_BASE}/me/adaccounts?fields=id,name,currency&access_token=${encodeURIComponent(accessToken)}`,
+  // Paged (an agency can reach more than 25 accounts) and with the status and
+  // time zone a choice depends on (docs/meta-ads-plan.md F1).
+  type Row = {
+    id: string;
+    name?: string;
+    currency?: string;
+    account_status?: number;
+    timezone_name?: string;
+  };
+  const params = new URLSearchParams({
+    fields: "id,name,currency,account_status,timezone_name",
+    limit: "100",
+    access_token: accessToken,
+  });
+  const rows = await requestAllPages<Row>(
+    `${GRAPH_BASE}/me/adaccounts?${params.toString()}`,
   );
-
-  return (result.data ?? []).map((account) => ({
+  return rows.map((account) => ({
     adAccountId: account.id,
     adAccountName: account.name ?? account.id,
     currency: account.currency ?? "USD",
+    ...(typeof account.account_status === "number"
+      ? { accountStatus: account.account_status }
+      : {}),
+    ...(account.timezone_name ? { timezoneName: account.timezone_name } : {}),
   }));
+}
+
+// The person's app-scoped id and name (Facebook route).
+export async function fetchMetaUserIdentity(
+  accessToken: string,
+): Promise<{ id?: string; name?: string }> {
+  try {
+    const result = await request<{ id?: string; name?: string }>(
+      `${GRAPH_BASE}/me?fields=id,name&access_token=${encodeURIComponent(accessToken)}`,
+    );
+    return { id: result.id, name: result.name };
+  } catch {
+    return {};
+  }
+}
+
+// debug_token with the app token: validity, expiry, data-access expiry and
+// the granted scopes (with their target ids).
+export async function inspectMetaToken(accessToken: string): Promise<{
+  isValid: boolean;
+  expiresAt?: number;
+  dataAccessExpiresAt?: number;
+  scopes: string[];
+  granularScopes: { scope: string; target_ids?: string[] }[];
+} | null> {
+  const env = getEnv();
+  if (!env.META_APP_ID || !env.META_APP_SECRET) return null;
+  const params = new URLSearchParams({
+    input_token: accessToken,
+    access_token: `${env.META_APP_ID}|${env.META_APP_SECRET}`,
+  });
+  const result = await request<{
+    data?: {
+      is_valid?: boolean;
+      expires_at?: number;
+      data_access_expires_at?: number;
+      scopes?: string[];
+      granular_scopes?: { scope: string; target_ids?: string[] }[];
+    };
+  }>(`${GRAPH_BASE}/debug_token?${params.toString()}`);
+  const data = result.data ?? {};
+  return {
+    isValid: data.is_valid === true,
+    expiresAt: data.expires_at || undefined,
+    dataAccessExpiresAt: data.data_access_expires_at || undefined,
+    scopes: data.scopes ?? [],
+    granularScopes: data.granular_scopes ?? [],
+  };
+}
+
+// The scopes the person really granted (declined ones are not listed).
+export async function fetchMetaPermissions(
+  accessToken: string,
+): Promise<string[]> {
+  const result = await request<{
+    data?: { permission: string; status: string }[];
+  }>(
+    `${GRAPH_BASE}/me/permissions?access_token=${encodeURIComponent(accessToken)}`,
+  );
+  return (result.data ?? [])
+    .filter((row) => row.status === "granted")
+    .map((row) => row.permission);
+}
+
+// Takes ONE permission back at Meta. Never `DELETE /me/permissions` on a
+// shared grant: Meta keeps one grant per person and app, so that would also
+// cut the person's Facebook and Instagram connections (K18).
+export async function revokeMetaPermission(input: {
+  userId: string;
+  permission: string;
+  accessToken: string;
+}): Promise<void> {
+  await request<{ success?: boolean }>(
+    `${GRAPH_BASE}/${input.userId}/permissions/${input.permission}?access_token=${encodeURIComponent(input.accessToken)}`,
+    { method: "DELETE" },
+  );
+}
+
+// The scopes each service needs; the token check reports what is missing.
+export function requiredMetaScopes(service: MetaService): readonly string[] {
+  return SCOPES[service];
 }
 
 // List fetches never throw — if a permission wasn't granted for a Page/ad
@@ -714,9 +788,9 @@ async function waitForContainerReady(
 
 // Creating the media container makes Instagram synchronously fetch and
 // validate `image_url` before it responds with the creation id — this can
-// take noticeably longer than the default 8s under normal network
+// take noticeably longer than a plain write under normal network
 // conditions (same reasoning as IMAGE_UPLOAD_TIMEOUT_MS above), so it gets
-// its own, more generous timeout instead of DEFAULT_TIMEOUT_MS.
+// its own, more generous timeout.
 const MEDIA_CONTAINER_CREATE_TIMEOUT_MS = 20_000;
 const FACEBOOK_POST_TIMEOUT_MS = 60_000;
 
@@ -1224,7 +1298,9 @@ function resultActionLabel(actionType: string): string {
 export type MetaInsightsRow = {
   spend: number;
   impressions: number;
-  reach: number;
+  // Tekil kişi sayısı: aynadan okunan çok günlük aralıkta günlük satırlardan
+  // toplanamaz, bilinmiyorsa yoktur (docs/meta-ads-plan.md §3.2).
+  reach?: number;
   clicks: number;
   ctr: number;
   cpc: number;
@@ -1265,11 +1341,45 @@ const LEAD_ACTION_TYPES = [
 // Exported for tests. `preferLead` picks a lead action when its count > 0 so a
 // leads campaign is not reported by a higher-volume click action; otherwise
 // the highest-count rule applies unchanged.
+function goalResult(
+  row: RawInsightsRow,
+  spend: number,
+  source: ResultSource,
+): Pick<MetaInsightsRow, "resultCount" | "resultLabel" | "costPerResult"> {
+  const count =
+    source.kind === "field"
+      ? Number(row[source.field] ?? 0)
+      : (row.actions ?? [])
+          .filter((a) => a.action_type === source.actionType)
+          .reduce((sum, a) => {
+            const value = Number(a.value);
+            return Number.isNaN(value) ? sum : sum + value;
+          }, 0);
+  return {
+    resultCount: count,
+    resultLabel:
+      source.kind === "field"
+        ? source.field === "reach"
+          ? "Reach"
+          : "Impressions"
+        : resultActionLabel(source.actionType),
+    costPerResult: count > 0 ? spend / count : undefined,
+  };
+}
+
 export function toInsightsRow(
   row: RawInsightsRow,
-  options?: { preferLead?: boolean },
+  options?: { preferLead?: boolean; resultSource?: ResultSource | null },
 ): MetaInsightsRow {
   const spend = Number(row.spend ?? 0);
+  // Optimizasyon hedefi biliniyorsa sonuç ondan sayılır (src/lib/ads/results.ts):
+  // hedefin action'ı satırda yoksa sonuç 0'dır, en büyük başka action değil.
+  if (options?.resultSource) {
+    return {
+      ...toInsightsRow(row),
+      ...goalResult(row, spend, options.resultSource),
+    };
+  }
   const leadAction = options?.preferLead
     ? (row.actions ?? [])
         .map((a) => ({ action_type: a.action_type, value: Number(a.value) }))
@@ -1344,6 +1454,8 @@ export async function fetchMetaLevelInsights(input: {
   scopedTo?: { field: "campaign.id" | "adset.id"; value: string };
   // Campaign ids (OUTCOME_LEADS) whose row should prefer the lead action.
   preferLeadFor?: ReadonlySet<string>;
+  // Entity id -> where its result is read from (its optimization goal).
+  resultSourceFor?: ReadonlyMap<string, ResultSource>;
 }): Promise<Map<string, MetaInsightsRow>> {
   const params = new URLSearchParams({
     level: input.level,
@@ -1377,11 +1489,14 @@ export async function fetchMetaLevelInsights(input: {
           ? row.adset_id
           : row.ad_id;
     if (!id) continue;
+    const resultSource = input.resultSourceFor?.get(id);
     map.set(
       id,
-      input.preferLeadFor
-        ? toInsightsRow(row, { preferLead: input.preferLeadFor.has(id) })
-        : toInsightsRow(row),
+      resultSource
+        ? toInsightsRow(row, { resultSource })
+        : input.preferLeadFor
+          ? toInsightsRow(row, { preferLead: input.preferLeadFor.has(id) })
+          : toInsightsRow(row),
     );
   }
   return map;
@@ -1395,6 +1510,9 @@ export type MetaCampaignSummary = {
   effectiveStatus: string;
   dailyBudgetCents?: number;
   lifetimeBudgetCents?: number;
+  // Yalnız aynadan okunurken (docs/meta-ads-plan.md F2): bitiş ve kaynak.
+  endTime?: string | null;
+  createdByAgentelse?: boolean;
 };
 
 export async function listMetaCampaigns(input: {
@@ -1693,9 +1811,22 @@ export type MetaAdSetTargeting = {
 };
 
 // Shared between createMetaAdSet and updateMetaAdSet's targeting update —
-// same geo_locations/age/gender/locale shape either way.
-function buildTargetingSpec(targeting: MetaAdSetTargeting) {
+// same geo_locations/age/gender/locale shape either way. `advantageAudience`
+// is sent explicitly whenever it is known: since v23 a new ad set with
+// non-default targeting must say 0 (age/gender are hard limits) or 1 (they
+// are suggestions) (docs/meta-ads-plan.md F0b).
+export function buildTargetingSpec(
+  targeting: MetaAdSetTargeting,
+  options: { advantageAudience?: 0 | 1 } = {},
+) {
   return {
+    ...(options.advantageAudience !== undefined
+      ? {
+          targeting_automation: {
+            advantage_audience: options.advantageAudience,
+          },
+        }
+      : {}),
     geo_locations: {
       countries: targeting.countries,
       ...(targeting.cities?.length
@@ -1736,6 +1867,13 @@ export async function createMetaAdSet(input: {
   optimizationGoal: string;
   targeting: MetaAdSetTargeting;
   status: "ACTIVE" | "PAUSED";
+  // UNIX saniyesi. Bitiş tarihi ad set'in Meta tarafındaki frenidir: sunucumuz
+  // düşse de teslimat bu anda durur (docs/meta-ads-plan.md F0b, §3.9).
+  startTime?: number;
+  endTime?: number;
+  advantageAudience?: 0 | 1;
+  // AB/AEA hedefinde zorunlu faydalanıcı ve ödeyici beyanı (DSA).
+  dsa?: { beneficiary: string; payor: string };
 }): Promise<{ adSetId: string }> {
   const body = new URLSearchParams({
     name: input.name,
@@ -1743,12 +1881,24 @@ export async function createMetaAdSet(input: {
     daily_budget: String(input.dailyBudgetCents),
     billing_event: input.billingEvent,
     optimization_goal: input.optimizationGoal,
-    targeting: JSON.stringify(buildTargetingSpec(input.targeting)),
+    targeting: JSON.stringify(
+      buildTargetingSpec(input.targeting, {
+        advantageAudience: input.advantageAudience,
+      }),
+    ),
     status: input.status,
     access_token: input.accessToken,
   });
   const destinationType = adSetDestinationType(input.optimizationGoal);
   if (destinationType) body.set("destination_type", destinationType);
+  if (input.startTime !== undefined) {
+    body.set("start_time", String(input.startTime));
+  }
+  if (input.endTime !== undefined) body.set("end_time", String(input.endTime));
+  if (input.dsa) {
+    body.set("dsa_beneficiary", input.dsa.beneficiary.slice(0, 512));
+    body.set("dsa_payor", input.dsa.payor.slice(0, 512));
+  }
 
   const result = await request<{ id: string }>(
     `${GRAPH_BASE}/${input.adAccountId}/adsets`,
@@ -1760,6 +1910,84 @@ export async function createMetaAdSet(input: {
   );
   return { adSetId: result.id };
 }
+
+// Bir kampanya / ad set / reklamın bağlı olduğu reklam hesabı ("act_<id>").
+// Güncelleme yolları hedef nesneyi görevdeki hesapla karşılaştırır: aynı ajans
+// token'ıyla başka bir müşterinin nesnesi değiştirilemez
+// (docs/meta-ads-plan.md F0b, nesne-hesap doğrulaması).
+export async function fetchMetaObjectAccountId(input: {
+  objectId: string;
+  accessToken: string;
+}): Promise<string> {
+  const params = new URLSearchParams({
+    fields: "account_id",
+    access_token: input.accessToken,
+  });
+  const result = await request<{ account_id?: string }>(
+    `${GRAPH_BASE}/${input.objectId}?${params.toString()}`,
+  );
+  if (!result.account_id) {
+    throw new MetaApiError("Meta did not say which ad account owns this object");
+  }
+  return normalizeAdAccountId(result.account_id);
+}
+
+// Yanıtı kaybolan bir oluşturma yazmasının nesnesini etiketle arar
+// (docs/meta-ads-plan.md §3.1 Idempotency). Önce Meta'nın ad süzgeciyle;
+// süzgeç reddedilirse (VALIDATION) en yeni nesneler yerelde taranır.
+// `createdSince`: yazmanın gönderildiği andan 60 sn öncesinden yeni olanlar.
+export async function findMetaObjectsByTag(input: {
+  adAccountId: string;
+  accessToken: string;
+  edge: "campaigns" | "adsets" | "ads";
+  tag: string;
+  createdSince?: Date;
+}): Promise<string[]> {
+  type Row = { id: string; name?: string; created_time?: string };
+  const base = `${GRAPH_BASE}/${input.adAccountId}/${input.edge}`;
+  const fields = "id,name,created_time";
+  let rows: Row[];
+  try {
+    const params = new URLSearchParams({
+      fields,
+      filtering: JSON.stringify([
+        { field: "name", operator: "CONTAIN", value: input.tag },
+      ]),
+      limit: "25",
+      access_token: input.accessToken,
+    });
+    rows = (await request<{ data?: Row[] }>(`${base}?${params.toString()}`))
+      .data ?? [];
+  } catch (error) {
+    if (!(error instanceof MetaApiError) || error.metaErrorCode !== 100) {
+      throw error;
+    }
+    const params = new URLSearchParams({
+      fields,
+      limit: "100",
+      access_token: input.accessToken,
+    });
+    rows = (await requestAllPages<Row>(`${base}?${params.toString()}`)).slice(
+      0,
+      200,
+    );
+  }
+  const since = input.createdSince
+    ? input.createdSince.getTime() - 60_000
+    : null;
+  return rows
+    .filter((row) => (row.name ?? "").includes(input.tag))
+    .filter(
+      (row) =>
+        since === null ||
+        !row.created_time ||
+        Date.parse(row.created_time) >= since,
+    )
+    .map((row) => row.id);
+}
+
+// "123" ve "act_123" aynı hesaptır (src/lib/ads/account-id.ts).
+export { normalizeAdAccountId };
 
 export type MetaAdGeoLocation = {
   key: string;

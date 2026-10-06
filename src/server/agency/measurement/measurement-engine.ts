@@ -56,10 +56,10 @@ const CHECK_TEMPLATES: Partial<
     { label: "ranking check 14d", afterHours: 336 },
     { label: "ranking check 30d", afterHours: 720 },
   ],
-  META_CAMPAIGN_CREATE: [
-    { label: "3d spend/performance check", afterHours: 72 },
-    { label: "14d performance check", afterHours: 336 },
-  ],
+  // META_CAMPAIGN_CREATE has no check here: no provider runs a
+  // MEASUREMENT_CHECK for it, so its plans only ever stalled. Ads launches
+  // get their checkpoints from the ads watchdogs instead (1 h review, 24 h
+  // delivery, 72 h early KPI, 7 d learning; docs/meta-ads-plan.md F0b, F2).
   GOOGLE_ADS_CAMPAIGN_CREATE: [
     { label: "3d spend/performance check", afterHours: 72 },
     { label: "14d performance check", afterHours: 336 },

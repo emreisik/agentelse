@@ -1,3 +1,4 @@
+import { formatMoney as formatMinorMoney } from "@/lib/ads/money";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -44,6 +45,12 @@ import { CampaignEditForm } from "@/components/ads/campaign-edit-form";
 import { AdSetEditWizard } from "@/components/ads/adset-edit-wizard";
 import { AdEditWizard } from "@/components/ads/ad-edit-wizard";
 import { cn } from "@/lib/utils";
+import { AdsFlags } from "@/lib/ads/flags";
+import { isModulesEnabled } from "@/server/works/flag";
+import { deliveryLabel } from "@/lib/ads/mirror";
+import { nameWithoutTag } from "@/lib/ads/operation-tag";
+import { AdsAccountStatus } from "@/components/ads/ads-account-status";
+import { loadAdsAccountStatus } from "@/server/ads/status";
 
 // MetaApiError and network failures land here uncaught otherwise (see the
 // isolated try/catch around each drill-down level's fetch below) — safe to
@@ -143,6 +150,8 @@ export default async function AdsPage({
   try {
     campaigns = await MetaAdsQuery.campaigns(connection, datePreset);
   } catch (error) {
+    // 190: the connection is marked for a reconnect (F0b).
+    await MetaAdsQuery.noteFailure(connection, error);
     campaignsError = metaErrorMessage(error);
   }
   const activeCampaign = campaignId
@@ -155,6 +164,7 @@ export default async function AdsPage({
     try {
       adSets = await MetaAdsQuery.adSets(connection, campaignId, datePreset);
     } catch (error) {
+      await MetaAdsQuery.noteFailure(connection, error);
       adSetsError = metaErrorMessage(error);
     }
   }
@@ -169,9 +179,19 @@ export default async function AdsPage({
     try {
       ads = await MetaAdsQuery.ads(connection, adSetId, datePreset);
     } catch (error) {
+      await MetaAdsQuery.noteFailure(connection, error);
       adsError = metaErrorMessage(error);
     }
   }
+
+  // F3: modüller ve güvenli lansman v2 açıkken eski oluşturma formları gizli;
+  // reklam Ads kartında tek onayla kurulur.
+  const legacyFormsHidden = isModulesEnabled() && AdsFlags.launchV2();
+
+  // Ayna açıkken hesap sağlığı, tazelik, uyarılar ve Pause all.
+  const accountStatus = AdsFlags.sync()
+    ? await loadAdsAccountStatus(projectId).catch(() => null)
+    : null;
 
   const create = typeof sp.create === "string" ? sp.create : undefined;
   const brief = typeof sp.brief === "string" ? sp.brief : undefined;
@@ -233,7 +253,15 @@ export default async function AdsPage({
               base={base}
               value={datePreset}
             />
-            {!campaignId ? (
+            {legacyFormsHidden ? (
+              <Link
+                href={`/projects/${projectId}?module=ads`}
+                className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
+              >
+                <Plus className="size-4" />
+                Create an ad
+              </Link>
+            ) : !campaignId ? (
               <Link
                 href={createCampaignHref}
                 className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}
@@ -260,6 +288,10 @@ export default async function AdsPage({
             ) : null}
           </div>
         </div>
+
+        {accountStatus ? (
+          <AdsAccountStatus projectId={projectId} {...accountStatus} />
+        ) : null}
 
         <Breadcrumb base={base} campaign={activeCampaign} adSet={activeAdSet} />
 
@@ -306,14 +338,14 @@ export default async function AdsPage({
           />
         )}
 
-        {create === "campaign" ? (
+        {create === "campaign" && !legacyFormsHidden ? (
           <CreateCampaignDialog
             projectId={projectId}
             closeHref={closeHref}
             prefillName={brief}
           />
         ) : null}
-        {create === "adset" && campaignId ? (
+        {create === "adset" && campaignId && !legacyFormsHidden ? (
           <CreateAdSetDialog
             projectId={projectId}
             campaignId={campaignId}
@@ -321,7 +353,7 @@ export default async function AdsPage({
             pageName={metadata.selectedPageName ?? "Your Page"}
           />
         ) : null}
-        {create === "ad" && adSetId ? (
+        {create === "ad" && adSetId && !legacyFormsHidden ? (
           <CreateAdDialog
             projectId={projectId}
             adSetId={adSetId}
@@ -384,7 +416,11 @@ export default async function AdsPage({
                   size="md"
                   bodyClassName="overflow-y-auto p-4"
                 >
-                  <CampaignEditForm projectId={projectId} campaign={campaign} />
+                  <CampaignEditForm
+                    projectId={projectId}
+                    campaign={campaign}
+                    currency={currency}
+                  />
                 </EntityDialog>
               ) : null;
             })()
@@ -404,6 +440,7 @@ export default async function AdsPage({
                     projectId={projectId}
                     adSet={adSet}
                     closeHref={closeHref}
+                    currency={currency}
                   />
                 </EntityDialog>
               ) : null;
@@ -662,9 +699,11 @@ function Breadcrumb({
 // (cents) — insights values (spend, cost_per_result) do NOT, they're
 // already in the account's major currency unit. Two separate formatters so
 // that distinction can't get silently mixed up at a call site.
+// Minor unit'ten, hesabın para birimi ofsetiyle (src/lib/ads/money.ts):
+// sabit /100 JPY/HUF gibi hesaplarda 100 kat yanlış gösteriyordu.
 function formatMoney(cents: number | undefined, currency: string): string {
   if (cents === undefined) return "—";
-  return `${(cents / 100).toFixed(2)} ${currency}`;
+  return formatMinorMoney(cents, currency);
 }
 
 function formatCurrency(amount: number | undefined, currency: string): string {
@@ -855,8 +894,13 @@ function CampaignsTable({
                 href={`${base}?campaignId=${c.campaignId}`}
                 className="font-medium text-foreground hover:underline"
               >
-                {c.name}
+                {nameWithoutTag(c.name)}
               </Link>
+              {c.createdByAgentelse ? (
+                <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  Agentelse
+                </span>
+              ) : null}
               <Link
                 href={detailHref(c.campaignId)}
                 className="flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
@@ -871,7 +915,19 @@ function CampaignsTable({
           </td>
           <td className="px-3.5 py-2.5 whitespace-nowrap">
             <StatusBadge
-              meta={{ label: c.effectiveStatus, tone: statusTone(c.status) }}
+              meta={{
+                // Aynadan okunurken Meta durumu okunur etikete çevrilir
+                // ("Completed", "Paused by you", "Stopped by Meta").
+                label:
+                  c.endTime !== undefined
+                    ? deliveryLabel({
+                        configuredStatus: c.status,
+                        effectiveStatus: c.effectiveStatus,
+                        endTime: c.endTime ? new Date(c.endTime) : null,
+                      })
+                    : c.effectiveStatus,
+                tone: statusTone(c.status),
+              }}
             />
           </td>
           <td className="px-3.5 py-2.5 whitespace-nowrap text-muted-foreground">

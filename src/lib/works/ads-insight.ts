@@ -1,3 +1,7 @@
+import {
+  THREE_DECIMAL_CURRENCIES,
+  ZERO_DECIMAL_CURRENCIES,
+} from "@/lib/ads/money";
 import { copyText } from "@/lib/works/copy";
 
 // The Meta Ads card's data (spec 3.12.2). Pure and isomorphic: the server reads
@@ -45,6 +49,9 @@ export type AdsInsightCardData = {
   };
   // Further pending proposals the card does not show.
   more?: number;
+  // F2: açık CRITICAL/WARN uyarılar ve "Pause all" (çalışan kampanya varsa).
+  alerts?: AdsPulseAlert[];
+  pauseAll?: { campaigns: number };
 };
 
 export type AdsDigestCampaign = {
@@ -73,43 +80,14 @@ export const MAX_DIGEST_CAMPAIGNS = 5;
 // The scanner runs about every 7 h: older than this means a scan was missed.
 export const STALE_AFTER_MS = 26 * 60 * 60 * 1000;
 
-// Meta budgets are minor units. These currencies have no cents (or a
-// thousandth) so cents / 100 would be a 10x to 100x error: never printed.
-export const ZERO_DECIMAL_CURRENCIES: readonly string[] = [
-  "JPY",
-  "KRW",
-  "VND",
-  "CLP",
-  "ISK",
-  "UGX",
-  "PYG",
-  "XAF",
-  "XOF",
-  "XPF",
-  "KMF",
-  "GNF",
-  "RWF",
-  "DJF",
-  "BIF",
-  "VUV",
-  // Meta's currency table lists these with an offset of 1 as well: the stored
-  // budget is the whole-unit amount, so cents / 100 would be 100x too small.
-  "COP",
-  "CRC",
-  "HUF",
-  "IDR",
-  "TWD",
-];
-export const THREE_DECIMAL_CURRENCIES: readonly string[] = [
-  "BHD",
-  "IQD",
-  "JOD",
-  "KWD",
-  "LYD",
-  "OMR",
-  "TND",
-];
-
+// Meta budgets are minor units. Zero-decimal currencies have no cents and
+// three-decimal ones a thousandth, so cents / 100 would be a 10x to 100x
+// error: never printed here. The lists live in src/lib/ads/money.ts (the one
+// money module, docs/meta-ads-plan.md F0b).
+export {
+  THREE_DECIMAL_CURRENCIES,
+  ZERO_DECIMAL_CURRENCIES,
+} from "@/lib/ads/money";
 function currencyCode(currency: string | undefined): string | null {
   const code = currency?.trim().toUpperCase();
   return code && /^[A-Z]{3}$/.test(code) ? code : null;
@@ -324,6 +302,12 @@ export type AdsPulseProposal = {
   reason?: string;
 };
 
+export type AdsPulseAlert = {
+  id: string;
+  severity: "INFO" | "WARN" | "CRITICAL";
+  title: string;
+};
+
 export type AdsPulse = {
   connected: boolean;
   hasAccount: boolean;
@@ -331,6 +315,10 @@ export type AdsPulse = {
   lastScanAt?: string;
   failureCount?: number;
   proposals: AdsPulseProposal[];
+  // F2 (ayna): açık uyarılar, çalışan kampanya sayısı ve bayatlık eşiği.
+  alerts?: AdsPulseAlert[];
+  runningCampaigns?: number;
+  staleAfterMs?: number;
 };
 
 function dateText(iso: string): string {
@@ -432,7 +420,7 @@ export function buildAdsInsight(
   // An unreadable timestamp counts as stale: never claim fresh numbers.
   const stale =
     !Number.isFinite(age) ||
-    age > STALE_AFTER_MS ||
+    age > (pulse.staleAfterMs ?? STALE_AFTER_MS) ||
     (pulse.failureCount ?? 0) > 0;
 
   // The campaign a pending proposal is about wins the headline.
@@ -498,6 +486,10 @@ export function buildAdsInsight(
     ...(focus ? { campaignId: focus.id, campaignName: focus.name } : {}),
     chips,
     ...proposalPart,
+    ...(pulse.alerts && pulse.alerts.length > 0 ? { alerts: pulse.alerts } : {}),
+    ...(pulse.runningCampaigns
+      ? { pauseAll: { campaigns: pulse.runningCampaigns } }
+      : {}),
   };
 
   if (stale) {

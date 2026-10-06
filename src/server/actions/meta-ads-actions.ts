@@ -9,6 +9,10 @@ import {
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { putAsset } from "@/server/storage/asset-storage";
 import type { MetaAdSetTargeting } from "@/server/integrations/meta-client";
+import { loadAdsAccount } from "@/server/modules/ads/account";
+import { getProjectTimezone } from "@/server/chat/content-plan";
+import { toMinorUnits } from "@/lib/ads/money";
+import { zonedDateTimeToUtc } from "@/lib/timezone";
 import type { ActionResult } from "@/server/actions/meta-actions";
 
 // Server actions behind the Ads Manager creation forms (see
@@ -26,6 +30,19 @@ function fail(error: unknown): ActionResult {
   };
 }
 
+// Seçili reklam hesabı ve para birimi: tutarlar hesabın minor unit'ine
+// buradan çevrilir (sabit ×100 JPY/HUF gibi hesaplarda 100 kat yanlış
+// gidiyordu) ve görev onay anının hesabını taşır (docs/meta-ads-plan.md F0b).
+async function accountContext(
+  projectId: string,
+): Promise<{ adAccountId?: string; currency?: string }> {
+  const account = await loadAdsAccount(projectId);
+  return {
+    ...(account.adAccountId ? { adAccountId: account.adAccountId } : {}),
+    ...(account.currency ? { currency: account.currency } : {}),
+  };
+}
+
 export async function createMetaCampaignAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -33,9 +50,8 @@ export async function createMetaCampaignAction(
     const projectId = String(formData.get("projectId"));
     const name = String(formData.get("name") ?? "").trim();
     const objective = String(formData.get("objective") ?? "").trim();
-    const dailyBudget = Number(formData.get("dailyBudget") ?? 0);
-    if (!name || !objective || !dailyBudget) {
-      return { ok: false, message: "Name, objective and budget are required" };
+    if (!name || !objective) {
+      return { ok: false, message: "Name and objective are required" };
     }
 
     const { userId } = await requireUser();
@@ -50,11 +66,13 @@ export async function createMetaCampaignAction(
       createdByType: "USER",
       createdByUserId: userId,
       departmentKey: "PERFORMANCE_MARKETING",
+      // Bütçe kampanyada değil ad set'tedir (ABO; Meta ikisini birden
+      // almaz) ve bitiş tarihiyle birlikte ad set'te sorulur.
       payloadExtra: {
         name,
         objective,
-        dailyBudgetCents: Math.round(dailyBudget * 100),
         status: "PAUSED",
+        ...(await accountContext(projectId)),
       },
     });
 
@@ -77,16 +95,14 @@ export async function updateMetaCampaignAction(
   try {
     const projectId = String(formData.get("projectId"));
     const campaignId = String(formData.get("campaignId") ?? "").trim();
+    // Bütçe yalnız kampanya bütçeli (CBO) ise gönderilir: ad set bütçeli
+    // (ABO) kampanyaya daily_budget yazmak yapıyı bozar.
     const dailyBudget = Number(formData.get("dailyBudget") ?? 0);
     const status = String(formData.get("status") ?? "").trim();
-    if (
-      !campaignId ||
-      !dailyBudget ||
-      (status !== "ACTIVE" && status !== "PAUSED")
-    ) {
+    if (!campaignId || (status !== "ACTIVE" && status !== "PAUSED")) {
       return {
         ok: false,
-        message: "Campaign, a valid daily budget and status are required",
+        message: "Campaign and status are required",
       };
     }
 
@@ -102,11 +118,17 @@ export async function updateMetaCampaignAction(
       createdByType: "USER",
       createdByUserId: userId,
       departmentKey: "PERFORMANCE_MARKETING",
-      payloadExtra: {
-        campaignId,
-        dailyBudgetCents: Math.round(dailyBudget * 100),
-        status,
-      },
+      payloadExtra: await (async () => {
+        const account = await accountContext(projectId);
+        return {
+          campaignId,
+          status,
+          ...account,
+          ...(dailyBudget > 0
+            ? { dailyBudgetCents: toMinorUnits(dailyBudget, account.currency) }
+            : {}),
+        };
+      })(),
     });
 
     revalidatePath(`/projects/${projectId}/ads`);
@@ -327,6 +349,7 @@ export async function createMetaAdSetWithAdAction(
     const campaignId = String(formData.get("campaignId") ?? "").trim();
     const name = String(formData.get("name") ?? "").trim();
     const dailyBudget = Number(formData.get("dailyBudget") ?? 0);
+    const endDate = String(formData.get("endDate") ?? "").trim();
     const billingEvent = String(formData.get("billingEvent") ?? "").trim();
     const optimizationGoal = String(
       formData.get("optimizationGoal") ?? "",
@@ -364,6 +387,18 @@ export async function createMetaAdSetWithAdAction(
 
     const { userId } = await requireUser();
     const access = await requireProjectAccess(userId, projectId);
+
+    // Zorunlu bitiş: seçilen günün sonu, projenin saat diliminde
+    // (docs/meta-ads-plan.md F0b). Geçmiş ya da boş gün kabul edilmez.
+    const endTime = /^\d{4}-\d{2}-\d{2}$/.test(endDate)
+      ? zonedDateTimeToUtc(
+          `${endDate}T23:59`,
+          await getProjectTimezone(projectId),
+        )
+      : null;
+    if (!endTime || endTime.getTime() <= Date.now() + 60 * 60_000) {
+      return { ok: false, message: "Pick a future end date for the ad set" };
+    }
 
     let pendingAd: Record<string, unknown>;
 
@@ -473,16 +508,21 @@ export async function createMetaAdSetWithAdAction(
       createdByType: "USER",
       createdByUserId: userId,
       departmentKey: "PERFORMANCE_MARKETING",
-      payloadExtra: {
-        campaignId,
-        name,
-        dailyBudgetCents: Math.round(dailyBudget * 100),
-        billingEvent,
-        optimizationGoal,
-        targeting: targetingFields,
-        status: "PAUSED",
-        pendingAd,
-      },
+      payloadExtra: await (async () => {
+        const account = await accountContext(projectId);
+        return {
+          campaignId,
+          name,
+          dailyBudgetCents: toMinorUnits(dailyBudget, account.currency),
+          endTime: endTime.toISOString(),
+          billingEvent,
+          optimizationGoal,
+          targeting: targetingFields,
+          status: "PAUSED",
+          pendingAd,
+          ...account,
+        };
+      })(),
     });
 
     revalidatePath(`/projects/${projectId}/ads`);
@@ -505,11 +545,15 @@ export async function updateMetaAdSetAction(
     const dailyBudget = Number(formData.get("dailyBudget") ?? 0);
     const status = String(formData.get("status") ?? "").trim();
     const targeting = parseTargetingFromFormData(formData);
+    // Hedefleme yalnız formda değiştiyse gönderilir: her seferinde tüm
+    // targeting'i yeniden yazmak Ads Manager'da eklenen ilgi alanlarını,
+    // özel kitleleri ve Advantage+ ayarlarını sessizce siliyordu.
+    const targetingChanged = formData.get("targetingChanged") === "1";
     if (
       !adSetId ||
       !dailyBudget ||
       (status !== "ACTIVE" && status !== "PAUSED") ||
-      targeting.countries.length === 0
+      (targetingChanged && targeting.countries.length === 0)
     ) {
       return {
         ok: false,
@@ -530,12 +574,16 @@ export async function updateMetaAdSetAction(
       createdByType: "USER",
       createdByUserId: userId,
       departmentKey: "PERFORMANCE_MARKETING",
-      payloadExtra: {
-        adSetId,
-        dailyBudgetCents: Math.round(dailyBudget * 100),
-        status,
-        targeting,
-      },
+      payloadExtra: await (async () => {
+        const account = await accountContext(projectId);
+        return {
+          adSetId,
+          dailyBudgetCents: toMinorUnits(dailyBudget, account.currency),
+          status,
+          ...(targetingChanged ? { targeting } : {}),
+          ...account,
+        };
+      })(),
     });
 
     revalidatePath(`/projects/${projectId}/ads`);

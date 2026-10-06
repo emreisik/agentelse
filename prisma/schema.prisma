@@ -166,6 +166,9 @@ enum CapabilityKey {
   META_ADSET_UPDATE
   META_AD_CREATE
   META_AD_UPDATE
+  // Pause / risk-reducing Meta writes (docs/meta-ads-plan.md §3.9): P0 lane.
+  META_SAFETY_ACTION
+  META_LAUNCH
 
   GOOGLE_ADS_ANALYSIS
   GOOGLE_ADS_CAMPAIGN_CREATE
@@ -2298,6 +2301,18 @@ model DeadLetterJob {
   @@index([resolvedAt])
 }
 
+// İşçi ve arka plan işlerinin nabzı (docs/meta-ads-plan.md F0b). Anahtar
+// başına tek satır, üzerine yazılır: "worker.tick" tick başında lastBeatAt,
+// sonunda lastOkAt yazar; data en uzun boşlukları (maxGapMs24h) tutar.
+model SystemHeartbeat {
+  key        String    @id
+  lastBeatAt DateTime?
+  lastOkAt   DateTime?
+  lastError  String?
+  data       Json?
+  updatedAt  DateTime  @updatedAt
+}
+
 // =============================================================================
 // SCHEDULER
 // =============================================================================
@@ -3130,4 +3145,351 @@ model ReasoningCall {
   @@index([purpose])
   // Scanners: a project's latest call of one purpose.
   @@index([projectId, purpose, createdAt])
+}
+
+// =============================================================================
+// META ADS (docs/meta-ads-plan.md §4)
+// =============================================================================
+// Yeni reklam tabloları `Ads*` önekini ve `platform` alanını taşır (şimdilik
+// yalnız META). Para alanları reklam hesabının minor unit'idir
+// (src/lib/ads/money.ts). Tablolar düz `projectId` taşır; ProjectDeletionService
+// onları kendiliğinden siler.
+
+enum AdsPlatform {
+  META
+}
+
+enum AdsOperationStatus {
+  PENDING
+  SENT
+  SUCCEEDED
+  UNKNOWN
+  RECONCILED
+  FAILED
+  COMPENSATED
+}
+
+// Workspace'te bağlı bir Meta reklam hesabının tek kaydı: sağlık, kota ve
+// senkron durumu. Meta kotası reklam hesabı (`act_`) başınadır; aynı hesap
+// birden çok projeye bağlıysa satır tektir, projeler AdsAccountProject'tedir.
+model AdsAccount {
+  id           String      @id @default(cuid())
+  workspaceId  String
+  credentialId String?
+  platform     AdsPlatform @default(META)
+  // "act_<id>"
+  externalId   String
+  name         String?
+  currency     String?
+  timezoneName String?
+
+  // Meta account_status (1 = ACTIVE) ve disable_reason (0 = yok).
+  accountStatus Int?
+  disableReason Int?
+  hasFunding    Boolean?
+  isPersonal    Boolean?
+
+  spendCapMinor            BigInt?
+  amountSpentMinor         BigInt?
+  minDailyBudgetMinor      BigInt?
+  minCampaignSpendCapMinor BigInt?
+  minimumBudgets           Json?
+  userTasks                String[] @default([])
+  businessId               String?
+  pageId                   String?
+  instagramUserId          String?
+  dsaBeneficiary           String?
+  dsaPayor                 String?
+  // development_access / standard_access (başlıktan okunur).
+  accessTier               String?
+
+  // Governor (src/server/integrations/meta/governor.ts): Meta'nın kullanım
+  // başlıklarından son okunan değerler ve blok süresi. Durum süreçte değil
+  // burada tutulur: deploy örtüşmesindeki iki kopya aynı kovayı görür.
+  lastUsage        Json?
+  rateLimitedUntil DateTime?
+
+  // OK | WARN | BLOCKED | AUTH | UNKNOWN
+  healthStatus String    @default("UNKNOWN")
+  healthReason String?
+  lastHealthAt DateTime?
+
+  lastStructureAt     DateTime?
+  lastInsightsAt      DateTime?
+  lastBackfillDate    String?
+  syncLeaseUntil      DateTime?
+  syncLeaseOwner      String?
+  consecutiveFailures Int       @default(0)
+
+  projects AdsAccountProject[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, platform, externalId])
+  @@index([externalId])
+  @@index([syncLeaseUntil])
+}
+
+// Hesap ↔ proje bağlantısı. v1'de proje başına tek seçili hesap (K10);
+// tablo çoklu hesaba hazırdır.
+model AdsAccountProject {
+  id           String     @id @default(cuid())
+  adsAccountId String
+  projectId    String
+  brandId      String
+  selected     Boolean    @default(false)
+  adsAccount   AdsAccount @relation(fields: [adsAccountId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+
+  @@unique([adsAccountId, projectId])
+  @@index([projectId, selected])
+}
+
+// Her Meta yazmasının niyet ve denetim kaydı (docs/meta-ads-plan.md §3.1
+// Idempotency). Meta istemci tarafı idempotency anahtarı sunmaz: yazmadan önce
+// bu satır açılır, `tag` nesne adına eklenir; zaman aşımında kör tekrar
+// yapılmaz, önce etiketle Meta'da aranır. Token asla saklanmaz.
+model AdsOperation {
+  id               String             @id @default(cuid())
+  workspaceId      String
+  projectId        String
+  adsAccountId     String?
+  // "act_<id>": kota ve uzlaştırma için.
+  adAccountExternalId String?
+  // CREATE_CAMPAIGN, CREATE_ADSET, CREATE_CREATIVE, CREATE_AD, UPDATE_CAMPAIGN,
+  // UPDATE_ADSET, UPDATE_AD, SET_STATUS...
+  kind             String
+  // "agx:k3f9q2" — Meta'da uzlaştırma anahtarı.
+  tag              String             @unique
+  launchId         String?
+  decisionId       String?
+  executionJobId   String?
+  // USER | SYSTEM | RULE
+  actorType        String
+  // Yazmanın hedefi (güncellemede nesne, oluşturmada ebeveyn kenarı).
+  targetExternalId String?
+  parentExternalId String?
+  request          Json
+  previousState    Json?
+  status           AdsOperationStatus @default(PENDING)
+  resultExternalId String?
+  // code, subcode, class, userMessage, blameFieldSpecs, fbtraceId
+  error            Json?
+  attempts         Int                @default(0)
+  sentAt           DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@unique([executionJobId, kind])
+  @@index([projectId, createdAt])
+  @@index([status, sentAt])
+  @@index([adAccountExternalId, createdAt])
+}
+
+enum AdsLevel {
+  ACCOUNT
+  CAMPAIGN
+  ADSET
+  AD
+}
+
+enum AdsAlertStatus {
+  OPEN
+  ACKED
+  RESOLVED
+  MUTED
+}
+
+enum AdsSeverity {
+  INFO
+  WARN
+  CRITICAL
+}
+
+// Kampanya / ad set / reklam aynası (docs/meta-ads-plan.md §3.2). Ekranlar,
+// sohbet ve kurallar canlı Graph yerine buradan okur. `goneAt`: Meta listesinde
+// artık görünmeyen (arşivlenmiş ya da silinmiş) nesne; harcaması kimlikle
+// okunmaya devam eder.
+model AdsObject {
+  id                   String    @id @default(cuid())
+  adsAccountId         String
+  projectId            String?
+  level                AdsLevel
+  externalId           String
+  parentExternalId     String?
+  campaignExternalId   String?
+  name                 String
+  objective            String?
+  optimizationGoal     String?
+  billingEvent         String?
+  bidStrategy          String?
+  destinationType      String?
+  configuredStatus     String?
+  effectiveStatus      String?
+  dailyBudgetMinor     BigInt?
+  lifetimeBudgetMinor  BigInt?
+  spendCapMinor        BigInt?
+  budgetRemainingMinor BigInt?
+  startTime            DateTime?
+  endTime              DateTime?
+  learningStatus       String?
+  learningConversions  Int?
+  lastSigEditAt        DateTime?
+  issues               Json?
+  reviewFeedback       Json?
+  failedDeliveryChecks Json?
+  advantageState       String?
+  resultActionType     String?
+  creativeExternalId   String?
+  thumbnailAssetId     String?
+  thumbnailFetchedAt   DateTime?
+  // 7 ve 28 günlük tekil kişi metrikleri (erişim, sıklık); günlük satırlardan
+  // toplanamaz.
+  windowStats          Json?
+  createdByAgentelse   Boolean   @default(false)
+  launchId             String?
+  // İzlenen alanların özeti: değişirse drift denetlenir.
+  fieldsHash           String?
+  metaUpdatedAt        DateTime?
+  lastSeenAt           DateTime?
+  lastDeliveryAt       DateTime?
+  driftAt              DateTime?
+  goneAt               DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([adsAccountId, externalId])
+  @@index([projectId, level, effectiveStatus])
+  @@index([adsAccountId, level])
+}
+
+// Günlük performans (hesap gününe göre). Para alanları hesabın minor
+// unit'idir. Reklam düzeyi 180 gün, diğer düzeyler 400 gün saklanır (K7).
+model AdsInsightDaily {
+  id                 String   @id @default(cuid())
+  adsAccountId       String
+  projectId          String?
+  level              AdsLevel
+  // ACCOUNT için "act_<id>"
+  externalId         String
+  date               DateTime @db.Date
+  spendMinor         BigInt   @default(0)
+  impressions        Int      @default(0)
+  reach              Int      @default(0)
+  frequency          Float?
+  clicks             Int      @default(0)
+  linkClicks         Int      @default(0)
+  landingPageViews   Int      @default(0)
+  // Meta'nın `results` alanından (ya da hedefe göre yedek eşlemeden).
+  results            Int?
+  resultActionType   String?
+  actionValuesMinor  BigInt?
+  actions            Json?
+  video3s            Int?
+  thruplays          Int?
+  rankings           Json?
+  attributionSetting String?
+  // 28 günden eski satır artık yeniden çekilmez.
+  isFinal            Boolean  @default(false)
+  fetchedAt          DateTime @default(now())
+
+  @@unique([adsAccountId, level, externalId, date])
+  @@index([projectId, date])
+  @@index([adsAccountId, date])
+}
+
+// Tekilleştirilmiş reklam uyarısı (docs/meta-ads-plan.md §3.6). Koşul tekrar
+// ederse aynı satır yeniden açılır; düzelince kendiliğinden RESOLVED olur.
+// LLM puanlamasından geçmez.
+model AdsAlert {
+  id             String         @id @default(cuid())
+  workspaceId    String
+  projectId      String
+  adsAccountId   String?
+  externalId     String?
+  kind           String
+  severity       AdsSeverity
+  status         AdsAlertStatus @default(OPEN)
+  dedupeKey      String
+  title          String
+  detail         String?
+  data           Json?
+  firstSeenAt    DateTime       @default(now())
+  lastSeenAt     DateTime       @default(now())
+  occurrences    Int            @default(1)
+  notifiedAt     DateTime?
+  notifyChannels String[]       @default([])
+  mutedUntil     DateTime?
+  resolvedAt     DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([projectId, dedupeKey])
+  @@index([projectId, status, severity])
+}
+
+// Lansman durumu (docs/meta-ads-plan.md §3.4).
+enum AdsLaunchStatus {
+  DRAFT
+  MEDIA_PROCESSING
+  VALIDATED
+  AWAITING_APPROVAL
+  CREATING
+  CREATED_PAUSED
+  ACTIVATING
+  ACTIVE
+  FAILED
+  EXPIRED
+  CANCELLED
+  DISCARDING
+  DISCARDED
+}
+
+// Bir lansmanın tek kaydı (F3). Kart yalnız launchId tutar; durum, ilerleme
+// (kurulan nesnelerin kimlikleri) ve Meta'nın ön kontrol sonuçları buradadır.
+// Her deneme ("Fix and retry", "Turn on", "Discard") ayrı bir META_LAUNCH
+// görevidir ve aynı kayda bağlanır; başarılı adımlar niyet günlüğünden
+// (AdsOperation.launchId) bulunup atlanır.
+model AdsLaunch {
+  id                  String          @id @default(cuid())
+  workspaceId         String
+  projectId           String
+  workId              String?
+  // Lansmanı açan kartın Command'ı.
+  commandId           String
+  launchKey           String
+  adsAccountId        String?
+  adAccountExternalId String
+  status              AdsLaunchStatus @default(DRAFT)
+  specVersion         Int             @default(1)
+  spec                Json
+  // Onayın geçerliliği: bütçe, hedefleme, amaç ya da kimlik değişirse değişir.
+  specHash            String
+  // Yerel doğrulama, Meta validate_only sonuçları ve önizlemeler.
+  validation          Json?
+  approvalId          String?
+  activationApprovalId String?
+  currentTaskId       String?
+  // create | activate | discard
+  mode                String?
+  campaignExternalId  String?
+  // Adım sonuçları: görsel hash'leri, kreatif / ad set / reklam kimlikleri.
+  progress            Json?
+  envelope            Json?
+  // Meta tarafı frenler: kampanya spend_cap, ad set end_time (geri okunmuş).
+  guards              Json?
+  error               Json?
+  // Adım makinesinin kilidi: işçi ve satır içi sürüş aynı anda yazmaz.
+  leaseUntil          DateTime?
+  leaseOwner          String?
+  createdByUserId     String?
+  activatedAt         DateTime?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@unique([commandId, launchKey])
+  @@index([projectId, status])
+  @@index([status, updatedAt])
 }

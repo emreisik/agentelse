@@ -1,0 +1,426 @@
+[
+  {
+    "name": "expired token",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 190,
+        "error_subcode": 463,
+        "message": "Error validating access token: Session has expired",
+        "type": "OAuthException",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "AUTH"
+  },
+  {
+    "name": "invalid token",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 190,
+        "message": "Invalid OAuth access token.",
+        "type": "OAuthException",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "AUTH"
+  },
+  {
+    "name": "password changed",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 190,
+        "error_subcode": 460,
+        "message": "Error validating access token: password changed",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "AUTH"
+  },
+  {
+    "name": "security checkpoint",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 190,
+        "error_subcode": 459,
+        "message": "User is enrolled in a blocking, logged-in checkpoint",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "AUTH"
+  },
+  {
+    "name": "page role missing",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 190,
+        "error_subcode": 492,
+        "message": "User does not have sufficient administrative permission for this action on this page.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "PERMISSION"
+  },
+  {
+    "name": "app request limit",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 4,
+        "message": "(#4) Application request limit reached",
+        "is_transient": true,
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "RATE_LIMIT"
+  },
+  {
+    "name": "insights throttled",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 4,
+        "error_subcode": 1504022,
+        "message": "There have been too many calls from this ad-account.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "RATE_LIMIT"
+  },
+  {
+    "name": "user request limit",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 17,
+        "error_subcode": 2446079,
+        "message": "User request limit reached",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "RATE_LIMIT"
+  },
+  {
+    "name": "page limit",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 32,
+        "message": "Page request limit reached",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "RATE_LIMIT"
+  },
+  {
+    "name": "abuse limit",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 613,
+        "message": "Calls to this api have exceeded the rate limit.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "RATE_LIMIT"
+  },
+  {
+    "name": "budget changes per hour",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 613,
+        "error_subcode": 1487632,
+        "message": "You can only change your ad set budget 4 times per hour.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "CHANGE_LIMIT"
+  },
+  {
+    "name": "spend cap changes per day",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 17,
+        "error_subcode": 1885172,
+        "message": "You can only change the spending limit 10 times a day.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "CHANGE_LIMIT"
+  },
+  {
+    "name": "ads volume",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 613,
+        "error_subcode": 1487225,
+        "message": "Too many ads in this ad account.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "VOLUME_LIMIT"
+  },
+  {
+    "name": "buc ads insights",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 80000,
+        "message": "There have been too many calls from this ad-account.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "RATE_LIMIT"
+  },
+  {
+    "name": "buc ads management",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 80004,
+        "message": "There have been too many calls to this ad-account.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "RATE_LIMIT"
+  },
+  {
+    "name": "dev mode post",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 1885183,
+        "message": "Ads creative post was created by an app that is in development mode.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "APP_ACCESS"
+  },
+  {
+    "name": "budget too low",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 1885272,
+        "message": "Your budget is too low.",
+        "error_user_msg": "Daily budget is below Meta's minimum.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "VALIDATION"
+  },
+  {
+    "name": "adset budget sharing",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 4834011,
+        "message": "Must specify True or False in is_adset_budget_sharing_enabled field",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "VALIDATION"
+  },
+  {
+    "name": "spend cap below min",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 2446307,
+        "message": "Campaign spend limit is below the minimum.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "VALIDATION"
+  },
+  {
+    "name": "dsa missing",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 3858152,
+        "message": "Beneficiary and payer are required for ads in the EU.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "VALIDATION"
+  },
+  {
+    "name": "generic invalid param",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "message": "Invalid parameter",
+        "error_data": "{\"blame_field_specs\":[[\"targeting\",\"age_min\"]]}",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "VALIDATION"
+  },
+  {
+    "name": "object missing",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 33,
+        "message": "Unsupported get request. Object with ID '123' does not exist",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "STATE"
+  },
+  {
+    "name": "archived limit",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 1487990,
+        "message": "Too many archived ads.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "STATE"
+  },
+  {
+    "name": "permission",
+    "httpStatus": 403,
+    "body": {
+      "error": {
+        "code": 200,
+        "message": "(#200) Requires ads_management permission",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "PERMISSION"
+  },
+  {
+    "name": "ig account not linked",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 1815199,
+        "message": "Instagram account isn't connected to this ad account.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "PERMISSION"
+  },
+  {
+    "name": "terms",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 2859024,
+        "message": "Non-discrimination policy certification required.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "TERMS_REQUIRED"
+  },
+  {
+    "name": "policy block",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 368,
+        "message": "The action attempted has been deemed abusive or is otherwise disallowed",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "POLICY"
+  },
+  {
+    "name": "disapproved edit",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 2490427,
+        "message": "Ad was rejected and can't be edited.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "POLICY"
+  },
+  {
+    "name": "post gone",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 2490155,
+        "message": "The post behind this ad was deleted.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "CREATIVE_SOURCE_GONE"
+  },
+  {
+    "name": "insights too big",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 1487534,
+        "message": "Please reduce the amount of data you're asking for.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "INSIGHTS_SIZE"
+  },
+  {
+    "name": "version",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 2635,
+        "message": "You are calling a deprecated version of the Ads API.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "VERSION"
+  },
+  {
+    "name": "server error",
+    "httpStatus": 500,
+    "body": {
+      "error": {
+        "code": 2,
+        "message": "An unexpected error has occurred. Please retry your request later.",
+        "is_transient": true,
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "TRANSIENT"
+  },
+  {
+    "name": "whatsapp unlinked",
+    "httpStatus": 400,
+    "body": {
+      "error": {
+        "code": 100,
+        "error_subcode": 2446880,
+        "message": "The WhatsApp number linked to this Page is no longer connected.",
+        "fbtrace_id": "AbCdEf123"
+      }
+    },
+    "expectedClass": "ACCOUNT"
+  }
+]

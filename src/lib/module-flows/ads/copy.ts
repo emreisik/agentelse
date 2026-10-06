@@ -32,6 +32,12 @@ export const ADS_FLOW_COPY = {
   ageTo: "To age",
   gender: "Gender",
   link: "Website link",
+  // DSA (EU/EEA only)
+  dsa: "EU ad disclosure",
+  dsaHint:
+    "Ads shown in the EU must say who benefits from them and who pays for them.",
+  dsaBeneficiary: "Who benefits from this ad?",
+  dsaPayor: "Who pays for it?",
   button: "Button",
   connect: "Connect Meta Ads",
   finishSetup: "Finish Meta Ads setup",
@@ -67,8 +73,9 @@ export const ADS_FLOW_COPY = {
   launching: "Launching…",
   safety:
     "Everything is created paused in your Meta Ads account, and each step waits for your approval first.",
-  noEndDate: (days: number) =>
-    `Meta gets no end date from here: once you turn it on, it runs until you pause it (planned: ${days} days).`,
+  // Meta stops the ad set by itself at its end date (docs/meta-ads-plan.md F0b).
+  endDate: (days: number) =>
+    `Runs ${days} days from creation, then Meta stops it by itself. Turning it on later does not move the end date.`,
 
   // Launch
   chainAria: "What is created in Meta",
@@ -92,6 +99,28 @@ export const ADS_FLOW_COPY = {
   accountChanged:
     "The Meta ad account changed since the brief. Go back to the Brief and check the budget.",
   notStarted: "The launch didn't start. Launch it again.",
+
+  // Launch v2 (one approval)
+  checkingMeta: "Checking with Meta…",
+  checkFailed: "Couldn't check with Meta. Try again.",
+  metaChecked: "Meta checked the campaign and the ad.",
+  previews: "How it looks",
+  approveLaunch: "Approve & launch",
+  createPaused: "Create paused",
+  approvingLaunch: "Launching…",
+  waitingAdmin: "Waiting for an owner or admin to approve the spend.",
+  envelope: (amount: string) => `You approve up to ${amount} (net, before taxes and fees).`,
+  pacing: "Meta may spend up to 1.75× your daily budget on some days; the weekly total stays within 7×.",
+  spendCap: (amount: string) => `Campaign spending limit: ${amount}.`,
+  endsOn: (date: string) => `Meta stops it by itself on ${date} (account time).`,
+  featuresOff: "Meta's automatic creative changes couldn't be set; Meta's defaults apply.",
+  live: "Live in Meta. Delivery starts after Meta's review.",
+  createdPaused: "Created paused in your Meta Ads account.",
+  discard: "Discard",
+  turnOnNow: "Turn on",
+  discarded: "Discarded. Nothing is left running.",
+  discardFirst: "Discard the half-made campaign first, then launch again.",
+  liveUntil: (date: string) => `Live until ${date}. Meta stops it by itself.`,
 } as const;
 
 export const ADS_ACCOUNT_COPY: Readonly<

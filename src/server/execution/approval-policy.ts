@@ -25,9 +25,17 @@ const LEVEL_4_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>(
     "META_CAMPAIGN_UPDATE",
     "META_ADSET_CREATE",
     "META_ADSET_UPDATE",
+    "META_LAUNCH",
     "GOOGLE_ADS_CAMPAIGN_CREATE",
   ],
 );
+
+// Güvenlik eylemi (Pause / Pause all; docs/meta-ads-plan.md §3.9): kullanıcının
+// kendi tıklaması onaydır (L0); sistemin önerdiği duraklatma Suggest modunda
+// onay ister (L4). Guarded/Full auto F7'de autopilot'tan geçer.
+const SAFETY_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
+  "META_SAFETY_ACTION",
+]);
 
 export type ApprovalLevelContext = {
   createdByType: ActorType;
@@ -67,7 +75,12 @@ export const ApprovalPolicy = {
   ): ApprovalLevel {
     let level: ApprovalLevel;
 
-    if (LEVEL_4_CAPABILITIES.has(capability)) {
+    if (SAFETY_CAPABILITIES.has(capability)) {
+      level =
+        context.createdByType === "USER"
+          ? "LEVEL_0_AUTO_OBSERVE"
+          : "LEVEL_4_CRITICAL";
+    } else if (LEVEL_4_CAPABILITIES.has(capability)) {
       level = "LEVEL_4_CRITICAL";
     } else if (ExecutionPolicy.requiresApproval(capability)) {
       // The legacy approval set is the L3 floor (publishes, account setup,

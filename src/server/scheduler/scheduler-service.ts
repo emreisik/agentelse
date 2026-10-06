@@ -13,6 +13,8 @@ import { DeadLetterRepository } from "@/server/repositories/dead-letter.reposito
 // three lines with a comment pointing at the original" convention
 // measurement-engine.ts already uses for its own backoff formula).
 const MAX_ATTEMPTS = 5;
+// A claimed schedule whose run never finished comes due again after this.
+const SCHEDULE_CLAIM_LEASE_MS = 10 * 60_000;
 const BASE_BACKOFF_MS = 2_000;
 function backoffMs(attempt: number): number {
   const base = Math.min(BASE_BACKOFF_MS * 2 ** attempt, 5 * 60_000);
@@ -86,6 +88,20 @@ export const SchedulerService = {
     let ran = 0;
     for (const schedule of due) {
       const config = (schedule.configuration ?? {}) as Record<string, unknown>;
+
+      // Claim (compare-and-swap on nextRunAt): during a deploy overlap two
+      // processes read the same due row; only the one that moves nextRunAt
+      // forward runs it, so a slot never publishes twice
+      // (docs/meta-ads-plan.md F1). The real next run is written below.
+      const claimed = await prisma.projectSchedule.updateMany({
+        where: {
+          id: schedule.id,
+          enabled: true,
+          nextRunAt: schedule.nextRunAt,
+        },
+        data: { nextRunAt: new Date(Date.now() + SCHEDULE_CLAIM_LEASE_MS) },
+      });
+      if (claimed.count !== 1) continue;
 
       // Per-item isolation (reliability audit concern 8): previously a
       // thrown error here propagated straight out of the `for` loop —

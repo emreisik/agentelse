@@ -1,3 +1,4 @@
+import { formatMoney as formatMinorMoney } from "@/lib/ads/money";
 import Link from "next/link";
 import { Pencil } from "lucide-react";
 
@@ -15,9 +16,11 @@ function statusTone(status: string): "positive" | "waiting" | "neutral" {
   return "neutral";
 }
 
+// Minor unit'ten, hesabın para birimi ofsetiyle (src/lib/ads/money.ts):
+// sabit /100 JPY/HUF gibi hesaplarda 100 kat yanlış gösteriyordu.
 function formatMoney(cents: number | undefined, currency: string): string {
   if (cents === undefined) return "—";
-  return `${(cents / 100).toFixed(2)} ${currency}`;
+  return formatMinorMoney(cents, currency);
 }
 
 // Read-only full detail for one AdSet, driven by ?adsetDetail=<id> in

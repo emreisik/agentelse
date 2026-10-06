@@ -125,9 +125,16 @@ async function processCredential(
       // INVALID_INPUT carries its own plain-language reason (the task cannot
       // run as written); every other AgentelseError here means the approval
       // was already decided.
+      // PERMISSION_DENIED: a spending (L4) approval is given in Agentelse by
+      // a workspace owner or admin, never from Telegram (docs/meta-ads-plan.md
+      // F0b); an expired one says so itself.
       const message = isAgentelseError(error)
-        ? error.code === "INVALID_INPUT"
-          ? error.message
+        ? error.code === "INVALID_INPUT" ||
+          error.code === "PERMISSION_DENIED" ||
+          /expired/i.test(error.message)
+          ? error.code === "PERMISSION_DENIED"
+            ? "Spending is approved in Agentelse by a workspace owner or admin. Open the app to review it."
+            : error.message
           : "This approval can no longer be decided (it has probably already been decided)"
         : "The action failed";
       await telegramAnswerCallbackQuery(token, cq.id, {
@@ -158,6 +165,10 @@ export async function pollTelegramApprovals(): Promise<void> {
 
   for (const credential of credentials) {
     try {
+      // One process at a time per bot: during a deploy overlap two processes
+      // would read the same getUpdates batch and handle each tap twice
+      // (docs/meta-ads-plan.md F1).
+      if (!(await claimPollLease(credential.id))) continue;
       await processCredential(credential);
     } catch (error) {
       console.error(
@@ -166,4 +177,17 @@ export async function pollTelegramApprovals(): Promise<void> {
       );
     }
   }
+}
+
+// A 30 s lease on the bot's metadata (compare-and-swap in one statement):
+// true when this process may poll now.
+const POLL_LEASE_MS = 30_000;
+
+export async function claimPollLease(
+  credentialId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const until = new Date(now.getTime() + POLL_LEASE_MS).toISOString();
+  const claimed = await prisma.$executeRaw`UPDATE "IntegrationCredential" SET metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), '{telegramPollLeaseUntil}', to_jsonb(${until}::text)) WHERE id = ${credentialId} AND (metadata->>'telegramPollLeaseUntil' IS NULL OR (metadata->>'telegramPollLeaseUntil')::timestamptz < ${now.toISOString()}::timestamptz)`;
+  return claimed === 1;
 }

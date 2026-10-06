@@ -15,6 +15,13 @@ export type EnqueueTriggerInput = {
   scheduledFor?: Date;
 };
 
+// A claimed trigger whose worker vanished is taken back after this.
+const PROCESSING_LEASE_MS = 15 * 60_000;
+
+export function triggerBackoffMs(attempt: number): number {
+  return Math.min(2 ** attempt * 60_000, 60 * 60_000);
+}
+
 export const AgencyTriggerRepository = {
   // Duplicate dedupeKey (P2002) is swallowed — the trigger already exists,
   // which is exactly the dedup guarantee callers rely on.
@@ -47,17 +54,32 @@ export const AgencyTriggerRepository = {
   // flipped are returned, so two concurrent workers never process the same
   // trigger (updateMany's count-checked per-row claim).
   async claimPending(limit: number) {
+    const now = new Date();
+    // A PROCESSING row whose worker died (deploy overlap, crash) is taken over
+    // once its lease ran out, instead of staying PROCESSING forever
+    // (docs/meta-ads-plan.md F1).
+    const staleBefore = new Date(now.getTime() - PROCESSING_LEASE_MS);
     const candidates = await prisma.agencyTrigger.findMany({
-      where: { status: "PENDING", scheduledFor: { lte: new Date() } },
+      where: {
+        OR: [
+          { status: "PENDING", scheduledFor: { lte: now } },
+          { status: "PROCESSING", updatedAt: { lt: staleBefore } },
+        ],
+      },
       take: limit,
       orderBy: { scheduledFor: "asc" },
     });
 
-    // Sent together, each swap atomic on its own row; order kept.
+    // Sent together, each swap atomic on its own row; order kept. The swap is
+    // conditional on the status (and, for a stale row, the same updatedAt) read
+    // above, so two workers never take the same trigger.
     const results = await Promise.all(
       candidates.map((trigger) =>
         prisma.agencyTrigger.updateMany({
-          where: { id: trigger.id, status: "PENDING" },
+          where:
+            trigger.status === "PROCESSING"
+              ? { id: trigger.id, status: "PROCESSING", updatedAt: trigger.updatedAt }
+              : { id: trigger.id, status: "PENDING" },
           data: { status: "PROCESSING" },
         }),
       ),
@@ -92,9 +114,14 @@ export const AgencyTriggerRepository = {
       data: { status: "FAILED", attemptCount, error },
     });
     if (attemptCount >= maxAttempts) return null;
+    // Retried with a growing pause (2, 4, 8... minutes, at most an hour),
+    // not on the very next tick.
     return prisma.agencyTrigger.update({
       where: { id: triggerId },
-      data: { status: "PENDING" },
+      data: {
+        status: "PENDING",
+        scheduledFor: new Date(Date.now() + triggerBackoffMs(attemptCount)),
+      },
     });
   },
 

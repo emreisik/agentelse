@@ -52,8 +52,8 @@ beforeEach(() => {
 });
 
 const rows = [
-  { id: "c1", workspaceId: "ws-1", projectId: "p1" },
-  { id: "c2", workspaceId: "ws-2", projectId: "p2" },
+  { id: "c1", workspaceId: "ws-1", projectId: "p1", provider: "instagram" },
+  { id: "c2", workspaceId: "ws-2", projectId: "p2", provider: "instagram" },
 ];
 
 describe("matching", () => {
@@ -61,10 +61,22 @@ describe("matching", () => {
     mocks.findMany.mockResolvedValue([]);
     await deleteInstagramUserData("1784");
     const where = mocks.findMany.mock.calls[0]![0].where;
-    expect(where.provider).toBe("instagram");
     expect(where.OR).toEqual([
-      { metadata: { path: ["instagramAccount", "id"], equals: "1784" } },
-      { metadata: { path: ["instagramAccount", "appScopedId"], equals: "1784" } },
+      {
+        provider: "instagram",
+        OR: [
+          { metadata: { path: ["instagramAccount", "id"], equals: "1784" } },
+          {
+            metadata: { path: ["instagramAccount", "appScopedId"], equals: "1784" },
+          },
+        ],
+      },
+      // F1: Facebook-route connections (Facebook, Instagram through a Page,
+      // Meta Ads) match the person's app-scoped Facebook user id.
+      {
+        provider: { in: ["instagram", "facebook", "meta_ads"] },
+        metadata: { path: ["appScopedUserId"], equals: "1784" },
+      },
     ]);
   });
 });
@@ -261,5 +273,20 @@ describe("readSignedUserId", () => {
         }),
       ),
     ).toBeNull();
+  });
+});
+
+describe("Facebook-route connections (F1)", () => {
+  it("a Meta Ads connection removed in Facebook is revoked and audited as such", async () => {
+    mocks.findMany.mockResolvedValue([
+      { id: "c9", workspaceId: "ws-1", projectId: "p1", provider: "meta_ads" },
+    ]);
+    expect(await deauthorizeInstagramUser("fb-55")).toBe(1);
+    expect(mocks.auditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "integration_credential.deauthorized_by_meta",
+        metadata: { provider: "meta_ads" },
+      }),
+    });
   });
 });

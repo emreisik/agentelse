@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   verificationFindMany: vi.fn(),
   verificationUpdateMany: vi.fn(),
   verificationUpdate: vi.fn(),
+  heartbeatBeat: vi.fn(),
+  heartbeatOk: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -62,6 +64,9 @@ vi.mock("@/server/repositories/outbox.repository", () => ({
 }));
 // The observability stages have their own tests; here we're measuring the
 // worker's flow, so their prisma calls shouldn't pollute the counters.
+vi.mock("@/server/observability/heartbeat", () => ({
+  Heartbeat: { beat: mocks.heartbeatBeat, ok: mocks.heartbeatOk },
+}));
 vi.mock("@/server/observability/self-healing.service", () => ({
   SelfHealingService: { run: mocks.selfHealingRun },
 }));
@@ -137,6 +142,8 @@ describe("ExecutionWorker.tick", () => {
     mocks.humanExpiry.mockResolvedValue(undefined);
     mocks.approvalExpiry.mockResolvedValue(undefined);
     mocks.secretExpiry.mockResolvedValue(undefined);
+    mocks.heartbeatBeat.mockResolvedValue(undefined);
+    mocks.heartbeatOk.mockResolvedValue(undefined);
   });
 
   it("coalesces overlapping calls and releases the lock after completion", async () => {
@@ -169,19 +176,43 @@ describe("ExecutionWorker.tick", () => {
   });
 
   it("releases the single-flight lock when a tick fails", async () => {
-    // Unisolated stage: if the dispatch queue blows up, the tick genuinely fails.
-    mocks.claimBatch.mockRejectedValueOnce(new Error("dispatch failed"));
+    // Every stage is isolated now; the tick itself can still fail at its
+    // very end (here: the end-of-tick heartbeat write) and must free the lock.
+    mocks.heartbeatOk.mockRejectedValueOnce(new Error("tick failed"));
 
     const first = ExecutionWorker.tick();
     const overlapping = ExecutionWorker.tick();
 
     await expect(Promise.all([first, overlapping])).rejects.toThrow(
-      "dispatch failed",
+      "tick failed",
     );
     expect(mocks.claimBatch).toHaveBeenCalledTimes(1);
 
     await ExecutionWorker.tick();
     expect(mocks.claimBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("a broken dispatch queue does not bring down poll, verify or the agency loop (F0b)", async () => {
+    mocks.claimBatch.mockRejectedValueOnce(new Error("dispatch failed"));
+
+    await expect(ExecutionWorker.tick()).resolves.toBeUndefined();
+
+    expect(mocks.executionFindMany).toHaveBeenCalledTimes(1);
+    expect(mocks.verificationFindMany).toHaveBeenCalledTimes(1);
+    expect(mocks.agencyTick).toHaveBeenCalledTimes(1);
+    expect(mocks.deadLetterCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "worker.tick.stage_failed.dispatch",
+        lastError: "dispatch failed",
+      }),
+    );
+  });
+
+  it("writes the heartbeat at the start and the end of a tick (F0b)", async () => {
+    await ExecutionWorker.tick();
+
+    expect(mocks.heartbeatBeat).toHaveBeenCalledWith("worker.tick");
+    expect(mocks.heartbeatOk).toHaveBeenCalledWith("worker.tick");
   });
 
   it("a broken scheduler does not bring down the rest of the tick", async () => {

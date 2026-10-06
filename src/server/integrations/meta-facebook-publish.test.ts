@@ -16,6 +16,11 @@ vi.mock("@/lib/env", () => ({
 }));
 
 const fetchMock = vi.fn();
+
+// Every Graph call carries appsecret_proof (meta/graph.ts, F1); the URL
+// assertions below are about everything else.
+const withoutProof = (url: string) =>
+  url.replace(/&appsecret_proof=[0-9a-f]+/, "");
 beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
@@ -144,7 +149,7 @@ describe("reading, editing and deleting a Page post", () => {
       message: "Hello",
       permalinkUrl: "https://www.facebook.com/p/1",
     });
-    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+    expect(withoutProof(String(fetchMock.mock.calls[0]![0]))).toBe(
       "https://graph.facebook.com/v26.0/page-1_post-1?fields=message,permalink_url&access_token=page-token",
     );
   });
@@ -167,7 +172,7 @@ describe("reading, editing and deleting a Page post", () => {
     await deleteFacebookPagePost("page-1_post-1", "page-token");
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(
+    expect(withoutProof(url)).toBe(
       "https://graph.facebook.com/v26.0/page-1_post-1?access_token=page-token",
     );
     expect(init.method).toBe("DELETE");

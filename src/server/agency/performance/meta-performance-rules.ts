@@ -1,3 +1,4 @@
+import { toMajorUnits } from "@/lib/ads/money";
 import type { MetaInsightsRow } from "@/server/integrations/meta-client";
 
 // Pure, deterministic rule engine — no server-only import, no DB, no
@@ -58,7 +59,9 @@ export function evaluateCampaignFinding(input: {
 }): PerformanceFinding | null {
   const { campaignName, insights, dailyBudgetCents, currency } = input;
   if (dailyBudgetCents <= 0) return null;
-  const dailyBudgetMajor = dailyBudgetCents / 100;
+  // Minor unit -> ana birim, hesabın para birimi ofsetiyle (JPY/HUF'de
+  // sabit /100 eşikleri 100 kat kaydırıyordu; docs/meta-ads-plan.md F0b).
+  const dailyBudgetMajor = toMajorUnits(dailyBudgetCents, currency);
   const candidates: PerformanceFinding[] = [];
 
   const hasNoResults = !insights.resultCount || insights.resultCount <= 0;

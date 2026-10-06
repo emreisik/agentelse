@@ -5,6 +5,8 @@
     "buildCommand": "npm run build"
   },
   "deploy": {
-    "startCommand": "npx prisma migrate deploy && npm run start"
+    "startCommand": "npx prisma migrate deploy && npm run start",
+    "healthcheckPath": "/api/health",
+    "healthcheckTimeout": 300
   }
 }

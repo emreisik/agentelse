@@ -10,6 +10,7 @@ import {
 } from "@/server/repositories/outbox.repository";
 import { SelfHealingService } from "@/server/observability/self-healing.service";
 import { ProviderHealthService } from "@/server/observability/provider-health.service";
+import { requirePlatformOperator } from "@/server/security/operator";
 import {
   requireUser,
   requireWorkspaceMembership,
@@ -27,6 +28,7 @@ export async function retryDeadLetterAction(
     const deadLetterId = String(formData.get("deadLetterId"));
     const { userId } = await requireUser();
     const { workspaceId } = await requireWorkspaceMembership(userId);
+    requirePlatformOperator(userId);
 
     const entry = await prisma.deadLetterJob.findUnique({
       where: { id: deadLetterId },
@@ -46,7 +48,13 @@ export async function retryDeadLetterAction(
 
     const job = await prisma.executionJob.findUnique({
       where: { id: entry.executionJobId },
-      select: { id: true, workspaceId: true, projectId: true, status: true },
+      select: {
+        id: true,
+        workspaceId: true,
+        projectId: true,
+        status: true,
+        taskId: true,
+      },
     });
     if (!job || job.workspaceId !== workspaceId) {
       return {
@@ -62,6 +70,18 @@ export async function retryDeadLetterAction(
     }
 
     await prisma.$transaction(async (tx) => {
+      // Olay yeniden eklenmeden önce iş ve görevi tekrar alınabilir duruma
+      // döner: aksi hâlde startExecution FAILED işi atlar (ya da FAILED
+      // görevi RUNNING'e geçiremeyip düşer) ve Retry hiçbir şey yapmaz
+      // (self-healing.service.ts'teki düzeltmenin aynısı).
+      await tx.executionJob.updateMany({
+        where: { id: job.id, status: "FAILED" },
+        data: { status: "QUEUED" },
+      });
+      await tx.task.updateMany({
+        where: { id: job.taskId, status: "FAILED" },
+        data: { status: "QUEUED", completedAt: null },
+      });
       await OutboxRepository.enqueue(tx, {
         workspaceId: job.workspaceId,
         projectId: job.projectId,
@@ -106,6 +126,7 @@ export async function dismissDeadLetterAction(
     const deadLetterId = String(formData.get("deadLetterId"));
     const { userId } = await requireUser();
     const { workspaceId } = await requireWorkspaceMembership(userId);
+    requirePlatformOperator(userId);
 
     const entry = await prisma.deadLetterJob.findUnique({
       where: { id: deadLetterId },
@@ -146,6 +167,7 @@ export async function runHealthScanAction(): Promise<ActionResult> {
   try {
     const { userId } = await requireUser();
     await requireWorkspaceMembership(userId);
+    requirePlatformOperator(userId);
 
     await SelfHealingService.run();
     await ProviderHealthService.refresh();
@@ -169,6 +191,7 @@ export async function clearProviderIncidentAction(
     const providerKey = String(formData.get("providerKey"));
     const { userId } = await requireUser();
     await requireWorkspaceMembership(userId);
+    requirePlatformOperator(userId);
 
     const definition = await prisma.providerDefinition.findUnique({
       where: { key: providerKey },

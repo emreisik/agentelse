@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/prisma";
 import { isAgentelseError } from "@/server/security/errors";
 import {
@@ -21,6 +23,10 @@ import { ExecutionJobRepository } from "@/server/repositories/execution-job.repo
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { SchedulerService } from "@/server/scheduler/scheduler-service";
 import { ContinuousAgencyEngine } from "@/server/agency/continuous/continuous-agency-engine";
+import { Heartbeat } from "@/server/observability/heartbeat";
+import { HEARTBEAT_KEYS } from "@/lib/heartbeat";
+import { metaWorkExcludedHere } from "@/lib/local-worker-policy";
+import { META_WORKER_CAPABILITIES } from "@/lib/execution-backlog";
 // Side-effect import: registers late setup-stage runners + intelligence
 // pipeline steps into the engine/orchestrator extension points.
 import "@/server/agency/continuous/agency-wiring";
@@ -161,9 +167,14 @@ async function failDeadLetteredDispatch(
 // only touches this file, never ExecutionService or domain callers.
 export const ExecutionWorker = {
   async processDispatchQueue(limit = 10): Promise<number> {
+    // Canlı DB'yi paylaşan yerel geliştirme işçisi Meta işlerini hiç almaz;
+    // onları canlı işçi yürütür (docs/meta-ads-plan.md F0b, K19).
     const batch = await OutboxRepository.claimBatch(
       limit,
       OUTBOX_EVENT_TYPES.EXECUTION_DISPATCH,
+      metaWorkExcludedHere(process.env)
+        ? { excludeCapabilities: [...META_WORKER_CAPABILITIES] }
+        : undefined,
     );
 
     // Each event above was already exclusively claimed via a per-row
@@ -344,7 +355,11 @@ export const ExecutionWorker = {
                     { status: "VERIFYING" },
                     {
                       status: "COMPLETED",
-                      task: { status: { not: "COMPLETED" } },
+                      // İptal edilmiş ya da düşmüş görev tamamlanamaz; her
+                      // dakika yeniden seçilip "take" sınırını doldurmasın.
+                      task: {
+                        status: { notIn: ["COMPLETED", "CANCELLED", "FAILED"] },
+                      },
                     },
                   ],
                 },
@@ -358,66 +373,79 @@ export const ExecutionWorker = {
 
     let resolved = 0;
     for (const verification of pending) {
-      const job = verification.executionJob;
-      const rawResult = (job.rawResult ?? {}) as Record<string, unknown>;
-
-      // The PENDING predicate is the cross-process claim. Keeping the claim,
-      // evidence, and final verification update in one transaction means a
-      // loser creates no duplicate evidence and a failed winner rolls back
-      // to PENDING for the next tick.
-      const claimed =
-        verification.status === "VERIFIED"
-          ? true
-          : await prisma.$transaction(async (tx) => {
-              const result = await tx.executionVerification.updateMany({
-                where: { id: verification.id, status: "PENDING" },
-                data: { status: "VERIFIED", verifiedAt: new Date() },
-              });
-              if (result.count !== 1) return false;
-
-              const evidence = await tx.evidence.create({
-                data: {
-                  workspaceId: verification.workspaceId,
-                  projectId: verification.projectId,
-                  brandId: verification.brandId,
-                  executionJobId: job.id,
-                  sourceType: "SYSTEM_VERIFICATION",
-                  statement: `Verification evidence for ${job.capability}`,
-                  extractedText: JSON.stringify(rawResult),
-                  confidenceScore: rawResult.isMock === true ? 0.5 : 1,
-                  accessedAt: new Date(),
-                },
-              });
-
-              await tx.executionVerification.update({
-                where: { id: verification.id },
-                data: { evidenceIds: [evidence.id] },
-              });
-              return true;
-            });
-      if (!claimed) continue;
-
-      const jobCompleted =
-        job.status === "COMPLETED" ||
-        (await ExecutionJobRepository.completeAfterVerification(
-          job.id,
-          job.projectId,
-        ));
-      if (!jobCompleted) {
-        const current = await prisma.executionJob.findUnique({
-          where: { id: job.id },
-        });
-        if (current?.status !== "COMPLETED") continue;
+      // Tek bozuk satır (ör. geçersiz bir görev geçişi) döngünün geri kalanını
+      // ve tick'in sonraki aşamalarını düşürmez.
+      try {
+        if (await this.resolveOneVerification(verification)) resolved += 1;
+      } catch (error) {
+        console.error(
+          `[execution-worker] verification ${verification.id} could not be resolved:`,
+          error instanceof Error ? error.message : error,
+        );
       }
-
-      const taskCompleted = await TaskRepository.completeAfterVerification(
-        job.taskId,
-        job.projectId,
-      );
-      if (taskCompleted) resolved += 1;
     }
 
     return resolved;
+  },
+
+  async resolveOneVerification(
+    verification: Prisma.ExecutionVerificationGetPayload<{
+      include: { executionJob: true };
+    }>,
+  ): Promise<boolean> {
+    const job = verification.executionJob;
+    const rawResult = (job.rawResult ?? {}) as Record<string, unknown>;
+
+    // The PENDING predicate is the cross-process claim. Keeping the claim,
+    // evidence, and final verification update in one transaction means a
+    // loser creates no duplicate evidence and a failed winner rolls back
+    // to PENDING for the next tick.
+    const claimed =
+      verification.status === "VERIFIED"
+        ? true
+        : await prisma.$transaction(async (tx) => {
+            const result = await tx.executionVerification.updateMany({
+              where: { id: verification.id, status: "PENDING" },
+              data: { status: "VERIFIED", verifiedAt: new Date() },
+            });
+            if (result.count !== 1) return false;
+
+            const evidence = await tx.evidence.create({
+              data: {
+                workspaceId: verification.workspaceId,
+                projectId: verification.projectId,
+                brandId: verification.brandId,
+                executionJobId: job.id,
+                sourceType: "SYSTEM_VERIFICATION",
+                statement: `Verification evidence for ${job.capability}`,
+                extractedText: JSON.stringify(rawResult),
+                confidenceScore: rawResult.isMock === true ? 0.5 : 1,
+                accessedAt: new Date(),
+              },
+            });
+
+            await tx.executionVerification.update({
+              where: { id: verification.id },
+              data: { evidenceIds: [evidence.id] },
+            });
+            return true;
+          });
+    if (!claimed) return false;
+
+    const jobCompleted =
+      job.status === "COMPLETED" ||
+      (await ExecutionJobRepository.completeAfterVerification(
+        job.id,
+        job.projectId,
+      ));
+    if (!jobCompleted) {
+      const current = await prisma.executionJob.findUnique({
+        where: { id: job.id },
+      });
+      if (current?.status !== "COMPLETED") return false;
+    }
+
+    return TaskRepository.completeAfterVerification(job.taskId, job.projectId);
   },
 
   async sweepExpired(): Promise<void> {
@@ -435,6 +463,12 @@ export const ExecutionWorker = {
     if (activeTick) return activeTick;
 
     const run = (async () => {
+      // Nabız: tick başında lastBeatAt, sonunda lastOkAt (en fazla dakikada
+      // bir). Harici monitör ve uygulama içi şerit buna bakar
+      // (docs/meta-ads-plan.md F0b).
+      // Beklenmez: nabız yazımı hiç fırlatmaz ve tick'in aşamalarını
+      // geciktirmemeli.
+      void Heartbeat.beat(HEARTBEAT_KEYS.WORKER_TICK);
       // Every stage is isolated: a single broken cron expression or health
       // scan error must not bring down the whole tick (including dispatch +
       // poll + verify).
@@ -444,12 +478,14 @@ export const ExecutionWorker = {
         lastProviderHealthAt = Date.now();
         await isolate("provider-health", () => ProviderHealthService.refresh());
       }
-      await this.processDispatchQueue();
-      await this.pollRunningJobs();
+      await isolate("dispatch", () => this.processDispatchQueue());
+      await isolate("poll", () => this.pollRunningJobs());
       const repairDue =
         Date.now() - lastVerificationRepairAt >= VERIFICATION_REPAIR_EVERY_MS;
       if (repairDue) lastVerificationRepairAt = Date.now();
-      await this.resolvePendingVerifications(20, { repair: repairDue });
+      await isolate("verify", () =>
+        this.resolvePendingVerifications(20, { repair: repairDue }),
+      );
       // Agency OS loop — internally fault-isolated per step; a failing agency
       // stage never breaks execution processing (guarded here anyway).
       try {
@@ -457,7 +493,8 @@ export const ExecutionWorker = {
       } catch {
         // ContinuousAgencyEngine.tick already audit-logs its own failures.
       }
-      await this.sweepExpired();
+      await isolate("sweep-expired", () => this.sweepExpired());
+      await Heartbeat.ok(HEARTBEAT_KEYS.WORKER_TICK);
     })();
 
     activeTick = run;

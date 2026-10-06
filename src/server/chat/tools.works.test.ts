@@ -115,6 +115,8 @@ const PRE_CHANGE_NAMES = [
   "get_brand_profile",
   "get_visual_identity",
   "get_connected_platforms",
+  "get_ads_overview",
+  "get_ad_performance",
   "start_plan_brief",
   "propose_content_plan",
   "propose_content_package",
@@ -342,6 +344,8 @@ describe("module chats (Work.module)", () => {
     "get_brand_profile",
     "get_visual_identity",
     "get_connected_platforms",
+    "get_ads_overview",
+    "get_ad_performance",
   ];
   // Guided setup on and the legacy loop on (the test default): the widest list.
   const widest = { works: true, guidedSetup: true } as const;

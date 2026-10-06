@@ -28,6 +28,13 @@ import {
   registerTaskTerminalHandler,
 } from "@/server/agency/continuous/continuous-agency-engine";
 import { LearningEngine } from "@/server/agency/learning/learning-engine";
+import { MetaTokenHealthCheck } from "@/server/ads/token-health";
+import { AdsFlags } from "@/lib/ads/flags";
+import { AdsDigest } from "@/server/ads/guard/digest";
+import { AdsRetention } from "@/server/ads/guard/retention";
+import { AdsGuard } from "@/server/ads/guard/watchdogs";
+import { LaunchWatchdog } from "@/server/ads/guard/launch-watchdog";
+import { AdsSync } from "@/server/ads/sync/runner";
 import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
 import { StrategyEngine } from "@/server/agency/strategy/strategy-service";
 import { MetaAdSetChainRelay } from "@/server/agency/meta-ads/meta-adset-chain-relay";
@@ -147,6 +154,42 @@ registerAgencyTickStep({
   name: "agency-loop-heartbeat",
   run: () => AgencyLoopHeartbeat.run(50),
 });
+// Meta Ads steps run right after the heartbeat, before every LLM step, so a
+// long tick never delays them (docs/meta-ads-plan.md §5). Each skips itself
+// on a dev process sharing the live database (K19).
+registerAgencyTickStep({
+  name: "meta-token-health",
+  run: () => MetaTokenHealthCheck.runDue(5),
+});
+// F2 (META_ADS_SYNC): the mirror sync (≤3 accounts a tick, per-account CAS
+// lease), the guard (15 min), the 08:30 daily digest and retention. Each
+// returns 0 at once while the flag is off.
+registerAgencyTickStep({
+  name: "meta-ads-sync",
+  run: () => AdsSync.runDue(3),
+});
+registerAgencyTickStep({
+  name: "meta-ads-guard",
+  run: () => AdsGuard.runPeriodic(),
+});
+registerAgencyTickStep({
+  name: "meta-launch-watchdog",
+  run: () => LaunchWatchdog.run(),
+});
+registerAgencyTickStep({
+  name: "ads-daily-digest",
+  run: () => AdsDigest.runDue(10),
+});
+registerAgencyTickStep({
+  name: "ads-retention",
+  run: () => AdsRetention.runDue(),
+});
+// Approvals answered in Telegram are applied right after the Meta steps, not
+// behind the LLM steps below.
+registerAgencyTickStep({
+  name: "telegram-approval-polling",
+  run: () => pollTelegramApprovals(),
+});
 
 // The Brand Brain's weekly look at the outside world (web-signal-scanner.ts):
 // one web-searching call per active project a week reports competitors' moves,
@@ -167,7 +210,10 @@ registerAgencyTickStep({
 // so PERFORMANCE signals produced this tick get scored in the same tick.
 registerAgencyTickStep({
   name: "meta-ads-performance-scan",
-  run: () => MetaPerformanceScanner.runDueScans(5),
+  // F2: with the mirror on, its findings come from the guard and (F4) the
+  // rules engine; the old scanner would read Meta live a second time.
+  run: () =>
+    AdsFlags.sync() ? Promise.resolve(0) : MetaPerformanceScanner.runDueScans(5),
 });
 // Same role as meta-ads-performance-scan above, for GA4/Search Console —
 // SEO signals produced this tick get scored in the same tick's
@@ -332,11 +378,6 @@ registerAgencyTickStep({
 registerAgencyTickStep({
   name: "strategy-synthesis",
   run: () => StrategyEngine.resynthesizeDue(5),
-});
-
-registerAgencyTickStep({
-  name: "telegram-approval-polling",
-  run: () => pollTelegramApprovals(),
 });
 
 export const AGENCY_WIRING_LOADED = true;

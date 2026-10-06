@@ -1,3 +1,4 @@
+import { tokenExpiry } from "@/lib/ads/token-expiry";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Plug, RefreshCw } from "lucide-react";
@@ -1518,6 +1519,9 @@ function MetaDialog({
                     )}
                   </div>
                 ) : null}
+                {service === "ads" ? (
+                  <AdsConnectionHealth metadata={adsMetadata} />
+                ) : null}
               </div>
 
               <MetaLastTestResult service={service} metadata={metadata} />
@@ -2163,5 +2167,68 @@ function XDialog({
         </EmptyState>
       )}
     </EntityDialog>
+  );
+}
+
+// Meta Ads bağlantı sağlığı (docs/meta-ads-plan.md F0b, F1): token süresi,
+// eksik izinler (günlük debug_token denetimi) ve seçili hesabın Meta'daki
+// durumu. Bağlantı ~60 günde sessizce düşer, kapalı hesaba yazılamaz.
+function AdsConnectionHealth({ metadata }: { metadata: MetaAdsMetadata }) {
+  const expiry = tokenExpiry(
+    metadata.tokenHealth?.expiresAt ?? metadata.longLivedTokenExpiresAt,
+    new Date(),
+  );
+  const missing = metadata.tokenHealth?.missingScopes ?? [];
+  const selected = metadata.adAccounts?.find(
+    (account) => account.adAccountId === metadata.selectedAdAccountId,
+  );
+  const accountBlocked =
+    selected?.accountStatus !== undefined && selected.accountStatus !== 1;
+  const outsideGrant =
+    metadata.selectedAdAccountId &&
+    metadata.tokenHealth?.adAccountTargets?.length &&
+    !metadata.tokenHealth.adAccountTargets.includes(
+      metadata.selectedAdAccountId,
+    );
+  const lines: { text: string; urgent: boolean }[] = [];
+  if (metadata.tokenHealth && !metadata.tokenHealth.isValid) {
+    lines.push({ text: "Access is no longer valid. Reconnect.", urgent: true });
+  } else if (expiry) {
+    lines.push(expiry);
+  }
+  if (missing.length > 0) {
+    lines.push({
+      text: `Missing permission: ${missing.join(", ")}. Reconnect and allow it.`,
+      urgent: true,
+    });
+  }
+  if (accountBlocked) {
+    lines.push({
+      text: "This ad account can't run ads (closed or disabled in Meta).",
+      urgent: true,
+    });
+  }
+  if (outsideGrant) {
+    lines.push({
+      text: "Agentelse wasn't given access to this ad account. Reconnect and tick it.",
+      urgent: true,
+    });
+  }
+  if (lines.length === 0) return null;
+  return (
+    <div className="space-y-0.5">
+      {lines.map((line) => (
+        <p
+          key={line.text}
+          className={
+            line.urgent
+              ? "text-[11px] font-medium text-amber-700 dark:text-amber-300"
+              : "text-[11px] text-muted-foreground"
+          }
+        >
+          {line.text}
+        </p>
+      ))}
+    </div>
   );
 }

@@ -40,6 +40,7 @@ for (const file of [
   "module-flow-actions",
   "analytics-flow-actions",
   "ads-flow-actions",
+  "ads-launch-actions",
   "seo-flow-actions",
   "post-actions",
   "publish-actions",

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { CapabilityKey, Prisma, PrismaClient } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
@@ -41,8 +41,29 @@ export const OutboxRepository = {
     });
   },
 
-  async claimBatch(limit: number, eventType?: string) {
+  async claimBatch(
+    limit: number,
+    eventType?: string,
+    options: { excludeCapabilities?: readonly CapabilityKey[] } = {},
+  ) {
     if (limit <= 0) return [];
+
+    // İşi olmayan olaylar her zaman alınabilir; dışlanan yeteneklerin işleri
+    // bu süreçte hiç claim edilmez (canlı işçiye kalır).
+    const capabilityFilter = options.excludeCapabilities?.length
+      ? {
+          OR: [
+            { executionJobId: null },
+            {
+              executionJob: {
+                is: {
+                  capability: { notIn: [...options.excludeCapabilities] },
+                },
+              },
+            },
+          ],
+        }
+      : {};
 
     const claimCutoff = new Date();
     const leaseUntil = new Date(
@@ -53,6 +74,7 @@ export const OutboxRepository = {
         status: { in: ["PENDING", "PROCESSING"] },
         nextAttemptAt: { lte: claimCutoff },
         ...(eventType ? { eventType } : {}),
+        ...capabilityFilter,
       },
       orderBy: { createdAt: "asc" },
       take: limit,

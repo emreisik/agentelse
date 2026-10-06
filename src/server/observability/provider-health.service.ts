@@ -5,6 +5,10 @@ import type { ProviderHealthStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ProviderRegistry } from "@/server/execution/provider-registry";
 import { classifyError } from "@/server/observability/error-classifier";
+import {
+  metaClassDegradesProvider,
+  parseMetaErrorCode,
+} from "@/server/integrations/meta/error-catalog";
 
 // Provider health: the ProviderDefinition/ProviderHealth/ProviderIncident
 // models were defined in the schema, but no code was writing to them. This
@@ -142,6 +146,7 @@ export const ProviderHealthService = {
           select: {
             providerId: true,
             status: true,
+            errorCode: true,
             errorMessage: true,
             updatedAt: true,
           },
@@ -167,9 +172,7 @@ export const ProviderHealthService = {
       // shouldn't drop the provider to UNAVAILABLE, because the provider
       // itself is healthy.
       const failures = jobs.filter(
-        (job) =>
-          job.status === "FAILED" &&
-          classifyError(job.errorMessage).degradesProvider,
+        (job) => job.status === "FAILED" && failureDegrades(job),
       );
       const lastErrorMessage = failures[0]?.errorMessage ?? null;
       const status =
@@ -260,3 +263,18 @@ export const ProviderHealthService = {
     return new Set(rows.map((row) => row.provider.key));
   },
 };
+
+// Meta failures carry a structured code (META:<CLASS>:<code>, see
+// meta/error-catalog.ts): only a Meta-wide temporary failure degrades the
+// shared `meta-api` provider. A tenant's expired token, missing permission,
+// rejected settings or blocked ad account stays at the account level and
+// never stops every other client's Meta work (docs/meta-ads-plan.md F1).
+// Everything else keeps the text classifier.
+export function failureDegrades(job: {
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}): boolean {
+  const metaClass = parseMetaErrorCode(job.errorCode);
+  if (metaClass) return metaClassDegradesProvider(metaClass);
+  return classifyError(job.errorMessage ?? null).degradesProvider;
+}

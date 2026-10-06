@@ -9,6 +9,7 @@ import type {
   SocialPlatform,
 } from "@prisma/client";
 
+import { isMetaSpendWrite } from "@/lib/execution-backlog";
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
@@ -68,6 +69,9 @@ export type PlanCapabilityInput = {
 // (spec section 28: publish/account-setup/campaign-write actions never run
 // unattended). Multi-task plans (dependent chains) build on top of this by
 // calling planForCapability per step and wiring TaskRepository.addDependency.
+// Meta harcama onaylarının geçerlilik süresi (docs/meta-ads-plan.md F0b).
+export const META_APPROVAL_TTL_MS = 72 * 60 * 60_000;
+
 export const TaskPlanner = {
   async planForCapability(input: PlanCapabilityInput) {
     const riskLevel = ExecutionPolicy.defaultRiskLevel(input.capability);
@@ -263,6 +267,11 @@ export const TaskPlanner = {
       level: resolvedLevel,
       requestedByType: task.createdByType,
       requestedById: task.createdByUserId ?? undefined,
+      // Meta harcama onayları 72 saat geçerlidir: daha eski bir onay bugünkü
+      // bütçe ve hesap bağlamıyla çalışmaz (docs/meta-ads-plan.md F0b).
+      expiresAt: isMetaSpendWrite(task.capability)
+        ? new Date(Date.now() + META_APPROVAL_TTL_MS)
+        : undefined,
     });
 
     // "Golden rule": the moment a task is parked for approval, it should
@@ -298,6 +307,8 @@ function publishApprovalType(capability: CapabilityKey) {
     capability === "META_ADSET_UPDATE" ||
     capability === "META_AD_CREATE" ||
     capability === "META_AD_UPDATE" ||
+    capability === "META_SAFETY_ACTION" ||
+    capability === "META_LAUNCH" ||
     capability.startsWith("GOOGLE_ADS_CAMPAIGN")
   ) {
     return "CAMPAIGN_APPROVAL" as const;

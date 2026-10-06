@@ -323,7 +323,7 @@ describe("publish queue: flag off (parity)", () => {
         excludedAt: null,
         OR: [
           { scheduledFor: null },
-          { scheduledFor: { lte: expect.any(Date) } },
+          { scheduledFor: { lte: expect.any(Date), gte: expect.any(Date) } },
         ],
       },
       orderBy: [
@@ -343,6 +343,34 @@ describe("publish queue: flag off (parity)", () => {
     expect(publishCreativeCore).toHaveBeenCalledWith(
       expect.objectContaining({ creativeId: "old", format: "FEED" }),
     );
+  });
+});
+
+describe("publish queue: stale pieces after a worker outage (F0a)", () => {
+  it("flag off: the legacy query only releases pieces due in the last 24 h", async () => {
+    creativeFindMany.mockResolvedValue([]);
+    await publishNextQueuedInstagramCreative(queueInput);
+    const where = (creativeFindMany.mock.calls[0]?.[0] as {
+      where: { OR: { scheduledFor: { lte?: Date; gte?: Date } | null }[] };
+    }).where;
+    const window = where.OR[1]?.scheduledFor as { lte: Date; gte: Date };
+    expect(window.lte.getTime() - window.gte.getTime()).toBe(24 * 3600 * 1000);
+    expect(publishCreativeCore).not.toHaveBeenCalled();
+  });
+
+  it("flag on: a NON-owned legacy candidate more than 24 h past its time is not released", async () => {
+    worksOn = true;
+    creativeFindMany.mockResolvedValue([
+      candidate("legacy-stale", { planId: null, scheduledFor: ago(30 * HOUR) }),
+      candidate("legacy-fresh", { planId: null, scheduledFor: ago(HOUR) }),
+    ]);
+    ownedPlanIds.mockResolvedValue(new Set());
+    await publishNextQueuedInstagramCreative(queueInput);
+    expect(
+      publishCreativeCore.mock.calls.map(
+        (call) => (call[0] as { creativeId: string }).creativeId,
+      ),
+    ).toEqual(["legacy-fresh"]);
   });
 });
 

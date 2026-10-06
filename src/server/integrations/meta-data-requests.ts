@@ -5,21 +5,35 @@ import { parseSignedRequest } from "@/lib/meta-signed-request";
 import { prisma } from "@/lib/prisma";
 import { META_PROVIDER } from "@/server/integrations/meta-client";
 
-// What happens when a person removes Agentelse in Instagram (deauthorize) or
-// asks Meta to delete their data (data deletion). Both only concern the
-// Instagram Login connection: it is the one stored against the account's own id,
-// so a request can be matched to it. (The Facebook route stores no Facebook user
-// id, so a request for one of those matches nothing and is a harmless no-op.)
+// What happens when a person removes Agentelse (deauthorize) or asks Meta to
+// delete their data (data deletion). An Instagram Login connection is stored
+// against the account's own id; a Facebook-route connection (Facebook, Instagram
+// through a Page, Meta Ads) against the person's app-scoped Facebook user id,
+// written when it connects (docs/meta-ads-plan.md F1). Either matches.
 
-// The signed `user_id` is Instagram's app-scoped id, which is not always the
-// professional account id publishing uses, so a connection stores both and
-// either one matches.
+// Instagram's signed `user_id` is its app-scoped id, which is not always the
+// professional account id publishing uses, so that connection stores both.
 function ownedBy(userId: string) {
   return {
-    provider: META_PROVIDER.instagram,
     OR: [
-      { metadata: { path: ["instagramAccount", "id"], equals: userId } },
-      { metadata: { path: ["instagramAccount", "appScopedId"], equals: userId } },
+      {
+        provider: META_PROVIDER.instagram,
+        OR: [
+          { metadata: { path: ["instagramAccount", "id"], equals: userId } },
+          {
+            metadata: {
+              path: ["instagramAccount", "appScopedId"],
+              equals: userId,
+            },
+          },
+        ],
+      },
+      {
+        provider: {
+          in: [META_PROVIDER.instagram, META_PROVIDER.facebook, META_PROVIDER.ads],
+        },
+        metadata: { path: ["appScopedUserId"], equals: userId },
+      },
     ],
   };
 }
@@ -84,7 +98,7 @@ export async function readSignedUserId(request: Request): Promise<string | null>
 export async function deauthorizeInstagramUser(userId: string): Promise<number> {
   const rows = await prisma.integrationCredential.findMany({
     where: { ...ownedBy(userId), NOT: { status: "REVOKED" } },
-    select: { id: true, workspaceId: true, projectId: true },
+    select: { id: true, workspaceId: true, projectId: true, provider: true },
   });
   let revoked = 0;
   for (const row of rows) {
@@ -99,10 +113,13 @@ export async function deauthorizeInstagramUser(userId: string): Promise<number> 
             workspaceId: row.workspaceId,
             projectId: row.projectId,
             actorType: "SYSTEM",
-            action: "integration_credential.deauthorized_by_instagram",
+            action:
+              row.provider === META_PROVIDER.instagram
+                ? "integration_credential.deauthorized_by_instagram"
+                : "integration_credential.deauthorized_by_meta",
             entityType: "IntegrationCredential",
             entityId: row.id,
-            metadata: { provider: META_PROVIDER.instagram },
+            metadata: { provider: row.provider },
           },
         });
       }
@@ -118,11 +135,27 @@ export async function deauthorizeInstagramUser(userId: string): Promise<number> 
 export async function deleteInstagramUserData(userId: string): Promise<number> {
   const rows = await prisma.integrationCredential.findMany({
     where: ownedBy(userId),
-    select: { id: true, workspaceId: true, projectId: true },
+    select: { id: true, workspaceId: true, projectId: true, provider: true },
   });
   let erased = 0;
   for (const row of rows) {
     erased += await prisma.$transaction(async (tx) => {
+      // Meta Ads: the mirror of the account goes with the connection
+      // (docs/meta-ads-plan.md F2, K7). The write log (AdsOperation) stays as
+      // the workspace's own audit record.
+      if (row.provider === META_PROVIDER.ads) {
+        const accounts = await tx.adsAccount.findMany({
+          where: { credentialId: row.id },
+          select: { id: true },
+        });
+        const ids = accounts.map((account) => account.id);
+        if (ids.length > 0) {
+          await tx.adsInsightDaily.deleteMany({ where: { adsAccountId: { in: ids } } });
+          await tx.adsObject.deleteMany({ where: { adsAccountId: { in: ids } } });
+          await tx.adsAlert.deleteMany({ where: { adsAccountId: { in: ids } } });
+          await tx.adsAccount.deleteMany({ where: { id: { in: ids } } });
+        }
+      }
       const { count } = await tx.integrationCredential.deleteMany({
         where: { id: row.id },
       });
@@ -135,7 +168,7 @@ export async function deleteInstagramUserData(userId: string): Promise<number> {
             action: "integration_credential.deleted_on_user_request",
             entityType: "IntegrationCredential",
             entityId: row.id,
-            metadata: { provider: META_PROVIDER.instagram },
+            metadata: { provider: row.provider },
           },
         });
       }

@@ -278,8 +278,13 @@ const SECTIONS: PolicySection[] = [
         <p>
           We store the Meta access token (encrypted), your name on Facebook, the
           Pages and ad accounts you can choose from and the ones you chose, the
-          ids of posts Agentelse shared on your Page, and the latest performance
-          figures of your campaigns. Page access tokens are derived when needed
+          ids of posts Agentelse shared on your Page, a copy of your campaigns,
+          ad sets and ads (names, status, budgets and schedule) and their daily
+          performance figures (spend, impressions, reach, clicks and results).
+          We keep the daily figures for 400 days, and for individual ads for
+          180 days, so we can show trends, pace your budget and warn you about
+          problems; a campaign that no longer exists in Meta is removed from
+          our copy after 90 days. Page access tokens are derived when needed
           and never stored. We use this data only to publish and manage what you
           ask for and to show and analyze your results. Campaign performance
           figures may be processed by our AI provider to produce

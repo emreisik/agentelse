@@ -21,6 +21,7 @@ import {
   requireWorkspaceMembership,
 } from "@/server/security/tenant-context";
 import { buildSystemHealthReport } from "@/server/observability/health-report";
+import { isPlatformOperator } from "@/server/security/operator";
 import {
   clearProviderIncidentAction,
   dismissDeadLetterAction,
@@ -67,6 +68,26 @@ function StatTile({
 export default async function HealthPage() {
   const { userId } = await requireUser();
   const { workspaceId } = await requireWorkspaceMembership(userId);
+  // Platform-wide data (every tenant's dead letters and provider health):
+  // the operator only (docs/meta-ads-plan.md F1).
+  if (!isPlatformOperator(userId)) {
+    return (
+      <AppShell>
+        <div className="space-y-2 p-6">
+          <h1 className="font-heading text-2xl font-semibold tracking-tight">
+            System Health
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            System health is visible to the platform operator only. To see it,
+            add your user id to OPERATOR_USER_IDS on the server:{" "}
+            <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+              {userId}
+            </code>
+          </p>
+        </div>
+      </AppShell>
+    );
+  }
   const report = await buildSystemHealthReport(workspaceId);
 
   const healthy =

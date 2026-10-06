@@ -16,6 +16,7 @@ const executionJob = {
 };
 const task = {
   findUnique: vi.fn(),
+  updateMany: vi.fn(),
 };
 
 vi.mock("@/lib/prisma", () => ({
@@ -28,6 +29,7 @@ vi.mock("@/lib/prisma", () => ({
         outboxEvent: { create: vi.fn() },
         deadLetterJob,
         executionJob,
+        task,
       }),
   },
 }));
@@ -165,6 +167,46 @@ describe("requeueRecoverableDeadLetters", () => {
     expect(OutboxRepository.enqueue).not.toHaveBeenCalled();
     expect(executionJob.updateMany).not.toHaveBeenCalled();
     expect(deadLetterJob.update).not.toHaveBeenCalled();
+  });
+
+  // F0a: a Meta write may have created the object at Meta and lost the
+  // reply; a blind requeue would create a duplicate campaign/ad set.
+  it("skips a Meta spend write and leaves its dead letter for a human", async () => {
+    deadLetterJob.findMany.mockResolvedValue([deadLetter()]);
+    executionJob.findUnique.mockResolvedValue({
+      id: "job-1",
+      workspaceId: "ws-1",
+      projectId: "p-1",
+      status: "FAILED",
+      capability: "META_ADSET_CREATE",
+      requestPayload: {},
+    });
+
+    const result = await SelfHealingService.requeueRecoverableDeadLetters();
+
+    expect(result).toEqual({ requeued: 0, skipped: 1 });
+    expect(OutboxRepository.enqueue).not.toHaveBeenCalled();
+    expect(deadLetterJob.update).not.toHaveBeenCalled();
+  });
+
+  it("puts a dead-lettered job's FAILED task back to QUEUED with the job (FAILED -> RUNNING is illegal)", async () => {
+    deadLetterJob.findMany.mockResolvedValue([deadLetter()]);
+    executionJob.findUnique.mockResolvedValue({
+      id: "job-1",
+      workspaceId: "ws-1",
+      projectId: "p-1",
+      status: "FAILED",
+      capability: "CREATE_CAPTION",
+      taskId: "task-1",
+      requestPayload: {},
+    });
+
+    await SelfHealingService.requeueRecoverableDeadLetters();
+
+    expect(task.updateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "FAILED" },
+      data: { status: "QUEUED", completedAt: null },
+    });
   });
 
   it("still requeues a job whose payload has no variantCount", async () => {

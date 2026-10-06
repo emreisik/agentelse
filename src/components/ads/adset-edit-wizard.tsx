@@ -1,5 +1,6 @@
 "use client";
 
+import { toMajorUnits } from "@/lib/ads/money";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, type UseFormReturn } from "react-hook-form";
@@ -70,10 +71,13 @@ export function AdSetEditWizard({
   projectId,
   adSet,
   closeHref,
+  currency,
 }: {
   projectId: string;
   adSet: MetaAdSetSummary;
   closeHref: string;
+  // Hesabın para birimi: tutar minor unit'ten bu ofsetle gösterilir.
+  currency?: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -85,7 +89,7 @@ export function AdSetEditWizard({
     defaultValues: {
       dailyBudget:
         adSet.dailyBudgetCents !== undefined
-          ? (adSet.dailyBudgetCents / 100).toFixed(2)
+          ? String(toMajorUnits(adSet.dailyBudgetCents, currency))
           : "",
       status: adSet.status === "ACTIVE" ? "ACTIVE" : "PAUSED",
       countries: targeting?.countries ?? [],
@@ -103,12 +107,27 @@ export function AdSetEditWizard({
 
   function handleSubmit(values: FormValues) {
     setSubmitError(null);
+    // Hedefleme yalnız değiştiyse gönderilir: aksi hâlde Ads Manager'da
+    // eklenen ilgi alanları ve kitleler yeniden yazılıp silinirdi
+    // (docs/meta-ads-plan.md F0b).
+    const initial = form.formState.defaultValues;
+    const targetingChanged =
+      targetingKey(values) !==
+      targetingKey({
+        countries: (initial?.countries ?? []) as string[],
+        cities: (initial?.cities ?? []) as { key: string; name: string }[],
+        ageMin: initial?.ageMin ?? "",
+        ageMax: initial?.ageMax ?? "",
+        gender: initial?.gender ?? "",
+        locales: (initial?.locales ?? []) as { id: number }[],
+      });
     startTransition(async () => {
       const formData = new FormData();
       formData.set("projectId", projectId);
       formData.set("adSetId", adSet.adSetId);
       formData.set("dailyBudget", values.dailyBudget);
       formData.set("status", values.status);
+      if (targetingChanged) formData.set("targetingChanged", "1");
       values.countries.forEach((c) => formData.append("countries", c));
       if (values.cities.length) {
         formData.set("cities", JSON.stringify(values.cities));
@@ -300,4 +319,22 @@ function TargetingFields({
       />
     </div>
   );
+}
+
+function targetingKey(values: {
+  countries: string[];
+  cities: { key: string }[];
+  ageMin: string;
+  ageMax: string;
+  gender: string;
+  locales: { id: number }[];
+}): string {
+  return JSON.stringify([
+    [...values.countries].sort(),
+    values.cities.map((c) => c.key).sort(),
+    values.ageMin,
+    values.ageMax,
+    values.gender,
+    values.locales.map((l) => l.id).sort(),
+  ]);
 }

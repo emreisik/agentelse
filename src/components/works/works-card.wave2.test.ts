@@ -43,6 +43,7 @@ vi.mock("@/server/actions/work-approve-actions", inert);
 vi.mock("@/server/actions/module-flow-actions", inert);
 vi.mock("@/server/actions/analytics-flow-actions", inert);
 vi.mock("@/server/actions/ads-flow-actions", inert);
+vi.mock("@/server/actions/ads-launch-actions", inert);
 vi.mock("@/server/actions/seo-flow-actions", inert);
 vi.mock("@/server/actions/post-actions", inert);
 vi.mock("@/server/actions/publish-actions", inert);

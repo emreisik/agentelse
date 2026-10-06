@@ -9,7 +9,6 @@ import {
   ArrowLeft,
   ArrowRight,
   Loader2,
-  Megaphone,
   Pencil,
   Rocket,
 } from "lucide-react";
@@ -40,26 +39,20 @@ const schema = z.object({
     .max(120, "120 characters max")
     .refine((value) => value.trim().length > 0, "Campaign name is required"),
   objective: z.enum(OBJECTIVES),
-  dailyBudget: z
-    .string()
-    .refine(
-      (value) => Number(value) > 0,
-      "Enter a daily budget greater than 0",
-    ),
 });
 
 type FormValues = z.infer<typeof schema>;
-type StepId = "objective" | "budget" | "review";
+// Bütçe kampanyada değil ad set'tedir (ABO): Meta ikisini birden almaz ve
+// bitiş tarihi de ad set'e yazılır (docs/meta-ads-plan.md F0b).
+type StepId = "objective" | "review";
 
 const STEPS: { id: StepId; title: string }[] = [
   { id: "objective", title: "Objective" },
-  { id: "budget", title: "Budget" },
   { id: "review", title: "Review" },
 ];
 
 const STEP_FIELDS: Record<StepId, (keyof FormValues)[]> = {
   objective: ["name", "objective"],
-  budget: ["dailyBudget"],
   review: [],
 };
 
@@ -77,7 +70,7 @@ const OBJECTIVE_LABEL: Record<Objective, string> = {
 // step with per-field Edit links) — applied here to Meta's campaign
 // creation, in place of the old single-screen native-<select> form. Submits
 // through the EXISTING createMetaCampaignAction unchanged (same FormData
-// shape: projectId/name/objective/dailyBudget), so the Approval/ExecutionJob
+// shape: projectId/name/objective), so the Approval/ExecutionJob
 // pipeline behind it is untouched.
 export function CampaignWizard({
   projectId,
@@ -99,7 +92,6 @@ export function CampaignWizard({
     defaultValues: {
       name: prefillName ?? "",
       objective: "OUTCOME_TRAFFIC",
-      dailyBudget: "",
     },
   });
 
@@ -120,7 +112,6 @@ export function CampaignWizard({
       formData.set("projectId", projectId);
       formData.set("name", values.name.trim());
       formData.set("objective", values.objective);
-      formData.set("dailyBudget", values.dailyBudget);
       const result = await createMetaCampaignAction(formData);
       if (result.ok) {
         toast.success("Campaign submitted for approval");
@@ -170,7 +161,6 @@ export function CampaignWizard({
             )}
           >
             {step.id === "objective" ? <ObjectiveStep form={form} /> : null}
-            {step.id === "budget" ? <BudgetStep form={form} /> : null}
             {step.id === "review" ? (
               <ReviewStep form={form} onEdit={goTo} />
             ) : null}
@@ -246,45 +236,6 @@ function ObjectiveStep({ form }: { form: UseFormReturn<FormValues> }) {
   );
 }
 
-function BudgetStep({ form }: { form: UseFormReturn<FormValues> }) {
-  return (
-    <div className="mx-auto w-full max-w-sm">
-      <div className="mb-6 text-center">
-        <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-          <Megaphone className="size-5" />
-        </div>
-        <h2 className="font-heading text-lg font-semibold tracking-tight">
-          Set a daily budget
-        </h2>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          The campaign is created paused — you can adjust the budget after
-          approval, before it goes live.
-        </p>
-      </div>
-      <FormField
-        control={form.control}
-        name="dailyBudget"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>Daily budget</FormLabel>
-            <FormControl>
-              <Input
-                {...field}
-                type="number"
-                min="1"
-                step="0.01"
-                autoFocus
-                placeholder="20.00"
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-    </div>
-  );
-}
-
 function ReviewStep({
   form,
   onEdit,
@@ -301,11 +252,11 @@ function ReviewStep({
       stepIndex: 0,
     },
     {
-      label: "Daily budget",
-      value: values.dailyBudget ? `${values.dailyBudget} / day` : "—",
-      stepIndex: 1,
+      label: "Budget",
+      value: "Set on the ad set, with its end date",
+      stepIndex: 0,
     },
-    { label: "Status", value: "Paused (draft)", stepIndex: 1 },
+    { label: "Status", value: "Paused (draft)", stepIndex: 0 },
   ];
 
   return (

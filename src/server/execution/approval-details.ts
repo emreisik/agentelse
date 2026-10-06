@@ -10,6 +10,7 @@ import {
   missingCapabilityInput,
   missingInputAdvice,
 } from "@/server/execution/capability-input";
+import { formatMoney } from "@/lib/ads/money";
 import type { ApprovalCategory } from "@/types/idea-event-card";
 
 // Plain-language bucket for a pending approval, shown on its chat card —
@@ -68,6 +69,27 @@ export function buildApprovalDetails(
       },
     ];
   }
+  if (capability === "META_CAMPAIGN_CREATE") {
+    return campaignCreateDetails((payload ?? {}) as Record<string, unknown>);
+  }
+  if (capability === "META_LAUNCH") {
+    return launchDetails((payload ?? {}) as Record<string, unknown>);
+  }
+  if (capability === "META_SAFETY_ACTION") {
+    const p = (payload ?? {}) as Record<string, unknown>;
+    return [
+      {
+        label: "What happens",
+        value:
+          p.action === "PAUSE_ALL"
+            ? "Every running campaign in the ad account is paused."
+            : p.action === "DISCARD_LAUNCH"
+              ? "The half-made campaign is removed from the ad account."
+              : "The ad is paused.",
+      },
+      ...(typeof p.reason === "string" ? [{ label: "Reason", value: p.reason }] : []),
+    ];
+  }
   if (
     capability !== "META_CAMPAIGN_UPDATE" &&
     capability !== "META_ADSET_UPDATE" &&
@@ -78,6 +100,9 @@ export function buildApprovalDetails(
     return undefined;
   }
   const p = (payload ?? {}) as Record<string, unknown>;
+  // Tutarlar minor unit'tir; para birimi görev yükündedir (onay anının
+  // hesabı). Yoksa formatMoney "(account currency)" der, tutar uydurmaz.
+  const currency = typeof p.currency === "string" ? p.currency : undefined;
 
   const details: { label: string; value: string }[] = [];
   const current =
@@ -91,7 +116,7 @@ export function buildApprovalDetails(
   if (current !== undefined && proposed !== undefined) {
     details.push({
       label: "Daily budget",
-      value: `${(current / 100).toFixed(2)} → ${(proposed / 100).toFixed(2)}`,
+      value: `${formatMoney(current, currency)} → ${formatMoney(proposed, currency)}`,
     });
   }
   if (typeof p.proposedStatus === "string") {
@@ -107,9 +132,11 @@ export function buildApprovalDetails(
     if (dailyBudgetCents !== undefined) {
       details.push({
         label: "Daily budget",
-        value: (dailyBudgetCents / 100).toFixed(2),
+        value: formatMoney(dailyBudgetCents, currency),
       });
     }
+    const runs = runsForText(p.durationDays);
+    if (runs) details.push({ label: "Runs for", value: runs });
     const targeting = p.targeting as { countries?: unknown } | undefined;
     if (Array.isArray(targeting?.countries) && targeting.countries.length > 0) {
       details.push({
@@ -195,4 +222,103 @@ function formatLabel(format: string, cards: unknown): string {
   }
   if (format === "VIDEO") return "Video";
   return "Single image";
+}
+
+// "7 days from creation, then Meta stops it" — süre, ad set kurulurken
+// başlar (docs/meta-ads-plan.md F0b).
+function runsForText(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return `${value} days from creation, then Meta stops it`;
+}
+
+// META_CAMPAIGN_CREATE: zincirin ilk halkası onaylanırken kullanıcı aslında
+// ad set'in bütçesini ve süresini de onaylıyor; kart bunları gösterir.
+function campaignCreateDetails(
+  p: Record<string, unknown>,
+): { label: string; value: string }[] | undefined {
+  const details: { label: string; value: string }[] = [];
+  if (typeof p.objective === "string") {
+    details.push({ label: "Objective", value: objectiveLabel(p.objective) });
+  }
+  const pending = (p.__pendingAdSet ?? null) as Record<string, unknown> | null;
+  const currency =
+    typeof pending?.currency === "string"
+      ? pending.currency
+      : typeof p.currency === "string"
+        ? p.currency
+        : undefined;
+  if (pending && typeof pending.dailyBudgetCents === "number") {
+    details.push({
+      label: "Daily budget",
+      value: formatMoney(pending.dailyBudgetCents, currency),
+    });
+  }
+  const runs = runsForText(pending?.durationDays);
+  if (runs) details.push({ label: "Runs for", value: runs });
+  const targeting = pending?.targeting as { countries?: unknown } | undefined;
+  if (Array.isArray(targeting?.countries) && targeting.countries.length > 0) {
+    details.push({ label: "Countries", value: targeting.countries.join(", ") });
+  }
+  return details.length > 0 ? details : undefined;
+}
+
+function objectiveLabel(objective: string): string {
+  const known: Record<string, string> = {
+    OUTCOME_TRAFFIC: "Traffic",
+    OUTCOME_AWARENESS: "Awareness",
+    OUTCOME_ENGAGEMENT: "Engagement",
+    OUTCOME_LEADS: "Leads",
+    OUTCOME_SALES: "Sales",
+    OUTCOME_APP_PROMOTION: "App promotion",
+  };
+  return known[objective] ?? objective;
+}
+
+// Güvenli lansmanın tek onayı (docs/meta-ads-plan.md §3.4 adım 5): net zarf,
+// bitiş, hesap, amaç, kitle ve Meta'nın gün içi temposu. Görev yükündeki
+// `summary` planlama anında yazılır (bu dosya saf kalır).
+function launchDetails(
+  p: Record<string, unknown>,
+): { label: string; value: string }[] {
+  const summary = (p.summary ?? {}) as Record<string, unknown>;
+  const currency = typeof summary.currency === "string" ? summary.currency : undefined;
+  const rows: { label: string; value: string }[] = [];
+  const mode = p.mode === "activate" ? "activate" : p.mode === "discard" ? "discard" : "create";
+  if (mode === "activate") {
+    rows.push({ label: "What happens", value: "The campaign is turned on in Meta. Delivery starts after Meta's review." });
+  } else if (mode === "discard") {
+    rows.push({ label: "What happens", value: "The half-made campaign is removed from the ad account." });
+  }
+  if (typeof summary.envelopeMinor === "number") {
+    rows.push({ label: "Total budget (net)", value: formatMoney(summary.envelopeMinor, currency) });
+  }
+  if (typeof summary.dailyMinor === "number" && typeof summary.days === "number") {
+    rows.push({
+      label: "Daily budget",
+      value: `${formatMoney(summary.dailyMinor, currency)} for ${summary.days} day${summary.days === 1 ? "" : "s"}`,
+    });
+  }
+  if (typeof summary.spendCapMinor === "number") {
+    rows.push({ label: "Campaign spending limit", value: formatMoney(summary.spendCapMinor, currency) });
+  }
+  if (typeof summary.objective === "string") rows.push({ label: "Goal", value: summary.objective });
+  if (typeof summary.audience === "string") rows.push({ label: "Audience", value: summary.audience });
+  if (typeof summary.account === "string") rows.push({ label: "Ad account", value: summary.account });
+  if (typeof summary.page === "string") rows.push({ label: "Runs as", value: summary.page });
+  if (mode === "create") {
+    rows.push({
+      label: "End",
+      value: `Meta stops it by itself after ${typeof summary.days === "number" ? summary.days : "the planned"} days${summary.timezone ? ` (account time, ${summary.timezone})` : ""}. Turning it on later does not move the end date.`,
+    });
+    rows.push({
+      label: "Pacing",
+      value: "Meta may spend up to 1.75× your daily budget on some days; the weekly total stays within 7×.",
+    });
+    if (summary.activate === false) {
+      rows.push({ label: "After creation", value: "Created paused. You turn it on later." });
+    }
+  }
+  return rows;
 }

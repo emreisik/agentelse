@@ -3,7 +3,12 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/server/security/crypto";
 import { SignalUniverse } from "@/server/agency/signals/signal-universe";
-import { PerformanceOptimizer } from "./performance-optimizer";
+import {
+  PerformanceOptimizer,
+  type AccountContext,
+} from "./performance-optimizer";
+import { resultSourceForGoal, type ResultSource } from "@/lib/ads/results";
+import { markMetaCredentialExpiredOn } from "@/server/integrations/meta-credential-health";
 import {
   evaluateAdSetFinding,
   evaluateCampaignFinding,
@@ -96,22 +101,23 @@ export const MetaPerformanceScanner = {
           `[meta-performance-scanner] scan failed for credential ${credential.id}:`,
           error instanceof Error ? error.message : error,
         );
-        await prisma.integrationCredential.update({
-          where: { id: credential.id },
-          data: {
-            metadata: {
-              ...metadata,
-              // lastAdsPerformanceScanAt must advance on failure too, not
-              // only on success — isDue() only enters the backoff branch
-              // once this is set; leaving it unset here would mean
-              // isDue()'s `!metadata.lastAdsPerformanceScanAt` short-circuit
-              // returns true every tick forever, and the exponential
-              // backoff below is never actually consulted.
-              lastAdsPerformanceScanAt: new Date().toISOString(),
-              adsPerformanceScanFailureCount:
-                (metadata.adsPerformanceScanFailureCount ?? 0) + 1,
-            } as never,
-          },
+        // 190: the token expired or was revoked — the connection says so and
+        // the Integrations tile asks for a reconnect (F0b).
+        await markMetaCredentialExpiredOn(error, credential.id);
+        // lastAdsPerformanceScanAt must advance on failure too, not only on
+        // success — isDue() only enters the backoff branch once this is set.
+        // Written key by key: a whole-object write would put back an ad
+        // account selection the user changed during the scan, and later
+        // work would go to the wrong client's account (F0b).
+        await writeMetadataKeys(credential.id, {
+          lastAdsPerformanceScanAt: new Date().toISOString(),
+          adsPerformanceScanFailureCount:
+            (metadata.adsPerformanceScanFailureCount ?? 0) + 1,
+        }).catch((writeError) => {
+          console.error(
+            `[meta-performance-scanner] backoff for credential ${credential.id} not written:`,
+            writeError instanceof Error ? writeError.message : writeError,
+          );
         });
       }
     }
@@ -188,8 +194,27 @@ async function scanOneCredential(
     .sort((a, b) => (b.insights!.spend ?? 0) - (a.insights!.spend ?? 0))
     .slice(0, MAX_CAMPAIGNS_PER_SCAN);
 
+  const account = { adAccountId, currency };
+
   for (const { campaign, insights } of active) {
-    if (!insights || !campaign.dailyBudgetCents) continue;
+    if (!insights) continue;
+
+    // ABO (budget on the ad sets — every campaign Agentelse builds): the
+    // campaign has no budget to judge or change, so its ad sets are judged
+    // and any proposal goes to the ad set (docs/meta-ads-plan.md F0b). Before
+    // this, the scanner skipped exactly the campaigns Agentelse created.
+    if (!campaign.dailyBudgetCents) {
+      await scanAdSets({
+        campaign,
+        adAccountId,
+        accessToken,
+        currency,
+        account,
+        scope,
+        nextSnapshot,
+      });
+      continue;
+    }
 
     const snapshotKey = `meta-campaign:${campaign.campaignId}`;
     nextSnapshot[snapshotKey] = {
@@ -224,15 +249,11 @@ async function scanOneCredential(
           campaignName: campaign.name,
           currentDailyBudgetCents: campaign.dailyBudgetCents,
           finding,
+          account,
         });
       }
-      if (finding.rule === "AD_FATIGUE") {
-        await PerformanceOptimizer.proposeCreativeRefresh({
-          scope,
-          subjectId: campaign.campaignId,
-          finding,
-        });
-      }
+      // AD_FATIGUE stays a Signal (a suggestion): no unapproved image
+      // generation is started from it any more (F0b).
       continue;
     }
 
@@ -265,73 +286,21 @@ async function scanOneCredential(
     const suspicious = !insights.resultCount || insights.resultCount <= 0;
     if (!suspicious) continue;
 
-    const [adSets, adSetInsights] = await Promise.all([
-      listMetaAdSets({ campaignId: campaign.campaignId, accessToken }),
-      fetchMetaLevelInsights({
-        adAccountId,
-        accessToken,
-        level: "adset",
-        datePreset: "last_7d",
-        scopedTo: { field: "campaign.id", value: campaign.campaignId },
-      }),
-    ]);
-
-    for (const adSet of adSets) {
-      const adSetRow = adSetInsights.get(adSet.adSetId);
-      if (!adSetRow || !adSet.dailyBudgetCents) continue;
-      nextSnapshot[`meta-adset:${adSet.adSetId}`] = {
-        spend: adSetRow.spend,
-        costPerResult: adSetRow.costPerResult,
-        ctr: adSetRow.ctr,
-      };
-      const adSetFinding = evaluateAdSetFinding({
-        campaignName: campaign.name,
-        adSetName: adSet.name,
-        insights: adSetRow,
-        dailyBudgetCents: adSet.dailyBudgetCents,
-        currency,
-      });
-      if (adSetFinding) {
-        await SignalUniverse.ingestRaw({
-          ...scope,
-          source: "meta-ads-performance-scan",
-          category: "PERFORMANCE",
-          externalRef: `meta-adset:${adSet.adSetId}:${adSetFinding.rule}`,
-          title: adSetFinding.title,
-          summary: adSetFinding.summary,
-          reliability: 1,
-        });
-        if (adSetFinding.severity === "HIGH" && adSetFinding.suggestedAction) {
-          await PerformanceOptimizer.proposeAdSetAction({
-            scope,
-            campaignId: campaign.campaignId,
-            adSetId: adSet.adSetId,
-            adSetName: adSet.name,
-            currentDailyBudgetCents: adSet.dailyBudgetCents,
-            finding: adSetFinding,
-          });
-        }
-        if (adSetFinding.rule === "AD_FATIGUE") {
-          await PerformanceOptimizer.proposeCreativeRefresh({
-            scope,
-            subjectId: adSet.adSetId,
-            finding: adSetFinding,
-          });
-        }
-      }
-    }
+    await scanAdSets({
+      campaign,
+      adAccountId,
+      accessToken,
+      currency,
+      account,
+      scope,
+      nextSnapshot,
+    });
   }
 
-  await prisma.integrationCredential.update({
-    where: { id: credential.id },
-    data: {
-      metadata: {
-        ...metadata,
-        lastAdsPerformanceScanAt: new Date().toISOString(),
-        adsPerformanceScanFailureCount: 0,
-        previousScanSnapshot: nextSnapshot,
-      } as never,
-    },
+  await writeMetadataKeys(credential.id, {
+    lastAdsPerformanceScanAt: new Date().toISOString(),
+    adsPerformanceScanFailureCount: 0,
+    previousScanSnapshot: nextSnapshot,
   });
   if (worksOn) {
     // Works only: a separate single-key write, so the digest can never revert
@@ -362,5 +331,87 @@ async function scanOneCredential(
         error instanceof Error ? error.message : error,
       );
     }
+  }
+}
+
+// Bir kampanyanın ad set'leri: her ad set kendi optimizasyon hedefinin
+// sonucuyla (src/lib/ads/results.ts) ve kendi bütçesiyle değerlendirilir;
+// öneri META_ADSET_UPDATE olarak ad set'e gider.
+async function scanAdSets(input: {
+  campaign: { campaignId: string; name: string };
+  adAccountId: string;
+  accessToken: string;
+  currency: string;
+  account: AccountContext;
+  scope: { workspaceId: string; projectId: string; brandId: string };
+  nextSnapshot: Record<string, ScanSnapshot>;
+}): Promise<void> {
+  const { campaign, adAccountId, accessToken, currency, scope } = input;
+  const adSets = await listMetaAdSets({
+    campaignId: campaign.campaignId,
+    accessToken,
+  });
+  const resultSourceFor = new Map<string, ResultSource>();
+  for (const adSet of adSets) {
+    const source = resultSourceForGoal(adSet.optimizationGoal);
+    if (source) resultSourceFor.set(adSet.adSetId, source);
+  }
+  const adSetInsights = await fetchMetaLevelInsights({
+    adAccountId,
+    accessToken,
+    level: "adset",
+    datePreset: "last_7d",
+    scopedTo: { field: "campaign.id", value: campaign.campaignId },
+    resultSourceFor,
+  });
+
+  for (const adSet of adSets) {
+    const adSetRow = adSetInsights.get(adSet.adSetId);
+    if (!adSetRow || !adSet.dailyBudgetCents) continue;
+    input.nextSnapshot[`meta-adset:${adSet.adSetId}`] = {
+      spend: adSetRow.spend,
+      costPerResult: adSetRow.costPerResult,
+      ctr: adSetRow.ctr,
+    };
+    const adSetFinding = evaluateAdSetFinding({
+      campaignName: campaign.name,
+      adSetName: adSet.name,
+      insights: adSetRow,
+      dailyBudgetCents: adSet.dailyBudgetCents,
+      currency,
+    });
+    if (!adSetFinding) continue;
+    await SignalUniverse.ingestRaw({
+      ...scope,
+      source: "meta-ads-performance-scan",
+      category: "PERFORMANCE",
+      externalRef: `meta-adset:${adSet.adSetId}:${adSetFinding.rule}`,
+      title: adSetFinding.title,
+      summary: adSetFinding.summary,
+      reliability: 1,
+    });
+    if (adSetFinding.severity === "HIGH" && adSetFinding.suggestedAction) {
+      await PerformanceOptimizer.proposeAdSetAction({
+        scope,
+        campaignId: campaign.campaignId,
+        adSetId: adSet.adSetId,
+        adSetName: adSet.name,
+        currentDailyBudgetCents: adSet.dailyBudgetCents,
+        finding: adSetFinding,
+        account: input.account,
+      });
+    }
+  }
+}
+
+// IntegrationCredential.metadata anahtar anahtar yazılır (jsonb_set): bütün
+// nesneyi geri yazmak, tarama sürerken yapılan hesap seçimini eski değere
+// döndürüyordu (docs/meta-ads-plan.md F0b).
+async function writeMetadataKeys(
+  credentialId: string,
+  values: Record<string, unknown>,
+): Promise<void> {
+  for (const [key, value] of Object.entries(values)) {
+    await prisma.$executeRaw`UPDATE "IntegrationCredential" SET metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), ${[key]}::text[], ${JSON.stringify(value)}::jsonb) WHERE id = ${credentialId}`;
   }
 }

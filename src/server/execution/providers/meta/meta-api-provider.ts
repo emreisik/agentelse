@@ -2,6 +2,7 @@ import "server-only";
 
 import type { CapabilityKey, ExecutionProviderType } from "@prisma/client";
 
+import { AdsFlags } from "@/lib/ads/flags";
 import { isIntegrationConfigured } from "@/lib/env";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/server/security/crypto";
@@ -19,8 +20,12 @@ import {
   createMetaCampaign,
   createMetaCarouselAdCreative,
   createMetaVideoAdCreative,
-  MetaApiError,
+  fetchMetaObjectAccountId,
   fetchPageAccessToken,
+  findMetaObjectsByTag,
+  listMetaCampaigns,
+  MetaApiError,
+  normalizeAdAccountId,
   publishFacebookPagePost,
   publishInstagramPost,
   updateMetaAd,
@@ -45,6 +50,24 @@ import {
   isDatePreset,
   MetaAdsQuery,
 } from "@/server/integrations/meta-ads-query";
+import {
+  isExpiredTokenError,
+  markMetaCredentialExpiredOn,
+} from "@/server/integrations/meta-credential-health";
+import { withMetaCallContext } from "@/server/integrations/meta/call-context";
+import {
+  classifyMetaError,
+  metaErrorCode,
+  metaUserMessage,
+} from "@/server/integrations/meta/error-catalog";
+import { AdsOperations } from "@/server/ads/operations";
+import { LaunchExecutor } from "@/server/ads/launch/executor";
+import { taggedName } from "@/lib/ads/operation-tag";
+import {
+  loadProviderResult,
+  saveProviderResult,
+  type ProviderResult,
+} from "./provider-results";
 import { buildAdsAnalysisText } from "./meta-ads-analysis-text";
 import type {
   ExecutionAcceptedResult,
@@ -68,15 +91,26 @@ const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "META_ADSET_UPDATE",
   "META_AD_CREATE",
   "META_AD_UPDATE",
+  "META_SAFETY_ACTION",
+  "META_LAUNCH",
 ]);
 
-type StoredResult = {
-  status: "COMPLETED" | "FAILED";
-  rawResult?: unknown;
-  errorMessage?: string;
+// Sonuçlar süreç belleğinde değil ExecutionJob.rawResult'ta tutulur
+// (provider-results.ts; docs/meta-ads-plan.md F1).
+type StoredResult = ProviderResult;
+
+// Bir yazmanın niyet günlüğü bağlamı (AdsOperation).
+type IntentContext = {
+  executionJobId: string;
+  workspaceId: string;
+  projectId: string;
+  actorType: "USER" | "SYSTEM";
 };
 
-const store = new Map<string, StoredResult>();
+// Yanıtı kaybolan oluşturma: 30 sn sonra etiketle aranır, 150 sn'de
+// bulunmazsa kör tekrar yapılmadan kapatılır.
+const RECONCILE_AFTER_MS = 30_000;
+const RECONCILE_GIVE_UP_MS = 150_000;
 
 // A META_AD_CREATE or META_AD_UPDATE with format "VIDEO" can't resolve
 // synchronously like every other capability here — Meta's own video
@@ -330,6 +364,162 @@ async function resolveImageHash(
   return { ok: false, error: "An image is required" };
 }
 
+// Görevin yükü onay anındaki reklam hesabını taşır. Seçim o zamandan beri
+// değiştiyse yazma yapılmaz: kampanya bir hesapta, ad set başka hesapta
+// kurulamaz (docs/meta-ads-plan.md F0b).
+function accountChangedSinceApproval(
+  metadata: MetaAdsMetadata,
+  payload: Record<string, unknown>,
+): string | null {
+  const pinned =
+    typeof payload.adAccountId === "string" ? payload.adAccountId : undefined;
+  if (!pinned || !metadata.selectedAdAccountId) return null;
+  return normalizeAdAccountId(pinned) ===
+    normalizeAdAccountId(metadata.selectedAdAccountId)
+    ? null
+    : "Ad account changed since approval";
+}
+
+// Güncellenecek nesnenin hesabı (10 dk önbellek): aynı ajans token'ıyla başka
+// bir müşterinin kampanyası değiştirilemez.
+const objectAccountCache = new Map<string, { accountId: string; at: number }>();
+const OBJECT_ACCOUNT_TTL_MS = 10 * 60_000;
+
+async function objectOutsideAccount(
+  objectId: string,
+  accessToken: string,
+  metadata: MetaAdsMetadata,
+  payload: Record<string, unknown>,
+): Promise<string | null> {
+  const changed = accountChangedSinceApproval(metadata, payload);
+  if (changed) return changed;
+  const expected =
+    typeof payload.adAccountId === "string"
+      ? payload.adAccountId
+      : metadata.selectedAdAccountId;
+  if (!expected) return "No ad account selected";
+  const cached = objectAccountCache.get(objectId);
+  let accountId: string;
+  if (cached && Date.now() - cached.at < OBJECT_ACCOUNT_TTL_MS) {
+    accountId = cached.accountId;
+  } else {
+    accountId = await fetchMetaObjectAccountId({ objectId, accessToken });
+    objectAccountCache.set(objectId, { accountId, at: Date.now() });
+  }
+  return accountId === normalizeAdAccountId(expected)
+    ? null
+    : "Ad account mismatch: this object belongs to another ad account";
+}
+
+// Ad set'in çalışma penceresi (UNIX saniyesi): eski sihirbazın mutlak
+// `endTime`'ı (ISO, gelecekte olmalı) ya da modül akışının `durationDays`'i
+// (şimdi + gün). İkisi de yoksa pencere yok: o tarihten önce açılmış eski
+// görevler bugünkü gibi bitişsiz kurulur.
+export function adSetTimeWindow(
+  payload: Record<string, unknown>,
+  now: Date,
+): { start: number; end: number } | null {
+  const start = Math.floor(now.getTime() / 1000);
+  if (typeof payload.endTime === "string") {
+    const end = Date.parse(payload.endTime);
+    if (Number.isFinite(end) && end > now.getTime()) {
+      return { start, end: Math.floor(end / 1000) };
+    }
+  }
+  const days = payload.durationDays;
+  if (typeof days !== "number" || !Number.isFinite(days) || days <= 0) {
+    return null;
+  }
+  return { start, end: start + Math.round(days * 24 * 3600) };
+}
+
+function readDsa(value: unknown): { beneficiary: string; payor: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const { beneficiary, payor } = value as Record<string, unknown>;
+  if (typeof beneficiary !== "string" || typeof payor !== "string") return null;
+  if (!beneficiary.trim() || !payor.trim()) return null;
+  return { beneficiary: beneficiary.trim(), payor: payor.trim() };
+}
+
+// Görevi kimin açtığı (niyet günlüğü aktörü).
+async function taskActor(taskId: string): Promise<"USER" | "SYSTEM"> {
+  try {
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { createdByType: true },
+    });
+    return task?.createdByType === "USER" ? "USER" : "SYSTEM";
+  } catch {
+    return "SYSTEM";
+  }
+}
+
+// Meta hatası -> başarısız sonuç: kullanıcıya Meta'nın kendi metni, işe
+// yapısal kod (META:SINIF:kod) — sağlayıcı sağlığı yalnız geçici Meta
+// arızalarında düşer (docs/meta-ads-plan.md F1).
+function failedResult(error: unknown, prefix = ""): StoredResult {
+  const message =
+    error instanceof MetaApiError && error.details.userMessage
+      ? error.details.userMessage
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  const classification = classifyMetaError(error);
+  return {
+    status: "FAILED",
+    errorMessage: `${prefix}${message}`,
+    errorCode: metaErrorCode(error),
+    retryable: classification.class === "TRANSIENT",
+  };
+}
+
+function operationErrorMessage(error: unknown): string {
+  if (error && typeof error === "object") {
+    const record = error as { userMessage?: unknown; message?: unknown };
+    if (typeof record.userMessage === "string" && record.userMessage) {
+      return record.userMessage;
+    }
+    if (typeof record.message === "string" && record.message) {
+      return record.message;
+    }
+  }
+  return "Meta didn't accept it.";
+}
+
+// Yalnız durdurma isteyen güncelleme (acil durdurmada geçer).
+function isPauseOnly(payload: Record<string, unknown>): boolean {
+  const status = payload.status ?? payload.proposedStatus;
+  return (
+    status === "PAUSED" &&
+    payload.dailyBudgetCents === undefined &&
+    payload.proposedDailyBudgetCents === undefined &&
+    payload.targeting === undefined &&
+    payload.creativeId === undefined
+  );
+}
+
+// Güncelleme isteğinin token'sız özeti (niyet kaydı).
+const UPDATE_REQUEST_KEYS = [
+  "status",
+  "proposedStatus",
+  "dailyBudgetCents",
+  "proposedDailyBudgetCents",
+  "name",
+  "targeting",
+  "endTime",
+  "creativeId",
+] as const;
+
+function updateRequestSummary(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const summary: Record<string, unknown> = {};
+  for (const key of UPDATE_REQUEST_KEYS) {
+    if (payload[key] !== undefined) summary[key] = payload[key];
+  }
+  return summary;
+}
+
 export class MetaApiProvider implements ExecutionProvider {
   readonly key = "meta-api";
   readonly type: ExecutionProviderType = "API";
@@ -404,6 +594,10 @@ export class MetaApiProvider implements ExecutionProvider {
   // single tick, so it's routed to the async pendingVideoAds path instead.
   async execute(request: ExecutionRequest): Promise<ExecutionAcceptedResult> {
     const payload = payloadRecord(request.payload);
+    if (request.capability === "META_LAUNCH") {
+      await this.startLaunch(request, payload);
+      return { executionReference: request.correlationId, isMock: false };
+    }
     const isVideoFormat = payload.format === "VIDEO";
     // A NEW video file (create always requires one; an update requiring one
     // is signaled by `videoAssetId`) needs uploading + Meta's async
@@ -424,7 +618,7 @@ export class MetaApiProvider implements ExecutionProvider {
       return { executionReference: request.correlationId, isMock: false };
     }
     const result = await this.runCapability(request);
-    store.set(request.correlationId, result);
+    await saveProviderResult(request.correlationId, result);
     return { executionReference: request.correlationId, isMock: false };
   }
 
@@ -437,7 +631,7 @@ export class MetaApiProvider implements ExecutionProvider {
     if (pending) {
       return this.pollVideoAd(executionReference, pending);
     }
-    const record = store.get(executionReference);
+    const record = await loadProviderResult(executionReference);
     if (!record) {
       return {
         status: "FAILED",
@@ -445,7 +639,20 @@ export class MetaApiProvider implements ExecutionProvider {
         isMock: false,
       };
     }
-    return { ...record, isMock: false };
+    if (record.status === "RUNNING" && record.pendingOperationId) {
+      return this.pollOperation(executionReference, record);
+    }
+    if (record.status === "RUNNING" && record.launchId) {
+      return this.pollLaunch(executionReference, record);
+    }
+    return {
+      status: record.status,
+      rawResult: record.rawResult,
+      errorMessage: record.errorMessage,
+      errorCode: record.errorCode,
+      retryable: record.retryable,
+      isMock: false,
+    };
   }
 
   // Uploads the video (bounded, synchronous — same class of wait as an
@@ -457,9 +664,11 @@ export class MetaApiProvider implements ExecutionProvider {
   // and META_AD_UPDATE (existing ad, new creative) — see PendingVideoAd's
   // `mode` field.
   private async startVideoAd(request: ExecutionRequest): Promise<void> {
-    const fail = (errorMessage: string): void => {
-      store.set(request.correlationId, { status: "FAILED", errorMessage });
-    };
+    const fail = (errorMessage: string): Promise<void> =>
+      saveProviderResult(request.correlationId, {
+        status: "FAILED",
+        errorMessage,
+      });
     const isUpdate = request.capability === "META_AD_UPDATE";
 
     const credential = await findActiveMetaCredential(
@@ -572,7 +781,7 @@ export class MetaApiProvider implements ExecutionProvider {
         await persistPendingVideoAdToRawResult(request.executionJobId, record);
       }
     } catch (error) {
-      fail(
+      await fail(
         `Video upload step failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
@@ -736,8 +945,52 @@ export class MetaApiProvider implements ExecutionProvider {
     const metadata = (credential.metadata ?? {}) as MetaAdsMetadata;
     const accessToken = decryptSecret(credential.encryptedSecret);
     const payload = payloadRecord(request.payload);
+    const intent: IntentContext = {
+      executionJobId: request.executionJobId,
+      workspaceId: request.context.workspaceId,
+      projectId: request.context.projectId,
+      actorType: await taskActor(request.context.taskId),
+    };
+    // Reklam çağrıları hesabın kotasını harcar: governor bu bağlamdan okur
+    // (meta/call-context.ts). Yayın çağrıları yalnız çağrı noktası taşır.
+    const callContext =
+      service === "ads"
+        ? {
+            account:
+              typeof payload.adAccountId === "string"
+                ? payload.adAccountId
+                : metadata.selectedAdAccountId,
+            // Duraklatma güvenlik şeridindedir: yerel kesiciye takılmaz.
+            lane:
+              request.capability === "META_SAFETY_ACTION"
+                ? ("P0_SAFETY" as const)
+                : ("P1_USER" as const),
+            family:
+              request.capability === "META_ADS_ANALYSIS"
+                ? ("ads_insights" as const)
+                : ("ads_management" as const),
+            callSite: `provider.${request.capability}`,
+          }
+        : { callSite: `provider.${request.capability}` };
+
+    // Acil durdurma (docs/meta-ads-plan.md §3.9): reklam yazmaları durur,
+    // yalnız duraklatma ve okumalar geçer.
+    if (
+      service === "ads" &&
+      AdsFlags.writesDisabled() &&
+      request.capability !== "META_SAFETY_ACTION" &&
+      request.capability !== "META_ADS_ANALYSIS" &&
+      !isPauseOnly(payload)
+    ) {
+      return {
+        status: "FAILED",
+        errorMessage:
+          "Ad changes are paused by Agentelse for now. Pausing ads still works.",
+      };
+    }
 
     try {
+      return await withMetaCallContext(callContext, async () => {
       switch (request.capability) {
         case "INSTAGRAM_PUBLISH":
           return await this.publishInstagram(
@@ -754,47 +1007,73 @@ export class MetaApiProvider implements ExecutionProvider {
         case "META_ADS_ANALYSIS":
           return await this.analyzeAds(metadata, accessToken, payload);
         case "META_CAMPAIGN_CREATE":
-          return await this.createCampaign(metadata, accessToken, payload);
+          return await this.createCampaign(
+            metadata,
+            accessToken,
+            payload,
+            intent,
+          );
         case "META_CAMPAIGN_UPDATE":
-          return await this.updateCampaign(accessToken, payload);
+          return await this.updateWithIntent(
+            intent,
+            "UPDATE_CAMPAIGN",
+            payload.campaignId,
+            callContext.account,
+            payload,
+            () => this.updateCampaign(metadata, accessToken, payload),
+          );
         case "META_ADSET_CREATE":
-          return await this.createAdSet(metadata, accessToken, payload);
+          return await this.createAdSet(metadata, accessToken, payload, intent);
         case "META_ADSET_UPDATE":
-          return await this.updateAdSet(accessToken, payload);
+          return await this.updateWithIntent(
+            intent,
+            "UPDATE_ADSET",
+            payload.adSetId,
+            callContext.account,
+            payload,
+            () => this.updateAdSet(metadata, accessToken, payload),
+          );
         case "META_AD_CREATE":
           return await this.createAd(
             metadata,
             accessToken,
             payload,
             request.context.projectId,
+            intent,
           );
+        case "META_SAFETY_ACTION":
+          return await this.safetyAction(metadata, accessToken, payload, intent);
         case "META_AD_UPDATE":
           // Video never reaches here — see execute()'s special case above.
-          return await this.updateAd(
-            metadata,
-            accessToken,
+          return await this.updateWithIntent(
+            intent,
+            "UPDATE_AD",
+            payload.adId,
+            callContext.account,
             payload,
-            request.context.projectId,
+            () =>
+              this.updateAd(
+                metadata,
+                accessToken,
+                payload,
+                request.context.projectId,
+              ),
           );
         default:
           return {
             status: "FAILED",
             errorMessage: `MetaApiProvider does not support capability ${request.capability}`,
-          };
+          } satisfies StoredResult;
       }
+      });
     } catch (error) {
       // Meta answers code 190 when the token expired or was revoked. Flag the
       // connection (the Test button already does) so the Connectors tile asks for a
       // reconnect, instead of every later publish failing while it still says Connected.
-      if (error instanceof MetaApiError && error.metaErrorCode === 190) {
-        await prisma.integrationCredential
-          .update({ where: { id: credential.id }, data: { status: "EXPIRED" } })
-          .catch(() => undefined);
-      }
-      return {
-        status: "FAILED",
-        errorMessage: error instanceof Error ? error.message : String(error),
-      };
+      // 190/492 (the Page token owner lost the Page role) only stops that
+      // Page's feature and is left out (meta-credential-health.ts).
+      await markMetaCredentialExpiredOn(error, credential.id);
+      return failedResult(error);
     }
   }
 
@@ -937,14 +1216,417 @@ export class MetaApiProvider implements ExecutionProvider {
     };
   }
 
+  // Bir oluşturma yazması niyet günlüğüyle (docs/meta-ads-plan.md §3.1):
+  // önce AdsOperation açılır ve adın sonuna [agx:…] etiketi eklenir. Aynı iş
+  // yazmayı daha önce göndermişse yeniden göndermez, kaldığı yerden devam
+  // eder. Yanıt kaybolursa (ağ, zaman aşımı, 5xx) iş RUNNING kalır ve
+  // pollOperation etiketle Meta'da arar; kör tekrar yapılmaz.
+  private async createWithIntent(input: {
+    intent: IntentContext;
+    kind: "CREATE_CAMPAIGN" | "CREATE_ADSET" | "CREATE_AD";
+    edge: "campaigns" | "adsets" | "ads";
+    adAccountId: string;
+    accessToken: string;
+    parentExternalId?: string;
+    resultKey: string;
+    extraResult?: Record<string, unknown>;
+    failurePrefix?: string;
+    request: Record<string, unknown>;
+    send: (tagged: (name: string) => string) => Promise<string>;
+  }): Promise<StoredResult> {
+    const { op, resumed } = await AdsOperations.begin({
+      workspaceId: input.intent.workspaceId,
+      projectId: input.intent.projectId,
+      kind: input.kind,
+      actorType: input.intent.actorType,
+      executionJobId: input.intent.executionJobId,
+      adAccountExternalId: input.adAccountId,
+      parentExternalId: input.parentExternalId,
+      request: input.request,
+    });
+    const completed = (externalId: string): StoredResult => ({
+      status: "COMPLETED",
+      rawResult: {
+        [input.resultKey]: externalId,
+        ...(input.extraResult ?? {}),
+        operationTag: op.tag,
+      },
+    });
+    const pending: StoredResult = {
+      status: "RUNNING",
+      pendingOperationId: op.id,
+      resultKey: input.resultKey,
+      ...(input.extraResult ? { extraResult: input.extraResult } : {}),
+    };
+
+    if (resumed) {
+      if (
+        (op.status === "SUCCEEDED" || op.status === "RECONCILED") &&
+        op.resultExternalId
+      ) {
+        return completed(op.resultExternalId);
+      }
+      if (op.status === "SENT" || op.status === "UNKNOWN") return pending;
+      if (op.status === "FAILED") {
+        return {
+          status: "FAILED",
+          errorMessage: operationErrorMessage(op.error),
+        };
+      }
+      // PENDING: kayıt açılmış ama gönderilmemiş — göndermek güvenli.
+    }
+
+    await AdsOperations.markSent(op.id);
+    try {
+      const externalId = await input.send((name) => taggedName(name, op.tag));
+      await AdsOperations.succeed(op.id, externalId);
+      return completed(externalId);
+    } catch (error) {
+      if (classifyMetaError(error).class === "TRANSIENT") {
+        // Meta nesneyi kurmuş ama yanıt kaybolmuş olabilir.
+        await AdsOperations.unknown(op.id, error);
+        return pending;
+      }
+      await AdsOperations.fail(op.id, error);
+      return failedResult(error, input.failurePrefix);
+    }
+  }
+
+  // META_LAUNCH (docs/meta-ads-plan.md §3.4): execute() yalnız lansmanı işe
+  // bağlar ve döner; her getStatus() adım makinesini en çok 3 yazma ilerletir.
+  // Dev kovasındaki kota beklemesi tick'i ya da isteği bloklamaz.
+  private async startLaunch(
+    request: ExecutionRequest,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const launchId = typeof payload.launchId === "string" ? payload.launchId : null;
+    const mode =
+      payload.mode === "activate" || payload.mode === "discard" ? payload.mode : "create";
+    const launch = launchId
+      ? await prisma.adsLaunch.findFirst({
+          where: { id: launchId, projectId: request.context.projectId },
+          select: { id: true },
+        })
+      : null;
+    if (!launch) {
+      await saveProviderResult(request.correlationId, {
+        status: "FAILED",
+        errorMessage: "META_LAUNCH requires the launch of this project",
+      });
+      return;
+    }
+    await prisma.adsLaunch.update({
+      where: { id: launch.id },
+      data: { currentTaskId: request.context.taskId ?? null, mode },
+    });
+    await saveProviderResult(request.correlationId, {
+      status: "RUNNING",
+      launchId: launch.id,
+      launchMode: mode,
+      actorType: await taskActor(request.context.taskId),
+    });
+  }
+
+  private async pollLaunch(
+    executionReference: string,
+    record: StoredResult,
+  ): Promise<ProviderExecutionStatus> {
+    const result = await LaunchExecutor.advance(
+      record.launchId!,
+      record.launchMode ?? "create",
+      { actorType: record.actorType ?? "USER" },
+    );
+    if (result.status === "RUNNING") {
+      return { status: "RUNNING", isMock: false };
+    }
+    const final: StoredResult = {
+      status: result.status,
+      rawResult: result.rawResult,
+      errorMessage: result.errorMessage,
+      errorCode: result.errorCode,
+      retryable: false,
+    };
+    await saveProviderResult(executionReference, final);
+    return {
+      status: final.status,
+      rawResult: final.rawResult,
+      errorMessage: final.errorMessage,
+      errorCode: final.errorCode,
+      retryable: false,
+      isMock: false,
+    };
+  }
+
+  // Güvenlik eylemi (docs/meta-ads-plan.md §3.9): duraklatma her zaman
+  // denenir; hesap engeli, yazma kapısı ve acil durdurma bayrağı onu
+  // durdurmaz. "PAUSE_ALL" hesaptaki açık her kampanyayı tek yazmayla durdurur
+  // (alt nesneler durumu miras alır); "PAUSE" verilen nesneleri durdurur.
+  // Her yazma niyet günlüğüne SET_STATUS olarak düşer (drift sayılmaz).
+  private async safetyAction(
+    metadata: MetaAdsMetadata,
+    accessToken: string,
+    payload: Record<string, unknown>,
+    intent: IntentContext,
+  ): Promise<StoredResult> {
+    const rawAccount =
+      typeof payload.adAccountId === "string"
+        ? payload.adAccountId
+        : metadata.selectedAdAccountId;
+    // Yarım lansmanın temizliği ("Discard", §3.4 telafi): riski azaltır.
+    if (payload.action === "DISCARD_LAUNCH" && typeof payload.launchId === "string") {
+      const launch = await prisma.adsLaunch.findFirst({
+        where: { id: payload.launchId, projectId: intent.projectId },
+        select: { id: true },
+      });
+      if (!launch) return { status: "FAILED", errorMessage: "Launch not found" };
+      const result = await LaunchExecutor.advance(launch.id, "discard", {
+        actorType: intent.actorType,
+      });
+      return result.status === "COMPLETED"
+        ? { status: "COMPLETED", rawResult: result.rawResult }
+        : result.status === "FAILED"
+          ? { status: "FAILED", errorMessage: result.errorMessage ?? "Couldn't discard it." }
+          : { status: "FAILED", errorMessage: "Meta is busy. Try discarding again in a minute.", retryable: true };
+    }
+    if (!rawAccount) {
+      return { status: "FAILED", errorMessage: "No ad account is selected" };
+    }
+    const adAccountId = normalizeAdAccountId(rawAccount);
+    let targets: { level: "CAMPAIGN" | "ADSET" | "AD"; id: string }[] = [];
+    if (payload.action === "PAUSE_ALL") {
+      const campaigns = await listMetaCampaigns({ adAccountId, accessToken });
+      targets = campaigns
+        .filter((campaign) => campaign.status === "ACTIVE")
+        .map((campaign) => ({ level: "CAMPAIGN" as const, id: campaign.campaignId }));
+    } else if (Array.isArray(payload.targets)) {
+      for (const raw of payload.targets) {
+        const target = raw as { level?: unknown; id?: unknown };
+        if (
+          typeof target.id === "string" &&
+          (target.level === "CAMPAIGN" || target.level === "ADSET" || target.level === "AD")
+        ) {
+          targets.push({ level: target.level, id: target.id });
+        }
+      }
+    }
+    const paused: string[] = [];
+    const failed: { id: string; message: string }[] = [];
+    for (const target of targets) {
+      // Bir iş birden çok nesneyi durdurur: işe bağlı tekil anahtar
+      // (executionJobId, kind) kullanılmaz, iş kimliği istekte durur.
+      const { op } = await AdsOperations.begin({
+        workspaceId: intent.workspaceId,
+        projectId: intent.projectId,
+        kind: "SET_STATUS",
+        actorType: intent.actorType,
+        adAccountExternalId: adAccountId,
+        targetExternalId: target.id,
+        request: {
+          status: "PAUSED",
+          level: target.level,
+          executionJobId: intent.executionJobId,
+          ...(typeof payload.reason === "string" ? { reason: payload.reason } : {}),
+        },
+        ...(typeof payload.decisionId === "string" ? { decisionId: payload.decisionId } : {}),
+      });
+      await AdsOperations.markSent(op.id);
+      try {
+        if (target.level === "CAMPAIGN") {
+          await updateMetaCampaign({ campaignId: target.id, accessToken, status: "PAUSED" });
+        } else if (target.level === "ADSET") {
+          await updateMetaAdSet({ adSetId: target.id, accessToken, status: "PAUSED" });
+        } else {
+          await updateMetaAd({ adId: target.id, accessToken, status: "PAUSED" });
+        }
+        await AdsOperations.succeed(op.id, target.id);
+        paused.push(target.id);
+      } catch (error) {
+        await AdsOperations.fail(op.id, error);
+        // 190: dış katman bağlantıyı EXPIRED yapar; kalan hedefler de düşer.
+        if (isExpiredTokenError(error)) throw error;
+        failed.push({ id: target.id, message: metaUserMessage(error) });
+      }
+    }
+    // Ayna hemen güncellenir; sonraki yapı senkronu doğrular.
+    if (paused.length > 0) {
+      await prisma.adsObject
+        .updateMany({
+          where: { externalId: { in: paused } },
+          data: { configuredStatus: "PAUSED", effectiveStatus: "PAUSED" },
+        })
+        .catch(() => undefined);
+    }
+    if (failed.length > 0 && paused.length === 0) {
+      return {
+        status: "FAILED",
+        errorMessage: failed[0]!.message,
+        rawResult: { paused, failed },
+      };
+    }
+    return { status: "COMPLETED", rawResult: { paused, failed } };
+  }
+
+  // Güncelleme yazmasının niyet kaydı (docs/meta-ads-plan.md §3.1, §3.2):
+  // güncellemeler idempotenttir, kör tekrar riski yoktur; kayıt denetim ve
+  // drift açıklaması içindir (ayna bizim değişikliğimizi "Changed in Ads
+  // Manager" saymaz). Kayıt yazılamazsa yazma yine yapılır.
+  private async updateWithIntent(
+    intent: IntentContext,
+    kind: "UPDATE_CAMPAIGN" | "UPDATE_ADSET" | "UPDATE_AD",
+    target: unknown,
+    adAccountId: string | undefined,
+    payload: Record<string, unknown>,
+    run: () => Promise<StoredResult>,
+  ): Promise<StoredResult> {
+    let opId: string | null = null;
+    try {
+      const { op } = await AdsOperations.begin({
+        workspaceId: intent.workspaceId,
+        projectId: intent.projectId,
+        kind,
+        actorType: intent.actorType,
+        executionJobId: intent.executionJobId,
+        adAccountExternalId: adAccountId,
+        targetExternalId: typeof target === "string" ? target : undefined,
+        request: updateRequestSummary(payload),
+      });
+      opId = op.id;
+      await AdsOperations.markSent(op.id);
+    } catch (error) {
+      console.error(
+        "[meta-api-provider] update intent could not be recorded:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+    try {
+      const result = await run();
+      if (opId) {
+        await (result.status === "COMPLETED"
+          ? AdsOperations.succeed(opId, typeof target === "string" ? target : undefined)
+          : AdsOperations.fail(opId, new Error(result.errorMessage ?? "failed"))
+        ).catch(() => undefined);
+      }
+      return result;
+    } catch (error) {
+      if (opId) await AdsOperations.fail(opId, error).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  // Yanıtı kaybolan oluşturmanın uzlaştırılması: 30 sn sonra etiketle aranır;
+  // bulunursa iş tamamlanır, 150 sn'de bulunmazsa kör tekrar yapılmadan
+  // kapatılır ("Fix and retry" / yeniden başlatma kullanıcıdadır).
+  private async pollOperation(
+    executionReference: string,
+    record: StoredResult,
+  ): Promise<ProviderExecutionStatus> {
+    const op = record.pendingOperationId
+      ? await AdsOperations.find(record.pendingOperationId)
+      : null;
+    if (!op) {
+      return {
+        status: "FAILED",
+        errorMessage: "The Meta write could not be traced",
+        isMock: false,
+      };
+    }
+    const finish = async (result: StoredResult) => {
+      await saveProviderResult(executionReference, result);
+      return { ...result, isMock: false } as ProviderExecutionStatus;
+    };
+    const completedWith = (externalId: string) =>
+      finish({
+        status: "COMPLETED",
+        rawResult: {
+          [record.resultKey ?? "externalId"]: externalId,
+          ...(record.extraResult ?? {}),
+          operationTag: op.tag,
+        },
+      });
+
+    if (
+      (op.status === "SUCCEEDED" || op.status === "RECONCILED") &&
+      op.resultExternalId
+    ) {
+      return completedWith(op.resultExternalId);
+    }
+    if (op.status === "FAILED") {
+      return finish({
+        status: "FAILED",
+        errorMessage: operationErrorMessage(op.error),
+      });
+    }
+    const sentAt = op.sentAt?.getTime() ?? op.createdAt.getTime();
+    const age = Date.now() - sentAt;
+    if (age < RECONCILE_AFTER_MS) return { status: "RUNNING", isMock: false };
+
+    const edge =
+      op.kind === "CREATE_CAMPAIGN"
+        ? "campaigns"
+        : op.kind === "CREATE_ADSET"
+          ? "adsets"
+          : "ads";
+    let found: string[] = [];
+    try {
+      const credential = await findActiveMetaCredential(op.projectId, "ads");
+      if (credential && op.adAccountExternalId) {
+        found = await withMetaCallContext(
+          {
+            account: op.adAccountExternalId,
+            lane: "P1_USER",
+            callSite: "provider.reconcile",
+          },
+          () =>
+            findMetaObjectsByTag({
+              adAccountId: op.adAccountExternalId!,
+              accessToken: decryptSecret(credential.encryptedSecret),
+              edge,
+              tag: op.tag,
+              createdSince: op.sentAt ?? op.createdAt,
+            }),
+        );
+      }
+    } catch (error) {
+      console.error(
+        `[meta-api-provider] reconcile search for ${op.tag} failed:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+
+    if (found.length > 0) {
+      // Birden fazla eşleşme: en eskisi alınır (liste en yeni önce gelebilir;
+      // kimlikler sayısal olarak büyür).
+      const [first] = [...found].sort((a, b) =>
+        a.length === b.length ? a.localeCompare(b) : a.length - b.length,
+      );
+      if (found.length > 1) {
+        console.warn(
+          `[meta-api-provider] ${found.length} objects carry ${op.tag}; kept ${first}`,
+        );
+      }
+      await AdsOperations.reconciled(op.id, first!);
+      return completedWith(first!);
+    }
+    if (age < RECONCILE_GIVE_UP_MS) return { status: "RUNNING", isMock: false };
+
+    const error = new Error(
+      "Meta did not confirm this write and nothing carrying its tag was found. Nothing was created: launch again.",
+    );
+    await AdsOperations.fail(op.id, error);
+    return finish({ status: "FAILED", errorMessage: error.message });
+  }
+
   private async createCampaign(
     metadata: MetaAdsMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
+    intent: IntentContext,
   ): Promise<StoredResult> {
     if (!metadata.selectedAdAccountId) {
       return { status: "FAILED", errorMessage: "No ad account selected" };
     }
+    const changed = accountChangedSinceApproval(metadata, payload);
+    if (changed) return { status: "FAILED", errorMessage: changed };
     const name = typeof payload.name === "string" ? payload.name : undefined;
     const objective =
       typeof payload.objective === "string" ? payload.objective : undefined;
@@ -960,18 +1642,31 @@ export class MetaApiProvider implements ExecutionProvider {
         ? payload.dailyBudgetCents
         : undefined;
 
-    const { campaignId } = await createMetaCampaign({
-      adAccountId: metadata.selectedAdAccountId,
+    const adAccountId = metadata.selectedAdAccountId;
+    return this.createWithIntent({
+      intent,
+      kind: "CREATE_CAMPAIGN",
+      edge: "campaigns",
+      adAccountId,
       accessToken,
-      name,
-      objective,
-      status,
-      dailyBudgetCents,
+      resultKey: "campaignId",
+      request: { name, objective, status, dailyBudgetCents },
+      send: async (tagged) =>
+        (
+          await createMetaCampaign({
+            adAccountId,
+            accessToken,
+            name: tagged(name),
+            objective,
+            status,
+            dailyBudgetCents,
+          })
+        ).campaignId,
     });
-    return { status: "COMPLETED", rawResult: { campaignId } };
   }
 
   private async updateCampaign(
+    metadata: MetaAdsMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
   ): Promise<StoredResult> {
@@ -983,6 +1678,13 @@ export class MetaApiProvider implements ExecutionProvider {
         errorMessage: "META_CAMPAIGN_UPDATE requires `campaignId`",
       };
     }
+    const foreign = await objectOutsideAccount(
+      campaignId,
+      accessToken,
+      metadata,
+      payload,
+    );
+    if (foreign) return { status: "FAILED", errorMessage: foreign };
     // Accepts BOTH `status`/`dailyBudgetCents` (a direct, e.g. future
     // chat-triggered, update request) AND `proposedStatus`/
     // `proposedDailyBudgetCents` (PerformanceOptimizer.proposeCampaignAction
@@ -1006,6 +1708,7 @@ export class MetaApiProvider implements ExecutionProvider {
   }
 
   private async updateAdSet(
+    metadata: MetaAdsMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
   ): Promise<StoredResult> {
@@ -1017,6 +1720,13 @@ export class MetaApiProvider implements ExecutionProvider {
         errorMessage: "META_ADSET_UPDATE requires `adSetId`",
       };
     }
+    const foreign = await objectOutsideAccount(
+      adSetId,
+      accessToken,
+      metadata,
+      payload,
+    );
+    if (foreign) return { status: "FAILED", errorMessage: foreign };
     // See the identical fallback comment in updateCampaign above —
     // PerformanceOptimizer.proposeAdSetAction writes proposedStatus/
     // proposedDailyBudgetCents, not status/dailyBudgetCents.
@@ -1042,6 +1752,7 @@ export class MetaApiProvider implements ExecutionProvider {
     metadata: MetaAdsMetadata,
     accessToken: string,
     payload: Record<string, unknown>,
+    intent: IntentContext,
   ): Promise<StoredResult> {
     if (!metadata.selectedAdAccountId) {
       return { status: "FAILED", errorMessage: "No ad account selected" };
@@ -1077,19 +1788,58 @@ export class MetaApiProvider implements ExecutionProvider {
       };
     }
     const status = payload.status === "ACTIVE" ? "ACTIVE" : "PAUSED";
+    const changed = accountChangedSinceApproval(metadata, payload);
+    if (changed) return { status: "FAILED", errorMessage: changed };
 
-    const { adSetId } = await createMetaAdSet({
-      adAccountId: metadata.selectedAdAccountId,
+    // Bitiş, Launch anında değil ad set kurulurken hesaplanır: zincir üç ayrı
+    // onay bekleyebilir (docs/meta-ads-plan.md F0b). Sonradan açmak bitişi
+    // ertelemez ("Turning it on later does not move the end date").
+    const window = adSetTimeWindow(payload, new Date());
+    // Açık değer: 0 = Brief'teki yaş/cinsiyet sert sınırdır (bugünkü
+    // davranış); 1 ve "Suggest / Limit to" ayrımı F5b'de gelir.
+    const advantageAudience = payload.advantageAudience === 1 ? 1 : 0;
+    const dsa = readDsa(payload.dsa);
+
+    const adAccountId = metadata.selectedAdAccountId;
+    return this.createWithIntent({
+      intent,
+      kind: "CREATE_ADSET",
+      edge: "adsets",
+      adAccountId,
       accessToken,
-      campaignId,
-      name,
-      dailyBudgetCents,
-      billingEvent,
-      optimizationGoal,
-      targeting,
-      status,
+      parentExternalId: campaignId,
+      resultKey: "adSetId",
+      extraResult: window
+        ? { endTime: new Date(window.end * 1000).toISOString() }
+        : undefined,
+      request: {
+        campaignId,
+        name,
+        dailyBudgetCents,
+        billingEvent,
+        optimizationGoal,
+        advantageAudience,
+        ...(window ? { startTime: window.start, endTime: window.end } : {}),
+        ...(dsa ? { dsa } : {}),
+      },
+      send: async (tagged) =>
+        (
+          await createMetaAdSet({
+            adAccountId,
+            accessToken,
+            campaignId,
+            name: tagged(name),
+            dailyBudgetCents,
+            billingEvent,
+            optimizationGoal,
+            targeting,
+            status,
+            advantageAudience,
+            ...(window ? { startTime: window.start, endTime: window.end } : {}),
+            ...(dsa ? { dsa } : {}),
+          })
+        ).adSetId,
     });
-    return { status: "COMPLETED", rawResult: { adSetId } };
   }
 
   // Three sequential Marketing API calls: upload the image (if given) ->
@@ -1106,9 +1856,16 @@ export class MetaApiProvider implements ExecutionProvider {
     accessToken: string,
     payload: Record<string, unknown>,
     projectId: string,
+    intent: IntentContext,
   ): Promise<StoredResult> {
     if (payload.format === "CAROUSEL") {
-      return this.createCarouselAd(metadata, accessToken, payload, projectId);
+      return this.createCarouselAd(
+        metadata,
+        accessToken,
+        payload,
+        projectId,
+        intent,
+      );
     }
     if (!metadata.selectedAdAccountId) {
       return { status: "FAILED", errorMessage: "No ad account selected" };
@@ -1190,25 +1947,30 @@ export class MetaApiProvider implements ExecutionProvider {
       };
     }
 
-    try {
-      const { adId } = await createMetaAd({
-        adAccountId: metadata.selectedAdAccountId,
-        accessToken,
-        adSetId,
-        name,
-        creativeId,
-        status,
-      });
-      return {
-        status: "COMPLETED",
-        rawResult: { adId, creativeId, imageHash },
-      };
-    } catch (error) {
-      return {
-        status: "FAILED",
-        errorMessage: `Ad creation step failed (creative ${creativeId} was created): ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
+    const adAccountId = metadata.selectedAdAccountId;
+    return this.createWithIntent({
+      intent,
+      kind: "CREATE_AD",
+      edge: "ads",
+      adAccountId,
+      accessToken,
+      parentExternalId: adSetId,
+      resultKey: "adId",
+      extraResult: { creativeId, imageHash },
+      failurePrefix: `Ad creation step failed (creative ${creativeId} was created): `,
+      request: { adSetId, name, creativeId, status },
+      send: async (tagged) =>
+        (
+          await createMetaAd({
+            adAccountId,
+            accessToken,
+            adSetId,
+            name: tagged(name),
+            creativeId,
+            status,
+          })
+        ).adId,
+    });
   }
 
   // Same three-step shape as createAd's single-image path, except step one
@@ -1221,6 +1983,7 @@ export class MetaApiProvider implements ExecutionProvider {
     accessToken: string,
     payload: Record<string, unknown>,
     projectId: string,
+    intent: IntentContext,
   ): Promise<StoredResult> {
     if (!metadata.selectedAdAccountId) {
       return { status: "FAILED", errorMessage: "No ad account selected" };
@@ -1323,25 +2086,30 @@ export class MetaApiProvider implements ExecutionProvider {
       };
     }
 
-    try {
-      const { adId } = await createMetaAd({
-        adAccountId: metadata.selectedAdAccountId,
-        accessToken,
-        adSetId,
-        name,
-        creativeId,
-        status,
-      });
-      return {
-        status: "COMPLETED",
-        rawResult: { adId, creativeId, cardCount: uploadedCards.length },
-      };
-    } catch (error) {
-      return {
-        status: "FAILED",
-        errorMessage: `Ad creation step failed (creative ${creativeId} was created): ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
+    const adAccountId = metadata.selectedAdAccountId;
+    return this.createWithIntent({
+      intent,
+      kind: "CREATE_AD",
+      edge: "ads",
+      adAccountId,
+      accessToken,
+      parentExternalId: adSetId,
+      resultKey: "adId",
+      extraResult: { creativeId, cardCount: uploadedCards.length },
+      failurePrefix: `Ad creation step failed (creative ${creativeId} was created): `,
+      request: { adSetId, name, creativeId, status, format: "CAROUSEL" },
+      send: async (tagged) =>
+        (
+          await createMetaAd({
+            adAccountId,
+            accessToken,
+            adSetId,
+            name: tagged(name),
+            creativeId,
+            status,
+          })
+        ).adId,
+    });
   }
 
   // Updates an EXISTING ad. A pure name/status edit (no `format` in the
@@ -1364,6 +2132,13 @@ export class MetaApiProvider implements ExecutionProvider {
         errorMessage: "META_AD_UPDATE requires `adId`",
       };
     }
+    const foreign = await objectOutsideAccount(
+      adId,
+      accessToken,
+      metadata,
+      payload,
+    );
+    if (foreign) return { status: "FAILED", errorMessage: foreign };
     const name = typeof payload.name === "string" ? payload.name : undefined;
     const status =
       payload.status === "ACTIVE" || payload.status === "PAUSED"

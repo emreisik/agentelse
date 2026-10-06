@@ -23,6 +23,11 @@ const nextConfig: NextConfig = {
             key: "Permissions-Policy",
             value: "camera=(), microphone=(), geolocation=()",
           },
+          // The product (agentelse.ai) stays out of search results: the
+          // public site is agentelse.com. A header rather than robots.txt so
+          // crawlers still fetch the pages and see it (a Disallow would hide
+          // the noindex and leave linked URLs in the index).
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
         ],
       },
     ];

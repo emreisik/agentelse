@@ -25,6 +25,7 @@ import {
   brandSummaryRows,
 } from "@/components/workspace/brand-overview-cards";
 import { InstagramOverviewCard } from "@/components/workspace/instagram-overview-card";
+import { AdsOverviewCard } from "@/components/workspace/ads-overview-card";
 import { buildHubHref } from "@/components/hub-core/hub-core-params";
 import {
   allPaletteHexes,
@@ -98,6 +99,13 @@ export function BrandSummaryPanel({
         (account) => account.key === "instagram" && account.state === "connected",
       ) ? (
         <InstagramOverviewCard projectId={projectId} />
+      ) : null}
+
+      {/* Meta Ads (K22): yalnız ayna açıkken ve hesap senkronlandıysa görünür. */}
+      {connections.some(
+        (account) => account.key === "meta-ads" && account.state === "connected",
+      ) ? (
+        <AdsOverviewCard projectId={projectId} />
       ) : null}
 
       <CollapsibleCard

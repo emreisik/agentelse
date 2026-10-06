@@ -14,6 +14,7 @@ Plan: [meta-ads-plan.md](meta-ads-plan.md). Bu dosya, planın uygulanmış hâli
 | F5a — Mesaj ve trafik amaçları | Kodlandı | `META_ADS_PLANNER=true` (+ v2) |
 | F4 — Optimizasyon v2 | Kodlandı | `META_ADS_OPTIMIZER=shadow` → `on` |
 | F5b — Planlama ve formlar | Kodlandı (Leads izin bekliyor) | `META_ADS_PLANNER=true` (+ v2) |
+| F6 — Raporlama ve öğrenme | Kodlandı | `META_ADS_REPORTS=true` (+ ayna) |
 
 Kod dışı adımlar sahipte (aşağıda "Sahip adımları").
 
@@ -234,6 +235,17 @@ Bayrak: `META_ADS_PLANNER=true` ve `META_ADS_LAUNCH_V2=true`. Her amaç ayrıca 
 - **Önerilen hedef**: piksel varsa Traffic, yoksa Messages (gerekçesiyle).
 - **Henüz yok**: carousel ve video modülde (eski sihirbazda duruyor), iki oranlı `asset_feed_spec` (test hesabında doğrulanana kadar tek görsel + `adapt_to_placement`), Instagram profil hedefi, içerik planındaki `ads.campaign` parçasına "Make this ad" köprüsü, mesai saatleriyle zamanlama.
 
+## F6 — Raporlama ve öğrenme
+
+Bayrak: `META_ADS_REPORTS=true` (ayna açık olmalı).
+
+- **Haftalık rapor** (`src/server/ads/reports/weekly.ts`): Pazartesi 08:00 (proje saati), geçen Pazartesi–Pazar (hesap günü), Ads sohbetine SYSTEM mesajı: harcama ve önceki haftaya göre fark, sonuç ve maliyet, KPI hedefiyle karşılaştırma, dönem erişimi ve sıklığı (tek Meta okuması; günlük satırlardan toplanmaz), teşhis ("Cost per result +37%: CPM +30% (auction or season), link CTR flat, conversion −5%"), haftayı taşıyan 3 reklam (yönlendirici), alınan kararlar ve sonuçları, bekleyen öneriler, "Meta suggests…" (ikinci görüş, asla otomatik uygulanmaz), atıf etiketi ve "Recent days may still change". Brand Brain için haftada tek özet Signal (PERFORMANCE).
+- **Aylık müşteri raporu**: ayın 1'i 09:00: ay toplamları, erişim, hedefler, işe yarayan karar oranı, yeni öğrenmeler, bugünkü bütçelerle gelecek ayın tutarı, mutabakat sorusu ("How many new customers did you get from ads last month?"), Ad Library bağlantısı (ülke dolu). Markdown / PDF için Analytics modülünün Share adımı (Meta bölümü artık aynadan).
+- **Teşhis ağacı** (`src/lib/ads/reports/diagnose.ts`): Δln CPA = Δln CPM − Δln CTR − Δln CVR (testli).
+- **Öğrenmeler** (`src/server/ads/reports/learnings.ts`): değerlendirilmiş ve en az 10 sonuçlu kararlardan `BrandLearning` (`sourceType = META_ADS`, WORKS / AVOID); metin n'yi içerir, n < 25 "directional".
+- **Brand sekmesi "Ads" kartı** (K22): sağ dok → Brand: son 7 gün harcama, sonuç, maliyet, çalışan kampanya, dikkat isteyen uyarı sayısı ve tazelik; "Open" Ads sayfasına götürür. Ayna kapalıysa görünmez.
+- **Bilinçli sapma**: rapor metinleri şablondur (LLM özeti bağlanmadı; her sayı aynadan).
+
 ## Sahip adımları (kod dışı)
 
 1. **Birikim raporunu oku**: yeni bir terminal sekmesinde, repo klasöründe `npm run db:report:backlog`. Çıktıyı Claude'a yapıştır.
@@ -250,3 +262,4 @@ Bayrak: `META_ADS_PLANNER=true` ve `META_ADS_LAUNCH_V2=true`. Her amaç ayrıca 
 12. **F5a**: `META_ADS_PLANNER=true` (v2 açıkken). Brief'te "Messages" kartı görünmeli; test hesabında bir WhatsApp ve bir Messenger lansmanı.
 13. **F4 gölge mod**: `META_ADS_OPTIMIZER=shadow`; en az 30 karar ya da 4 hafta sonra kararları birlikte inceleyin (kabul ≥ %60 → `on`).
 14. **Leads**: Meta App Review'da `pages_manage_ads` onaylanınca `src/lib/ads/objectives.ts` → `READY_RECIPES.leads_instant_form = true` (tek satır); test hesabında bir form lansmanı.
+15. **F6**: `META_ADS_REPORTS=true`; ilk haftalık rapor Pazartesi 08:00'de Ads sohbetinde.

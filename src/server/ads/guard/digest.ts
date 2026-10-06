@@ -2,7 +2,6 @@ import "server-only";
 
 import { AdsFlags } from "@/lib/ads/flags";
 import {
-  adsWorkId,
   digestCommandId,
   digestText,
   digestWorthy,
@@ -15,8 +14,7 @@ import { prisma } from "@/lib/prisma";
 import { dayKeyInTimezone, utcToZonedDateTimeLocal } from "@/lib/timezone";
 import { AdsAlerts } from "@/server/ads/guard/alerts";
 import { getProjectTimezone } from "@/server/chat/content-plan";
-import { isUniqueViolation } from "@/server/guided-setup/store";
-import { createWorkInTx } from "@/server/works/draft-plan-work";
+import { postToAdsChat } from "@/server/ads/ads-chat";
 import { claimPeriodic } from "@/server/observability/periodic";
 
 // Günlük Ads özeti (docs/meta-ads-plan.md §3.6, K24): her sabah 08:30'da
@@ -139,53 +137,13 @@ export const AdsDigest = {
     };
     if (!digestWorthy(facts)) return false;
 
-    const work = await prisma.work.findFirst({
-      where: { projectId, module: "ads", status: "ACTIVE" },
-      orderBy: { lastActivityAt: "desc" },
-      select: { id: true },
+    return postToAdsChat({
+      projectId,
+      brandId,
+      commandId: digestCommandId(projectId, day),
+      text: `Ads today\n${digestText(facts)}`,
+      summary: "Daily ads check",
+      now,
     });
-    try {
-      await prisma.$transaction(async (tx) => {
-        let workId = work?.id;
-        if (!workId) {
-          workId = adsWorkId(projectId);
-          const existing = await tx.work.findUnique({
-            where: { id: workId },
-            select: { id: true },
-          });
-          if (!existing) {
-            await createWorkInTx(tx, {
-              workId,
-              workspaceId: project.workspaceId,
-              projectId,
-              title: "Ads",
-              module: "ads",
-              now,
-            });
-          }
-        }
-        await tx.command.create({
-          data: {
-            id: digestCommandId(projectId, day),
-            workspaceId: project.workspaceId,
-            projectId,
-            brandId,
-            workId,
-            source: "SYSTEM",
-            rawText: "",
-            replyText: `Ads today\n${digestText(facts)}`,
-            replyStatus: "ANSWERED",
-          },
-        });
-        await tx.work.update({
-          where: { id: workId },
-          data: { lastActivityAt: now, summary: "Daily ads check" },
-        });
-      });
-      return true;
-    } catch (error) {
-      if (isUniqueViolation(error)) return false;
-      throw error;
-    }
   },
 };

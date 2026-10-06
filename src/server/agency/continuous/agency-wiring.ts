@@ -37,6 +37,7 @@ import { LaunchWatchdog } from "@/server/ads/guard/launch-watchdog";
 import { AdsDecisions } from "@/server/ads/decisions";
 import { AdsOptimizer } from "@/server/ads/optimizer";
 import { refreshAdsGoals } from "@/server/ads/goals";
+import { AdsReports } from "@/server/ads/reports/weekly";
 import { claimPeriodic } from "@/server/observability/periodic";
 import { AdsSync } from "@/server/ads/sync/runner";
 import { MeasurementEngine } from "@/server/agency/measurement/measurement-engine";
@@ -199,6 +200,13 @@ registerAgencyTickStep({
     const goals = await refreshAdsGoals();
     return expired + verified + evaluated + goals;
   },
+});
+// F6 (META_ADS_REPORTS): weekly report (Monday 08:00 project time), monthly
+// client report (the 1st, 09:00) and Brand Brain lessons from evaluated
+// decisions.
+registerAgencyTickStep({
+  name: "ads-reports",
+  run: () => AdsReports.runDue(5),
 });
 registerAgencyTickStep({
   name: "ads-daily-digest",

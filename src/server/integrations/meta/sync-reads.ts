@@ -400,3 +400,43 @@ export async function readPixelSummary(
     ),
   };
 }
+
+// Rapor dönemi için tekil erişim ve sıklık (günlük satırlardan toplanamaz).
+export async function readPeriodReach(input: {
+  adAccountId: string;
+  accessToken: string;
+  since: string;
+  until: string;
+}): Promise<{ reach: number; frequency: number } | null> {
+  const body = await metaFetch<{ data?: { reach?: string; frequency?: string }[] }>(
+    url(`${input.adAccountId}/insights`, {
+      level: "account",
+      fields: "reach,frequency",
+      time_range: JSON.stringify({ since: input.since, until: input.until }),
+      access_token: input.accessToken,
+    }),
+  );
+  const row = body.data?.[0];
+  if (!row) return null;
+  const reach = Number(row.reach);
+  const frequency = Number(row.frequency);
+  return Number.isFinite(reach)
+    ? { reach, frequency: Number.isFinite(frequency) ? frequency : 0 }
+    : null;
+}
+
+// Meta'nın kendi önerileri (ikinci görüş; asla otomatik uygulanmaz). Yanıt
+// biçimi doğrulanmalı: başlık ya da mesaj metni alınır.
+export async function readRecommendations(
+  adAccountId: string,
+  accessToken: string,
+): Promise<string[]> {
+  const body = await metaFetch<{
+    data?: { title?: string; message?: string; recommendation_title?: string }[];
+  }>(url(`${adAccountId}/recommendations`, { access_token: accessToken }));
+  return (body.data ?? [])
+    .map((row) => row.title ?? row.recommendation_title ?? row.message ?? "")
+    .map((text) => text.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}

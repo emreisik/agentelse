@@ -17,6 +17,7 @@ import { getAgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot"
 import { WorkspacePanelToggleProvider } from "@/components/workspace/workspace-panel-toggle";
 import { SETUP_STAGE, SETUP_STAGE_ORDER_UI } from "@/lib/labels";
 import type { ModuleKey } from "@/lib/modules/catalog";
+import { GaFlags } from "@/lib/website-analytics/flags";
 import { loadSidebarWorks } from "@/server/works/sidebar-works";
 import { WorkerStrip } from "@/components/layout/worker-strip";
 import { Heartbeat } from "@/server/observability/heartbeat";
@@ -206,9 +207,7 @@ export async function AppShell({
   // nabız eskiyse. Okuma başarısızsa (undefined) şerit çıkmaz.
   const now = new Date();
   const workerLevel =
-    workerHeartbeat === undefined
-      ? "ok"
-      : heartbeatLevel(workerHeartbeat, now);
+    workerHeartbeat === undefined ? "ok" : heartbeatLevel(workerHeartbeat, now);
   const workerStrip =
     (role === "OWNER" || role === "ADMIN") && workerLevel !== "ok" ? (
       <WorkerStrip
@@ -245,6 +244,7 @@ export async function AppShell({
         works={sidebarWorks}
         openWorkUntouched={openWorkUntouched}
         openWorkModule={openWorkModule}
+        websitePage={GaFlags.websitePage()}
       />
       <SidebarBottom
         displayName={displayName}

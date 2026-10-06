@@ -359,6 +359,16 @@ const SECTIONS: PolicySection[] = [
           when it is needed for security or required by law.
         </p>
         <p>
+          For Google Analytics we also keep daily summaries of your
+          website&rsquo;s figures (such as users, sessions, engagement and key
+          events, broken down by channel, landing page, page, event, device and
+          country), so reports and trends load quickly: up to 400 days, and 95
+          days for page and campaign detail. These are totals, never individual
+          visitors. Page addresses are stored without query strings, and email
+          addresses, phone numbers and similar personal details in them are
+          masked.
+        </p>
+        <p>
           Agentelse&rsquo;s use of information received from Google APIs will
           adhere to{" "}
           <a

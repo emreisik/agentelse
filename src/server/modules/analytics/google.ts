@@ -18,8 +18,16 @@ import {
   fetchSearchConsoleQueryRows,
   fetchSearchConsoleReport,
 } from "@/server/integrations/google-client";
+import {
+  averageSessionSeconds,
+  engagementRate,
+} from "@/lib/website-analytics/totals";
 import type { ActiveGoogleConnections } from "@/server/integrations/google-connections";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
+import {
+  readGaWindow,
+  type GaWindow,
+} from "@/server/website-analytics/readers";
 
 // The Google sections of a report. Google Analytics reads the GA4 Data API with
 // its own request (google-client.ts's fetchGa4Report only knows two metrics):
@@ -139,12 +147,50 @@ export function ga4Metrics(summary: Ga4Summary): ReportMetric[] {
   return metrics;
 }
 
+// Ambardaki pencere (GA_SYNC): sayılar GA'nın kendi dönem tanımlarıyla aynı;
+// toplanabilir metrikler günlüklerden, tekil kullanıcılar kayan pencereden,
+// oranlar bileşenlerinden. Kullanıcı sayısı yoksa satır atlanır.
+export function ga4MetricsFromWindow(window: GaWindow): ReportMetric[] {
+  const { totals } = window;
+  const metrics: ReportMetric[] = [];
+  if (window.users) {
+    metrics.push({ key: "ga.activeUsers", value: window.users.activeUsers });
+  }
+  metrics.push(
+    { key: "ga.newUsers", value: totals.newUsers },
+    { key: "ga.sessions", value: totals.sessions },
+    { key: "ga.views", value: totals.screenPageViews },
+  );
+  const rate = engagementRate(totals);
+  if (rate !== null) metrics.push({ key: "ga.engagementRate", value: rate });
+  const duration = averageSessionSeconds(totals);
+  if (duration !== null) {
+    metrics.push({ key: "ga.avgSessionDuration", value: duration });
+  }
+  return metrics;
+}
+
 export async function collectGa4(
   connection: ActiveGoogleConnections["analytics"],
   period: AnalyticsPeriod,
+  projectId?: string,
 ): Promise<ReportSection> {
   if (!connection) return failedSection("ga4", "not_connected");
   try {
+    // Ambar pencereyi eksiksiz kapsıyorsa Google'a çağrı yapılmaz.
+    const window = projectId
+      ? await readGaWindow({
+          projectId,
+          propertyId: connection.propertyId,
+          days: period,
+        }).catch(() => null)
+      : null;
+    if (window) {
+      return okSection("ga4", {
+        days: period,
+        metrics: ga4MetricsFromWindow(window),
+      });
+    }
     const token = await getFreshGoogleAccessToken(connection.credential);
     const summary = await fetchGa4Summary(token, connection.propertyId, period);
     return okSection("ga4", { days: period, metrics: ga4Metrics(summary) });

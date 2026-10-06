@@ -11,6 +11,7 @@ import {
 import { googleErrorCode } from "@/server/integrations/google/error-catalog";
 import { findActiveGoogleConnections } from "@/server/integrations/google-connections";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
+import { readGaWindow } from "@/server/website-analytics/readers";
 import type {
   ExecutionAcceptedResult,
   ExecutionPolicyContext,
@@ -104,8 +105,10 @@ export class GoogleApiProvider implements ExecutionProvider {
       // possibly from different Google accounts.
       const [ga4, gsc] = await Promise.all([
         analytics
-          ? getFreshGoogleAccessToken(analytics.credential).then((token) =>
-              fetchGa4Report(token, analytics.propertyId, REPORT_WINDOW_DAYS),
+          ? readGa4(
+              request.context.projectId,
+              analytics.propertyId,
+              analytics.credential,
             )
           : Promise.resolve(null),
         searchConsole
@@ -129,6 +132,28 @@ export class GoogleApiProvider implements ExecutionProvider {
       };
     }
   }
+}
+
+// Ambar (GA_SYNC) 28 günü eksiksiz ve tekil kullanıcısıyla kapsıyorsa Google'a
+// çağrı yapılmaz; yoksa eski canlı okuma.
+async function readGa4(
+  projectId: string,
+  propertyId: string,
+  credential: { id: string; encryptedSecret: string },
+): Promise<Awaited<ReturnType<typeof fetchGa4Report>>> {
+  const window = await readGaWindow({
+    projectId,
+    propertyId,
+    days: REPORT_WINDOW_DAYS,
+  }).catch(() => null);
+  if (window?.users) {
+    return {
+      activeUsers: window.users.activeUsers,
+      sessions: window.totals.sessions,
+    };
+  }
+  const token = await getFreshGoogleAccessToken(credential);
+  return fetchGa4Report(token, propertyId, REPORT_WINDOW_DAYS);
 }
 
 function summarize(

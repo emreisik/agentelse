@@ -2179,6 +2179,160 @@ model IntegrationCredential {
   @@index([brandId])
 }
 
+// Google Analytics ambarı (docs/google-analytics-plan.md §4, GA-F2): proje ↔
+// GA4 mülkü bağı; mülk metadata'sı, sağlık, kota ve senkron durumu. Satır,
+// seçili mülkü olan ACTIVE `google_analytics` bağlantısından tembel oluşur
+// (src/server/website-analytics/sync/links.ts); Disconnect bağı ve verisini
+// siler. Mevcut modellere ilişki alanı yok: proje silme `projectId` kolonu
+// olan her tabloyu kendiliğinden temizler (project-deletion.service.ts).
+model GaPropertyLink {
+  id           String  @id @default(cuid())
+  workspaceId  String
+  projectId    String
+  credentialId String
+  // GA4 mülk kimliği, "properties/" öneki olmadan.
+  propertyId   String
+  // Projenin şu an seçili mülkü. Seçim değişince eski bağ false olur, senkron
+  // durur ve verisi ga-retention'da silinir.
+  isPrimary    Boolean @default(true)
+  isMock       Boolean @default(false)
+
+  propertyName      String?
+  accountId         String?
+  accountName       String?
+  timeZone          String?
+  currencyCode      String?
+  industryCategory  String?
+  // GOOGLE_ANALYTICS_STANDARD | GOOGLE_ANALYTICS_360
+  serviceLevel      String?
+  propertyCreatedAt DateTime?
+  streamId          String?
+  measurementId     String?
+  streamUri         String?
+  // [{ eventName, countingMethod, createTime }]
+  keyEvents         Json?
+  // Olay verisi saklama süresi (TWO_MONTHS | FOURTEEN_MONTHS | ...).
+  dataRetention     String?
+  // { googleAds: <bağlantı sayısı> }
+  linkedProducts    Json?
+  // Katalogdan düşen raporlar: { [reportKey]: { reason, at } }
+  catalog           Json?
+
+  // OK | AUTH | NEEDS_PERMISSION | ACCESS_LOST | GONE | API_DISABLED |
+  // DEGRADED | UNKNOWN
+  health       String  @default("UNKNOWN")
+  healthReason String?
+  // GA-F3 ölçüm puanı (0-100).
+  healthScore  Int?
+
+  // Kota yöneticisi (src/lib/website-analytics/governor.ts): son
+  // propertyQuota, blok süresi ve saatlik sunucu hatası sayacı.
+  lastQuota        Json?
+  rateLimitedUntil DateTime?
+  serverErrorsHour Json?
+
+  // Kilit ve "şu zamana kadar deneme" (geri çekilme, kota bloğu).
+  syncLeaseUntil      DateTime?
+  syncLeaseOwner      String?
+  consecutiveFailures Int       @default(0)
+  lastSyncError       String?
+  lastMetadataAt      DateTime?
+  // Son günlük çekim denemesi ve tamamlandığı mülk günü (YYYY-MM-DD).
+  lastDailyAt         DateTime?
+  lastDailyDate       String?
+  // Geri doldurma durumu (src/lib/website-analytics/backfill.ts).
+  backfill            Json?
+  backfillDoneAt      DateTime?
+
+  dailyTotals GaDailyTotal[]
+  slices      GaReportSlice[]
+  monthly     GaMonthlySummary[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, propertyId])
+  @@index([propertyId])
+  @@index([credentialId])
+  @@index([isPrimary, syncLeaseUntil])
+}
+
+// Mülk-gün toplamı: KPI'ların tek kaynağı. `date` mülkün saat dilimindeki
+// gündür. Para mikro birimdir (değer × 1.000.000, mülkün para birimi). Oturum
+// süresi ortalama değil toplam olarak tutulur (dönem ortalaması kesin çıksın).
+model GaDailyTotal {
+  id                 String   @id @default(cuid())
+  linkId             String
+  projectId          String
+  date               DateTime @db.Date
+  activeUsers        Int      @default(0)
+  newUsers           Int      @default(0)
+  sessions           Int      @default(0)
+  engagedSessions    Int      @default(0)
+  engagementSec      Float    @default(0)
+  sessionDurationSec Float    @default(0)
+  screenPageViews    Int      @default(0)
+  keyEvents          Float    @default(0)
+  revenueMicros      BigInt   @default(0)
+  transactions       Int      @default(0)
+  quality            Json?
+  // Revizyon penceresinden çıktı; bir daha çekilmez.
+  isFinal            Boolean  @default(false)
+  fetchedAt          DateTime
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, date])
+  @@index([projectId, date])
+}
+
+// Katalog raporunun bir dönemi (DAY: mülk günü; WEEK: ISO haftasının
+// Pazartesisi). Satırlar kompakt: [boyutlar..., metrikler...].
+model GaReportSlice {
+  id               String   @id @default(cuid())
+  linkId           String
+  projectId        String
+  reportKey        String
+  // DAY | WEEK
+  grain            String   @default("DAY")
+  periodStart      DateTime @db.Date
+  specVersion      Int
+  dimensionHeaders String[]
+  metricHeaders    String[]
+  rows             Json
+  rowCount         Int      @default(0)
+  truncated        Boolean  @default(false)
+  otherRow         Json?
+  quality          Json?
+  isFinal          Boolean  @default(false)
+  fetchedAt        DateTime
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, reportKey, grain, periodStart])
+  @@index([projectId, reportKey, periodStart])
+}
+
+// Ay özeti: uzun dönem eğilimi ve geçen yılla karşılaştırma.
+model GaMonthlySummary {
+  id        String   @id @default(cuid())
+  linkId    String
+  projectId String
+  // Ayın ilk günü.
+  month     DateTime @db.Date
+  totals    Json
+  channels  Json
+  topPages  Json
+  isFinal   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, month])
+  @@index([projectId, month])
+}
+
 model Skill {
   id   String @id @default(cuid())
   name String

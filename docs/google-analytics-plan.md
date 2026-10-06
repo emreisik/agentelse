@@ -952,6 +952,8 @@ Uygulamada plandan farklar (GA-F2 ve sonrası bunlara göre yazılır):
 
 ### GA-F2 — Ambar ve kota yöneticisi · L
 
+**Durum (6 Ekim):** Bölüm 1 yapıldı; uygulanan hâl [website-analytics.md](website-analytics.md)'de (ambar, kota yöneticisi, senkron ve geri doldurma, okuyucuların geçişi, Website sayfası v1, Integrations'ta tazelik ve mülk kartı, gizlilik metni). Plandan farklar: `grantId` yok (GA-F1 notu); `GaDailyTotal`'da `eventCount` yerine oturum süresi toplamı (`sessionDurationSec`) var, olay sayısı `events` dilimlerinde; dönem kullanıcıları için her gün yazılan `rolling_users` dilimi (7/28/90 gün) eklendi; `preliminary` ayrı kolon değil (`isFinal` olmayan gün önveridir). Bölüm 2: Brand sekmesi "Website" kartı, Analytics modül kartında kanal/açılış sayfası/key event bölümleri, /health sayaçları, haftalık dilimler, `getMetadata`/`checkCompatibility` ile google_ads, search_console ve site_search raporları, gün içi ve realtime.
+
 **Amaç:** GA verisini eksiksiz, tutarlı ve hızlı okunur hale getirmek; tüm okuyucuları tek kaynağa bağlamak.
 
 **Kapsam:**

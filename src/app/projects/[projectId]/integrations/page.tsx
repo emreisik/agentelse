@@ -59,6 +59,11 @@ import {
   rankSearchConsoleSites,
   searchConsoleSiteCoversDomain,
 } from "@/lib/search-console-site";
+import { GaFlags } from "@/lib/website-analytics/flags";
+import {
+  readWebsiteLinkInfo,
+  type WebsiteLinkInfo,
+} from "@/server/website-analytics/report";
 import {
   disconnectMetaAction,
   selectMetaAdAccountAction,
@@ -475,6 +480,11 @@ export default async function EntegrasyonlarPage({
         ? searchConsoleCredential
         : null,
   );
+  // GA ambarı (GA_SYNC): mülk kartı ve "Data through …"; okunamazsa kart yok.
+  const gaWarehouse =
+    openGoogleService === "analytics" && GaFlags.sync()
+      ? await readWebsiteLinkInfo(projectId).catch(() => null)
+      : null;
   const metaError = typeof sp.metaError === "string" ? sp.metaError : null;
   const metaDetail = visibleMetaDetail(metaError, sp.metaDetail);
   const tiktokError =
@@ -602,6 +612,9 @@ export default async function EntegrasyonlarPage({
             googleError={googleError}
             reuseOptions={googleReuseOptions}
             projectDomain={project.domain}
+            warehouse={gaWarehouse}
+            warehouseOn={GaFlags.sync()}
+            websitePage={GaFlags.websitePage()}
           />
         ) : null}
 
@@ -1015,6 +1028,9 @@ function GoogleDialog({
   googleError,
   reuseOptions,
   projectDomain,
+  warehouse = null,
+  warehouseOn = false,
+  websitePage = false,
 }: {
   service: GoogleService;
   projectId: string;
@@ -1023,6 +1039,10 @@ function GoogleDialog({
   googleError: string | null;
   reuseOptions: GoogleReuseOption[];
   projectDomain: string | null;
+  // Google Analytics ambarı (GA_SYNC): mülk kartı ve veri tazeliği.
+  warehouse?: WebsiteLinkInfo | null;
+  warehouseOn?: boolean;
+  websitePage?: boolean;
 }) {
   const connected = credential?.status === "ACTIVE";
   const expired = credential?.status === "EXPIRED";
@@ -1137,6 +1157,15 @@ function GoogleDialog({
                 )}
               </div>
 
+              {service === "analytics" && warehouseOn ? (
+                <GaWarehouseCard
+                  info={warehouse}
+                  websiteHref={
+                    websitePage ? `/projects/${projectId}/site` : null
+                  }
+                />
+              ) : null}
+
               <GoogleLastTestResult
                 service={service}
                 metadata={
@@ -1195,6 +1224,13 @@ function GoogleDialog({
         </EmptyState>
       )}
 
+      {service === "analytics" && warehouseOn && !connected ? (
+        <p className="text-[11px] text-muted-foreground">
+          Agentelse keeps daily summaries of your Google Analytics data to build
+          reports. Disconnecting deletes them.
+        </p>
+      ) : null}
+
       {!connected ? (
         <GoogleReuseList
           projectId={projectId}
@@ -1203,6 +1239,53 @@ function GoogleDialog({
         />
       ) : null}
     </EntityDialog>
+  );
+}
+
+// GA ambarının durumu (GA_SYNC): verinin hangi güne kadar geldiği ve mülkün
+// saat dilimi, para birimi, ölçüm kimliği, akış adresi.
+function GaWarehouseCard({
+  info,
+  websiteHref,
+}: {
+  info: WebsiteLinkInfo | null;
+  websiteHref: string | null;
+}) {
+  const through = info?.dataThrough
+    ? new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      }).format(new Date(`${info.dataThrough}T00:00:00.000Z`))
+    : null;
+  const details = info
+    ? [
+        info.timeZone,
+        info.currencyCode,
+        info.measurementId,
+        info.streamUri ? formatSearchConsoleSite(info.streamUri).label : null,
+      ].filter(Boolean)
+    : [];
+  return (
+    <div className="space-y-1 rounded-lg bg-muted/50 p-2.5 text-[11px] text-muted-foreground">
+      <p className="font-medium text-foreground">
+        {through
+          ? `Data through ${through}`
+          : "Getting your data from Google Analytics…"}
+        {info && !info.backfillDone && through
+          ? " · older history loading"
+          : ""}
+      </p>
+      {details.length > 0 ? <p>{details.join(" · ")}</p> : null}
+      {websiteHref && through ? (
+        <Link
+          href={websiteHref}
+          className="inline-block font-medium text-foreground underline underline-offset-2"
+        >
+          Open website report
+        </Link>
+      ) : null}
+    </div>
   );
 }
 

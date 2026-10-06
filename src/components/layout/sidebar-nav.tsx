@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Ellipsis,
   Gem,
+  Globe,
   Library,
   Megaphone,
   MessagesSquare,
@@ -57,7 +58,7 @@ type NavItem = {
   icon: LucideIcon;
 } & (
   | { panel: PanelKey; sub?: string }
-  | { route: "takvim" | "integrations" | "ads" }
+  | { route: "takvim" | "integrations" | "ads" | "site" }
   | { home: true }
 );
 
@@ -102,8 +103,28 @@ const EXPLORE_WITH_MODULES: NavItem[][] = EXPLORE.map((group) =>
   ),
 );
 
-export function exploreGroups(modulesUi: boolean): NavItem[][] {
-  return modulesUi ? EXPLORE_WITH_MODULES : EXPLORE;
+// GA_WEBSITE_PAGE: the Google Analytics "Website" page sits next to the ads
+// page, before Connectors.
+const WEBSITE_ITEM: NavItem = { label: "Website", icon: Globe, route: "site" };
+
+function withWebsite(groups: NavItem[][]): NavItem[][] {
+  return groups.map((group, index) =>
+    index === 0
+      ? group.flatMap((item) =>
+          "route" in item && item.route === "integrations"
+            ? [WEBSITE_ITEM, item]
+            : [item],
+        )
+      : group,
+  );
+}
+
+export function exploreGroups(
+  modulesUi: boolean,
+  websitePage = false,
+): NavItem[][] {
+  const groups = modulesUi ? EXPLORE_WITH_MODULES : EXPLORE;
+  return websitePage ? withWebsite(groups) : groups;
 }
 
 export const MODULES_COPY = { heading: "Modules", soon: "Soon" } as const;
@@ -177,6 +198,7 @@ export function SidebarNav({
   works,
   openWorkUntouched = false,
   openWorkModule = null,
+  websitePage = false,
 }: {
   activeProjectId?: string;
   toolBadges?: Partial<Record<PanelKey, number>>;
@@ -187,6 +209,8 @@ export function SidebarNav({
   openWorkUntouched?: boolean;
   // Modules: that new chat's module (see AppShell); null: a general chat.
   openWorkModule?: ModuleKey | null;
+  // GA_WEBSITE_PAGE: Explore lists the "Website" page.
+  websitePage?: boolean;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -248,7 +272,7 @@ export function SidebarNav({
     sent: sentWorkId !== null && sentWorkId === openWorkId,
   });
   const primary = PRIMARY.filter((item) => !(works && "home" in item));
-  const explore = exploreGroups(modulesUi).map((group) =>
+  const explore = exploreGroups(modulesUi, websitePage).map((group) =>
     group.map((item) => ({ item, ...resolve(item) })),
   );
 

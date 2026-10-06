@@ -160,6 +160,13 @@ describe("privacy policy: Google Analytics and Search Console section", () => {
     expect(google).toContain("People at Agentelse do not read it");
   });
 
+  it("says which Google Analytics summaries are kept, for how long, and masked", () => {
+    expect(google).toContain("daily summaries");
+    expect(google).toContain("up to 400 days");
+    expect(google).toContain("never individual visitors");
+    expect(google).toContain("are masked");
+  });
+
   it("says Disconnect deletes right away and when Google access is kept", () => {
     expect(google).toContain(
       "deletes its stored token and the Google data in that connection right away",

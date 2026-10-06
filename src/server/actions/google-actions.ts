@@ -24,7 +24,9 @@ import {
   type GoogleSearchConsoleMetadata,
   type GoogleService,
 } from "@/server/integrations/google-client";
+import { GaFlags } from "@/lib/website-analytics/flags";
 import { buildGoogleConnectionMetadata } from "@/server/integrations/google-connection-metadata";
+import { ensureGaLinkForProject } from "@/server/website-analytics/sync/links";
 import { disconnectGoogleCredential } from "@/server/integrations/google-disconnect";
 import { googleErrorUserMessage } from "@/server/integrations/google/error-catalog";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
@@ -139,6 +141,16 @@ export async function selectGa4PropertyAction(
       where: { id: credential.id, status: { not: "REVOKED" } },
       data: { metadata: nextMetadata },
     });
+    // Ambar (GA_SYNC): yeni mülkün bağı hemen birincil olur, eskisinin
+    // senkronu durur; veri bir sonraki tick'te gelmeye başlar.
+    if (GaFlags.sync()) {
+      await ensureGaLinkForProject(projectId).catch((error: unknown) => {
+        console.error(
+          "[google-actions] GA link could not be updated:",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }
 
     revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };

@@ -44,7 +44,7 @@ Google, bir Google hesabı × OAuth istemcisi için en çok 100 canlı refresh t
 ## Disconnect (`google-disconnect.ts`)
 
 - Yalnız workspace OWNER/ADMIN (`isWorkspaceManager`, `tenant-context.ts`).
-- Refresh token ve Google'dan okunan bütün metadata (liste, seçim, test sonucu, e-posta, kimlik) hemen silinir; satır REVOKED olur, metadata yalnız `{ disconnectedAt }` tutar. Bu değişiklikten önce koparılmış ve token'ı hâlâ duran satırlar, Disconnect yeniden çağrılınca temizlenir.
+- Refresh token ve Google'dan okunan bütün metadata (liste, seçim, test sonucu, e-posta, kimlik) hemen silinir; satır REVOKED olur, metadata yalnız `{ disconnectedAt }` tutar. Bu değişiklikten önce koparılmış ve token'ı hâlâ duran satırlar, Disconnect yeniden çağrılınca temizlenir. Google Analytics ambarı (bağ, günlük toplamlar, dilimler, ay özetleri; [website-analytics.md](website-analytics.md)) da aynı anda silinir.
 - **Akıllı iptal:** Google'a iptal (`oauth2.googleapis.com/revoke`) yalnız şu durumda gider: aynı Google hesabını kullanan, koparılmamış başka bir Google bağlantısı yoksa (hangi workspace ya da servis olursa olsun). Eşleşme sırası: aynı şifreli token (29 Eylül'den kalan GA/GSC çiftleri), aynı `googleSub`, kimliği olmayan eski satırlarda aynı e-posta. Hesap tanınamıyorsa iptal edilmez. İptal başarısız olsa da silme yapılır.
 - Denetim kaydında `revokedAtGoogle` tutulur.
 

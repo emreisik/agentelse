@@ -47,6 +47,8 @@ import { MetaCampaignChainRelay } from "@/server/agency/meta-ads/meta-campaign-c
 import { CreativePublishCompletion } from "@/server/commands/creative-publish-completion";
 import { GoogleAnalyticsScanner } from "@/server/agency/performance/google-analytics-scanner";
 import { GoogleConnectionHealth } from "@/server/integrations/google-connection-health";
+import { GaRetention } from "@/server/website-analytics/retention";
+import { GaSync } from "@/server/website-analytics/sync/runner";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
 import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
 import { WorkPlanProgressor } from "@/server/agency/work-plans/work-plan-progressor";
@@ -262,6 +264,17 @@ registerAgencyTickStep({
 registerAgencyTickStep({
   name: "google-connection-health",
   run: () => GoogleConnectionHealth.runDue(5),
+});
+// GA-F2 (GA_SYNC): Google Analytics ambarının senkronu (≤3 bağ bir tick'te,
+// bağ başına CAS kilidi, kota yöneticisi) ve günlük saklama temizliği. Bayrak
+// kapalıyken ikisi de hemen 0 döner; odak ayarı bunları kapatmaz.
+registerAgencyTickStep({
+  name: "ga-sync",
+  run: () => GaSync.runDue(3),
+});
+registerAgencyTickStep({
+  name: "ga-retention",
+  run: () => GaRetention.runDue(),
 });
 registerAgencyTickStep({
   name: "signal-processing",

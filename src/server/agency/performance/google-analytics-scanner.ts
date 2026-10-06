@@ -11,6 +11,7 @@ import {
   type GoogleSearchConsoleMetadata,
 } from "@/server/integrations/google-client";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
+import { readGaWindow } from "@/server/website-analytics/readers";
 
 type ScanMetadata = GoogleAnalyticsMetadata | GoogleSearchConsoleMetadata;
 
@@ -30,10 +31,7 @@ function jitterMs(credentialId: string): number {
   return (hash % (JITTER_MINUTES * 2)) * 60_000;
 }
 
-function isDue(
-  metadata: ScanMetadata,
-  credentialId: string,
-): boolean {
+function isDue(metadata: ScanMetadata, credentialId: string): boolean {
   if (!metadata.lastAnalyticsScanAt) return true;
   const failures = metadata.analyticsScanFailureCount ?? 0;
   const backoff = Math.min(
@@ -104,6 +102,24 @@ export const GoogleAnalyticsScanner = {
   },
 };
 
+// Son 7 gün: ambar (GA_SYNC) eksiksiz kapsıyorsa oradan, yoksa canlı.
+async function readGa4Week(
+  projectId: string,
+  propertyId: string,
+  accessToken: () => Promise<string>,
+): Promise<{ activeUsers: number; sessions: number }> {
+  const window = await readGaWindow({ projectId, propertyId, days: 7 }).catch(
+    () => null,
+  );
+  if (window?.users) {
+    return {
+      activeUsers: window.users.activeUsers,
+      sessions: window.totals.sessions,
+    };
+  }
+  return fetchGa4Report(await accessToken(), propertyId, 7);
+}
+
 function hasSelection(provider: string, metadata: ScanMetadata): boolean {
   return provider === GOOGLE_PROVIDER.analytics
     ? Boolean((metadata as GoogleAnalyticsMetadata).selectedGa4PropertyId)
@@ -124,8 +140,9 @@ async function scanOneCredential(
   metadata: ScanMetadata,
 ): Promise<void> {
   // The stored secret is the refresh token — it must be exchanged for an
-  // access token before any API call (using it directly returns 401).
-  const accessToken = await getFreshGoogleAccessToken(credential);
+  // access token before any API call (using it directly returns 401). Only
+  // fetched when a live call is really needed.
+  const accessToken = () => getFreshGoogleAccessToken(credential);
   const scope = {
     workspaceId: credential.workspaceId,
     projectId: credential.projectId,
@@ -138,13 +155,17 @@ async function scanOneCredential(
 
   const ga4Current =
     isAnalytics && gaMetadata.selectedGa4PropertyId
-      ? await fetchGa4Report(accessToken, gaMetadata.selectedGa4PropertyId, 7)
+      ? await readGa4Week(
+          credential.projectId,
+          gaMetadata.selectedGa4PropertyId,
+          accessToken,
+        )
       : undefined;
 
   const gscRows =
     !isAnalytics && gscMetadata.selectedSearchConsoleSite
       ? await fetchSearchConsoleQueryRows(
-          accessToken,
+          await accessToken(),
           gscMetadata.selectedSearchConsoleSite,
           ["query"],
           28,

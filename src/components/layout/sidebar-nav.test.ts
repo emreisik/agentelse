@@ -189,6 +189,20 @@ describe("SidebarNav: Modules (MODULES_UI)", () => {
     expect(exploreGroups(false)).toBe(EXPLORE);
   });
 
+  it("GA_WEBSITE_PAGE adds the Website page right before Connectors", () => {
+    expect(exploreGroups(false, true)[0]?.map((item) => item.label)).toEqual([
+      "Ads Manager",
+      "Website",
+      "Connectors",
+    ]);
+    expect(exploreGroups(true, true)[0]?.map((item) => item.label)).toEqual([
+      "Ads account",
+      "Website",
+      "Connectors",
+    ]);
+    expect(exploreGroups(false, true)[1]).toEqual(EXPLORE[1]);
+  });
+
   it("on: the group sits right under New Chat, before the pages and Recents", () => {
     const html = open(true);
     const order = [

@@ -7,12 +7,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   update: vi.fn(),
+  deleteLinks: vi.fn(),
   revokeGoogleToken: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     integrationCredential: { findMany: mocks.findMany, update: mocks.update },
+    gaPropertyLink: { deleteMany: mocks.deleteLinks },
   },
 }));
 vi.mock("@/server/security/crypto", () => ({
@@ -39,6 +41,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.findMany.mockResolvedValue([]);
   mocks.update.mockResolvedValue({});
+  mocks.deleteLinks.mockResolvedValue({ count: 1 });
   mocks.revokeGoogleToken.mockResolvedValue(undefined);
 });
 
@@ -50,6 +53,10 @@ function expectWiped() {
       encryptedSecret: "",
       metadata: { disconnectedAt: expect.any(String) },
     },
+  });
+  // Google Analytics ambarı da bağla birlikte gider.
+  expect(mocks.deleteLinks).toHaveBeenCalledWith({
+    where: { credentialId: "cred-ga" },
   });
 }
 

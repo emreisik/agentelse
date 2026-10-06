@@ -52,7 +52,7 @@ export async function collectReport(
       case "ga4": {
         const connections = await google;
         if (!connections) return failedSection("ga4", "error");
-        return collectGa4(connections.analytics, period);
+        return collectGa4(connections.analytics, period, projectId);
       }
       case "searchConsole": {
         const connections = await google;

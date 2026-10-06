@@ -235,6 +235,12 @@ export type SafeFetchOptions = {
   // hold a hop open far past timeoutMs. true also destroys the request at
   // timeoutMs in TOTAL. Opt-in so every other caller keeps today's behaviour.
   hardDeadline?: boolean;
+  // Varsayılan tarayıcı kimliği yerine (ör. GA site etiketi kontrolü: "AgentelseSiteCheck/1.0 (+https://agentelse.com/bot)"). Opt-in; diğer çağıranlar bugünkü UA ile kalır.
+  userAgent?: string;
+  // Opt-in: her yönlendirme hedefi istek atılmadan önce sorulur; false ise
+  // hedefe gidilmez (UnsafeUrlError). Ör. GA site kontrolü yalnız aynı siteye
+  // (www ikizi dahil) yönlendirmeyi izler, yol başka sunucuya gitmez.
+  allowRedirect?: (target: URL) => boolean;
 };
 
 export type SafeFetchResult = {
@@ -260,6 +266,7 @@ export type Transport = (
   > & {
     accept: string;
     hardDeadline?: boolean;
+    userAgent?: string;
   },
 ) => Promise<HopResponse>;
 
@@ -294,7 +301,7 @@ const nodeTransport: Transport = (url, options) =>
         method: "GET",
         lookup: guardedLookup as never,
         headers: {
-          "user-agent": USER_AGENT,
+          "user-agent": options.userAgent ?? USER_AGENT,
           accept: options.accept,
           "accept-encoding": "gzip, deflate, br",
         },
@@ -403,6 +410,7 @@ export async function safeFetch(
       accept: options.accept ?? "*/*",
       // Absent unless true, so a fake transport sees today's options object.
       ...(options.hardDeadline ? { hardDeadline: true } : {}),
+      ...(options.userAgent ? { userAgent: options.userAgent } : {}),
     });
 
     if (REDIRECT_STATUSES.has(response.status)) {
@@ -413,6 +421,9 @@ export async function safeFetch(
       // validated exactly like the first URL (protocol, port, IP literal),
       // and its host is checked again at connection time.
       url = assertSafeUrl(new URL(target, url));
+      if (options.allowRedirect && !options.allowRedirect(url)) {
+        throw new UnsafeUrlError("The site redirected to another site");
+      }
       continue;
     }
 

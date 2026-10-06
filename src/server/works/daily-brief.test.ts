@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   creatives: vi.fn(),
   tasks: vi.fn(),
   ideas: vi.fn(),
+  siteAlerts: vi.fn(),
+  attention: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -14,6 +16,14 @@ vi.mock("@/lib/prisma", () => ({
     task: { findMany: mocks.tasks },
     idea: { count: mocks.ideas },
   },
+}));
+
+vi.mock("@/server/monitoring/site-alert-brief", () => ({
+  loadSiteAlertBrief: mocks.siteAlerts,
+  siteAlertSourcesForBrief: () => ["GA4"],
+}));
+vi.mock("@/server/seo/health/attention", () => ({
+  loadSearchAttention: mocks.attention,
 }));
 
 import { loadBriefExtras } from "@/server/works/daily-brief";
@@ -26,6 +36,8 @@ beforeEach(() => {
   mocks.creatives.mockResolvedValue([]);
   mocks.tasks.mockResolvedValue([]);
   mocks.ideas.mockResolvedValue(0);
+  mocks.siteAlerts.mockResolvedValue([]);
+  mocks.attention.mockResolvedValue(null);
 });
 
 describe("loadBriefExtras", () => {
@@ -122,6 +134,7 @@ describe("loadBriefExtras", () => {
       yesterdayPublished: 0,
       yesterdayFailed: 0,
       shortlistedIdeas: 2,
+      siteAlerts: [],
     });
   });
 
@@ -131,7 +144,39 @@ describe("loadBriefExtras", () => {
       yesterdayPublished: 0,
       yesterdayFailed: 0,
       shortlistedIdeas: 0,
+      siteAlerts: [],
     });
+  });
+
+  it("reads site alerts and critical search issues in the same round", async () => {
+    const alert = {
+      id: "site-a1",
+      source: "GA4",
+      title: "Google Analytics stopped receiving data",
+      severity: "CRITICAL",
+      href: "/projects/p1/site#measurement-health",
+    };
+    mocks.siteAlerts.mockResolvedValue([alert]);
+    mocks.attention.mockResolvedValue({
+      critical: [
+        { id: "s1", kind: "SEO_KEY_PAGE_NOINDEX", title: "Noindex", href: "/h1" },
+      ],
+      criticalCount: 1,
+      warnCount: 0,
+      href: "/h",
+    });
+    const extras = await loadBriefExtras("p1", TZ, "2026-10-01");
+    expect(mocks.siteAlerts).toHaveBeenCalledWith("p1", ["GA4"]);
+    expect(extras.siteAlerts).toEqual([alert]);
+    expect(extras.searchIssues).toEqual([{ id: "s1", title: "Noindex", href: "/h1" }]);
+  });
+
+  it("leaves search issues out when there is no critical one, and survives failures", async () => {
+    mocks.siteAlerts.mockRejectedValue(new Error("db"));
+    mocks.attention.mockRejectedValue(new Error("db"));
+    const extras = await loadBriefExtras("p1", TZ, "2026-10-01");
+    expect(extras.siteAlerts).toEqual([]);
+    expect("searchIssues" in extras).toBe(false);
   });
 
   it("imports no network module", () => {

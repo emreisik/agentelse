@@ -114,15 +114,25 @@ describe("safeFetch redirects and limits", () => {
         ? hop({ status: 301, headers: { location: "/final" } })
         : hop({ body: Buffer.from("ok") });
     };
-    const result = await safeFetch("https://example.com/start", opts, transport);
-    expect(calls).toEqual(["https://example.com/start", "https://example.com/final"]);
+    const result = await safeFetch(
+      "https://example.com/start",
+      opts,
+      transport,
+    );
+    expect(calls).toEqual([
+      "https://example.com/start",
+      "https://example.com/final",
+    ]);
     expect(result.url).toBe("https://example.com/final");
     expect(result.body.toString()).toBe("ok");
   });
 
   it("refuses a redirect into a private address", async () => {
     const transport: Transport = async () =>
-      hop({ status: 302, headers: { location: "http://169.254.169.254/latest" } });
+      hop({
+        status: 302,
+        headers: { location: "http://169.254.169.254/latest" },
+      });
     await expect(
       safeFetch("https://example.com/", opts, transport),
     ).rejects.toThrow(/not publicly reachable/);
@@ -140,7 +150,11 @@ describe("safeFetch redirects and limits", () => {
     const transport: Transport = async () =>
       hop({ status: 302, headers: { location: "/again" } });
     await expect(
-      safeFetch("https://example.com/", { ...opts, maxRedirects: 3 }, transport),
+      safeFetch(
+        "https://example.com/",
+        { ...opts, maxRedirects: 3 },
+        transport,
+      ),
     ).rejects.toThrow(/too many times/);
   });
 
@@ -213,6 +227,22 @@ describe("safeFetch hardDeadline (G110)", () => {
       },
     );
     expect(seen.hardDeadline).toBe(true);
+  });
+
+  it("passes a custom user agent to the transport only when set", async () => {
+    const seen: Record<string, unknown>[] = [];
+    const transport: Transport = async (_url, options) => {
+      seen.push(options);
+      return hop();
+    };
+    await safeFetch(
+      "https://example.com/",
+      { maxBytes: 10, userAgent: "AgentelseSiteCheck/1.0" },
+      transport,
+    );
+    await safeFetch("https://example.com/", { maxBytes: 10 }, transport);
+    expect(seen[0]!.userAgent).toBe("AgentelseSiteCheck/1.0");
+    expect("userAgent" in seen[1]!).toBe(false);
   });
 });
 

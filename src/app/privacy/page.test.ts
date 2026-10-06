@@ -170,6 +170,34 @@ describe("privacy policy: Google Analytics and Search Console section", () => {
     expect(google).toContain("top 50 landing pages");
     expect(google).toContain("search words are masked");
     expect(google).toContain("are not stored");
+    // GA-F3: ölçüm kontrolleri.
+    expect(google).toContain("measurement checks");
+    expect(google).toContain(
+      "never the addresses or the personal details themselves",
+    );
+    expect(google).toContain("AgentelseSiteCheck");
+    expect(google).toContain("robots.txt");
+    expect(google).toContain("project's own Telegram");
+  });
+
+  it("says what the site audit fetches and stores", () => {
+    expect(google).toContain("visits the public pages of that website only");
+    expect(google).toContain("at most one request per second");
+    expect(google).toContain("follows your robots.txt");
+    expect(google).toContain("a copy of your robots.txt");
+    expect(google).toContain("link text");
+    expect(google).toContain("don't store the page text");
+    expect(google).toContain("at most 200 checks a day");
+    expect(google).toContain(
+      "disconnecting Search Console deletes these right away",
+    );
+    expect(google).toContain(
+      "short notice with no figures, pages or findings",
+    );
+    expect(google).not.toContain("shown only to you");
+    expect(google).toContain("DNS TXT record");
+    expect(google).toContain("Chrome UX Report");
+    expect(google).toContain("delete its data anytime");
   });
 
   it("says which Search Console summaries are kept, how long beyond Google's 16 months, and masked", () => {

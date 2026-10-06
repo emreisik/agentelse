@@ -1,0 +1,473 @@
+[
+  {
+    "id": "t1Lq7hQx3sPq9cTz1Ab2",
+    "number": "1000370",
+    "begin": "2026-09-16T17:00:00+00:00",
+    "created": "2026-09-16T17:00:00+00:00",
+    "modified": "2026-09-16T17:00:00+00:00",
+    "external_desc": "September 2026 spam update",
+    "updates": [
+      {
+        "created": "2026-09-16T17:00:00+00:00",
+        "modified": "2026-09-16T17:00:00+00:00",
+        "when": "2026-09-16T17:00:00+00:00",
+        "text": "Released the September 2026 spam update. The rollout may take up to 2 weeks to complete.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      }
+    ],
+    "most_recent_update": {
+      "created": "2026-09-16T17:00:00+00:00",
+      "modified": "2026-09-16T17:00:00+00:00",
+      "when": "2026-09-16T17:00:00+00:00",
+      "text": "Released the September 2026 spam update. The rollout may take up to 2 weeks to complete.",
+      "status": "AVAILABLE",
+      "affected_locations": []
+    },
+    "status_impact": "SERVICE_INFORMATION",
+    "severity": "low",
+    "service_key": "aUeNbSZtpRtPVmjQb9WL",
+    "service_name": "Ranking",
+    "affected_products": [
+      {
+        "title": "Ranking",
+        "id": "aUeNbSZtpRtPVmjQb9WL"
+      }
+    ],
+    "uri": "incidents/t1Lq7hQx3sPq9cTz1Ab2",
+    "currently_affected_locations": [],
+    "previously_affected_locations": []
+  },
+  {
+    "id": "Vb7mZc1oQnWfL2rXkE9d",
+    "number": "1000333",
+    "begin": "2026-09-03T14:20:00+00:00",
+    "created": "2026-09-03T14:20:00+00:00",
+    "modified": "2026-09-03T19:05:00+00:00",
+    "external_desc": "Serving issues affecting Google Search",
+    "updates": [
+      {
+        "created": "2026-09-03T19:05:00+00:00",
+        "modified": "2026-09-03T19:05:00+00:00",
+        "when": "2026-09-03T19:05:00+00:00",
+        "text": "The issue is resolved.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      },
+      {
+        "created": "2026-09-03T14:20:00+00:00",
+        "modified": "2026-09-03T14:20:00+00:00",
+        "when": "2026-09-03T14:20:00+00:00",
+        "text": "We're investigating: Serving issues affecting Google Search.",
+        "status": "SERVICE_DISRUPTION",
+        "affected_locations": []
+      }
+    ],
+    "most_recent_update": {
+      "created": "2026-09-03T19:05:00+00:00",
+      "modified": "2026-09-03T19:05:00+00:00",
+      "when": "2026-09-03T19:05:00+00:00",
+      "text": "The issue is resolved.",
+      "status": "AVAILABLE",
+      "affected_locations": []
+    },
+    "status_impact": "SERVICE_DISRUPTION",
+    "severity": "medium",
+    "service_key": "Gu5mn2kRiBs3yfGu1b8Q",
+    "service_name": "Serving",
+    "affected_products": [
+      {
+        "title": "Serving",
+        "id": "Gu5mn2kRiBs3yfGu1b8Q"
+      }
+    ],
+    "uri": "incidents/Vb7mZc1oQnWfL2rXkE9d",
+    "currently_affected_locations": [],
+    "previously_affected_locations": [],
+    "end": "2026-09-03T19:05:00+00:00"
+  },
+  {
+    "id": "Hq2pR8sKdX4yNw6uJm1z",
+    "number": "1000296",
+    "begin": "2026-08-19T16:00:00+00:00",
+    "created": "2026-08-19T16:00:00+00:00",
+    "modified": "2026-09-02T10:00:00+00:00",
+    "external_desc": "August 2026 Discover update",
+    "updates": [
+      {
+        "created": "2026-09-02T10:00:00+00:00",
+        "modified": "2026-09-02T10:00:00+00:00",
+        "when": "2026-09-02T10:00:00+00:00",
+        "text": "The rollout was complete.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      },
+      {
+        "created": "2026-08-19T16:00:00+00:00",
+        "modified": "2026-08-19T16:00:00+00:00",
+        "when": "2026-08-19T16:00:00+00:00",
+        "text": "Released the August 2026 Discover update. The rollout may take up to 2 weeks to complete.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      }
+    ],
+    "most_recent_update": {
+      "created": "2026-09-02T10:00:00+00:00",
+      "modified": "2026-09-02T10:00:00+00:00",
+      "when": "2026-09-02T10:00:00+00:00",
+      "text": "The rollout was complete.",
+      "status": "AVAILABLE",
+      "affected_locations": []
+    },
+    "status_impact": "SERVICE_INFORMATION",
+    "severity": "low",
+    "service_key": "aUeNbSZtpRtPVmjQb9WL",
+    "service_name": "Ranking",
+    "affected_products": [
+      {
+        "title": "Ranking",
+        "id": "aUeNbSZtpRtPVmjQb9WL"
+      }
+    ],
+    "uri": "incidents/Hq2pR8sKdX4yNw6uJm1z",
+    "currently_affected_locations": [],
+    "previously_affected_locations": [],
+    "end": "2026-09-02T10:00:00+00:00"
+  },
+  {
+    "id": "Ys5tB3nLc8vWq1xZp7Ko",
+    "number": "1000259",
+    "begin": "2026-07-22T09:30:00+00:00",
+    "created": "2026-07-22T09:30:00+00:00",
+    "modified": "2026-07-23T15:00:00+00:00",
+    "external_desc": "Crawling delays for some sites",
+    "updates": [
+      {
+        "created": "2026-07-23T15:00:00+00:00",
+        "modified": "2026-07-23T15:00:00+00:00",
+        "when": "2026-07-23T15:00:00+00:00",
+        "text": "The issue is resolved.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      },
+      {
+        "created": "2026-07-22T09:30:00+00:00",
+        "modified": "2026-07-22T09:30:00+00:00",
+        "when": "2026-07-22T09:30:00+00:00",
+        "text": "We're investigating: Crawling delays for some sites.",
+        "status": "SERVICE_DISRUPTION",
+        "affected_locations": []
+      }
+    ],
+    "most_recent_update": {
+      "created": "2026-07-23T15:00:00+00:00",
+      "modified": "2026-07-23T15:00:00+00:00",
+      "when": "2026-07-23T15:00:00+00:00",
+      "text": "The issue is resolved.",
+      "status": "AVAILABLE",
+      "affected_locations": []
+    },
+    "status_impact": "SERVICE_DISRUPTION",
+    "severity": "medium",
+    "service_key": "SoDJAWFR1YF2c1nppsjA",
+    "service_name": "Crawling",
+    "affected_products": [
+      {
+        "title": "Crawling",
+        "id": "SoDJAWFR1YF2c1nppsjA"
+      }
+    ],
+    "uri": "incidents/Ys5tB3nLc8vWq1xZp7Ko",
+    "currently_affected_locations": [],
+    "previously_affected_locations": [],
+    "end": "2026-07-23T15:00:00+00:00"
+  },
+  {
+    "id": "Fe4gH6jKl9mNb2vCx5Zq",
+    "number": "1000222",
+    "begin": "2026-06-24T16:00:00+00:00",
+    "created": "2026-06-24T16:00:00+00:00",
+    "modified": "2026-07-15T12:00:00+00:00",
+    "external_desc": "June 2026 core update",
+    "updates": [
+      {
+        "created": "2026-07-15T12:00:00+00:00",
+        "modified": "2026-07-15T12:00:00+00:00",
+        "when": "2026-07-15T12:00:00+00:00",
+        "text": "The rollout was complete.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      },
+      {
+        "created": "2026-06-24T16:00:00+00:00",
+        "modified": "2026-06-24T16:00:00+00:00",
+        "when": "2026-06-24T16:00:00+00:00",
+        "text": "Released the June 2026 core update. The rollout may take up to 2 weeks to complete.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      }
+    ],
+    "most_recent_update": {
+      "created": "2026-07-15T12:00:00+00:00",
+      "modified": "2026-07-15T12:00:00+00:00",
+      "when": "2026-07-15T12:00:00+00:00",
+      "text": "The rollout was complete.",
+      "status": "AVAILABLE",
+      "affected_locations": []
+    },
+    "status_impact": "SERVICE_INFORMATION",
+    "severity": "low",
+    "service_key": "aUeNbSZtpRtPVmjQb9WL",
+    "service_name": "Ranking",
+    "affected_products": [
+      {
+        "title": "Ranking",
+        "id": "aUeNbSZtpRtPVmjQb9WL"
+      }
+    ],
+    "uri": "incidents/Fe4gH6jKl9mNb2vCx5Zq",
+    "currently_affected_locations": [],
+    "previously_affected_locations": [],
+    "end": "2026-07-15T12:00:00+00:00"
+  },
+  {
+    "id": "Pw8oI3uYt6rEq1wSa4Dx",
+    "number": "1000185",
+    "begin": "2026-05-12T08:00:00+00:00",
+    "created": "2026-05-12T08:00:00+00:00",
+    "modified": "2026-05-13T20:00:00+00:00",
+    "external_desc": "Indexing issue affecting a small number of sites",
+    "updates": [
+      {
+        "created": "2026-05-13T20:00:00+00:00",
+        "modified": "2026-05-13T20:00:00+00:00",
+        "when": "2026-05-13T20:00:00+00:00",
+        "text": "The issue is resolved.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      },
+      {
+        "created": "2026-05-12T08:00:00+00:00",
+        "modified": "2026-05-12T08:00:00+00:00",
+        "when": "2026-05-12T08:00:00+00:00",
+        "text": "We're investigating: Indexing issue affecting a small number of sites.",
+        "status": "SERVICE_DISRUPTION",
+        "affected_locations": []
+      }
+    ],
+    "most_recent_update": {
+      "created": "2026-05-13T20:00:00+00:00",
+      "modified": "2026-05-13T20:00:00+00:00",
+      "when": "2026-05-13T20:00:00+00:00",
+      "text": "The issue is resolved.",
+      "status": "AVAILABLE",
+      "affected_locations": []
+    },
+    "status_impact": "SERVICE_DISRUPTION",
+    "severity": "medium",
+    "service_key": "MqfHzS7b1fJvXrGKiHHz",
+    "service_name": "Indexing",
+    "affected_products": [
+      {
+        "title": "Indexing",
+        "id": "MqfHzS7b1fJvXrGKiHHz"
+      }
+    ],
+    "uri": "incidents/Pw8oI3uYt6rEq1wSa4Dx",
+    "currently_affected_locations": [],
+    "previously_affected_locations": [],
+    "end": "2026-05-13T20:00:00+00:00"
+  },
+  {
+    "id": "Lk9jH2gFd5sAq8wEr3Ty",
+    "number": "1000148",
+    "begin": "2026-04-08T17:00:00+00:00",
+    "created": "2026-04-08T17:00:00+00:00",
+    "modified": "2026-04-22T09:00:00+00:00",
+    "external_desc": "April 2026 reviews update",
+    "updates": [
+      {
+        "created": "2026-04-22T09:00:00+00:00",
+        "modified": "2026-04-22T09:00:00+00:00",
+        "when": "2026-04-22T09:00:00+00:00",
+        "text": "The rollout was complete.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      },
+      {
+        "created": "2026-04-08T17:00:00+00:00",
+        "modified": "2026-04-08T17:00:00+00:00",
+        "when": "2026-04-08T17:00:00+00:00",
+        "text": "Released the April 2026 reviews update. The rollout may take up to 2 weeks to complete.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      }
+    ],
+    "most_recent_update": {
+      "created": "2026-04-22T09:00:00+00:00",
+      "modified": "2026-04-22T09:00:00+00:00",
+      "when": "2026-04-22T09:00:00+00:00",
+      "text": "The rollout was complete.",
+      "status": "AVAILABLE",
+      "affected_locations": []
+    },
+    "status_impact": "SERVICE_INFORMATION",
+    "severity": "low",
+    "service_key": "aUeNbSZtpRtPVmjQb9WL",
+    "service_name": "Ranking",
+    "affected_products": [
+      {
+        "title": "Ranking",
+        "id": "aUeNbSZtpRtPVmjQb9WL"
+      }
+    ],
+    "uri": "incidents/Lk9jH2gFd5sAq8wEr3Ty",
+    "currently_affected_locations": [],
+    "previously_affected_locations": [],
+    "end": "2026-04-22T09:00:00+00:00"
+  },
+  {
+    "id": "Mn1bV4cXz7aSd0fGh6Jk",
+    "number": "1000111",
+    "begin": "2026-03-11T16:00:00+00:00",
+    "created": "2026-03-11T16:00:00+00:00",
+    "modified": "2026-03-29T18:00:00+00:00",
+    "external_desc": "March 2026 core update",
+    "updates": [
+      {
+        "created": "2026-03-29T18:00:00+00:00",
+        "modified": "2026-03-29T18:00:00+00:00",
+        "when": "2026-03-29T18:00:00+00:00",
+        "text": "The rollout was complete.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      },
+      {
+        "created": "2026-03-11T16:00:00+00:00",
+        "modified": "2026-03-11T16:00:00+00:00",
+        "when": "2026-03-11T16:00:00+00:00",
+        "text": "Released the March 2026 core update. The rollout may take up to 2 weeks to complete.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      }
+    ],
+    "most_recent_update": {
+      "created": "2026-03-29T18:00:00+00:00",
+      "modified": "2026-03-29T18:00:00+00:00",
+      "when": "2026-03-29T18:00:00+00:00",
+      "text": "The rollout was complete.",
+      "status": "AVAILABLE",
+      "affected_locations": []
+    },
+    "status_impact": "SERVICE_INFORMATION",
+    "severity": "low",
+    "service_key": "aUeNbSZtpRtPVmjQb9WL",
+    "service_name": "Ranking",
+    "affected_products": [
+      {
+        "title": "Ranking",
+        "id": "aUeNbSZtpRtPVmjQb9WL"
+      }
+    ],
+    "uri": "incidents/Mn1bV4cXz7aSd0fGh6Jk",
+    "currently_affected_locations": [],
+    "previously_affected_locations": [],
+    "end": "2026-03-29T18:00:00+00:00"
+  },
+  {
+    "id": "Qa3sD6fGh9jKl2zXc5Vb",
+    "number": "1000074",
+    "begin": "2026-02-18T21:40:00+00:00",
+    "created": "2026-02-18T21:40:00+00:00",
+    "modified": "2026-02-19T02:10:00+00:00",
+    "external_desc": "Serving disruption in Google Search results",
+    "updates": [
+      {
+        "created": "2026-02-19T02:10:00+00:00",
+        "modified": "2026-02-19T02:10:00+00:00",
+        "when": "2026-02-19T02:10:00+00:00",
+        "text": "The issue is resolved.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      },
+      {
+        "created": "2026-02-18T21:40:00+00:00",
+        "modified": "2026-02-18T21:40:00+00:00",
+        "when": "2026-02-18T21:40:00+00:00",
+        "text": "We're investigating: Serving disruption in Google Search results.",
+        "status": "SERVICE_DISRUPTION",
+        "affected_locations": []
+      }
+    ],
+    "most_recent_update": {
+      "created": "2026-02-19T02:10:00+00:00",
+      "modified": "2026-02-19T02:10:00+00:00",
+      "when": "2026-02-19T02:10:00+00:00",
+      "text": "The issue is resolved.",
+      "status": "AVAILABLE",
+      "affected_locations": []
+    },
+    "status_impact": "SERVICE_DISRUPTION",
+    "severity": "medium",
+    "service_key": "Gu5mn2kRiBs3yfGu1b8Q",
+    "service_name": "Serving",
+    "affected_products": [
+      {
+        "title": "Serving",
+        "id": "Gu5mn2kRiBs3yfGu1b8Q"
+      }
+    ],
+    "uri": "incidents/Qa3sD6fGh9jKl2zXc5Vb",
+    "currently_affected_locations": [],
+    "previously_affected_locations": [],
+    "end": "2026-02-19T02:10:00+00:00"
+  },
+  {
+    "id": "Zx7cV0bNm3qWe6rTy9Ui",
+    "number": "1000037",
+    "begin": "2026-01-20T17:00:00+00:00",
+    "created": "2026-01-20T17:00:00+00:00",
+    "modified": "2026-02-03T12:00:00+00:00",
+    "external_desc": "January 2026 helpful content system improvement",
+    "updates": [
+      {
+        "created": "2026-02-03T12:00:00+00:00",
+        "modified": "2026-02-03T12:00:00+00:00",
+        "when": "2026-02-03T12:00:00+00:00",
+        "text": "The rollout was complete.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      },
+      {
+        "created": "2026-01-20T17:00:00+00:00",
+        "modified": "2026-01-20T17:00:00+00:00",
+        "when": "2026-01-20T17:00:00+00:00",
+        "text": "Released the January 2026 helpful content system improvement. The rollout may take up to 2 weeks to complete.",
+        "status": "AVAILABLE",
+        "affected_locations": []
+      }
+    ],
+    "most_recent_update": {
+      "created": "2026-02-03T12:00:00+00:00",
+      "modified": "2026-02-03T12:00:00+00:00",
+      "when": "2026-02-03T12:00:00+00:00",
+      "text": "The rollout was complete.",
+      "status": "AVAILABLE",
+      "affected_locations": []
+    },
+    "status_impact": "SERVICE_INFORMATION",
+    "severity": "low",
+    "service_key": "aUeNbSZtpRtPVmjQb9WL",
+    "service_name": "Ranking",
+    "affected_products": [
+      {
+        "title": "Ranking",
+        "id": "aUeNbSZtpRtPVmjQb9WL"
+      }
+    ],
+    "uri": "incidents/Zx7cV0bNm3qWe6rTy9Ui",
+    "currently_affected_locations": [],
+    "previously_affected_locations": [],
+    "end": "2026-02-03T12:00:00+00:00"
+  }
+]

@@ -3,6 +3,7 @@ import {
   type ChannelKey,
   type PublishMode,
 } from "@/lib/content-channels";
+import type { WebsiteJourneyFacts } from "@/lib/website-analytics/health/view-types";
 import { integrationsHref } from "@/lib/works/starter-cards";
 
 // The shape of the "what is next" layer that walks a client from a saved
@@ -89,6 +90,10 @@ export type JourneySnapshot = {
   weeklyDraft?: { workId: string; count: number };
   // Work-scoped: this chat holds an unsaved plan draft.
   openDraftHere?: boolean;
+  // GA-F3: Google Analytics bağlantısı ve ölçüm düzeltmesi (yalnız GA_HEALTH açıkken).
+  website?: WebsiteJourneyFacts;
+  // SC-F3: en yeni açık kritik arama sağlığı uyarısı ve kritik uyarı sayısı.
+  searchCritical?: { alertId: string; title: string; count: number };
 };
 
 export type NextStepAction =
@@ -120,7 +125,13 @@ export type NextStepAction =
   // Open the chat that holds the weekly plan draft.
   | { kind: "open_weekly_draft"; workId: string; count: number }
   // What the measurement loop reported about published pieces.
-  | { kind: "show_results"; count: number };
+  | { kind: "show_results"; count: number }
+  // GA-F3: alan adı olan ama Google Analytics bağlamamış projeye sessiz öneri.
+  | { kind: "connect_analytics" }
+  // GA-F3: en önemli açık ölçüm sorunu; Website panelindeki kontrole gider.
+  | { kind: "fix_tracking"; checkKey: string; href: string }
+  // Open critical search health issue (SC-F3): the Search page's health section.
+  | { kind: "fix_search_issue"; alertId: string; count: number };
 
 export type NextStep = {
   key: string;
@@ -223,6 +234,12 @@ export function nextStepHref(
         : `/projects/${projectId}/integrations`;
     case "open_weekly_draft":
       return `/projects/${projectId}?work=${encodeURIComponent(action.workId)}`;
+    case "connect_analytics":
+      return `/projects/${projectId}/integrations?integration=google_analytics`;
+    case "fix_tracking":
+      return action.href;
+    case "fix_search_issue":
+      return `/projects/${projectId}/arama?issue=${encodeURIComponent(action.alertId)}#health`;
     default:
       return workId
         ? `/projects/${projectId}?work=${encodeURIComponent(workId)}&next=${action.kind}`
@@ -264,6 +281,8 @@ export const NEXT_STEP_KINDS: readonly NextStepAction["kind"][] = [
   "plan_from_ideas",
   "open_weekly_draft",
   "show_results",
+  "connect_analytics",
+  "fix_tracking",
 ];
 
 // The kinds a `?next=` landing may run by itself. approve_plan decides on the

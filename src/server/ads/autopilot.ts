@@ -106,6 +106,8 @@ export const AdsAutopilot = {
           projectId,
           kind: "TRACKING_STALE",
           status: { in: ["OPEN", "ACKED"] },
+          // Yalnız Meta uyarıları (site uyarıları source taşır).
+          source: null,
         },
       }),
     ]);

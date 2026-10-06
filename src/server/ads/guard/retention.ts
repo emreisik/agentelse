@@ -27,7 +27,12 @@ export const AdsRetention = {
       }),
       prisma.adsObject.deleteMany({ where: { goneAt: { lt: before(90) } } }),
       prisma.adsAlert.deleteMany({
-        where: { status: "RESOLVED", resolvedAt: { lt: before(180) } },
+        where: {
+          status: "RESOLVED",
+          resolvedAt: { lt: before(180) },
+          // Site uyarılarının saklama süresi kendi adımlarında (ga.health.housekeeping).
+          source: null,
+        },
       }),
       prisma.adsWebhookEvent.deleteMany({
         where: { receivedAt: { lt: before(14) } },

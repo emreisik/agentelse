@@ -6,7 +6,7 @@ import type {
   PlanItemStage,
 } from "@/lib/journey";
 
-import { computeNextSteps } from "./next-steps";
+import { computeNextSteps, nextStepTitlesForPrompt } from "./next-steps";
 
 const TODAY = "2026-10-01";
 
@@ -515,5 +515,160 @@ describe("computeNextSteps, Work-scoped snapshot", () => {
     const connect = work.find((s) => s.key === "connect-instagram");
     expect(connect?.quiet).toBe(false);
     expect(work.filter((s) => s.quiet)).toHaveLength(0);
+  });
+});
+
+describe("computeNextSteps, website measurement (GA-F3)", () => {
+  const result = {
+    creativeId: "c-r",
+    title: "R",
+    where: "Instagram · Post",
+    check: "24h engagement check",
+    observation: "Good reach.",
+    checkedAt: "2026-09-30T10:00:00.000Z",
+  };
+  const fix = (checkKey: "MH1" | "MH5", critical: boolean) => ({
+    analytics: "connected" as const,
+    hasDomain: true,
+    fix: {
+      checkKey,
+      title: `Fix ${checkKey}`,
+      href: `/projects/p/site#ga-${checkKey.toLowerCase()}`,
+      critical,
+    },
+  });
+
+  it("changes nothing without website facts", () => {
+    const items = [item("IN_REVIEW", "2026-12-01")];
+    expect(computeNextSteps(snap(items, { website: undefined }))).toEqual(
+      computeNextSteps(snap(items)),
+    );
+  });
+
+  it("offers a quiet connect step to a project with a domain, outside the cap", () => {
+    const steps = computeNextSteps(
+      snap(
+        [item("IN_REVIEW", "2026-10-02"), item("PLANNED", "2026-10-02")],
+        {
+          results: [result],
+          website: { analytics: "not_connected", hasDomain: true, fix: null },
+        },
+      ),
+    );
+    expect(steps.filter((step) => !step.quiet)).toHaveLength(3);
+    expect(steps.at(-1)).toMatchObject({
+      key: "connect-analytics",
+      quiet: true,
+      action: { kind: "connect_analytics" },
+    });
+  });
+
+  it("says nothing about Google Analytics without a domain", () => {
+    const items = [item("IN_REVIEW", "2026-12-01")];
+    expect(
+      keys(
+        snap(items, {
+          website: { analytics: "not_connected", hasDomain: false, fix: null },
+        }),
+      ),
+    ).toEqual(keys(snap(items)));
+  });
+
+  it("puts a critical tracking fix before Review", () => {
+    expect(
+      keys(snap([item("IN_REVIEW", "2026-12-01")], { website: fix("MH1", true) })),
+    ).toEqual(["fix-tracking-MH1", "review"]);
+  });
+
+  it("puts a non-critical fix after the results", () => {
+    const steps = computeNextSteps(
+      snap([item("IN_REVIEW", "2026-12-01")], {
+        results: [result],
+        website: fix("MH5", false),
+      }),
+    );
+    expect(steps.map((step) => step.key)).toEqual([
+      "review",
+      "results",
+      "fix-tracking-MH5",
+    ]);
+    expect(steps[2]).toMatchObject({
+      tone: "next",
+      label: "Fix tracking",
+      action: {
+        kind: "fix_tracking",
+        checkKey: "MH5",
+        href: "/projects/p/site#ga-mh5",
+      },
+    });
+  });
+
+  it("shows a critical fix before there is a plan", () => {
+    expect(keys(snap([], { ideaPool: 2, website: fix("MH1", true) }))).toEqual([
+      "fix-tracking-MH1",
+      "plan-from-ideas",
+    ]);
+  });
+});
+
+describe("computeNextSteps, search health (SC-F3)", () => {
+  const searchCritical = { alertId: "a1", title: "Your homepage is set to noindex", count: 3 };
+
+  it("puts the search issue first on both paths", () => {
+    const empty = computeNextSteps(snap([], { ideaPool: 2, searchCritical }));
+    expect(empty[0]).toEqual({
+      key: "fix-search-issue",
+      tone: "blocker",
+      label: "Fix",
+      title: "Your homepage is set to noindex (+2 more search issues)",
+      action: { kind: "fix_search_issue", alertId: "a1", count: 3 },
+    });
+    expect(keys(snap([item("IN_REVIEW", "2026-12-01")], { searchCritical }))).toEqual([
+      "fix-search-issue",
+      "review",
+    ]);
+  });
+
+  it("changes nothing without a search issue", () => {
+    const items = [item("IN_REVIEW", "2026-12-01")];
+    expect(keys(snap(items, { searchCritical: undefined }))).toEqual(["review"]);
+    expect(keys(snap([]))).toEqual([]);
+  });
+});
+
+describe("nextStepTitlesForPrompt", () => {
+  it("never passes GA4 or Search Console alert titles to the chat model", () => {
+    const steps = computeNextSteps(
+      snap([item("IN_REVIEW", "2026-12-01")], {
+        searchCritical: {
+          alertId: "a1",
+          title: "Your homepage dropped out of Google's index",
+          count: 2,
+        },
+        website: {
+          analytics: "connected",
+          hasDomain: true,
+          fix: {
+            checkKey: "MH1",
+            title: "No data has reached Google Analytics in 48 hours",
+            href: "/projects/p/site#ga-mh1",
+            critical: true,
+          },
+        },
+      }),
+    );
+    const titles = nextStepTitlesForPrompt(steps);
+    expect(titles).toHaveLength(steps.length);
+    expect(titles.join(" ")).not.toContain("dropped out of Google's index");
+    expect(titles.join(" ")).not.toContain("reached Google Analytics");
+    expect(titles).toContain(
+      "Fix a Google Search issue (the client sees a Fix button).",
+    );
+    expect(titles).toContain(
+      "Fix a website tracking issue (the client sees a Fix tracking button).",
+    );
+    // Diğer adımlar olduğu gibi.
+    const review = steps.find((step) => step.key === "review");
+    expect(titles).toContain(review?.title);
   });
 });

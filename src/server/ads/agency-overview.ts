@@ -87,6 +87,8 @@ export async function loadAgencyOverview(
           where: {
             adsAccountId: { in: ids },
             status: { in: ["OPEN", "ACKED"] },
+            // Yalnız Meta uyarıları (site uyarıları source taşır).
+            source: null,
           },
           _count: { _all: true },
         })

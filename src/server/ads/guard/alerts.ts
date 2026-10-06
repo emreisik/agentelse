@@ -3,7 +3,10 @@ import "server-only";
 import type { AdsAlert, AdsSeverity, Prisma } from "@prisma/client";
 
 import { appUrl } from "@/lib/app-url";
+import { isSiteAlertSource } from "@/lib/monitoring/site-alert-href";
+import { siteAlertTelegramText } from "@/lib/monitoring/site-alert-text";
 import { prisma } from "@/lib/prisma";
+import { GaFlags } from "@/lib/website-analytics/flags";
 import { sendTelegramMessage } from "@/server/notifications/telegram.service";
 
 // Tekilleştirilmiş reklam uyarıları (docs/meta-ads-plan.md §3.6 Uyarı
@@ -23,6 +26,8 @@ export type AlertInput = {
   title: string;
   detail?: string | null;
   data?: Record<string, unknown>;
+  // null = Meta Ads; "GA4" | "GSC" | "SEO" site uyarıları (GK8).
+  source?: string | null;
 };
 
 const RENOTIFY_MS = 24 * 60 * 60_000;
@@ -33,7 +38,20 @@ export function telegramTextFor(alert: {
   kind: string;
   projectName: string;
   projectId: string;
+  source?: string | null;
 }): string {
+  // Site uyarıları (GA/GSC/SEO) notifyIfDue'dan geçmez; bu dal yalnız savunma
+  // amaçlıdır ve SiteAlerts'in sabit, sayısız ifadelerini kullanır. Operatör
+  // sohbeti HTML kipinde olduğu için proje adı kaçışlanır.
+  if (isSiteAlertSource(alert.source)) {
+    return siteAlertTelegramText({
+      source: alert.source,
+      kind: alert.kind,
+      projectName: escapeHtml(alert.projectName),
+      projectId: alert.projectId,
+      websitePage: GaFlags.websitePage(),
+    });
+  }
   const what = TELEGRAM_KIND_TEXT[alert.kind] ?? "needs your attention";
   const link = appUrl(`/projects/${alert.projectId}/ads`).toString();
   return `Ads alert for ${escapeHtml(alert.projectName)}: ${what}. Open Agentelse: ${link}`;
@@ -59,6 +77,8 @@ function escapeHtml(value: string): string {
 }
 
 async function notifyIfDue(alert: AdsAlert, now: Date): Promise<void> {
+  // Site uyarıları (GA/GSC/SEO) operatöre gitmez; SiteAlerts projenin kendi Telegram'ına gönderir (Limited Use).
+  if (alert.source != null) return;
   if (alert.severity !== "CRITICAL" || alert.status !== "OPEN") return;
   // CAS: deploy örtüşmesinde iki kopya aynı uyarıyı iki kez göndermez.
   const claimed = await prisma.adsAlert.updateMany({
@@ -81,6 +101,7 @@ async function notifyIfDue(alert: AdsAlert, now: Date): Promise<void> {
       kind: alert.kind,
       projectName: project?.name ?? "your project",
       projectId: alert.projectId,
+      source: alert.source,
     }),
   );
 }
@@ -104,6 +125,7 @@ export const AdsAlerts = {
       detail: input.detail ?? null,
       data: (input.data ?? undefined) as Prisma.InputJsonValue | undefined,
       lastSeenAt: now,
+      source: input.source ?? null,
     };
     let alert: AdsAlert;
     if (!existing) {
@@ -176,6 +198,8 @@ export const AdsAlerts = {
         projectId: input.projectId,
         kind: { in: [...input.kinds] },
         status: { in: ["OPEN", "ACKED", "MUTED"] },
+        // Ads bekçisi site uyarılarını (GA/GSC/SEO) asla kapatmaz.
+        source: null,
         ...(input.adsAccountId ? { adsAccountId: input.adsAccountId } : {}),
       },
       select: { id: true, dedupeKey: true },
@@ -215,10 +239,19 @@ export const AdsAlerts = {
     });
   },
 
-  // Açık uyarılar, önce en ciddi ve en yeni.
-  async listOpen(projectId: string, limit = 20): Promise<AdsAlert[]> {
+  // Açık uyarılar, önce en ciddi ve en yeni. Meta ekranları yalnız kendi
+  // uyarılarını görür (source boş).
+  async listOpen(
+    projectId: string,
+    limit = 20,
+    options: { source?: string | null } = {},
+  ): Promise<AdsAlert[]> {
     const rows = await prisma.adsAlert.findMany({
-      where: { projectId, status: { in: ["OPEN", "ACKED"] } },
+      where: {
+        projectId,
+        status: { in: ["OPEN", "ACKED"] },
+        source: options.source ?? null,
+      },
       orderBy: { lastSeenAt: "desc" },
       take: limit * 2,
     });

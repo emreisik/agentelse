@@ -36,6 +36,7 @@ import {
   buildUserInput,
   trimHistory,
 } from "./history";
+import { nextStepTitlesForPrompt } from "@/server/agency/journey/next-steps";
 import { loadNextSteps } from "@/server/agency/journey/snapshot";
 import { loadIdeaPoolForPrompt } from "@/server/chat/idea-pool";
 import { MemoryService } from "@/server/memory/memory-service";
@@ -604,7 +605,8 @@ export async function* runChatAgent(
           brandScan,
           // The note only where the tool is really offered (not ON_HOLD).
           guidedSetup: tools.some((tool) => tool.name === "start_guided_setup"),
-          nextSteps: nextSteps.map((step) => step.title),
+          // Google'dan türeyen adımlar (GA4/GSC uyarıları) sabit metinle.
+          nextSteps: nextStepTitlesForPrompt(nextSteps),
           work: workForPrompt,
           ...(moduleKey ? { module: moduleKey } : {}),
           ...(worksPlanSlots

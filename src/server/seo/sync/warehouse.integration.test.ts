@@ -446,8 +446,25 @@ describeIntegration("GSC warehouse sync (mock Google)", () => {
 
   it("deletes the stored data and recreates the link with the same settings", async () => {
     const before = await primary();
+    // SC-F3: Search Console'dan türeyen uyarı da silinir.
+    await prisma.adsAlert.create({
+      data: {
+        workspaceId: fixture.workspaceId,
+        projectId: fixture.projectId,
+        kind: "GSC_SEARCH_DROP",
+        severity: "WARN",
+        dedupeKey: "gsc:GSC_SEARCH_DROP",
+        source: "GSC",
+        title: "Search clicks dropped",
+      },
+    });
     const result = await deleteGscDataForProject(fixture.projectId);
     expect(result.deletedLinks).toBeGreaterThanOrEqual(1);
+    expect(
+      await prisma.adsAlert.count({
+        where: { projectId: fixture.projectId, source: "GSC" },
+      }),
+    ).toBe(0);
     const link = await primary();
     expect(link.id).not.toBe(before.id);
     expect(link.archive).toBe(false);

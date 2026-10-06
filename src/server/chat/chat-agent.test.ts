@@ -467,8 +467,16 @@ describe("runChatAgent", () => {
 
     it("tells the model what is waiting on the client's plan, in the same words the screen shows", async () => {
       loadNextSteps.mockResolvedValue([
-        { key: "review", title: "3 pieces are ready for your decision." },
-        { key: "produce", title: "4 planned pieces have no content yet." },
+        {
+          key: "review",
+          title: "3 pieces are ready for your decision.",
+          action: { kind: "review_queue", creativeId: "c1", count: 3 },
+        },
+        {
+          key: "produce",
+          title: "4 planned pieces have no content yet.",
+          action: { kind: "produce_plan", planId: "p1", count: 4 },
+        },
       ]);
       const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
 
@@ -478,6 +486,30 @@ describe("runChatAgent", () => {
       expect(note).toContain("Next steps on the client's content plan");
       expect(note).toContain("3 pieces are ready for your decision.");
       expect(note).toContain("4 planned pieces have no content yet.");
+    });
+
+    it("never sends Google-derived alert titles to the model", async () => {
+      loadNextSteps.mockResolvedValue([
+        {
+          key: "fix-search-issue",
+          title: "Your homepage dropped out of Google's index",
+          action: { kind: "fix_search_issue", alertId: "a1", count: 1 },
+        },
+        {
+          key: "fix-tracking-MH1",
+          title: "No data has reached Google Analytics in 48 hours",
+          action: { kind: "fix_tracking", checkKey: "MH1", href: "/x" },
+        },
+      ]);
+      const { model, requests } = scriptedModel([{ text: ["Merhaba"] }]);
+
+      await collect(runChatAgent(baseInput, { model }));
+
+      const note = developerNote(requests);
+      expect(note).toContain("Next steps on the client's content plan");
+      expect(note).not.toContain("dropped out of Google's index");
+      expect(note).not.toContain("reached Google Analytics");
+      expect(note).toContain("Fix a Google Search issue");
     });
 
     it("says nothing when there is nothing to do next", async () => {

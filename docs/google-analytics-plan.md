@@ -988,6 +988,19 @@ Uygulamada plandan farklar (GA-F2 ve sonrası bunlara göre yazılır):
 
 ### GA-F3 — Ölçüm sağlığı denetimi · M
 
+**Durum (6 Ekim):** Yapıldı (bayraklı, canlı denenmedi); uygulanan hâl [measurement-health.md](measurement-health.md)'de. Plandan farklar:
+
+- MH25 GA-F6'ya kaldı.
+- MH17 ambardaki olaylardan.
+- MH13 yalnız saat dilimi.
+- MH15 google/cpc vekili.
+- MH12 son 7 günün ambar maskeleri + haftalık (ve "I fixed it" ile bugünkü) pagePathPlusQueryString yoklaması.
+- Gün içi MH1 ayrı MH1_RT.
+- Değerlendirme yalnız günlük çekimin tamamladığı günlere kadar (completeThrough); eksik gün sıfır sayılır.
+- Uyarılar AdsAlert.source ile SiteAlerts'te; Telegram yalnız projenin kendi sohbetine.
+- Durum GaHealthRun'da.
+- Works kartı yerine Today özeti + sıradaki adım.
+
 **Amaç:** Verinin doğruluğunu sürekli denetlemek ve sorunları sade dille düzelttirmek.
 
 **Kapsam:**

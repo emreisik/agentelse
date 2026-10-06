@@ -50,6 +50,18 @@ describe("stepWeight", () => {
     expect(stepWeight(approve(4))).toBe(4);
   });
 
+  it("brings a hidden search issue step back when more critical issues open", () => {
+    const search = (count: number) =>
+      step("fix-search-issue", {
+        kind: "fix_search_issue",
+        alertId: "a1",
+        count,
+      });
+    const hidden = dismissSteps([search(1)], null, NOW);
+    expect(visibleSteps([search(1)], hidden, NOW + 1)).toEqual([]);
+    expect(visibleSteps([search(2)], hidden, NOW + 1)).toEqual([search(2)]);
+  });
+
   it("is 1 for a step with nothing to count", () => {
     expect(
       stepWeight(step("c", { kind: "connect_channel", channel: "instagram" })),
@@ -69,7 +81,9 @@ describe("visibleSteps", () => {
   it("keeps hidden what the client has seen, also as it shrinks", () => {
     const hidden = dismissSteps([review(9), produce(7)], null, NOW);
     // Deciding on some pieces is progress, not news.
-    expect(visibleSteps([review(7), produce(7)], hidden, NOW + 1000)).toEqual([]);
+    expect(visibleSteps([review(7), produce(7)], hidden, NOW + 1000)).toEqual(
+      [],
+    );
     expect(visibleSteps([review(9)], hidden, NOW + 1000)).toEqual([]);
   });
 

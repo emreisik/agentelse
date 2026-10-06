@@ -5,6 +5,7 @@ import { Globe, Plug, RefreshCw } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { GaFlags } from "@/lib/website-analytics/flags";
+import { gaHealthEnabled } from "@/lib/website-analytics/health/flags";
 import {
   DEFAULT_WEBSITE_PERIOD,
   isWebsitePeriod,
@@ -18,6 +19,7 @@ import {
   buildWebsiteReport,
   type WebsiteLinkInfo,
 } from "@/server/website-analytics/report";
+import { loadMeasurementHealth } from "@/server/website-analytics/health/read";
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionForm } from "@/components/shared/action-form";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -28,6 +30,8 @@ import {
   WebsiteReportBody,
 } from "@/components/website-analytics/website-report-view";
 import { WebsiteLiveStrip } from "@/components/website-analytics/website-live-strip";
+import { MeasurementHealthPanel } from "@/components/website-analytics/measurement-health-panel";
+import { MeasurementScoreChip } from "@/components/website-analytics/measurement-score";
 
 // "Website" sayfası (docs/google-analytics-plan.md §3.9, GA-F2 v1): Google
 // Analytics ambarından karşılaştırmalı KPI'lar, günlük trend, kanallar,
@@ -113,6 +117,11 @@ export default async function WebsitePage({
     : DEFAULT_WEBSITE_PERIOD;
   const base = `/projects/${projectId}/site`;
   const result = await buildWebsiteReport(projectId, periodKey);
+  // GA-F3 (GA_HEALTH): ölçüm sağlığı paneli ve başlıktaki puan.
+  const measurement =
+    result.state === "ready" && gaHealthEnabled()
+      ? await loadMeasurementHealth(projectId).catch(() => null)
+      : null;
   const connectorsHref = `/projects/${projectId}/integrations?integration=google_analytics`;
   const headerLink =
     result.state === "waiting"
@@ -128,6 +137,12 @@ export default async function WebsitePage({
           <Header projectName={project.name} link={headerLink} />
           {result.state === "ready" ? (
             <div className="flex items-center gap-2">
+              {measurement ? (
+                <MeasurementScoreChip
+                  summary={measurement.summary}
+                  href="#measurement-health"
+                />
+              ) : null}
               <WebsitePeriodSelector base={base} value={periodKey} />
               <ActionForm
                 action={refreshWebsiteAnalyticsAction}
@@ -186,6 +201,9 @@ export default async function WebsitePage({
             ) : (
               <WebsiteReportBody report={result.report} />
             )}
+            {measurement ? (
+              <MeasurementHealthPanel projectId={projectId} health={measurement} />
+            ) : null}
           </>
         )}
       </div>

@@ -62,7 +62,12 @@ export type BriefFactsInput = {
   hasAnalytics: boolean;
   extras: Pick<
     BriefFacts,
-    "todayItems" | "yesterdayPublished" | "yesterdayFailed" | "shortlistedIdeas"
+    | "todayItems"
+    | "yesterdayPublished"
+    | "yesterdayFailed"
+    | "shortlistedIdeas"
+    | "siteAlerts"
+    | "searchIssues"
   >;
   // For Today this is the PROJECT-WIDE snapshot (Today is project-wide).
   journey: JourneySnapshot | null;
@@ -99,6 +104,12 @@ export function briefFactsFor(input: BriefFactsInput): BriefFacts {
     ...(input.goalTitle ? { goalTitle: input.goalTitle } : {}),
     shortlistedIdeas: input.extras.shortlistedIdeas,
     channelsWithoutWork: input.channelsWithoutWork,
+    ...(input.extras.siteAlerts && input.extras.siteAlerts.length > 0
+      ? { siteAlerts: input.extras.siteAlerts }
+      : {}),
+    ...(input.extras.searchIssues?.length
+      ? { searchIssues: input.extras.searchIssues }
+      : {}),
   };
 }
 

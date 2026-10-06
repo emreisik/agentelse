@@ -8,6 +8,7 @@ const PAGES = [
   { path: "/agencies", priority: 0.8 },
   { path: "/pricing", priority: 0.8 },
   { path: "/security", priority: 0.6 },
+  { path: "/bot", priority: 0.3 },
   { path: "/about", priority: 0.5 },
   { path: "/contact", priority: 0.5 },
 ];

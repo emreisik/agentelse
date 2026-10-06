@@ -30,6 +30,8 @@ vi.mock("@/lib/app-url", () => ({
   appUrl: (path: string) => new URL(path, "https://app.example"),
 }));
 
+import { SEARCH_TELEGRAM_FALLBACK } from "@/lib/seo/health/alert-kinds";
+
 import { AdsAlerts, telegramTextFor } from "./alerts";
 
 const now = new Date("2026-10-06T10:00:00Z");
@@ -96,6 +98,42 @@ describe("AdsAlerts.raise", () => {
     expect(mocks.update.mock.calls[0]![0].data.status).toBeUndefined();
     expect(mocks.telegram).not.toHaveBeenCalled();
   });
+
+  it("notifyIfDue never sends site alerts to the operator", async () => {
+    const siteInput = {
+      ...input,
+      kind: "GA_MH1",
+      dedupeKey: "ga4:GA_MH1:l1",
+      source: "GA4",
+    };
+    mocks.findUnique.mockResolvedValue(null);
+    mocks.upsert.mockResolvedValue({ id: "a9", ...siteInput, status: "OPEN" });
+    await AdsAlerts.raise(siteInput, now);
+    expect(mocks.upsert.mock.calls[0]![0].create.source).toBe("GA4");
+    expect(mocks.telegram).not.toHaveBeenCalled();
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("a critical GSC alert never reaches Telegram", async () => {
+    const gscInput = {
+      ...input,
+      kind: "GSC_SEARCH_DROP",
+      dedupeKey: "gsc:GSC_SEARCH_DROP",
+      source: "GSC",
+    };
+    mocks.findUnique.mockResolvedValue(null);
+    mocks.upsert.mockResolvedValue({ id: "a10", ...gscInput, status: "OPEN" });
+    await AdsAlerts.raise(gscInput, now);
+    expect(mocks.telegram).not.toHaveBeenCalled();
+  });
+});
+
+describe("AdsAlerts.listOpen", () => {
+  it("listOpen only returns Meta alerts by default", async () => {
+    mocks.findMany.mockResolvedValue([]);
+    await AdsAlerts.listOpen("p1");
+    expect(mocks.findMany.mock.calls.at(-1)![0].where.source).toBeNull();
+  });
 });
 
 describe("AdsAlerts.resolveMissing", () => {
@@ -111,6 +149,8 @@ describe("AdsAlerts.resolveMissing", () => {
     );
     expect(count).toBe(1);
     expect(mocks.updateMany.mock.calls.at(-1)![0].where).toEqual({ id: { in: ["a2"] } });
+    // Ads bekçisi site uyarılarını kapatmaz.
+    expect(mocks.findMany.mock.calls.at(-1)![0].where.source).toBeNull();
   });
 });
 
@@ -121,5 +161,53 @@ describe("telegramTextFor", () => {
     ).toBe(
       "Ads alert for A&amp;B: the ad account has a payment issue. Open Agentelse: https://app.example/projects/p1/ads",
     );
+  });
+
+  it("telegramTextFor links GA alerts without numbers", () => {
+    vi.stubEnv("GA_WEBSITE_PAGE", "true");
+    try {
+      const text = telegramTextFor({
+        kind: "GA_MH1",
+        projectName: "Acme",
+        projectId: "p1",
+        source: "GA4",
+      });
+      expect(text).toContain("/projects/p1/site");
+      expect(text.replace(/https:\/\/\S+/g, "")).not.toMatch(/\d/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("search alerts carry no Google findings, numbers, queries or URLs, only the Search page link", () => {
+    const seo = telegramTextFor({
+      kind: "SEO_KEY_PAGE_NOINDEX",
+      projectName: "A&B",
+      projectId: "proj",
+      source: "SEO",
+    });
+    expect(seo).toContain("Search alert for A&amp;B: a key page is set to noindex.");
+    expect(seo).toContain("/projects/proj/arama#health");
+    const withoutLink = seo.replace(/https:\/\/\S+/g, "");
+    expect(withoutLink).not.toMatch(/\d/);
+    expect(withoutLink).not.toContain("http");
+
+    const gsc = telegramTextFor({
+      kind: "GSC_SEARCH_DROP",
+      projectName: "A&B",
+      projectId: "proj",
+      source: "GSC",
+    });
+    expect(gsc).toContain(SEARCH_TELEGRAM_FALLBACK);
+    expect(gsc).not.toContain("dropped");
+
+    expect(
+      telegramTextFor({
+        kind: "SEO_NOT_A_KIND",
+        projectName: "A&B",
+        projectId: "proj",
+        source: "SEO",
+      }),
+    ).toContain(SEARCH_TELEGRAM_FALLBACK);
   });
 });

@@ -393,6 +393,21 @@ const SECTIONS: PolicySection[] = [
           not stored.
         </p>
         <p>
+          To check that your Google Analytics tracking works, Agentelse also
+          runs measurement checks: it compares your stored daily summaries,
+          reads your property&rsquo;s settings and, once a week (or when you ask
+          us to check again), asks Google for page addresses that look like they
+          contain personal details. We keep only the results and counts (for
+          example how many pages were affected and which parameter names, such
+          as &ldquo;email&rdquo;, appeared), never the addresses or the personal
+          details themselves. Once a week we also open your website&rsquo;s home
+          page and up to five popular pages as &ldquo;AgentelseSiteCheck&rdquo;,
+          following your robots.txt, to see whether the Google Analytics tag is
+          installed. Alerts about these checks are shown in Agentelse and, for
+          critical problems, sent to your project&rsquo;s own Telegram chat if
+          you connected one; they never include your figures.
+        </p>
+        <p>
           For Google Search Console we also keep summaries of how your site
           appears in Google Search: daily totals (clicks, impressions and
           average position) by search type, country, device and search
@@ -409,6 +424,30 @@ const SECTIONS: PolicySection[] = [
           privacy never reach us. Page addresses are stored without query
           strings, and email addresses, phone numbers and similar personal
           details in search queries and addresses are masked.
+        </p>
+        <p>
+          When you connect Google Search Console, or verify your website in
+          Agentelse (with a meta tag on your homepage or a DNS TXT record we look
+          up), our site audit (AgentelseSiteAudit, described at
+          agentelse.com/bot) visits the public pages of that website only: the
+          pages anyone can open, plus its robots.txt and sitemaps. It makes at
+          most one request per second and checks at most 500 pages a week plus a
+          few key pages every 6 hours, and it follows your robots.txt. We store
+          each page&rsquo;s address, status code, title, meta description,
+          headings, language, Open Graph tags, structured-data types, hreflang
+          links, internal links with their link text, and a few technical
+          measurements such as size and response time, plus a copy of your
+          robots.txt. We don&rsquo;t store the page text, only a fingerprint
+          used to spot duplicate pages. For Search Console we also keep
+          Google&rsquo;s index status for a sample of your pages (URL
+          Inspection, at most 200 checks a day), the status of your sitemaps and
+          the alerts based on them; disconnecting Search Console deletes these
+          right away. Alerts based on Search Console data are shown in
+          Agentelse; for a critical one we may also send your project&rsquo;s
+          own Telegram chat a short notice with no figures, pages or findings.
+          Core Web Vitals come from Google&rsquo;s public Chrome
+          UX Report. You can turn the audit off or delete its data anytime on
+          the Search page.
         </p>
         <p>
           Agentelse&rsquo;s use of information received from Google APIs will

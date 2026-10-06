@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Plug, RefreshCw, Search } from "lucide-react";
@@ -18,6 +19,7 @@ import {
 } from "@/server/seo/report";
 import { AppShell } from "@/components/layout/app-shell";
 import { BrandTermsForm } from "@/components/search-analytics/brand-terms-form";
+import { SearchHealthSection } from "@/components/search-health/search-health-section";
 import {
   SearchPeriodSelector,
   SearchReportBody,
@@ -132,6 +134,7 @@ export default async function SearchPage({
     ? sp.period
     : DEFAULT_SEARCH_PERIOD;
   const queryFilter = isSearchQueryFilter(sp.queries) ? sp.queries : "all";
+  const issue = typeof sp.issue === "string" ? sp.issue : null;
   const base = `/projects/${projectId}/arama`;
   const result = await buildSearchReport(projectId, periodKey, { queryFilter });
   const connectorsHref = `/projects/${projectId}/integrations?integration=google_search_console`;
@@ -217,6 +220,11 @@ export default async function SearchPage({
             />
           </>
         )}
+
+        {/* SC-F3 (SEO_HEALTH): indeks ve teknik sağlık bölümü; bayrak kapalıyken bileşen null döner. */}
+        <Suspense fallback={null}>
+          <SearchHealthSection projectId={projectId} issueId={issue} />
+        </Suspense>
       </div>
     </AppShell>
   );

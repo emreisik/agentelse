@@ -198,8 +198,10 @@ export default async function DataDeletionPage({
             account id, the properties or sites you could choose from, the one
             you chose and your last test result. For Search Console it also
             deletes the search history Agentelse stored: daily totals,
-            breakdowns, and weekly and monthly query and page summaries. It
-            also removes
+            breakdowns, and weekly and monthly query and page summaries.
+            Disconnecting Search Console also deletes the URL Inspection
+            results, sitemap status and search alerts based on Search Console
+            that Agentelse stored. It also removes
             Agentelse&rsquo;s access in your Google account, unless the same
             Google account is still used by your other Agentelse Google
             connection. You can remove that access yourself in your Google
@@ -216,6 +218,14 @@ export default async function DataDeletionPage({
               Connectors &gt; Google Search Console &gt; Delete stored data
             </span>
             . The last 16 months then load again from Google.
+          </p>
+          <p>
+            To delete what our site audit stored about your website (page
+            addresses, titles and technical checks), open{" "}
+            <span className="text-foreground">
+              Search &gt; Index &amp; technical health &gt; Delete audit data
+            </span>
+            . You can also turn the audit off there.
           </p>
           <p>
             To also erase reports and suggestions Agentelse built from your

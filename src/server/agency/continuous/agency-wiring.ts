@@ -53,9 +53,17 @@ import { CreativePublishCompletion } from "@/server/commands/creative-publish-co
 import { GoogleAnalyticsScanner } from "@/server/agency/performance/google-analytics-scanner";
 import { GoogleConnectionHealth } from "@/server/integrations/google-connection-health";
 import { GaRetention } from "@/server/website-analytics/retention";
+import { GaHealth } from "@/server/website-analytics/health/runner";
 import { GaSync } from "@/server/website-analytics/sync/runner";
 import { GscRetention } from "@/server/seo/retention";
 import { GscSync } from "@/server/seo/sync/runner";
+import { SeoCrawler } from "@/server/seo/crawl/crawler";
+import { SeoInspection } from "@/server/seo/health/inspection";
+import { GscSitemaps } from "@/server/seo/health/gsc-sitemaps";
+import { SeoCwvJob } from "@/server/seo/health/cwv";
+import { SeoHealth } from "@/server/seo/health/runner";
+import { SearchUpdates } from "@/server/seo/health/updates";
+import { SeoAuditRetention } from "@/server/seo/health/retention";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
 import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
 import { WorkPlanProgressor } from "@/server/agency/work-plans/work-plan-progressor";
@@ -311,6 +319,8 @@ registerAgencyTickStep({
   name: "ga-retention",
   run: () => GaRetention.runDue(),
 });
+// GA-F3 (GA_HEALTH): ölçüm sağlığı denetimi; parmak izli tam değerlendirme + saatlik yalnız-realtime yolu, en çok 5 bağ bir tick'te, haftalık site taraması (tick başına 1). Bayrak kapalıyken hemen 0 döner; odak ayarı bunu kapatmaz.
+registerAgencyTickStep({ name: "ga-health", run: () => GaHealth.runDue(5) });
 // SC-F2 (GSC_SYNC): Search Console ambarının senkronu (≤3 site bir tick'te,
 // site başına CAS kilidi, kota yöneticisi, 90 sn süre) ve günlük saklama
 // temizliği (SK3 arşivi). Bayrak kapalıyken senkron hemen 0 döner; saklama
@@ -320,6 +330,28 @@ registerAgencyTickStep({ name: "gsc-sync", run: () => GscSync.runDue(3) });
 registerAgencyTickStep({
   name: "seo-retention",
   run: () => GscRetention.runDue(),
+});
+// SC-F3 (SEO_HEALTH / SEO_CRAWL): site tarayıcı ve 6 saatlik gerileme bekçisi
+// (saniyede ≤1 istek, robots.txt'ye uyum), bütçeli URL Inspection + GSC
+// sitemap okuması, haftalık CrUX, arama sağlığı kontrolleri (SH1–SH27, puan,
+// uyarılar), Google güncellemeleri takvimi ve saklama. Tarayıcı sağlıktan önce
+// koşar ki bekçinin bulduğu noindex aynı tick'te uyarıya dönsün. Bayraklar
+// kapalıyken hepsi hemen 0 döner; odak ayarı bunları kapatmaz.
+registerAgencyTickStep({ name: "seo-crawl", run: () => SeoCrawler.runDue(3) });
+registerAgencyTickStep({
+  name: "gsc-inspect",
+  run: async () =>
+    (await GscSitemaps.syncDue(3)) + (await SeoInspection.runDue(5)),
+});
+registerAgencyTickStep({ name: "seo-cwv", run: () => SeoCwvJob.runDue(3) });
+registerAgencyTickStep({ name: "seo-health", run: () => SeoHealth.runDue(5) });
+registerAgencyTickStep({
+  name: "search-updates-sync",
+  run: () => SearchUpdates.runDue(),
+});
+registerAgencyTickStep({
+  name: "seo-health-retention",
+  run: () => SeoAuditRetention.runDue(),
 });
 registerAgencyTickStep({
   name: "signal-processing",

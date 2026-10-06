@@ -3,6 +3,7 @@ import "server-only";
 import { dayKeyInTimezone } from "@/lib/timezone";
 import { safeTimezone } from "@/lib/website-analytics/days";
 import { GaFlags } from "@/lib/website-analytics/flags";
+import { gaHealthEnabled } from "@/lib/website-analytics/health/flags";
 import {
   overviewTrend,
   overviewWindow,
@@ -12,6 +13,7 @@ import {
 import { changePercent } from "@/lib/website-analytics/periods";
 import { sumTotals } from "@/lib/website-analytics/totals";
 
+import { loadMeasurementSummaryForLink } from "./health/read";
 import { gaDataThrough, primaryGaLink, readDailyTotals } from "./store";
 
 // Brand sekmesindeki "Website" kartının verisi (GA-F2 bölüm 2,
@@ -57,6 +59,9 @@ export async function loadWebsiteOverview(
     dataThrough: through,
     today,
   });
+  const measurement = gaHealthEnabled()
+    ? await loadMeasurementSummaryForLink(link.id).catch(() => null)
+    : null;
 
   return {
     ok: true,
@@ -70,5 +75,14 @@ export async function loadWebsiteOverview(
     health: health.tone,
     healthLabel: health.label,
     dataThrough: through,
+    ...(measurement
+      ? {
+          measurement: {
+            score: measurement.score,
+            tone: measurement.tone,
+            label: measurement.label,
+          },
+        }
+      : {}),
   };
 }

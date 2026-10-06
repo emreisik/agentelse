@@ -333,3 +333,106 @@ describe("buildDailyBrief: secondary, yesterday, focus", () => {
     expect(buildDailyBrief(facts()).focus).toBeUndefined();
   });
 });
+
+describe("buildDailyBrief: site alerts (GA-F3)", () => {
+  const ga = {
+    id: "site-a1",
+    source: "GA4" as const,
+    title: "Google Analytics stopped receiving data",
+    severity: "CRITICAL" as const,
+    href: "/projects/p1/site#measurement-health",
+  };
+
+  it("adds site alerts as 'website' link rows after the items and counts them", () => {
+    const brief = buildDailyBrief(
+      facts({ todayItems: [item("a", "PLANNED", "instagram")], siteAlerts: [ga] }),
+    );
+    expect(brief.rows.map((row) => row.id)).toEqual(["item-a", "site-a1"]);
+    expect(brief.rows[1]).toMatchObject({
+      group: "website",
+      title: ga.title,
+      actionLabel: "Open",
+      action: { kind: "link", href: ga.href },
+    });
+    expect(brief.summary).toBe(
+      buildDailyBrief(
+        facts({
+          todayItems: [item("a", "PLANNED", "instagram"), item("b", "PLANNED")],
+        }),
+      ).summary,
+    );
+  });
+
+  it("is unchanged without site alerts", () => {
+    const base = facts({ todayItems: [item("a", "PLANNED", "instagram")] });
+    expect(buildDailyBrief({ ...base, siteAlerts: [] })).toEqual(
+      buildDailyBrief(base),
+    );
+  });
+
+  it("drops an alert that is already the next step", () => {
+    const fix = step(
+      { kind: "fix_tracking", checkKey: "MH1", href: ga.href },
+      "Fix tracking",
+      ga.title,
+    );
+    const brief = buildDailyBrief(facts({ siteAlerts: [ga], nextSteps: [fix] }));
+    expect(brief.rows).toEqual([]);
+    expect(brief.next?.step).toBe(fix);
+  });
+});
+
+describe("buildDailyBrief: search issues (SC-F3)", () => {
+  const issue = (id: string) => ({
+    id,
+    title: `Search issue ${id}`,
+    href: `/projects/p/arama?issue=${id}#health`,
+  });
+
+  it("puts the first two critical search issues first, counted once", () => {
+    const brief = buildDailyBrief(
+      facts({
+        todayItems: [item("a", "PLANNED", "instagram")],
+        searchIssues: [issue("s1"), issue("s2"), issue("s3")],
+      }),
+    );
+    expect(brief.rows.slice(0, 2)).toEqual([
+      {
+        id: "search-s1",
+        group: "seo",
+        title: "Search issue s1",
+        actionLabel: "Fix",
+        action: { kind: "link", href: "/projects/p/arama?issue=s1#health" },
+      },
+      {
+        id: "search-s2",
+        group: "seo",
+        title: "Search issue s2",
+        actionLabel: "Fix",
+        action: { kind: "link", href: "/projects/p/arama?issue=s2#health" },
+      },
+    ]);
+    expect(brief.rows).toHaveLength(3);
+    expect(brief.summary).toBe("3 things for today");
+  });
+
+  it("skips a fix_search_issue step when choosing the next row", () => {
+    const search = step(
+      { kind: "fix_search_issue", alertId: "s1", count: 1 },
+      "Fix",
+      "Search issue s1",
+    );
+    const brief = buildDailyBrief(
+      facts({ searchIssues: [issue("s1")], nextSteps: [search, produce] }),
+    );
+    expect(brief.next?.step).toBe(produce);
+    expect(brief.summary).toBe("2 things for today");
+  });
+
+  it("is unchanged without search issues", () => {
+    const base = facts({ nextSteps: [produce] });
+    expect(buildDailyBrief({ ...base, searchIssues: [] })).toEqual(
+      buildDailyBrief(base),
+    );
+  });
+});

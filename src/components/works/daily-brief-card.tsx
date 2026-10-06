@@ -36,6 +36,7 @@ const GROUP_LABEL: Partial<Record<BriefRowGroup, string>> = {
   content: copyText("brief.group.content"),
   seo: copyText("brief.group.seo"),
   ads: copyText("brief.group.ads"),
+  website: copyText("brief.group.website"),
 };
 
 export function nextButtonLabel(next: NonNullable<DailyBrief["next"]>): string {

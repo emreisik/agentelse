@@ -11,6 +11,9 @@ import {
   type GoogleConnectionRef,
 } from "@/server/integrations/google/revoke-policy";
 import { GOOGLE_PROVIDER } from "@/server/integrations/google/services";
+import { deleteSearchConsoleAlerts } from "@/server/seo/health/alerts";
+import { SeoSites } from "@/server/seo/site/sites";
+import { deleteGaHealthAlertsForCredential } from "@/server/website-analytics/health/cleanup";
 
 // Google bağlantısını koparır (GA ya da Search Console; ikisi ayrı ayrı).
 // google-token.ts gibi bir düzenleme adımıdır: REST çağrısı çekirdekte, DB
@@ -113,13 +116,51 @@ export async function disconnectGoogleCredential(
     },
   });
   // Google Analytics ambarı (Ga*) ve Search Console ambarı (Gsc*: bağ, günlük
-  // toplamlar, kırılımlar, sözlükler, haftalık/aylık özetler) bağ silinince
+  // toplamlar, kırılımlar, sözlükler, haftalık/aylık özetler; SC-F3'ten beri
+  // URL Inspection sonuçları, Search Console sitemap durumu ve kapsam
+  // tahminleri: GscUrlInspection, GscSitemap, GscCoverageWeek) bağ silinince
   // cascade ile gider; gizlilik metni "right away" der.
+  // GA-F3: projenin GA ölçüm uyarıları hemen silinir; kontrol sonuçları ve denetim durumu bağ silinince cascade ile gider.
+  // Hata ambar silmesini durdurmasın (token zaten silindi, yeniden deneme
+  // iptali atlar); kalan GA4 uyarılarını GA-F3 temizliği yetim olarak kapatır.
+  await deleteGaHealthAlertsForCredential(credential.id).catch(
+    (error: unknown) => {
+      console.error(
+        "[google-disconnect] measurement alerts could not be deleted:",
+        error instanceof Error ? error.message : error,
+      );
+      return 0;
+    },
+  );
   await prisma.gaPropertyLink.deleteMany({
     where: { credentialId: credential.id },
   });
+  // Search Console'dan türeyen arama sağlığı uyarıları (source GSC) bayraktan
+  // bağımsız hemen silinir; site tarayıcısının kendi uyarıları (SEO) kalır.
+  const searchAlerts = await deleteSearchConsoleAlerts(credential.id).catch(
+    (error: unknown) => {
+      console.error(
+        "[google-disconnect] search alerts could not be deleted:",
+        error instanceof Error ? error.message : error,
+      );
+      return { deleted: 0, projectIds: [] as string[] };
+    },
+  );
   await prisma.gscSiteLink.deleteMany({
     where: { credentialId: credential.id },
   });
+  // Denetimdeki GSC kökenli durum (inceleme kuyruğu, puan, yalnız GSC'den
+  // bilinen sayfalar) silinir; kapsamı Search Console'dan gelen sitenin tarama
+  // verisi sıfırlanır (alan adı doğrulaması korunur).
+  if (searchAlerts.projectIds.length > 0) {
+    await SeoSites.forgetSearchConsoleData(searchAlerts.projectIds, {
+      resetScope: true,
+    }).catch((error: unknown) => {
+      console.error(
+        "[google-disconnect] site audit state could not be cleared:",
+        error instanceof Error ? error.message : error,
+      );
+    });
+  }
   return { revokedAtGoogle };
 }

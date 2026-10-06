@@ -23,6 +23,7 @@ export const FOOTER_COLUMNS = [
       { label: "For agencies", href: "/agencies" },
       { label: "Pricing", href: "/pricing" },
       { label: "Security", href: "/security" },
+      { label: "Our bots", href: "/bot" },
     ],
   },
   {

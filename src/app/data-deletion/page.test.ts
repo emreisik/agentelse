@@ -75,6 +75,14 @@ describe("data deletion page", () => {
     expect(html).toContain("Delete stored data");
   });
 
+  it("says what Disconnect deletes from the search audit, and how to delete the site audit data", async () => {
+    const html = await render();
+    expect(html).toContain(
+      "URL Inspection results, sitemap status and search alerts",
+    );
+    expect(html).toContain("Delete audit data");
+  });
+
   it("ignores a made-up or tampered code and just shows the instructions", async () => {
     for (const bad of [
       "abc",

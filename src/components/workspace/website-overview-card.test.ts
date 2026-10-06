@@ -81,4 +81,17 @@ describe("WebsiteOverviewView", () => {
       render({ status: "done", overview: { ok: false, reason: "off" } }),
     ).toBe("");
   });
+
+  it("shows the measurement score only when there is one", () => {
+    const html = render({
+      status: "done",
+      overview: {
+        ...overview,
+        measurement: { score: 72, tone: "warning", label: "72/100" },
+      },
+    });
+    expect(html).toContain("Tracking 72/100");
+    expect(html).toContain("bg-amber-500");
+    expect(render({ status: "done", overview })).not.toContain("Tracking");
+  });
 });

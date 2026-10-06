@@ -8,15 +8,28 @@ import { prisma } from "@/lib/prisma";
 import { zonedDateTimeToUtc } from "@/lib/timezone";
 import type { BriefFacts } from "@/lib/works/daily-brief";
 import { deriveItemStage } from "@/server/agency/journey/plan-progress";
+import {
+  loadSiteAlertBrief,
+  siteAlertSourcesForBrief,
+} from "@/server/monitoring/site-alert-brief";
+import { loadSearchAttention } from "@/server/seo/health/attention";
 
 // The DB-only extras of the Today Work's daily brief (spec 3.11.3). No Graph,
 // GA or other network call; every read is isolated so one failure zeroes one
 // field instead of the page. The page runs this on every progress refresh, so
-// the budget is four reads in one Promise.all.
+// the budget is four reads in one Promise.all, plus one when site alerts are
+// on (GA-F3) and one when search health is on (SC-F3).
+// SC-F3: bayraklar kapalıyken loadSearchAttention veritabanına hiç gitmez
+// (sıcak yol değişmez); GA-F3 site uyarıları da açık kaynak yoksa sorgu atmaz.
 
 type Extras = Pick<
   BriefFacts,
-  "todayItems" | "yesterdayPublished" | "yesterdayFailed" | "shortlistedIdeas"
+  | "todayItems"
+  | "yesterdayPublished"
+  | "yesterdayFailed"
+  | "shortlistedIdeas"
+  | "siteAlerts"
+  | "searchIssues"
 >;
 
 const PUBLISH_CAPABILITIES: CapabilityKey[] = [
@@ -51,6 +64,7 @@ export async function loadBriefExtras(
     yesterdayPublished: 0,
     yesterdayFailed: 0,
     shortlistedIdeas: 0,
+    siteAlerts: [],
   };
   let dayStart: Date;
   let dayEnd: Date;
@@ -65,7 +79,7 @@ export async function loadBriefExtras(
   }
   const yesterday = { gte: yesterdayStart, lt: dayStart };
 
-  const [creatives, tasks, posted, shortlistedIdeas] = await Promise.all([
+  const [creatives, tasks, posted, shortlistedIdeas, siteAlerts, attention] = await Promise.all([
     isolated(
       "today items",
       () =>
@@ -119,6 +133,12 @@ export async function loadBriefExtras(
       () => prisma.idea.count({ where: { projectId, status: "SHORTLISTED" } }),
       0,
     ),
+    isolated(
+      "site alerts",
+      () => loadSiteAlertBrief(projectId, siteAlertSourcesForBrief()),
+      [],
+    ),
+    isolated("search issues", () => loadSearchAttention(projectId), null),
   ]);
 
   const todayItems: Extras["todayItems"] = [];
@@ -159,5 +179,15 @@ export async function loadBriefExtras(
       tasks.filter((task) => task.status === "COMPLETED").length + clientPosted,
     yesterdayFailed: tasks.filter((task) => task.status === "FAILED").length,
     shortlistedIdeas,
+    siteAlerts,
+    ...(attention && attention.critical.length > 0
+      ? {
+          searchIssues: attention.critical.map(({ id, title, href }) => ({
+            id,
+            title,
+            href,
+          })),
+        }
+      : {}),
   };
 }

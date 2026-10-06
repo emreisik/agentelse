@@ -21,11 +21,7 @@ const step = (action: NextStepAction): NextStep => ({
   action,
 });
 
-const item = (
-  id: string,
-  planId: string,
-  date: string,
-): JourneyItem => ({
+const item = (id: string, planId: string, date: string): JourneyItem => ({
   id,
   planId,
   stage: "IN_REVIEW",
@@ -45,11 +41,19 @@ describe("planIdOfStep", () => {
 
   it("is the plan the step names", () => {
     expect(
-      planIdOfStep(step({ kind: "produce_plan", planId: "planA", count: 2 }), items),
+      planIdOfStep(
+        step({ kind: "produce_plan", planId: "planA", count: 2 }),
+        items,
+      ),
     ).toBe("planA");
     expect(
       planIdOfStep(
-        step({ kind: "approve_plan", planIds: ["planB", "planA"], creativeIds: ["c2"], count: 1 }),
+        step({
+          kind: "approve_plan",
+          planIds: ["planB", "planA"],
+          creativeIds: ["c2"],
+          count: 1,
+        }),
         items,
       ),
     ).toBe("planB");
@@ -57,7 +61,10 @@ describe("planIdOfStep", () => {
 
   it("is the plan of the pieces the step names", () => {
     expect(
-      planIdOfStep(step({ kind: "publish_manual", creativeIds: ["c1"] }), items),
+      planIdOfStep(
+        step({ kind: "publish_manual", creativeIds: ["c1"] }),
+        items,
+      ),
     ).toBe("planA");
   });
 
@@ -76,10 +83,15 @@ describe("planIdOfStep", () => {
     expect(
       planIdOfStep(step({ kind: "show_results", count: 1 }), undated),
     ).toBe("planA");
-    expect(planIdOfStep(step({ kind: "show_results", count: 1 }), [])).toBeUndefined();
+    expect(
+      planIdOfStep(step({ kind: "show_results", count: 1 }), []),
+    ).toBeUndefined();
     // Named pieces that are not in the snapshot fall through to the newest.
     expect(
-      planIdOfStep(step({ kind: "publish_manual", creativeIds: ["zzz"] }), items),
+      planIdOfStep(
+        step({ kind: "publish_manual", creativeIds: ["zzz"] }),
+        items,
+      ),
     ).toBe("planB");
   });
 });
@@ -93,14 +105,25 @@ describe("addDaysKey", () => {
 });
 
 describe("publishesItself", () => {
-  const item = { publish: "auto" as const, channel: "instagram" as const, platform: "INSTAGRAM" };
+  const item = {
+    publish: "auto" as const,
+    channel: "instagram" as const,
+    platform: "INSTAGRAM",
+  };
 
   it("only a connected Instagram piece in an auto format publishes itself", () => {
-    expect(publishesItself(item, { instagram: { connected: true } })).toBe(true);
-    expect(publishesItself(item, { instagram: { connected: false } })).toBe(false);
+    expect(publishesItself(item, { instagram: { connected: true } })).toBe(
+      true,
+    );
+    expect(publishesItself(item, { instagram: { connected: false } })).toBe(
+      false,
+    );
     expect(publishesItself(item, {})).toBe(false);
     expect(
-      publishesItself({ ...item, publish: "manual" }, { instagram: { connected: true } }),
+      publishesItself(
+        { ...item, publish: "manual" },
+        { instagram: { connected: true } },
+      ),
     ).toBe(false);
   });
 
@@ -117,11 +140,39 @@ describe("publishesItself", () => {
 describe("nextStepHref", () => {
   it("sends review to the piece and connect to the integrations page", () => {
     expect(
-      nextStepHref("p1", step({ kind: "review_queue", creativeId: "c9", count: 2 })),
+      nextStepHref(
+        "p1",
+        step({ kind: "review_queue", creativeId: "c9", count: 2 }),
+      ),
     ).toBe("/projects/p1/takvim?creative=c9");
     expect(
-      nextStepHref("p1", step({ kind: "connect_channel", channel: "instagram" })),
+      nextStepHref(
+        "p1",
+        step({ kind: "connect_channel", channel: "instagram" }),
+      ),
     ).toBe("/projects/p1/integrations");
+  });
+
+  it("sends website and search fixes to their own screens", () => {
+    expect(nextStepHref("p1", step({ kind: "connect_analytics" }))).toBe(
+      "/projects/p1/integrations?integration=google_analytics",
+    );
+    expect(
+      nextStepHref(
+        "p1",
+        step({
+          kind: "fix_tracking",
+          checkKey: "MH1",
+          href: "/projects/p1/site#measurement-health",
+        }),
+      ),
+    ).toBe("/projects/p1/site#measurement-health");
+    expect(
+      nextStepHref(
+        "p1",
+        step({ kind: "fix_search_issue", alertId: "a 1", count: 2 }),
+      ),
+    ).toBe("/projects/p1/arama?issue=a%201#health");
   });
 
   it("sends everything the chat runs to the chat, which runs it once on landing", () => {
@@ -148,8 +199,12 @@ describe("nextStepHref", () => {
       "plan_from_ideas",
       "open_weekly_draft",
       "show_results",
+      "connect_analytics",
+      "fix_tracking",
     ];
     expect([...NEXT_STEP_KINDS].sort()).toEqual([...kinds].sort());
+    // SC-F3: arama sorunu adımı bir bağlantıdır, sohbet onu çalıştırmaz.
+    expect(NEXT_STEP_KINDS).not.toContain("fix_search_issue");
     expect(NEXT_STEP_KINDS).toContain("approve_plan");
   });
 
@@ -201,9 +256,8 @@ describe("nextStepHref", () => {
 
 describe("selectProductionBatch", () => {
   it("is what plan-progress re-exports, so the card and the server agree", async () => {
-    const { selectProductionBatch: fromServer } = await import(
-      "@/server/agency/journey/plan-progress"
-    );
+    const { selectProductionBatch: fromServer } =
+      await import("@/server/agency/journey/plan-progress");
     expect(fromServer).toBe(selectProductionBatch);
   });
 });

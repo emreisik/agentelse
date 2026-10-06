@@ -1,0 +1,34 @@
+{
+  "inspectionResult": {
+    "inspectionResultLink": "https://search.google.com/search-console/inspect?resource_id=sc-domain:example.com&id=ghi789",
+    "indexStatusResult": {
+      "sitemap": ["https://www.example.com/sitemap.xml"],
+      "verdict": "NEUTRAL",
+      "coverageState": "Crawled - currently not indexed",
+      "robotsTxtState": "ALLOWED",
+      "indexingState": "INDEXING_ALLOWED",
+      "lastCrawlTime": "2026-09-21T02:13:09Z",
+      "pageFetchState": "SUCCESSFUL",
+      "googleCanonical": "https://www.example.com/blog/post-7",
+      "userCanonical": "https://www.example.com/blog/post-7",
+      "crawledAs": "MOBILE"
+    },
+    "richResultsResult": {
+      "verdict": "FAIL",
+      "detectedItems": [
+        {
+          "richResultType": "Article",
+          "items": [
+            {
+              "name": "Unnamed item",
+              "issues": [
+                { "issueMessage": "Missing field \"headline\"", "severity": "ERROR" },
+                { "issueMessage": "Missing field \"image\"", "severity": "WARNING" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

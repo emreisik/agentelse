@@ -5,6 +5,7 @@ import {
   type ChannelKey,
 } from "@/lib/content-channels";
 import { STAGE_LABEL } from "@/lib/content-plan-view";
+import type { SiteAlertBriefRow } from "@/lib/monitoring/site-alert-brief";
 import type { NextStep, PlanItemStage } from "@/lib/journey";
 import { serializePlanBrief } from "@/lib/plan-brief";
 import type { CardAction } from "@/lib/works/card-action";
@@ -24,7 +25,13 @@ export type BriefAction =
   | { kind: "open-channel-work"; channel: ChannelKey };
 
 export type BriefRowGroup =
-  "content" | "seo" | "ads" | "connect" | "ideas" | "channel";
+  | "content"
+  | "seo"
+  | "ads"
+  | "connect"
+  | "ideas"
+  | "channel"
+  | "website";
 
 export type BriefRow = {
   id: string;
@@ -78,6 +85,10 @@ export type BriefFacts = {
   goalTitle?: string;
   shortlistedIdeas: number;
   channelsWithoutWork: readonly ChannelKey[];
+  // Açık kritik site uyarıları (GA-F3 SiteAlerts; GA4 → website, GSC/SEO → seo).
+  siteAlerts?: readonly SiteAlertBriefRow[];
+  // Açık kritik arama sağlığı uyarıları (SC-F3); en çok 2, Search sayfasına gider.
+  searchIssues?: readonly { id: string; title: string; href: string }[];
 };
 
 export const MAX_BRIEF_ROWS = 6;
@@ -219,10 +230,40 @@ export function buildDailyBrief(facts: BriefFacts): DailyBrief {
     });
   }
 
-  const allRows = [...itemRows, ...extraRows];
+  // Arama sorunu zaten 'seo' satırı olarak görünür; 'next' satırında ikinci
+  // kez gösterilmez ve iki kez sayılmaz.
+  const top = facts.nextSteps.find(
+    (step) => step.action.kind !== "fix_search_issue",
+  );
+
+  // SC-F3: kritik arama sorunları en önde, kesilmesinler diye.
+  const searchRows: BriefRow[] = (facts.searchIssues ?? [])
+    .slice(0, 2)
+    .map((issue) => ({
+      id: `search-${issue.id}`,
+      group: "seo",
+      title: issue.title,
+      actionLabel: copyText("brief.fixAction"),
+      action: { kind: "link", href: issue.href },
+    }));
+
+  // GA-F3: uyarı zaten 'next' satırıysa (fix_tracking) iki kez görünmez.
+  const siteRows: BriefRow[] = (facts.siteAlerts ?? [])
+    .filter(
+      (alert) =>
+        !(top?.action.kind === "fix_tracking" && top.title === alert.title),
+    )
+    .map((alert) => ({
+      id: alert.id,
+      group: alert.source === "GA4" ? "website" : "seo",
+      title: alert.title,
+      actionLabel: copyText("brief.rowOpen"),
+      action: { kind: "link", href: alert.href },
+    }));
+
+  const allRows = [...searchRows, ...itemRows, ...siteRows, ...extraRows];
   const rows = allRows.slice(0, MAX_BRIEF_ROWS);
 
-  const top = facts.nextSteps[0];
   const costNote = facts.nextStepCostNote?.trim() || undefined;
   const next = top
     ? {
@@ -234,7 +275,9 @@ export function buildDailyBrief(facts: BriefFacts): DailyBrief {
     : undefined;
 
   const open =
+    searchRows.length +
     itemRows.filter((row) => row.stage !== "PUBLISHED").length +
+    siteRows.length +
     extraRows.length +
     (next ? 1 : 0);
   const summary =

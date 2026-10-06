@@ -20,6 +20,8 @@ export type WebsiteOverview =
       health: WebsiteHealthTone;
       healthLabel: string;
       dataThrough: string | null;
+      // GA-F3 (GA_HEALTH): ölçüm sağlığı noktası
+      measurement?: { score: number | null; tone: WebsiteHealthTone; label: string };
     };
 
 const TREND_THRESHOLD = 3;

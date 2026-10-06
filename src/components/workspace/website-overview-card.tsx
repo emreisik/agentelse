@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Globe } from "lucide-react";
 
 import { CardTitle } from "@/components/workspace/card-title";
+import { MeasurementDot } from "@/components/website-analytics/measurement-score";
 import { formatCount } from "@/lib/module-flows/analytics/format";
 import type {
   WebsiteHealthTone,
@@ -187,6 +188,15 @@ export function WebsiteOverviewView({
             ? ` · Data through ${dayLabel(overview.dataThrough)}`
             : ""}
         </span>
+        {overview.measurement ? (
+          <>
+            <span aria-hidden>·</span>
+            <span className="inline-flex shrink-0 items-center gap-1.5">
+              <MeasurementDot tone={overview.measurement.tone} />
+              <span>{`Tracking ${overview.measurement.label}`}</span>
+            </span>
+          </>
+        ) : null}
       </p>
     </section>
   );

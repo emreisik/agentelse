@@ -13,11 +13,13 @@ Plan: [google-analytics-plan.md](google-analytics-plan.md) §3.3, §3.4, §3.9, 
 | Website sayfası v1 (`/projects/[projectId]/site`), Explore girişi, Refresh                                                                                                                                                                                                                   | Yapıldı (`GA_WEBSITE_PAGE`)                                   |
 | Integrations: "Data through …", mülk kartı, saklama beyanı; gizlilik metni                                                                                                                                                                                                                   | Yapıldı                                                       |
 | Bölüm 2: haftalık dilimler + site_search (`GA_WEEKLY`), katalog denetimi + google_ads/search_console (`GA_CATALOG_CHECKS`), Today so far / Right now (`GA_LIVE`), Analytics modülünde kanal/açılış sayfası/key event listeleri (`GA_MODULE_SECTIONS`), Brand sekmesi Website kartı (`GA_BRAND_CARD`), /health sayaçları | Yapıldı (bayraklı, canlı denenmedi) |
+| GA-F3 ölçüm sağlığı (`GA_HEALTH`) | Yapıldı, bkz. [measurement-health.md](measurement-health.md) |
 
 ## Bayraklar ve açılış
 
 - `GA_SYNC=true`: senkron, saklama ve okuyucular. Kapalıyken hiçbir şey değişmez (adımlar hemen 0 döner, okuyucular canlı yolu kullanır).
 - `GA_WEBSITE_PAGE=true`: Website sayfası ve Explore'daki "Website" satırı. Veri için `GA_SYNC` de açık olmalı.
+- `GA_HEALTH=true` (GA-F3): ölçüm sağlığı denetimi, uyarılar ve puan; `GA_SYNC` ister. Ayrıntılar ve açılış sırası (migration koddan önce) [measurement-health.md](measurement-health.md)'de.
 - `GA_SYNC_DEV_PROJECTS=<id,id>`: yerel geliştirme süreci canlı veritabanını paylaşırken yalnız bu projeler senkronlanır; saklama temizliği yerelde hiç çalışmaz. Yerel tek kullanımlık veritabanında (localhost ya da Unix soketi) her şey çalışır.
 - Sıra: migration canlıya çıkar (Railway başlangıcında `migrate deploy`) → `GA_SYNC=true` → ilk veriler birkaç dakikada, geçmiş birkaç tick'te gelir → `GA_WEBSITE_PAGE=true`.
 

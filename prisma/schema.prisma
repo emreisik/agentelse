@@ -2247,6 +2247,8 @@ model GaPropertyLink {
   dailyTotals GaDailyTotal[]
   slices      GaReportSlice[]
   monthly     GaMonthlySummary[]
+  healthChecks GaHealthCheck[]
+  healthRun    GaHealthRun?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2415,6 +2417,9 @@ model GscSiteLink {
   monthlyQueries GscMonthlyQuery[]
   monthlyPages   GscMonthlyPage[]
   periodFetches  GscPeriodFetch[]
+  urlInspections GscUrlInspection[]
+  gscSitemaps    GscSitemap[]
+  coverageWeeks  GscCoverageWeek[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2632,6 +2637,448 @@ model GscPeriodFetch {
 
   @@unique([linkId, grain, periodStart, key])
   @@index([projectId, periodStart])
+}
+
+// GA-F3 ölçüm sağlığı (docs/measurement-health.md): bağ başına kontrolün güncel sonucu.
+model GaHealthCheck {
+  id            String    @id @default(cuid())
+  linkId        String
+  projectId     String
+  // "MH1" … "MH24", "MH1_RT"
+  checkKey      String
+  // PASS | WARN | FAIL | UNKNOWN
+  status        String
+  // INFO | WARN | CRITICAL
+  severity      String
+  // Toplulaştırılmış kanıt (sayılar, neden kodu, izinli parametre adları);
+  // ham URL ya da kişisel veri asla yok.
+  evidence      Json?
+  guideId       String
+  firstFailedAt DateTime?
+  lastCheckedAt DateTime
+  lastChangedAt DateTime
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, checkKey])
+  @@index([projectId, status])
+}
+
+// GA-F3: bağ başına denetim turu durumu (kilit, parmak izi, son site taraması,
+// PII yoklaması, gün içi realtime ölçümleri, şüpheli günler).
+model GaHealthRun {
+  id                 String    @id @default(cuid())
+  linkId             String    @unique
+  workspaceId        String
+  projectId          String
+  fingerprint        String?
+  evaluatedAt        DateTime?
+  leaseUntil         DateTime?
+  leaseOwner         String?
+  recheckRequestedAt DateTime?
+  siteCheckedAt      DateTime?
+  // GaSiteTagResult (yalnız kimlikler, sayılar, boolean'lar)
+  siteTag            Json?
+  piiCheckedAt       DateTime?
+  // GaPiiProbeResult (yalnız sayılar ve izinli parametre adları)
+  piiProbe           Json?
+  // GaRealtimeState
+  realtime           Json?
+  // { "YYYY-MM-DD": ["MH1", ...] }, 400 gün
+  suspectDays        Json?
+  lastError          String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([evaluatedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Arama sağlığı ve teknik denetim (docs/google-search-console-plan.md SC-F3,
+// docs/search-health.md). Gsc* tabloları Search Console bağına (GscSiteLink)
+// cascade'lidir: Disconnect ve "Delete stored data" onları da hemen siler.
+// Seo* tabloları sitenin kendisinden (kendi tarayıcımız, CrUX) gelir, projeye
+// (SeoSite) bağlıdır ve GSC'siz projede de (doğrulanmış alan adıyla) çalışır.
+// SearchUpdate globaldir (Google güncellemeleri takvimi).
+// ---------------------------------------------------------------------------
+
+
+// Proje başına arama sağlığı durumu (kip başına bir satır). Zaman alanlarında
+// null = "boşta" (koşucu adayı değil); ensureForProject / ayar / doğrulama
+// yeniden kurar.
+model SeoSite {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  isMock      Boolean @default(false)
+
+  // Tarama kapsamı (src/lib/seo/crawl-url.ts CrawlScope) ve özeti; scopeKey
+  // değişince ya da null olunca sayfalar, taramalar, linkler ve CWV silinir.
+  scope    Json?
+  scopeKey String?
+  // "https://www.example.com": ana sayfanın son adresinin kökü
+  origin   String?
+
+  // Agentelse alan adı doğrulaması (GSC'siz projeler); "Delete audit data"
+  // bunları korur.
+  verifyToken     String?
+  verifiedDomain  String?
+  // META | DNS | MOCK
+  verifyMethod    String?
+  verifiedAt      DateTime?
+  verifyCheckedAt DateTime?
+  verifyFailures  Int       @default(0)
+
+  // { v: 1, crawlEnabled: boolean, pageLimit: 100 | 250 | 500 }
+  settings Json?
+
+  // robots.txt (kendi okumamız; herkese açık dosya, ≤ 512 KB)
+  robotsStatus    Int?
+  // OK | MISSING | SERVER_ERROR | UNREACHABLE
+  robotsVerdict   String?
+  robotsHash      String?
+  robotsBody      String?
+  robotsPrevBody  String?
+  robotsFetchedAt DateTime?
+  robotsChangedAt DateTime?
+  // Yalnız yeniden deneme de başarısız olunca artar (art arda)
+  robotsFailures  Int       @default(0)
+  // Hata sonrası geri çekilme (30 dk'dan 6 saate katlanır)
+  robotsRetryAt   DateTime?
+  // http://<host>/ https'e yönleniyor mu (SH16)
+  httpRedirectsToHttps Boolean?
+  httpCheckedAt        DateTime?
+
+  // Kendi sitemap okumamızın özeti: [{ url, source, status, kind, urlCount,
+  // inScope, errors[], fetchedAt }]
+  sitemaps          Json?
+  sitemapsCheckedAt DateTime?
+  // İlk eksiksiz sitemap geçişi (taban çizgisi); öncesindeki URL'ler "yeni" sayılmaz
+  sitemapBaselineAt DateTime?
+  // GSC sitemaps.list son okunuşu (GscSitemap tablosu) ve sıradaki deneme
+  gscSitemapsAt     DateTime?
+  gscSitemapsNextAt DateTime?
+
+  // Tarayıcı kilidi ve zamanlaması
+  crawlLeaseUntil  DateTime?
+  crawlLeaseOwner  String?
+  crawlNextAt      DateTime?
+  crawlPausedUntil DateTime?
+  crawlThrottles   Int       @default(0)
+  crawlBlocked     Boolean   @default(false)
+  fullCrawlDueAt   DateTime?
+  lastFullCrawlAt  DateTime?
+  regressionDueAt  DateTime?
+  lastRegressionAt DateTime?
+  lastCrawlError   String?
+
+  // URL Inspection bütçesi (PT günü) ve kuyruğu
+  inspectDay         String?
+  inspectCount       Int       @default(0)
+  inspectBudget      Int       @default(200)
+  inspectNextAt      DateTime?
+  inspectLastRunAt   DateTime?
+  inspectPausedUntil DateTime?
+  // [{ url, urlHash, requestedAt, by: "user" | "watchdog" }] en çok 20 (P1);
+  // yalnız src/server/seo/site/inspect-queue.ts'in atomik SQL'i yazar
+  inspectQueue       Json?
+
+  cwvCheckedAt DateTime?
+
+  // Search health puanı (src/lib/seo/health/score.ts)
+  healthScore      Int?
+  healthParts      Json?
+  healthComputedAt DateTime?
+  healthDueAt      DateTime?
+
+  pages  SeoPage[]
+  crawls SeoCrawl[]
+  links  SeoLink[]
+  cwv    SeoCwv[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, isMock])
+  @@index([isMock, crawlNextAt])
+  @@index([isMock, inspectNextAt])
+  @@index([isMock, gscSitemapsNextAt])
+  @@index([isMock, healthDueAt])
+}
+
+// Bir tarama koşusu: haftalık tam tarama ya da 6 saatlik gerileme bekçisi.
+model SeoCrawl {
+  id           String    @id @default(cuid())
+  siteId       String
+  workspaceId  String
+  projectId    String
+  // FULL | REGRESSION
+  kind         String
+  // RUNNING | DONE | PARTIAL | BLOCKED | FAILED
+  status       String
+  startedAt    DateTime
+  finishedAt   DateTime?
+  pagesFetched Int       @default(0)
+  notModified  Int       @default(0)
+  errors       Int       @default(0)
+  budget       Int
+  robotsHash   String?
+  // Bekleyen kuyruk { v: 1, queue: [{ u, d, s }] } (en çok 2.000, URL ≤ 512); bitince null
+  frontier     Json?
+  // { statuses, newUrls, redirected, blockedByRobots, outOfScope, otherHosts,
+  //   throttled, knownNowRedirect, knownRefetched, droppedFrontier, longUrls }
+  stats        Json?
+
+  site SeoSite @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, startedAt])
+  @@index([siteId, kind, status])
+}
+
+// Sitenin URL envanteri ve her URL'nin son taranmış hali (sayfa metni
+// saklanmaz; yalnız özet ve parmak izi).
+model SeoPage {
+  id            String  @id @default(cuid())
+  siteId        String
+  workspaceId   String
+  projectId     String
+  url           String
+  // sha256(normalizeCrawlUrl(url)) ilk 32 hex
+  urlHash       String
+  path          String
+  // SEED | CRAWL | SITEMAP | GSC
+  discoveredVia String
+
+  lastCrawlId     String?
+  // Son adımın durum kodu; yanıt yoksa null
+  status          Int?
+  // Yanıt alınamadıysa: TIMEOUT | NETWORK | UNSAFE | LOOP | TOO_MANY_REDIRECTS | LEFT_SCOPE | ROBOTS_HOP
+  fetchError      String?
+  contentType     String?
+  finalUrl        String?
+  // [{ url, status }] her adım
+  redirectChain   Json?
+  robotsBlocked   Boolean  @default(false)
+  // facts.canonicalResolved ?? ham href
+  canonical       String?
+  robotsMeta      String?
+  xRobotsTag      String?
+  noindex         Boolean  @default(false)
+  indexable       Boolean?
+  title           String?
+  metaDescription String?
+  h1              String?
+  // { h1: string[], h2: string[] }
+  headings        Json?
+  lang            String?
+  // [{ lang, href }]
+  hreflang        Json?
+  schemaTypes     String[] @default([])
+  // string[]
+  schemaErrors    Json?
+  openGraph       Json?
+  // { scripts: string[], styles: string[] } aynı kökten, en çok 20 (ana sayfa)
+  assets          Json?
+  wordCount       Int?
+  textHash        String?
+  textSimhash     String?
+  contentHash     String?
+  inlinks         Int      @default(0)
+  outlinks        Int      @default(0)
+  depth           Int?
+  imagesNoAlt     Int      @default(0)
+  bytes           Int?
+  ttfbMs          Int?
+  renderRisk      Boolean  @default(false)
+  mixedContent    Int      @default(0)
+  etag            String?
+  lastModified    String?
+  // [{ code: "TA7", severity }]
+  issues          Json?
+  // Bir önceki getirmenin kritik alanları { status, fetchError, noindex, canonical, title, finalUrl, at }
+  previous        Json?
+  // Son başarılı (200, indekslenebilir) hal { title, h1, at } (SH27 eşleştirmesi)
+  lastGood        Json?
+
+  inSitemap          Boolean   @default(false)
+  sitemapLastmod     DateTime?
+  // Taban çizgisi geçişinde null kalır; yalnız sonradan eklenen URL'lerde dolar
+  sitemapFirstSeenAt DateTime?
+  sitemapLastSeenAt  DateTime?
+
+  lastCrawledAt DateTime?
+  lastChangedAt DateTime?
+  firstSeenAt   DateTime
+  goneAt        DateTime?
+
+  site     SeoSite   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  outLinks SeoLink[] @relation("SeoLinkFrom")
+
+  @@unique([siteId, urlHash])
+  @@index([projectId])
+  @@index([siteId, lastCrawlId])
+  @@index([siteId, inSitemap])
+}
+
+// İç link grafiği (yalnız kapsam içi hedefler; sayfa yeniden taranınca
+// giden linkleri yeniden yazılır).
+model SeoLink {
+  id         String  @id @default(cuid())
+  siteId     String
+  projectId  String
+  fromPageId String
+  toUrl      String
+  toUrlHash  String
+  anchor     String?
+  nofollow   Boolean @default(false)
+
+  site SeoSite @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  from SeoPage @relation("SeoLinkFrom", fields: [fromPageId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, toUrlHash])
+  @@index([fromPageId])
+  @@index([projectId])
+}
+
+// Chrome UX Report saha ölçümleri (p75; değerler CrUX'un döndürdüğü gibi).
+model SeoCwv {
+  id               String   @id @default(cuid())
+  siteId           String
+  projectId        String
+  isMock           Boolean  @default(false)
+  // ORIGIN | URL
+  scope            String
+  target           String
+  // PHONE | DESKTOP
+  formFactor       String
+  // "2026-09-08..2026-10-05"
+  collectionPeriod String
+  periodEnd        DateTime @db.Date
+  // RECORD | HISTORY
+  source           String
+  lcpP75           Float?
+  inpP75           Float?
+  clsP75           Float?
+  fcpP75           Float?
+  ttfbP75          Float?
+  // { lcp: [good, ni, poor], ... } yoğunluklar
+  histogram        Json?
+  fetchedAt        DateTime
+
+  site SeoSite @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, scope, target, formFactor, collectionPeriod])
+  @@index([projectId, periodEnd])
+}
+
+// Google arama güncellemeleri takvimi (global; projeye bağlı değil).
+model SearchUpdate {
+  id              String    @id @default(cuid())
+  // Google Search Status Dashboard olay kimliği; elle girilende null
+  externalId      String?   @unique
+  name            String
+  // CORE | SPAM | DISCOVER | REVIEWS | HELPFUL_CONTENT | OTHER_RANKING | SERVING | CRAWLING | INDEXING | OTHER
+  kind            String
+  // STATUS_DASHBOARD | MANUAL
+  source          String
+  startedAt       DateTime
+  endedAt         DateTime?
+  url             String?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([startedAt])
+}
+
+// URL Inspection: URL başına son ve önceki indeks durumu (salt okunur API).
+model GscUrlInspection {
+  id               String    @id @default(cuid())
+  linkId           String
+  projectId        String
+  url              String
+  // SeoPage.urlHash ile aynı fonksiyon
+  urlHash          String
+  // P1 | P2 | P3 | P4 | P5 | P6
+  reason           String
+  inspectedAt      DateTime
+  inspectCount     Int       @default(1)
+  // PASS | PARTIAL | FAIL | NEUTRAL | VERDICT_UNSPECIFIED
+  verdict          String?
+  coverageState    String?
+  indexingState    String?
+  robotsTxtState   String?
+  pageFetchState   String?
+  googleCanonical  String?
+  userCanonical    String?
+  lastCrawlTime    DateTime?
+  crawledAs        String?
+  sitemaps         String[]  @default([])
+  referringUrls    String[]  @default([])
+  // { verdict, items: [{ type, issues: [{ severity, message }] }] }
+  richResults      Json?
+  // { verdict, coverageState, googleCanonical, inspectedAt }
+  previous         Json?
+  verdictChangedAt DateTime?
+  // P6 örneğine girdiği PT haftası (Pazartesi, YYYY-MM-DD)
+  sampleWeek       String?
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, urlHash])
+  @@index([linkId, inspectedAt])
+  @@index([linkId, sampleWeek])
+  @@index([projectId])
+}
+
+// Search Console'un sitemap görünümü (sitemaps.list; gönderim yok).
+model GscSitemap {
+  id             String    @id @default(cuid())
+  linkId         String
+  projectId      String
+  path           String
+  type           String?
+  isIndex        Boolean   @default(false)
+  isPending      Boolean   @default(false)
+  lastSubmitted  DateTime?
+  lastDownloaded DateTime?
+  errors         Int       @default(0)
+  warnings       Int       @default(0)
+  submittedCount Int       @default(0)
+  checkedAt      DateTime
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, path])
+  @@index([projectId])
+}
+
+// Haftalık kapsam tahmini (P6 örneklemi, Wilson aralığı).
+model GscCoverageWeek {
+  id                String   @id @default(cuid())
+  linkId            String
+  projectId         String
+  // PT Pazartesi
+  weekStart         DateTime @db.Date
+  sampled           Int
+  indexed           Int
+  crawledNotIndexed Int
+  point             Float
+  low               Float
+  high              Float
+  // Sitemap URL sayısı (örneklem havuzu)
+  population        Int
+  computedAt        DateTime
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, weekStart])
+  @@index([projectId])
 }
 
 model Skill {
@@ -3899,6 +4346,9 @@ model AdsAlert {
   severity       AdsSeverity
   status         AdsAlertStatus @default(OPEN)
   dedupeKey      String
+  // Ortak uyarı tablosu (GK8): null = Meta Ads; "GA4" | "GSC" | "SEO"
+  // (src/server/monitoring/site-alerts.ts).
+  source         String?
   title          String
   detail         String?
   data           Json?
@@ -3914,6 +4364,7 @@ model AdsAlert {
 
   @@unique([projectId, dedupeKey])
   @@index([projectId, status, severity])
+  @@index([projectId, source, status])
 }
 
 // Lansman durumu (docs/meta-ads-plan.md §3.4).

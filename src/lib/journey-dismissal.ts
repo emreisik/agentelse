@@ -25,6 +25,7 @@ export function stepWeight(step: NextStep): number {
     case "approve_plan":
     case "enable_scheduled_publish":
     case "show_results":
+    case "fix_search_issue":
       return action.count;
     case "publish_manual":
       return action.creativeIds.length;

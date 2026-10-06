@@ -60,10 +60,14 @@ import {
   searchConsoleSiteCoversDomain,
 } from "@/lib/search-console-site";
 import { GaFlags } from "@/lib/website-analytics/flags";
+import { gaHealthEnabled } from "@/lib/website-analytics/health/flags";
+import type { MeasurementSummary } from "@/lib/website-analytics/health/view-types";
 import {
   readWebsiteLinkInfo,
   type WebsiteLinkInfo,
 } from "@/server/website-analytics/report";
+import { loadMeasurementSummary } from "@/server/website-analytics/health/read";
+import { MeasurementScoreLine } from "@/components/website-analytics/measurement-score";
 import { GscFlags } from "@/lib/seo/flags";
 import { readSearchLinkInfo, type SearchLinkInfo } from "@/server/seo/report";
 import {
@@ -491,6 +495,11 @@ export default async function EntegrasyonlarPage({
     openGoogleService === "analytics" && GaFlags.sync()
       ? await readWebsiteLinkInfo(projectId).catch(() => null)
       : null;
+  // GA-F3 (GA_HEALTH): ölçüm puanı satırı.
+  const gaMeasurement =
+    openGoogleService === "analytics" && gaHealthEnabled()
+      ? await loadMeasurementSummary(projectId).catch(() => null)
+      : null;
   // GSC ambarı (GSC_SYNC): "Final data through …", arşiv ayarı, saklanan veriyi
   // silme ve marka terimleri; okunamazsa kart boş durumla görünür.
   const gscWarehouse =
@@ -633,6 +642,7 @@ export default async function EntegrasyonlarPage({
             warehouse={gaWarehouse}
             warehouseOn={GaFlags.sync()}
             websitePage={GaFlags.websitePage()}
+            measurement={gaMeasurement}
             searchWarehouse={gscWarehouse}
             searchWarehouseOn={GscFlags.sync()}
             searchCanManage={gscCanManage}
@@ -1053,6 +1063,7 @@ function GoogleDialog({
   warehouse = null,
   warehouseOn = false,
   websitePage = false,
+  measurement = null,
   searchWarehouse = null,
   searchWarehouseOn = false,
   searchCanManage = false,
@@ -1069,6 +1080,8 @@ function GoogleDialog({
   warehouse?: WebsiteLinkInfo | null;
   warehouseOn?: boolean;
   websitePage?: boolean;
+  // GA-F3 ölçüm puanı
+  measurement?: MeasurementSummary | null;
   // Search Console ambarı (GSC_SYNC): kesin veri günü, arşiv, silme, marka
   // terimleri; yönetim yalnız OWNER/ADMIN.
   searchWarehouse?: SearchLinkInfo | null;
@@ -1194,6 +1207,17 @@ function GoogleDialog({
                   info={warehouse}
                   websiteHref={
                     websitePage ? `/projects/${projectId}/site` : null
+                  }
+                />
+              ) : null}
+
+              {service === "analytics" && measurement ? (
+                <MeasurementScoreLine
+                  summary={measurement}
+                  href={
+                    websitePage
+                      ? `/projects/${projectId}/site#measurement-health`
+                      : null
                   }
                 />
               ) : null}

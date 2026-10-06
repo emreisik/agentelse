@@ -75,7 +75,8 @@ export function approvePlansToast(result: ApprovePlansResult): {
   const { approved, failed, held, locked } = result;
   let text = `${approved} approved.`;
   if (failed > 0) text = `${approved} approved, ${failed} could not be.`;
-  else if (held > 0) text = `${approved} approved. ${held} on hold until you set a time.`;
+  else if (held > 0)
+    text = `${approved} approved. ${held} on hold until you set a time.`;
   if (locked > 0) text += ` ${locked} skipped: their Work is completed.`;
   return { kind: failed > 0 ? "error" : "success", text };
 }
@@ -162,6 +163,19 @@ export function useRunNextStep({
         return;
       case "show_results":
         setResults(true);
+        return;
+      case "connect_analytics":
+        router.push(
+          `/projects/${projectId}/integrations?integration=google_analytics`,
+        );
+        return;
+      case "fix_tracking":
+        router.push(action.href);
+        return;
+      case "fix_search_issue":
+        router.push(
+          `/projects/${projectId}/arama?issue=${encodeURIComponent(action.alertId)}#health`,
+        );
         return;
     }
   };

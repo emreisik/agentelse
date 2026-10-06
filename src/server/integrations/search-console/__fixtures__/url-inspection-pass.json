@@ -1,0 +1,51 @@
+{
+  "inspectionResult": {
+    "inspectionResultLink": "https://search.google.com/search-console/inspect?resource_id=sc-domain:example.com&id=abc123",
+    "indexStatusResult": {
+      "sitemap": ["https://www.example.com/sitemap.xml"],
+      "referringUrls": [
+        "https://www.example.com/",
+        "https://www.example.com/blog/",
+        "https://www.example.com/pricing",
+        "https://www.example.com/about",
+        "https://www.example.com/blog/post-2",
+        "https://www.example.com/blog/post-3"
+      ],
+      "verdict": "PASS",
+      "coverageState": "Submitted and indexed",
+      "robotsTxtState": "ALLOWED",
+      "indexingState": "INDEXING_ALLOWED",
+      "lastCrawlTime": "2026-10-03T07:41:12Z",
+      "pageFetchState": "SUCCESSFUL",
+      "googleCanonical": "https://www.example.com/blog/post-1",
+      "userCanonical": "https://www.example.com/blog/post-1",
+      "crawledAs": "MOBILE"
+    },
+    "mobileUsabilityResult": {
+      "verdict": "VERDICT_UNSPECIFIED"
+    },
+    "richResultsResult": {
+      "verdict": "PASS",
+      "detectedItems": [
+        {
+          "richResultType": "Article",
+          "items": [{ "name": "Unnamed item" }]
+        },
+        {
+          "richResultType": "Breadcrumbs",
+          "items": [
+            {
+              "name": "Unnamed item",
+              "issues": [
+                {
+                  "issueMessage": "Missing field \"item\" (in \"itemListElement\")",
+                  "severity": "WARNING"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

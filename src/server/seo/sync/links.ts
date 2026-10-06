@@ -11,6 +11,8 @@ import {
 } from "@/server/integrations/google-client";
 import { gscMockMode } from "@/server/integrations/search-console/search-analytics";
 import { propertyTypeOf } from "@/server/integrations/search-console/sites";
+import { deleteSearchConsoleAlertsForProjects } from "@/server/seo/health/alerts";
+import { SeoSites } from "@/server/seo/site/sites";
 
 // Proje ↔ Search Console sitesi bağları (docs/google-search-console-plan.md
 // §4, "tembel bağ"): bağ, seçili sitesi olan ACTIVE
@@ -178,6 +180,11 @@ export async function deleteGscDataForProject(
     select: { archive: true, brandTerms: true },
   });
   const result = await prisma.gscSiteLink.deleteMany({ where: mode });
+  // SC-F3: Search Console'dan türeyen uyarılar ve denetimdeki GSC kökenli
+  // durum da silinir (bayraktan bağımsız); tarama verisi sitenin kendisinden
+  // geldiği için kalır.
+  await deleteSearchConsoleAlertsForProjects([projectId]);
+  await SeoSites.forgetSearchConsoleData([projectId], { resetScope: false });
   await ensureGscLinkForProject(projectId);
   if (previous) {
     const terms = parseBrandTermsConfig(previous.brandTerms);

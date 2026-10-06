@@ -1,0 +1,19 @@
+{
+  "error": {
+    "code": 429,
+    "message": "Quota exceeded for quota metric 'Inspection requests' and limit 'Inspection requests per day per site' of service 'searchconsole.googleapis.com' for consumer 'project_number:123456789'.",
+    "status": "RESOURCE_EXHAUSTED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "RATE_LIMIT_EXCEEDED",
+        "domain": "googleapis.com",
+        "metadata": {
+          "service": "searchconsole.googleapis.com",
+          "quota_metric": "searchconsole.googleapis.com/url_inspection_requests",
+          "quota_limit": "UrlInspectionRequestsPerDayPerSite"
+        }
+      }
+    ]
+  }
+}

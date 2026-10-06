@@ -20,6 +20,8 @@ import { prisma } from "@/lib/prisma";
 import { GOOGLE_PROVIDER } from "@/server/integrations/google-client";
 import { gscMockMode } from "@/server/integrations/search-console/search-analytics";
 import { claimPeriodic } from "@/server/observability/periodic";
+import { deleteSearchConsoleAlertsForProjects } from "@/server/seo/health/alerts";
+import { SeoSites } from "@/server/seo/site/sites";
 
 // Search Console ambarının saklama temizliği (docs/google-search-console-plan.md
 // §4 "Saklama", SK3; docs/search-analytics.md "Saklama"): `seo-retention`
@@ -326,11 +328,29 @@ export const GscRetention = {
         .filter((link) => !live.has(link.credentialId))
         .map((link) => link.id);
       if (orphaned.length > 0) {
+        const orphanProjects = [
+          ...new Set(
+            (
+              await prisma.gscSiteLink.findMany({
+                where: { id: { in: orphaned } },
+                select: { projectId: true },
+              })
+            ).map((row) => row.projectId),
+          ),
+        ];
         deleted += (
           await prisma.gscSiteLink.deleteMany({
             where: { id: { in: orphaned } },
           })
         ).count;
+        // SC-F3: Disconnect'in kaçırdığı bağlarda da GSC kökenli uyarılar ve
+        // denetim durumu silinir.
+        await deleteSearchConsoleAlertsForProjects(orphanProjects).catch(
+          () => 0,
+        );
+        await SeoSites.forgetSearchConsoleData(orphanProjects, {
+          resetScope: true,
+        }).catch(() => 0);
       }
     }
 

@@ -1,6 +1,6 @@
 # Agentelse · Google Search Console ve SEO Motoru: Mimari ve Uygulama Planı
 
-Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 ve sonrası henüz uygulanmadı.
+Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 arama sağlığı ve teknik denetim uygulandı (6 Ekim 2026, bayraklı; [search-health.md](search-health.md)); SC-F4 ve sonrası henüz uygulanmadı.
 
 > **Kapsam:** Google Search Console (GSC) entegrasyonu ve onun üzerine kurulan SEO motoru. Bu plan şunları kapsar: bağlantı ve kimlik; arama ambarı ve kalıcı arşiv; indeks ve teknik sağlık denetimi (URL Inspection, sitemap, robots, kendi site tarayıcımız, Core Web Vitals); SEO fırsat motoru; raporlama ve planlama; öneri → uygulama → ölçüm döngüsü. Sonraki aşamalarda içerik planı, CMS üzerinden onaylı uygulama ve AI arama görünürlüğü gelir.
 >
@@ -917,6 +917,24 @@ Ertelenenler: saatlik erken uyarı sorgusu, sitemap senkronu (SC-F3), uzlaştır
 **Görünür değişiklik:** Yeni "Search" sayfası; Brand sekmesinde "Search" kartı; Analytics modülünde marka ayrımlı GSC bölümü; Integrations'ta "Final data through …".
 
 ### SC-F3 — Arama sağlığı ve teknik denetim · L
+
+**Durum (6 Ekim):** Uygulandı (`SEO_HEALTH`, `SEO_CRAWL` bayraklı, canlı denenmedi); uygulanan hâl [search-health.md](search-health.md)'de. Plandan farklar:
+
+- htmlparser2 yerine kendi tokenizer'ımız (SK4); robots, sitemap ve JSON-LD ayrıştırıcıları da el yazımı.
+- GSC'si olmayan projeler için Agentelse meta etiketi / DNS TXT doğrulaması.
+- Ek tablolar `SeoSite` ve `GscCoverageWeek`; `SeoPage` taban çizgisi geçişiyle sitemap envanterini de tutar.
+- `SearchUpdate` olay kimliğiyle (incident id) anahtarlı.
+- Yalnız ana host (eş host yalnız kendi robots.txt'si altında bir yönlendirme adımı olarak).
+- SH4: `*` grubunda `Disallow: /` da CRITICAL; asset/sitemap engelleri WARN; robots 5xx yalnız tur içi yeniden denemeden sonra CRITICAL.
+- SH5 ağ hataları iki ardışık kontrol ister.
+- TA18 3 MB sayfa ağırlığı yerine 2 MB HTML sınırı (ve 1,5 sn TTFB).
+- Karışık kontroller veri kaynağına göre bölündü (GSC_* / SEO_*).
+- Uyarılar AdsAlert.source üzerinde SiteAlerts ile; GSC uyarıları operatöre hiç gitmez, CRITICAL olanı projenin kendi Telegram'ına yalnız genel ifadeyi gönderir; SEO uyarıları yalnız projenin kendi Telegram'ına.
+- Works "Needs attention" kartı yerine Today özeti + sıradaki adım.
+- Ayarlar Search sayfasındaki bölümde.
+- Kapsam tahmini SEO_CRAWL ister.
+
+Ertelenenler: SH2 saatlik erken uyarı, grafik notları, Integrations rozeti, inceleme bütçesi ayarı, PSI, ikincil hostlar, `inspect_url` (SC-F4), SeoAction P1 (SC-F6).
 
 **Amaç:** Siteyi Google'ın gözünden ve kendi tarayıcımızla sürekli denetlemek; felaketleri saatler içinde yakalamak.
 

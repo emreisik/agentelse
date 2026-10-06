@@ -71,11 +71,93 @@ function planFromIdeasStep(pool: number): NextStep {
   };
 }
 
+// GA-F3: web sitesinin ölçüm adımları. Alan adı olan ama Google Analytics
+// bağlamamış projeye sessiz bir bağlama önerisi; açık bir ölçüm sorunu varsa
+// kritikse engel, değilse sıradaki adım olarak düzeltme.
+export function websiteSteps(snapshot: JourneySnapshot): {
+  blocker: NextStep[];
+  next: NextStep[];
+} {
+  const website = snapshot.website;
+  if (!website) return { blocker: [], next: [] };
+  if (website.analytics === "not_connected") {
+    return website.hasDomain
+      ? {
+          blocker: [],
+          next: [
+            {
+              key: "connect-analytics",
+              tone: "next",
+              label: "Connect Google Analytics",
+              title:
+                "Connect Google Analytics to see what your posts bring to your website.",
+              action: { kind: "connect_analytics" },
+              quiet: true,
+            },
+          ],
+        }
+      : { blocker: [], next: [] };
+  }
+  const fix = website.fix;
+  if (!fix) return { blocker: [], next: [] };
+  const step: NextStep = {
+    key: `fix-tracking-${fix.checkKey}`,
+    tone: fix.critical ? "blocker" : "next",
+    label: "Fix tracking",
+    title: fix.title,
+    action: { kind: "fix_tracking", checkKey: fix.checkKey, href: fix.href },
+  };
+  return fix.critical
+    ? { blocker: [step], next: [] }
+    : { blocker: [], next: [step] };
+}
+
+// SC-F3: açık kritik arama sağlığı sorunu; her iki yolda da ilk adım.
+function searchIssueStep(
+  issue: NonNullable<JourneySnapshot["searchCritical"]>,
+): NextStep {
+  return {
+    key: "fix-search-issue",
+    tone: "blocker",
+    label: "Fix",
+    title:
+      issue.count > 1
+        ? `${issue.title} (+${issue.count - 1} more search issues)`
+        : issue.title,
+    action: {
+      kind: "fix_search_issue",
+      alertId: issue.alertId,
+      count: issue.count,
+    },
+  };
+}
+
+// Sohbet modeline giden adım metinleri. GA4/GSC uyarılarından türeyen
+// adımların başlığı (Google verisinden bulgular) üçüncü taraf yapay zekâ
+// işlemcisine gitmez: yerine sabit bir cümle geçer, düğme ekranda kalır.
+const PROMPT_SAFE_TITLES: Partial<Record<NextStep["action"]["kind"], string>> =
+  {
+    fix_tracking:
+      "Fix a website tracking issue (the client sees a Fix tracking button).",
+    fix_search_issue:
+      "Fix a Google Search issue (the client sees a Fix button).",
+  };
+
+export function nextStepTitlesForPrompt(steps: readonly NextStep[]): string[] {
+  return steps.map(
+    (step) => PROMPT_SAFE_TITLES[step.action.kind] ?? step.title,
+  );
+}
+
 export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
   const { items, today } = snapshot;
   const pool = snapshot.ideaPool ?? 0;
   const draft = snapshot.weeklyDraft;
   const awaiting = snapshot.awaitingVerdict ?? 0;
+  const site = websiteSteps(snapshot);
+  const search = snapshot.searchCritical
+    ? [searchIssueStep(snapshot.searchCritical)]
+    : [];
   // A drafted week stands in for "plan from ideas" and "plan the next weeks":
   // the plan is already made, it only waits for the owner. A chat that holds
   // an unsaved draft of its own is not offered a new plan either (it would
@@ -87,10 +169,16 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
       : pool > 0 && !snapshot.openDraftHere
         ? [planFromIdeasStep(pool)]
         : [];
-    return awaiting > 0 ? [...lead, verdictStep(awaiting)] : lead;
+    return [
+      ...search,
+      ...site.blocker,
+      ...lead,
+      ...(awaiting > 0 ? [verdictStep(awaiting)] : []),
+      ...site.next,
+    ];
   }
 
-  const steps: NextStep[] = [];
+  const steps: NextStep[] = [...search];
   const at = (stage: JourneyItem["stage"]) =>
     items.filter((item) => item.stage === stage);
 
@@ -133,6 +221,8 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
       },
     });
   }
+  // GA-F3: kritik ölçüm sorunu, gecikmiş paylaşımdan hemen sonra.
+  steps.push(...site.blocker);
 
   // Work-scoped only: approving what is in review in one go comes before the
   // review step itself. It names the exact pieces it was computed for.
@@ -285,6 +375,8 @@ export function computeNextSteps(snapshot: JourneySnapshot): NextStep[] {
       action: { kind: "show_results", count: n },
     });
   }
+  // GA-F3: kritik olmayan ölçüm düzeltmesi ya da sessiz GA bağlama önerisi.
+  steps.push(...site.next);
 
   // The cap is for what is waiting; quiet steps never take a slot from it.
   return [

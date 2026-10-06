@@ -17,6 +17,8 @@ import {
 } from "@/server/chat/content-plan";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
 import { countEnabledPublishSchedules } from "@/server/chat/publish-schedule";
+import { loadSearchAttention } from "@/server/seo/health/attention";
+import { loadWebsiteJourneyFacts } from "@/server/website-analytics/health/read";
 
 import { computeNextSteps } from "./next-steps";
 import { loadPlanResults } from "./results";
@@ -133,6 +135,8 @@ export async function loadJourneySnapshot(
       weeklyDraft,
       awaitingVerdict,
       openDraftHere,
+      attention,
+      website,
     ] = await Promise.all([
       timezoneRead,
       creativesRead,
@@ -153,6 +157,10 @@ export async function loadJourneySnapshot(
       // dialog lists (post-results.ts).
       countAwaitingVerdict(projectId).catch(() => 0),
       workId ? hasOpenDraft(projectId, workId) : Promise.resolve(false),
+      // SC-F3: bayraklar kapalıyken sorgu yok.
+      loadSearchAttention(projectId).catch(() => null),
+      // GA-F3: GA_HEALTH kapalıyken sorgu yok.
+      loadWebsiteJourneyFacts(projectId).catch(() => null),
     ]);
 
     const tasks: PlanTaskRow[] = taskRows.flatMap((task) => {
@@ -185,6 +193,16 @@ export async function loadJourneySnapshot(
       awaitingVerdict,
       ...(weeklyDraft ? { weeklyDraft } : {}),
       ...(openDraftHere ? { openDraftHere } : {}),
+      ...(attention && attention.critical[0]
+        ? {
+            searchCritical: {
+              alertId: attention.critical[0].id,
+              title: attention.critical[0].title,
+              count: attention.criticalCount,
+            },
+          }
+        : {}),
+      ...(website ? { website } : {}),
     };
   } catch (error) {
     console.error("[journey] snapshot failed:", error);

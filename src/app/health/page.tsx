@@ -27,6 +27,10 @@ import { AdsInsurance } from "@/server/ads/insurance";
 import { isPlatformOperator } from "@/server/security/operator";
 import { loadGaHealthCounters } from "@/server/website-analytics/health-counters";
 import { GaHealthCard } from "@/components/website-analytics/ga-health-card";
+import { loadGaMeasurementCounters } from "@/server/website-analytics/health/read";
+import { GaMeasurementCountersCard } from "@/components/website-analytics/ga-measurement-counters-card";
+import { loadSeoOperatorCounters } from "@/server/seo/health/operator-counters";
+import { SeoOperatorCard } from "@/components/search-health/seo-operator-card";
 import {
   clearProviderIncidentAction,
   dismissDeadLetterAction,
@@ -98,6 +102,8 @@ export default async function HealthPage() {
   // işlenemeyen webhook olayları (operatör elle bakar). GA-F2b: Google
   // Analytics sayaçları (yalnız sayılar, GA_SYNC kapalıyken null). SC-F2:
   // dikkat isteyen, geçmişi yüklenen ve Google kotasını bekleyen siteler.
+  // GA-F3: ölçüm sağlığı sayaçları; SC-F3: arama sağlığı ve tarayıcı
+  // sayaçları (bayraklar kapalıyken null). Bunlar `healthy`'ye sayılmaz.
   const now = new Date();
   const [
     leftoverRules,
@@ -106,6 +112,8 @@ export default async function HealthPage() {
     gscAttention,
     gscBackfilling,
     gscQuotaWaiting,
+    gaMeasurement,
+    seoCounters,
   ] = await Promise.all([
     AdsInsurance.undeletable().catch(() => []),
     prisma.adsWebhookEvent.count({ where: { status: "DEAD" } }).catch(() => 0),
@@ -130,6 +138,8 @@ export default async function HealthPage() {
         },
       })
       .catch(() => 0),
+    loadGaMeasurementCounters().catch(() => null),
+    loadSeoOperatorCounters(now).catch(() => null),
   ]);
 
   const healthy =
@@ -423,6 +433,9 @@ export default async function HealthPage() {
         ) : null}
 
         {gaCounters ? <GaHealthCard counters={gaCounters} /> : null}
+        {gaMeasurement ? (
+          <GaMeasurementCountersCard counters={gaMeasurement} />
+        ) : null}
 
         {gscAttention > 0 || gscBackfilling > 0 || gscQuotaWaiting > 0 ? (
           <Card>
@@ -451,6 +464,7 @@ export default async function HealthPage() {
             </CardContent>
           </Card>
         ) : null}
+        {seoCounters ? <SeoOperatorCard counters={seoCounters} /> : null}
 
         <Card>
           <CardHeader className="flex flex-row items-center gap-2 space-y-0">

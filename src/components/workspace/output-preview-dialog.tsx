@@ -137,7 +137,6 @@ function PreviewBody({
       if (result.ok) {
         setLocalStatus(to);
         toast.success(to === "APPROVED" ? "Approved" : "Rejected");
-        router.refresh();
         onChanged?.();
       } else {
         toast.error(result.message);

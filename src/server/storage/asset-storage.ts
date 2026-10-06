@@ -11,6 +11,7 @@ import {
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 
+import { ALLOWED_ASSET_WIDTHS } from "@/lib/asset-url";
 import { getEnv, isIntegrationConfigured } from "@/lib/env";
 
 // Single storage abstraction for every Asset-backed file in the app. Two
@@ -135,6 +136,8 @@ export async function overwriteAsset(
     const key = storageKey.slice(R2_SCHEME.length);
     assertSafeKey(key);
     await putR2(key, buffer, mimeType);
+    // Previews made from the old picture would outlive it.
+    await dropStoredThumbnails(storageKey);
     return;
   }
   if (storageKey.startsWith(LOCAL_ASSET_SCHEME)) {
@@ -144,6 +147,56 @@ export async function overwriteAsset(
     return;
   }
   throw new Error(`Unrecognized storageKey scheme: ${storageKey}`);
+}
+
+// Resized previews (asset-thumbnail.ts) kept next to the originals in R2, so
+// a restart or a deploy does not send every picture back through a full
+// download and a resize. Derived data: dropped whenever the original is
+// overwritten or deleted. Only r2:// assets have them; for anything else a
+// read finds nothing and a write does nothing.
+function thumbnailKey(storageKey: string, width: number): string | null {
+  if (!storageKey.startsWith(R2_SCHEME)) return null;
+  const key = storageKey.slice(R2_SCHEME.length);
+  if (!SAFE_KEY.test(key)) return null;
+  return `thumbs/${key.replace(/\.[a-zA-Z0-9]+$/, "")}-w${width}.webp`;
+}
+
+export async function readStoredThumbnail(
+  storageKey: string,
+  width: number,
+): Promise<Buffer | null> {
+  const key = thumbnailKey(storageKey, width);
+  if (!key) return null;
+  try {
+    return await getR2(key);
+  } catch {
+    // Not made yet (NoSuchKey) or R2 unreachable: the caller makes it.
+    return null;
+  }
+}
+
+export async function writeStoredThumbnail(
+  storageKey: string,
+  width: number,
+  preview: Buffer,
+): Promise<void> {
+  const key = thumbnailKey(storageKey, width);
+  if (!key) return;
+  await putR2(key, preview, "image/webp");
+}
+
+// Best-effort: a preview that cannot be removed is at worst a stale picture,
+// never a failed write or delete of the original.
+async function dropStoredThumbnails(storageKey: string): Promise<void> {
+  await Promise.all(
+    ALLOWED_ASSET_WIDTHS.map(async (width) => {
+      const key = thumbnailKey(storageKey, width);
+      if (!key) return;
+      await getR2Client()
+        .send(new DeleteObjectCommand({ Bucket: bucketName(), Key: key }))
+        .catch(() => undefined);
+    }),
+  );
 }
 
 export async function readAsset(storageKey: string): Promise<Buffer> {
@@ -175,6 +228,7 @@ export async function deleteAsset(storageKey: string): Promise<boolean> {
           Key: key,
         }),
       );
+      await dropStoredThumbnails(storageKey);
       return true;
     }
     if (storageKey.startsWith(LOCAL_ASSET_SCHEME)) {

@@ -6,7 +6,11 @@ import {
   requireProjectAccess,
 } from "@/server/security/tenant-context";
 import { isAgentelseError } from "@/server/security/errors";
-import { readAsset } from "@/server/storage/asset-storage";
+import {
+  readAsset,
+  readStoredThumbnail,
+  writeStoredThumbnail,
+} from "@/server/storage/asset-storage";
 import {
   assetThumbnail,
   canResize,
@@ -56,8 +60,14 @@ export async function GET(
   const width = parseAssetWidth(new URL(request.url).searchParams.get("w"));
   if (width && canResize(asset.mimeType)) {
     try {
-      const preview = await assetThumbnail(assetId, width, () =>
-        readAsset(asset.storageKey),
+      const preview = await assetThumbnail(
+        assetId,
+        width,
+        () => readAsset(asset.storageKey),
+        {
+          read: () => readStoredThumbnail(asset.storageKey, width),
+          write: (made) => writeStoredThumbnail(asset.storageKey, width, made),
+        },
       );
       return new NextResponse(new Uint8Array(preview), {
         headers: {

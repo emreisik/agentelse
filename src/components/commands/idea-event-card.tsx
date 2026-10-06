@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import type { DepartmentKey } from "@prisma/client";
 import {
@@ -394,24 +394,22 @@ export function IdeaEventCard({
       // Keyed by the package: assistant-ui keys messages by position, so
       // without this a card would inherit another package's ticks when the
       // list shifts under it.
-      return (
-        host
-          ? inPane(
-              card,
-              commandId,
-              <ContentPackageCard
-                key={commandId ?? card.topic}
-                card={card}
-                commandId={commandId}
-              />,
-            )
-          : (
-              <ContentPackageCard
-                key={commandId ?? card.topic}
-                card={card}
-                commandId={commandId}
-              />
-            )
+      return host ? (
+        inPane(
+          card,
+          commandId,
+          <ContentPackageCard
+            key={commandId ?? card.topic}
+            card={card}
+            commandId={commandId}
+          />,
+        )
+      ) : (
+        <ContentPackageCard
+          key={commandId ?? card.topic}
+          card={card}
+          commandId={commandId}
+        />
       );
 
     case "setup-demo-carousel":
@@ -679,8 +677,9 @@ function WsDecisionCard({
 // to a "task-result"/CANCELLED card on its own (TaskRepository.transition
 // calls postTaskChatEvent for every terminal status, cancellation
 // included — see task.repository.ts), so this needed no new server code,
-// only a button. Optimistic: shows "Cancelling…" immediately, then
-// router.refresh() picks up the real resolved card.
+// only a button. Optimistic: shows "Cancelling…" immediately, then the
+// action's own revalidatePath brings the real resolved card back with its
+// response (no separate router.refresh(), which rendered the page twice).
 function TaskRunningCard({
   card,
 }: {
@@ -689,7 +688,6 @@ function TaskRunningCard({
   const params = useParams<{ projectId?: string }>();
   const projectId =
     typeof params?.projectId === "string" ? params.projectId : undefined;
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -705,7 +703,6 @@ function TaskRunningCard({
         const result = await cancelTaskAction(formData);
         if (result.ok) {
           setCancelling(true);
-          router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);
@@ -755,7 +752,8 @@ function TaskRunningCard({
 // awaiting approval — the decision can be made here without navigating to
 // a separate panel (pending ones are appended to the Agency Desk chat as this same card). After the decision, the server (see
 // resolveApprovalDecisionCard) updates the SAME row to an
-// "approval-decision" card; router.refresh() fetches that updated state.
+// "approval-decision" card; the action's revalidatePath re-renders the page
+// with that state in its own response.
 // In between, an optimistic result state is shown briefly while waiting
 // for the server response.
 function ApprovalRequestCard({
@@ -763,7 +761,6 @@ function ApprovalRequestCard({
 }: {
   card: Extract<IdeaEventCardData, { kind: "approval-request" }>;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [decision, setDecision] = useState<"APPROVED" | "REJECTED" | null>(
     null,
@@ -783,7 +780,6 @@ function ApprovalRequestCard({
         if (result.ok) {
           setDecision(to);
           toast.success(to === "APPROVED" ? "Approved" : "Rejected");
-          router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);
@@ -938,7 +934,6 @@ function HumanActionRequiredCard({
 }: {
   card: Extract<IdeaEventCardData, { kind: "human-action-required" }>;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [resolved, setResolved] = useState<"RESOLVED" | "CANCELLED" | null>(
     null,
@@ -965,7 +960,6 @@ function HumanActionRequiredCard({
         if (result.ok) {
           setResolved(outcome);
           toast.success(outcome === "RESOLVED" ? "Response sent" : "Cancelled");
-          router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);
@@ -1082,7 +1076,6 @@ function HandoffProposedCard({
 }: {
   card: Extract<IdeaEventCardData, { kind: "handoff-proposed" }>;
 }) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [decision, setDecision] = useState<"ACCEPTED" | "REJECTED" | null>(
     null,
@@ -1105,7 +1098,6 @@ function HandoffProposedCard({
           toast.success(
             to === "ACCEPTED" ? "Handoff accepted" : "Handoff rejected",
           );
-          router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);
@@ -1598,7 +1590,6 @@ function QuestionCard({
 }: {
   card: Extract<IdeaEventCardData, { kind: "question" }>;
 }) {
-  const router = useRouter();
   // The composer's own send path: the streaming agent turn under
   // CHAT_ENGINE=agent, the blocking action otherwise. Answering through it
   // keeps the reply in the engine that asked; the raw action below is only the
@@ -1636,7 +1627,6 @@ function QuestionCard({
         const result = await submitChatMessageAction(formData);
         if (result.ok) {
           setAnswered(true);
-          router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);

@@ -245,7 +245,6 @@ function CreativeReadyCard({
                     ? "Approved — it goes out at its planned time"
                     : "Approved",
           );
-          router.refresh();
         } else {
           setError(result.message);
           toast.error(result.message);
@@ -586,7 +585,6 @@ const PLATFORM_LABEL: Record<"tiktok" | "linkedin" | "x", string> = {
 };
 
 function PublishSection({ creativeId }: { creativeId: string }) {
-  const router = useRouter();
   const [targets, setTargets] = useState<PublishTarget[] | null>(null);
   const [publishedKeys, setPublishedKeys] = useState<Set<string>>(new Set());
   const [pendingKey, setPendingKey] = useState<string | null>(null);
@@ -639,7 +637,6 @@ function PublishSection({ creativeId }: { creativeId: string }) {
         if (result.ok) {
           toast.success(result.message);
           setPublishedKeys((prev) => new Set(prev).add(key));
-          router.refresh();
         } else {
           toast.error(result.message);
         }
@@ -654,7 +651,6 @@ function PublishSection({ creativeId }: { creativeId: string }) {
         if (result.ok) {
           toast.success(result.message);
           setPublishedKeys((prev) => new Set(prev).add(platform));
-          router.refresh();
         } else {
           toast.error(result.message);
         }

@@ -55,4 +55,23 @@ describe("asset thumbnails", () => {
     const small = await assetThumbnail("a2", 1280, async () => png(200, 100));
     expect((await sharp(small).metadata()).width).toBe(200);
   });
+
+  it("serves a stored preview without reading the original, and stores a new one", async () => {
+    const kept = Buffer.from("kept-preview");
+    const read = vi.fn(async () => png(1080, 1350));
+    const fromStore = await assetThumbnail("a3", 320, read, {
+      read: async () => kept,
+      write: vi.fn(async () => undefined),
+    });
+    expect(fromStore).toBe(kept);
+    expect(read).not.toHaveBeenCalled();
+
+    const write = vi.fn(async (preview: Buffer) => void preview);
+    const made = await assetThumbnail("a4", 320, read, {
+      read: async () => null,
+      write,
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(write).toHaveBeenCalledWith(made);
+  });
 });

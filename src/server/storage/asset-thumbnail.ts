@@ -47,6 +47,13 @@ export async function assetThumbnail(
   assetId: string,
   width: number,
   readOriginal: () => Promise<Buffer>,
+  // The preview kept in storage across restarts and deploys (R2, see
+  // asset-storage.ts): read before making one, written after. Absent: this
+  // process's memory only.
+  stored?: {
+    read: () => Promise<Buffer | null>;
+    write: (preview: Buffer) => Promise<void>;
+  },
 ): Promise<Buffer> {
   const key = `${assetId}:${width}`;
   const hit = cache.get(key);
@@ -59,12 +66,21 @@ export async function assetThumbnail(
   const pending = inFlight.get(key);
   if (pending) return pending;
   const making = (async () => {
+    const kept = await stored?.read();
+    if (kept) {
+      remember(key, kept);
+      return kept;
+    }
     const resized = await sharp(await readOriginal())
       .rotate()
       .resize({ width, withoutEnlargement: true })
       .webp({ quality: 80 })
       .toBuffer();
     remember(key, resized);
+    // Kept for the next restart or deploy; the answer does not wait for it.
+    stored?.write(resized).catch((error: unknown) => {
+      console.error(`[asset-thumbnail] could not store ${key}`, error);
+    });
     return resized;
   })().finally(() => {
     inFlight.delete(key);

@@ -2251,6 +2251,8 @@ model GaPropertyLink {
   healthRun    GaHealthRun?
   findings     GaFinding[]
   analysisRun  GaAnalysisRun?
+  reportRun    GaReportRun?
+  goalProgress GaGoalProgress[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2426,6 +2428,9 @@ model GscSiteLink {
   seoClusters        SeoCluster[]
   seoQueryEmbeddings SeoQueryEmbedding[]
   seoEngineState     SeoEngineState?
+  seoReports         SeoReport[]
+  seoReportState     SeoReportState?
+  seoGoalProgress    SeoGoalProgress[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2822,6 +2827,115 @@ model GaAnalysisRun {
   @@index([projectId])
   @@index([lastDailyAt])
   @@index([lastCheckedAt])
+}
+
+// ---------------------------------------------------------------------------
+// GA-F5 raporlama ve planlama (docs/website-reports.md). Mevcut modellere ilişki
+// yok (GaPropertyLink'e geri ilişkiler hariç): proje silme projectId kolonlu her
+// tabloyu kendisi temizler. GaReportRun ve GaGoalProgress bağla birlikte cascade
+// ile gider (Disconnect "right away"). GaReportSettings Google verisi taşımaz.
+// ---------------------------------------------------------------------------
+
+// GA-F5 rapor ve uyarı tercihleri. Proje başına tek satır; satır yoksa
+// varsayılanlar geçerlidir (src/lib/website-analytics/reports/settings.ts).
+model GaReportSettings {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  projectId       String   @unique
+  // Haftalık rapor; gün ISO hafta günü (1 = Pazartesi … 7 = Pazar), 08:00 proje saati
+  weeklyEnabled   Boolean  @default(true)
+  weeklyWeekday   Int      @default(1)
+  // Aylık rapor + "Next month plan"; ayın günü (1-28), 08:00 proje saati
+  monthlyEnabled  Boolean  @default(true)
+  monthlyDay      Int      @default(2)
+  // Günlük nabız: "notable" (yalnız not edilecek bir şey varsa) | "off"
+  pulse           String   @default("notable")
+  // Kritik ölçüm uyarısı: Website analytics sohbetine kart / projenin
+  // Telegram'ına rakamsız mesaj (SiteAlerts)
+  alertChat       Boolean  @default(true)
+  alertTelegram   Boolean  @default(true)
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// GA-F5: bağ başına rapor turu durumu (CAS kilidi, dönem başına "yapıldı"
+// işaretleri, nabız beklemesi, deneme sayaçları, adil aday sırası). stats ve
+// attempts yalnız sayaçtır; lastError yalnız hata adı/kodudur (Google verisi yok).
+model GaReportRun {
+  id                String    @id @default(cuid())
+  linkId            String    @unique
+  workspaceId       String
+  projectId         String
+  leaseUntil        DateTime?
+  leaseOwner        String?
+  // Aday seçimi adaleti: zamanı gelmese de her bakılışta yazılır
+  lastCheckedAt     DateTime?
+  // Değerlendirilen son nabız günü (mülk günü, YYYY-MM-DD); sessiz geçse de yazılır
+  lastPulseDay      String?
+  // Son nabız değerlendirmesinin zamanı ("yeni uyarı" sınırı)
+  lastPulseAt       DateTime?
+  // GA-F4 günlük analizini bekleyen nabız günü ve beklemenin başladığı an (en çok 3 saat)
+  pulsePendingDay   String?
+  pulsePendingSince DateTime?
+  // Son haftalık raporun Pazartesi'si (mülk günü); atlanan hafta da yazılır
+  lastWeek          String?
+  // Son aylık rapor ayı (YYYY-MM)
+  lastMonth         String?
+  // Son "Next month plan" hedef ayı (YYYY-MM)
+  lastPlanMonth     String?
+  // Hedeflerin güncellendiği son tam mülk günü (completeThrough)
+  lastGoalsDay      String?
+  // Kritik uyarı kartları için son tarama
+  lastAlertScanAt   DateTime?
+  // { "<variant>:<periodKey>": hata sayısı } (en çok 12 anahtar)
+  attempts          Json?
+  // Yalnız hata adı / Prisma kodu (ör. "P2028"), mesaj değil
+  lastError         String?
+  // { posted: {...}, skipped: {...}, narrative: {...} } sayaçları
+  stats             Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([lastCheckedAt])
+}
+
+// GA-F5: web.* hedefinin bu ayki ilerlemesi (Brand Brain → Goals'taki tempo ve
+// tahmin). Ay ve günler mülk saatindedir. Tempo saklanmaz: okurken hedefin
+// güncel targetValue'su ile hesaplanır (expectedShare × hedef). Hedef silinince
+// ya da anahtarı değişince günlük işte silinir.
+model GaGoalProgress {
+  id            String   @id @default(cuid())
+  goalId        String   @unique
+  linkId        String
+  workspaceId   String
+  projectId     String
+  // web.sessions | web.key_events | web.revenue
+  metricKey     String
+  // "2026-10"
+  month         String
+  // Hesabın dayandığı son tam mülk günü (YYYY-MM-DD)
+  through       String
+  dayOfMonth    Int
+  daysInMonth   Int
+  monthToDate   Float
+  // Haftanın günü ağırlıklı: ayın bu güne kadar beklenen payı (0-1)
+  expectedShare Float?
+  forecast      Float?
+  forecastLow   Float?
+  forecastHigh  Float?
+  // ok | short_history | no_baseline | complete
+  forecastBasis String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([linkId])
 }
 
 // ---------------------------------------------------------------------------
@@ -3378,6 +3492,131 @@ model SeoQueryEmbedding {
 
   @@index([linkId])
   @@index([projectId])
+}
+
+// ---------------------------------------------------------------------------
+// SEO raporları ve planlama (docs/google-search-console-plan.md SC-F5,
+// docs/search-reports.md). Bütün tablolar Search Console bağına (GscSiteLink)
+// cascade'lidir: Disconnect, "Delete stored data" ve W1 saklama temizliği
+// raporları, rapor durumunu ve hedef ilerlemesini hemen siler. ProjectGoal'a
+// ilişki eklenmez (goalId düz kimliktir; hedefin modu ProjectGoal.isMock'tadır).
+// ---------------------------------------------------------------------------
+
+// Gönderilmiş rapor: değişmez anlık görüntü. Yazıldıktan sonra hiçbir alanı
+// güncellenmez (updatedAt yok); yalnız silinir.
+model SeoReport {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  projectId     String
+  linkId        String
+  // PULSE | WEEKLY | MONTHLY | ROADMAP
+  kind          String
+  // "D:<gün>" | "W:<Pazartesi>" | "M:<YYYY-MM>" (ROADMAP: planlanan ay)
+  periodKey     String
+  periodStart   DateTime @db.Date
+  periodEnd     DateTime @db.Date
+  // Rapor yazılırken kesinleşen son PT günü (YYYY-MM-DD)
+  finalThrough  String
+  // Anlatının dili (Project.language || "tr", ReasoningService ile aynı)
+  language      String
+  title         String
+  // SeoReportSnapshot (src/lib/seo/reports/types.ts)
+  snapshot      Json
+  // Number-check'ten geçmiş anlatı (ReportSummary) ya da null
+  narrative     Json?
+  // Anlatı yoksa nedeni (sabit İngilizce metin)
+  narrativeNote String?
+  // Sohbete yazılan Command'ın deterministik kimliği
+  // (seoweekly_<linkId>_<hafta> ...; bağ kimliği mock/canlı ve yeniden
+  // bağlanmayı ayırır)
+  commandId     String   @unique
+  isMock        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, kind, periodKey])
+  @@index([projectId, isMock, createdAt])
+  @@index([kind, createdAt])
+}
+
+// Bağ başına rapor zamanlayıcısının durumu (kilit, son işlenen dönemler,
+// bekleme anları, geri çekilme).
+model SeoReportState {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  linkId      String  @unique
+  isMock      Boolean @default(false)
+
+  leaseUntil DateTime?
+  leaseOwner String?
+
+  // Son işlenen dönemler (PT gün anahtarları, YYYY-MM-DD): nabız günü,
+  // haftanın Pazartesi'si, ayın ilk günü, yol haritasının ayı, hedeflerin
+  // ölçüldüğü son kesin gün
+  pulseDay       String?
+  // Son nabız denetimi (yeni CRITICAL uyarı sayımı bu andan itibaren)
+  pulseCheckedAt DateTime?
+  weeklyWeek     String?
+  monthlyMonth   String?
+  roadmapMonth   String?
+  goalsDay       String?
+
+  // "wait" sonucu: bu dönem için bir sonraki denetim anı (proje saatinde
+  // Çarşamba/Perşembe 09:00 ya da ayın 4'ü 09:00, UTC'ye çevrilmiş)
+  weeklyWaitWeek   String?
+  weeklyWaitUntil  DateTime?
+  monthlyWaitMonth String?
+  monthlyWaitUntil DateTime?
+
+  nextRunAt           DateTime?
+  consecutiveFailures Int       @default(0)
+  lastError           String?
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([isMock, nextRunAt])
+}
+
+// SEO hedefinin (ProjectGoal, metricKey SEO_GOAL_METRIC_KEYS'ten biri) günlük
+// ölçümü ve temposu. ProjectGoal.currentValue ile aynı değer burada tarih ve
+// seriyle tutulur. Hedef tek moda aittir (ProjectGoal.isMock), bu yüzden
+// goalId tekildir.
+model SeoGoalProgress {
+  id              String  @id @default(cuid())
+  workspaceId     String
+  projectId       String
+  linkId          String
+  // ProjectGoal.id (FK yok)
+  goalId          String  @unique
+  metricKey       String
+  value           Float?
+  // Değerin dayandığı son kesin PT günü
+  measuredThrough String?
+  // achieved | on_track | behind | at_risk | unknown
+  pace            String  @default("unknown")
+  // 13 hafta sonrası tahmini ve %90 aralığı
+  projected       Float?
+  projectedLow    Float?
+  projectedHigh   Float?
+  // [{ week: "YYYY-MM-DD", value: number }] en çok 13 nokta, eskiden yeniye
+  series          Json?
+  // no_value | no_target | short_history | no_brand_split | no_health | no_cwv
+  reason          String?
+  isMock          Boolean @default(false)
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, isMock])
+  @@index([linkId])
 }
 
 model Skill {

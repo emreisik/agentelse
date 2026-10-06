@@ -231,6 +231,22 @@ describe("privacy policy: Google Analytics and Search Console section", () => {
     );
   });
 
+  it("says what the website reports keep and delete (GA-F5)", () => {
+    expect(google).toContain("keeps each report as it was sent");
+    expect(google).toContain(
+      "weekly reports, monthly reports and plans for 400 days",
+    );
+    expect(google).toContain(
+      "these reports and the goal progress taken from it are deleted right away",
+    );
+  });
+
+  it("says how long the Search reports are kept (SC-F5)", () => {
+    expect(google).toContain(
+      "The weekly and monthly Search reports Agentelse writes from this data are kept for up to 36 months (16 months if you chose to keep only the last 16 months; daily notes for 90 days) and are deleted with it.",
+    );
+  });
+
   it("says Disconnect deletes right away and when Google access is kept", () => {
     expect(google).toContain(
       "deletes its stored token and the Google data in that connection right away",

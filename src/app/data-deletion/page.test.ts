@@ -27,6 +27,14 @@ describe("data deletion page", () => {
     expect(html).not.toContain("deletion-status");
   });
 
+  it("says disconnecting Google Analytics deletes the website reports (GA-F5)", async () => {
+    const html = (await render()).replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+    expect(html).toContain("website reports Agentelse posted");
+    expect(html).toContain(
+      "Your own messages in that chat stay until you delete the chat",
+    );
+  });
+
   it("shows the status of a request opened with its signed confirmation code", async () => {
     const code = createDeletionCode(1, "auth-secret", now);
     const html = await render(code);

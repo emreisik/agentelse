@@ -95,6 +95,7 @@ Açılış sırası:
 - Sohbet ANALYTICS_ANALYSIS sağlayıcısı (`google-api-provider.ts`): 28 günlük toplamlar önce `readSearchConsoleTotals`'tan.
 - SEO Manager quick wins (`modules/seo/research.ts`): son 4 tam haftanın marka dışı sorguları, gösterime göre ilk 1000 satır, sonra değişmeyen `pickQuickWins` → `generateSeoIdeas`.
 - `google-analytics-scanner` SC-F4'e kadar canlı kalır.
+- SC-F5 raporları ([search-reports.md](search-reports.md)) ambardan yalnız kesin günleri okur; gönderilen rapor `SeoReport`'ta değişmez anlık görüntüdür.
 
 ## Arayüz
 

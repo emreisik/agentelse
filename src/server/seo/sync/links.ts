@@ -13,6 +13,7 @@ import { gscMockMode } from "@/server/integrations/search-console/search-analyti
 import { propertyTypeOf } from "@/server/integrations/search-console/sites";
 import { deleteSearchConsoleAlertsForProjects } from "@/server/seo/health/alerts";
 import { forgetSearchOpportunitiesForLinks } from "@/server/seo/opportunities/forget";
+import { forgetSeoGoalValues } from "@/server/seo/reports/goals";
 import { SeoSites } from "@/server/seo/site/sites";
 
 // Proje ↔ Search Console sitesi bağları (docs/google-search-console-plan.md
@@ -186,6 +187,8 @@ export async function deleteGscDataForProject(
   ).map((row) => row.id);
   await forgetSearchOpportunitiesForLinks(forgetIds).catch(() => undefined);
   const result = await prisma.gscSiteLink.deleteMany({ where: mode });
+  // SC-F5: SEO hedeflerinin değeri silinen ambardan geliyordu; boşaltılır (raporlar cascade ile gitti).
+  await forgetSeoGoalValues([projectId], { isMock: gscMockMode() });
   // SC-F3: Search Console'dan türeyen uyarılar ve denetimdeki GSC kökenli
   // durum da silinir (bayraktan bağımsız); tarama verisi sitenin kendisinden
   // geldiği için kalır.

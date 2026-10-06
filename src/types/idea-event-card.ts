@@ -11,6 +11,8 @@ import type { MasterContentCardData } from "@/lib/works/master-content";
 import type { DailyBrief } from "@/lib/works/daily-brief";
 import type { AdsInsightCardData } from "@/lib/works/ads-insight";
 import type { ModuleFlowCardData } from "@/lib/module-flows/card";
+import type { WebsiteReportCardData } from "@/lib/website-analytics/reports/types";
+import type { SeoReportCardData } from "@/lib/seo/reports/card";
 
 // Representation of EVERY pipeline event in an idea's chat (origin
 // signal/finding, insight/opportunity, idea birth, council decision, work
@@ -406,6 +408,10 @@ export type IdeaEventCardData =
   // Ads Manager / Analytics / SEO Manager: one card per module flow, changed
   // in place step by step (src/lib/module-flows/card.ts).
   | ModuleFlowCardData
+  // Website analytics reports (GA-F5): stored snapshots; never change after they are sent (src/lib/website-analytics/reports/types.ts).
+  | WebsiteReportCardData
+  // SC-F5: Search & SEO sohbetinin rapor kartı; yalnız rapora işaret eder (sayı taşımaz), anlık görüntü SeoReport'tan okunur.
+  | SeoReportCardData
   | CreativeCardData;
 
 const EVENT_KINDS = new Set([
@@ -438,6 +444,8 @@ const EVENT_KINDS = new Set([
   "daily-brief",
   "ads-insight",
   "module-flow",
+  "website-report",
+  "seo-report",
 ]);
 
 const CREATIVE_KINDS = [

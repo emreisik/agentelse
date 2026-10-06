@@ -109,6 +109,31 @@ async function run(
   }
 }
 
+const OpenIdsSchema = z.object({
+  projectId: z.string().trim().min(1).max(64),
+  findingIds: z.array(z.string().trim().min(1).max(64)).max(20),
+});
+
+// Rapor kartındaki bulguların hangileri hâlâ OPEN (Accept / Dismiss
+// gösterilebilir). Hata ve yetkisizlikte boş döner: düğme gizli kalır.
+export async function loadOpenGaFindingIdsAction(
+  projectId: string,
+  findingIds: string[],
+): Promise<string[]> {
+  try {
+    const parsed = OpenIdsSchema.safeParse({ projectId, findingIds });
+    if (!parsed.success) return [];
+    const { userId } = await requireUser();
+    await requireProjectAccess(userId, parsed.data.projectId);
+    return await GaFindingActions.openLiveIds(
+      parsed.data.projectId,
+      parsed.data.findingIds,
+    );
+  } catch {
+    return [];
+  }
+}
+
 export async function acceptGaFindingAction(
   formData: FormData,
 ): Promise<ActionResult> {

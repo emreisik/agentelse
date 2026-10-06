@@ -6,6 +6,7 @@ import { Plug, RefreshCw, Search } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { GscFlags } from "@/lib/seo/flags";
+import { SeoReportFlags } from "@/lib/seo/reports/flags";
 import { SeoInsightFlags } from "@/lib/seo/insight-flags";
 import { DEFAULT_SEARCH_PERIOD, isSearchPeriod } from "@/lib/seo/periods";
 import { refreshSearchAnalyticsAction } from "@/server/actions/search-analytics-actions";
@@ -23,6 +24,7 @@ import { BrandTermsForm } from "@/components/search-analytics/brand-terms-form";
 import { SearchHealthSection } from "@/components/search-health/search-health-section";
 import { BrandTermSuggestions } from "@/components/search-opportunities/brand-term-suggestions";
 import { SearchOpportunitiesSection } from "@/components/search-opportunities/opportunities-section";
+import { SearchReportsSection } from "@/components/search-reports/search-reports-section";
 import {
   SearchPeriodSelector,
   SearchReportBody,
@@ -221,6 +223,15 @@ export default async function SearchPage({
                 <SearchOpportunitiesSection
                   projectId={projectId}
                   highlight={opportunity}
+                />
+              </Suspense>
+            ) : null}
+            {/* SC-F5 (SEO_REPORTS): "Reports & goals" bölümü; bayrak kapalıyken işaretleme aynıdır. */}
+            {SeoReportFlags.on() ? (
+              <Suspense fallback={null}>
+                <SearchReportsSection
+                  projectId={projectId}
+                  reportId={typeof sp.report === "string" ? sp.report : null}
                 />
               </Suspense>
             ) : null}

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   notifyProject: vi.fn(),
   operatorTelegram: vi.fn(),
   excluded: vi.fn(),
+  telegramAllowed: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -34,6 +35,9 @@ vi.mock("@/server/notifications/project-telegram-notifier", () => ({
 }));
 vi.mock("@/server/notifications/telegram.service", () => ({
   sendTelegramMessage: mocks.operatorTelegram,
+}));
+vi.mock("@/server/website-analytics/reports/settings", () => ({
+  gaAlertTelegramAllowed: mocks.telegramAllowed,
 }));
 vi.mock("@/lib/local-worker-policy", () => ({
   metaWorkExcludedHere: mocks.excluded,
@@ -91,6 +95,7 @@ describe("SiteAlerts.raise", () => {
     vi.clearAllMocks();
     vi.stubEnv("ALLOW_DEV_NOTIFICATIONS", "");
     mocks.excluded.mockReturnValue(false);
+    mocks.telegramAllowed.mockResolvedValue(true);
     mocks.projectFind.mockResolvedValue({ name: "Acme" });
     mocks.updateMany.mockResolvedValue({ count: 1 });
     mocks.credentialFind.mockResolvedValue({ metadata: { chatId: "123" } });
@@ -162,6 +167,35 @@ describe("SiteAlerts.raise", () => {
     ]);
     expect(mocks.notifyProject).not.toHaveBeenCalled();
     expect(mocks.operatorTelegram).not.toHaveBeenCalled();
+  });
+
+  it("keeps a GA4 alert in-app when the project turned Telegram off (GA-F5)", async () => {
+    mocks.telegramAllowed.mockResolvedValue(false);
+    await SiteAlerts.raise(input, now);
+    expect(mocks.telegramAllowed).toHaveBeenCalledWith("p1");
+    expect(mocks.notifyProject).not.toHaveBeenCalled();
+    expect(mocks.updateMany.mock.calls[0]![0].data.notifyChannels).toEqual([
+      "in_app",
+    ]);
+  });
+
+  it("never consults the GA preference for a Search Console alert", async () => {
+    mocks.telegramAllowed.mockResolvedValue(false);
+    mocks.upsert.mockResolvedValue(
+      row({ source: "GSC", kind: "SH1", dedupeKey: "gsc:link1:SH1" }),
+    );
+    await SiteAlerts.raise(
+      {
+        ...input,
+        source: "GSC",
+        kind: "SH1",
+        dedupeKey: "gsc:link1:SH1",
+        data: { checkKey: "SH1" },
+      },
+      now,
+    );
+    expect(mocks.telegramAllowed).not.toHaveBeenCalled();
+    expect(mocks.notifyProject).toHaveBeenCalledOnce();
   });
 
   it("the dev guard stops before any claim or send", async () => {

@@ -12,6 +12,7 @@ import { siteAlertTelegramText } from "@/lib/monitoring/site-alert-text";
 import { prisma } from "@/lib/prisma";
 import { GaFlags } from "@/lib/website-analytics/flags";
 import { notifyProjectTelegram } from "@/server/notifications/project-telegram-notifier";
+import { gaAlertTelegramAllowed } from "@/server/website-analytics/reports/settings";
 
 export type { SiteAlertSource } from "@/lib/monitoring/site-alert-href";
 
@@ -90,7 +91,10 @@ async function notifyIfDue(
     alert.notifiedAt === null ||
     (renotify && alert.notifiedAt.getTime() < now.getTime() - RENOTIFY_MS);
   if (!due) return;
-  const hasTelegram = await projectTelegramConnected(alert.projectId);
+  // GA-F5: proje "Send a short Telegram message" tercihini kapattıysa GA uyarısı yalnız uygulama içinde kalır (GA_REPORTS kapalıyken tercih okunmaz, davranış aynı).
+  const hasTelegram =
+    (source !== "GA4" || (await gaAlertTelegramAllowed(alert.projectId))) &&
+    (await projectTelegramConnected(alert.projectId));
   // CAS: deploy örtüşmesinde iki kopya aynı uyarıyı iki kez göndermez.
   const claimed = await prisma.adsAlert.updateMany({
     where: {

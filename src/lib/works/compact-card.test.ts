@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  sampleAlertCard,
+  sampleMonthlyCard,
+  samplePlanCard,
+  samplePulseCard,
+  sampleWeeklyCard,
+} from "@/lib/website-analytics/reports/test-fixtures";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
 import {
@@ -237,6 +244,39 @@ describe("compactSpecOf: the long cards collapse", () => {
     expect(compactSpecOf(ads({ headline: undefined }))?.subtitle).toBe(
       "How your campaigns are doing",
     );
+  });
+});
+
+describe("compactSpecOf: website reports", () => {
+  const stored = (value: unknown) => card(JSON.parse(JSON.stringify(value)));
+
+  it("collapses weekly, monthly and plan reports to the pane card", () => {
+    expect(compactSpecOf(stored(sampleWeeklyCard({ preliminary: false })))).toMatchObject({
+      icon: "website",
+      title: "Weekly website report",
+      subtitle: "Sep 28 – Oct 4",
+    });
+    expect(compactSpecOf(stored(sampleMonthlyCard()))?.title).toBe(
+      "Monthly website report",
+    );
+    expect(compactSpecOf(stored(samplePlanCard()))?.title).toBe(
+      "Next month plan",
+    );
+  });
+
+  it("marks a preliminary report and leaves the others without a status", () => {
+    expect(
+      compactSpecOf(stored(sampleWeeklyCard({ preliminary: true })))?.status,
+    ).toEqual({ label: "Preliminary", tone: "neutral" });
+    expect(
+      compactSpecOf(stored(sampleWeeklyCard({ preliminary: false })))?.status,
+    ).toBeUndefined();
+  });
+
+  it("keeps pulse and alert cards in the chat, and so does an unreadable card", () => {
+    expect(compactSpecOf(stored(samplePulseCard()))).toBeNull();
+    expect(compactSpecOf(stored(sampleAlertCard()))).toBeNull();
+    expect(compactSpecOf(card({ kind: "website-report", v: 99 }))).toBeNull();
   });
 });
 

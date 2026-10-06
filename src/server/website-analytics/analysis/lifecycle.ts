@@ -130,7 +130,29 @@ async function act(
   return "ok";
 }
 
+// Saklı rapor kartı değişmez; kartın düğmeleri yalnız bulgu ŞİMDİ hâlâ
+// OPEN ve canlı ise gösterilir. Verilen kimliklerden bu koşulu sağlayanlar.
+async function openLiveIds(
+  projectId: string,
+  findingIds: readonly string[],
+): Promise<string[]> {
+  if (findingIds.length === 0) return [];
+  if (gaInsightsModeFor(projectId) === "off") return [];
+  const rows = await prisma.gaFinding.findMany({
+    where: {
+      projectId,
+      id: { in: [...findingIds] },
+      status: "OPEN",
+      mode: "live",
+    },
+    select: { id: true },
+  });
+  return rows.map((row) => row.id);
+}
+
 export const GaFindingActions = {
+  openLiveIds,
+
   accept(input: ActionInput): Promise<GaFindingActionResult> {
     return act(input, "accept");
   },

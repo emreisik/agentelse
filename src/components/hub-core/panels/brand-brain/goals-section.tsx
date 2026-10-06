@@ -20,6 +20,11 @@ import { buildHubHref, entityHref } from "../../hub-core-params";
 import { CrossLinkChip } from "../../primitives/cross-link-chip";
 import { FieldGrid, type FieldSpec } from "../../primitives/field-grid";
 import type { EntityRef } from "../../hub-core-params";
+import { loadGoalPaceMap } from "@/server/website-analytics/reports/read";
+import { GoalPaceChip } from "@/components/website-analytics/reports/goal-pace-chip";
+import type { GoalPaceChipView } from "@/lib/website-analytics/reports/types";
+import { loadSeoGoalPaces } from "@/server/seo/reports/goals";
+import { SeoGoalPaceBadge } from "@/components/search-reports/seo-goal-pace-badge";
 
 const GOAL_GROUPS: Array<{ label: string; statuses: ProjectGoalStatus[] }> = [
   { label: "Awaiting your decision", statuses: ["PROPOSED"] },
@@ -77,11 +82,40 @@ function BackToList({ projectId }: { projectId: string }) {
 
 // ---------------------------------------------------------------------------
 
+type SeoPaceView = Awaited<ReturnType<typeof loadSeoGoalPaces>> extends Map<
+  string,
+  infer View
+>
+  ? View
+  : never;
+
+// GA-F5: web.* hedeflerinin bu ayki temposu (Google Analytics, mülk saati; hedefin güncel değeriyle hesaplanır); bayrak kapalıyken boş.
+// SC-F5: SEO hedeflerinin 13 haftalık temposu; bayrak kapalıyken boş.
+function GoalPaceBadges({
+  ga,
+  seo,
+}: {
+  ga?: GoalPaceChipView;
+  seo?: SeoPaceView;
+}) {
+  if (!ga && !seo) return null;
+  return (
+    <>
+      {ga ? <GoalPaceChip view={ga} /> : null}
+      {seo ? <SeoGoalPaceBadge pace={seo.pace} label={seo.label} /> : null}
+    </>
+  );
+}
+
 async function GoalListSection({ projectId }: { projectId: string }) {
-  const goals = await prisma.projectGoal.findMany({
-    where: { projectId },
-    orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
-  });
+  const [goals, pace, seoPaces] = await Promise.all([
+    prisma.projectGoal.findMany({
+      where: { projectId },
+      orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
+    }),
+    loadGoalPaceMap(projectId),
+    loadSeoGoalPaces(projectId),
+  ]);
 
   if (goals.length === 0) {
     return (
@@ -151,6 +185,10 @@ async function GoalListSection({ projectId }: { projectId: string }) {
                             : ""}
                         </span>
                       ) : null}
+                      <GoalPaceBadges
+                        ga={pace.get(goal.id)}
+                        seo={seoPaces.get(goal.id)}
+                      />
                       {goal.isMock ? (
                         <StatusBadge
                           meta={{ label: "Demo", tone: "special" }}
@@ -247,7 +285,7 @@ async function GoalDetail({
     );
   }
 
-  const [sourceInsights, approvedByUser] = await Promise.all([
+  const [sourceInsights, approvedByUser, pace, seoPaces] = await Promise.all([
     goal.sourceInsightIds.length
       ? prisma.insight.findMany({
           where: { id: { in: goal.sourceInsightIds } },
@@ -260,12 +298,43 @@ async function GoalDetail({
           select: { id: true, name: true, email: true },
         })
       : Promise.resolve(null),
+    loadGoalPaceMap(projectId),
+    loadSeoGoalPaces(projectId),
   ]);
+  const paceView = pace.get(goal.id);
+  const seoPace = seoPaces.get(goal.id);
 
   const fields: FieldSpec[] = [
     { type: "text", label: "Metric key", value: goal.metricKey },
     { type: "text", label: "Target value", value: goal.targetValue },
     { type: "text", label: "Current value", value: goal.currentValue },
+    ...(paceView
+      ? [
+          {
+            type: "node" as const,
+            label: "Progress this month",
+            node: <GoalPaceChip view={paceView} detailed />,
+          },
+        ]
+      : []),
+    ...(seoPace
+      ? [
+          {
+            type: "node" as const,
+            label: "Pace",
+            node: (
+              <div className="space-y-1">
+                <SeoGoalPaceBadge pace={seoPace.pace} label={seoPace.label} />
+                {seoPace.measuredThrough ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    Measured through {seoPace.measuredThrough}
+                  </p>
+                ) : null}
+              </div>
+            ),
+          },
+        ]
+      : []),
     { type: "text", label: "Priority", value: goal.priority },
     { type: "boolean", label: "Demo data", value: goal.isMock },
     {

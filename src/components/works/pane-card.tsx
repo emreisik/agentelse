@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BarChart3,
   CalendarClock,
   ChevronRight,
   FileText,
@@ -36,6 +37,7 @@ const ICONS: Record<CompactIcon, LucideIcon> = {
   plan: CalendarClock,
   package: Layers,
   ads: Megaphone,
+  website: BarChart3,
 };
 
 export function CompactCardView({

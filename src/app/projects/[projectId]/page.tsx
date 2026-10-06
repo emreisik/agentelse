@@ -30,6 +30,8 @@ import { getWorkspaceRightPanelData } from "@/components/workspace/workspace-rig
 import { WorkspaceRightPanel } from "@/components/workspace/workspace-right-panel";
 import { BrandSummaryPanel } from "@/components/workspace/brand-summary-panel";
 import { GscFlags } from "@/lib/seo/flags";
+import { gaReportsEnabled } from "@/lib/website-analytics/reports/flags";
+import { SeoReportFlags } from "@/lib/seo/reports/flags";
 import { OutputsPanel } from "@/components/workspace/outputs-panel";
 import { CalendarPanel } from "@/components/workspace/calendar-panel";
 import { FilesPanel } from "@/components/workspace/files-panel";
@@ -333,7 +335,10 @@ export default async function ProjectChatPage({
       // ordinary content-plan-draft, saved and edited like any other. And a
       // module's flow card (Ads Manager, Analytics, SEO Manager; docs/
       // modules.md), the SYSTEM row its start writes and every step changes in
-      // place. No other SYSTEM row.
+      // place. And, with GA_REPORTS on, the website reports Agentelse posts
+      // into the project's Website analytics chat (stored snapshots, docs/
+      // website-reports.md). And the Search & SEO chat's stored report cards
+      // (SC-F5, SEO_REPORTS). No other SYSTEM row.
       where: {
         projectId,
         topic: null,
@@ -357,6 +362,28 @@ export default async function ProjectChatPage({
                     equals: "module-flow",
                   },
                 },
+                ...(gaReportsEnabled()
+                  ? [
+                      {
+                        source: "SYSTEM" as const,
+                        parsedIntent: {
+                          path: ["card", "kind"],
+                          equals: "website-report",
+                        },
+                      },
+                    ]
+                  : []),
+                ...(SeoReportFlags.on()
+                  ? [
+                      {
+                        source: "SYSTEM" as const,
+                        parsedIntent: {
+                          path: ["card", "kind"],
+                          equals: "seo-report",
+                        },
+                      },
+                    ]
+                  : []),
               ],
             }
           : { source: "WEB" as const }),

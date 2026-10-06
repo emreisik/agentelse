@@ -1,6 +1,6 @@
 # Agentelse · Google Analytics 4: Mimari ve Uygulama Planı
 
-Durum (6 Ekim 2026): GA-F0 – GA-F4 kodlandı (bayraklı; GA-F4 ayrıntısı [website-insights.md](website-insights.md)); GA-F5 ve sonrası plan.
+Durum (6 Ekim 2026): GA-F0 – GA-F5 kodlandı (bayraklı; GA-F4 ayrıntısı [website-insights.md](website-insights.md), GA-F5 ayrıntısı [website-reports.md](website-reports.md)); GA-F6 ve sonrası plan.
 
 > **Kapsam:** Google Analytics 4 (GA4) entegrasyonu: bağlantı ve kimlik, yerel veri ambarı, ölçüm sağlığı denetimi, analiz, raporlama, planlama, reklam ölçümü ve öneri döngüsü. **Search Console ayrı bir entegrasyondur** ve kendi planı vardır: `docs/google-search-console-plan.md`. İki entegrasyon yalnız kod çekirdeğini paylaşır (OAuth, HTTP, hata kataloğu, PII süzgeci; §3.1). Bağlantı, izin, token, veri tabloları, işler, sağlık durumu, bayraklar, arayüz ve silme akışı tamamen ayrıdır; biri bağlı değilken diğeri eksiksiz çalışır. İkisi birden bağlıysa §12'deki isteğe bağlı köprü devreye girer.
 >
@@ -1060,6 +1060,8 @@ Uygulamada plandan farklar (GA-F2 ve sonrası bunlara göre yazılır):
 **Görünür değişiklik:** Website sayfasında "What changed" ve "Opportunities"; Analytics sohbetinde GA soruları anında yanıtlanıyor; fikir panosunda "From your website" kanıtlı fikirler.
 
 ### GA-F5 — Raporlama ve planlama · M
+
+**Durum (6 Ekim 2026):** kodlandı (GA_REPORTS=true; migration 20261006215000_add_ga_reports: GaReportSettings, GaReportRun, GaGoalProgress; plan "Migration: Yok" diyordu, ayar, deneme sayacı ve tahmin için uygun JSON alanı yoktu). Ayrıntı [website-reports.md](website-reports.md). Hedef anahtarları GA-F4 ile aynı (web.sessions, web.key_events, web.revenue); oran ve olay hedefleri ertelendi. Tahmin AN15 formülüyle aynıdır, eğilim ve yıllık mevsimsellik yok; ay sonu hatası ≤ %20 sahibin mülkünde doğrulanmalı (`npm run db:report:ga-forecast <projectId>`). Rapor kartları 95/400 gün tutulur (gizlilik metniyle uyumlu).
 
 **Amaç:** Profesyonel bir ritimde rapor ve hedefe bağlı plan.
 

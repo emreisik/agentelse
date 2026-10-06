@@ -13,11 +13,14 @@ type ServerAction = (formData: FormData) => Promise<ActionResult | void>;
 export function ActionForm({
   action,
   successMessage = "Action completed",
+  onSuccess,
   className,
   children,
 }: {
   action: ServerAction;
   successMessage?: string;
+  // Başarıdan sonra (toast ve router.refresh ile birlikte) bir kez çağrılır.
+  onSuccess?: () => void;
   className?: string;
   children: React.ReactNode;
 }) {
@@ -50,11 +53,12 @@ export function ActionForm({
     lastSeq.current = state.seq;
     if (state.ok) {
       toast.success(successMessage);
+      onSuccess?.();
       router.refresh();
     } else {
       toast.error(state.message || "Action failed");
     }
-  }, [state, successMessage, router]);
+  }, [state, successMessage, onSuccess, router]);
 
   return (
     <form action={formAction} className={className}>

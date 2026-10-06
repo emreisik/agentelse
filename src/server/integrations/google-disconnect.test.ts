@@ -4,13 +4,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // durumda hemen siler; Google'da iptal yalnız aynı hesabı kullanan başka canlı
 // bağlantı yoksa yapılır ve iptal başarısız olsa da silme yine olur. GA-F4
 // bulgu türevleri GA bağından, SC-F4 fırsat verisi GSC bağından önce silinir;
-// fırsat temizliği başarısız olsa da Disconnect biter.
+// fırsat temizliği başarısız olsa da Disconnect biter. GA-F5 rapor kartları GA
+// bağından önce silinir; SC-F5 SEO hedef değerleri GSC bağından sonra boşaltılır.
 
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   update: vi.fn(),
   deleteLinks: vi.fn(),
   deleteGscLinks: vi.fn(),
+  findGscLinks: vi.fn(),
+  deleteGaReports: vi.fn(),
+  forgetSeoGoalValues: vi.fn(),
   revokeGoogleToken: vi.fn(),
   deleteHealthAlerts: vi.fn(),
   deleteSearchAlerts: vi.fn(),
@@ -23,7 +27,10 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     integrationCredential: { findMany: mocks.findMany, update: mocks.update },
     gaPropertyLink: { deleteMany: mocks.deleteLinks },
-    gscSiteLink: { deleteMany: mocks.deleteGscLinks },
+    gscSiteLink: {
+      findMany: mocks.findGscLinks,
+      deleteMany: mocks.deleteGscLinks,
+    },
   },
 }));
 vi.mock("@/server/security/crypto", () => ({
@@ -34,6 +41,12 @@ vi.mock("@/server/integrations/google/oauth", () => ({
 }));
 vi.mock("@/server/website-analytics/health/cleanup", () => ({
   deleteGaHealthAlertsForCredential: mocks.deleteHealthAlerts,
+}));
+vi.mock("@/server/website-analytics/reports/cleanup", () => ({
+  deleteGaReportDataForCredential: mocks.deleteGaReports,
+}));
+vi.mock("@/server/seo/reports/goals", () => ({
+  forgetSeoGoalValues: mocks.forgetSeoGoalValues,
 }));
 vi.mock("@/server/seo/health/alerts", () => ({
   deleteSearchConsoleAlerts: mocks.deleteSearchAlerts,
@@ -67,6 +80,9 @@ beforeEach(() => {
   mocks.update.mockResolvedValue({});
   mocks.deleteLinks.mockResolvedValue({ count: 1 });
   mocks.deleteGscLinks.mockResolvedValue({ count: 1 });
+  mocks.findGscLinks.mockResolvedValue([]);
+  mocks.deleteGaReports.mockResolvedValue({ commands: 0 });
+  mocks.forgetSeoGoalValues.mockResolvedValue(0);
   mocks.revokeGoogleToken.mockResolvedValue(undefined);
   mocks.deleteHealthAlerts.mockResolvedValue(0);
   mocks.deleteSearchAlerts.mockResolvedValue({ deleted: 0, projectIds: ["p1"] });
@@ -108,6 +124,17 @@ function expectWiped() {
   expect(mocks.deleteGaInsights).toHaveBeenCalledWith("cred-ga");
   expect(mocks.deleteGaInsights.mock.invocationCallOrder[0]).toBeLessThan(
     mocks.deleteLinks.mock.invocationCallOrder[0]!,
+  );
+  // GA-F5: rapor kartları bir kez, GA bağı silindikten SONRA silinir (yazarların bağ denetimi yeni yazımı durdursun).
+  expect(mocks.deleteGaReports).toHaveBeenCalledTimes(1);
+  expect(mocks.deleteGaReports).toHaveBeenCalledWith("cred-ga");
+  expect(mocks.deleteGaReports.mock.invocationCallOrder[0]).toBeGreaterThan(
+    mocks.deleteLinks.mock.invocationCallOrder[0]!,
+  );
+  // SC-F5: bağ yoksa boş liste, hedef değerleri GSC bağı silindikten sonra boşaltılır.
+  expect(mocks.forgetSeoGoalValues).toHaveBeenCalledTimes(1);
+  expect(mocks.forgetSeoGoalValues.mock.invocationCallOrder[0]).toBeGreaterThan(
+    mocks.deleteGscLinks.mock.invocationCallOrder[0]!,
   );
   // SC-F4: fırsat sinyalleri ve havuz fikirleri GSC bağından önce silinir.
   expect(mocks.forgetOpportunities).toHaveBeenCalledWith("cred-ga");
@@ -227,6 +254,35 @@ describe("disconnectGoogleCredential", () => {
     expect(mocks.deleteGscLinks).toHaveBeenCalledWith({
       where: { credentialId: "cred-ga" },
     });
+  });
+
+  it("clears the SEO goal values of every project the credential was linked to", async () => {
+    mocks.findGscLinks.mockResolvedValue([
+      { projectId: "p1" },
+      { projectId: "p1" },
+      { projectId: "p2" },
+    ]);
+    await disconnectGoogleCredential(credential);
+    expect(mocks.forgetSeoGoalValues).toHaveBeenCalledWith(["p1", "p2"]);
+    expect(mocks.findGscLinks.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.deleteGscLinks.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("with no search link it passes an empty project list", async () => {
+    await disconnectGoogleCredential(credential);
+    expect(mocks.forgetSeoGoalValues).toHaveBeenCalledWith([]);
+  });
+
+  it("still finishes when the website report or SEO goal cleanup fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.deleteGaReports.mockRejectedValue(new Error("db"));
+    mocks.forgetSeoGoalValues.mockRejectedValue(new Error("db"));
+    await expect(disconnectGoogleCredential(credential)).resolves.toEqual({
+      revokedAtGoogle: true,
+    });
+    expect(mocks.deleteLinks).toHaveBeenCalled();
+    expect(mocks.deleteGscLinks).toHaveBeenCalled();
   });
 
   it("does not call Google for a row whose token is already gone", async () => {

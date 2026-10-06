@@ -1,6 +1,6 @@
 # Agentelse · Google Search Console ve SEO Motoru: Mimari ve Uygulama Planı
 
-Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 arama sağlığı ve teknik denetim uygulandı (6 Ekim 2026, bayraklı; [search-health.md](search-health.md)); SC-F4 SEO fırsat motoru uygulandı (6 Ekim 2026, bayraklı; [search-opportunities.md](search-opportunities.md)); SC-F5 ve sonrası henüz uygulanmadı.
+Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 arama sağlığı ve teknik denetim uygulandı (6 Ekim 2026, bayraklı; [search-health.md](search-health.md)); SC-F4 SEO fırsat motoru uygulandı (6 Ekim 2026, bayraklı; [search-opportunities.md](search-opportunities.md)); SC-F5 raporlama ve planlama uygulandı (6 Ekim 2026, bayraklı; [search-reports.md](search-reports.md)); SC-F6 ve sonrası henüz uygulanmadı.
 
 > **Kapsam:** Google Search Console (GSC) entegrasyonu ve onun üzerine kurulan SEO motoru. Bu plan şunları kapsar: bağlantı ve kimlik; arama ambarı ve kalıcı arşiv; indeks ve teknik sağlık denetimi (URL Inspection, sitemap, robots, kendi site tarayıcımız, Core Web Vitals); SEO fırsat motoru; raporlama ve planlama; öneri → uygulama → ölçüm döngüsü. Sonraki aşamalarda içerik planı, CMS üzerinden onaylı uygulama ve AI arama görünürlüğü gelir.
 >
@@ -1015,6 +1015,14 @@ Ertelenenler: SeoAction / "Fix this" (SC-F6), GA köprüsü, cihaz başına eğr
 **Görünür değişiklik:** Search sayfasında öncelikli fırsat listesi; SEO Manager'da CTR eğrili quick wins; fikir panosunda kanıtlı SEO fikirleri.
 
 ### SC-F5 — Raporlama ve planlama · M
+
+Durum (6 Ekim 2026): Kodlandı (SEO_REPORTS); ayrıntılar [search-reports.md](search-reports.md). Plandan sapmalar:
+
+- Migration var (3 tablo: değişmez, silinebilir anlık görüntüler için).
+- seo-pulse/seo-weekly-report/seo-monthly-report tek tick adımı "seo-reports".
+- Teşhis ağacında adım 2 ikiye bölündü: indeks (URL Inspection) ve teknik (tarayıcı).
+- Rapor günleri ayarı ertelendi.
+- Uyarılar sohbete yalnız nabız kartında sayı olarak gelir.
 
 **Amaç:** Profesyonel ritimde SEO raporu, teşhis ve hedefe bağlı plan.
 

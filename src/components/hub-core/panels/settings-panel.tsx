@@ -26,6 +26,7 @@ import { WEEKLY_AUTO_PRODUCE_COPY, weeklyDraftOn } from "@/lib/weekly-draft";
 import { updateInstagramPublishScheduleAction } from "@/server/actions/publish-schedule-actions";
 import { ProjectDeletionService } from "@/server/projects/project-deletion.service";
 import { ActionForm } from "@/components/shared/action-form";
+import { WebsiteReportSettingsCard } from "@/components/website-analytics/reports/report-settings-card";
 import { DeleteProjectCard } from "@/components/projects/delete-project-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { LiveRefresh } from "@/components/shared/live-refresh";
@@ -309,6 +310,8 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
           approverIds={policy.adsSpendApproverIds}
         />
       ) : null}
+
+      <WebsiteReportSettingsCard projectId={projectId} />
     </div>
   );
 }

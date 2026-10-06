@@ -1,6 +1,8 @@
 import { isChannelKey, type ChannelKey } from "@/lib/content-channels";
 import { activePlatformsOf, groupPosts } from "@/lib/works/plan-platforms";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
+import { readWebsiteReportCard } from "@/lib/website-analytics/reports/card";
+import { workSummaryOf } from "@/lib/website-analytics/reports/copy";
 
 // Long cards of a chat are shown as ONE compact card, like ChatGPT's canvas
 // cards (docs/works.md): an icon, a title, one line about what is inside and a
@@ -10,7 +12,7 @@ import type { IdeaEventCardData } from "@/types/idea-event-card";
 // slot, a picture) stay in the chat as they are.
 
 export type CompactIcon =
-  "directions" | "ideas" | "master" | "plan" | "package" | "ads";
+  "directions" | "ideas" | "master" | "plan" | "package" | "ads" | "website";
 
 export type CompactTone =
   "neutral" | "positive" | "waiting" | "danger" | "special";
@@ -234,6 +236,24 @@ export function compactSpecOf(card: IdeaEventCardData): CompactCardSpec | null {
             ? { status: { label: COMPACT_COPY.error, tone: "danger" as const } }
             : {}),
       };
+
+    // Weekly, monthly and plan reports open in the pane; pulse and alert cards
+    // stay inline. An invalid card returns null and renders inline through the
+    // card's own fallback.
+    case "website-report": {
+      const report = readWebsiteReportCard(card);
+      if (!report || report.variant === "pulse" || report.variant === "alert") {
+        return null;
+      }
+      return {
+        icon: "website",
+        title: workSummaryOf(report.variant),
+        subtitle: report.periodLabel,
+        ...(report.preliminary
+          ? { status: { label: "Preliminary", tone: "neutral" as const } }
+          : {}),
+      };
+    }
 
     default:
       return null;

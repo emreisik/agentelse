@@ -23,6 +23,7 @@
     "db:reset:agency": "tsx prisma/reset-agency.ts",
     "db:backfill:posts": "tsx prisma/backfill-posts.ts",
     "db:report:backlog": "tsx prisma/worker-backlog-report.ts",
+    "db:report:ga-forecast": "tsx prisma/ga-forecast-backtest.ts",
     "db:backfill:approval-expiry": "tsx prisma/backfill-approval-expiry.ts"
   },
   "dependencies": {

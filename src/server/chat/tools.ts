@@ -103,6 +103,7 @@ import {
 
 import type { ChatStreamEvent } from "./types";
 import { searchChatTools } from "@/server/chat/search-tools";
+import { searchReportChatTools } from "@/server/chat/search-report-tools";
 import {
   WEBSITE_CHAT_TOOLS,
   WEBSITE_CHAT_TOOL_NAMES,
@@ -2166,9 +2167,11 @@ export function toolsForPhase(
   const legacyLoopOn = isLegacyUnitEnabled("director-decisions");
   const works = options.works === true;
   // SC-F4: Search Console okuma araçları yalnız SEO_INSIGHTS=on ve proje izinliyken eklenir (yalnız ortam okunur; kapalıyken liste aynıdır).
+  // SC-F5: Search raporu okuma araçları (teşhis, son rapor, hedefler) yalnız SEO_REPORTS açık ve proje izinliyken eklenir (yalnız ortam okunur).
   const filtered = [
     ...ALL_TOOLS,
     ...searchChatTools(options.projectId ?? null),
+    ...searchReportChatTools(options.projectId ?? null),
   ].filter(
     (tool) =>
       tool.phases.includes(phase) &&

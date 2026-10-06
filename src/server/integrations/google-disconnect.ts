@@ -16,6 +16,8 @@ import { forgetSearchOpportunitiesForCredential } from "@/server/seo/opportuniti
 import { SeoSites } from "@/server/seo/site/sites";
 import { deleteGaInsightDerivedDataForCredential } from "@/server/website-analytics/analysis/cleanup";
 import { deleteGaHealthAlertsForCredential } from "@/server/website-analytics/health/cleanup";
+import { deleteGaReportDataForCredential } from "@/server/website-analytics/reports/cleanup";
+import { forgetSeoGoalValues } from "@/server/seo/reports/goals";
 
 // Google bağlantısını koparır (GA ya da Search Console; ikisi ayrı ayrı).
 // google-token.ts gibi bir düzenleme adımıdır: REST çağrısı çekirdekte, DB
@@ -149,6 +151,19 @@ export async function disconnectGoogleCredential(
   await prisma.gaPropertyLink.deleteMany({
     where: { credentialId: credential.id },
   });
+  // GA-F5: Website analytics sohbetindeki rapor kartları (garep_*), boş kalan sohbet ve web.* hedeflerinin GA'dan yazılan güncel değeri hemen silinir; GaReportRun ve GaGoalProgress bağla birlikte cascade ile gider. Ayarlar, kullanıcının kendi mesajları ve hedeflerin kendisi kalır (Google verisi değil). Search Console kimliğinde no-op.
+  // Bağ silindikten SONRA çalışır: yazarların (haftalık/aylık rapor, hedef
+  // yenileme) "bağ var" denetimi artık geçmez, silmeden sonra yeni kart ya da
+  // hedef değeri yazılamaz. Hata ambar silmesini durdurmasın; kalanları
+  // GaRetention'ın proje taraması (sweepOrphanGaReportData) siler.
+  await deleteGaReportDataForCredential(credential.id).catch(
+    (error: unknown) => {
+      console.error(
+        "[google-disconnect] website report data could not be deleted:",
+        error instanceof Error ? error.name : error,
+      );
+    },
+  );
   // Search Console'dan türeyen arama sağlığı uyarıları (source GSC) bayraktan
   // bağımsız hemen silinir; site tarayıcısının kendi uyarıları (SEO) kalır.
   const searchAlerts = await deleteSearchConsoleAlerts(credential.id).catch(
@@ -169,9 +184,26 @@ export async function disconnectGoogleCredential(
       );
     },
   );
+  const searchProjects = (
+    await prisma.gscSiteLink.findMany({
+      where: { credentialId: credential.id },
+      select: { projectId: true },
+    })
+  ).map((row) => row.projectId);
   await prisma.gscSiteLink.deleteMany({
     where: { credentialId: credential.id },
   });
+  // SC-F5: Search raporları, rapor durumu ve hedef ilerlemesi bağla cascade silinir; SEO hedeflerinin Google'dan gelen güncel değeri de hemen boşaltılır.
+  // Hata Disconnect'i durdurmasın; kalan değeri SeoReportRetention'ın günlük adımı boşaltır.
+  await forgetSeoGoalValues([...new Set(searchProjects)]).catch(
+    (error: unknown) => {
+      console.error(
+        "[google-disconnect] seo goal values could not be cleared:",
+        error instanceof Error ? error.name : error,
+      );
+      return 0;
+    },
+  );
   // Denetimdeki GSC kökenli durum (inceleme kuyruğu, puan, yalnız GSC'den
   // bilinen sayfalar) silinir; kapsamı Search Console'dan gelen sitenin tarama
   // verisi sıfırlanır (alan adı doğrulaması korunur).

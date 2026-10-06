@@ -5,6 +5,8 @@ import { Layers } from "lucide-react";
 
 import { WsEventCard } from "@/components/commands/ws-event-card";
 import { ModuleFlowCard } from "@/components/module-flows/module-flow-card";
+import { SeoReportCard } from "@/components/search-reports/seo-report-card";
+import { WebsiteReportWorksCard } from "@/components/website-analytics/reports/website-report-card";
 import { useCardFocus } from "@/components/works/card-focus";
 import { AdsInsightCard } from "@/components/works/ads-insight-card";
 import { DailyBriefCard } from "@/components/works/daily-brief-card";
@@ -33,6 +35,8 @@ export const WORKS_ONLY_KINDS: ReadonlySet<string> = new Set([
   "daily-brief",
   "ads-insight",
   "module-flow",
+  "website-report",
+  "seo-report",
 ]);
 
 // A long card is a compact card in the chat that opens it in the pane on the
@@ -67,7 +71,7 @@ export function inPane(
 
 export function renderWorksCard(
   card: IdeaEventCardData,
-  { commandId }: { commandId?: string; host: WorkCardHostValue },
+  { commandId, host }: { commandId?: string; host: WorkCardHostValue },
 ): ReactNode | null {
   switch (card.kind) {
     case "content-plan-options":
@@ -106,6 +110,20 @@ export function renderWorksCard(
       return inPane(card, commandId, <AdsInsightCard card={card} />);
     case "module-flow":
       return <ModuleFlowCard card={card} commandId={commandId} />;
+    case "website-report":
+      return inPane(
+        card,
+        commandId,
+        <WebsiteReportWorksCard card={card} commandId={commandId} />,
+      );
+    case "seo-report":
+      return (
+        <SeoReportCard
+          card={card}
+          projectId={host.projectId}
+          commandId={commandId}
+        />
+      );
     default:
       return null;
   }

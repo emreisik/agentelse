@@ -49,6 +49,10 @@ vi.mock("@/server/actions/schedule-slots-actions", inert);
 vi.mock("@/server/actions/slot-suggest-actions", inert);
 vi.mock("@/server/actions/slot-text-actions", inert);
 vi.mock("@/server/actions/work-actions", inert);
+vi.mock("@/server/actions/website-report-actions", inert);
+vi.mock("@/server/actions/website-insights-actions", inert);
+vi.mock("@/server/actions/measurement-health-actions", inert);
+vi.mock("@/server/actions/search-opportunity-actions", inert);
 vi.mock("@/components/workspace/output-preview-dialog", () => ({
   OutputPreviewDialog: () => null,
 }));
@@ -60,6 +64,7 @@ const { WorkCardHostProvider } = await import("./work-card-host");
 const { WORKS_ONLY_KINDS } = await import("./works-card");
 
 import type { WorkCardHostInput } from "./work-card-host";
+import { sampleWeeklyCard } from "@/lib/website-analytics/reports/test-fixtures";
 
 type PlanCard = Extract<IdeaEventCardData, { kind: "content-plan-draft" }>;
 
@@ -276,6 +281,14 @@ const FIXTURES: Record<string, IdeaEventCardData> = {
     title: "Analytics",
     step: "brief",
     data: {},
+  },
+  "website-report": sampleWeeklyCard() as IdeaEventCardData,
+  "seo-report": {
+    kind: "seo-report",
+    reportId: "rep-1",
+    reportKind: "WEEKLY",
+    title: "Weekly SEO report",
+    periodLabel: "Sep 28 – Oct 4",
   },
   "creative-loading": {
     kind: "creative-loading",

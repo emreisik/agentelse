@@ -124,6 +124,17 @@ totals (10 metrik) + channel, source_medium, campaign, landing_page, page, event
 
 Ambarın üstünde çalışan analiz motoru [website-insights.md](website-insights.md)'de anlatılır. `GA_INSIGHTS=off|shadow|on` (`GA_SYNC` gerekir) açıkken Website sayfasının (`/projects/[id]/site`) rapor gövdesinin altında "Insights" bölümü "What changed" ve "Opportunities" listelerini gösterir (Accept / Dismiss / Mark done). `GA_INSIGHTS=on` iken (ya da gölge kipte `GA_INSIGHTS_PROJECTS`'teki projelerde) eski `google-analytics-scanner.ts`'in GA kısmı (`DECLINING_TRAFFIC`) çalışmaz; düşüşleri AN1/AN2 bulur.
 
+## Website reports (GA-F5)
+
+Ambarın üstünde çalışan raporlama ve planlama katmanı [website-reports.md](website-reports.md)'de anlatılır. `GA_REPORTS=true` (`GA_SYNC` gerekir) açıkken:
+
+- projede "Website analytics" sohbeti (`wkga_<projectId>`) açılır; nabız, haftalık, aylık, "Next month plan" ve kritik ölçüm uyarısı kartları oraya, değişmeyen anlık görüntü olarak yazılır;
+- Website sayfasının (`/projects/[id]/site`) altında "Reports" arşivi (son 12 haftalık, aylık ve plan kartı; Copy / Markdown / "Print / PDF") görünür;
+- Brand Brain → Goals'ta `web.*` hedeflerinin bu ayki temposu ve "Progress this month" satırı çıkar;
+- Settings → Autonomy → "Website reports" kartı açılır.
+
+Bayrak kapalıyken bunların hiçbiri çalışmaz ve sorgu atmaz.
+
 ## Testler
 
 `src/lib/website-analytics/*.test.ts` (katalog, yanıt ayrıştırma, dilimleme, kota, zamanlama, geri doldurma, dönemler, toplamlar, bayraklar), `google/pii.test.ts`, `sync/requests.test.ts` (toplu çağrı, bozuk rapor, kota bekletmesi, sunucu hatası, 429), `sync/warehouse.integration.test.ts` (gerçek Postgres, mock Google: uçtan uca senkron, yeniden yazımda kopya yok, Website raporu, Disconnect'te silme; CI'da koşar).

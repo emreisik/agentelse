@@ -231,6 +231,13 @@ export default async function DataDeletionPage({
             . You can also turn the audit off there.
           </p>
           <p>
+            Disconnecting Google Analytics also deletes, right away, the website
+            reports Agentelse posted in your project&rsquo;s &ldquo;Website
+            analytics&rdquo; chat and the goal progress it took from Google
+            Analytics. Your own messages in that chat stay until you delete the
+            chat.
+          </p>
+          <p>
             To also erase reports and suggestions Agentelse built from your
             Google data, email <Mail /> from the address you use with Agentelse,
             naming the property or site. We will erase them and confirm. See the{" "}

@@ -393,6 +393,22 @@ const SECTIONS: PolicySection[] = [
           not stored.
         </p>
         <p>
+          When website reports are on, Agentelse writes daily, weekly and
+          monthly website reports from these stored Google Analytics summaries
+          into a &ldquo;Website analytics&rdquo; chat in your project, and keeps
+          each report as it was sent so later changes in Google Analytics do not
+          alter it. Daily notes and tracking alerts are kept for 95 days, and
+          weekly reports, monthly reports and plans for 400 days. If you set
+          website goals, Agentelse updates their progress from Google Analytics
+          every day. To write the short summary at the top of a weekly or
+          monthly report, the report&rsquo;s aggregated figures and at most 20
+          masked page addresses or event names are sent to our AI provider; they
+          are not stored there and are not used to train AI models. Telegram
+          messages never contain Google Analytics figures, page addresses or
+          campaign names. When you disconnect Google Analytics, these reports
+          and the goal progress taken from it are deleted right away.
+        </p>
+        <p>
           Agentelse also analyses these stored Google Analytics summaries to
           point out what changed and where your website can do better (for
           example a landing page that gets visits but few leads). Findings are
@@ -436,7 +452,10 @@ const SECTIONS: PolicySection[] = [
           breakdowns for 16 months, after which we keep them only as monthly
           breakdowns. In Connectors you can choose to keep only the last 16
           months, or delete the stored history anytime; disconnecting deletes it
-          all right away. If you choose a different site, the previous
+          all right away. The weekly and monthly Search reports Agentelse
+          writes from this data are kept for up to 36 months (16 months if you
+          chose to keep only the last 16 months; daily notes for 90 days) and
+          are deleted with it. If you choose a different site, the previous
           site&rsquo;s data is deleted after 30 days. Searches Google hides for
           privacy never reach us. Page addresses are stored without query
           strings, and email addresses, phone numbers and similar personal

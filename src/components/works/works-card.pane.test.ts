@@ -47,6 +47,10 @@ for (const file of [
   "schedule-slots-actions",
   "slot-suggest-actions",
   "work-actions",
+  "website-report-actions",
+  "website-insights-actions",
+  "measurement-health-actions",
+  "search-opportunity-actions",
 ]) {
   vi.doMock(`@/server/actions/${file}`, inert);
 }

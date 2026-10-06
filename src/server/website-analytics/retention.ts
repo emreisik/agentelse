@@ -21,6 +21,11 @@ import { GOOGLE_PROVIDER } from "@/server/integrations/google-client";
 import { claimPeriodic } from "@/server/observability/periodic";
 
 import { sweepOrphanGaInsightData } from "./analysis/cleanup";
+import {
+  deleteGaReportData,
+  sweepOrphanGaReportData,
+} from "./reports/cleanup";
+import { GaReportRetention } from "./reports/retention";
 
 // Ambar saklama temizliği (docs/google-analytics-plan.md §4 "Saklama", §5
 // `ga-retention`): günde bir, yalnız süresi dolmuş satırlar silinir.
@@ -108,7 +113,7 @@ export const GaRetention = {
     // Bağlantısı kalmamış bağlar: Disconnect bunları zaten siler; arada
     // kalanlar (silinen bağlantı, eski satırlar) burada temizlenir.
     const links = await prisma.gaPropertyLink.findMany({
-      select: { id: true, credentialId: true },
+      select: { id: true, credentialId: true, projectId: true },
     });
     if (links.length > 0) {
       const live = new Set(
@@ -127,6 +132,26 @@ export const GaRetention = {
         .filter((link) => !live.has(link.credentialId))
         .map((link) => link.id);
       if (orphaned.length > 0) {
+        // GA-F5: bağlantısı kalmamış projede rapor kartları ve hedeflerin GA değerleri de Disconnect'teki gibi silinir (bayraktan bağımsız).
+        const liveProjects = new Set(
+          links
+            .filter((link) => live.has(link.credentialId))
+            .map((link) => link.projectId),
+        );
+        const orphanProjects = new Set(
+          links
+            .filter((link) => !live.has(link.credentialId))
+            .map((link) => link.projectId)
+            .filter((projectId) => !liveProjects.has(projectId)),
+        );
+        for (const projectId of orphanProjects) {
+          await deleteGaReportData(projectId).catch((error: unknown) => {
+            console.error(
+              "[ga-retention] website report leftovers could not be cleared:",
+              error instanceof Error ? error.name : error,
+            );
+          });
+        }
         deleted += (
           await prisma.gaPropertyLink.deleteMany({
             where: { id: { in: orphaned } },
@@ -143,6 +168,17 @@ export const GaRetention = {
       );
       return 0;
     });
+    // GA-F5: Disconnect'ten sonra kalan rapor kartları / hedef değerleri.
+    deleted += await sweepOrphanGaReportData().catch((error: unknown) => {
+      console.error(
+        "[ga-retention] website report leftovers could not be swept:",
+        error instanceof Error ? error.name : error,
+      );
+      return 0;
+    });
+    // GA-F5: rapor kartlarının 95/400 gün sözü GA_REPORTS bayrağına bağlı
+    // değildir; bayrak kapalı kalsa da (geri alma) kartlar burada budanır.
+    deleted += await GaReportRetention.runDue(now).catch(() => 0);
     return deleted;
   },
 };

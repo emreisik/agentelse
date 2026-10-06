@@ -21,6 +21,7 @@ import {
 } from "@/server/website-analytics/report";
 import { loadMeasurementHealth } from "@/server/website-analytics/health/read";
 import { loadWebsiteInsights } from "@/server/website-analytics/analysis/read";
+import { loadWebsiteReportArchive } from "@/server/website-analytics/reports/read";
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionForm } from "@/components/shared/action-form";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -34,6 +35,7 @@ import { WebsiteLiveStrip } from "@/components/website-analytics/website-live-st
 import { MeasurementHealthPanel } from "@/components/website-analytics/measurement-health-panel";
 import { MeasurementScoreChip } from "@/components/website-analytics/measurement-score";
 import { WebsiteInsights } from "@/components/website-analytics/website-insights";
+import { WebsiteReportArchive } from "@/components/website-analytics/reports/website-report-archive";
 
 // "Website" sayfası (docs/google-analytics-plan.md §3.9, GA-F2 v1): Google
 // Analytics ambarından karşılaştırmalı KPI'lar, günlük trend, kanallar,
@@ -132,6 +134,11 @@ export default async function WebsitePage({
           review: sp.insights === "review",
         }).catch(() => null)
       : null;
+  // GA-F5 (GA_REPORTS): "Reports" arşivi; bayrak kapalıyken okuyucu sorgusuz null döner.
+  const reports =
+    result.state === "ready"
+      ? await loadWebsiteReportArchive(projectId).catch(() => null)
+      : null;
   const connectorsHref = `/projects/${projectId}/integrations?integration=google_analytics`;
   const headerLink =
     result.state === "waiting"
@@ -216,6 +223,9 @@ export default async function WebsitePage({
             ) : null}
             {measurement ? (
               <MeasurementHealthPanel projectId={projectId} health={measurement} />
+            ) : null}
+            {reports ? (
+              <WebsiteReportArchive projectId={projectId} items={reports} />
             ) : null}
           </>
         )}

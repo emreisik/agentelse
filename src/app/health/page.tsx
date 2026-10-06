@@ -36,6 +36,8 @@ import { SeoOperatorCard } from "@/components/search-health/seo-operator-card";
 import { loadGaInsightsOperatorView } from "@/server/website-analytics/analysis/read";
 import { GaInsightsOperatorCard } from "@/components/website-analytics/ga-insights-operator-card";
 import { loadSeoOpportunityCounters } from "@/server/seo/opportunities/operator-counters";
+import { loadSeoReportCounters } from "@/server/seo/reports/counters";
+import { SeoReportCountersCard } from "@/components/search-reports/seo-report-counters-card";
 import {
   clearProviderIncidentAction,
   dismissDeadLetterAction,
@@ -109,8 +111,8 @@ export default async function HealthPage() {
   // dikkat isteyen, geçmişi yüklenen ve Google kotasını bekleyen siteler.
   // GA-F3: ölçüm sağlığı sayaçları; SC-F3: arama sağlığı ve tarayıcı
   // sayaçları (bayraklar kapalıyken null). GA-F4: website içgörüleri (operatör
-  // görünümü); SC-F4: SEO fırsat motoru sayaçları. Bunlar `healthy`'ye
-  // sayılmaz.
+  // görünümü); SC-F4: SEO fırsat motoru sayaçları; SC-F5: Search rapor
+  // sayaçları. Bunlar `healthy`'ye sayılmaz.
   const now = new Date();
   const [
     leftoverRules,
@@ -123,6 +125,7 @@ export default async function HealthPage() {
     seoCounters,
     gaInsights,
     seoOpportunities,
+    seoReports,
   ] = await Promise.all([
     AdsInsurance.undeletable().catch(() => []),
     prisma.adsWebhookEvent.count({ where: { status: "DEAD" } }).catch(() => 0),
@@ -151,6 +154,7 @@ export default async function HealthPage() {
     loadSeoOperatorCounters(now).catch(() => null),
     loadGaInsightsOperatorView({ userId }).catch(() => null),
     loadSeoOpportunityCounters(now).catch(() => null),
+    loadSeoReportCounters(now).catch(() => null),
   ]);
 
   const healthy =
@@ -524,6 +528,7 @@ export default async function HealthPage() {
             </CardContent>
           </Card>
         ) : null}
+        {seoReports ? <SeoReportCountersCard counters={seoReports} /> : null}
 
         <Card>
           <CardHeader className="flex flex-row items-center gap-2 space-y-0">

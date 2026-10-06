@@ -104,6 +104,25 @@ export const requireProjectAccess = cache(
   },
 );
 
+// Workspace yöneticileri: bütün ekibi etkileyen işler (bir entegrasyonu
+// koparmak, seçili mülkü değiştirmek) yalnız onlara açıktır
+// (docs/google-analytics-plan.md GK6). Proje silmedeki kontrolle aynı kural
+// (project-deletion-actions.ts).
+export const WORKSPACE_MANAGER_ROLES = ["OWNER", "ADMIN"] as const;
+
+export async function isWorkspaceManager(
+  userId: string,
+  workspaceId: string,
+): Promise<boolean> {
+  const membership = await prisma.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId } },
+    select: { role: true },
+  });
+  return (WORKSPACE_MANAGER_ROLES as readonly string[]).includes(
+    membership?.role ?? "",
+  );
+}
+
 // Confirms `brandId` actually belongs to `projectId`. Every mutation that
 // receives both a projectId and a brandId from a client payload must call
 // this — otherwise a Biduniq task could be pointed at a BityPay brand by

@@ -15,7 +15,10 @@ const SUPPORT_EMAIL = "hello@agentelse.ai";
 
 function Mail() {
   return (
-    <a href={`mailto:${SUPPORT_EMAIL}`} className="underline underline-offset-4">
+    <a
+      href={`mailto:${SUPPORT_EMAIL}`}
+      className="underline underline-offset-4"
+    >
       {SUPPORT_EMAIL}
     </a>
   );
@@ -77,13 +80,14 @@ export default async function DataDeletionPage({
                 : "We could not match this request to an Instagram connection stored in Agentelse, so nothing was erased. If you connected through a Facebook Page or Meta Ads, or you want more removed, email us and we will handle it by hand."}
             </p>
             <p className="text-muted-foreground">
-              Confirmation code: <span className="font-mono text-foreground">{code}</span>
+              Confirmation code:{" "}
+              <span className="font-mono text-foreground">{code}</span>
             </p>
             <p className="text-muted-foreground">
               Posts that were published to Instagram stay on Instagram. Plans,
               chats and other content created in Agentelse belong to the
-              workspace that made them and stay there until it is deleted;
-              email <Mail /> to have those deleted too.
+              workspace that made them and stay there until it is deleted; email{" "}
+              <Mail /> to have those deleted too.
             </p>
           </section>
         ) : null}
@@ -99,26 +103,38 @@ export default async function DataDeletionPage({
           </p>
           <ol className="flex list-decimal flex-col gap-2 pl-5">
             <li>
-              In Instagram, open <span className="text-foreground">Settings &gt; Apps and websites</span>,
-              find Agentelse and remove it, choosing to delete the data if
+              In Instagram, open{" "}
+              <span className="text-foreground">
+                Settings &gt; Apps and websites
+              </span>
+              , find Agentelse and remove it, choosing to delete the data if
               Instagram offers that choice. Instagram then tells us, and we
               erase the connection record automatically.
             </li>
             <li>
-              Email <Mail /> from the address you use with Agentelse, naming your
-              Instagram username. We will erase the record and confirm.
+              Email <Mail /> from the address you use with Agentelse, naming
+              your Instagram username. We will erase the record and confirm.
             </li>
           </ol>
           <p>
             To only stop Agentelse from using the connection, open{" "}
-            <span className="text-foreground">Connectors &gt; Instagram &gt; Disconnect</span> inside
-            Agentelse. That takes effect right away but does not erase the
-            record; use one of the options above for that. Content you created
-            in Agentelse (plans, chats, creatives) belongs to your workspace and
-            is deleted with it: email us to have a workspace deleted.
+            <span className="text-foreground">
+              Connectors &gt; Instagram &gt; Disconnect
+            </span>{" "}
+            inside Agentelse. That takes effect right away but does not erase
+            the record; use one of the options above for that. Content you
+            created in Agentelse (plans, chats, creatives) belongs to your
+            workspace and is deleted with it: email us to have a workspace
+            deleted.
           </p>
           <p>
-            See our <Link href="/privacy#instagram-data" className="underline underline-offset-4">Privacy Policy</Link>{" "}
+            See our{" "}
+            <Link
+              href="/privacy#instagram-data"
+              className="underline underline-offset-4"
+            >
+              Privacy Policy
+            </Link>{" "}
             for what we collect and why.
           </p>
 
@@ -131,26 +147,74 @@ export default async function DataDeletionPage({
             Facebook, the Pages and ad accounts you can choose from and the ones
             you chose, the ids of posts Agentelse shared on your Page, and for
             Meta Ads a copy of your campaigns, ad sets and ads with their daily
-            performance figures. Page access tokens are never stored. To erase those
-            records, email <Mail /> from the address you use with Agentelse,
-            naming the Page or ad account. We will erase the records and
-            confirm.
+            performance figures. Page access tokens are never stored. To erase
+            those records, email <Mail /> from the address you use with
+            Agentelse, naming the Page or ad account. We will erase the records
+            and confirm.
           </p>
           <p>
             To stop Agentelse from using them right away, open{" "}
-            <span className="text-foreground">Connectors &gt; Facebook &gt; Disconnect</span> or{" "}
-            <span className="text-foreground">Connectors &gt; Meta Ads &gt; Disconnect</span>, or
-            remove Agentelse in Facebook under{" "}
-            <span className="text-foreground">Settings &amp; privacy &gt; Settings &gt; Business integrations</span>.
-            Neither erases the record by itself; email us for that. A post
+            <span className="text-foreground">
+              Connectors &gt; Facebook &gt; Disconnect
+            </span>{" "}
+            or{" "}
+            <span className="text-foreground">
+              Connectors &gt; Meta Ads &gt; Disconnect
+            </span>
+            , or remove Agentelse in Facebook under{" "}
+            <span className="text-foreground">
+              Settings &amp; privacy &gt; Settings &gt; Business integrations
+            </span>
+            . Neither erases the record by itself; email us for that. A post
             Agentelse shared on your Page can be deleted from its card in
             Agentelse or on Facebook; posts and ads already published stay on
             Facebook until you remove them there.
           </p>
           <p>
             See the{" "}
-            <Link href="/privacy#facebook-and-meta-ads" className="underline underline-offset-4">
+            <Link
+              href="/privacy#facebook-and-meta-ads"
+              className="underline underline-offset-4"
+            >
               Facebook Page and Meta Ads section
+            </Link>{" "}
+            of our Privacy Policy for what we collect and why.
+          </p>
+
+          <h2 className="mt-6 text-lg font-semibold text-foreground">
+            How to delete your Google Analytics and Search Console data
+          </h2>
+          <p>
+            Open{" "}
+            <span className="text-foreground">
+              Connectors &gt; Google Analytics &gt; Disconnect
+            </span>{" "}
+            or{" "}
+            <span className="text-foreground">
+              Connectors &gt; Google Search Console &gt; Disconnect
+            </span>
+            . Disconnecting deletes that connection&rsquo;s stored token and the
+            Google data in it right away: the connected email address and
+            account id, the properties or sites you could choose from, the one
+            you chose and your last test result. It also removes
+            Agentelse&rsquo;s access in your Google account, unless the same
+            Google account is still used by your other Agentelse Google
+            connection. You can remove that access yourself in your Google
+            Account under{" "}
+            <span className="text-foreground">
+              Security &gt; Third-party apps and services
+            </span>
+            .
+          </p>
+          <p>
+            To also erase reports and suggestions Agentelse built from your
+            Google data, email <Mail /> from the address you use with Agentelse,
+            naming the property or site. We will erase them and confirm. See the{" "}
+            <Link
+              href="/privacy#google-analytics-and-search-console"
+              className="underline underline-offset-4"
+            >
+              Google Analytics and Search Console section
             </Link>{" "}
             of our Privacy Policy for what we collect and why.
           </p>
@@ -161,10 +225,16 @@ export default async function DataDeletionPage({
         <div className="mx-auto flex w-full max-w-3xl flex-col-reverse items-start gap-2 px-6 py-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span>© {new Date().getFullYear()} Agentelse</span>
           <div className="flex gap-4">
-            <Link href="/privacy" className="transition-colors hover:text-foreground">
+            <Link
+              href="/privacy"
+              className="transition-colors hover:text-foreground"
+            >
               Privacy
             </Link>
-            <Link href="/terms" className="transition-colors hover:text-foreground">
+            <Link
+              href="/terms"
+              className="transition-colors hover:text-foreground"
+            >
               Terms
             </Link>
           </div>

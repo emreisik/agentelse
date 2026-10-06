@@ -17,14 +17,14 @@ const plain = (markup: string) =>
   markup
     .replace(/<[^>]+>/g, "")
     .replace(/&gt;/g, ">")
-    .replace(/&rsquo;/g, "'")
+    .replace(/&rsquo;|’/g, "'")
     .replace(/\s+/g, " ");
 const section = sectionBetween("instagram-data", "facebook-and-meta-ads");
 const text = plain(section);
 
 describe("privacy policy: Instagram connection section", () => {
-  it("carries the date of the text that was last rewritten on 3 October 2026", () => {
-    expect(html).toContain("Last updated: October 3, 2026");
+  it("carries the date of the latest rewrite (6 October 2026: the Google section)", () => {
+    expect(html).toContain("Last updated: October 6, 2026");
   });
 
   it("is titled for what it covers, and linked from the deletion page", () => {
@@ -42,7 +42,9 @@ describe("privacy policy: Instagram connection section", () => {
   it("says the profile figures, post counters and insights are shown, not stored", () => {
     expect(text).toContain("last 28 days");
     expect(text).toContain("shown to you; we do not store them");
-    expect(text).toContain("We do not read your messages, the content of comments or who your followers are");
+    expect(text).toContain(
+      "We do not read your messages, the content of comments or who your followers are",
+    );
   });
 
   it("does not say content only ever goes out after a click: scheduled posting and Autopilot publish too", () => {
@@ -53,7 +55,9 @@ describe("privacy policy: Instagram connection section", () => {
 
   it("says Disconnect and removing the app stop use but do not erase the record, and how to erase it", () => {
     expect(text).toContain("Connectors > Instagram > Disconnect");
-    expect(text).toContain("Neither erases the stored connection record by itself");
+    expect(text).toContain(
+      "Neither erases the stored connection record by itself",
+    );
     expect(text).toContain("email us");
     expect(text).toContain("if Instagram offers the choice");
     expect(text).not.toContain("Integrations > Instagram");
@@ -67,11 +71,15 @@ describe("privacy policy: Instagram connection section", () => {
 
   it("says recent posts are read only for a style analysis the person asks for, and not stored", () => {
     expect(text).toContain("the images and captions of its most recent posts");
-    expect(text).toContain("sent to our AI provider for that analysis and are not stored");
+    expect(text).toContain(
+      "sent to our AI provider for that analysis and are not stored",
+    );
   });
 
   it("says what is NOT done with the data", () => {
-    expect(text).toContain("do not read your messages, the content of comments");
+    expect(text).toContain(
+      "do not read your messages, the content of comments",
+    );
     expect(text).toContain("do not sell this data");
   });
 });
@@ -80,7 +88,12 @@ describe("privacy policy: Instagram connection section", () => {
 // connections request and says what each is used for, so the policy matches what
 // Meta's reviewers see requested (meta-client.ts SCOPES).
 describe("privacy policy: Facebook Page and Meta Ads section", () => {
-  const meta = plain(sectionBetween("facebook-and-meta-ads", "data-retention"));
+  const meta = plain(
+    sectionBetween(
+      "facebook-and-meta-ads",
+      "google-analytics-and-search-console",
+    ),
+  );
 
   it("names every permission the Facebook and Meta Ads connections request", () => {
     for (const permission of [
@@ -115,5 +128,45 @@ describe("privacy policy: Facebook Page and Meta Ads section", () => {
     expect(meta).toContain("Connectors > Facebook > Disconnect");
     expect(meta).toContain("Connectors > Meta Ads > Disconnect");
     expect(meta).toContain("Neither erases the stored record by itself");
+  });
+});
+
+// The Google section is what Google's OAuth verification reads: both read-only
+// permissions with their purpose, the Limited Use disclosure in Google's own
+// wording, and what Disconnect does (docs/google-analytics-plan.md §3.11).
+describe("privacy policy: Google Analytics and Search Console section", () => {
+  const google = plain(
+    sectionBetween("google-analytics-and-search-console", "data-retention"),
+  );
+
+  it("names both read-only permissions and says the two connect separately", () => {
+    expect(google).toContain("analytics.readonly");
+    expect(google).toContain("webmasters.readonly");
+    expect(google).toContain("two separate connections");
+    expect(google).toContain(
+      "Agentelse never changes anything in your Google accounts",
+    );
+  });
+
+  it("carries the Limited Use disclosure", () => {
+    expect(google).toContain(
+      "Agentelse's use of information received from Google APIs will adhere to Google API Services User Data Policy, including the Limited Use requirements.",
+    );
+  });
+
+  it("says what is not done with the data and who can read it", () => {
+    expect(google).toContain("We do not sell this data");
+    expect(google).toContain("we do not use it to train AI models");
+    expect(google).toContain("People at Agentelse do not read it");
+  });
+
+  it("says Disconnect deletes right away and when Google access is kept", () => {
+    expect(google).toContain(
+      "deletes its stored token and the Google data in that connection right away",
+    );
+    expect(google).toContain(
+      "unless the same Google account is still used by another of your Agentelse Google connections",
+    );
+    expect(google).toContain("Security > Third-party apps and services");
   });
 });

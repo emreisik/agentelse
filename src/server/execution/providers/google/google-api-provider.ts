@@ -4,9 +4,11 @@ import type { CapabilityKey, ExecutionProviderType } from "@prisma/client";
 
 import { isIntegrationConfigured } from "@/lib/env";
 import {
+  GoogleApiError,
   fetchGa4Report,
   fetchSearchConsoleReport,
 } from "@/server/integrations/google-client";
+import { googleErrorCode } from "@/server/integrations/google/error-catalog";
 import { findActiveGoogleConnections } from "@/server/integrations/google-connections";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
 import type {
@@ -34,6 +36,9 @@ type StoredResult = {
   status: "COMPLETED" | "FAILED";
   rawResult?: unknown;
   errorMessage?: string;
+  // `GOOGLE:<SINIF>`: sağlık hesabı bununla bir müşterinin bağlantı sorununu
+  // Google'ın kendi arızasından ayırır (provider-health.service.ts).
+  errorCode?: string;
 };
 
 const store = new Map<string, StoredResult>();
@@ -118,6 +123,9 @@ export class GoogleApiProvider implements ExecutionProvider {
       return {
         status: "FAILED",
         errorMessage: error instanceof Error ? error.message : String(error),
+        ...(error instanceof GoogleApiError
+          ? { errorCode: googleErrorCode(error.errorClass) }
+          : {}),
       };
     }
   }

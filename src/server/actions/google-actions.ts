@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import {
+  isWorkspaceManager,
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
@@ -23,25 +24,33 @@ import {
   type GoogleSearchConsoleMetadata,
   type GoogleService,
 } from "@/server/integrations/google-client";
+import { disconnectGoogleCredential } from "@/server/integrations/google-disconnect";
+import { googleErrorUserMessage } from "@/server/integrations/google/error-catalog";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
 
 export type ActionResult = { ok: true } | { ok: false; message: string };
 
-function describeGoogleError(error: unknown): string {
+// Kullanıcıya giden metin hata kataloğundan gelir (google/error-catalog.ts);
+// katalogda karşılığı olmayan hatada Google'ın kendi mesajı gösterilir.
+function describeGoogleError(error: unknown, service?: GoogleService): string {
   if (!(error instanceof GoogleApiError)) {
     return error instanceof Error ? error.message : "Operation failed";
-  }
-  if (error.googleErrorCode === "invalid_grant") {
-    return "Google: The connection's authorization has become invalid — you need to reconnect.";
   }
   if (error.googleErrorCode === "access_denied") {
     return "Google: Access denied.";
   }
+  const friendly = service
+    ? googleErrorUserMessage(error.errorClass, service)
+    : null;
+  if (friendly) return friendly;
+  if (error.googleErrorCode === "invalid_grant") {
+    return "Google: The connection's authorization has become invalid — you need to reconnect.";
+  }
   return `Google: ${error.message}`;
 }
 
-function fail(error: unknown): ActionResult {
-  return { ok: false, message: describeGoogleError(error) };
+function fail(error: unknown, service?: GoogleService): ActionResult {
+  return { ok: false, message: describeGoogleError(error, service) };
 }
 
 function notFound(service: GoogleService): ActionResult {
@@ -50,6 +59,11 @@ function notFound(service: GoogleService): ActionResult {
     message: `${GOOGLE_SERVICE_LABEL[service]} connection not found`,
   };
 }
+
+const MANAGERS_ONLY: ActionResult = {
+  ok: false,
+  message: "Only workspace owners and admins can change this.",
+};
 
 function loadCredential(projectId: string, service: GoogleService) {
   return prisma.integrationCredential.findUnique({
@@ -70,6 +84,19 @@ async function resolveScope(formData: FormData) {
   return { projectId, service, userId, access };
 }
 
+// İlk seçimi bağlantıyı kuran herkes yapabilir (Connect her üyeye açık);
+// zaten seçili mülkü ya da siteyi değiştirmek bütün ekibin raporlarını
+// değiştirdiği için yalnız OWNER/ADMIN'e açıktır (GK6).
+async function canChangeSelection(
+  current: string | undefined,
+  next: string,
+  userId: string,
+  workspaceId: string,
+): Promise<boolean> {
+  if (!current || current === next) return true;
+  return isWorkspaceManager(userId, workspaceId);
+}
+
 export async function selectGa4PropertyAction(
   formData: FormData,
 ): Promise<ActionResult> {
@@ -77,10 +104,12 @@ export async function selectGa4PropertyAction(
     const projectId = String(formData.get("projectId"));
     const propertyId = String(formData.get("propertyId") ?? "").trim();
     const { userId } = await requireUser();
-    await requireProjectAccess(userId, projectId);
+    const access = await requireProjectAccess(userId, projectId);
 
     const credential = await loadCredential(projectId, "analytics");
-    if (!credential) return notFound("analytics");
+    if (!credential || credential.status === "REVOKED") {
+      return notFound("analytics");
+    }
 
     const metadata = (credential.metadata ?? {}) as GoogleAnalyticsMetadata;
     const property = metadata.ga4Properties?.find(
@@ -89,21 +118,31 @@ export async function selectGa4PropertyAction(
     if (!property) {
       return { ok: false, message: "Invalid GA4 property selection" };
     }
+    if (
+      !(await canChangeSelection(
+        metadata.selectedGa4PropertyId,
+        property.propertyId,
+        userId,
+        access.workspaceId,
+      ))
+    ) {
+      return MANAGERS_ONLY;
+    }
 
     const nextMetadata: GoogleAnalyticsMetadata = {
       ...metadata,
       selectedGa4PropertyId: property.propertyId,
       selectedGa4PropertyName: property.propertyName,
     };
-    await prisma.integrationCredential.update({
-      where: { id: credential.id },
+    await prisma.integrationCredential.updateMany({
+      where: { id: credential.id, status: { not: "REVOKED" } },
       data: { metadata: nextMetadata },
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
-    return fail(error);
+    return fail(error, "analytics");
   }
 }
 
@@ -114,10 +153,12 @@ export async function selectSearchConsoleSiteAction(
     const projectId = String(formData.get("projectId"));
     const siteUrl = String(formData.get("siteUrl") ?? "").trim();
     const { userId } = await requireUser();
-    await requireProjectAccess(userId, projectId);
+    const access = await requireProjectAccess(userId, projectId);
 
     const credential = await loadCredential(projectId, "search_console");
-    if (!credential) return notFound("search_console");
+    if (!credential || credential.status === "REVOKED") {
+      return notFound("search_console");
+    }
 
     const metadata = (credential.metadata ?? {}) as GoogleSearchConsoleMetadata;
     const site = metadata.searchConsoleSites?.find(
@@ -126,20 +167,30 @@ export async function selectSearchConsoleSiteAction(
     if (!site) {
       return { ok: false, message: "Invalid Search Console site selection" };
     }
+    if (
+      !(await canChangeSelection(
+        metadata.selectedSearchConsoleSite,
+        site.siteUrl,
+        userId,
+        access.workspaceId,
+      ))
+    ) {
+      return MANAGERS_ONLY;
+    }
 
     const nextMetadata: GoogleSearchConsoleMetadata = {
       ...metadata,
       selectedSearchConsoleSite: site.siteUrl,
     };
-    await prisma.integrationCredential.update({
-      where: { id: credential.id },
+    await prisma.integrationCredential.updateMany({
+      where: { id: credential.id, status: { not: "REVOKED" } },
       data: { metadata: nextMetadata },
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);
     return { ok: true };
   } catch (error) {
-    return fail(error);
+    return fail(error, "search_console");
   }
 }
 
@@ -148,13 +199,15 @@ export async function selectSearchConsoleSiteAction(
 export async function testGoogleConnectionAction(
   formData: FormData,
 ): Promise<ActionResult> {
+  let service: GoogleService | undefined;
   try {
-    const { projectId, service } = await resolveScope(formData);
+    const scope = await resolveScope(formData);
+    service = scope.service;
+    const { projectId } = scope;
 
     const credential = await loadCredential(projectId, service);
-    // Koparılmış (REVOKED) bağlantı token'ını hâlâ tutuyor; başarılı bir test
-    // onu hesap sahibinin yeni onayı olmadan yeniden ACTIVE yapmamalı. Bağlantıyı
-    // yalnız yeni bir OAuth bağlantısı geri getirebilir (meta-actions.ts ile aynı).
+    // Koparılmış (REVOKED) bağlantı geri gelmez: bağlantıyı yalnız yeni bir
+    // OAuth bağlantısı geri getirebilir (meta-actions.ts ile aynı kural).
     if (!credential || credential.status === "REVOKED") {
       return notFound(service);
     }
@@ -178,7 +231,7 @@ export async function testGoogleConnectionAction(
         );
         result.ga4ActiveUsers = ga4.activeUsers;
       } catch (error) {
-        result.error = describeGoogleError(error);
+        result.error = describeGoogleError(error, service);
       }
       testError = result.error;
       nextMetadata = { ...metadata, lastTestResult: result };
@@ -199,7 +252,7 @@ export async function testGoogleConnectionAction(
         result.gscClicks = gsc.clicks;
         result.gscImpressions = gsc.impressions;
       } catch (error) {
-        result.error = describeGoogleError(error);
+        result.error = describeGoogleError(error, service);
       }
       testError = result.error;
       nextMetadata = { ...metadata, lastTestResult: result };
@@ -215,7 +268,7 @@ export async function testGoogleConnectionAction(
     revalidatePath(`/projects/${projectId}/integrations`);
     return testError ? { ok: false, message: testError } : { ok: true };
   } catch (error) {
-    return fail(error);
+    return fail(error, service);
   }
 }
 
@@ -226,8 +279,11 @@ export async function testGoogleConnectionAction(
 export async function refreshGoogleListsAction(
   formData: FormData,
 ): Promise<ActionResult> {
+  let service: GoogleService | undefined;
   try {
-    const { projectId, service } = await resolveScope(formData);
+    const scope = await resolveScope(formData);
+    service = scope.service;
+    const { projectId } = scope;
 
     const credential = await loadCredential(projectId, service);
     // Test eylemindeki kuralın aynısı: koparılmış bağlantı liste yenilemeyle
@@ -271,23 +327,34 @@ export async function refreshGoogleListsAction(
     revalidatePath(`/projects/${projectId}/integrations`);
     return listError ? { ok: false, message: listError } : { ok: true };
   } catch (error) {
-    return fail(error);
+    return fail(error, service);
   }
 }
 
+// Bağlantıyı koparır: refresh token ve Google'dan gelen veriler hemen silinir,
+// Google'da iptal yalnız aynı Google hesabının başka canlı Agentelse bağlantısı
+// yoksa yapılır (google-disconnect.ts). Bütün ekibi etkilediği için yalnız
+// OWNER/ADMIN (GK6).
 export async function disconnectGoogleAction(
   formData: FormData,
 ): Promise<ActionResult> {
   try {
     const { projectId, service, userId, access } = await resolveScope(formData);
+    if (!(await isWorkspaceManager(userId, access.workspaceId))) {
+      return MANAGERS_ONLY;
+    }
 
     const credential = await loadCredential(projectId, service);
-    if (!credential) return { ok: true };
+    // Bu değişiklikten önce koparılmış satırlar token'ı hâlâ tutuyor olabilir;
+    // onlar da temizlenir.
+    if (
+      !credential ||
+      (credential.status === "REVOKED" && !credential.encryptedSecret)
+    ) {
+      return { ok: true };
+    }
 
-    await prisma.integrationCredential.update({
-      where: { id: credential.id },
-      data: { status: "REVOKED" },
-    });
+    const { revokedAtGoogle } = await disconnectGoogleCredential(credential);
 
     await AuditLogRepository.record({
       workspaceId: access.workspaceId,
@@ -297,7 +364,7 @@ export async function disconnectGoogleAction(
       action: "integration_credential.disconnected",
       entityType: "IntegrationCredential",
       entityId: credential.id,
-      metadata: { provider: GOOGLE_PROVIDER[service] },
+      metadata: { provider: GOOGLE_PROVIDER[service], revokedAtGoogle },
     });
 
     revalidatePath(`/projects/${projectId}/integrations`);

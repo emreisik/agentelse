@@ -7,7 +7,7 @@ export const metadata: Metadata = {
     "How Agentelse collects, uses, and protects your data when you use your AI Growth Team.",
 };
 
-const LAST_UPDATED = "October 3, 2026";
+const LAST_UPDATED = "October 6, 2026";
 
 type PolicySection = {
   id: string;
@@ -162,13 +162,17 @@ const SECTIONS: PolicySection[] = [
             recent posts.
           </li>
           <li>
-            <span className="text-foreground">instagram_business_manage_insights</span>{" "}
+            <span className="text-foreground">
+              instagram_business_manage_insights
+            </span>{" "}
             — to read the account&rsquo;s insights over the last 28 days
             (accounts reached, views, accounts that engaged and total
             interactions), so we can show how the account is doing.
           </li>
           <li>
-            <span className="text-foreground">instagram_business_content_publish</span>{" "}
+            <span className="text-foreground">
+              instagram_business_content_publish
+            </span>{" "}
             — to publish posts and stories to that account: content you create
             or approve in Agentelse, and content Agentelse publishes for you if
             you switch on scheduled posting or Autopilot for a project.
@@ -180,19 +184,20 @@ const SECTIONS: PolicySection[] = [
           to publish content as described above, to show which account is
           connected and, when you ask, to analyze the look of your recent posts:
           their images and captions are sent to our AI provider for that
-          analysis and are not stored. The profile figures, post counters and insights are read when you open your workspace and shown to you; we do not store them. We do not read your messages, the content of comments or who your followers are, we do
-          not sell this data, and we do not use it for advertising or to train
-          AI models.
+          analysis and are not stored. The profile figures, post counters and
+          insights are read when you open your workspace and shown to you; we do
+          not store them. We do not read your messages, the content of comments
+          or who your followers are, we do not sell this data, and we do not use
+          it for advertising or to train AI models.
         </p>
         <p>
           You can stop Agentelse from using the connection at any time with
           Connectors &gt; Instagram &gt; Disconnect, or by removing Agentelse in
           Instagram under Settings &gt; Apps and websites. Neither erases the
-          stored connection record by itself. To have it erased, email us or,
-          if Instagram offers the choice when you remove the app, ask Instagram
-          to delete your data: Instagram then notifies us and we erase the
-          record automatically. Instructions and the status of a request are on
-          our{" "}
+          stored connection record by itself. To have it erased, email us or, if
+          Instagram offers the choice when you remove the app, ask Instagram to
+          delete your data: Instagram then notifies us and we erase the record
+          automatically. Instructions and the status of a request are on our{" "}
           <Link href="/data-deletion" className="underline underline-offset-4">
             data deletion page
           </Link>
@@ -281,17 +286,16 @@ const SECTIONS: PolicySection[] = [
           ids of posts Agentelse shared on your Page, a copy of your campaigns,
           ad sets and ads (names, status, budgets and schedule) and their daily
           performance figures (spend, impressions, reach, clicks and results).
-          We keep the daily figures for 400 days, and for individual ads for
-          180 days, so we can show trends, pace your budget and warn you about
-          problems; a campaign that no longer exists in Meta is removed from
-          our copy after 90 days. Page access tokens are derived when needed
-          and never stored. We use this data only to publish and manage what you
-          ask for and to show and analyze your results. Campaign performance
-          figures may be processed by our AI provider to produce
-          recommendations, and so may the names of your connected Page and
-          accounts, so the assistant knows where it can publish (see How AI is
-          used with your data). We do not sell this data and we do not use it to
-          train AI models.
+          We keep the daily figures for 400 days, and for individual ads for 180
+          days, so we can show trends, pace your budget and warn you about
+          problems; a campaign that no longer exists in Meta is removed from our
+          copy after 90 days. Page access tokens are derived when needed and
+          never stored. We use this data only to publish and manage what you ask
+          for and to show and analyze your results. Campaign performance figures
+          may be processed by our AI provider to produce recommendations, and so
+          may the names of your connected Page and accounts, so the assistant
+          knows where it can publish (see How AI is used with your data). We do
+          not sell this data and we do not use it to train AI models.
         </p>
         <p>
           You can stop Agentelse from using either connection with Connectors
@@ -304,6 +308,81 @@ const SECTIONS: PolicySection[] = [
           </Link>
           ). Posts and ads already published stay on Facebook and Instagram
           until you remove them there.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "google-analytics-and-search-console",
+    title: "Google Analytics and Search Console connections",
+    body: (
+      <>
+        <p>
+          Google Analytics and Google Search Console are two separate
+          connections: you connect, and disconnect, each one on its own, and
+          each one asks Google only for its own permission. Both are read-only;
+          Agentelse never changes anything in your Google accounts.
+        </p>
+        <ul className="flex flex-col gap-2 pl-5 list-disc">
+          <li>
+            Google Analytics asks for &ldquo;See and download your Google
+            Analytics data&rdquo; (analytics.readonly), to show your website
+            traffic and results in reports, check that your tracking works and
+            suggest improvements.
+          </li>
+          <li>
+            Google Search Console asks for &ldquo;View Search Console data for
+            your verified sites&rdquo; (webmasters.readonly), to show how your
+            site appears in Google Search and suggest content and SEO
+            improvements.
+          </li>
+          <li>
+            Both also ask for your email address, so we can show which Google
+            account is connected and tell your connections apart.
+          </li>
+        </ul>
+        <p>
+          We store the access Google gives us (an encrypted refresh token), the
+          connected Google account&rsquo;s email address and account id, the
+          list of properties or sites that account can see, the one you
+          selected, and the result of your last connection test. Reports and
+          suggestions read your figures when they are built: summary figures
+          (such as users, sessions, clicks and impressions) and your top search
+          queries are shown to you, kept with the report or suggestion they
+          belong to, and may be processed by our AI provider to write summaries
+          and ideas (see How AI is used with your data). We do not sell this
+          data, we do not use it for advertising and we do not use it to train
+          AI models. People at Agentelse do not read it unless you ask us to, or
+          when it is needed for security or required by law.
+        </p>
+        <p>
+          Agentelse&rsquo;s use of information received from Google APIs will
+          adhere to{" "}
+          <a
+            href="https://developers.google.com/terms/api-services-user-data-policy"
+            className="underline underline-offset-4"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Google API Services User Data Policy
+          </a>
+          , including the Limited Use requirements.
+        </p>
+        <p>
+          Disconnecting a Google connection in Connectors deletes its stored
+          token and the Google data in that connection right away. We also
+          remove Agentelse&rsquo;s access in your Google account, unless the
+          same Google account is still used by another of your Agentelse Google
+          connections; Google removes access for an app as a whole, so doing it
+          then would disconnect that one too. You can remove Agentelse&rsquo;s
+          access yourself at any time in your Google Account under Security &gt;
+          Third-party apps and services, which stops both connections. To have
+          reports and suggestions built from your Google data erased as well,
+          email us (see the{" "}
+          <Link href="/data-deletion" className="underline underline-offset-4">
+            data deletion page
+          </Link>
+          ).
         </p>
       </>
     ),

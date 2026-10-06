@@ -14,8 +14,8 @@ type OAuthStatePayload = {
   projectId: string;
   userId: string;
   issuedAt: number;
-  // Only filled in by providers that require PKCE (TikTok, X) — see
-  // pkce.ts. Google/Meta/LinkedIn never send this field.
+  // Only filled in by providers that use PKCE (TikTok, X and Google) — see
+  // pkce.ts. Meta/LinkedIn never send this field.
   codeVerifier?: string;
   // Only filled in by Google — which of the two Google integrations
   // (analytics / search_console) this grant is for, since both share one
@@ -47,9 +47,9 @@ export function signOAuthState(
 export function verifyOAuthState(
   token: string,
 ): Pick<
-    OAuthStatePayload,
-    "projectId" | "userId" | "codeVerifier" | "service" | "login"
-  > | null {
+  OAuthStatePayload,
+  "projectId" | "userId" | "codeVerifier" | "service" | "login"
+> | null {
   const [payloadB64, sig] = token.split(".");
   if (!payloadB64 || !sig) return null;
 

@@ -41,6 +41,7 @@ import { MetaAdSetChainRelay } from "@/server/agency/meta-ads/meta-adset-chain-r
 import { MetaCampaignChainRelay } from "@/server/agency/meta-ads/meta-campaign-chain-relay";
 import { CreativePublishCompletion } from "@/server/commands/creative-publish-completion";
 import { GoogleAnalyticsScanner } from "@/server/agency/performance/google-analytics-scanner";
+import { GoogleConnectionHealth } from "@/server/integrations/google-connection-health";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
 import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
 import { WorkPlanProgressor } from "@/server/agency/work-plans/work-plan-progressor";
@@ -213,7 +214,9 @@ registerAgencyTickStep({
   // F2: with the mirror on, its findings come from the guard and (F4) the
   // rules engine; the old scanner would read Meta live a second time.
   run: () =>
-    AdsFlags.sync() ? Promise.resolve(0) : MetaPerformanceScanner.runDueScans(5),
+    AdsFlags.sync()
+      ? Promise.resolve(0)
+      : MetaPerformanceScanner.runDueScans(5),
 });
 // Same role as meta-ads-performance-scan above, for GA4/Search Console —
 // SEO signals produced this tick get scored in the same tick's
@@ -221,6 +224,13 @@ registerAgencyTickStep({
 registerAgencyTickStep({
   name: "google-analytics-scan",
   run: () => GoogleAnalyticsScanner.runDueScans(5),
+});
+// Google Analytics ve Search Console bağlantılarının günlük sağlık kontrolü
+// (google-connection-health.ts): token, izin ve seçili mülk/site erişimi.
+// Odak ayarından bağımsız çalışır; kopuk bağlantı her modda görünmeli.
+registerAgencyTickStep({
+  name: "google-connection-health",
+  run: () => GoogleConnectionHealth.runDue(5),
 });
 registerAgencyTickStep({
   name: "signal-processing",

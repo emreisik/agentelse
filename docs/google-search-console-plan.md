@@ -843,6 +843,8 @@ Mevcut testler korunur ve taşınır: `quick-wins.test.ts`, `on-page.test.ts`, `
 
 ### SC-F1 — Bağlantı ve kimlik · M
 
+**Durum (6 Ekim):** Ortak bölüm 1, GA-F1 ile birlikte yapıldı ([google-connections.md](google-connections.md)). Search Console'a özgü site önerisi ve alan adı uyarısı, `GoogleGrant` ve Connectors diyaloğu ise bölüm 2'de; `integrations/page.tsx`'teki commit'siz değişiklik bekleniyor.
+
 **Amaç:** GA-F1 ile aynı; Search Console'a özgü site doğrulamasıyla.
 
 **Kapsam:**

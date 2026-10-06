@@ -10,6 +10,10 @@ import {
 import { signOAuthState } from "@/server/security/oauth-state";
 import { isAgentelseError } from "@/server/security/errors";
 import {
+  deriveCodeChallenge,
+  generateCodeVerifier,
+} from "@/server/security/pkce";
+import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
@@ -53,6 +57,11 @@ export async function GET(request: Request) {
     );
   }
 
-  const state = signOAuthState({ projectId, userId, service });
-  return NextResponse.redirect(buildGoogleAuthorizeUrl(state, service));
+  // PKCE: doğrulayıcı imzalı state'te taşınır; state oturum kullanıcısına
+  // bağlı olduğu için çalınan bir kod başka bir oturumda kullanılamaz.
+  const codeVerifier = generateCodeVerifier();
+  const state = signOAuthState({ projectId, userId, service, codeVerifier });
+  return NextResponse.redirect(
+    buildGoogleAuthorizeUrl(state, service, deriveCodeChallenge(codeVerifier)),
+  );
 }

@@ -580,7 +580,7 @@ interface GoogleAccess {
 
 ### 3.11 Güvenlik, gizlilik ve uyumluluk
 
-- **Limited Use beyanı:** Gizlilik politikasına (isteğe bağlı olarak ana sayfaya da) Google'ın verdiği kalıp eklenir: "Agentelse's use of information received from Google APIs will adhere to the Google API Services User Data Policy, including the Limited Use requirements." Beyan herkese açık bir sayfada olmalıdır.
+- **Limited Use beyanı:** Gizlilik politikasına (isteğe bağlı olarak ana sayfaya da) Google'ın verdiği kalıp eklenir: "Agentelse's use of information received from Google APIs will adhere to Google API Services User Data Policy, including the Limited Use requirements." Beyan herkese açık bir sayfada olmalıdır.
 - **Gizlilik politikasında Google bölümü** (`privacy/page.tsx`, Meta bölümünden sonra):
   - izin ve amacı (`analytics.readonly`: raporlar, denetim, öneriler),
   - saklananlar (şifreli refresh token, e-posta, mülk listesi ve seçimi, toplulaştırılmış günlük metrikler ve saklama süreleri, bulgular),
@@ -906,6 +906,8 @@ Mevcut testler korunur: `meta-google-scopes.test.ts` (kapsam izolasyonu), `googl
 **Görünür değişiklik:** Koparılmış bir Google bağlantısında "Run Test" ve liste yenileme artık "Google Analytics connection not found" (ya da "Google Search Console connection not found") der ve bağlantıyı geri getirmez; yeniden bağlanmak için "Connect with Google" gerekir.
 
 ### GA-F1 — Bağlantı ve kimlik · M
+
+**Durum (6 Ekim):** Bölüm 1 yapıldı, uygulanan hâl [google-connections.md](google-connections.md)'de: ortak çekirdek, izin doğrulama, PKCE, hesap kimliği, Disconnect + akıllı iptal, roller, kiracıya özel sağlık, günlük bağlantı sağlığı, gizlilik ve veri silme metni. Bölüm 2 bekliyor: `GoogleGrant` + "Use existing connection", Connectors diyaloğundaki yeni durumlar ve mesajlar, bağlı hesaplar kartı. `integrations/page.tsx`'te başka bir oturumun commit'siz değişikliği var. Uygulamada plandan iki fark: (1) `GoogleGrant` gelene kadar Google hesap kimliği ve sağlık durumu `IntegrationCredential.metadata`'da (`googleSub`, `googleHealth`) tutuluyor; akıllı iptal de bunlara bakıyor. (2) İlk mülk/site seçimini bağlantıyı kuran her üye yapabiliyor; yalnız değiştirmek OWNER/ADMIN istiyor. `pii.ts` ambarla birlikte GA-F2'ye kaldı.
 
 **Amaç:** Bağlantıyı doğru, ayrı, güvenli ve doğrulanabilir kılmak.
 

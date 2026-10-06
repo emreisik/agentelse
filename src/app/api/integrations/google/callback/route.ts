@@ -14,7 +14,6 @@ import {
   GOOGLE_SERVICE_LABEL,
   exchangeGoogleAuthCode,
   fetchGa4PropertyList,
-  fetchGoogleAccountEmail,
   fetchSearchConsoleSiteList,
   parseGoogleService,
   reconcileGa4Selection,
@@ -23,6 +22,11 @@ import {
   type GoogleSearchConsoleMetadata,
   type GoogleService,
 } from "@/server/integrations/google-client";
+import {
+  fetchGoogleIdentity,
+  type GoogleIdentity,
+} from "@/server/integrations/google/oauth";
+import { hasServiceScope } from "@/server/integrations/google/services";
 
 function redirectToIntegrations(
   projectId: string,
@@ -38,28 +42,35 @@ function redirectToIntegrations(
 // Builds the service's metadata from a fresh list fetch, keeping the
 // previous selection if it's still accessible. Scan bookkeeping from the
 // existing row is carried over so a reconnect doesn't reset the scanner.
+// Koparılmış bir satırın `disconnectedAt` işareti yeniden bağlanınca düşer.
 async function buildMetadata(
   service: GoogleService,
   accessToken: string,
-  connectedEmail: string | null,
+  identity: GoogleIdentity,
   existing: Record<string, unknown>,
 ): Promise<GoogleAnalyticsMetadata | GoogleSearchConsoleMetadata> {
+  const kept: Record<string, unknown> = { ...existing };
+  delete kept.disconnectedAt;
+  const account = {
+    connectedEmail: identity.email ?? undefined,
+    googleSub: identity.googleSub ?? undefined,
+  };
   if (service === "analytics") {
-    const previous = existing as Partial<GoogleAnalyticsMetadata>;
+    const previous = kept as Partial<GoogleAnalyticsMetadata>;
     const lists = await fetchGa4PropertyList(accessToken);
     return {
       ...previous,
-      connectedEmail: connectedEmail ?? undefined,
+      ...account,
       ga4ListError: undefined,
       ...lists,
       ...reconcileGa4Selection(previous, lists),
     };
   }
-  const previous = existing as Partial<GoogleSearchConsoleMetadata>;
+  const previous = kept as Partial<GoogleSearchConsoleMetadata>;
   const lists = await fetchSearchConsoleSiteList(accessToken);
   return {
     ...previous,
-    connectedEmail: connectedEmail ?? undefined,
+    ...account,
     gscListError: undefined,
     ...lists,
     ...reconcileSearchConsoleSelection(previous, lists),
@@ -118,9 +129,21 @@ export async function GET(request: Request) {
 
   let tokens: Awaited<ReturnType<typeof exchangeGoogleAuthCode>>;
   try {
-    tokens = await exchangeGoogleAuthCode(code);
+    tokens = await exchangeGoogleAuthCode(code, state.codeVerifier);
   } catch {
     return redirectToIntegrations(state.projectId, service, "exchange_failed");
+  }
+  // Google, e-posta + bir veri izni istendiğinde onay kutuları gösterir;
+  // kullanıcı veri iznini kaldırdıysa bağlantı kurulmaz (yoksa "Connected"
+  // görünüp her çağrı 403 alırdı). Token iptal edilmez: Google iptali Cloud
+  // projesi düzeyinde uyguladığı için aynı hesabın diğer Agentelse
+  // bağlantısını da koparırdı. Yanıtta `scope` hiç yoksa (beklenmez) karar
+  // verilemez ve bağlantı kurulur; ilk API çağrısı izni yine sınar.
+  if (
+    tokens.grantedScopes.length > 0 &&
+    !hasServiceScope(service, tokens.grantedScopes)
+  ) {
+    return redirectToIntegrations(state.projectId, service, "scope_missing");
   }
   if (!tokens.refreshToken) {
     return redirectToIntegrations(state.projectId, service, "no_refresh_token");
@@ -134,14 +157,14 @@ export async function GET(request: Request) {
   // Even if the property/site list fails (e.g. that API isn't enabled on
   // the GCP project), the connection is still established — the error
   // message is stored in the metadata and shown in the dialog.
-  const connectedEmail = await fetchGoogleAccountEmail(tokens.accessToken);
+  const identity = await fetchGoogleIdentity(tokens.accessToken);
   const metadata = await buildMetadata(
     service,
     tokens.accessToken,
-    connectedEmail,
+    identity,
     (existing?.metadata ?? {}) as Record<string, unknown>,
   );
-  const accountLabel = connectedEmail ?? GOOGLE_SERVICE_LABEL[service];
+  const accountLabel = identity.email ?? GOOGLE_SERVICE_LABEL[service];
 
   const credential = await prisma.integrationCredential.upsert({
     where: { projectId_provider: { projectId: state.projectId, provider } },

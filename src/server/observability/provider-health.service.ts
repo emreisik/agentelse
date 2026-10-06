@@ -9,6 +9,10 @@ import {
   metaClassDegradesProvider,
   parseMetaErrorCode,
 } from "@/server/integrations/meta/error-catalog";
+import {
+  googleClassDegradesProvider,
+  parseGoogleErrorCode,
+} from "@/server/integrations/google/error-catalog";
 
 // Provider health: the ProviderDefinition/ProviderHealth/ProviderIncident
 // models were defined in the schema, but no code was writing to them. This
@@ -276,5 +280,10 @@ export function failureDegrades(job: {
 }): boolean {
   const metaClass = parseMetaErrorCode(job.errorCode);
   if (metaClass) return metaClassDegradesProvider(metaClass);
+  // Google için aynı kural (GOOGLE:<SINIF>, google/error-catalog.ts): bir
+  // müşterinin süresi dolan bağlantısı, eksik izni ya da kaybolan mülkü
+  // paylaşılan `google-api` sağlığını düşürmez.
+  const googleClass = parseGoogleErrorCode(job.errorCode);
+  if (googleClass) return googleClassDegradesProvider(googleClass);
   return classifyError(job.errorMessage ?? null).degradesProvider;
 }

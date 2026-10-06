@@ -1,57 +1,37 @@
 import "server-only";
 
 // A thin, real Google REST API wrapper — no SDK, plain `fetch` (same
-// pattern as telegram-client.ts). The OAuth authorization-code flow + the
-// minimum surface of the GA4 (Analytics Admin/Data API) + Search Console
-// API needed for these integrations.
+// pattern as telegram-client.ts): the minimum surface of the GA4 (Analytics
+// Admin/Data API) + Search Console API needed for these integrations. The
+// OAuth flow, the HTTP gate (timeouts, safe retries) and the error catalog
+// live in the shared Google core (src/server/integrations/google/*); they are
+// re-exported here so existing callers keep their imports.
 
-import { getEnv } from "@/lib/env";
+import { googleFetchJson } from "@/server/integrations/google/http";
 
-const AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
+export {
+  GOOGLE_PROVIDER,
+  GOOGLE_SERVICES,
+  GOOGLE_SERVICE_LABEL,
+  parseGoogleService,
+  type GoogleService,
+} from "@/server/integrations/google/services";
+export { GoogleApiError } from "@/server/integrations/google/errors";
+export {
+  buildGoogleAuthorizeUrl,
+  exchangeGoogleAuthCode,
+  refreshGoogleAccessToken,
+} from "@/server/integrations/google/oauth";
+
 const ANALYTICS_ADMIN_BASE = "https://analyticsadmin.googleapis.com/v1beta";
 const ANALYTICS_DATA_BASE = "https://analyticsdata.googleapis.com/v1beta";
 const SEARCH_CONSOLE_BASE =
   "https://searchconsole.googleapis.com/webmasters/v3";
 
-const DEFAULT_TIMEOUT_MS = 8_000;
-
-// Google Analytics and Search Console are two independent integrations:
-// each has its own OAuth grant (only its own scope), its own refresh token
-// and its own IntegrationCredential row — so they can be connected from
-// different Google accounts and disconnected separately. Both share the
-// same GCP OAuth client and the same registered redirect URI; the service
-// travels in the signed OAuth state.
-export const GOOGLE_SERVICES = ["analytics", "search_console"] as const;
-export type GoogleService = (typeof GOOGLE_SERVICES)[number];
-
-export const GOOGLE_PROVIDER = {
-  analytics: "google_analytics",
-  search_console: "google_search_console",
-} as const satisfies Record<GoogleService, string>;
-
-export const GOOGLE_SERVICE_LABEL: Record<GoogleService, string> = {
-  analytics: "Google Analytics",
-  search_console: "Google Search Console",
-};
-
-const SCOPES: Record<GoogleService, string[]> = {
-  analytics: [
-    "https://www.googleapis.com/auth/analytics.readonly",
-    "https://www.googleapis.com/auth/userinfo.email",
-  ],
-  search_console: [
-    "https://www.googleapis.com/auth/webmasters.readonly",
-    "https://www.googleapis.com/auth/userinfo.email",
-  ],
-};
-
-export function parseGoogleService(value: unknown): GoogleService | null {
-  return GOOGLE_SERVICES.includes(value as GoogleService)
-    ? (value as GoogleService)
-    : null;
-}
+// accountSummaries sayfalıdır; çok müşterili bir ajans hesabı 200'den fazla
+// mülk görebilir. Sonsuz döngüye karşı en çok 10 sayfa (2.000 mülk).
+const ACCOUNT_SUMMARY_PAGE_SIZE = 200;
+const ACCOUNT_SUMMARY_MAX_PAGES = 10;
 
 // Bookkeeping for GoogleAnalyticsScanner's due-scan check (see
 // google-analytics-scanner.ts) — same pattern as Meta's
@@ -62,190 +42,50 @@ type GoogleScanBookkeeping = {
   analyticsScanFailureCount?: number;
 };
 
-// IntegrationCredential.metadata for provider "google_analytics".
-export type GoogleAnalyticsMetadata = GoogleScanBookkeeping & {
+// Hangi Google hesabıyla bağlanıldığı. `googleSub` (userinfo `id`) Google'da
+// iptalin güvenli olup olmadığına karar verirken kullanılır
+// (google-disconnect.ts); e-posta değişse de aynı kalır.
+type GoogleAccountIdentity = {
   connectedEmail?: string;
-  ga4Properties: Ga4Property[];
-  ga4ListError?: string;
-  selectedGa4PropertyId?: string;
-  selectedGa4PropertyName?: string;
-  lastTestResult?: {
-    testedAt: string;
-    ga4ActiveUsers?: number;
-    error?: string;
-  };
-  // One-deep snapshot of the last scan's GA4 aggregate — powers
-  // seo-rules.ts's evaluateTrafficFinding the same way Meta's
-  // previousScanSnapshot powers evaluateTrendFinding.
-  previousAnalyticsSnapshot?: {
-    ga4?: { activeUsers: number; sessions: number };
-  };
+  googleSub?: string;
 };
+
+// IntegrationCredential.metadata for provider "google_analytics".
+export type GoogleAnalyticsMetadata = GoogleScanBookkeeping &
+  GoogleAccountIdentity & {
+    ga4Properties: Ga4Property[];
+    ga4ListError?: string;
+    selectedGa4PropertyId?: string;
+    selectedGa4PropertyName?: string;
+    lastTestResult?: {
+      testedAt: string;
+      ga4ActiveUsers?: number;
+      error?: string;
+    };
+    // One-deep snapshot of the last scan's GA4 aggregate — powers
+    // seo-rules.ts's evaluateTrafficFinding the same way Meta's
+    // previousScanSnapshot powers evaluateTrendFinding.
+    previousAnalyticsSnapshot?: {
+      ga4?: { activeUsers: number; sessions: number };
+    };
+  };
 
 // IntegrationCredential.metadata for provider "google_search_console".
-export type GoogleSearchConsoleMetadata = GoogleScanBookkeeping & {
-  connectedEmail?: string;
-  searchConsoleSites: SearchConsoleSite[];
-  gscListError?: string;
-  selectedSearchConsoleSite?: string;
-  lastTestResult?: {
-    testedAt: string;
-    gscClicks?: number;
-    gscImpressions?: number;
-    error?: string;
+export type GoogleSearchConsoleMetadata = GoogleScanBookkeeping &
+  GoogleAccountIdentity & {
+    searchConsoleSites: SearchConsoleSite[];
+    gscListError?: string;
+    selectedSearchConsoleSite?: string;
+    lastTestResult?: {
+      testedAt: string;
+      gscClicks?: number;
+      gscImpressions?: number;
+      error?: string;
+    };
   };
-};
 
-export class GoogleApiError extends Error {
-  readonly googleErrorCode?: string;
-  constructor(message: string, googleErrorCode?: string) {
-    super(message);
-    this.name = "GoogleApiError";
-    this.googleErrorCode = googleErrorCode;
-  }
-}
-
-// There is no separate GOOGLE_OAUTH_REDIRECT_URI env var — it's derived
-// from the existing NEXT_PUBLIC_APP_URL, and this path must be registered
-// as the authorized redirect URI in Google Cloud Console.
-function redirectUri(): string {
-  return `${getEnv().NEXT_PUBLIC_APP_URL}/api/integrations/google/callback`;
-}
-
-async function request<T>(
-  url: string,
-  init?: RequestInit,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
-): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let res: Response;
-  try {
-    res = await fetch(url, { ...init, signal: controller.signal });
-  } catch (error) {
-    const isAbort = error instanceof Error && error.name === "AbortError";
-    throw new GoogleApiError(
-      isAbort
-        ? `Google API request timed out (${timeoutMs}ms)`
-        : `Could not reach Google API: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  } finally {
-    clearTimeout(timer);
-  }
-
-  let body: unknown = null;
-  try {
-    body = await res.json();
-  } catch {
-    // Empty body (e.g. some 204s) — not a problem, res.ok is checked below.
-  }
-
-  if (!res.ok) {
-    const errorBody = body as {
-      error?: string | { message?: string };
-      error_description?: string;
-    } | null;
-    const code =
-      typeof errorBody?.error === "string" ? errorBody.error : undefined;
-    const message =
-      typeof errorBody?.error === "object" && errorBody?.error?.message
-        ? errorBody.error.message
-        : (errorBody?.error_description ??
-          `Google API error (HTTP ${res.status})`);
-    throw new GoogleApiError(message, code);
-  }
-
-  return body as T;
-}
-
-export function buildGoogleAuthorizeUrl(
-  state: string,
-  service: GoogleService,
-): string {
-  const env = getEnv();
-  const params = new URLSearchParams({
-    client_id: env.GOOGLE_OAUTH_CLIENT_ID,
-    redirect_uri: redirectUri(),
-    response_type: "code",
-    access_type: "offline",
-    prompt: "consent",
-    // No include_granted_scopes: each service's token must carry only its
-    // own scope, otherwise the two integrations would silently merge again.
-    scope: SCOPES[service].join(" "),
-    state,
-  });
-  return `${AUTHORIZE_URL}?${params.toString()}`;
-}
-
-export async function exchangeGoogleAuthCode(code: string): Promise<{
-  accessToken: string;
-  refreshToken: string | null;
-  expiresIn: number;
-}> {
-  const env = getEnv();
-  const body = new URLSearchParams({
-    code,
-    client_id: env.GOOGLE_OAUTH_CLIENT_ID,
-    client_secret: env.GOOGLE_OAUTH_CLIENT_SECRET,
-    redirect_uri: redirectUri(),
-    grant_type: "authorization_code",
-  });
-  const result = await request<{
-    access_token: string;
-    refresh_token?: string;
-    expires_in?: number;
-  }>(TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
-  });
-  return {
-    accessToken: result.access_token,
-    refreshToken: result.refresh_token ?? null,
-    // expires_in eksik gelirse NaN tarih -> RangeError zinciri oluşmasın
-    // (meta-client'ta yaşandı); Google'ın standart 1 saatini varsay.
-    expiresIn: result.expires_in ?? 3600,
-  };
-}
-
-// invalid_grant -> the refresh token has been revoked/is invalid; the
-// caller should turn this into marking the credential EXPIRED and
-// requesting a reconnect (see testGoogleConnectionAction).
-export async function refreshGoogleAccessToken(
-  refreshToken: string,
-): Promise<{ accessToken: string; expiresIn: number }> {
-  const env = getEnv();
-  const body = new URLSearchParams({
-    refresh_token: refreshToken,
-    client_id: env.GOOGLE_OAUTH_CLIENT_ID,
-    client_secret: env.GOOGLE_OAUTH_CLIENT_SECRET,
-    grant_type: "refresh_token",
-  });
-  const result = await request<{ access_token: string; expires_in?: number }>(
-    TOKEN_URL,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    },
-  );
-  return {
-    accessToken: result.access_token,
-    expiresIn: result.expires_in ?? 3600,
-  };
-}
-
-export async function fetchGoogleAccountEmail(
-  accessToken: string,
-): Promise<string | null> {
-  try {
-    const result = await request<{ email?: string }>(USERINFO_URL, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    return result.email ?? null;
-  } catch {
-    return null;
-  }
+function bearer(accessToken: string): Record<string, string> {
+  return { Authorization: `Bearer ${accessToken}` };
 }
 
 export type Ga4Property = {
@@ -257,25 +97,37 @@ export type Ga4Property = {
 export async function listGa4Properties(
   accessToken: string,
 ): Promise<Ga4Property[]> {
-  const result = await request<{
-    accountSummaries?: Array<{
-      displayName?: string;
-      propertySummaries?: Array<{ property?: string; displayName?: string }>;
-    }>;
-  }>(`${ANALYTICS_ADMIN_BASE}/accountSummaries?pageSize=200`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
   const properties: Ga4Property[] = [];
-  for (const account of result.accountSummaries ?? []) {
-    for (const property of account.propertySummaries ?? []) {
-      if (!property.property) continue;
-      properties.push({
-        propertyId: property.property.replace(/^properties\//, ""),
-        propertyName: property.displayName ?? property.property,
-        accountName: account.displayName ?? "",
-      });
+  let pageToken: string | undefined;
+  for (let page = 0; page < ACCOUNT_SUMMARY_MAX_PAGES; page += 1) {
+    const params = new URLSearchParams({
+      pageSize: String(ACCOUNT_SUMMARY_PAGE_SIZE),
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const result = await googleFetchJson<{
+      accountSummaries?: Array<{
+        displayName?: string;
+        propertySummaries?: Array<{ property?: string; displayName?: string }>;
+      }>;
+      nextPageToken?: string;
+    }>(
+      `${ANALYTICS_ADMIN_BASE}/accountSummaries?${params.toString()}`,
+      { headers: bearer(accessToken) },
+      { kind: "admin" },
+    );
+
+    for (const account of result.accountSummaries ?? []) {
+      for (const property of account.propertySummaries ?? []) {
+        if (!property.property) continue;
+        properties.push({
+          propertyId: property.property.replace(/^properties\//, ""),
+          propertyName: property.displayName ?? property.property,
+          accountName: account.displayName ?? "",
+        });
+      }
     }
+    pageToken = result.nextPageToken || undefined;
+    if (!pageToken) break;
   }
   return properties;
 }
@@ -288,11 +140,9 @@ export type SearchConsoleSite = {
 export async function listSearchConsoleSites(
   accessToken: string,
 ): Promise<SearchConsoleSite[]> {
-  const result = await request<{
+  const result = await googleFetchJson<{
     siteEntry?: Array<{ siteUrl?: string; permissionLevel?: string }>;
-  }>(`${SEARCH_CONSOLE_BASE}/sites`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  }>(`${SEARCH_CONSOLE_BASE}/sites`, { headers: bearer(accessToken) });
 
   const sites: SearchConsoleSite[] = [];
   for (const site of result.siteEntry ?? []) {
@@ -317,19 +167,20 @@ export async function fetchGa4Report(
   propertyId: string,
   days = 7,
 ): Promise<{ activeUsers: number; sessions: number }> {
-  const result = await request<{
+  const result = await googleFetchJson<{
     rows?: Array<{ metricValues?: Array<{ value?: string }> }>;
-  }>(`${ANALYTICS_DATA_BASE}/properties/${propertyId}:runReport`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
+  }>(
+    `${ANALYTICS_DATA_BASE}/properties/${propertyId}:runReport`,
+    {
+      method: "POST",
+      headers: { ...bearer(accessToken), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dateRanges: [{ startDate: `${days}daysAgo`, endDate: "today" }],
+        metrics: [{ name: "activeUsers" }, { name: "sessions" }],
+      }),
     },
-    body: JSON.stringify({
-      dateRanges: [{ startDate: `${days}daysAgo`, endDate: "today" }],
-      metrics: [{ name: "activeUsers" }, { name: "sessions" }],
-    }),
-  });
+    { kind: "report" },
+  );
   const values = result.rows?.[0]?.metricValues ?? [];
   return {
     activeUsers: Number(values[0]?.value ?? 0),
@@ -355,7 +206,7 @@ export async function fetchSearchConsoleReport(
   start.setDate(start.getDate() - days);
   const format = (d: Date) => d.toISOString().slice(0, 10);
 
-  const result = await request<{
+  const result = await googleFetchJson<{
     rows?: Array<{
       clicks?: number;
       impressions?: number;
@@ -366,16 +217,14 @@ export async function fetchSearchConsoleReport(
     `${SEARCH_CONSOLE_BASE}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
     {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
+      headers: { ...bearer(accessToken), "Content-Type": "application/json" },
       body: JSON.stringify({
         startDate: format(start),
         endDate: format(today),
         rowLimit: 1,
       }),
     },
+    { kind: "report" },
   );
   const row = result.rows?.[0];
   return {
@@ -412,7 +261,7 @@ export async function fetchSearchConsoleQueryRows(
   start.setDate(start.getDate() - days);
   const format = (d: Date) => d.toISOString().slice(0, 10);
 
-  const result = await request<{
+  const result = await googleFetchJson<{
     rows?: Array<{
       keys?: string[];
       clicks?: number;
@@ -424,10 +273,7 @@ export async function fetchSearchConsoleQueryRows(
     `${SEARCH_CONSOLE_BASE}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
     {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
+      headers: { ...bearer(accessToken), "Content-Type": "application/json" },
       body: JSON.stringify({
         startDate: format(start),
         endDate: format(today),
@@ -435,6 +281,7 @@ export async function fetchSearchConsoleQueryRows(
         rowLimit,
       }),
     },
+    { kind: "report" },
   );
   return (result.rows ?? []).map((row) => ({
     keys: row.keys ?? [],

@@ -6,6 +6,7 @@ import {
   Check,
   Clock,
   Gem,
+  Globe,
   Lightbulb,
   Loader2,
   MessageSquare,
@@ -104,6 +105,7 @@ const SOURCE_ICON: Record<IdeaSource, LucideIcon> = {
   chat: MessageSquare,
   opportunity: Lightbulb,
   search: Search,
+  website: Globe,
   manual: PenLine,
 };
 

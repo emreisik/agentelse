@@ -980,7 +980,7 @@ model BrandVisualIdentity {
 
   photographyStyle PhotographyStyle?
   styleRefinement  String?
-  moodTags         String[] @default([])
+  moodTags         String[]                  @default([])
   compositionNotes String?
   backgroundTone   BackgroundTonePreference?
 
@@ -998,7 +998,7 @@ model BrandVisualIdentity {
   // pixel-guaranteed (non-stochastic) part of a generated image. Defaults
   // reproduce today's hardcoded creative-template.ts behavior exactly, so
   // a brand that never opens the new settings sees no change.
-  templateEnabled       Boolean           @default(true)
+  templateEnabled        Boolean           @default(true)
   logoPosition           LogoPosition      @default(BOTTOM_RIGHT)
   logoSizePercent        Int               @default(16)
   logoMarginPercent      Int               @default(4)
@@ -1249,9 +1249,9 @@ model ExecutionContextSnapshot {
 // single project chat. Connection status is NOT stored here (it is read live);
 // only the channels the user chose to work on.
 model Work {
-  id          String @id @default(cuid())
-  workspaceId String
-  projectId   String
+  id              String  @id @default(cuid())
+  workspaceId     String
+  projectId       String
   createdByUserId String?
 
   title   String
@@ -1260,7 +1260,7 @@ model Work {
   status  WorkStatus @default(ACTIVE)
 
   // Chosen channel keys (content-channels CHANNEL_KEYS subset), e.g. ["instagram"].
-  channels Json @default("[]")
+  channels                Json @default("[]")
   // Channel keys chosen while NOT connected ("I'll connect later").
   acknowledgedUnconnected Json @default("[]")
 
@@ -2244,11 +2244,13 @@ model GaPropertyLink {
   backfill            Json?
   backfillDoneAt      DateTime?
 
-  dailyTotals GaDailyTotal[]
-  slices      GaReportSlice[]
-  monthly     GaMonthlySummary[]
+  dailyTotals  GaDailyTotal[]
+  slices       GaReportSlice[]
+  monthly      GaMonthlySummary[]
   healthChecks GaHealthCheck[]
   healthRun    GaHealthRun?
+  findings     GaFinding[]
+  analysisRun  GaAnalysisRun?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2343,7 +2345,7 @@ model GaMonthlySummary {
 // ---------------------------------------------------------------------------
 
 model GscSiteLink {
-  id           String  @id @default(cuid())
+  id           String    @id @default(cuid())
   workspaceId  String
   projectId    String
   credentialId String
@@ -2356,15 +2358,15 @@ model GscSiteLink {
   isMock       Boolean   @default(false)
 
   // DOMAIN | URL_PREFIX
-  propertyType    String?
+  propertyType        String?
   // siteOwner | siteFullUser | siteRestrictedUser
-  permissionLevel String?
+  permissionLevel     String?
   // Site projenin alan adını kapsıyor mu (null: projede alan adı yok).
-  domainMatch     Boolean?
+  domainMatch         Boolean?
   // { empty: [searchType...], disabledSlices: [kind...], appearancePerDay, checkedAt }
-  searchTypes     Json?
+  searchTypes         Json?
   // { v: 1, auto: [], user: [], removed: [], updatedAt } (src/lib/seo/brand-terms.ts)
-  brandTerms      Json?
+  brandTerms          Json?
   // Günlük marka serisinin tamamlandığı terimlerin özeti ("none", "error" ya da
   // brandTermsHash); güncel terimlerin özetine eşitse ayrım hazırdır.
   brandSeriesHash     String?
@@ -2372,7 +2374,7 @@ model GscSiteLink {
   // bir sonraki senkronda yeniden sınıflandır.
   brandClassifiedHash String?
   // SK3 (a): Google'ın 16 ayından eski veri saklanır; false: yalnız son 16 ay.
-  archive         Boolean @default(true)
+  archive             Boolean  @default(true)
 
   // OK | AUTH | NEEDS_PERMISSION | ACCESS_LOST | GONE | API_DISABLED |
   // DEGRADED | UNKNOWN
@@ -2407,19 +2409,23 @@ model GscSiteLink {
   backfill            Json?
   backfillDoneAt      DateTime?
 
-  dailyTotals    GscDailyTotal[]
-  slices         GscDailySlice[]
-  queries        GscQuery[]
-  pages          GscPage[]
-  weeklyQueries  GscWeeklyQuery[]
-  weeklyPages    GscWeeklyPage[]
-  weeklyPairs    GscWeeklyQueryPage[]
-  monthlyQueries GscMonthlyQuery[]
-  monthlyPages   GscMonthlyPage[]
-  periodFetches  GscPeriodFetch[]
-  urlInspections GscUrlInspection[]
-  gscSitemaps    GscSitemap[]
-  coverageWeeks  GscCoverageWeek[]
+  dailyTotals        GscDailyTotal[]
+  slices             GscDailySlice[]
+  queries            GscQuery[]
+  pages              GscPage[]
+  weeklyQueries      GscWeeklyQuery[]
+  weeklyPages        GscWeeklyPage[]
+  weeklyPairs        GscWeeklyQueryPage[]
+  monthlyQueries     GscMonthlyQuery[]
+  monthlyPages       GscMonthlyPage[]
+  periodFetches      GscPeriodFetch[]
+  urlInspections     GscUrlInspection[]
+  gscSitemaps        GscSitemap[]
+  coverageWeeks      GscCoverageWeek[]
+  seoFindings        SeoFinding[]
+  seoClusters        SeoCluster[]
+  seoQueryEmbeddings SeoQueryEmbedding[]
+  seoEngineState     SeoEngineState?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2501,6 +2507,7 @@ model GscQuery {
 
   @@unique([linkId, textHash])
   @@index([linkId, lastSeenWeek])
+  @@index([linkId, clusterId])
   @@index([projectId])
 }
 
@@ -2698,6 +2705,125 @@ model GaHealthRun {
   @@index([evaluatedAt])
 }
 
+// GA-F4 analiz motoru (docs/website-insights.md): bir kuralın bir dönem için
+// ürettiği bulgu ve yaşam döngüsü. Parmak izi bağ + kural + konu özeti +
+// dönemdir; aynı sorun her dönemde yeni bir satır olur (koşul kurallarında
+// öncekini SUPERSEDED yapar). Kanıt yalnız toplulaştırılmış sayılar ve
+// maskelenmiş yollar taşır. Her kapanış closedAt yazar; saklama closedAt'ten
+// 730 gün sonra siler.
+model GaFinding {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  projectId         String
+  linkId            String
+  // "AN1" … "AN12", "AN15" (src/lib/website-analytics/analysis/registry.ts)
+  ruleKey           String
+  ruleVersion       Int
+  // ANOMALY | CHANGE | OPPORTUNITY | RISK | WIN
+  kind              String
+  // "site", "site:week", "page:/pricing", "channel:Organic Search:keyEventRate" … (maskelenmiş)
+  subject           String
+  // subject'in FNV-1a özeti (16 hex): parmak izi ve sinyal anahtarı yol taşımaz
+  subjectKey        String
+  // DAY | WEEK | MONTH | WINDOW28
+  periodGrain       String
+  // "2026-10-05" | "2026-W41" | "2026-09" | "2026-W41:28d" (+ ":wow" gibi ek)
+  periodKey         String
+  periodStart       DateTime  @db.Date
+  periodEnd         DateTime  @db.Date
+  // INFO | WARN | CRITICAL
+  severity          String
+  // SIGNIFICANT | DIRECTIONAL
+  confidence        String
+  // OPEN | ACCEPTED | DISMISSED | DONE | EVALUATED | EXPIRED | SUPERSEDED | RESOLVED
+  status            String    @default("OPEN")
+  // shadow | live: gölge modda üretilen bulgu kullanıcıya hiç gösterilmez
+  mode              String
+  isMock            Boolean   @default(false)
+  priority          Float     @default(0)
+  // GaFindingEvidence (v1)
+  evidence          Json
+  // GaImpact { metric, perWeek, low, high, directional }
+  impact            Json?
+  // LLM açıklaması (projenin içerik dili); number-check'ten geçmiş
+  explanation       String?
+  explainedAt       DateTime?
+  // Haftalık LLM sıralaması (1 = en önemli)
+  rank              Int?
+  // Gölge satır canlıya devredilince `${fingerprint}#shadow:${id}` olur
+  fingerprint       String    @unique
+  previousId        String?
+  occurrences       Int       @default(1)
+  signalId          String?
+  ideaIds           String[]  @default([])
+  acceptedAt        DateTime?
+  acceptedByUserId  String?
+  dismissedAt       DateTime?
+  dismissedByUserId String?
+  doneAt            DateTime?
+  // DONE'dan sonra en erken değerlendirme (doneAt + 36 gün)
+  evaluateAfter     DateTime?
+  evaluatedAt       DateTime?
+  // WORKED | DIDNT | INCONCLUSIVE
+  outcome           String?
+  // GaOutcomeEvidence (v1)
+  outcomeEvidence   Json?
+  // ttl | newer | shadow | measurement | revised | recovered | dismissed | evaluated
+  closedReason      String?
+  // Her kapanışta yazılır (EXPIRED, SUPERSEDED, RESOLVED, DISMISSED, EVALUATED)
+  closedAt          DateTime?
+  // Gölge mod incelemesi (yalnız platform operatörü): USEFUL | NOT_USEFUL
+  reviewVerdict     String?
+  reviewedAt        DateTime?
+  reviewedByUserId  String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status])
+  @@index([linkId, ruleKey, subjectKey, periodStart])
+  @@index([status, evaluateAfter])
+  @@index([mode, createdAt])
+  @@index([createdAt])
+  @@index([closedAt])
+}
+
+// GA-F4: bağ başına analiz turu durumu (CAS kilidi, son günlük/haftalık/aylık
+// dönem, son LLM açıklaması, son bakılma). stats yalnız kural sayaçlarıdır,
+// Google verisi değildir.
+model GaAnalysisRun {
+  id                String    @id @default(cuid())
+  linkId            String    @unique
+  workspaceId       String
+  projectId         String
+  leaseUntil        DateTime?
+  leaseOwner        String?
+  // Aday seçimi adaleti: zamanı gelmese de her bakılışta yazılır
+  lastCheckedAt     DateTime?
+  // Değerlendirilen son mülk günü (AN1/AN15), YYYY-MM-DD
+  lastDailyDay      String?
+  lastDailyAt       DateTime?
+  // Değerlendirilen son ISO hafta (Pazartesi), YYYY-MM-DD
+  lastWeek          String?
+  lastWeeklyAt      DateTime?
+  // Değerlendirilen son takvim ayı (AN2 MoM, AN10), YYYY-MM
+  lastMonth         String?
+  // LLM açıklamasının yapıldığı son hafta (Pazartesi)
+  lastExplainedWeek String?
+  lastError         String?
+  // Son turun kural başına aday/oluşan/atlanan sayıları
+  stats             Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([lastDailyAt])
+  @@index([lastCheckedAt])
+}
+
 // ---------------------------------------------------------------------------
 // Arama sağlığı ve teknik denetim (docs/google-search-console-plan.md SC-F3,
 // docs/search-health.md). Gsc* tabloları Search Console bağına (GscSiteLink)
@@ -2706,7 +2832,6 @@ model GaHealthRun {
 // (SeoSite) bağlıdır ve GSC'siz projede de (doğrulanmış alan adıyla) çalışır.
 // SearchUpdate globaldir (Google güncellemeleri takvimi).
 // ---------------------------------------------------------------------------
-
 
 // Proje başına arama sağlığı durumu (kip başına bir satır). Zaman alanlarında
 // null = "boşta" (koşucu adayı değil); ensureForProject / ayar / doğrulama
@@ -2738,18 +2863,18 @@ model SeoSite {
   settings Json?
 
   // robots.txt (kendi okumamız; herkese açık dosya, ≤ 512 KB)
-  robotsStatus    Int?
+  robotsStatus         Int?
   // OK | MISSING | SERVER_ERROR | UNREACHABLE
-  robotsVerdict   String?
-  robotsHash      String?
-  robotsBody      String?
-  robotsPrevBody  String?
-  robotsFetchedAt DateTime?
-  robotsChangedAt DateTime?
+  robotsVerdict        String?
+  robotsHash           String?
+  robotsBody           String?
+  robotsPrevBody       String?
+  robotsFetchedAt      DateTime?
+  robotsChangedAt      DateTime?
   // Yalnız yeniden deneme de başarısız olunca artar (art arda)
-  robotsFailures  Int       @default(0)
+  robotsFailures       Int       @default(0)
   // Hata sonrası geri çekilme (30 dk'dan 6 saate katlanır)
-  robotsRetryAt   DateTime?
+  robotsRetryAt        DateTime?
   // http://<host>/ https'e yönleniyor mu (SH16)
   httpRedirectsToHttps Boolean?
   httpCheckedAt        DateTime?
@@ -2843,7 +2968,7 @@ model SeoCrawl {
 // Sitenin URL envanteri ve her URL'nin son taranmış hali (sayfa metni
 // saklanmaz; yalnız özet ve parmak izi).
 model SeoPage {
-  id            String  @id @default(cuid())
+  id            String @id @default(cuid())
   siteId        String
   workspaceId   String
   projectId     String
@@ -3078,6 +3203,180 @@ model GscCoverageWeek {
   link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
 
   @@unique([linkId, weekStart])
+  @@index([projectId])
+}
+
+// ---------------------------------------------------------------------------
+// SEO fırsat motoru (docs/google-search-console-plan.md SC-F4,
+// docs/search-opportunities.md). Bütün tablolar Search Console bağına
+// (GscSiteLink) cascade'lidir: Disconnect, "Delete stored data" ve W1 saklama
+// temizliği bulguları, kümeleri, embedding'leri ve motor durumunu hemen siler.
+// pageId / queryId / clusterId düz kimliktir (W1 sözlüklerine FK yok).
+// ---------------------------------------------------------------------------
+
+// Bağ başına motor durumu: kilit, zamanlama, CTR eğrileri, son koşu sayaçları
+// ve marka terimi önerileri.
+model SeoEngineState {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  linkId      String  @unique
+  isMock      Boolean @default(false)
+
+  leaseUntil          DateTime?
+  leaseOwner          String?
+  // null: hemen aday; her bırakışta ileri bir zaman yazılır
+  nextRunAt           DateTime?
+  consecutiveFailures Int       @default(0)
+  lastError           String?
+  lastRunAt           DateTime?
+  // Son değerlendirilen tam haftanın Pazartesi'si (PT, YYYY-MM-DD) =
+  // GscSiteLink.lastWeeklyWeek
+  lastWeek            String?
+  // { mode, lowData, evaluated: [], skipped: [{ ruleKey, reason }], fired: { [ruleKey]: n }, dropped, persist: {...}, llmSkipped }
+  lastRunStats        Json?
+  // { nonBrand: CtrCurve, brand: CtrCurve } (src/lib/seo/ctr-curve.ts)
+  curves              Json?
+  curvesWeek          String?
+  classifiedAt        DateTime?
+  // Niyet sınıflamasının dayandığı GscSiteLink.brandClassifiedHash; değişince
+  // navigational/marka satırlarının niyeti sıfırlanır
+  intentBrandHash     String?
+  embeddedAt          DateTime?
+  clustersWeek        String?
+  explainedWeek       String?
+  // { v: 1, items: [{ term, reason, at }], dismissed: string[], lastAt, auto: boolean }
+  brandSuggestions    Json?
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isMock, nextRunAt])
+  @@index([projectId])
+}
+
+// Fırsat ya da sorun bulgusu (GaFinding alanları + pageId/queryId/clusterId).
+model SeoFinding {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  projectId        String
+  linkId           String
+  // "SO1_STRIKING_DISTANCE" ... "SO16_TECH_IMPACT"
+  ruleKey          String
+  ruleVersion      Int
+  // OPPORTUNITY | RISK | CHANGE | WIN
+  kind             String
+  // "page:<pageId>", "query:<queryId>", "cluster:<clusterId>", "group:<pageGroup>",
+  // "group-schema:<pageGroup>:<type>", "site:<what>", "country:<cc>", "ta:<code>"
+  subject          String
+  periodStart      DateTime  @db.Date
+  periodEnd        DateTime  @db.Date
+  // "W:<Pazar>" (haftalık) ya da "M:<ay>" (SO3)
+  periodKey        String
+  // INFO | WARN | CRITICAL
+  severity         String
+  // SIGNIFICANT | DIRECTIONAL
+  confidence       String
+  // OPEN | ACCEPTED | DISMISSED | DONE | EVALUATED | EXPIRED | SUPERSEDED | RESOLVED
+  status           String    @default("OPEN")
+  // SEO_INSIGHTS=shadow iken üretildi: kullanıcıya gösterilmez
+  shadow           Boolean   @default(false)
+  // S | M | L | VARIES
+  effort           String
+  // TITLE_META | CONTENT_REFRESH | NEW_CONTENT | INTERNAL_LINKS | CONSOLIDATE |
+  // TECH_FIX | SCHEMA | LOCALIZE | INVESTIGATE
+  actionKind       String
+  priority         Float     @default(0)
+  // Kuralın sabit İngilizce metni (sayılar evidence.metrics'ten; Google
+  // dizgisi olarak yalnız keyword ve ana sayfa yolu)
+  title            String
+  summary          String
+  // SeoEvidence (src/lib/seo/opportunity-types.ts)
+  evidence         Json
+  // { kind: "clicks", perMonth, low, high } | { kind: "reach", impressionsPerMonth }
+  impact           Json?
+  // LLM; number-check'ten geçmiş, projenin içerik dilinde
+  explanation      String?
+  explainedAt      DateTime?
+  keyword          String?
+  ideaWorthy       Boolean   @default(false)
+  signalWorthy     Boolean   @default(false)
+  fingerprint      String    @unique
+  signalId         String?
+  ideaIds          String[]  @default([])
+  pageId           String?
+  queryId          String?
+  clusterId        String?
+  decidedAt        DateTime?
+  decidedByUserId  String?
+  // not_relevant | already_done | wrong_data | not_now
+  dismissReason    String?
+  // Gölge inceleme (operatör, kendi projesinde): USEFUL | NOT_USEFUL
+  review           String?
+  reviewedAt       DateTime?
+  reviewedByUserId String?
+  evaluateAfter    DateTime?
+  evaluatedAt      DateTime?
+  outcome          String?
+  lastSeenAt       DateTime
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, status])
+  @@index([linkId, status])
+  @@index([linkId, ruleKey, subject])
+  @@index([shadow, createdAt])
+  @@index([createdAt])
+}
+
+// Konu kümesi; üyelik GscQuery.clusterId'dedir (W1 sütunu).
+model SeoCluster {
+  id             String   @id @default(cuid())
+  workspaceId    String
+  projectId      String
+  linkId         String
+  name           String
+  // LLM | TOP_QUERY
+  nameSource     String
+  pillarPageId   String?
+  queryCount     Int      @default(0)
+  impressions28d Int      @default(0)
+  clicks28d      Int      @default(0)
+  // Gösterime göre ilk 10 üye (GscQuery kimlikleri)
+  topQueryIds    String[] @default([])
+  // ACTIVE | STALE
+  status         String   @default("ACTIVE")
+  // Son hesaplandığı hafta (Pazartesi, PT)
+  week           String
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([linkId, status])
+  @@index([projectId])
+}
+
+// Sorgu başına bir kez hesaplanan embedding (SK13); Float32 LE baytları.
+model SeoQueryEmbedding {
+  id        String   @id @default(cuid())
+  linkId    String
+  projectId String
+  queryId   String   @unique
+  model     String
+  dims      Int
+  vector    Bytes
+  createdAt DateTime @default(now())
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([linkId])
   @@index([projectId])
 }
 
@@ -3907,13 +4206,13 @@ model AutonomyPolicy {
   // en çok %30 bütçe düşürme) kendisi yapar ve sonradan bildirir; FULL ayrıca
   // aylık tavan içinde sınırlı bütçe artışı yapar (önkoşullu). Yalnız
   // OWNER/ADMIN değiştirir; her değişiklik AuditLog'a yazılır.
-  adsAutonomy        AdsAutonomyLevel @default(SUGGEST)
+  adsAutonomy         AdsAutonomyLevel @default(SUGGEST)
   // FULL'ün aylık harcama tavanı (reklam hesabı para biriminin alt
   // biriminde). Boşken FULL açılamaz.
-  adsMonthlyCapMinor BigInt?
+  adsMonthlyCapMinor  BigInt?
   // F8 müşteri onaylayıcıları: OWNER/ADMIN olmayan ama bu projenin L4
   // (harcama) onayını verebilen workspace üyeleri (yalnız bu proje).
-  adsSpendApproverIds String[] @default([])
+  adsSpendApproverIds String[]         @default([])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3994,7 +4293,7 @@ model AgencyCycle {
   triggerType AgencyTriggerType?
   triggerId   String?
 
-  startedAt   DateTime  @default(now())
+  startedAt   DateTime          @default(now())
   completedAt DateTime?
   status      AgencyCycleStatus @default(RUNNING)
 
@@ -4181,36 +4480,36 @@ model AdsAccountProject {
 // bu satır açılır, `tag` nesne adına eklenir; zaman aşımında kör tekrar
 // yapılmaz, önce etiketle Meta'da aranır. Token asla saklanmaz.
 model AdsOperation {
-  id               String             @id @default(cuid())
-  workspaceId      String
-  projectId        String
-  adsAccountId     String?
+  id                  String             @id @default(cuid())
+  workspaceId         String
+  projectId           String
+  adsAccountId        String?
   // "act_<id>": kota ve uzlaştırma için.
   adAccountExternalId String?
   // CREATE_CAMPAIGN, CREATE_ADSET, CREATE_CREATIVE, CREATE_AD, UPDATE_CAMPAIGN,
   // UPDATE_ADSET, UPDATE_AD, SET_STATUS...
-  kind             String
+  kind                String
   // "agx:k3f9q2" — Meta'da uzlaştırma anahtarı.
-  tag              String             @unique
-  launchId         String?
-  decisionId       String?
-  executionJobId   String?
+  tag                 String             @unique
+  launchId            String?
+  decisionId          String?
+  executionJobId      String?
   // USER | SYSTEM | RULE
-  actorType        String
+  actorType           String
   // Yazmanın hedefi (güncellemede nesne, oluşturmada ebeveyn kenarı).
-  targetExternalId String?
-  parentExternalId String?
-  request          Json
-  previousState    Json?
-  status           AdsOperationStatus @default(PENDING)
-  resultExternalId String?
+  targetExternalId    String?
+  parentExternalId    String?
+  request             Json
+  previousState       Json?
+  status              AdsOperationStatus @default(PENDING)
+  resultExternalId    String?
   // code, subcode, class, userMessage, blameFieldSpecs, fbtraceId
-  error            Json?
-  attempts         Int                @default(0)
-  sentAt           DateTime?
-  completedAt      DateTime?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  error               Json?
+  attempts            Int                @default(0)
+  sentAt              DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
 
   @@unique([executionJobId, kind])
   @@index([projectId, createdAt])
@@ -4273,7 +4572,7 @@ model AdsObject {
   advantageState       String?
   // F8 kitle çakışması: hedeflemenin özeti (ülkeler, yaş, cinsiyet, özel
   // kitleler); kişisel veri yok.
-  targeting           Json?
+  targeting            Json?
   resultActionType     String?
   creativeExternalId   String?
   thumbnailAssetId     String?
@@ -4390,41 +4689,41 @@ enum AdsLaunchStatus {
 // görevidir ve aynı kayda bağlanır; başarılı adımlar niyet günlüğünden
 // (AdsOperation.launchId) bulunup atlanır.
 model AdsLaunch {
-  id                  String          @id @default(cuid())
-  workspaceId         String
-  projectId           String
-  workId              String?
+  id                   String          @id @default(cuid())
+  workspaceId          String
+  projectId            String
+  workId               String?
   // Lansmanı açan kartın Command'ı.
-  commandId           String
-  launchKey           String
-  adsAccountId        String?
-  adAccountExternalId String
-  status              AdsLaunchStatus @default(DRAFT)
-  specVersion         Int             @default(1)
-  spec                Json
+  commandId            String
+  launchKey            String
+  adsAccountId         String?
+  adAccountExternalId  String
+  status               AdsLaunchStatus @default(DRAFT)
+  specVersion          Int             @default(1)
+  spec                 Json
   // Onayın geçerliliği: bütçe, hedefleme, amaç ya da kimlik değişirse değişir.
-  specHash            String
+  specHash             String
   // Yerel doğrulama, Meta validate_only sonuçları ve önizlemeler.
-  validation          Json?
-  approvalId          String?
+  validation           Json?
+  approvalId           String?
   activationApprovalId String?
-  currentTaskId       String?
+  currentTaskId        String?
   // create | activate | discard
-  mode                String?
-  campaignExternalId  String?
+  mode                 String?
+  campaignExternalId   String?
   // Adım sonuçları: görsel hash'leri, kreatif / ad set / reklam kimlikleri.
-  progress            Json?
-  envelope            Json?
+  progress             Json?
+  envelope             Json?
   // Meta tarafı frenler: kampanya spend_cap, ad set end_time (geri okunmuş).
-  guards              Json?
-  error               Json?
+  guards               Json?
+  error                Json?
   // Adım makinesinin kilidi: işçi ve satır içi sürüş aynı anda yazmaz.
-  leaseUntil          DateTime?
-  leaseOwner          String?
-  createdByUserId     String?
-  activatedAt         DateTime?
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
+  leaseUntil           DateTime?
+  leaseOwner           String?
+  createdByUserId      String?
+  activatedAt          DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
 
   @@unique([commandId, launchKey])
   @@index([projectId, status])
@@ -4458,41 +4757,41 @@ enum AdsAutonomyLevel {
 // geri okuma → değerlendirme → geri alma zincirini izler. Gölge modda yalnız
 // SHADOW yazılır. Kurallar deterministiktir; metin yalnız açıklamadır.
 model AdsDecision {
-  id           String            @id @default(cuid())
-  workspaceId  String
-  projectId    String
-  adsAccountId String
-  level        AdsLevel
-  externalId   String
+  id            String            @id @default(cuid())
+  workspaceId   String
+  projectId     String
+  adsAccountId  String
+  level         AdsLevel
+  externalId    String
   // "O2_HIGH_CPA"
-  ruleKey      String
-  ruleVersion  Int
+  ruleKey       String
+  ruleVersion   Int
   // PAUSE, BUDGET_DOWN, BUDGET_UP, CREATIVE_REFRESH, ARCHIVE, NOTIFY, ROLLBACK
-  kind         String
-  severity     AdsSeverity
-  status       AdsDecisionStatus
-  autonomy     AdsAutonomyLevel  @default(SUGGEST)
+  kind          String
+  severity      AdsSeverity
+  status        AdsDecisionStatus
+  autonomy      AdsAutonomyLevel  @default(SUGGEST)
   // Pencereler, metrikler, geçen kapılar.
-  evidence     Json
-  explanation  String
+  evidence      Json
+  explanation   String
   // { field, from, to }: "from" uygulamada CAS için.
-  change       Json?
+  change        Json?
   // kural + nesne + hafta
-  fingerprint  String            @unique
-  approvalId   String?
-  taskId       String?
-  expiresAt    DateTime?
-  appliedAt    DateTime?
-  verifiedAt   DateTime?
+  fingerprint   String            @unique
+  approvalId    String?
+  taskId        String?
+  expiresAt     DateTime?
+  appliedAt     DateTime?
+  verifiedAt    DateTime?
   // Olgunluk gecikmesiyle değerlendirme zamanı.
   evaluateAfter DateTime?
-  evaluatedAt  DateTime?
+  evaluatedAt   DateTime?
   // WORKED | DIDNT | INCONCLUSIVE
-  outcome      String?
-  outcomeData  Json?
-  rollbackOfId String?
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
+  outcome       String?
+  outcomeData   Json?
+  rollbackOfId  String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 
   @@index([projectId, status])
   @@index([adsAccountId, externalId, ruleKey])

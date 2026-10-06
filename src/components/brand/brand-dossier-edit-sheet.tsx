@@ -70,12 +70,13 @@ export function BrandDossierEditSheet({
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <Button
-        variant="ghost"
-        size="icon-sm"
+        variant="outline"
+        size="sm"
         onClick={() => setOpen(true)}
         aria-label="Edit brand dossier"
       >
         <Pencil className="size-3.5" />
+        Edit details
       </Button>
       <SheetContent className="flex w-full flex-col gap-0 p-0 sm:max-w-lg">
         <SheetHeader className="shrink-0 border-b border-foreground/10">

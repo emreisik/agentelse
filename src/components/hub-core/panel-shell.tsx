@@ -83,7 +83,11 @@ export async function PanelShell({
           "w-full pt-8",
           isBoard
             ? "flex min-h-0 flex-1 flex-col px-4 pb-6 sm:px-6"
-            : "mx-auto max-w-5xl px-6 pb-16",
+            : cn(
+                "mx-auto px-6 pb-16",
+                // Brand Brain has a left menu: it needs the extra width.
+                panel === "brand-brain" ? "max-w-6xl" : "max-w-5xl",
+              ),
         )}
       >
         <Link

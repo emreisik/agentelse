@@ -3,15 +3,9 @@ import {
   ArrowLeft,
   BookOpen,
   ChevronDown,
-  Compass,
-  Gem,
   GraduationCap,
-  Palette,
   ShieldCheck,
-  Target,
-  Type as FontIcon,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import type { EvidenceSourceType } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
@@ -22,18 +16,12 @@ import {
   CONSTITUTION_STATUS,
   FACT_CLASSIFICATION,
 } from "@/lib/labels";
-import { BrandDossierEditSheet } from "@/components/brand/brand-dossier-edit-sheet";
-import { BrandDossierSuggestButton } from "@/components/brand/brand-dossier-suggest-button";
-import { BrandLogoCard } from "@/components/brand/brand-logo-card";
 import { PostStyleSection } from "@/components/brand/post-style-section";
 import { VisualIdentitySection } from "@/components/brand/visual-identity-section";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { suggestBrandDossierAction } from "@/server/actions/brand-dossier-actions";
-import { updateBrandDossierAction } from "@/server/actions/project-actions";
-import { isGuidedSetupEnabled } from "@/server/guided-setup/flag";
 import {
   BRAND_BRAIN_SUB_KEYS,
   ENTITY_SUB,
@@ -41,12 +29,16 @@ import {
   entityHref,
   type BrandBrainSubKey,
 } from "../hub-core-params";
-import { parseColorSwatches, parseFontNames } from "@/lib/color-swatches";
 import { POST_STYLE_CATEGORY } from "@/lib/post-style";
 import { AssetPreview } from "../primitives/asset-preview";
 import { CrossLinkChip } from "../primitives/cross-link-chip";
-import { FieldGrid, type FieldSpec } from "../primitives/field-grid";
-import { JsonViewer } from "../primitives/json-viewer";
+import { FieldGrid } from "../primitives/field-grid";
+import {
+  AssetsSection,
+  KNOWLEDGE_GROUP_ID,
+  type BrandKnowledgeCounts,
+} from "./brand-brain/assets-section";
+import { BrandBrainNav } from "./brand-brain/brand-brain-nav";
 import { GoalsSection } from "./brand-brain/goals-section";
 import { IntelligenceSection } from "./brand-brain/intelligence-section";
 import type { PanelProps } from "./panel-props";
@@ -62,27 +54,6 @@ const EVIDENCE_SOURCE_LABEL: Record<EvidenceSourceType, string> = {
   USER_INPUT: "User Input",
   INTERNAL_DATA: "Internal Data",
   SYSTEM_VERIFICATION: "System Verification",
-};
-
-const BRAND_BRAIN_TAB_LABEL: Record<BrandBrainSubKey, string> = {
-  assets: "Assets",
-  rules: "Rules & Knowledge",
-  "visual-identity": "Visual Identity",
-  constitution: "Constitution",
-  goals: "Goals",
-  intelligence: "Intelligence",
-  // The chat's brand memory: what the user decided and what the brand learned.
-  learnings: "Memory",
-};
-
-const BRAND_BRAIN_TAB_ICON: Record<BrandBrainSubKey, LucideIcon> = {
-  assets: Gem,
-  rules: ShieldCheck,
-  "visual-identity": Palette,
-  constitution: BookOpen,
-  goals: Target,
-  intelligence: Compass,
-  learnings: GraduationCap,
 };
 
 function isBrandBrainSub(value: string | null): value is BrandBrainSubKey {
@@ -180,81 +151,49 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
   };
 
   return (
-    <div className="space-y-6 py-6">
-      <div className="flex flex-wrap items-center gap-1 border-b border-border">
-        {BRAND_BRAIN_SUB_KEYS.map((key) => {
-          const isActive = key === activeSub;
-          const Icon = BRAND_BRAIN_TAB_ICON[key];
-          const count = tabCount[key];
-          return (
-            <Link
-              key={key}
-              href={buildHubHref(projectId, {
-                panel: "brand-brain",
-                sub: key,
-                entity: null,
-              })}
-              scroll={false}
-              className={cn(
-                "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors",
-                isActive
-                  ? "border-primary font-medium text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Icon className="size-3.5" />
-              {BRAND_BRAIN_TAB_LABEL[key]}
-              {count !== undefined ? (
-                <span
-                  className={cn(
-                    "flex h-4 min-w-4 items-center justify-center rounded-4xl px-1 text-[10px] font-medium tabular-nums",
-                    isActive
-                      ? "bg-primary/15 text-primary"
-                      : "bg-muted text-muted-foreground",
-                  )}
-                >
-                  {count}
-                </span>
-              ) : null}
-            </Link>
-          );
-        })}
-      </div>
+    <div className="grid gap-6 py-6 md:grid-cols-[13.5rem_minmax(0,1fr)] md:gap-10">
+      <BrandBrainNav
+        projectId={projectId}
+        active={activeSub}
+        counts={tabCount}
+      />
 
-      {activeSub === "visual-identity" ? (
-        <div className="space-y-5">
-          <VisualIdentitySection projectId={projectId} brandId={brandId} />
-          <PostStyleSection projectId={projectId} brandId={brandId} />
-        </div>
-      ) : activeSub === "constitution" ? (
-        <div className="space-y-8">
-          <ConstitutionSection
+      <div className="min-w-0">
+        {activeSub === "visual-identity" ? (
+          <div className="space-y-5">
+            <VisualIdentitySection projectId={projectId} brandId={brandId} />
+            <PostStyleSection projectId={projectId} brandId={brandId} />
+          </div>
+        ) : activeSub === "constitution" ? (
+          <div className="space-y-8">
+            <ConstitutionSection
+              projectId={projectId}
+              brandId={brandId}
+              focusedId={null}
+            />
+            <SubSection title="Strategy versions">
+              <StrategyVersionsSection brandId={brandId} />
+            </SubSection>
+            <SubSection title="Sources">
+              <EvidenceSection brandId={brandId} />
+            </SubSection>
+          </div>
+        ) : activeSub === "goals" ? (
+          <GoalsSection projectId={projectId} entity={entity} />
+        ) : activeSub === "intelligence" ? (
+          <IntelligenceSection projectId={projectId} entity={entity} />
+        ) : activeSub === "learnings" ? (
+          <LearningsSection projectId={projectId} />
+        ) : activeSub === "rules" ? (
+          <RulesSection brandId={brandId} knowledge={knowledge} />
+        ) : (
+          <AssetsSection
             projectId={projectId}
             brandId={brandId}
-            focusedId={null}
+            knowledge={knowledge}
           />
-          <SubSection title="Strategy versions">
-            <StrategyVersionsSection brandId={brandId} />
-          </SubSection>
-          <SubSection title="Sources">
-            <EvidenceSection brandId={brandId} />
-          </SubSection>
-        </div>
-      ) : activeSub === "goals" ? (
-        <GoalsSection projectId={projectId} entity={entity} />
-      ) : activeSub === "intelligence" ? (
-        <IntelligenceSection projectId={projectId} entity={entity} />
-      ) : activeSub === "learnings" ? (
-        <LearningsSection projectId={projectId} />
-      ) : activeSub === "rules" ? (
-        <RulesSection brandId={brandId} knowledge={knowledge} />
-      ) : (
-        <AssetsSection
-          projectId={projectId}
-          brandId={brandId}
-          knowledge={knowledge}
-        />
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -458,13 +397,6 @@ function SectionValue({ value }: { value: unknown }) {
 
 // ---------------------------------------------------------------------------
 
-type BrandKnowledgeCounts = {
-  negativeRules: number;
-  claims: number;
-  facts: number;
-  assumptions: number;
-};
-
 // Counts only — the lists themselves live on the Rules & Knowledge tab so
 // they don't stretch the Assets overview. Same filters RulesSection uses.
 async function countBrandKnowledge(
@@ -479,332 +411,6 @@ async function countBrandKnowledge(
     prisma.brandAssumption.count({ where: { brandId } }),
   ]);
   return { negativeRules, claims, facts, assumptions };
-}
-
-// Rules & Knowledge group anchors — the Assets chips deep-link to them.
-const KNOWLEDGE_GROUP_ID = {
-  negativeRules: "never-do",
-  claims: "approved-claims",
-  facts: "brand-facts",
-  assumptions: "assumptions",
-} as const;
-
-function KnowledgeChip({
-  projectId,
-  group,
-  label,
-  value,
-}: {
-  projectId: string;
-  group: keyof typeof KNOWLEDGE_GROUP_ID;
-  label: string;
-  value: number;
-}) {
-  return (
-    <Link
-      href={`${buildHubHref(projectId, {
-        panel: "brand-brain",
-        sub: "rules",
-        entity: null,
-      })}#${KNOWLEDGE_GROUP_ID[group]}`}
-      className="inline-flex items-center gap-1.5 rounded-full bg-background/70 px-2.5 py-1 text-xs ring-1 ring-foreground/10 transition-colors hover:bg-background"
-    >
-      <span className="font-semibold tabular-nums">{value}</span>
-      <span className="text-muted-foreground">{label}</span>
-    </Link>
-  );
-}
-
-async function AssetsSection({
-  projectId,
-  brandId,
-  knowledge,
-}: {
-  projectId: string;
-  brandId: string;
-  knowledge: BrandKnowledgeCounts;
-}) {
-  const dossier = await prisma.brandDossier.findUnique({ where: { brandId } });
-  // The fields an AI suggestion filled (see brand/dossier-suggest.ts): the
-  // note stays until a person edits the dossier afterwards.
-  const suggestionsOn = isGuidedSetupEnabled();
-  const aiNote = suggestionsOn ? await aiSuggestedFieldsOf(brandId) : null;
-
-  let strategyVersionLabel: string | null = null;
-  if (dossier?.currentStrategyVersionId) {
-    const version = await prisma.brandStrategyVersion.findUnique({
-      where: { id: dossier.currentStrategyVersionId },
-      select: { version: true },
-    });
-    strategyVersionLabel = version
-      ? `v${version.version}`
-      : dossier.currentStrategyVersionId;
-  }
-
-  const colors = parseColorSwatches(dossier?.approvedColors);
-  const fonts = parseFontNames(dossier?.approvedFonts);
-  // If colors/fonts arrive in a shape that doesn't fit a list (e.g. free
-  // text or an unexpected object shape), the raw data stays below the
-  // swatch list as a JsonViewer — the "don't let data go missing" principle.
-  const colorsUnparsed =
-    hasContent(dossier?.approvedColors) && colors.length === 0;
-  const fontsUnparsed =
-    hasContent(dossier?.approvedFonts) && fonts.length === 0;
-
-  const dossierFields: FieldSpec[] = dossier
-    ? [
-        { type: "text", label: "Summary", value: dossier.summary },
-        { type: "text", label: "Language", value: dossier.language },
-        { type: "text", label: "Country", value: dossier.country },
-        {
-          type: "text",
-          label: "Current Strategy",
-          value: strategyVersionLabel,
-        },
-        {
-          type: "json",
-          label: "Target Audiences",
-          value: dossier.targetAudiences,
-        },
-        { type: "json", label: "Markets", value: dossier.markets },
-        { type: "json", label: "Products", value: dossier.products },
-        { type: "json", label: "Services", value: dossier.services },
-        {
-          type: "json",
-          label: "Visual Guidelines",
-          value: dossier.visualGuidelines,
-        },
-        {
-          type: "date",
-          label: "Updated",
-          value: dossier.updatedAt,
-          relative: true,
-        },
-      ]
-    : [];
-
-  return (
-    <section className="space-y-4">
-      <div className="flex items-center gap-2.5">
-        <span className="flex size-8 items-center justify-center rounded-lg bg-foreground text-background">
-          <Gem className="size-4" />
-        </span>
-        <div>
-          <p className="font-heading text-base font-semibold tracking-tight text-foreground">
-            Assets
-          </p>
-          <p className="text-xs text-muted-foreground">
-            The brand&apos;s protected core identity — logo, positioning, tone
-            of voice, approved colors and fonts
-          </p>
-        </div>
-      </div>
-
-      <div className="overflow-hidden rounded-2xl ring-1 ring-foreground/10">
-        <div className="grid gap-5 bg-gradient-to-b from-accent/50 via-accent/15 to-transparent p-5 sm:grid-cols-[minmax(0,15rem)_1fr] sm:p-6">
-          <BrandLogoCard projectId={projectId} brandId={brandId} />
-
-          <div className="min-w-0 space-y-4">
-            {dossier?.positioning ? (
-              <blockquote className="border-l-2 border-foreground/20 pl-4">
-                <p className="text-balance text-base leading-relaxed font-medium text-foreground">
-                  “{dossier.positioning}”
-                </p>
-              </blockquote>
-            ) : !dossier ? (
-              <p className="text-sm text-muted-foreground">
-                Brand dossier hasn&apos;t been created yet.
-              </p>
-            ) : null}
-
-            {dossier?.toneOfVoice ? (
-              <p className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">
-                  Tone of Voice:{" "}
-                </span>
-                {dossier.toneOfVoice}
-              </p>
-            ) : null}
-
-            <div className="flex flex-wrap gap-1.5">
-              <KnowledgeChip
-                projectId={projectId}
-                group="negativeRules"
-                label="never-do rules"
-                value={knowledge.negativeRules}
-              />
-              <KnowledgeChip
-                projectId={projectId}
-                group="claims"
-                label="approved claims"
-                value={knowledge.claims}
-              />
-              <KnowledgeChip
-                projectId={projectId}
-                group="facts"
-                label="brand facts"
-                value={knowledge.facts}
-              />
-              <KnowledgeChip
-                projectId={projectId}
-                group="assumptions"
-                label="assumptions"
-                value={knowledge.assumptions}
-              />
-            </div>
-          </div>
-        </div>
-
-        {colors.length > 0 || fonts.length > 0 ? (
-          <div className="grid gap-5 border-t border-foreground/10 bg-card p-5 sm:grid-cols-2 sm:p-6">
-            {colors.length > 0 ? (
-              <div className="space-y-2">
-                <p className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                  <Palette className="size-3.5" />
-                  Approved Colors
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  {colors.map((color, index) => (
-                    <div
-                      key={`${color.hex}-${index}`}
-                      className="flex flex-col items-center gap-1.5"
-                    >
-                      <span
-                        className="size-9 rounded-full shadow-sm ring-1 ring-foreground/15"
-                        style={{ backgroundColor: color.hex }}
-                        title={color.name ?? color.hex}
-                      />
-                      <span className="font-mono text-[10px] text-muted-foreground">
-                        {color.name ?? color.hex}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {fonts.length > 0 ? (
-              <div className="space-y-2">
-                <p className="flex items-center gap-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                  <FontIcon className="size-3.5" />
-                  Approved Fonts
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {fonts.map((font, index) => (
-                    <span
-                      key={`${font}-${index}`}
-                      className="rounded-lg bg-muted px-3 py-1.5 text-sm text-foreground"
-                    >
-                      <span className="mr-2 text-muted-foreground">Aa</span>
-                      {font}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {colorsUnparsed || fontsUnparsed ? (
-          <div className="grid gap-3 border-t border-foreground/10 bg-card p-5 sm:grid-cols-2 sm:p-6">
-            {colorsUnparsed ? (
-              <JsonViewer
-                label="Approved Colors (raw)"
-                value={dossier?.approvedColors}
-              />
-            ) : null}
-            {fontsUnparsed ? (
-              <JsonViewer
-                label="Approved Fonts (raw)"
-                value={dossier?.approvedFonts}
-              />
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
-          <CardTitle className="text-base">Brand Dossier</CardTitle>
-          <div className="flex items-center gap-1">
-            {suggestionsOn ? (
-              <BrandDossierSuggestButton
-                projectId={projectId}
-                action={suggestBrandDossierAction}
-              />
-            ) : null}
-            <BrandDossierEditSheet
-              projectId={projectId}
-              dossier={{
-                summary: dossier?.summary ?? null,
-                positioning: dossier?.positioning ?? null,
-                toneOfVoice: dossier?.toneOfVoice ?? null,
-                language: dossier?.language ?? null,
-                country: dossier?.country ?? null,
-                targetAudiences: dossier?.targetAudiences ?? null,
-                markets: dossier?.markets ?? null,
-                products: dossier?.products ?? null,
-                services: dossier?.services ?? null,
-                visualGuidelines: dossier?.visualGuidelines ?? null,
-              }}
-              action={updateBrandDossierAction}
-            />
-          </div>
-        </CardHeader>
-        <CardContent>
-          {aiNote ? (
-            <p className="mb-3 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
-              AI-suggested: {aiNote}. These are starting points, not verified
-              facts. Review and edit them.
-            </p>
-          ) : null}
-          {dossier ? (
-            <FieldGrid fields={dossierFields} />
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Brand dossier hasn&apos;t been created yet.
-            </p>
-          )}
-        </CardContent>
-      </Card>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-const DOSSIER_FIELD_LABEL: Record<string, string> = {
-  summary: "Summary",
-  positioning: "Positioning",
-  services: "Services",
-  products: "Products",
-  markets: "Markets",
-  visualGuidelines: "Visual guidelines",
-};
-
-// The labels of the fields the latest AI suggestion filled, or null when there
-// was none or a person edited the dossier after it.
-async function aiSuggestedFieldsOf(brandId: string): Promise<string | null> {
-  const [filled, edited] = await Promise.all([
-    prisma.auditLog.findFirst({
-      where: { brandId, action: "brand_dossier.autofilled" },
-      orderBy: { createdAt: "desc" },
-      select: { createdAt: true, metadata: true },
-    }),
-    prisma.auditLog.findFirst({
-      where: { brandId, action: "brand_dossier.updated" },
-      orderBy: { createdAt: "desc" },
-      select: { createdAt: true },
-    }),
-  ]);
-  if (!filled || (edited && edited.createdAt > filled.createdAt)) return null;
-  const fields = (filled.metadata as { fields?: unknown } | null)?.fields;
-  if (!Array.isArray(fields)) return null;
-  const labels = fields
-    .filter((field): field is string => typeof field === "string")
-    .map((field) => DOSSIER_FIELD_LABEL[field])
-    .filter((label): label is string => Boolean(label));
-  return labels.length > 0 ? labels.join(", ") : null;
 }
 
 const KNOWLEDGE_LIST_LIMIT = 50;
@@ -1040,9 +646,7 @@ async function StrategyVersionsSection({ brandId }: { brandId: string }) {
 
   if (versions.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        No strategy versions yet.
-      </p>
+      <p className="text-sm text-muted-foreground">No strategy versions yet.</p>
     );
   }
 
@@ -1089,9 +693,7 @@ async function EvidenceSection({ brandId }: { brandId: string }) {
 
   if (items.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        No sources recorded yet.
-      </p>
+      <p className="text-sm text-muted-foreground">No sources recorded yet.</p>
     );
   }
 

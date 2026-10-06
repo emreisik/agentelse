@@ -36,6 +36,7 @@ const {
   exchangeInstagramLongLivedToken,
   fetchInstagramLoginProfile,
   fetchInstagramRecentMedia,
+  InstagramPendingTesterError,
   publishInstagramPost,
   verifyInstagramAccess,
 } = await import("./meta-client");
@@ -104,11 +105,11 @@ describe("Instagram Login token exchange", () => {
     fetchMock.mockResolvedValueOnce(
       json({ error: { message: "Unsupported request - method type: get", code: 100 } }, 400),
     );
-    await expect(exchangeInstagramLongLivedToken("short")).rejects.toMatchObject({
+    const failure = exchangeInstagramLongLivedToken("short");
+    await expect(failure).rejects.toBeInstanceOf(InstagramPendingTesterError);
+    await expect(failure).rejects.toMatchObject({
       metaErrorCode: 100,
-      message: expect.stringMatching(
-        /Unsupported request - method type: get\. .*pending tester.*Tester invites/,
-      ),
+      message: "Unsupported request - method type: get",
     });
     // One documented GET, no guessing with other methods.
     expect(fetchMock).toHaveBeenCalledTimes(1);

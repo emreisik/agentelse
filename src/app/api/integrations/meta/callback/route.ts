@@ -12,6 +12,7 @@ import {
   requireUser,
 } from "@/server/security/tenant-context";
 import {
+  InstagramPendingTesterError,
   META_PROVIDER,
   META_SERVICE_LABEL,
   MetaApiError,
@@ -193,6 +194,9 @@ export async function GET(request: Request) {
         ? { code: error.metaErrorCode, subcode: error.metaErrorSubcode }
         : "",
     );
+    if (error instanceof InstagramPendingTesterError) {
+      return redirectToIntegrations(state.projectId, service, "pending_tester");
+    }
     return redirectToIntegrations(
       state.projectId,
       service,

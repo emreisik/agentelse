@@ -56,6 +56,7 @@ export const IDEAS_COPY = {
     chat: "From chat",
     opportunity: "Opportunity",
     search: "Search",
+    website: "From your website",
     manual: "Your topic",
   } satisfies Record<IdeaSource, string>,
   channelAll: "All channels",

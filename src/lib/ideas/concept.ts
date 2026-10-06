@@ -31,6 +31,8 @@ export const IDEA_SOURCES = [
   "chat",
   "opportunity",
   "search",
+  // "website": GA-F4 bulgularından (site içi arama, dönüşen ve okunan sayfalar).
+  "website",
   "manual",
 ] as const;
 export type IdeaSource = (typeof IDEA_SOURCES)[number];

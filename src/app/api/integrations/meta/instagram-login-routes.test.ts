@@ -227,6 +227,22 @@ describe("callback (Instagram Login)", () => {
     log.mockRestore();
   });
 
+  it("a pending tester gets its own error with the fix, not Meta's text cut short in the URL", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { InstagramPendingTesterError } = await import(
+      "@/server/integrations/meta-client"
+    );
+    mocks.exchangeInstagramLongLivedToken.mockRejectedValue(
+      new InstagramPendingTesterError("Unsupported request - method type: get", 100),
+    );
+    const response = await callback(callbackUrl());
+    const url = location(response);
+    expect(url.searchParams.get("metaError")).toBe("pending_tester");
+    expect(url.searchParams.get("metaDetail")).toBeNull();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+
   it("names the later steps too, so a bad profile call is not mistaken for a bad code", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.fetchInstagramLoginProfile.mockRejectedValue(new Error("Unsupported get request"));

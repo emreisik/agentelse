@@ -378,10 +378,16 @@ export async function exchangeInstagramAuthCode(
 // Short-lived (1 hour) -> long-lived (60 days) Instagram token: the documented
 // GET on the unversioned host root. Meta answers "Unsupported request - method
 // type: get" (and the same for POST and for a versioned path) when the Instagram
-// account is a Tester of the Meta app whose invitation is still Pending, so that
-// message is turned into the thing to actually do.
-const PENDING_TESTER_HINT =
-  "The Instagram account is probably still a pending tester of the Meta app: accept the invite in Instagram (Settings > Apps and websites > Tester invites) and check the Meta app's App roles page shows it as Active.";
+// account is a Tester of the Meta app whose invitation is still Pending (or not
+// a tester at all while the app is in Development mode), so that answer gets its
+// own error: the callback turns it into a fixed instruction instead of Meta's
+// misleading text, which the error URL would also cut short.
+export class InstagramPendingTesterError extends MetaApiError {
+  constructor(message: string, metaErrorCode?: number, metaErrorSubcode?: number) {
+    super(message, metaErrorCode, metaErrorSubcode);
+    this.name = "InstagramPendingTesterError";
+  }
+}
 
 export async function exchangeInstagramLongLivedToken(
   shortLivedToken: string,
@@ -404,8 +410,8 @@ export async function exchangeInstagramLongLivedToken(
       error instanceof MetaApiError &&
       /unsupported request/i.test(error.message)
     ) {
-      throw new MetaApiError(
-        `${error.message}. ${PENDING_TESTER_HINT}`,
+      throw new InstagramPendingTesterError(
+        error.message,
         error.metaErrorCode,
         error.metaErrorSubcode,
       );

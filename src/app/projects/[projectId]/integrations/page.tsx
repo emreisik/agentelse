@@ -1535,6 +1535,8 @@ const META_ERROR_MESSAGES: Record<string, string> = {
   not_configured: "This integration hasn't been configured yet.",
   exchange_failed:
     "Couldn't establish a connection with Meta, please try again.",
+  pending_tester:
+    "Meta hasn't let this Instagram account use the app yet: while the app is in development, only accepted testers can connect. Add the account under App roles > Roles > Instagram Tester in the Meta app, accept the invite on instagram.com/accounts/manage_access (Tester invites tab) while signed in as that account, then connect again.",
   not_professional:
     "That Instagram account isn't a professional account. In Instagram, go to Settings > Account type and tools > Switch to professional account (Business or Creator), then connect again.",
   state_invalid:

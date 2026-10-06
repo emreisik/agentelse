@@ -1,9 +1,15 @@
 // Meta Ads bayrakları (docs/meta-ads-plan.md §9). Her faz kendi bayrağıyla
 // açılır; değerler çağrı anında process.env'den okunur (tick adımları bayrağı
-// her turda yeniden okur). Yalnız "true" açar; optimizer üç değerlidir.
+// her turda yeniden okur). Yalnız "true" açar (büyük / küçük harf ve baştaki
+// ya da sondaki boşluk fark etmez: Railway'de "TRUE" yazmak bayrağı sessizce
+// kapalı bırakmasın); optimizer üç değerlidir.
+
+export function flagValue(raw: string | undefined): string {
+  return (raw ?? "").trim().toLowerCase();
+}
 
 function on(name: string): boolean {
-  return process.env[name] === "true";
+  return flagValue(process.env[name]) === "true";
 }
 
 export type OptimizerMode = "off" | "shadow" | "on";
@@ -15,7 +21,7 @@ export const AdsFlags = {
   launchV2: () => on("META_ADS_LAUNCH_V2"),
   // F4: optimizasyon kuralları ve karar kaydı.
   optimizer: (): OptimizerMode => {
-    const value = process.env.META_ADS_OPTIMIZER;
+    const value = flagValue(process.env.META_ADS_OPTIMIZER);
     return value === "on" || value === "shadow" ? value : "off";
   },
   // F5: planlama motoru ve yeni amaçlar.

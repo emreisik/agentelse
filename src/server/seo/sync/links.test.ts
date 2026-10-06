@@ -2,20 +2,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Bu dosyanın kanıtladığı: "Delete stored data" bağları sildikten SONRA
 // projenin GSC uyarılarını siler ve denetimdeki GSC kökenli durumu kapsamı
-// sıfırlamadan (resetScope: false; tarama verisi kalır) temizler.
+// sıfırlamadan (resetScope: false; tarama verisi kalır) temizler. SC-F4: bağlar
+// silinmeden ÖNCE yalnız bu kipin bağlarının fırsat verisi unutulur.
 
 const mocks = vi.hoisted(() => ({
   findFirst: vi.fn(),
+  findMany: vi.fn(),
   deleteMany: vi.fn(),
   updateMany: vi.fn(),
   deleteAlerts: vi.fn(),
   forget: vi.fn(),
+  forgetOpportunities: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     gscSiteLink: {
       findFirst: mocks.findFirst,
+      findMany: mocks.findMany,
       deleteMany: mocks.deleteMany,
       updateMany: mocks.updateMany,
     },
@@ -38,6 +42,9 @@ vi.mock("@/server/integrations/google-client", () => ({
 vi.mock("@/server/seo/health/alerts", () => ({
   deleteSearchConsoleAlertsForProjects: mocks.deleteAlerts,
 }));
+vi.mock("@/server/seo/opportunities/forget", () => ({
+  forgetSearchOpportunitiesForLinks: mocks.forgetOpportunities,
+}));
 vi.mock("@/server/seo/site/sites", () => ({
   SeoSites: { forgetSearchConsoleData: mocks.forget },
 }));
@@ -47,6 +54,8 @@ const { deleteGscDataForProject } = await import("./links");
 beforeEach(() => {
   for (const mock of Object.values(mocks)) mock.mockReset();
   mocks.findFirst.mockResolvedValue(null);
+  mocks.findMany.mockResolvedValue([{ id: "link-1" }, { id: "link-2" }]);
+  mocks.forgetOpportunities.mockResolvedValue({ ideas: 0, signals: 0 });
   mocks.deleteMany.mockResolvedValue({ count: 2 });
   mocks.deleteAlerts.mockResolvedValue(1);
   mocks.forget.mockResolvedValue(1);
@@ -69,5 +78,26 @@ describe("deleteGscDataForProject", () => {
       deleted,
     );
     expect(mocks.forget.mock.invocationCallOrder[0]).toBeGreaterThan(deleted);
+  });
+
+  it("forgets the search opportunity data of this mode's links before deleting them", async () => {
+    await deleteGscDataForProject("proj-1");
+    expect(mocks.findMany).toHaveBeenCalledWith({
+      where: { projectId: "proj-1", isMock: false },
+      select: { id: true },
+    });
+    expect(mocks.forgetOpportunities).toHaveBeenCalledWith([
+      "link-1",
+      "link-2",
+    ]);
+    expect(
+      mocks.forgetOpportunities.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.deleteMany.mock.invocationCallOrder[0]!);
+
+    // Temizlik hatası silmeyi durdurmaz.
+    mocks.forgetOpportunities.mockRejectedValue(new Error("db"));
+    await expect(deleteGscDataForProject("proj-1")).resolves.toEqual({
+      deletedLinks: 2,
+    });
   });
 });

@@ -21,6 +21,7 @@ import { GOOGLE_PROVIDER } from "@/server/integrations/google-client";
 import { gscMockMode } from "@/server/integrations/search-console/search-analytics";
 import { claimPeriodic } from "@/server/observability/periodic";
 import { deleteSearchConsoleAlertsForProjects } from "@/server/seo/health/alerts";
+import { forgetSearchOpportunitiesForLinks } from "@/server/seo/opportunities/forget";
 import { SeoSites } from "@/server/seo/site/sites";
 
 // Search Console ambarının saklama temizliği (docs/google-search-console-plan.md
@@ -295,16 +296,26 @@ export const GscRetention = {
 
     // Seçimi değişen sitenin bağı demotedAt'ten 30 gün sonra (kota yazımı
     // updatedAt'i ilerletse de).
-    deleted += (
-      await prisma.gscSiteLink.deleteMany({
+    // SC-F4: silinen bağların fırsat sinyalleri ve havuzdaki kanıtlı fikirleri de silinir.
+    const demoted = (
+      await prisma.gscSiteLink.findMany({
         where: {
           isPrimary: false,
           demotedAt: {
             lt: new Date(now.getTime() - STALE_LINK_DAYS * 86_400_000),
           },
         },
+        select: { id: true },
       })
-    ).count;
+    ).map((link) => link.id);
+    if (demoted.length > 0) {
+      await forgetSearchOpportunitiesForLinks(demoted).catch(() => undefined);
+      deleted += (
+        await prisma.gscSiteLink.deleteMany({
+          where: { id: { in: demoted } },
+        })
+      ).count;
+    }
 
     // Bağlantısı kalmamış bağlar: Disconnect bunları zaten siler; arada
     // kalanlar burada temizlenir.
@@ -338,6 +349,9 @@ export const GscRetention = {
             ).map((row) => row.projectId),
           ),
         ];
+        await forgetSearchOpportunitiesForLinks(orphaned).catch(
+          () => undefined,
+        );
         deleted += (
           await prisma.gscSiteLink.deleteMany({
             where: { id: { in: orphaned } },

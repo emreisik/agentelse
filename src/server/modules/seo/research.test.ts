@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({
   run: vi.fn(),
   getBrandTwin: vi.fn(),
   readQuickWinRows: vi.fn(),
+  readSeoCurves: vi.fn(),
+}));
+
+vi.mock("@/server/seo/opportunities/state", () => ({
+  readSeoCurves: mocks.readSeoCurves,
 }));
 
 vi.mock("@/server/integrations/google-connections", () => ({
@@ -34,6 +39,7 @@ vi.mock("@/server/works/brand-rule-loader", () => ({
   loadBrandRules: async () => null,
 }));
 
+import { priorCurve } from "@/lib/seo/ctr-curve";
 import { AgentelseError } from "@/server/security/errors";
 
 import {
@@ -72,6 +78,9 @@ const ANSWER = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
+  vi.stubEnv("SEO_INSIGHTS", "off");
+  mocks.readSeoCurves.mockResolvedValue(null);
   mocks.getBrandTwin.mockResolvedValue(null);
   mocks.readQuickWinRows.mockResolvedValue(null);
   mocks.findActiveGoogleConnections.mockResolvedValue(CONNECTED);
@@ -165,6 +174,73 @@ describe("loadSeoQuickWins", () => {
       ],
     });
     expect(mocks.fetchSearchConsoleQueryRows).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps today's pick and never reads curves while SEO_INSIGHTS is off", async () => {
+    vi.stubEnv("GSC_SYNC", "true");
+    mocks.readQuickWinRows.mockResolvedValueOnce([
+      { keys: ["stored close"], clicks: 2, impressions: 800, position: 9.26 },
+    ]);
+    expect(await loadSeoQuickWins("p1")).toEqual({
+      state: "ok",
+      items: [
+        { query: "stored close", impressions: 800, clicks: 2, position: 9.3 },
+      ],
+    });
+    expect(mocks.readSeoCurves).not.toHaveBeenCalled();
+  });
+
+  it("ranks stored rows by the site's curve gain when SEO_INSIGHTS is on", async () => {
+    vi.stubEnv("SEO_INSIGHTS", "on");
+    vi.stubEnv("GSC_SYNC", "true");
+    vi.stubEnv("GSC_SYNC_DEV_PROJECTS", "");
+    vi.stubEnv("GSC_ROLLOUT_PROJECTS", "");
+    vi.stubEnv("NODE_ENV", "production");
+    mocks.readSeoCurves.mockResolvedValueOnce({
+      nonBrand: priorCurve("non-brand"),
+      brand: priorCurve("brand"),
+    });
+    mocks.readQuickWinRows.mockResolvedValueOnce([
+      { keys: ["mid page"], clicks: 5, impressions: 4000, position: 5.2 },
+      { keys: ["far page"], clicks: 0, impressions: 900, position: 14 },
+      { keys: ["top page"], clicks: 90, impressions: 2000, position: 1.5 },
+    ]);
+    const result = await loadSeoQuickWins("p1");
+    expect(mocks.readSeoCurves).toHaveBeenCalledWith("p1");
+    expect(result.state).toBe("ok");
+    const items = result.state === "ok" ? result.items : [];
+    expect(items.map((item) => item.query)).toEqual(["mid page", "far page"]);
+    expect(items[0]?.gain).toBeGreaterThan(items[1]?.gain ?? 0);
+    expect(mocks.fetchSearchConsoleQueryRows).not.toHaveBeenCalled();
+  });
+
+  it("falls back to today's pick when curves are missing or fail", async () => {
+    vi.stubEnv("SEO_INSIGHTS", "on");
+    vi.stubEnv("GSC_SYNC", "true");
+    vi.stubEnv("GSC_SYNC_DEV_PROJECTS", "");
+    vi.stubEnv("GSC_ROLLOUT_PROJECTS", "");
+    vi.stubEnv("NODE_ENV", "production");
+    const stored = [
+      { keys: ["stored close"], clicks: 2, impressions: 800, position: 9.26 },
+    ];
+    mocks.readQuickWinRows.mockResolvedValueOnce(stored);
+    mocks.readSeoCurves.mockRejectedValueOnce(new Error("db down"));
+    expect(await loadSeoQuickWins("p1")).toEqual({
+      state: "ok",
+      items: [
+        { query: "stored close", impressions: 800, clicks: 2, position: 9.3 },
+      ],
+    });
+  });
+
+  it("leaves the live path untouched when SEO_INSIGHTS is on", async () => {
+    vi.stubEnv("SEO_INSIGHTS", "on");
+    vi.stubEnv("GSC_SYNC", "true");
+    expect(await loadSeoQuickWins("p1")).toMatchObject({
+      state: "ok",
+      items: [{ query: "closer" }, { query: "close one" }],
+    });
+    expect(mocks.readSeoCurves).not.toHaveBeenCalled();
   });
 
   it("does not read the warehouse when Search Console is not connected", async () => {

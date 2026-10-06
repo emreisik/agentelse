@@ -1,6 +1,6 @@
 # Agentelse · Google Search Console ve SEO Motoru: Mimari ve Uygulama Planı
 
-Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 arama sağlığı ve teknik denetim uygulandı (6 Ekim 2026, bayraklı; [search-health.md](search-health.md)); SC-F4 ve sonrası henüz uygulanmadı.
+Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 arama sağlığı ve teknik denetim uygulandı (6 Ekim 2026, bayraklı; [search-health.md](search-health.md)); SC-F4 SEO fırsat motoru uygulandı (6 Ekim 2026, bayraklı; [search-opportunities.md](search-opportunities.md)); SC-F5 ve sonrası henüz uygulanmadı.
 
 > **Kapsam:** Google Search Console (GSC) entegrasyonu ve onun üzerine kurulan SEO motoru. Bu plan şunları kapsar: bağlantı ve kimlik; arama ambarı ve kalıcı arşiv; indeks ve teknik sağlık denetimi (URL Inspection, sitemap, robots, kendi site tarayıcımız, Core Web Vitals); SEO fırsat motoru; raporlama ve planlama; öneri → uygulama → ölçüm döngüsü. Sonraki aşamalarda içerik planı, CMS üzerinden onaylı uygulama ve AI arama görünürlüğü gelir.
 >
@@ -968,6 +968,23 @@ Ertelenenler: SH2 saatlik erken uyarı, grafik notları, Integrations rozeti, in
 **Görünür değişiklik:** Search sayfasında "Index & technical health" paneli, "Search health 81/100" rozeti; Works'te "Your homepage is set to noindex" gibi kritik kartlar.
 
 ### SC-F4 — SEO fırsat motoru · L
+
+**Durum (6 Ekim):** Uygulandı (bayraklı, canlı denenmedi); uygulanan hâl [search-opportunities.md](search-opportunities.md)'de. Plandan farklar:
+
+- Site başına tek CTR eğrisi (marka dışı + marka); cihaz başına eğri yok.
+- Niyet LLM'i 200 yerine 20'lik paketlerle çalışır (Limited Use).
+- Günlük toplam anomalisi SC-F3 SH2'de kalır.
+- SC-F4 uyarı üretmez.
+- Sinyaller yalnız genel metin taşır (SO3, SO6, SO7, SO9, SO10, SO13).
+- "From your search data" fikir etiketi ertelendi (kaynak hâlâ "Search").
+- GA değer köprüsü ertelendi.
+- Sohbet araçları yalnız ambarı okur (canlı P1 yok).
+- Marka terimi önerileri Search sayfasındadır.
+- Gölge inceleme sahibin kendi Search sayfasında, sayaçlar /health/search-opportunities'te.
+- Ek tablolar: `SeoEngineState` ve `SeoQueryEmbedding`.
+- SO12 Review/Event/LocalBusiness alt türleri olmadan, SO9 pozisyon eğilimi olmadan.
+
+Ertelenenler: SeoAction / "Fix this" (SC-F6), GA köprüsü, cihaz başına eğriler, "Search & SEO" sohbeti (SC-F5).
 
 **Amaç:** Fırsatları profesyonel yöntemlerle bulmak ve etkiyle önceliklendirmek.
 

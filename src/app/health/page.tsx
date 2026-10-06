@@ -1,7 +1,9 @@
+import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
   HeartPulse,
+  Lightbulb,
   RefreshCw,
   Search,
   Send,
@@ -31,6 +33,9 @@ import { loadGaMeasurementCounters } from "@/server/website-analytics/health/rea
 import { GaMeasurementCountersCard } from "@/components/website-analytics/ga-measurement-counters-card";
 import { loadSeoOperatorCounters } from "@/server/seo/health/operator-counters";
 import { SeoOperatorCard } from "@/components/search-health/seo-operator-card";
+import { loadGaInsightsOperatorView } from "@/server/website-analytics/analysis/read";
+import { GaInsightsOperatorCard } from "@/components/website-analytics/ga-insights-operator-card";
+import { loadSeoOpportunityCounters } from "@/server/seo/opportunities/operator-counters";
 import {
   clearProviderIncidentAction,
   dismissDeadLetterAction,
@@ -51,7 +56,7 @@ function StatTile({
   tone,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   tone: "danger" | "waiting" | "positive" | "neutral";
 }) {
   const toneClass =
@@ -103,7 +108,9 @@ export default async function HealthPage() {
   // Analytics sayaçları (yalnız sayılar, GA_SYNC kapalıyken null). SC-F2:
   // dikkat isteyen, geçmişi yüklenen ve Google kotasını bekleyen siteler.
   // GA-F3: ölçüm sağlığı sayaçları; SC-F3: arama sağlığı ve tarayıcı
-  // sayaçları (bayraklar kapalıyken null). Bunlar `healthy`'ye sayılmaz.
+  // sayaçları (bayraklar kapalıyken null). GA-F4: website içgörüleri (operatör
+  // görünümü); SC-F4: SEO fırsat motoru sayaçları. Bunlar `healthy`'ye
+  // sayılmaz.
   const now = new Date();
   const [
     leftoverRules,
@@ -114,6 +121,8 @@ export default async function HealthPage() {
     gscQuotaWaiting,
     gaMeasurement,
     seoCounters,
+    gaInsights,
+    seoOpportunities,
   ] = await Promise.all([
     AdsInsurance.undeletable().catch(() => []),
     prisma.adsWebhookEvent.count({ where: { status: "DEAD" } }).catch(() => 0),
@@ -140,6 +149,8 @@ export default async function HealthPage() {
       .catch(() => 0),
     loadGaMeasurementCounters().catch(() => null),
     loadSeoOperatorCounters(now).catch(() => null),
+    loadGaInsightsOperatorView({ userId }).catch(() => null),
+    loadSeoOpportunityCounters(now).catch(() => null),
   ]);
 
   const healthy =
@@ -436,6 +447,7 @@ export default async function HealthPage() {
         {gaMeasurement ? (
           <GaMeasurementCountersCard counters={gaMeasurement} />
         ) : null}
+        {gaInsights ? <GaInsightsOperatorCard view={gaInsights} /> : null}
 
         {gscAttention > 0 || gscBackfilling > 0 || gscQuotaWaiting > 0 ? (
           <Card>
@@ -465,6 +477,53 @@ export default async function HealthPage() {
           </Card>
         ) : null}
         {seoCounters ? <SeoOperatorCard counters={seoCounters} /> : null}
+        {seoOpportunities ? (
+          <Card>
+            <CardHeader className="flex flex-row items-center gap-2 space-y-0">
+              <span className="flex size-7 items-center justify-center rounded-lg bg-accent">
+                <Lightbulb className="size-4" />
+              </span>
+              <CardTitle className="text-base">Search opportunities</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <StatTile
+                  label="Findings (14 days)"
+                  value={seoOpportunities.findings14d}
+                  tone="neutral"
+                />
+                <StatTile
+                  label="Reviewed"
+                  value={seoOpportunities.reviewed}
+                  tone="neutral"
+                />
+                <StatTile
+                  label="Precision"
+                  value={
+                    seoOpportunities.precision === null
+                      ? "—"
+                      : `${Math.round(seoOpportunities.precision * 100)}%`
+                  }
+                  tone="neutral"
+                />
+                <StatTile
+                  label="Failing sites"
+                  value={seoOpportunities.failing}
+                  tone="danger"
+                />
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Counters only. Customer data is never shown here.{" "}
+                <Link
+                  href="/health/search-opportunities"
+                  className="text-foreground underline-offset-2 hover:underline"
+                >
+                  Open
+                </Link>
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader className="flex flex-row items-center gap-2 space-y-0">

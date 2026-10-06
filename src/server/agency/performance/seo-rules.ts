@@ -24,6 +24,7 @@ const MAX_CONTENT_OPPORTUNITIES = 3; // cap per scan — avoid flooding the sign
 // calendar week — there's no dedicated GA4 date-range comparison call yet,
 // and this keeps the same "diff against the last stored scan" pattern
 // google-analytics-scanner.ts already uses for Search Console.
+// GA_INSIGHTS=on iken (ve GA_INSIGHTS_PROJECTS projelerinde) çağrılmaz: tarayıcı GA bağlantılarını atlar, düşüşleri GA-F4 analiz motoru (AN1 anomali, AN2 ayrıştırma) haftanın günü tabanıyla bulur. Bayrak kapalıyken bu kural aynen çalışır.
 export function evaluateTrafficFinding(input: {
   current: { activeUsers: number; sessions: number };
   previous?: { activeUsers: number; sessions: number };

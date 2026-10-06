@@ -102,6 +102,13 @@ import {
 } from "./works-tools";
 
 import type { ChatStreamEvent } from "./types";
+import { searchChatTools } from "@/server/chat/search-tools";
+import {
+  WEBSITE_CHAT_TOOLS,
+  WEBSITE_CHAT_TOOL_NAMES,
+  WEBSITE_CHAT_TOOL_NAME_SET,
+  websiteChatToolsListed,
+} from "@/server/chat/website-tools";
 
 // What the chat agent may do on this project right now. ACTIVE is the normal
 // case: a project no longer has to finish setup before it can work (see
@@ -2055,6 +2062,7 @@ const ALL_TOOLS: readonly ChatTool[] = [
   getConnectedPlatforms,
   getAdsOverview,
   getAdPerformance,
+  ...WEBSITE_CHAT_TOOLS,
   startPlanBrief,
   startGuidedSetup,
   proposeContentPlan,
@@ -2139,8 +2147,8 @@ const MODULE_TOOLS: Readonly<Record<ModuleKey, ReadonlySet<string>>> = {
     "save_style_reference",
   ]),
   ads: new Set(MODULE_COMMON_TOOLS),
-  analytics: new Set(MODULE_COMMON_TOOLS),
-  seo: new Set(MODULE_COMMON_TOOLS),
+  analytics: new Set([...MODULE_COMMON_TOOLS, ...WEBSITE_CHAT_TOOL_NAMES]),
+  seo: new Set([...MODULE_COMMON_TOOLS, ...WEBSITE_CHAT_TOOL_NAMES]),
 };
 
 export function toolsForPhase(
@@ -2150,18 +2158,25 @@ export function toolsForPhase(
     works?: boolean;
     // The Work's module; absent or null (a general chat) changes nothing.
     module?: ModuleKey | null;
+    // SC-F4: Search Console araçlarının proje izin listesi için (yalnız ortam okunur).
+    projectId?: string | null;
   } = {},
 ): ChatTool[] {
   // Read per call, not cached: LEGACY_AGENCY_LOOP is an operator switch.
   const legacyLoopOn = isLegacyUnitEnabled("director-decisions");
   const works = options.works === true;
-  const filtered = ALL_TOOLS.filter(
+  // SC-F4: Search Console okuma araçları yalnız SEO_INSIGHTS=on ve proje izinliyken eklenir (yalnız ortam okunur; kapalıyken liste aynıdır).
+  const filtered = [
+    ...ALL_TOOLS,
+    ...searchChatTools(options.projectId ?? null),
+  ].filter(
     (tool) =>
       tool.phases.includes(phase) &&
       (legacyLoopOn || !tool.legacyLoop) &&
       (options.guidedSetup === true || !tool.requiresGuidedSetup) &&
       (works || !tool.requiresWorks) &&
-      (!works || !tool.hiddenInWorks),
+      (!works || !tool.hiddenInWorks) &&
+      (!WEBSITE_CHAT_TOOL_NAME_SET.has(tool.name) || websiteChatToolsListed()),
   );
   const tools = works
     ? [
@@ -2171,7 +2186,12 @@ export function toolsForPhase(
     : filtered;
   const allowed = options.module ? MODULE_TOOLS[options.module] : undefined;
   if (!allowed) return tools;
-  return tools.filter((tool) => tool.kind === "read" || allowed.has(tool.name));
+  // Website analytics read tools are scoped: only the analytics and seo module chats (and general chats) see them.
+  return tools.filter(
+    (tool) =>
+      (tool.kind === "read" && !WEBSITE_CHAT_TOOL_NAME_SET.has(tool.name)) ||
+      allowed.has(tool.name),
+  );
 }
 
 // OpenAI function-tool definition. strict:false for the same reason as the

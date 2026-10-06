@@ -1,3 +1,4 @@
+import { compactCount } from "@/lib/module-flows/seo/quick-wins";
 import { SEO_LIMITS, type SeoIntent } from "@/lib/module-flows/seo/state";
 
 // Every word the SEO Manager's card shows (UI chrome stays English; the
@@ -29,8 +30,17 @@ export const SEO_FLOW_COPY = {
   noSecondary: "No secondary keywords.",
   quickWins: "Quick wins from Search Console",
   quickWinsHint: "Queries you already rank 8–20 for. Tap one to add it.",
-  quickWinAria: (query: string, impressions: number, position: number) =>
-    `Add “${query}”: ${impressions} impressions in 28 days, average position ${position}`,
+  // SC-F4: CTR eğrisinden gelen quick wins (kazanç tahminli) için.
+  quickWinsHintCurve:
+    "Queries you rank 4–20 for, sorted by the extra clicks a better position could bring. Tap one to add it.",
+  quickWinAria: (
+    query: string,
+    impressions: number,
+    position: number,
+    gain?: number,
+  ) =>
+    `Add “${query}”: ${impressions} impressions in 28 days, average position ${position}${gain === undefined ? "" : `, about ${gain} more clicks a month`}`,
+  quickWinGain: (gain: number) => `+${compactCount(gain)}/mo`,
   quickWinsNone: "No queries close to page one in the last 28 days.",
   quickWinsMissing:
     "Connect Search Console to see queries you almost rank for.",

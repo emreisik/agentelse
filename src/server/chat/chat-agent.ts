@@ -506,6 +506,7 @@ export async function* runChatAgent(
       guidedSetup: GUIDED_SETUP,
       ...(work ? { works: true } : {}),
       ...(moduleKey ? { module: moduleKey } : {}),
+      projectId: input.projectId,
     });
     const toolMap = new Map(tools.map((tool) => [tool.name, tool]));
     const openaiTools = [

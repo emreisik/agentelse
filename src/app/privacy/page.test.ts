@@ -194,7 +194,9 @@ describe("privacy policy: Google Analytics and Search Console section", () => {
     expect(google).toContain(
       "short notice with no figures, pages or findings",
     );
-    expect(google).not.toContain("shown only to you");
+    // Uyarılar Telegram'a da gidebilir: "yalnız size gösterilir" denmez
+    // (GA-F4 bulguları için söylenir; onlar Telegram'a gitmez).
+    expect(google).not.toMatch(/[Aa]lerts[^.]*shown only to you/);
     expect(google).toContain("DNS TXT record");
     expect(google).toContain("Chrome UX Report");
     expect(google).toContain("delete its data anytime");
@@ -209,6 +211,24 @@ describe("privacy policy: Google Analytics and Search Console section", () => {
     expect(google).toContain("deleted after 30 days");
     expect(google).toContain("Searches Google hides for privacy never reach us");
     expect(google).toContain("in search queries and addresses are masked");
+  });
+
+  it("says what the website insights keep and send to AI (GA-F4)", () => {
+    expect(google).toContain("at the latest 24 months after they are closed");
+    expect(google).toContain(
+      "at most 20 masked page addresses or search words per request",
+    );
+  });
+
+  it("says what the search opportunity engine keeps and sends to AI", () => {
+    expect(google).toContain("finds search opportunities");
+    expect(google).toContain("for up to 24 months or until you disconnect");
+    expect(google).toContain("sent once to our AI provider");
+    expect(google).toContain("never more than 20 at a time");
+    expect(google).toContain("suggest spellings of your brand");
+    expect(google).toContain(
+      "deletes these opportunities, topic groups and suggestions right away",
+    );
   });
 
   it("says Disconnect deletes right away and when Google access is kept", () => {

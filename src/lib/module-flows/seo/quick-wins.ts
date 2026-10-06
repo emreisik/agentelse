@@ -23,7 +23,18 @@ export type SeoQuickWin = {
   clicks: number;
   // Average position, one decimal.
   position: number;
+  // Eğri tabanlı seçimde (SEO_INSIGHTS=on) hedef konuma çıkınca beklenen ek
+  // aylık tıklama (tam sayı); klasik seçimde yok.
+  gain?: number;
 };
+
+// Satırın sorgusu: boşlukları tekleştirilmiş, en çok 80 karakter (kod
+// noktası); boşsa ya da uzunsa null. İki seçici de bunu kullanır.
+export function cleanQuickWinQuery(raw: string): string | null {
+  const query = raw.replace(/\s+/g, " ").trim();
+  if (!query || Array.from(query).length > QUERY_MAX) return null;
+  return query;
+}
 
 export function pickQuickWins(
   rows: readonly SearchQueryRow[],
@@ -32,9 +43,9 @@ export function pickQuickWins(
   const seen = new Set<string>();
   return rows
     .flatMap((row) => {
-      const query = (row.keys[0] ?? "").replace(/\s+/g, " ").trim();
+      const query = cleanQuickWinQuery(row.keys[0] ?? "");
       const { position, impressions } = row;
-      if (!query || Array.from(query).length > QUERY_MAX) return [];
+      if (!query) return [];
       if (!Number.isFinite(position) || !Number.isFinite(impressions)) {
         return [];
       }

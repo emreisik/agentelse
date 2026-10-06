@@ -2390,15 +2390,19 @@ describe("runChatAgent: Works", () => {
     toolsForPhaseSpy.mockImplementationOnce(() => tools);
 
   describe("flag-off parity (agent-parity)", () => {
-    it("without a workId passes only guidedSetup, loads next steps unscoped and keeps the fallback", async () => {
+    it("without a workId passes only guidedSetup (and the project for SC-F4's search tools), loads next steps unscoped and keeps the fallback", async () => {
       envOverrides.GUIDED_SETUP = true;
       submit.mockResolvedValue({ status: "PLANNED" });
       const { model, requests } = scriptedModel([{ fail: new Error("boom") }]);
       const events = await collect(runChatAgent(baseInput, { model }));
 
-      expect(toolsForPhaseSpy.mock.calls[0]![1]).toEqual({ guidedSetup: true });
+      expect(toolsForPhaseSpy.mock.calls[0]![1]).toEqual({
+        guidedSetup: true,
+        projectId: "proj-1",
+      });
       expect(Object.keys(toolsForPhaseSpy.mock.calls[0]![1])).toEqual([
         "guidedSetup",
+        "projectId",
       ]);
       expect(loadNextSteps).toHaveBeenCalledWith("proj-1");
       expect(loadNextSteps.mock.calls[0]).toHaveLength(1);

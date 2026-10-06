@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { compactCount, pickQuickWins, type SearchQueryRow } from "./quick-wins";
+import {
+  cleanQuickWinQuery,
+  compactCount,
+  pickQuickWins,
+  type SearchQueryRow,
+} from "./quick-wins";
 
 const row = (
   query: string,
@@ -57,6 +62,23 @@ describe("pickQuickWins", () => {
     ).toEqual([
       { query: "spaced query", impressions: 100, clicks: 1, position: 10 },
     ]);
+  });
+});
+
+describe("cleanQuickWinQuery", () => {
+  it("collapses whitespace and rejects empty or overlong text", () => {
+    expect(cleanQuickWinQuery("  spaced \n  query ")).toBe("spaced query");
+    expect(cleanQuickWinQuery("   ")).toBeNull();
+    expect(cleanQuickWinQuery("")).toBeNull();
+    expect(cleanQuickWinQuery("x".repeat(80))).toBe("x".repeat(80));
+    expect(cleanQuickWinQuery("x".repeat(81))).toBeNull();
+    // Kod noktası sayılır: 80 emoji sığar.
+    expect(cleanQuickWinQuery("😀".repeat(80))).toBe("😀".repeat(80));
+  });
+
+  it("leaves the classic picker without a gain", () => {
+    const wins = pickQuickWins([row("page two", 14, 1200)]);
+    expect(wins[0]).not.toHaveProperty("gain");
   });
 });
 

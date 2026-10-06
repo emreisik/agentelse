@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Bu dosyanın kanıtladığı: Disconnect token'ı ve Google verisini her
 // durumda hemen siler; Google'da iptal yalnız aynı hesabı kullanan başka canlı
-// bağlantı yoksa yapılır ve iptal başarısız olsa da silme yine olur.
+// bağlantı yoksa yapılır ve iptal başarısız olsa da silme yine olur. GA-F4
+// bulgu türevleri GA bağından, SC-F4 fırsat verisi GSC bağından önce silinir;
+// fırsat temizliği başarısız olsa da Disconnect biter.
 
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
@@ -13,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   deleteHealthAlerts: vi.fn(),
   deleteSearchAlerts: vi.fn(),
   forgetSearchConsoleData: vi.fn(),
+  deleteGaInsights: vi.fn(),
+  forgetOpportunities: vi.fn().mockResolvedValue({ ideas: 0, signals: 0 }),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -33,6 +37,12 @@ vi.mock("@/server/website-analytics/health/cleanup", () => ({
 }));
 vi.mock("@/server/seo/health/alerts", () => ({
   deleteSearchConsoleAlerts: mocks.deleteSearchAlerts,
+}));
+vi.mock("@/server/website-analytics/analysis/cleanup", () => ({
+  deleteGaInsightDerivedDataForCredential: mocks.deleteGaInsights,
+}));
+vi.mock("@/server/seo/opportunities/forget", () => ({
+  forgetSearchOpportunitiesForCredential: mocks.forgetOpportunities,
 }));
 vi.mock("@/server/seo/site/sites", () => ({
   SeoSites: { forgetSearchConsoleData: mocks.forgetSearchConsoleData },
@@ -61,6 +71,15 @@ beforeEach(() => {
   mocks.deleteHealthAlerts.mockResolvedValue(0);
   mocks.deleteSearchAlerts.mockResolvedValue({ deleted: 0, projectIds: ["p1"] });
   mocks.forgetSearchConsoleData.mockResolvedValue(1);
+  mocks.deleteGaInsights.mockResolvedValue({
+    signals: 0,
+    findings: 0,
+    insights: 0,
+    opportunities: 0,
+    learnings: 0,
+    ideas: 0,
+  });
+  mocks.forgetOpportunities.mockResolvedValue({ ideas: 0, signals: 0 });
 });
 
 function expectWiped() {
@@ -83,6 +102,17 @@ function expectWiped() {
   expect(mocks.deleteHealthAlerts).toHaveBeenCalledWith("cred-ga");
   expect(mocks.deleteHealthAlerts.mock.invocationCallOrder[0]).toBeLessThan(
     mocks.deleteLinks.mock.invocationCallOrder[0]!,
+  );
+  // GA-F4: bulgulardan türeyen veri bir kez, GA bağından önce silinir.
+  expect(mocks.deleteGaInsights).toHaveBeenCalledTimes(1);
+  expect(mocks.deleteGaInsights).toHaveBeenCalledWith("cred-ga");
+  expect(mocks.deleteGaInsights.mock.invocationCallOrder[0]).toBeLessThan(
+    mocks.deleteLinks.mock.invocationCallOrder[0]!,
+  );
+  // SC-F4: fırsat sinyalleri ve havuz fikirleri GSC bağından önce silinir.
+  expect(mocks.forgetOpportunities).toHaveBeenCalledWith("cred-ga");
+  expect(mocks.forgetOpportunities.mock.invocationCallOrder[0]).toBeLessThan(
+    mocks.deleteGscLinks.mock.invocationCallOrder[0]!,
   );
   // SC-F3: GSC uyarıları bağdan önce, denetim durumu bağdan sonra temizlenir.
   expect(mocks.deleteSearchAlerts).toHaveBeenCalledWith("cred-ga");
@@ -167,6 +197,32 @@ describe("disconnectGoogleCredential", () => {
     });
     expect(mocks.deleteLinks).toHaveBeenCalledWith({
       where: { credentialId: "cred-ga" },
+    });
+    expect(mocks.deleteGscLinks).toHaveBeenCalledWith({
+      where: { credentialId: "cred-ga" },
+    });
+  });
+
+  it("still wipes both warehouses when the website insight cleanup fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.deleteGaInsights.mockRejectedValue(new Error("timeout"));
+    await expect(disconnectGoogleCredential(credential)).resolves.toEqual({
+      revokedAtGoogle: true,
+    });
+    expect(mocks.deleteLinks).toHaveBeenCalledWith({
+      where: { credentialId: "cred-ga" },
+    });
+    expect(mocks.forgetOpportunities).toHaveBeenCalledWith("cred-ga");
+    expect(mocks.deleteGscLinks).toHaveBeenCalledWith({
+      where: { credentialId: "cred-ga" },
+    });
+  });
+
+  it("finishes the disconnect when the search opportunity cleanup fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.forgetOpportunities.mockRejectedValue(new Error("db"));
+    await expect(disconnectGoogleCredential(credential)).resolves.toEqual({
+      revokedAtGoogle: true,
     });
     expect(mocks.deleteGscLinks).toHaveBeenCalledWith({
       where: { credentialId: "cred-ga" },

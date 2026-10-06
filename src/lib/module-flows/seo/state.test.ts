@@ -98,6 +98,42 @@ describe("parseSeoState", () => {
     });
   });
 
+  it("reads a quick win's gain only when it is a non-negative number", () => {
+    const items = [
+      { query: "with gain", impressions: 10, clicks: 1, position: 12, gain: 7 },
+      { query: "negative", impressions: 10, clicks: 1, position: 12, gain: -1 },
+      { query: "text", impressions: 10, clicks: 1, position: 12, gain: "7" },
+      { query: "absent", impressions: 10, clicks: 1, position: 12 },
+    ];
+    const state = parseSeoState({
+      plan: { ...PLAN, quickWins: { state: "ok", items } },
+    });
+    const quickWins = state.plan?.quickWins;
+    expect(quickWins?.state).toBe("ok");
+    const parsed = quickWins?.state === "ok" ? quickWins.items : [];
+    expect(parsed.map((item) => item.query)).toEqual([
+      "with gain",
+      "negative",
+      "text",
+      "absent",
+    ]);
+    expect(parsed[0]?.gain).toBe(7);
+    for (const item of parsed.slice(1)) expect(item.gain).toBeUndefined();
+    expect(parsed[3]).not.toHaveProperty("gain");
+    expect(Object.keys(serializeSeoState(state).plan as object)).toContain(
+      "quickWins",
+    );
+    const stored = serializeSeoState(state) as {
+      plan: { quickWins: { items: Record<string, unknown>[] } };
+    };
+    expect(stored.plan.quickWins.items.map((item) => "gain" in item)).toEqual([
+      true,
+      false,
+      false,
+      false,
+    ]);
+  });
+
   it("needs a title and a section to keep a plan", () => {
     expect(
       parseSeoState({ plan: { ...PLAN, titleOptions: [] } }).plan,

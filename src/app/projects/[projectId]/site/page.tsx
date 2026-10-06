@@ -20,6 +20,7 @@ import {
   type WebsiteLinkInfo,
 } from "@/server/website-analytics/report";
 import { loadMeasurementHealth } from "@/server/website-analytics/health/read";
+import { loadWebsiteInsights } from "@/server/website-analytics/analysis/read";
 import { AppShell } from "@/components/layout/app-shell";
 import { ActionForm } from "@/components/shared/action-form";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -32,6 +33,7 @@ import {
 import { WebsiteLiveStrip } from "@/components/website-analytics/website-live-strip";
 import { MeasurementHealthPanel } from "@/components/website-analytics/measurement-health-panel";
 import { MeasurementScoreChip } from "@/components/website-analytics/measurement-score";
+import { WebsiteInsights } from "@/components/website-analytics/website-insights";
 
 // "Website" sayfası (docs/google-analytics-plan.md §3.9, GA-F2 v1): Google
 // Analytics ambarından karşılaştırmalı KPI'lar, günlük trend, kanallar,
@@ -122,6 +124,14 @@ export default async function WebsitePage({
     result.state === "ready" && gaHealthEnabled()
       ? await loadMeasurementHealth(projectId).catch(() => null)
       : null;
+  // GA-F4 (GA_INSIGHTS): "What changed" / "Opportunities" listeleri; bayrak kapalıyken okuyucu sorgusuz null döner.
+  const insights =
+    result.state === "ready"
+      ? await loadWebsiteInsights(projectId, {
+          userId,
+          review: sp.insights === "review",
+        }).catch(() => null)
+      : null;
   const connectorsHref = `/projects/${projectId}/integrations?integration=google_analytics`;
   const headerLink =
     result.state === "waiting"
@@ -201,6 +211,9 @@ export default async function WebsitePage({
             ) : (
               <WebsiteReportBody report={result.report} />
             )}
+            {insights ? (
+              <WebsiteInsights projectId={projectId} view={insights} />
+            ) : null}
             {measurement ? (
               <MeasurementHealthPanel projectId={projectId} health={measurement} />
             ) : null}

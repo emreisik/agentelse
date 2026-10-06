@@ -30,7 +30,12 @@ Tipli veri mevcut `Idea.concept` alanında, sürümlü durur. Okurken zod ile do
   expiresAt?, evidence?: [{ title, url }], feedback?, relatedIdeaId?, draft }
 ```
 
-- `source`: `trend`, `season`, `results`, `brand`, `chat`, `opportunity`, `search`, `manual`.
+- `source`: `trend`, `season`, `results`, `brand`, `chat`, `opportunity`, `search`, `website`, `manual`.
+- `website` ("From your website", küre ikonu; GA-F4, [website-insights.md](website-insights.md)): GA-F4 bulgularından makale fikirleri: site içi arama terimleri (AN8), ziyaret alıp key event getiren açılış sayfaları (AN3 promote) ve çok okunan içerik (AN10).
+  - En çok haftada bir hafif model çağrısı (`idea.website`, `website-ideas.ts`, istem `idea-website.ts`); en çok 3 website fikri bekler.
+  - Yalnız SEO modülü doldurmasında (`moduleRefillIfDue`, `GA_INSIGHTS=on`) çalışır.
+  - Mock GA verisi bu fikirleri hiç üretmez.
+  - GA Disconnect'te havuzda bekleyen (kullanılmamış) website fikirleri silinir.
 - Taslaklar:
 
   | Modül  | `draft`                                                                                                                                     |
@@ -59,7 +64,7 @@ Tipli veri mevcut `Idea.concept` alanında, sürümlü durur. Okurken zod ile do
 | Modül  | Ne yapar                                                                                                                                                                                                            | Nerede                                                                                              |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Post   | Tek lite çağrı, her biri hazır post olan N fikir. Bağlam: marka profili, başlıklı layout'lar, kanallar, son 8 web sinyali, açık fırsatlar, post sonuçları, öne alınanlar, "Not for us" denenler, son postlar, havuz | `idea-engine.ts` (`IdeaEngine.generate`), `idea-context.ts`, istem `idea-social.ts` (`idea.social`) |
-| Makale | Lite çağrı. Search Console "quick wins" sorgularından makale fikirleri; anahtar kelime bir quick win ise kaynak `search` olur                                                                                       | `idea-modules.ts` (`generateSeoIdeas`), istem `idea-seo.ts` (`idea.seo`)                            |
+| Makale | Lite çağrı. Search Console "quick wins" sorgularından makale fikirleri; anahtar kelime bir quick win ise kaynak `search` olur. SC-F4 (`SEO_INSIGHTS=on`): fırsat motorunun kanıtlı bulguları istemde önce gelir, eşleşen fikir kanıtla kaydedilir ([search-opportunities.md](search-opportunities.md)). GA-F4: "From your website" fikirleri ayrı bir lite çağrıyla (`website-ideas.ts`) | `idea-modules.ts` (`generateSeoIdeas`), istem `idea-seo.ts` (`idea.seo`)                            |
 | Reklam | **Modelsiz.** "İşe yaradı" işaretli postlar önce (BrandLearning `creative:<id>:result`, WORKS), yoksa son öne çıkarılabilir postlar. Zaten önerilmiş post yeniden önerilmez                                         | `idea-modules.ts` (`refreshAdIdeas`)                                                                |
 
 Her üretimin son işlemi aynıdır:

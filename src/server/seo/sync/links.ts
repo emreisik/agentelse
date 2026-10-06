@@ -12,6 +12,7 @@ import {
 import { gscMockMode } from "@/server/integrations/search-console/search-analytics";
 import { propertyTypeOf } from "@/server/integrations/search-console/sites";
 import { deleteSearchConsoleAlertsForProjects } from "@/server/seo/health/alerts";
+import { forgetSearchOpportunitiesForLinks } from "@/server/seo/opportunities/forget";
 import { SeoSites } from "@/server/seo/site/sites";
 
 // Proje ↔ Search Console sitesi bağları (docs/google-search-console-plan.md
@@ -179,6 +180,11 @@ export async function deleteGscDataForProject(
     orderBy: [{ isPrimary: "desc" }, { updatedAt: "desc" }],
     select: { archive: true, brandTerms: true },
   });
+  // SC-F4: 'Delete stored data' fırsat motorunun sinyallerini ve havuzdaki kanıtlı fikirlerini de siler (bayraktan bağımsız, yalnız bu kipin bağları); bulgular bağla cascade ile gider.
+  const forgetIds = (
+    await prisma.gscSiteLink.findMany({ where: mode, select: { id: true } })
+  ).map((row) => row.id);
+  await forgetSearchOpportunitiesForLinks(forgetIds).catch(() => undefined);
   const result = await prisma.gscSiteLink.deleteMany({ where: mode });
   // SC-F3: Search Console'dan türeyen uyarılar ve denetimdeki GSC kökenli
   // durum da silinir (bayraktan bağımsız); tarama verisi sitenin kendisinden

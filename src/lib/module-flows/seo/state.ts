@@ -131,6 +131,8 @@ const quickWinSchema = z.object({
   impressions: z.number().nonnegative(),
   clicks: z.number().nonnegative().catch(0),
   position: z.number().positive(),
+  // Eğri tabanlı quick win'in beklenen aylık tıklama kazancı; eski kayıtta yok.
+  gain: z.number().nonnegative().optional().catch(undefined),
 });
 
 const quickWinsSchema = z.discriminatedUnion("state", [

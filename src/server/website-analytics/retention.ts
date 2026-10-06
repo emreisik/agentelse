@@ -20,6 +20,8 @@ import {
 import { GOOGLE_PROVIDER } from "@/server/integrations/google-client";
 import { claimPeriodic } from "@/server/observability/periodic";
 
+import { sweepOrphanGaInsightData } from "./analysis/cleanup";
+
 // Ambar saklama temizliği (docs/google-analytics-plan.md §4 "Saklama", §5
 // `ga-retention`): günde bir, yalnız süresi dolmuş satırlar silinir.
 // Birincilliğini kaybetmiş bağlar (seçim değişti) 30 gün sonra, bağlantısı
@@ -132,6 +134,15 @@ export const GaRetention = {
         ).count;
       }
     }
+    // GA-F4: Disconnect temizliği yarıda kaldıysa canlı GA bağlantısı
+    // olmayan projelerin bulgu türevleri burada silinir.
+    deleted += await sweepOrphanGaInsightData().catch((error: unknown) => {
+      console.error(
+        "[ga-retention] website insight leftovers could not be cleared:",
+        error instanceof Error ? error.name : error,
+      );
+      return 0;
+    });
     return deleted;
   },
 };

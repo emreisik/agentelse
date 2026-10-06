@@ -27,6 +27,13 @@ import { loadAdsAccount } from "@/server/modules/ads/account";
 import { listSourcePosts } from "@/server/modules/ads/source-posts";
 import { loadSeoQuickWins } from "@/server/modules/seo/research";
 import { ideaSeoDef } from "@/server/reasoning/prompts/idea-seo";
+import { refreshWebsiteIdeas } from "@/server/ideas/website-ideas";
+import {
+  applySeoOpportunity,
+  attachIdeasToFindings,
+  loadSeoIdeaOpportunities,
+  opportunityPromptRows,
+} from "@/server/seo/opportunities/ideas";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { AgentelseError } from "@/server/security/errors";
 import { loadBrandRules } from "@/server/works/brand-rule-loader";
@@ -109,21 +116,24 @@ export async function generateSeoIdeas(input: {
   if (!isModulesEnabled()) return { ok: false, reason: "EMPTY" };
   const scope = await scopeOf(input.projectId);
   if (!scope) return { ok: false, reason: "NO_BRAND" };
-  const [rows, brand, quickWins, articles, timezone] = await Promise.all([
-    readIdeaRows(input.projectId),
-    ConstitutionService.getBrandContext(scope.brandId),
-    loadSeoQuickWins(input.projectId),
-    prisma.post.findMany({
-      where: {
-        projectId: input.projectId,
-        deliveries: { some: { channel: "seo" } },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 30,
-      select: { topic: true },
-    }),
-    getProjectTimezone(input.projectId),
-  ]);
+  // SC-F4: fırsat motorunun kanıtlı bulguları istemde önce gelir (quick wins ile birlikte en çok 20 Google dizgisi); eşleşen fikir 'search' kaynağı ve kanıtla kaydedilir. SEO_INSIGHTS=on değilken liste boştur ve istem bugünküyle aynıdır.
+  const [rows, brand, quickWins, articles, timezone, opportunities] =
+    await Promise.all([
+      readIdeaRows(input.projectId),
+      ConstitutionService.getBrandContext(scope.brandId),
+      loadSeoQuickWins(input.projectId),
+      prisma.post.findMany({
+        where: {
+          projectId: input.projectId,
+          deliveries: { some: { channel: "seo" } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 30,
+        select: { topic: true },
+      }),
+      getProjectTimezone(input.projectId),
+      loadSeoIdeaOpportunities(input.projectId, now).catch(() => []),
+    ]);
   const pool = rows.flatMap((row) =>
     row.concept?.module === "seo" ? [row.concept.draft.keyword] : [],
   );
@@ -141,20 +151,26 @@ export async function generateSeoIdeas(input: {
   });
   const fits = Math.min(wanted, capacity.free + capacity.retire.length);
   if (fits <= 0) return { ok: false, reason: "FULL" };
+  const quickWinRows =
+    quickWins.state === "ok"
+      ? quickWins.items.map((item) => [
+          item.query,
+          item.impressions,
+          item.position,
+        ])
+      : [];
+  const opportunityRows = opportunityPromptRows(
+    opportunities,
+    quickWins.state === "ok" ? quickWins.items.map((item) => item.query) : [],
+  );
   const run = await ReasoningService.run(ideaSeoDef, {
     ...scope,
     context: {
       count: fits,
       today: utcToZonedDateTimeLocal(now, timezone).slice(0, 10),
       brand,
-      quickWins:
-        quickWins.state === "ok"
-          ? quickWins.items.map((item) => [
-              item.query,
-              item.impressions,
-              item.position,
-            ])
-          : [],
+      quickWins: quickWinRows,
+      ...(opportunityRows.length > 0 ? { opportunities: opportunityRows } : {}),
       articles: articles.map((post) => post.topic),
       pool,
       ...(input.focus ? { focus: input.focus } : {}),
@@ -181,6 +197,7 @@ export async function generateSeoIdeas(input: {
         ? { ...concept, source: "search" as const }
         : concept,
     )
+    .map((concept) => applySeoOpportunity(concept, opportunities))
     .filter(
       (concept) =>
         blocksOf(
@@ -190,7 +207,17 @@ export async function generateSeoIdeas(input: {
           ),
         ).length === 0,
     );
-  return saveIdeaConcepts({ scope, concepts, rows, isMock: run.isMock, now });
+  const saved = await saveIdeaConcepts({
+    scope,
+    concepts,
+    rows,
+    isMock: run.isMock,
+    now,
+  });
+  if (saved.ok && opportunities.length > 0) {
+    await attachIdeasToFindings(input.projectId, saved.created).catch(() => 0);
+  }
+  return saved;
 }
 
 // --- ads ------------------------------------------------------------------------
@@ -307,6 +334,15 @@ export async function moduleRefillIfDue(
       });
       if (result.ok) created.push(...result.created);
     }
+  }
+  // GA-F4: "From your website" makale fikirleri (GA_INSIGHTS=on; kendi kapıları sorgudan önce). Aynı çağrıda fikir eklendiyse satırlar yeniden okunur.
+  if (available.seo) {
+    const website = await refreshWebsiteIdeas({
+      projectId,
+      now,
+      rows: created.length > 0 ? undefined : rows,
+    });
+    if (website.ok) created.push(...website.created);
   }
   return created;
 }

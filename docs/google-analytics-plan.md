@@ -1,6 +1,6 @@
 # Agentelse · Google Analytics 4: Mimari ve Uygulama Planı
 
-Durum: Plan (6 Ekim 2026) — henüz uygulanmadı.
+Durum (6 Ekim 2026): GA-F0 – GA-F4 kodlandı (bayraklı; GA-F4 ayrıntısı [website-insights.md](website-insights.md)); GA-F5 ve sonrası plan.
 
 > **Kapsam:** Google Analytics 4 (GA4) entegrasyonu: bağlantı ve kimlik, yerel veri ambarı, ölçüm sağlığı denetimi, analiz, raporlama, planlama, reklam ölçümü ve öneri döngüsü. **Search Console ayrı bir entegrasyondur** ve kendi planı vardır: `docs/google-search-console-plan.md`. İki entegrasyon yalnız kod çekirdeğini paylaşır (OAuth, HTTP, hata kataloğu, PII süzgeci; §3.1). Bağlantı, izin, token, veri tabloları, işler, sağlık durumu, bayraklar, arayüz ve silme akışı tamamen ayrıdır; biri bağlı değilken diğeri eksiksiz çalışır. İkisi birden bağlıysa §12'deki isteğe bağlı köprü devreye girer.
 >
@@ -1029,6 +1029,8 @@ Uygulamada plandan farklar (GA-F2 ve sonrası bunlara göre yazılır):
 **Görünür değişiklik:** "Measurement health 72/100" rozeti; Website sayfasında kontrol listesi ve rehberler; Works'te "Google Analytics stopped receiving data" kartı.
 
 ### GA-F4 — Analiz motoru · L
+
+**Durum (6 Ekim 2026):** kodlandı (GA_INSIGHTS=off|shadow|on, migration 20261006213000_add_ga_finding); ayrıntı [website-insights.md](website-insights.md). AN13/AN14 GA-F6'ya ertelendi; fikirler hafif model çağrısıyla (marka dili), uyarı üretilmez; haftalık canlı öneri en fazla 3.
 
 **Amaç:** Değişimleri nedenleriyle açıklamak ve fırsatları önceliklendirmek.
 

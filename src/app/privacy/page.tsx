@@ -393,6 +393,23 @@ const SECTIONS: PolicySection[] = [
           not stored.
         </p>
         <p>
+          Agentelse also analyses these stored Google Analytics summaries to
+          point out what changed and where your website can do better (for
+          example a landing page that gets visits but few leads). Findings are
+          shown only to you and your team and are deleted at the latest 24
+          months after they are closed. Short, figure-free notes derived from
+          them (signals in Brand Brain, lessons such as &ldquo;improving a
+          landing page raised its key event rate&rdquo;, and article ideas
+          marked &ldquo;From your website&rdquo;) stay while you are connected.
+          All of this is deleted right away when you disconnect, except ideas
+          you have already used and tasks you have already accepted. To explain
+          the most important findings, answer your questions in chat and suggest
+          website ideas, the aggregated figures behind them and at most 20
+          masked page addresses or search words per request are sent to our AI
+          provider; they are not stored there and are not used to train AI
+          models.
+        </p>
+        <p>
           To check that your Google Analytics tracking works, Agentelse also
           runs measurement checks: it compares your stored daily summaries,
           reads your property&rsquo;s settings and, once a week (or when you ask
@@ -448,6 +465,21 @@ const SECTIONS: PolicySection[] = [
           Core Web Vitals come from Google&rsquo;s public Chrome
           UX Report. You can turn the audit off or delete its data anytime on
           the Search page.
+        </p>
+        <p>
+          From your Search Console data Agentelse also finds search
+          opportunities, such as pages close to the first page, pages losing
+          clicks or searches with no matching page, and keeps them, with the
+          figures they are based on, for up to 24 months or until you
+          disconnect. To group your searches into topics, the search words
+          (with personal details masked) are sent once to our AI provider to
+          compute a numeric representation, which we keep with the search; our
+          AI provider may also receive a small sample of search words and page
+          addresses (never more than 20 at a time) to classify searches, name
+          topics, suggest spellings of your brand and write short explanations.
+          Disconnecting Search Console deletes these opportunities, topic
+          groups and suggestions right away, together with the article ideas
+          made from them that you haven&rsquo;t used yet.
         </p>
         <p>
           Agentelse&rsquo;s use of information received from Google APIs will

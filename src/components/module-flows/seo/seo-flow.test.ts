@@ -172,6 +172,33 @@ describe("SeoFlow: Plan", () => {
     expect(primaries(html)).toBe(1);
   });
 
+  it("shows the expected monthly gain of curve quick wins (SC-F4)", () => {
+    const html = render("plan", {
+      brief: BRIEF,
+      plan: {
+        ...PLAN,
+        quickWins: {
+          state: "ok",
+          items: [{ ...PLAN.quickWins.items[0], position: 6.2, gain: 12 }],
+        },
+      },
+    });
+    expect(html).toContain(
+      "Queries you rank 4–20 for, sorted by the extra clicks a better position could bring.",
+    );
+    expect(html).not.toContain("Queries you already rank 8–20 for.");
+    expect(html).toContain("+12/mo");
+    expect(html).toContain(
+      "average position 6.2, about 12 more clicks a month",
+    );
+
+    // Kazançsız liste bugünkü gibi kalır.
+    const plain = render("plan", { brief: BRIEF, plan: PLAN });
+    expect(plain).toContain("Queries you already rank 8–20 for.");
+    expect(plain).not.toContain("/mo");
+    expect(plain).not.toContain("more clicks a month");
+  });
+
   it("links to Search Console when it is not connected", () => {
     const html = render("plan", {
       brief: BRIEF,

@@ -12,7 +12,9 @@ import {
 } from "@/server/integrations/google/revoke-policy";
 import { GOOGLE_PROVIDER } from "@/server/integrations/google/services";
 import { deleteSearchConsoleAlerts } from "@/server/seo/health/alerts";
+import { forgetSearchOpportunitiesForCredential } from "@/server/seo/opportunities/forget";
 import { SeoSites } from "@/server/seo/site/sites";
+import { deleteGaInsightDerivedDataForCredential } from "@/server/website-analytics/analysis/cleanup";
 import { deleteGaHealthAlertsForCredential } from "@/server/website-analytics/health/cleanup";
 
 // Google bağlantısını koparır (GA ya da Search Console; ikisi ayrı ayrı).
@@ -118,8 +120,10 @@ export async function disconnectGoogleCredential(
   // Google Analytics ambarı (Ga*) ve Search Console ambarı (Gsc*: bağ, günlük
   // toplamlar, kırılımlar, sözlükler, haftalık/aylık özetler; SC-F3'ten beri
   // URL Inspection sonuçları, Search Console sitemap durumu ve kapsam
-  // tahminleri: GscUrlInspection, GscSitemap, GscCoverageWeek) bağ silinince
-  // cascade ile gider; gizlilik metni "right away" der.
+  // tahminleri: GscUrlInspection, GscSitemap, GscCoverageWeek; SC-F4'ten beri
+  // SEO fırsat motorunun verisi: SeoFinding, SeoCluster, SeoQueryEmbedding,
+  // SeoEngineState) bağ silinince cascade ile gider; gizlilik metni "right
+  // away" der.
   // GA-F3: projenin GA ölçüm uyarıları hemen silinir; kontrol sonuçları ve denetim durumu bağ silinince cascade ile gider.
   // Hata ambar silmesini durdurmasın (token zaten silindi, yeniden deneme
   // iptali atlar); kalan GA4 uyarılarını GA-F3 temizliği yetim olarak kapatır.
@@ -130,6 +134,16 @@ export async function disconnectGoogleCredential(
         error instanceof Error ? error.message : error,
       );
       return 0;
+    },
+  );
+  // GA-F4: bulgulardan türeyen sinyal, ajans bulgusu/içgörüsü/dokunulmamış fırsat, öğrenme ve havuzdaki "website" fikirleri hemen silinir; GaFinding/GaAnalysisRun bağla birlikte cascade ile gider. Search Console kimliğinde no-op.
+  // Hata ambar silmesini durdurmasın; kalanları GaRetention'ın yetim bağ adımı siler.
+  await deleteGaInsightDerivedDataForCredential(credential.id).catch(
+    (error: unknown) => {
+      console.error(
+        "[google-disconnect] website insight data could not be cleared:",
+        error instanceof Error ? error.name : error,
+      );
     },
   );
   await prisma.gaPropertyLink.deleteMany({
@@ -144,6 +158,15 @@ export async function disconnectGoogleCredential(
         error instanceof Error ? error.message : error,
       );
       return { deleted: 0, projectIds: [] as string[] };
+    },
+  );
+  // SC-F4: fırsat motorunun Search Console'dan türeyen sinyalleri ve havuzdaki kanıtlı fikirleri bayraktan bağımsız silinir; bulgular, kümeler, embedding'ler ve motor durumu bağla birlikte cascade ile gider.
+  await forgetSearchOpportunitiesForCredential(credential.id).catch(
+    (error: unknown) => {
+      console.error(
+        "[google-disconnect] search opportunity data could not be cleared:",
+        error instanceof Error ? error.message : error,
+      );
     },
   );
   await prisma.gscSiteLink.deleteMany({

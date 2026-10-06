@@ -6,6 +6,7 @@ import { Plug, RefreshCw, Search } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { GscFlags } from "@/lib/seo/flags";
+import { SeoInsightFlags } from "@/lib/seo/insight-flags";
 import { DEFAULT_SEARCH_PERIOD, isSearchPeriod } from "@/lib/seo/periods";
 import { refreshSearchAnalyticsAction } from "@/server/actions/search-analytics-actions";
 import {
@@ -20,6 +21,8 @@ import {
 import { AppShell } from "@/components/layout/app-shell";
 import { BrandTermsForm } from "@/components/search-analytics/brand-terms-form";
 import { SearchHealthSection } from "@/components/search-health/search-health-section";
+import { BrandTermSuggestions } from "@/components/search-opportunities/brand-term-suggestions";
+import { SearchOpportunitiesSection } from "@/components/search-opportunities/opportunities-section";
 import {
   SearchPeriodSelector,
   SearchReportBody,
@@ -135,6 +138,10 @@ export default async function SearchPage({
     : DEFAULT_SEARCH_PERIOD;
   const queryFilter = isSearchQueryFilter(sp.queries) ? sp.queries : "all";
   const issue = typeof sp.issue === "string" ? sp.issue : null;
+  // SC-F4 (SEO_INSIGHTS): öncelikli fırsat listesi ve marka terimi önerileri; bayrak kapalıyken sarmalayıcılar hiç çizilmez (HTML bugünküyle aynı), veritabanına gidilmez.
+  const opportunity =
+    typeof sp.opportunity === "string" ? sp.opportunity : null;
+  const insights = SeoInsightFlags.active();
   const base = `/projects/${projectId}/arama`;
   const result = await buildSearchReport(projectId, periodKey, { queryFilter });
   const connectorsHref = `/projects/${projectId}/integrations?integration=google_search_console`;
@@ -209,6 +216,14 @@ export default async function SearchPage({
               </Notice>
             ) : null}
             <SearchReportBody report={result.report} base={base} />
+            {insights ? (
+              <Suspense fallback={null}>
+                <SearchOpportunitiesSection
+                  projectId={projectId}
+                  highlight={opportunity}
+                />
+              </Suspense>
+            ) : null}
             <BrandTermsForm
               projectId={projectId}
               terms={result.report.link.brandTerms}
@@ -216,6 +231,13 @@ export default async function SearchPage({
               defaultOpen={
                 result.report.link.brandSplit === "none" ||
                 result.report.link.brandSplit === "error"
+              }
+              suggestions={
+                SeoInsightFlags.userFacing() ? (
+                  <Suspense fallback={null}>
+                    <BrandTermSuggestions projectId={projectId} />
+                  </Suspense>
+                ) : undefined
               }
             />
           </>

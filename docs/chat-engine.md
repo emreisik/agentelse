@@ -69,6 +69,15 @@ Tool kısıtı koddadır (`tools.ts`, `phases`) ve iki durumludur: `ACTIVE` heps
 
 \* `start_strategic_project` yalnızca `LEGACY_AGENCY_LOOP=on` iken sunulur (planlayan Director artık çalışmıyorsa ajan geniş işi kendisi somut çıktılara böler). `save_idea` her modda vardır.
 
+**Website araçları (GA-F4, `website-tools.ts`, [website-insights.md](website-insights.md)).** `get_website_overview`, `query_website_analytics`, `explain_website_change`, `get_measurement_health`:
+
+- Okumadır ve `external: true`'dur: dönen sayfa adları, kampanyalar ve arama sözcükleri turu "tainted" yapar.
+- Yalnız `GA_INSIGHTS` onları listelerken sunulur (`on`, ya da gölge kipte `GA_INSIGHTS_PROJECTS` doluyken); kapalıyken araç listesi bayt bayt aynıdır.
+- Modül sohbetlerinde yalnız Analytics ve SEO sohbetleri görür; genel sohbet (modülsüz) de görür, Social ve Ads görmez.
+- Ambar yetmezse `query_website_analytics` P1 canlı sorguya düşer: proje başına günde ≤ 20, yalnız temel metrikler; sonuçlar en çok 20 satırdır.
+
+**Search Console araçları (SC-F4, `search-tools.ts`, [search-opportunities.md](search-opportunities.md)).** Yalnız `SEO_INSIGHTS=on` ve proje izinliyken eklenir (`toolsForPhase`'e `projectId` geçer; verilmezse araçlar sunulmaz).
+
 ### Girdisi eksik iş açılmaz (yeni hesap: platform)
 
 `SOCIAL_ACCOUNT_SETUP` dar bir şeydir: bir tarayıcı ajanı **yeni** bir Instagram / TikTok / LinkedIn hesabı açar (yüksek risk, müşteri onayı). Platform olmadan çalışamaz ve yalnızca standart tarayıcı profil paketinde profili olan platformlarda çalışabilir (X'in profili hiç oluşmaz, bu yüzden düğme olarak sunulmaz; liste `capability-input.ts`'te derleme zamanında pakete bağlıdır); eskiden görev ve onay kartı yine de oluşuyor, hata ancak müşteri Approve'a bastıktan sonra çıkıyordu (onay tüketilmiş, görev `FAILED`, kart ölü düğmelerle kalıyordu). Şimdi kural tek yerde (`src/server/execution/capability-input.ts`, saf) ve hem görev **açılmadan önce** hem onay **verilmeden önce** uygulanır:

@@ -83,6 +83,13 @@ describe("data deletion page", () => {
     expect(html).toContain("Delete audit data");
   });
 
+  it("says Disconnect also deletes the search opportunity data (SC-F4)", async () => {
+    const html = await render();
+    expect(html).toContain(
+      "search opportunities, topic groups and brand-term suggestions",
+    );
+  });
+
   it("ignores a made-up or tampered code and just shows the instructions", async () => {
     for (const bad of [
       "abc",

@@ -485,10 +485,12 @@ function QuickWins({
     return <Field label={COPY.quickWins}>{note(COPY.quickWinsNone)}</Field>;
   }
   if (open.length === 0) return null;
+  // SC-F4: kazanç tahmini olan liste CTR eğrisinden gelir (4–20. sıra).
+  const curve = quickWins.items.some((win) => win.gain !== undefined);
   return (
     <Field label={COPY.quickWins}>
       <p className="text-xs" style={{ color: "var(--ws-text-3)" }}>
-        {COPY.quickWinsHint}
+        {curve ? COPY.quickWinsHintCurve : COPY.quickWinsHint}
       </p>
       <ul className="flex flex-wrap gap-1.5">
         {open.map((win) => (
@@ -499,6 +501,7 @@ function QuickWins({
                 win.query,
                 win.impressions,
                 win.position,
+                win.gain,
               )}
               disabled={keywords.length >= SEO_LIMITS.secondaryMax}
               onClick={() => onAdd(win.query)}
@@ -516,6 +519,9 @@ function QuickWins({
                 style={{ color: "var(--ws-text-3)" }}
               >
                 {compactCount(win.impressions)} · #{Math.round(win.position)}
+                {win.gain === undefined
+                  ? null
+                  : ` · ${COPY.quickWinGain(win.gain)}`}
               </span>
             </button>
           </li>

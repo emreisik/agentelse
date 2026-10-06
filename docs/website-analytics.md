@@ -120,6 +120,10 @@ totals (10 metrik) + channel, source_medium, campaign, landing_page, page, event
 - **Gizlilik**: Google bölümünde günlük özetler, süreleri (400 / 95 gün), 400 güne kadar haftalık özetler, 36 aya kadar ay özetleri (ilk 50 açılış sayfası dahil), site içi arama sözcükleri, Google Ads ve Search Console özetleri, maskeleme ve saklanmayan "Today so far" / "Right now" sayıları yazıyor; bayraklardan bağımsız olarak saklayabileceğimiz en çoğu anlatır.
 - **Website sayfası** (bölüm 2): `GA_WEEKLY` ile Landing pages'in altında "Site search" tablosu (dönemin içindeki çekilmiş tam haftalar, ilk 10 + "Other"); `GA_LIVE` ile sağlık uyarısının altında "Today so far" (Partial) ve "Right now" kartları.
 
+## Website insights (GA-F4)
+
+Ambarın üstünde çalışan analiz motoru [website-insights.md](website-insights.md)'de anlatılır. `GA_INSIGHTS=off|shadow|on` (`GA_SYNC` gerekir) açıkken Website sayfasının (`/projects/[id]/site`) rapor gövdesinin altında "Insights" bölümü "What changed" ve "Opportunities" listelerini gösterir (Accept / Dismiss / Mark done). `GA_INSIGHTS=on` iken (ya da gölge kipte `GA_INSIGHTS_PROJECTS`'teki projelerde) eski `google-analytics-scanner.ts`'in GA kısmı (`DECLINING_TRAFFIC`) çalışmaz; düşüşleri AN1/AN2 bulur.
+
 ## Testler
 
 `src/lib/website-analytics/*.test.ts` (katalog, yanıt ayrıştırma, dilimleme, kota, zamanlama, geri doldurma, dönemler, toplamlar, bayraklar), `google/pii.test.ts`, `sync/requests.test.ts` (toplu çağrı, bozuk rapor, kota bekletmesi, sunucu hatası, 429), `sync/warehouse.integration.test.ts` (gerçek Postgres, mock Google: uçtan uca senkron, yeniden yazımda kopya yok, Website raporu, Disconnect'te silme; CI'da koşar).

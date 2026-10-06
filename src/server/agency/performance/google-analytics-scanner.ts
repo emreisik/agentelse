@@ -1,6 +1,8 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { gscRestrictedProjects } from "@/lib/seo/flags";
+import { SeoInsightFlags } from "@/lib/seo/insight-flags";
 import { SignalUniverse } from "@/server/agency/signals/signal-universe";
 import { evaluateSeoFindings } from "./seo-rules";
 import {
@@ -12,6 +14,7 @@ import {
 } from "@/server/integrations/google-client";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
 import { readGaWindow } from "@/server/website-analytics/readers";
+import { scannerGaGate } from "@/server/website-analytics/analysis/scanner-gate";
 
 type ScanMetadata = GoogleAnalyticsMetadata | GoogleSearchConsoleMetadata;
 
@@ -53,12 +56,42 @@ function isDue(metadata: ScanMetadata, credentialId: string): boolean {
 // the normal council/director quality gate instead of an automatic task.
 export const GoogleAnalyticsScanner = {
   async runDueScans(limit = MAX_CREDENTIALS_PER_TICK_DEFAULT): Promise<number> {
+    // SC-F4 (SEO_INSIGHTS=on): motorun sahip olduğu projelerin Search Console kimlikleri sorgudan çıkarılır (döngüde atlamak updatedAt'i ilerletmez ve GA taramalarını aç bırakırdı). Kapalı ya da gölge kipte sorgu bugünküyle aynıdır.
+    const engineProjects = SeoInsightFlags.userFacing()
+      ? gscRestrictedProjects()
+      : undefined;
+    // GA-F4: GA_INSIGHTS=on iken (ya da GA_INSIGHTS_PROJECTS'teki projelerde) GA kısmı analiz motoruna geçti (AN1/AN2 DECLINING_TRAFFIC'in yerini alır); kapalıyken bugünkü davranış.
+    const gate = scannerGaGate(
+      engineProjects === null
+        ? [GOOGLE_PROVIDER.analytics]
+        : [GOOGLE_PROVIDER.analytics, GOOGLE_PROVIDER.search_console],
+      GOOGLE_PROVIDER.analytics,
+    );
+    if (gate.providers.length === 0) return 0;
+    // İki kapı birbirinden bağımsızdır: dışlamaları VE ile birleşir.
+    const excluded = [
+      ...(gate.excludeGaProjectIds.length > 0
+        ? [
+            {
+              provider: GOOGLE_PROVIDER.analytics,
+              projectId: { in: gate.excludeGaProjectIds },
+            },
+          ]
+        : []),
+      ...(engineProjects && engineProjects.length > 0
+        ? [
+            {
+              provider: GOOGLE_PROVIDER.search_console,
+              projectId: { in: engineProjects },
+            },
+          ]
+        : []),
+    ];
     const candidates = await prisma.integrationCredential.findMany({
       where: {
-        provider: {
-          in: [GOOGLE_PROVIDER.analytics, GOOGLE_PROVIDER.search_console],
-        },
+        provider: { in: gate.providers },
         status: "ACTIVE",
+        ...(excluded.length > 0 ? { NOT: excluded } : {}),
       },
       take: limit * 4,
       orderBy: { updatedAt: "asc" },

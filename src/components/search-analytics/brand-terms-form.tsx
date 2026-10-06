@@ -6,7 +6,9 @@ import { Textarea } from "@/components/ui/textarea";
 
 // Marka terimleri (SC-F2, SK8 v1): bu kelimeleri içeren aramalar marka
 // sayılır. Search sayfasında ve Connectors kartında (kapalı) aynı form;
-// terim yoksa ya da Google terimleri reddettiyse açık gelir.
+// terim yoksa ya da Google terimleri reddettiyse açık gelir. SC-F4:
+// `suggestions` (SEO_INSIGHTS=on iken marka terimi önerileri) formun altına
+// çizilir; verilmezse HTML bugünküyle aynıdır.
 
 const STATUS_NOTE: Record<BrandSplitStatus, string | null> = {
   ready: null,
@@ -21,11 +23,13 @@ export function BrandTermsForm({
   terms,
   status,
   defaultOpen = false,
+  suggestions,
 }: {
   projectId: string;
   terms: string[];
   status: BrandSplitStatus;
   defaultOpen?: boolean;
+  suggestions?: React.ReactNode;
 }) {
   const open = defaultOpen || status === "none" || status === "error";
   const note = STATUS_NOTE[status];
@@ -71,6 +75,7 @@ export function BrandTermsForm({
             <SubmitButton size="xs">Save brand terms</SubmitButton>
           </div>
         </ActionForm>
+        {suggestions}
       </div>
     </details>
   );

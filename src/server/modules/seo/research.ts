@@ -7,10 +7,16 @@ import type {
   SeoPlan,
   SeoQuickWins,
 } from "@/lib/module-flows/seo/state";
+import {
+  SeoInsightFlags,
+  seoInsightsAllowedFor,
+} from "@/lib/seo/insight-flags";
+import { pickCurveQuickWins } from "@/lib/seo/quick-wins-curve";
 import { fetchSearchConsoleQueryRows } from "@/server/integrations/google-client";
 import { findActiveGoogleConnections } from "@/server/integrations/google-connections";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
+import { readSeoCurves } from "@/server/seo/opportunities/state";
 import { readQuickWinRows } from "@/server/seo/readers";
 
 import {
@@ -51,7 +57,21 @@ export async function loadSeoQuickWins(
       projectId,
       siteUrl: searchConsole.siteUrl,
     }).catch(() => null);
-    if (stored) return { state: "ok", items: pickQuickWins(stored) };
+    if (stored) {
+      // SC-F4 (SEO_INSIGHTS=on): sitenin kendi CTR eğrisi varsa hızlı
+      // kazanımlar pozisyon 4–20 arasından tahmini ek aylık tıklamaya göre
+      // seçilir; eğri okunamazsa bugünkü seçim aynen kalır.
+      if (SeoInsightFlags.userFacing() && seoInsightsAllowedFor(projectId)) {
+        const curves = await readSeoCurves(projectId).catch(() => null);
+        if (curves) {
+          return {
+            state: "ok",
+            items: pickCurveQuickWins(stored, curves.nonBrand),
+          };
+        }
+      }
+      return { state: "ok", items: pickQuickWins(stored) };
+    }
     const accessToken = await getFreshGoogleAccessToken(
       searchConsole.credential,
     );

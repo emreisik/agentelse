@@ -152,7 +152,12 @@ export async function testGoogleConnectionAction(
     const { projectId, service } = await resolveScope(formData);
 
     const credential = await loadCredential(projectId, service);
-    if (!credential) return notFound(service);
+    // Koparılmış (REVOKED) bağlantı token'ını hâlâ tutuyor; başarılı bir test
+    // onu hesap sahibinin yeni onayı olmadan yeniden ACTIVE yapmamalı. Bağlantıyı
+    // yalnız yeni bir OAuth bağlantısı geri getirebilir (meta-actions.ts ile aynı).
+    if (!credential || credential.status === "REVOKED") {
+      return notFound(service);
+    }
 
     let testError: string | undefined;
     let nextMetadata: GoogleAnalyticsMetadata | GoogleSearchConsoleMetadata;
@@ -200,8 +205,10 @@ export async function testGoogleConnectionAction(
       nextMetadata = { ...metadata, lastTestResult: result };
     }
 
-    await prisma.integrationCredential.update({
-      where: { id: credential.id },
+    // Yalnız satır hâlâ REVOKED değilken yazılır: test sürerken gelen bir
+    // Disconnect kazanır.
+    await prisma.integrationCredential.updateMany({
+      where: { id: credential.id, status: { not: "REVOKED" } },
       data: { metadata: nextMetadata, status: "ACTIVE" },
     });
 
@@ -223,7 +230,11 @@ export async function refreshGoogleListsAction(
     const { projectId, service } = await resolveScope(formData);
 
     const credential = await loadCredential(projectId, service);
-    if (!credential) return notFound(service);
+    // Test eylemindeki kuralın aynısı: koparılmış bağlantı liste yenilemeyle
+    // geri gelmez.
+    if (!credential || credential.status === "REVOKED") {
+      return notFound(service);
+    }
 
     const accessToken = await getFreshGoogleAccessToken(credential);
 
@@ -252,8 +263,8 @@ export async function refreshGoogleListsAction(
       };
     }
 
-    await prisma.integrationCredential.update({
-      where: { id: credential.id },
+    await prisma.integrationCredential.updateMany({
+      where: { id: credential.id, status: { not: "REVOKED" } },
       data: { metadata: nextMetadata, status: "ACTIVE" },
     });
 

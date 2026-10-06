@@ -106,7 +106,11 @@ export const ApprovalRepository = {
     // sohbetin command-service yolu ise doğrudan buraya gelir; kapı bu yüzden
     // burada (docs/meta-ads-plan.md §3.9 Roller).
     if (approval.level === "LEVEL_4_CRITICAL" && to === "APPROVED") {
-      await assertCanApproveSpend(approval.workspaceId, reviewedByUserId);
+      await assertCanApproveSpend(
+        approval.workspaceId,
+        reviewedByUserId,
+        approval.projectId,
+      );
     }
 
     // Claim (compare-and-swap): if the same decision is delivered twice
@@ -188,22 +192,43 @@ export const ApprovalRepository = {
 
 const SPEND_APPROVER_ROLES = new Set(["OWNER", "ADMIN"]);
 
+// F8 müşteri onaylayıcısı: OWNER/ADMIN olmayan üye yalnız kendisine atanmış
+// projenin (AutonomyPolicy.adsSpendApproverIds) L4 onayını verebilir.
+export async function canApproveSpend(
+  workspaceId: string,
+  userId: string,
+  projectId: string | null,
+): Promise<boolean> {
+  // Telegram onaylayıcısı "telegram:<id>" sözde kullanıcısıdır; workspace
+  // rolü yoktur, L4 veremez (Telegram'a L4 için yalnız bağlantı gider).
+  if (userId.includes(":")) return false;
+  const member = await prisma.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId } },
+    select: { role: true },
+  });
+  if (!member) return false;
+  if (SPEND_APPROVER_ROLES.has(member.role)) return true;
+  if (!projectId) return false;
+  const policy = await prisma.autonomyPolicy.findUnique({
+    where: { projectId },
+    select: { workspaceId: true, adsSpendApproverIds: true },
+  });
+  return Boolean(
+    policy &&
+      policy.workspaceId === workspaceId &&
+      policy.adsSpendApproverIds.includes(userId),
+  );
+}
+
 async function assertCanApproveSpend(
   workspaceId: string,
   reviewedByUserId: string,
+  projectId: string | null,
 ): Promise<void> {
-  // Telegram onaylayıcısı "telegram:<id>" sözde kullanıcısıdır; workspace
-  // rolü yoktur, L4 veremez (Telegram'a L4 için yalnız bağlantı gider).
-  const member = reviewedByUserId.includes(":")
-    ? null
-    : await prisma.workspaceMember.findUnique({
-        where: { workspaceId_userId: { workspaceId, userId: reviewedByUserId } },
-        select: { role: true },
-      });
-  if (!member || !SPEND_APPROVER_ROLES.has(member.role)) {
+  if (!(await canApproveSpend(workspaceId, reviewedByUserId, projectId))) {
     throw new AgentelseError(
       "PERMISSION_DENIED",
-      "Only a workspace owner or admin can approve spending.",
+      "Only a workspace owner or admin, or this project's spend approver, can approve spending.",
     );
   }
 }

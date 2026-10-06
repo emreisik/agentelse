@@ -136,3 +136,70 @@ export async function updateAdsAutopilotAction(
     };
   }
 }
+
+// F8 müşteri onaylayıcıları (Settings → Autonomy → Spend approvers): OWNER /
+// ADMIN olmayan üyelerden bu projenin L4 harcama onayını verebilecekler.
+export async function updateSpendApproversAction(
+  formData: FormData,
+): Promise<ActionResult> {
+  try {
+    const projectId = String(formData.get("projectId") ?? "");
+    const { userId } = await requireUser();
+    const access = await requireProjectAccess(userId, projectId);
+    if (!AdsFlags.agency()) {
+      return { ok: false, message: "Spend approvers aren't available yet." };
+    }
+    const member = await prisma.workspaceMember.findUnique({
+      where: {
+        workspaceId_userId: { workspaceId: access.workspaceId, userId },
+      },
+      select: { role: true },
+    });
+    if (!member || !ADMIN_ROLES.has(member.role)) {
+      return {
+        ok: false,
+        message: "Only a workspace owner or admin can choose spend approvers.",
+      };
+    }
+    const picked = formData
+      .getAll("approverIds")
+      .map((value) => String(value))
+      .filter(Boolean);
+    // Yalnız bu workspace'in MEMBER'ları (OWNER/ADMIN zaten onaylayabilir).
+    const members = await prisma.workspaceMember.findMany({
+      where: {
+        workspaceId: access.workspaceId,
+        role: "MEMBER",
+        userId: { in: picked },
+      },
+      select: { userId: true },
+    });
+    const approverIds = members.map((row) => row.userId);
+    const current = await prisma.autonomyPolicy.findUnique({
+      where: { projectId },
+      select: { adsSpendApproverIds: true },
+    });
+    if (!current) return { ok: false, message: "This project has no autonomy policy." };
+    await prisma.autonomyPolicy.update({
+      where: { projectId },
+      data: { adsSpendApproverIds: approverIds },
+    });
+    await AuditLogRepository.record({
+      workspaceId: access.workspaceId,
+      projectId,
+      actorType: "USER",
+      actorId: userId,
+      action: "ads_spend_approvers.updated",
+      entityType: "AutonomyPolicy",
+      entityId: projectId,
+      metadata: { from: current.adsSpendApproverIds, to: approverIds },
+    });
+    revalidatePath(`/projects/${projectId}`);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Couldn't save spend approvers.",
+    };
+  }
+}

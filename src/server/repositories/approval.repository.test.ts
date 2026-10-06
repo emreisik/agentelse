@@ -12,9 +12,10 @@ const approval = {
 };
 const workspaceMember = { findUnique: vi.fn() };
 const task = { findUnique: vi.fn() };
+const autonomyPolicy = { findUnique: vi.fn() };
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { approval, workspaceMember, task },
+  prisma: { approval, workspaceMember, task, autonomyPolicy },
 }));
 vi.mock("@/server/notifications/telegram-approval-notifier", () => ({
   sendApprovalRequestToTelegram: vi.fn(),
@@ -50,6 +51,7 @@ beforeEach(() => {
   approval.findFirstOrThrow.mockResolvedValue(row({ status: "APPROVED" }));
   approval.updateMany.mockResolvedValue({ count: 1 });
   workspaceMember.findUnique.mockResolvedValue({ role: "OWNER" });
+  autonomyPolicy.findUnique.mockResolvedValue(null);
 });
 
 describe("ApprovalRepository.decide", () => {
@@ -69,6 +71,32 @@ describe("ApprovalRepository.decide", () => {
     workspaceMember.findUnique.mockResolvedValue({ role: "MEMBER" });
     await expect(
       ApprovalRepository.decide("ap-1", "p-1", "APPROVED", "user-2"),
+    ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(approval.updateMany).not.toHaveBeenCalled();
+  });
+
+  // F8: müşteri onaylayıcısı yalnız kendi projesinin harcamasını onaylar.
+  it("lets this project's spend approver approve its spending", async () => {
+    workspaceMember.findUnique.mockResolvedValue({ role: "MEMBER" });
+    autonomyPolicy.findUnique.mockResolvedValue({
+      workspaceId: "ws-1",
+      adsSpendApproverIds: ["client-1"],
+    });
+    await ApprovalRepository.decide("ap-1", "p-1", "APPROVED", "client-1");
+    expect(autonomyPolicy.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { projectId: "p-1" } }),
+    );
+    expect(approval.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a spend approver of another project", async () => {
+    workspaceMember.findUnique.mockResolvedValue({ role: "MEMBER" });
+    autonomyPolicy.findUnique.mockResolvedValue({
+      workspaceId: "ws-1",
+      adsSpendApproverIds: ["client-9"],
+    });
+    await expect(
+      ApprovalRepository.decide("ap-1", "p-1", "APPROVED", "client-1"),
     ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
     expect(approval.updateMany).not.toHaveBeenCalled();
   });

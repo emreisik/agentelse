@@ -41,6 +41,7 @@ export async function loadAdsAccountStatus(
         ? `Account time (${accountTimezone})`
         : null,
     runningCampaigns: running,
+    agencyLink: AdsFlags.agency(),
     realtime: !AdsFlags.webhooks()
       ? null
       : account.webhookStatus === "SUBSCRIBED"

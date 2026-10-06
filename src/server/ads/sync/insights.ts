@@ -11,9 +11,13 @@ import {
   type InsightLevel,
   type RawDailyInsight,
 } from "@/lib/ads/insight-rows";
+import { AdsFlags } from "@/lib/ads/flags";
 import { addDays, BACKFILL_DAYS } from "@/lib/ads/sync-plan";
 import { prisma } from "@/lib/prisma";
-import { readDailyInsights } from "@/server/integrations/meta/sync-reads";
+import {
+  isTooMuchDataError,
+  readDailyInsights,
+} from "@/server/integrations/meta/sync-reads";
 
 import type { SyncContext } from "./context";
 
@@ -180,7 +184,17 @@ export async function syncInsightsRange(
         projectId: object?.projectId ?? ctx.primaryProjectId,
       };
     });
-    const adRaw = await read("ad");
+    // F8: reklam listesi "çok fazla veri" derse async rapora düşülür
+    // (hesap, ad set ve kampanya satırları yine bu turda yazılır).
+    let adRaw: RawDailyInsight[];
+    try {
+      adRaw = await read("ad");
+    } catch (error) {
+      if (!AdsFlags.agency() || !isTooMuchDataError(error)) throw error;
+      const { AsyncInsights } = await import("./async-insights");
+      await AsyncInsights.enqueue(ctx, range);
+      adRaw = [];
+    }
     push(adRaw, "AD", (raw) => {
       const object = raw.ad_id ? byId.get(raw.ad_id) : undefined;
       const parent = raw.adset_id ? byId.get(raw.adset_id) : undefined;

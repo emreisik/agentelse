@@ -177,6 +177,13 @@ const envSchema = z.object({
   // doğrulama jetonu (GET hub.verify_token). Boşken abonelik kurulmaz; ayna
   // yoklaması her durumda sürer.
   META_ADS_WEBHOOK_VERIFY_TOKEN: z.string().optional().default(""),
+  // Facebook Login for Business yapılandırması (docs/meta-ads-plan.md F8): App
+  // Dashboard → Facebook Login for Business → Configurations'taki "System-user
+  // access token" yapılandırmasının kimliği. Boşken ajans bağlantısı yok.
+  META_FLFB_CONFIG_ID: z.string().optional().default(""),
+  // Meta bağlantı token'larının sürümlü anahtarları ("k2:<64 hex>,k1:<64
+  // hex>"; ilk anahtar yazmada). Boşken ortak TEMPORARY_SECRET_ENCRYPTION_KEY.
+  META_TOKEN_KEYS: z.string().optional().default(""),
   // "Instagram API with Instagram Login": connects an Instagram professional
   // account directly, with no Facebook account or Page. It lives in the SAME
   // Meta app (App Dashboard > Instagram > API setup with Instagram login) but

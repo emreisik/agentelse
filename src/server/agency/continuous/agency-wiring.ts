@@ -37,9 +37,11 @@ import { LaunchWatchdog } from "@/server/ads/guard/launch-watchdog";
 import { AdsDecisions } from "@/server/ads/decisions";
 import { AdsOptimizer } from "@/server/ads/optimizer";
 import { refreshAdsGoals } from "@/server/ads/goals";
+import { AdsConnections } from "@/server/ads/connections";
 import { AdsInsurance } from "@/server/ads/insurance";
 import { AdsReports } from "@/server/ads/reports/weekly";
 import { claimPeriodic } from "@/server/observability/periodic";
+import { AsyncInsights } from "@/server/ads/sync/async-insights";
 import { AdsSync } from "@/server/ads/sync/runner";
 import { AdsWebhookSubscriptions } from "@/server/ads/webhook-subscriptions";
 import { AdsWebhooks } from "@/server/ads/webhooks";
@@ -203,6 +205,17 @@ registerAgencyTickStep({
 registerAgencyTickStep({
   name: "meta-ads-rules",
   run: () => AdsInsurance.runDue(),
+});
+// F8 (META_ADS_AGENCY): workspace connections (daily debug_token, key
+// rotation) and async ad-level insight reports (one status check per account
+// a tick, per-account daily cap).
+registerAgencyTickStep({
+  name: "meta-ads-connections",
+  run: () => AdsConnections.checkDue(),
+});
+registerAgencyTickStep({
+  name: "meta-ads-async-insights",
+  run: () => AsyncInsights.runDue(),
 });
 // F4 (META_ADS_OPTIMIZER=shadow|on): rules over the mirror once a day per
 // account, and the decisions' lifecycle (expiry, read-back, matured

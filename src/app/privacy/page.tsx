@@ -298,7 +298,13 @@ const SECTIONS: PolicySection[] = [
           problems; a campaign that no longer exists in Meta is removed from our
           copy after 90 days. When Meta notifies us that an ad&rsquo;s status
           changed (for example, it was rejected), we keep that notice for 14
-          days. If you run lead ads, the details people send stay
+          days. If an agency connects a client&rsquo;s business through
+          Facebook Login for Business, we store that business login&rsquo;s
+          access token (encrypted with a separate key), the business id and
+          the ad accounts and Pages it can use. For each ad set we keep a short
+          summary of its targeting (locations, age range, genders and audience
+          ids, never the people in an audience) to spot ad sets that compete
+          for the same people. If you run lead ads, the details people send stay
           in Meta (Leads Center); Agentelse only counts how many arrived and
           never reads or stores them. Page access tokens are derived when needed
           and never stored. We use this data only to publish and manage what you

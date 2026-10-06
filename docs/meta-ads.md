@@ -16,6 +16,7 @@ Plan: [meta-ads-plan.md](meta-ads-plan.md). Bu dosya, planın uygulanmış hâli
 | F5b — Planlama ve formlar | Kodlandı (Leads izin bekliyor) | `META_ADS_PLANNER=true` (+ v2) |
 | F6 — Raporlama ve öğrenme | Kodlandı | `META_ADS_REPORTS=true` (+ ayna) |
 | F7 — Webhook ve otonomi | Kodlandı | `META_ADS_WEBHOOKS=true`, `META_ADS_AUTOPILOT=true`, isteğe bağlı `META_ADS_RULES=true` |
+| F8 — Ajans ölçeği ve token modeli | Kodlandı (FLfB App Review bekliyor) | `META_ADS_AGENCY=true` |
 
 Kod dışı adımlar sahipte (aşağıda "Sahip adımları").
 
@@ -276,6 +277,21 @@ Migration: `20261006180000_add_ads_autonomy_and_webhook_events` (`AutonomyPolicy
 - Lansman bitince / kampanya gidince kural silinir; Disconnect'te izinlerden önce silinir, silinemeyen /health "Meta Ads clean-up"ta listelenir.
 - Kural yürütmeleri yapı senkronunun başında `adrules_history`'den okunur, RULE aktörlü `AdsOperation` olur (drift sayılmaz) ve "Paused by Agentelse safety rule: …" uyarısı açılır.
 
+## F8 — Ajans ölçeği ve token modeli
+
+Bayrak: `META_ADS_AGENCY=true`. Migration: `20261006200000_add_ads_connection` (`AdsConnection`, `AdsAccount.connectionId` + `asyncInsights`, `AdsObject.targeting`, `AutonomyPolicy.adsSpendApproverIds`).
+
+- **Workspace bağlantısı (FLfB + BISU)**: `/ads` sayfasındaki "Connect a business" (yalnız OWNER/ADMIN) Facebook Login for Business'ı `config_id` ile açar (`src/server/integrations/meta/business-login.ts`, uçlar `/api/integrations/meta-business/{start,callback}`; state imzalı, oturumdaki kullanıcıyla eşleşmeli). Dönen token `debug_token` ile denetlenir: süresizse `BISU` (business'lı) / `SYSTEM_USER`, süreliyse `USER`. `/me?fields=client_business_id` ile business bulunur; aynı business'ı yeniden bağlamak aynı satırı günceller ve atanmış projelerin kopyalarını yeniler (`src/server/ads/connections.ts`). Günde bir `debug_token` denetimi: geçersizse bağlantı ve kopyaları EXPIRED.
+- **Projelere atama**: `/ads` → "Not in a project yet": business uçlarından (`owned_ad_accounts` + `client_ad_accounts`, Sayfalar için `owned_pages` + `client_pages`) gelen hesap bir projeye (ve isteğe bağlı Sayfaya) atanır. Atama projenin Meta Ads bağlantısını bu token'ın kopyasıyla kurar: ayna, lansman, kararlar ve bekçiler değişmeden çalışır. Bir bağlantı birden çok projeye hesap atar. Yalnız bağlantının kendi hesabı ve workspace'in projesi kabul edilir (testli).
+- **Ajans görünümü** `/ads`: workspace'in bütün hesapları (sağlık, son 7 gün harcama, çalışan kampanya, kritik / kontrol edilecek uyarı, tazelik, gerçek zamanlı uyarı, projeler ve otomatik pilot seviyeleri). Projenin Ads sayfası başlığında "All ad accounts" bağlantısı.
+- **Sürümlü anahtar** (`src/server/security/key-ring.ts`, testli): bağlantı token'ı `META_TOKEN_KEYS="k2:<64 hex>,k1:<64 hex>"` ile (ilk anahtar yazmada, hepsi okumada) şifrelenir, `keyId` satırda; tanımlı değilse ortak anahtar (`legacy`). Anahtar değişince günlük denetim eski kayıtları yeni anahtarla yeniden yazar. Proje kopyaları mevcut yolların okuduğu ortak anahtarla kalır.
+- **Müşteri onaylayıcısı**: Settings → Autonomy → "Spend approvers": OWNER/ADMIN olmayan üyeler (ör. müşteri) yalnız o projenin L4 harcama onayını verebilir (`ApprovalRepository.decide` kapısı, testli). Telegram L4 eşlemesi yapılmadı (gerek olunca).
+- **Batch okuma** (`src/server/integrations/meta/batch.ts`, testli): en çok 50 GET tek istekte; webhook işleyicisi nesneleri tek batch'te okur.
+- **Async insights** (`src/server/ads/sync/async-insights.ts`): reklam düzeyi liste okuması "çok fazla veri" (100/1504018, 2/1504038, 100/1487534) verirse rapor Meta'da arka planda hazırlanır; tick hesap başına tek durum kontrolü yapar, "Job Completed"ta satırlar yazılır, "Job Skipped" yeniden gönderilir. Hesap başına günde min(10, açık reklam) iş; dolunca bilgi uyarısı ("Some ad-level numbers arrive tomorrow"). Bayrak kapalıyken eski davranış (hata yükselir).
+- **Metrik anomalisi** (`src/lib/ads/anomaly.ts`, testli): günde bir hesap başına dünün CPM, CPA ve link CTR'ı, haftanın gününe göre düzeltilmiş 14 günlük tabana göre z-skoru (|z| ≥ 3, yalnız kötü yön, asgari hacim) → `METRIC_ANOMALY` uyarısı.
+- **Kitle çakışması** (`src/lib/ads/overlap.ts`, testli): aynada ad set hedeflemesinin özeti tutulur (konum, yaş, cinsiyet, kitle kimlikleri); aynı amaçla çalışan iki ad set aynı insanları kapsıyorsa `AUDIENCE_OVERLAP` önerisi.
+- **Bilinçli sapmalar**: proje başına çok hesap şemada var (AdsAccountProject) ama arayüz ve lansman v1'de tek seçili hesapla çalışır; ajans system user + partner erişimi ve Meta'da bağlantının uzaktan kaldırılması yok (müşteri Business Settings → Integrations'tan kaldırır).
+
 ## Sahip adımları (kod dışı)
 
 1. **Birikim raporunu oku**: yeni bir terminal sekmesinde, repo klasöründe `npm run db:report:backlog`. Çıktıyı Claude'a yapıştır.
@@ -296,3 +312,6 @@ Migration: `20261006180000_add_ads_autonomy_and_webhook_events` (`AutonomyPolicy
 16. **F7 webhook**: Railway web servisine `META_ADS_WEBHOOK_VERIFY_TOKEN=<rastgele uzun değer>` ve `META_ADS_WEBHOOKS=true`. Uygulama aboneliği ertesi tick'te kendiliğinden kurulur (Meta, `https://<uygulama>/api/webhooks/meta-ads` adresini doğrular); istersen App Dashboard → Webhooks → Ad Account'tan kontrol et. Ads sayfası başlığında "Real-time alerts on" görünmeli; admin olmayan hesapta "Real-time alerts need an admin of this ad account". Webhook'lar uygulama Live moddayken gelir (plan §7).
 17. **F7 otomatik pilot**: önce Meta App Review'daki `ads_management` kullanım açıklamasına otomatik koruma eylemlerini ekle (gizlilik metni güncellendi: "If a workspace owner or admin turns on Ads autopilot…"). Sonra `META_ADS_AUTOPILOT=true` ve Settings → Autonomy → Ads autopilot → "Guarded auto" + onay kutusu. Full auto, önkoşullar tutunca (F8'in system user bağlantısı dahil) açılabilir.
 18. **F7 Ad Rules (isteğe bağlı)**: önce test reklam hesabında `META_ADS_RULES=true` ile bir lansman; Ads Manager → Automated rules'da "Agentelse safety · …" kuralını gör, Graph Explorer'da `/{rule_id}/preview` ile hangi nesnelere uygulandığını kontrol et ve token iptalinden sonra kuralın çalışıp çalışmadığını not et (plan §3.9). Sonra canlıda aç.
+19. **F8 Facebook Login for Business**: Meta App Dashboard → Facebook Login for Business → Configurations → "System-user access token" türünde bir yapılandırma oluştur (izinler: `ads_management`, `ads_read`, `business_management`, `pages_show_list`, `pages_read_engagement`; varlıklar: reklam hesapları ve Sayfalar). Kimliği Railway'e `META_FLFB_CONFIG_ID=...`. "Valid OAuth Redirect URIs"e `https://<uygulama>/api/integrations/meta-business/callback` ekle. Business tipi uygulama + Advanced Access (App Review) gerekir.
+20. **F8 anahtar**: Railway'e `META_TOKEN_KEYS=k1:<openssl rand -hex 32 çıktısı>` (yeni terminal sekmesinde `openssl rand -hex 32`). Döndürmek için yeni anahtarı başa ekle: `k2:<yeni>,k1:<eski>`; eski anahtarı ancak /ads'teki bağlantılar bir gün sonra yeniden yazıldıktan sonra çıkar.
+21. **F8'i aç**: `META_ADS_AGENCY=true`. `/ads` sayfasında "Connect a business" → müşteri business'ını seç → "Not in a project yet" listesinden hesabı projeye ata. Projenin Ads sayfası "All ad accounts" bağlantısı gösterir; Settings → Autonomy'de "Spend approvers" kartı çıkar.

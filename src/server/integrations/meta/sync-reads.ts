@@ -14,6 +14,7 @@ import {
   OBJECT_STATUS_FIELDS,
   WINDOW_FIELDS,
 } from "./fields";
+import { metaBatchGet } from "./batch";
 import { metaFetch } from "./graph";
 import { requestPages } from "./paging";
 import { GRAPH_BASE } from "./version";
@@ -255,6 +256,26 @@ export async function readMirrorObject(
   }
 }
 
+// F8: birden çok nesnenin hedefli okuması tek batch'te (webhook işleyicisi).
+// Bulunamayan ya da hatalı alt istek null döner.
+export async function readMirrorObjects(
+  objects: readonly { id: string; level: "CAMPAIGN" | "ADSET" | "AD" }[],
+  accessToken: string,
+): Promise<Map<string, Record<string, unknown> | null>> {
+  const fieldsOf = (level: "CAMPAIGN" | "ADSET" | "AD") =>
+    level === "CAMPAIGN" ? CAMPAIGN_FIELDS : level === "ADSET" ? ADSET_FIELDS : AD_FIELDS;
+  const results = await metaBatchGet<Record<string, unknown>>(
+    objects.map((object) => `${object.id}?fields=${encodeURIComponent(fieldsOf(object.level))}`),
+    accessToken,
+  );
+  return new Map(
+    objects.map((object, index) => {
+      const result = results[index];
+      return [object.id, result?.ok ? result.body : null];
+    }),
+  );
+}
+
 export type RawInsight = {
   date_start?: string;
   date_stop?: string;
@@ -464,4 +485,85 @@ export async function readRecommendations(
     .map((text) => text.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .slice(0, 3);
+}
+
+// F8 async insights (docs/meta-ads-plan.md §3.1): bölünmüş senkron okuma hâlâ
+// "çok fazla veri" hatası verirse rapor Meta'da arka planda hazırlanır.
+const TOO_MUCH_DATA: ReadonlyArray<readonly [number, number]> = [
+  [100, 1504018],
+  [2, 1504038],
+  [100, 1487534],
+];
+
+export function isTooMuchDataError(error: unknown): boolean {
+  if (!(error instanceof MetaApiError)) return false;
+  return (
+    TOO_MUCH_DATA.some(
+      ([code, subcode]) =>
+        error.metaErrorCode === code && error.metaErrorSubcode === subcode,
+    ) || /reduce the amount of data/i.test(error.message)
+  );
+}
+
+export async function startAsyncInsights(input: {
+  adAccountId: string;
+  accessToken: string;
+  level: InsightsLevel;
+  since: string;
+  until: string;
+}): Promise<string> {
+  const params: Record<string, string> = {
+    level: input.level,
+    fields: [
+      INSIGHT_FIELDS,
+      ...(input.level === "ad" ? [AD_RANKING_FIELDS] : []),
+      ...(resultsFieldSupported ? [INSIGHT_RESULT_FIELDS] : []),
+    ].join(","),
+    time_range: JSON.stringify({ since: input.since, until: input.until }),
+    time_increment: "1",
+    access_token: input.accessToken,
+  };
+  const body = await metaFetch<{ report_run_id?: string }>(
+    `${GRAPH_BASE}/${input.adAccountId}/insights`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(params).toString(),
+    },
+  );
+  if (!body.report_run_id) throw new Error("Meta didn't return a report id");
+  return body.report_run_id;
+}
+
+// "Job Not Started" | "Job Started" | "Job Running" | "Job Completed" |
+// "Job Failed" | "Job Skipped"
+export async function readAsyncReportStatus(
+  reportRunId: string,
+  accessToken: string,
+): Promise<{ status: string; percent: number }> {
+  const body = await metaFetch<{
+    async_status?: string;
+    async_percent_completion?: number;
+  }>(
+    url(reportRunId, {
+      fields: "async_status,async_percent_completion",
+      access_token: accessToken,
+    }),
+  );
+  return {
+    status: body.async_status ?? "",
+    percent: Number(body.async_percent_completion ?? 0),
+  };
+}
+
+export async function readAsyncReportRows(
+  reportRunId: string,
+  accessToken: string,
+): Promise<RawInsight[]> {
+  return (
+    await requestPages<RawInsight>(
+      url(`${reportRunId}/insights`, { limit: "500", access_token: accessToken }),
+      { label: "async-insights", maxPages: 50 },
+    )
+  ).items;
 }

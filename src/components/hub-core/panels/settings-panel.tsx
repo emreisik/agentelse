@@ -10,7 +10,10 @@ import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/dates";
 import { updateAutonomyPolicyAction } from "@/server/actions/agency-config-actions";
-import { updateAdsAutopilotAction } from "@/server/actions/ads-autopilot-actions";
+import {
+  updateAdsAutopilotAction,
+  updateSpendApproversAction,
+} from "@/server/actions/ads-autopilot-actions";
 import {
   fullPrerequisitesMet,
   missingFullPrerequisites,
@@ -298,7 +301,92 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
           }
         />
       ) : null}
+
+      {AdsFlags.agency() ? (
+        <SpendApproversCard
+          projectId={projectId}
+          workspaceId={policy.workspaceId}
+          approverIds={policy.adsSpendApproverIds}
+        />
+      ) : null}
     </div>
+  );
+}
+
+// Spend approvers (docs/meta-ads-plan.md F8): müşteri tarafındaki üye bu
+// projenin harcama onayını verebilir (yalnız bu proje). Owner ve admin zaten
+// onaylayabildiği için listede yalnız üyeler var.
+async function SpendApproversCard({
+  projectId,
+  workspaceId,
+  approverIds,
+}: {
+  projectId: string;
+  workspaceId: string;
+  approverIds: string[];
+}) {
+  const members = await prisma.workspaceMember.findMany({
+    where: { workspaceId, role: "MEMBER" },
+    select: { userId: true, user: { select: { name: true, email: true } } },
+    orderBy: { createdAt: "asc" },
+    take: 100,
+  });
+  return (
+    <ActionForm
+      action={updateSpendApproversAction}
+      successMessage="Spend approvers updated"
+      className="space-y-4"
+    >
+      <input type="hidden" name="projectId" value={projectId} />
+      <Card size="sm">
+        <CardHeader className="flex flex-row items-center gap-2 space-y-0">
+          <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10">
+            <ShieldCheck className="size-4 text-primary" />
+          </span>
+          <CardTitle className="text-base">Spend approvers</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Owners and admins can always approve ad spend. Pick members (for
+            example your client) who may approve spend for this project only.
+          </p>
+          {members.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Invite your client to the workspace as a member first.
+            </p>
+          ) : (
+            members.map((member) => (
+              <label
+                key={member.userId}
+                className="flex cursor-pointer items-center gap-3 text-sm"
+              >
+                <input
+                  type="checkbox"
+                  name="approverIds"
+                  value={member.userId}
+                  defaultChecked={approverIds.includes(member.userId)}
+                  className="accent-primary"
+                />
+                <span>
+                  {member.user.name ?? member.user.email}
+                  {member.user.name && member.user.email ? (
+                    <span className="text-muted-foreground">
+                      {" "}
+                      · {member.user.email}
+                    </span>
+                  ) : null}
+                </span>
+              </label>
+            ))
+          )}
+        </CardContent>
+      </Card>
+      {members.length > 0 ? (
+        <div className="flex justify-end">
+          <SubmitButton>Save approvers</SubmitButton>
+        </div>
+      ) : null}
+    </ActionForm>
   );
 }
 

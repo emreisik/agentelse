@@ -10,9 +10,15 @@ import {
   type GuardFinding,
   type GuardObject,
 } from "@/lib/ads/guard-rules";
+import { anomalyTitle, metricAnomalies } from "@/lib/ads/anomaly";
 import { envelopeMinor, parseLaunchSpec } from "@/lib/ads/launch-spec";
 import { formatMoney } from "@/lib/ads/money";
 import { nameWithoutTag } from "@/lib/ads/operation-tag";
+import {
+  overlapKey,
+  overlappingPairs,
+  type TargetingSummary,
+} from "@/lib/ads/overlap";
 import { addDays, safeTimezone, weekStartSunday } from "@/lib/ads/sync-plan";
 import { tokenWarningDays } from "@/lib/ads/token-health";
 import { metaWorkExcludedHere } from "@/lib/local-worker-policy";
@@ -322,6 +328,110 @@ async function autoPause(
   }
 }
 
+// F8 (META_ADS_AGENCY): günde bir kez hesap başına metrik anomalisi (dünün
+// CPM / CPA / link CTR z-skoru) ve çalışan ad set'ler arasında kitle
+// çakışması. Yalnız aynadan; bulgular uyarıdır (otomatik eylem yok).
+async function dailyScaleChecks(ctx: SyncContext, objects: AdsObject[]): Promise<void> {
+  if (!AdsFlags.agency()) return;
+  if (!(await claimPeriodic(`ads.scale-checks:${ctx.account.id}`, 24 * 60 * 60_000, ctx.now))) {
+    return;
+  }
+  const yesterday = addDays(ctx.today, -1);
+  const rows = await prisma.adsInsightDaily.findMany({
+    where: {
+      adsAccountId: ctx.account.id,
+      level: "ACCOUNT",
+      date: { gte: dateOf(addDays(yesterday, -28)), lte: dateOf(yesterday) },
+    },
+    select: { date: true, spendMinor: true, impressions: true, linkClicks: true, results: true },
+  });
+  const anomalies = metricAnomalies(
+    rows.map((row) => ({
+      date: row.date.toISOString().slice(0, 10),
+      spendMinor: Number(row.spendMinor),
+      impressions: row.impressions,
+      linkClicks: row.linkClicks,
+      results: row.results,
+    })),
+    yesterday,
+  );
+  const running = objects.filter(
+    (object) =>
+      object.level === "ADSET" &&
+      !object.goneAt &&
+      object.configuredStatus === "ACTIVE" &&
+      object.effectiveStatus === "ACTIVE",
+  );
+  const pairs = overlappingPairs(
+    running.flatMap((adSet) => {
+      const targeting = adSet.targeting as TargetingSummary | null;
+      return targeting
+        ? [
+            {
+              externalId: adSet.externalId,
+              name: nameWithoutTag(adSet.name),
+              optimizationGoal: adSet.optimizationGoal,
+              targeting,
+            },
+          ]
+        : [];
+    }),
+  );
+  for (const project of ctx.projects) {
+    const open = new Set<string>();
+    for (const anomaly of anomalies) {
+      const dedupeKey = `METRIC_ANOMALY:${anomaly.metric}:${ctx.externalId}:${yesterday}`;
+      open.add(dedupeKey);
+      await AdsAlerts.raise(
+        {
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          adsAccountId: ctx.account.id,
+          externalId: ctx.externalId,
+          kind: "METRIC_ANOMALY",
+          severity: "WARN",
+          dedupeKey,
+          title: anomalyTitle(anomaly),
+          detail:
+            anomaly.metric === "LINK_CTR"
+              ? "Far fewer people clicked than on a normal day. Check the ads and the link."
+              : "Far above a normal day for this account. Check the auction, the audience and recent changes.",
+          data: { ...anomaly, day: yesterday },
+        },
+        ctx.now,
+      );
+    }
+    for (const pair of pairs) {
+      const dedupeKey = `AUDIENCE_OVERLAP:${overlapKey(pair.a.externalId, pair.b.externalId)}`;
+      open.add(dedupeKey);
+      await AdsAlerts.raise(
+        {
+          workspaceId: project.workspaceId,
+          projectId: project.projectId,
+          adsAccountId: ctx.account.id,
+          externalId: pair.a.externalId,
+          kind: "AUDIENCE_OVERLAP",
+          severity: "INFO",
+          dedupeKey,
+          title: `Two ad sets target the same people: ${pair.a.name} and ${pair.b.name}`,
+          detail:
+            "They bid against each other in the same auctions, which pushes both costs up. Merge them, or exclude one audience from the other.",
+        },
+        ctx.now,
+      );
+    }
+    await AdsAlerts.resolveMissing(
+      {
+        projectId: project.projectId,
+        kinds: ["METRIC_ANOMALY", "AUDIENCE_OVERLAP"],
+        stillOpen: open,
+        adsAccountId: ctx.account.id,
+      },
+      ctx.now,
+    );
+  }
+}
+
 export const AdsGuard = {
   async evaluateAccount(ctx: SyncContext): Promise<void> {
     if (ctx.projects.length === 0) return;
@@ -523,6 +633,13 @@ export const AdsGuard = {
         ctx.now,
       );
     }
+
+    await dailyScaleChecks(ctx, objects).catch((error: unknown) => {
+      console.error(
+        `[ads-guard] scale checks failed for ${ctx.externalId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    });
   },
 
   // Tick adımı (15 dakikada bir, süreçler arası kilitli).

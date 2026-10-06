@@ -8,6 +8,7 @@ import {
   driftSeverity,
   isDelivering,
   mirrorFieldsFrom,
+  stableStringify,
   trackedChanges,
   trackedHash,
   type MetaRawObject,
@@ -15,6 +16,7 @@ import {
   type MirrorLevel,
 } from "@/lib/ads/mirror";
 import { nameWithoutTag, tagOfName } from "@/lib/ads/operation-tag";
+import { targetingSummary } from "@/lib/ads/overlap";
 import { resultActionTypeForGoal } from "@/lib/ads/results";
 import { prisma } from "@/lib/prisma";
 import { AdsAlerts } from "@/server/ads/guard/alerts";
@@ -175,6 +177,8 @@ export async function syncStructure(ctx: SyncContext): Promise<StructureResult> 
     seen.push(raw.id);
 
     const previous = byId.get(raw.id);
+    // F8 kitle çakışması: ad set hedeflemesinin özeti (kişisel veri yok).
+    const targeting = level === "ADSET" ? targetingSummary(raw.targeting) : null;
     const data = {
       ...dataFor(fields),
       name: fields.name,
@@ -182,6 +186,7 @@ export async function syncStructure(ctx: SyncContext): Promise<StructureResult> 
       projectId,
       createdByAgentelse: ours,
       launchId: ours ? (op!.launchId ?? null) : null,
+      targeting: json(targeting),
     };
     if (!previous) {
       creates.push({
@@ -197,6 +202,7 @@ export async function syncStructure(ctx: SyncContext): Promise<StructureResult> 
         failedDeliveryChecks: (fields.failedDeliveryChecks ?? undefined) as
           | Prisma.InputJsonValue
           | undefined,
+        targeting: (targeting ?? undefined) as Prisma.InputJsonValue | undefined,
       });
       continue;
     }
@@ -213,7 +219,9 @@ export async function syncStructure(ctx: SyncContext): Promise<StructureResult> 
       JSON.stringify(previous.reviewFeedback ?? null) !==
         JSON.stringify(fields.reviewFeedback ?? null) ||
       Number(previous.budgetRemainingMinor ?? -1) !==
-        (fields.budgetRemainingMinor ?? -1);
+        (fields.budgetRemainingMinor ?? -1) ||
+      // JSONB anahtar sırasını değiştirir: sıradan bağımsız karşılaştırma.
+      stableStringify(previous.targeting ?? null) !== stableStringify(targeting);
     if (!changed) continue;
 
     let driftAt: Date | undefined;

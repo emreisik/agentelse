@@ -1,21 +1,19 @@
 import "server-only";
 
-import { Prisma, type AdsAccount, type AdsWebhookEvent } from "@prisma/client";
+import { Prisma, type AdsWebhookEvent } from "@prisma/client";
 
 import { AdsFlags } from "@/lib/ads/flags";
 import { mirrorFieldsFrom, type MetaRawObject } from "@/lib/ads/mirror";
 import { nameWithoutTag } from "@/lib/ads/operation-tag";
-import { safeTimezone } from "@/lib/ads/sync-plan";
 import type { ParsedWebhookEvent } from "@/lib/ads/webhooks";
 import { metaWorkExcludedHere } from "@/lib/local-worker-policy";
 import { prisma } from "@/lib/prisma";
-import { dayKeyInTimezone } from "@/lib/timezone";
 import { AdsAlerts } from "@/server/ads/guard/alerts";
 import { AdsGuard } from "@/server/ads/guard/watchdogs";
-import type { SyncContext, SyncProject } from "@/server/ads/sync/context";
+import type { SyncContext } from "@/server/ads/sync/context";
+import { syncContextFor } from "@/server/ads/sync/context-for";
 import { withMetaCallContext } from "@/server/integrations/meta/call-context";
-import { readMirrorObject } from "@/server/integrations/meta/sync-reads";
-import { decryptSecret } from "@/server/security/crypto";
+import { readMirrorObjects } from "@/server/integrations/meta/sync-reads";
 
 // Meta Ads webhook olay kutusu ve işleyicisi (docs/meta-ads-plan.md F7).
 // Uç (api/webhooks/meta-ads) yalnız yazar ve hemen 200 döner; ajans tick'i
@@ -123,75 +121,36 @@ async function retryLater(
   }
 }
 
-type AccountWithProjects = AdsAccount & {
-  projects: { projectId: string; brandId: string }[];
-};
-
-async function contextFor(
-  account: AccountWithProjects,
-  now: Date,
-): Promise<SyncContext | null> {
-  if (!account.credentialId || account.projects.length === 0) return null;
-  const credential = await prisma.integrationCredential.findUnique({
-    where: { id: account.credentialId },
-    select: { status: true, encryptedSecret: true },
+// Nesnelerin durum alanlarını tek batch okumayla tazeler (drift'e konu
+// alanlar yapı senkronunda kalır). Aynada olmayan yeni nesneyi bir sonraki
+// yapı senkronu ekler.
+async function refreshObjects(ctx: SyncContext, externalIds: string[]): Promise<void> {
+  if (externalIds.length === 0) return;
+  const rows = await prisma.adsObject.findMany({
+    where: { adsAccountId: ctx.account.id, externalId: { in: externalIds } },
   });
-  if (
-    !credential ||
-    credential.status !== "ACTIVE" ||
-    !credential.encryptedSecret
-  )
-    return null;
-  const rows = await prisma.project.findMany({
-    where: { id: { in: account.projects.map((link) => link.projectId) } },
-    select: { id: true, workspaceId: true, name: true, status: true },
-  });
-  const brandOf = new Map(
-    account.projects.map((link) => [link.projectId, link.brandId]),
+  const targets = rows.flatMap((row) =>
+    row.level === "ACCOUNT" ? [] : [{ row, level: row.level }],
   );
-  const projects: SyncProject[] = rows.map((row) => ({
-    projectId: row.id,
-    workspaceId: row.workspaceId,
-    brandId: brandOf.get(row.id) ?? "",
-    name: row.name,
-    status: row.status,
-  }));
-  const timezone = safeTimezone(account.timezoneName);
-  return {
-    account,
-    accessToken: decryptSecret(credential.encryptedSecret),
-    externalId: account.externalId,
-    currency: account.currency,
-    timezone,
-    today: dayKeyInTimezone(now, timezone),
-    now,
-    projects,
-    primaryProjectId: projects[0]?.projectId ?? null,
-  };
-}
-
-// Nesnenin durum alanlarını tazeler (drift'e konu alanlar yapı senkronunda).
-async function refreshObject(
-  ctx: SyncContext,
-  externalId: string,
-): Promise<void> {
-  const row = await prisma.adsObject.findFirst({
-    where: { adsAccountId: ctx.account.id, externalId },
-  });
-  // Aynada olmayan yeni nesneyi bir sonraki yapı senkronu ekler.
-  if (!row || row.level === "ACCOUNT") return;
-  const raw = await readMirrorObject(externalId, row.level, ctx.accessToken);
-  if (!raw) return;
-  const fields = mirrorFieldsFrom(raw as unknown as MetaRawObject, row.level);
-  await prisma.adsObject.update({
-    where: { id: row.id },
-    data: {
-      effectiveStatus: fields.effectiveStatus,
-      issues: json(fields.issues),
-      reviewFeedback: json(fields.reviewFeedback),
-      failedDeliveryChecks: json(fields.failedDeliveryChecks),
-    },
-  });
+  if (targets.length === 0) return;
+  const raws = await readMirrorObjects(
+    targets.map((target) => ({ id: target.row.externalId, level: target.level })),
+    ctx.accessToken,
+  );
+  for (const { row, level } of targets) {
+    const raw = raws.get(row.externalId);
+    if (!raw) continue;
+    const fields = mirrorFieldsFrom(raw as unknown as MetaRawObject, level);
+    await prisma.adsObject.update({
+      where: { id: row.id },
+      data: {
+        effectiveStatus: fields.effectiveStatus,
+        issues: json(fields.issues),
+        reviewFeedback: json(fields.reviewFeedback),
+        failedDeliveryChecks: json(fields.failedDeliveryChecks),
+      },
+    });
+  }
 }
 
 async function raiseFatigue(
@@ -280,7 +239,7 @@ export const AdsWebhooks = {
     );
     let handled = false;
     for (const account of accounts) {
-      const ctx = await contextFor(account, now);
+      const ctx = await syncContextFor(account, now);
       if (!ctx) continue;
       handled = true;
       const objectIds = [
@@ -306,7 +265,7 @@ export const AdsWebhooks = {
       await withMetaCallContext(
         { account: externalId, lane: "P2_BACKGROUND", callSite: "ads.webhook" },
         async () => {
-          for (const objectId of objectIds) await refreshObject(ctx, objectId);
+          await refreshObjects(ctx, objectIds);
         },
       );
       for (const adId of fatigued) await raiseFatigue(ctx, adId);

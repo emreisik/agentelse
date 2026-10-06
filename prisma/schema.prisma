@@ -3163,6 +3163,9 @@ model AutonomyPolicy {
   // FULL'ün aylık harcama tavanı (reklam hesabı para biriminin alt
   // biriminde). Boşken FULL açılamaz.
   adsMonthlyCapMinor BigInt?
+  // F8 müşteri onaylayıcıları: OWNER/ADMIN olmayan ama bu projenin L4
+  // (harcama) onayını verebilen workspace üyeleri (yalnız bu proje).
+  adsSpendApproverIds String[] @default([])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3392,6 +3395,12 @@ model AdsAccount {
   lastWebhookAt    DateTime?
   // Ad Rules sigortası (F7, isteğe bağlı): adrules_history son okuması.
   rulesHistoryAt   DateTime?
+  // F8: hesabın geldiği workspace bağlantısı (FLfB / BISU); null = proje
+  // bağlantısı (kullanıcı token'ı).
+  connectionId     String?
+  // F8 async insights: bekleyen rapor işleri ve günlük sayaç
+  // ({ day, started, runs: [{ id, level, since, until, createdAt }] }).
+  asyncInsights    Json?
 
   projects AdsAccountProject[]
 
@@ -3401,6 +3410,7 @@ model AdsAccount {
   @@unique([workspaceId, platform, externalId])
   @@index([externalId])
   @@index([syncLeaseUntil])
+  @@index([connectionId])
 }
 
 // Hesap ↔ proje bağlantısı. v1'de proje başına tek seçili hesap (K10);
@@ -3513,6 +3523,9 @@ model AdsObject {
   reviewFeedback       Json?
   failedDeliveryChecks Json?
   advantageState       String?
+  // F8 kitle çakışması: hedeflemenin özeti (ülkeler, yaş, cinsiyet, özel
+  // kitleler); kişisel veri yok.
+  targeting           Json?
   resultActionType     String?
   creativeExternalId   String?
   thumbnailAssetId     String?
@@ -3757,4 +3770,33 @@ model AdsWebhookEvent {
 
   @@index([status, receivedAt])
   @@index([receivedAt])
+}
+
+// Workspace düzeyinde Meta bağlantısı (docs/meta-ads-plan.md F8): Facebook
+// Login for Business (config_id) ile alınan, kişiye bağlı olmayan BISU
+// token'ı. Hesapları projelere atanır (proje bağlantısı bu token'ın
+// kopyasını taşır). Token ayrı ve sürümlü anahtarla şifrelenir (keyId).
+model AdsConnection {
+  id                  String    @id @default(cuid())
+  workspaceId         String
+  // USER | BISU | SYSTEM_USER
+  kind                String
+  name                String?
+  // Müşterinin business portfolio'su (/me?fields=client_business_id).
+  clientBusinessId    String?
+  encryptedSecret     String
+  // META_TOKEN_KEYS içindeki anahtarın kimliği; "legacy" = ortak anahtar.
+  keyId               String    @default("legacy")
+  scopes              String[]  @default([])
+  // null: süresiz (debug_token expires_at = 0).
+  expiresAt           DateTime?
+  dataAccessExpiresAt DateTime?
+  // ACTIVE | EXPIRED | REVOKED
+  status              String    @default("ACTIVE")
+  lastCheckedAt       DateTime?
+  createdByUserId     String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([workspaceId])
 }

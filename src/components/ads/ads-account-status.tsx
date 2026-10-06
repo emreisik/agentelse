@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, BellOff, CirclePause, RefreshCw } from "lucide-react";
@@ -35,6 +36,8 @@ export type AdsAccountStatusProps = {
   // F7: webhook aboneliği. "polling" = hesapta admin yok, uyarılar yoklamayla
   // (en geç ~1 saat) gelir; null = webhook kapalı ya da henüz denenmedi.
   realtime?: "on" | "polling" | null;
+  // F8: ajans görünümüne (/ads) bağlantı.
+  agencyLink?: boolean;
 };
 
 const SEVERITY_TONE: Record<AdsStatusAlert["severity"], string> = {
@@ -125,6 +128,11 @@ export function AdsAccountStatus(props: AdsAccountStatusProps) {
               {props.updatedText}
               {props.accountTimeLabel ? ` · ${props.accountTimeLabel}` : ""}
             </span>
+          ) : null}
+          {props.agencyLink ? (
+            <Link href="/ads" className="text-muted-foreground underline-offset-2 hover:underline">
+              All ad accounts
+            </Link>
           ) : null}
           {props.realtime === "on" ? (
             <span className="text-muted-foreground">Real-time alerts on</span>

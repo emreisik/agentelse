@@ -11,6 +11,7 @@ vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
   isProjectAgencyActive: vi.fn(),
 }));
 vi.mock("@/server/works/flag", () => ({ isWorksEnabled: vi.fn(() => true) }));
+vi.mock("@/server/ideas/idea-modules", () => ({ moduleRefillIfDue: vi.fn() }));
 
 const {
   refillDue,
@@ -31,6 +32,15 @@ describe("pool refill", () => {
     expect(refillDue({ fresh: 7, lowWater: 8, last: null, now: NOW })).toBe(
       true,
     );
+  });
+
+  it("is never due while the pool has no room left", () => {
+    expect(
+      refillDue({ fresh: 0, lowWater: 8, last: null, now: NOW, room: 0 }),
+    ).toBe(false);
+    expect(
+      refillDue({ fresh: 0, lowWater: 8, last: null, now: NOW, room: 3 }),
+    ).toBe(true);
   });
 
   it("waits hours after a good run, an hour after a failed one", () => {

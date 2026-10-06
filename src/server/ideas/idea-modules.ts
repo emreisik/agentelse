@@ -16,6 +16,7 @@ import { ConstitutionService } from "@/server/agency/constitution/constitution-s
 import { brandRuleLanguageOf } from "@/server/brand/rule-language";
 import { getProjectTimezone } from "@/server/chat/content-plan";
 import {
+  poolCapacity,
   saveIdeaConcepts,
   type GenerateIdeasResult,
 } from "@/server/ideas/idea-engine";
@@ -126,13 +127,24 @@ export async function generateSeoIdeas(input: {
   const pool = rows.flatMap((row) =>
     row.concept?.module === "seo" ? [row.concept.draft.keyword] : [],
   );
+  const wanted = Math.min(
+    SEO_PER_CALL * 2,
+    Math.max(1, input.count ?? SEO_PER_CALL),
+  );
+  // Room first: no model call for ideas a full pool cannot take.
+  const capacity = await poolCapacity({
+    scope,
+    rows,
+    isMock: ReasoningService.isMockMode(),
+    now,
+    wanted,
+  });
+  const fits = Math.min(wanted, capacity.free + capacity.retire.length);
+  if (fits <= 0) return { ok: false, reason: "FULL" };
   const run = await ReasoningService.run(ideaSeoDef, {
     ...scope,
     context: {
-      count: Math.min(
-        SEO_PER_CALL * 2,
-        Math.max(1, input.count ?? SEO_PER_CALL),
-      ),
+      count: fits,
       today: utcToZonedDateTimeLocal(now, timezone).slice(0, 10),
       brand,
       quickWins:

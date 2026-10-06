@@ -1,23 +1,16 @@
 "use server";
 
 import { contactSchema, type ContactFormValues } from "@/lib/contact-schema";
+import { CONTACT_EMAIL } from "@/lib/site";
 import { sendTelegramMessage } from "@/server/notifications/telegram.service";
 
-// sendTelegramMessage uses Telegram's HTML parse mode — escape user input
-// before interpolating it so a submitted name/message can't break the
-// markup or inject unintended formatting.
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-// Validates and logs server-side, then notifies the team over Telegram
-// (silent no-op if TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID aren't configured on
-// this deploy — see telegram.service.ts). Delivery failure never blocks the
-// response: the contact page also keeps a visible mailto: fallback for
-// anyone who lands here before a lead is confirmed received.
+// Validates and logs server-side, then notifies the team over Telegram (plain
+// text; a long message goes out in several pieces, see telegram.service.ts).
+// A message Telegram did not take is never answered with "we got it": the
+// visitor is asked to email instead. Without TELEGRAM_BOT_TOKEN /
+// TELEGRAM_CHAT_ID on this deploy the form still succeeds (a missing optional
+// integration must not break it), and the whole request is written to the
+// server log so it is not lost.
 export async function submitContactRequest(
   values: ContactFormValues,
 ): Promise<{ success: true } | { success: false; error: string }> {
@@ -28,27 +21,38 @@ export async function submitContactRequest(
       error: parsed.error.issues[0]?.message ?? "Invalid submission",
     };
   }
+  const { name, email, company, message } = parsed.data;
 
   console.info("[marketing] contact request received", {
-    name: parsed.data.name,
-    email: parsed.data.email,
-    company: parsed.data.company,
+    name,
+    email,
+    company,
   });
 
-  await sendTelegramMessage(
+  const delivery = await sendTelegramMessage(
     [
-      "<b>New contact request</b>",
-      `Name: ${escapeHtml(parsed.data.name)}`,
-      `Email: ${escapeHtml(parsed.data.email)}`,
-      parsed.data.company
-        ? `Company: ${escapeHtml(parsed.data.company)}`
-        : null,
+      "New contact request",
+      `Name: ${name}`,
+      `Email: ${email}`,
+      company ? `Company: ${company}` : null,
       "",
-      escapeHtml(parsed.data.message),
+      message,
     ]
       .filter((line) => line !== null)
       .join("\n"),
   );
 
+  if (delivery === "failed") {
+    return {
+      success: false,
+      error: `We couldn't send your message. Please try again, or email us at ${CONTACT_EMAIL}.`,
+    };
+  }
+  if (delivery === "not-configured") {
+    console.warn(
+      "[marketing] contact request not delivered: Telegram is not configured on this deploy",
+      { name, email, company, message },
+    );
+  }
   return { success: true };
 }

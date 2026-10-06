@@ -5,6 +5,7 @@ import { isExpired, parseIdeaConcept } from "@/lib/ideas/concept";
 import { IDEA_POOL_STATUSES } from "@/lib/idea-pool";
 import { ideaSocialDef } from "@/server/reasoning/prompts/idea-social";
 import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
+import { IdeaRepository } from "@/server/repositories/idea.repository";
 import { isWorksEnabled } from "@/server/works/flag";
 import { moduleRefillIfDue } from "@/server/ideas/idea-modules";
 import {
@@ -39,7 +40,12 @@ export function refillDue(input: {
   lowWater: number;
   last: LastRun;
   now: Date;
+  // How many ideas the pool could still take (PoolHealth.room): a pool full
+  // of saved, planned or older ideas is never due, so nothing is tried (or
+  // paid for) every few minutes while it stays full.
+  room?: number;
 }): boolean {
+  if (input.room !== undefined && input.room <= 0) return false;
   if (input.fresh >= input.lowWater) return false;
   if (!input.last) return true;
   const age = input.now.getTime() - input.last.createdAt.getTime();
@@ -70,22 +76,26 @@ export type PoolHealth = {
   last: LastRun;
   poolSize: number;
   unlimited: boolean;
+  // How many ideas the pool could still take: the free places under the pool
+  // size plus the untouched typed ideas a run may retire (idea-engine.ts
+  // poolCapacity). Real ideas only, like `fresh`.
+  room: number;
 };
 
 // Fresh post ideas waiting (saved ones count: a plan uses them first), the
-// last run, and the pool size setting.
+// last run, the pool size setting and the room left.
 export async function poolHealth(
   projectId: string,
   now: Date,
 ): Promise<PoolHealth> {
-  const [ideas, last, policy] = await Promise.all([
+  const [ideas, last, policy, active] = await Promise.all([
     prisma.idea.findMany({
       where: {
         projectId,
         isMock: false,
         status: { in: [...IDEA_POOL_STATUSES] },
       },
-      select: { concept: true },
+      select: { concept: true, status: true },
       take: 300,
     }),
     prisma.reasoningCall.findFirst({
@@ -97,18 +107,28 @@ export async function poolHealth(
       where: { projectId },
       select: { maxActiveIdeas: true, unlimitedMode: true },
     }),
+    IdeaRepository.countActive(projectId, { isMock: false }),
   ]);
-  const fresh = ideas.filter((row) => {
+  let fresh = 0;
+  let retirable = 0;
+  for (const row of ideas) {
     const concept = parseIdeaConcept(row.concept);
-    return concept?.module === "social" && !isExpired(concept, now);
-  }).length;
+    if (!concept) continue;
+    if (row.status === "VALIDATED") retirable += 1;
+    if (concept.module === "social" && !isExpired(concept, now)) fresh += 1;
+  }
+  const poolSize = policy?.maxActiveIdeas ?? DEFAULT_POOL_SIZE;
+  const unlimited = policy?.unlimitedMode ?? false;
   return {
     fresh,
     last: last
       ? { createdAt: last.createdAt, status: String(last.status) }
       : null,
-    poolSize: policy?.maxActiveIdeas ?? DEFAULT_POOL_SIZE,
-    unlimited: policy?.unlimitedMode ?? false,
+    poolSize,
+    unlimited,
+    room: unlimited
+      ? IDEA_POOL_TARGET
+      : Math.max(0, poolSize - active) + retirable,
   };
 }
 
@@ -125,8 +145,9 @@ export async function refillIfDue(
     lowWater: lowWaterOf(health.poolSize, health.unlimited),
     last: health.last,
     now,
+    room: health.room,
   });
-  const count = refillCount(health);
+  const count = Math.min(refillCount(health), health.room);
   if (!due || count <= 0) return { ok: false, reason: "NOT_DUE" };
   return IdeaEngine.generate({ projectId, count, trigger: "refill", now });
 }

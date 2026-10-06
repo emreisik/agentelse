@@ -100,13 +100,25 @@ export const IdeaEngine = {
       Math.max(1, Math.round(input.count)),
       IDEAS_PER_CALL + 2,
     );
+    // Room first: a pool full of saved, planned or older ideas has nothing
+    // to retire, and a model call for ideas that cannot be saved is never
+    // paid for.
+    const capacity = await poolCapacity({
+      scope,
+      rows: ctx.ideas,
+      isMock: ReasoningService.isMockMode(),
+      now,
+      wanted: count,
+    });
+    const fits = Math.min(count, capacity.free + capacity.retire.length);
+    if (fits <= 0) return { ok: false, reason: "FULL" };
     const focus = cleanWorksTextOrNull(input.focus, 300);
     const memory = ideaMemoryOf(ctx.ideas);
 
     const run = await ReasoningService.run(ideaSocialDef, {
       ...scope,
       context: {
-        count,
+        count: fits,
         today: ctx.today,
         timezone: ctx.timezone,
         brand: ctx.brand,
@@ -149,7 +161,7 @@ export const IdeaEngine = {
           : {}),
       ...(input.relatedIdeaId ? { relatedIdeaId: input.relatedIdeaId } : {}),
       avoid: [...memory.pool, ...ctx.recentPosts],
-    }).slice(0, count);
+    }).slice(0, fits);
 
     const language = await brandRuleLanguageOf(input.projectId);
     const rules = await loadBrandRules({
@@ -193,11 +205,39 @@ export function rowTextOf(concept: IdeaConcept): {
   }
 }
 
-// Saves typed ideas into the pool: room first (the cap is Settings ->
-// Autonomy "Idea pool size"; a full pool retires its oldest untouched typed
-// ideas), then each idea as VALIDATED with its concept and fingerprint.
+type PoolScope = { workspaceId: string; projectId: string; brandId: string };
+
+// How many new ideas the pool takes now: the free places under the pool size
+// (Settings -> Autonomy "Idea pool size"), then the untouched typed ideas a
+// full pool may retire for them (`retire`, at most what is missing). A run
+// only counts and retires ideas of its own kind: a mock run (the dev database
+// is shared) never archives a real idea, and a real run neither counts nor
+// archives a mock one.
+export async function poolCapacity(input: {
+  scope: PoolScope;
+  rows: readonly IdeaRow[];
+  isMock: boolean;
+  now: Date;
+  wanted: number;
+}): Promise<{ free: number; retire: string[] }> {
+  const policy = await AutonomyPolicyRepository.getOrCreate(input.scope);
+  if (policy.unlimitedMode) return { free: input.wanted, retire: [] };
+  const active = await IdeaRepository.countActive(input.scope.projectId, {
+    isMock: input.isMock,
+  });
+  const free = Math.max(0, policy.maxActiveIdeas - active);
+  const own = input.rows.filter((row) => row.isMock === input.isMock);
+  return {
+    free,
+    retire: rotationCandidates(own, input.wanted - free, input.now),
+  };
+}
+
+// Saves typed ideas into the pool: room first (poolCapacity: a full pool
+// retires its oldest untouched typed ideas), then each idea as VALIDATED with
+// its concept and fingerprint.
 export async function saveIdeaConcepts(input: {
-  scope: { workspaceId: string; projectId: string; brandId: string };
+  scope: PoolScope;
   concepts: readonly IdeaConcept[];
   rows: readonly IdeaRow[];
   isMock: boolean;
@@ -206,29 +246,27 @@ export async function saveIdeaConcepts(input: {
 }): Promise<GenerateIdeasResult> {
   const { scope, concepts, now } = input;
   if (concepts.length === 0) return { ok: false, reason: "EMPTY" };
-  const policy = await AutonomyPolicyRepository.getOrCreate(scope);
-  const active = await IdeaRepository.countActive(scope.projectId);
-  let room = policy.unlimitedMode
-    ? concepts.length
-    : Math.max(0, policy.maxActiveIdeas - active);
+  const capacity = await poolCapacity({
+    scope,
+    rows: input.rows,
+    isMock: input.isMock,
+    now,
+    wanted: concepts.length,
+  });
+  let room = Math.min(concepts.length, capacity.free);
   let rotated = 0;
-  if (room < concepts.length) {
-    // A run only retires ideas of its own kind: a mock run (the dev database
-    // is shared) never archives a real idea, and a real run never a mock one.
-    const live = input.rows.filter((row) => row.isMock === input.isMock);
-    for (const id of rotationCandidates(live, concepts.length - room, now)) {
-      try {
-        await IdeaRepository.transition(id, scope.projectId, "ARCHIVED");
-        rotated += 1;
-      } catch (error) {
-        console.error(
-          `[idea-engine] could not retire idea ${id}:`,
-          error instanceof Error ? error.message : error,
-        );
-      }
+  for (const id of capacity.retire) {
+    try {
+      await IdeaRepository.transition(id, scope.projectId, "ARCHIVED");
+      rotated += 1;
+    } catch (error) {
+      console.error(
+        `[idea-engine] could not retire idea ${id}:`,
+        error instanceof Error ? error.message : error,
+      );
     }
-    room += rotated;
   }
+  room += rotated;
   const keep = concepts.slice(0, room);
   if (keep.length === 0) return { ok: false, reason: "FULL" };
 

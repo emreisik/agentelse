@@ -70,6 +70,12 @@ Her üretimin son işlemi aynıdır:
 4. Kayıt: `saveIdeaConcepts`.
 5. Havuz `maxActiveIdeas` (Settings → Autonomy → Idea pool size) dolunca en eski, dokunulmamış VALIDATED tipli fikirler `ARCHIVED` olur; süresi geçenler önce gider. Öne alınan ya da planlanan fikre asla dokunulmaz.
 
+Yer kontrolü (`poolCapacity`) **model çağrısından önce** yapılır:
+
+- Boş yer ve arşivlenebilecek fikir toplamı sıfırsa çağrı yapılmaz, sonuç `FULL` olur. Modelden yalnız sığacak kadar fikir istenir.
+- Sayım ve arşivleme yalnız çalışmanın kendi türündeki fikirlerde yapılır. Gerçek çalışma mock satırları saymaz ve arşivlemez; mock çalışma da gerçek fikirlere dokunmaz.
+- Doldurma da (`poolHealth.room`) yer yokken vadesi gelmiş sayılmaz. Böylece dolu havuz her turda yeniden denenmez.
+
 Tüm çağrılar Autonomy'deki günlük AI limiti ve bütçesine tabidir. Limit dolunca "Today's AI limit is reached" denir.
 
 Motoru çağıranlar:

@@ -153,10 +153,13 @@ export const IdeaRepository = {
     return perProject;
   },
 
-  countActive(projectId: string) {
+  // `isMock` counts only ideas of one kind (the idea pool: a real run never
+  // counts mock rows of the shared dev database against the pool size).
+  countActive(projectId: string, opts?: { isMock?: boolean }) {
     return prisma.idea.count({
       where: {
         projectId,
+        ...(opts?.isMock !== undefined ? { isMock: opts.isMock } : {}),
         status: {
           in: [
             "RAW",

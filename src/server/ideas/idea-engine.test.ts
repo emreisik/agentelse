@@ -12,8 +12,9 @@ vi.mock("@/server/ideas/idea-context", () => ({
   }),
 }));
 const run = vi.fn();
+const isMockMode = vi.fn(() => false);
 vi.mock("@/server/reasoning/reasoning-service", () => ({
-  ReasoningService: { run },
+  ReasoningService: { run, isMockMode },
 }));
 const create = vi.fn();
 const countActive = vi.fn();
@@ -196,6 +197,41 @@ describe("IdeaEngine.generate", () => {
     });
     expect(transition).toHaveBeenCalledWith("oldest", "p1", "ARCHIVED");
     expect(result).toEqual({ ok: true, created: ["new-1"], rotated: 1 });
+  });
+
+  it("checks the room before the model call: a full pool with nothing to retire pays for nothing", async () => {
+    loadIdeaContext.mockResolvedValue({
+      ...CONTEXT,
+      ideas: [typedRow("saved", "2026-09-01T10:00:00Z", "APPROVED")],
+    });
+    countActive.mockResolvedValue(20);
+    expect(
+      await IdeaEngine.generate({
+        projectId: "p1",
+        count: 6,
+        trigger: "refill",
+        now: NOW,
+      }),
+    ).toEqual({ ok: false, reason: "FULL" });
+    expect(run).not.toHaveBeenCalled();
+    // Real runs count real ideas only (mock rows of the shared dev database
+    // never fill the pool).
+    expect(countActive).toHaveBeenCalledWith("p1", { isMock: false });
+  });
+
+  it("asks the model only for what the pool can take", async () => {
+    countActive.mockResolvedValue(18);
+    run.mockResolvedValue({
+      isMock: false,
+      output: { ideas: [raw("Meet the barista behind your morning cup")] },
+    });
+    await IdeaEngine.generate({
+      projectId: "p1",
+      count: 6,
+      trigger: "manual",
+      now: NOW,
+    });
+    expect(run.mock.calls[0]![1].context.count).toBe(2);
   });
 
   it("says so when today's AI limit is reached", async () => {

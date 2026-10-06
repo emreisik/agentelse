@@ -171,6 +171,7 @@ export async function loadIdeaBoard(
         lowWater: lowWaterOf(health.poolSize, health.unlimited),
         last: health.last,
         now,
+        room: health.room,
       }),
     },
     timezone,

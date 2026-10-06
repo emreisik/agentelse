@@ -209,8 +209,8 @@ export const WeeklyPlanProduce = {
   // At most `limit` plans auto-saved per tick (production for each then runs
   // in the background). Returns how many were saved.
   // The legacy-loop gate (Council/Director must not also be turning the same
-  // pool ideas into their own creatives) lives in the caller, same convention
-  // as idea-generation (agency-wiring.ts).
+  // pool ideas into their own creatives) lives in the caller
+  // (agency-wiring.ts).
   async runDue(limit = 2, now: Date = new Date()): Promise<number> {
     if (!isWorksEnabled()) return 0;
     const due = await findDue(now);

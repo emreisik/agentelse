@@ -17,6 +17,7 @@ import {
   type ChannelKey,
 } from "@/lib/content-channels";
 import { utcToZonedDateTimeLocal } from "@/lib/timezone";
+import { parseIdeaConcept } from "@/lib/ideas/concept";
 import { MAX_POSTS_PER_RUN } from "@/lib/journey";
 import { postKeyOf } from "@/lib/works/plan-platforms";
 import {
@@ -140,6 +141,10 @@ export type ClaimedSlot = {
   // Where its picture comes from: absent = it renders its own (or is text).
   // The other pieces of a post adapt the post's one picture (shared-picture.ts).
   picture?: Exclude<PictureSource, { kind: "render" | "skip" }>;
+  // The post layout of the pool idea the post was made from (docs/ideas.md),
+  // for the piece that renders the post's own picture: what the Ideas board
+  // showed is what is made. Adapting pieces take their own format's layout.
+  layoutId?: string;
 };
 
 export type PlanClaimResult =
@@ -155,6 +160,37 @@ function slotCostUsd(slot: ClaimedSlot): number {
   return slot.production.contentFormat === "STORY"
     ? IMAGE_PIECE_COST_USD.story
     : IMAGE_PIECE_COST_USD.post;
+}
+
+// postId -> the post layout of the typed pool idea it was made from.
+async function ideaLayoutsOf(
+  tx: Prisma.TransactionClient,
+  postIds: readonly string[],
+): Promise<Map<string, string>> {
+  const layouts = new Map<string, string>();
+  if (postIds.length === 0) return layouts;
+  const posts = await tx.post.findMany({
+    where: { id: { in: [...new Set(postIds)] }, ideaId: { not: null } },
+    select: { id: true, ideaId: true },
+  });
+  const ideaIds = [...new Set(posts.flatMap((post) => (post.ideaId ? [post.ideaId] : [])))];
+  if (ideaIds.length === 0) return layouts;
+  const ideas = await tx.idea.findMany({
+    where: { id: { in: ideaIds } },
+    select: { id: true, concept: true },
+  });
+  const byIdea = new Map<string, string>();
+  for (const idea of ideas) {
+    const concept = parseIdeaConcept(idea.concept);
+    if (concept?.module === "social" && concept.draft.layoutId) {
+      byIdea.set(idea.id, concept.draft.layoutId);
+    }
+  }
+  for (const post of posts) {
+    const layoutId = post.ideaId ? byIdea.get(post.ideaId) : undefined;
+    if (layoutId) layouts.set(post.id, layoutId);
+  }
+  return layouts;
 }
 
 function slotRequest(input: {
@@ -369,19 +405,30 @@ export async function claimPlanProduction(input: {
           };
         }
 
+        const ideaLayouts = await ideaLayoutsOf(
+          tx,
+          batch.flatMap((id) => {
+            const postId = byId.get(id)?.row.postId;
+            return postId ? [postId] : [];
+          }),
+        );
         const slots = batch.map((id): ClaimedSlot => {
           const { production, row: creative } = byId.get(id)!;
+          const layoutId =
+            production.image && creative.postId
+              ? ideaLayouts.get(creative.postId)
+              : undefined;
           const plannedFor = creative.scheduledFor
             ? utcToZonedDateTimeLocal(creative.scheduledFor, card.timezone)
             : "";
           const title = creative.title?.trim() || production.label;
           const source = sources.get(id);
+          const adapts = source?.kind === "wait" || source?.kind === "adapt";
           return {
             id,
             title,
-            ...(source?.kind === "wait" || source?.kind === "adapt"
-              ? { picture: source }
-              : {}),
+            ...(adapts ? { picture: source } : {}),
+            ...(layoutId && !adapts ? { layoutId } : {}),
             production,
             request: slotRequest({
               production,
@@ -550,6 +597,9 @@ function specOf(
             quality: "medium",
             // Not a new picture: the post's own, re-laid out for this format.
             ...(adaptFromAssetId ? { adaptFromAssetId } : {}),
+            ...(slot.layoutId && !adaptFromAssetId
+              ? { layoutId: slot.layoutId }
+              : {}),
           }
         : {}),
     },

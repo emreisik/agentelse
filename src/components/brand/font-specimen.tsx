@@ -12,6 +12,11 @@ import { useEffect, useState } from "react";
 // characters are accepted; anything else is shown as text in the stand-in.
 const SAFE_FONT_NAME = /^[A-Za-z0-9][A-Za-z0-9 .\-]{0,58}$/;
 
+// Also used by the Ideas board to set idea cards in the brand's font.
+export function isSafeFontName(name: string): boolean {
+  return SAFE_FONT_NAME.test(name);
+}
+
 const SERIF_HINT =
   /serif|playfair|georgia|times|lora|merriweather|cormorant|garamond|baskerville|didot|bodoni|libre caslon|crimson|spectral|fraunces|dm serif/i;
 const MONO_HINT = /mono|code|courier|consolas/i;
@@ -25,7 +30,7 @@ function fallbackStack(name: string): string {
 
 const loads = new Map<string, Promise<boolean>>();
 
-function loadGoogleFont(name: string): Promise<boolean> {
+export function loadGoogleFont(name: string): Promise<boolean> {
   const existing = loads.get(name);
   if (existing) return existing;
   const promise = new Promise<boolean>((resolve) => {

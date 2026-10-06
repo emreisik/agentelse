@@ -4,21 +4,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-openai-sans);
-  --font-heading: var(--font-openai-sans);
-  --font-mono: var(--font-openai-sans);
-  --text-xs: 0.8125rem;
-  --text-xs--line-height: 1.4;
-  --text-sm: 0.875rem;
-  --text-sm--line-height: 1.4;
-  --text-base: 1rem;
-  --text-base--line-height: 1.5;
-  --text-lg: 1.125rem;
-  --text-lg--line-height: 1.55;
-  --text-xl: 1.375rem;
-  --text-xl--line-height: 1.26;
-  --text-2xl: 2rem;
-  --text-2xl--line-height: 1.2;
+  --font-sans: var(--font-inter);
+  --font-heading: var(--font-inter);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -34,7 +21,8 @@
   --color-destructive: var(--destructive);
   --color-warning: var(--warning);
   --color-success: var(--success);
-  --color-special: var(--special);
+  --color-spark: var(--spark);
+  --color-spark-soft: var(--spark-soft);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -47,205 +35,139 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* ============================================================
-   Agentelse — clean monochrome theme (OpenAI/api-style reference):
-   pure white ground, near-black ink, no signature color. Hierarchy
-   comes from type, weight and spacing, not from a brand hue.
-   ============================================================ */
+/* Agentelse marketing — the product's own palette: white ground, cool ink,
+   neutral grays. The one colour is the violet of the logo's spark, used
+   sparingly (eyebrows, the spark mark, live states) so it keeps meaning. */
 :root {
-  --font-openai-sans: "OpenAI Sans", var(--font-openai-sans-fallback),
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
   --background: #ffffff;
-  --foreground: #0d0d0d;
+  --foreground: oklch(0.19 0.014 260);
   --card: #ffffff;
-  --card-foreground: #0d0d0d;
+  --card-foreground: oklch(0.19 0.014 260);
   --popover: #ffffff;
-  --popover-foreground: #0d0d0d;
-  --primary: #0d0d0d;
-  --primary-foreground: #ffffff;
-  --secondary: #f5f5f5;
-  --secondary-foreground: #0d0d0d;
-  --muted: #fafafa;
-  --muted-foreground: #666666;
-  --accent: #f5f5f5;
-  --accent-foreground: #0d0d0d;
-  --destructive: #dc2626;
-  --warning: #b45309;
-  --success: #16a34a;
-  --special: #6d28d9;
-  --border: #e5e7eb;
-  --input: #e5e7eb;
-  --ring: rgba(13, 13, 13, 0.3);
+  --popover-foreground: oklch(0.19 0.014 260);
+  --primary: oklch(0.19 0.014 260);
+  --primary-foreground: oklch(0.995 0.002 260);
+  --secondary: oklch(0.967 0.003 260);
+  --secondary-foreground: oklch(0.19 0.014 260);
+  --muted: oklch(0.984 0.002 260);
+  --muted-foreground: oklch(0.5 0.012 260);
+  --accent: oklch(0.967 0.003 260);
+  --accent-foreground: oklch(0.19 0.014 260);
+  --destructive: oklch(0.58 0.21 27);
+  --warning: oklch(0.62 0.15 65);
+  --success: oklch(0.6 0.14 152);
+  --spark: oklch(0.6 0.22 293);
+  --spark-soft: oklch(0.96 0.03 293);
+  --border: oklch(0.92 0.004 260);
+  --input: oklch(0.92 0.004 260);
+  --ring: oklch(0.19 0.014 260 / 0.3);
   --radius: 0.875rem;
 
-  /* No signature color — every "accent" reference below resolves to ink or
-     a neutral gray, so existing components (signal-flow line, highlighted
-     pricing tier, StatusPill "accent" tone) stay monochrome automatically
-     without needing per-component edits. */
-  --agentelse-accent: #0d0d0d;
-  --agentelse-accent-foreground: #ffffff;
-  --agentelse-accent-soft: #f5f5f5;
-  --agentelse-line: var(--border);
-  --agentelse-ink-muted: var(--muted-foreground);
+  --shadow-card: 0 1px 2px 0 rgb(15 18 28 / 0.04), 0 2px 8px -2px rgb(15 18 28 / 0.08);
+  --shadow-float: 0 1px 2px 0 rgb(15 18 28 / 0.05), 0 24px 64px -24px rgb(15 18 28 / 0.22);
 
-  /* OpenAI.com production typography scale. */
-  --agentelse-text-caption: 0.8125rem;
-  --agentelse-text-label: 0.875rem;
-  --agentelse-text-body: 1rem;
-  --agentelse-text-body-lg: 1.125rem;
-  --agentelse-text-lead: 1.125rem;
-  --agentelse-text-lead-lg: 1.125rem;
-  --agentelse-text-h3: 1.375rem;
-  --agentelse-text-h2: clamp(2rem, 1.45rem + 2.35vw, 3rem);
-  --agentelse-text-h1: clamp(2.5rem, 2.05rem + 1.9vw, 3rem);
-  --agentelse-text-display: clamp(2.75rem, 2.05rem + 3vw, 4rem);
-
-  /* rhythm */
-  --agentelse-space-section-y: clamp(4rem, 4rem + 4vw, 8rem);
-  --agentelse-space-gutter: clamp(1.25rem, 1rem + 2vw, 3rem);
-  --agentelse-container: 1280px;
-  --agentelse-container-wide: 1440px;
-
-  /* motion */
-  --agentelse-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --agentelse-duration-fast: 150ms;
-  --agentelse-duration-base: 400ms;
-  --agentelse-duration-slow: 700ms;
-  --agentelse-duration-pulse: 2400ms;
+  --site-gutter: clamp(1rem, 0.6rem + 2vw, 2.5rem);
+  --site-section-y: clamp(4.5rem, 3.5rem + 5vw, 8.5rem);
+  --site-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    scroll-behavior: smooth;
+  }
   body {
     @apply bg-background font-sans text-foreground;
-    font-size: var(--agentelse-text-body);
-    line-height: 1.5;
     font-feature-settings:
-      "liga" 1,
+      "cv11" 1,
+      "ss01" 1,
       "calt" 1;
-    font-kerning: normal;
+  }
+  ::selection {
+    background: var(--spark-soft);
   }
 }
 
-@utility agentelse-container {
-  max-width: var(--agentelse-container);
+@utility site-container {
+  width: 100%;
+  max-width: 1200px;
   margin-inline: auto;
-  padding-inline: var(--agentelse-space-gutter);
+  padding-inline: var(--site-gutter);
 }
 
-@utility agentelse-container-wide {
-  max-width: var(--agentelse-container-wide);
+@utility site-container-wide {
+  width: 100%;
+  max-width: 1360px;
   margin-inline: auto;
-  padding-inline: var(--agentelse-space-gutter);
+  padding-inline: var(--site-gutter);
 }
 
-@utility agentelse-section-y {
-  padding-block: var(--agentelse-space-section-y);
+@utility site-section {
+  padding-block: var(--site-section-y);
 }
 
-@utility agentelse-text-display {
-  font-size: var(--agentelse-text-display);
-  font-weight: 400;
-  line-height: 1;
-  letter-spacing: -0.03em;
+@utility text-display {
+  font-size: clamp(2.7rem, 1.4rem + 5.4vw, 5.75rem);
+  font-weight: 600;
+  line-height: 0.98;
+  letter-spacing: -0.052em;
 }
 
-@utility agentelse-text-h1 {
-  font-size: var(--agentelse-text-h1);
-  font-weight: 400;
-  line-height: 1.08;
-  letter-spacing: -0.03em;
+@utility text-h1 {
+  font-size: clamp(2.25rem, 1.65rem + 2.6vw, 3.5rem);
+  font-weight: 560;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
 }
 
-@utility agentelse-text-h2 {
-  font-size: var(--agentelse-text-h2);
-  font-weight: 400;
-  line-height: 1.08;
-  letter-spacing: -0.03em;
+@utility text-h2 {
+  font-size: clamp(2rem, 1.4rem + 2.4vw, 3.4rem);
+  font-weight: 600;
+  line-height: 1.02;
+  letter-spacing: -0.045em;
 }
 
-@utility agentelse-text-h3 {
-  font-size: var(--agentelse-text-h3);
-  font-weight: 500;
-  line-height: 1.26;
-  letter-spacing: -0.01em;
+@utility text-h3 {
+  font-size: 1.25rem;
+  font-weight: 560;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
 }
 
-@utility agentelse-text-lead {
-  font-size: var(--agentelse-text-lead);
-  font-weight: 400;
+@utility text-lead {
+  font-size: clamp(1.05rem, 0.98rem + 0.3vw, 1.2rem);
   line-height: 1.55;
-  letter-spacing: 0;
 }
 
-@utility agentelse-text-body {
-  font-size: var(--agentelse-text-body);
-  font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: 0;
-}
-
-@utility agentelse-text-label {
-  font-size: var(--agentelse-text-label);
-  font-weight: 500;
-  line-height: 1.4;
-  letter-spacing: 0;
-}
-
-@utility agentelse-text-caption {
-  font-size: var(--agentelse-text-caption);
-  font-weight: 400;
-  line-height: 1.4;
-  letter-spacing: 0.01em;
-}
-
-@custom-variant agentelse-visible (&[data-reveal="visible"]);
-
-.agentelse-reveal {
+/* Scroll reveal (reveal.tsx): fades up once, never under reduced motion. */
+.site-reveal {
   opacity: 0;
-  transform: translateY(14px);
+  transform: translateY(16px);
   transition:
-    opacity var(--agentelse-duration-slow) var(--agentelse-ease),
-    transform var(--agentelse-duration-slow) var(--agentelse-ease);
+    opacity 700ms var(--site-ease),
+    transform 700ms var(--site-ease);
 }
-.agentelse-reveal[data-reveal="visible"] {
+.site-reveal[data-reveal="visible"] {
   opacity: 1;
-  transform: translateY(0);
+  transform: none;
 }
 
-@keyframes agentelse-signal-flow {
-  from {
-    stroke-dashoffset: 24;
-  }
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-.agentelse-signal-path {
-  stroke-dasharray: 6 18;
-  animation: agentelse-signal-flow var(--agentelse-duration-pulse) linear infinite;
+/* The soft violet glow behind the hero product frame. */
+.site-glow {
+  background:
+    radial-gradient(60% 55% at 50% 0%, oklch(0.6 0.22 293 / 0.14), transparent 70%),
+    radial-gradient(40% 40% at 85% 30%, oklch(0.75 0.12 230 / 0.12), transparent 70%);
 }
 
-/* The hub node in every FlowDiagram (Agency Director) — a slow breathing
-   glow standing in for "always thinking, always on", not a loud effect. */
-@keyframes agentelse-hub-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 color-mix(in oklch, var(--agentelse-accent) 22%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 0 6px color-mix(in oklch, var(--agentelse-accent) 0%, transparent);
-  }
-}
-.agentelse-hub-pulse {
-  animation: agentelse-hub-pulse 2.6s ease-in-out infinite;
+/* A thin dotted grid used behind diagrams. */
+.site-grid {
+  background-image: radial-gradient(oklch(0.19 0.014 260 / 0.09) 1px, transparent 1px);
+  background-size: 20px 20px;
 }
 
-/* The "Autonomous" live indicator in the app showcase's browser chrome. */
-@keyframes agentelse-live-dot {
+@keyframes site-pulse {
   0%,
   100% {
     opacity: 1;
@@ -254,15 +176,30 @@
     opacity: 0.35;
   }
 }
-.agentelse-live-dot {
-  animation: agentelse-live-dot 2s ease-in-out infinite;
+.site-pulse {
+  animation: site-pulse 1.8s ease-in-out infinite;
 }
 
-/* Mobile integration-logo row: a continuous right-to-left drift instead of
-   discrete slot swaps. The track renders the logo pool twice back-to-back,
-   so animating exactly one half-width per loop is seamless — no jump, no
-   pause, constant speed. */
-@keyframes agentelse-marquee {
+@keyframes site-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.site-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--secondary) 0%,
+    var(--muted) 40%,
+    var(--secondary) 80%
+  );
+  background-size: 200% 100%;
+  animation: site-shimmer 2.4s linear infinite;
+}
+
+@keyframes site-marquee {
   from {
     transform: translateX(0);
   }
@@ -270,36 +207,154 @@
     transform: translateX(-50%);
   }
 }
-.agentelse-marquee-track {
-  animation: agentelse-marquee 24s linear infinite;
+.site-marquee {
+  animation: site-marquee 32s linear infinite;
 }
-.agentelse-marquee-mask {
-  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
-  -webkit-mask-image: linear-gradient(
-    to right,
-    transparent,
-    black 8%,
-    black 92%,
-    transparent
+.site-fade-x {
+  mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+}
+
+/* ---- Hero ------------------------------------------------------------- */
+
+.hero-bg {
+  background:
+    radial-gradient(52% 40% at 50% 0%, oklch(0.6 0.22 293 / 0.16), transparent 72%),
+    radial-gradient(28% 30% at 10% 28%, oklch(0.8 0.09 230 / 0.16), transparent 70%),
+    radial-gradient(28% 30% at 90% 22%, oklch(0.82 0.09 340 / 0.12), transparent 70%);
+}
+
+.hero-grid {
+  background-image:
+    linear-gradient(to right, oklch(0.19 0.014 260 / 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(0.19 0.014 260 / 0.055) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 25%, transparent 75%);
+}
+
+/* ---- The product demo (hero-demo.tsx) ---------------------------------- */
+
+@keyframes demo-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.demo-caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 1.05em;
+  margin-left: 1px;
+  vertical-align: -0.18em;
+  background: var(--foreground);
+  animation: demo-caret 1s step-end infinite;
+}
+
+@keyframes demo-ripple {
+  from {
+    transform: translate(-50%, -50%) scale(0.2);
+    opacity: 0.55;
+  }
+  to {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+.demo-ripple {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 9999px;
+  background: oklch(0.6 0.22 293 / 0.35);
+  animation: demo-ripple 420ms ease-out forwards;
+}
+
+@keyframes demo-blur-in {
+  from {
+    filter: blur(12px);
+    opacity: 0.35;
+    transform: scale(1.06);
+  }
+  to {
+    filter: blur(0);
+    opacity: 1;
+    transform: none;
+  }
+}
+.demo-blur-in {
+  animation: demo-blur-in 700ms var(--site-ease) both;
+}
+
+@keyframes demo-drop {
+  0% {
+    transform: translateY(-26px) rotate(-3deg) scale(1.04);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(2px) rotate(0.6deg);
+    opacity: 1;
+  }
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+}
+.demo-drop {
+  animation: demo-drop 650ms var(--site-ease) both;
+}
+
+.demo-text-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted-foreground) 0%,
+    var(--muted-foreground) 35%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 65%,
+    var(--muted-foreground) 100%
   );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: site-shimmer 1.8s linear infinite;
+}
+
+@keyframes site-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+.site-float {
+  animation: site-float 5s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agentelse-reveal {
+  html {
+    scroll-behavior: auto;
+  }
+  .site-reveal {
     opacity: 1;
     transform: none;
     transition: none;
   }
-  .agentelse-signal-path {
-    animation: none;
-  }
-  .agentelse-hub-pulse {
-    animation: none;
-  }
-  .agentelse-live-dot {
-    animation: none;
-  }
-  .agentelse-marquee-track {
+  .site-pulse,
+  .site-shimmer,
+  .site-marquee,
+  .demo-caret,
+  .demo-ripple,
+  .demo-blur-in,
+  .demo-drop,
+  .demo-text-shimmer,
+  .site-float {
     animation: none;
   }
 }

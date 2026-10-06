@@ -1,12 +1,9 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
-
 import { prisma } from "@/lib/prisma";
 import type { ChannelKey } from "@/lib/content-channels";
 import { utcToZonedDateTimeLocal, zonedDateTimeToUtc } from "@/lib/timezone";
 import { addDaysToKey } from "@/lib/content-plan-view";
-import { brandCheckOf, checkItems } from "@/lib/works/brand-rules";
 import { cleanWorksTextOrNull } from "@/lib/works/clean-text";
 import {
   defaultPlanBrief,
@@ -40,6 +37,10 @@ import {
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
 import { loadBrandRules } from "@/server/works/brand-rule-loader";
+import {
+  withBrandFlags,
+  writePlanDraftWork,
+} from "@/server/works/draft-plan-work";
 import { isWorksEnabled } from "@/server/works/flag";
 
 // Faz 4, the autonomous weekly plan draft (docs/brand-brain-loop.md). Every
@@ -61,7 +62,8 @@ const FAILED_RETRY_MS = 60 * 60_000;
 // How far back an open draft card can still cover next week.
 const OPEN_DRAFT_LOOKBACK_DAYS = 21;
 const TOPIC_MAX = 120;
-const CAPTION_MAX = 600;
+// Room for a drafted pool idea ('"headline" | visual | caption', ideas.md).
+const CAPTION_MAX = 1500;
 const PURPOSE_MAX = 60;
 
 // The durable "this week was drafted" fact, written in the same transaction as
@@ -316,51 +318,29 @@ async function draftWeek(
     brandId: brand.id,
     language,
   });
-  const card = buildPlanCard(
-    { title: WEEKLY_DRAFT_COPY.planTitle, items },
-    project.timezone,
-    connections,
+  const flagged = withBrandFlags(
+    buildPlanCard(
+      { title: WEEKLY_DRAFT_COPY.planTitle, items },
+      project.timezone,
+      connections,
+    ),
+    rules,
   );
-  const flags = checkItems(card.items, rules);
-  const flagged = {
-    ...card,
-    items: card.items.map((item, index) => {
-      const own = flags
-        .filter((entry) => entry.index === index)
-        .map((entry) => entry.flag);
-      return own.length > 0 ? { ...item, brandFlags: own } : item;
-    }),
-    brandCheck: brandCheckOf(rules),
-  };
 
   try {
     await prisma.$transaction(async (tx) => {
-      await tx.work.create({
-        data: {
-          id: workId,
-          workspaceId: project.workspaceId,
-          projectId,
-          title: WEEKLY_DRAFT_COPY.workTitle(monday),
-          channels: [],
-          acknowledgedUnconnected: [],
-          lastActivityAt: now,
-        },
-      });
-      await tx.command.create({
-        data: {
-          id: weeklyCommandId(projectId, monday),
-          workspaceId: project.workspaceId,
-          projectId,
-          brandId: brand.id,
-          workId,
-          source: "SYSTEM",
-          rawText: "",
-          replyText: (autoProduceOn
-            ? WEEKLY_AUTO_PRODUCE_COPY.reply
-            : WEEKLY_DRAFT_COPY.reply)(flagged.items.length, monday),
-          replyStatus: "ANSWERED",
-          parsedIntent: { card: flagged } as unknown as Prisma.InputJsonValue,
-        },
+      await writePlanDraftWork(tx, {
+        workId,
+        commandId: weeklyCommandId(projectId, monday),
+        workspaceId: project.workspaceId,
+        projectId,
+        brandId: brand.id,
+        title: WEEKLY_DRAFT_COPY.workTitle(monday),
+        reply: (autoProduceOn
+          ? WEEKLY_AUTO_PRODUCE_COPY.reply
+          : WEEKLY_DRAFT_COPY.reply)(flagged.items.length, monday),
+        card: flagged,
+        now,
       });
       await tx.auditLog.create({
         data: {

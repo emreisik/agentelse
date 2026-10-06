@@ -1,105 +1,182 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import {
+  BadgeCheck,
+  CircleSlash,
+  CopyX,
+  KeyRound,
+  Lock,
+  ShieldAlert,
+  Trash2,
+  Unplug,
+} from "lucide-react";
 
-import { FinalCta } from "@/components/marketing/final-cta";
-import { Reveal } from "@/components/marketing/reveal";
-import { Section } from "@/components/marketing/section";
+import { appHref } from "@/lib/app-url";
+import { CONTACT_EMAIL } from "@/lib/site";
+import { CtaBand } from "@/components/site/cta-band";
+import { PageHero } from "@/components/site/page-hero";
+import { Reveal } from "@/components/site/reveal";
+import { Section, SectionHeader } from "@/components/site/section";
+import { CONTROLS } from "@/components/site/home/control";
 
 export const metadata: Metadata = {
   title: "Security",
   description:
-    "How Agentelse keeps your company data separated, permissioned, and under human control.",
+    "How Agentelse keeps you in control: approval before anything goes live, encrypted account tokens, AI guardrails, and your data never sold.",
 };
 
-type Principle = {
-  id: string;
-  title: string;
-  body: string;
-};
-
-const PRINCIPLES: Principle[] = [
+const ACCOUNTS = [
   {
-    id: "encrypted-connections",
-    title: "Encrypted connections",
-    body: "Data moving between Agentelse and your connected tools is encrypted in transit, and data stored at rest is encrypted too.",
+    Icon: KeyRound,
+    title: "Official sign-in.",
+    body: "Accounts connect through each platform's own login. We never see your passwords.",
   },
   {
-    id: "separated-company-data",
-    title: "Separated company data",
-    body: "Each company's data is isolated from every other customer's. Nothing is shared or pooled across tenants.",
+    Icon: Lock,
+    title: "Encrypted tokens.",
+    body: "Access tokens are stored encrypted with AES-256-GCM.",
   },
   {
-    id: "permissions-on-every-action",
-    title: "Permissions on every action",
-    body: "Every capability Agentelse has is gated by the permission level you set: view, create, recommend, request approval, or execute. This is the same Human Control model described on the homepage, enforced down to the level of individual actions.",
+    Icon: Unplug,
+    title: "Disconnect anytime.",
+    body: "Remove it in Agentelse, or revoke it on the platform.",
   },
   {
-    id: "human-approvals",
-    title: "Human approvals for risky work",
-    body: "Actions with real-world consequences, like publishing, ad spend, or account changes, require a person to approve before they happen.",
-  },
-  {
-    id: "audit-history",
-    title: "Audit history",
-    body: "Every action Agentelse takes, and every approval decision a person makes, is logged and reviewable.",
-  },
-  {
-    id: "controlled-integrations",
-    title: "Controlled integrations",
-    body: "Connected tools, like analytics, ads, CRM, and social accounts, are scoped to only the access they need. You can review and revoke a connection at any time.",
-  },
-  {
-    id: "configurable-data-retention",
-    title: "Configurable data retention",
-    body: "You control how long signals, findings, and historical data are kept.",
+    Icon: Trash2,
+    title: "Delete on request.",
+    body: "Ask us to delete your data, including Instagram and Facebook data.",
   },
 ];
+
+const GUARDRAILS = [
+  {
+    Icon: ShieldAlert,
+    title: "The web can't give orders.",
+    body: "While a chat reads web pages, it can't change memory or approve anything.",
+  },
+  {
+    Icon: CopyX,
+    title: "No double posts.",
+    body: "A lock makes sure the same post never goes out twice.",
+  },
+  {
+    Icon: CircleSlash,
+    title: "Brand rules first.",
+    body: "Plans are checked for words your brand never uses.",
+  },
+  {
+    Icon: BadgeCheck,
+    title: "What you approve is final.",
+    body: "Approved text and time are locked. Revisions come back for review.",
+  },
+];
+
+function TileGrid({
+  items,
+}: {
+  items: { Icon: typeof Lock; title: string; body: string }[];
+}) {
+  return (
+    <ul className="grid gap-px overflow-hidden rounded-[1.75rem] border border-border bg-border sm:grid-cols-2">
+      {items.map(({ Icon, title, body }, index) => (
+        <li key={title} className="bg-card">
+          <Reveal
+            delayMs={(index % 2) * 70}
+            className="flex h-full flex-col gap-2.5 p-7 sm:p-8"
+          >
+            <span className="flex size-9 items-center justify-center rounded-xl bg-secondary">
+              <Icon className="size-4" />
+            </span>
+            <p className="text-h3">{title}</p>
+            <p className="text-[15px] text-muted-foreground">{body}</p>
+          </Reveal>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default function SecurityPage() {
   return (
     <>
-      <Section className="pb-0">
-        <Reveal className="flex flex-col gap-4">
-          <p className="agentelse-text-caption font-medium text-muted-foreground uppercase">
-            Security
-          </p>
-          <h1 className="agentelse-text-h1 max-w-[24ch] text-balance">
-            Your company data stays your company data.
-          </h1>
-          <p className="agentelse-text-lead max-w-[56ch] text-muted-foreground">
-            Agentelse works inside your company&rsquo;s real systems and real
-            data, so it&rsquo;s built with strict data separation and human
-            control from day one, not added on afterward.
-          </p>
-        </Reveal>
+      <PageHero
+        eyebrow="Security"
+        title="You're always in control."
+        lead="How we keep your brand and your accounts safe."
+      />
+
+      <Section wide className="pt-0 sm:pt-0">
+        <SectionHeader
+          eyebrow="Approvals"
+          title="You decide. Every time."
+          className="mb-12"
+        />
+        <TileGrid items={CONTROLS} />
       </Section>
 
-      <Section tone="raised">
-        <Reveal>
-          <div className="border-t border-border">
-            {PRINCIPLES.map((principle) => (
-              <div
-                key={principle.id}
-                className="grid gap-2 border-b border-border py-8 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] sm:gap-8 md:py-10"
+      <Section tone="muted" wide>
+        <SectionHeader
+          eyebrow="Your accounts"
+          title="Safe to connect. Easy to remove."
+          className="mb-12"
+        />
+        <TileGrid items={ACCOUNTS} />
+      </Section>
+
+      <Section wide>
+        <SectionHeader
+          eyebrow="AI guardrails"
+          title="Safe by design."
+          className="mb-12"
+        />
+        <TileGrid items={GUARDRAILS} />
+      </Section>
+
+      <Section tone="muted">
+        <Reveal className="flex flex-col gap-6">
+          <SectionHeader eyebrow="Your data" title="Your data is yours." />
+          <div className="flex max-w-[60ch] flex-col gap-4 text-[16px] leading-relaxed text-muted-foreground">
+            <p>
+              We never sell it. It&apos;s used only to run Agentelse for you,
+              with hosting, database and AI providers under data-protection
+              terms.
+            </p>
+            <p>
+              Read the{" "}
+              <Link
+                href={appHref("/privacy")}
+                className="text-foreground underline underline-offset-4"
               >
-                <h3 className="agentelse-text-h3 text-foreground">
-                  {principle.title}
-                </h3>
-                <p className="max-w-[60ch] text-base text-foreground/80">
-                  {principle.body}
-                </p>
-              </div>
-            ))}
+                Privacy Policy
+              </Link>{" "}
+              and{" "}
+              <Link
+                href={appHref("/terms")}
+                className="text-foreground underline underline-offset-4"
+              >
+                Terms
+              </Link>
+              , or{" "}
+              <Link
+                href={appHref("/data-deletion")}
+                className="text-foreground underline underline-offset-4"
+              >
+                request deletion
+              </Link>
+              . Security question? Write to{" "}
+              <a
+                href={`mailto:${CONTACT_EMAIL}`}
+                className="text-foreground underline underline-offset-4"
+              >
+                {CONTACT_EMAIL}
+              </a>
+              .
+            </p>
           </div>
         </Reveal>
-
-        <Reveal delayMs={80} className="mt-8">
-          <p className="text-sm text-muted-foreground">
-            Built with enterprise-grade security principles.
-          </p>
-        </Reveal>
       </Section>
 
-      <FinalCta />
+      <CtaBand />
     </>
   );
 }

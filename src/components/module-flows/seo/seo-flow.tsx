@@ -29,6 +29,7 @@ import {
   seoRunActive,
   seoStatusOf,
 } from "@/lib/module-flows/seo/state";
+import { flowHintOf } from "@/lib/module-flows/card";
 import { MODULES } from "@/lib/modules/catalog";
 import { goToSeoStepAction } from "@/server/actions/seo-flow-actions";
 
@@ -129,7 +130,7 @@ export function SeoFlow({
   let body: ReactNode;
   switch (step) {
     case "brief":
-      body = <BriefStep {...common} />;
+      body = <BriefStep {...common} defaultTopic={flowHintOf(card.data).topic} />;
       break;
     case "plan":
       body = <PlanStep {...common} running={running} />;

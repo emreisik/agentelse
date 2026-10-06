@@ -58,6 +58,36 @@ export function pickPreviewLogo(
 const FALLBACK_BASE = "#334155";
 const FALLBACK_DEEP = "#0f172a";
 
+// The headline's size as a share of the canvas's SHORT side, the same table
+// the compositor typesets with (creative-text.ts SCALE_SIZE), so real words in
+// the preview sit at the size the post gets.
+const TEXT_SCALE = { M: 0.064, L: 0.08, XL: 0.1 } as const;
+
+// The words a post carries on its picture (OnImageText in creative-text.ts).
+export type PreviewText = {
+  headline: string;
+  // The words of the headline set in the brand's accent colour.
+  highlight?: string;
+  // At most one supporting line under it.
+  lines?: string[];
+};
+
+// The headline with its highlighted words split out (first match, any case).
+export function splitHighlight(
+  headline: string,
+  highlight?: string,
+): { before: string; match: string; after: string } | null {
+  const needle = highlight?.trim();
+  if (!needle) return null;
+  const at = headline.toLowerCase().indexOf(needle.toLowerCase());
+  if (at === -1) return null;
+  return {
+    before: headline.slice(0, at),
+    match: headline.slice(at, at + needle.length),
+    after: headline.slice(at + needle.length),
+  };
+}
+
 const HEADLINE_BAR_HEIGHT = { M: 2.6, L: 3.6, XL: 4.8 } as const; // % of height
 const HEADLINE_LINE_WIDTHS = [100, 86, 64];
 const LINE_GAP = 1.6; // % of canvas height between placeholder lines
@@ -97,16 +127,30 @@ export function LayoutPreview({
   colors,
   logos,
   aspect,
+  ratio: ratioOverride,
+  text,
+  fontFamily,
+  showLogo = true,
   className,
 }: {
   layout: LayoutTemplate;
   colors: LayoutPalette;
   logos: PreviewLogos;
   aspect?: AspectClass;
+  // Width / height, when the post's real shape differs from the class's
+  // (an Instagram post is 3:4, the class's portrait 4:5).
+  ratio?: number;
+  // Real words in the headline zone instead of placeholder bars. Without a
+  // headline zone the picture carries no words, exactly like the post.
+  text?: PreviewText;
+  // CSS font-family for those words (the brand's font, loaded by the caller).
+  fontFamily?: string;
+  // false: no logo and no placeholder for one (a post that gets no logo).
+  showLogo?: boolean;
   className?: string;
 }) {
   const cls = aspect ?? previewAspect(layout);
-  const ratio = RATIO[cls];
+  const ratio = ratioOverride ?? RATIO[cls];
   const base = colors.primary ?? FALLBACK_BASE;
   const deep = colors.secondary ?? colors.primary ?? FALLBACK_DEEP;
   const ink = readableOn(base);
@@ -218,6 +262,8 @@ export function LayoutPreview({
       style={{
         aspectRatio: `${ratio}`,
         background: `linear-gradient(155deg, color-mix(in srgb, ${base} 88%, white), ${deep})`,
+        // The headline's size is set in container units (cqw).
+        containerType: "inline-size",
       }}
     >
       <div
@@ -239,7 +285,21 @@ export function LayoutPreview({
         />
       ) : null}
 
-      {layout.headline.enabled ? (
+      {layout.headline.enabled && text?.headline ? (
+        <HeadlineText
+          text={text}
+          zone={zone}
+          zoneBox={zoneBox}
+          centered={centered}
+          maxLines={layout.headline.maxLines}
+          sizeCqw={
+            TEXT_SCALE[layout.headline.scale] * 100 * Math.min(1, 1 / ratio)
+          }
+          ink={ink}
+          accent={colors.accent ?? null}
+          fontFamily={fontFamily}
+        />
+      ) : layout.headline.enabled && !text ? (
         <div
           data-part="headline"
           data-zone={zone}
@@ -267,7 +327,7 @@ export function LayoutPreview({
         </div>
       ) : null}
 
-      {logoOnBand && barColor ? (
+      {!showLogo ? null : logoOnBand && barColor ? (
         <div
           data-part="logo-on-band"
           className="absolute inset-x-0 flex items-center"
@@ -290,6 +350,91 @@ export function LayoutPreview({
           {logoImage}
         </div>
       )}
+    </div>
+  );
+}
+
+// Real headline words in the layout's headline zone: the brand's font, the
+// layout's size and alignment, the highlighted words in the accent colour (as
+// the compositor sets them) and at most one supporting line.
+function HeadlineText({
+  text,
+  zone,
+  zoneBox,
+  centered,
+  maxLines,
+  sizeCqw,
+  ink,
+  accent,
+  fontFamily,
+}: {
+  text: PreviewText;
+  zone: HeadlineZone;
+  zoneBox: Box;
+  centered: boolean;
+  maxLines: number;
+  sizeCqw: number;
+  ink: string;
+  accent: string | null;
+  fontFamily?: string;
+}) {
+  const split = splitHighlight(text.headline, text.highlight);
+  // The accent reads on its own only when it differs from the ink's side.
+  const highlightColor =
+    accent && isDarkColor(accent) !== (ink === LIGHT_INK) ? accent : ink;
+  const line = text.lines?.find((entry) => entry.trim());
+  return (
+    <div
+      data-part="headline"
+      data-zone={zone}
+      className="absolute flex flex-col"
+      style={{
+        ...zoneBox,
+        color: ink,
+        textAlign: centered ? "center" : "left",
+        fontFamily,
+        textShadow:
+          ink === LIGHT_INK ? "0 1px 2px rgba(0,0,0,0.25)" : undefined,
+      }}
+    >
+      <span
+        data-part="headline-text"
+        style={{
+          fontSize: `${sizeCqw.toFixed(2)}cqw`,
+          fontWeight: 700,
+          lineHeight: 1.06,
+          letterSpacing: "-0.01em",
+          display: "-webkit-box",
+          WebkitLineClamp: maxLines,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          overflowWrap: "anywhere",
+        }}
+      >
+        {split ? (
+          <>
+            {split.before}
+            <span style={{ color: highlightColor }}>{split.match}</span>
+            {split.after}
+          </>
+        ) : (
+          text.headline
+        )}
+      </span>
+      {line ? (
+        <span
+          data-part="headline-line"
+          style={{
+            marginTop: `${(sizeCqw * 0.3).toFixed(2)}cqw`,
+            fontSize: `${(sizeCqw * 0.5).toFixed(2)}cqw`,
+            fontWeight: 500,
+            lineHeight: 1.2,
+            opacity: 0.92,
+          }}
+        >
+          {line}
+        </span>
+      ) : null}
     </div>
   );
 }

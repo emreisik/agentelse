@@ -31,6 +31,7 @@ import {
   type PlanOptionsCardData,
 } from "@/lib/works/plan-options";
 import { updateCardInTx, updateCommandCard } from "@/server/chat/card-store";
+import { markIdeasPlanned } from "@/server/chat/idea-pool";
 import {
   buildPlanCard,
   supersedeOpenPlanCards,
@@ -420,7 +421,8 @@ type SwapRefusal = {
 };
 
 type SwapTxOutcome =
-  | { ok: true; saved: boolean }
+  // ideaId: the pool idea a saved post took (it is marked planned).
+  | { ok: true; saved: boolean; ideaId?: string | null }
   | {
       ok: false;
       code: "WORK" | "NOT_FOUND" | "LOCKED" | "FAILED" | SwapRefusal["code"];
@@ -515,6 +517,12 @@ export async function swapPlanItemAction(
       entityId: commandId,
       metadata: { index, altIndex, saved: outcome.saved },
     }).catch(() => undefined);
+
+    // A saved post took a pool idea: it leaves the pool now ("Planned"), as
+    // it would have when the plan was saved.
+    if (outcome.saved && outcome.ideaId) {
+      await markIdeasPlanned(projectId, [outcome.ideaId]);
+    }
 
     refreshWorkPages(
       projectId,
@@ -746,7 +754,12 @@ async function swapInTx(
       await tx.post.update({ where: { id: postId }, data: idea });
     }
   }
-  return { ok: true, saved: isSaved };
+  const written = postWrite as { ideaId: string | null } | null;
+  return {
+    ok: true,
+    saved: isSaved,
+    ...(isSaved && written ? { ideaId: written.ideaId } : {}),
+  };
 }
 
 // The idea fields of `next` on another channel item of the same post: its

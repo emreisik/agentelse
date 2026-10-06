@@ -22,8 +22,9 @@ import { assetUrl } from "@/lib/asset-url";
 
 // "Publish N": approved pieces the client posts themselves (a Reel, a
 // carousel, a blog article, a post on an account that is not connected). The
-// piece's text and image are right here to copy; "I published it" closes the
-// loop so the plan knows it went out.
+// piece's text and image are right here to copy; "I posted it myself" closes
+// the loop so the plan knows it went out. Nothing here posts to the account:
+// the copy says so plainly, a client once took the button for "post it".
 
 export function ManualPublishList({
   items,
@@ -119,7 +120,7 @@ export function ManualPublishList({
               ) : (
                 <Check className="size-3.5" />
               )}
-              I published it
+              I posted it myself
             </Button>
           </div>
         </li>
@@ -171,7 +172,7 @@ export function ManualPublishDialog({
       toast.error(result.message);
       return;
     }
-    toast.success("Marked as published.");
+    toast.success("Marked as posted by you.");
     const rest = (items ?? []).filter((candidate) => candidate.id !== item.id);
     setItems(rest);
     router.refresh();
@@ -182,9 +183,11 @@ export function ManualPublishDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Yours to post</DialogTitle>
+          <DialogTitle>Post these yourself</DialogTitle>
           <DialogDescription>
-            Copy the text, post it where it belongs, then tell me it is out.
+            Agentelse can&apos;t post these formats for you, so nothing is sent
+            to the account from here. Copy the text, download the image, post it
+            on the account, then mark it as posted.
           </DialogDescription>
         </DialogHeader>
         {error ? (

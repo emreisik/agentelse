@@ -24,6 +24,8 @@ const tx = {
   creative: { findMany: vi.fn(), create: vi.fn() },
   // One Post per post of the plan (save-plan-core createPostsInTx).
   post: { create: vi.fn(async () => ({ id: "post-1" })) },
+  // The chat an idea made into a post opens (newWork).
+  work: { create: vi.fn() },
 };
 type TxFn = (t: typeof tx) => unknown;
 const transaction = vi.fn<(fn: TxFn, opts?: unknown) => unknown>(async (fn) =>
@@ -307,6 +309,46 @@ describe("createSlots", () => {
       },
       select: { id: true, scheduledFor: true },
     });
+  });
+
+  it("opens the new chat in the same transaction, before its plan row, only when something is written", async () => {
+    const newWork = {
+      title: "Autumn launch",
+      module: "social",
+      channels: ["instagram"],
+      createdByUserId: "user-1",
+      now: new Date("2026-10-01T09:00:00Z"),
+    };
+
+    await createSlots({ ...baseInput([target()]), newWork });
+
+    expect(tx.work.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        id: "work-1",
+        workspaceId: "ws-1",
+        projectId: "proj-1",
+        title: "Autumn launch",
+        module: "social",
+        channels: ["instagram"],
+        createdByUserId: "user-1",
+      }),
+    });
+    expect(tx.work.create.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.command.create.mock.invocationCallOrder[0]!,
+    );
+    expect(firstData(tx.command.create)).toMatchObject({ workId: "work-1" });
+
+    // Already on the calendar: no empty chat is left behind.
+    vi.clearAllMocks();
+    tx.command.findMany.mockResolvedValue([
+      { id: "plan-9", parsedIntent: savedCard([item()], ["cr-9"]) },
+    ]);
+    tx.creative.findMany.mockResolvedValue([
+      { id: "cr-9", scheduledFor: new Date("2026-10-02T08:00:00Z") },
+    ]);
+    const again = await createSlots({ ...baseInput([target()]), newWork });
+    expect(again).toMatchObject({ ok: true, alreadyScheduled: true });
+    expect(tx.work.create).not.toHaveBeenCalled();
   });
 
   it("a dead slot (archived or rejected) may be added again (W22)", async () => {

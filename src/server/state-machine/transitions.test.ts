@@ -243,7 +243,10 @@ describe("StateMachine — Opportunity transitions", () => {
 
   it("rejects converting a DISMISSED opportunity", () => {
     expect(() =>
-      StateMachine.assertOpportunityTransition("DISMISSED", "CONVERTED_TO_TASK"),
+      StateMachine.assertOpportunityTransition(
+        "DISMISSED",
+        "CONVERTED_TO_TASK",
+      ),
     ).toThrow(AgentelseError);
   });
 });
@@ -267,7 +270,13 @@ describe("StateMachine — Idea lifecycle", () => {
   });
 
   it("allows the council to REJECT at every pre-approval stage", () => {
-    for (const from of ["RAW", "RESEARCHING", "VALIDATED", "CONCEPT", "SHORTLISTED"] as const) {
+    for (const from of [
+      "RAW",
+      "RESEARCHING",
+      "VALIDATED",
+      "CONCEPT",
+      "SHORTLISTED",
+    ] as const) {
       expect(() =>
         StateMachine.assertIdeaTransition(from, "REJECTED"),
       ).not.toThrow();
@@ -281,9 +290,28 @@ describe("StateMachine — Idea lifecycle", () => {
   });
 
   it("rejects reviving a REJECTED idea", () => {
+    expect(() => StateMachine.assertIdeaTransition("REJECTED", "RAW")).toThrow(
+      AgentelseError,
+    );
+  });
+
+  it("saves a typed idea straight from VALIDATED, never through SHORTLISTED", () => {
     expect(() =>
-      StateMachine.assertIdeaTransition("REJECTED", "RAW"),
-    ).toThrow(AgentelseError);
+      StateMachine.assertIdeaTransition("VALIDATED", "APPROVED"),
+    ).not.toThrow();
+  });
+
+  it("lets the Ideas board unsave, archive or turn down a saved idea", () => {
+    for (const to of [
+      "VALIDATED",
+      "SHORTLISTED",
+      "ARCHIVED",
+      "REJECTED",
+    ] as const) {
+      expect(() =>
+        StateMachine.assertIdeaTransition("APPROVED", to),
+      ).not.toThrow();
+    }
   });
 });
 

@@ -217,10 +217,15 @@ const OPPORTUNITY_TRANSITIONS: Record<OpportunityStatus, OpportunityStatus[]> =
 export const IDEA_TRANSITIONS: Record<IdeaStatus, IdeaStatus[]> = {
   RAW: ["RESEARCHING", "VALIDATED", "REJECTED", "ARCHIVED"],
   RESEARCHING: ["VALIDATED", "REJECTED", "ARCHIVED"],
-  VALIDATED: ["CONCEPT", "REJECTED", "ARCHIVED"],
+  // A typed idea (src/lib/ideas/concept.ts) is born VALIDATED and saved
+  // straight to APPROVED: it never passes SHORTLISTED, which the old agency
+  // Director would turn into tasks.
+  VALIDATED: ["CONCEPT", "APPROVED", "REJECTED", "ARCHIVED"],
   CONCEPT: ["SHORTLISTED", "REJECTED", "ARCHIVED"],
   SHORTLISTED: ["APPROVED", "REJECTED", "ARCHIVED"],
-  APPROVED: ["PLANNING"],
+  // Saved ideas can be unsaved (back to where typed or older ideas wait),
+  // archived or turned down from the Ideas board.
+  APPROVED: ["PLANNING", "VALIDATED", "SHORTLISTED", "ARCHIVED", "REJECTED"],
   PLANNING: ["ACTIVE"],
   ACTIVE: ["MEASURING", "ARCHIVED"],
   MEASURING: ["LEARNED", "ARCHIVED"],

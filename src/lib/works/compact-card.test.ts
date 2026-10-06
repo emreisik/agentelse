@@ -245,11 +245,22 @@ describe("compactSpecOf: short cards stay in the chat", () => {
     for (const via of ["idea", "generate", "suggestion", "brief"]) {
       const one = planDraft({
         via,
+        state: "saved",
+        savedCreativeIds: ["c1"],
         items: [{ date: "2026-10-03", time: "10:00", channel: "instagram", topic: "a", captionIdea: "a" }],
       });
       expect(compactSpecOf(one)).toBeNull();
       expect(isSingleSlotPlan(one as Extract<IdeaEventCardData, { kind: "content-plan-draft" }>)).toBe(true);
     }
+  });
+
+  it("one post that is not on the calendar yet (a draft) is a plan card, whatever it came from", () => {
+    const one = planDraft({
+      via: "idea",
+      items: [{ date: "2026-10-03", time: "10:00", channel: "instagram", topic: "a", captionIdea: "a" }],
+    });
+    expect(compactSpecOf(one)).not.toBeNull();
+    expect(isSingleSlotPlan(one as Extract<IdeaEventCardData, { kind: "content-plan-draft" }>)).toBe(false);
   });
 
   it("one post that came from a plan's directions or the master is still a plan card", () => {

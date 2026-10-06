@@ -314,7 +314,13 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
       const layoutPlan = planCreativeLayout({
         visualIdentity: brandCtx.visualIdentity,
         hasLogo: Boolean(brandCtx.logoAssetId || brandCtx.darkLogoAssetId),
-        requestedId: preset.success ? preset.data.layoutId : null,
+        // The chat's pick; else the layout of the pool idea a planned post
+        // was made from (plan-run.ts specOf, docs/ideas.md).
+        requestedId: preset.success
+          ? preset.data.layoutId
+          : typeof input.layoutId === "string" && input.layoutId.length <= 40
+            ? input.layoutId
+            : null,
         pixelSize: platformFormat.pixelSize,
         // The image model never draws the words: they are typeset below.
         hasHeadline: false,

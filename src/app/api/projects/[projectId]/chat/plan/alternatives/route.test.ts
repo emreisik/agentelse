@@ -84,6 +84,12 @@ vi.mock("@/server/repositories/audit-log.repository", () => ({
 
 vi.mock("@/server/chat/plan-run", () => ({ RUN_CLAIM_TTL_MS: 600_000 }));
 
+const poolAlternativesFor = vi.fn();
+vi.mock("@/server/chat/idea-pool", () => ({ poolAlternativesFor }));
+vi.mock("@/server/brand/rule-language", () => ({
+  brandRuleLanguageOf: vi.fn(async () => "tr"),
+}));
+
 const { POST } = await import("./route");
 const { AgentelseError } = await import("@/server/security/errors");
 const {
@@ -196,6 +202,7 @@ beforeEach(() => {
     competitors: [],
   });
   getBrandTwin.mockResolvedValue(null);
+  poolAlternativesFor.mockResolvedValue([]);
   creativeFindMany.mockResolvedValue([]);
   taskFindMany.mockResolvedValue([]);
   auditRecord.mockResolvedValue(undefined);
@@ -774,5 +781,47 @@ describe("alt-route: failures", () => {
     expect(await response.json()).toMatchObject({ ok: false, code: "FAILED" });
     expect(storedCard().alternativesMeta).toEqual({ runs: 1 });
     expect(storedCard().items[0]?.alternatives).toHaveLength(2);
+  });
+});
+
+describe("alt-route-pool: a post's new idea from the idea pool first", () => {
+  const offer = {
+    topic: "Five new cups for colder mornings",
+    captionIdea: '"Autumn is here" | A latte on a bar | Come by.',
+    from: "Idea pool",
+    ideaId: "idea-1",
+    origin: { kind: "idea", ref: "idea-1" },
+  };
+
+  it("adds the pool's post ideas to the asked post without a model call or a run", async () => {
+    poolAlternativesFor.mockResolvedValue([offer]);
+
+    const response = await POST(request({ ...valid, index: 1 }), params);
+
+    expect(await response.json()).toEqual({
+      ok: true,
+      slots: 1,
+      fromPool: 1,
+    });
+    expect(run).not.toHaveBeenCalled();
+    expect(poolAlternativesFor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "proj-1",
+        channel: "instagram",
+        limit: 2,
+      }),
+    );
+    const card = storedCard();
+    expect(card.items[1]!.alternatives).toEqual([offer]);
+    expect(card.items[0]!.alternatives).toHaveLength(2);
+    expect(card.alternativesMeta).toBeUndefined();
+  });
+
+  it("goes on to the model when the pool has nothing for the post", async () => {
+    const response = await POST(request({ ...valid, index: 1 }), params);
+    expect(await response.json()).toMatchObject({ ok: true });
+    expect(poolAlternativesFor).toHaveBeenCalled();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(storedCard().alternativesMeta).toEqual({ runs: 1 });
   });
 });

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
+import { parseIdeaConcept } from "@/lib/ideas/concept";
 import {
   isFlowModuleKey,
   newModuleFlowCard,
@@ -38,7 +39,29 @@ export type StartModuleFlowResult =
 // What the place the flow was opened from already knows: "Boost with an ad" on
 // a post names that post. Kept on the card for the module's Brief to read
 // (card.data.hint); never trusted beyond an id shape.
-export type ModuleFlowHint = { sourceCreativeId?: string | null };
+export type ModuleFlowHint = {
+  sourceCreativeId?: string | null;
+  // An idea from the Ideas board ("Write this article", docs/ideas.md): its
+  // topic is read here, from the idea itself, never from the URL.
+  sourceIdeaId?: string | null;
+};
+
+// The SEO idea an article starts from: its id and its working title.
+async function seoIdeaHint(
+  projectId: string,
+  ideaId: string | null | undefined,
+): Promise<{ ideaId: string; topic: string } | null> {
+  const id = idSchema.safeParse(ideaId);
+  if (!id.success) return null;
+  const row = await prisma.idea.findFirst({
+    where: { id: id.data, projectId },
+    select: { id: true, concept: true },
+  });
+  const concept = parseIdeaConcept(row?.concept);
+  return row && concept?.module === "seo"
+    ? { ideaId: row.id, topic: concept.draft.title }
+    : null;
+}
 
 export async function startModuleFlowAction(
   projectId: string,
@@ -77,16 +100,20 @@ export async function startModuleFlowAction(
 
       const title = TITLE[module];
       const source = idSchema.safeParse(hint?.sourceCreativeId);
+      const ideaHint =
+        module === "seo" ? await seoIdeaHint(projectId, hint?.sourceIdeaId) : null;
       const card = newModuleFlowCard(module, title);
+      const data = {
+        ...(source.success ? { sourceCreativeId: source.data } : {}),
+        ...(ideaHint ?? {}),
+      };
       const row = await IdeaChatRepository.postSystemMessage({
         workspaceId: gate.auth.workspaceId,
         projectId,
         ideaId: null,
         workId: work.id,
         text: title,
-        card: source.success
-          ? { ...card, data: { hint: { sourceCreativeId: source.data } } }
-          : card,
+        card: Object.keys(data).length > 0 ? { ...card, data: { hint: data } } : card,
       });
       await WorkRepository.touch(projectId, work.id, {
         summary: title,

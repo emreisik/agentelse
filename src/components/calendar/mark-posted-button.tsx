@@ -34,7 +34,7 @@ export function MarkPostedButton({
             toast.error(result.message);
             return;
           }
-          toast.success("Marked as posted");
+          toast.success("Marked as posted by you");
           onDone();
         })
       }
@@ -44,7 +44,7 @@ export function MarkPostedButton({
       ) : (
         <Check aria-hidden />
       )}
-      Mark as posted
+      I posted it myself
     </Button>
   );
 }

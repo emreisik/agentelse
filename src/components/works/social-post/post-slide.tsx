@@ -635,8 +635,11 @@ export function PostSlide({
         </form>
       ) : null}
 
+      {/* Kardeş anahtarları önekli: üçü de seçili parçayla sıfırlanır, ama aynı
+          anahtarı paylaşırlarsa React satırları her yenilemede çoğaltır
+          (yayınlanmış parçada "Published." yığını). */}
       {card && !selected.excluded && !isFacebook ? (
-        <CreativePublishLine key={selected.id} card={card} />
+        <CreativePublishLine key={`line-${selected.id}`} card={card} />
       ) : null}
 
       {/* The Facebook delivery goes to the Page through its own row, open
@@ -644,7 +647,7 @@ export function PostSlide({
       {card && !selected.excluded && isFacebook ? (
         facebookConnected ? (
           <FacebookShareRow
-            key={selected.id}
+            key={`facebook-${selected.id}`}
             creativeId={selected.id}
             collapsed={!finished}
           />
@@ -664,7 +667,7 @@ export function PostSlide({
       {/* A published delivery asks how it did. */}
       {host?.projectId && selected.stage === "PUBLISHED" ? (
         <PostResult
-          key={selected.id}
+          key={`result-${selected.id}`}
           projectId={host.projectId}
           creativeId={selected.id}
         />

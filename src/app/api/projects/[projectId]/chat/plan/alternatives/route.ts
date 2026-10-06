@@ -20,12 +20,15 @@ import {
   MAX_ALTERNATIVE_RUNS,
   MAX_ALTERNATIVE_SLOTS_PER_RUN,
   MAX_ALTERNATIVES_STORED,
+  PLAN_ALTERNATIVES_PER_SLOT,
   canSwapSlot,
   normalizeAlternatives,
   type PlanAlternative,
   type SwapSlotState,
 } from "@/lib/works/plan-alternatives";
 import { getBrandTwin } from "@/server/brand-twin/brand-twin";
+import { brandRuleLanguageOf } from "@/server/brand/rule-language";
+import { poolAlternativesFor } from "@/server/chat/idea-pool";
 import { RUN_CLAIM_TTL_MS } from "@/server/chat/plan-run";
 import { updateCommandCard } from "@/server/chat/card-store";
 import {
@@ -66,7 +69,12 @@ const MAX_OTHER_TOPICS = 40;
 const MAX_TOPIC = 120;
 const MAX_CAPTION = 200;
 
-const BodySchema = z.object({ commandId: idSchema });
+const BodySchema = z.object({
+  commandId: idSchema,
+  // The post "New idea" was pressed on: the idea pool's unused post ideas go
+  // to it first, with no model call and no paid run (poolAlternativesFor).
+  index: z.number().int().min(0).max(500).optional(),
+});
 
 type PlanCard = Extract<IdeaEventCardData, { kind: "content-plan-draft" }>;
 type PlanItem = PlanCard["items"][number];
@@ -201,6 +209,104 @@ async function releaseClaim(
   }
 }
 
+// The ideas a plan already uses or offers: one pool idea makes one post.
+function ideaIdsOnCard(card: PlanCard): Set<string> {
+  const ids = new Set<string>();
+  for (const item of card.items) {
+    if (item.ideaId) ids.add(item.ideaId);
+    for (const alt of item.alternatives ?? []) {
+      if (alt.ideaId) ids.add(alt.ideaId);
+    }
+  }
+  return ids;
+}
+
+// "New idea" on one post, from the idea pool first (docs/ideas.md): its
+// unused post ideas are added to that post's other ideas at once, without a
+// model call, so they cost nothing and use up no run. Returns how many were
+// added; 0 sends the caller on to the model.
+async function offerPoolIdeas(input: {
+  card: PlanCard;
+  projectId: string;
+  commandId: string;
+  brandId: string;
+  index: number;
+  slotStates: SwapSlotState[] | null;
+}): Promise<number> {
+  const item = input.card.items[input.index];
+  if (!item || item.removed) return 0;
+  const existing = item.alternatives?.length ?? 0;
+  const room = Math.min(
+    PLAN_ALTERNATIVES_PER_SLOT,
+    MAX_ALTERNATIVES_STORED - existing,
+  );
+  if (room <= 0) return 0;
+  const check = input.slotStates
+    ? canSwapSlot("saved", input.slotStates[input.index] ?? null)
+    : canSwapSlot("draft", null);
+  if (!check.ok) return 0;
+
+  const offers = await poolAlternativesFor({
+    projectId: input.projectId,
+    channel: item.channel ?? undefined,
+    exclude: ideaIdsOnCard(input.card),
+    takenTopics: input.card.items.flatMap((entry) => [
+      entry.topic,
+      ...(entry.alternatives ?? []).map((alt) => alt.topic),
+    ]),
+    limit: room,
+  });
+  if (offers.length === 0) return 0;
+  // Checked again: the brand's rules may have changed since the idea was made.
+  const rules = await loadBrandRules({
+    projectId: input.projectId,
+    brandId: input.brandId,
+    language: await brandRuleLanguageOf(input.projectId),
+  });
+  const blocked = new Set(
+    blocksOf(checkItems(offers, rules)).map((entry) => entry.index),
+  );
+  const allowed = offers.filter((_, i) => !blocked.has(i));
+  if (allowed.length === 0) return 0;
+
+  let added = 0;
+  const write = await updateCommandCard({
+    commandId: input.commandId,
+    projectId: input.projectId,
+    expectKinds: ["content-plan-draft"],
+    requireActiveWork: true,
+    update: (card) => {
+      if (
+        !isPlanCard(card) ||
+        (card.state !== "draft" && card.state !== "saved")
+      ) {
+        return null;
+      }
+      const current = card.items[input.index];
+      // A concurrent swap or edit wins.
+      if (!current || current.removed || current.topic !== item.topic) {
+        return null;
+      }
+      const used = ideaIdsOnCard(card);
+      const list = current.alternatives ?? [];
+      const fresh = allowed
+        .filter((alt) => !alt.ideaId || !used.has(alt.ideaId))
+        .slice(0, Math.max(0, MAX_ALTERNATIVES_STORED - list.length));
+      added = fresh.length;
+      if (added === 0) return null;
+      return {
+        ...card,
+        items: card.items.map((entry, i) =>
+          i === input.index
+            ? { ...entry, alternatives: [...list, ...fresh] }
+            : entry,
+        ),
+      };
+    },
+  });
+  return write.ok && write.changed ? added : 0;
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ projectId: string }> },
@@ -237,7 +343,7 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
-  const { commandId } = parsed.data;
+  const { commandId, index: askedIndex } = parsed.data;
 
   if (
     isRateLimited(`plan-alt:${userId}`, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS)
@@ -275,17 +381,32 @@ export async function POST(
     );
   }
 
-  // A mock answer must never be written into a real plan.
-  if (ReasoningService.isMockMode()) {
-    return soft("MOCK", copyText("planAlt.mock"));
-  }
-
   // Which saved slots are still untouched (read before the claim: the claim
   // callback is synchronous).
   const slotStates =
     storedCard.state === "saved"
       ? await slotStatesOf(storedCard, projectId, commandId, Date.now())
       : null;
+
+  if (askedIndex !== undefined) {
+    const offered = await offerPoolIdeas({
+      card: storedCard,
+      projectId,
+      commandId,
+      brandId: access.defaultBrandId,
+      index: askedIndex,
+      slotStates,
+    });
+    if (offered > 0) {
+      refreshWorkPages(projectId);
+      return NextResponse.json({ ok: true, slots: 1, fromPool: offered });
+    }
+  }
+
+  // A mock answer must never be written into a real plan.
+  if (ReasoningService.isMockMode()) {
+    return soft("MOCK", copyText("planAlt.mock"));
+  }
 
   // Claim: this write is the mutex. Two tabs, one model call.
   const stamp = new Date().toISOString();

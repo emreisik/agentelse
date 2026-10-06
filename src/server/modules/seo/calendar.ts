@@ -42,6 +42,8 @@ export async function placeSeoArticle(input: {
   article: SeoArticle;
   plan?: SeoPlan;
   brief?: SeoBrief;
+  // The Ideas board's article idea it was written from (docs/ideas.md).
+  ideaId?: string | null;
 }): Promise<SeoPlacement> {
   const { scope, article } = input;
   const [date, time] = input.when.split("T") as [string, string];
@@ -79,6 +81,7 @@ export async function placeSeoArticle(input: {
             formatKey: SEO_FORMAT_KEY,
             topic: article.title,
             captionIdea: article.metaDescription || article.title,
+            ...(input.ideaId ? { ideaId: input.ideaId } : {}),
           },
         ],
       });

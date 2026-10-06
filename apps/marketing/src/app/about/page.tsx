@@ -1,66 +1,86 @@
 import type { Metadata } from "next";
 
-import { FinalCta } from "@/components/marketing/final-cta";
-import { Section } from "@/components/marketing/section";
-import { Reveal } from "@/components/marketing/reveal";
+import { CtaBand } from "@/components/site/cta-band";
+import { PageHero } from "@/components/site/page-hero";
+import { Reveal } from "@/components/site/reveal";
+import { Section, SectionHeader } from "@/components/site/section";
 
 export const metadata: Metadata = {
   title: "About",
   description:
-    "Agentelse is not another AI tool you manage. It's an autonomous growth department a company adds to itself.",
+    "Why we build Agentelse: a social media team for every brand, with you in charge.",
 };
+
+const PRINCIPLES = [
+  {
+    title: "You approve. Always.",
+    body: "AI does the work. You make the calls.",
+  },
+  {
+    title: "Your brand, not a template.",
+    body: "Everything starts from what makes you, you.",
+  },
+  {
+    title: "Honest about automation.",
+    body: "We say what posts itself and what doesn't.",
+  },
+  {
+    title: "Useful on day one.",
+    body: "A website and a sentence. That's the setup.",
+  },
+];
 
 export default function AboutPage() {
   return (
     <>
-      <Section className="pb-0">
-        <Reveal className="flex flex-col gap-4">
-          <p className="agentelse-text-caption font-medium text-muted-foreground uppercase">
-            About
+      <PageHero
+        eyebrow="About"
+        title="A content team for every brand."
+        lead="Most brands should post more. Few have the time or the team. We fix that."
+      />
+
+      <Section className="pt-0 sm:pt-0">
+        <Reveal className="mx-auto flex max-w-[56ch] flex-col gap-5 text-[18px] leading-relaxed text-foreground/85">
+          <p>
+            Social media is a dozen jobs: ideas, plans, captions, designs,
+            posting on time and checking what worked. Small teams and busy
+            agencies do it all in between everything else.
           </p>
-          <h1 className="agentelse-text-h1 max-w-[20ch] text-balance">
-            We think AI should do the work, not wait for instructions.
-          </h1>
-          <p className="agentelse-text-lead max-w-[56ch] text-muted-foreground">
-            Most AI tools take a prompt and hand back an output. That&rsquo;s
-            not how a growth department works. A real one researches, decides,
-            and acts continuously, on its own schedule, not yours. So
-            that&rsquo;s what we built.
+          <p>
+            Agentelse takes those jobs. It knows your brand, works where you can
+            see it, and asks before anything reaches your audience.
           </p>
         </Reveal>
       </Section>
 
-      <Section tone="raised">
-        <Reveal className="flex max-w-[65ch] flex-col gap-6">
-          <h2 className="agentelse-text-h2 text-balance">
-            How we think about it
-          </h2>
-          <div className="flex flex-col gap-5 text-base text-foreground/90">
-            <p>
-              Companies shouldn&rsquo;t have to manage AI the way they manage
-              software: configuring it, prompting it, checking on it every few
-              hours. They should be able to give it a job, the way they&rsquo;d
-              hand a role to a new team member, and trust it to show up and do
-              that job.
-            </p>
-            <p>
-              But autonomy without control isn&rsquo;t trustworthy, it&rsquo;s
-              just risk with better marketing. That&rsquo;s why approvals and
-              permissions are core to Agentelse, not a setting you find later.
-              You decide what it can do on its own and what it brings back to
-              you first.
-            </p>
-            <p>
-              We&rsquo;re not building a novelty. We&rsquo;re building
-              infrastructure a company can still be running on in five years,
-              something that gets more useful the longer it works for you, not
-              something you churn out of after the demo wears off.
-            </p>
-          </div>
-        </Reveal>
+      <Section tone="muted" wide>
+        <SectionHeader
+          eyebrow="What we believe"
+          title="How we build it."
+          align="center"
+          className="mx-auto mb-14"
+        />
+        <ul className="grid gap-px overflow-hidden rounded-[1.75rem] border border-border bg-border sm:grid-cols-2">
+          {PRINCIPLES.map((principle, index) => (
+            <li key={principle.title} className="bg-card">
+              <Reveal
+                delayMs={(index % 2) * 70}
+                className="flex h-full flex-col gap-2.5 p-8 sm:p-10"
+              >
+                <span className="text-sm font-medium text-muted-foreground tabular-nums">
+                  0{index + 1}
+                </span>
+                <p className="text-h3">{principle.title}</p>
+                <p className="text-[15px] text-muted-foreground">
+                  {principle.body}
+                </p>
+              </Reveal>
+            </li>
+          ))}
+        </ul>
       </Section>
 
-      <FinalCta />
+      <CtaBand />
     </>
   );
 }

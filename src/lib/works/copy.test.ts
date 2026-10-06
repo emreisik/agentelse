@@ -105,6 +105,13 @@ const NEW_COMPONENT_FILES = [
   "plan-pane/quick-links.tsx",
 ].map((f) => join("src/components/works", f));
 
+// The Ideas board: every sentence is in src/components/ideas/copy.ts.
+const IDEAS_COMPONENT_FILES = [
+  "idea-card.tsx",
+  "idea-detail.tsx",
+  "ideas-board.tsx",
+].map((f) => join("src/components/ideas", f));
+
 // Literals that are not user-visible sentences. One comment per entry.
 const ALLOWED_LITERALS = new Set<string>([
   // Module specifiers and directives are code, not copy.
@@ -190,7 +197,7 @@ describe("copy coverage scan (W01)", () => {
     ).toHaveLength(1);
   });
 
-  for (const file of NEW_COMPONENT_FILES) {
+  for (const file of [...NEW_COMPONENT_FILES, ...IDEAS_COMPONENT_FILES]) {
     it(`${file} has no hard-coded sentence`, () => {
       if (!existsSync(file)) return;
       expect(findHardCodedSentences(readFileSync(file, "utf8")), file).toEqual(

@@ -24,7 +24,12 @@ export const WeeklyPlanDraftSchema = z.object({
 
 export type WeeklyPlanDraftOutput = z.infer<typeof WeeklyPlanDraftSchema>;
 
-type PoolIdea = { id: string; title: string; summary?: string };
+type PoolIdea = {
+  id: string;
+  title: string;
+  summary?: string;
+  captionIdea?: string;
+};
 
 function list(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
@@ -45,7 +50,7 @@ export const weeklyPlanDraftDef: ReasoningDef<WeeklyPlanDraftOutput> = {
         "You are the content planner of an AI marketing agency. Draft next week's social media posts for one brand; the client reviews the draft and saves it, nothing is published before that.\n\n" +
         "Rules:\n" +
         "- The server fixed the slots (day, time, channel, format). Write exactly one post per slot, numbered like the slots.\n" +
-        "- Build the posts from the idea pool first, in its order. Skip an idea that cannot become a good post on that channel; adapt a campaign idea into one post that is a piece of it. For a post taken from an idea, set ideaId to that idea's id. Fill the remaining slots with your own ideas from the brand profile, without ideaId. Never use one idea twice and never invent or change an ideaId.\n" +
+        "- Build the posts from the idea pool first, in its order. Skip an idea that cannot become a good post on that channel; adapt a campaign idea into one post that is a piece of it. For a post taken from an idea, set ideaId to that idea's id; an idea with a captionIdea is already written as a post, so use its title as the topic and its captionIdea as written. Fill the remaining slots with your own ideas from the brand profile, without ideaId. Never use one idea twice and never invent or change an ideaId.\n" +
         "- Lean toward what the client marked as worked on published posts, and away from what did not.\n" +
         '- topic: a concrete headline (at most 100 characters). captionIdea: the caption idea in the brand\'s voice, 1-3 sentences. purpose: 2-4 words on what the post does for the plan (for example "Introduce the product").\n' +
         "- Follow the brand's rules and never make claims the brand profile does not support.\n" +
@@ -81,7 +86,7 @@ export const weeklyPlanDraftDef: ReasoningDef<WeeklyPlanDraftOutput> = {
               slot: index + 1,
               ideaId: idea.id,
               topic: idea.title.slice(0, 100),
-              captionIdea: idea.summary || idea.title,
+              captionIdea: idea.captionIdea || idea.summary || idea.title,
               purpose: "From the idea pool",
             }
           : {

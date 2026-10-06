@@ -36,6 +36,7 @@ export function BriefStep({
   state,
   blocked,
   onMoving,
+  defaultTopic,
 }: {
   projectId?: string;
   commandId?: string;
@@ -43,9 +44,11 @@ export function BriefStep({
   // Why nothing on the card can change right now, or null.
   blocked: string | null;
   onMoving?: OnMoving;
+  // The topic of the idea the flow was started from (docs/ideas.md).
+  defaultTopic?: string;
 }) {
   const stored = state.brief;
-  const [topic, setTopic] = useState(stored?.topic ?? "");
+  const [topic, setTopic] = useState(stored?.topic ?? defaultTopic ?? "");
   const [siteUrl, setSiteUrl] = useState(stored?.siteUrl ?? "");
   const [language, setLanguage] = useState(stored?.language ?? "");
   const [audience, setAudience] = useState(stored?.audience ?? "");

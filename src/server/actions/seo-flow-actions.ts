@@ -1,5 +1,7 @@
 "use server";
 
+import { flowHintOf } from "@/lib/module-flows/card";
+import { markIdeasPlanned } from "@/server/chat/idea-pool";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 
@@ -531,6 +533,9 @@ async function placeOnCalendar(input: {
       article,
       plan,
       brief,
+      ...(flowHintOf(current.card.data).ideaId
+        ? { ideaId: flowHintOf(current.card.data).ideaId }
+        : {}),
     });
     delivery = {
       postId: placed.postId,
@@ -545,6 +550,10 @@ async function placeOnCalendar(input: {
     );
     return { ok: false, message: COPY.calendarFailed };
   }
+
+  // The idea the article came from leaves the pool ("Planned").
+  const ideaId = flowHintOf(current.card.data).ideaId;
+  if (ideaId) await markIdeasPlanned(projectId, [ideaId]);
 
   const written = await writeSeoCard({
     projectId,

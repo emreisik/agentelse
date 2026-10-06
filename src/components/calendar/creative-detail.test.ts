@@ -148,12 +148,12 @@ describe("CreativeDetail", () => {
     expect(html).not.toContain("<footer>");
   });
 
-  it("elle paylaşılan onaylı parçada 'Mark as posted' altta durur", () => {
+  it("elle paylaşılan onaylı parçada 'I posted it myself' altta durur", () => {
     expect(render({ item: item({ stage: "manual" }) })).toContain(
-      "Mark as posted",
+      "I posted it myself",
     );
     // Zamanlanmış otomatik parçada yok.
-    expect(render()).not.toContain("Mark as posted");
+    expect(render()).not.toContain("I posted it myself");
   });
 
   it("yayınlanmış parça salt okunurdur: tarih formu yok, yayın anı var", () => {

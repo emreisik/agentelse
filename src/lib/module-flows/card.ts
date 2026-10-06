@@ -56,3 +56,32 @@ export function newModuleFlowCard(
 ): ModuleFlowCardData {
   return { kind: "module-flow", module, title, step: "brief", data: {} };
 }
+
+// What the place a flow was opened from already knew (card.data.hint): the
+// post "Boost with an ad" names, the idea "Write this article" starts from
+// (docs/ideas.md) and that idea's topic. Read defensively: stored JSON.
+export type ModuleFlowHintData = {
+  sourceCreativeId?: string;
+  ideaId?: string;
+  topic?: string;
+};
+
+const HINT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function flowHintOf(data: unknown): ModuleFlowHintData {
+  const hint =
+    data && typeof data === "object"
+      ? (data as { hint?: unknown }).hint
+      : undefined;
+  if (!hint || typeof hint !== "object") return {};
+  const raw = hint as Record<string, unknown>;
+  const out: ModuleFlowHintData = {};
+  if (typeof raw.sourceCreativeId === "string" && HINT_ID.test(raw.sourceCreativeId)) {
+    out.sourceCreativeId = raw.sourceCreativeId;
+  }
+  if (typeof raw.ideaId === "string" && HINT_ID.test(raw.ideaId)) out.ideaId = raw.ideaId;
+  if (typeof raw.topic === "string" && raw.topic.trim()) {
+    out.topic = raw.topic.trim().slice(0, 200);
+  }
+  return out;
+}

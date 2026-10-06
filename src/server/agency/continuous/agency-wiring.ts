@@ -14,6 +14,7 @@ import {
 } from "@/server/agency/director/agency-director";
 import { WorkHandoffEngine } from "@/server/agency/handoffs/work-handoff-engine";
 import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
+import { IdeaRefill } from "@/server/ideas/idea-refill";
 import { WeeklyPlanDraft } from "@/server/agency/content/weekly-plan-draft";
 import { WeeklyPlanProduce } from "@/server/agency/content/weekly-plan-produce";
 import { legacyAgencyLoopMode } from "@/server/agency/legacy-loop";
@@ -194,20 +195,17 @@ registerAgencyTickStep({
   name: "opportunity-evaluation",
   run: () => OpportunityEngine.evaluatePromotedInsights(10),
 });
-// The Brand Brain loop's idea step: every project with an evaluated
-// opportunity gets one quiet idea run a day (IdeaFoundry.generateDaily: a few
-// ideas, no chat cards, bounded by the idea pool cap and the daily AI budget).
-// The ideas wait in the pool; plans made in the chat draw from it first, and
-// the chat's next-step bar offers them. It runs only once the old pipeline is
-// wound down (LEGACY_AGENCY_LOOP=drain|off, an operator's switch): with the
-// loop `on`, the Council and the Director would turn these ideas into tasks and
-// work plans on their own instead of leaving them for the chat. With the loop
-// down, council-lite shortlists them LLM-free. The old weekly GENERATE_IDEAS
-// schedule stays retired (scheduler-service.ts switches a leftover row off).
+// The Brand Brain loop's idea step (docs/ideas.md): the idea pool is kept
+// full of ready-to-make post ideas. A project someone works in, whose fresh
+// post ideas fall below the low-water mark, gets one idea-engine run at most
+// every few hours (idea-refill.ts), bounded by the pool size and the daily AI
+// limit. The ideas are typed and born VALIDATED, out of reach of the old
+// Council and Director, so this runs in every LEGACY_AGENCY_LOOP mode. It
+// replaces the old daily "idea-generation" step (campaign ideas across
+// creative lenses, which the posts planner could not use as they were).
 registerAgencyTickStep({
-  name: "idea-generation",
-  run: async () =>
-    legacyAgencyLoopMode() === "on" ? 0 : IdeaFoundry.generateDaily(3),
+  name: "idea-pool-refill",
+  run: () => IdeaRefill.runDue(2),
 });
 // Faz 4: every Sunday evening (project time) Agentelse drafts next week's plan
 // from the idea pool into a chat of its own (weekly-plan-draft.ts), unless the
@@ -223,7 +221,9 @@ registerAgencyTickStep({
 // a project whose owner opted into Settings -> Autonomy "Prepare it
 // automatically" (AutonomyPolicy.weeklyAutoProduce, default off). Approving,
 // scheduling and publishing stay the owner's taps exactly as they are for a
-// plan produced by hand. Same legacy-loop requirement as idea-generation.
+// plan produced by hand. Runs only once the old loop is wound down
+// (LEGACY_AGENCY_LOOP=drain|off): with it `on`, the Council and the Director
+// would also be turning the same pool ideas into work of their own.
 registerAgencyTickStep({
   name: "weekly-plan-produce",
   run: async () =>

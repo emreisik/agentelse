@@ -2,25 +2,30 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
-import { MarketingNav } from "@/components/marketing/nav";
-import { MarketingFooter } from "@/components/marketing/footer";
+import { SiteNav } from "@/components/site/nav";
+import { SiteFooter } from "@/components/site/footer";
+import { SITE_URL } from "@/lib/site";
 
-// OpenAI Sans is proprietary and distributed through OpenAI's gated brand
-// portal. Inter is the metric-compatible, self-hosted fallback until licensed
-// OpenAI Sans files are supplied; CSS still keeps the real family first.
-const openAiSansFallback = Inter({
-  variable: "--font-openai-sans-fallback",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: {
-    default: "Agentelse — Your Autonomous Growth Department",
+    default: "Agentelse — Your AI social media team",
     template: "%s — Agentelse",
   },
   description:
-    "Agentelse researches your market, discovers opportunities, coordinates specialized AI teams and turns strategy into execution — continuously.",
+    "Agentelse plans, designs and publishes your social media posts in your brand's style. You just approve.",
+  openGraph: {
+    type: "website",
+    siteName: "Agentelse",
+    url: SITE_URL,
+  },
+  twitter: { card: "summary_large_image" },
 };
 
 export default function RootLayout({
@@ -32,13 +37,14 @@ export default function RootLayout({
     <html
       lang="en"
       translate="no"
-      className={`${openAiSansFallback.variable} h-full antialiased notranslate`}
+      data-scroll-behavior="smooth"
+      className={`${inter.variable} h-full antialiased notranslate`}
       suppressHydrationWarning
     >
       <body className="flex min-h-full flex-col bg-background font-sans text-foreground">
-        <MarketingNav />
+        <SiteNav />
         <main className="flex-1">{children}</main>
-        <MarketingFooter />
+        <SiteFooter />
       </body>
     </html>
   );

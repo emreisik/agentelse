@@ -10,6 +10,8 @@ import { OpportunityRepository } from "@/server/repositories/opportunity.reposit
 import { ProjectGoalRepository } from "@/server/repositories/project-goal.repository";
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
+import { IdeaEngine } from "@/server/ideas/idea-engine";
+import { IDEA_ACTION_COPY } from "@/lib/ideas/copy";
 import { prisma } from "@/lib/prisma";
 import {
   requireProjectAccess,
@@ -194,17 +196,38 @@ export async function opportunityToIdeasAction(
     const { userId } = await requireUser();
     const access = await requireProjectAccess(userId, projectId);
 
-    const created = await IdeaFoundry.generateForOpportunity(
+    // The opportunity becomes ready-to-make post ideas (docs/ideas.md), in
+    // the same pool and board as every other idea.
+    const opportunity = await OpportunityRepository.findByIdInProject(
       opportunityId,
       projectId,
-      { postToChat: false, maxLenses: 3 },
     );
-    if (created === 0) {
+    if (!opportunity) {
+      return { ok: false, message: "This opportunity is no longer here." };
+    }
+    const result = await IdeaEngine.generate({
+      projectId,
+      count: 3,
+      trigger: "opportunity",
+      opportunityId,
+      focus: `${opportunity.title}. ${opportunity.description ?? ""}`,
+    });
+    if (!result.ok || result.created.length === 0) {
       return {
         ok: false,
-        message:
-          "No new ideas: the idea pool is full or this opportunity was already used for ideas.",
+        message: !result.ok && result.reason === "BUDGET"
+          ? IDEA_ACTION_COPY.budget
+          : !result.ok && result.reason === "FULL"
+            ? IDEA_ACTION_COPY.full
+            : IDEA_ACTION_COPY.empty,
       };
+    }
+    if (opportunity.status === "EVALUATED") {
+      await OpportunityRepository.transition(
+        opportunityId,
+        projectId,
+        "ACCEPTED",
+      ).catch(() => undefined);
     }
     await audit(
       access.workspaceId,

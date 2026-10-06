@@ -38,7 +38,7 @@ describe("ManualPublishList", () => {
     expect(html).toContain("Blog / SEO · Article · 2026-10-05");
     expect(html).toContain("Full article text");
     expect(html).toContain("Copy text");
-    expect(html).toContain("I published it");
+    expect(html).toContain("I posted it myself");
   });
 
   it("offers the image as a download when the piece has one", () => {
@@ -53,7 +53,7 @@ describe("ManualPublishList", () => {
   it("does not offer to copy text a piece does not have", () => {
     const html = render({ items: [item({ text: "" })] });
     expect(html).not.toContain("Copy text");
-    expect(html).toContain("I published it");
+    expect(html).toContain("I posted it myself");
   });
 
   it("an unscheduled piece shows no date", () => {

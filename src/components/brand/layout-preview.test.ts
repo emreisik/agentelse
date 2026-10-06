@@ -120,3 +120,38 @@ describe("pickPreviewLogo (mirrors applyBrandTemplate)", () => {
     expect(pickPreviewLogo({ light: null, dark: null }, "#000000")).toBeNull();
   });
 });
+
+describe("LayoutPreview with real words (Ideas board)", () => {
+  const renderText = (id: string, extra: Partial<Parameters<typeof LayoutPreview>[0]> = {}) =>
+    renderToStaticMarkup(
+      createElement(LayoutPreview, {
+        layout: byId(id),
+        colors,
+        logos: bothLogos,
+        text: { headline: "The autumn menu is here", highlight: "autumn menu" },
+        ...extra,
+      }),
+    );
+
+  it("sets the headline as text in the zone, the highlight in the accent colour", () => {
+    const html = renderText("headline-top");
+    expect(html).toContain('data-part="headline-text"');
+    expect(html).toContain("The ");
+    expect(html).toMatch(/<span style="color:#2dd4bf">autumn menu<\/span>/);
+    // No placeholder bars once there are words.
+    expect(html).not.toMatch(/padding-bottom:[\d.]+%/);
+  });
+
+  it("puts no words on a layout without a headline zone, like the post", () => {
+    const html = renderText("classic");
+    expect(html).not.toContain("autumn menu");
+    expect(html).not.toContain('data-part="headline"');
+  });
+
+  it("draws the post's real shape and can leave the logo out", () => {
+    const html = renderText("headline-top", { ratio: 3 / 4, showLogo: false });
+    expect(html).toContain("aspect-ratio:0.75");
+    expect(html).not.toContain('data-part="logo"');
+    expect(html).not.toContain("data-logo-placeholder");
+  });
+});

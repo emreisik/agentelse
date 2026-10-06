@@ -1,39 +1,41 @@
 import type { Metadata } from "next";
 
-import { Section } from "@/components/marketing/section";
-import { Reveal } from "@/components/marketing/reveal";
-import { ContactForm } from "@/components/marketing/contact-form";
+import { CONTACT_EMAIL } from "@/lib/site";
+import { ContactForm } from "@/components/site/contact-form";
+import { Reveal } from "@/components/site/reveal";
+import { Eyebrow } from "@/components/site/section";
 
 export const metadata: Metadata = {
   title: "Contact",
-  description:
-    "Tell us about your brands and what you'd want your first AI department to take on.",
+  description: "Talk to the Agentelse team. We reply within one business day.",
 };
 
 export default function ContactPage() {
   return (
-    <Section>
-      <div className="grid items-start gap-12 md:grid-cols-2">
+    <section className="site-section">
+      <div className="site-container grid items-start gap-12 md:grid-cols-[0.9fr_1.1fr] md:gap-16">
         <Reveal className="flex flex-col gap-6">
-          <h1 className="agentelse-text-h1 max-w-[16ch] text-balance">
-            Talk to us.
+          <Eyebrow>Contact</Eyebrow>
+          <h1 className="text-h1 max-w-[14ch] text-balance">
+            Let&apos;s talk.
           </h1>
-          <p className="agentelse-text-lead max-w-[42ch] text-muted-foreground">
-            Tell us about your brands and what you&apos;d want your first AI
-            department to take on. We&apos;ll follow up within a business day.
+          <p className="text-lead max-w-[42ch] text-muted-foreground">
+            Tell us about your brand. We reply within one business day.
           </p>
           <div className="flex flex-col gap-1 pt-2">
             <p className="text-sm text-muted-foreground">Prefer email?</p>
             <a
-              href="mailto:hello@agentelse.com"
+              href={`mailto:${CONTACT_EMAIL}`}
               className="text-sm text-foreground underline underline-offset-4"
             >
-              hello@agentelse.com
+              {CONTACT_EMAIL}
             </a>
           </div>
         </Reveal>
-        <ContactForm />
+        <Reveal delayMs={100}>
+          <ContactForm />
+        </Reveal>
       </div>
-    </Section>
+    </section>
   );
 }

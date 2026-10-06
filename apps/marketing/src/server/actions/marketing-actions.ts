@@ -1,17 +1,7 @@
 "use server";
 
-import { z } from "zod";
-
+import { contactSchema, type ContactFormValues } from "@/lib/contact-schema";
 import { sendTelegramMessage } from "@/server/notifications/telegram.service";
-
-const contactSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  email: z.string().email("Enter a valid email address"),
-  company: z.string().optional(),
-  message: z.string().min(1, "Tell us a bit about what you need"),
-});
-
-export type ContactFormValues = z.infer<typeof contactSchema>;
 
 // sendTelegramMessage uses Telegram's HTML parse mode — escape user input
 // before interpolating it so a submitted name/message can't break the

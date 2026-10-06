@@ -14,6 +14,8 @@ import {
 import { sanitizeClickText } from "@/lib/works/slot-rules";
 import type { IdeaEventCardData } from "@/types/idea-event-card";
 
+import { createWorkInTx, type NewWorkInput } from "@/server/works/draft-plan-work";
+
 import { buildPlanCard } from "./content-plan";
 import { createPostsInTx, savePlanSlotsInTx } from "./save-plan-core";
 
@@ -67,6 +69,10 @@ export type CreatedSlot = {
 export type CreateSlotsInput = {
   scope: SlotScope;
   workId: string;
+  // The chat to open with the slots (an idea made into a post from the Ideas
+  // board): created as `workId` in the same transaction, only when there is
+  // something to put on the calendar. Without it the Work already exists.
+  newWork?: Omit<NewWorkInput, "workId" | "workspaceId" | "projectId">;
   timezone: string;
   via: PlanVia;
   cardTitle: string;
@@ -354,6 +360,14 @@ async function createSlotsOnce(
         goal: input.goal,
         brandCheck: input.brandCheck,
       });
+      if (input.newWork) {
+        await createWorkInTx(tx, {
+          ...input.newWork,
+          workId: input.workId,
+          workspaceId: scope.workspaceId,
+          projectId: scope.projectId,
+        });
+      }
       const rawText =
         sanitizeClickText(input.rawText, RAW_TEXT_MAX) || FALLBACK_RAW_TEXT;
       // ideaId and topic stay unset: a set ideaId would hide the row from the

@@ -30,7 +30,7 @@ import { ensureProjectActive } from "@/server/projects/activation";
 import { isWorksEnabled } from "@/server/works/flag";
 import { performCreativeRevision } from "@/server/actions/creative-actions";
 import { createStrategicIdea } from "@/server/commands/strategic-request";
-import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
+import { IdeaEngine } from "@/server/ideas/idea-engine";
 import {
   planWeeklyInstagramContent,
   summarizeWeeklyPlanResult,
@@ -139,12 +139,10 @@ export type SubmitCommandResult =
       summary: string;
       result: WeeklyPlanResult;
     }
-  // Chat-triggered on-demand draw from the existing EVALUATED opportunity
-  // backlog (idea generation is no longer continuous/tick-driven — see
-  // idea-foundry.ts/agency-wiring.ts). Each new idea already gets its own
-  // "idea" card posted to its own thread by IdeaFoundry itself
-  // (idea-foundry.ts's postSystemMessage call) — count is only for the
-  // general chat's own plain-text summary reply.
+  // Chat-triggered: a batch of ready-to-make post ideas for the idea pool
+  // (src/server/ideas/idea-engine.ts, docs/ideas.md), drawn from everything
+  // the brand knows including its open opportunities. They show on the Ideas
+  // board; count is only for the general chat's own plain-text reply.
   | {
       status: "IDEAS_GENERATED_FROM_OPPORTUNITIES";
       commandId: string;
@@ -471,9 +469,14 @@ export const CommandService = {
     // either, so a chat request is the way new ideas get made from the
     // backlog (besides the agent's own save_idea).
     if (intent.kind === "GENERATE_IDEAS_FROM_OPPORTUNITIES") {
-      const count = await IdeaFoundry.generateForTopOpportunities(5, {
+      // Ready-to-make post ideas for the pool (docs/ideas.md); the engine
+      // reads the open opportunities itself.
+      const generated = await IdeaEngine.generate({
         projectId,
+        count: 5,
+        trigger: "chat",
       });
+      const count = generated.ok ? generated.created.length : 0;
       return {
         status: "IDEAS_GENERATED_FROM_OPPORTUNITIES",
         commandId: command.id,

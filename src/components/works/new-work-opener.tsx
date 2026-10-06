@@ -51,6 +51,7 @@ export function openedWorkHref(
   params.delete("work");
   params.delete("module");
   params.delete("post");
+  params.delete("idea");
   const rest = params.toString();
   return `${workHref(projectId, workId)}${rest ? `&${rest}` : ""}`;
 }
@@ -100,11 +101,13 @@ async function openModuleWork(
   projectId: string,
   module: ModuleKey,
   sourcePost: string | null,
+  sourceIdea: string | null,
 ): Promise<{ ok: true; workId: string } | { ok: false; message: string }> {
   const result = await createWorkAction(projectId, undefined, undefined, module);
   if (result.ok && isFlowModuleKey(module) && MODULES[module].ready) {
     await startModuleFlowAction(projectId, result.workId, module, {
       sourceCreativeId: sourcePost,
+      sourceIdeaId: sourceIdea,
     }).catch(() => undefined);
   }
   return result;
@@ -155,6 +158,8 @@ export function NewWorkOpener({
   const requested = parseModuleKey(search.get("module"));
   // "Boost with an ad" on a post: the ads flow starts from that post.
   const sourcePost = search.get("post");
+  // "Write this article" on the Ideas board: the SEO flow starts from that idea.
+  const sourceIdea = search.get("idea");
   const started = React.useRef(false);
   // False once the person has left the landing page (and while the page is torn
   // down): a late answer then moves nowhere. Re-armed by the effect so React's
@@ -179,7 +184,7 @@ export function NewWorkOpener({
         mode === "today"
           ? openTodayWorkAction(projectId)
           : requested
-            ? openModuleWork(projectId, requested, sourcePost)
+            ? openModuleWork(projectId, requested, sourcePost, sourceIdea)
             : createWorkAction(projectId),
       stillHere: () => here.current,
       replace: (href) => router.replace(href),
@@ -188,7 +193,7 @@ export function NewWorkOpener({
       started.current = false;
       setError(outcome.message);
     }
-  }, [projectId, router, mode, landing, requested, sourcePost]);
+  }, [projectId, router, mode, landing, requested, sourcePost, sourceIdea]);
 
   React.useEffect(() => {
     if (started.current) return;

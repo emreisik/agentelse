@@ -100,8 +100,12 @@ function join(parts: readonly (string | null | undefined | false)[]): string {
   return parts.filter(Boolean).join(" · ");
 }
 
-// A plan of one post that came straight from an idea, a brief, a suggestion or
-// slot-first generation is the planned-slot card: short, so it stays in the chat.
+// A plan of one post that went straight onto the calendar from an idea, a
+// brief, a suggestion or slot-first generation is the planned-slot card: short,
+// so it stays in the chat. Only once it is saved: the planned-slot card says
+// "Added to your calendar" and acts on the post, so a draft of one post (not
+// on the calendar yet) is a plan card like any other, with its Save and
+// Prepare content.
 const COMPACT_VIA: ReadonlySet<string> = new Set([
   "idea",
   "generate",
@@ -113,7 +117,9 @@ type PlanDraft = Extract<IdeaEventCardData, { kind: "content-plan-draft" }>;
 
 export function isSingleSlotPlan(card: PlanDraft): boolean {
   return (
-    card.items.length === 1 && Boolean(card.via && COMPACT_VIA.has(card.via))
+    card.state !== "draft" &&
+    card.items.length === 1 &&
+    Boolean(card.via && COMPACT_VIA.has(card.via))
   );
 }
 

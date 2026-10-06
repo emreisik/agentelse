@@ -597,7 +597,8 @@ function PaneBody({
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ commandId }),
+          // The post asked for: the idea pool's post ideas go to it first.
+          body: JSON.stringify({ commandId, index }),
         },
       );
       const reply = parseReply(await response.json().catch(() => null));

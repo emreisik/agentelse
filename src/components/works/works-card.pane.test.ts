@@ -159,6 +159,17 @@ const slotPlan = card({
   kind: "content-plan-draft",
   title: "One post",
   timezone: "Europe/Istanbul",
+  state: "saved",
+  via: "idea",
+  savedCreativeIds: ["c1"],
+  items: [planItem("2026-10-03")],
+});
+
+// A one-post plan from an idea that is not on the calendar yet.
+const slotDraft = card({
+  kind: "content-plan-draft",
+  title: "One post",
+  timezone: "Europe/Istanbul",
   state: "draft",
   via: "idea",
   items: [planItem("2026-10-03")],
@@ -232,6 +243,12 @@ describe("what stays in the chat", () => {
     expect(html).not.toContain("data-card-compact");
     // The planned-slot card itself: its own receipt line, in the chat.
     expect(html).toContain("Added to your calendar");
+  });
+
+  it("a draft of one post is a plan card, never a calendar receipt", () => {
+    const html = render(slotDraft, PANE);
+    expect(html).toContain("data-card-compact");
+    expect(html).not.toContain("Added to your calendar");
   });
 
   it("short cards are untouched", () => {

@@ -207,8 +207,8 @@ export function CreativeDetail({
         <>
           {siblings ? (
             <p className="mb-2 text-[11px] text-muted-foreground">
-              Approving also approves the post&apos;s other channels waiting
-              for review.
+              Approving also approves the post&apos;s other channels waiting for
+              review.
             </p>
           ) : null}
           <DecisionButtons
@@ -219,13 +219,20 @@ export function CreativeDetail({
         </>
       ) : null;
   } else if (MARKABLE.has(item.stage) && item.facts.status === "APPROVED") {
+    // Bu düğme hesaba hiçbir şey göndermez; yalnız "ben paylaştım" der.
     footer = (
-      <MarkPostedButton
-        key={item.id}
-        creativeId={item.id}
-        className="w-full"
-        onDone={onDecided}
-      />
+      <>
+        <p className="mb-2 text-[11px] text-muted-foreground">
+          Agentelse can&apos;t post this format for you. Post it on the account
+          yourself, then mark it here.
+        </p>
+        <MarkPostedButton
+          key={item.id}
+          creativeId={item.id}
+          className="w-full"
+          onDone={onDecided}
+        />
+      </>
     );
   }
 

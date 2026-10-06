@@ -36,6 +36,9 @@ export type CreateIdeaInput = {
   concept?: unknown;
   fingerprint?: string;
   isMock?: boolean;
+  // Typed ideas (src/lib/ideas/concept.ts) are born VALIDATED: out of reach of
+  // the old Council (RAW) and Director (SHORTLISTED). Absent = RAW.
+  status?: IdeaStatus;
 };
 
 export type CreateCouncilEvaluationInput = {
@@ -74,6 +77,7 @@ export const IdeaRepository = {
         concept: input.concept as never,
         fingerprint: input.fingerprint,
         isMock: input.isMock ?? false,
+        ...(input.status ? { status: input.status } : {}),
       },
     });
   },

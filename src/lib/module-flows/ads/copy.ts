@@ -50,7 +50,12 @@ export const ADS_FLOW_COPY = {
     "No Meta Pixel sent events from your website this week, so Meta optimizes for link clicks, which brings more accidental taps. Add the Pixel to optimize for landing page views.",
   // F5b
   morePosts: "More posts (optional)",
-  morePostsHint: "Up to 2 more. Different ideas in one ad set let Meta find what works.",
+  morePostsHint: "Up to 2 more as separate ads: different ideas in one ad set let Meta find what works.",
+  adFormat: "How should they show?",
+  separateAds: "Separate ads",
+  carouselAd: "One carousel",
+  carouselHint: "Every picked post becomes a card people swipe through (2 to 10 cards). For website goals only.",
+  carouselNeedsMore: "Pick at least one more post to make a carousel.",
   where: "Where",
   newCampaign: "New campaign",
   addToAdSet: "Add to an ad set",

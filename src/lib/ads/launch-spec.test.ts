@@ -160,3 +160,110 @@ describe("objectives and lint", () => {
     expect(policyLint("BUY NOW BEFORE IT IS GONE FOREVER").map((flag) => flag.rule)).toEqual(["shouting"]);
   });
 });
+
+describe("carousel ads (F8+)", () => {
+  const cards = [
+    { imageAssetId: "a1", headline: "Spring", link: "https://example.com" },
+    { imageAssetId: "a2", headline: "Summer", link: "https://example.com" },
+    { imageAssetId: "a3", link: "https://example.com" },
+  ];
+  const carousel: AdsLaunchSpec = {
+    ...spec,
+    ads: [
+      {
+        ...spec.ads[0]!,
+        creative: { ...spec.ads[0]!.creative, cards },
+      },
+    ],
+  };
+
+  it("passes with distinct pictures and warns about risky card headlines", () => {
+    expect(validateLaunchSpec(carousel, facts)).toEqual([]);
+    const risky = {
+      ...carousel,
+      ads: [
+        {
+          ...carousel.ads[0]!,
+          creative: {
+            ...carousel.ads[0]!.creative,
+            cards: [
+              { ...cards[0]!, headline: "Are you diabetic? Guaranteed cure" },
+              cards[1]!,
+            ],
+          },
+        },
+      ],
+    };
+    const issues = validateLaunchSpec(risky, facts);
+    expect(issues.some((issue) => issue.rule === "P6")).toBe(true);
+    expect(blockingIssues(issues)).toEqual([]);
+  });
+
+  it("blocks a carousel of one picture, and with messages or a lead form", () => {
+    const same = {
+      ...carousel,
+      ads: [
+        {
+          ...carousel.ads[0]!,
+          creative: {
+            ...carousel.ads[0]!.creative,
+            cards: [cards[0]!, { ...cards[1]!, imageAssetId: "a1" }],
+          },
+        },
+      ],
+    };
+    expect(blockingIssues(validateLaunchSpec(same, facts)).map((i) => i.field)).toEqual([
+      "ads.0.creative.cards",
+    ]);
+    const withMessages = {
+      ...carousel,
+      ads: [
+        {
+          ...carousel.ads[0]!,
+          creative: { ...carousel.ads[0]!.creative, messaging: "WHATSAPP" as const },
+        },
+      ],
+    };
+    expect(blockingIssues(validateLaunchSpec(withMessages, facts)).length).toBeGreaterThan(0);
+  });
+
+  it("is rejected by the schema when mixed with a lead form or messages", async () => {
+    const { parseLaunchSpec } = await import("./launch-spec");
+    expect(parseLaunchSpec(carousel)).not.toBeNull();
+    expect(
+      parseLaunchSpec({
+        ...carousel,
+        leadForm: { privacyUrl: "https://example.com/privacy", higherIntent: false, name: "Form" },
+      }),
+    ).toBeNull();
+    expect(
+      parseLaunchSpec({
+        ...carousel,
+        ads: [
+          {
+            ...carousel.ads[0]!,
+            creative: { ...carousel.ads[0]!.creative, cards: [cards[0]!] },
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the hash of a single-picture spec, and changes it when a card changes", () => {
+    expect(specHash(spec)).toBe(specHash({ ...spec }));
+    const swapped = {
+      ...carousel,
+      ads: [
+        {
+          ...carousel.ads[0]!,
+          creative: {
+            ...carousel.ads[0]!.creative,
+            cards: [cards[0]!, cards[1]!, { ...cards[2]!, imageAssetId: "a9" }],
+          },
+        },
+      ],
+    };
+    expect(specHash(swapped)).not.toBe(specHash(carousel));
+    expect(specHash(carousel)).not.toBe(specHash(spec));
+  });
+});

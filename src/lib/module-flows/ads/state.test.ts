@@ -308,3 +308,48 @@ describe("adsLaunchPayload", () => {
     expect(payload.__pendingAdSet.optimizationGoal).toBe("LINK_CLICKS");
   });
 });
+
+describe("carousel brief rules", () => {
+  const input = {
+    creativeId: "c1",
+    objective: "OUTCOME_TRAFFIC",
+    dailyBudget: 20,
+    days: 7,
+    countries: ["TR"],
+    ageMin: 18,
+    ageMax: 65,
+    gender: "all",
+    link: "https://example.com",
+    callToAction: "LEARN_MORE",
+  };
+
+  it("needs at least one more post and allows up to nine", () => {
+    expect(briefIssue({ ...input, adFormat: "carousel" })).not.toBeNull();
+    expect(
+      briefIssue({ ...input, adFormat: "carousel", extraCreativeIds: ["c2"] }),
+    ).toBeNull();
+    const nine = Array.from({ length: 9 }, (_, i) => `x${i}`);
+    expect(briefIssue({ ...input, adFormat: "carousel", extraCreativeIds: nine })).toBeNull();
+    expect(
+      briefIssue({ ...input, adFormat: "carousel", extraCreativeIds: [...nine, "x9"] }),
+    ).not.toBeNull();
+  });
+
+  it("separate ads still stop at two extra posts", () => {
+    expect(briefIssue({ ...input, extraCreativeIds: ["c2", "c3"] })).toBeNull();
+    expect(briefIssue({ ...input, extraCreativeIds: ["c2", "c3", "c4"] })).not.toBeNull();
+  });
+
+  it("is for website goals only", () => {
+    expect(
+      briefIssue({
+        ...input,
+        objective: "OUTCOME_ENGAGEMENT",
+        adFormat: "carousel",
+        extraCreativeIds: ["c2"],
+        link: "",
+        messages: { app: "MESSENGER" },
+      }),
+    ).not.toBeNull();
+  });
+});

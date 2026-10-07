@@ -183,6 +183,10 @@ export async function saveAdsBriefAction(
           ? { leadForm: given.leadForm }
           : {}),
         ...(extraSources.length > 0 ? { extraSources } : {}),
+        // Carousel: seçilen bütün postlar tek reklamın kartları.
+        ...(given.adFormat === "carousel" && extraSources.length > 0
+          ? { adFormat: "carousel" as const }
+          : {}),
         source,
         ...(account.currency ? { currency: account.currency } : {}),
         ...(account.pageName ? { pageName: account.pageName } : {}),

@@ -235,7 +235,7 @@ Bayrak: `META_ADS_PLANNER=true` ve `META_ADS_LAUNCH_V2=true`. Her amaç ayrıca 
 - **Ücret** (`src/lib/ads/fees.ts`, tarihli): konum ücretiyle tahmini fatura ("plus VAT where it applies"; KDV hesaplanmaz).
 - **Leads** (anında form): spec, yürütücü adımı (`/{page_id}/leadgen_forms`, Sayfa token'ı, Higher intent), CTA ve günlük "New leads today: N — open Leads Center" bildirimi kodlandı; `pages_manage_ads` App Review'dan geçene kadar `READY_RECIPES.leads_instant_form = false` (Brief'te görünmez). Lead'lerin kişisel verisi okunmaz ve saklanmaz (gizlilik metni güncellendi).
 - **Önerilen hedef**: piksel varsa Traffic, yoksa Messages (gerekçesiyle).
-- **Henüz yok**: carousel ve video modülde (eski sihirbazda duruyor), iki oranlı `asset_feed_spec` (test hesabında doğrulanana kadar tek görsel + `adapt_to_placement`), Instagram profil hedefi, içerik planındaki `ads.campaign` parçasına "Make this ad" köprüsü, mesai saatleriyle zamanlama.
+- **Henüz yok**: video modülde (eski sihirbazda duruyor), iki oranlı `asset_feed_spec` (test hesabında doğrulanana kadar tek görsel + `adapt_to_placement`), Instagram profil hedefi, içerik planındaki `ads.campaign` parçasına "Make this ad" köprüsü, mesai saatleriyle zamanlama.
 
 ## F6 — Raporlama ve öğrenme
 
@@ -291,6 +291,16 @@ Bayrak: `META_ADS_AGENCY=true`. Migration: `20261006200000_add_ads_connection` (
 - **Metrik anomalisi** (`src/lib/ads/anomaly.ts`, testli): günde bir hesap başına dünün CPM, CPA ve link CTR'ı, haftanın gününe göre düzeltilmiş 14 günlük tabana göre z-skoru (|z| ≥ 3, yalnız kötü yön, asgari hacim) → `METRIC_ANOMALY` uyarısı.
 - **Kitle çakışması** (`src/lib/ads/overlap.ts`, testli): aynada ad set hedeflemesinin özeti tutulur (konum, yaş, cinsiyet, kitle kimlikleri); aynı amaçla çalışan iki ad set aynı insanları kapsıyorsa `AUDIENCE_OVERLAP` önerisi.
 - **Bilinçli sapmalar**: proje başına çok hesap şemada var (AdsAccountProject) ama arayüz ve lansman v1'de tek seçili hesapla çalışır; ajans system user + partner erişimi ve Meta'da bağlantının uzaktan kaldırılması yok (müşteri Business Settings → Integrations'tan kaldırır).
+
+## Carousel reklam (modül akışı)
+
+Brief'te ana posta ek post seçilince "How should they show?" çıkar: **Separate ads** (varsayılan; en çok 3 post, her biri ayrı reklam) ya da **One carousel** (2-10 post, hepsi tek reklamın kartı). Yalnız bağlantılı hedeflerde (trafik, erişim, etkileşim); mesaj ve anında form carousel olmaz (şema, Brief ve yerel kurallar bunu üç yerde engeller).
+
+- Spec: `ads[].creative.cards[]` (2-10; `imageAssetId`, `headline`, `description`, `link`); ilk kart `imageAssetId` ile aynıdır. `specHash` yalnız carousel'de kartları katar: eski spec'lerin özeti değişmedi.
+- Görseller (`src/lib/ads/launch-images.ts`): her kart ayrı yuva (ilk kart reklamın kendi anahtarı, sonrakiler `index:kart`); Review'da ve yürütücüde bir kez yüklenir, yeniden denemede tekrar yüklenmez.
+- Meta yazısı: eski sihirbazda canlıda kanıtlanmış `link_data.child_attachments` biçimi (`objectStorySpec`). Review'da `validate_only` ile Meta ön kontrolü ve önizleme carousel'i de kapsar; kart başlıkları politika denetiminden geçer.
+- Kartın başlığı post başlığından (40 karaktere kısaltılır). Görseller 1:1 değilse Meta kırpar; test lansmanında önizlemeden kontrol et.
+- Doğrulanmadı: Meta'nın carousel `ON_POST` etkileşim hedefindeki davranışı. İlk gerçek denemede Review'daki Meta ön kontrolü sorunu gösterir.
 
 ## Sahip adımları (kod dışı)
 

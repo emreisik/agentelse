@@ -140,6 +140,21 @@ export const AdsLaunchSpecSchema = z.object({
           // F5a: mesaj reklamı (CTA sohbeti açar; bağlantı uygulamanın kendi
           // adresidir).
           messaging: z.enum(["WHATSAPP", "MESSENGER", "INSTAGRAM_DIRECT"]).optional(),
+          // F8+: carousel. 2-10 kart; ilk kartın görseli `imageAssetId` ile
+          // aynıdır (önizleme ve eski yollar için). Mesaj ve anında formla
+          // birlikte olmaz.
+          cards: z
+            .array(
+              z.object({
+                imageAssetId: z.string().min(1),
+                headline: z.string().max(255).optional(),
+                description: z.string().max(255).optional(),
+                link: z.string().url(),
+              }),
+            )
+            .min(2)
+            .max(10)
+            .optional(),
         }),
         urlTags: z.string().max(1000),
       }),
@@ -168,7 +183,14 @@ export const AdsLaunchSpecSchema = z.object({
       target: z.number().positive(),
     })
     .optional(),
-});
+}).refine(
+  // Carousel kartları mesaj CTA'sı ve anında formla birlikte kurulamaz.
+  (spec) =>
+    spec.ads.every(
+      (ad) => !ad.creative.cards || (!ad.creative.messaging && !spec.leadForm),
+    ),
+  { path: ["ads"], message: "A carousel can't be a message or lead form ad" },
+);
 export type AdsLaunchSpec = z.infer<typeof AdsLaunchSpecSchema>;
 
 export function parseLaunchSpec(value: unknown): AdsLaunchSpec | null {
@@ -199,6 +221,16 @@ export function specHash(spec: AdsLaunchSpec): string {
         adSetIndex: ad.adSetIndex,
         image: ad.creative.imageAssetId,
         link: ad.creative.link,
+        // Yalnız carousel'de eklenir: eski spec'lerin özeti değişmez.
+        ...(ad.creative.cards
+          ? {
+              cards: ad.creative.cards.map((card) => ({
+                image: card.imageAssetId,
+                link: card.link,
+                headline: card.headline ?? null,
+              })),
+            }
+          : {}),
       })),
       activate: spec.activate,
     }),
@@ -460,8 +492,12 @@ export function validateLaunchSpec(
         message: "An ad has no ad set.",
       });
     }
+    // Carousel kart başlıkları da reklam metnidir.
+    const cardText = (ad.creative.cards ?? [])
+      .map((card) => card.headline ?? "")
+      .join(" ");
     for (const flag of policyLint(
-      `${ad.creative.headline ?? ""} ${ad.creative.message}`,
+      `${ad.creative.headline ?? ""} ${ad.creative.message} ${cardText}`,
     )) {
       issues.push({
         rule: "P6",
@@ -469,6 +505,25 @@ export function validateLaunchSpec(
         severity: "warn",
         message: flag.message,
       });
+    }
+    if (ad.creative.cards) {
+      const assets = new Set(ad.creative.cards.map((card) => card.imageAssetId));
+      if (assets.size < 2) {
+        issues.push({
+          rule: "P2",
+          field: `ads.${index}.creative.cards`,
+          severity: "block",
+          message: "A carousel needs at least two different pictures.",
+        });
+      }
+      if (ad.creative.messaging || spec.leadForm) {
+        issues.push({
+          rule: "P2",
+          field: `ads.${index}.creative.cards`,
+          severity: "block",
+          message: "A carousel can't be used for messages or forms.",
+        });
+      }
     }
   });
   return issues;

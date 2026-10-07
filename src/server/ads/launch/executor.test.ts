@@ -246,6 +246,46 @@ describe("LaunchExecutor.advance", () => {
     expect(meta.postAdSet.mock.calls[0]![0].endTime).toBeGreaterThan(meta.postAdSet.mock.calls[0]![0].startTime);
   });
 
+  it("uploads every carousel card once and sends them as child attachments", async () => {
+    let hashes = 0;
+    meta.uploadMetaAdImage.mockImplementation(async () => {
+      hashes += 1;
+      state.calls.push("upload");
+      return { imageHash: `h${hashes}` };
+    });
+    freshLaunch({
+      spec: {
+        ...spec,
+        ads: [
+          {
+            ...spec.ads[0]!,
+            creative: {
+              ...spec.ads[0]!.creative,
+              cards: [
+                { imageAssetId: "a1", headline: "One", link: "https://example.com" },
+                { imageAssetId: "a2", link: "https://example.com" },
+                { imageAssetId: "a3", headline: "Three", link: "https://example.com" },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    const { result } = await runToEnd();
+    expect(result.status).toBe("COMPLETED");
+    expect(state.calls.filter((call) => call === "upload")).toHaveLength(3);
+    expect(meta.postCreative).toHaveBeenCalledTimes(1);
+    expect(meta.postCreative.mock.calls[0]![0].cards).toEqual([
+      { imageHash: "h1", link: "https://example.com", headline: "One" },
+      { imageHash: "h2", link: "https://example.com" },
+      { imageHash: "h3", link: "https://example.com", headline: "Three" },
+    ]);
+    // Re-running a finished launch uploads nothing again.
+    state.launch = { ...state.launch!, status: "FAILED" };
+    await runToEnd();
+    expect(state.calls.filter((call) => call === "upload")).toHaveLength(3);
+  });
+
   it("never sends a finished step again", async () => {
     await runToEnd();
     state.launch = { ...state.launch!, status: "FAILED" };

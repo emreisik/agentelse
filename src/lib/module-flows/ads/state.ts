@@ -131,6 +131,10 @@ export const ADS_LIMITS = {
   maxDailyBudget: 1_000_000,
   title: 120,
   caption: 1000,
+  // Carousel: 2-10 kart; her kart bir post (ana post + en çok 9 ek post).
+  maxCards: 10,
+  // Ayrı reklam olarak ek post sınırı (kreatif çeşitliliği).
+  maxExtraSeparate: 2,
 } as const;
 
 export const DEFAULT_AGE_MIN = 18;
@@ -237,6 +241,9 @@ const briefFields = z.object({
       higherIntent: z.boolean(),
     })
     .optional(),
+  // "carousel": seçilen bütün postlar TEK reklamın kartları olur (2-10);
+  // varsayılan "single": her post ayrı reklam.
+  adFormat: z.enum(["single", "carousel"]).optional(),
 });
 
 const leadsNeedForm = (value: { objective: string; leadForm?: unknown }) =>
@@ -251,6 +258,16 @@ const messagesOnEngagement = (value: { objective: string; messages?: unknown }) 
 const whatsappNumberGiven = (value: {
   messages?: { app: string; whatsappNumber?: string };
 }) => value.messages?.app !== "WHATSAPP" || Boolean(value.messages.whatsappNumber);
+
+// Carousel yalnız bağlantılı reklamda (trafik, erişim, etkileşim) kurulur:
+// mesaj ve anında form kreatifleri kart yapısını desteklemez.
+const carouselFits = (value: {
+  adFormat?: string;
+  objective: string;
+  messages?: unknown;
+}) =>
+  value.adFormat !== "carousel" ||
+  (!value.messages && value.objective !== "OUTCOME_LEADS");
 
 const agesInOrder = (value: { ageMin: number; ageMax: number }) =>
   value.ageMin <= value.ageMax;
@@ -267,9 +284,22 @@ const dsaWhenEu = (value: {
 export const AdsBriefInputSchema = briefFields
   .extend({
     creativeId: idField,
-    // F5b: en çok iki ek post (kreatif çeşitliliği: aynı ad set'te 2-3 reklam).
-    extraCreativeIds: z.array(idField).max(2).optional(),
+    // F5b: ayrı reklamlarda en çok iki ek post (aynı ad set'te 2-3 reklam);
+    // carousel'de en çok dokuz (2-10 kart).
+    extraCreativeIds: z.array(idField).max(ADS_LIMITS.maxCards - 1).optional(),
   })
+  .refine(
+    (value) =>
+      value.adFormat === "carousel" ||
+      (value.extraCreativeIds?.length ?? 0) <= ADS_LIMITS.maxExtraSeparate,
+    { path: ["extraCreativeIds"] },
+  )
+  .refine(
+    (value) =>
+      value.adFormat !== "carousel" || (value.extraCreativeIds?.length ?? 0) >= 1,
+    { path: ["extraCreativeIds"] },
+  )
+  .refine(carouselFits, { path: ["adFormat"] })
   .refine(leadsNeedForm, { path: ["leadForm"] })
   .refine(agesInOrder, { path: ["ageMax"] })
   .refine(dsaWhenEu, { path: ["dsaBeneficiary"] })
@@ -301,9 +331,10 @@ const AdsBriefSchema = briefFields
     // The ad account the Brief was written for (its currency): the launch
     // is refused if another account is selected since.
     adAccountId: z.string().max(64).optional(),
-    // F5b: ek postlar (sunucu dondurur, ana post gibi).
-    extraSources: z.array(AdsSourceSchema).max(2).optional(),
+    // F5b: ek postlar (sunucu dondurur, ana post gibi); carousel'de kartlar.
+    extraSources: z.array(AdsSourceSchema).max(ADS_LIMITS.maxCards - 1).optional(),
   })
+  .refine(carouselFits, { path: ["adFormat"] })
   .refine(agesInOrder, { path: ["ageMax"] })
   .refine(linkWhenNeeded, { path: ["link"] });
 export type AdsBrief = z.infer<typeof AdsBriefSchema>;
@@ -469,6 +500,7 @@ export const ADS_BRIEF_ISSUE = {
   dsa: "Ads shown in the EU must say who benefits from the ad and who pays for it.",
   whatsapp: "Enter the WhatsApp number your Facebook Page uses.",
   leadForm: "Add the link to your privacy policy: Meta shows it on the form.",
+  carousel: "A carousel needs 2 to 10 posts, and works for website goals only (not messages or forms).",
   other: "Check the brief.",
 } as const;
 
@@ -482,6 +514,8 @@ const ISSUE_ORDER: readonly [string, string][] = [
   ["dsaPayor", ADS_BRIEF_ISSUE.dsa],
   ["messages", ADS_BRIEF_ISSUE.whatsapp],
   ["leadForm", ADS_BRIEF_ISSUE.leadForm],
+  ["adFormat", ADS_BRIEF_ISSUE.carousel],
+  ["extraCreativeIds", ADS_BRIEF_ISSUE.carousel],
   ["ageMin", ADS_BRIEF_ISSUE.ages],
   ["ageMax", ADS_BRIEF_ISSUE.ages],
   ["link", ADS_BRIEF_ISSUE.link],

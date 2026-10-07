@@ -140,6 +140,9 @@ export type CreativeInput = {
   messaging?: "WHATSAPP" | "MESSENGER" | "INSTAGRAM_DIRECT";
   // F5b: anında formun kimliği (CTA formu açar).
   leadFormId?: string;
+  // Carousel (F8+): 2-10 kart. Her kartın kendi görsel özeti ve bağlantısı
+  // vardır; üst düzey `imageHash` ilk karttır.
+  cards?: { imageHash: string; link: string; headline?: string; description?: string }[];
   // K14: Meta AI dönüşümleri açıkça; reddedilirse gönderilmeden denenir.
   features?: { send: boolean; multiAdvertiser: "OPT_IN" | "OPT_OUT" };
   validateOnly?: boolean;
@@ -166,7 +169,28 @@ export function objectStorySpec(input: Pick<
   | "headline"
   | "messaging"
   | "leadFormId"
+  | "cards"
 >) {
+  // Carousel: eski sihirbazda canlıda kanıtlanmış biçim (createMetaCarouselAdCreative):
+  // link_data üst `link` (ilk kartın bağlantısı), `message` ve her kart için
+  // child_attachments; CTA üst düzeyde.
+  if (input.cards && input.cards.length >= 2) {
+    return {
+      page_id: input.pageId,
+      ...(input.instagramUserId ? { instagram_user_id: input.instagramUserId } : {}),
+      link_data: {
+        link: input.cards[0]!.link,
+        message: input.message,
+        child_attachments: input.cards.map((card) => ({
+          link: card.link,
+          image_hash: card.imageHash,
+          ...(card.headline ? { name: card.headline } : {}),
+          ...(card.description ? { description: card.description } : {}),
+        })),
+        call_to_action: { type: input.callToAction },
+      },
+    };
+  }
   const messaging = input.messaging ? MESSAGING_CTA[input.messaging] : null;
   const link = messaging?.link ?? input.link;
   if (input.leadFormId) {

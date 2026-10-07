@@ -386,6 +386,9 @@ function BriefForm({
   const [extraIds, setExtraIds] = useState<string[]>(
     brief?.extraSources?.map((source) => source.creativeId) ?? [],
   );
+  const [adFormat, setAdFormat] = useState<"single" | "carousel">(
+    brief?.adFormat === "carousel" ? "carousel" : "single",
+  );
   const [existingAdSetId, setExistingAdSetId] = useState(
     brief?.existingAdSetId ?? "",
   );
@@ -435,6 +438,13 @@ function BriefForm({
         ? { mode: "max" as const, maxCost: numberOf(maxCost) }
         : undefined;
   const target = targetCost(kpi);
+  // Carousel yalnız bağlantılı hedeflerde (mesaj ve form değil); en az bir ek
+  // post seçili olmalı.
+  const carouselAllowed =
+    planner && !messages && objective !== "OUTCOME_LEADS";
+  const carouselOn =
+    carouselAllowed && adFormat === "carousel" && extraIds.length > 0;
+  const maxExtras = carouselAllowed && adFormat === "carousel" ? 9 : 2;
   const input: Partial<AdsBriefInput> & Record<string, unknown> = {
     creativeId: creativeId ?? undefined,
     objective: messages ? "OUTCOME_ENGAGEMENT" : objective,
@@ -469,6 +479,7 @@ function BriefForm({
     ...(planner && extraIds.length > 0
       ? { extraCreativeIds: extraIds.filter((id) => id !== creativeId) }
       : {}),
+    ...(carouselOn ? { adFormat: "carousel" as const } : {}),
     ...(adding ? { existingAdSetId } : {}),
   };
   const issue = briefIssue(input);
@@ -514,7 +525,7 @@ function BriefForm({
           <div role="group" aria-label={COPY.morePosts} className="flex flex-wrap gap-1.5">
             {options.posts
               .filter((post) => post.creativeId !== creativeId)
-              .slice(0, 8)
+              .slice(0, 11)
               .map((post) => {
                 const on = extraIds.includes(post.creativeId);
                 return (
@@ -525,7 +536,7 @@ function BriefForm({
                       setExtraIds((ids) =>
                         on
                           ? ids.filter((id) => id !== post.creativeId)
-                          : ids.length >= 2
+                          : ids.length >= maxExtras
                             ? ids
                             : [...ids, post.creativeId],
                       )
@@ -535,6 +546,29 @@ function BriefForm({
                   </Chip>
                 );
               })}
+          </div>
+        </Section>
+      ) : null}
+
+      {carouselAllowed && extraIds.length > 0 ? (
+        <Section label={COPY.adFormat} hint={COPY.carouselHint}>
+          <div
+            role="group"
+            aria-label={COPY.adFormat}
+            className="flex flex-wrap gap-1.5"
+          >
+            <Chip
+              active={adFormat === "single"}
+              onClick={() => setAdFormat("single")}
+            >
+              {COPY.separateAds}
+            </Chip>
+            <Chip
+              active={adFormat === "carousel"}
+              onClick={() => setAdFormat("carousel")}
+            >
+              {COPY.carouselAd}
+            </Chip>
           </div>
         </Section>
       ) : null}

@@ -19,6 +19,7 @@ import {
   type LaunchAccountFacts,
   type LaunchIssue,
 } from "@/lib/ads/launch-spec";
+import { creativeCards, imageSlots } from "@/lib/ads/launch-images";
 import { safeTimezone } from "@/lib/ads/sync-plan";
 import type { LaunchBuildContext } from "@/lib/module-flows/ads/launch";
 import { prisma } from "@/lib/prisma";
@@ -280,14 +281,14 @@ export async function prepareLaunch(input: {
       if (blockingIssues(issues).length === 0) {
         // Görseller (Review'da yüklenir; yürütücü aynı hash'i kullanır).
         progress.images = progress.images ?? {};
-        for (const [index, ad] of spec.ads.entries()) {
-          if (progress.images[index]) continue;
+        for (const slot of imageSlots(spec.ads)) {
+          if (progress.images[slot.key]) continue;
           const asset = await prisma.asset.findFirst({
-            where: { id: ad.creative.imageAssetId, projectId: input.projectId },
+            where: { id: slot.assetId, projectId: input.projectId },
             select: { storageKey: true },
           });
           if (!asset) {
-            validation.issues.push({ rule: "P12", field: `ads.${index}.creative`, severity: "block", message: "The ad's picture is gone. Pick the post again." });
+            validation.issues.push({ rule: "P12", field: `ads.${slot.adIndex}.creative`, severity: "block", message: "The ad's picture is gone. Pick the post again." });
             continue;
           }
           try {
@@ -296,9 +297,9 @@ export async function prepareLaunch(input: {
               accessToken: account.accessToken,
               imageBuffer: await readAsset(asset.storageKey),
             });
-            progress.images[index] = uploaded.imageHash;
+            progress.images[slot.key] = uploaded.imageHash;
           } catch (error) {
-            validation.issues.push(metaIssue(`ads.${index}.creative.image`, error));
+            validation.issues.push(metaIssue(`ads.${slot.adIndex}.creative.image`, error));
           }
         }
 
@@ -320,6 +321,9 @@ export async function prepareLaunch(input: {
         for (const [index, ad] of spec.ads.entries()) {
           const hash = progress.images?.[index];
           if (!hash) continue;
+          const cards = creativeCards(ad, index, progress.images);
+          // Carousel'de bir kartın görseli yüklenemediyse sorun zaten eklendi.
+          if (cards === null) continue;
           const base = {
             adAccountId,
             accessToken: account.accessToken,
@@ -333,6 +337,7 @@ export async function prepareLaunch(input: {
             headline: ad.creative.headline,
             urlTags: ad.urlTags,
             messaging: ad.creative.messaging,
+            ...(cards ? { cards } : {}),
             validateOnly: true,
           };
           try {
@@ -356,7 +361,8 @@ export async function prepareLaunch(input: {
         // düşürür, lansmanı değil.
         const first = spec.ads[0];
         const hash = progress.images?.[0];
-        if (first && hash) {
+        const firstCards = first ? creativeCards(first, 0, progress.images) : undefined;
+        if (first && hash && firstCards !== null) {
           const creative = {
             object_story_spec: objectStorySpec({
               pageId: spec.pageId,
@@ -367,6 +373,7 @@ export async function prepareLaunch(input: {
               callToAction: first.creative.callToAction,
               headline: first.creative.headline,
               messaging: first.creative.messaging,
+              ...(firstCards ? { cards: firstCards } : {}),
             }),
             ...(spec.creativeFeatures.send && !progress.featuresFallback
               ? { degrees_of_freedom_spec: creativeFeaturesSpec() }

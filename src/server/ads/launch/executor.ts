@@ -11,6 +11,7 @@ import {
   type AdsLaunchSpec,
 } from "@/lib/ads/launch-spec";
 import { normalizeAdAccountId } from "@/lib/ads/account-id";
+import { creativeCards, imageSlots } from "@/lib/ads/launch-images";
 import { taggedName } from "@/lib/ads/operation-tag";
 import { prisma } from "@/lib/prisma";
 import { dayKeyInTimezone, zonedDateTimeToUtc } from "@/lib/timezone";
@@ -291,16 +292,16 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
 
   // 1) Görseller (hash idempotent; niyet kaydı gerekmez).
   ctx.progress.images = ctx.progress.images ?? {};
-  for (const [index, ad] of spec.ads.entries()) {
-    if (ctx.progress.images[index]) continue;
+  for (const slot of imageSlots(spec.ads)) {
+    if (ctx.progress.images[slot.key]) continue;
     if (ctx.writes >= MAX_WRITES) return { status: "RUNNING" };
     const asset = await prisma.asset.findFirst({
-      where: { id: ad.creative.imageAssetId, projectId: ctx.launch.projectId },
+      where: { id: slot.assetId, projectId: ctx.launch.projectId },
       select: { storageKey: true },
     });
     if (!asset) {
       return failLaunch(ctx.launch, {
-        step: `image:${index}`,
+        step: `image:${slot.key}`,
         class: "VALIDATION",
         message: "The ad's picture is gone. Pick the post again.",
       });
@@ -312,13 +313,13 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
         accessToken: ctx.accessToken,
         imageBuffer: await readAsset(asset.storageKey),
       });
-      ctx.progress.images[index] = uploaded.imageHash;
+      ctx.progress.images[slot.key] = uploaded.imageHash;
       await save(ctx);
     } catch (error) {
       if (notCreated(error) || classifyMetaError(error).class === "TRANSIENT") {
         return { status: "RUNNING" };
       }
-      return failLaunch(ctx.launch, launchError(`image:${index}`, error));
+      return failLaunch(ctx.launch, launchError(`image:${slot.key}`, error));
     }
   }
 
@@ -356,8 +357,16 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
     const outcome = await step(ctx, {
       kind: "CREATE_CREATIVE",
       stepKey: `creative:${index}`,
-      request: { name: ad.name, link: ad.creative.link },
+      request: {
+        name: ad.name,
+        link: ad.creative.link,
+        ...(ad.creative.cards ? { cards: ad.creative.cards.length } : {}),
+      },
       send: async (tagged) => {
+        const cards = creativeCards(ad, index, ctx.progress.images);
+        if (cards === null) {
+          throw new MetaApiError("A carousel card's picture isn't uploaded yet");
+        }
         const base = {
           adAccountId: ctx.adAccountId,
           accessToken: ctx.accessToken,
@@ -372,6 +381,7 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
           urlTags: ad.urlTags,
           messaging: ad.creative.messaging,
           ...(ctx.progress.leadForm ? { leadFormId: ctx.progress.leadForm } : {}),
+          ...(cards ? { cards } : {}),
         };
         const withFeatures =
           spec.creativeFeatures.send && !ctx.progress.featuresFallback;

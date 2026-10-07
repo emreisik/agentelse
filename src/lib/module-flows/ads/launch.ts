@@ -14,10 +14,14 @@ import {
 } from "@/lib/ads/objectives";
 
 import {
+  ADS_LIMITS,
   targetsEuEea,
   type AdsBrief,
   type AdsPlanInput,
 } from "./state";
+
+// Carousel kartının başlığı: Meta kart başlığını yaklaşık 32 karakterde keser.
+const CARD_HEADLINE_MAX = 40;
 
 // Kart akışından (Brief + Plan) güvenli lansman spec'i (docs/meta-ads-plan.md
 // F3). Saf: Review'ın ön kontrolü ve "Approve & launch" aynı spec'i kurar.
@@ -71,6 +75,12 @@ export function launchSpecFromFlow(input: {
   const target = targetCost(brief.kpi);
   const metric = kpiMetricFor(recipe.resultActionType);
   const messaging = brief.messages?.app;
+  // Carousel: bütün postlar tek reklamın kartları (mesaj ve formla olmaz).
+  const carousel =
+    brief.adFormat === "carousel" &&
+    !brief.messages &&
+    brief.objective !== "OUTCOME_LEADS" &&
+    (brief.extraSources?.length ?? 0) >= 1;
   const promotedObject: Record<string, string> | undefined =
     recipe.promoted === "page" || recipe.promoted === "page_whatsapp"
       ? {
@@ -136,7 +146,29 @@ export function launchSpecFromFlow(input: {
         ...(dsa ? { dsa } : {}),
       },
     ],
-    ads: [
+    ads: carousel
+      ? [
+          {
+            name: plan.adName,
+            adSetIndex: 0,
+            creative: {
+              imageAssetId: brief.source.assetId,
+              message: plan.primaryText,
+              link: brief.link,
+              callToAction: brief.callToAction,
+              // Her kart bir post: görseli ve (kısaltılmış) başlığıyla.
+              cards: [brief.source, ...(brief.extraSources ?? [])].map((card) => ({
+                imageAssetId: card.assetId,
+                ...(card.title
+                  ? { headline: clipWords(card.title, CARD_HEADLINE_MAX, true) }
+                  : {}),
+                link: brief.link,
+              })),
+            },
+            urlTags: DEFAULT_URL_TAGS,
+          },
+        ]
+      : [
       {
         name: plan.adName,
         adSetIndex: 0,
@@ -152,7 +184,7 @@ export function launchSpecFromFlow(input: {
       },
       // F5b: ek postlar aynı ad set'te ayrı reklamlar (kreatif çeşitliliği);
       // metinleri kendi açıklamalarından.
-      ...(brief.extraSources ?? []).map((source, index) => ({
+      ...(brief.extraSources ?? []).slice(0, ADS_LIMITS.maxExtraSeparate).map((source, index) => ({
         name: clipWords(`${source.title || plan.adName} ${index + 2}`, 400),
         adSetIndex: 0,
         creative: {

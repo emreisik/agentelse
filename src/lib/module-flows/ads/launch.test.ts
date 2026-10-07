@@ -47,6 +47,52 @@ describe("launchSpecFromFlow", () => {
   });
 });
 
+describe("launchSpecFromFlow carousel", () => {
+  const traffic: AdsBrief = {
+    ...brief,
+    objective: "OUTCOME_TRAFFIC",
+    adFormat: "carousel",
+    extraSources: [
+      { creativeId: "c2", assetId: "a2", title: "Summer" },
+      { creativeId: "c3", assetId: "a3", title: "" },
+    ],
+  };
+
+  it("turns every picked post into a card of one ad", () => {
+    const spec = launchSpecFromFlow({ brief: traffic, plan, context, activate: false });
+    expect(spec.ads).toHaveLength(1);
+    expect(spec.ads[0]?.creative.cards).toEqual([
+      { imageAssetId: "a1", headline: "Spring", link: "https://example.com" },
+      { imageAssetId: "a2", headline: "Summer", link: "https://example.com" },
+      { imageAssetId: "a3", link: "https://example.com" },
+    ]);
+    expect(spec.ads[0]?.creative.imageAssetId).toBe("a1");
+  });
+
+  it("keeps separate ads without the carousel format, and never mixes it with messages or forms", () => {
+    const separate = launchSpecFromFlow({
+      brief: { ...traffic, adFormat: "single" },
+      plan,
+      context,
+      activate: false,
+    });
+    expect(separate.ads).toHaveLength(3);
+    expect(separate.ads.every((ad) => !ad.creative.cards)).toBe(true);
+    const messages = launchSpecFromFlow({
+      brief: {
+        ...traffic,
+        objective: "OUTCOME_ENGAGEMENT",
+        messages: { app: "MESSENGER" },
+        link: "",
+      },
+      plan,
+      context,
+      activate: false,
+    });
+    expect(messages.ads.every((ad) => !ad.creative.cards)).toBe(true);
+  });
+});
+
 describe("chainFromLaunch", () => {
   const base = { launchId: "l1", adSetCount: 1, adCount: 1, error: null };
 

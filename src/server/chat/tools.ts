@@ -105,6 +105,10 @@ import type { ChatStreamEvent } from "./types";
 import { searchChatTools } from "@/server/chat/search-tools";
 import { searchReportChatTools } from "@/server/chat/search-report-tools";
 import {
+  seoContentPlanChatTools,
+  SEO_CONTENT_TOOL_NAMES,
+} from "@/server/chat/search-content-tools";
+import {
   WEBSITE_CHAT_TOOLS,
   WEBSITE_CHAT_TOOL_NAMES,
   WEBSITE_CHAT_TOOL_NAME_SET,
@@ -2149,8 +2153,15 @@ const MODULE_TOOLS: Readonly<Record<ModuleKey, ReadonlySet<string>>> = {
   ]),
   ads: new Set(MODULE_COMMON_TOOLS),
   analytics: new Set([...MODULE_COMMON_TOOLS, ...WEBSITE_CHAT_TOOL_NAMES]),
-  seo: new Set([...MODULE_COMMON_TOOLS, ...WEBSITE_CHAT_TOOL_NAMES]),
+  // SC-F7: aylık içerik planı araçları yalnız SEO modül sohbetinde (ve genel sohbette) görünür.
+  seo: new Set([
+    ...MODULE_COMMON_TOOLS,
+    ...WEBSITE_CHAT_TOOL_NAMES,
+    ...SEO_CONTENT_TOOL_NAMES,
+  ]),
 };
+
+const SEO_CONTENT_TOOL_NAME_SET = new Set<string>(SEO_CONTENT_TOOL_NAMES);
 
 export function toolsForPhase(
   phase: ChatPhase,
@@ -2172,6 +2183,8 @@ export function toolsForPhase(
     ...ALL_TOOLS,
     ...searchChatTools(options.projectId ?? null),
     ...searchReportChatTools(options.projectId ?? null),
+    // SC-F7: aylık SEO içerik planı araçları yalnız SEO_CONTENT_PLAN açık ve proje izinliyken eklenir (yalnız ortam okunur).
+    ...seoContentPlanChatTools(options.projectId ?? null),
   ].filter(
     (tool) =>
       tool.phases.includes(phase) &&
@@ -2192,7 +2205,9 @@ export function toolsForPhase(
   // Website analytics read tools are scoped: only the analytics and seo module chats (and general chats) see them.
   return tools.filter(
     (tool) =>
-      (tool.kind === "read" && !WEBSITE_CHAT_TOOL_NAME_SET.has(tool.name)) ||
+      (tool.kind === "read" &&
+        !WEBSITE_CHAT_TOOL_NAME_SET.has(tool.name) &&
+        !SEO_CONTENT_TOOL_NAME_SET.has(tool.name)) ||
       allowed.has(tool.name),
   );
 }

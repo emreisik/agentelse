@@ -24,6 +24,7 @@ import { deleteSearchConsoleAlertsForProjects } from "@/server/seo/health/alerts
 import { sweepOrphanSeoCardsSearchData } from "@/server/modules/seo/forget-cards";
 import { forgetSeoActionsForLinks } from "@/server/seo/actions/forget";
 import { forgetSearchOpportunitiesForLinks } from "@/server/seo/opportunities/forget";
+import { forgetSeoContentPlansForLinks } from "@/server/seo/content-plan/forget";
 import { SeoSites } from "@/server/seo/site/sites";
 
 // Search Console ambarının saklama temizliği (docs/google-search-console-plan.md
@@ -312,6 +313,8 @@ export const GscRetention = {
     ).map((link) => link.id);
     if (demoted.length > 0) {
       await forgetSearchOpportunitiesForLinks(demoted).catch(() => undefined);
+      // SC-F7: silinen bağların aylık SEO içerik planı da (slot parçaları, plana ait fikirler) kalıcı silinir.
+      await forgetSeoContentPlansForLinks(demoted).catch(() => undefined);
       // SC-F6: silinen bağların SEO eylemleri ve öğrenmeleri de silinir.
       await forgetSeoActionsForLinks(demoted).catch(() => undefined);
       deleted += (
@@ -356,6 +359,7 @@ export const GscRetention = {
         await forgetSearchOpportunitiesForLinks(orphaned).catch(
           () => undefined,
         );
+        await forgetSeoContentPlansForLinks(orphaned).catch(() => undefined);
         await forgetSeoActionsForLinks(orphaned).catch(() => undefined);
         deleted += (
           await prisma.gscSiteLink.deleteMany({
@@ -382,6 +386,7 @@ export const GscRetention = {
         })
       ).map((link) => link.id);
       await forgetSeoActionsForLinks(mockLinks).catch(() => undefined);
+      await forgetSeoContentPlansForLinks(mockLinks).catch(() => undefined);
       deleted += (
         await prisma.gscSiteLink.deleteMany({ where: { isMock: true } })
       ).count;

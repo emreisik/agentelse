@@ -9,8 +9,9 @@ Planlar: [google-analytics-plan.md](google-analytics-plan.md), [google-search-co
 | GA-F0 / SC-F0: koparılmış bağlantı Test ile geri gelmiyor                                                                                                                                                        | Yapıldı (9b5794c) |
 | GA-F1 / SC-F1 bölüm 1: çekirdek, izin doğrulama, PKCE, hesap kimliği, gerçek Disconnect + akıllı iptal, roller, kiracıya özel sağlık, günlük bağlantı sağlığı, gizlilik ve veri silme metni                      | Yapıldı           |
 | GA-F1 / SC-F1 bölüm 2: "Use existing connection" (100 token sınırı; `GoogleGrant` tablosu yerine token kopyalama), Connectors diyaloğunda yeni durumlar ve mesajlar, site/alan adı uyarısı, bağlı hesaplar kartı | Yapıldı           |
+| GA-F7: isteğe bağlı `analytics.edit` yükseltmesi, düzeltme eylemleri ([website-fixes.md](website-fixes.md)) | Kodlandı, `GA_FIXES` arkasında, kapalı |
 
-Ayrı entegrasyon ilkesi: iki ayrı kutucuk, iki ayrı onay ekranı (her biri yalnız kendi izni), ayrı token, seçim, Disconnect ve veri. Tek Google Cloud projesi ve tek doğrulama; sitemap gönderimi yok, iki entegrasyon da salt okunur.
+Ayrı entegrasyon ilkesi: iki ayrı kutucuk, iki ayrı onay ekranı (her biri yalnız kendi izni), ayrı token, seçim, Disconnect ve veri. Tek Google Cloud projesi ve tek doğrulama; sitemap gönderimi yok. Search Console her zaman salt okunur; Google Analytics isteğe bağlı GA-F7 yükseltmesi dışında salt okunur.
 
 ## Ortak çekirdek (`src/server/integrations/google/`)
 
@@ -30,6 +31,8 @@ Ayrı entegrasyon ilkesi: iki ayrı kutucuk, iki ayrı onay ekranı (her biri ya
 - Callback: token yanıtındaki `scope` alanında servisin izni yoksa (kullanıcı onay ekranında kutuyu kaldırdıysa) bağlantı kurulmaz; `googleError=scope_missing` ile dönülür. Token iptal edilmez, çünkü iptal Cloud projesi düzeyindedir ve aynı hesabın diğer bağlantısını koparırdı. Yanıtta `scope` hiç yoksa bağlantı kurulur.
 - Metadata'ya hesap kimliği (`googleSub`) ve e-posta yazılır. Metadata'yı `google-connection-metadata.ts` kurar (OAuth dönüşü ve "Use existing connection" ortak): liste tazelenir, hâlâ erişilebilen seçim ve tarama kayıtları korunur, `disconnectedAt` işareti ve eski token'ın `googleHealth` kaydı düşer.
 - Connectors diyaloğu `scope_missing` için açık mesaj gösterir: "Google access wasn't allowed. Connect again and tick the box to allow it."
+
+**İsteğe bağlı GA-F7 yükseltmesi** (`GA_FIXES`, varsayılan kapalı; ayrıntı [website-fixes.md](website-fixes.md)): yalnız analytics servisi için ikinci bir onay ekranı. İzinler açıkça listelenir (`analytics.readonly` + `analytics.edit` + `userinfo.email`), `include_granted_scopes` YOK, aynı Google hesabı zorunlu, hibe `metadata.gaEdit` olarak saklanır. Eski refresh token asla iptal edilmez; callback Search Console izni de taşıyan token'ı reddeder (`edit_not_available`, hiçbir şey saklanmaz). "Turn off editing" yazmayı hemen durdurur; izin Google'da kalır. Normal yeniden bağlanma ve "Use existing connection" `gaEdit`i düşürür.
 
 ## Use existing connection (`google-reuse.ts`, `reuseGoogleConnectionAction`)
 
@@ -84,6 +87,7 @@ Google, bir Google hesabı × OAuth istemcisi için en çok 100 canlı refresh t
 
 - `privacy/page.tsx`'te yeni "Google Analytics and Search Console connections" bölümü var: iki izin ve amaçları, saklananlar, AI işleme, satılmaz, eğitimde kullanılmaz, insanlar okumaz, Disconnect ve Google hesabından kaldırma. Google'ın kalıbıyla Limited Use beyanı da burada. Sayfa tarihi 6 Ekim 2026.
 - `data-deletion/page.tsx`'te Google için silme yolu var.
+- GA-F7 ile (7 Ekim 2026) gizlilik sayfası isteğe bağlı `analytics.edit` iznini ayrı bir madde olarak anlatır (kullanım amacı, günlük değişiklik geçmişi okumasının liste saklamadığı, 24 aylık değişiklik kaydı, izni Google Hesabı ayarlarından kaldırma). Sayfa tarihi 7 Ekim 2026.
 
 ## Testler
 

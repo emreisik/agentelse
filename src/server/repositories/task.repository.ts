@@ -362,7 +362,11 @@ export const TaskRepository = {
       }
     }
 
-    if (to === "COMPLETED" || to === "FAILED") {
+    // GA-F7: Telegram'a GA değişikliği başlığı gitmez.
+    if (
+      (to === "COMPLETED" || to === "FAILED") &&
+      task.capability !== "ANALYTICS_EDIT"
+    ) {
       const prefix =
         to === "COMPLETED" ? "✅ Task completed" : "❌ Task failed";
       try {

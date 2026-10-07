@@ -7,8 +7,9 @@ import { updateCommandCard } from "@/server/chat/card-store";
 
 // SEO Manager kartlarındaki Search Console verisinin silinmesi (docs/search-
 // actions.md "Silme"): Disconnect ve "Delete stored data" bu projelerin
-// kartlarında yalnız iki alanı temizler: plan.quickWins (state "ok" → "not-
-// connected") ve target.queryCount (→ 0). Kullanıcının kendi içeriği (brief,
+// kartlarında yalnız Google kaynaklı alanları temizler: plan.quickWins (state
+// "ok" → "not-connected"), target.queryCount (→ 0) ve SC-F7'nin hint.keyword /
+// hint.plannedAt alanları. Kullanıcının kendi içeriği (brief,
 // plan, makale, teslim) olduğu gibi kalır. Bayrağa BAĞLI DEĞİLDİR: bu bir
 // silme işlemidir. Tamamlanmış Work'lerin kartları da temizlenir (kullanıcı
 // düzenlemesi değil, veri silme); yazma kartın atomik yazıcısından geçer.
@@ -19,27 +20,40 @@ const SWEEP_PROJECTS = 200;
 
 type CardRow = { id: string; projectId: string | null };
 
-// Ham kart verisinde yalnız iki alanı değiştirir; başka anahtar (hint gibi)
-// ve geçersiz parçalar olduğu gibi kalır.
+// Ham kart verisinde yalnız Google kaynaklı alanları değiştirir; başka anahtar
+// ve geçersiz parçalar olduğu gibi kalır. SC-F7: aylık plandan açılan kartın
+// hint.keyword (Search Console sorgusu) ve hint.plannedAt alanları da silinir;
+// konu (hint.topic) kullanıcının makale başlığı olarak kalır.
 function scrubbedData(
   data: Record<string, unknown>,
 ): Record<string, unknown> | null {
   const { state, changed } = scrubSearchData(parseSeoState(data));
-  if (!changed) return null;
+  const rawHint = data.hint;
+  const hintHasPlan =
+    !!rawHint &&
+    typeof rawHint === "object" &&
+    ("keyword" in rawHint || "plannedAt" in rawHint);
+  if (!changed && !hintHasPlan) return null;
   const next = { ...data };
   const rawPlan = data.plan;
-  if (state.plan && rawPlan && typeof rawPlan === "object") {
+  if (changed && state.plan && rawPlan && typeof rawPlan === "object") {
     next.plan = {
       ...(rawPlan as Record<string, unknown>),
       quickWins: state.plan.quickWins,
     };
   }
   const rawTarget = data.target;
-  if (state.target && rawTarget && typeof rawTarget === "object") {
+  if (changed && state.target && rawTarget && typeof rawTarget === "object") {
     next.target = {
       ...(rawTarget as Record<string, unknown>),
       queryCount: state.target.queryCount,
     };
+  }
+  if (hintHasPlan) {
+    const hint = { ...(rawHint as Record<string, unknown>) };
+    delete hint.keyword;
+    delete hint.plannedAt;
+    next.hint = hint;
   }
   return next;
 }

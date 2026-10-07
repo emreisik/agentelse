@@ -4,6 +4,12 @@
 // ayrı ayrı koparılabilirler. İkisi aynı Google Cloud projesini ve aynı
 // yönlendirme adresini kullanır; hangi servis olduğu imzalı OAuth state'te
 // taşınır (docs/google-analytics-plan.md §3.2). Saf modül: ağ ve DB yok.
+//
+// Google Analytics, ilk bağlanışta yalnız salt okunur izni ister; ek
+// analytics.edit izni YALNIZCA isteğe bağlı yükseltme akışında (GA-F7,
+// GA_FIXES açıkken, ikinci bir onay ekranıyla) istenir. Search Console
+// sonsuza kadar salt okunur kalır (SK10): googleScopesFor('search_console')
+// hiçbir koşulda yazma izni döndürmez.
 
 export const GOOGLE_SERVICES = ["analytics", "search_console"] as const;
 export type GoogleService = (typeof GOOGLE_SERVICES)[number];
@@ -24,7 +30,7 @@ export const GOOGLE_RESOURCE_NOUN: Record<GoogleService, string> = {
   search_console: "site",
 };
 
-// Servisin tek veri izni. İkisi de salt okunurdur; yazma izni istenmez
+// Servisin ilk bağlanıştaki tek veri izni. İkisi de salt okunurdur
 // (sitemap gönderimi yok, Search Console planı SK10).
 export const GOOGLE_SERVICE_SCOPE: Record<GoogleService, string> = {
   analytics: "https://www.googleapis.com/auth/analytics.readonly",
@@ -35,8 +41,26 @@ export const GOOGLE_SERVICE_SCOPE: Record<GoogleService, string> = {
 export const GOOGLE_IDENTITY_SCOPE =
   "https://www.googleapis.com/auth/userinfo.email";
 
-export function googleScopesFor(service: GoogleService): string[] {
+// GA-F7 isteğe bağlı yazma izni (anahtar olay, saklama süresi vb.).
+export const GA_EDIT_SCOPE = "https://www.googleapis.com/auth/analytics.edit";
+
+// `edit` yalnız analytics için anlamlıdır; search_console onu yok sayar.
+export function googleScopesFor(
+  service: GoogleService,
+  options?: { edit?: boolean },
+): string[] {
+  if (service === "analytics" && options?.edit) {
+    return [
+      GOOGLE_SERVICE_SCOPE.analytics,
+      GA_EDIT_SCOPE,
+      GOOGLE_IDENTITY_SCOPE,
+    ];
+  }
   return [GOOGLE_SERVICE_SCOPE[service], GOOGLE_IDENTITY_SCOPE];
+}
+
+export function hasGaEditScope(granted: readonly string[]): boolean {
+  return granted.includes(GA_EDIT_SCOPE);
 }
 
 export function parseGoogleService(value: unknown): GoogleService | null {

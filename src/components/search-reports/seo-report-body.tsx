@@ -3,6 +3,7 @@ import { AlertTriangle, Check, HelpCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCount, formatPosition } from "@/lib/module-flows/analytics/format";
 import { FindingDecision } from "@/components/search-reports/finding-decision";
+import { ThisMonthsArticlesLive } from "@/components/search-content-plan/this-months-articles-live";
 import {
   SeoGoalPaceBadge,
   goalValueText,
@@ -841,8 +842,22 @@ function SectionView({
       return <GoalsSection goals={section.goals} />;
     case "forecast":
       return <ForecastSection forecast={section.forecast} />;
-    case "content":
-      return <ContentSection title={section.title} items={section.items} />;
+    case "content": {
+      const snapshotSection = (
+        <ContentSection title={section.title} items={section.items} />
+      );
+      // SC-F7: yalnız yol haritasında canlı plan; geçmiş ayın raporu değişmez anlık görüntü (fallback) kalır, canlı bileşen ay uyuşmazlığında, yüklenirken, 404'te ve hatada fallback'i çizer.
+      if (view.snapshot.kind !== "ROADMAP" || !view.contentPlanLive) {
+        return snapshotSection;
+      }
+      return (
+        <ThisMonthsArticlesLive
+          projectId={view.projectId}
+          month={view.snapshot.period.from.slice(0, 7)}
+          fallback={snapshotSection}
+        />
+      );
+    }
     case "roadmap":
       return (
         <RoadmapSection

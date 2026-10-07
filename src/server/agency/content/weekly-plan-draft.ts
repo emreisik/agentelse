@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import type { ChannelKey } from "@/lib/content-channels";
 import { utcToZonedDateTimeLocal, zonedDateTimeToUtc } from "@/lib/timezone";
 import { addDaysToKey } from "@/lib/content-plan-view";
+import { seoContentPlanActiveFor } from "@/lib/seo/content-plan/flags";
 import { cleanWorksTextOrNull } from "@/lib/works/clean-text";
 import {
   defaultPlanBrief,
@@ -28,6 +29,7 @@ import { brandRuleLanguageOf } from "@/server/brand/rule-language";
 import { buildPlanCard, keepPoolIdeaIds } from "@/server/chat/content-plan";
 import { loadIdeaPoolForPrompt, poolIdeaIds } from "@/server/chat/idea-pool";
 import { isUniqueViolation } from "@/server/guided-setup/store";
+import { weeklySeoNote } from "@/server/seo/content-plan/weekly";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
 import { MemoryService } from "@/server/memory/memory-service";
 import {
@@ -239,6 +241,10 @@ async function draftWeek(
       projectId,
       status: { notIn: ["ARCHIVED", "REJECTED"] },
       scheduledFor: { gte: weekStart, lt: weekEnd },
+      // SC-F7: aylık SEO slotu sosyal haftalık taslağı engellemesin (OR biçimi: yalnız `not: 'seo'` NULL kanallı satırları da düşürürdü). Plan o proje için kapalıyken sorgu aynıdır.
+      ...(seoContentPlanActiveFor(projectId)
+        ? { OR: [{ channel: null }, { channel: { not: "seo" } }] }
+        : {}),
     },
   });
   if (planned > 0) return "skipped";
@@ -318,6 +324,8 @@ async function draftWeek(
     brandId: brand.id,
     language,
   });
+  // SC-F7: bu hafta aylık plandan SEO makalesi çıkıyorsa cevaba tek cümle (kapalıyken '' ve sorgu yok).
+  const seoNote = await weeklySeoNote(projectId, weekStart, weekEnd);
   const flagged = withBrandFlags(
     buildPlanCard(
       { title: WEEKLY_DRAFT_COPY.planTitle, items },
@@ -336,9 +344,9 @@ async function draftWeek(
         projectId,
         brandId: brand.id,
         title: WEEKLY_DRAFT_COPY.workTitle(monday),
-        reply: (autoProduceOn
+        reply: `${(autoProduceOn
           ? WEEKLY_AUTO_PRODUCE_COPY.reply
-          : WEEKLY_DRAFT_COPY.reply)(flagged.items.length, monday),
+          : WEEKLY_DRAFT_COPY.reply)(flagged.items.length, monday)}${seoNote ? ` ${seoNote}` : ""}`,
         card: flagged,
         now,
       });

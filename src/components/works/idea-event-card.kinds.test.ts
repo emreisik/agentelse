@@ -55,6 +55,8 @@ vi.mock("@/server/actions/measurement-health-actions", inert);
 vi.mock("@/server/actions/search-opportunity-actions", inert);
 vi.mock("@/server/actions/seo-mode-actions", inert);
 vi.mock("@/server/actions/seo-action-actions", inert);
+vi.mock("@/server/actions/seo-content-plan-actions", inert);
+vi.mock("@/server/actions/ga-fix-actions", inert);
 vi.mock("@/server/actions/link-tracking-actions", inert);
 vi.mock("@/components/workspace/output-preview-dialog", () => ({
   OutputPreviewDialog: () => null,

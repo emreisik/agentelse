@@ -123,3 +123,17 @@ describe("ExecutionPolicy.requiresBrowserProfile", () => {
     expect(ExecutionPolicy.requiresBrowserProfile("CREATE_COPY")).toBe(false);
   });
 });
+
+// GA-F7: GA yapılandırma yazması her zaman onay ister, ama doğrulama/tarayıcı hattına girmez
+describe("ExecutionPolicy ANALYTICS_EDIT", () => {
+  it("requires approval and is high risk", () => {
+    expect(ExecutionPolicy.requiresApproval("ANALYTICS_EDIT")).toBe(true);
+    expect(ExecutionPolicy.defaultRiskLevel("ANALYTICS_EDIT")).toBe("HIGH");
+  });
+
+  it("is not verification-gated and maps to no browser purpose", () => {
+    expect(ExecutionPolicy.requiresVerification("ANALYTICS_EDIT")).toBe(false);
+    expect(ExecutionPolicy.staticBrowserPurpose("ANALYTICS_EDIT")).toBeUndefined();
+    expect(ExecutionPolicy.requiresBrowserProfile("ANALYTICS_EDIT")).toBe(false);
+  });
+});

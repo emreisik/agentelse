@@ -33,6 +33,8 @@ const APPROVAL_REQUIRED_CAPABILITIES: ReadonlySet<CapabilityKey> =
     "EMAIL_SEND",
     "SOCIAL_ACCOUNT_SETUP",
     "WEBSITE_UPDATE",
+    // GA-F7: GA yapilandirma yazmasi her zaman onay ister; dogrudan dispatch edilmez, approval-hook araya girer
+    "ANALYTICS_EDIT",
     "PR_OUTREACH",
   ]);
 
@@ -149,6 +151,8 @@ const HIGH_RISK_CAPABILITIES: ReadonlySet<CapabilityKey> =
     "EMAIL_SEND",
     "SOCIAL_ACCOUNT_SETUP",
     "WEBSITE_UPDATE",
+    // GA-F7: GA yapilandirma yazmasi her zaman onay ister; dogrudan dispatch edilmez, approval-hook araya girer
+    "ANALYTICS_EDIT",
     "PR_OUTREACH",
   ]);
 

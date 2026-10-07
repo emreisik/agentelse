@@ -1,6 +1,6 @@
 # Agentelse · Google Search Console ve SEO Motoru: Mimari ve Uygulama Planı
 
-Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 arama sağlığı ve teknik denetim uygulandı (6 Ekim 2026, bayraklı; [search-health.md](search-health.md)); SC-F4 SEO fırsat motoru uygulandı (6 Ekim 2026, bayraklı; [search-opportunities.md](search-opportunities.md)); SC-F5 raporlama ve planlama uygulandı (6 Ekim 2026, bayraklı; [search-reports.md](search-reports.md)); SC-F6 öneri döngüsü uygulandı (bayraklı; [search-actions.md](search-actions.md)); SC-F7 ve sonrası henüz uygulanmadı.
+Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 arama sağlığı ve teknik denetim uygulandı (6 Ekim 2026, bayraklı; [search-health.md](search-health.md)); SC-F4 SEO fırsat motoru uygulandı (6 Ekim 2026, bayraklı; [search-opportunities.md](search-opportunities.md)); SC-F5 raporlama ve planlama uygulandı (6 Ekim 2026, bayraklı; [search-reports.md](search-reports.md)); SC-F6 öneri döngüsü uygulandı (bayraklı; [search-actions.md](search-actions.md)); SC-F7 aylık SEO içerik planı kodlandı (7 Ekim 2026, `SEO_CONTENT_PLAN` arkasında; [search-content-plan.md](search-content-plan.md)); SC-F8 ve sonrası henüz uygulanmadı.
 
 > **Kapsam:** Google Search Console (GSC) entegrasyonu ve onun üzerine kurulan SEO motoru. Bu plan şunları kapsar: bağlantı ve kimlik; arama ambarı ve kalıcı arşiv; indeks ve teknik sağlık denetimi (URL Inspection, sitemap, robots, kendi site tarayıcımız, Core Web Vitals); SEO fırsat motoru; raporlama ve planlama; öneri → uygulama → ölçüm döngüsü. Sonraki aşamalarda içerik planı, CMS üzerinden onaylı uygulama ve AI arama görünürlüğü gelir.
 >
@@ -1090,6 +1090,8 @@ Durum (6 Ekim 2026): Kodlandı (SEO_REPORTS); ayrıntılar [search-reports.md](s
 **Görünür değişiklik:** Fırsat kartında "Fix this"; SEO Manager'da yeni modlar; Search sayfasında eylemlerin sonuçları ("Worked: +18% CTR").
 
 ### SC-F7 — İçerik planı · M
+
+**Durum (7 Ekim 2026):** kodlandı, `SEO_CONTENT_PLAN` arkasında; canlı denenmedi. Ayrıntı [search-content-plan.md](search-content-plan.md). Kayıtlı sapmalar: (1) "Migration: Yok" yerine `SeoContentPlan` + `SeoContentSetting` (`20261006220000_add_seo_content_plan`): Google'dan türeyen plan Disconnect'te silinmeli ve sınır ayarı kalıcı olmalı; (2) SK14 (a) uygulandı; sınır ayarı Settings paneli yerine Search sayfasındaki bölümde; (3) "SEO makaleleri de taslağa girebilir" yerine haftalık taslakta not + hafta dolu sayımından çıkarma (plan kartının kalemi değil); (4) §6.5 aylık yapay zekâ makale sınırı: üretim öncesi ön kontrol (yalnız slotsuz makale ve içinde bulunulan ay doluysa).
 
 **Amaç:** Arama verisinden aylık, kümelere dayalı bir içerik planı üretmek.
 

@@ -11,6 +11,7 @@ import {
   missingInputAdvice,
 } from "@/server/execution/capability-input";
 import { formatMoney } from "@/lib/ads/money";
+import { gaFixApprovalDetails } from "@/lib/website-analytics/fixes/approval-details";
 import type { ApprovalCategory } from "@/types/idea-event-card";
 
 // Plain-language bucket for a pending approval, shown on its chat card —
@@ -38,6 +39,9 @@ export function buildApprovalDetails(
   capability: CapabilityKey,
   payload: unknown,
 ): { label: string; value: string }[] | undefined {
+  // GA-F7: kartın satırları kendi yük metninden okunur (mülk adı taşımaz).
+  if (capability === "ANALYTICS_EDIT") return gaFixApprovalDetails(payload);
+
   // Opening a new social account is High Risk and the task's title is only the
   // first 80 characters of whatever was asked, which says nothing about what
   // approving does. Say it.

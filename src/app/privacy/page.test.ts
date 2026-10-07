@@ -23,8 +23,8 @@ const section = sectionBetween("instagram-data", "facebook-and-meta-ads");
 const text = plain(section);
 
 describe("privacy policy: Instagram connection section", () => {
-  it("carries the date of the latest rewrite (6 October 2026: the Google section)", () => {
-    expect(html).toContain("Last updated: October 6, 2026");
+  it("carries the date of the latest rewrite (7 October 2026: the optional Google Analytics edit permission)", () => {
+    expect(html).toContain("Last updated: October 7, 2026");
   });
 
   it("is titled for what it covers, and linked from the deletion page", () => {
@@ -144,7 +144,7 @@ describe("privacy policy: Google Analytics and Search Console section", () => {
     expect(google).toContain("webmasters.readonly");
     expect(google).toContain("two separate connections");
     expect(google).toContain(
-      "Agentelse never changes anything in your Google accounts",
+      "Without that extra permission, Agentelse never changes anything in your Google accounts",
     );
   });
 
@@ -158,6 +158,26 @@ describe("privacy policy: Google Analytics and Search Console section", () => {
     expect(google).toContain("We do not sell this data");
     expect(google).toContain("we do not use it to train AI models");
     expect(google).toContain("People at Agentelse do not read it");
+  });
+
+  it("describes the optional Google Analytics edit permission (GA-F7)", () => {
+    expect(google).toContain("Search Console is always read-only");
+    expect(google).toContain("analytics.edit");
+    expect(google).toContain("It is optional");
+    expect(google).toContain("approves one by one");
+    expect(google).toContain("so you can undo it");
+    expect(google).toContain("up to 24 months");
+    expect(google).toContain("deletes that record when you disconnect");
+    expect(google).toContain("the history itself is not stored");
+    expect(google).toContain("turn editing off at any time in Connectors");
+    expect(google).toContain("Google Account settings");
+  });
+
+  it("says what the monthly SEO content plan stores and how it is removed (SC-F7)", () => {
+    expect(google).toContain("monthly SEO content plan");
+    expect(google).toContain(
+      "drafts you have not started are removed from your calendar",
+    );
   });
 
   it("says which Google Analytics summaries are kept, for how long, and masked", () => {

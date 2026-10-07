@@ -376,6 +376,9 @@ export type SeoReportView = {
   // opportunities/roadmap bölümlerindeki kimlikler için CANLI SeoFinding.status;
   // SEO_INSIGHTS=on ve izinli değilse null.
   findingStatus: Record<string, string> | null;
+  // SC-F7: yol haritasındaki canlı "bu ayın makaleleri" bloğu yalnız plan açıkken
+  // (sunucuda hesaplanır; yoksa kapalı sayılır, istemci boşuna istek atmaz).
+  contentPlanLive?: boolean;
 };
 
 export type SeoReportListItem = {

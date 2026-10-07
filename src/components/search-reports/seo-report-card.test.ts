@@ -21,6 +21,15 @@ vi.mock("@/server/actions/search-opportunity-actions", () => ({
   acceptOpportunityAction: vi.fn(),
   dismissOpportunityAction: vi.fn(),
 }));
+// SC-F7: yol haritasındaki canlı plan bloğu plan eylemlerini içe aktarır.
+vi.mock("@/server/actions/seo-content-plan-actions", () => ({
+  planThisMonthAction: vi.fn(),
+  refreshPlanAction: vi.fn(),
+  replaceSlotAction: vi.fn(),
+  skipSlotAction: vi.fn(),
+  moveSlotAction: vi.fn(),
+  savePlanSettingsAction: vi.fn(),
+}));
 
 const { SeoReportCard, SeoReportCardView } = await import("./seo-report-card");
 

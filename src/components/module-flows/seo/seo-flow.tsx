@@ -187,7 +187,13 @@ export function SeoFlow({
       body = <ReviewStep {...common} running={running} />;
       break;
     case "deliver":
-      body = <DeliverStep {...common} timezone={host?.timezone} />;
+      body = (
+        <DeliverStep
+          {...common}
+          timezone={host?.timezone}
+          plannedAt={flowHintOf(card.data).plannedAt}
+        />
+      );
       break;
   }
 

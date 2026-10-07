@@ -12,6 +12,7 @@ import { useWorkCardHost } from "@/components/works/work-card-host";
 import { todayKeyIn } from "@/lib/date-picker";
 import {
   defaultPublishAt,
+  plannedPublishAt,
   formatDay,
   formatWhen,
   isWallClock,
@@ -65,6 +66,8 @@ type Props = {
   state: SeoState;
   blocked: string | null;
   timezone?: string;
+  // SC-F7: aylık plan slotunun tarihi (kart ipucu); varsa seçicinin ilk değeri.
+  plannedAt?: string;
   onMoving?: OnMoving;
 };
 
@@ -332,12 +335,15 @@ function DeliverBody({
   state,
   blocked,
   timezone,
+  plannedAt,
   onMoving,
   article,
 }: Props & { article: SeoArticle }) {
   const { delivery } = state;
-  const [when, setWhen] = useState(() =>
-    defaultPublishAt(todayKeyIn(timezone)),
+  const [when, setWhen] = useState(
+    () =>
+      plannedPublishAt(plannedAt, timezone, new Date()) ??
+      defaultPublishAt(todayKeyIn(timezone)),
   );
   const modes = state.features?.modes === true;
   const ids = useId();

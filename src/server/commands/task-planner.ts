@@ -200,6 +200,17 @@ export const TaskPlanner = {
     const task = await TaskRepository.findByIdInProject(taskId, projectId);
     if (!task) return null;
 
+    // GA-F7 onaylandı; ExecutionJob oluşturulmaz, uygulama GaFixes içinde CAS kilitli ve geri okumalıdır.
+    if (task.capability === "ANALYTICS_EDIT") {
+      const { GaFixes } = await import("@/server/website-analytics/fixes/fixes");
+      await GaFixes.onTaskApproved({
+        id: task.id,
+        projectId: task.projectId,
+        workspaceId: task.workspaceId,
+      });
+      return null;
+    }
+
     const snapshot = await ContextSnapshotService.create({
       workspaceId: task.workspaceId,
       projectId: task.projectId,

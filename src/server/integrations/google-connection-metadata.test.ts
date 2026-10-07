@@ -84,4 +84,23 @@ describe("buildGoogleConnectionMetadata", () => {
         metadata.selectedSearchConsoleSite,
     ).toBeFalsy();
   });
+
+  it("drops a copied edit grant: a new token starts without edit access", async () => {
+    fetchGa4PropertyList.mockResolvedValue({
+      ga4Properties: [
+        { propertyId: "123", propertyName: "Web", accountName: "Acme" },
+      ],
+    });
+    const metadata = await buildGoogleConnectionMetadata(
+      "analytics",
+      "access-token",
+      account,
+      {
+        selectedGa4PropertyId: "123",
+        gaEdit: { grantedAt: "2026-10-06T00:00:00.000Z", grantedByUserId: "u1" },
+      },
+    );
+    expect(metadata).not.toHaveProperty("gaEdit");
+    expect(metadata).toMatchObject({ selectedGa4PropertyId: "123" });
+  });
 });

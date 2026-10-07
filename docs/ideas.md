@@ -111,6 +111,10 @@ Eski `IdeaFoundry` yalnız `reviseIdeaAction` için duruyor.
 
 Plan fikir kullanınca (`markIdeasPlanned`) havuz azalır; sonraki tur ya da açılış tamamlar.
 
+### Aylık SEO planı ve fikirler (SC-F7)
+
+Aylık SEO içerik planı ([search-content-plan.md](search-content-plan.md)) her slot için `PLANNING` durumunda, `module: "seo"`, `source: "search"` bir fikir üretir ya da havuzdaki eşleşen fikri (token Jaccard ≥ 0.8) tüketir; tüketilen fikir önceki durumunu (`prevIdeaStatus`) saklar ve Skip/Replace/forget/süpürme onu eski durumuna döndürür (planın yarattığı fikir arşivlenir). `PLANNING` fikirler `IdeaRepository.countActive`'e girer ve havuzdaki boş yeri azaltır. Fikir panosunda "Planned" görünür.
+
 ## 4. Pano
 
 Yer: `/projects/<id>?panel=ideas`.

@@ -40,6 +40,21 @@ const mocks = vi.hoisted(() => ({
   updateProposal: vi.fn(),
   pageCheckSite: vi.fn(),
   runAction: vi.fn(),
+  seoMonthCapStatus: vi.fn(),
+}));
+
+// SC-F7: calendar.ts'in aylık sınır hatası (gerçek sınıfın küçük kopyası).
+const { SeoMonthlyCapErrorMock } = vi.hoisted(() => ({
+  SeoMonthlyCapErrorMock: class SeoMonthlyCapError extends Error {
+    readonly cap: number;
+    constructor(cap: number) {
+      super(
+        `The limit of ${cap} articles for that month is reached. Change the limit on the Search page, or pick another month.`,
+      );
+      this.name = "SeoMonthlyCapError";
+      this.cap = cap;
+    }
+  },
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
@@ -96,6 +111,10 @@ vi.mock("@/server/chat/content-plan", () => ({
 vi.mock("@/server/modules/seo/calendar", () => ({
   placeSeoArticle: mocks.placeSeoArticle,
   seoPieceStatus: mocks.seoPieceStatus,
+  SeoMonthlyCapError: SeoMonthlyCapErrorMock,
+}));
+vi.mock("@/server/seo/content-plan/cap-status", () => ({
+  seoMonthCapStatus: mocks.seoMonthCapStatus,
 }));
 vi.mock("@/server/actions/plan-progress-actions", () => ({
   markCreativePublishedAction: mocks.markCreativePublishedAction,
@@ -302,6 +321,7 @@ beforeEach(() => {
   });
   mocks.pageCheckSite.mockResolvedValue(SITE);
   mocks.runAction.mockResolvedValue({ status: "pending", fetches: 1 });
+  mocks.seoMonthCapStatus.mockResolvedValue({ active: false });
   mocks.after.mockImplementation(() => undefined);
 });
 
@@ -702,6 +722,114 @@ describe("scheduleSeoArticleAction", () => {
   });
 });
 
+// SC-F7: aylık makale sınırı (docs/search-content-plan.md)
+describe("scheduleSeoArticleAction: aylık sınır", () => {
+  const CAP_MESSAGE =
+    "The limit of 4 articles for that month is reached. Change the limit on the Search page, or pick another month.";
+  const full = (hasSlot: boolean) => ({
+    active: true,
+    cap: 4,
+    used: 4,
+    month: "2026-10",
+    full: true,
+    hasSlot,
+  });
+
+  beforeEach(() => {
+    row.card = card("deliver", {
+      hint: { ideaId: "idea1", topic: "Trail guide" },
+      brief: BRIEF,
+      plan: PLAN,
+      article: ARTICLE,
+    });
+    mocks.placeSeoArticle.mockResolvedValue({
+      postId: "post-1",
+      creativeId: "cr-1",
+      scheduledFor: new Date(DELIVERY.scheduledFor),
+      reused: false,
+    });
+  });
+
+  it("refuses a full month before any work, checking the chosen month and the card's idea", async () => {
+    mocks.seoMonthCapStatus.mockResolvedValue(full(false));
+    expect(
+      await scheduleSeoArticleAction(PROJECT, CMD, "2026-10-09T10:00"),
+    ).toEqual({ ok: false, message: CAP_MESSAGE });
+    expect(mocks.seoMonthCapStatus).toHaveBeenCalledWith(PROJECT, {
+      month: "2026-10",
+      ideaId: "idea1",
+    });
+    expect(mocks.placeSeoArticle).not.toHaveBeenCalled();
+    expect(storedData().delivery).toBeUndefined();
+  });
+
+  it("returns the existing delivery on a retry even when the month is full (idempotent)", async () => {
+    row.card = card("deliver", {
+      hint: { ideaId: "idea1", topic: "Trail guide" },
+      brief: BRIEF,
+      plan: PLAN,
+      article: ARTICLE,
+      delivery: DELIVERY,
+    });
+    mocks.seoMonthCapStatus.mockResolvedValue(full(false));
+    expect(
+      await scheduleSeoArticleAction(PROJECT, CMD, "2026-10-09T10:00"),
+    ).toMatchObject({ ok: true });
+    expect(mocks.seoMonthCapStatus).not.toHaveBeenCalled();
+    expect(mocks.placeSeoArticle).not.toHaveBeenCalled();
+  });
+
+  it("lets a slot's article through a full month", async () => {
+    mocks.seoMonthCapStatus.mockResolvedValue(full(true));
+    expect(
+      await scheduleSeoArticleAction(PROJECT, CMD, "2026-10-09T10:00"),
+    ).toMatchObject({ ok: true });
+    expect(mocks.placeSeoArticle).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps the calendar's cap error to the same message and writes no card", async () => {
+    mocks.placeSeoArticle.mockRejectedValue(new SeoMonthlyCapErrorMock(4));
+    expect(
+      await scheduleSeoArticleAction(PROJECT, CMD, "2026-10-09T10:00"),
+    ).toEqual({ ok: false, message: CAP_MESSAGE });
+    expect(storedData().delivery).toBeUndefined();
+  });
+
+  it("does not pass capExempt when scheduling", async () => {
+    await scheduleSeoArticleAction(PROJECT, CMD, "2026-10-09T10:00");
+    expect(mocks.placeSeoArticle.mock.calls[0]![0]).not.toHaveProperty(
+      "capExempt",
+    );
+  });
+
+  it("refuses AI generation for a slotless article when the current month is full, and allows a slot's", async () => {
+    row.card = card("plan", {
+      hint: { ideaId: "idea1", topic: "Trail guide" },
+      brief: BRIEF,
+      plan: PLAN,
+    });
+    mocks.seoMonthCapStatus.mockResolvedValue(full(false));
+    expect(await writeSeoArticleAction(PROJECT, CMD)).toEqual({
+      ok: false,
+      message: CAP_MESSAGE,
+    });
+    expect(mocks.seoMonthCapStatus).toHaveBeenCalledWith(PROJECT, {
+      ideaId: "idea1",
+    });
+    expect(mocks.run).not.toHaveBeenCalled();
+
+    mocks.seoMonthCapStatus.mockResolvedValue(full(true));
+    mocks.run.mockResolvedValue({
+      output: { markdown: `# ${PLAN.titleOptions[0]}\n\n${MARKDOWN}` },
+      isMock: false,
+      reasoningCallId: "r",
+    });
+    expect(await writeSeoArticleAction(PROJECT, CMD)).toMatchObject({
+      ok: true,
+    });
+  });
+});
+
 describe("markSeoPublishedAction", () => {
   it("marks the calendar piece published through the manual path", async () => {
     row.card = card("deliver", {
@@ -741,7 +869,7 @@ describe("markSeoPublishedAction", () => {
     });
     // 10:00 UTC is 13:00 in Istanbul.
     expect(mocks.placeSeoArticle).toHaveBeenCalledWith(
-      expect.objectContaining({ when: "2026-10-05T13:00" }),
+      expect.objectContaining({ when: "2026-10-05T13:00", capExempt: true }),
     );
     expect(mocks.markCreativePublishedAction).toHaveBeenCalledWith("cr-2");
     expect(storedData().delivery).toEqual({

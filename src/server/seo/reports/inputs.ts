@@ -73,7 +73,8 @@ const ACTION_ITEM_LIMIT = 5;
 const ACTION_SCAN_LIMIT = 50;
 const UPDATE_LIMIT = 5;
 const UPDATE_LEAD_DAYS = 3;
-const CONTENT_LIMIT = 10;
+// SC-F7: 12 makalelik aylık plan özette eksiksiz görünsün diye 10 iken 12.
+const CONTENT_LIMIT = 12;
 const LATEST_WEEKS_WINDOW = 12;
 
 // Rapora giren güncelleme ve olay türleri: sıralamayı etkileyen güncellemeler

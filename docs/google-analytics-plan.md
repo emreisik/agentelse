@@ -1,6 +1,6 @@
 # Agentelse · Google Analytics 4: Mimari ve Uygulama Planı
 
-Durum (7 Ekim 2026): GA-F0 – GA-F6 kodlandı (bayraklı; GA-F4 ayrıntısı [website-insights.md](website-insights.md), GA-F5 ayrıntısı [website-reports.md](website-reports.md)); GA-F6 ayrıntısı [website-attribution.md](website-attribution.md); GA-F7 ve sonrası plan.
+Durum (7 Ekim 2026): GA-F0 – GA-F6 kodlandı (bayraklı; GA-F4 ayrıntısı [website-insights.md](website-insights.md), GA-F5 ayrıntısı [website-reports.md](website-reports.md)); GA-F6 ayrıntısı [website-attribution.md](website-attribution.md); GA-F7 kodlandı, bayrakları kapalı ([website-fixes.md](website-fixes.md)); GA-F8 ve sonrası plan.
 
 > **Kapsam:** Google Analytics 4 (GA4) entegrasyonu: bağlantı ve kimlik, yerel veri ambarı, ölçüm sağlığı denetimi, analiz, raporlama, planlama, reklam ölçümü ve öneri döngüsü. **Search Console ayrı bir entegrasyondur** ve kendi planı vardır: `docs/google-search-console-plan.md`. İki entegrasyon yalnız kod çekirdeğini paylaşır (OAuth, HTTP, hata kataloğu, PII süzgeci; §3.1). Bağlantı, izin, token, veri tabloları, işler, sağlık durumu, bayraklar, arayüz ve silme akışı tamamen ayrıdır; biri bağlı değilken diğeri eksiksiz çalışır. İkisi birden bağlıysa §12'deki isteğe bağlı köprü devreye girer.
 >
@@ -109,7 +109,7 @@ Tam liste §11'de. Sahip 6 Ekim'de "eksikleri tamamla" dedi: bu listede ve §11'
 
 ### 1.2 Otonomi
 
-GA4 entegrasyonu varsayılan olarak **salt okunurdur**; Agentelse GA'da hiçbir şeyi değiştirmez.
+GA4 entegrasyonu varsayılan olarak **salt okunurdur**; Agentelse GA'da hiçbir şeyi değiştirmez. (Bu, isteğe bağlı GA-F7 yükseltmesi verilmedikçe geçerlidir: o izin verilirse yalnız OWNER/ADMIN'in tek tek onayladığı küçük düzeltmeler yazılır, bkz. [website-fixes.md](website-fixes.md). Search Console her zaman salt okunur.)
 
 | Seviye (UI)                   | Ne yapılır                                                                                            | Asla yapılmaz                                                | Önkoşul                                                                | Varsayılan           |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------- | -------------------- |
@@ -1120,6 +1120,8 @@ Uygulamada plandan farklar (GA-F2 ve sonrası bunlara göre yazılır):
 **Görünür değişiklik:** Website sayfasında "From Agentelse"; haftalık raporda "Your ads on your website"; Ads modülünün Review adımında "Tracking: UTM added".
 
 ### GA-F7 — Düzeltme eylemleri (`analytics.edit`) · M · isteğe bağlı
+
+**Durum (7 Ekim 2026):** kodlandı; `GA_FIXES`, `GA_FIXES_ALPHA`, `GA_FIXES_ANNOTATIONS`, `GA_FIXES_ANNOTATIONS_PUBLISH` arkasında, hepsi varsayılan kapalı; migration'lar `20261006218900_add_analytics_edit_capability` ve `20261006219000_add_ga_config_change`. GK13: kodlandı ama kapalı; `analytics.edit` aynı projenin Data Access'ine ve mevcut doğrulama başvurusuna eklenmeden açılmaz (ikinci doğrulama yok). Ayrıntı [website-fixes.md](website-fixes.md).
 
 **Amaç:** Sık görülen yapılandırma sorunlarını, kullanıcının onayıyla tek dokunuşta düzeltmek.
 

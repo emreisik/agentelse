@@ -174,6 +174,7 @@ enum CapabilityKey {
   GOOGLE_ADS_CAMPAIGN_CREATE
 
   ANALYTICS_ANALYSIS
+  ANALYTICS_EDIT
 
   CRM_ANALYSIS
 
@@ -2244,15 +2245,17 @@ model GaPropertyLink {
   backfill            Json?
   backfillDoneAt      DateTime?
 
-  dailyTotals  GaDailyTotal[]
-  slices       GaReportSlice[]
-  monthly      GaMonthlySummary[]
-  healthChecks GaHealthCheck[]
-  healthRun    GaHealthRun?
-  findings     GaFinding[]
-  analysisRun  GaAnalysisRun?
-  reportRun    GaReportRun?
-  goalProgress GaGoalProgress[]
+  dailyTotals   GaDailyTotal[]
+  slices        GaReportSlice[]
+  monthly       GaMonthlySummary[]
+  healthChecks  GaHealthCheck[]
+  healthRun     GaHealthRun?
+  configChanges GaConfigChange[]
+  changeWatch   GaChangeWatch?
+  findings      GaFinding[]
+  analysisRun   GaAnalysisRun?
+  reportRun     GaReportRun?
+  goalProgress  GaGoalProgress[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2431,6 +2434,7 @@ model GscSiteLink {
   seoReports         SeoReport[]
   seoReportState     SeoReportState?
   seoGoalProgress    SeoGoalProgress[]
+  contentPlans       SeoContentPlan[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2989,6 +2993,113 @@ model LinkTrackingSetting {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
+
+// ============================================================================
+// GA-F7 (migration 20261006219000_add_ga_config_change)
+// ============================================================================
+// COMPANION MIGRATION (own folder, sorts before the main one, not referenced by the SQL of the main one):
+//   20261006218900_add_analytics_edit_capability/migration.sql
+//   ALTER TYPE "CapabilityKey" ADD VALUE IF NOT EXISTS 'ANALYTICS_EDIT';
+// and in schema.prisma, enum CapabilityKey: add the line  ANALYTICS_EDIT  (next to ANALYTICS_ANALYSIS).
+//
+
+// GA-F7: GA yapilandirma yazmasinin kaydi (docs/website-fixes.md). Onay, uygulama,
+// geri okuma ve geri alma bu satirda izlenir. before/after/params Google'dan okunan
+// yapilandirma icerir (olay adi, saklama suresi, ayar bayraklari); sayi ya da kisisel
+// veri yok. Disconnect bagi siler, satirlar cascade ile hemen gider.
+model GaConfigChange {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  linkId      String
+
+  // KEY_EVENT_CREATE | RETENTION_14M | ENHANCED_MEASUREMENT | CHANNEL_GROUP_AI | ANNOTATION_CREATE
+  kind         String
+  // PROPOSED | APPROVED | APPLYING | APPLIED | VERIFIED | FAILED | UNDOING | UNDONE | REJECTED | EXPIRED
+  status       String  @default("PROPOSED")
+  // GUIDE | PANEL | AUTO | API
+  source       String
+  // Kullaniciya gosterilen sabit Ingilizce baslik (en cok 80 karakter).
+  title        String
+  // Dogrulanmis eylem girdisi: GaFixParams (kind dahil).
+  params       Json
+  // Uygulamadan hemen once canli okunan durum ve geri okunan sonraki durum: GaFixSnapshot.
+  before       Json?
+  after        Json?
+  // Google kaynak adi (properties/1/keyEvents/2); geri alma ve degisim gecmisi eslemesi icin.
+  resourceName String?
+  // Ayni (bag, tur, konu) icin tek acik degisiklik: dedupeKey, acik durumlarda openKey'e de yazilir.
+  dedupeKey    String
+  openKey      String?
+  // Zaten saglanmisti: yazma yapilmadi, geri alinamaz.
+  noop         Boolean @default(false)
+
+  taskId           String?
+  approvalId       String?
+  // USER | SYSTEM
+  proposedByType   String
+  proposedByUserId String?
+  approvedByUserId String?
+  undoneByUserId   String?
+
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime?
+  leaseUntil    DateTime?
+  leaseOwner    String?
+  expiresAt     DateTime
+
+  approvedAt   DateTime?
+  appliedAt    DateTime?
+  verifiedAt   DateTime?
+  rolledBackAt DateTime?
+  failedAt     DateTime?
+  // { code, message, retryable?, undo? }: sabit metin, Google ham hatasi yok.
+  error        Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, openKey])
+  @@index([projectId, createdAt])
+  @@index([linkId, dedupeKey])
+  @@index([status, nextAttemptAt])
+  @@index([taskId])
+  @@index([approvalId])
+}
+
+// GA-F7: degisim gecmisi taramasinin bag basina durumu (imlec, kilit, son hata kodu).
+model GaChangeWatch {
+  id          String @id @default(cuid())
+  linkId      String @unique
+  workspaceId String
+  projectId   String
+
+  // Son basarili turda gorulen en ileri zaman; sonraki tur 1 saat ortusmeyle buradan baslar.
+  // Izin yeniden verilince (markGaEditGranted) null'a cekilir: aradaki bosluk icin uyari uretilmez.
+  cursorAt       DateTime?
+  lastRunAt      DateTime?
+  lastEventCount Int       @default(0)
+  lastAlertCount Int       @default(0)
+  leaseUntil     DateTime?
+  leaseOwner     String?
+  // Yalniz hata kodu: permission | scope_missing | reconnect | rate_limited | google_unavailable | truncated | unknown
+  lastError      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([lastRunAt])
+}
+
+// Migration SQL notes for the orchestrator (main migration): CREATE TABLE "GaConfigChange" / "GaChangeWatch" with the columns above,
+// UNIQUE INDEX "GaConfigChange_linkId_openKey_key" ("linkId","openKey"), UNIQUE INDEX on "GaChangeWatch"."linkId",
+// the listed indexes, and FOREIGN KEY ("linkId") REFERENCES "GaPropertyLink"("id") ON DELETE CASCADE ON UPDATE CASCADE for both tables.
+// NAMING: the Prisma TYPE is GaChangeWatch; the exported server const is GaChangeWatcher, so both can be imported in one file.
 
 // ---------------------------------------------------------------------------
 // Arama sağlığı ve teknik denetim (docs/google-search-console-plan.md SC-F3,
@@ -3767,6 +3878,62 @@ model SeoAction {
   @@index([linkId])
   @@index([findingId])
   @@index([commandId])
+}
+
+// ---------------------------------------------------------------------------
+// SC-F7: aylık SEO içerik planı (migration 20261006220000_add_seo_content_plan)
+// ---------------------------------------------------------------------------
+
+// Bağ başına ay başına bir plan. Google'dan türeyen gerekçe (sorgular, gösterim
+// payları, boşluklar) yalnız data içindedir; GscSiteLink silinince (Disconnect,
+// "Delete stored data", W1 saklama) cascade ile gider.
+model SeoContentPlan {
+  id             String  @id @default(cuid())
+  workspaceId    String
+  projectId      String
+  linkId         String
+  isMock         Boolean @default(false)
+  // Projenin yerel ayı: "2026-10"
+  month          String
+  // ACTIVE (en az bir slot yazıldı) | EMPTY (slot yok; data.reason nedeni söyler)
+  status         String  @default("ACTIVE")
+  // Planlandığı andaki aylık sınır ve o ayda zaten var olan makale sayısı
+  cap            Int
+  existingAtPlan Int     @default(0)
+  // GscSiteLink.lastWeeklyWeek (Pazartesi, PT): planın dayandığı veri haftası
+  basedOnWeek    String
+  // AI | BASIC | MOCK
+  wording        String  @default("BASIC")
+  // "Refresh plan" sayısı (en çok 3)
+  regenerations  Int     @default(0)
+  // SeoContentPlanData (src/lib/seo/content-plan/types.ts): slotlar, pillar
+  // haritası, reddedilenler, nedenler
+  data           Json
+
+  link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([linkId, month])
+  @@index([projectId, month])
+  @@index([isMock, month])
+}
+
+// Proje başına SEO içerik planı ayarı (Google verisi değildir; Disconnect'te
+// silinmez, yalnız proje silinirken forgetSeoContentPlansForProjects siler).
+// Satır yoksa varsayılanlar geçerlidir (sınır 4, otomatik plan açık).
+model SeoContentSetting {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  projectId       String   @unique
+  // 1..12 (varsayılan 4; SK14 a)
+  monthlyCap      Int      @default(4)
+  // Her ay kendiliğinden plan çıkar
+  autoPlan        Boolean  @default(true)
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model Skill {

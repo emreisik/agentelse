@@ -79,6 +79,12 @@ vi.mock("@/server/brand/rule-language", () => ({
   brandRuleLanguageOf: vi.fn(async () => "tr"),
 }));
 
+// SC-F7: aylık SEO planı kapısı ve haftalık not
+const seoContentPlanActiveFor = vi.fn();
+vi.mock("@/lib/seo/content-plan/flags", () => ({ seoContentPlanActiveFor }));
+const weeklySeoNote = vi.fn();
+vi.mock("@/server/seo/content-plan/weekly", () => ({ weeklySeoNote }));
+
 const {
   WeeklyPlanDraft,
   draftItems,
@@ -102,6 +108,8 @@ beforeEach(() => {
     { projectId: PROJECT, autopilotMode: "AUTOPILOT" },
   ]);
   isProjectAgencyActive.mockResolvedValue(true);
+  seoContentPlanActiveFor.mockReturnValue(false);
+  weeklySeoNote.mockResolvedValue("");
   work.findUnique.mockResolvedValue(null);
   work.findMany.mockResolvedValue([]);
   creative.count.mockResolvedValue(0);
@@ -271,6 +279,40 @@ describe("WeeklyPlanDraft.runDue", () => {
         entityId: `${PROJECT}:2026-10-05`,
       }),
     });
+  });
+
+  // SC-F7: aylık SEO slotu sosyal taslağı engellemez; kapalıyken sorgu eskisi gibidir.
+  it("keeps the old planned-count where-clause for a project outside the SEO content plan", async () => {
+    await WeeklyPlanDraft.runDue(2, SUNDAY_EVENING);
+    const where = creative.count.mock.calls[0]![0].where;
+    expect(where).not.toHaveProperty("OR");
+    expect(seoContentPlanActiveFor).toHaveBeenCalledWith(PROJECT);
+    expect(weeklySeoNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not count seo-channel pieces as a planned week when the SEO plan is active", async () => {
+    seoContentPlanActiveFor.mockReturnValue(true);
+    expect(await WeeklyPlanDraft.runDue(2, SUNDAY_EVENING)).toBe(1);
+    const where = creative.count.mock.calls[0]![0].where;
+    expect(where.OR).toEqual([{ channel: null }, { channel: { not: "seo" } }]);
+    // The where-clause alone decides: a seo-only week counts 0 and is drafted.
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds the SEO note to the draft's reply", async () => {
+    seoContentPlanActiveFor.mockReturnValue(true);
+    weeklySeoNote.mockResolvedValue(
+      "One SEO article from this month's plan is also due this week.",
+    );
+    await WeeklyPlanDraft.runDue(2, SUNDAY_EVENING);
+    const row = tx.command.create.mock.calls[0]![0].data;
+    expect(row.replyText).toContain("3 posts");
+    expect(row.replyText).toContain(
+      "One SEO article from this month's plan is also due this week.",
+    );
+    const [, from, to] = weeklySeoNote.mock.calls[0]!;
+    expect(from).toBeInstanceOf(Date);
+    expect(to.getTime() - from.getTime()).toBe(7 * 86_400_000);
   });
 
   it("never drafts a week again after its chat was deleted, even in a fresh process", async () => {

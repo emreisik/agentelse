@@ -251,6 +251,7 @@ const CAPABILITY_LABELS: Partial<Record<CapabilityKey, string>> = {
   WEBSITE_UPDATE: "Website Update",
   PR_OUTREACH: "PR Outreach",
   ANALYTICS_ANALYSIS: "Analytics Analysis",
+  ANALYTICS_EDIT: "Google Analytics change",
   REPORTING: "Reporting",
   VERIFY_EXTERNAL_ACTION: "External Action Verification",
   SOCIAL_ACCOUNT_SETUP: "Social Account Setup",

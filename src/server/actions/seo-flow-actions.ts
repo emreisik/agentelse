@@ -8,7 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { isModuleFlowStep } from "@/lib/module-flows/card";
 import { cleanLine, validateSeoBrief } from "@/lib/module-flows/seo/brief";
 import { formatWhen, isWallClock } from "@/lib/module-flows/seo/deliver";
-import { applyPlanEdits } from "@/lib/module-flows/seo/plan";
+import { applyPlanEdits, withPlannedKeyword } from "@/lib/module-flows/seo/plan";
 import {
   SEO_LIMITS,
   canGoToSeoStep,
@@ -27,7 +27,13 @@ import {
   runSeoClaimed,
   verifyActionSoon,
 } from "@/server/modules/seo/background";
-import { placeSeoArticle, seoPieceStatus } from "@/server/modules/seo/calendar";
+import {
+  placeSeoArticle,
+  SeoMonthlyCapError,
+  seoPieceStatus,
+} from "@/server/modules/seo/calendar";
+import { SEO_CAP_MESSAGE } from "@/lib/seo/content-plan/copy";
+import { seoMonthCapStatus } from "@/server/seo/content-plan/cap-status";
 import {
   readSeoCard,
   writeSeoCard,
@@ -243,10 +249,17 @@ export async function researchSeoAction(
             : { ok: false, message: answer.message };
         },
         // A new plan; an article written earlier stays until it is rewritten.
-        finish: ({ state }, plan) => ({
-          step: "plan",
-          state: { ...state, plan },
-        }),
+        // SC-F7: aylık plandan açılan kartta hedef anahtar kelime planın sorgusu.
+        finish: ({ state }, plan) => {
+          const planned = flowHintOf(current.card.data).keyword;
+          return {
+            step: "plan",
+            state: {
+              ...state,
+              plan: planned ? withPlannedKeyword(plan, planned) : plan,
+            },
+          };
+        },
         afterDone: () =>
           touchWork(projectId, current.workId, researched.topic),
         message: COPY.researched,
@@ -280,6 +293,13 @@ export async function writeSeoArticleAction(
       }
       if (ReasoningService.isMockMode()) {
         return { ok: false, message: COPY.mock };
+      }
+      // SC-F7: aylık makale sınırı AI yazımından ÖNCE denetlenir (§6.5); yalnız slotsuz makale ve içinde bulunulan ay doluysa reddedilir. Bayrak kapalıyken sorgu yok.
+      const capStatus = await seoMonthCapStatus(projectId, {
+        ideaId: flowHintOf(current.card.data).ideaId ?? null,
+      });
+      if (capStatus.active && capStatus.full && !capStatus.hasSlot) {
+        return { ok: false, message: SEO_CAP_MESSAGE(capStatus.cap) };
       }
       const scope = scopeOf(auth, projectId);
       const writtenAt = () => new Date().toISOString();
@@ -491,6 +511,8 @@ async function placeOnCalendar(input: {
   auth: WorksAuth;
   timezone: string;
   when: string;
+  // SC-F7: zaten yayında olan makale ("Mark as published") aylık sınıra takılmaz.
+  capExempt?: boolean;
 }): Promise<Placed> {
   const { projectId, commandId, current, auth } = input;
   const { article, plan, brief } = current.state;
@@ -523,6 +545,7 @@ async function placeOnCalendar(input: {
       ...(flowHintOf(current.card.data).ideaId
         ? { ideaId: flowHintOf(current.card.data).ideaId }
         : {}),
+      ...(input.capExempt ? { capExempt: true } : {}),
     });
     delivery = {
       postId: placed.postId,
@@ -531,6 +554,10 @@ async function placeOnCalendar(input: {
       timezone: input.timezone,
     };
   } catch (error) {
+    // SC-F7: ay dolu; ileti Search sayfasındaki sınıra yönlendirir.
+    if (error instanceof SeoMonthlyCapError) {
+      return { ok: false, message: error.message };
+    }
     console.error(
       "[works] seo calendar failed:",
       error instanceof Error ? error.message : error,
@@ -826,6 +853,17 @@ export async function scheduleSeoArticleAction(
       if (scheduledFor.getTime() < Date.now() - PAST_GRACE_MS) {
         return { ok: false, message: COPY.past };
       }
+      // SC-F7: seçilen ay doluysa iş yapılmadan reddedilir; kendi ayındaki slot sınıra takılmaz. Bayrak kapalıyken sorgu yok.
+      // Kartın parçası zaten yerleştiyse (tekrar/çift tık) sınır denetimi atlanır: placeOnCalendar mevcut teslimi döndürür.
+      if (!current.state.delivery) {
+        const capStatus = await seoMonthCapStatus(projectId, {
+          month: when.slice(0, 7),
+          ideaId: flowHintOf(current.card.data).ideaId ?? null,
+        });
+        if (capStatus.active && capStatus.full && !capStatus.hasSlot) {
+          return { ok: false, message: SEO_CAP_MESSAGE(capStatus.cap) };
+        }
+      }
       const placed = await placeOnCalendar({
         projectId,
         commandId: id,
@@ -883,6 +921,7 @@ export async function markSeoPublishedAction(
           auth,
           timezone,
           when: utcToZonedDateTimeLocal(new Date(), timezone),
+          capExempt: true,
         });
         if (!placed.ok) {
           refresh(projectId, true);

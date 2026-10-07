@@ -7,7 +7,7 @@ export const metadata: Metadata = {
     "How Agentelse collects, uses, and protects your data when you use your AI Growth Team.",
 };
 
-const LAST_UPDATED = "October 6, 2026";
+const LAST_UPDATED = "October 7, 2026";
 
 type PolicySection = {
   id: string;
@@ -338,8 +338,10 @@ const SECTIONS: PolicySection[] = [
         <p>
           Google Analytics and Google Search Console are two separate
           connections: you connect, and disconnect, each one on its own, and
-          each one asks Google only for its own permission. Both are read-only;
-          Agentelse never changes anything in your Google accounts.
+          each one asks Google only for its own permission. Search Console is
+          always read-only. Google Analytics is read-only unless you choose to
+          turn on an optional extra permission (see below). Without that extra
+          permission, Agentelse never changes anything in your Google accounts.
         </p>
         <ul className="flex flex-col gap-2 pl-5 list-disc">
           <li>
@@ -347,6 +349,26 @@ const SECTIONS: PolicySection[] = [
             Analytics data&rdquo; (analytics.readonly), to show your website
             traffic and results in reports, check that your tracking works and
             suggest improvements.
+          </li>
+          <li>
+            If you choose to let Agentelse make approved changes to Google
+            Analytics, a second Google screen asks for &ldquo;Edit Google
+            Analytics management entities&rdquo; (analytics.edit). It is
+            optional. Agentelse only uses it for small fixes you ask for and a
+            workspace owner or admin approves one by one: marking a key event,
+            raising event data retention to 14 months, turning on enhanced
+            measurement items that are off, adding an &ldquo;AI
+            assistants&rdquo; channel group, and adding dated notes
+            (annotations) to your reports. It also lets Agentelse read your
+            property&rsquo;s change history once a day, to tell you if something
+            was changed in Google Analytics outside Agentelse; the history
+            itself is not stored, only an alert in the app. Agentelse keeps a
+            record of each change (what it was and how it was before and after)
+            so you can undo it, for up to 24 months while Google Analytics stays
+            connected, and deletes that record when you disconnect. You can turn
+            editing off at any time in Connectors. That stops Agentelse right
+            away; to also remove the permission at Google, remove Agentelse in
+            your Google Account settings (Security, third-party access).
           </li>
           <li>
             Google Search Console asks for &ldquo;View Search Console data for
@@ -513,7 +535,11 @@ const SECTIONS: PolicySection[] = [
           topics, suggest spellings of your brand and write short explanations.
           Disconnecting Search Console deletes these opportunities, topic
           groups and suggestions right away, together with the article ideas
-          made from them that you haven&rsquo;t used yet.
+          made from them that you haven&rsquo;t used yet. If you use the
+          monthly SEO content plan, Agentelse stores the search topics and
+          article suggestions it is built from; Disconnect or Delete stored
+          data removes them, and drafts you have not started are removed from
+          your calendar.
         </p>
         <p>
           When you tell Agentelse you changed a page, it checks your public page

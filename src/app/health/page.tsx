@@ -31,6 +31,8 @@ import { loadGaHealthCounters } from "@/server/website-analytics/health-counters
 import { GaHealthCard } from "@/components/website-analytics/ga-health-card";
 import { loadGaMeasurementCounters } from "@/server/website-analytics/health/read";
 import { GaMeasurementCountersCard } from "@/components/website-analytics/ga-measurement-counters-card";
+import { loadGaFixCounters } from "@/server/website-analytics/fixes/counters";
+import { GaFixesCountersCard } from "@/components/website-analytics/ga-fixes-counters-card";
 import { loadSeoOperatorCounters } from "@/server/seo/health/operator-counters";
 import { SeoOperatorCard } from "@/components/search-health/seo-operator-card";
 import { loadGaInsightsOperatorView } from "@/server/website-analytics/analysis/read";
@@ -40,6 +42,8 @@ import { loadSeoReportCounters } from "@/server/seo/reports/counters";
 import { SeoReportCountersCard } from "@/components/search-reports/seo-report-counters-card";
 import { loadSeoActionCounters } from "@/server/seo/actions/operator-counters";
 import { SeoActionCountersCard } from "@/components/search-actions/seo-action-counters-card";
+import { loadSeoContentPlanCounters } from "@/server/seo/content-plan/counters";
+import { ContentPlanCountersCard } from "@/components/search-content-plan/content-plan-counters-card";
 import {
   clearProviderIncidentAction,
   dismissDeadLetterAction,
@@ -114,7 +118,8 @@ export default async function HealthPage() {
   // GA-F3: ölçüm sağlığı sayaçları; SC-F3: arama sağlığı ve tarayıcı
   // sayaçları (bayraklar kapalıyken null). GA-F4: website içgörüleri (operatör
   // görünümü); SC-F4: SEO fırsat motoru sayaçları; SC-F5: Search rapor
-  // sayaçları; SC-F6: SEO eylem sayaçları. Bunlar `healthy`'ye sayılmaz.
+  // sayaçları; SC-F6: SEO eylem sayaçları; GA-F7: GA düzeltme sayaçları;
+  // SC-F7: SEO içerik planı sayaçları. Bunlar `healthy`'ye sayılmaz.
   const now = new Date();
   const [
     leftoverRules,
@@ -129,6 +134,8 @@ export default async function HealthPage() {
     seoOpportunities,
     seoReports,
     seoActionCounters,
+    gaFixes,
+    seoContentPlan,
   ] = await Promise.all([
     AdsInsurance.undeletable().catch(() => []),
     prisma.adsWebhookEvent.count({ where: { status: "DEAD" } }).catch(() => 0),
@@ -159,6 +166,8 @@ export default async function HealthPage() {
     loadSeoOpportunityCounters(now).catch(() => null),
     loadSeoReportCounters(now).catch(() => null),
     loadSeoActionCounters(now).catch(() => null),
+    loadGaFixCounters().catch(() => null),
+    loadSeoContentPlanCounters(now).catch(() => null),
   ]);
 
   const healthy =
@@ -455,6 +464,7 @@ export default async function HealthPage() {
         {gaMeasurement ? (
           <GaMeasurementCountersCard counters={gaMeasurement} />
         ) : null}
+        {gaFixes ? <GaFixesCountersCard counters={gaFixes} /> : null}
         {gaInsights ? <GaInsightsOperatorCard view={gaInsights} /> : null}
 
         {gscAttention > 0 || gscBackfilling > 0 || gscQuotaWaiting > 0 ? (
@@ -535,6 +545,9 @@ export default async function HealthPage() {
         {seoReports ? <SeoReportCountersCard counters={seoReports} /> : null}
         {seoActionCounters ? (
           <SeoActionCountersCard counters={seoActionCounters} />
+        ) : null}
+        {seoContentPlan ? (
+          <ContentPlanCountersCard counters={seoContentPlan} />
         ) : null}
 
         <Card>

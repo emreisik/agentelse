@@ -26,6 +26,10 @@ export async function buildGoogleConnectionMetadata(
   const kept: Record<string, unknown> = { ...existing };
   delete kept.disconnectedAt;
   delete kept.googleHealth;
+  // Yeni token (normal bağlanış ya da başka projenin analytics.edit taşıyabilen
+  // token'ını kopyalayan "Use existing connection") düzenleme izni OLMADAN
+  // başlar; gaEdit'i yalnız yükseltme callback'i yazar.
+  delete kept.gaEdit;
   if (service === "analytics") {
     const previous = kept as Partial<GoogleAnalyticsMetadata>;
     const lists = await fetchGa4PropertyList(accessToken);

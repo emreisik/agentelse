@@ -66,6 +66,19 @@ export function withKeyword(
   return [...list, clean];
 }
 
+// SC-F7: aylık plandan açılan makalede hedef anahtar kelime planın sorgusudur;
+// modelin seçtiği ana kelime ikincil listeye iner (kişi planı yine düzenleyebilir).
+export function withPlannedKeyword(plan: SeoPlan, planned: string): SeoPlan {
+  const keyword = keywordOf(planned);
+  if (!keyword || sameKeyword(keyword, plan.primaryKeyword)) return plan;
+  const rest = plan.secondaryKeywords.filter((item) => !sameKeyword(item, keyword));
+  return {
+    ...plan,
+    primaryKeyword: keyword,
+    secondaryKeywords: withKeyword(rest, plan.primaryKeyword, keyword),
+  };
+}
+
 function intentOf(raw: unknown): SeoIntent {
   const text = foldForMatch(typeof raw === "string" ? raw : "");
   return SEO_INTENTS.find((intent) => text.includes(intent)) ?? "informational";

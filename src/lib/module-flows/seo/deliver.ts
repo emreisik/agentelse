@@ -3,6 +3,8 @@
 // on the Content Calendar for the day it goes live and records when it is out.
 // Pure helpers for the card and the actions.
 
+import { utcToZonedDateTimeLocal } from "@/lib/timezone";
+
 const WALL_CLOCK = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 
 // A real "YYYY-MM-DDTHH:mm" (the date-time picker's value): no 31 February.
@@ -19,6 +21,23 @@ export function isWallClock(value: unknown): value is string {
     hh! <= 23 &&
     mm! <= 59
   );
+}
+
+// SC-F7: the monthly plan's slot date (card hint) as the picker's first value,
+// only while it is still ahead and the timezone is known; else null.
+export function plannedPublishAt(
+  plannedAt: string | undefined,
+  timezone: string | undefined,
+  now: Date,
+): string | null {
+  if (!plannedAt || !timezone) return null;
+  const at = new Date(plannedAt);
+  if (Number.isNaN(at.getTime()) || at.getTime() <= now.getTime()) return null;
+  try {
+    return utcToZonedDateTimeLocal(at, timezone);
+  } catch {
+    return null;
+  }
 }
 
 // The picker's first value: tomorrow at 10:00 in the project's day.

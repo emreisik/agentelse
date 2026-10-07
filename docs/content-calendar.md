@@ -69,6 +69,10 @@ Sohbet ekranının sağ panelindeki Calendar sekmesi aynı veriyi (`GET .../cale
 - Görünüm, sıralama ve seçili platformlar tarayıcıda proje başına hatırlanır (`localStorage`, `ws-calendar:<projectId>`).
 - Saf mantık: `src/lib/calendar/panel-view.ts` (süzme, sıralama, gruplama, gün noktaları).
 
+## SEO parçaları (SC-F7)
+
+`SEO_CONTENT_PLAN` açıkken aylık plan ([search-content-plan.md](search-content-plan.md)) takvime SEO slotları koyar: `planId`'siz, DRAFT, sürümsüz `seo.article` parçaları (kısa brief; evre "Needs content", gecikme yalnız bayrak). Makale Review'dan geçip Deliver edilince slot APPROVED olur (`placeSeoArticle` slotu tüketir). Taşıma ve silme takvimden de çalışır (taşıma aylık sınıra tabi değildir); plan canlı durumu, tarihi ve arşiv durumunu her zaman Creative'dan okur, plan JSON'undan değil. Ayın sonunda dokunulmamış slotlar bir sonraki ay planlanırken arşivlenir.
+
 ## Bilinen sınırlar
 
 - Facebook çapraz paylaşımının (FACEBOOK_PUBLISH) durumu takvimde yok; o durum Facebook'tan canlı okunuyor (bkz. `facebook-share.ts`).

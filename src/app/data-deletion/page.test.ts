@@ -35,6 +35,20 @@ describe("data deletion page", () => {
     );
   });
 
+  it("says what Disconnect does to Google Analytics changes and the SEO content plan (GA-F7, SC-F7)", async () => {
+    const html = (await render()).replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+    expect(html).toContain("record Agentelse keeps of changes");
+    expect(html).toContain("Undo before disconnecting");
+    expect(html).toContain("Google Account settings");
+    expect(html).toContain(
+      "monthly SEO content plan and its not-yet-started calendar drafts and ideas",
+    );
+    // Silme yolunun kendi paragrafında da yer alır ("Delete stored data").
+    expect(html).toContain(
+      "Deleting the stored data also deletes the monthly SEO content plan and its not-yet-started calendar drafts and ideas",
+    );
+  });
+
   it("shows the status of a request opened with its signed confirmation code", async () => {
     const code = createDeletionCode(1, "auth-secret", now);
     const html = await render(code);

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { parseIdeaConcept } from "@/lib/ideas/concept";
 import { SeoActionFlags, seoActionsAllowedFor } from "@/lib/seo/action-flags";
+import { seoContentPlanActiveFor } from "@/lib/seo/content-plan/flags";
 import {
   isFlowModuleKey,
   newModuleFlowCard,
@@ -47,11 +48,18 @@ export type ModuleFlowHint = {
   sourceIdeaId?: string | null;
 };
 
-// The SEO idea an article starts from: its id and its working title.
+// The SEO idea an article starts from: its id and its working title. With the
+// monthly content plan on (SC-F7) it also carries the target keyword and the
+// planned slot's date, so the article targets the planned query.
 async function seoIdeaHint(
   projectId: string,
   ideaId: string | null | undefined,
-): Promise<{ ideaId: string; topic: string } | null> {
+): Promise<{
+  ideaId: string;
+  topic: string;
+  keyword?: string;
+  plannedAt?: string;
+} | null> {
   const id = idSchema.safeParse(ideaId);
   if (!id.success) return null;
   const row = await prisma.idea.findFirst({
@@ -59,9 +67,31 @@ async function seoIdeaHint(
     select: { id: true, concept: true },
   });
   const concept = parseIdeaConcept(row?.concept);
-  return row && concept?.module === "seo"
-    ? { ideaId: row.id, topic: concept.draft.title }
-    : null;
+  if (!row || concept?.module !== "seo") return null;
+  const hint: {
+    ideaId: string;
+    topic: string;
+    keyword?: string;
+    plannedAt?: string;
+  } = { ideaId: row.id, topic: concept.draft.title };
+  if (!seoContentPlanActiveFor(projectId)) return hint;
+  // Plan slotu: dokunulmamış DRAFT seo.article parçası (tek ucuz sorgu; yalnız plan etkinken).
+  const keyword = concept.draft.keyword.trim().slice(0, 80);
+  if (keyword) hint.keyword = keyword;
+  const slot = await prisma.creative.findFirst({
+    where: {
+      projectId,
+      formatKey: "seo.article",
+      status: "DRAFT",
+      planId: null,
+      excludedAt: null,
+      versions: { none: {} },
+      post: { ideaId: row.id },
+    },
+    select: { scheduledFor: true },
+  });
+  if (slot?.scheduledFor) hint.plannedAt = slot.scheduledFor.toISOString();
+  return hint;
 }
 
 export async function startModuleFlowAction(

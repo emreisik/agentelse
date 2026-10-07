@@ -64,6 +64,9 @@ export type ModuleFlowHintData = {
   sourceCreativeId?: string;
   ideaId?: string;
   topic?: string;
+  // SC-F7: aylık planın hedef anahtar kelimesi ve planlı tarih (ISO).
+  keyword?: string;
+  plannedAt?: string;
 };
 
 const HINT_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -82,6 +85,15 @@ export function flowHintOf(data: unknown): ModuleFlowHintData {
   if (typeof raw.ideaId === "string" && HINT_ID.test(raw.ideaId)) out.ideaId = raw.ideaId;
   if (typeof raw.topic === "string" && raw.topic.trim()) {
     out.topic = raw.topic.trim().slice(0, 200);
+  }
+  if (typeof raw.keyword === "string" && raw.keyword.trim()) {
+    out.keyword = raw.keyword.trim().slice(0, 80);
+  }
+  if (
+    typeof raw.plannedAt === "string" &&
+    Number.isFinite(Date.parse(raw.plannedAt))
+  ) {
+    out.plannedAt = raw.plannedAt;
   }
   return out;
 }

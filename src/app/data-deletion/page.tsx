@@ -209,9 +209,9 @@ export default async function DataDeletionPage({
             Console also deletes the search opportunities, topic groups and
             brand-term suggestions built from it, and the article ideas made
             from them that you haven&rsquo;t used yet, as well as the measured
-            results of SEO changes and the learnings drawn from them. It also
-            removes
-            Agentelse&rsquo;s access in your Google account, unless the same
+            results of SEO changes and the learnings drawn from them, and the
+            monthly SEO content plan and its not-yet-started calendar drafts
+            and ideas. It also removes Agentelse&rsquo;s access in your Google account, unless the same
             Google account is still used by your other Agentelse Google
             connection. You can remove that access yourself in your Google
             Account under{" "}
@@ -226,7 +226,9 @@ export default async function DataDeletionPage({
             <span className="text-foreground">
               Connectors &gt; Google Search Console &gt; Delete stored data
             </span>
-            . The last 16 months then load again from Google.
+            . The last 16 months then load again from Google. Deleting the
+            stored data also deletes the monthly SEO content plan and its
+            not-yet-started calendar drafts and ideas.
           </p>
           <p>
             To delete what our site audit stored about your website (page
@@ -242,6 +244,15 @@ export default async function DataDeletionPage({
             analytics&rdquo; chat and the goal progress it took from Google
             Analytics. Your own messages in that chat stay until you delete the
             chat.
+          </p>
+          <p>
+            Disconnecting Google Analytics also deletes the record Agentelse
+            keeps of changes it made in your property (and of changes it noticed
+            there), and the text of its approval requests, right away. It does
+            not undo the changes themselves; use Undo before disconnecting if
+            you want them reverted. Disconnecting stops Agentelse from making
+            changes; to also remove the permission at Google, remove Agentelse
+            in your Google Account settings (Security, third-party access).
           </p>
           <p>
             To also erase reports and suggestions Agentelse built from your

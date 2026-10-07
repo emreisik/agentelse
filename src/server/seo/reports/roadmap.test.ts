@@ -15,6 +15,10 @@ const mocks = vi.hoisted(() => ({
   listSeoGoals: vi.fn(),
   forecastSearchMonth: vi.fn(),
   readAuditSummary: vi.fn(),
+  contentPlanActive: vi.fn(() => false),
+}));
+vi.mock("@/lib/seo/content-plan/flags", () => ({
+  seoContentPlanActiveFor: mocks.contentPlanActive,
 }));
 
 vi.mock("./inputs", () => ({
@@ -97,6 +101,7 @@ describe("buildRoadmapReport", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.SEO_HEALTH = "true";
+    mocks.contentPlanActive.mockReturnValue(false);
     mocks.readOpportunities.mockResolvedValue(null);
     mocks.readOpenSearchAlerts.mockResolvedValue(null);
     mocks.readQuickWins.mockResolvedValue([]);
@@ -220,6 +225,22 @@ describe("buildRoadmapReport", () => {
       expect.objectContaining({ projectId: "p1" }),
       NEXT,
     );
+  });
+
+  // SC-F7: aylık plan etkinken bölüm başlığı planın bölüm adıdır.
+  it("titles the content section like the monthly plan when it is active", async () => {
+    mocks.contentPlanActive.mockReturnValue(true);
+    mocks.readContentPlan.mockResolvedValue([
+      { title: "Trail guide", date: "2026-10-09", status: "DRAFT" },
+    ]);
+    const result = await buildRoadmapReport(context(), NEXT, NOW);
+    if (!("snapshot" in result)) throw new Error("yol haritası beklendi");
+    const content = result.snapshot.sections.find(
+      (section) => section.type === "content",
+    );
+    if (content?.type !== "content") throw new Error("içerik bölümü beklendi");
+    expect(content.title).toBe("This month's articles");
+    expect(mocks.contentPlanActive).toHaveBeenCalledWith("p1");
   });
 
   it("still posts when only goals exist", async () => {

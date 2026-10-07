@@ -162,6 +162,26 @@ describe("scrubSeoCardsSearchData", () => {
     expect(data.hint).toEqual({ ideaId: "i1" });
   });
 
+  it("aylık plandan gelen hint.keyword ve hint.plannedAt'i siler, konuyu bırakır", async () => {
+    db.rows = [
+      row("c1", {
+        plan: { ...PLAN, quickWins: { state: "not-connected" } },
+        target: { ...TARGET, queryCount: 0 },
+        hint: {
+          ideaId: "i1",
+          topic: "Trail guide",
+          keyword: "best trail shoes",
+          plannedAt: "2026-10-20T09:00:00.000Z",
+        },
+      }),
+    ];
+    expect(await scrubSeoCardsSearchData(["p1"])).toBe(1);
+    expect(dataOf((db.rows as Row[])[0]!).hint).toEqual({
+      ideaId: "i1",
+      topic: "Trail guide",
+    });
+  });
+
   it("tamamlanmış Work'ün kartını da temizler", async () => {
     db.rows = [row("c1", { plan: PLAN }, { workActive: false })];
     expect(await scrubSeoCardsSearchData(["p1"])).toBe(1);

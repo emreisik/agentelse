@@ -113,6 +113,14 @@ export const ApprovalRepository = {
       );
     }
 
+    // GA-F7: yalnız OWNER/ADMIN karar verir (onay, ret, revizyon; sohbet yolu
+    // dahil); 'telegram:<id>' sözde kullanıcısının rolü yoktur. İptal (CANCELLED)
+    // sistem yoludur. CRITICAL_CHANGE_APPROVAL daha önce kullanılmıyordu; diğer
+    // tiplerde sorgu çalışmaz.
+    if (approval.type === "CRITICAL_CHANGE_APPROVAL" && to !== "CANCELLED") {
+      await assertCanApproveGaChange(approval.workspaceId, reviewedByUserId);
+    }
+
     // Claim (compare-and-swap): if the same decision is delivered twice
     // (e.g. Telegram resending the same callback_query, or a near-simultaneous
     // double click from web + Telegram), don't let `from === to` silently
@@ -218,6 +226,24 @@ export async function canApproveSpend(
       policy.workspaceId === workspaceId &&
       policy.adsSpendApproverIds.includes(userId),
   );
+}
+
+// GA-F7: tenant-context import'u next-auth'u worker'a çekeceği için arama
+// burada satır içi; autonomy-policy yedeği yok.
+async function assertCanApproveGaChange(
+  workspaceId: string,
+  userId: string,
+): Promise<void> {
+  const denied = new AgentelseError(
+    "PERMISSION_DENIED",
+    "Only a workspace owner or admin can approve changes to Google Analytics.",
+  );
+  if (userId.includes(":")) throw denied;
+  const member = await prisma.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId } },
+    select: { role: true },
+  });
+  if (!member || !SPEND_APPROVER_ROLES.has(member.role)) throw denied;
 }
 
 async function assertCanApproveSpend(

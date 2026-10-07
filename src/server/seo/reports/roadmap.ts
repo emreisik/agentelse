@@ -1,6 +1,7 @@
 import "server-only";
 
 import { SeoFlags } from "@/lib/seo/health-flags";
+import { seoContentPlanActiveFor } from "@/lib/seo/content-plan/flags";
 import { monthEnd } from "@/lib/seo/dates";
 import { periodKeyOf } from "@/lib/seo/reports/ids";
 import { buildRoadmap } from "@/lib/seo/reports/roadmap";
@@ -69,7 +70,14 @@ export async function buildRoadmapReport(
         }
       : null,
     planned.length > 0
-      ? { type: "content", title: "Planned SEO articles", items: planned }
+      ? {
+          type: "content",
+          // SC-F7: aylık plan etkinken başlık planın bölüm adıyla aynıdır; kapalıyken eski başlık.
+          title: seoContentPlanActiveFor(ctx.projectId)
+            ? "This month's articles"
+            : "Planned SEO articles",
+          items: planned,
+        }
       : null,
     goals.length > 0 ? { type: "goals", goals } : null,
     forecast ? { type: "forecast", forecast } : null,

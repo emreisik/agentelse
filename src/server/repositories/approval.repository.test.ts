@@ -132,6 +132,85 @@ describe("ApprovalRepository.decide", () => {
   });
 });
 
+// GA-F7: Google Analytics değişikliği onayı yalnız OWNER/ADMIN'den gelir.
+describe("ApprovalRepository.decide: CRITICAL_CHANGE_APPROVAL", () => {
+  const gaRow = () =>
+    row({ type: "CRITICAL_CHANGE_APPROVAL", level: "LEVEL_3_CLIENT" });
+
+  it("refuses approval from a plain MEMBER and does not update the approval", async () => {
+    approval.findFirst.mockResolvedValue(gaRow());
+    workspaceMember.findUnique.mockResolvedValue({ role: "MEMBER" });
+    await expect(
+      ApprovalRepository.decide("ap-1", "p-1", "APPROVED", "user-2"),
+    ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(approval.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses Telegram's pseudo-user without a membership lookup", async () => {
+    approval.findFirst.mockResolvedValue(gaRow());
+    await expect(
+      ApprovalRepository.decide("ap-1", "p-1", "APPROVED", "telegram:123"),
+    ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(workspaceMember.findUnique).not.toHaveBeenCalled();
+    expect(approval.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to the spend-approver list", async () => {
+    approval.findFirst.mockResolvedValue(gaRow());
+    workspaceMember.findUnique.mockResolvedValue({ role: "MEMBER" });
+    autonomyPolicy.findUnique.mockResolvedValue({
+      workspaceId: "ws-1",
+      adsSpendApproverIds: ["client-1"],
+    });
+    await expect(
+      ApprovalRepository.decide("ap-1", "p-1", "APPROVED", "client-1"),
+    ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    expect(autonomyPolicy.findUnique).not.toHaveBeenCalled();
+  });
+
+  it.each(["OWNER", "ADMIN"])("lets a workspace %s approve", async (role) => {
+    approval.findFirst.mockResolvedValue(gaRow());
+    workspaceMember.findUnique.mockResolvedValue({ role });
+    await ApprovalRepository.decide("ap-1", "p-1", "APPROVED", "user-1");
+    expect(approval.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["REJECTED", "REVISION_REQUESTED"] as const)(
+    "refuses %s from a plain MEMBER too (chat path included)",
+    async (to) => {
+      approval.findFirst.mockResolvedValue(gaRow());
+      workspaceMember.findUnique.mockResolvedValue({ role: "MEMBER" });
+      await expect(
+        ApprovalRepository.decide("ap-1", "p-1", to, "user-2"),
+      ).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+      expect(approval.updateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it("lets a workspace owner reject", async () => {
+    approval.findFirst.mockResolvedValue(gaRow());
+    workspaceMember.findUnique.mockResolvedValue({ role: "OWNER" });
+    await ApprovalRepository.decide("ap-1", "p-1", "REJECTED", "user-1");
+    expect(approval.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not gate the system's CANCELLED transition", async () => {
+    approval.findFirst.mockResolvedValue(gaRow());
+    await ApprovalRepository.decide("ap-1", "p-1", "CANCELLED", "system");
+    expect(workspaceMember.findUnique).not.toHaveBeenCalled();
+    expect(approval.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not run this gate for another approval type", async () => {
+    approval.findFirst.mockResolvedValue(
+      row({ type: "PUBLISH_APPROVAL", level: "LEVEL_3_CLIENT" }),
+    );
+    await ApprovalRepository.decide("ap-1", "p-1", "APPROVED", "user-2");
+    expect(workspaceMember.findUnique).not.toHaveBeenCalled();
+    expect(approval.updateMany).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("ApprovalRepository.expireOverdue", () => {
   it("expires the approval and cancels its still-open task", async () => {
     approval.findMany.mockResolvedValue([

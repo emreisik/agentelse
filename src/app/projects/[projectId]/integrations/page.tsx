@@ -60,6 +60,10 @@ import {
   searchConsoleSiteCoversDomain,
 } from "@/lib/search-console-site";
 import { GaFlags } from "@/lib/website-analytics/flags";
+import { gaFixesEnabledFor } from "@/lib/website-analytics/fixes/flags";
+import { GA_EDIT_ERROR_MESSAGES } from "@/lib/website-analytics/fixes/consent-copy";
+import { loadGaEditAccess } from "@/server/website-analytics/fixes/edit-grant";
+import { GaEditAccessCard } from "@/components/website-analytics/ga-edit-access-card";
 import { gaHealthEnabled } from "@/lib/website-analytics/health/flags";
 import type { MeasurementSummary } from "@/lib/website-analytics/health/view-types";
 import {
@@ -500,6 +504,17 @@ export default async function EntegrasyonlarPage({
     openGoogleService === "analytics" && gaHealthEnabled()
       ? await loadMeasurementSummary(projectId).catch(() => null)
       : null;
+  // GA-F7 (GA_FIXES): isteğe bağlı düzenleme izni kartı; bayrak kapalıyken sorgu yok.
+  const gaEdit =
+    openGoogleService === "analytics" && gaFixesEnabledFor(projectId)
+      ? {
+          access: await loadGaEditAccess(projectId).catch(() => null),
+          canManage: await requireProjectAccess(userId, projectId)
+            .then(({ workspaceId }) => isWorkspaceManager(userId, workspaceId))
+            .catch(() => false),
+          justGranted: sp.googleEdit === "granted",
+        }
+      : null;
   // GSC ambarı (GSC_SYNC): "Final data through …", arşiv ayarı, saklanan veriyi
   // silme ve marka terimleri; okunamazsa kart boş durumla görünür.
   const gscWarehouse =
@@ -643,6 +658,7 @@ export default async function EntegrasyonlarPage({
             warehouseOn={GaFlags.sync()}
             websitePage={GaFlags.websitePage()}
             measurement={gaMeasurement}
+            gaEdit={gaEdit}
             searchWarehouse={gscWarehouse}
             searchWarehouseOn={GscFlags.sync()}
             searchCanManage={gscCanManage}
@@ -943,6 +959,7 @@ const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   unauthorized: "Your session has expired, please sign in again and retry.",
   scope_missing:
     "Google access wasn't allowed. Connect again and tick the box to allow it.",
+  ...GA_EDIT_ERROR_MESSAGES,
 };
 
 // Günlük bağlantı sağlığının (google-connection-health.ts) bulduğu sorunlar.
@@ -1064,6 +1081,7 @@ function GoogleDialog({
   warehouseOn = false,
   websitePage = false,
   measurement = null,
+  gaEdit = null,
   searchWarehouse = null,
   searchWarehouseOn = false,
   searchCanManage = false,
@@ -1082,6 +1100,12 @@ function GoogleDialog({
   websitePage?: boolean;
   // GA-F3 ölçüm puanı
   measurement?: MeasurementSummary | null;
+  // GA-F7: düzenleme izni kartı (GA_FIXES kapalıyken null)
+  gaEdit?: {
+    access: { granted: boolean } | null;
+    canManage: boolean;
+    justGranted: boolean;
+  } | null;
   // Search Console ambarı (GSC_SYNC): kesin veri günü, arşiv, silme, marka
   // terimleri; yönetim yalnız OWNER/ADMIN.
   searchWarehouse?: SearchLinkInfo | null;
@@ -1201,6 +1225,15 @@ function GoogleDialog({
                   />
                 )}
               </div>
+
+              {service === "analytics" && gaEdit ? (
+                <GaEditAccessCard
+                  projectId={projectId}
+                  state={gaEdit.access?.granted ? "granted" : "not_granted"}
+                  canManage={gaEdit.canManage}
+                  justGranted={gaEdit.justGranted}
+                />
+              ) : null}
 
               {service === "analytics" && warehouseOn ? (
                 <GaWarehouseCard

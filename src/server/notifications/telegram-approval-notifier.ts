@@ -269,6 +269,9 @@ export async function notifyApprovalDecision(
   to: ApprovalStatus,
   reviewedByUserId: string,
 ): Promise<void> {
+  // GA-F7: Google Analytics değişikliği onayı Telegram'a hiçbir mesaj göndermez
+  // (başlık GA yapılandırması taşır; yalnız uygulama içi).
+  if (approval.type === "CRITICAL_CHANGE_APPROVAL") return;
   try {
     const credential = await findActiveTelegramCredential(approval.projectId);
     if (!credential) return;

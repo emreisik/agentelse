@@ -23,6 +23,13 @@ vi.mock("@/server/actions/measurement-health-actions", () => ({
   recheckMeasurementHealthAction: vi.fn(),
   muteMeasurementAlertAction: vi.fn(),
 }));
+// GA-F7: "Fix it for me" düğmesi GA düzeltme eylemlerini içe aktarır.
+vi.mock("@/server/actions/ga-fix-actions", () => ({
+  proposeGaFixAction: vi.fn(),
+  decideGaFixAction: vi.fn(),
+  undoGaFixAction: vi.fn(),
+  turnOffGaEditAccessAction: vi.fn(),
+}));
 
 // ActionForm geçirgen: başarı mesajını ve eylem adını işaretler.
 vi.mock("@/components/shared/action-form", () => ({

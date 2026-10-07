@@ -54,6 +54,9 @@ import { GoogleAnalyticsScanner } from "@/server/agency/performance/google-analy
 import { GoogleConnectionHealth } from "@/server/integrations/google-connection-health";
 import { GaRetention } from "@/server/website-analytics/retention";
 import { GaHealth } from "@/server/website-analytics/health/runner";
+import { GaFixes } from "@/server/website-analytics/fixes/fixes";
+import { GaChangeWatcher } from "@/server/website-analytics/fixes/change-watch";
+import { GaAnnotations } from "@/server/website-analytics/fixes/annotations";
 import { GaInsights } from "@/server/website-analytics/analysis/runner";
 import { GaFindingEvaluator } from "@/server/website-analytics/analysis/evaluator";
 import { GaSync } from "@/server/website-analytics/sync/runner";
@@ -70,6 +73,8 @@ import { SearchUpdates } from "@/server/seo/health/updates";
 import { SeoAuditRetention } from "@/server/seo/health/retention";
 import { SeoOpportunities } from "@/server/seo/opportunities/runner";
 import { SeoOpportunityRetention } from "@/server/seo/opportunities/retention";
+import { SeoContentPlans } from "@/server/seo/content-plan/runner";
+import { SeoContentPlanRetention } from "@/server/seo/content-plan/retention";
 import { SeoActionJobs } from "@/server/seo/actions/jobs";
 import { SeoReports } from "@/server/seo/reports/runner";
 import { SeoReportRetention } from "@/server/seo/reports/retention";
@@ -330,6 +335,10 @@ registerAgencyTickStep({
 });
 // GA-F3 (GA_HEALTH): ölçüm sağlığı denetimi; parmak izli tam değerlendirme + saatlik yalnız-realtime yolu, en çok 5 bağ bir tick'te, haftalık site taraması (tick başına 1). Bayrak kapalıyken hemen 0 döner; odak ayarı bunu kapatmaz.
 registerAgencyTickStep({ name: "ga-health", run: () => GaHealth.runDue(5) });
+// GA-F7 (GA_FIXES): onaylı GA düzeltmelerinin uygulanması/yeniden denemesi/süre dolumu, günlük değişiklik geçmişi izleme (elle yapılan değişiklik uyarısı) ve otomatik not (annotation) önerileri. Üçü de bayrak kapalıyken sorgusuz hemen 0 döner; odak ayarı bunları kapatmaz.
+registerAgencyTickStep({ name: "ga-fixes", run: () => GaFixes.runDue(5) });
+registerAgencyTickStep({ name: "ga-change-watch", run: () => GaChangeWatcher.runDue(3) });
+registerAgencyTickStep({ name: "ga-annotations", run: () => GaAnnotations.runDue(20) });
 // GA-F4 (GA_INSIGHTS=shadow|on): analiz motoru. Günlük AN1/AN15, Pazartesi 06:30'dan sonra (mülk saati, pazar verisi gelince) haftalık AN2-AN12; ≤5 bağ bir tick'te, bağ başına CAS kilidi. Ardından kabul edilen bulguların sonucu ve 24 aylık saklama. Bayrak kapalıyken ikisi de sorgusuz 0 döner; odak ayarı kapatmaz.
 registerAgencyTickStep({ name: "ga-analyze", run: () => GaInsights.runDue(5) });
 registerAgencyTickStep({
@@ -381,6 +390,12 @@ registerAgencyTickStep({
   run: async () =>
     (await SeoOpportunities.runDue(2)) +
     (await SeoOpportunityRetention.runDue()),
+});
+// SC-F7 (SEO_CONTENT_PLAN): aylık SEO içerik planı (ayın 2'si 09:00'dan sonra, proje başına ayda bir; bayrak kapalıyken hemen 0). Odak ayarı bunu kapatmaz.
+registerAgencyTickStep({
+  name: "seo-content-plan",
+  run: async () =>
+    (await SeoContentPlans.runDue(2)) + (await SeoContentPlanRetention.runDue()),
 });
 // SC-F6 (SEO_ACTIONS): öneri → uygulama → ölçüm döngüsü; doğrulama günlük ve 45 sn bütçeli (kendi tarayıcımız + inceleme bütçesi), değerlendirme vadesi gelenlerde, kapıdan geçen sonuçlar öğrenmeye. Bayrak kapalıyken hemen 0 döner (saklama yalnız eylem satırı varsa); odak ayarı bunları kapatmaz.
 registerAgencyTickStep({ name: "seo-action-verify", run: () => SeoActionJobs.verify() });

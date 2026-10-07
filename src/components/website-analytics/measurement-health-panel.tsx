@@ -2,6 +2,7 @@ import { ExternalLink } from "lucide-react";
 
 import { ActionForm } from "@/components/shared/action-form";
 import { SubmitButton } from "@/components/shared/submit-button";
+import { FixItButton } from "@/components/website-analytics/fix-it-button";
 import { MeasurementDot } from "@/components/website-analytics/measurement-score";
 import { timeAgo } from "@/lib/dates";
 import { cn } from "@/lib/utils";
@@ -9,6 +10,7 @@ import {
   describeCheck,
   suspectDaysText,
 } from "@/lib/website-analytics/health/copy";
+import type { GaFixOffer } from "@/lib/website-analytics/fixes/view-types";
 import { gaGuide } from "@/lib/website-analytics/health/guides";
 import { GA_CHECKS } from "@/lib/website-analytics/health/registry";
 import type {
@@ -154,11 +156,16 @@ function IssueRow({
   check,
   timeZone,
   locked,
+  offers = [],
+  canManageFixes = true,
 }: {
   projectId: string;
   check: MeasurementCheckView;
   timeZone: string;
   locked: boolean;
+  // GA-F7: bu kontrole bağlı "Fix it for me" teklifleri
+  offers?: GaFixOffer[];
+  canManageFixes?: boolean;
 }) {
   return (
     <li className="space-y-2 py-3 first:pt-0 last:pb-0">
@@ -173,6 +180,14 @@ function IssueRow({
         {describeCheck(check, { timeZone })}
       </p>
       <Guide guideId={check.guideId} />
+      {offers.map((offer) => (
+        <FixItButton
+          key={offer.id}
+          projectId={projectId}
+          offer={offer}
+          canManage={canManageFixes}
+        />
+      ))}
       <div className="flex flex-wrap items-center gap-2">
         <RecheckForm
           projectId={projectId}
@@ -224,9 +239,13 @@ function CheckList({
 export function MeasurementHealthPanel({
   projectId,
   health,
+  fixOffers = [],
+  canManageFixes = true,
 }: {
   projectId: string;
   health: MeasurementHealthView;
+  fixOffers?: GaFixOffer[];
+  canManageFixes?: boolean;
 }) {
   const { summary, timeZone } = health;
   const issues = needsAttention(health.checks);
@@ -285,6 +304,8 @@ export function MeasurementHealthPanel({
                 check={check}
                 timeZone={timeZone}
                 locked={locked}
+                offers={fixOffers.filter((o) => o.checkKey === check.key)}
+                canManageFixes={canManageFixes}
               />
             ))}
           </ul>

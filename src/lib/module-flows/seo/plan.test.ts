@@ -14,6 +14,7 @@ import {
   normalizeArticleMarkdown,
   planFromResearch,
   withKeyword,
+  withPlannedKeyword,
   type SeoResearchAnswer,
 } from "./plan";
 import type { SeoPlan } from "./state";
@@ -250,6 +251,31 @@ describe("withKeyword", () => {
     expect(withKeyword(["a b"], "A B", "x")).toEqual(["a b"]);
     expect(withKeyword(["a b"], "X", "x")).toEqual(["a b"]);
     expect(withKeyword([], "  ", "x")).toEqual([]);
+  });
+});
+
+// SC-F7: aylık plandan açılan makalenin hedef kelimesi planın sorgusudur.
+describe("withPlannedKeyword", () => {
+  it("makes the planned query primary and keeps the model's keyword as secondary", () => {
+    const plan = planFromResearch(ANSWER, QUICK, NOW)!;
+    const next = withPlannedKeyword(plan, "trail running shoes");
+    expect(next.primaryKeyword).toBe("trail running shoes");
+    expect(next.secondaryKeywords).toContain("Running Shoes");
+    expect(next.titleOptions).toEqual(plan.titleOptions);
+  });
+
+  it("leaves the plan alone for the same keyword or an empty one", () => {
+    const plan = planFromResearch(ANSWER, QUICK, NOW)!;
+    expect(withPlannedKeyword(plan, "running shoes")).toBe(plan);
+    expect(withPlannedKeyword(plan, "  ")).toBe(plan);
+  });
+
+  it("never lists the planned keyword twice", () => {
+    const plan = planFromResearch(ANSWER, QUICK, NOW)!;
+    const next = withPlannedKeyword(plan, "best running shoes");
+    expect(
+      next.secondaryKeywords.filter((k) => k.toLowerCase() === "best running shoes"),
+    ).toEqual([]);
   });
 });
 

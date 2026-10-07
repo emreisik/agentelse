@@ -23,6 +23,9 @@ const mocks = vi.hoisted(() => ({
   forgetOpportunities: vi.fn().mockResolvedValue({ ideas: 0, signals: 0 }),
   deleteGaAttribution: vi.fn(),
   forgetSeoActions: vi.fn(),
+  cancelGaFixes: vi.fn(),
+  gaFixesEnabled: vi.fn(),
+  forgetSeoContentPlans: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -65,6 +68,15 @@ vi.mock("@/server/seo/actions/forget", () => ({
 vi.mock("@/server/seo/opportunities/forget", () => ({
   forgetSearchOpportunitiesForCredential: mocks.forgetOpportunities,
 }));
+vi.mock("@/server/website-analytics/fixes/cleanup", () => ({
+  cancelPendingGaFixesForCredential: mocks.cancelGaFixes,
+}));
+vi.mock("@/lib/website-analytics/fixes/flags", () => ({
+  gaFixesEnabled: mocks.gaFixesEnabled,
+}));
+vi.mock("@/server/seo/content-plan/forget", () => ({
+  forgetSeoContentPlansForCredential: mocks.forgetSeoContentPlans,
+}));
 vi.mock("@/server/seo/site/sites", () => ({
   SeoSites: { forgetSearchConsoleData: mocks.forgetSearchConsoleData },
 }));
@@ -106,6 +118,9 @@ beforeEach(() => {
   mocks.forgetOpportunities.mockResolvedValue({ ideas: 0, signals: 0 });
   mocks.deleteGaAttribution.mockResolvedValue({ learnings: 0, decisions: 0 });
   mocks.forgetSeoActions.mockResolvedValue({ actions: 0, learnings: 0, cards: 0 });
+  mocks.gaFixesEnabled.mockReturnValue(false);
+  mocks.cancelGaFixes.mockResolvedValue(0);
+  mocks.forgetSeoContentPlans.mockResolvedValue({ ideas: 0, pieces: 0 });
 });
 
 function expectWiped() {
@@ -323,5 +338,52 @@ describe("disconnectGoogleCredential", () => {
     expect(mocks.findMany).not.toHaveBeenCalled();
     expect(mocks.revokeGoogleToken).not.toHaveBeenCalled();
     expectWiped();
+  });
+});
+
+describe("GA-F7 and SC-F7 cleanup on disconnect", () => {
+  it("cancels pending GA fixes before the GA link is deleted when the flag is on", async () => {
+    mocks.gaFixesEnabled.mockReturnValue(true);
+    await disconnectGoogleCredential(credential);
+    expect(mocks.cancelGaFixes).toHaveBeenCalledTimes(1);
+    expect(mocks.cancelGaFixes).toHaveBeenCalledWith("cred-ga");
+    expect(mocks.cancelGaFixes.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.deleteLinks.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("does not stop the disconnect when the GA fix cancellation rejects", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.gaFixesEnabled.mockReturnValue(true);
+    mocks.cancelGaFixes.mockRejectedValue(new Error("db"));
+    await expect(disconnectGoogleCredential(credential)).resolves.toEqual({
+      revokedAtGoogle: true,
+    });
+    expect(mocks.deleteLinks).toHaveBeenCalledWith({
+      where: { credentialId: "cred-ga" },
+    });
+    expect(mocks.deleteGscLinks).toHaveBeenCalled();
+  });
+
+  it("does not call the GA fix cleanup with the flag off", async () => {
+    await disconnectGoogleCredential(credential);
+    expect(mocks.cancelGaFixes).not.toHaveBeenCalled();
+  });
+
+  it("forgets the SEO content plan before the GSC link is deleted, flag-independent", async () => {
+    await disconnectGoogleCredential(credential);
+    expect(mocks.forgetSeoContentPlans).toHaveBeenCalledWith("cred-ga");
+    expect(
+      mocks.forgetSeoContentPlans.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.deleteGscLinks.mock.invocationCallOrder[0]!);
+  });
+
+  it("finishes the disconnect when the SEO content plan cleanup fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.forgetSeoContentPlans.mockRejectedValue(new Error("db"));
+    await expect(disconnectGoogleCredential(credential)).resolves.toEqual({
+      revokedAtGoogle: true,
+    });
+    expect(mocks.deleteGscLinks).toHaveBeenCalled();
   });
 });

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  GA_EDIT_SCOPE,
   GOOGLE_SERVICE_SCOPE,
   googleScopesFor,
   googleServiceForProvider,
+  hasGaEditScope,
   hasServiceScope,
   parseGrantedScopes,
 } from "./services";
@@ -52,5 +54,43 @@ describe("Google service scopes", () => {
       "search_console",
     );
     expect(googleServiceForProvider("meta_ads")).toBeNull();
+  });
+});
+
+describe("GA edit scope (GA-F7)", () => {
+  it("adds analytics.edit only when the upgrade asks for it", () => {
+    expect(GA_EDIT_SCOPE).toBe(
+      "https://www.googleapis.com/auth/analytics.edit",
+    );
+    expect(googleScopesFor("analytics", { edit: false })).toEqual(
+      googleScopesFor("analytics"),
+    );
+    expect(googleScopesFor("analytics", { edit: true })).toEqual([
+      "https://www.googleapis.com/auth/analytics.readonly",
+      "https://www.googleapis.com/auth/analytics.edit",
+      "https://www.googleapis.com/auth/userinfo.email",
+    ]);
+  });
+
+  it("never hands Search Console a write scope", () => {
+    expect(googleScopesFor("search_console", { edit: true })).toEqual(
+      googleScopesFor("search_console"),
+    );
+    expect(googleScopesFor("search_console", { edit: true })).not.toContain(
+      GA_EDIT_SCOPE,
+    );
+  });
+
+  it("detects the edit scope in a token's granted scopes", () => {
+    expect(hasGaEditScope([GOOGLE_SERVICE_SCOPE.analytics])).toBe(false);
+    expect(hasGaEditScope([GOOGLE_SERVICE_SCOPE.analytics, GA_EDIT_SCOPE])).toBe(
+      true,
+    );
+    expect(hasGaEditScope([])).toBe(false);
+  });
+
+  it("keeps both first-connect scopes read-only", () => {
+    expect(GOOGLE_SERVICE_SCOPE.analytics).toMatch(/readonly$/);
+    expect(GOOGLE_SERVICE_SCOPE.search_console).toMatch(/readonly$/);
   });
 });

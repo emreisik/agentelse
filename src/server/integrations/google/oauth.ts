@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getEnv } from "@/lib/env";
+import { gaFixesEnabled } from "@/lib/website-analytics/fixes/flags";
 
 import { googleFetchJson } from "./http";
 import {
@@ -28,7 +29,13 @@ export function buildGoogleAuthorizeUrl(
   state: string,
   service: GoogleService,
   codeChallenge?: string,
+  options?: { upgrade?: "edit"; loginHint?: string },
 ): string {
+  const upgrade = options?.upgrade === "edit";
+  // Sert koruma: GA_FIXES kapalıyken analytics.edit asla istenmez.
+  if (upgrade && (service !== "analytics" || !gaFixesEnabled())) {
+    throw new Error("The edit upgrade is not available");
+  }
   const env = getEnv();
   const params = new URLSearchParams({
     client_id: env.GOOGLE_OAUTH_CLIENT_ID,
@@ -36,13 +43,19 @@ export function buildGoogleAuthorizeUrl(
     response_type: "code",
     access_type: "offline",
     // consent: her bağlanışta refresh token gelsin. select_account: tarayıcıda
-    // birden çok Google hesabı varsa doğru hesap seçilsin.
-    prompt: "consent select_account",
+    // birden çok Google hesabı varsa doğru hesap seçilsin. Yükseltmede hesap
+    // zaten bellidir (login_hint), seçici gösterilmez.
+    prompt: upgrade ? "consent" : "consent select_account",
     // include_granted_scopes yok: her servisin token'ı yalnız kendi iznini
-    // taşır, iki entegrasyon sessizce birleşmez.
-    scope: googleScopesFor(service).join(" "),
+    // taşır, iki entegrasyon sessizce birleşmez. Yükseltme izinlerini açıkça
+    // listeler, onun da buna ihtiyacı yok (eklenirse yeni GA token'ı Search
+    // Console iznini de taşırdı).
+    scope: googleScopesFor(service, { edit: upgrade }).join(" "),
     state,
   });
+  if (upgrade && options?.loginHint) {
+    params.set("login_hint", options.loginHint);
+  }
   // PKCE (S256): doğrulayıcı imzalı state'te taşınır (pkce.ts deseni). State
   // oturum kullanıcısına bağlı olduğu için çalınan bir kod başka oturumda
   // kullanılamaz.

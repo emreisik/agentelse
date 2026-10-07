@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { GaFlags } from "@/lib/website-analytics/flags";
 import { gaHealthEnabled } from "@/lib/website-analytics/health/flags";
+import { gaFixesEnabledFor } from "@/lib/website-analytics/fixes/flags";
 import {
   DEFAULT_WEBSITE_PERIOD,
   isWebsitePeriod,
@@ -20,6 +21,7 @@ import {
   type WebsiteLinkInfo,
 } from "@/server/website-analytics/report";
 import { loadMeasurementHealth } from "@/server/website-analytics/health/read";
+import { loadGaFixesView } from "@/server/website-analytics/fixes/read";
 import { loadWebsiteInsights } from "@/server/website-analytics/analysis/read";
 import { loadWebsiteReportArchive } from "@/server/website-analytics/reports/read";
 import { AppShell } from "@/components/layout/app-shell";
@@ -36,6 +38,7 @@ import { UtmCoverageCheck } from "@/components/website-analytics/utm-coverage-ch
 import { WebsiteLiveStrip } from "@/components/website-analytics/website-live-strip";
 import { MeasurementHealthPanel } from "@/components/website-analytics/measurement-health-panel";
 import { MeasurementScoreChip } from "@/components/website-analytics/measurement-score";
+import { GaFixesPanel } from "@/components/website-analytics/ga-fixes-panel";
 import { WebsiteInsights } from "@/components/website-analytics/website-insights";
 import { WebsiteReportArchive } from "@/components/website-analytics/reports/website-report-archive";
 
@@ -127,6 +130,20 @@ export default async function WebsitePage({
   const measurement =
     result.state === "ready" && gaHealthEnabled()
       ? await loadMeasurementHealth(projectId).catch(() => null)
+      : null;
+  // GA-F7 (GA_FIXES): "Fix it for me" teklifleri ve "Changes Agentelse made" bölümü; bayrak kapalıyken sorgu yok.
+  const fixes =
+    result.state === "ready" && gaFixesEnabledFor(projectId)
+      ? await loadGaFixesView({
+          projectId,
+          userId,
+          checks:
+            measurement?.checks.map((c) => ({
+              key: c.key,
+              status: c.status,
+              evidence: c.evidence,
+            })) ?? [],
+        }).catch(() => null)
       : null;
   // GA-F4 (GA_INSIGHTS): "What changed" / "Opportunities" listeleri; bayrak kapalıyken okuyucu sorgusuz null döner.
   const insights =
@@ -234,10 +251,16 @@ export default async function WebsitePage({
             ) : null}
             {measurement ? (
               <>
-                <MeasurementHealthPanel projectId={projectId} health={measurement} />
+                <MeasurementHealthPanel
+                  projectId={projectId}
+                  health={measurement}
+                  fixOffers={fixes?.offers ?? []}
+                  canManageFixes={fixes?.canManage ?? false}
+                />
                 <UtmCoverageCheck projectId={projectId} />
               </>
             ) : null}
+            {fixes ? <GaFixesPanel projectId={projectId} view={fixes} /> : null}
             {reports ? (
               <WebsiteReportArchive projectId={projectId} items={reports} />
             ) : null}

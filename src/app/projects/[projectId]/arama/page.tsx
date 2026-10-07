@@ -9,6 +9,7 @@ import { GscFlags } from "@/lib/seo/flags";
 import { SeoReportFlags } from "@/lib/seo/reports/flags";
 import { SeoActionFlags } from "@/lib/seo/action-flags";
 import { SeoInsightFlags } from "@/lib/seo/insight-flags";
+import { seoContentPlanActiveFor } from "@/lib/seo/content-plan/flags";
 import { DEFAULT_SEARCH_PERIOD, isSearchPeriod } from "@/lib/seo/periods";
 import { refreshSearchAnalyticsAction } from "@/server/actions/search-analytics-actions";
 import {
@@ -27,6 +28,7 @@ import { SearchHealthSection } from "@/components/search-health/search-health-se
 import { BrandTermSuggestions } from "@/components/search-opportunities/brand-term-suggestions";
 import { SearchOpportunitiesSection } from "@/components/search-opportunities/opportunities-section";
 import { SearchReportsSection } from "@/components/search-reports/search-reports-section";
+import { SearchContentPlanSection } from "@/components/search-content-plan/search-content-plan-section";
 import {
   SearchPeriodSelector,
   SearchReportBody,
@@ -228,6 +230,12 @@ export default async function SearchPage({
                   projectId={projectId}
                   highlight={opportunity}
                 />
+              </Suspense>
+            ) : null}
+            {/* SC-F7 (SEO_CONTENT_PLAN): "This month's articles"; bayrak kapalıyken işaretleme aynıdır. */}
+            {seoContentPlanActiveFor(projectId) ? (
+              <Suspense fallback={null}>
+                <SearchContentPlanSection projectId={projectId} />
               </Suspense>
             ) : null}
             {/* SC-F6 (SEO_ACTIONS): Actions & results; bayrak kapalıyken hiç çizilmez. */}

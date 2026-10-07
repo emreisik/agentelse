@@ -14,6 +14,7 @@ import { propertyTypeOf } from "@/server/integrations/search-console/sites";
 import { deleteSearchConsoleAlertsForProjects } from "@/server/seo/health/alerts";
 import { forgetSeoActionsForProjectMode } from "@/server/seo/actions/forget";
 import { forgetSearchOpportunitiesForLinks } from "@/server/seo/opportunities/forget";
+import { forgetSeoContentPlansForLinks } from "@/server/seo/content-plan/forget";
 import { forgetSeoGoalValues } from "@/server/seo/reports/goals";
 import { SeoSites } from "@/server/seo/site/sites";
 
@@ -187,6 +188,8 @@ export async function deleteGscDataForProject(
     await prisma.gscSiteLink.findMany({ where: mode, select: { id: true } })
   ).map((row) => row.id);
   await forgetSearchOpportunitiesForLinks(forgetIds).catch(() => undefined);
+  // SC-F7: aylık SEO içerik planı (dokunulmamış slot parçaları ve plana ait fikirler kalıcı silinir), bayraktan bağımsız, aynı kip bağlarıyla; bağlar silinmeden önce.
+  await forgetSeoContentPlansForLinks(forgetIds).catch(() => undefined);
   // SC-F6: bu kipin bağlarına ait SEO eylemleri, SEO öğrenmeleri ve SEO kartlarındaki Search Console verisi de silinir (bayraktan bağımsız).
   await forgetSeoActionsForProjectMode(projectId, gscMockMode());
   const result = await prisma.gscSiteLink.deleteMany({ where: mode });

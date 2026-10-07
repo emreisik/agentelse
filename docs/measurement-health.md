@@ -113,6 +113,7 @@ Kaynak: `lib/website-analytics/health/registry.ts` (başlık, kategori, ağırl�
 ## Arayüz
 
 - **Website sayfası** (`/projects/[projectId]/site`, `GA_WEBSITE_PAGE`): başlıkta "Tracking 72/100" çipi (`#measurement-health`'e gider) ve rapor gövdesinin altında "Measurement health" paneli (`id="measurement-health"`): dikkat isteyenler, kontrol edilemeyenler, geçenler; her satırda İngilizce düzeltme rehberi; "Check again", "I fixed it", "Mute 7 days".
+- `GA_FIXES` açıkken MH5, MH14 ve MH17 rehberin altında "Fix it for me (needs approval)" gösterir; MH9 ve MH10 yalnız rehber kalır çünkü Google'da bunlar için API yok ([website-fixes.md](website-fixes.md)).
 - **Integrations** GA diyaloğu: mülk kartının altında "Measurement health 72/100 · …" satırı ve "View checks".
 - **Brand sekmesi Website kartı**: altbilgide "Tracking 72/100" noktası.
 - **Today özeti**: açık CRITICAL GA4 uyarıları, en çok 2, yeni "Website" grubunda öğelerden sonra; sıradaki adım aynı uyarının `fix_tracking` adımıysa satır gösterilmez.

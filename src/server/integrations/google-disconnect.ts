@@ -14,11 +14,14 @@ import { GOOGLE_PROVIDER } from "@/server/integrations/google/services";
 import { forgetSeoActionsForCredential } from "@/server/seo/actions/forget";
 import { deleteSearchConsoleAlerts } from "@/server/seo/health/alerts";
 import { forgetSearchOpportunitiesForCredential } from "@/server/seo/opportunities/forget";
+import { forgetSeoContentPlansForCredential } from "@/server/seo/content-plan/forget";
 import { SeoSites } from "@/server/seo/site/sites";
 import { deleteGaInsightDerivedDataForCredential } from "@/server/website-analytics/analysis/cleanup";
 import { deleteGaAttributionDataForCredential } from "@/server/website-analytics/attribution/cleanup";
 import { deleteGaHealthAlertsForCredential } from "@/server/website-analytics/health/cleanup";
 import { deleteGaReportDataForCredential } from "@/server/website-analytics/reports/cleanup";
+import { gaFixesEnabled } from "@/lib/website-analytics/fixes/flags";
+import { cancelPendingGaFixesForCredential } from "@/server/website-analytics/fixes/cleanup";
 import { forgetSeoGoalValues } from "@/server/seo/reports/goals";
 
 // Google bağlantısını koparır (GA ya da Search Console; ikisi ayrı ayrı).
@@ -160,6 +163,17 @@ export async function disconnectGoogleCredential(
       );
     },
   );
+  // GA-F7: bekleyen onaylar iptal edilir, Task/sohbet kartı metinleri silinir; GaConfigChange ve GaChangeWatch satırları bağ silinince cascade ile gider; GA4 uyarıları zaten deleteGaHealthAlertsForCredential ile silinir. Bayrak kapalıyken ek sorgu yoktur.
+  if (gaFixesEnabled()) {
+    await cancelPendingGaFixesForCredential(credential.id).catch(
+      (error: unknown) => {
+        console.error(
+          "[google-disconnect] pending fixes could not be cancelled:",
+          error instanceof Error ? error.name : error,
+        );
+      },
+    );
+  }
   await prisma.gaPropertyLink.deleteMany({
     where: { credentialId: credential.id },
   });
@@ -193,6 +207,15 @@ export async function disconnectGoogleCredential(
       console.error(
         "[google-disconnect] search opportunity data could not be cleared:",
         error instanceof Error ? error.message : error,
+      );
+    },
+  );
+  // SC-F7: aylık SEO içerik planı bayraktan bağımsız kalıcı silinir: dokunulmamış slot parçaları ve plana ait fikirler; plan satırları bağla birlikte cascade ile gider. Yazılmış makaleler kullanıcının içeriğidir, kalır.
+  await forgetSeoContentPlansForCredential(credential.id).catch(
+    (error: unknown) => {
+      console.error(
+        "[google-disconnect] seo content plan data could not be cleared:",
+        error instanceof Error ? error.name : error,
       );
     },
   );

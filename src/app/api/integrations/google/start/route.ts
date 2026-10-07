@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { appUrl } from "@/lib/app-url";
 import { isIntegrationConfigured } from "@/lib/env";
+import { prisma } from "@/lib/prisma";
+import { gaFixesEnabledFor } from "@/lib/website-analytics/fixes/flags";
 import {
   GOOGLE_PROVIDER,
   buildGoogleAuthorizeUrl,
@@ -14,6 +16,7 @@ import {
   generateCodeVerifier,
 } from "@/server/security/pkce";
 import {
+  isWorkspaceManager,
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
@@ -21,7 +24,9 @@ import {
 // The initial step that redirects to Google's own consent screen — see
 // callback/route.ts for the return trip. `service` picks which of the two
 // separate Google integrations (analytics / search_console) is being
-// connected; only that service's scope is requested.
+// connected; only that service's scope is requested. `upgrade=edit`
+// (analytics only, GA-F7) is the optional second consent that adds
+// analytics.edit to an already connected Google Analytics account.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const projectId = searchParams.get("projectId");
@@ -33,6 +38,15 @@ export async function GET(request: Request) {
     );
   }
 
+  // Yalnız "edit" geçerlidir; başka değerler yok sayılır.
+  const upgrade = searchParams.get("upgrade") === "edit";
+  if (upgrade && service !== "analytics") {
+    return NextResponse.json(
+      { error: "upgrade=edit is only for analytics" },
+      { status: 400 },
+    );
+  }
+
   let userId: string;
   try {
     ({ userId } = await requireUser());
@@ -40,8 +54,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  let access: { workspaceId: string };
   try {
-    await requireProjectAccess(userId, projectId);
+    access = await requireProjectAccess(userId, projectId);
   } catch (error) {
     if (isAgentelseError(error)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -57,11 +72,60 @@ export async function GET(request: Request) {
     );
   }
 
+  let loginHint: string | undefined;
+  if (upgrade) {
+    const refusal = (code: string) =>
+      NextResponse.redirect(
+        appUrl(
+          `/projects/${projectId}/integrations?integration=${GOOGLE_PROVIDER.analytics}&googleError=${code}`,
+        ),
+      );
+    if (!gaFixesEnabledFor(projectId)) return refusal("edit_not_available");
+    if (!(await isWorkspaceManager(userId, access.workspaceId))) {
+      return refusal("edit_manager_only");
+    }
+    // Yükseltme, bağlı ve mülkü seçilmiş bir Analytics bağlantısı ister.
+    const credential = await prisma.integrationCredential.findUnique({
+      where: {
+        projectId_provider: { projectId, provider: GOOGLE_PROVIDER.analytics },
+      },
+      select: { status: true, encryptedSecret: true, metadata: true },
+    });
+    const metadata = (credential?.metadata ?? {}) as {
+      selectedGa4PropertyId?: unknown;
+      connectedEmail?: unknown;
+    };
+    if (
+      !credential ||
+      credential.status !== "ACTIVE" ||
+      !credential.encryptedSecret ||
+      typeof metadata.selectedGa4PropertyId !== "string" ||
+      !metadata.selectedGa4PropertyId
+    ) {
+      return refusal("edit_connect_first");
+    }
+    if (typeof metadata.connectedEmail === "string" && metadata.connectedEmail) {
+      loginHint = metadata.connectedEmail;
+    }
+  }
+
   // PKCE: doğrulayıcı imzalı state'te taşınır; state oturum kullanıcısına
   // bağlı olduğu için çalınan bir kod başka bir oturumda kullanılamaz.
   const codeVerifier = generateCodeVerifier();
-  const state = signOAuthState({ projectId, userId, service, codeVerifier });
+  const state = signOAuthState({
+    projectId,
+    userId,
+    service,
+    codeVerifier,
+    ...(upgrade ? { upgrade: "edit" } : {}),
+  });
+  const challenge = deriveCodeChallenge(codeVerifier);
   return NextResponse.redirect(
-    buildGoogleAuthorizeUrl(state, service, deriveCodeChallenge(codeVerifier)),
+    upgrade
+      ? buildGoogleAuthorizeUrl(state, service, challenge, {
+          upgrade: "edit",
+          loginHint,
+        })
+      : buildGoogleAuthorizeUrl(state, service, challenge),
   );
 }

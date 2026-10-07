@@ -27,6 +27,15 @@ vi.mock("@/server/actions/search-opportunity-actions", () => ({
   acceptOpportunityAction: vi.fn(),
   dismissOpportunityAction: vi.fn(),
 }));
+// SC-F7: yol haritasındaki canlı plan bloğu plan eylemlerini içe aktarır.
+vi.mock("@/server/actions/seo-content-plan-actions", () => ({
+  planThisMonthAction: vi.fn(),
+  refreshPlanAction: vi.fn(),
+  replaceSlotAction: vi.fn(),
+  skipSlotAction: vi.fn(),
+  moveSlotAction: vi.fn(),
+  savePlanSettingsAction: vi.fn(),
+}));
 
 const { SeoReportBody } = await import("./seo-report-body");
 
@@ -62,6 +71,15 @@ describe("SeoReportBody bölümleri", () => {
     expect(html).toContain("Directional");
     expect(html).toContain("Planned SEO articles");
     expect(html).toContain("How to choose trail shoes");
+  });
+
+  it("yol haritasında canlı plan sarmalayıcısı yalnız plan açıkken (contentPlanLive) çizilir", () => {
+    const view = sampleView("ROADMAP");
+    const off = render({ ...view, contentPlanLive: false });
+    const unset = render(view);
+    const on = render({ ...view, contentPlanLive: true });
+    expect(unset).toBe(off);
+    expect(on).not.toBe(off);
   });
 
   it("yol haritasında numaralı adımlar ve teknik liste çizilir", () => {

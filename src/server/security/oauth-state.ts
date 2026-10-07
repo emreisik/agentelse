@@ -25,6 +25,9 @@ type OAuthStatePayload = {
   // is made through Instagram Login (no Facebook account), absent for the
   // Facebook Login route. Both share one callback URL.
   login?: string;
+  // Only filled in by Google's optional upgrade flow (GA-F7) — "edit" when
+  // the grant asks for analytics.edit on top of the connected read access.
+  upgrade?: string;
 };
 
 function sign(payloadB64: string): string {
@@ -36,7 +39,7 @@ function sign(payloadB64: string): string {
 export function signOAuthState(
   input: Pick<
     OAuthStatePayload,
-    "projectId" | "userId" | "codeVerifier" | "service" | "login"
+    "projectId" | "userId" | "codeVerifier" | "service" | "login" | "upgrade"
   >,
 ): string {
   const payload: OAuthStatePayload = { ...input, issuedAt: Date.now() };
@@ -48,7 +51,7 @@ export function verifyOAuthState(
   token: string,
 ): Pick<
   OAuthStatePayload,
-  "projectId" | "userId" | "codeVerifier" | "service" | "login"
+  "projectId" | "userId" | "codeVerifier" | "service" | "login" | "upgrade"
 > | null {
   const [payloadB64, sig] = token.split(".");
   if (!payloadB64 || !sig) return null;
@@ -76,7 +79,8 @@ export function verifyOAuthState(
     (payload.codeVerifier !== undefined &&
       typeof payload.codeVerifier !== "string") ||
     (payload.service !== undefined && typeof payload.service !== "string") ||
-    (payload.login !== undefined && typeof payload.login !== "string")
+    (payload.login !== undefined && typeof payload.login !== "string") ||
+    (payload.upgrade !== undefined && typeof payload.upgrade !== "string")
   ) {
     return null;
   }
@@ -88,5 +92,6 @@ export function verifyOAuthState(
     codeVerifier: payload.codeVerifier,
     service: payload.service,
     login: payload.login,
+    upgrade: payload.upgrade,
   };
 }

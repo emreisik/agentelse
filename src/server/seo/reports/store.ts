@@ -9,6 +9,7 @@ import {
 import { readSummary, type ReportSummary } from "@/lib/module-flows/analytics/report";
 import { prisma } from "@/lib/prisma";
 import { dateToDayKey } from "@/lib/seo/dates";
+import { seoContentPlanActiveFor } from "@/lib/seo/content-plan/flags";
 import { GscFlags } from "@/lib/seo/flags";
 import {
   SeoInsightFlags,
@@ -245,6 +246,7 @@ export async function readSeoReportView(
       : null,
     chatHref,
     findingStatus,
+    contentPlanLive: seoContentPlanActiveFor(projectId),
   };
 }
 

@@ -224,7 +224,9 @@ const briefFields = z.object({
       replyTime: z.enum(ADS_REPLY_TIMES).optional(),
     })
     .optional(),
-  trafficEvent: z.enum(["LINK_CLICKS", "LANDING_PAGE_VIEWS"]).optional(),
+  trafficEvent: z
+    .enum(["LINK_CLICKS", "LANDING_PAGE_VIEWS", "PROFILE_VISITS"])
+    .optional(),
   // F5b: hedef maliyet (başabaş formülü ya da doğrudan üst sınır).
   kpi: kpiField,
   // "Suggest": yaş / cinsiyet Meta'ya öneri (Advantage+ audience açık);
@@ -259,8 +261,23 @@ const leadsNeedForm = (value: { objective: string; leadForm?: unknown }) =>
 
 // Bağlantı mesaj hedefi dışında zorunludur; mesaj hedefi Engagement
 // amacıyla kurulur, WhatsApp'ta numara istenir.
-const linkWhenNeeded = (value: { link: string; messages?: unknown }) =>
-  Boolean(value.messages) ? !value.link || isWebLink(value.link) : isWebLink(value.link);
+const linkWhenNeeded = (value: {
+  link: string;
+  messages?: unknown;
+  trafficEvent?: string;
+}) =>
+  Boolean(value.messages) || value.trafficEvent === "PROFILE_VISITS"
+    ? !value.link || isWebLink(value.link)
+    : isWebLink(value.link);
+
+// Profil ziyareti yalnız trafik amacıyla, mesaj ve formla birlikte olmaz.
+const profileFits = (value: {
+  trafficEvent?: string;
+  objective: string;
+  messages?: unknown;
+}) =>
+  value.trafficEvent !== "PROFILE_VISITS" ||
+  (value.objective === "OUTCOME_TRAFFIC" && !value.messages);
 const messagesOnEngagement = (value: { objective: string; messages?: unknown }) =>
   !value.messages || value.objective === "OUTCOME_ENGAGEMENT";
 const whatsappNumberGiven = (value: {
@@ -320,6 +337,7 @@ export const AdsBriefInputSchema = briefFields
     { path: ["extraCreativeIds"] },
   )
   .refine(carouselFits, { path: ["adFormat"] })
+  .refine(profileFits, { path: ["trafficEvent"] })
   .refine(hoursFit, { path: ["hours"] })
   .refine(leadsNeedForm, { path: ["leadForm"] })
   .refine(agesInOrder, { path: ["ageMax"] })
@@ -356,6 +374,7 @@ const AdsBriefSchema = briefFields
     extraSources: z.array(AdsSourceSchema).max(ADS_LIMITS.maxCards - 1).optional(),
   })
   .refine(carouselFits, { path: ["adFormat"] })
+  .refine(profileFits, { path: ["trafficEvent"] })
   .refine(hoursFit, { path: ["hours"] })
   .refine(agesInOrder, { path: ["ageMax"] })
   .refine(linkWhenNeeded, { path: ["link"] });
@@ -487,6 +506,8 @@ export type AdsBriefOptions = {
     messages: boolean;
     messageApps: AdsMessageApp[];
     landingPageViews: boolean;
+    // Instagram profil ziyareti: tarif açık ve hesapta Instagram var.
+    instagramProfile?: boolean;
   };
   // Hesapta son 7 günde olay gönderen bir Meta Pixel var mı?
   hasPixel?: boolean;
@@ -523,6 +544,7 @@ export const ADS_BRIEF_ISSUE = {
   whatsapp: "Enter the WhatsApp number your Facebook Page uses.",
   leadForm: "Add the link to your privacy policy: Meta shows it on the form.",
   hours: "Business hours need a total budget and an end hour after the start hour.",
+  profile: "Instagram profile visits need the website goal and no messages.",
   carousel: "A carousel needs 2 to 10 posts, and works for website goals only (not messages or forms).",
   other: "Check the brief.",
 } as const;
@@ -537,6 +559,7 @@ const ISSUE_ORDER: readonly [string, string][] = [
   ["dsaPayor", ADS_BRIEF_ISSUE.dsa],
   ["messages", ADS_BRIEF_ISSUE.whatsapp],
   ["leadForm", ADS_BRIEF_ISSUE.leadForm],
+  ["trafficEvent", ADS_BRIEF_ISSUE.profile],
   ["hours", ADS_BRIEF_ISSUE.hours],
   ["adFormat", ADS_BRIEF_ISSUE.carousel],
   ["extraCreativeIds", ADS_BRIEF_ISSUE.carousel],

@@ -382,3 +382,35 @@ describe("business hours brief rules", () => {
     expect(briefIssue({ ...input, existingAdSetId: "123" })).toBe(ADS_BRIEF_ISSUE.hours);
   });
 });
+
+describe("Instagram profile brief rules", () => {
+  const input = {
+    creativeId: "c1",
+    objective: "OUTCOME_TRAFFIC",
+    dailyBudget: 20,
+    days: 7,
+    countries: ["TR"],
+    ageMin: 18,
+    ageMax: 65,
+    gender: "all",
+    link: "",
+    callToAction: "LEARN_MORE",
+    trafficEvent: "PROFILE_VISITS",
+  };
+
+  it("needs no website link", () => {
+    expect(briefIssue(input)).toBeNull();
+    expect(briefIssue({ ...input, trafficEvent: "LINK_CLICKS" })).toBe(ADS_BRIEF_ISSUE.link);
+  });
+
+  it("is for the website goal only, without messages", () => {
+    expect(briefIssue({ ...input, objective: "OUTCOME_AWARENESS" })).toBe(ADS_BRIEF_ISSUE.profile);
+    expect(
+      briefIssue({
+        ...input,
+        objective: "OUTCOME_ENGAGEMENT",
+        messages: { app: "MESSENGER" },
+      }),
+    ).not.toBeNull();
+  });
+});

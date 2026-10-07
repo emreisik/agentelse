@@ -59,6 +59,8 @@ export const ADS_FLOW_COPY = {
   hoursTo: "To",
   weekdaysOnly: "Weekdays only",
   everyDay: "Every day",
+  profileGoal: "Instagram profile visits",
+  profileHint: "Send people to your Instagram profile.",
   adFormat: "How should they show?",
   separateAds: "Separate ads",
   carouselAd: "One carousel",

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_URL_TAGS } from "@/lib/ads/launch-spec";
+
 import { chainFromLaunch } from "./chain";
 import { launchSpecFromFlow } from "./launch";
 import type { AdsBrief } from "./state";
@@ -47,6 +49,40 @@ describe("launchSpecFromFlow", () => {
   });
 });
 
+describe("launchSpecFromFlow Instagram profile visits", () => {
+  const profileBrief: AdsBrief = {
+    ...brief,
+    objective: "OUTCOME_TRAFFIC",
+    trafficEvent: "PROFILE_VISITS",
+    link: "",
+  };
+
+  it("uses the profile recipe and sends the ad to the Instagram profile", () => {
+    const spec = launchSpecFromFlow({
+      brief: profileBrief,
+      plan,
+      context: {
+        ...context,
+        instagramUserId: "ig1",
+        instagramProfileUrl: "https://www.instagram.com/acme/",
+      },
+      activate: false,
+    });
+    expect(spec.recipe).toBe("traffic_instagram_profile");
+    expect(spec.adSets[0]).toMatchObject({
+      optimizationGoal: "PROFILE_VISIT",
+      destinationType: "INSTAGRAM_PROFILE",
+    });
+    expect(spec.instagramUserId).toBe("ig1");
+    expect(spec.ads[0]?.creative.link).toBe("https://www.instagram.com/acme/");
+  });
+
+  it("falls back to the Instagram site when the username is unknown (the review blocks it)", () => {
+    const spec = launchSpecFromFlow({ brief: profileBrief, plan, context, activate: false });
+    expect(spec.ads[0]?.creative.link).toBe("https://www.instagram.com/");
+  });
+});
+
 describe("launchSpecFromFlow business hours", () => {
   const hours = { from: 9, to: 18, weekdaysOnly: true };
 
@@ -77,6 +113,37 @@ describe("launchSpecFromFlow business hours", () => {
         activate: false,
       }).adSets[0]?.schedule,
     ).toBeUndefined();
+  });
+});
+
+describe("launchSpecFromFlow urlTags (GA-F6)", () => {
+  const separate: AdsBrief = {
+    ...brief,
+    objective: "OUTCOME_TRAFFIC",
+    extraSources: [
+      { creativeId: "c2", assetId: "a2", title: "Summer" },
+      { creativeId: "c3", assetId: "a3", title: "" },
+    ],
+  };
+
+  it("uses the given tag per ad and falls back to DEFAULT_URL_TAGS for undefined entries", () => {
+    const spec = launchSpecFromFlow({
+      brief: separate,
+      plan,
+      context,
+      activate: false,
+      urlTags: ["a", undefined, "c"],
+    });
+    expect(spec.ads.map((ad) => ad.urlTags)).toEqual(["a", DEFAULT_URL_TAGS, "c"]);
+  });
+
+  it("gives every ad DEFAULT_URL_TAGS without urlTags", () => {
+    const spec = launchSpecFromFlow({ brief: separate, plan, context, activate: false });
+    expect(spec.ads.map((ad) => ad.urlTags)).toEqual([
+      DEFAULT_URL_TAGS,
+      DEFAULT_URL_TAGS,
+      DEFAULT_URL_TAGS,
+    ]);
   });
 });
 

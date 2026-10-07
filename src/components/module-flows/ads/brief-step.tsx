@@ -352,6 +352,9 @@ function BriefForm({
   // F5a: mesaj hedefi Engagement amacıyla, CONVERSATIONS olayıyla kurulur.
   const messageApps = options.goals?.messageApps ?? [];
   const [messagesOn, setMessagesOn] = useState(Boolean(brief?.messages));
+  const [profileOn, setProfileOn] = useState(
+    brief?.trafficEvent === "PROFILE_VISITS",
+  );
   const [messageApp, setMessageApp] = useState<AdsMessageApp>(
     brief?.messages?.app ?? messageApps[0] ?? "WHATSAPP",
   );
@@ -362,6 +365,9 @@ function BriefForm({
     brief?.messages?.replyTime ?? "hour",
   );
   const messages = messagesOn && options.goals?.messages;
+  // Instagram profil ziyareti: trafik amacı, bağlantı yok (profil bağlantısı
+  // sunucuda kurulur); mesajla birlikte olmaz.
+  const profile = !messages && profileOn && options.goals?.instagramProfile;
   // F5b (planner açıkken): kitle modu, bütçe modu, KPI, ek postlar, mevcut
   // ad set.
   const planner = Boolean(options.goals);
@@ -426,9 +432,10 @@ function BriefForm({
   );
   const showDsa = targetsEuEea(countries);
 
-  const trafficEvent =
-    objective === "OUTCOME_TRAFFIC" && options.goals?.landingPageViews
-      ? "LANDING_PAGE_VIEWS"
+  const trafficEvent = profile
+    ? ("PROFILE_VISITS" as const)
+    : objective === "OUTCOME_TRAFFIC" && options.goals?.landingPageViews
+      ? ("LANDING_PAGE_VIEWS" as const)
       : undefined;
   const budgetNumber = numberOf(budget);
   const enteredDaily =
@@ -456,7 +463,11 @@ function BriefForm({
   const hoursActive = hoursAllowed && hoursOn;
   const input: Partial<AdsBriefInput> & Record<string, unknown> = {
     creativeId: creativeId ?? undefined,
-    objective: messages ? "OUTCOME_ENGAGEMENT" : objective,
+    objective: messages
+      ? "OUTCOME_ENGAGEMENT"
+      : profile
+        ? "OUTCOME_TRAFFIC"
+        : objective,
     // Mevcut ad set'e eklemede bütçe o ad set'indir (bu değer kullanılmaz).
     dailyBudget:
       adding && !(Number.isFinite(enteredDaily) && enteredDaily > 0)
@@ -467,7 +478,7 @@ function BriefForm({
     ageMin: numberOf(ageMin),
     ageMax: numberOf(ageMax),
     gender,
-    link: messages ? "" : withScheme(link),
+    link: messages || profile ? "" : withScheme(link),
     callToAction: cta,
     ...(showDsa ? { dsaBeneficiary, dsaPayor } : {}),
     ...(messages
@@ -637,7 +648,7 @@ function BriefForm({
         >
           {ADS_OBJECTIVES.map((key) => {
             const meta = ADS_OBJECTIVE_META[key];
-            const on = !messages && objective === key;
+            const on = !messages && !profile && objective === key;
             return (
               <button
                 key={key}
@@ -646,6 +657,7 @@ function BriefForm({
                 aria-checked={on}
                 onClick={() => {
                   setMessagesOn(false);
+                  setProfileOn(false);
                   setObjective(key);
                 }}
                 className="flex min-h-11 items-start gap-2 rounded-xl border px-3 py-2 text-left transition-colors outline-none hover:bg-[var(--ws-hover)] focus-visible:ring-2 focus-visible:ring-ring/50"
@@ -681,7 +693,10 @@ function BriefForm({
               type="button"
               role="radio"
               aria-checked={Boolean(messages)}
-              onClick={() => setMessagesOn(true)}
+              onClick={() => {
+                setProfileOn(false);
+                setMessagesOn(true);
+              }}
               className="flex min-h-11 items-start gap-2 rounded-xl border px-3 py-2 text-left transition-colors outline-none hover:bg-[var(--ws-hover)] focus-visible:ring-2 focus-visible:ring-ring/50"
               style={{
                 borderColor: messages ? "var(--ws-accent)" : "var(--ws-border)",
@@ -698,6 +713,39 @@ function BriefForm({
               {messages ? <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0" /> : null}
             </button>
           ) : null}
+          {options.goals?.instagramProfile ? (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={Boolean(profile)}
+              onClick={() => {
+                setMessagesOn(false);
+                setProfileOn(true);
+              }}
+              className="flex min-h-11 items-start gap-2 rounded-xl border px-3 py-2 text-left transition-colors outline-none hover:bg-[var(--ws-hover)] focus-visible:ring-2 focus-visible:ring-ring/50"
+              style={{
+                borderColor: profile ? "var(--ws-accent)" : "var(--ws-border)",
+              }}
+            >
+              <span className="min-w-0 flex-1">
+                <span
+                  className="block text-sm font-medium"
+                  style={{ color: "var(--ws-text)" }}
+                >
+                  {COPY.profileGoal}
+                </span>
+                <span
+                  className="block text-xs"
+                  style={{ color: "var(--ws-text-2)" }}
+                >
+                  {COPY.profileHint}
+                </span>
+              </span>
+              {profile ? (
+                <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+              ) : null}
+            </button>
+          ) : null}
         </div>
         {options.recommended ? (
           <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
@@ -707,7 +755,7 @@ function BriefForm({
             )}
           </p>
         ) : null}
-        {!messages && objective === "OUTCOME_TRAFFIC" && options.goals ? (
+        {!messages && !profile && objective === "OUTCOME_TRAFFIC" && options.goals ? (
           <p className="text-xs" style={{ color: "var(--ws-text-2)" }}>
             {options.goals.landingPageViews ? COPY.lpvOn : COPY.noPixel}
           </p>
@@ -1096,7 +1144,7 @@ function BriefForm({
         </Section>
       ) : null}
 
-      {messages ? null : (
+      {messages || profile ? null : (
       <Section label={COPY.link} htmlFor={linkId}>
         <input
           id={linkId}
@@ -1115,7 +1163,7 @@ function BriefForm({
 
       )}
 
-      {messages ? null : (
+      {messages || profile ? null : (
       <Section label={COPY.button}>
         <div
           role="group"

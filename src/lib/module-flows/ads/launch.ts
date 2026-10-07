@@ -33,6 +33,8 @@ export type LaunchBuildContext = {
   timezone: string;
   pageId: string;
   instagramUserId?: string;
+  // Profil ziyareti hedefinde reklamın bağlantısı: https://www.instagram.com/<kullanıcı>/
+  instagramProfileUrl?: string;
   minCampaignSpendCapMinor: number | null;
   dsaBeneficiary: string | null;
   dsaPayor: string | null;
@@ -51,6 +53,9 @@ export function recipeForBrief(
           : "messages_messenger";
     return recipeByKey(key)!;
   }
+  if (brief.objective === "OUTCOME_TRAFFIC" && brief.trafficEvent === "PROFILE_VISITS") {
+    return recipeByKey("traffic_instagram_profile")!;
+  }
   if (brief.objective === "OUTCOME_TRAFFIC" && brief.trafficEvent === "LANDING_PAGE_VIEWS") {
     return recipeByKey("traffic_landing_page_views")!;
   }
@@ -68,6 +73,8 @@ export function launchSpecFromFlow(input: {
   plan: AdsPlanInput;
   context: LaunchBuildContext;
   activate: boolean;
+  // GA-F6 (GA_UTM): reklam başına Agentelse UTM etiketleri (src/server/tracked-links/ads.ts); verilmezse ya da boşsa DEFAULT_URL_TAGS.
+  urlTags?: readonly (string | undefined)[];
 }): AdsLaunchSpec {
   const { brief, plan, context } = input;
   const recipe = recipeForBrief(brief);
@@ -76,6 +83,11 @@ export function launchSpecFromFlow(input: {
   const target = targetCost(brief.kpi);
   const metric = kpiMetricFor(recipe.resultActionType);
   const messaging = brief.messages?.app;
+  // Profil ziyaretinde reklamın bağlantısı Instagram profilidir.
+  const profileLink =
+    recipe.key === "traffic_instagram_profile"
+      ? (context.instagramProfileUrl ?? "https://www.instagram.com/")
+      : null;
   // Carousel: bütün postlar tek reklamın kartları (mesaj ve formla olmaz).
   const carousel =
     brief.adFormat === "carousel" &&
@@ -169,7 +181,7 @@ export function launchSpecFromFlow(input: {
                 link: brief.link,
               })),
             },
-            urlTags: DEFAULT_URL_TAGS,
+            urlTags: input.urlTags?.[0] ?? DEFAULT_URL_TAGS,
           },
         ]
       : [
@@ -180,11 +192,11 @@ export function launchSpecFromFlow(input: {
           imageAssetId: brief.source.assetId,
           message: plan.primaryText,
           // Mesaj reklamında bağlantıyı uygulamanın adresi belirler.
-          link: brief.link || brief.leadForm?.privacyUrl || "https://www.facebook.com/",
+          link: profileLink ?? (brief.link || brief.leadForm?.privacyUrl || "https://www.facebook.com/"),
           callToAction: brief.callToAction,
           ...(messaging ? { messaging } : {}),
         },
-        urlTags: DEFAULT_URL_TAGS,
+        urlTags: input.urlTags?.[0] ?? DEFAULT_URL_TAGS,
       },
       // F5b: ek postlar aynı ad set'te ayrı reklamlar (kreatif çeşitliliği);
       // metinleri kendi açıklamalarından.
@@ -195,11 +207,11 @@ export function launchSpecFromFlow(input: {
           imageAssetId: source.assetId,
           message:
             clipWords(adTextFrom(source.caption ?? ""), 125, true) || plan.primaryText,
-          link: brief.link || brief.leadForm?.privacyUrl || "https://www.facebook.com/",
+          link: profileLink ?? (brief.link || brief.leadForm?.privacyUrl || "https://www.facebook.com/"),
           callToAction: brief.callToAction,
           ...(messaging ? { messaging } : {}),
         },
-        urlTags: DEFAULT_URL_TAGS,
+        urlTags: input.urlTags?.[index + 1] ?? DEFAULT_URL_TAGS,
       })),
     ],
     guards: {

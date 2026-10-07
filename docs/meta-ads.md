@@ -179,6 +179,7 @@ Bayrak: `META_ADS_LAUNCH_V2=true` (kapalıyken Ads kartı eski üç onaylı zinc
 
 - **Review**: kart açılınca ön kontrol (`prepareAdsLaunchAction` → `src/server/ads/launch/validate.ts`): hesap gerçekleri (15 dk'dan tazeyse aynadan, değilse canlı), yerel P kuralları (`src/lib/ads/launch-spec.ts`: asgari bütçe, amaç kombinasyonu, Advantage+ yaş kuralı, AB DSA, bölgesel kimlik isteyen ülkeler BR/TW/TH/SG engelli, politika lint'i uyarısı), görsel yükleme (harcamasız), kampanya ve kreatif için Meta `validate_only`, ve Meta'nın kendi önizlemeleri (Facebook feed, Instagram feed / story / reels). Sonuç `AdsLaunch` (VALIDATED ya da DRAFT) satırına yazılır.
 - Review'da görünenler: sorunlar (engelleyici kırmızı, uyarı gri), önizlemeler, "You approve up to X (net…)", Meta'nın gün içi temposu, kampanya harcama tavanı, bitiş tarihi (hesap saatiyle).
+- **UTM etiketi (GA-F6, `GA_UTM=true`)**: lansman v2 reklamlarından linki projenin kendi sitesine giden ve `utm_content` taşımayanlar `DEFAULT_URL_TAGS` yerine agx UTM şablonunu kullanır: `utm_source=facebook`, `utm_medium=paid_social`, `utm_campaign=agx-<kampanya>`, `utm_content=agx_<kod>`, `utm_term={{site_source_name}}`. Linkte zaten olan diğer `utm_*` anahtarları korunur. Etiketler Review'da hesaplanır (Meta `validate_only` bunları sınar) ve Approve aynısını kullanır; Review "Tracking: UTM added" notunu gösterir. Optimizer karar kanıtına düz `ga4_*` anahtarları ekler (GA-F6); GA Disconnect'te bunlar silinir. Eski `META_AD_CREATE` zinciri etiketlemez. Ayrıntı: [website-attribution.md](website-attribution.md).
 - **Approve & launch** (ya da **Create paused**): tek `META_LAUNCH` görevi (L4). Tıklayan OWNER/ADMIN ise aynı dokunuşta onaylanır ve iş `after()` ile istek beklemeden sürülür (`src/server/ads/launch/drive.ts`); MEMBER ise onay yöneticiyi bekler ("Approve launch" düğmesi kartta). Onay, kontrol edilen spec'e verilir: Brief/Plan sonradan değiştiyse yeniden kontrol gerekir (`specHash`).
 - **Launch**: Campaign / Ad set / Ad halkaları lansman kaydından okunur; durum "Live", "Created, paused", "Stopped", "Discarded". Düğmeler: **Try again** (aynı lansman, yeni görev; başarılı adımlar atlanır), **Turn on** (duraklatılmış oluşturmada ayrı L4), **Discard** (güvenlik eylemi, L0).
 
@@ -235,7 +236,7 @@ Bayrak: `META_ADS_PLANNER=true` ve `META_ADS_LAUNCH_V2=true`. Her amaç ayrıca 
 - **Ücret** (`src/lib/ads/fees.ts`, tarihli): konum ücretiyle tahmini fatura ("plus VAT where it applies"; KDV hesaplanmaz).
 - **Leads** (anında form): spec, yürütücü adımı (`/{page_id}/leadgen_forms`, Sayfa token'ı, Higher intent), CTA ve günlük "New leads today: N — open Leads Center" bildirimi kodlandı; `pages_manage_ads` App Review'dan geçene kadar `READY_RECIPES.leads_instant_form = false` (Brief'te görünmez). Lead'lerin kişisel verisi okunmaz ve saklanmaz (gizlilik metni güncellendi).
 - **Önerilen hedef**: piksel varsa Traffic, yoksa Messages (gerekçesiyle).
-- **Henüz yok**: video modülde (eski sihirbazda duruyor), iki oranlı `asset_feed_spec` (test hesabında doğrulanana kadar tek görsel + `adapt_to_placement`), Instagram profil hedefi (Meta alan adları test hesabında doğrulanmalı), içerik planındaki metin-tabanlı `ads.campaign` parçasına "Make this ad" köprüsü (görselli postlar için "Boost with an ad" zaten var).
+- **Henüz yok**: video modülde (eski sihirbazda duruyor), iki oranlı `asset_feed_spec` (test hesabında doğrulanana kadar tek görsel + `adapt_to_placement`), içerik planındaki metin-tabanlı `ads.campaign` parçasına "Make this ad" köprüsü (görselli postlar için "Boost with an ad" zaten var).
 
 ## F6 — Raporlama ve öğrenme
 
@@ -309,6 +310,14 @@ Brief'te bütçe **toplam (in total)** seçiliyken "When should the ad run?": **
 - Spec: `adSets[].schedule` ({days 0=Pazar…6, startMinute, endMinute; saat başı}). `src/lib/ads/day-parting.ts` (testli) Meta'nın alanını üretir; ad set yazısı `pacing_type=["day_parting"]` + `adset_schedule` (`timezone_type=ADVERTISER`) gönderir. `specHash` yalnız zamanlama varken değişir.
 - Review notu: "Ads run Mon–Fri 09:00–18:00 (account time)…".
 - Doğrulanmadı: ad set için `validate_only` kullanılmıyor, yani zamanlama hatası lansman sırasında ad set adımında çıkar (kampanya o noktada kapalı: harcama olmaz, "Fix and retry"). İlk denemeyi `socialmedia` test hesabında yap.
+
+## Instagram profil ziyareti (kapalı gelir)
+
+Trafik amacının ek hedefi: Brief'te "Instagram profile visits" kartı (yalnız hesapta Instagram varsa ve tarif açıksa). Tarif `traffic_instagram_profile`: `OUTCOME_TRAFFIC` + `optimization_goal=PROFILE_VISIT` + `destination_type=INSTAGRAM_PROFILE` (iki enum Meta'nın ad set referansında doğrulandı). Reklamın bağlantısı hesabın Instagram profilidir (`https://www.instagram.com/<kullanıcı>/`, sunucu kurar); Brief'te web bağlantısı sorulmaz.
+
+- **Kapalı**: `READY_RECIPES` içinde `false`. Açmak için Railway'de `META_ADS_READY_RECIPES=traffic_instagram_profile` (kodsuz). Kapalıyken yerel kurallar lansmanı engeller ("… isn't open yet") ve kart Brief'te görünmez.
+- Sonuç sayısı Meta'nın `results` alanından gelir; `PROFILE_VISIT` için yedek eşleme yoktur (bilinmeyen hedef "unknown", optimizer yanlış "sonuçsuz" kararı üretmez).
+- Doğrulanmadı: ad set için `promoted_object` gerekip gerekmediği ve profil reklamının CTA'sı. Ad set için `validate_only` kullanılmadığından sorun lansmanın ad set adımında çıkar (kampanya o noktada kapalıdır). İlk denemeyi `socialmedia` test hesabında yap.
 
 ## Sahip adımları (kod dışı)
 

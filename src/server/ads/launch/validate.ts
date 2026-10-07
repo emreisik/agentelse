@@ -187,6 +187,9 @@ export async function prepareLaunch(input: {
         timezone: safeTimezone(facts.timezone),
         pageId: account.pageId!,
         ...(assets?.instagramUserId ? { instagramUserId: assets.instagramUserId } : {}),
+        ...(assets?.instagramUsername
+          ? { instagramProfileUrl: `https://www.instagram.com/${assets.instagramUsername}/` }
+          : {}),
         minCampaignSpendCapMinor: facts.minCampaignSpendCapMinor,
         dsaBeneficiary: facts.dsaBeneficiary ?? null,
         dsaPayor: facts.dsaPayor ?? null,
@@ -212,6 +215,14 @@ export async function prepareLaunch(input: {
       }
       if (spec.adSets.some((adSet) => adSet.optimizationGoal === "LANDING_PAGE_VIEWS")) {
         notes.push("Meta shows the ad to people likely to wait for your page to load, not just to tap.");
+      }
+      if (spec.recipe === "traffic_instagram_profile" && !(spec.instagramUserId && assets?.instagramUsername)) {
+        issues.push({
+          rule: "P9",
+          field: "adSets.0.destinationType",
+          severity: "block",
+          message: "Connect an Instagram account to this ad account to get profile visits.",
+        });
       }
       if (messaging === "INSTAGRAM_DIRECT" && !spec.instagramUserId) {
         issues.push({

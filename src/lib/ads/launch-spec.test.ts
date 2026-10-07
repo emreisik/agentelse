@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { dayKeyInTimezone, zonedDateTimeToUtc } from "@/lib/timezone";
 
@@ -311,5 +311,44 @@ describe("business hours (adset_schedule)", () => {
   it("changes the approval hash only when a schedule is present", () => {
     expect(specHash(withHours(fixed))).not.toBe(specHash({ ...spec, budget: fixed }));
     expect(specHash({ ...spec, budget: fixed })).toBe(specHash({ ...spec, budget: fixed }));
+  });
+});
+
+describe("closed recipes", () => {
+  afterEach(() => {
+    delete process.env.META_ADS_READY_RECIPES;
+  });
+
+  const profile: AdsLaunchSpec = {
+    ...spec,
+    recipe: "traffic_instagram_profile",
+    adSets: [
+      {
+        ...spec.adSets[0]!,
+        optimizationGoal: "PROFILE_VISIT",
+        destinationType: "INSTAGRAM_PROFILE",
+      },
+    ],
+  };
+
+  it("blocks a recipe that isn't open, and lets it through once opened", () => {
+    const closed = validateLaunchSpec(profile, facts);
+    expect(blockingIssues(closed).map((issue) => issue.field)).toContain("recipe");
+    expect(closed.find((issue) => issue.field === "recipe")?.message).toContain(
+      "Instagram profile visits",
+    );
+    process.env.META_ADS_READY_RECIPES = "traffic_instagram_profile";
+    expect(blockingIssues(validateLaunchSpec(profile, facts))).toEqual([]);
+  });
+
+  it("knows Meta's combination for profile visits", () => {
+    expect(
+      isValidCombination({
+        objective: "OUTCOME_TRAFFIC",
+        optimizationGoal: "PROFILE_VISIT",
+        billingEvent: "IMPRESSIONS",
+        destinationType: "INSTAGRAM_PROFILE",
+      }),
+    ).toBe(true);
   });
 });

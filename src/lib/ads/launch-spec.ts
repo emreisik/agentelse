@@ -4,6 +4,7 @@ import { formatMoney } from "./money";
 import {
   isValidCombination,
   recipeByKey,
+  recipeReady,
   type LaunchObjective,
 } from "./objectives";
 import { policyLint, type PolicyFlag } from "./policy-lint";
@@ -402,6 +403,16 @@ export function validateLaunchSpec(
       field: "budget",
       severity: "block",
       message: `The ad account now uses ${facts.currency}, not ${spec.currency}. Check the budget again.`,
+    });
+  }
+  // Henüz açılmamış amaç (anında form, satış, profil ziyareti) hiçbir yoldan
+  // lansmana ulaşmaz; Railway'de META_ADS_READY_RECIPES ile açılır.
+  if (recipe && !recipeReady(recipe.key)) {
+    issues.push({
+      rule: "P2",
+      field: "recipe",
+      severity: "block",
+      message: `${recipe.label} isn't open yet. Pick another goal.`,
     });
   }
   if (!recipe || recipe.objective !== spec.objective) {

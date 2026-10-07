@@ -52,6 +52,10 @@ describe("ready recipes override (META_ADS_READY_RECIPES)", () => {
     expect(recipeReady("leads_instant_form")).toBe(true);
     expect(recipeReady("sales_purchase")).toBe(false);
     expect(recipeReady("nonsense")).toBe(false);
+    // Instagram profil ziyareti de kapalı gelir ve aynı yoldan açılır.
+    expect(recipeReady("traffic_instagram_profile")).toBe(false);
+    process.env.META_ADS_READY_RECIPES = "traffic_instagram_profile";
+    expect(recipeReady("traffic_instagram_profile")).toBe(true);
     // Hazır olanlar etkilenmez.
     expect(recipeReady("traffic_link_clicks")).toBe(true);
   });

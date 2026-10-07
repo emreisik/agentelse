@@ -16,6 +16,8 @@ const TTL_MS = 15 * 60_000;
 
 type Assets = {
   instagramUserId: string | null;
+  // Profil bağlantısı için (profil ziyareti hedefi).
+  instagramUsername: string | null;
   hasPixel: boolean;
   readAt: number;
 };
@@ -41,6 +43,10 @@ export async function adsAccountAssets(
       const assets: Assets = {
         instagramUserId:
           instagram.status === "fulfilled" ? (instagram.value[0]?.id ?? null) : null,
+        instagramUsername:
+          instagram.status === "fulfilled"
+            ? (instagram.value[0]?.username ?? null)
+            : null,
         hasPixel: pixel.status === "fulfilled" ? pixel.value.firedLast7d : false,
         readAt: now.getTime(),
       };

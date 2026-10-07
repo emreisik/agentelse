@@ -91,6 +91,9 @@ export async function loadAdsBriefOptions(
         ...(assets?.instagramUserId ? (["INSTAGRAM_DIRECT"] as const) : []),
       ],
       landingPageViews: Boolean(assets?.hasPixel),
+      instagramProfile:
+        recipeReady("traffic_instagram_profile") &&
+        Boolean(assets?.instagramUserId && assets.instagramUsername),
     },
     hasPixel: Boolean(assets?.hasPixel),
   };

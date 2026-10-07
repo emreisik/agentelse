@@ -25,7 +25,7 @@ export type AdsRecipe = {
   label: string;
   // Hangi fazdan beri sunuluyor (F5a mesaj ve açılış sayfası, F5b form ve
   // satış).
-  since: "F3" | "F5a" | "F5b";
+  since: "F3" | "F5a" | "F5b" | "F8";
 };
 
 export const ADS_RECIPES: readonly AdsRecipe[] = [
@@ -49,6 +49,20 @@ export const ADS_RECIPES: readonly AdsRecipe[] = [
     resultActionType: "landing_page_view",
     label: "Landing page views",
     since: "F5a",
+  },
+  {
+    // Instagram profil ziyareti (Meta: destination_type INSTAGRAM_PROFILE +
+    // optimization_goal PROFILE_VISIT). Kapalı gelir; test hesabında
+    // doğrulanınca META_ADS_READY_RECIPES=traffic_instagram_profile ile açılır.
+    key: "traffic_instagram_profile",
+    objective: "OUTCOME_TRAFFIC",
+    optimizationGoal: "PROFILE_VISIT",
+    billingEvent: "IMPRESSIONS",
+    destinationType: "INSTAGRAM_PROFILE",
+    promoted: "none",
+    resultActionType: "instagram_profile_visit",
+    label: "Instagram profile visits",
+    since: "F8",
   },
   {
     key: "awareness_reach",
@@ -176,6 +190,7 @@ export const READY_RECIPES: Readonly<Record<string, boolean>> = {
   messages_whatsapp: true,
   leads_instant_form: false,
   sales_purchase: false,
+  traffic_instagram_profile: false,
 };
 
 // Kapalı bir amaç, kod değişikliği ve push beklemeden Railway'de açılabilir:

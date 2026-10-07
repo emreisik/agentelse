@@ -11,6 +11,7 @@ import {
   reportCommandId,
   reportCommandPrefix,
   reportHrefs,
+  reportScopeKey,
   variantOfCommandId,
   websiteWorkId,
 } from "./ids";
@@ -93,6 +94,67 @@ describe("reportHrefs", () => {
     expect(reportHrefs("a b/c", true).chat).toBe(
       "/projects/a b/c?work=wkga_a%20b%2Fc",
     );
+  });
+});
+
+describe("reportHrefs with a property (GA-F8)", () => {
+  it("appends ?property= to the website, insights and finding hrefs", () => {
+    const h = reportHrefs("p1", true, "123456");
+    expect(h.website).toBe("/projects/p1/site?property=123456");
+    expect(h.insights).toBe("/projects/p1/site?property=123456");
+    expect(h.finding("f9")).toBe("/projects/p1/site?property=123456#finding-f9");
+  });
+
+  it("leaves the main property output byte-identical", () => {
+    const { finding: nullFinding, ...nullRest } = reportHrefs("p1", true, null);
+    const { finding: plainFinding, ...plainRest } = reportHrefs("p1", true);
+    expect(nullRest).toEqual(plainRest);
+    expect(nullFinding("f1")).toBe(plainFinding("f1"));
+    expect(reportHrefs("p1", true, undefined).website).toBe("/projects/p1/site");
+  });
+
+  it("adds no query when the Website page is off", () => {
+    const h = reportHrefs("p1", false, "123456");
+    expect(h.website).toBe(h.integrations);
+    expect(h.finding("f9")).toBe(h.integrations);
+  });
+});
+
+describe("reportScopeKey", () => {
+  it("keeps the project id for the main property and scopes extras", () => {
+    expect(reportScopeKey("p1", { id: "l1", isPrimary: true })).toBe("p1");
+    expect(reportScopeKey("p1", { id: "l2", isPrimary: false })).toBe("p1_s_l2");
+  });
+
+  it("never collides two properties of one project on command ids", () => {
+    const a = reportCommandId(
+      "weekly",
+      reportScopeKey("p1", { id: "l1", isPrimary: true }),
+      "2026-09-28",
+    );
+    const b = reportCommandId(
+      "weekly",
+      reportScopeKey("p1", { id: "l2", isPrimary: false }),
+      "2026-09-28",
+    );
+    const c = reportCommandId(
+      "weekly",
+      reportScopeKey("p1", { id: "l3", isPrimary: false }),
+      "2026-09-28",
+    );
+    expect(new Set([a, b, c]).size).toBe(3);
+    expect(b).toBe("garep_weekly_p1_s_l2_2026-09-28");
+  });
+
+  it("still reads the variant from scoped ids (prefix, not underscore split)", () => {
+    for (const variant of WEBSITE_REPORT_VARIANTS) {
+      const id = reportCommandId(
+        variant,
+        reportScopeKey("p1", { id: "l2", isPrimary: false }),
+        "2026-09",
+      );
+      expect(variantOfCommandId(id)).toBe(variant);
+    }
   });
 });
 

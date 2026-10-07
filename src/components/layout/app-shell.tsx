@@ -19,6 +19,8 @@ import { SETUP_STAGE, SETUP_STAGE_ORDER_UI } from "@/lib/labels";
 import type { ModuleKey } from "@/lib/modules/catalog";
 import { GaFlags } from "@/lib/website-analytics/flags";
 import { GscFlags } from "@/lib/seo/flags";
+import { gaAgencyEnabled } from "@/lib/website-analytics/agency/flags";
+import { gscAgencyOn } from "@/lib/seo/agency/flags";
 import { loadSidebarWorks } from "@/server/works/sidebar-works";
 import { WorkerStrip } from "@/components/layout/worker-strip";
 import { Heartbeat } from "@/server/observability/heartbeat";
@@ -247,6 +249,12 @@ export async function AppShell({
         openWorkModule={openWorkModule}
         websitePage={GaFlags.websitePage()}
         searchPage={GscFlags.searchPage()}
+        websitesOverview={
+          gaAgencyEnabled() && (role === "OWNER" || role === "ADMIN")
+        }
+        searchOverview={
+          gscAgencyOn() && (role === "OWNER" || role === "ADMIN")
+        }
       />
       <SidebarBottom
         displayName={displayName}

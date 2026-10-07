@@ -90,6 +90,7 @@ function link(overrides: Partial<GscSiteLink> = {}): GscSiteLink {
     credentialId: "cred-1",
     siteUrl: "sc-domain:example.com",
     isPrimary: true,
+    isSecondary: false,
     demotedAt: null,
     isMock: true,
     propertyType: "DOMAIN",
@@ -281,6 +282,53 @@ describe("GscSync.runDue", () => {
     expect(mocks.beat).toHaveBeenCalledWith("gsc.sync", NOW);
     expect(mocks.claimPeriodic).toHaveBeenCalledWith("gsc.links", 120_000, NOW);
     expect(mocks.ensureLinks).toHaveBeenCalledTimes(1);
+  });
+
+  it("issues exactly the two primary queries when GSC_AGENCY is off (SC-F9)", async () => {
+    await GscSync.runDue(3, NOW);
+    expect(mocks.findMany).toHaveBeenCalledTimes(2);
+    for (const call of mocks.findMany.mock.calls) {
+      expect(call[0].where).toMatchObject({ isPrimary: true });
+      expect(call[0].where).not.toHaveProperty("isSecondary");
+    }
+  });
+
+  it("adds two small secondary queries when GSC_AGENCY is on and keeps primaries ahead of at most 2 secondaries per tick (400 links, SC-F9)", async () => {
+    vi.stubEnv("GSC_AGENCY", "true");
+    const primaries = Array.from({ length: 2 }, (_, i) =>
+      link({ id: `primary-${i}`, projectId: `pp-${i}`, credentialId: "cred-1" }),
+    );
+    const secondaries = Array.from({ length: 398 }, (_, i) =>
+      link({
+        id: `secondary-${i}`,
+        projectId: `ps-${i}`,
+        isPrimary: false,
+        isSecondary: true,
+        siteUrl: `https://s${i}.example.com/`,
+      }),
+    );
+    mocks.findMany.mockImplementation(
+      async (args: { where: { isSecondary?: boolean }; take: number }) =>
+        (args.where.isSecondary ? secondaries : primaries).slice(0, args.take),
+    );
+    mocks.projects.mockResolvedValue(
+      [...primaries, ...secondaries].map((row) => ({
+        id: row.projectId,
+        status: "ACTIVE",
+      })),
+    );
+    const all = [...primaries, ...secondaries];
+    mocks.findUnique.mockImplementation(
+      async (args: { where: { id: string } }) =>
+        all.find((row) => row.id === args.where.id) ?? null,
+    );
+    expect(await GscSync.runDue(10, NOW)).toBe(4);
+    expect(mocks.findMany).toHaveBeenCalledTimes(4);
+    const first = mocks.metadata.mock.calls.map(
+      (call) => (call[0] as { link: GscSiteLink }).link.id,
+    );
+    expect(first.slice(0, 2)).toEqual(["primary-0", "primary-1"]);
+    expect(first.filter((id) => id.startsWith("secondary-"))).toHaveLength(2);
   });
 
   it("marks the link AUTH when its credential is gone", async () => {

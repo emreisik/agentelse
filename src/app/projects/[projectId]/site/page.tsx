@@ -5,6 +5,7 @@ import { Globe, Plug, RefreshCw } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { GaFlags } from "@/lib/website-analytics/flags";
+import { WEBSITES_OVERVIEW_HREF } from "@/lib/website-analytics/agency/routes";
 import { gaHealthEnabled } from "@/lib/website-analytics/health/flags";
 import { gaFixesEnabledFor } from "@/lib/website-analytics/fixes/flags";
 import {
@@ -16,6 +17,10 @@ import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
+import {
+  loadSitePropertyScope,
+  runInSiteScope,
+} from "@/server/website-analytics/agency/site-scope";
 import {
   buildWebsiteReport,
   type WebsiteLinkInfo,
@@ -41,6 +46,10 @@ import { MeasurementScoreChip } from "@/components/website-analytics/measurement
 import { GaFixesPanel } from "@/components/website-analytics/ga-fixes-panel";
 import { WebsiteInsights } from "@/components/website-analytics/website-insights";
 import { WebsiteReportArchive } from "@/components/website-analytics/reports/website-report-archive";
+import { PropertySwitcher } from "@/components/website-analytics/agency/property-switcher";
+import { ClientReportSection } from "@/components/website-analytics/agency/client-report-section";
+import { BigQueryCard } from "@/components/website-analytics/bigquery/bigquery-card";
+import { FunnelCard } from "@/components/website-analytics/funnel/funnel-card";
 
 // "Website" sayfası (docs/google-analytics-plan.md §3.9, GA-F2 v1): Google
 // Analytics ambarından karşılaştırmalı KPI'lar, günlük trend, kanallar,
@@ -110,8 +119,9 @@ export default async function WebsitePage({
   const sp = await searchParams;
 
   const { userId } = await requireUser();
+  let workspaceId: string;
   try {
-    await requireProjectAccess(userId, projectId);
+    workspaceId = (await requireProjectAccess(userId, projectId)).workspaceId;
   } catch {
     notFound();
   }
@@ -125,39 +135,67 @@ export default async function WebsitePage({
     ? sp.period
     : DEFAULT_WEBSITE_PERIOD;
   const base = `/projects/${projectId}/site`;
-  const result = await buildWebsiteReport(projectId, periodKey);
-  // GA-F3 (GA_HEALTH): ölçüm sağlığı paneli ve başlıktaki puan.
-  const measurement =
-    result.state === "ready" && gaHealthEnabled()
-      ? await loadMeasurementHealth(projectId).catch(() => null)
-      : null;
-  // GA-F7 (GA_FIXES): "Fix it for me" teklifleri ve "Changes Agentelse made" bölümü; bayrak kapalıyken sorgu yok.
-  const fixes =
-    result.state === "ready" && gaFixesEnabledFor(projectId)
-      ? await loadGaFixesView({
-          projectId,
-          userId,
-          checks:
-            measurement?.checks.map((c) => ({
-              key: c.key,
-              status: c.status,
-              evidence: c.evidence,
-            })) ?? [],
-        }).catch(() => null)
-      : null;
-  // GA-F4 (GA_INSIGHTS): "What changed" / "Opportunities" listeleri; bayrak kapalıyken okuyucu sorgusuz null döner.
-  const insights =
-    result.state === "ready"
-      ? await loadWebsiteInsights(projectId, {
-          userId,
-          review: sp.insights === "review",
-        }).catch(() => null)
-      : null;
-  // GA-F5 (GA_REPORTS): "Reports" arşivi; bayrak kapalıyken okuyucu sorgusuz null döner.
-  const reports =
-    result.state === "ready"
-      ? await loadWebsiteReportArchive(projectId).catch(() => null)
-      : null;
+  // GA-F8 (GA_AGENCY): ?property= ile seçilen mülk. Bayrak kapalıyken sorgu yok
+  // ve kapsam "enabled: false" döner; sayfa bugünkü gibi çalışır.
+  const agency = await loadSitePropertyScope({
+    projectId,
+    userId,
+    workspaceId,
+    requestedPropertyId: typeof sp.property === "string" ? sp.property : null,
+    period: isWebsitePeriod(sp.period) ? sp.period : null,
+  });
+  // Mülke bağlı bütün okumalar tek kapsamda: ek mülkte seçili bağ üzerinden,
+  // ana mülkte bugünkü sorgularla. Hedef, nabız, uyarı, plan, fikir ya da
+  // React cache() okuyucuları burada ÇAĞRILMAZ.
+  const { result, measurement, fixes, insights, reports } = await runInSiteScope(
+    agency,
+    async () => {
+      const report = await buildWebsiteReport(projectId, periodKey);
+      // GA-F3 (GA_HEALTH): ölçüm sağlığı paneli ve başlıktaki puan.
+      const health =
+        report.state === "ready" && gaHealthEnabled()
+          ? await loadMeasurementHealth(projectId).catch(() => null)
+          : null;
+      // GA-F7 (GA_FIXES): "Fix it for me" teklifleri ve "Changes Agentelse made" bölümü; bayrak kapalıyken sorgu yok. Ek mülkte düzeltme yok.
+      const fixView =
+        report.state === "ready" &&
+        !agency.isSecondary &&
+        gaFixesEnabledFor(projectId)
+          ? await loadGaFixesView({
+              projectId,
+              userId,
+              checks:
+                health?.checks.map((c) => ({
+                  key: c.key,
+                  status: c.status,
+                  evidence: c.evidence,
+                })) ?? [],
+            }).catch(() => null)
+          : null;
+      // GA-F4 (GA_INSIGHTS): "What changed" / "Opportunities" listeleri; bayrak kapalıyken okuyucu sorgusuz null döner.
+      const insightView =
+        report.state === "ready"
+          ? await loadWebsiteInsights(projectId, {
+              userId,
+              review: sp.insights === "review",
+            }).catch(() => null)
+          : null;
+      // GA-F5 (GA_REPORTS): "Reports" arşivi; bayrak kapalıyken okuyucu sorgusuz null döner.
+      const archive =
+        report.state === "ready"
+          ? await loadWebsiteReportArchive(projectId, undefined, {
+              linkId: agency.archiveLinkId,
+            }).catch(() => null)
+          : null;
+      return {
+        result: report,
+        measurement: health,
+        fixes: fixView,
+        insights: insightView,
+        reports: archive,
+      };
+    },
+  );
   const connectorsHref = `/projects/${projectId}/integrations?integration=google_analytics`;
   const headerLink =
     result.state === "waiting"
@@ -179,23 +217,53 @@ export default async function WebsitePage({
                   href="#measurement-health"
                 />
               ) : null}
-              <WebsitePeriodSelector base={base} value={periodKey} />
-              <ActionForm
-                action={refreshWebsiteAnalyticsAction}
-                successMessage="Updated from Google Analytics"
-              >
-                <input type="hidden" name="projectId" value={projectId} />
-                <SubmitButton
-                  variant="ghost"
-                  size="icon-xs"
-                  title="Fetch the last 7 days again"
+              <WebsitePeriodSelector
+                base={base}
+                value={periodKey}
+                query={
+                  agency.selected && !agency.selected.isPrimary
+                    ? { property: agency.selected.propertyId }
+                    : undefined
+                }
+              />
+              {agency.isSecondary ? null : (
+                <ActionForm
+                  action={refreshWebsiteAnalyticsAction}
+                  successMessage="Updated from Google Analytics"
                 >
-                  <RefreshCw className="size-3.5" />
-                </SubmitButton>
-              </ActionForm>
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <SubmitButton
+                    variant="ghost"
+                    size="icon-xs"
+                    title="Fetch the last 7 days again"
+                  >
+                    <RefreshCw className="size-3.5" />
+                  </SubmitButton>
+                </ActionForm>
+              )}
             </div>
           ) : null}
         </div>
+
+        {agency.enabled ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <PropertySwitcher
+              projectId={projectId}
+              chips={agency.chips}
+              canManage={agency.canManage}
+              addable={agency.addable}
+              canAdd={agency.canAdd}
+            />
+            {agency.canManage ? (
+              <Link
+                href={WEBSITES_OVERVIEW_HREF}
+                className="text-xs font-medium text-muted-foreground hover:text-foreground"
+              >
+                All websites
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
 
         {result.state === "not_connected" ? (
           <EmptyState
@@ -224,7 +292,7 @@ export default async function WebsitePage({
         ) : (
           <>
             <HealthNotice link={result.report.link} />
-            {GaFlags.live() && GaFlags.sync() ? (
+            {!agency.isSecondary && GaFlags.live() && GaFlags.sync() ? (
               <WebsiteLiveStrip projectId={projectId} />
             ) : null}
             {result.report.period.days === 0 ? (
@@ -237,7 +305,7 @@ export default async function WebsitePage({
             ) : (
               <WebsiteReportBody report={result.report} />
             )}
-            {result.report.period.days > 0 ? (
+            {!agency.isSecondary && result.report.period.days > 0 ? (
               <FromAgentelseSection
                 projectId={projectId}
                 range={{
@@ -247,7 +315,11 @@ export default async function WebsitePage({
               />
             ) : null}
             {insights ? (
-              <WebsiteInsights projectId={projectId} view={insights} />
+              <WebsiteInsights
+                projectId={projectId}
+                view={insights}
+                readOnly={agency.isSecondary}
+              />
             ) : null}
             {measurement ? (
               <>
@@ -256,13 +328,39 @@ export default async function WebsitePage({
                   health={measurement}
                   fixOffers={fixes?.offers ?? []}
                   canManageFixes={fixes?.canManage ?? false}
+                  readOnly={agency.isSecondary}
                 />
-                <UtmCoverageCheck projectId={projectId} />
+                {agency.isSecondary ? null : (
+                  <UtmCoverageCheck projectId={projectId} />
+                )}
               </>
             ) : null}
             {fixes ? <GaFixesPanel projectId={projectId} view={fixes} /> : null}
             {reports ? (
               <WebsiteReportArchive projectId={projectId} items={reports} />
+            ) : null}
+            {agency.enabled && agency.linkId ? (
+              <>
+                {reports ? (
+                  <ClientReportSection
+                    projectId={projectId}
+                    linkId={agency.linkId}
+                    items={reports}
+                    canManage={agency.canManage}
+                  />
+                ) : null}
+                <BigQueryCard
+                  projectId={projectId}
+                  linkId={agency.linkId}
+                  canManage={agency.canManage}
+                  readOnly={false}
+                />
+                <FunnelCard
+                  projectId={projectId}
+                  linkId={agency.linkId}
+                  readOnly={false}
+                />
+              </>
             ) : null}
           </>
         )}

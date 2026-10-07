@@ -28,6 +28,10 @@ import {
   weeklyTargetWeek,
 } from "@/lib/website-analytics/analysis/schedule";
 import type { GaFindingMode } from "@/lib/website-analytics/analysis/types";
+import {
+  gaEngineLinkWhere,
+  isGaEngineLink,
+} from "@/lib/website-analytics/agency/scope";
 import { addDays, safeTimezone } from "@/lib/website-analytics/days";
 import { gaGlobalWorkAllowedHere } from "@/lib/website-analytics/flags";
 import { completeThroughOf } from "@/lib/website-analytics/health/schedule";
@@ -232,7 +236,9 @@ async function analyze(
   result.resolved = swept.resolved;
 
   let lastExplainedWeek = run.lastExplainedWeek;
-  if (mode === "live") {
+  // GA-F8: Brand Brain sinyalleri ve haftalık LLM açıklaması proje düzeyinde
+  // yan etkidir; yalnız ana mülk yazar (ek mülk yalnız bulgu üretir).
+  if (mode === "live" && link.isPrimary) {
     result.signals = await ingestFindingSignals({ findingIds: created, now });
     // Açıklanacak hafta: bu turun haftası ya da son analiz edilen hafta.
     // Bütçe ya da geçici LLM hatasında hafta ilerlemez; açıklama haftalık
@@ -291,7 +297,7 @@ async function analyzeLink(
   const link = await prisma.gaPropertyLink.findUnique({
     where: { id: linkId },
   });
-  if (!link || !link.isPrimary) return "skipped";
+  if (!link || !isGaEngineLink(link)) return "skipped";
   if (gaInsightsModeFor(link.projectId) === "off") return "skipped";
   await ensureRun(link);
 
@@ -359,7 +365,7 @@ export const GaInsights = {
     };
     const candidates: CandidateLink[] = await prisma.gaPropertyLink.findMany({
       where: {
-        isPrimary: true,
+        ...gaEngineLinkWhere(),
         lastDailyDate: { not: null },
         health: { notIn: STOPPED_HEALTH },
         ...(scope || stopped.length > 0 ? { projectId: projectFilter } : {}),

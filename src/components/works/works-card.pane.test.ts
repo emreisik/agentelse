@@ -58,6 +58,15 @@ for (const file of [
   "seo-geo-actions",
   "ga-fix-actions",
   "link-tracking-actions",
+  "gsc-sites-actions",
+  "gsc-bigquery-actions",
+  "gsc-split-test-actions",
+  "report-share-actions",
+  "bigquery-actions",
+  "funnel-actions",
+  "website-agency-actions",
+  "website-client-report-actions",
+  "website-property-actions",
 ]) {
   vi.doMock(`@/server/actions/${file}`, inert);
 }

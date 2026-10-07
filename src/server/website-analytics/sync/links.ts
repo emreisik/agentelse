@@ -31,7 +31,13 @@ async function reconcileProject(
   const propertyId = metadata?.selectedGa4PropertyId;
   const links = await prisma.gaPropertyLink.findMany({
     where: { projectId },
-    select: { id: true, propertyId: true, isPrimary: true, credentialId: true },
+    select: {
+      id: true,
+      propertyId: true,
+      isPrimary: true,
+      isSecondary: true,
+      credentialId: true,
+    },
   });
 
   // Seçili mülk dışındaki birincil bağlar düşer.
@@ -51,7 +57,12 @@ async function reconcileProject(
     if (!existing.isPrimary || existing.credentialId !== credential.id) {
       await prisma.gaPropertyLink.update({
         where: { id: existing.id },
-        data: { isPrimary: true, credentialId: credential.id },
+        data: {
+          isPrimary: true,
+          credentialId: credential.id,
+          // GA-F8: ek mülk seçimle ana mülk olunca ek olmaktan çıkar.
+          ...(existing.isSecondary ? { isSecondary: false } : {}),
+        },
       });
     }
     return false;

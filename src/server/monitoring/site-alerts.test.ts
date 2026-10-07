@@ -382,6 +382,48 @@ describe("SiteAlerts queries", () => {
     });
   });
 
+  it("resolveMissing without prefixes keeps the where unchanged", async () => {
+    await SiteAlerts.resolveMissing(
+      {
+        projectId: "p1",
+        source: "GA4",
+        kinds: ["GA_MH1"],
+        stillOpen: new Set<string>(),
+        excludeDedupePrefixes: [],
+      },
+      now,
+    );
+    const where = mocks.updateMany.mock.calls[0]![0].where;
+    expect(Object.keys(where)).not.toContain("AND");
+  });
+
+  it("resolveMissing excludes other links' dedupe prefixes", async () => {
+    await SiteAlerts.resolveMissing(
+      {
+        projectId: "p1",
+        source: "GA4",
+        kinds: ["GA_MH1", "GA_MH24"],
+        stillOpen: new Set(["ga4:a:MH1"]),
+        excludeDedupePrefixes: ["ga4:b:", "ga4:c:"],
+      },
+      now,
+    );
+    expect(mocks.updateMany.mock.calls[0]![0]).toEqual({
+      where: {
+        projectId: "p1",
+        source: "GA4",
+        kind: { in: ["GA_MH1", "GA_MH24"] },
+        status: { in: ["OPEN", "ACKED", "MUTED"] },
+        dedupeKey: { notIn: ["ga4:a:MH1"] },
+        AND: [
+          { NOT: { dedupeKey: { startsWith: "ga4:b:" } } },
+          { NOT: { dedupeKey: { startsWith: "ga4:c:" } } },
+        ],
+      },
+      data: { status: "RESOLVED", resolvedAt: now },
+    });
+  });
+
   it("bulk helpers skip the query for empty project lists", async () => {
     expect(await SiteAlerts.deleteForProjects([], "GA4")).toBe(0);
     expect(await SiteAlerts.resolveForProjects([], "GA4", now)).toBe(0);

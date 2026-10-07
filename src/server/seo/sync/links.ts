@@ -16,6 +16,7 @@ import { forgetSeoActionsForProjectMode } from "@/server/seo/actions/forget";
 import { forgetSearchOpportunitiesForLinks } from "@/server/seo/opportunities/forget";
 import { forgetSeoContentPlansForLinks } from "@/server/seo/content-plan/forget";
 import { forgetSeoGoalValues } from "@/server/seo/reports/goals";
+import { forgetAgencyForProjectMode } from "@/server/seo/agency/forget";
 import { SeoSites } from "@/server/seo/site/sites";
 
 // Proje ↔ Search Console sitesi bağları (docs/google-search-console-plan.md
@@ -91,6 +92,8 @@ async function reconcileProject(
         where: { id: existing.id },
         data: {
           isPrimary: true,
+          // SC-F9: Integrations sayfasında seçilen ikincil site normal birincil olur.
+          isSecondary: false,
           demotedAt: null,
           credentialId: credential.id,
         },
@@ -192,6 +195,10 @@ export async function deleteGscDataForProject(
   await forgetSeoContentPlansForLinks(forgetIds).catch(() => undefined);
   // SC-F6: bu kipin bağlarına ait SEO eylemleri, SEO öğrenmeleri ve SEO kartlarındaki Search Console verisi de silinir (bayraktan bağımsız).
   await forgetSeoActionsForProjectMode(projectId, gscMockMode());
+  // SC-F9: paylaşım bağlantıları, sayfa grubu uygulama durumu ve BigQuery'nin Google türevi alanları silinen ambarla birlikte sıfırlanır (bayraktan bağımsız).
+  await forgetAgencyForProjectMode(projectId, mode.isMock).catch(
+    () => undefined,
+  );
   const result = await prisma.gscSiteLink.deleteMany({ where: mode });
   // SC-F5: SEO hedeflerinin değeri silinen ambardan geliyordu; boşaltılır (raporlar cascade ile gitti).
   await forgetSeoGoalValues([projectId], { isMock: gscMockMode() });

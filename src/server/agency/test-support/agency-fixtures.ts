@@ -111,6 +111,11 @@ export async function teardownAgencyFixture(
   await prisma.asset.deleteMany({ where });
   await prisma.browserProfile.deleteMany({ where });
   await prisma.brandDossier.deleteMany({ where });
+  // SC-F9: bu tabloların workspace'e FK'si yok; kimlikle silinir.
+  await prisma.gscSiteSetting.deleteMany({ where });
+  await prisma.gscBqSource.deleteMany({ where });
+  await prisma.reportShare.deleteMany({ where });
+  await prisma.reportBranding.deleteMany({ where });
   await prisma.brand.deleteMany({ where });
   await prisma.project.deleteMany({ where });
   await prisma.workspaceMember.deleteMany({ where });

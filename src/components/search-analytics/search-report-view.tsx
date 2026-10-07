@@ -46,7 +46,9 @@ function searchHref(
   if (period !== "28d") params.set("period", period);
   if (queryFilter !== "all") params.set("queries", queryFilter);
   const query = params.toString();
-  return query ? `${base}?${query}` : base;
+  // SC-F9: ikincil site görünümünde ?site= parametresi korunur.
+  const joiner = base.includes("?") ? "&" : "?";
+  return query ? `${base}${joiner}${query}` : base;
 }
 
 export function SearchPeriodSelector({

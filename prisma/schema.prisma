@@ -2210,6 +2210,7 @@ model GaPropertyLink {
   // Projenin şu an seçili mülkü. Seçim değişince eski bağ false olur, senkron
   // durur ve verisi ga-retention'da silinir.
   isPrimary    Boolean @default(true)
+  isSecondary  Boolean @default(false)
   isMock       Boolean @default(false)
 
   propertyName      String?
@@ -2259,17 +2260,20 @@ model GaPropertyLink {
   backfill            Json?
   backfillDoneAt      DateTime?
 
-  dailyTotals   GaDailyTotal[]
-  slices        GaReportSlice[]
-  monthly       GaMonthlySummary[]
-  healthChecks  GaHealthCheck[]
-  healthRun     GaHealthRun?
-  configChanges GaConfigChange[]
-  changeWatch   GaChangeWatch?
-  findings      GaFinding[]
-  analysisRun   GaAnalysisRun?
-  reportRun     GaReportRun?
-  goalProgress  GaGoalProgress[]
+  dailyTotals    GaDailyTotal[]
+  slices         GaReportSlice[]
+  monthly        GaMonthlySummary[]
+  healthChecks   GaHealthCheck[]
+  healthRun      GaHealthRun?
+  configChanges  GaConfigChange[]
+  bigQuerySource GaBigQuerySource?
+  bigQueryDays   GaBigQueryDay[]
+  funnels        GaFunnel[]
+  changeWatch    GaChangeWatch?
+  findings       GaFinding[]
+  analysisRun    GaAnalysisRun?
+  reportRun      GaReportRun?
+  goalProgress   GaGoalProgress[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2278,6 +2282,7 @@ model GaPropertyLink {
   @@index([propertyId])
   @@index([credentialId])
   @@index([isPrimary, syncLeaseUntil])
+  @@index([isSecondary, syncLeaseUntil])
 }
 
 // Mülk-gün toplamı: KPI'ların tek kaynağı. `date` mülkün saat dilimindeki
@@ -2373,6 +2378,7 @@ model GscSiteLink {
   // Projenin şu an seçili sitesi. Seçim değişince eski bağ false olur,
   // demotedAt yazılır, senkron durur ve 30 gün sonra seo-retention'da silinir.
   isPrimary    Boolean   @default(true)
+  isSecondary  Boolean   @default(false)
   demotedAt    DateTime?
   isMock       Boolean   @default(false)
 
@@ -2449,6 +2455,7 @@ model GscSiteLink {
   seoReportState     SeoReportState?
   seoGoalProgress    SeoGoalProgress[]
   contentPlans       SeoContentPlan[]
+  splitTests         GscSplitTest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2457,6 +2464,7 @@ model GscSiteLink {
   @@index([siteUrl])
   @@index([credentialId])
   @@index([isPrimary, syncLeaseUntil])
+  @@index([isSecondary, syncLeaseUntil])
 }
 
 // Arama türü başına günlük toplam (KPI'ların tek kaynağı). Gün PT'dir.
@@ -2572,6 +2580,8 @@ model GscWeeklyQuery {
 
   @@unique([linkId, weekStart, queryId])
   @@index([projectId, weekStart])
+  // FK cascade (GscQuery/GscPage silinirken) için: bu sütun hiçbir indexin başında değildi.
+  @@index([queryId])
 }
 
 model GscWeeklyPage {
@@ -2589,6 +2599,8 @@ model GscWeeklyPage {
 
   @@unique([linkId, weekStart, pageId])
   @@index([projectId, weekStart])
+  // FK cascade (GscQuery/GscPage silinirken) için: bu sütun hiçbir indexin başında değildi.
+  @@index([pageId])
 }
 
 model GscWeeklyQueryPage {
@@ -2608,6 +2620,9 @@ model GscWeeklyQueryPage {
 
   @@unique([linkId, weekStart, queryId, pageId])
   @@index([projectId, weekStart])
+  // FK cascade (GscQuery/GscPage silinirken) için: bu sütun hiçbir indexin başında değildi.
+  @@index([queryId])
+  @@index([pageId])
 }
 
 model GscMonthlyQuery {
@@ -2626,6 +2641,8 @@ model GscMonthlyQuery {
 
   @@unique([linkId, month, queryId])
   @@index([projectId, month])
+  // FK cascade (GscQuery/GscPage silinirken) için: bu sütun hiçbir indexin başında değildi.
+  @@index([queryId])
 }
 
 model GscMonthlyPage {
@@ -2643,6 +2660,8 @@ model GscMonthlyPage {
 
   @@unique([linkId, month, pageId])
   @@index([projectId, month])
+  // FK cascade (GscQuery/GscPage silinirken) için: bu sütun hiçbir indexin başında değildi.
+  @@index([pageId])
 }
 
 // Hangi haftalık/aylık özetin çekildiği: idempotent senkron, kırpılma
@@ -2662,6 +2681,8 @@ model GscPeriodFetch {
   rowImpressions Int      @default(0)
   pages          Int      @default(0)
   fetchedAt      DateTime
+  // API | BQ: BQ ise dönem BigQuery dışa aktarımından yazıldı (SC-F9)
+  source         String   @default("API")
 
   link GscSiteLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
 
@@ -3109,6 +3130,362 @@ model GaChangeWatch {
   @@index([projectId])
   @@index([lastRunAt])
 }
+
+// ===========================================================================
+// GA-F8 ajans ve ileri ölçek (migration 20261006222000_add_ga_agency)
+// ===========================================================================
+// Beyaz etiket marka ve paylaşım bağlantısı tabloları (ReportBranding, ReportShare) SC-F9'undur
+// (migration 20261006223000_add_gsc_agency); GA-F8 yalnız onları kullanır, burada TANIMLANMAZ.
+// Başka mevcut modele dokunulmaz. IntegrationCredential'a keyId kolonu EKLENMEZ: anahtar sürümü şifreli metnin önekindedir (gk1:<keyId>:...).
+
+// Google RISC (Cross-Account Protection) olayları. Açıkça globaldir (proje yok).
+// Yalnız tekrar koruması ve sayaç: Google hesap kimliği (sub) ASLA saklanmaz.
+model GoogleRiscEvent {
+  id         String   @id @default(cuid())
+  // Güvenlik olayı jetonunun jti'si: tekrar koruması
+  jti        String   @unique
+  // tokens-revoked | token-revoked | account-disabled | account-enabled | account-purged | sessions-revoked | credential-change-required | verification
+  eventKeys  String[]
+  // PENDING (uygulanmadan önce eklenir; takılı kalırsa Google'ın yeniden denemesi tekrar işler) | APPLIED | RECHECK | NO_MATCH | IGNORED
+  outcome    String   @default("PENDING")
+  // Etkilenen bağlantı sayısı
+  matched    Int      @default(0)
+  receivedAt DateTime @default(now())
+
+  @@index([receivedAt])
+}
+
+// GA4 BigQuery dışa aktarımı kaynağı (GA_BIGQUERY). Bağ başına en çok bir satır. Müşteri kendi
+// projesindeki veri kümesine Agentelse'in servis hesabına (SC-F9 paylaşımlı istemcisi) okuma yetkisi verir.
+// TEK PROJE KURALI: veri kümesinin projesi ile sorgu işinin (faturalanan) projesi aynıdır (gcpProjectId);
+// ayrı faturalama projesi alanı YOKTUR (başka müşterinin projesine fatura kesme açığı). Veri kümesi adı
+// analytics_<mülk kimliği> olmak ZORUNDADIR (bağlama kuralı). Yeni OAuth izni yok. Bağ silinince cascade ile gider.
+model GaBigQuerySource {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  projectId       String
+  linkId          String    @unique
+  // Veri kümesinin ve sorgu işlerinin (faturalama) tek Google Cloud projesi
+  gcpProjectId    String
+  // Daima analytics_<GA4 mülk kimliği>
+  datasetId       String
+  location        String?
+  // PENDING | OK | ERROR
+  status          String    @default("PENDING")
+  // Yalnız hata kodu: not_configured | not_shared | dataset_not_found | no_export_tables | bytes_limit | budget | billing | auth | quota | invalid_query | unavailable
+  lastError       String?
+  verifiedAt      DateTime?
+  // Okunan en son dışa aktarım günü (YYYY-MM-DD)
+  lastDay         String?
+  lastRunAt       DateTime?
+  nextRunAt       DateTime?
+  leaseUntil      DateTime?
+  leaseOwner      String?
+  // Aylık bayt bütçesi sayacı: ay (YYYY-MM) ve o ayki faturalanan bayt (üç sorgunun toplamı)
+  usageMonth      String?
+  usageBytes      BigInt    @default(0)
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextRunAt])
+  @@index([projectId])
+}
+
+// Dışa aktarımdan türeyen günlük toplamlar (ham satır yok). Para mikro birimdir (olay para birimi, yalnız bilgi).
+// topEvents: [[eventName, count]] ilk 20; topPages: [[maskeliYol, views, users]] ilk 50 (sorgu dizesi atılmış, PII maskeli).
+model GaBigQueryDay {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  projectId     String
+  linkId        String
+  date          DateTime @db.Date
+  events        Int
+  users         Int
+  sessions      Int
+  keyEvents     Int
+  revenueMicros BigInt   @default(0)
+  topEvents     Json?
+  topPages      Json?
+  computedAt    DateTime @default(now())
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@unique([linkId, date])
+  @@index([projectId])
+}
+
+// Huni raporu tanımı ve son sonucu (GA_FUNNEL, v1alpha runFunnelReport). Mülk başına en çok 5.
+// lastResult yalnız toplulaştırılmış sayılardır. Bağ silinince cascade ile gider.
+model GaFunnel {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  projectId       String
+  linkId          String
+  name            String
+  isOpen          Boolean   @default(false)
+  // [{ name, kind: "event" | "page", value }] 2..6 adım
+  steps           Json
+  periodDays      Int       @default(28)
+  // { through, steps: [{ name, users, completionRate, abandonments, abandonmentRate }] }
+  lastResult      Json?
+  lastRunAt       DateTime?
+  // Gerçek çalıştırma sayacı (günlük 20 sınırı mülk başına bu sayaçların toplamıdır; önce artır, sonra denetle)
+  // UTC gün anahtarı (YYYY-MM-DD); bugünden farklıysa runsToday sıfır sayılır
+  runDay          String?
+  runsToday       Int       @default(0)
+  // Yalnız hata kodu
+  lastError       String?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  link GaPropertyLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([linkId])
+  @@index([projectId])
+}
+
+// ---------------------------------------------------------------------------
+// Ajans ve büyük site (docs/google-search-console-plan.md SC-F9,
+// docs/search-agency.md). Google'dan türeyen veri (bölünmüş test sonuçları,
+// BigQuery ile yazılan dönem özetleri) GscSiteLink'e cascade'lidir; müşterinin
+// kendi ayarları (sayfa grubu kuralları, ek site listesi, BigQuery proje/veri
+// kümesi, marka/paylaşım) bağdan bağımsızdır ve Disconnect'te silinir.
+// ---------------------------------------------------------------------------
+
+// Not: Bu tabloların hiçbiri GscSiteLink/Project'e FK'lı değildir (GscSplitTest hariç); temizlik forget.ts, yetim süpürmesi ve Disconnect ile yapılır.
+
+// Site başına müşteri ayarı: ek site üyeliği ve sayfa grubu kuralları. Bağ
+// silinse de ("Delete stored data") kalır; Disconnect siler. Mod (mock/canlı)
+// isMock ile ayrılır; yanlış moddaki satırlar yok sayılır ve ASLA çevrilmez.
+model GscSiteSetting {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  siteUrl     String
+  isMock      Boolean @default(false)
+
+  // true: bu site projenin ek sitesi (birincil değil)
+  isExtra Boolean @default(false)
+
+  // { v: 1, rules: [{ id, group, match: "PREFIX" | "GLOB" | "EXACT", pattern }] } (src/lib/seo/agency/page-groups.ts)
+  pageGroupRules       Json?
+  // Her kayıtta +1
+  rulesVersion         Int       @default(0)
+  // GscPage.pageGroup'a en son tamamen uygulanan kural sürümü ve o andaki GscSiteLink.lastWeeklyWeek
+  groupsAppliedVersion Int       @default(0)
+  groupsAppliedWeek    String?
+  // Yarım kalan uygulamanın son GscPage kimliği (anahtarlı sayfalama)
+  groupsCursor         String?
+  groupsLeaseUntil     DateTime?
+  groupsLeaseOwner     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, siteUrl])
+  @@index([workspaceId])
+  @@index([isExtra, projectId])
+}
+
+// Site başına BigQuery dışa aktarım kaynağı (yapılandırma + maliyet sayaçları).
+// Müşteri kendi veri kümesinde Agentelse'in servis hesabına okuma yetkisi verir;
+// sorgular müşterinin Cloud projesinde çalışır ve onun faturasına yazılır.
+// Etkinleştirme yalnız GscSiteLink.permissionLevel = siteOwner ise mümkündür.
+model GscBqSource {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  siteUrl     String
+  isMock      Boolean @default(false)
+
+  // DRAFT | VERIFIED | ACTIVE | PAUSED | ERROR | BUDGET
+  status            String    @default("DRAFT")
+  // Müşterinin Cloud proje kimliği ve Search Console dışa aktarım veri kümesi (varsayılan "searchconsole")
+  bqProjectId       String
+  dataset           String
+  // Veri kümesinin konumu (doğrulamada okunur)
+  location          String?
+  // Dışa aktarım tablolarındaki site_url değeri (doğrulamada eşleşen; yalnız bu mülk okunur)
+  bqSiteUrl         String?
+  // Dışa aktarımın ilk ve son tam gün anahtarı (PT, YYYY-MM-DD)
+  exportStart       String?
+  exportedThrough   String?
+  coverageCheckedAt DateTime?
+  // true: pencere içindeki kırpılmamış API dönemleri de BigQuery ile değişir
+  importAll         Boolean   @default(false)
+
+  // Maliyet kalkanı (bayt): sorgu başına üst sınır ve aylık bütçe
+  maxBytesPerQuery   BigInt  @default(10737418240)
+  monthlyBudgetBytes BigInt  @default(322122547200)
+  // "YYYY-MM"; ay dönünce sayaçlar sıfırlanır
+  usageMonth         String?
+  bytesBilledMonth   BigInt  @default(0)
+  queriesMonth       Int     @default(0)
+
+  lastVerifiedAt      DateTime?
+  lastSyncAt          DateTime?
+  // Sabit hata kodu (NOT_OWNER, NO_ACCESS, NOT_FOUND, BILLING_DISABLED, SITE_MISMATCH, NO_EXPORT_DATA, COST_CAP ...); ham Google hatası saklanmaz
+  lastError           String?
+  consecutiveFailures Int       @default(0)
+  nextRunAt           DateTime?
+  leaseUntil          DateTime?
+  leaseOwner          String?
+  // { checkedAt, days, clicksDiffPct, impressionsDiffPct } (BigQuery ile API'nin son günleri); Google türevidir, "Delete stored data" siler
+  reconcile           Json?
+  createdByUserId     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, siteUrl])
+  @@index([status, nextRunAt])
+  @@index([workspaceId])
+}
+
+// Bölünmüş SEO testi (plan 6.4): her sayfa grubunun kendi içinde rastgele
+// ikiye ayrılması, değişiklik yalnız test yarısına uygulanır, fark-içinde-fark
+// ve plasebo (A/A) denetimiyle ölçülür.
+model GscSplitTest {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  linkId      String
+  isMock      Boolean @default(false)
+
+  // Kullanıcının verdiği ad (en çok 80 karakter)
+  name        String
+  // TITLE_META | SCHEMA | INTERNAL_LINKS_BLOCK | CONTENT_BLOCK | TEMPLATE_CHANGE | OTHER
+  changeKind  String
+  // Kullanıcının kendi metni (en çok 300 karakter; Google verisi değil)
+  description String?
+  // DRAFT | APPLIED | EVALUATING | WORKED | DIDNT | INCONCLUSIVE | CANCELLED | EXPIRED
+  status      String  @default("DRAFT")
+
+  // { v: 1, pageGroups: string[], capped: boolean, preWeeks: string[] }
+  population   Json
+  // Atama tohumu (= test kimliği); aynı tohum aynı ayrımı verir
+  seed         String
+  testPages    Int    @default(0)
+  controlPages Int    @default(0)
+  // { testClicks, controlClicks, ratio, recommended: boolean, perGroup: [{ group, test, control }] } (atama anındaki 8 haftalık tıklama)
+  balance      Json
+  // { titlePattern, metaPattern, schemaType, note } (kullanıcının kendi içeriği)
+  change       Json?
+
+  // MANUAL | CMS
+  appliedVia      String?
+  appliedAt       DateTime?
+  appliedByUserId String?
+  // { v: 1, items: [{ pageId, changeId | null, skipped | null }] } (SC-F8 SeoChange kimlikleri, düz kimlik)
+  cmsChanges      Json?
+  // Örnek sayfaların uygulama öncesi hâli (tarayıcıdan, sitenin kendi verisi; yalnız birincil bağ ve kapsam içi adresler): { v: 1, test: [...], control: [...] }
+  baseline        Json?
+  // { v: 1, attempts, lastCheckedAt, checks: [{ key, label, ok, observed }], method, reason }
+  verification    Json?
+  verifyAttempts  Int       @default(0)
+  askedAt         DateTime?
+
+  // Ölçüm çıpası ve penceresi (SC-F6 measuringFields)
+  measureFrom   DateTime?
+  windowDays    Int       @default(28)
+  evaluateAfter DateTime?
+  nextCheckAt   DateTime?
+  // SplitEvaluation (src/lib/seo/agency/split/types.ts)
+  evaluation    Json?
+  // WORKED | DIDNT | INCONCLUSIVE
+  outcome       String?
+  // SIGNIFICANT | DIRECTIONAL
+  confidence    String?
+  evaluatedAt   DateTime?
+
+  leaseUntil      DateTime?
+  leaseOwner      String?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  link  GscSiteLink        @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  pages GscSplitTestPage[]
+
+  @@index([linkId, status])
+  @@index([projectId, isMock, status])
+  @@index([status, nextCheckAt])
+}
+
+// Testin sayfa ataması (GscPage kimliği düz kimliktir: sayfa budanırsa satır
+// yetim kalır, değerlendirme eksik sayfayı atlar).
+model GscSplitTestPage {
+  id        String @id @default(cuid())
+  testId    String
+  linkId    String
+  pageId    String
+  // Sayfanın grubu atama anında (denge raporu için)
+  pageGroup String @default("")
+  // TEST | CONTROL
+  arm       String
+
+  test GscSplitTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  @@unique([testId, pageId])
+  @@index([linkId, pageId])
+  @@index([testId, arm])
+}
+
+// Beyaz etiket: workspace başına ajans markası (rapor başlığı, vurgu rengi, alt not).
+// Bilinçli istisna: projectId yok, tablo workspace kapsamlıdır (marka projeler arası ortaktır).
+model ReportBranding {
+  id              String   @id @default(cuid())
+  workspaceId     String   @unique
+  // En çok 60 karakter; boşsa Workspace.name kullanılır
+  displayName     String
+  // slate | blue | green | violet | orange | rose
+  accent          String   @default("slate")
+  // En çok 160 karakter
+  footer          String?
+  // Asset.id (type LOGO, aynı workspace, png/jpeg/webp); düz kimlik
+  logoAssetId     String?
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// Süreli, iptal edilebilir salt-okunur rapor bağlantısı. Genel (GA-F8 de
+// kullanır): reportId düz kimliktir; görüntülemede raporun hâlâ var olduğu
+// denetlenir, Disconnect/silme bağlantıları hemen siler.
+model ReportShare {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  projectId       String
+  // SEARCH | WEBSITE
+  kind            String
+  // SeoReport.id (SEARCH) ya da GA rapor kimliği (WEBSITE)
+  reportId        String
+  // Gizli parçanın sha256 özeti (hex); gizli parça saklanmaz
+  tokenHash       String    @unique
+  // { displayName, accent, footer, logoAssetId } oluşturma anındaki marka
+  branding        Json
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  createdByUserId String
+  viewCount       Int       @default(0)
+  lastViewedAt    DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([projectId, kind, reportId])
+  @@index([expiresAt])
+  @@index([workspaceId, revokedAt])
+}
+
+// Migration SQL notları (orkestratör): ALTER TABLE "GaPropertyLink" ADD COLUMN "isSecondary" BOOLEAN NOT NULL DEFAULT false;
+// CREATE INDEX "GaPropertyLink_isSecondary_syncLeaseUntil_idx"; 4 CREATE TABLE (GoogleRiscEvent, GaBigQuerySource, GaBigQueryDay, GaFunnel);
+// GaBigQuerySource / GaBigQueryDay / GaFunnel için FOREIGN KEY ("linkId") REFERENCES "GaPropertyLink"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+// UNIQUE: GoogleRiscEvent.jti, GaBigQuerySource.linkId, GaBigQueryDay(linkId,date). GoogleRiscEvent.outcome DEFAULT 'PENDING'; GaFunnel.runsToday DEFAULT 0.
+// Yalnız ekleme; mevcut migration klasörlerine dokunulmaz. AgencyBranding ve GaReportShare YOKTUR (SC-F9'un ReportBranding / ReportShare tabloları kullanılır).
+// Klasör sırası: bugünkü son klasör 20261006218000; W5-W7 migration'ları 222000'den ÖNCE olmalı, SC-F9'un 223000'ı SONRA gelmeli.
 
 // Migration SQL notes for the orchestrator (main migration): CREATE TABLE "GaConfigChange" / "GaChangeWatch" with the columns above,
 // UNIQUE INDEX "GaConfigChange_linkId_openKey_key" ("linkId","openKey"), UNIQUE INDEX on "GaChangeWatch"."linkId",

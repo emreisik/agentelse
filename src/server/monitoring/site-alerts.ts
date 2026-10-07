@@ -227,10 +227,15 @@ export const SiteAlerts = {
       source: SiteAlertSource;
       kinds: string[];
       stillOpen: Set<string>;
+      // GA-F8: ek mülklerde bir mülkün değerlendirmesi diğer motor bağlarının
+      // açık uyarısını çözmez; emekli/kaldırılmış bağların uyarıları ise
+      // çözülmeye devam eder. Boş/verilmemişse where bugünküyle aynıdır.
+      excludeDedupePrefixes?: readonly string[];
     },
     now: Date = new Date(),
   ): Promise<number> {
     if (input.kinds.length === 0) return 0;
+    const prefixes = input.excludeDedupePrefixes ?? [];
     const result = await prisma.adsAlert.updateMany({
       where: {
         projectId: input.projectId,
@@ -238,6 +243,13 @@ export const SiteAlerts = {
         kind: { in: [...input.kinds] },
         status: { in: [...LIVE_STATUSES] },
         dedupeKey: { notIn: [...input.stillOpen] },
+        ...(prefixes.length > 0
+          ? {
+              AND: prefixes.map((prefix) => ({
+                NOT: { dedupeKey: { startsWith: prefix } },
+              })),
+            }
+          : {}),
       },
       data: { status: "RESOLVED", resolvedAt: now },
     });

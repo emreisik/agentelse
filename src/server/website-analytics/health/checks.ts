@@ -67,6 +67,8 @@ import {
 import { gaMockMode } from "@/server/integrations/google-analytics/data-api";
 import { GoogleApiError } from "@/server/integrations/google/errors";
 import { getFreshGoogleAccessToken } from "@/server/integrations/google-token";
+import { gaAgencyEnabled } from "@/lib/website-analytics/agency/flags";
+import { gaEngineLinkWhere } from "@/lib/website-analytics/agency/scope";
 import { SiteAlerts } from "@/server/monitoring/site-alerts";
 import { readDailyTotals } from "@/server/website-analytics/store";
 import type { GaSyncContext } from "@/server/website-analytics/sync/context";
@@ -361,10 +363,29 @@ async function raiseAlert(
   }
 }
 
+// GA-F8: bir mülkün değerlendirmesi projenin ÖBÜR motor bağlarının açık
+// uyarısını çözmesin. Emekli/kaldırılmış bağların uyarıları (artık motor bağı
+// değil) çözülmeye devam eder; bu yüzden "kendi öneki" değil "diğer motor
+// bağlarının önekleri" dışlanır. GA_AGENCY kapalıyken sorgu yok, liste boş.
+async function otherEngineAlertPrefixes(
+  link: GaPropertyLink,
+): Promise<string[]> {
+  if (!gaAgencyEnabled()) return [];
+  const others = await prisma.gaPropertyLink.findMany({
+    where: {
+      projectId: link.projectId,
+      id: { not: link.id },
+      ...gaEngineLinkWhere(),
+    },
+    select: { id: true },
+  });
+  return others.map((other) => `ga4:${other.id}:`);
+}
+
 // Uyarılar: WARN/CRITICAL önemli WARN/FAIL açılır; UNKNOWN en çok 48 saat
 // açık tutar (MH1_RT hiç). Ardından proje genelinde resolveMissing: önceki
 // birincil bağın uyarıları da burada çözülür.
-async function syncAlerts(
+export async function syncAlerts(
   link: GaPropertyLink,
   results: readonly GaCheckResult[],
   previous: ReadonlyMap<string, PreviousRow>,
@@ -390,12 +411,14 @@ async function syncAlerts(
       stillOpen.add(dedupeKey);
     }
   }
+  const prefixes = await otherEngineAlertPrefixes(link);
   await SiteAlerts.resolveMissing(
     {
       projectId: link.projectId,
       source: "GA4",
       kinds: [...GA_ALERT_KINDS],
       stillOpen,
+      ...(prefixes.length > 0 ? { excludeDedupePrefixes: prefixes } : {}),
     },
     now,
   );
@@ -660,12 +683,14 @@ export async function evaluateGaRealtime(
   const dedupeKey = gaAlertDedupeKey(link.id, key);
   const alertable = gaAlertable(result);
   if (alertable) await raiseAlert(link, result, now);
+  const prefixes = await otherEngineAlertPrefixes(link);
   await SiteAlerts.resolveMissing(
     {
       projectId: link.projectId,
       source: "GA4",
       kinds: [gaCheckDef(key).alertKind],
       stillOpen: alertable ? new Set([dedupeKey]) : new Set<string>(),
+      ...(prefixes.length > 0 ? { excludeDedupePrefixes: prefixes } : {}),
     },
     now,
   );

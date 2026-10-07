@@ -15,6 +15,11 @@ const mocks = vi.hoisted(() => ({
   forgetOpportunities: vi.fn(),
   forgetGoalValues: vi.fn(),
   forgetSeoActions: vi.fn(),
+  forgetAgency: vi.fn(),
+  update: vi.fn(),
+  upsert: vi.fn(),
+  credentials: vi.fn(),
+  syncAllowed: vi.fn(() => false),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -24,12 +29,15 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.findMany,
       deleteMany: mocks.deleteMany,
       updateMany: mocks.updateMany,
+      update: mocks.update,
+      upsert: mocks.upsert,
     },
+    integrationCredential: { findMany: mocks.credentials },
   },
 }));
 vi.mock("@/lib/seo/flags", () => ({
   // Bağ yeniden kurulmaz: bu test yalnız silme sırasını sınar.
-  gscSyncAllowedFor: () => false,
+  gscSyncAllowedFor: mocks.syncAllowed,
   gscRestrictedProjects: () => null,
 }));
 vi.mock("@/server/integrations/search-console/search-analytics", () => ({
@@ -53,11 +61,14 @@ vi.mock("@/server/seo/actions/forget", () => ({
 vi.mock("@/server/seo/reports/goals", () => ({
   forgetSeoGoalValues: mocks.forgetGoalValues,
 }));
+vi.mock("@/server/seo/agency/forget", () => ({
+  forgetAgencyForProjectMode: mocks.forgetAgency,
+}));
 vi.mock("@/server/seo/site/sites", () => ({
   SeoSites: { forgetSearchConsoleData: mocks.forget },
 }));
 
-const { deleteGscDataForProject } = await import("./links");
+const { deleteGscDataForProject, ensureGscLinkForProject } = await import("./links");
 
 beforeEach(() => {
   for (const mock of Object.values(mocks)) mock.mockReset();
@@ -69,6 +80,8 @@ beforeEach(() => {
   mocks.forget.mockResolvedValue(1);
   mocks.forgetGoalValues.mockResolvedValue(0);
   mocks.forgetSeoActions.mockResolvedValue({ actions: 0, learnings: 0, cards: 0 });
+  mocks.forgetAgency.mockResolvedValue(undefined);
+  mocks.syncAllowed.mockReturnValue(false);
 });
 
 describe("deleteGscDataForProject", () => {
@@ -93,6 +106,9 @@ describe("deleteGscDataForProject", () => {
     expect(mocks.forgetSeoActions.mock.invocationCallOrder[0]).toBeLessThan(
       deleted,
     );
+    // SC-F9: paylaşım/sayfa grubu/BigQuery izleri bağlar silinmeden ÖNCE unutulur.
+    expect(mocks.forgetAgency).toHaveBeenCalledWith("proj-1", false);
+    expect(mocks.forgetAgency.mock.invocationCallOrder[0]).toBeLessThan(deleted);
     // SC-F5: SEO hedeflerinin değeri bağlar silindikten sonra boşaltılır.
     expect(mocks.forgetGoalValues).toHaveBeenCalledWith(["proj-1"], {
       isMock: expect.any(Boolean),
@@ -120,6 +136,40 @@ describe("deleteGscDataForProject", () => {
     mocks.forgetOpportunities.mockRejectedValue(new Error("db"));
     await expect(deleteGscDataForProject("proj-1")).resolves.toEqual({
       deletedLinks: 2,
+    });
+  });
+});
+
+describe("ensureGscLinkForProject", () => {
+  it("promotes an existing secondary link of the selected site to a normal primary", async () => {
+    mocks.syncAllowed.mockReturnValue(true);
+    mocks.credentials.mockResolvedValue([
+      {
+        id: "cred-1",
+        workspaceId: "ws-1",
+        projectId: "proj-1",
+        status: "ACTIVE",
+        metadata: { selectedSearchConsoleSite: "sc-domain:example.com" },
+      },
+    ]);
+    mocks.findMany.mockResolvedValue([
+      {
+        id: "link-9",
+        siteUrl: "sc-domain:example.com",
+        isPrimary: false,
+        isMock: false,
+        credentialId: "cred-1",
+      },
+    ]);
+    await ensureGscLinkForProject("proj-1");
+    expect(mocks.update).toHaveBeenCalledWith({
+      where: { id: "link-9" },
+      data: {
+        isPrimary: true,
+        isSecondary: false,
+        demotedAt: null,
+        credentialId: "cred-1",
+      },
     });
   });
 });

@@ -107,7 +107,11 @@ function periodSections(
   options: { weekly: boolean },
 ): PeriodReportSections {
   const { link, current, previous, findings } = input;
-  const hrefs = reportHrefs(link.projectId, input.websitePage);
+  const hrefs = reportHrefs(
+    link.projectId,
+    input.websitePage,
+    link.propertyId ?? null,
+  );
   const snapOf = (view: PeriodReportInput["findings"]["changed"][number]) =>
     findingSnap(view, {
       currency: link.currency,
@@ -196,7 +200,11 @@ export function buildMonthlyCard(
   input: MonthlyReportInput,
 ): WebsiteReportCardData {
   const { current, previous, lastYear, findings, link } = input;
-  const hrefs = reportHrefs(link.projectId, input.websitePage);
+  const hrefs = reportHrefs(
+    link.projectId,
+    input.websitePage,
+    link.propertyId ?? null,
+  );
   const outcomes = findings.outcomeCounts
     ? {
         worked: findings.outcomeCounts.worked,
@@ -242,7 +250,11 @@ export function buildAlertCard(input: {
   alert: { id: string; kind: string; title: string; firstSeenAt: string };
 }): WebsiteReportCardData {
   const { link, alert } = input;
-  const hrefs = reportHrefs(link.projectId, input.websitePage);
+  const hrefs = reportHrefs(
+    link.projectId,
+    input.websitePage,
+    link.propertyId ?? null,
+  );
   return {
     ...cardBase(link, input.builtAt),
     variant: "alert",

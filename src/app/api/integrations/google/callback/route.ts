@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { gaFixesEnabledFor } from "@/lib/website-analytics/fixes/flags";
 import { buildGaEditGrant } from "@/lib/website-analytics/fixes/edit-grant";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
-import { encryptSecret } from "@/server/security/crypto";
+import { encryptGoogleSecret } from "@/server/integrations/google/secret";
 import { verifyOAuthState } from "@/server/security/oauth-state";
 import {
   isWorkspaceManager,
@@ -171,13 +171,13 @@ export async function GET(request: Request) {
       brandId: access.defaultBrandId,
       provider,
       accountLabel,
-      encryptedSecret: encryptSecret(tokens.refreshToken),
+      encryptedSecret: encryptGoogleSecret(tokens.refreshToken),
       metadata,
       status: "ACTIVE",
     },
     update: {
       accountLabel,
-      encryptedSecret: encryptSecret(tokens.refreshToken),
+      encryptedSecret: encryptGoogleSecret(tokens.refreshToken),
       metadata,
       status: "ACTIVE",
     },
@@ -278,7 +278,7 @@ async function handleEditUpgrade(input: {
   await prisma.integrationCredential.update({
     where: { id: credential.id },
     data: {
-      encryptedSecret: encryptSecret(tokens.refreshToken),
+      encryptedSecret: encryptGoogleSecret(tokens.refreshToken),
       status: "ACTIVE",
     },
   });

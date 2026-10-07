@@ -358,6 +358,9 @@ export async function writePeriod(
   periodStart: string,
   key: GscPeriodKey,
   result: GscPagedResult,
+  // SC-F9: BigQuery dönemleri "BQ" damgasıyla yazılır; mevcut çağıranlar
+  // varsayılan "API" ile değişmez.
+  source: "API" | "BQ" = "API",
 ): Promise<void> {
   if (grain === "MONTH" && key === "query_page") {
     throw new Error("Monthly query×page summaries are not stored");
@@ -478,6 +481,7 @@ export async function writePeriod(
         rowImpressions: Math.round(rowImpressions),
         pages: result.pages,
         fetchedAt,
+        source,
       };
       await tx.gscPeriodFetch.upsert({
         where: {
@@ -499,7 +503,14 @@ export async function writePeriod(
         update: fetch,
       });
     },
-    { timeout: PERIOD_TX_TIMEOUT_MS },
+    // SC-F9: BigQuery dönemleri 100.000 satıra varabilir; süre satır sayısıyla
+    // ölçeklenir (üst sınır 5 dk).
+    {
+      timeout: Math.min(
+        300_000,
+        PERIOD_TX_TIMEOUT_MS + Math.ceil(rows.length / 1000) * 1_000,
+      ),
+    },
   );
 }
 

@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   cancelGaFixes: vi.fn(),
   gaFixesEnabled: vi.fn(),
   forgetSeoContentPlans: vi.fn(),
+  forgetAgency: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -77,6 +78,9 @@ vi.mock("@/lib/website-analytics/fixes/flags", () => ({
 vi.mock("@/server/seo/content-plan/forget", () => ({
   forgetSeoContentPlansForCredential: mocks.forgetSeoContentPlans,
 }));
+vi.mock("@/server/seo/agency/forget", () => ({
+  forgetAgencyForCredential: mocks.forgetAgency,
+}));
 vi.mock("@/server/seo/site/sites", () => ({
   SeoSites: { forgetSearchConsoleData: mocks.forgetSearchConsoleData },
 }));
@@ -121,6 +125,7 @@ beforeEach(() => {
   mocks.gaFixesEnabled.mockReturnValue(false);
   mocks.cancelGaFixes.mockResolvedValue(0);
   mocks.forgetSeoContentPlans.mockResolvedValue({ ideas: 0, pieces: 0 });
+  mocks.forgetAgency.mockResolvedValue({ shares: 0, settings: 0, bqSources: 0 });
 });
 
 function expectWiped() {
@@ -385,5 +390,27 @@ describe("GA-F7 and SC-F7 cleanup on disconnect", () => {
       revokedAtGoogle: true,
     });
     expect(mocks.deleteGscLinks).toHaveBeenCalled();
+  });
+});
+
+describe("SC-F9 agency cleanup on disconnect", () => {
+  it("forgets the agency data of the credential before the GSC links are deleted", async () => {
+    await disconnectGoogleCredential(credential);
+    expect(mocks.forgetAgency).toHaveBeenCalledTimes(1);
+    expect(mocks.forgetAgency).toHaveBeenCalledWith("cred-ga");
+    expect(mocks.forgetAgency.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.deleteGscLinks.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("does not stop the deletion when the agency cleanup rejects", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.forgetAgency.mockRejectedValue(new Error("db"));
+    await expect(disconnectGoogleCredential(credential)).resolves.toEqual({
+      revokedAtGoogle: true,
+    });
+    expect(mocks.deleteGscLinks).toHaveBeenCalledWith({
+      where: { credentialId: "cred-ga" },
+    });
   });
 });

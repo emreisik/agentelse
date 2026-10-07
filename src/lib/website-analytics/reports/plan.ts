@@ -161,7 +161,12 @@ export function proposeTargets(input: {
 
 export function buildPlanCard(input: PlanReportInput): WebsiteReportCardData {
   const { link } = input;
-  const hrefs = reportHrefs(link.projectId, input.websitePage);
+  // GA-F8: ek mülkün bulgu bağlantıları ?property= taşır (ana mülkte null).
+  const hrefs = reportHrefs(
+    link.projectId,
+    input.websitePage,
+    link.propertyId ?? null,
+  );
   const { proposals, note } = proposeTargets({
     month: input.month,
     months: input.months,

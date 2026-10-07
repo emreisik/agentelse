@@ -428,6 +428,9 @@ export type ReportLinkInfo = {
   currency: string | null;
   isMock: boolean;
   dataThrough: string;
+  // GA-F8: ek mülkün GA4 kimliği (bağlantılar ?property= taşır); ana mülk için
+  // null/yok.
+  propertyId?: string | null;
 };
 
 // Bir dönem penceresinin ambardan okunmuş verisi.

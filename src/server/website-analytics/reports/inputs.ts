@@ -140,6 +140,8 @@ export function reportLinkInfo(ctx: GaReportContext): ReportLinkInfo {
     currency: ctx.link.currencyCode,
     isMock: ctx.link.isMock,
     dataThrough: ctx.completeThrough ?? "",
+    // GA-F8: ek mülkün kartları ?property= taşır.
+    propertyId: ctx.link.isPrimary ? null : ctx.link.propertyId,
   };
 }
 
@@ -476,7 +478,10 @@ export async function loadWeeklyReportInput(
       insights,
       evaluated: false,
     }),
-    GaGoals.loadProgress(ctx.projectId),
+    // GA-F8: hedefler projeye aittir; ek mülklerde okunmaz.
+    link.isPrimary
+      ? GaGoals.loadProgress(ctx.projectId)
+      : Promise.resolve([] as Awaited<ReturnType<typeof GaGoals.loadProgress>>),
     loadMonthForecasts({ linkId: link.id, through, country: ctx.country }),
     // GA-F6: bayrak kapalıysa sorgusuz null döner; hata da null'dır.
     loadAgentelseReportSection({
@@ -529,7 +534,11 @@ export async function loadMonthlyReportInput(
     lastYearMonthTotals(link.id, sameMonthLastYear(from)),
     loadMeasurementSummaryForLink(link.id),
     loadReportFindings(ctx, { from, to }, { insights, evaluated: true }),
-    GaGoals.loadTrackedGoals(ctx.projectId),
+    link.isPrimary
+      ? GaGoals.loadTrackedGoals(ctx.projectId)
+      : Promise.resolve(
+          [] as Awaited<ReturnType<typeof GaGoals.loadTrackedGoals>>,
+        ),
   ]);
   // Biten ayın hedef sonucu GaGoalProgress'ten değil, ayın günlük
   // toplamlarından hesaplanır (progress satırı yeni ayı taşıyor olabilir).
@@ -582,7 +591,11 @@ export async function loadPlanReportInput(
   const [months, trackedGoals, findingRows, window, forecasts, historyDays] =
     await Promise.all([
       loadMonthTotals(link.id, monthKeysBefore(month, PLAN_MONTHS)),
-      GaGoals.loadTrackedGoals(ctx.projectId),
+      link.isPrimary
+        ? GaGoals.loadTrackedGoals(ctx.projectId)
+        : Promise.resolve(
+            [] as Awaited<ReturnType<typeof GaGoals.loadTrackedGoals>>,
+          ),
       ctx.insights === "on"
         ? prisma.gaFinding.findMany({
             where: { linkId: link.id, mode: "live", status: "OPEN" },

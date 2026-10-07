@@ -2,7 +2,10 @@ import "server-only";
 
 import { buildWeeklyCard } from "@/lib/website-analytics/reports/build";
 import { workSummaryOf } from "@/lib/website-analytics/reports/copy";
-import { reportCommandId } from "@/lib/website-analytics/reports/ids";
+import {
+  reportCommandId,
+  reportScopeKey,
+} from "@/lib/website-analytics/reports/ids";
 import { websiteReportChatDigest } from "@/lib/website-analytics/reports/text";
 import type {
   NarrativeMode,
@@ -30,7 +33,12 @@ export const GaWeeklyReport = {
     insights: "on" | "pending" | "off",
     options: { narrative: NarrativeMode },
   ): Promise<ReportWriteResult> {
-    const commandId = reportCommandId("weekly", ctx.projectId, week.monday);
+    // GA-F8: ek mülkün kartı `<proje>_s_<bağ>` kapsamıyla ayrı kimlik alır.
+    const commandId = reportCommandId(
+      "weekly",
+      reportScopeKey(ctx.projectId, ctx.link),
+      week.monday,
+    );
     if (await websiteReportExists(commandId)) {
       return { result: "exists", narrative: null };
     }

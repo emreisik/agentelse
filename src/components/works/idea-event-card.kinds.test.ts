@@ -60,6 +60,15 @@ vi.mock("@/server/actions/seo-apply-actions", inert);
 vi.mock("@/server/actions/seo-geo-actions", inert);
 vi.mock("@/server/actions/ga-fix-actions", inert);
 vi.mock("@/server/actions/link-tracking-actions", inert);
+vi.mock("@/server/actions/gsc-sites-actions", inert);
+vi.mock("@/server/actions/gsc-bigquery-actions", inert);
+vi.mock("@/server/actions/gsc-split-test-actions", inert);
+vi.mock("@/server/actions/report-share-actions", inert);
+vi.mock("@/server/actions/bigquery-actions", inert);
+vi.mock("@/server/actions/funnel-actions", inert);
+vi.mock("@/server/actions/website-agency-actions", inert);
+vi.mock("@/server/actions/website-client-report-actions", inert);
+vi.mock("@/server/actions/website-property-actions", inert);
 vi.mock("@/components/workspace/output-preview-dialog", () => ({
   OutputPreviewDialog: () => null,
 }));

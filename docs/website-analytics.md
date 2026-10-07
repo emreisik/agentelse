@@ -140,6 +140,10 @@ Ambarın üstünde çalışan raporlama ve planlama katmanı [website-reports.md
 
 Bayrak kapalıyken bunların hiçbiri çalışmaz ve sorgu atmaz.
 
+## Ek mülkler ve /websites (GA-F8)
+
+Bir projede 1 ana + en çok 4 ek GA4 mülkü (`GA_AGENCY`). Website sayfası `?property=<id>` ile seçilen mülkü salt okunur gösterir (mülk seçici, tek istek kapsamlı seçili bağ). Uyarı çözümü bağ kapsamlıdır: `SiteAlerts.resolveMissing` `excludeDedupePrefixes` ile diğer motor bağlarının uyarılarına dokunmaz. Workspace genelinde OWNER/ADMIN için `/websites` görünümü vardır. Ayrıntı: [website-agency.md](website-agency.md).
+
 ## Testler
 
 `src/lib/website-analytics/*.test.ts` (katalog, yanıt ayrıştırma, dilimleme, kota, zamanlama, geri doldurma, dönemler, toplamlar, bayraklar), `google/pii.test.ts`, `sync/requests.test.ts` (toplu çağrı, bozuk rapor, kota bekletmesi, sunucu hatası, 429), `sync/warehouse.integration.test.ts` (gerçek Postgres, mock Google: uçtan uca senkron, yeniden yazımda kopya yok, Website raporu, Disconnect'te silme; CI'da koşar).

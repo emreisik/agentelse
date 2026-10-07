@@ -62,6 +62,9 @@ import { GaFindingEvaluator } from "@/server/website-analytics/analysis/evaluato
 import { GaSync } from "@/server/website-analytics/sync/runner";
 import { GaReports } from "@/server/website-analytics/reports/runner";
 import { GaAttributionLearnings } from "@/server/website-analytics/attribution/learnings";
+import { GoogleKeyRotation } from "@/server/integrations/google/key-rotation";
+import { GaBigQueryRunner } from "@/server/website-analytics/bigquery/runner";
+import { GaAgencyRetention } from "@/server/website-analytics/agency/retention";
 import { GscRetention } from "@/server/seo/retention";
 import { GscSync } from "@/server/seo/sync/runner";
 import { SeoCrawler } from "@/server/seo/crawl/crawler";
@@ -80,6 +83,8 @@ import { SeoReports } from "@/server/seo/reports/runner";
 import { SeoReportRetention } from "@/server/seo/reports/retention";
 import { SeoApply } from "@/server/seo/apply/seo-apply";
 import { SeoGeo } from "@/server/seo/geo/runner";
+import { GscAgency } from "@/server/seo/agency/jobs";
+import { ReportShareRetention } from "@/server/report-share/retention";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
 import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
 import { WorkPlanProgressor } from "@/server/agency/work-plans/work-plan-progressor";
@@ -349,6 +354,46 @@ registerAgencyTickStep({
 });
 // GA-F5 (GA_REPORTS=true): Website analytics sohbetine raporlar. Bağ başına CAS kilidi; sırasıyla hedeflerin günlük güncel değeri (ProjectGoal.currentValue + tahmin), kritik ölçüm uyarısı kartı, günlük nabız (yalnız not edilecek bir şey varsa), haftalık rapor (Pazartesi 08:00 proje saati, pazar verisi gelince), aylık rapor ve "Next month plan" (ayın 2'si 08:00). Bayrak kapalıyken sorgusuz 0 döner; odak ayarı kapatmaz.
 registerAgencyTickStep({ name: "ga-reports", run: () => GaReports.runDue(5) });
+// GA-F8: anahtar döndürme (GOOGLE_TOKEN_KEYS), BigQuery günlük toplamları
+// (GA_BIGQUERY) ve günlük gizlilik saklaması. İlk ikisi bayrak/env kapalıyken
+// sorgusuz 0 döner; "ga-agency-retention" BİLİNÇLİ olarak bayraktan bağımsız
+// günlük küresel süpürmedir (RISC olayları, BigQuery günleri, başıboş WEBSITE
+// paylaşımları). registerAgencyTickStep fırlatmayı yalıtmaz; bu yüzden hata
+// adı loglanıp 0 dönülür. Ek mülkler ga-sync/ga-health/ga-analyze/ga-reports
+// içinde koşar, ayrı adım yoktur.
+registerAgencyTickStep({
+  name: "google-key-rotation",
+  run: () =>
+    GoogleKeyRotation.runDue(25).catch((error) => {
+      console.error(
+        "[google-key-rotation] run failed:",
+        error instanceof Error ? error.name : "error",
+      );
+      return 0;
+    }),
+});
+registerAgencyTickStep({
+  name: "ga-bigquery",
+  run: () =>
+    GaBigQueryRunner.runDue(2).catch((error) => {
+      console.error(
+        "[ga-bigquery] run failed:",
+        error instanceof Error ? error.name : "error",
+      );
+      return 0;
+    }),
+});
+registerAgencyTickStep({
+  name: "ga-agency-retention",
+  run: () =>
+    GaAgencyRetention.runDue().catch((error) => {
+      console.error(
+        "[ga-agency-retention] run failed:",
+        error instanceof Error ? error.name : "error",
+      );
+      return 0;
+    }),
+});
 // GA-F6 (GA_UTM + GA_SYNC): etiketli linklerin (reklam, bio) sitedeki sonucu kapıyı geçerse sayısız GA4 Brand Brain öğrenmesi; günde bir (claimPeriodic), projeler güne göre döner; yerel geliştirmede yalnız GA_SYNC_DEV_PROJECTS. Bayrak kapalıyken sorgusuz 0 döner.
 registerAgencyTickStep({
   name: "ga-attribution-learnings",
@@ -426,6 +471,30 @@ registerAgencyTickStep({
 // SC-F8 (SEO_APPLY / SEO_GEO): WordPress değişikliklerinin uygulama/geri okuma/saklama adımı ve haftalık AI arama görünürlüğü denetimi. Bayrak kapalıyken hemen 0 döner ve sorgu yapmaz; odak ayarı bunları kapatmaz; yerel geliştirme süreci yalnız izinli projeleri işler.
 registerAgencyTickStep({ name: "seo-apply", run: () => SeoApply.runDue(5) });
 registerAgencyTickStep({ name: "seo-geo", run: () => SeoGeo.runDue(2) });
+// SC-F9 (GSC_AGENCY): ek siteler, sayfa grupları, BigQuery içe aktarımı ve bölünmüş testler; tek genel süre bütçesiyle. Bayrak kapalıyken sorgusuz 0 döner. registerAgencyTickStep fırlatmayı yalıtmaz; hata adı loglanıp 0 dönülür.
+registerAgencyTickStep({
+  name: "gsc-agency",
+  run: () =>
+    GscAgency.runDue().catch((error) => {
+      console.error(
+        "[gsc-agency] run failed:",
+        error instanceof Error ? error.name : "error",
+      );
+      return 0;
+    }),
+});
+// SC-F9: paylaşım saklaması ayrı adımdır: yalnız GA_AGENCY açıkken de çalışır ve bayraklar kapatıldıktan sonra kalan satırları günde bir kez temizler. GA-F8 ikinci bir saklama adımı kaydetmez.
+registerAgencyTickStep({
+  name: "report-share-retention",
+  run: () =>
+    ReportShareRetention.runDue().catch((error) => {
+      console.error(
+        "[report-share-retention] run failed:",
+        error instanceof Error ? error.name : "error",
+      );
+      return 0;
+    }),
+});
 registerAgencyTickStep({
   name: "signal-processing",
   run: () => IntelligenceEngine.processNewSignals(20),

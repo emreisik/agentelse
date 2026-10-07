@@ -83,6 +83,14 @@ Google, bir Google hesabı × OAuth istemcisi için en çok 100 canlı refresh t
 - Süresi dolan token: `invalid_grant` → bağlantı EXPIRED; REVOKED bir satır EXPIRED'a düşmez.
 - **Bağlı hesaplar kartı** (sağ panel, `brand-overview-cards.tsx`): süresi dolan GA4 / Search Console bağlantısı kaybolmaz, amber noktalı ikonla ve "yeniden bağlanmalı" ipucuyla görünür (`ConnectedAccountState` = `reconnect`). Plan metni İngilizceye çevirmeyi öneriyordu; sağ panelin tamamı Türkçe olduğu için kart Türkçe kaldı.
 
+## Anahtar sürümleme (`GOOGLE_TOKEN_KEYS`)
+
+`decryptGoogleSecret` / `encryptGoogleSecret` (`google/secret.ts`) Google token şifrelemesinin TEK giriş noktasıdır: `google-token.ts`, `google-disconnect.ts` ve OAuth callback bunları kullanır. Anahtar kimliği şifreli metnin önekindedir (`gk1:<keyId>:...`); env boşken çıktı eski biçimle aynıdır. Önce kod, sonra env (iki deploy). Ayrıntı: [website-agency.md](website-agency.md) bölüm 9.
+
+## RISC (Cross-Account Protection)
+
+`POST /api/webhooks/google-risc` (`GOOGLE_RISC`): Google hesabın erişimi iptal edildiğinde bağlantıyı hemen EXPIRED yapar, bağları `AUTH`'a çeker ve kritik uyarı açar; veri silinmez. Ayrıntı ve kayıt adımları: [website-agency.md](website-agency.md) bölüm 8 ve 10.
+
 ## Gizlilik
 
 - `privacy/page.tsx`'te yeni "Google Analytics and Search Console connections" bölümü var: iki izin ve amaçları, saklananlar, AI işleme, satılmaz, eğitimde kullanılmaz, insanlar okumaz, Disconnect ve Google hesabından kaldırma. Google'ın kalıbıyla Limited Use beyanı da burada. Sayfa tarihi 6 Ekim 2026.

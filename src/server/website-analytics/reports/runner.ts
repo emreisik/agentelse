@@ -5,6 +5,10 @@ import { randomUUID } from "node:crypto";
 import type { GaReportRun, Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import {
+  gaEngineLinkWhere,
+  isGaEngineLink,
+} from "@/lib/website-analytics/agency/scope";
 import { gaGlobalWorkAllowedHere } from "@/lib/website-analytics/flags";
 import {
   gaReportsDevProjectScope,
@@ -239,10 +243,13 @@ async function writePeriod(
   },
 ): Promise<ReportStepResult | null> {
   const key = attemptKey(input.variant, input.periodKey);
-  const mode = narrativeModeFor({
-    attempts: attemptsOf(state.attempts, key),
-    llmBudget: state.llmBudget,
-  });
+  // GA-F8: ek mülkün kartı LLM'siz, belirlenimci şablonla yazılır ("skip").
+  const mode = state.ctx.link.isPrimary
+    ? narrativeModeFor({
+        attempts: attemptsOf(state.attempts, key),
+        llmBudget: state.llmBudget,
+      })
+    : "skip";
   try {
     const written = await input.write(mode);
     if (written.narrative && LLM_STATUSES.has(written.narrative)) {
@@ -423,7 +430,7 @@ async function runLink(
   const link = await prisma.gaPropertyLink.findUnique({
     where: { id: linkId },
   });
-  if (!link || !link.isPrimary) return "skipped";
+  if (!link || !isGaEngineLink(link)) return "skipped";
   if (!gaReportsEnabledFor(link.projectId)) return "skipped";
   await ensureRun(link);
 
@@ -478,14 +485,23 @@ async function runLink(
         fail(state, link.id, "insights", error);
       }
     }
-    const stages: [string, (state: RunState) => Promise<void>][] = [
-      ["goals", stageGoals],
-      ["alerts", stageAlerts],
-      ["pulse", stagePulse],
-      ["weekly", stageWeekly],
-      ["monthly", stageMonthly],
-      ["plan", stagePlan],
-    ];
+    // GA-F8: hedef, uyarı kartı, nabız ve plan proje düzeyindedir; ek mülk
+    // yalnız haftalık ve aylık kartını yazar (lastGoalsDay, lastPulse*,
+    // lastAlertScanAt ve lastPlanMonth'a dokunulmaz).
+    const stages: [string, (state: RunState) => Promise<void>][] =
+      link.isPrimary
+        ? [
+            ["goals", stageGoals],
+            ["alerts", stageAlerts],
+            ["pulse", stagePulse],
+            ["weekly", stageWeekly],
+            ["monthly", stageMonthly],
+            ["plan", stagePlan],
+          ]
+        : [
+            ["weekly", stageWeekly],
+            ["monthly", stageMonthly],
+          ];
     for (const [name, stage] of stages) {
       try {
         await stage(state);
@@ -533,7 +549,7 @@ async function candidateLinkIds(
   const projectFilter = scope ? { projectId: { in: scope } } : {};
   const fresh = await prisma.gaPropertyLink.findMany({
     where: {
-      isPrimary: true,
+      ...gaEngineLinkWhere(),
       lastDailyDate: { not: null },
       reportRun: null,
       ...projectFilter,
@@ -547,7 +563,7 @@ async function candidateLinkIds(
   const seen = await prisma.gaReportRun.findMany({
     where: {
       link: {
-        isPrimary: true,
+        ...gaEngineLinkWhere(),
         lastDailyDate: { not: null },
         ...projectFilter,
       },

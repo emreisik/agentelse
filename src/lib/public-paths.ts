@@ -22,6 +22,10 @@ export function isPublicPath(pathname: string): boolean {
     // jetonunu, POST X-Hub-Signature-256 imzasını kendisi doğrular, aksi hâlde
     // 403 / 401 döner.
     pathname === "/api/webhooks/meta-ads" ||
+    // Google RISC (Cross-Account Protection) push'u: oturum yok; route Google'ın
+    // RS256 imzalı jetonunu kendisi doğrular, GOOGLE_RISC kapalıyken 404,
+    // geçersiz jetonda 400 döner.
+    pathname === "/api/webhooks/google-risc" ||
     pathname === "/api/auth" ||
     pathname.startsWith("/api/auth/") ||
     // Has its own signed-token verification (see
@@ -39,6 +43,10 @@ export function isPublicPath(pathname: string): boolean {
     // Canlılık ve işçi nabzı ucu: Railway healthcheck'i ve harici monitör
     // oturumsuz çağırır; yanıt yalnız durum taşır (api/health/route.ts).
     pathname === "/api/health" ||
+    // SC-F9 / GA-F8: salt-okunur rapor paylaşım sayfası ve logosu; oturum yok,
+    // her biri kendi imzalı jetonunu doğrular (src/server/report-share),
+    // geçersizse aynı 404. Yalnız "/r/" öneki: "/r" ve "/reports" korunur.
+    pathname.startsWith("/r/") ||
     pathname === "/icon" ||
     pathname === "/apple-icon"
   );

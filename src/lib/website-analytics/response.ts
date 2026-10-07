@@ -63,7 +63,7 @@ function number(value: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function parseQuota(raw: GaRawReport["propertyQuota"]): GaPropertyQuota | null {
+export function parseQuota(raw: GaRawReport["propertyQuota"]): GaPropertyQuota | null {
   if (!raw) return null;
   const quota: GaPropertyQuota = {};
   for (const key of GA_QUOTA_KEYS) {

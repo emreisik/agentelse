@@ -17,6 +17,7 @@ import {
   gscSyncAllowedFor,
 } from "@/lib/seo/flags";
 import { heavyBlocked, quotaStateOf } from "@/lib/seo/governor";
+import { GscAgencyFlags } from "@/lib/seo/agency/flags";
 import {
   GSC_DAILY_WINDOW_DAYS,
   GSC_REFRESH_BUDGET_MS,
@@ -59,6 +60,11 @@ import { syncWeekly } from "./weekly";
 
 const CANDIDATES = 25;
 const BACKFILL_CANDIDATES = 10;
+// SC-F9: ikincil siteler ayrı küçük sorgulardan gelir, birincil pencereyi
+// kalabalıklaştırmaz; tick başına en çok SECONDARY_PER_TICK'i işlenir.
+const SECONDARY_CANDIDATES = 6;
+const SECONDARY_BACKFILL_CANDIDATES = 3;
+const SECONDARY_PER_TICK = 2;
 const LINKS_EVERY_MS = 2 * 60_000;
 const STOP_WAIT_MS = 6 * 3_600_000;
 const QUOTA_FALLBACK_MS = 15 * 60_000;
@@ -161,30 +167,59 @@ async function candidateLinks(now: Date): Promise<GscSiteLink[]> {
     OR: [{ syncLeaseUntil: null }, { syncLeaseUntil: { lt: now } }],
     ...(restricted ? { projectId: { in: restricted } } : {}),
   };
-  const [oldest, backfilling] = await Promise.all([
-    prisma.gscSiteLink.findMany({
-      where,
-      orderBy: [{ lastDailyAt: { sort: "asc", nulls: "first" } }],
-      take: CANDIDATES,
-    }),
-    // Ajans ölçeğinde geri dolduran bağlar aç kalmasın.
-    prisma.gscSiteLink.findMany({
-      where: { ...where, backfillDoneAt: null },
-      orderBy: [{ updatedAt: "asc" }],
-      take: BACKFILL_CANDIDATES,
-    }),
-  ]);
-  const seen = new Set<string>();
-  const links = [...oldest, ...backfilling].filter((link) => {
-    if (seen.has(link.id)) return false;
-    seen.add(link.id);
-    return true;
-  });
+  const agency = GscAgencyFlags.on();
+  const secondaryWhere: Prisma.GscSiteLinkWhereInput = {
+    isPrimary: false,
+    isSecondary: true,
+    isMock: gscMockMode(),
+    OR: [{ syncLeaseUntil: null }, { syncLeaseUntil: { lt: now } }],
+    ...(restricted ? { projectId: { in: restricted } } : {}),
+  };
+  const [oldest, backfilling, secondaryOldest, secondaryBackfilling] =
+    await Promise.all([
+      prisma.gscSiteLink.findMany({
+        where,
+        orderBy: [{ lastDailyAt: { sort: "asc", nulls: "first" } }],
+        take: CANDIDATES,
+      }),
+      // Ajans ölçeğinde geri dolduran bağlar aç kalmasın.
+      prisma.gscSiteLink.findMany({
+        where: { ...where, backfillDoneAt: null },
+        orderBy: [{ updatedAt: "asc" }],
+        take: BACKFILL_CANDIDATES,
+      }),
+      // SC-F9: bayrak kapalıyken bu iki sorgu hiç çalışmaz.
+      agency
+        ? prisma.gscSiteLink.findMany({
+            where: secondaryWhere,
+            orderBy: [{ lastDailyAt: { sort: "asc", nulls: "first" } }],
+            take: SECONDARY_CANDIDATES,
+          })
+        : Promise.resolve([] as GscSiteLink[]),
+      agency
+        ? prisma.gscSiteLink.findMany({
+            where: { ...secondaryWhere, backfillDoneAt: null },
+            orderBy: [{ updatedAt: "asc" }],
+            take: SECONDARY_BACKFILL_CANDIDATES,
+          })
+        : Promise.resolve([] as GscSiteLink[]),
+    ]);
+  const dedupe = (rows: GscSiteLink[]): GscSiteLink[] => {
+    const seen = new Set<string>();
+    return rows.filter((link) => {
+      if (seen.has(link.id)) return false;
+      seen.add(link.id);
+      return true;
+    });
+  };
+  const links = dedupe([...oldest, ...backfilling]);
   // Günlük çekimi gelenler önce.
   const dailyDue = (link: GscSiteLink) => stagesFor(link, now).daily;
+  // İkincil siteler HER ZAMAN bütün birincil adaylardan sonra gelir.
   return [
     ...links.filter(dailyDue),
     ...links.filter((link) => !dailyDue(link)),
+    ...dedupe([...secondaryOldest, ...secondaryBackfilling]),
   ];
 }
 
@@ -229,9 +264,11 @@ export const GscSync = {
     const projectById = new Map(projects.map((row) => [row.id, row]));
 
     let processed = 0;
+    let secondaryDone = 0;
     for (const link of candidates) {
       if (processed >= limit || Date.now() >= tickDeadline) break;
       if (!gscSyncAllowedFor(link.projectId)) continue;
+      if (link.isSecondary && secondaryDone >= SECONDARY_PER_TICK) continue;
       const project = projectById.get(link.projectId);
       if (!project) continue;
       const credential = credentialById.get(link.credentialId);
@@ -264,6 +301,7 @@ export const GscSync = {
       const owner = `gsc-sync:${process.pid}:${now.getTime()}:${link.id}`;
       if (!(await claim(link.id, owner, now))) continue;
       processed += 1;
+      if (link.isSecondary) secondaryDone += 1;
       await this.syncLink(link, credential, stages, owner, now, {
         lane: "P2",
         requests: GSC_RUN_REQUESTS.P2,

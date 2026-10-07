@@ -113,6 +113,18 @@ describe("GaRetention.runDue", () => {
     spy.mockRestore();
   });
 
+  it("never sweeps extra properties as retired links", async () => {
+    mocks.linkFindMany.mockResolvedValue([]);
+    const now = new Date("2026-10-07T03:00:00Z");
+    await GaRetention.runDue(now);
+    const retired = mocks.linkDeleteMany.mock.calls
+      .map(([arg]) => arg.where)
+      .find((where) => where.isPrimary === false);
+    expect(retired).toBeDefined();
+    expect(retired.isSecondary).toBe(false);
+    expect(retired.updatedAt.lt).toBeInstanceOf(Date);
+  });
+
   it("does nothing when the daily claim is taken", async () => {
     mocks.claim.mockResolvedValue(false);
     expect(await GaRetention.runDue()).toBe(0);

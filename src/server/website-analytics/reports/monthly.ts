@@ -2,7 +2,10 @@ import "server-only";
 
 import { buildMonthlyCard } from "@/lib/website-analytics/reports/build";
 import { workSummaryOf } from "@/lib/website-analytics/reports/copy";
-import { reportCommandId } from "@/lib/website-analytics/reports/ids";
+import {
+  reportCommandId,
+  reportScopeKey,
+} from "@/lib/website-analytics/reports/ids";
 import { buildPlanCard } from "@/lib/website-analytics/reports/plan";
 import { websiteReportChatDigest } from "@/lib/website-analytics/reports/text";
 import type {
@@ -36,7 +39,12 @@ export const GaMonthlyReport = {
     insights: "on" | "pending" | "off",
     options: { narrative: NarrativeMode },
   ): Promise<ReportWriteResult> {
-    const commandId = reportCommandId("monthly", ctx.projectId, month);
+    // GA-F8: ek mülkün kartı `<proje>_s_<bağ>` kapsamıyla ayrı kimlik alır.
+    const commandId = reportCommandId(
+      "monthly",
+      reportScopeKey(ctx.projectId, ctx.link),
+      month,
+    );
     if (await websiteReportExists(commandId)) {
       return { result: "exists", narrative: null };
     }

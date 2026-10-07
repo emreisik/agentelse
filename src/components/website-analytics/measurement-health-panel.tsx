@@ -77,6 +77,10 @@ function recheckLocked(availableAt: string | null): boolean {
 
 const LOCKED_TITLE = "Available in a few minutes";
 
+// GA-F8: ek mülkte yazan düğme yok; not yalnız "Check again" düğmesinin yerinde.
+const READ_ONLY_NOTE =
+  "Changes to this property are made on the main property view.";
+
 function RecheckForm({
   projectId,
   checkKey,
@@ -158,6 +162,7 @@ function IssueRow({
   locked,
   offers = [],
   canManageFixes = true,
+  readOnly = false,
 }: {
   projectId: string;
   check: MeasurementCheckView;
@@ -166,6 +171,7 @@ function IssueRow({
   // GA-F7: bu kontrole bağlı "Fix it for me" teklifleri
   offers?: GaFixOffer[];
   canManageFixes?: boolean;
+  readOnly?: boolean;
 }) {
   return (
     <li className="space-y-2 py-3 first:pt-0 last:pb-0">
@@ -180,36 +186,40 @@ function IssueRow({
         {describeCheck(check, { timeZone })}
       </p>
       <Guide guideId={check.guideId} />
-      {offers.map((offer) => (
-        <FixItButton
-          key={offer.id}
-          projectId={projectId}
-          offer={offer}
-          canManage={canManageFixes}
-        />
-      ))}
-      <div className="flex flex-wrap items-center gap-2">
-        <RecheckForm
-          projectId={projectId}
-          checkKey={check.key}
-          locked={locked}
-          label="I fixed it"
-          successMessage="Thanks — we checked again. We'll confirm with the next day's data."
-          variant="outline"
-        />
-        {check.alertId ? (
-          <ActionForm
-            action={muteMeasurementAlertAction}
-            successMessage="Muted for 7 days"
-          >
-            <input type="hidden" name="projectId" value={projectId} />
-            <input type="hidden" name="alertId" value={check.alertId} />
-            <SubmitButton variant="ghost" size="xs">
-              Mute 7 days
-            </SubmitButton>
-          </ActionForm>
-        ) : null}
-      </div>
+      {readOnly
+        ? null
+        : offers.map((offer) => (
+            <FixItButton
+              key={offer.id}
+              projectId={projectId}
+              offer={offer}
+              canManage={canManageFixes}
+            />
+          ))}
+      {readOnly ? null : (
+        <div className="flex flex-wrap items-center gap-2">
+          <RecheckForm
+            projectId={projectId}
+            checkKey={check.key}
+            locked={locked}
+            label="I fixed it"
+            successMessage="Thanks — we checked again. We'll confirm with the next day's data."
+            variant="outline"
+          />
+          {check.alertId ? (
+            <ActionForm
+              action={muteMeasurementAlertAction}
+              successMessage="Muted for 7 days"
+            >
+              <input type="hidden" name="projectId" value={projectId} />
+              <input type="hidden" name="alertId" value={check.alertId} />
+              <SubmitButton variant="ghost" size="xs">
+                Mute 7 days
+              </SubmitButton>
+            </ActionForm>
+          ) : null}
+        </div>
+      )}
     </li>
   );
 }
@@ -241,11 +251,14 @@ export function MeasurementHealthPanel({
   health,
   fixOffers = [],
   canManageFixes = true,
+  readOnly = false,
 }: {
   projectId: string;
   health: MeasurementHealthView;
   fixOffers?: GaFixOffer[];
   canManageFixes?: boolean;
+  // GA-F8: ek mülk; yazan form/düğme çizilmez.
+  readOnly?: boolean;
 }) {
   const { summary, timeZone } = health;
   const issues = needsAttention(health.checks);
@@ -281,14 +294,20 @@ export function MeasurementHealthPanel({
               : "Not checked yet"}
           </p>
         </div>
-        <RecheckForm
-          projectId={projectId}
-          checkKey={null}
-          locked={locked}
-          label="Check again"
-          successMessage="Checked again. Data checks update when new Google Analytics data arrives."
-          variant="outline"
-        />
+        {readOnly ? (
+          <p className="max-w-xs text-xs text-muted-foreground">
+            {READ_ONLY_NOTE}
+          </p>
+        ) : (
+          <RecheckForm
+            projectId={projectId}
+            checkKey={null}
+            locked={locked}
+            label="Check again"
+            successMessage="Checked again. Data checks update when new Google Analytics data arrives."
+            variant="outline"
+          />
+        )}
       </div>
 
       <div>
@@ -306,6 +325,7 @@ export function MeasurementHealthPanel({
                 locked={locked}
                 offers={fixOffers.filter((o) => o.checkKey === check.key)}
                 canManageFixes={canManageFixes}
+                readOnly={readOnly}
               />
             ))}
           </ul>

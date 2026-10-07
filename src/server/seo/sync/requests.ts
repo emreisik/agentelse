@@ -17,6 +17,7 @@ import {
   type GscPagedResult,
 } from "@/server/integrations/search-console/search-analytics";
 import { GoogleApiError } from "@/server/integrations/google/errors";
+import { GscAgencyFlags } from "@/lib/seo/agency/flags";
 
 import type { GscSyncContext } from "./context";
 
@@ -117,7 +118,10 @@ async function recordQuotaError(
   await prisma.gscSiteLink.updateMany({
     where: {
       siteUrl: ctx.link.siteUrl,
-      isPrimary: true,
+      // SC-F9: ikincil siteler aynı siteUrl'nin kota durumunu paylaşır.
+      ...(GscAgencyFlags.on()
+        ? { OR: [{ isPrimary: true }, { isSecondary: true }] }
+        : { isPrimary: true }),
       isMock: ctx.link.isMock,
     },
     data: {

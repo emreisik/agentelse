@@ -59,6 +59,22 @@ describe("data deletion page", () => {
     );
   });
 
+  it("says what Disconnect does to extra properties, client report links, BigQuery totals and funnels (GA-F8)", async () => {
+    const html = (await render()).replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+    expect(html).toContain("every extra property you added");
+    expect(html).toContain("client report links");
+    expect(html).toContain("BigQuery totals");
+    expect(html).toContain("saved funnels");
+  });
+
+  it("says what Disconnect does to BigQuery summaries, split-test results and report share links for Search Console (SC-F9)", async () => {
+    const html = (await render()).replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+    expect(html).toContain("Disconnecting Search Console also deletes the BigQuery export summaries");
+    expect(html).toContain("split-test results");
+    expect(html).toContain("client report share links");
+    expect(html).toContain("page-group settings");
+  });
+
   it("shows the status of a request opened with its signed confirmation code", async () => {
     const code = createDeletionCode(1, "auth-secret", now);
     const html = await render(code);

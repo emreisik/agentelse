@@ -254,6 +254,19 @@ export default async function DataDeletionPage({
             changes; to also remove the permission at Google, remove Agentelse
             in your Google Account settings (Security, third-party access).
           </p>
+          <p>
+            Disconnecting Google Analytics also deletes every extra property you
+            added, the client report links you created for it, any BigQuery
+            totals Agentelse read for it and your saved funnels, right away. The
+            agency name, accent color, footer and logo choice used on client
+            reports are not Google data and stay until you change them.
+          </p>
+          <p>
+            Disconnecting Search Console also deletes the BigQuery export
+            summaries Agentelse imported, your split-test results, the client
+            report share links you created, and the BigQuery and page-group
+            settings you entered, right away.
+          </p>
           <h2 className="mt-6 text-lg font-semibold text-foreground">
             How to delete your WordPress connection data
           </h2>

@@ -116,6 +116,37 @@ describe("loadWebsiteReportArchive", () => {
     expect(args.take).toBe(12);
   });
 
+  it("keeps today's exact where without a link filter", async () => {
+    mocks.commandFindMany.mockResolvedValue([]);
+    await loadWebsiteReportArchive("p1", undefined, { linkId: null });
+    await loadWebsiteReportArchive("p1", 12, {});
+    const [first, second] = mocks.commandFindMany.mock.calls.map(
+      (call) => call[0] as { where: Record<string, unknown> },
+    );
+    expect(Object.keys(first?.where ?? {})).toEqual([
+      "projectId",
+      "workId",
+      "source",
+      "OR",
+    ]);
+    expect(second?.where).toEqual(first?.where);
+  });
+
+  it("filters by link inside the query (Json path), ANDed with the prefixes", async () => {
+    mocks.commandFindMany.mockResolvedValue([]);
+    await loadWebsiteReportArchive("p1", undefined, { linkId: "l2" });
+    const args = mocks.commandFindMany.mock.calls[0]?.[0] as {
+      where: Record<string, unknown>;
+      take: number;
+    };
+    expect(args.where.parsedIntent).toEqual({
+      path: ["card", "linkId"],
+      equals: "l2",
+    });
+    expect(args.where.OR).toHaveLength(3);
+    expect(args.take).toBe(12);
+  });
+
   it("drops invalid and non-archive cards and links to the chat", async () => {
     const weekly = sampleWeeklyCard();
     const plan = samplePlanCard();

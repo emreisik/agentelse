@@ -105,6 +105,18 @@ function FindingButton({
   );
 }
 
+// GA-F8: ek mülkte yazan düğme çizilmez; not yalnız düğmenin yerinde.
+const READ_ONLY_NOTE =
+  "Changes to this property are made on the main property view.";
+
+function hasLiveActions(finding: GaFindingView): boolean {
+  if (finding.mode !== "live") return false;
+  return (
+    finding.status === "OPEN" ||
+    (finding.status === "ACCEPTED" && finding.evaluable)
+  );
+}
+
 function LiveActions({
   projectId,
   finding,
@@ -198,10 +210,12 @@ function FindingItem({
   projectId,
   finding,
   view,
+  readOnly,
 }: {
   projectId: string;
   finding: GaFindingView;
   view: WebsiteInsightsView;
+  readOnly: boolean;
 }) {
   const title = findingTitle(finding);
   const confidence = findingConfidenceText(finding.confidence);
@@ -275,16 +289,24 @@ function FindingItem({
         ) : null}
         {status ? <p className="text-muted-foreground">{status}</p> : null}
       </div>
-      <div className="space-y-2 pl-3.5">
-        <LiveActions projectId={projectId} finding={finding} title={title} />
-        {view.review ? (
-          <ReviewActions
-            projectId={projectId}
-            finding={finding}
-            title={title}
-          />
-        ) : null}
-      </div>
+      {readOnly ? (
+        hasLiveActions(finding) || view.review ? (
+          <p className="pl-3.5 text-[11px] text-muted-foreground">
+            {READ_ONLY_NOTE}
+          </p>
+        ) : null
+      ) : (
+        <div className="space-y-2 pl-3.5">
+          <LiveActions projectId={projectId} finding={finding} title={title} />
+          {view.review ? (
+            <ReviewActions
+              projectId={projectId}
+              finding={finding}
+              title={title}
+            />
+          ) : null}
+        </div>
+      )}
     </article>
   );
 }
@@ -293,10 +315,12 @@ function FindingList({
   projectId,
   findings,
   view,
+  readOnly,
 }: {
   projectId: string;
   findings: GaFindingView[];
   view: WebsiteInsightsView;
+  readOnly: boolean;
 }) {
   return (
     <div className="divide-y divide-foreground/10">
@@ -306,6 +330,7 @@ function FindingList({
           projectId={projectId}
           finding={finding}
           view={view}
+          readOnly={readOnly}
         />
       ))}
     </div>
@@ -315,9 +340,11 @@ function FindingList({
 export function WebsiteInsights({
   projectId,
   view,
+  readOnly = false,
 }: {
   projectId: string;
   view: WebsiteInsightsView;
+  readOnly?: boolean;
 }) {
   return (
     <section
@@ -344,6 +371,7 @@ export function WebsiteInsights({
               projectId={projectId}
               findings={view.changed}
               view={view}
+              readOnly={readOnly}
             />
           ) : (
             <p className="text-sm text-muted-foreground">
@@ -358,6 +386,7 @@ export function WebsiteInsights({
               projectId={projectId}
               findings={view.opportunities}
               view={view}
+              readOnly={readOnly}
             />
           ) : (
             <p className="text-sm text-muted-foreground">
@@ -373,6 +402,7 @@ export function WebsiteInsights({
                 projectId={projectId}
                 findings={view.inProgress}
                 view={view}
+                readOnly={readOnly}
               />
             </div>
           ) : null}

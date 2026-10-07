@@ -18,7 +18,7 @@ vi.mock("@/server/chat/content-plan", () => ({
   getProjectTimezone: vi.fn(),
 }));
 
-const { loadReportFindings } = await import("./inputs");
+const { loadReportFindings, reportLinkInfo } = await import("./inputs");
 
 import type { GaReportContext } from "./inputs";
 
@@ -82,5 +82,33 @@ describe("loadReportFindings", () => {
     });
     expect(result.outcomeCounts).toEqual({ worked: 2, didnt: 1, inconclusive: 0 });
     expect(mocks.findMany).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("reportLinkInfo (GA-F8)", () => {
+  const base = {
+    projectId: "p1",
+    propertyTimeZone: "UTC",
+    completeThrough: "2026-10-04",
+  };
+
+  it("carries the property id only for an extra property", () => {
+    const extra = {
+      ...base,
+      link: {
+        id: "l2",
+        propertyId: "999",
+        isPrimary: false,
+        propertyName: "Shop",
+        currencyCode: "EUR",
+        isMock: false,
+      },
+    } as unknown as GaReportContext;
+    const main = {
+      ...base,
+      link: { ...extra.link, id: "l1", propertyId: "123", isPrimary: true },
+    } as unknown as GaReportContext;
+    expect(reportLinkInfo(extra).propertyId).toBe("999");
+    expect(reportLinkInfo(main).propertyId).toBeNull();
   });
 });

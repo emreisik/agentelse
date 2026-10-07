@@ -36,10 +36,27 @@ export type GscPeriodCoverage = {
   rowImpressions: number;
 };
 
+// SC-F9: istek kapsamlı site görünümü (site-context.ts) React cache() kullanır;
+// işçi sürecine ulaşan bu dosya ona STATİK bağımlı olamaz (worker-graph.test.ts).
+// site-context kendini yalnız sayfa grafiğinde yüklenince kaydeder; işçide ve
+// sunucu eylemlerinde çözümleyici yoktur, davranış değişmez.
+type ViewedGscLinkResolver = (projectId: string) => GscSiteLink | null;
+let viewedResolver: ViewedGscLinkResolver | null = null;
+
+export function registerViewedGscLinkResolver(
+  resolver: ViewedGscLinkResolver,
+): void {
+  viewedResolver = resolver;
+}
+
 // Projenin şu anki birincil bağı; yalnız geçerli kipin (mock/canlı) bağları.
 export async function primaryGscLink(
   projectId: string,
 ): Promise<GscSiteLink | null> {
+  // GSC_AGENCY: Search sayfası ikincil bir siteyi görüntülürken o bağ döner;
+  // istek kapsamlıdır, sunucu eylemleri etkilenmez.
+  const viewed = viewedResolver?.(projectId) ?? null;
+  if (viewed) return viewed;
   return prisma.gscSiteLink.findFirst({
     where: { projectId, isPrimary: true, isMock: gscMockMode() },
     orderBy: { updatedAt: "desc" },

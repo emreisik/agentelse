@@ -13,6 +13,10 @@ import {
   gaCatalogCheckDue,
   gaDisabledReports,
 } from "@/lib/website-analytics/catalog-state";
+import {
+  gaAgencyEnabled,
+  gaAgencyEnabledFor,
+} from "@/lib/website-analytics/agency/flags";
 import { hourInTimezone, safeTimezone } from "@/lib/website-analytics/days";
 import { GaFlags, gaSyncAllowedFor } from "@/lib/website-analytics/flags";
 import type {
@@ -173,11 +177,42 @@ export const GaSync = {
       orderBy: [{ lastDailyAt: { sort: "asc", nulls: "first" } }],
       take: CANDIDATES,
     });
-    if (candidates.length === 0) {
-      await Heartbeat.ok(HEARTBEAT_KEY, now);
-      return 0;
+    let processed = 0;
+    if (candidates.length > 0) {
+      processed = await this.runBatch(candidates, limit, now, false);
     }
+    // GA-F8: ek mülkler birincillerden sonra gelir ve her turda en az bir yer
+    // alır (birincil sırayı doldursa da açlıktan ölmesinler; 1 taşma kabul).
+    if (gaAgencyEnabled()) {
+      processed += await this.runSecondary(Math.max(1, limit - processed), now);
+    }
+    await Heartbeat.ok(HEARTBEAT_KEY, now);
+    return processed;
+  },
 
+  // Ek (isSecondary) mülkler: yalnız günlük/dilim aşamaları; katalog denetimi
+  // ve eklenti aşamaları yok. En eski çekilen önce.
+  async runSecondary(limit: number, now: Date): Promise<number> {
+    const candidates = await prisma.gaPropertyLink.findMany({
+      where: {
+        isSecondary: true,
+        OR: [{ syncLeaseUntil: null }, { syncLeaseUntil: { lt: now } }],
+      },
+      orderBy: [{ lastDailyAt: { sort: "asc", nulls: "first" } }],
+      take: CANDIDATES,
+    });
+    if (candidates.length === 0) return 0;
+    return this.runBatch(candidates, limit, now, true);
+  },
+
+  // Aday listesinin ortak gövdesi: kimlik bilgisi/proje okuması, aşama
+  // seçimi, kilit ve senkron. `secondary` ek mülk geçişidir.
+  async runBatch(
+    candidates: GaPropertyLink[],
+    limit: number,
+    now: Date,
+    secondary: boolean,
+  ): Promise<number> {
     const [credentials, projects] = await Promise.all([
       prisma.integrationCredential.findMany({
         where: { id: { in: candidates.map((link) => link.credentialId) } },
@@ -195,6 +230,7 @@ export const GaSync = {
     for (const link of candidates) {
       if (processed >= limit) break;
       if (!gaSyncAllowedFor(link.projectId)) continue;
+      if (secondary && !gaAgencyEnabledFor(link.projectId)) continue;
       const project = projectById.get(link.projectId);
       if (!project) continue;
       const credential = credentialById.get(link.credentialId);
@@ -215,7 +251,11 @@ export const GaSync = {
         continue;
       }
       const paused = project.status === "PAUSED" || project.status === "CLOSED";
-      const stages = stagesFor(link, now, paused);
+      const due = stagesFor(link, now, paused);
+      // Ek mülkte katalog denetimi ve eklentiler hiç çalışmaz.
+      const stages: GaTurnStages = secondary
+        ? { ...due, catalog: false, addons: false }
+        : due;
       if (!anyGaStageDue(stages) && !stages.catalog && !stages.addons) {
         continue;
       }
@@ -225,7 +265,6 @@ export const GaSync = {
       processed += 1;
       await this.syncLink(link, credential, stages, owner, now, "P2");
     }
-    await Heartbeat.ok(HEARTBEAT_KEY, now);
     return processed;
   },
 

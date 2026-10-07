@@ -3,7 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { decryptSecret } from "@/server/security/crypto";
+import { decryptGoogleSecret } from "@/server/integrations/google/secret";
 import { forgetGoogleAccessTokens } from "@/server/integrations/google/access-token";
 import { revokeGoogleToken } from "@/server/integrations/google/oauth";
 import {
@@ -23,6 +23,7 @@ import { deleteGaReportDataForCredential } from "@/server/website-analytics/repo
 import { gaFixesEnabled } from "@/lib/website-analytics/fixes/flags";
 import { cancelPendingGaFixesForCredential } from "@/server/website-analytics/fixes/cleanup";
 import { forgetSeoGoalValues } from "@/server/seo/reports/goals";
+import { forgetAgencyForCredential } from "@/server/seo/agency/forget";
 
 // Google bağlantısını koparır (GA ya da Search Console; ikisi ayrı ayrı).
 // google-token.ts gibi bir düzenleme adımıdır: REST çağrısı çekirdekte, DB
@@ -102,7 +103,7 @@ export async function disconnectGoogleCredential(
     const others = await sameAccountConnections(target);
     if (shouldRevokeAtGoogle(target, others)) {
       try {
-        await revokeGoogleToken(decryptSecret(target.encryptedSecret));
+        await revokeGoogleToken(decryptGoogleSecret(target.encryptedSecret));
         revokedAtGoogle = true;
       } catch (error) {
         // İptal en iyi çabadır: başarısız olsa da bizim token'ımız aşağıda
@@ -234,6 +235,13 @@ export async function disconnectGoogleCredential(
       );
     },
   );
+  // SC-F9: paylaşım bağlantıları, sayfa grubu kuralları, ek site listesi ve BigQuery kaynakları Disconnect'te projeye göre hemen silinir (bağ satırı kalmamış olsa bile); bölünmüş testler bağla cascade ile gider. Bayraktan bağımsızdır; Analytics kimliğinde sıfır döner.
+  await forgetAgencyForCredential(credential.id).catch((error: unknown) => {
+    console.error(
+      "[google-disconnect] search agency data could not be cleared:",
+      error instanceof Error ? error.name : error,
+    );
+  });
   await prisma.gscSiteLink.deleteMany({
     where: { credentialId: credential.id },
   });

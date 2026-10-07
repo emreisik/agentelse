@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { decryptSecret } from "@/server/security/crypto";
+import { decryptGoogleSecret } from "@/server/integrations/google/secret";
 import {
   GoogleApiError,
   refreshGoogleAccessToken,
@@ -33,7 +33,7 @@ export async function getFreshGoogleAccessToken(credential: {
   try {
     return await cachedGoogleAccessToken(
       googleAccessTokenKey(credential.id, credential.encryptedSecret),
-      () => refreshGoogleAccessToken(decryptSecret(credential.encryptedSecret)),
+      () => refreshGoogleAccessToken(decryptGoogleSecret(credential.encryptedSecret)),
     );
   } catch (error) {
     if (

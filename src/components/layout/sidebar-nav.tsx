@@ -11,17 +11,23 @@ import {
   Ellipsis,
   Gem,
   Globe,
+  LayoutGrid,
   Library,
   Megaphone,
   MessagesSquare,
   Plug,
   Search,
+  SearchCheck,
   Settings2,
   Sparkles,
   type LucideIcon,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import {
+  SEARCH_OVERVIEW_HREF,
+  WEBSITES_OVERVIEW_HREF,
+} from "@/lib/website-analytics/agency/routes";
 import {
   MODULE_KEYS,
   MODULES,
@@ -60,6 +66,7 @@ type NavItem = {
 } & (
   | { panel: PanelKey; sub?: string }
   | { route: "takvim" | "integrations" | "ads" | "site" | "arama" }
+  | { href: string }
   | { home: true }
 );
 
@@ -136,14 +143,63 @@ function withSearch(groups: NavItem[][]): NavItem[][] {
   );
 }
 
+// GSC_AGENCY (SC-F9): the workspace-wide Search overview (every client site),
+// for workspace owners and admins only. Named "Search overview" so it does not
+// repeat the project's own "Search" line; it sits right before Connectors,
+// after Search.
+const SEARCH_OVERVIEW_ITEM: NavItem = {
+  label: "Search overview",
+  icon: SearchCheck,
+  href: SEARCH_OVERVIEW_HREF,
+};
+
+function withSearchOverview(groups: NavItem[][]): NavItem[][] {
+  return groups.map((group, index) =>
+    index === 0
+      ? group.flatMap((item) =>
+          "route" in item && item.route === "integrations"
+            ? [SEARCH_OVERVIEW_ITEM, item]
+            : [item],
+        )
+      : group,
+  );
+}
+
+// GA_AGENCY (GA-F8): the workspace-wide "Websites" overview, for workspace
+// owners and admins only. A workspace page, not a project one, so it carries
+// its own href. It sits right before Connectors, after Search.
+const WEBSITES_ITEM: NavItem = {
+  label: "Websites",
+  icon: LayoutGrid,
+  href: WEBSITES_OVERVIEW_HREF,
+};
+
+function withWebsites(groups: NavItem[][]): NavItem[][] {
+  return groups.map((group, index) =>
+    index === 0
+      ? group.flatMap((item) =>
+          "route" in item && item.route === "integrations"
+            ? [WEBSITES_ITEM, item]
+            : [item],
+        )
+      : group,
+  );
+}
+
 export function exploreGroups(
   modulesUi: boolean,
   websitePage = false,
   searchPage = false,
+  websitesOverview = false,
+  searchOverview = false,
 ): NavItem[][] {
   const groups = modulesUi ? EXPLORE_WITH_MODULES : EXPLORE;
   const withSite = websitePage ? withWebsite(groups) : groups;
-  return searchPage ? withSearch(withSite) : withSite;
+  const withFind = searchPage ? withSearch(withSite) : withSite;
+  const withOverview = searchOverview
+    ? withSearchOverview(withFind)
+    : withFind;
+  return websitesOverview ? withWebsites(withOverview) : withOverview;
 }
 
 export const MODULES_COPY = { heading: "Modules", soon: "Soon" } as const;
@@ -219,6 +275,8 @@ export function SidebarNav({
   openWorkModule = null,
   websitePage = false,
   searchPage = false,
+  websitesOverview = false,
+  searchOverview = false,
 }: {
   activeProjectId?: string;
   toolBadges?: Partial<Record<PanelKey, number>>;
@@ -233,6 +291,10 @@ export function SidebarNav({
   websitePage?: boolean;
   // GSC_SEARCH_PAGE: Explore lists the "Search" page.
   searchPage?: boolean;
+  // GA_AGENCY and a workspace owner/admin: Explore lists "Websites".
+  websitesOverview?: boolean;
+  // GSC_AGENCY and a workspace owner/admin: Explore lists "Search overview".
+  searchOverview?: boolean;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -275,6 +337,9 @@ export function SidebarNav({
       const href = `/projects/${activeProjectId}/${item.route}`;
       return { href, active: pathname === href, badge: 0 };
     }
+    if ("href" in item) {
+      return { href: item.href, active: pathname === item.href, badge: 0 };
+    }
     // Agency Desk: only without Works (see PRIMARY).
     return {
       href: `/projects/${activeProjectId}`,
@@ -294,7 +359,13 @@ export function SidebarNav({
     sent: sentWorkId !== null && sentWorkId === openWorkId,
   });
   const primary = PRIMARY.filter((item) => !(works && "home" in item));
-  const explore = exploreGroups(modulesUi, websitePage, searchPage).map((group) =>
+  const explore = exploreGroups(
+    modulesUi,
+    websitePage,
+    searchPage,
+    websitesOverview,
+    searchOverview,
+  ).map((group) =>
     group.map((item) => ({ item, ...resolve(item) })),
   );
 

@@ -173,6 +173,26 @@ describe("privacy policy: Google Analytics and Search Console section", () => {
     expect(google).toContain("Google Account settings");
   });
 
+  it("describes extra properties, client report links, BigQuery and Cross-Account Protection (GA-F8)", () => {
+    expect(google).toContain("more than one Google Analytics property");
+    expect(google).toContain("client report link");
+    expect(google).toContain("you revoke it");
+    expect(google).toContain("BigQuery export");
+    expect(google).toContain("Cross-Account Protection");
+    expect(google).toContain("encrypts the stored Google tokens");
+  });
+
+  it("describes the Search Console BigQuery export, report links and their deletion (SC-F9)", () => {
+    expect(google).toContain("bulk data export to BigQuery");
+    expect(google).toContain("read-only service account");
+    expect(google).toContain("your own Google Cloud project");
+    expect(google).toContain("only the property owner can connect it");
+    expect(google).toContain(
+      "the link is deleted right away when you disconnect Search Console",
+    );
+    expect(google).toContain("split-test results");
+  });
+
   it("says what the monthly SEO content plan stores and how it is removed (SC-F7)", () => {
     expect(google).toContain("monthly SEO content plan");
     expect(google).toContain(

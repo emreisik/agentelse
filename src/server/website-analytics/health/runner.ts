@@ -4,6 +4,7 @@ import type { GaHealthRun, GaPropertyLink } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { dayKeyInTimezone } from "@/lib/timezone";
+import { gaEngineLinkWhere } from "@/lib/website-analytics/agency/scope";
 import { hourInTimezone, safeTimezone } from "@/lib/website-analytics/days";
 import {
   gaGlobalWorkAllowedHere,
@@ -188,7 +189,8 @@ export const GaHealth = {
     }
 
     const candidates: CandidateLink[] = await prisma.gaPropertyLink.findMany({
-      where: { isPrimary: true, lastMetadataAt: { not: null } },
+      // GA-F8: ek mülkler de değerlendirilir (bayrak kapalıyken yalnız birincil).
+      where: { ...gaEngineLinkWhere(), lastMetadataAt: { not: null } },
       include: { healthRun: true },
       orderBy: { healthRun: { evaluatedAt: { sort: "asc", nulls: "first" } } },
       take: CANDIDATES,

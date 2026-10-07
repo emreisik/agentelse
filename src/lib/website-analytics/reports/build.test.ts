@@ -615,6 +615,28 @@ describe("buildPulseCard", () => {
   });
 });
 
+describe("extra property links (GA-F8)", () => {
+  it("appends ?property=<id> to the finding hrefs of an extra property", () => {
+    const card = buildWeeklyCard(
+      weeklyInput({ link: { ...LINK, propertyId: "123456" } }),
+    );
+    if (card.body.variant !== "weekly") throw new Error("variant");
+    expect(card.body.whatChanged[0]?.href).toBe(
+      "/projects/p1/site?property=123456#finding-f1",
+    );
+  });
+
+  it("leaves the main property output unchanged", () => {
+    const main = buildWeeklyCard(weeklyInput());
+    const nullId = buildWeeklyCard(
+      weeklyInput({ link: { ...LINK, propertyId: null } }),
+    );
+    expect(nullId).toEqual(main);
+    if (main.body.variant !== "weekly") throw new Error("variant");
+    expect(main.body.whatChanged[0]?.href).toBe("/projects/p1/site#finding-f1");
+  });
+});
+
 describe("buildAlertCard", () => {
   const alert = {
     id: "a1",

@@ -1,6 +1,6 @@
 # Agentelse · Google Analytics 4: Mimari ve Uygulama Planı
 
-Durum (7 Ekim 2026): GA-F0 – GA-F6 kodlandı (bayraklı; GA-F4 ayrıntısı [website-insights.md](website-insights.md), GA-F5 ayrıntısı [website-reports.md](website-reports.md)); GA-F6 ayrıntısı [website-attribution.md](website-attribution.md); GA-F7 kodlandı, bayrakları kapalı ([website-fixes.md](website-fixes.md)); GA-F8 ve sonrası plan.
+Durum (7 Ekim 2026): GA-F0 – GA-F6 kodlandı (bayraklı; GA-F4 ayrıntısı [website-insights.md](website-insights.md), GA-F5 ayrıntısı [website-reports.md](website-reports.md)); GA-F6 ayrıntısı [website-attribution.md](website-attribution.md); GA-F7 kodlandı, bayrakları kapalı ([website-fixes.md](website-fixes.md)); GA-F8 kodlandı, bayrakları kapalı ([website-agency.md](website-agency.md); paylaşımlı BigQuery istemcisi, beyaz etiket ve `/r` SC-F9'dandır: [search-agency.md](search-agency.md)).
 
 > **Kapsam:** Google Analytics 4 (GA4) entegrasyonu: bağlantı ve kimlik, yerel veri ambarı, ölçüm sağlığı denetimi, analiz, raporlama, planlama, reklam ölçümü ve öneri döngüsü. **Search Console ayrı bir entegrasyondur** ve kendi planı vardır: `docs/google-search-console-plan.md`. İki entegrasyon yalnız kod çekirdeğini paylaşır (OAuth, HTTP, hata kataloğu, PII süzgeci; §3.1). Bağlantı, izin, token, veri tabloları, işler, sağlık durumu, bayraklar, arayüz ve silme akışı tamamen ayrıdır; biri bağlı değilken diğeri eksiksiz çalışır. İkisi birden bağlıysa §12'deki isteğe bağlı köprü devreye girer.
 >
@@ -1176,6 +1176,20 @@ Uygulamada plandan farklar (GA-F2 ve sonrası bunlara göre yazılır):
 - Beyaz etiketli rapor dışa aktarılabiliyor.
 
 **Bağımlılık:** GA-F5.
+
+**Durum (7 Ekim 2026):** GA-F8 kodlandı (bayraklı, hepsi kapalı). Ayrıntı ve sahip adımları: [website-agency.md](website-agency.md). Planlanandan sapmalar:
+
+- `GoogleGrant` tablosu yok: toplu bağlama token'ı kopyalar.
+- Ek mülkler yalnız senkron, sağlık, içgörü ve haftalık/aylık rapor alır (eklenti aşaması ve LLM yok).
+- `keyId` şifreli metin önekindedir (`gk1:<keyId>:`); sütun yok.
+- Ana mülk `isPrimary`, ek mülk `isSecondary` ile işaretlenir.
+- 360 kotaları paylaşımlı yönetici ile ele alınır; ek kapasite kullanılmaz. `properties.chat` kullanılmadı.
+- Beyaz etiket, paylaşım, BigQuery istemcisi ve `/r/[token]` SC-F9'un ortak birimleridir; GA-F8 yalnız tüketir.
+- "Zamanlanmış paylaşım" (kendini güncelleyen LATEST bağlantı), uzatma ve yenileme KALDIRILDI: paylaşımlar rapor anının değişmez görüntüsüdür, 7/30/90 gün sürer ve iptal edilebilir (SAHİP KARARI, onaylanmalı).
+- Beyaz etiket yalnız GA-F5 Website kartlarını kapsar; Analytics modülünün Copy/Markdown/Print adımını kapsamaz (sahip kararı, onaylanmalı).
+- BigQuery bağlama kuralı: veri kümesi `analytics_<mülk kimliği>` ve tek proje; kabul edilen sınır website-agency.md bölüm 6'dadır.
+- RISC `account-purged` yalnız bağlantıyı EXPIRE eder (sahip kararı).
+- GK5, GK6 ve GK17 uygulandı (GK17: GA dönüştürücüsü için etiket haritası hazır, yalnız İngilizce).
 
 ---
 

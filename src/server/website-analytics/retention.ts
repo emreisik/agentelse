@@ -107,6 +107,9 @@ export const GaRetention = {
       await prisma.gaPropertyLink.deleteMany({
         where: {
           isPrimary: false,
+          // GA-F8: ek mülkler emekli bağ değildir; bayrak kapalı/duraklatılmış
+          // aylarda updatedAt eskir ama silinmemeli.
+          isSecondary: false,
           updatedAt: {
             lt: new Date(now.getTime() - STALE_LINK_DAYS * 86_400_000),
           },

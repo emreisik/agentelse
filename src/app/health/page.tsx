@@ -33,6 +33,10 @@ import { loadGaMeasurementCounters } from "@/server/website-analytics/health/rea
 import { GaMeasurementCountersCard } from "@/components/website-analytics/ga-measurement-counters-card";
 import { loadGaFixCounters } from "@/server/website-analytics/fixes/counters";
 import { GaFixesCountersCard } from "@/components/website-analytics/ga-fixes-counters-card";
+import { loadGaAgencyCounters } from "@/server/website-analytics/agency/counters";
+import { GaAgencyCountersCard } from "@/components/website-analytics/agency/agency-counters-card";
+import { loadGscAgencyCounters } from "@/server/seo/agency/counters";
+import { GscAgencyCountersCard } from "@/components/search-agency/gsc-agency-counters-card";
 import { loadSeoOperatorCounters } from "@/server/seo/health/operator-counters";
 import { SeoOperatorCard } from "@/components/search-health/seo-operator-card";
 import { loadGaInsightsOperatorView } from "@/server/website-analytics/analysis/read";
@@ -124,7 +128,9 @@ export default async function HealthPage() {
   // görünümü); SC-F4: SEO fırsat motoru sayaçları; SC-F5: Search rapor
   // sayaçları; SC-F6: SEO eylem sayaçları; GA-F7: GA düzeltme sayaçları;
   // SC-F7: SEO içerik planı sayaçları; SC-F8: Website changes ve AI arama
-  // görünürlüğü sayaçları. Bunlar `healthy`'ye sayılmaz.
+  // görünürlüğü sayaçları; GA-F8: ajans/RISC/BigQuery/anahtar sayaçları;
+  // SC-F9: Search ajansı sayaçları (ek site, BigQuery, bölünmüş test, paylaşım).
+  // Bunlar `healthy`'ye sayılmaz.
   const now = new Date();
   const [
     leftoverRules,
@@ -143,6 +149,8 @@ export default async function HealthPage() {
     seoContentPlan,
     seoApplyCounters,
     seoGeoCounters,
+    gaAgency,
+    gscAgency,
   ] = await Promise.all([
     AdsInsurance.undeletable().catch(() => []),
     prisma.adsWebhookEvent.count({ where: { status: "DEAD" } }).catch(() => 0),
@@ -177,6 +185,8 @@ export default async function HealthPage() {
     loadSeoContentPlanCounters(now).catch(() => null),
     loadSeoApplyCounters(now).catch(() => null),
     loadSeoGeoCounters(now).catch(() => null),
+    loadGaAgencyCounters(now).catch(() => null),
+    loadGscAgencyCounters(now).catch(() => null),
   ]);
 
   const healthy =
@@ -475,6 +485,7 @@ export default async function HealthPage() {
         ) : null}
         {gaFixes ? <GaFixesCountersCard counters={gaFixes} /> : null}
         {gaInsights ? <GaInsightsOperatorCard view={gaInsights} /> : null}
+        {gaAgency ? <GaAgencyCountersCard counters={gaAgency} /> : null}
 
         {gscAttention > 0 || gscBackfilling > 0 || gscQuotaWaiting > 0 ? (
           <Card>
@@ -562,6 +573,7 @@ export default async function HealthPage() {
           <SeoApplyCountersCard counters={seoApplyCounters} />
         ) : null}
         {seoGeoCounters ? <GeoCountersCard counters={seoGeoCounters} /> : null}
+        {gscAgency ? <GscAgencyCountersCard counters={gscAgency} /> : null}
 
         <Card>
           <CardHeader className="flex flex-row items-center gap-2 space-y-0">

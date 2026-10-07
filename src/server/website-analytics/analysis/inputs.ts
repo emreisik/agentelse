@@ -160,7 +160,8 @@ export async function loadDailyAnalysisInput(
     loadAnalysisDays(link.id, range),
     loadExcludedDays(link.id, country, range),
     readSlices(link.id, "channel", addDays(through, -CHANNEL_DAYS), through),
-    websiteGoals(link.projectId),
+    // GA-F8: ek mülklerde proje hedefleri okunmaz (AN15 yalnız ana mülkte).
+    link.isPrimary ? websiteGoals(link.projectId) : Promise.resolve([]),
     measurementDegraded(link.id),
   ]);
   return {

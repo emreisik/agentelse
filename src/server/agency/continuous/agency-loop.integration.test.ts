@@ -152,10 +152,16 @@ describeIntegration(
     }, 400_000);
 
     it("multi-department decisions produce a dependency-wired work plan", async () => {
-      const plan = await prisma.workPlan.findFirst({
-        where: { projectId: fixture.projectId },
-        include: { tasks: true },
-      });
+      // İşçi iki şeritli: plan görevleri karardan sonraki turlarda yazılır; en
+      // az üç görev görünene kadar tur at (tek findFirst turdan önce 2 görev görür).
+      const loadPlan = () =>
+        prisma.workPlan.findFirst({
+          where: { projectId: fixture.projectId },
+          orderBy: { createdAt: "asc" },
+          include: { tasks: true },
+        });
+      await pumpWorker(async () => ((await loadPlan())?.tasks.length ?? 0) >= 3, 30);
+      const plan = await loadPlan();
       // At least one decided idea should have gone the multi-department path
       // (mock lens concepts always involve >=2 departments).
       expect(plan).toBeTruthy();

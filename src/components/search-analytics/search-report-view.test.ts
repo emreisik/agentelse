@@ -293,4 +293,25 @@ describe("SearchPeriodSelector", () => {
     expect(plain).toContain(`href="${BASE}"`);
     expect(plain).toContain(`href="${BASE}?period=7d"`);
   });
+
+  it("keeps ?site= when the base already carries a query (SC-F9)", () => {
+    const base = `${BASE}?site=link-2`;
+    const html = renderToStaticMarkup(
+      createElement(SearchPeriodSelector, {
+        base,
+        value: "28d",
+        queryFilter: "brand",
+      }),
+    );
+    expect(html).toContain(`href="${base}&amp;queries=brand"`);
+    expect(html).toContain(`href="${base}&amp;period=7d&amp;queries=brand"`);
+    const plain = renderToStaticMarkup(
+      createElement(SearchPeriodSelector, {
+        base,
+        value: "7d",
+        queryFilter: "all",
+      }),
+    );
+    expect(plain).toContain(`href="${base}"`);
+  });
 });

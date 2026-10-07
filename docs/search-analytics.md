@@ -65,6 +65,10 @@ Açılış sırası:
 - Dev koruması: `!gscGlobalWorkAllowedHere()` iken `runDue` nabız yazmaz, `claimPeriodic` almaz, yalnız `GSC_SYNC_DEV_PROJECTS` projelerini doğrudan uzlaştırır (süreç içi 2 dk) ve yalnız onların bağlarını senkronlar.
 - Tick adımları `gsc-sync` (`GscSync.runDue(3)`) ve `seo-retention` (`GscRetention.runDue()`), `agency-wiring.ts`'te; nabız `SystemHeartbeat("gsc.sync")`, periyodik anahtarlar `gsc.links` (2 dk) ve `gsc.retention` (24 sa). Odak ayarı (AGENCY_FOCUS) bunları kapatmaz.
 
+## BigQuery toplu dışa aktarımı (SC-F9)
+
+API günde, arama türü başına en çok 50.000 satır verir; büyük sitelerde haftalık/aylık dönemler bu yüzden `truncated=true` kalır. `GSC_AGENCY` + `GSC_BIGQUERY` açıkken, mülk sahibi Search Console'un toplu dışa aktarımını açıp Agentelse'in salt okunur servis hesabına erişim verdiyse, kesilmiş ya da eksik haftalık/aylık dönemler BigQuery'den tam olarak içe aktarılır: `GscPeriodFetch.source = 'BQ'` ve `truncated=false` (bir BQ dönemi kesindir). Günlük toplamlar (`GscDailyTotal`) BigQuery'den ASLA yazılmaz. Ayrıntı, maliyet koruması ve güvenlik modeli: [search-agency.md](search-agency.md).
+
 ## Kota yöneticisi (`lib/seo/governor.ts`)
 
 - Site başına dakikada en çok 30 istek (süreç içi kayan pencere, mock'ta devre dışı): sınıra takılan istek, slot süre dolmadan boşalacaksa bekler, yoksa tur `GscRunBudgetSpent` ile yumuşak biter. Süreç içinde site başına en çok 2 eşzamanlı istek.

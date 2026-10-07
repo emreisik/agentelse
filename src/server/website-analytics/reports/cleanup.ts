@@ -7,6 +7,7 @@ import {
   websiteWorkId,
 } from "@/lib/website-analytics/reports/ids";
 import { GOOGLE_PROVIDER } from "@/server/integrations/google/services";
+import { forgetWebsiteSharesForProject } from "@/server/website-analytics/agency/share-forget";
 
 // Disconnect (google-disconnect.ts): GA-F5 rapor kartları hemen silinir; boş
 // kalan "Website analytics" sohbeti (kullanıcının mesajı ya da gönderisi yoksa)
@@ -26,7 +27,7 @@ export async function deleteGaReportData(
   projectId: string,
 ): Promise<GaReportCleanupResult> {
   const workId = websiteWorkId(projectId);
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const commands = await tx.command.deleteMany({
       where: {
         projectId,
@@ -57,6 +58,12 @@ export async function deleteGaReportData(
       works: works.count,
     };
   });
+  // GA-F8: müşteri rapor bağlantıları (ReportShare kind WEBSITE) kartlarla
+  // birlikte hemen silinir; hem Disconnect (deleteGaReportDataForCredential)
+  // hem yetim süpürmesi (sweepOrphanGaReportData) bu yoldan geçer. Asla
+  // fırlatmaz, bayrağa bağlı değildir.
+  await forgetWebsiteSharesForProject(projectId);
+  return result;
 }
 
 export async function deleteGaReportDataForCredential(

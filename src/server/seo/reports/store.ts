@@ -218,6 +218,7 @@ async function liveFindingStatus(
 export async function readSeoReportView(
   projectId: string,
   reportId: string,
+  options?: { forShare?: boolean },
 ): Promise<SeoReportView | null> {
   const row = await prisma.seoReport.findFirst({
     where: { id: reportId, projectId, isMock: gscMockMode() },
@@ -225,10 +226,15 @@ export async function readSeoReportView(
   if (!row || !isSeoReportKind(row.kind)) return null;
   const snapshot = readSeoReportSnapshot(row.snapshot);
   if (!snapshot) return null;
-  const [findingStatus, chatHref] = await Promise.all([
-    liveFindingStatus(projectId, snapshot),
-    seoChatHref(projectId),
-  ]);
+  // SC-F9: genel paylaşım sayfası oturumsuzdur; canlı bulgu ve uygulama
+  // bağlantıları okunmaz.
+  const forShare = options?.forShare === true;
+  const [findingStatus, chatHref] = forShare
+    ? [null, null]
+    : await Promise.all([
+        liveFindingStatus(projectId, snapshot),
+        seoChatHref(projectId),
+      ]);
   return {
     id: row.id,
     projectId: row.projectId,
@@ -241,9 +247,10 @@ export async function readSeoReportView(
     narrative: readSummary(row.narrative),
     narrativeNote: row.narrativeNote,
     isMock: row.isMock,
-    searchHref: GscFlags.searchPage()
-      ? `/projects/${projectId}/arama?report=${row.id}#reports`
-      : null,
+    searchHref:
+      !forShare && GscFlags.searchPage()
+        ? `/projects/${projectId}/arama?report=${row.id}#reports`
+        : null,
     chatHref,
     findingStatus,
     contentPlanLive: seoContentPlanActiveFor(projectId),

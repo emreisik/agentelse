@@ -18,6 +18,7 @@ import {
   type GaSlicePlan,
 } from "@/lib/website-analytics/weekly";
 import { isoWeekMonday } from "@/lib/website-analytics/weeks";
+import { selectedGaLinkFor } from "@/server/website-analytics/agency/selected-link";
 
 export { sumTotals } from "@/lib/website-analytics/totals";
 
@@ -35,6 +36,10 @@ export type RollingUsers = Record<
 export async function primaryGaLink(
   projectId: string,
 ): Promise<GaPropertyLink | null> {
+  // GA-F8: Website sayfası bir ek mülk seçtiyse okuyucular onu görür; kapsam
+  // yoksa sorgu bugünküyle aynı.
+  const selected = selectedGaLinkFor(projectId);
+  if (selected) return selected;
   return prisma.gaPropertyLink.findFirst({
     where: { projectId, isPrimary: true },
     orderBy: { updatedAt: "desc" },

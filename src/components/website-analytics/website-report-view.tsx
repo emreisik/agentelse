@@ -38,12 +38,27 @@ function dayLabel(day: string): string {
   }).format(new Date(`${day}T00:00:00.000Z`));
 }
 
+// GA-F8: `query` (ör. { property }) her bağlantıya eklenir; 28d yalnız
+// taban + query taşır, `query` yoksa çıktı bugünküyle aynıdır.
+function periodHref(
+  base: string,
+  period: WebsitePeriodKey,
+  query: Record<string, string> | undefined,
+): string {
+  const params = new URLSearchParams(query ?? {});
+  if (period !== "28d") params.set("period", period);
+  const text = params.toString();
+  return text ? `${base}?${text}` : base;
+}
+
 export function WebsitePeriodSelector({
   base,
   value,
+  query,
 }: {
   base: string;
   value: WebsitePeriodKey;
+  query?: Record<string, string>;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1 rounded-full bg-muted p-0.5">
@@ -52,7 +67,7 @@ export function WebsitePeriodSelector({
         return (
           <Link
             key={period.key}
-            href={period.key === "28d" ? base : `${base}?period=${period.key}`}
+            href={periodHref(base, period.key, query)}
             aria-current={active ? "page" : undefined}
             className={cn(
               "rounded-full px-2.5 py-1 text-xs font-medium transition-colors",

@@ -226,6 +226,49 @@ describe("SidebarNav: Modules (MODULES_UI)", () => {
     expect(exploreGroups(false, false, true)[1]).toEqual(EXPLORE[1]);
   });
 
+  it("GA_AGENCY adds the workspace Websites page after Search, before Connectors", () => {
+    const labels = (groups: ReturnType<typeof exploreGroups>, index: number) =>
+      groups[index]?.map((item) => item.label);
+    expect(labels(exploreGroups(false, true, true, true), 0)).toEqual([
+      "Ads Manager",
+      "Website",
+      "Search",
+      "Websites",
+      "Connectors",
+    ]);
+    expect(labels(exploreGroups(false, false, false, true), 0)).toEqual([
+      "Ads Manager",
+      "Websites",
+      "Connectors",
+    ]);
+    // Bayrak kapalıyken liste bugünkü gibi.
+    expect(exploreGroups(false, false, false, false)).toBe(EXPLORE);
+    expect(exploreGroups(false, false, false, true)[1]).toEqual(EXPLORE[1]);
+  });
+
+  it("GSC_AGENCY adds the workspace Search overview before Websites and Connectors (SC-F9)", () => {
+    const labels = (groups: ReturnType<typeof exploreGroups>, index: number) =>
+      groups[index]?.map((item) => item.label);
+    expect(labels(exploreGroups(false, true, true, true, true), 0)).toEqual([
+      "Ads Manager",
+      "Website",
+      "Search",
+      "Search overview",
+      "Websites",
+      "Connectors",
+    ]);
+    expect(labels(exploreGroups(false, false, false, false, true), 0)).toEqual([
+      "Ads Manager",
+      "Search overview",
+      "Connectors",
+    ]);
+    // Bayrak kapalıyken liste bugünkü gibi.
+    expect(exploreGroups(false, false, false, false, false)).toBe(EXPLORE);
+    expect(exploreGroups(false, false, false, false, true)[1]).toEqual(
+      EXPLORE[1],
+    );
+  });
+
   it("on: the group sits right under New Chat, before the pages and Recents", () => {
     const html = open(true);
     const order = [

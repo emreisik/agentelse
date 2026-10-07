@@ -620,6 +620,42 @@ const SECTIONS: PolicySection[] = [
           are written by an AI service without any Google Analytics or Search
           Console data.
         </p>
+        <p>
+          If you add more than one Google Analytics property to a project, or
+          link one Google account to several of your projects, Agentelse reads
+          each property with the same read-only permission and keeps each
+          property&rsquo;s data separately; disconnecting Google Analytics
+          deletes all of them right away. If you create a client report link,
+          anyone who has the link can see that report until it expires (7, 30
+          or 90 days) or you revoke it; the page shows only the report, never
+          your Google account or any other data, and the link stops working as
+          soon as you disconnect Google Analytics. If you choose to share your
+          Google Analytics BigQuery export with Agentelse&rsquo;s read-only
+          service account, Agentelse reads daily totals from it using that
+          access only (no extra Google permission is requested from you;
+          queries run and are billed in your own Google Cloud project), stores
+          only those totals, and deletes them when you disconnect. Where
+          Google&rsquo;s Cross-Account Protection notices are enabled for
+          Agentelse, a connection is switched off as soon as Google tells us
+          your account&rsquo;s access was revoked. Agentelse encrypts the stored
+          Google tokens.
+        </p>
+        <p>
+          If you turn on the Search Console bulk data export to BigQuery and
+          give Agentelse&rsquo;s read-only service account access to it,
+          Agentelse reads weekly and monthly summaries of that property from
+          your own BigQuery dataset (the queries run and are billed in your own
+          Google Cloud project, with a size limit you set, and only the property
+          owner can connect it) and stores them like Search Console API data. If
+          you create a client report link for a Search Console report, anyone
+          who has the link can see that stored report until it expires or you
+          revoke it, and the link is deleted right away when you disconnect
+          Search Console. Disconnecting Search Console, or choosing Delete
+          stored data, deletes the imported summaries and split-test results
+          right away; the page-group rules, extra-site lists and BigQuery
+          project and dataset names you entered are settings, and are deleted
+          when you disconnect.
+        </p>
       </>
     ),
   },

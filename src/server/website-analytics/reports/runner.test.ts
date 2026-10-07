@@ -585,3 +585,101 @@ describe("GaReports.runLink (alerts, pulse and plan)", () => {
     expect(savedData()).not.toHaveProperty("lastPlanMonth");
   });
 });
+
+describe("GaReports (GA-F8 extra properties)", () => {
+  const EXTRA = { ...LINK, id: "link-x", isPrimary: false, isSecondary: true };
+
+  it("skips an extra property when GA_AGENCY is off", async () => {
+    db.gaPropertyLink.findUnique.mockResolvedValue(EXTRA);
+    expect(await GaReports.runLink("link-x", { now: NOW })).toBe("skipped");
+    expect(db.gaReportRun.upsert).not.toHaveBeenCalled();
+  });
+
+  it("keeps the exact candidate where when GA_AGENCY is off", async () => {
+    db.gaPropertyLink.findMany.mockResolvedValue([{ id: "a" }]);
+    await GaReports.runDue(4, NOW);
+    const fresh = db.gaPropertyLink.findMany.mock.calls[0]?.[0] as {
+      where: Record<string, unknown>;
+    };
+    expect(fresh.where).toEqual({
+      isPrimary: true,
+      lastDailyDate: { not: null },
+      reportRun: null,
+    });
+    const seen = db.gaReportRun.findMany.mock.calls[0]?.[0] as {
+      where: { link: Record<string, unknown> };
+    };
+    expect(seen.where.link).toEqual({
+      isPrimary: true,
+      lastDailyDate: { not: null },
+    });
+  });
+
+  it("widens both candidate queries to extras when GA_AGENCY is on", async () => {
+    vi.stubEnv("GA_AGENCY", "true");
+    db.gaPropertyLink.findMany.mockResolvedValue([{ id: "a" }]);
+    await GaReports.runDue(4, NOW);
+    const widened = [{ isPrimary: true }, { isSecondary: true }];
+    const fresh = db.gaPropertyLink.findMany.mock.calls[0]?.[0] as {
+      where: Record<string, unknown>;
+    };
+    expect(fresh.where.OR).toEqual(widened);
+    const seen = db.gaReportRun.findMany.mock.calls[0]?.[0] as {
+      where: { link: Record<string, unknown> };
+    };
+    expect(seen.where.link.OR).toEqual(widened);
+  });
+
+  it("runs only weekly and monthly for an extra, with the template narrative", async () => {
+    vi.stubEnv("GA_AGENCY", "true");
+    db.gaPropertyLink.findUnique.mockResolvedValue(EXTRA);
+    deps.loadGaReportContext.mockResolvedValue(
+      context({
+        link: EXTRA,
+        settings: settings({
+          pulse: "notable",
+          alertChat: true,
+          monthlyEnabled: true,
+        }),
+      }),
+    );
+    const result = await GaReports.runLink("link-x", {
+      now: NOW,
+      llmBudget: 3,
+    });
+    expect(result).toMatchObject({ weekly: "posted", llmCalls: 0 });
+    // Deterministik şablon: bütçe ne olursa olsun "skip".
+    expect(deps.weeklyWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "off",
+      { narrative: "skip" },
+    );
+    expect(deps.refreshLink).not.toHaveBeenCalled();
+    expect(deps.postAlertCards).not.toHaveBeenCalled();
+    expect(deps.pulseWrite).not.toHaveBeenCalled();
+    expect(deps.writePlan).not.toHaveBeenCalled();
+    expect(deps.historyDaysOf).not.toHaveBeenCalled();
+    const data = savedData();
+    expect(data).toMatchObject({ lastWeek: "2026-10-05" });
+    for (const key of [
+      "lastGoalsDay",
+      "lastPulseDay",
+      "lastPulseAt",
+      "pulsePendingDay",
+      "lastAlertScanAt",
+      "lastPlanMonth",
+    ]) {
+      expect(data).not.toHaveProperty(key);
+    }
+  });
+
+  it("does not count LLM budget even for a status that would", async () => {
+    vi.stubEnv("GA_AGENCY", "true");
+    db.gaPropertyLink.findUnique.mockResolvedValue(EXTRA);
+    deps.loadGaReportContext.mockResolvedValue(context({ link: EXTRA }));
+    deps.weeklyWrite.mockResolvedValue({ result: "posted", narrative: "none" });
+    const result = await GaReports.runLink("link-x", { now: NOW, llmBudget: 0 });
+    expect(result).toMatchObject({ weekly: "posted", llmCalls: 0 });
+  });
+});

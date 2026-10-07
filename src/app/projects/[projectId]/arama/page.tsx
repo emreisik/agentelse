@@ -11,18 +11,24 @@ import { SeoActionFlags } from "@/lib/seo/action-flags";
 import { SeoInsightFlags } from "@/lib/seo/insight-flags";
 import { seoContentPlanActiveFor } from "@/lib/seo/content-plan/flags";
 import { seoApplyEnabledFor, seoGeoEnabledFor } from "@/lib/seo/apply/flags";
+import { gscAgencyActiveFor } from "@/lib/seo/agency/flags";
+import { SEARCH_OVERVIEW_HREF } from "@/lib/website-analytics/agency/routes";
 import { DEFAULT_SEARCH_PERIOD, isSearchPeriod } from "@/lib/seo/periods";
 import { refreshSearchAnalyticsAction } from "@/server/actions/search-analytics-actions";
 import {
+  isWorkspaceManager,
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
+import { resolveViewedSite } from "@/server/seo/agency/sites";
 import {
   buildSearchReport,
   isSearchQueryFilter,
   type SearchLinkInfo,
 } from "@/server/seo/report";
 import { AppShell } from "@/components/layout/app-shell";
+import { SearchAgencySection } from "@/components/search-agency/search-agency-section";
+import { SiteSwitcher } from "@/components/search-agency/site-switcher";
 import { BrandTermsForm } from "@/components/search-analytics/brand-terms-form";
 import { SearchActionsSection } from "@/components/search-actions/actions-section";
 import { SearchHealthSection } from "@/components/search-health/search-health-section";
@@ -131,8 +137,9 @@ export default async function SearchPage({
   const sp = await searchParams;
 
   const { userId } = await requireUser();
+  let access: Awaited<ReturnType<typeof requireProjectAccess>>;
   try {
-    await requireProjectAccess(userId, projectId);
+    access = await requireProjectAccess(userId, projectId);
   } catch {
     notFound();
   }
@@ -154,6 +161,24 @@ export default async function SearchPage({
   // SC-F6 (SEO_ACTIONS + SEO_HEALTH + SEO_CRAWL): "Actions & results" bölümü; bayrak kapalıyken işaretleme aynıdır. ?action= ile gelinen eylem vurgulanır.
   const actionHighlight = typeof sp.action === "string" ? sp.action : null;
   const base = `/projects/${projectId}/arama`;
+  // SC-F9 (GSC_AGENCY): ?site= ikincil bir siteyi görüntüler. Bu istek kapsamlı
+  // geçersiz kılma, birincil bağı okuyan HER şeyden (buildSearchReport dahil)
+  // ÖNCE kurulmalıdır; bayrak kapalıyken veritabanına gidilmez.
+  const agencyOn = gscAgencyActiveFor(projectId);
+  const viewedSite = await resolveViewedSite(
+    projectId,
+    typeof sp.site === "string" ? sp.site : null,
+  );
+  const isManager = agencyOn
+    ? await isWorkspaceManager(userId, access.workspaceId)
+    : false;
+  // İkincil görünümde motora bağlı ya da proje düzeyindeki bölümler gizlenir:
+  // aksi hâlde birincil sitenin verisi ikincil başlığın altında görünürdü.
+  const engineViews = !agencyOn || viewedSite.isPrimaryView;
+  const viewBase =
+    agencyOn && !viewedSite.isPrimaryView && viewedSite.viewed
+      ? `${base}?site=${viewedSite.viewed.linkId}`
+      : base;
   const result = await buildSearchReport(projectId, periodKey, { queryFilter });
   const connectorsHref = `/projects/${projectId}/integrations?integration=google_search_console`;
   const headerLink =
@@ -171,27 +196,50 @@ export default async function SearchPage({
           {result.state === "ready" ? (
             <div className="flex items-center gap-2">
               <SearchPeriodSelector
-                base={base}
+                base={viewBase}
                 value={periodKey}
                 queryFilter={queryFilter}
               />
-              <ActionForm
-                action={refreshSearchAnalyticsAction}
-                successMessage="Updated from Search Console"
-              >
-                <input type="hidden" name="projectId" value={projectId} />
-                <SubmitButton
-                  variant="ghost"
-                  size="icon-xs"
-                  title="Fetch the latest days again"
-                  aria-label="Fetch the latest days again"
+              {engineViews ? (
+                <ActionForm
+                  action={refreshSearchAnalyticsAction}
+                  successMessage="Updated from Search Console"
                 >
-                  <RefreshCw className="size-3.5" />
-                </SubmitButton>
-              </ActionForm>
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <SubmitButton
+                    variant="ghost"
+                    size="icon-xs"
+                    title="Fetch the latest days again"
+                    aria-label="Fetch the latest days again"
+                  >
+                    <RefreshCw className="size-3.5" />
+                  </SubmitButton>
+                </ActionForm>
+              ) : null}
             </div>
           ) : null}
         </div>
+
+        {/* SC-F9 (GSC_AGENCY): site değiştirici ve tüm siteler bağlantısı; bayrak kapalıyken çizilmez. */}
+        {agencyOn && (viewedSite.sites.length > 1 || isManager) ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <SiteSwitcher
+              projectId={projectId}
+              sites={viewedSite.sites}
+              viewedLinkId={viewedSite.viewed?.linkId ?? null}
+              base={base}
+              keep={{ period: periodKey }}
+            />
+            {isManager ? (
+              <Link
+                href={SEARCH_OVERVIEW_HREF}
+                className="text-xs font-medium text-muted-foreground hover:text-foreground"
+              >
+                All sites
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
 
         {result.state === "not_connected" ? (
           <EmptyState
@@ -220,14 +268,15 @@ export default async function SearchPage({
         ) : (
           <>
             <HealthNotice link={result.report.link} />
-            {result.report.link.domainMatch === false ? (
+            {/* Ek site bilerek başka alan adında olabilir: uyarı yalnız birincil görünümde. */}
+            {engineViews && result.report.link.domainMatch === false ? (
               <Notice>
                 This site doesn&apos;t cover the project&apos;s website. Reports
                 describe a different site.
               </Notice>
             ) : null}
-            <SearchReportBody report={result.report} base={base} />
-            {insights ? (
+            <SearchReportBody report={result.report} base={viewBase} />
+            {engineViews && insights ? (
               <Suspense fallback={null}>
                 <SearchOpportunitiesSection
                   projectId={projectId}
@@ -236,13 +285,13 @@ export default async function SearchPage({
               </Suspense>
             ) : null}
             {/* SC-F7 (SEO_CONTENT_PLAN): "This month's articles"; bayrak kapalıyken işaretleme aynıdır. */}
-            {seoContentPlanActiveFor(projectId) ? (
+            {engineViews && seoContentPlanActiveFor(projectId) ? (
               <Suspense fallback={null}>
                 <SearchContentPlanSection projectId={projectId} />
               </Suspense>
             ) : null}
             {/* SC-F6 (SEO_ACTIONS): Actions & results; bayrak kapalıyken hiç çizilmez. */}
-            {SeoActionFlags.loop() ? (
+            {engineViews && SeoActionFlags.loop() ? (
               <Suspense fallback={null}>
                 <SearchActionsSection
                   projectId={projectId}
@@ -251,7 +300,7 @@ export default async function SearchPage({
               </Suspense>
             ) : null}
             {/* SC-F5 (SEO_REPORTS): "Reports & goals" bölümü; bayrak kapalıyken işaretleme aynıdır. */}
-            {SeoReportFlags.on() ? (
+            {engineViews && SeoReportFlags.on() ? (
               <Suspense fallback={null}>
                 <SearchReportsSection
                   projectId={projectId}
@@ -259,39 +308,55 @@ export default async function SearchPage({
                 />
               </Suspense>
             ) : null}
-            <BrandTermsForm
-              projectId={projectId}
-              terms={result.report.link.brandTerms}
-              status={result.report.link.brandSplit}
-              defaultOpen={
-                result.report.link.brandSplit === "none" ||
-                result.report.link.brandSplit === "error"
-              }
-              suggestions={
-                SeoInsightFlags.userFacing() ? (
-                  <Suspense fallback={null}>
-                    <BrandTermSuggestions projectId={projectId} />
-                  </Suspense>
-                ) : undefined
-              }
-            />
+            {engineViews ? (
+              <BrandTermsForm
+                projectId={projectId}
+                terms={result.report.link.brandTerms}
+                status={result.report.link.brandSplit}
+                defaultOpen={
+                  result.report.link.brandSplit === "none" ||
+                  result.report.link.brandSplit === "error"
+                }
+                suggestions={
+                  SeoInsightFlags.userFacing() ? (
+                    <Suspense fallback={null}>
+                      <BrandTermSuggestions projectId={projectId} />
+                    </Suspense>
+                  ) : undefined
+                }
+              />
+            ) : null}
           </>
         )}
 
         {/* SC-F3 (SEO_HEALTH): indeks ve teknik sağlık bölümü; bayrak kapalıyken bileşen null döner. */}
-        <Suspense fallback={null}>
-          <SearchHealthSection projectId={projectId} issueId={issue} />
-        </Suspense>
+        {engineViews ? (
+          <Suspense fallback={null}>
+            <SearchHealthSection projectId={projectId} issueId={issue} />
+          </Suspense>
+        ) : null}
 
         {/* SC-F8 (SEO_APPLY, SEO_GEO): Website changes ve AI search visibility bölümleri; bayrak kapalıyken işaretleme aynı. */}
-        {seoApplyEnabledFor(projectId) ? (
+        {engineViews && seoApplyEnabledFor(projectId) ? (
           <Suspense fallback={null}>
             <SearchApplySection projectId={projectId} />
           </Suspense>
         ) : null}
-        {seoGeoEnabledFor(projectId) ? (
+        {engineViews && seoGeoEnabledFor(projectId) ? (
           <Suspense fallback={null}>
             <SearchGeoSection projectId={projectId} />
+          </Suspense>
+        ) : null}
+
+        {/* SC-F9 (GSC_AGENCY): Sites, BigQuery, Page groups, Split SEO tests, Client reports; bayrak kapalıyken null. */}
+        {agencyOn ? (
+          <Suspense fallback={null}>
+            <SearchAgencySection
+              projectId={projectId}
+              viewed={viewedSite}
+              isManager={isManager}
+              userId={userId}
+            />
           </Suspense>
         ) : null}
       </div>

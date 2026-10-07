@@ -69,9 +69,12 @@ function cardOf(parsedIntent: unknown): unknown {
 
 // Website analytics sohbetindeki en yeni haftalık, aylık ve plan kartları
 // (nabız ve uyarı kartları arşive girmez). Geçersiz kart satırı düşer.
+// GA-F8: options.linkId verilirse yalnız o mülkün kartları gelir; süzgeç
+// sorguda uygulanır (başka mülkün 12 yeni kartı bu mülkü aç bırakmasın).
 export async function loadWebsiteReportArchive(
   projectId: string,
   limit: number = ARCHIVE_LIMIT,
+  options: { linkId?: string | null } = {},
 ): Promise<WebsiteReportArchiveItem[] | null> {
   if (!gaReportsEnabled()) return null;
   const rows = await prisma.command.findMany({
@@ -82,6 +85,9 @@ export async function loadWebsiteReportArchive(
       OR: (["weekly", "monthly", "plan"] as const).map((variant) => ({
         id: { startsWith: reportCommandPrefix(variant) },
       })),
+      ...(options.linkId
+        ? { parsedIntent: { path: ["card", "linkId"], equals: options.linkId } }
+        : {}),
     },
     orderBy: { createdAt: "desc" },
     take: limit,

@@ -3,6 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { learningText } from "@/lib/website-analytics/analysis/describe";
 import { isGaRuleKey } from "@/lib/website-analytics/analysis/registry";
+import { gaAgencyEnabled } from "@/lib/website-analytics/agency/flags";
 import {
   parseGaFindingEvidence,
   parseGaOutcomeEvidence,
@@ -41,6 +42,17 @@ export async function writeFindingLearning(
   const outcome = parseGaOutcomeEvidence(finding.outcomeEvidence);
   if (!evidence || !outcome) return false;
   if (outcome.before.hits + outcome.after.hits < MIN_HITS) return false;
+
+  // GA-F8: öğrenme proje düzeyinde marka belleğine gider; yalnız ana mülkün
+  // bulgusu yazar (ek mülkün bulgusu başka bir sitenin dersi olabilir).
+  // Bayrak kapalıyken ek sorgu yok, davranış eskisiyle aynı.
+  if (gaAgencyEnabled()) {
+    const link = await prisma.gaPropertyLink.findUnique({
+      where: { id: finding.linkId },
+      select: { isPrimary: true },
+    });
+    if (!link?.isPrimary) return false;
+  }
 
   const exists = await prisma.brandLearning.findFirst({
     where: { sourceType: GA_LEARNING_SOURCE_TYPE, sourceRef: finding.id },

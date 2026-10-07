@@ -30,6 +30,17 @@ export function reportCommandId(
   return `${reportCommandPrefix(variant)}${projectId}_${periodKey}`;
 }
 
+// GA-F8: rapor kimliğindeki kapsam parçası. Birincil mülk için proje kimliği
+// (kimlikler değişmez); ek mülk için `<proje>_s_<bağ>` — iki mülkün aynı dönem
+// kartı aynı komut kimliğine düşmesin. Kimlik ayrıştıran kod `_` ile bölmemeli:
+// önek `variantOfCommandId` ile okunur, kapsam yalnız bir bütün olarak anlamlı.
+export function reportScopeKey(
+  projectId: string,
+  link: { id: string; isPrimary: boolean },
+): string {
+  return link.isPrimary ? projectId : `${projectId}_s_${link.id}`;
+}
+
 // Uyarı kartının dönem anahtarı: şiddet anahtarın parçasıdır; WARN -> CRITICAL
 // yükselmesi firstSeenAt'i korusa da yeni kart gönderilir.
 export function alertPeriodKey(
@@ -62,12 +73,21 @@ export type ReportHrefs = {
 // Kartlardaki bağlantılar. Website sayfasında "#insights" çapası yoktur:
 // insights doğrudan sayfanın kendisidir; bulgular `#finding-<id>` çapasını
 // kullanır.
+// GA-F8: ek mülkün kartları `?property=<GA mülk kimliği>` taşır (ana mülk için
+// parametre yok; Website sayfası kapalıyken bağlantılar Integrations'a gider).
 export function reportHrefs(
   projectId: string,
   websitePage: boolean,
+  propertyId?: string | null,
 ): ReportHrefs {
   const integrations = `/projects/${projectId}/integrations?integration=google_analytics`;
-  const website = websitePage ? `/projects/${projectId}/site` : integrations;
+  const query =
+    websitePage && propertyId
+      ? `?property=${encodeURIComponent(propertyId)}`
+      : "";
+  const website = websitePage
+    ? `/projects/${projectId}/site${query}`
+    : integrations;
   return {
     website,
     integrations,
@@ -77,7 +97,9 @@ export function reportHrefs(
     settings: `/projects/${projectId}?panel=settings&sub=autonomy#website-reports`,
     chat: `/projects/${projectId}?work=${encodeURIComponent(websiteWorkId(projectId))}`,
     finding: (id: string) =>
-      websitePage ? `/projects/${projectId}/site#finding-${id}` : website,
+      websitePage
+        ? `/projects/${projectId}/site${query}#finding-${id}`
+        : website,
   };
 }
 

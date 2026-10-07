@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
 import { isBrandQuery } from "@/lib/seo/brand-terms";
+import { groupFor } from "@/lib/seo/agency/page-groups";
+import { pageGroupRulesForLink } from "@/server/seo/agency/page-groups";
 import { prisma } from "@/lib/prisma";
 
 import type { GscSyncContext } from "./context";
@@ -80,13 +82,16 @@ export async function upsertPages(
 ): Promise<Map<string, string>> {
   const ids = new Map<string, string>();
   const week = seenWeek;
+  // SC-F9: yeni sayfalar sayfa grubu kurallarıyla doğar; hem API hem BigQuery
+  // yazımı aynı yoldan geçer, motorlar varsayılan gruplu sayfa görmez.
+  const groupRules = await pageGroupRulesForLink(ctx.link);
   for (const part of chunks(
     unique(items, (item) => item.hash),
     ROWS_PER_STATEMENT,
   )) {
     const values = part.map(
       (item) =>
-        Prisma.sql`(${randomUUID()}, ${ctx.link.id}, ${ctx.link.projectId}, ${item.url}, ${item.hash}, ${item.path}, ${item.pageGroup}, ${week}::date, ${week}::date)`,
+        Prisma.sql`(${randomUUID()}, ${ctx.link.id}, ${ctx.link.projectId}, ${item.url}, ${item.hash}, ${item.path}, ${groupRules ? groupFor(groupRules, item.path) : item.pageGroup}, ${week}::date, ${week}::date)`,
     );
     const rows = await prisma.$queryRaw<Returned[]>`
       INSERT INTO "GscPage" ("id", "linkId", "projectId", "url", "urlHash", "path", "pageGroup", "firstSeenWeek", "lastSeenWeek")

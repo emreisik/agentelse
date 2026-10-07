@@ -15,6 +15,9 @@ describe("proxy public path matching", () => {
     "/api/integrations/meta/deauthorize",
     "/api/integrations/meta/data-deletion",
     "/api/webhooks/meta-ads",
+    "/api/webhooks/google-risc",
+    "/r/abc.def",
+    "/r/abc.def/logo",
   ])("allows %s", (pathname) => {
     expect(isPublicPath(pathname)).toBe(true);
   });
@@ -32,6 +35,11 @@ describe("proxy public path matching", () => {
     "/api/health/details",
     "/api/webhooks/meta-ads/extra",
     "/api/webhooks/other",
+    "/api/webhooks",
+    "/api/webhooks/google-risc/x",
+    "/r",
+    "/reports/x",
+    "/projects/p/arama",
   ])(
     "protects %s",
     (pathname) => {

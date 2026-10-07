@@ -1,0 +1,49 @@
+{
+  "funnelTable": {
+    "dimensionHeaders": [{ "name": "funnelStepName" }],
+    "metricHeaders": [
+      { "name": "activeUsers", "type": "TYPE_INTEGER" },
+      { "name": "funnelStepCompletionRate", "type": "TYPE_FLOAT" },
+      { "name": "funnelStepAbandonments", "type": "TYPE_INTEGER" },
+      { "name": "funnelStepAbandonmentRate", "type": "TYPE_FLOAT" }
+    ],
+    "rows": [
+      {
+        "dimensionValues": [{ "value": "1. Visit" }],
+        "metricValues": [
+          { "value": "1200" },
+          { "value": "0.25" },
+          { "value": "900" },
+          { "value": "0.75" }
+        ]
+      },
+      {
+        "dimensionValues": [{ "value": "2. Started a form" }],
+        "metricValues": [
+          { "value": "300" },
+          { "value": "0.4" },
+          { "value": "180" },
+          { "value": "0.6" }
+        ]
+      },
+      {
+        "dimensionValues": [{ "value": "3. Lead" }],
+        "metricValues": [
+          { "value": "120" },
+          { "value": "0" },
+          { "value": "0" },
+          { "value": "0" }
+        ]
+      }
+    ],
+    "metadata": {}
+  },
+  "propertyQuota": {
+    "tokensPerDay": { "consumed": 12, "remaining": 199988 },
+    "tokensPerHour": { "consumed": 12, "remaining": 39988 },
+    "concurrentRequests": { "consumed": 0, "remaining": 10 },
+    "serverErrorsPerProjectPerHour": { "consumed": 0, "remaining": 10 },
+    "tokensPerProjectPerHour": { "consumed": 12, "remaining": 13988 }
+  },
+  "kind": "analyticsData#runFunnelReport"
+}

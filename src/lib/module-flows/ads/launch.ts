@@ -4,6 +4,7 @@ import {
   LAUNCH_SPEC_VERSION,
   type AdsLaunchSpec,
 } from "@/lib/ads/launch-spec";
+import { dayPartOf } from "@/lib/ads/day-parting";
 import { kpiMetricFor, targetCost } from "@/lib/ads/kpi";
 import { toMinorUnits } from "@/lib/ads/money";
 import { adTextFrom, clipWords } from "./state";
@@ -144,6 +145,9 @@ export function launchSpecFromFlow(input: {
         },
         advantageAudience,
         ...(dsa ? { dsa } : {}),
+        ...(brief.hours && brief.budgetMode === "fixed" && !brief.existingAdSetId
+          ? { schedule: dayPartOf(brief.hours) }
+          : {}),
       },
     ],
     ads: carousel

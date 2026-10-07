@@ -286,6 +286,27 @@ describe("LaunchExecutor.advance", () => {
     expect(state.calls.filter((call) => call === "upload")).toHaveLength(3);
   });
 
+  it("sends the business hours with the total budget to the ad set", async () => {
+    freshLaunch({
+      spec: {
+        ...spec,
+        budget: { mode: "FIXED", lifetimeMinor: 140_000, durationDays: 7 },
+        adSets: [
+          {
+            ...spec.adSets[0]!,
+            schedule: { days: [1, 2, 3, 4, 5], startMinute: 540, endMinute: 1080 },
+          },
+        ],
+      },
+    });
+    const { result } = await runToEnd();
+    expect(result.status).toBe("COMPLETED");
+    expect(meta.postAdSet.mock.calls[0]![0]).toMatchObject({
+      lifetimeBudgetMinor: 140_000,
+      schedule: { days: [1, 2, 3, 4, 5], startMinute: 540, endMinute: 1080 },
+    });
+  });
+
   it("never sends a finished step again", async () => {
     await runToEnd();
     state.launch = { ...state.launch!, status: "FAILED" };

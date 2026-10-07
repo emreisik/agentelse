@@ -353,3 +353,32 @@ describe("carousel brief rules", () => {
     ).not.toBeNull();
   });
 });
+
+describe("business hours brief rules", () => {
+  const input = {
+    creativeId: "c1",
+    objective: "OUTCOME_TRAFFIC",
+    dailyBudget: 20,
+    days: 7,
+    countries: ["TR"],
+    ageMin: 18,
+    ageMax: 65,
+    gender: "all",
+    link: "https://example.com",
+    callToAction: "LEARN_MORE",
+    budgetMode: "fixed",
+    hours: { from: 9, to: 18, weekdaysOnly: true },
+  };
+
+  it("accepts business hours with a total budget", () => {
+    expect(briefIssue(input)).toBeNull();
+  });
+
+  it("needs a total budget, a later end hour and a new campaign", () => {
+    expect(briefIssue({ ...input, budgetMode: "daily" })).toBe(ADS_BRIEF_ISSUE.hours);
+    expect(briefIssue({ ...input, hours: { from: 18, to: 9, weekdaysOnly: true } })).toBe(
+      ADS_BRIEF_ISSUE.hours,
+    );
+    expect(briefIssue({ ...input, existingAdSetId: "123" })).toBe(ADS_BRIEF_ISSUE.hours);
+  });
+});

@@ -244,6 +244,14 @@ const briefFields = z.object({
   // "carousel": seçilen bütün postlar TEK reklamın kartları olur (2-10);
   // varsayılan "single": her post ayrı reklam.
   adFormat: z.enum(["single", "carousel"]).optional(),
+  // Mesai saatlerinde yayın (hesap saatiyle); yalnız toplam bütçeyle.
+  hours: z
+    .object({
+      from: z.number().int().min(0).max(23),
+      to: z.number().int().min(1).max(24),
+      weekdaysOnly: z.boolean(),
+    })
+    .optional(),
 });
 
 const leadsNeedForm = (value: { objective: string; leadForm?: unknown }) =>
@@ -268,6 +276,18 @@ const carouselFits = (value: {
 }) =>
   value.adFormat !== "carousel" ||
   (!value.messages && value.objective !== "OUTCOME_LEADS");
+
+// Mesai saatleri: bitiş başlangıçtan sonra, toplam bütçeyle (Meta kuralı) ve
+// mevcut ad set'e eklemede değil (ad set kurulmaz).
+const hoursFit = (value: {
+  hours?: { from: number; to: number };
+  budgetMode?: string;
+  existingAdSetId?: string;
+}) =>
+  !value.hours ||
+  (value.hours.to > value.hours.from &&
+    value.budgetMode === "fixed" &&
+    !value.existingAdSetId);
 
 const agesInOrder = (value: { ageMin: number; ageMax: number }) =>
   value.ageMin <= value.ageMax;
@@ -300,6 +320,7 @@ export const AdsBriefInputSchema = briefFields
     { path: ["extraCreativeIds"] },
   )
   .refine(carouselFits, { path: ["adFormat"] })
+  .refine(hoursFit, { path: ["hours"] })
   .refine(leadsNeedForm, { path: ["leadForm"] })
   .refine(agesInOrder, { path: ["ageMax"] })
   .refine(dsaWhenEu, { path: ["dsaBeneficiary"] })
@@ -335,6 +356,7 @@ const AdsBriefSchema = briefFields
     extraSources: z.array(AdsSourceSchema).max(ADS_LIMITS.maxCards - 1).optional(),
   })
   .refine(carouselFits, { path: ["adFormat"] })
+  .refine(hoursFit, { path: ["hours"] })
   .refine(agesInOrder, { path: ["ageMax"] })
   .refine(linkWhenNeeded, { path: ["link"] });
 export type AdsBrief = z.infer<typeof AdsBriefSchema>;
@@ -500,6 +522,7 @@ export const ADS_BRIEF_ISSUE = {
   dsa: "Ads shown in the EU must say who benefits from the ad and who pays for it.",
   whatsapp: "Enter the WhatsApp number your Facebook Page uses.",
   leadForm: "Add the link to your privacy policy: Meta shows it on the form.",
+  hours: "Business hours need a total budget and an end hour after the start hour.",
   carousel: "A carousel needs 2 to 10 posts, and works for website goals only (not messages or forms).",
   other: "Check the brief.",
 } as const;
@@ -514,6 +537,7 @@ const ISSUE_ORDER: readonly [string, string][] = [
   ["dsaPayor", ADS_BRIEF_ISSUE.dsa],
   ["messages", ADS_BRIEF_ISSUE.whatsapp],
   ["leadForm", ADS_BRIEF_ISSUE.leadForm],
+  ["hours", ADS_BRIEF_ISSUE.hours],
   ["adFormat", ADS_BRIEF_ISSUE.carousel],
   ["extraCreativeIds", ADS_BRIEF_ISSUE.carousel],
   ["ageMin", ADS_BRIEF_ISSUE.ages],

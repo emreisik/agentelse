@@ -1,5 +1,6 @@
 import "server-only";
 
+import { adsetScheduleParam, type DayPart } from "@/lib/ads/day-parting";
 import {
   CREATIVE_FEATURES_OPT_IN,
   CREATIVE_FEATURES_OPT_OUT,
@@ -84,6 +85,8 @@ export async function postAdSet(input: {
   advantageAudience: 0 | 1;
   dsa?: { beneficiary: string; payor: string };
   frequencyControl?: { maxImpressions: number; days: number };
+  // Mesai saatleri: yalnız toplam bütçeyle (Meta kuralı).
+  schedule?: DayPart;
   status: "ACTIVE" | "PAUSED";
   validateOnly?: boolean;
 }): Promise<Created> {
@@ -110,6 +113,14 @@ export async function postAdSet(input: {
     ),
     dsa_beneficiary: input.dsa?.beneficiary.slice(0, 512),
     dsa_payor: input.dsa?.payor.slice(0, 512),
+    pacing_type:
+      input.schedule && input.lifetimeBudgetMinor !== undefined
+        ? JSON.stringify(["day_parting"])
+        : undefined,
+    adset_schedule:
+      input.schedule && input.lifetimeBudgetMinor !== undefined
+        ? JSON.stringify(adsetScheduleParam(input.schedule))
+        : undefined,
     frequency_control_specs: input.frequencyControl
       ? JSON.stringify([
           {

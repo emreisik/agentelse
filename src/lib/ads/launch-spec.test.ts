@@ -267,3 +267,49 @@ describe("carousel ads (F8+)", () => {
     expect(specHash(carousel)).not.toBe(specHash(spec));
   });
 });
+
+describe("business hours (adset_schedule)", () => {
+  const schedule = { days: [1, 2, 3, 4, 5], startMinute: 540, endMinute: 1080 };
+  const fixed = { mode: "FIXED" as const, lifetimeMinor: 140_000, durationDays: 7 };
+  const withHours = (budget: AdsLaunchSpec["budget"]): AdsLaunchSpec => ({
+    ...spec,
+    budget,
+    adSets: [{ ...spec.adSets[0]!, schedule }],
+  });
+
+  it("is accepted with a total budget", async () => {
+    const { parseLaunchSpec } = await import("./launch-spec");
+    expect(parseLaunchSpec(withHours(fixed))).not.toBeNull();
+  });
+
+  it("is refused with a daily budget or on an existing ad set", async () => {
+    const { parseLaunchSpec } = await import("./launch-spec");
+    expect(
+      parseLaunchSpec(withHours({ mode: "DAILY", dailyMinor: 20_000, durationDays: 7 })),
+    ).toBeNull();
+    expect(
+      parseLaunchSpec({ ...withHours(fixed), existingAdSetId: "123" }),
+    ).toBeNull();
+  });
+
+  it("rejects half hours and an end before the start", async () => {
+    const { parseLaunchSpec } = await import("./launch-spec");
+    expect(
+      parseLaunchSpec({
+        ...withHours(fixed),
+        adSets: [{ ...spec.adSets[0]!, schedule: { ...schedule, startMinute: 570 } }],
+      }),
+    ).toBeNull();
+    expect(
+      parseLaunchSpec({
+        ...withHours(fixed),
+        adSets: [{ ...spec.adSets[0]!, schedule: { ...schedule, startMinute: 1080, endMinute: 540 } }],
+      }),
+    ).toBeNull();
+  });
+
+  it("changes the approval hash only when a schedule is present", () => {
+    expect(specHash(withHours(fixed))).not.toBe(specHash({ ...spec, budget: fixed }));
+    expect(specHash({ ...spec, budget: fixed })).toBe(specHash({ ...spec, budget: fixed }));
+  });
+});

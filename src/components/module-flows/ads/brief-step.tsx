@@ -386,6 +386,12 @@ function BriefForm({
   const [extraIds, setExtraIds] = useState<string[]>(
     brief?.extraSources?.map((source) => source.creativeId) ?? [],
   );
+  const [hoursOn, setHoursOn] = useState(Boolean(brief?.hours));
+  const [hoursFrom, setHoursFrom] = useState(String(brief?.hours?.from ?? 9));
+  const [hoursTo, setHoursTo] = useState(String(brief?.hours?.to ?? 18));
+  const [weekdaysOnly, setWeekdaysOnly] = useState(
+    brief?.hours?.weekdaysOnly ?? true,
+  );
   const [adFormat, setAdFormat] = useState<"single" | "carousel">(
     brief?.adFormat === "carousel" ? "carousel" : "single",
   );
@@ -445,6 +451,9 @@ function BriefForm({
   const carouselOn =
     carouselAllowed && adFormat === "carousel" && extraIds.length > 0;
   const maxExtras = carouselAllowed && adFormat === "carousel" ? 9 : 2;
+  // Mesai saatleri yalnız toplam bütçeyle ve yeni kampanyada.
+  const hoursAllowed = planner && budgetMode === "fixed" && !adding;
+  const hoursActive = hoursAllowed && hoursOn;
   const input: Partial<AdsBriefInput> & Record<string, unknown> = {
     creativeId: creativeId ?? undefined,
     objective: messages ? "OUTCOME_ENGAGEMENT" : objective,
@@ -480,6 +489,15 @@ function BriefForm({
       ? { extraCreativeIds: extraIds.filter((id) => id !== creativeId) }
       : {}),
     ...(carouselOn ? { adFormat: "carousel" as const } : {}),
+    ...(hoursActive
+      ? {
+          hours: {
+            from: Number(hoursFrom),
+            to: Number(hoursTo),
+            weekdaysOnly,
+          },
+        }
+      : {}),
     ...(adding ? { existingAdSetId } : {}),
   };
   const issue = briefIssue(input);
@@ -803,6 +821,89 @@ function BriefForm({
         </div>
       </Section>
       )}
+
+      {hoursAllowed ? (
+        <Section label={COPY.hoursLabel} hint={COPY.hoursHint}>
+          <div className="space-y-2">
+            <div
+              role="group"
+              aria-label={COPY.hoursLabel}
+              className="flex flex-wrap gap-1.5"
+            >
+              <Chip active={!hoursOn} onClick={() => setHoursOn(false)}>
+                {COPY.allDay}
+              </Chip>
+              <Chip active={hoursOn} onClick={() => setHoursOn(true)}>
+                {COPY.businessHours}
+              </Chip>
+            </div>
+            {hoursOn ? (
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="space-y-1">
+                  <span
+                    className="block text-xs"
+                    style={{ color: "var(--ws-text-2)" }}
+                  >
+                    {COPY.hoursFrom}
+                  </span>
+                  <select
+                    value={hoursFrom}
+                    onChange={(event) => setHoursFrom(event.target.value)}
+                    className={FIELD_CLASS}
+                    style={FIELD_STYLE}
+                  >
+                    {Array.from({ length: 24 }, (_, hour) => (
+                      <option key={hour} value={hour}>
+                        {String(hour).padStart(2, "0")}:00
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1">
+                  <span
+                    className="block text-xs"
+                    style={{ color: "var(--ws-text-2)" }}
+                  >
+                    {COPY.hoursTo}
+                  </span>
+                  <select
+                    value={hoursTo}
+                    onChange={(event) => setHoursTo(event.target.value)}
+                    className={FIELD_CLASS}
+                    style={FIELD_STYLE}
+                  >
+                    {Array.from({ length: 24 }, (_, index) => index + 1).map(
+                      (hour) => (
+                        <option key={hour} value={hour}>
+                          {String(hour).padStart(2, "0")}:00
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+                <div
+                  role="group"
+                  aria-label={COPY.weekdaysOnly}
+                  className="flex flex-wrap gap-1.5"
+                >
+                  <Chip
+                    active={weekdaysOnly}
+                    onClick={() => setWeekdaysOnly(true)}
+                  >
+                    {COPY.weekdaysOnly}
+                  </Chip>
+                  <Chip
+                    active={!weekdaysOnly}
+                    onClick={() => setWeekdaysOnly(false)}
+                  >
+                    {COPY.everyDay}
+                  </Chip>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </Section>
+      ) : null}
 
       {planner && !adding ? (
         <Section label={COPY.target} hint={target ? COPY.targetIs(formatBudget(target, currency)) : COPY.targetHint}>

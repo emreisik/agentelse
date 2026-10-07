@@ -512,6 +512,7 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
             adSet.optimizationGoal === "REACH"
               ? { maxImpressions: 2, days: 7 }
               : undefined,
+          ...(adSet.schedule ? { schedule: adSet.schedule } : {}),
           status: "ACTIVE",
         });
         if (!created.id)

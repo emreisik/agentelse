@@ -47,6 +47,39 @@ describe("launchSpecFromFlow", () => {
   });
 });
 
+describe("launchSpecFromFlow business hours", () => {
+  const hours = { from: 9, to: 18, weekdaysOnly: true };
+
+  it("puts the schedule on the ad set when the budget is a total", () => {
+    const spec = launchSpecFromFlow({
+      brief: { ...brief, budgetMode: "fixed", hours },
+      plan,
+      context,
+      activate: false,
+    });
+    expect(spec.adSets[0]?.schedule).toEqual({
+      days: [1, 2, 3, 4, 5],
+      startMinute: 540,
+      endMinute: 1080,
+    });
+  });
+
+  it("drops it for a daily budget or an existing ad set", () => {
+    expect(
+      launchSpecFromFlow({ brief: { ...brief, hours }, plan, context, activate: false }).adSets[0]
+        ?.schedule,
+    ).toBeUndefined();
+    expect(
+      launchSpecFromFlow({
+        brief: { ...brief, budgetMode: "fixed", hours, existingAdSetId: "123" },
+        plan,
+        context,
+        activate: false,
+      }).adSets[0]?.schedule,
+    ).toBeUndefined();
+  });
+});
+
 describe("launchSpecFromFlow carousel", () => {
   const traffic: AdsBrief = {
     ...brief,

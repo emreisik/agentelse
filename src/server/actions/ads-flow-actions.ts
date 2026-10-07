@@ -183,6 +183,8 @@ export async function saveAdsBriefAction(
           ? { leadForm: given.leadForm }
           : {}),
         ...(extraSources.length > 0 ? { extraSources } : {}),
+        // Mesai saatleri (toplam bütçeyle; şema bunu zaten denetler).
+        ...(given.hours ? { hours: given.hours } : {}),
         // Carousel: seçilen bütün postlar tek reklamın kartları.
         ...(given.adFormat === "carousel" && extraSources.length > 0
           ? { adFormat: "carousel" as const }

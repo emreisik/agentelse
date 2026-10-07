@@ -235,7 +235,7 @@ Bayrak: `META_ADS_PLANNER=true` ve `META_ADS_LAUNCH_V2=true`. Her amaç ayrıca 
 - **Ücret** (`src/lib/ads/fees.ts`, tarihli): konum ücretiyle tahmini fatura ("plus VAT where it applies"; KDV hesaplanmaz).
 - **Leads** (anında form): spec, yürütücü adımı (`/{page_id}/leadgen_forms`, Sayfa token'ı, Higher intent), CTA ve günlük "New leads today: N — open Leads Center" bildirimi kodlandı; `pages_manage_ads` App Review'dan geçene kadar `READY_RECIPES.leads_instant_form = false` (Brief'te görünmez). Lead'lerin kişisel verisi okunmaz ve saklanmaz (gizlilik metni güncellendi).
 - **Önerilen hedef**: piksel varsa Traffic, yoksa Messages (gerekçesiyle).
-- **Henüz yok**: video modülde (eski sihirbazda duruyor), iki oranlı `asset_feed_spec` (test hesabında doğrulanana kadar tek görsel + `adapt_to_placement`), Instagram profil hedefi, içerik planındaki `ads.campaign` parçasına "Make this ad" köprüsü, mesai saatleriyle zamanlama.
+- **Henüz yok**: video modülde (eski sihirbazda duruyor), iki oranlı `asset_feed_spec` (test hesabında doğrulanana kadar tek görsel + `adapt_to_placement`), Instagram profil hedefi (Meta alan adları test hesabında doğrulanmalı), içerik planındaki metin-tabanlı `ads.campaign` parçasına "Make this ad" köprüsü (görselli postlar için "Boost with an ad" zaten var).
 
 ## F6 — Raporlama ve öğrenme
 
@@ -301,6 +301,14 @@ Brief'te ana posta ek post seçilince "How should they show?" çıkar: **Separat
 - Meta yazısı: eski sihirbazda canlıda kanıtlanmış `link_data.child_attachments` biçimi (`objectStorySpec`). Review'da `validate_only` ile Meta ön kontrolü ve önizleme carousel'i de kapsar; kart başlıkları politika denetiminden geçer.
 - Kartın başlığı post başlığından (40 karaktere kısaltılır). Görseller 1:1 değilse Meta kırpar; test lansmanında önizlemeden kontrol et.
 - Doğrulanmadı: Meta'nın carousel `ON_POST` etkileşim hedefindeki davranışı. İlk gerçek denemede Review'daki Meta ön kontrolü sorunu gösterir.
+
+## Mesai saatlerinde yayın (modül akışı)
+
+Brief'te bütçe **toplam (in total)** seçiliyken "When should the ad run?": **Business hours** (başlangıç ve bitiş saati, yalnız hafta içi ya da her gün; hesap saatine göre). Meta `adset_schedule`'ı yalnız toplam bütçeli ad set'te kabul eder; günlük bütçede ve mevcut ad set'e eklemede seçenek çıkmaz, şema ve spec de bunu reddeder.
+
+- Spec: `adSets[].schedule` ({days 0=Pazar…6, startMinute, endMinute; saat başı}). `src/lib/ads/day-parting.ts` (testli) Meta'nın alanını üretir; ad set yazısı `pacing_type=["day_parting"]` + `adset_schedule` (`timezone_type=ADVERTISER`) gönderir. `specHash` yalnız zamanlama varken değişir.
+- Review notu: "Ads run Mon–Fri 09:00–18:00 (account time)…".
+- Doğrulanmadı: ad set için `validate_only` kullanılmıyor, yani zamanlama hatası lansman sırasında ad set adımında çıkar (kampanya o noktada kapalı: harcama olmaz, "Fix and retry"). İlk denemeyi `socialmedia` test hesabında yap.
 
 ## Sahip adımları (kod dışı)
 

@@ -116,6 +116,15 @@ export const AdsLaunchSpecSchema = z.object({
         promotedObject: z.record(z.string(), z.string()).optional(),
         targeting: TargetingSchema,
         advantageAudience: z.union([z.literal(0), z.literal(1)]),
+        // Mesai saatleri (adset_schedule): yalnız toplam bütçeyle.
+        schedule: z
+          .object({
+            days: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+            startMinute: z.number().int().min(0).max(1380).multipleOf(60),
+            endMinute: z.number().int().min(60).max(1440).multipleOf(60),
+          })
+          .refine((part) => part.endMinute > part.startMinute)
+          .optional(),
         dsa: z
           .object({
             beneficiary: z.string().max(512),
@@ -190,6 +199,16 @@ export const AdsLaunchSpecSchema = z.object({
       (ad) => !ad.creative.cards || (!ad.creative.messaging && !spec.leadForm),
     ),
   { path: ["ads"], message: "A carousel can't be a message or lead form ad" },
+).refine(
+  // Meta, adset_schedule'ı yalnız toplam (lifetime) bütçeli ad set'te kabul
+  // eder; mevcut ad set'e eklemede ad set kurulmaz.
+  (spec) =>
+    spec.adSets.every(
+      (adSet) =>
+        !adSet.schedule ||
+        (spec.budget.mode === "FIXED" && !spec.existingAdSetId),
+    ),
+  { path: ["adSets"], message: "Business hours need a total budget" },
 );
 export type AdsLaunchSpec = z.infer<typeof AdsLaunchSpecSchema>;
 
@@ -216,6 +235,7 @@ export function specHash(spec: AdsLaunchSpec): string {
         promotedObject: adSet.promotedObject ?? null,
         targeting: adSet.targeting,
         advantageAudience: adSet.advantageAudience,
+        ...(adSet.schedule ? { schedule: adSet.schedule } : {}),
       })),
       ads: spec.ads.map((ad) => ({
         adSetIndex: ad.adSetIndex,

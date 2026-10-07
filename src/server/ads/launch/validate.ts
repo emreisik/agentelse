@@ -19,6 +19,7 @@ import {
   type LaunchAccountFacts,
   type LaunchIssue,
 } from "@/lib/ads/launch-spec";
+import { dayPartLabel } from "@/lib/ads/day-parting";
 import { creativeCards, imageSlots } from "@/lib/ads/launch-images";
 import { safeTimezone } from "@/lib/ads/sync-plan";
 import type { LaunchBuildContext } from "@/lib/module-flows/ads/launch";
@@ -259,6 +260,13 @@ export async function prepareLaunch(input: {
         }
         if (reach && reach.upper < NARROW_AUDIENCE) {
           notes.push("This audience is narrow (under 100,000 people): results may cost more.");
+        }
+      }
+      for (const adSet of spec.adSets) {
+        if (adSet.schedule) {
+          notes.push(
+            `Ads run ${dayPartLabel(adSet.schedule)} (account time). Outside those hours nothing is shown, so the total budget is spread over fewer hours.`,
+          );
         }
       }
       const countries = spec.adSets.flatMap((adSet) => adSet.targeting.countries);

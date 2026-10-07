@@ -57,11 +57,16 @@ const DISPATCH_CONCURRENCY = 5;
 // 135s timeout, or advanceOneProject's 45s per-project setup budget) — this
 // exists only to guarantee the worker recovers from a hang nothing else
 // catches (a fetch with no timeout, a stalled DB connection), not to police
-// normal duration. Without it, a single stuck tick wedges activeTick
+// normal duration. Without it, a single stuck tick wedges its lane
 // forever: every later interval firing just re-awaits the same promise, so
 // the whole worker goes silent with no error ever logged.
 const TICK_WATCHDOG_MS = 5 * 60_000;
-let activeTick: Promise<void> | undefined;
+// Single-flight state per lane (see ExecutionWorker.tick*): the full tick and
+// each of its two lanes coalesce overlapping callers on their own.
+type Lane = { active: Promise<void> | undefined };
+const fullLane: Lane = { active: undefined };
+const fastLane: Lane = { active: undefined };
+const slowLane: Lane = { active: undefined };
 
 // Provider health is computed over a 30-minute window of job results;
 // recomputing (and re-writing) it on every 10 s tick bought nothing. Every
@@ -111,6 +116,23 @@ function watchdog(ms: number): { promise: Promise<never>; cancel: () => void } {
     );
   });
   return { promise, cancel: () => clearTimeout(timer) };
+}
+
+// Runs one lane single-flight, raced against the watchdog: whichever settles
+// first decides the outcome. A normal run error propagates; a watchdog timeout
+// propagates the same way instead of hanging forever (and frees the lane even
+// though the stuck run itself may never return).
+async function runLane(lane: Lane, run: () => Promise<void>): Promise<void> {
+  if (lane.active) return lane.active;
+  const running = run();
+  lane.active = running;
+  const dog = watchdog(TICK_WATCHDOG_MS);
+  try {
+    await Promise.race([running, dog.promise]);
+  } finally {
+    dog.cancel();
+    if (lane.active === running) lane.active = undefined;
+  }
 }
 
 // Exponential backoff + jitter. Without jitter, N jobs that fail at the
@@ -456,28 +478,17 @@ export const ExecutionWorker = {
     ]);
   },
 
-  async tick(): Promise<void> {
-    // Coalesce overlapping interval/HTTP invocations in this process. The
-    // shared promise also makes callers wait for the active tick instead of
-    // reporting success while work is still running.
-    if (activeTick) return activeTick;
-
-    const run = (async () => {
-      // Nabız: tick başında lastBeatAt, sonunda lastOkAt (en fazla dakikada
-      // bir). Harici monitör ve uygulama içi şerit buna bakar
-      // (docs/meta-ads-plan.md F0b).
-      // Beklenmez: nabız yazımı hiç fırlatmaz ve tick'in aşamalarını
-      // geciktirmemeli.
-      void Heartbeat.beat(HEARTBEAT_KEYS.WORKER_TICK);
-      // Every stage is isolated: a single broken cron expression or health
-      // scan error must not bring down the whole tick (including dispatch +
-      // poll + verify).
-      await isolate("scheduler", () => SchedulerService.runDueSchedules());
-      await isolate("self-healing", () => SelfHealingService.run());
-      if (Date.now() - lastProviderHealthAt >= PROVIDER_HEALTH_EVERY_MS) {
-        lastProviderHealthAt = Date.now();
-        await isolate("provider-health", () => ProviderHealthService.refresh());
-      }
+  // The worker's work comes in two lanes that run side by side, so that a user's
+  // queued job is never held up by the slow agency steps (LLM calls, setup
+  // advancement with a 45 s budget per project, Telegram HTTP): they used to
+  // share one serial tick, and a long agency step delayed the next dispatch by
+  // minutes.
+  //   fast: dispatch, poll running jobs, verify (what a queued job waits for)
+  //   slow: scheduler, self-healing, provider health, agency loop, sweep
+  // Each lane is single-flight on its own; tick() runs both (the cron route,
+  // tests), the in-process timer runs each on its own interval.
+  async tickFast(): Promise<void> {
+    return runLane(fastLane, async () => {
       await isolate("dispatch", () => this.processDispatchQueue());
       await isolate("poll", () => this.pollRunningJobs());
       const repairDue =
@@ -486,6 +497,25 @@ export const ExecutionWorker = {
       await isolate("verify", () =>
         this.resolvePendingVerifications(20, { repair: repairDue }),
       );
+    });
+  },
+
+  async tickSlow(): Promise<void> {
+    return runLane(slowLane, async () => {
+      // Nabız: tick başında lastBeatAt, sonunda lastOkAt (en fazla dakikada
+      // bir). Harici monitör ve uygulama içi şerit buna bakar
+      // (docs/meta-ads-plan.md F0b).
+      // Beklenmez: nabız yazımı hiç fırlatmaz ve tick'in aşamalarını
+      // geciktirmemeli.
+      void Heartbeat.beat(HEARTBEAT_KEYS.WORKER_TICK);
+      // Every stage is isolated: a single broken cron expression or health
+      // scan error must not bring down the whole lane.
+      await isolate("scheduler", () => SchedulerService.runDueSchedules());
+      await isolate("self-healing", () => SelfHealingService.run());
+      if (Date.now() - lastProviderHealthAt >= PROVIDER_HEALTH_EVERY_MS) {
+        lastProviderHealthAt = Date.now();
+        await isolate("provider-health", () => ProviderHealthService.refresh());
+      }
       // Agency OS loop — internally fault-isolated per step; a failing agency
       // stage never breaks execution processing (guarded here anyway).
       try {
@@ -495,20 +525,22 @@ export const ExecutionWorker = {
       }
       await isolate("sweep-expired", () => this.sweepExpired());
       await Heartbeat.ok(HEARTBEAT_KEYS.WORKER_TICK);
-    })();
+    });
+  },
 
-    activeTick = run;
-    const dog = watchdog(TICK_WATCHDOG_MS);
-    try {
-      // Races the tick against the watchdog rather than just `await run` —
-      // whichever settles first decides the outcome. A normal run() error
-      // still propagates exactly as before (callers: instrumentation.ts's
-      // console.error, the cron route's dead-letter + 500); a watchdog
-      // timeout now propagates the same way instead of hanging forever.
-      await Promise.race([run, dog.promise]);
-    } finally {
-      dog.cancel();
-      if (activeTick === run) activeTick = undefined;
-    }
+  async tick(): Promise<void> {
+    // Coalesce overlapping interval/HTTP invocations in this process. The
+    // shared promise also makes callers wait for the active tick instead of
+    // reporting success while work is still running.
+    return runLane(fullLane, async () => {
+      const results = await Promise.allSettled([
+        this.tickFast(),
+        this.tickSlow(),
+      ]);
+      // A failed lane propagates exactly as a failed tick did (callers:
+      // instrumentation.ts's console.error, the cron route's dead-letter + 500).
+      const failed = results.find((r) => r.status === "rejected");
+      if (failed) throw (failed as PromiseRejectedResult).reason;
+    });
   },
 };

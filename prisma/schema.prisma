@@ -1364,6 +1364,17 @@ model Command {
   idea  Idea?  @relation(fields: [ideaId], references: [id], onDelete: SetNull)
   tasks Task[]
 
+  // Read-only copies of parsedIntent.card.{kind,taskId,creativeId}: STORED
+  // generated columns (migration 20261007110000), filled by the database
+  // itself, so no writer sets them and old rows already have them. They exist
+  // so the chat page and the card repositories can use plain indexed
+  // equality instead of a JSON-path scan over every row of the project
+  // (Prisma sends a path filter as parameters, which no index can serve).
+  // Never put them in a create/update `data`.
+  cardKind       String? @default(dbgenerated("((\"parsedIntent\" -> 'card'::text) ->> 'kind'::text)"))
+  cardTaskId     String? @default(dbgenerated("((\"parsedIntent\" -> 'card'::text) ->> 'taskId'::text)"))
+  cardCreativeId String? @default(dbgenerated("((\"parsedIntent\" -> 'card'::text) ->> 'creativeId'::text)"))
+
   createdAt DateTime @default(now())
 
   @@index([workspaceId])
@@ -1380,6 +1391,9 @@ model Command {
   @@index([projectId, createdAt])
   // The chat page reads WEB and SYSTEM rows separately, newest first.
   @@index([projectId, source, createdAt])
+  @@index([projectId, cardTaskId])
+  @@index([projectId, cardCreativeId])
+  @@index([projectId, cardKind, createdAt])
 }
 
 model Task {

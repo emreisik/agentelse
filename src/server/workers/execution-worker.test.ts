@@ -159,7 +159,10 @@ describe("ExecutionWorker.tick", () => {
     const overlapping = ExecutionWorker.tick();
 
     expect(mocks.schedulerRun).toHaveBeenCalledTimes(1);
-    expect(mocks.claimBatch).not.toHaveBeenCalled();
+    // The fast lane (dispatch, poll, verify) is not held up by the slow one:
+    // a slow scheduler or agency step no longer delays a queued job.
+    await vi.waitFor(() => expect(mocks.claimBatch).toHaveBeenCalledTimes(1));
+    expect(mocks.agencyTick).not.toHaveBeenCalled();
 
     releaseScheduler();
     await Promise.all([first, overlapping]);
@@ -173,6 +176,31 @@ describe("ExecutionWorker.tick", () => {
     await ExecutionWorker.tick();
     expect(mocks.schedulerRun).toHaveBeenCalledTimes(2);
     expect(mocks.claimBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("the two lanes are independent: a stuck agency step never delays dispatch, and each lane coalesces on its own", async () => {
+    let releaseAgency!: () => void;
+    mocks.agencyTick.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseAgency = resolve;
+        }),
+    );
+
+    const slow = ExecutionWorker.tickSlow();
+    await vi.waitFor(() => expect(mocks.agencyTick).toHaveBeenCalledTimes(1));
+
+    // The slow lane is stuck inside the agency step: dispatch still runs, on
+    // every call, while a second slow call just joins the running one.
+    await ExecutionWorker.tickFast();
+    await ExecutionWorker.tickFast();
+    expect(mocks.claimBatch).toHaveBeenCalledTimes(2);
+    const joined = ExecutionWorker.tickSlow();
+    expect(mocks.schedulerRun).toHaveBeenCalledTimes(1);
+
+    releaseAgency();
+    await Promise.all([slow, joined]);
+    expect(mocks.heartbeatOk).toHaveBeenCalledTimes(1);
   });
 
   it("releases the single-flight lock when a tick fails", async () => {

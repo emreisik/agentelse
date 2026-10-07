@@ -16,6 +16,11 @@ const db = vi.hoisted(() => ({
 // Sahte Command.findMany: where'i yürüyerek kartın uyup uymadığına bakar.
 function matches(where: Where, card: Record<string, unknown>): boolean {
   const own = (part: Where) => {
+    // cardKind is the generated copy of card.kind (migration
+    // 20261007110000); other card fields are still matched by JSON path.
+    if (typeof part.cardKind === "string" && card.kind !== part.cardKind) {
+      return false;
+    }
     const intent = part.parsedIntent as
       { path: string[]; equals: string } | undefined;
     if (!intent) return true;
@@ -88,7 +93,7 @@ describe("liveSlotCount: SEO kartlarının makaleleri", () => {
     expect(db.commandWhere[0]).toEqual({
       projectId: "p1",
       workId: "w1",
-      parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" },
+      cardKind: "content-plan-draft",
     });
   });
 

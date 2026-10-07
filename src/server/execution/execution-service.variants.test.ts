@@ -215,7 +215,7 @@ function installPrisma() {
     },
     command: {
       findFirst: async ({ where }: { where: { AND: Rec[] } }) => {
-        const creativeId = (where.AND[0]?.parsedIntent as Rec).equals;
+        const creativeId = where.AND[0]?.cardCreativeId;
         return (
           db.commands.find(
             (c) =>
@@ -227,7 +227,7 @@ function installPrisma() {
         Object.assign(db.commands.find((c) => c.id === where.id) as Rec, data);
       },
       updateMany: async ({ where, data }: { where: Rec; data: Rec }) => {
-        const taskId = (where.parsedIntent as Rec).equals;
+        const taskId = where.cardTaskId;
         for (const c of db.commands) {
           if (
             ((c.parsedIntent as Rec)?.card as Rec | undefined)?.taskId ===

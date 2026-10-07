@@ -337,10 +337,16 @@ describeIntegration("SEO handoff chain (spec test c)", () => {
     expect(job?.verification?.status).toBe("VERIFIED");
     expect(job?.verification?.evidenceIds.length).toBeGreaterThan(0);
 
-    const handoff = await prisma.workHandoff.findUnique({
-      where: { id: handoffId },
-    });
-    expect(handoff?.status).toBe("COMPLETED");
+    // The worker's two lanes run side by side (execution-worker.ts tickFast /
+    // tickSlow): the agency step sees the finished task on the NEXT tick, not
+    // in the tick that verified it, so the handoff completes a tick later.
+    const handoffDone = await pumpWorker(async () => {
+      const handoff = await prisma.workHandoff.findUnique({
+        where: { id: handoffId },
+      });
+      return handoff?.status === "COMPLETED";
+    }, 10);
+    expect(handoffDone).toBe(true);
   }, 180_000);
 
   it("schedules measurement, runs the due check, and extracts a learning", async () => {

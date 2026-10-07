@@ -51,7 +51,7 @@ async function loadWorkPlanIds(
     where: {
       projectId,
       workId,
-      parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" },
+      cardKind: "content-plan-draft",
     },
     select: { id: true },
     take: 200,
@@ -287,7 +287,7 @@ async function hasOpenDraft(projectId: string, workId: string): Promise<boolean>
         projectId,
         workId,
         AND: [
-          { parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" } },
+          { cardKind: "content-plan-draft" },
           { parsedIntent: { path: ["card", "state"], equals: "draft" } },
         ],
       },

@@ -66,18 +66,25 @@ export async function register() {
     const { ExecutionWorker } =
       await import("@/server/workers/execution-worker");
 
-    // Production ticks a bit slower than dev: a tick that's still running
-    // just coalesces the next one (ExecutionWorker.tick's activeTick), so
-    // this is the idle poll latency, not a throughput cap.
+    // Two lanes on their own timers (ExecutionWorker.tickFast / tickSlow): a
+    // queued job's dispatch no longer waits behind the slow agency steps. A lane
+    // that is still running just coalesces its next firing, so these are idle
+    // poll latencies, not throughput caps. Production is a bit slower than dev.
+    const FAST_MS = isDevWorker ? 2_000 : 4_000;
     const TICK_MS = isDevWorker ? 3_000 : 10_000;
     setInterval(() => {
-      ExecutionWorker.tick().catch((error) => {
+      ExecutionWorker.tickFast().catch((error) => {
+        console.error("[worker] fast lane failed", error);
+      });
+    }, FAST_MS);
+    setInterval(() => {
+      ExecutionWorker.tickSlow().catch((error) => {
         console.error("[worker] tick failed", error);
       });
     }, TICK_MS);
 
     console.log(
-      `[worker] ${isDevWorker ? "local" : "in-process production"} execution worker started (tick every ${TICK_MS}ms)`,
+      `[worker] ${isDevWorker ? "local" : "in-process production"} execution worker started (fast lane every ${FAST_MS}ms, tick every ${TICK_MS}ms)`,
     );
   }
 }

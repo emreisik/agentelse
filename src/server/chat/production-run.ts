@@ -129,7 +129,7 @@ async function loadTaskCard(projectId: string, taskId: string) {
     where: {
       projectId,
       source: "SYSTEM",
-      parsedIntent: { path: ["card", "taskId"], equals: taskId },
+      cardTaskId: taskId,
     },
     orderBy: { createdAt: "desc" },
     select: { id: true, replyText: true, parsedIntent: true },

@@ -783,8 +783,8 @@ async function patchCardAfterVariantsOnly(
       projectId: job.projectId,
       source: "SYSTEM",
       AND: [
-        { parsedIntent: { path: ["card", "creativeId"], equals: creativeId } },
-        { parsedIntent: { path: ["card", "kind"], equals: "creative-ready" } },
+        { cardCreativeId: creativeId },
+        { cardKind: "creative-ready" },
       ],
     },
     orderBy: { createdAt: "desc" },
@@ -821,7 +821,7 @@ async function patchCardAfterVariantsOnly(
     where: {
       projectId: job.projectId,
       source: "SYSTEM",
-      parsedIntent: { path: ["card", "taskId"], equals: job.taskId },
+      cardTaskId: job.taskId,
     },
     data: {
       replyText:

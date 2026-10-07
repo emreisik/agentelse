@@ -463,13 +463,13 @@ async function liveSlotCount(
   workId: string,
 ): Promise<number> {
   const planCard = {
-    parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" },
+    cardKind: "content-plan-draft",
   };
   // SEO_ACTIONS açıkken SEO Manager kartlarının makaleleri de (Creative.planId =
   // kartın Command'ı) canlı slot sayılır: takvimdeki makalesi olan Work silinemez.
   const seoCard = {
     AND: [
-      { parsedIntent: { path: ["card", "kind"], equals: "module-flow" } },
+      { cardKind: "module-flow" },
       { parsedIntent: { path: ["card", "module"], equals: "seo" } },
     ],
   };

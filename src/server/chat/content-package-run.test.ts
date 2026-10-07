@@ -297,8 +297,8 @@ describe("runContentPackage", () => {
       return { status: "COMPLETED", errorMessage: null };
     });
     commandFindFirst.mockImplementation(
-      async ({ where }: { where: { parsedIntent: { equals: string } } }) =>
-        where.parsedIntent.equals === "task-Post"
+      async ({ where }: { where: { cardTaskId: string } }) =>
+        where.cardTaskId === "task-Post"
           ? {
               id: "row-post",
               replyText: "Creative ready: Post — awaiting approval.",

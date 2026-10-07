@@ -697,11 +697,11 @@ describe("project page Works wave 2", () => {
       { source: "WEB" },
       {
         source: "SYSTEM",
-        parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" },
+        cardKind: "content-plan-draft",
       },
       {
         source: "SYSTEM",
-        parsedIntent: { path: ["card", "kind"], equals: "module-flow" },
+        cardKind: "module-flow",
       },
     ]);
 

@@ -350,26 +350,17 @@ export default async function ProjectChatPage({
                 { source: "WEB" as const },
                 {
                   source: "SYSTEM" as const,
-                  parsedIntent: {
-                    path: ["card", "kind"],
-                    equals: "content-plan-draft",
-                  },
+                  cardKind: "content-plan-draft",
                 },
                 {
                   source: "SYSTEM" as const,
-                  parsedIntent: {
-                    path: ["card", "kind"],
-                    equals: "module-flow",
-                  },
+                  cardKind: "module-flow",
                 },
                 ...(gaReportsEnabled()
                   ? [
                       {
                         source: "SYSTEM" as const,
-                        parsedIntent: {
-                          path: ["card", "kind"],
-                          equals: "website-report",
-                        },
+                        cardKind: "website-report",
                       },
                     ]
                   : []),
@@ -377,10 +368,7 @@ export default async function ProjectChatPage({
                   ? [
                       {
                         source: "SYSTEM" as const,
-                        parsedIntent: {
-                          path: ["card", "kind"],
-                          equals: "seo-report",
-                        },
+                        cardKind: "seo-report",
                       },
                     ]
                   : []),
@@ -430,7 +418,7 @@ export default async function ProjectChatPage({
         projectId,
         topic: null,
         source: "SYSTEM",
-        parsedIntent: { path: ["card", "kind"], equals: "creative-ready" },
+        cardKind: "creative-ready",
         ...(work ? { workId: work.id } : {}),
       },
       orderBy: { createdAt: "desc" },
@@ -541,12 +529,12 @@ export default async function ProjectChatPage({
             AND: [
               {
                 OR: PACKAGE_ROW_KINDS.map((kind) => ({
-                  parsedIntent: { path: ["card", "kind"], equals: kind },
+                  cardKind: kind,
                 })),
               },
               {
                 OR: packageTaskIds.map((taskId) => ({
-                  parsedIntent: { path: ["card", "taskId"], equals: taskId },
+                  cardTaskId: taskId,
                 })),
               },
             ],

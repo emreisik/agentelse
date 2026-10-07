@@ -132,7 +132,7 @@ describe("loadJourneySnapshot", () => {
       where: {
         projectId: "proj-1",
         workId: "w1",
-        parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" },
+        cardKind: "content-plan-draft",
       },
       select: { id: true },
       take: 200,

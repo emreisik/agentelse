@@ -27,6 +27,7 @@ const meta = vi.hoisted(() => ({
   postAdSet: vi.fn(),
   postCreative: vi.fn(),
   postAd: vi.fn(),
+  setCampaignBidStrategy: vi.fn(),
   readBack: vi.fn(),
   setObjectStatus: vi.fn(),
   lifetimeImpressions: vi.fn(),
@@ -78,6 +79,7 @@ vi.mock("@/server/integrations/meta/launch-writes", () => ({
   postAdSet: (...args: unknown[]) => meta.postAdSet(...args),
   postCreative: (...args: unknown[]) => meta.postCreative(...args),
   postAd: (...args: unknown[]) => meta.postAd(...args),
+  setCampaignBidStrategy: (...args: unknown[]) => meta.setCampaignBidStrategy(...args),
   readBack: (...args: unknown[]) => meta.readBack(...args),
   setObjectStatus: (...args: unknown[]) => meta.setObjectStatus(...args),
   lifetimeImpressions: (...args: unknown[]) => meta.lifetimeImpressions(...args),
@@ -367,6 +369,56 @@ describe("LaunchExecutor.advance", () => {
     expect(result.status).toBe("FAILED");
     expect(meta.postCreative).not.toHaveBeenCalled();
     expect(meta.postCampaign).not.toHaveBeenCalled();
+  });
+
+  describe("ad set asks for a bid amount (100/1815857)", () => {
+    const bidError = () =>
+      new MetaApiError("Bid amount or bid constraints required", 100, 1815857);
+
+    it("writes the campaign's bid strategy and retries the ad set once", async () => {
+      let adSetCalls = 0;
+      meta.postAdSet.mockImplementation(async () => {
+        adSetCalls += 1;
+        if (adSetCalls === 1) throw bidError();
+        state.calls.push("adset");
+        return { id: "s1" };
+      });
+      meta.setCampaignBidStrategy.mockImplementation(async () => {
+        state.calls.push("campaign-bid-strategy");
+      });
+      const { result } = await runToEnd();
+      expect(result.status).toBe("COMPLETED");
+      expect(meta.postAdSet).toHaveBeenCalledTimes(2);
+      expect(meta.setCampaignBidStrategy).toHaveBeenCalledTimes(1);
+      expect(meta.setCampaignBidStrategy.mock.calls[0]![0]).toMatchObject({ campaignId: "c1" });
+      const order = state.calls.filter((call) => ["adset", "campaign-bid-strategy"].includes(call));
+      expect(order).toEqual(["campaign-bid-strategy", "adset"]);
+    });
+
+    it("keeps Meta's own error when the retry fails too", async () => {
+      meta.postAdSet.mockRejectedValue(bidError());
+      meta.setCampaignBidStrategy.mockResolvedValue(undefined);
+      const { result } = await runToEnd();
+      expect(result.status).toBe("FAILED");
+      expect(meta.postAdSet).toHaveBeenCalledTimes(2);
+      expect(meta.postAd).not.toHaveBeenCalled();
+    });
+
+    it("keeps the original error when the strategy can't be written, and does not retry", async () => {
+      meta.postAdSet.mockRejectedValue(bidError());
+      meta.setCampaignBidStrategy.mockRejectedValue(new MetaApiError("Permissions error", 200));
+      const { result } = await runToEnd();
+      expect(result.status).toBe("FAILED");
+      expect(meta.postAdSet).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves every other ad set error alone", async () => {
+      meta.postAdSet.mockRejectedValue(new MetaApiError("Invalid parameter", 100, 1885272));
+      const { result } = await runToEnd();
+      expect(result.status).toBe("FAILED");
+      expect(meta.setCampaignBidStrategy).not.toHaveBeenCalled();
+      expect(meta.postAdSet).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("never sends a finished step again", async () => {

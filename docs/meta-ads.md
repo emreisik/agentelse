@@ -328,6 +328,13 @@ Brief'te "Video (optional)": projenin Library'sindeki videolardan biri seçilir;
 - **Kreatif**: eski sihirbazda canlıda kanıtlanmış `video_data` biçimi: adres CTA'nın içinde, kapak `image_url` ile herkese açık adresten (video_data hash kabul etmez). Cloud depolama (R2) kapalıysa kapağın adresi yoktur ve Review bunu söyler.
 - Doğrulanmadı: çok büyük videoda tek istekli yükleme sınırı (Meta parçalı yükleme önerir; 200 MB'a kadar eski sihirbazda çalışıyor). İlk denemeyi `socialmedia` test hesabında kısa bir videoyla yap.
 
+## Ad set "teklif tutarı gerekli" hatası (100/1815857)
+
+İlk gerçek lansmanda ad set adımı "Bid amount or bid constraints required" ile düştü. Meta'nın bu hatası, kampanyada açık teklif stratejisi olmayınca hesabın varsayılan stratejisinin (teklif tutarı isteyen) uygulanmasından çıkabiliyor (başka bir projenin gerçek hesapta doğruladığı bulgu; kampanya yaratılırken `bid_strategy` verilmemişti). Yürütücü artık bu hatayı alırsa kampanyaya `LOWEST_COST_WITHOUT_CAP` yazar ve ad set'i **bir kez** yeniden dener (kampanya kapalıdır: harcama olmaz; reddedilen istek hiçbir şey kurmamıştır). Strateji yazılamazsa ya da ikinci deneme de düşerse Meta'nın kendi hatası kartta kalır. Her lansman hatası ayrıca log'a `[ads-launch] <id> failed at <adım>: <sınıf> <kod>/<alt kod> field=… trace=…` satırı düşer (token ve tutar içermez), böylece Railway loglarından bakılabilir.
+
+- Not: ad set için `validate_only` ön kontrolü yapılamaz (ad set, var olan bir kampanya kimliği ister; kampanya Review'da henüz kurulmamıştır). Bu tür hatalar yalnız lansman anında, kampanya kapalıyken görünür.
+- Doğrulanmadı: düzeltmenin bu hesapta işe yarayıp yaramadığı. İşe yaramazsa log satırındaki kod, alan ve `trace` değerleriyle devam edilir.
+
 ## Sahip adımları (kod dışı)
 
 1. **Birikim raporunu oku**: yeni bir terminal sekmesinde, repo klasöründe `npm run db:report:backlog`. Çıktıyı Claude'a yapıştır.

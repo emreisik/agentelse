@@ -34,6 +34,7 @@ import {
   lifetimeImpressions,
   postAd,
   postAdSet,
+  setCampaignBidStrategy,
   postCampaign,
   postCreative,
   postLeadForm,
@@ -208,6 +209,17 @@ async function step(
   }
 }
 
+// Ad set "teklif tutarı gerekli" diyorsa (100/1815857): kampanyada açık strateji
+// yoktur, Meta hesabın varsayılanını uygular. Kampanyaya en düşük maliyet
+// stratejisi yazılıp ad set bir kez daha denenir (kampanya kapalı: harcama yok).
+function bidAmountRequired(error: unknown): boolean {
+  return (
+    error instanceof MetaApiError &&
+    error.metaErrorCode === 100 &&
+    error.metaErrorSubcode === 1815857
+  );
+}
+
 function featuresRejected(error: unknown): boolean {
   if (!(error instanceof MetaApiError)) return false;
   const text = `${error.message} ${JSON.stringify(error.details.blameFieldSpecs ?? "")}`;
@@ -257,6 +269,10 @@ async function failLaunch(
   error: LaunchError,
 ): Promise<AdvanceResult> {
   await AdsLaunches.fail(launch.id, error);
+  // Teşhis için (token ve harcama yok): hangi adım, hangi Meta kodu, hangi alan.
+  console.error(
+    `[ads-launch] ${launch.id} failed at ${error.step}: ${error.class} ${error.code ?? "net"}/${error.subcode ?? "-"} field=${error.field ?? "-"} trace=${error.fbtraceId ?? "-"}`,
+  );
   return {
     status: "FAILED",
     errorMessage: error.message,
@@ -541,7 +557,7 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
         optimizationGoal: adSet.optimizationGoal,
       },
       send: async (tagged) => {
-        const created = await postAdSet({
+        const adSetInput = {
           adAccountId: ctx.adAccountId,
           accessToken: ctx.accessToken,
           campaignId: ctx.progress.campaign!,
@@ -563,8 +579,32 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
               ? { maxImpressions: 2, days: 7 }
               : undefined,
           ...(adSet.schedule ? { schedule: adSet.schedule } : {}),
-          status: "ACTIVE",
-        });
+          status: "ACTIVE" as const,
+        };
+        let created: { id?: string };
+        try {
+          created = await postAdSet(adSetInput);
+        } catch (error) {
+          if (!bidAmountRequired(error)) throw error;
+          // Reddedilen istek hiçbir şey kurmadı: kampanyaya açık strateji
+          // yazılıp bir kez daha denenir. Strateji yazılamazsa asıl hata kalır.
+          console.warn(
+            "[ads-launch] ad set needs a bid amount (100/1815857); setting the campaign's bid strategy and retrying once",
+          );
+          try {
+            await setCampaignBidStrategy({
+              campaignId: ctx.progress.campaign!,
+              accessToken: ctx.accessToken,
+            });
+          } catch (healError) {
+            console.warn(
+              "[ads-launch] the campaign bid strategy could not be set:",
+              healError instanceof Error ? healError.message : healError,
+            );
+            throw error;
+          }
+          created = await postAdSet(adSetInput);
+        }
         if (!created.id)
           throw new MetaApiError("Meta did not return the ad set id");
         return created.id;

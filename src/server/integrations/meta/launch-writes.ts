@@ -67,6 +67,19 @@ export async function postCampaign(input: {
   });
 }
 
+// Kampanyaya açık teklif stratejisi yazar. Kampanyada strateji belirtilmemişse
+// Meta hesabın varsayılanını uygulayabilir; o da teklif tutarı isteyen bir
+// strateji olabilir ("Bid amount or bid constraints required", 100/1815857).
+export async function setCampaignBidStrategy(input: {
+  campaignId: string;
+  accessToken: string;
+}): Promise<void> {
+  await post(input.campaignId, {
+    bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+    access_token: input.accessToken,
+  });
+}
+
 export async function postAdSet(input: {
   adAccountId: string;
   accessToken: string;

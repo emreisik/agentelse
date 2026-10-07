@@ -1,13 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-const envMocks = vi.hoisted(() => ({
-  REASONING_PROVIDER: "gemini" as "gemini" | "openai",
-}));
-vi.mock("@/lib/env", () => ({
-  getEnv: () => ({ REASONING_PROVIDER: envMocks.REASONING_PROVIDER }),
-}));
-
 const openaiMocks = vi.hoisted(() => ({
   isConfigured: true,
   modelForTier: vi.fn(() => "gpt-5.6-luna"),
@@ -22,17 +15,6 @@ vi.mock("@/server/reasoning/openai-client", () => ({
 const searchMocks = vi.hoisted(() => ({ runStructured: vi.fn() }));
 vi.mock("@/server/reasoning/openai-search-client", () => ({
   runOpenAIStructuredWithSearch: searchMocks.runStructured,
-}));
-
-const geminiMocks = vi.hoisted(() => ({
-  isConfigured: true,
-  modelForTier: vi.fn(() => "gemini-3.6-flash"),
-  runStructured: vi.fn(),
-}));
-vi.mock("@/server/reasoning/gemini-client", () => ({
-  isGeminiConfigured: () => geminiMocks.isConfigured,
-  geminiModelForTier: geminiMocks.modelForTier,
-  runGeminiStructured: geminiMocks.runStructured,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -88,12 +70,7 @@ const input: ReasoningInput = {
 describe("ReasoningService.run", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    envMocks.REASONING_PROVIDER = "gemini";
     openaiMocks.isConfigured = true;
-    geminiMocks.isConfigured = true;
-    geminiMocks.runStructured.mockResolvedValue({
-      raw: { value: "gemini-out" },
-    });
     openaiMocks.runStructured.mockResolvedValue({
       raw: { value: "openai-out" },
     });
@@ -113,37 +90,19 @@ describe("ReasoningService.run", () => {
       isMock: true,
       reasoningCallId: "call-1",
     });
-    expect(geminiMocks.runStructured).not.toHaveBeenCalled();
     expect(openaiMocks.runStructured).not.toHaveBeenCalled();
   });
 
-  it("defaults to Gemini when REASONING_PROVIDER is unset/gemini", async () => {
-    envMocks.REASONING_PROVIDER = "gemini";
-
-    const result = await ReasoningService.run(def(), input);
-
-    expect(result.output).toEqual({ value: "gemini-out" });
-    expect(geminiMocks.runStructured).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "gemini-3.6-flash" }),
-    );
-    expect(openaiMocks.runStructured).not.toHaveBeenCalled();
-  });
-
-  it("switches to OpenAI when REASONING_PROVIDER=openai", async () => {
-    envMocks.REASONING_PROVIDER = "openai";
-
+  it("runs on OpenAI with the tier's default model", async () => {
     const result = await ReasoningService.run(def(), input);
 
     expect(result.output).toEqual({ value: "openai-out" });
     expect(openaiMocks.runStructured).toHaveBeenCalledWith(
       expect.objectContaining({ model: "gpt-5.6-luna" }),
     );
-    expect(geminiMocks.runStructured).not.toHaveBeenCalled();
   });
 
-  it("a def.model pin overrides REASONING_PROVIDER by the model's own family (gpt- pin while provider=gemini)", async () => {
-    envMocks.REASONING_PROVIDER = "gemini";
-
+  it("a def.model pin wins over the tier's default model", async () => {
     const result = await ReasoningService.run(
       def({ model: "gpt-5.4-mini" }),
       input,
@@ -153,38 +112,21 @@ describe("ReasoningService.run", () => {
     expect(openaiMocks.runStructured).toHaveBeenCalledWith(
       expect.objectContaining({ model: "gpt-5.4-mini" }),
     );
-    expect(geminiMocks.runStructured).not.toHaveBeenCalled();
   });
 
-  it("a def.model pin overrides REASONING_PROVIDER by the model's own family (gemini pin while provider=openai)", async () => {
-    envMocks.REASONING_PROVIDER = "openai";
-
-    const result = await ReasoningService.run(
-      def({ model: "gemini-3.1-pro-preview" }),
-      input,
-    );
-
-    expect(result.output).toEqual({ value: "gemini-out" });
-    expect(geminiMocks.runStructured).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "gemini-3.1-pro-preview" }),
-    );
-    expect(openaiMocks.runStructured).not.toHaveBeenCalled();
-  });
-
-  it("throws PROVIDER_UNAVAILABLE when the resolved backend isn't configured", async () => {
-    envMocks.REASONING_PROVIDER = "gemini";
-    geminiMocks.isConfigured = false;
+  it("throws PROVIDER_UNAVAILABLE when OpenAI isn't configured", async () => {
+    openaiMocks.isConfigured = false;
 
     await expect(ReasoningService.run(def(), input)).rejects.toSatisfy(
       (error) => {
         return (
           isAgentelseError(error) &&
           error.code === "PROVIDER_UNAVAILABLE" &&
-          error.message.includes("GEMINI_API_KEY")
+          error.message.includes("OPENAI_API_KEY")
         );
       },
     );
-    expect(geminiMocks.runStructured).not.toHaveBeenCalled();
+    expect(openaiMocks.runStructured).not.toHaveBeenCalled();
   });
 });
 
@@ -196,11 +138,8 @@ describe("ReasoningService.run with web search", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    envMocks.REASONING_PROVIDER = "openai";
     openaiMocks.isConfigured = true;
-    geminiMocks.isConfigured = true;
     openaiMocks.runStructured.mockResolvedValue({ raw: { value: "plain-out" } });
-    geminiMocks.runStructured.mockResolvedValue({ raw: { value: "gemini-out" } });
     searchMocks.runStructured.mockResolvedValue({
       raw: { value: "search-out" },
       inputTokens: 1_000,
@@ -258,15 +197,6 @@ describe("ReasoningService.run with web search", () => {
     });
   });
 
-  it("ignores the request on a backend that cannot search instead of failing", async () => {
-    envMocks.REASONING_PROVIDER = "gemini";
-
-    const result = await ReasoningService.run(def({ webSearch: true }), input);
-
-    expect(result.output).toEqual({ value: "gemini-out" });
-    expect(searchMocks.runStructured).not.toHaveBeenCalled();
-  });
-
   it("never calls the search client in mock mode: the def's own mock stands in", async () => {
     process.env.AGENTELSE_REASONING_MODE = "mock";
 
@@ -280,9 +210,8 @@ describe("ReasoningService.run with web search", () => {
 describe("ReasoningService.run locale directive", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    envMocks.REASONING_PROVIDER = "gemini";
-    geminiMocks.isConfigured = true;
-    geminiMocks.runStructured.mockResolvedValue({ raw: { value: "out" } });
+    openaiMocks.isConfigured = true;
+    openaiMocks.runStructured.mockResolvedValue({ raw: { value: "out" } });
   });
 
   const project = (language: string, country: string) =>
@@ -290,7 +219,7 @@ describe("ReasoningService.run locale directive", () => {
       .mocked(prisma.project.findUnique)
       .mockResolvedValueOnce({ language, country } as never);
   const systemOf = () =>
-    (geminiMocks.runStructured.mock.calls.at(-1)![0] as { system: string })
+    (openaiMocks.runStructured.mock.calls.at(-1)![0] as { system: string })
       .system;
 
   it("uses the project language and country when no override is given", async () => {

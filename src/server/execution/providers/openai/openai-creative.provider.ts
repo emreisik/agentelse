@@ -357,10 +357,9 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
                 ),
                 user: brief,
                 jsonSchema: z.toJSONSchema(outputSchema),
-                // See gemini-creative.provider.ts's former history (now
-                // removed): a 3-field schema can still be cut off mid-JSON
-                // on a small budget when `copy`/`imagePrompt` are asked to
-                // be substantial — 8192 keeps this call out of that failure
+                // A 3-field schema can still be cut off mid-JSON on a small
+                // budget when `copy`/`imagePrompt` are asked to be
+                // substantial — 8192 keeps this call out of that failure
                 // class from the start.
                 maxOutputTokens: 8192,
               })
@@ -426,10 +425,9 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
               // Absent for worker-driven jobs: unchanged behavior ("high").
               quality,
               // Somebody is watching this render live (inline chat
-              // generation): stream previews and don't detour via Gemini.
+              // generation): stream previews.
               ...(streamed
                 ? {
-                    skipGemini: true,
                     ...(live
                       ? {
                           onPartial: (partial: {
@@ -571,7 +569,6 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
                 baseImage: { data: adaptFrom.data, mimeType: adaptFrom.mimeType },
                 imageSize: platformFormat.pixelSize,
                 quality,
-                ...(streamed ? { skipGemini: true } : {}),
               },
             )
           : null;

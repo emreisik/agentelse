@@ -550,7 +550,7 @@ function BriefForm({
   const linkId = `${baseId}-link`;
   const dsaBeneficiaryId = `${baseId}-dsa-beneficiary`;
   const dsaPayorId = `${baseId}-dsa-payor`;
-  const ageMinId = `${baseId}-age-min`;
+  const minAgeId = `${baseId}-age-min`;
   const ageMaxId = `${baseId}-age-max`;
 
   return (
@@ -1084,7 +1084,7 @@ function BriefForm({
             <GeoTargetSelect value={countries} onChange={setCountries} />
           </div>
           <div className="flex flex-wrap items-end gap-3">
-            <label htmlFor={ageMinId} className="space-y-1">
+            <label htmlFor={minAgeId} className="space-y-1">
               <span
                 className="block text-xs"
                 style={{ color: "var(--ws-text-2)" }}
@@ -1092,7 +1092,7 @@ function BriefForm({
                 {COPY.ageFrom}
               </span>
               <input
-                id={ageMinId}
+                id={minAgeId}
                 type="number"
                 inputMode="numeric"
                 min={ADS_LIMITS.minAge}

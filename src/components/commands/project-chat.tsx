@@ -340,7 +340,7 @@ const QUICK_ACTIONS: { label: string; icon: typeof ImageIcon }[] = [
 ];
 
 // assistant-ui's composer immediately treats an added file as
-// "sendable" — the actual upload (Asset record + Gemini payload) happens
+// "sendable" — the actual upload (Asset record + model payload) happens
 // inside the server action, at message submission time. This adapter just
 // carries the File reference through to the message.
 class ProjectChatAttachmentAdapter implements AttachmentAdapter {

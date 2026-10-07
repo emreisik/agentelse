@@ -66,7 +66,7 @@ export function CreativeImageStudio({
   >(availableFormats[0]?.contentFormat);
   const format = getCreativePlatformFormat(platform, contentFormat);
   const [instruction, setInstruction] = useState("");
-  // "" means the default (Gemini -> OpenAI -> OpenClaw chain) — only set to
+  // "" means the default (OpenAI) — only set to
   // a fal-image-models.ts id when the user deliberately picks one. In edit
   // mode, only models with supportsImageInput can actually do anything with
   // the existing image, so the list is filtered accordingly.
@@ -172,7 +172,7 @@ export function CreativeImageStudio({
           </span>
           <Select
             items={[
-              { value: "", label: "Gemini (default)" },
+              { value: "", label: "OpenAI (default)" },
               ...falModelChoices.map((model) => ({
                 value: model.id,
                 label: falModelOptionLabel(model),
@@ -186,8 +186,8 @@ export function CreativeImageStudio({
             </SelectTrigger>
             {/* Popup width is decoupled from the (narrow, w-fit) trigger —
                 item text is whitespace-nowrap, so without this override
-                long labels (e.g. "Nano Banana Edit (Gemini 2.5 Flash) —
-                $0.039/img") get clipped to the trigger's width instead of
+                long labels (e.g. "FLUX Pro Fill (inpaint) —
+                $0.05/mp") get clipped to the trigger's width instead of
                 fully readable. alignItemWithTrigger=false: that mode
                 positions the popup assuming it's roughly the trigger's own
                 width (opens with the selected item directly over the
@@ -199,7 +199,7 @@ export function CreativeImageStudio({
               align="start"
               alignItemWithTrigger={false}
             >
-              <SelectItem value="">Gemini (default)</SelectItem>
+              <SelectItem value="">OpenAI (default)</SelectItem>
               {falModelChoices.map((model) => (
                 <SelectItem key={model.id} value={model.id}>
                   {falModelOptionLabel(model)}

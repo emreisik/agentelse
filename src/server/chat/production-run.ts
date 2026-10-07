@@ -258,7 +258,7 @@ export async function runProductionItem(
 
     // Subscribe BEFORE starting so no early preview is missed; a listener
     // also tells the creative provider somebody is watching (streamed
-    // previews, no Gemini detour).
+    // previews).
     const unsubscribe = subscribeCreativeProgress(plan.job.id, (event) =>
       emit({
         type: "item.partial",

@@ -3,9 +3,8 @@ import sharp from "sharp";
 
 // Core guarantee this file exists to prove (docs/brand-workspace-migration.md
 // §7 Phase 5 — Creative Engine provider fallback): generateCreativeImage's
-// preference order is Gemini -> OpenAI -> fal.ai (last-resort
-// tier), each only tried once every earlier tier has failed or isn't
-// configured — and the explicit falModelId path (Image Studio) still never
+// preference order is OpenAI -> fal.ai (last-resort tier), each only tried
+// once every earlier tier has failed or isn't configured — and the explicit falModelId path (Image Studio) still never
 // falls back to anything else.
 
 const storageMocks = vi.hoisted(() => ({
@@ -15,15 +14,6 @@ const storageMocks = vi.hoisted(() => ({
 vi.mock("@/server/storage/asset-storage", () => ({
   readAsset: storageMocks.readAsset,
   overwriteAsset: storageMocks.overwriteAsset,
-}));
-
-const geminiMocks = vi.hoisted(() => ({
-  generateGeminiImage: vi.fn(),
-  isGeminiImageConfigured: vi.fn(),
-}));
-vi.mock("@/server/reasoning/gemini-image-client", () => ({
-  generateGeminiImage: geminiMocks.generateGeminiImage,
-  isGeminiImageConfigured: geminiMocks.isGeminiImageConfigured,
 }));
 
 const openaiMocks = vi.hoisted(() => ({
@@ -59,7 +49,6 @@ beforeEach(async () => {
   vi.clearAllMocks();
   storageMocks.readAsset.mockResolvedValue(await solidPng());
   storageMocks.overwriteAsset.mockResolvedValue(undefined);
-  geminiMocks.isGeminiImageConfigured.mockReturnValue(false);
   openaiMocks.isOpenAIImageConfigured.mockReturnValue(false);
   falMocks.isFalImageConfigured.mockReturnValue(false);
 });
@@ -75,17 +64,6 @@ describe("generateCreativeImage — reference pictures", () => {
     mimeType: "image/png",
     size: 1,
   };
-
-  it("hands the whole ordered set to the Gemini tier", async () => {
-    geminiMocks.isGeminiImageConfigured.mockReturnValue(true);
-    geminiMocks.generateGeminiImage.mockResolvedValue({ ...stored, provider: "gemini" });
-
-    await generateCreativeImage("p", { referenceImages: refs, imageSize: { width: 100, height: 100 } });
-
-    const args = geminiMocks.generateGeminiImage.mock.calls[0]!;
-    expect(args[3]).toBeUndefined();
-    expect(args[4]).toEqual(refs);
-  });
 
   it("hands the whole ordered set to the OpenAI tier", async () => {
     openaiMocks.isOpenAIImageConfigured.mockReturnValue(true);
@@ -114,37 +92,7 @@ describe("generateCreativeImage — reference pictures", () => {
 });
 
 describe("generateCreativeImage — fallback order", () => {
-  it("uses Gemini when configured and successful, never touching OpenAI or fal", async () => {
-    geminiMocks.isGeminiImageConfigured.mockReturnValue(true);
-    geminiMocks.generateGeminiImage.mockResolvedValue({
-      storageKey: "k-gemini",
-      mimeType: "image/png",
-      size: 123,
-    });
-
-    const result = await generateCreativeImage("a blazer on white");
-
-    expect(result?.storageKey).toBe("k-gemini");
-    expect(openaiMocks.generateOpenAIImage).not.toHaveBeenCalled();
-    expect(falMocks.generateFalImage).not.toHaveBeenCalled();
-  });
-
-  it("falls back to OpenAI when Gemini is configured but returns null (failure)", async () => {
-    geminiMocks.isGeminiImageConfigured.mockReturnValue(true);
-    geminiMocks.generateGeminiImage.mockResolvedValue(null);
-    openaiMocks.isOpenAIImageConfigured.mockReturnValue(true);
-    openaiMocks.generateOpenAIImage.mockResolvedValue({
-      storageKey: "k-openai",
-      mimeType: "image/png",
-      size: 123,
-    });
-
-    const result = await generateCreativeImage("a blazer on white");
-
-    expect(result?.storageKey).toBe("k-openai");
-  });
-
-  it("uses OpenAI when Gemini is unconfigured, never touching fal", async () => {
+  it("uses OpenAI when configured and successful, never touching fal", async () => {
     openaiMocks.isOpenAIImageConfigured.mockReturnValue(true);
     openaiMocks.generateOpenAIImage.mockResolvedValue({
       storageKey: "k-openai",
@@ -158,9 +106,7 @@ describe("generateCreativeImage — fallback order", () => {
     expect(falMocks.generateFalImage).not.toHaveBeenCalled();
   });
 
-  it("falls back to fal when Gemini and OpenAI are both configured but return null (failure)", async () => {
-    geminiMocks.isGeminiImageConfigured.mockReturnValue(true);
-    geminiMocks.generateGeminiImage.mockResolvedValue(null);
+  it("falls back to fal when OpenAI is configured but returns null (failure)", async () => {
     openaiMocks.isOpenAIImageConfigured.mockReturnValue(true);
     openaiMocks.generateOpenAIImage.mockResolvedValue(null);
     falMocks.isFalImageConfigured.mockReturnValue(true);
@@ -175,7 +121,7 @@ describe("generateCreativeImage — fallback order", () => {
     expect(result?.storageKey).toBe("k-fal");
   });
 
-  it("falls back to fal (FLUX Schnell) only once Gemini and OpenAI both fail/aren't configured", async () => {
+  it("falls back to fal (FLUX Schnell) only once OpenAI fails/isn't configured", async () => {
     falMocks.isFalImageConfigured.mockReturnValue(true);
     falMocks.generateFalImage.mockResolvedValue({
       storageKey: "k-fal",
@@ -199,8 +145,7 @@ describe("generateCreativeImage — fallback order", () => {
     expect(result).toBeNull();
   });
 
-  it("an explicit falModelId (Image Studio path) never falls back to Gemini/OpenAI/the generic fal fallback", async () => {
-    geminiMocks.isGeminiImageConfigured.mockReturnValue(true);
+  it("an explicit falModelId (Image Studio path) never falls back to OpenAI/the generic fal fallback", async () => {
     openaiMocks.isOpenAIImageConfigured.mockReturnValue(true);
     falMocks.generateFalImage.mockResolvedValue(null); // the picked model fails
 
@@ -209,7 +154,6 @@ describe("generateCreativeImage — fallback order", () => {
     });
 
     expect(result).toBeNull();
-    expect(geminiMocks.generateGeminiImage).not.toHaveBeenCalled();
     expect(openaiMocks.generateOpenAIImage).not.toHaveBeenCalled();
     expect(falMocks.generateFalImage).toHaveBeenCalledWith(
       "fal-ai/flux-pro/v1.1-ultra",
@@ -221,8 +165,8 @@ describe("generateCreativeImage — fallback order", () => {
 });
 
 describe("isCreativeImageConfigured", () => {
-  it("is true when only Gemini is configured", () => {
-    geminiMocks.isGeminiImageConfigured.mockReturnValue(true);
+  it("is true when only OpenAI is configured", () => {
+    openaiMocks.isOpenAIImageConfigured.mockReturnValue(true);
     expect(isCreativeImageConfigured()).toBe(true);
   });
 

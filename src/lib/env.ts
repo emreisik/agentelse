@@ -16,35 +16,9 @@ const envSchema = z.object({
   // to NEXT_PUBLIC_APP_URL when empty.
   PUBLIC_ASSET_BASE_URL: z.string().optional().default(""),
 
-  // Google Gemini — ReasoningService's optional LLM backend and the first
-  // image tier in creative-image.ts (see gemini-client.ts,
-  // gemini-image-client.ts). There is no Gemini execution provider: text and
-  // creative capabilities always run on OpenAI. ReasoningService.run() does
-  // NOT auto-reroute — if REASONING_PROVIDER stays "gemini" while this is
-  // unset, it throws PROVIDER_UNAVAILABLE instead of retrying with OpenAI; set
-  // REASONING_PROVIDER=openai explicitly for that path instead.
-  GEMINI_API_KEY: z.string().optional().default(""),
-  // NOTE: "gemini-pro-latest" resolves to the latest Pro, and Pro's free
-  // tier limit is only 250 requests/day — the agency loop was burning
-  // through that in hours and hitting 429s. Flash gives 10,000 requests on
-  // the same quota; individual prompts that need quality can opt out via
-  // ReasoningDef.model.
-  GEMINI_MODEL: z.string().optional().default("gemini-3.6-flash"),
-  // Model tiers: prompts select "lite"/"pro" via ReasoningDef.tier, and
-  // which model that maps to lives here — so changing a model doesn't
-  // require touching prompt files.
-  GEMINI_LITE_MODEL: z.string().optional().default("gemini-3.1-flash-lite"),
-  GEMINI_PRO_MODEL: z.string().optional().default("gemini-3.1-pro-preview"),
-  // Image generation is a separate model family: the response returns
-  // base64 inside `inlineData`. Since creative output goes straight to the
-  // client, quality is the priority — the Pro image model ("Nano Banana
-  // Pro") is the default. See gemini-image-client.ts / creative-image.ts,
-  // where this is now the first tier tried, OpenAI second.
-  GEMINI_IMAGE_MODEL: z.string().optional().default("gemini-3-pro-image"),
-
-  // OpenAI — ReasoningService's fallback backend (see openai-client.ts),
-  // and the fallback execution provider when Gemini is unconfigured or
-  // circuit-broken by ProviderHealthService.
+  // OpenAI — ReasoningService's backend (see openai-client.ts), the image
+  // generator (openai-image-client.ts) and the text/creative execution
+  // provider.
   OPENAI_API_KEY: z.string().optional().default(""),
   OPENAI_MODEL: z.string().optional().default("gpt-5.6-luna"),
   // Model tiers: prompts select "lite"/"pro" via ReasoningDef.tier, and
@@ -52,19 +26,6 @@ const envSchema = z.object({
   // require touching prompt files.
   OPENAI_LITE_MODEL: z.string().optional().default("gpt-5.4-mini"),
   OPENAI_PRO_MODEL: z.string().optional().default("gpt-5.6-terra"),
-  // Which backend ReasoningService.run uses. Default is "openai" — Gemini's
-  // billing account (the GCP project behind GEMINI_API_KEY) hit a dunning
-  // block (403 "Lightning dunning decision is deny"), so every Gemini call
-  // was failing outright; OpenAI is the one actually configured/working
-  // backend. Unknown values fall back to the same default via catch() so a
-  // typo in the env degrades gracefully instead of crashing the first
-  // request. Flip back to "gemini" (or set REASONING_PROVIDER=gemini in the
-  // environment) once that GCP project's billing is resolved.
-  REASONING_PROVIDER: z
-    .enum(["gemini", "openai"])
-    .optional()
-    .default("openai")
-    .catch("openai"),
   // Chat engine (src/server/chat/): "agent" is the streaming tool-calling
   // loop on the OpenAI Responses API; "legacy" is the one-shot JSON
   // ChatService kept until the agent path is proven. Unknown values fall
@@ -138,7 +99,7 @@ const envSchema = z.object({
   // fal.ai — optional additional image-generation provider (see
   // fal-image-client.ts and fal-image-models.ts). Purely opt-in: the
   // Image Studio's fal.ai model group only appears when this is set, and
-  // the existing Gemini -> OpenAI fallback chain is unaffected when it isn't.
+  // the OpenAI image path is unaffected when it isn't.
   FAL_API_KEY: z.string().optional().default(""),
 
   R2_ACCOUNT_ID: z.string().optional().default(""),
@@ -230,7 +191,6 @@ export function getEnv() {
 
 export function isIntegrationConfigured(
   key:
-    | "GEMINI"
     | "OPENAI"
     | "FAL"
     | "R2"
@@ -245,8 +205,6 @@ export function isIntegrationConfigured(
 ): boolean {
   const env = getEnv();
   switch (key) {
-    case "GEMINI":
-      return Boolean(env.GEMINI_API_KEY);
     case "OPENAI":
       return Boolean(env.OPENAI_API_KEY);
     case "FAL":

@@ -2,12 +2,6 @@ import "server-only";
 
 import { z } from "zod";
 
-import { getEnv } from "@/lib/env";
-import {
-  geminiModelForTier,
-  isGeminiConfigured,
-  runGeminiStructured,
-} from "@/server/reasoning/gemini-client";
 import {
   isOpenAIConfigured,
   openaiModelForTier,
@@ -93,26 +87,10 @@ export const ReasoningService = {
     input: ReasoningInput,
   ): Promise<ReasoningResult<TOut>> {
     const mock = shouldMock();
-    // Which backend handles the call — Gemini by default, OpenAI when
-    // REASONING_PROVIDER=openai. Both implement the same structured-call
-    // contract, so nothing below (or in any prompt file) branches on it
-    // except model selection and the actual call.
-    const provider = mock ? "gemini" : getEnv().REASONING_PROVIDER;
-    // def.model allows model selection on a per-prompt basis (Pro for
-    // heavy syntheses, Flash for cheap, frequently-run steps). If
-    // undefined, the active provider's tier default is used. Note that a
-    // pinned def.model is provider-specific — a def pinning a Gemini model
-    // effectively opts out of the provider switch.
-    const model = mock
-      ? "mock"
-      : (def.model ??
-        (provider === "openai"
-          ? openaiModelForTier(def.tier)
-          : geminiModelForTier(def.tier)));
-    // The backend is ultimately decided by the model's family, so a def
-    // that pins e.g. a Gemini model keeps working even when the
-    // project-wide provider is OpenAI (and vice versa).
-    const backend = model.startsWith("gpt-") ? "openai" : "gemini";
+    // def.model allows model selection on a per-prompt basis (a bigger model
+    // for heavy syntheses, a smaller one for cheap, frequently-run steps). If
+    // undefined, the tier default is used.
+    const model = mock ? "mock" : (def.model ?? openaiModelForTier(def.tier));
     const startedAt = Date.now();
 
     // Budget gate first — mock calls cost 0 but still count, so a runaway
@@ -135,26 +113,17 @@ export const ReasoningService = {
       if (mock) {
         output = def.schema.parse(def.buildMock(input.context));
       } else {
-        const configured =
-          backend === "openai" ? isOpenAIConfigured() : isGeminiConfigured();
-        if (!configured) {
+        if (!isOpenAIConfigured()) {
           throw new AgentelseError(
             "PROVIDER_UNAVAILABLE",
-            `Reasoning ${def.purpose}: ${
-              backend === "openai" ? "OPENAI_API_KEY" : "GEMINI_API_KEY"
-            } is not configured`,
+            `Reasoning ${def.purpose}: OPENAI_API_KEY is not configured`,
           );
         }
         const prompt = def.buildPrompt(input.context);
         const directive = await localeDirective(input.projectId, input.language);
-        // Live web search is an OpenAI Responses feature; a def that asks for
-        // it on another backend simply runs without.
-        const runStructured =
-          backend === "openai"
-            ? def.webSearch
-              ? runOpenAIStructuredWithSearch
-              : runOpenAIStructured
-            : runGeminiStructured;
+        const runStructured = def.webSearch
+          ? runOpenAIStructuredWithSearch
+          : runOpenAIStructured;
         const result = await runStructured({
           model,
           system: `${directive}\n\n${prompt.system}`,

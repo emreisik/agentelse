@@ -12,7 +12,7 @@ import { AgentelseError } from "@/server/security/errors";
 // strict:false is deliberate — strict mode requires every property to be
 // listed in `required` and rejects several shapes that z.toJSONSchema
 // produces for the existing prompt schemas. Schema-guided (non-strict) output
-// gives the same guarantee level as Gemini's responseJsonSchema, and the zod
+// gives the same guarantee level as a strict response schema, and the zod
 // parse in reasoning-service remains the actual enforcement point.
 
 const CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
@@ -130,9 +130,8 @@ async function callOpenAI(input: {
       { role: "system", content: input.system },
       {
         role: "user",
-        // Attachments BEFORE the text — same ordering rationale as the
-        // Gemini client: models reference attachments more reliably when
-        // the instruction comes last in multi-modal input.
+        // Attachments BEFORE the text: models reference attachments more
+        // reliably when the instruction comes last in multi-modal input.
         content: [
           ...attachmentParts(input.attachments),
           { type: "text", text: input.user },

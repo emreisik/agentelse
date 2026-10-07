@@ -852,7 +852,7 @@ model Project {
   // country market all AI research/reasoning calls focus on (see
   // src/lib/locales.ts). Migration-safe default for existing rows.
   // country is the first/primary element of countries — all reasoning/prompt
-  // injection chokepoints (ReasoningService, Gemini providers,
+  // injection chokepoints (ReasoningService, the AI providers,
   // ConstitutionService, etc.) still read ONLY this field for backward
   // compatibility. countries exists solely to store/display ALL target
   // markets selected in the setup wizard — business logic does not branch
@@ -992,7 +992,7 @@ model BrandVisualIdentity {
 
   // v1: a single "style board" reference image (an Asset, type IMAGE) sent
   // to the AI as referenceImage once the logo itself stops being sent that
-  // way (see gemini-creative.provider.ts / creative-actions.ts Phase 2).
+  // way (see creative-actions.ts Phase 2).
   referenceImageAssetId String?
 
   // Deterministic template config for applyBrandTemplate() — the ONLY

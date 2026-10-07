@@ -23,7 +23,7 @@ export type CouncilEvaluationOutput = z.infer<
 export const councilEvaluationDef: ReasoningDef<CouncilEvaluationOutput> = {
   purpose: "council.evaluate",
   schema: CouncilEvaluationOutputSchema,
-  // 2048 wasn't enough on thinking models (gemini-pro-latest spends part of
+  // 2048 wasn't enough on thinking models (a reasoning model spends part of
   // the output budget on reasoning tokens): 147 of the first ~400 prod calls
   // died with finishReason MAX_TOKENS mid-JSON. The output itself is small;
   // the headroom is for thinking.

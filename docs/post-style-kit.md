@@ -36,7 +36,7 @@ Linkler `safeFetch` (SSRF korumalı) ile çekilir; doğrudan görsel linki ya da
 `loadStyleReferences` (`src/server/media/style-references.ts`) görsel modeline giden resimleri ve metni kurar:
 
 - **Sıra:** örnek postlar (ajanın seçtikleri, yoksa en yeni; en çok 3) → (örnek yoksa eski tek "style board") → gerçek ürün fotoğrafları (en çok 3).
-- gpt-image-2 `/v1/images/edits` çoklu `image[]` alır; Gemini birden çok `inlineData` parçası alır; fal resim almaz. Mevcut görseli **düzenleyen** çağrılar tek girdi olduğu için referans eklemez.
+- gpt-image-2 `/v1/images/edits` çoklu `image[]` alır; fal resim almaz. Mevcut görseli **düzenleyen** çağrılar tek girdi olduğu için referans eklemez.
 - **Prompt:** `creative-prompt-builder.ts` konu cümlesinden hemen sonra `POST STYLE KIT:` bölümünü koyar (referans postlar, ürün paragrafı, örnek tarifleri, daima geçerli talimatlar). `fidelity=match` iken layout kompozisyon notları ve başlık yerleşimi geri çekilir; tipografi referans postları izler. Metin adımı başlık/vurgu/ek satırı, layout'un başlık bölgesi varsa ya da kit `match` ise ister; yazıyı model çizmez, `creative-text.ts` layout'un bölgesine (bölge yoksa üst üçte birin ortasına) dizer (`docs/brand-kit.md`). `match` postlarda yazı artık örnek postların konumunda ve tipografisinde değil, layout bölgesinde ve bizim dizgimizle çıkar: yazım garanti, örneklere benzerlik biraz daha gevşek.
 - **Logo:** modele "logo çizme" denir; gerçek logo/şerit hâlâ üretimden sonra `applyBrandTemplate` ile piksel-hassas eklenir.
 
@@ -67,7 +67,7 @@ Works'teki bitmiş (IN_REVIEW / APPROVED / PUBLISHED) her post kartının altın
 | Şema, bağlam, prompt metni | `src/lib/post-style.ts`, `post-style-links.ts`                                                                                                                                                            |
 | Depo, servis, analiz       | `src/server/brand/post-style-{store,service,analyzer}.ts`, `src/server/reasoning/prompts/post-style.ts`                                                                                                   |
 | Eylemler                   | `src/server/actions/post-style-actions.ts`, `creative-rating-actions.ts`                                                                                                                                  |
-| Üretim                     | `src/server/media/style-references.ts`, `creative-prompt-builder.ts`, `openai-image-client.ts`, `gemini-image-client.ts`, `creative-image.ts`, `openai-creative.provider.ts`, `instagram-week-planner.ts` |
+| Üretim                     | `src/server/media/style-references.ts`, `creative-prompt-builder.ts`, `openai-image-client.ts`, `creative-image.ts`, `openai-creative.provider.ts`, `instagram-week-planner.ts` |
 | Sohbet                     | `src/server/chat/tools.ts` (`save_style_reference`, `get_visual_identity`, Works `generate_image`), `slot-first.ts`                                                                                       |
 | Arayüz                     | `src/components/brand/post-style-{card,section,copy}`, `src/components/works/creative-rating.tsx`                                                                                                         |
 | Hafıza                     | `src/lib/creative-rating.ts`, `src/server/memory/memory-service.ts` (`rememberCreativeRating`)                                                                                                            |

@@ -124,14 +124,14 @@ If using Neon, `DATABASE_URL` should be the pooled connection URL and `DIRECT_UR
 Execution providers and Agency OS's internal reasoning calls are separate layers:
 
 - `OPENAI_API_KEY` enables `OpenAiAiProvider`/`OpenAiCreativeProvider` — the real text/analysis and creative (caption/copy + image prompt) execution providers. `OpenAiAiProvider` also serves the public-web research capabilities (`BRAND_DISCOVERY`, `WEB_RESEARCH`, `COMPETITOR_RESEARCH`, `SEO_RESEARCH`, `PRODUCT_RESEARCH`, ...) through OpenAI's hosted `web_search` tool (Responses API) and returns the report as free text for `ResultMaterializer`.
-- `GEMINI_API_KEY` enables Gemini as an optional backend for Agency OS's internal reasoning calls (`REASONING_PROVIDER=openai` switches the reasoning side to OpenAI without touching any prompt file) and as the first image tier. There is no Gemini execution provider.
+- The same `OPENAI_API_KEY` also powers Agency OS's internal reasoning calls and image generation; there is no other LLM backend.
 - Capabilities that need a logged-in browser (`SOCIAL_ACCOUNT_SETUP`, `SOCIAL_PROFILE_AUDIT`, `SIGNAL_SCAN`, `MEASUREMENT_CHECK`, ...) have no real provider; the router fails them with `PROVIDER_UNAVAILABLE`.
 - `AGENTELSE_PROVIDER_MODE=mock` forces the mock provider fleet, for development and testing only.
 - If the provider mode is not `mock`, the registry only considers real providers. If no real provider is configured, the job explicitly fails with `PROVIDER_UNAVAILABLE`; there is no silent mock fallback.
-- Under the `AGENTELSE_REASONING_MODE=auto` default, Gemini is used; `REASONING_PROVIDER=openai` switches it to OpenAI. A `ReasoningDef.model` pin always wins regardless of `REASONING_PROVIDER` — the backend is inferred from the model name's own family (`gpt-*` → OpenAI, otherwise Gemini).
+- Under the `AGENTELSE_REASONING_MODE=auto` default, OpenAI is used. A `ReasoningDef.model` pin wins over the tier's default model.
 - `AGENTELSE_REASONING_MODE=mock` produces deterministic reasoning for test and seed scenarios.
 
-Image generation tries Gemini, then OpenAI (`gpt-image-2`), then fal.ai as a last resort, and stores the result under `storage/assets` in the development environment.
+Image generation tries OpenAI (`gpt-image-2`), then fal.ai as a last resort, and stores the result under `storage/assets` in the development environment.
 
 ## Agency OS
 
@@ -230,7 +230,7 @@ A worker tick covers the scheduler, outbox dispatch, running job polling, verifi
 
 ## Current limitations
 
-- The OpenAI creative provider generates copy and the image prompt; the actual image is generated separately (Gemini first, then OpenAI's image API, then fal.ai if those aren't configured or fail).
+- The OpenAI creative provider generates copy and the image prompt; the actual image is generated separately (OpenAI's image API first, then fal.ai if it isn't configured or fails).
 - Competitor models exist; the regular research -> snapshot -> diff pipeline is not yet complete.
 - `Skill` and `ProjectSkill` models exist; the skill discovery/review/sandbox/approval pipeline is not yet complete.
 - `SENTRY_DSN` is readable, but there is no direct Sentry bootstrap integration yet.

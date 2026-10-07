@@ -234,7 +234,7 @@ export async function performCreativeRevision({
   // A fal-image-models.ts id — only ever set from the Studio form (see
   // generateRealCreativeImageAction), never from the chat-facing
   // reviseCreativeAction, which has no model picker and stays on the
-  // default Gemini -> OpenAI -> OpenClaw chain.
+  // default OpenAI path.
   falModelId?: string;
   // A saved post layout id — only set from the Studio picker, and only
   // honoured when rendering from scratch (see revisionLayoutRequest).

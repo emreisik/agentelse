@@ -2,7 +2,7 @@
 // (see creative-image-studio.tsx). fal.ai hosts 50+ image-generation
 // endpoints; listing them all would be unusable. This is a broader,
 // named-by-use-case list — the trending/flagship model per family (FLUX,
-// Google Gemini/Imagen, Seedream, Recraft, Ideogram) plus the editing/
+// Seedream, Recraft, Ideogram) plus the editing/
 // background-removal/upscaling specialists — not the full catalog. Adding
 // another model later is a line here, not a code change (endpointId is the
 // only thing fal-image-client.ts needs). Prices are approximate (fal's own
@@ -14,7 +14,6 @@ export type FalImageModelCategory =
   | "Premium"
   | "Budget"
   | "Typography"
-  | "Gemini"
   | "Editing"
   | "Background removal"
   | "Upscale";
@@ -113,35 +112,11 @@ export const FAL_IMAGE_MODELS: FalImageModel[] = [
     supportsImageInput: false,
   },
   {
-    id: "gemini-25-flash-image",
-    label: "Gemini 2.5 Flash Image (Nano Banana)",
-    endpointId: "fal-ai/gemini-25-flash-image",
-    category: "Gemini",
-    approxPrice: "$0.039/img",
-    supportsImageInput: false,
-  },
-  {
-    id: "gemini-3-pro-image-preview",
-    label: "Nano Banana Pro (Gemini 3, preview)",
-    endpointId: "fal-ai/gemini-3-pro-image-preview",
-    category: "Gemini",
-    approxPrice: "preview pricing",
-    supportsImageInput: true,
-  },
-  {
     id: "flux-kontext-pro",
     label: "FLUX Kontext Pro",
     endpointId: "fal-ai/flux-pro/kontext",
     category: "Editing",
     approxPrice: "$0.04/img",
-    supportsImageInput: true,
-  },
-  {
-    id: "gemini-25-flash-image-edit",
-    label: "Nano Banana Edit (Gemini 2.5 Flash)",
-    endpointId: "fal-ai/gemini-25-flash-image/edit",
-    category: "Editing",
-    approxPrice: "$0.039/img",
     supportsImageInput: true,
   },
   {

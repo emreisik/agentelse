@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Inline (chat-driven) creative generation: the conversation model already
 // wrote the copy and image prompt, so the provider must skip its own text LLM
 // call, honour the requested quality, and — only when somebody is watching —
-// stream previews and skip the Gemini detour.
+// stream previews.
 
 const runOpenAIStructured = vi.fn();
 vi.mock("@/server/reasoning/openai-client", () => ({
@@ -91,16 +91,15 @@ describe("OpenAiCreativeProvider inline generation", () => {
     expect(options.quality).toBe("medium");
   });
 
-  it("does not stream or skip Gemini when nobody is watching", async () => {
+  it("does not stream when nobody is watching", async () => {
     await new OpenAiCreativeProvider().execute(
       request({ request: "brief", preset, quality: "medium" }),
     );
     const options = generateCreativeImage.mock.calls[0]![1];
     expect(options.onPartial).toBeUndefined();
-    expect(options.skipGemini).toBeUndefined();
   });
 
-  it("streams previews to the watcher and skips Gemini", async () => {
+  it("streams previews to the watcher", async () => {
     const seen: unknown[] = [];
     const off = subscribeCreativeProgress("job-1", (e) => seen.push(e));
     generateCreativeImage.mockImplementation(async (_p, options) => {
@@ -116,7 +115,6 @@ describe("OpenAiCreativeProvider inline generation", () => {
     expect(seen).toEqual([
       { type: "partial", index: 0, dataUrl: "data:image/png;base64,AAA" },
     ]);
-    expect(generateCreativeImage.mock.calls[0]![1].skipGemini).toBe(true);
   });
 
   it("falls back to its own LLM when there is no valid preset (worker path)", async () => {

@@ -17,7 +17,7 @@ export type BaselineAuditOutput = z.infer<typeof BaselineAuditOutputSchema>;
 export const baselineAuditDef: ReasoningDef<BaselineAuditOutput> = {
   purpose: "baseline-audit.generate",
   schema: BaselineAuditOutputSchema,
-  // Produces 4 arrays + a summary, and in Gemini thinking tokens also
+  // Produces 4 arrays + a summary, and reasoning tokens also
   // count against this limit: at 2048 the response was getting cut off
   // mid-JSON ("non-JSON output despite responseMimeType") and ~27% of
   // calls were failing.

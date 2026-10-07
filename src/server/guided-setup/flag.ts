@@ -44,8 +44,7 @@ export function discoveryGates(workspaceId: string): DiscoveryGates {
         workspaceId,
       ),
     mock: ReasoningService.isMockMode(),
-    providerOk:
-      env.REASONING_PROVIDER === "openai" && isIntegrationConfigured("OPENAI"),
+    providerOk: isIntegrationConfigured("OPENAI"),
   };
 }
 

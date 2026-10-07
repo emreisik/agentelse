@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The two switches of guided setup: off by default, only the literal "true"
 // turns them on, the paid step needs the master switch too, and the gates report
-// what would make the paid run refuse (mock mode, a provider without hosted
-// search).
+// what would make the paid run refuse (mock mode, no OpenAI key).
 
 const env: Record<string, unknown> = {};
 const isIntegrationConfigured = vi.fn();
@@ -24,7 +23,6 @@ beforeEach(() => {
     GUIDED_SETUP: false,
     GUIDED_SETUP_DISCOVERY: "false",
     GUIDED_SETUP_DISCOVERY_CAPS: "",
-    REASONING_PROVIDER: "openai",
   });
   isIntegrationConfigured.mockReturnValue(true);
   isMockMode.mockReturnValue(false);
@@ -70,12 +68,6 @@ describe("discoveryGates", () => {
     isMockMode.mockReturnValue(true);
 
     expect(discoveryGates("w1").mock).toBe(true);
-  });
-
-  it("reports a provider that has no hosted web search", () => {
-    env.REASONING_PROVIDER = "gemini";
-
-    expect(discoveryGates("w1").providerOk).toBe(false);
   });
 
   it("reports an OpenAI provider that has no key", () => {

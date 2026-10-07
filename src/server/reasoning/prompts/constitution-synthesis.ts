@@ -94,7 +94,7 @@ function countryName(context: ReasoningContext): string {
 export const constitutionSynthesisDef: ReasoningDef<ConstitutionOutput> = {
   purpose: "constitution.synthesize",
   schema: ConstitutionOutputSchema,
-  // A 22-section constitution, and on top of that, Gemini's thinking
+  // A 22-section constitution, and on top of that, reasoning
   // tokens also count against this limit: when fed real findings, the
   // response at 8192 was getting cut off mid-JSON (finishReason: MAX_TOKENS).
   maxTokens: 32768,

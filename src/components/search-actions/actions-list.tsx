@@ -3,7 +3,9 @@ import Link from "next/link";
 import { ActionForm } from "@/components/shared/action-form";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SubmitButton } from "@/components/shared/submit-button";
+import { ApplyWithApprovalButton } from "@/components/seo-apply/apply-with-approval-button";
 import { buttonVariants } from "@/components/ui/button";
+import type { ApplyOffer } from "@/lib/seo/apply/view-types";
 import { cn } from "@/lib/utils";
 import {
   checkActionNowAction,
@@ -158,9 +160,13 @@ function Instructions({ item }: { item: SeoActionItem }) {
 function Buttons({
   projectId,
   item,
+  offer,
+  isManager,
 }: {
   projectId: string;
   item: SeoActionItem;
+  offer?: ApplyOffer;
+  isManager: boolean;
 }) {
   const { can } = item;
   const any =
@@ -169,7 +175,8 @@ function Buttons({
     can.undo ||
     can.checkNow ||
     can.dismiss ||
-    item.cardHref !== null;
+    item.cardHref !== null ||
+    offer !== undefined;
   if (!any) return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -181,6 +188,14 @@ function Buttons({
           label="Mark as done"
           success="Marked as done"
           primary
+        />
+      ) : null}
+      {/* SC-F8: WordPress bağlıyken onaylı uygulama; "Mark as done" yanında. */}
+      {offer ? (
+        <ApplyWithApprovalButton
+          projectId={projectId}
+          offer={offer}
+          isManager={isManager}
         />
       ) : null}
       {can.confirmLive ? (
@@ -235,9 +250,13 @@ function Buttons({
 function ActionRow({
   projectId,
   item,
+  apply,
+  isManager,
 }: {
   projectId: string;
   item: SeoActionItem;
+  apply?: Record<string, ApplyOffer>;
+  isManager: boolean;
 }) {
   return (
     <li
@@ -275,7 +294,12 @@ function ActionRow({
       ) : null}
       <Instructions item={item} />
       <Checks item={item} />
-      <Buttons projectId={projectId} item={item} />
+      <Buttons
+        projectId={projectId}
+        item={item}
+        offer={apply?.[item.id]}
+        isManager={isManager}
+      />
     </li>
   );
 }
@@ -284,10 +308,14 @@ function Group({
   title,
   projectId,
   items,
+  apply,
+  isManager,
 }: {
   title: string;
   projectId: string;
   items: SeoActionItem[];
+  apply?: Record<string, ApplyOffer>;
+  isManager: boolean;
 }) {
   if (items.length === 0) return null;
   return (
@@ -295,7 +323,13 @@ function Group({
       <h3 className="text-sm font-medium">{title}</h3>
       <ul className="space-y-3">
         {items.map((item) => (
-          <ActionRow key={item.id} projectId={projectId} item={item} />
+          <ActionRow
+            key={item.id}
+            projectId={projectId}
+            item={item}
+            apply={apply}
+            isManager={isManager}
+          />
         ))}
       </ul>
     </div>
@@ -337,8 +371,13 @@ function SummaryChips({ panel }: { panel: SeoActionsPanel }) {
 
 export function ActionsListView({
   panel,
+  apply,
+  isManager = false,
 }: {
   panel: SeoActionsPanel;
+  // SC-F8: eylem kimliği -> "Apply with approval" teklifi (yalnız SEO_APPLY açıkken).
+  apply?: Record<string, ApplyOffer>;
+  isManager?: boolean;
 }): React.JSX.Element {
   const empty =
     panel.needsYou.length === 0 &&
@@ -369,16 +408,22 @@ export function ActionsListView({
             title="Needs you"
             projectId={panel.projectId}
             items={panel.needsYou}
+            apply={apply}
+            isManager={isManager}
           />
           <Group
             title="In progress"
             projectId={panel.projectId}
             items={panel.inProgress}
+            apply={apply}
+            isManager={isManager}
           />
           <Group
             title="Results"
             projectId={panel.projectId}
             items={panel.results}
+            apply={apply}
+            isManager={isManager}
           />
         </>
       )}

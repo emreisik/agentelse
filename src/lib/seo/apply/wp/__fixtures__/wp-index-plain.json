@@ -1,0 +1,10 @@
+{
+  "_doğrulanmalı": "El yazısı: SEO eklentisi olmayan, Uygulama Parolaları kapalı bir site (authentication boş).",
+  "name": "Düz Site",
+  "description": "",
+  "url": "https://plain.example.com",
+  "home": "https://plain.example.com",
+  "namespaces": ["oembed/1.0", "wp/v2"],
+  "authentication": [],
+  "routes": {}
+}

@@ -244,11 +244,13 @@ async function resetSite(
   options: { keepVerification: boolean; extra?: Prisma.SeoSiteUpdateInput },
 ): Promise<{ site: SeoSite; deleted: number }> {
   const where = { siteId };
-  const [links, pages, crawls, cwv, site] = await prisma.$transaction([
+  const [links, pages, crawls, cwv, , site] = await prisma.$transaction([
     prisma.seoLink.deleteMany({ where }),
     prisma.seoPage.deleteMany({ where }),
     prisma.seoCrawl.deleteMany({ where }),
     prisma.seoCwv.deleteMany({ where }),
+    // SC-F8: AI arama görünürlüğü denetimi de kapsam sıfırlanınca ve Delete audit data ile silinir.
+    prisma.seoGeoAudit.deleteMany({ where }),
     prisma.seoSite.update({
       where: { id: siteId },
       data: {

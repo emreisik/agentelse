@@ -412,6 +412,9 @@ type TransitionPatch = {
   creativeId?: string | null;
   baseline?: PageSnapshot | null;
   dismissReason?: string | null;
+  // SC-F8: CMS üzerinden uygulanan değişiklik appliedVia=CMS ve onay kimliğiyle yazılır.
+  appliedVia?: "USER" | "CMS";
+  approvalId?: string | null;
 };
 
 function patchData(
@@ -466,7 +469,10 @@ function eventData(
         ...patchData(patch),
         status: next,
         appliedAt: now,
-        appliedVia: "USER",
+        appliedVia: patch.appliedVia ?? "USER",
+        ...(patch.approvalId !== undefined
+          ? { approvalId: patch.approvalId }
+          : {}),
         appliedByUserId: input.userId,
         verification: json(freshVerification()),
         verifyAttempts: 0,

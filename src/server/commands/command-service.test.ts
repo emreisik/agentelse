@@ -712,6 +712,59 @@ describe("CommandService.submit — inputs a capability cannot run without", () 
       expect(approvalDecide).toHaveBeenCalled();
     });
   });
+
+  // SC-F8 ve GA-F7: kritik değişiklik onayı sohbet kısayoluyla kör verilmez.
+  describe("a critical change approval", () => {
+    const criticalApproval = {
+      id: "appr-c1",
+      workspaceId: "ws-1",
+      projectId: "proj-1",
+      brandId: "brand-1",
+      taskId: "task-c1",
+      entityType: "Task",
+      entityId: "task-c1",
+      type: "CRITICAL_CHANGE_APPROVAL",
+      level: "LEVEL_3_CLIENT",
+    };
+    const decide = (decision: "APPROVE" | "REJECT") => ({
+      ...baseInput(""),
+      rawText: decision === "APPROVE" ? "onayla" : "reddet",
+      intent: { kind: "APPROVAL_DECISION" as const, decision },
+    });
+
+    beforeEach(() => {
+      approvalFindMany.mockResolvedValue([criticalApproval]);
+    });
+
+    it("is sent to the approval card instead of being approved by a plain yes", async () => {
+      const result = await CommandService.submit(decide("APPROVE"));
+
+      expect(result).toMatchObject({
+        status: "APPROVAL_ON_CARD",
+        approvalId: "appr-c1",
+      });
+      expect(approvalDecide).not.toHaveBeenCalled();
+      expect(dispatchApprovedTask).not.toHaveBeenCalled();
+    });
+
+    it("can still be rejected in chat", async () => {
+      const result = await CommandService.submit(decide("REJECT"));
+
+      expect(result.status).toBe("APPROVAL_HANDLED");
+      expect(approvalDecide).toHaveBeenCalled();
+    });
+
+    it("leaves an ordinary approval unchanged", async () => {
+      approvalFindMany.mockResolvedValue([
+        { ...criticalApproval, type: "PUBLISH_APPROVAL" },
+      ]);
+
+      const result = await CommandService.submit(decide("APPROVE"));
+
+      expect(result.status).toBe("APPROVAL_HANDLED");
+      expect(approvalDecide).toHaveBeenCalled();
+    });
+  });
 });
 
 describe("CommandService.submit — an approval decision inside a Work", () => {

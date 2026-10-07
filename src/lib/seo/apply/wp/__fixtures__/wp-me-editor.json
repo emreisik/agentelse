@@ -1,0 +1,41 @@
+{
+  "_doğrulanmalı": "El yazısı: GET /wp/v2/users/me?context=edit biçimi; capabilities haritası WordPress rol tanımlarından hafızayla yazıldı.",
+  "id": 5,
+  "name": "Agentelse",
+  "slug": "agentelse",
+  "roles": [
+    "editor"
+  ],
+  "capabilities": {
+    "read": true,
+    "level_0": true,
+    "level_1": true,
+    "edit_posts": true,
+    "delete_posts": true,
+    "level_2": true,
+    "upload_files": true,
+    "publish_posts": true,
+    "edit_published_posts": true,
+    "delete_published_posts": true,
+    "level_3": true,
+    "level_4": true,
+    "level_5": true,
+    "level_6": true,
+    "level_7": true,
+    "moderate_comments": true,
+    "manage_categories": true,
+    "edit_others_posts": true,
+    "delete_others_posts": true,
+    "edit_pages": true,
+    "edit_others_pages": true,
+    "edit_published_pages": true,
+    "publish_pages": true,
+    "delete_pages": true,
+    "delete_others_pages": true,
+    "delete_published_pages": true,
+    "unfiltered_html": true
+  },
+  "extra_capabilities": {
+    "editor": true
+  }
+}

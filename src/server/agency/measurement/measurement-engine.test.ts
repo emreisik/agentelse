@@ -9,9 +9,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //    "measurement plan <id>" fallback.
 
 const task = { findUnique: vi.fn() };
+const executionJob = { findFirst: vi.fn() };
 
 vi.mock("@/lib/prisma", () => ({
-  prisma: { task },
+  prisma: { task, executionJob },
 }));
 
 vi.mock("@/server/agency/fingerprint", () => ({
@@ -32,6 +33,8 @@ vi.mock("@/server/repositories/measurement.repository", () => ({
     transitionCheck: vi.fn().mockResolvedValue(undefined),
     completePlanIfDone: vi.fn().mockResolvedValue(undefined),
     findCheckByResultTask: vi.fn(),
+    findPlanForTask: vi.fn(),
+    createPlan: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -253,5 +256,36 @@ describe("MeasurementEngine.onCheckTaskTerminal", () => {
     } as never);
     await MeasurementEngine.onCheckTaskTerminal("task-2", "CANCELLED");
     expect(MeasurementRepository.transitionCheck).not.toHaveBeenCalled();
+  });
+});
+
+// SC-F8: WordPress değişikliği görevleri için ölçüm planı açılmaz (SC-F6 ölçer).
+describe("MeasurementEngine.planForCompletedTask", () => {
+  const websiteTask = (payload: unknown) => ({
+    id: "task-w",
+    workspaceId: "ws-1",
+    projectId: "p-1",
+    brandId: "b-1",
+    workPlanId: null,
+    capability: "WEBSITE_UPDATE",
+    title: "Update the site",
+    status: "COMPLETED",
+    payload,
+  });
+
+  it("creates no plan for a completed seo-apply task", async () => {
+    task.findUnique.mockResolvedValue(
+      websiteTask({ seoApply: { v: 1, changeId: "c1", kind: "TITLE_META" } }),
+    );
+    await MeasurementEngine.planForCompletedTask("task-w");
+    expect(MeasurementRepository.createPlan).not.toHaveBeenCalled();
+  });
+
+  it("still plans an unmarked WEBSITE_UPDATE task", async () => {
+    task.findUnique.mockResolvedValue(websiteTask({ request: "x" }));
+    vi.mocked(MeasurementRepository.findPlanForTask).mockResolvedValue(null);
+    executionJob.findFirst.mockResolvedValue(null);
+    await MeasurementEngine.planForCompletedTask("task-w");
+    expect(MeasurementRepository.createPlan).toHaveBeenCalledTimes(1);
   });
 });

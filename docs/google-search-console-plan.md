@@ -1,6 +1,6 @@
 # Agentelse · Google Search Console ve SEO Motoru: Mimari ve Uygulama Planı
 
-Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 arama sağlığı ve teknik denetim uygulandı (6 Ekim 2026, bayraklı; [search-health.md](search-health.md)); SC-F4 SEO fırsat motoru uygulandı (6 Ekim 2026, bayraklı; [search-opportunities.md](search-opportunities.md)); SC-F5 raporlama ve planlama uygulandı (6 Ekim 2026, bayraklı; [search-reports.md](search-reports.md)); SC-F6 öneri döngüsü uygulandı (bayraklı; [search-actions.md](search-actions.md)); SC-F7 aylık SEO içerik planı kodlandı (7 Ekim 2026, `SEO_CONTENT_PLAN` arkasında; [search-content-plan.md](search-content-plan.md)); SC-F8 ve sonrası henüz uygulanmadı.
+Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 arama sağlığı ve teknik denetim uygulandı (6 Ekim 2026, bayraklı; [search-health.md](search-health.md)); SC-F4 SEO fırsat motoru uygulandı (6 Ekim 2026, bayraklı; [search-opportunities.md](search-opportunities.md)); SC-F5 raporlama ve planlama uygulandı (6 Ekim 2026, bayraklı; [search-reports.md](search-reports.md)); SC-F6 öneri döngüsü uygulandı (bayraklı; [search-actions.md](search-actions.md)); SC-F7 aylık SEO içerik planı kodlandı (7 Ekim 2026, `SEO_CONTENT_PLAN` arkasında; [search-content-plan.md](search-content-plan.md)); SC-F8 uygulama katmanı (WordPress) ve AI arama görünürlüğü kodlandı (7 Ekim 2026, `SEO_APPLY` / `SEO_INDEXNOW` / `SEO_GEO` arkasında; [wordpress-plan.md](wordpress-plan.md), [website-apply.md](website-apply.md), [ai-search-visibility.md](ai-search-visibility.md)); SC-F9 henüz uygulanmadı.
 
 > **Kapsam:** Google Search Console (GSC) entegrasyonu ve onun üzerine kurulan SEO motoru. Bu plan şunları kapsar: bağlantı ve kimlik; arama ambarı ve kalıcı arşiv; indeks ve teknik sağlık denetimi (URL Inspection, sitemap, robots, kendi site tarayıcımız, Core Web Vitals); SEO fırsat motoru; raporlama ve planlama; öneri → uygulama → ölçüm döngüsü. Sonraki aşamalarda içerik planı, CMS üzerinden onaylı uygulama ve AI arama görünürlüğü gelir.
 >
@@ -521,6 +521,7 @@ Haftalık rapor kartları sohbette **saklanan kart** olarak yazılır; gönderil
   - robots.txt'de AI tarayıcılarının (Google-Extended, GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot…) durumu. Karar kullanıcınındır; Agentelse yalnız bilgi verir.
   - `llms.txt` varlığı; Organization / LocalBusiness şeması ve `sameAs` tutarlılığı; soru-cevap biçimli içerik blokları; varlık (entity) tutarlılığı.
   - Ölçüm: GA köprüsünden AI asistan trafiği (GA planı AN7); Search Console'daki Gen-AI raporu API'ye gelirse onun gösterimleri.
+- **Durum (7 Ekim 2026):** GEO/AEO denetimi Search sayfasında "AI search visibility" bölümüdür (`/projects/{id}/arama#ai-visibility`); ayrıntı [ai-search-visibility.md](ai-search-visibility.md). WordPress ve uygulama katmanı için [wordpress-plan.md](wordpress-plan.md) ve [website-apply.md](website-apply.md).
 - Google Business Profile (yerel SEO) ayrı ve gelecekteki bir entegrasyondur. Yerel niyetli sorgular (SO11) şimdilik yerel sayfa önerisine döner.
 
 ### 3.10 Arayüz yüzeyleri
@@ -1136,6 +1137,8 @@ Durum (6 Ekim 2026): Kodlandı (SEO_REPORTS); ayrıntılar [search-reports.md](s
 - Her yazma geri alınabiliyor.
 - Taslak varsayılanı çalışıyor.
 - Search Console'a hiçbir yazma isteği gitmiyor; istemci yalnız okuma uçlarını içeriyor (testli).
+
+**Durum (7 Ekim 2026):** kodlandı, `SEO_APPLY`, `SEO_INDEXNOW` ve `SEO_GEO` arkasında; canlı denenmedi. Planlar [wordpress-plan.md](wordpress-plan.md), [website-apply.md](website-apply.md), [ai-search-visibility.md](ai-search-visibility.md). Migration `20261006221000_add_seo_apply` (`CmsSite`, `SeoChange`, `SeoApplySetting`, `SeoGeoAudit`). Kayıtlı sapmalar: (1) `WEBSITE_UPDATE` yeniden kullanıldı; SC-F8 görevleri `Task.payload.seoApply` ile ayırt edilir, `ExecutionProvider` yazılmadı, onay kancası motoru doğrudan çağırır; (2) GEO bulguları SC-F4 bulgu tablosuna değil kendi tablosuna (`SeoGeoAudit`) yazılır; (3) "Apply with approval" SC-F6 eylemleri (`SeoAction`) üzerinden çalışır; (4) şema (JSON-LD) enjeksiyonu ve "sitemap dosyasını CMS üzerinden düzelt" yapılmadı; plan §3.9'daki "başlık, meta ve şema güncelleme" = başlık ve meta; (5) `SEO_INDEXNOW` planın bayrak listesinde yoktu (yeni); (6) "her yazma geri alınabiliyor" = onaylanıp yazılan her değişiklik 90 gün boyunca geri alınabilir; noop (zaten sağlanmış) değişiklik yazmadığı için geri alınmaz; (7) migration artık "CMS planlarına göre" değil `20261006221000_add_seo_apply`; (8) yalnız WordPress (SK11 a); CONTENT_REFRESH, CONSOLIDATE, zamanlı yayın, medya, kategori, özel yazı türleri, Shopify ve Webflow ertelendi.
 
 **Bağımlılık:** SC-F6 + ilgili CMS entegrasyonu.
 

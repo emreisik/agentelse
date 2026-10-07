@@ -28,6 +28,17 @@ vi.mock("@/server/actions/seo-mode-actions", () => ({
   checkSeoNowAction: vi.fn(),
   undoSeoAppliedAction: vi.fn(),
 }));
+vi.mock("@/server/actions/seo-apply-actions", () => ({
+  proposeApplyAction: vi.fn(),
+  proposePublishArticleAction: vi.fn(),
+  proposeMakeLiveAction: vi.fn(),
+  decideSeoChangeAction: vi.fn(),
+  undoSeoChangeAction: vi.fn(),
+  saveApplySettingsAction: vi.fn(),
+  indexNowEnableAction: vi.fn(),
+  indexNowVerifyAction: vi.fn(),
+  indexNowDisableAction: vi.fn(),
+}));
 vi.mock("@/server/actions/seo-flow-actions", () => ({
   goToSeoStepAction: vi.fn(),
   markSeoPublishedAction: vi.fn(),
@@ -665,6 +676,40 @@ describe("SeoFlow: Publish with features", () => {
       delivery: DELIVERY,
     });
     expect(html).not.toContain("Write another");
+  });
+});
+
+// SC-F8: "Publish to WordPress (draft)" yalnız features.apply damgasıyla çıkar.
+describe("SeoFlow: Publish with the apply feature", () => {
+  it("shows nothing about WordPress without the apply stamp", () => {
+    const html = render("deliver", {
+      features: FEATURES,
+      brief: BRIEF,
+      plan: PLAN,
+      article: ARTICLE,
+      delivery: DELIVERY,
+    });
+    expect(html).not.toContain("WordPress");
+  });
+
+  it("asks to schedule first, then offers the draft block once it is on the calendar", () => {
+    const before = render("deliver", {
+      features: { ...FEATURES, apply: true },
+      brief: BRIEF,
+      plan: PLAN,
+      article: ARTICLE,
+    });
+    expect(before).toContain(
+      "Schedule the article first; then you can send a draft to WordPress.",
+    );
+    const placed = render("deliver", {
+      features: { ...FEATURES, apply: true },
+      brief: BRIEF,
+      plan: PLAN,
+      article: ARTICLE,
+      delivery: DELIVERY,
+    });
+    expect(placed).not.toContain("Schedule the article first");
   });
 });
 

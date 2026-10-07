@@ -9,6 +9,7 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { isSeoApplyPayload } from "@/lib/seo/apply/approval-details";
 import { AgencyTriggerRepository } from "@/server/repositories/agency-trigger.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
@@ -363,9 +364,11 @@ export const TaskRepository = {
     }
 
     // GA-F7: Telegram'a GA değişikliği başlığı gitmez.
+    // SC-F8: WordPress değişikliği görevleri Telegram'a bildirim göndermez.
     if (
       (to === "COMPLETED" || to === "FAILED") &&
-      task.capability !== "ANALYTICS_EDIT"
+      task.capability !== "ANALYTICS_EDIT" &&
+      !isSeoApplyPayload(task.payload)
     ) {
       const prefix =
         to === "COMPLETED" ? "✅ Task completed" : "❌ Task failed";

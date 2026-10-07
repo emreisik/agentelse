@@ -254,6 +254,24 @@ describe("transitionAction", () => {
     expect(result).toEqual({ ok: false, reason: "invalid_transition" });
   });
 
+  it("applies through the CMS: appliedVia CMS and the approval id are written (SC-F8)", async () => {
+    current("ACCEPTED", { findingId: "finding-1" });
+    await transitionAction({
+      projectId: "project-1",
+      actionId: "action-1",
+      event: "APPLY",
+      userId: "user-1",
+      patch: { appliedVia: "CMS", approvalId: "approval-1" },
+      now: NOW,
+    });
+    const call = mocks.updateMany.mock.calls[0]![0];
+    expect(call.data).toMatchObject({
+      status: "APPLIED",
+      appliedVia: "CMS",
+      approvalId: "approval-1",
+    });
+  });
+
   it("reports an impossible event and a missing row", async () => {
     current("EVALUATING");
     expect(

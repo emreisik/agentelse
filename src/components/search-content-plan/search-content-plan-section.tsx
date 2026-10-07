@@ -7,6 +7,7 @@ import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
+import { loadApplyReady } from "@/server/seo/apply/offers";
 import { loadContentPlanView } from "@/server/seo/content-plan/store";
 
 // Search sayfasındaki "This month's articles" bölümü (SC-F7,
@@ -29,13 +30,19 @@ export async function SearchContentPlanSection({
   }
   const view = await loadContentPlanView(projectId).catch(() => null);
   if (!view) return null;
+  // SC-F8: bayrak kapalıyken sorgusuz false.
+  const applyReady = await loadApplyReady(projectId);
   return (
     <section
       id="content-plan"
       aria-labelledby={CONTENT_PLAN_TITLE_ID}
       className="scroll-mt-20 space-y-4 border-t border-foreground/10 pt-6"
     >
-      <ContentPlanListView view={view} projectId={projectId} />
+      <ContentPlanListView
+        view={view}
+        projectId={projectId}
+        applyReady={applyReady}
+      />
     </section>
   );
 }

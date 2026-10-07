@@ -13,6 +13,12 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/server/actions/seo-apply-actions", () => ({
+  proposePublishArticleAction: vi.fn(),
+  proposeMakeLiveAction: vi.fn(),
+  decideSeoChangeAction: vi.fn(),
+  undoSeoChangeAction: vi.fn(),
+}));
 vi.mock("@/server/actions/seo-content-plan-actions", () => ({
   planThisMonthAction: vi.fn(),
   refreshPlanAction: vi.fn(),

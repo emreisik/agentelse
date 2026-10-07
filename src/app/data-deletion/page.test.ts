@@ -35,6 +35,16 @@ describe("data deletion page", () => {
     );
   });
 
+  it("says what Disconnect does to the WordPress connection data (SC-F8)", async () => {
+    const html = (await render()).replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+    expect(html).toContain("How to delete your WordPress connection data");
+    expect(html).toContain("saved Application Password");
+    expect(html).toContain("Undo before disconnecting");
+    expect(html).toContain("Application Passwords in WordPress");
+    expect(html).toContain("Delete audit data");
+    expect(html).toContain("delete a whole project");
+  });
+
   it("says what Disconnect does to Google Analytics changes and the SEO content plan (GA-F7, SC-F7)", async () => {
     const html = (await render()).replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
     expect(html).toContain("record Agentelse keeps of changes");

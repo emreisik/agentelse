@@ -324,12 +324,12 @@ describe("decideGaFixAction", () => {
 
   it("passes the error message of a failed decision through", async () => {
     mocks.applyApprovalDecision.mockRejectedValue(
-      new Error("Only a workspace owner or admin can approve changes to Google Analytics."),
+      new Error("Only a workspace owner or admin can approve this change."),
     );
     expect(await decideGaFixAction(form(approve))).toEqual({
       ok: false,
       message:
-        "Only a workspace owner or admin can approve changes to Google Analytics.",
+        "Only a workspace owner or admin can approve this change.",
     });
     expect(mocks.syncApprovalState).not.toHaveBeenCalled();
   });

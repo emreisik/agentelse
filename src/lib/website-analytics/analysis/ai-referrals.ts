@@ -29,9 +29,13 @@ const EPSILON = 1e-9;
 const SESSIONS_INDEX = 0;
 const KEY_EVENTS_INDEX = 2;
 
-type AssistantTotals = Map<string, { sessions: number; keyEvents: number }>;
+export type AssistantTotals = Map<
+  string,
+  { sessions: number; keyEvents: number }
+>;
 
-function assistantTotals(tables: GaWindowTables): AssistantTotals {
+// SC-F8: AI arama görünürlüğü aynı asistan toplamını kullanır.
+export function assistantTotals(tables: GaWindowTables): AssistantTotals {
   const totals: AssistantTotals = new Map();
   for (const row of tables.sourceMedium) {
     const name = aiAssistantOf(row.key[0] ?? "");

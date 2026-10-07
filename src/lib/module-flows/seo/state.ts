@@ -97,7 +97,9 @@ export type SeoMode = (typeof SEO_MODES)[number];
 
 // Kart oluşturulurken bayrağa göre damgalanır; arayüz karardan bu damgaya
 // bakar, bayrak sonradan kapansa da eski kartlar aynen çizilir.
-export type SeoFeatures = { modes: boolean; live: boolean };
+// SC-F8: apply, kart açılırken WordPress bağlı ve sağlıklıysa damgalanır
+// (loadApplyReady); yoksa alan hiç yazılmaz.
+export type SeoFeatures = { modes: boolean; live: boolean; apply?: boolean };
 
 // Hedef sayfa: kendi tarayıcımızla okunan sitenin kendi verisi. queryCount
 // Google kaynaklıdır ve bağlantı kesilince sıfırlanır (scrubSearchData).
@@ -277,6 +279,7 @@ const clippedOrNull = (max: number) =>
 const featuresSchema = z.object({
   modes: z.boolean().catch(false),
   live: z.boolean().catch(false),
+  apply: z.boolean().optional().catch(undefined),
 });
 
 const targetSchema = z.object({

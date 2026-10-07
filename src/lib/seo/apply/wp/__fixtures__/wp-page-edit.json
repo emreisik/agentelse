@@ -1,0 +1,20 @@
+{
+  "_doğrulanmalı": "El yazısı: GET /wp/v2/pages/7?context=edit biçimi; klasik editör içeriği (blok yorumu yok). meta boş dizi: WordPress meta kaydı yoksa [] döndürebilir.",
+  "id": 7,
+  "modified": "2026-08-20T08:00:00",
+  "modified_gmt": "2026-08-20T08:00:00",
+  "slug": "hakkimizda",
+  "status": "publish",
+  "type": "page",
+  "link": "https://example.com/hakkimizda/",
+  "title": { "raw": "Hakkımızda", "rendered": "Hakkımızda" },
+  "content": {
+    "raw": "Biz yerel işletmelere yardım eden küçük bir ekibiz.\n\nHizmetlerimiz arasında yerel SEO rehberi hazırlamak da var.\n\n<h2>İletişim</h2>\n\nBize yazın.",
+    "rendered": "<p>Biz yerel işletmelere yardım eden küçük bir ekibiz.</p>",
+    "protected": false
+  },
+  "excerpt": { "raw": "", "rendered": "", "protected": false },
+  "parent": 0,
+  "menu_order": 0,
+  "meta": []
+}

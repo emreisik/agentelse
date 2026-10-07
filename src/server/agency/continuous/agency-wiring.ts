@@ -78,6 +78,8 @@ import { SeoContentPlanRetention } from "@/server/seo/content-plan/retention";
 import { SeoActionJobs } from "@/server/seo/actions/jobs";
 import { SeoReports } from "@/server/seo/reports/runner";
 import { SeoReportRetention } from "@/server/seo/reports/retention";
+import { SeoApply } from "@/server/seo/apply/seo-apply";
+import { SeoGeo } from "@/server/seo/geo/runner";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
 import { WorkPlanBuilder } from "@/server/agency/work-plans/work-plan-builder";
 import { WorkPlanProgressor } from "@/server/agency/work-plans/work-plan-progressor";
@@ -421,6 +423,9 @@ registerAgencyTickStep({
     return posted + pruned;
   },
 });
+// SC-F8 (SEO_APPLY / SEO_GEO): WordPress değişikliklerinin uygulama/geri okuma/saklama adımı ve haftalık AI arama görünürlüğü denetimi. Bayrak kapalıyken hemen 0 döner ve sorgu yapmaz; odak ayarı bunları kapatmaz; yerel geliştirme süreci yalnız izinli projeleri işler.
+registerAgencyTickStep({ name: "seo-apply", run: () => SeoApply.runDue(5) });
+registerAgencyTickStep({ name: "seo-geo", run: () => SeoGeo.runDue(2) });
 registerAgencyTickStep({
   name: "signal-processing",
   run: () => IntelligenceEngine.processNewSignals(20),

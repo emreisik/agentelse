@@ -254,6 +254,31 @@ export default async function DataDeletionPage({
             changes; to also remove the permission at Google, remove Agentelse
             in your Google Account settings (Security, third-party access).
           </p>
+          <h2 className="mt-6 text-lg font-semibold text-foreground">
+            How to delete your WordPress connection data
+          </h2>
+          <p>
+            Open{" "}
+            <span className="text-foreground">
+              Connectors &gt; WordPress &gt; Disconnect
+            </span>
+            . Disconnecting deletes the saved Application Password, the record
+            of changes Agentelse made and the saved copies of the changed page
+            content, and the text of its approval requests, right away. It does
+            not undo the changes themselves; use Undo before disconnecting if
+            you want them reverted. Agentelse also asks WordPress to revoke the
+            Application Password; if that fails, remove it under{" "}
+            <span className="text-foreground">
+              Users &gt; Profile &gt; Application Passwords
+            </span>{" "}
+            in WordPress. If you delete a whole project, Agentelse deletes the
+            same data but does not ask WordPress to revoke the password, so
+            disconnect WordPress first or revoke it in WordPress. The AI search
+            visibility results are deleted when you use{" "}
+            <span className="text-foreground">Delete audit data</span> on the
+            Search page or delete the project.
+          </p>
+
           <p>
             To also erase reports and suggestions Agentelse built from your
             Google data, email <Mail /> from the address you use with Agentelse,

@@ -3936,6 +3936,202 @@ model SeoContentSetting {
   updatedAt       DateTime @updatedAt
 }
 
+// ============================================================================
+// SC-F8 (migration 20261006221000_add_seo_apply)
+// docs/website-apply.md, docs/wordpress-plan.md, docs/ai-search-visibility.md
+// NO existing model changes. Relations only between the new CmsSite and SeoChange.
+// ============================================================================
+
+// SC-F8: projenin bagli CMS sitesi (simdilik WordPress). Kimlik bilgisi
+// IntegrationCredential'da (provider "wordpress"; mock kipinde "wordpress_mock"),
+// sifreli; burada yalniz site durumu, algilanan SEO eklentisi ve yetenekler durur.
+// Disconnect satiri siler, SeoChange satirlari cascade ile gider (once
+// cleanupSeoApplyForSite).
+model CmsSite {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  isMock      Boolean @default(false)
+
+  // WORDPRESS (ileride SHOPIFY | WEBFLOW)
+  kind          String
+  // IntegrationCredential.id (duz kimlik, FK yok)
+  credentialId  String
+  // Kanonik koken, yol yok: "https://www.example.com"
+  origin        String
+  // pretty: {origin}/wp-json/...   query: {origin}/?rest_route=/...
+  restMode      String    @default("pretty")
+  siteName      String?
+  // SeoSite kapsam anahtari (CrawlScope.key) baglanma aninda; degisirse yazma durur (scope_changed)
+  scopeKey      String?
+  // YOAST | RANK_MATH | NONE
+  seoPlugin     String    @default("NONE")
+  // { plugin, titleVia, descriptionVia, verifiable } (SeoFieldsCapability)
+  seoFields     Json?
+  // { draftPosts, publishPosts, editPublishedPosts, editPages, editPublishedPages, editOthers, deletePosts } (WpCapabilities)
+  capabilities  Json?
+  // OK | LIMITED | AUTH | NO_PERMISSION | UNREACHABLE | NOT_WORDPRESS | REST_BLOCKED | DOMAIN_MISMATCH | UNKNOWN
+  health        String    @default("UNKNOWN")
+  healthReason  String?
+  lastCheckedAt DateTime?
+  lastError     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  changes SeoChange[]
+
+  @@unique([projectId, kind, isMock])
+  @@index([credentialId])
+  @@index([projectId])
+}
+
+// SC-F8: siteye yazilan her degisikligin kaydi (onay, uygulama, geri okuma,
+// geri alma). before/after/params musterinin kendi sayfa icerigidir (baslik,
+// aciklama, baglanti metni, iceride ham icerik); Google verisi degildir.
+// Metin yuklu alanlar Disconnect'te cascade ile silinir; 24 ay sonra temizlenir.
+model SeoChange {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  siteId      String
+  isMock      Boolean @default(false)
+
+  // PUBLISH_ARTICLE | PUBLISH_LIVE | TITLE_META | INTERNAL_LINKS
+  kind   String
+  // PROPOSED | APPROVED | APPLYING | APPLIED | VERIFIED | FAILED | UNDOING | UNDONE | REJECTED | EXPIRED
+  status String @default("PROPOSED")
+  // ARTICLE | ACTION | DRAFT
+  source String
+  // Sabit Ingilizce baslik (en cok 80 karakter; URL ve makale basligi icermez)
+  title  String
+
+  // WordPress hedefi (PUBLISH_ARTICLE'da uygulama sonrasi dolar)
+  targetUrl String?
+  // post | page
+  wpType    String?
+  wpId      Int?
+  // Herkese acik adres (taslakta null); IndexNow ve arayuz icin
+  liveUrl   String?
+
+  // Dogrulanmis girdi: SeoChangeParams (kind dahil)
+  params Json
+  // Uygulamadan hemen once canli okunan ve geri okunan durum: WpSnapshot.
+  // before ilk denemede saklanir ve sonraki denemelerde "onceki durum" olarak okunur.
+  before Json?
+  after  Json?
+
+  // Ayni (site, tur, konu) icin tek acik degisiklik
+  dedupeKey String
+  openKey   String?
+  // Zaten saglanmisti: yazma yapilmadi, geri alinamaz. Onceki denememizin yazisi
+  // inmisse (landedEarlier) false kalir: sayilir, geri alinabilir.
+  noop      Boolean @default(false)
+
+  // Baglantilar (duz kimlik, FK yok). creativeId PUBLISH_ARTICLE ve PUBLISH_LIVE'da dolar.
+  seoActionId String?
+  creativeId  String?
+  taskId      String?
+  approvalId  String?
+
+  // USER (SC-F8'de SYSTEM onerisi yok)
+  proposedByType   String
+  proposedByUserId String?
+  approvedByUserId String?
+  undoneByUserId   String?
+
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime?
+  leaseUntil    DateTime?
+  leaseOwner    String?
+  // Approval.expiresAt ile ayni deger (tek kez hesaplanir)
+  expiresAt     DateTime
+
+  approvedAt   DateTime?
+  appliedAt    DateTime?
+  verifiedAt   DateTime?
+  rolledBackAt DateTime?
+  failedAt     DateTime?
+  // { code, message, retryable?, undo? }: sabit metin, WordPress ham hatasi yok
+  error        Json?
+  // { state: PENDING | SENT | SKIPPED | FAILED, at, urls }
+  indexNow     Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  site CmsSite @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, openKey])
+  @@index([projectId, createdAt])
+  @@index([siteId, dedupeKey])
+  @@index([status, nextAttemptAt])
+  @@index([taskId])
+  @@index([approvalId])
+  @@index([seoActionId])
+  @@index([creativeId])
+}
+
+// SC-F8: proje basina uygulama ayarlari (gunluk sinir, IndexNow). Google verisi yok.
+model SeoApplySetting {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String @unique
+
+  // Kayan 24 saatte en cok uygulanacak degisiklik (1..25)
+  dailyLimit Int @default(10)
+
+  indexNowEnabled    Boolean   @default(false)
+  // Herkese acik anahtar (dosya adi ve icerik); gizli degildir
+  indexNowKey        String?
+  indexNowHost       String?
+  indexNowVerifiedAt DateTime?
+  indexNowLastPingAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// SC-F8: AI arama gorunurlugu (GEO/AEO) denetiminin son sonucu; SeoSite basina
+// bir satir (FK yok: SeoSites.resetSite ve proje silme temizler). Yalniz
+// sitenin kendi verisi; GA ya da Search Console verisi saklanmaz.
+model SeoGeoAudit {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  isMock      Boolean @default(false)
+  siteId      String  @unique
+  // SeoSite kapsam anahtari (CrawlScope.key) denetim aninda; farkliysa satir bayat sayilir
+  scopeKey    String?
+
+  // 0..100 (puanli kontroller); null = veri yok
+  score           Int?
+  previousScore   Int?
+  previousAt      DateTime?
+  // GeoAuditResult (src/lib/seo/geo/types.ts): checks, crawlers, llms, org, pages
+  result          Json
+  // Kullanicinin "bunu ben karar verdim" dedigi kontroller (yalniz GEO2, GEO9); puandan dusulur
+  acknowledged    String[]  @default([])
+  // { source: ai | template, language, items: [{ checkId, text }], at }
+  recommendations Json?
+
+  auditedAt   DateTime
+  nextAuditAt DateTime?
+  leaseUntil  DateTime?
+  leaseOwner  String?
+  // Yalniz hata kodu: crawl_missing | fetch_failed | unknown
+  lastError   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([nextAuditAt])
+}
+
+// UNIQUE INDEX "CmsSite_projectId_kind_isMock_key", "SeoChange_siteId_openKey_key" (NULL openKey rows stay distinct), "SeoApplySetting_projectId_key", "SeoGeoAudit_siteId_key";
+// the listed plain indexes (including "SeoChange_creativeId_idx"); FOREIGN KEY ("siteId") REFERENCES "CmsSite"("id") ON DELETE CASCADE ON UPDATE CASCADE for "SeoChange" only. No enum change (ApprovalType CRITICAL_CHANGE_APPROVAL and CapabilityKey WEBSITE_UPDATE already exist). The folder 20261006221000_add_seo_apply sorts after 20261006220000_add_seo_content_plan (SC-F7); re-check the timestamp against the integrator's final list.
+
 model Skill {
   id   String @id @default(cuid())
   name String

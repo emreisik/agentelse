@@ -1,0 +1,32 @@
+{
+  "_doğrulanmalı": "El yazısı: GET /wp/v2/posts/42?context=edit biçimi (title.raw, content.raw, excerpt.raw, modified_gmt saat dilimsiz). Yoast meta anahtarlarının REST'te görünmesi register_meta show_in_rest'e bağlıdır, gerçek sitede doğrulanmalı.",
+  "id": 42,
+  "date": "2026-09-01T09:00:00",
+  "date_gmt": "2026-09-01T09:00:00",
+  "modified": "2026-09-10T12:30:00",
+  "modified_gmt": "2026-09-10T12:30:00",
+  "slug": "ornek-yazi",
+  "status": "publish",
+  "type": "post",
+  "link": "https://example.com/ornek-yazi/",
+  "title": { "raw": "Örnek yazı", "rendered": "Örnek yazı" },
+  "content": {
+    "raw": "<!-- wp:paragraph -->\n<p>Bu yazıda yerel SEO rehberi hakkında kısa bir giriş var.</p>\n<!-- /wp:paragraph -->\n\n<!-- wp:heading -->\n<h2 class=\"wp-block-heading\">Yerel SEO rehberi</h2>\n<!-- /wp:heading -->\n\n<!-- wp:paragraph -->\n<p>İkinci paragraf, yerel SEO rehberi konusuna döner.</p>\n<!-- /wp:paragraph -->",
+    "rendered": "<p>Bu yazıda yerel SEO rehberi hakkında kısa bir giriş var.</p>",
+    "protected": false
+  },
+  "excerpt": { "raw": "", "rendered": "", "protected": false },
+  "author": 3,
+  "featured_media": 0,
+  "comment_status": "open",
+  "ping_status": "open",
+  "sticky": false,
+  "template": "",
+  "format": "standard",
+  "meta": {
+    "_yoast_wpseo_title": "%%title%% %%sep%% %%sitename%%",
+    "_yoast_wpseo_metadesc": ""
+  },
+  "categories": [1],
+  "tags": []
+}

@@ -44,6 +44,10 @@ import { loadSeoActionCounters } from "@/server/seo/actions/operator-counters";
 import { SeoActionCountersCard } from "@/components/search-actions/seo-action-counters-card";
 import { loadSeoContentPlanCounters } from "@/server/seo/content-plan/counters";
 import { ContentPlanCountersCard } from "@/components/search-content-plan/content-plan-counters-card";
+import { loadSeoApplyCounters } from "@/server/seo/apply/counters";
+import { SeoApplyCountersCard } from "@/components/seo-apply/apply-counters-card";
+import { loadSeoGeoCounters } from "@/server/seo/geo/counters";
+import { GeoCountersCard } from "@/components/search-geo/geo-counters-card";
 import {
   clearProviderIncidentAction,
   dismissDeadLetterAction,
@@ -119,7 +123,8 @@ export default async function HealthPage() {
   // sayaçları (bayraklar kapalıyken null). GA-F4: website içgörüleri (operatör
   // görünümü); SC-F4: SEO fırsat motoru sayaçları; SC-F5: Search rapor
   // sayaçları; SC-F6: SEO eylem sayaçları; GA-F7: GA düzeltme sayaçları;
-  // SC-F7: SEO içerik planı sayaçları. Bunlar `healthy`'ye sayılmaz.
+  // SC-F7: SEO içerik planı sayaçları; SC-F8: Website changes ve AI arama
+  // görünürlüğü sayaçları. Bunlar `healthy`'ye sayılmaz.
   const now = new Date();
   const [
     leftoverRules,
@@ -136,6 +141,8 @@ export default async function HealthPage() {
     seoActionCounters,
     gaFixes,
     seoContentPlan,
+    seoApplyCounters,
+    seoGeoCounters,
   ] = await Promise.all([
     AdsInsurance.undeletable().catch(() => []),
     prisma.adsWebhookEvent.count({ where: { status: "DEAD" } }).catch(() => 0),
@@ -168,6 +175,8 @@ export default async function HealthPage() {
     loadSeoActionCounters(now).catch(() => null),
     loadGaFixCounters().catch(() => null),
     loadSeoContentPlanCounters(now).catch(() => null),
+    loadSeoApplyCounters(now).catch(() => null),
+    loadSeoGeoCounters(now).catch(() => null),
   ]);
 
   const healthy =
@@ -549,6 +558,10 @@ export default async function HealthPage() {
         {seoContentPlan ? (
           <ContentPlanCountersCard counters={seoContentPlan} />
         ) : null}
+        {seoApplyCounters ? (
+          <SeoApplyCountersCard counters={seoApplyCounters} />
+        ) : null}
+        {seoGeoCounters ? <GeoCountersCard counters={seoGeoCounters} /> : null}
 
         <Card>
           <CardHeader className="flex flex-row items-center gap-2 space-y-0">

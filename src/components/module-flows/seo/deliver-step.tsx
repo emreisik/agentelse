@@ -4,6 +4,8 @@ import { CalendarCheck, Check, Code2, FileText } from "lucide-react";
 import { useId, useState } from "react";
 
 import { CopyButton } from "@/components/calendar/copy-button";
+import { SnippetApplyPanel } from "@/components/seo-apply/apply-with-approval-button";
+import { PublishToWordPress } from "@/components/seo-apply/publish-to-wordpress";
 import { Button } from "@/components/ui/button";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { Input } from "@/components/ui/input";
@@ -302,6 +304,21 @@ function AppliedDeliver({
         />
       ) : null}
 
+      {/* SC-F8: yalnız features.apply ile (sunucu damgası); features.live'a bağlı değildir. */}
+      {mode === "snippet" &&
+      !applied &&
+      projectId &&
+      state.actionId &&
+      state.features?.apply === true ? (
+        <SnippetApplyPanel
+          projectId={projectId}
+          actionId={state.actionId}
+          title={text.title}
+          metaDescription={text.metaDescription}
+          applyReady
+        />
+      ) : null}
+
       {state.features?.live ? (
         <Results
           projectId={projectId}
@@ -505,6 +522,21 @@ function DeliverBody({
         busyId={busyId}
         error={error}
       />
+
+      {/* SC-F8: WordPress'e taslak gönderme; yalnız features.apply ile (sunucu damgası). */}
+      {state.features?.apply === true ? (
+        projectId && delivery?.creativeId ? (
+          <PublishToWordPress
+            projectId={projectId}
+            creativeId={delivery.creativeId}
+            isManager={false}
+          />
+        ) : (
+          <p className="text-xs" style={{ color: "var(--ws-text-3)" }}>
+            {COPY.scheduleFirstForWordPress}
+          </p>
+        )
+      ) : null}
 
       {state.features?.live ? (
         <Results

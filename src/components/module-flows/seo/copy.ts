@@ -91,6 +91,8 @@ export const SEO_FLOW_COPY = {
   // Publish
   deliverIntro:
     "Ready to go live. Copy it into your site, then mark it as published.",
+  scheduleFirstForWordPress:
+    "Schedule the article first; then you can send a draft to WordPress.",
   pasteHint:
     "Paste the title and meta description into your site's own fields.",
   copyMarkdown: "Copy as Markdown",

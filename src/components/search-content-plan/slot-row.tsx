@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { SlotMenu } from "@/components/search-content-plan/slot-actions";
+import { PublishToWordPress } from "@/components/seo-apply/publish-to-wordpress";
 import { buttonVariants } from "@/components/ui/button";
 import { PLAN_COPY } from "@/lib/seo/content-plan/copy";
 import { cn } from "@/lib/utils";
@@ -99,16 +100,26 @@ function WriteAction({ slot }: { slot: SlotView }) {
   );
 }
 
+// SC-F8: yazılmış (onaylı/yayında) makalesi olan yuvalar WordPress taslağına gidebilir.
+const WRITTEN_STATES: ReadonlySet<string> = new Set([
+  "SCHEDULED",
+  "PUBLISHED",
+  "OVERDUE",
+]);
+
 export function SlotRow({
   slot,
   projectId,
   month,
   compact = false,
+  applyReady = false,
 }: {
   slot: SlotView;
   projectId: string;
   month: string;
   compact?: boolean;
+  // SC-F8: bölüm bir kez hesaplar; false/yok iken işaretleme aynıdır ve istek yoktur.
+  applyReady?: boolean;
 }) {
   const skipped = slot.state === "SKIPPED";
   return (
@@ -165,6 +176,14 @@ export function SlotRow({
             />
           ) : null}
         </div>
+      ) : null}
+      {applyReady && WRITTEN_STATES.has(slot.state) && slot.creativeId ? (
+        <PublishToWordPress
+          projectId={projectId}
+          creativeId={slot.creativeId}
+          isManager={false}
+          compact
+        />
       ) : null}
     </li>
   );

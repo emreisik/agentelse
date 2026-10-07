@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   crawlFindMany: vi.fn(),
   crawlUpdate: vi.fn(),
   cwvDeleteMany: vi.fn(),
+  geoAuditDeleteMany: vi.fn(),
   gscLinkFindFirst: vi.fn(),
   gscLinkFindMany: vi.fn(),
   transaction: vi.fn(),
@@ -54,6 +55,7 @@ vi.mock("@/lib/prisma", () => ({
       update: mocks.crawlUpdate,
     },
     seoCwv: { deleteMany: mocks.cwvDeleteMany },
+    seoGeoAudit: { deleteMany: mocks.geoAuditDeleteMany },
     gscSiteLink: {
       findFirst: mocks.gscLinkFindFirst,
       findMany: mocks.gscLinkFindMany,
@@ -171,6 +173,7 @@ beforeEach(() => {
     mocks.pageDeleteMany,
     mocks.crawlDeleteMany,
     mocks.cwvDeleteMany,
+    mocks.geoAuditDeleteMany,
     mocks.siteDeleteMany,
   ]) {
     fn.mockResolvedValue({ count: 2 });
@@ -199,6 +202,8 @@ describe("SeoSites.ensureForProject", () => {
       mocks.pageDeleteMany,
       mocks.crawlDeleteMany,
       mocks.cwvDeleteMany,
+      // SC-F8: AI arama görünürlüğü denetimi de silinir.
+      mocks.geoAuditDeleteMany,
     ]) {
       expect(fn).toHaveBeenCalledWith({ where: { siteId: "site-1" } });
     }

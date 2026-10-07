@@ -12,6 +12,7 @@ import {
   type FlowModuleKey,
 } from "@/lib/module-flows/card";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
+import { loadApplyReady } from "@/server/seo/apply/offers";
 import { WorkRepository } from "@/server/repositories/work.repository";
 import {
   GUARD_MESSAGE,
@@ -140,6 +141,11 @@ export async function startModuleFlowAction(
       };
       // SEO_ACTIONS açıkken SEO kartı oluşurken damgalanır; arayüz karardan bu
       // damgaya bakar (bayrak kapalıyken kart bugünküyle aynıdır).
+      // SC-F8: apply yalnız SEO_APPLY açık ve WordPress bağlı/sağlıklıyken damgalanır.
+      const applyReady =
+        module === "seo" && SeoActionFlags.manager()
+          ? await loadApplyReady(projectId)
+          : false;
       const features =
         module === "seo" && SeoActionFlags.manager()
           ? {
@@ -147,6 +153,7 @@ export async function startModuleFlowAction(
                 modes:
                   SeoActionFlags.loop() && seoActionsAllowedFor(projectId),
                 live: true,
+                ...(applyReady ? { apply: true } : {}),
               },
             }
           : {};

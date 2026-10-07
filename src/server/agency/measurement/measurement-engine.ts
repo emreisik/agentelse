@@ -3,6 +3,7 @@ import "server-only";
 import type { CapabilityKey, SocialPlatform } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { isSeoApplyPayload } from "@/lib/seo/apply/approval-details";
 import { taskFingerprint } from "@/server/agency/fingerprint";
 import { TaskPlanner } from "@/server/commands/task-planner";
 import { isProjectAgencyActive } from "@/server/repositories/agency-loop-state.repository";
@@ -73,6 +74,9 @@ export const MeasurementEngine = {
   async planForCompletedTask(taskId: string): Promise<void> {
     const task = await prisma.task.findUnique({ where: { id: taskId } });
     if (!task || task.status !== "COMPLETED") return;
+    // SC-F8: WordPress değişiklikleri SC-F6 döngüsüyle ölçülür; genel
+    // WEBSITE_UPDATE ölçüm planı açılmaz.
+    if (isSeoApplyPayload(task.payload)) return;
 
     const template = CHECK_TEMPLATES[task.capability];
     if (!template) return;

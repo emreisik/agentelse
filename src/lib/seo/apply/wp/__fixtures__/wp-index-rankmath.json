@@ -1,0 +1,16 @@
+{
+  "_doğrulanmalı": "El yazısı: Rank Math ad alanı rankmath/v1 hafızadan, gerçek bir Rank Math sitesine karşı doğrulanmalı.",
+  "name": "Örnek Rank Math Sitesi",
+  "description": "",
+  "url": "https://example.com",
+  "home": "https://example.com",
+  "namespaces": ["oembed/1.0", "wp/v2", "rankmath/v1", "wp-site-health/v1"],
+  "authentication": {
+    "application-passwords": {
+      "endpoints": {
+        "authorization": "https://example.com/wp-admin/authorize-application.php"
+      }
+    }
+  },
+  "routes": {}
+}

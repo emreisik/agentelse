@@ -108,6 +108,12 @@ import { EntityDialog } from "@/components/shared/entity-dialog";
 import { ModeSwitcher } from "@/components/shared/mode-switcher";
 import { SearchableSelect } from "@/components/shared/searchable-select";
 import { TelegramConnectForm } from "@/components/integrations/telegram-connect-form";
+import { WordPressDialog } from "@/components/integrations/wordpress-dialog";
+import { WordPressTile } from "@/components/integrations/wordpress-tile";
+import { IndexNowCard } from "@/components/seo-apply/indexnow-card";
+import { seoApplyEnabledFor, seoIndexNowEnabled } from "@/lib/seo/apply/flags";
+import { loadWordPressConnectionView } from "@/server/integrations/wordpress/connect";
+import { readApplySettings } from "@/server/seo/apply/settings";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { Input } from "@/components/ui/input";
@@ -136,6 +142,8 @@ const CATEGORY_LIST = [
   { key: "social", label: "Social Media" },
   { key: "reklam", label: "Advertising" },
   { key: "analitik", label: "Analytics" },
+  // SC-F8: yalnız WordPress bağlayıcısı listelendiğinde görünür (SEO_APPLY).
+  { key: "website", label: "Website" },
 ] as const;
 type CategoryKey = (typeof CATEGORY_LIST)[number]["key"];
 
@@ -269,6 +277,10 @@ export default async function EntegrasyonlarPage({
     }),
   ]);
   const telegramConnected = telegramCredential?.status === "ACTIVE";
+  // SC-F8 (SEO_APPLY): bayrak kapalıyken sorgu yok ve kart/diyalog çizilmez.
+  const wordpressView = seoApplyEnabledFor(projectId)
+    ? await loadWordPressConnectionView(projectId, userId).catch(() => null)
+    : null;
 
   const filter: FilterKey =
     typeof sp.kategori === "string" &&
@@ -433,6 +445,22 @@ export default async function EntegrasyonlarPage({
       ),
     },
   ];
+  if (wordpressView) {
+    allConnectors.push({
+      key: "wordpress",
+      category: "website",
+      label: "WordPress",
+      connected: wordpressView.connected,
+      node: (
+        <WordPressTile
+          key="wordpress"
+          base={base}
+          kategori={kategoriParam}
+          view={wordpressView}
+        />
+      ),
+    });
+  }
 
   const categoryFiltered =
     filter === "tumu"
@@ -449,7 +477,8 @@ export default async function EntegrasyonlarPage({
   const categoryCounts = CATEGORY_LIST.map((c) => ({
     ...c,
     count: allConnectors.filter((row) => row.category === c.key).length,
-  }));
+    // "Website" yalnız WordPress bağlayıcısı listelendiğinde gösterilir.
+  })).filter((c) => c.key !== "website" || c.count > 0);
   const sectionTitle =
     filter === "tumu"
       ? "All Connectors"
@@ -482,6 +511,10 @@ export default async function EntegrasyonlarPage({
   const openTikTok = sp.integration === "tiktok";
   const openLinkedIn = sp.integration === "linkedin";
   const openX = sp.integration === "x";
+  const openWordPress = sp.integration === "wordpress" && wordpressView !== null;
+  const wordpressSettings = openWordPress
+    ? await readApplySettings(projectId).catch(() => null)
+    : null;
   const googleError =
     typeof sp.googleError === "string" ? sp.googleError : null;
   const googleReuseOptions = await googleReuseOptionsFor(
@@ -707,6 +740,24 @@ export default async function EntegrasyonlarPage({
             credential={xCredential}
             closeHref={closeHref}
             xError={xError}
+          />
+        ) : null}
+
+        {openWordPress ? (
+          <WordPressDialog
+            projectId={projectId}
+            view={wordpressView}
+            closeHref={closeHref}
+            settings={wordpressSettings}
+            indexNowSlot={
+              seoIndexNowEnabled() && wordpressSettings?.indexNow ? (
+                <IndexNowCard
+                  projectId={projectId}
+                  view={wordpressSettings.indexNow}
+                  canManage={wordpressView?.canManage === true}
+                />
+              ) : undefined
+            }
           />
         ) : null}
       </div>

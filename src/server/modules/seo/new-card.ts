@@ -13,6 +13,7 @@ import {
 } from "@/lib/module-flows/seo/state";
 import { SeoActionFlags, seoActionsAllowedFor } from "@/lib/seo/action-flags";
 import type { SeoScope } from "@/server/modules/seo/context";
+import { loadApplyReady } from "@/server/seo/apply/offers";
 import { createWorkInTx } from "@/server/works/draft-plan-work";
 
 // SEO Manager'ın yeni bir kartı (docs/search-actions.md "SEO Manager"): "Write
@@ -62,11 +63,15 @@ export async function createSeoManagerCard(input: {
 
   // Kip ve kart özellikleri damgalanır: arayüz karardan bu damgaya bakar, bayrak
   // sonradan kapansa da kart aynen çizilir.
+  // SC-F8: apply yalnız SEO_APPLY açık ve WordPress bağlı/sağlıklıyken damgalanır
+  // (bayrak kapalıyken sorgu yok, alan yazılmaz).
+  const applyReady = await loadApplyReady(scope.projectId);
   const data = serializeSeoState({
     mode: input.mode,
     features: {
       modes: SeoActionFlags.loop() && seoActionsAllowedFor(scope.projectId),
       live: true,
+      ...(applyReady ? { apply: true } : {}),
     },
     ...input.state,
   });

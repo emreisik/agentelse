@@ -11,6 +11,7 @@ import {
   missingInputAdvice,
 } from "@/server/execution/capability-input";
 import { formatMoney } from "@/lib/ads/money";
+import { seoApplyApprovalDetails } from "@/lib/seo/apply/approval-details";
 import { gaFixApprovalDetails } from "@/lib/website-analytics/fixes/approval-details";
 import type { ApprovalCategory } from "@/types/idea-event-card";
 
@@ -41,6 +42,13 @@ export function buildApprovalDetails(
 ): { label: string; value: string }[] | undefined {
   // GA-F7: kartın satırları kendi yük metninden okunur (mülk adı taşımaz).
   if (capability === "ANALYTICS_EDIT") return gaFixApprovalDetails(payload);
+
+  // SC-F8: işaretli WordPress değişikliği satırları; işaretsiz WEBSITE_UPDATE
+  // yükleri aşağıdan eskisi gibi devam eder.
+  if (capability === "WEBSITE_UPDATE") {
+    const rows = seoApplyApprovalDetails(payload);
+    if (rows) return rows;
+  }
 
   // Opening a new social account is High Risk and the task's title is only the
   // first 80 characters of whatever was asked, which says nothing about what

@@ -30,6 +30,10 @@ vi.mock("@/components/search-actions/fix-this-button", () => ({
       existing ? `Open fix · ${existing.statusLabel}` : "Fix this",
     ),
 }));
+vi.mock("@/components/seo-apply/apply-with-approval-button", () => ({
+  ApplyWithApprovalButton: ({ offer }: { offer: { kind: string } }) =>
+    createElement("span", { "data-apply": offer.kind }, "Apply with approval"),
+}));
 vi.mock("@/server/actions/search-opportunity-actions", () => ({
   acceptOpportunityAction: vi.fn(),
   dismissOpportunityAction: vi.fn(),
@@ -153,6 +157,29 @@ describe("OpportunityListView", () => {
     expect(html).toContain("Open fix · To do");
     // INVESTIGATE bulgusunda düğme yoktur.
     expect(html).not.toContain('data-fix-this="f-9"');
+  });
+
+  it("shows Apply with approval only for an item that has an offer (SC-F8)", () => {
+    const value = panel();
+    expect(render(value)).not.toContain("data-apply");
+    const html = renderToStaticMarkup(
+      createElement(OpportunityListView, {
+        panel: value,
+        apply: {
+          "f-1": {
+            state: "ready",
+            changeId: null,
+            actionId: null,
+            findingId: "f-1",
+            kind: "TITLE_META",
+            links: [],
+            hint: null,
+          },
+        },
+      }),
+    );
+    expect(html).toContain('data-apply="TITLE_META"');
+    expect(html.match(/data-apply=/g)).toHaveLength(1);
   });
 
   it("shows each opportunity with its chips, evidence and forms", () => {

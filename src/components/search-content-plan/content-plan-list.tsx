@@ -182,10 +182,13 @@ export function ContentPlanListView({
   view,
   compact = false,
   projectId,
+  applyReady = false,
 }: {
   view: ContentPlanView;
   compact?: boolean;
   projectId: string;
+  // SC-F8: sunucuda bir kez hesaplanır (loadApplyReady); false iken işaretleme aynıdır.
+  applyReady?: boolean;
 }): React.JSX.Element {
   const ready = view.state === "ready";
   const { active, skipped } = orderSlots(view.slots);
@@ -209,6 +212,7 @@ export function ContentPlanListView({
                 projectId={projectId}
                 month={view.month}
                 compact={compact}
+                applyReady={applyReady && !compact}
               />
             ))}
           </ul>
@@ -224,6 +228,7 @@ export function ContentPlanListView({
                     slot={slot}
                     projectId={projectId}
                     month={view.month}
+                    applyReady={applyReady && !compact}
                   />
                 ))}
               </ul>

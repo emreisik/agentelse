@@ -177,7 +177,7 @@ Fixtures ve "doğrulanmalı" notları `admin-write.fixtures.ts`'tedir. Şekil ka
 
 - Yazı başına yayın notu bilerek yok (yalnız haftalık özet).
 - MH9 ve MH10 yalnız rehber (Google'da API yok).
-- Onay kartı genel sohbet akışında, bekleyen kararlarda ve panoda da görünür (Telegram'da değil). Onaylayacak OWNER/ADMIN bakmazsa öneri 7 günde sona erer; panel kimin onaylayabileceğini söyler. Sohbetten ret herhangi bir üyeye açıktır (yalnız onay kapılıdır).
+- Onay kartı genel sohbet akışında, bekleyen kararlarda ve panoda da görünür (Telegram'da değil). Onaylayacak OWNER/ADMIN bakmazsa öneri 7 günde sona erer; panel kimin onaylayabileceğini söyler. Karar (onay, ret, düzeltme isteği) sohbetten de olsa yalnız OWNER/ADMIN'e açıktır; üye karar veremez, yalnız sistemin iptali (CANCELLED) kapı dışıdır.
 - İncelenmemiş SYSTEM önerileri 3 ile sınırlı.
 - Tekil kaynak geri almasında ön koşul sıkı olduğu için sonradan yapılan elle değişiklikten sonra geri alma reddedilir; kullanıcı GA'da elle geri çevirir.
 - Yeni `CapabilityKey` değeri genel Task listelerinde ve ajans işleyicilerinde (TASK_COMPLETED fan-out) görünebilir; işleyiciler `taskId`/yeteneğe göre arar ve bilinmeyeni yok sayar. Enum değişikliğinden sonra `agency-loop` entegrasyon testlerini koş.

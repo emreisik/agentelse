@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import type { ApplyOffer } from "@/lib/seo/apply/view-types";
 import type {
   SeoActionItem,
   SeoActionsPanel,
@@ -17,6 +18,9 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/server/actions/seo-apply-actions", () => ({
+  proposeApplyAction: vi.fn(),
+}));
 vi.mock("@/server/actions/seo-action-actions", () => ({
   markActionAppliedAction: vi.fn(),
   undoActionAppliedAction: vi.fn(),
@@ -260,5 +264,43 @@ describe("ActionsListView", () => {
     expect(text(html)).toContain("Cover: pricing");
     expect(html).not.toContain("utm_");
     expect(html).not.toContain("?q=");
+  });
+
+  // SC-F8: apply özelliği verilmezse işaretleme aynıdır; verilince satırda çıkar.
+  it("renders the apply button only for an action with an offer", () => {
+    const offer: ApplyOffer = {
+      state: "ready",
+      changeId: null,
+      actionId: "act-1",
+      findingId: null,
+      kind: "TITLE_META",
+      links: [],
+      hint: null,
+    };
+    const value = panel({
+      needsYou: [
+        item({
+          id: "act-1",
+          can: {
+            apply: true,
+            undo: false,
+            dismiss: false,
+            confirmLive: false,
+            checkNow: false,
+          },
+        }),
+      ],
+    });
+    const plain = renderToStaticMarkup(createElement(ActionsListView, { panel: value }));
+    expect(plain).not.toContain("data-apply-kind");
+    const withOffer = renderToStaticMarkup(
+      createElement(ActionsListView, { panel: value, apply: { "act-1": offer } }),
+    );
+    expect(withOffer).toContain('data-apply-kind="TITLE_META"');
+    expect(withOffer).toContain("Mark as done");
+    const other = renderToStaticMarkup(
+      createElement(ActionsListView, { panel: value, apply: { other: offer } }),
+    );
+    expect(other).not.toContain("data-apply-kind");
   });
 });

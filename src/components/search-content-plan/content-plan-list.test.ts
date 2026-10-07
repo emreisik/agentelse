@@ -18,6 +18,10 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/components/seo-apply/publish-to-wordpress", () => ({
+  PublishToWordPress: ({ creativeId }: { creativeId: string }) =>
+    createElement("span", { "data-publish-wp": creativeId }, "Publish to WordPress"),
+}));
 vi.mock("@/server/actions/seo-content-plan-actions", () => ({
   planThisMonthAction: vi.fn(),
   refreshPlanAction: vi.fn(),
@@ -341,5 +345,28 @@ describe("ContentPlanListView", () => {
     expect(html).toContain(PLAN_COPY.autoLabel);
     expect(html).toContain('<option value="6" selected="">6</option>');
     expect(html).toContain('<option value="12">12</option>');
+  });
+
+  // SC-F8: WordPress düğmesi yalnız applyReady ile ve yazılmış makalesi olan yuvada çıkar.
+  it("shows the WordPress block only with applyReady and only for a written article", () => {
+    const value = view({
+      slots: [
+        slot({ id: "w1", state: "SCHEDULED", creativeId: "cr-written" }),
+        slot({ id: "w2", state: "PLANNED", creativeId: "cr-planned" }),
+      ],
+    });
+    expect(render({ view: value, projectId: "p1" })).not.toContain(
+      "data-publish-wp",
+    );
+    const html = render({ view: value, projectId: "p1", applyReady: true });
+    expect(html).toContain('data-publish-wp="cr-written"');
+    expect(html).not.toContain('data-publish-wp="cr-planned"');
+    const compact = render({
+      view: value,
+      projectId: "p1",
+      applyReady: true,
+      compact: true,
+    });
+    expect(compact).not.toContain("data-publish-wp");
   });
 });

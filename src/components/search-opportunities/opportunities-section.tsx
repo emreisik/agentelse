@@ -4,11 +4,13 @@ import {
 } from "@/components/search-opportunities/opportunity-list";
 import { ShadowReview } from "@/components/search-opportunities/shadow-review";
 import { SeoActionFlags, seoActionsAllowedFor } from "@/lib/seo/action-flags";
+import { seoApplyEnabledFor } from "@/lib/seo/apply/flags";
 import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
 import { loadFixThisStates } from "@/server/seo/actions/fix-this";
+import { loadApplyOffersForFindings } from "@/server/seo/apply/offers";
 import { loadOpportunitiesPanel } from "@/server/seo/opportunities/panel";
 
 // Search sayfasındaki "Opportunities" bölümü (SC-F4,
@@ -44,6 +46,16 @@ export async function SearchOpportunitiesSection({
           [...panel.items, ...panel.accepted].map((item) => item.id),
         ).catch(() => ({}))
       : undefined;
+  // SC-F8: "Apply with approval" teklifleri yalnız SEO_APPLY açıkken okunur; kapalıyken sorgu yok.
+  const apply = seoApplyEnabledFor(projectId)
+    ? await loadApplyOffersForFindings(
+        projectId,
+        [...panel.items, ...panel.accepted].map((item) => ({
+          id: item.id,
+          actionKind: item.actionKind,
+        })),
+      ).catch(() => ({}))
+    : undefined;
   return (
     <section
       id="opportunities"
@@ -54,7 +66,7 @@ export async function SearchOpportunitiesSection({
       {panel.mode === "shadow" ? (
         <ShadowReview panel={panel} />
       ) : (
-        <OpportunityListView panel={panel} fixThis={fixThis} />
+        <OpportunityListView panel={panel} fixThis={fixThis} apply={apply} />
       )}
     </section>
   );

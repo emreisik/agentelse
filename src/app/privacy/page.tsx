@@ -585,6 +585,45 @@ const SECTIONS: PolicySection[] = [
     ),
   },
   {
+    id: "wordpress-and-website-changes",
+    title: "WordPress connection and website changes",
+    body: (
+      <>
+        <p>
+          If you connect WordPress, you give Agentelse your site address, a
+          WordPress username and an Application Password. Agentelse stores the
+          password encrypted, uses it only to read your site and to make changes
+          you approve, and deletes it when you disconnect. You can also revoke
+          the Application Password in WordPress at any time.
+        </p>
+        <p>
+          Agentelse changes your site only after a workspace owner or admin
+          approves each change. New articles are saved as drafts; making an
+          article public is a separate approval. For each change Agentelse keeps
+          a copy of the page content it changed (title, description, text) so
+          you can undo it, for up to 24 months, and deletes these copies when
+          you disconnect WordPress. The text you approved is your own content
+          and is not removed when you disconnect Search Console. Search Console
+          is never used to change anything.
+        </p>
+        <p>
+          Optional IndexNow: if you turn it on, Agentelse tells search engines
+          that take part in IndexNow (for example Bing and Yandex, not Google)
+          the web addresses of pages it changed, after you approved the change.
+          It sends only those addresses and a public key.
+        </p>
+        <p>
+          AI search visibility: Agentelse checks your public site (robots.txt,
+          llms.txt, your home page and the pages it already audits) and, if
+          Google Analytics is connected, counts visits that come from AI
+          assistants. These checks are not shared with anyone; recommendations
+          are written by an AI service without any Google Analytics or Search
+          Console data.
+        </p>
+      </>
+    ),
+  },
+  {
     id: "data-retention",
     title: "Data retention",
     body: (

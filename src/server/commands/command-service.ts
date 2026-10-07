@@ -256,7 +256,14 @@ export const CommandService = {
             })
           : undefined;
 
-      if (intent.decision === "APPROVE" && (await spendsMoney(approval))) {
+      // SC-F8 ve GA-F7: kritik değişiklik onayı sohbetteki "onayla"
+      // kısayoluyla kör verilmez; onay kartı kullanılır (spendsMoney ile aynı
+      // kural). Reddetme serbest kalır.
+      if (
+        intent.decision === "APPROVE" &&
+        (approval.type === "CRITICAL_CHANGE_APPROVAL" ||
+          (await spendsMoney(approval)))
+      ) {
         return {
           status: "APPROVAL_ON_CARD",
           commandId: command.id,

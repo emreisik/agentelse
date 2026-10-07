@@ -132,6 +132,7 @@ etki (aylık ek tıklama ya da erişim) × güven (SIGNIFICANT 1, DIRECTIONAL 0,
 
 - `actionKind` TITLE_META → SEO Manager "Fix the snippet" Work'ü, CONTENT_REFRESH → "Refresh a page", NEW_CONTENT ve LOCALIZE → makale modu. INTERNAL_LINKS, CONSOLIDATE, TECH_FIX ve SCHEMA "Actions & results"ta kontrol listesi maddesine ("Mark as done") dönüşür. INVESTIGATE'te Fix this yoktur.
 - Bulgunun anahtar kelimesi karta yazılmaz: kullanıcıya "Suggested from Search Console" önerisi olarak sunulur, tek dokunuşla benimsenir.
+- SC-F8 (`SEO_APPLY`, [website-apply.md](website-apply.md)): WordPress bağlı ve sağlıklıyken INTERNAL_LINKS bulgusunda (kaynak sayfa başına bir düğme, en çok 3 bağlantı) ve metni seçilmiş TITLE_META eylemlerinde "Apply with approval" çıkar; bir OWNER/ADMIN onaylayınca değişiklik WordPress'e yazılır, `SeoAction` `appliedVia = CMS` ile APPLIED olur ve her zamanki gibi ölçülür. Metni henüz seçilmemiş TITLE_META bulgusu "Fix this" ile kalır.
 - "Mark done" (SEO_ACTIONS) ölçümü başlatır: her Done bir `SeoAction` doğurur ya da uygular. Bulgunun `evaluateAfter`'ı eylem değerlendirilebilene dek uzatılır; böylece aynı sayfa için ikinci fırsat ya da ikinci Fix this çıkmaz.
 
 ## LLM kullanımı ve Limited Use

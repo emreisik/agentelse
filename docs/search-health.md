@@ -52,12 +52,14 @@ Silme kuralları:
 - Disconnect: Gsc* cascade + GSC uyarıları + `forgetSearchConsoleData(resetScope: true)`; bayraktan bağımsız.
 - Delete stored data (W1): aynısı, `resetScope: false` (tarama verisi sitenin kendisinden geldiği için kalır).
 - W1 yetim bağ temizliği: aynısı, `resetScope: true`.
-- Delete audit data (panel): alt satırlar ve durum silinir; doğrulama ve ayarlar kalır (meta etiketi / TXT kaydı geçerli kalır).
+- Delete audit data (panel): alt satırlar ve durum silinir; doğrulama ve ayarlar kalır (meta etiketi / TXT kaydı geçerli kalır). SC-F8: aynı işlem `SeoGeoAudit` (AI arama görünürlüğü) sonucunu da siler (`resetSite`).
 - Kapsam değişimi, alan adının kaldırılması, PAUSED/CLOSED proje: sıfırlama (alt satırlar silinir, zamanlamalar null, `healthDueAt = now` ki uyarılar kapansın).
 - Silinen proje: `SeoSite` hemen silinir.
 - Saklama (`seo-health-retention`, günde bir, global): 90 günden eski `SeoCrawl` ve kaybolan `SeoPage`, 730 günden eski `SeoCwv`, canlıda mock siteler, projesi olmayan siteler (hemen), alan adı ve GSC bağı olmayan 30 günlük siteler, `GscSiteLink`'i kalmamış projelerin GSC uyarıları, 180 günden eski çözülmüş (RESOLVED) GSC ve SEO uyarıları.
 
 ## Kapsam ve doğrulama
+
+SC-F8 notu: `SeoSite` doğrulaması aynı zamanda WordPress bağlayıcısının ([wordpress-plan.md](wordpress-plan.md)) ve AI arama görünürlüğü denetiminin ([ai-search-visibility.md](ai-search-visibility.md)) önkoşuludur.
 
 - Kapsam önce projenin geçerli kipteki birincil `GscSiteLink`'inden (sağlık GONE/ACCESS_LOST değilse): `sc-domain:` → kök + alt alan adları, URL önekli mülk → o önek. Yoksa `Project.domain`'in Agentelse doğrulaması: `https://<domain>/` üzerinde `<meta name="agentelse-site-verification" content="TOKEN">` ya da DNS TXT `agentelse-site-verification=TOKEN` (node:dns). İkisi de yoksa tarayıcı boşta, panel doğrulama kartını gösterir.
 - Yalnız ana host (ana sayfanın son URL'sinin host'u) taranır. www/apex eşi yalnız bir yönlendirme adımı olarak ve kendi robots.txt'siyle (tur başına bir kez, bellekte; 4xx = serbest, 5xx/ulaşılamaz = yasak) kabul edilir. Başka host'lar `stats.otherHosts`'ta sayılır, getirilmez.

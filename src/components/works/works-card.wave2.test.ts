@@ -52,6 +52,8 @@ vi.mock("@/server/actions/search-opportunity-actions", inert);
 vi.mock("@/server/actions/seo-mode-actions", inert);
 vi.mock("@/server/actions/seo-action-actions", inert);
 vi.mock("@/server/actions/seo-content-plan-actions", inert);
+vi.mock("@/server/actions/seo-apply-actions", inert);
+vi.mock("@/server/actions/seo-geo-actions", inert);
 vi.mock("@/server/actions/ga-fix-actions", inert);
 vi.mock("@/server/actions/link-tracking-actions", inert);
 vi.mock("@/server/actions/post-actions", inert);

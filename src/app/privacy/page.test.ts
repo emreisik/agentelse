@@ -296,3 +296,30 @@ describe("privacy policy: Google Analytics and Search Console section", () => {
     expect(google).toContain("Security > Third-party apps and services");
   });
 });
+
+describe("privacy policy: WordPress connection and website changes (SC-F8)", () => {
+  const wordpress = plain(
+    sectionBetween("wordpress-and-website-changes", "data-retention"),
+  );
+
+  it("says what is stored and that every change needs an owner or admin approval", () => {
+    expect(wordpress).toContain("Application Password");
+    expect(wordpress).toContain("approves each change");
+    expect(wordpress).toContain("drafts");
+  });
+
+  it("says how long the copies are kept and when they are deleted", () => {
+    expect(wordpress).toContain("up to 24 months");
+    expect(wordpress).toContain(
+      "deletes these copies when you disconnect WordPress",
+    );
+  });
+
+  it("describes IndexNow and AI search visibility", () => {
+    expect(wordpress).toContain("IndexNow");
+    expect(wordpress).toContain("not Google");
+    expect(wordpress).toContain(
+      "without any Google Analytics or Search Console data",
+    );
+  });
+});

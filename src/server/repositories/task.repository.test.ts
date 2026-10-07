@@ -82,3 +82,31 @@ describe("TaskRepository.transition: Telegram notice", () => {
     },
   );
 });
+
+// SC-F8: işaretli (payload.seoApply) WEBSITE_UPDATE görevi de Telegram'a gitmez;
+// işaretsiz WEBSITE_UPDATE eskisi gibi bildirir.
+describe("TaskRepository.transition: seo-apply marker", () => {
+  const marked = () => ({
+    ...taskRow("WEBSITE_UPDATE"),
+    payload: { seoApply: { v: 1, changeId: "c1", kind: "TITLE_META" } },
+  });
+
+  it.each(["COMPLETED", "FAILED"] as const)(
+    "does not notify Telegram when a marked WEBSITE_UPDATE task is %s",
+    async (to) => {
+      taskFindFirst.mockResolvedValue(marked());
+      await TaskRepository.transition("task-1", "p-1", to);
+      expect(taskUpdate).toHaveBeenCalledTimes(1);
+      expect(notifyProjectTelegram).not.toHaveBeenCalled();
+    },
+  );
+
+  it("still notifies Telegram for an unmarked WEBSITE_UPDATE task", async () => {
+    taskFindFirst.mockResolvedValue(taskRow("WEBSITE_UPDATE"));
+    await TaskRepository.transition("task-1", "p-1", "COMPLETED");
+    expect(notifyProjectTelegram).toHaveBeenCalledWith(
+      "p-1",
+      "✅ Task completed: Change something",
+    );
+  });
+});

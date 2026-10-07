@@ -42,6 +42,11 @@ const onTaskApproved = vi.fn();
 vi.mock("@/server/website-analytics/fixes/fixes", () => ({
   GaFixes: { onTaskApproved },
 }));
+// SC-F8: işaretli WEBSITE_UPDATE görevi SeoApply'a yönlenir (dinamik import).
+const onSeoTaskApproved = vi.fn();
+vi.mock("@/server/seo/apply/seo-apply", () => {
+  return { SeoApply: { onTaskApproved: onSeoTaskApproved } };
+});
 
 const { TaskPlanner } = await import("@/server/commands/task-planner");
 
@@ -85,6 +90,32 @@ describe("TaskPlanner.dispatchApprovedTask", () => {
     const result = await TaskPlanner.dispatchApprovedTask("t1", "p1");
     expect(result).toEqual({ id: "job" });
     expect(onTaskApproved).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands a marked WEBSITE_UPDATE task to SeoApply and creates no ExecutionJob", async () => {
+    findByIdInProject.mockResolvedValue({
+      ...task("WEBSITE_UPDATE"),
+      payload: { seoApply: { v: 1, changeId: "c1", kind: "TITLE_META" } },
+    });
+    const result = await TaskPlanner.dispatchApprovedTask("t1", "p1");
+    expect(result).toBeNull();
+    expect(onSeoTaskApproved).toHaveBeenCalledTimes(1);
+    expect(onSeoTaskApproved).toHaveBeenCalledWith({
+      id: "t1",
+      projectId: "p1",
+      workspaceId: "w1",
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(snapshotCreate).not.toHaveBeenCalled();
+    expect(transition).not.toHaveBeenCalled();
+  });
+
+  it("sends an unmarked WEBSITE_UPDATE task through ExecutionService as before", async () => {
+    findByIdInProject.mockResolvedValue(task("WEBSITE_UPDATE"));
+    const result = await TaskPlanner.dispatchApprovedTask("t1", "p1");
+    expect(result).toEqual({ id: "job" });
+    expect(onSeoTaskApproved).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 

@@ -10,6 +10,7 @@ import { SeoReportFlags } from "@/lib/seo/reports/flags";
 import { SeoActionFlags } from "@/lib/seo/action-flags";
 import { SeoInsightFlags } from "@/lib/seo/insight-flags";
 import { seoContentPlanActiveFor } from "@/lib/seo/content-plan/flags";
+import { seoApplyEnabledFor, seoGeoEnabledFor } from "@/lib/seo/apply/flags";
 import { DEFAULT_SEARCH_PERIOD, isSearchPeriod } from "@/lib/seo/periods";
 import { refreshSearchAnalyticsAction } from "@/server/actions/search-analytics-actions";
 import {
@@ -29,6 +30,8 @@ import { BrandTermSuggestions } from "@/components/search-opportunities/brand-te
 import { SearchOpportunitiesSection } from "@/components/search-opportunities/opportunities-section";
 import { SearchReportsSection } from "@/components/search-reports/search-reports-section";
 import { SearchContentPlanSection } from "@/components/search-content-plan/search-content-plan-section";
+import { SearchGeoSection } from "@/components/search-geo/geo-section";
+import { SearchApplySection } from "@/components/seo-apply/changes-section";
 import {
   SearchPeriodSelector,
   SearchReportBody,
@@ -279,6 +282,18 @@ export default async function SearchPage({
         <Suspense fallback={null}>
           <SearchHealthSection projectId={projectId} issueId={issue} />
         </Suspense>
+
+        {/* SC-F8 (SEO_APPLY, SEO_GEO): Website changes ve AI search visibility bölümleri; bayrak kapalıyken işaretleme aynı. */}
+        {seoApplyEnabledFor(projectId) ? (
+          <Suspense fallback={null}>
+            <SearchApplySection projectId={projectId} />
+          </Suspense>
+        ) : null}
+        {seoGeoEnabledFor(projectId) ? (
+          <Suspense fallback={null}>
+            <SearchGeoSection projectId={projectId} />
+          </Suspense>
+        ) : null}
       </div>
     </AppShell>
   );

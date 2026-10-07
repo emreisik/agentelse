@@ -1,0 +1,19 @@
+{
+  "_doğrulanmalı": "El yazısı: GET /wp/v2/users/me?context=edit biçimi; capabilities haritası WordPress rol tanımlarından hafızayla yazıldı.",
+  "id": 6,
+  "name": "Misafir",
+  "slug": "misafir",
+  "roles": [
+    "contributor"
+  ],
+  "capabilities": {
+    "read": true,
+    "level_0": true,
+    "level_1": true,
+    "edit_posts": true,
+    "delete_posts": true
+  },
+  "extra_capabilities": {
+    "contributor": true
+  }
+}

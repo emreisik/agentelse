@@ -1,9 +1,11 @@
 import { FixThisButton } from "@/components/search-actions/fix-this-button";
+import { ApplyWithApprovalButton } from "@/components/seo-apply/apply-with-approval-button";
 import { ActionForm } from "@/components/shared/action-form";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { cn } from "@/lib/utils";
 import { isFixableFindingKind } from "@/lib/seo/actions/kinds";
+import type { ApplyOffer } from "@/lib/seo/apply/view-types";
 import {
   SEO_DISMISS_REASONS,
   type SeoDismissReason,
@@ -200,10 +202,12 @@ function OpportunityRow({
   projectId,
   item,
   fixThis,
+  apply,
 }: {
   projectId: string;
   item: OpportunityItem;
   fixThis?: Record<string, FixThisState>;
+  apply?: Record<string, ApplyOffer>;
 }) {
   const accepted = item.status === "ACCEPTED";
   return (
@@ -240,6 +244,14 @@ function OpportunityRow({
             existing={fixThis[item.id] ?? null}
           />
         ) : null}
+        {/* SC-F8: WordPress bağlıyken onaylı uygulama; rol sunucuda yeniden denetlenir. */}
+        {apply?.[item.id] ? (
+          <ApplyWithApprovalButton
+            projectId={projectId}
+            offer={apply[item.id]!}
+            isManager={false}
+          />
+        ) : null}
         {accepted ? (
           <ActionForm
             action={markOpportunityDoneAction}
@@ -266,10 +278,13 @@ function OpportunityRow({
 export function OpportunityListView({
   panel,
   fixThis,
+  apply,
 }: {
   panel: OpportunitiesPanel;
   // SC-F6: "Fix this" durumları; yoksa düğme çizilmez.
   fixThis?: Record<string, FixThisState>;
+  // SC-F8: bulgu kimliği -> "Apply with approval" teklifi; yoksa düğme çizilmez.
+  apply?: Record<string, ApplyOffer>;
 }): React.JSX.Element {
   const week = weekLabel(panel.week);
   return (
@@ -302,6 +317,7 @@ export function OpportunityListView({
               projectId={panel.projectId}
               item={item}
               fixThis={fixThis}
+              apply={apply}
             />
           ))}
         </ul>
@@ -316,6 +332,7 @@ export function OpportunityListView({
                 projectId={panel.projectId}
                 item={item}
                 fixThis={fixThis}
+                apply={apply}
               />
             ))}
           </ul>

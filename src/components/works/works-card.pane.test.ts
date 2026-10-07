@@ -54,6 +54,8 @@ for (const file of [
   "seo-mode-actions",
   "seo-action-actions",
   "seo-content-plan-actions",
+  "seo-apply-actions",
+  "seo-geo-actions",
   "ga-fix-actions",
   "link-tracking-actions",
 ]) {

@@ -10,6 +10,7 @@ import type {
 } from "@prisma/client";
 
 import { isMetaSpendWrite } from "@/lib/execution-backlog";
+import { isSeoApplyPayload } from "@/lib/seo/apply/approval-details";
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
@@ -204,6 +205,19 @@ export const TaskPlanner = {
     if (task.capability === "ANALYTICS_EDIT") {
       const { GaFixes } = await import("@/server/website-analytics/fixes/fixes");
       await GaFixes.onTaskApproved({
+        id: task.id,
+        projectId: task.projectId,
+        workspaceId: task.workspaceId,
+      });
+      return null;
+    }
+
+    // SC-F8: onaylanan WordPress değişikliği; ExecutionJob oluşturulmaz, uygulama
+    // SeoApply içinde CAS kilitli ve geri okumalıdır. Genel WEBSITE_UPDATE
+    // görevleri (işaretsiz) eskisi gibi dağıtılır.
+    if (task.capability === "WEBSITE_UPDATE" && isSeoApplyPayload(task.payload)) {
+      const { SeoApply } = await import("@/server/seo/apply/seo-apply");
+      await SeoApply.onTaskApproved({
         id: task.id,
         projectId: task.projectId,
         workspaceId: task.workspaceId,

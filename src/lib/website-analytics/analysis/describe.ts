@@ -40,6 +40,11 @@ import type { GaFindingView } from "./view-types";
 
 type Currency = { currency?: string | null };
 
+// Meta'nın varsayılan atıf penceresi (tıklama sonrası 7 gün, görüntüleme
+// sonrası 1 gün); AN13 metni bunu açıklar.
+const META_CLICK_WINDOW_DAYS = 7;
+const META_VIEW_WINDOW_DAYS = 1;
+
 // Yazıcının topladığı olgular; konu metni en fazla 3 tane.
 const MAX_SUBJECT_STRINGS = 3;
 
@@ -101,9 +106,21 @@ class Printer {
   }
 
   money(name: string, value: number): string {
+    return this.moneyIn(name, value, this.currency);
+  }
+
+  // Mülk parasından farklı bir para birimi (AN13: Meta hesabının parası).
+  moneyIn(name: string, value: number, currency: string | null): string {
     const rounded = Math.abs(round2(finite(value)));
     this.facts[name] = rounded;
-    return formatMoney(rounded, this.currency);
+    return formatMoney(rounded, currency);
+  }
+
+  // ROAS gibi birimsiz oran: iki ondalık, olgulara aynı yuvarlama.
+  ratio(name: string, value: number): string {
+    const rounded = Math.abs(round2(finite(value)));
+    this.facts[name] = rounded;
+    return String(rounded);
   }
 
   // "1m 35s": dakika ve saniye ayrı sayı olarak da yazılır.
@@ -351,6 +368,14 @@ export function findingTitle(f: GaFindingView): string {
       return `Campaign “${evidence.campaign}” converts ${
         evidence.direction === "below" ? "less" : "better"
       } than the rest`;
+    case "AN13":
+      return evidence.checks.includes("clicks")
+        ? gaRule("AN13").title
+        : "Meta and GA4 count conversions differently";
+    case "AN14":
+      return evidence.direction === "worse"
+        ? "Google Ads: cost per key event went up"
+        : "Google Ads: cost per key event went down";
     case "AN15":
       return `Goal “${evidence.goalTitle}” is behind this month`;
   }
@@ -554,6 +579,62 @@ function printDetail(f: GaFindingView, printer: Printer): string {
       const days = printer.count("windowDays", inclusiveDays(evidence.window));
       printer.subject("campaign", evidence.campaign);
       return `${printer.count("sessions", evidence.sessions)} visits in ${days} days; key event rate ${printer.rate("rate", evidence.rate)} vs ${printer.rate("restRate", evidence.restRate)} on the rest of the site.`;
+    }
+    case "AN13": {
+      // Etiket her varyantta olgulara girer (açıklama istemi kampanyayı bilsin).
+      const label = printer.subject("label", evidence.label);
+      const sentences: string[] = [];
+      if (evidence.checks.includes("clicks")) {
+        const clicks = printer.count("metaLinkClicks", evidence.meta.linkClicks);
+        const sessions = printer.count("gaSessions", evidence.ga.sessions);
+        const loss = printer.rate("clickLoss", evidence.clickLoss ?? 0);
+        sentences.push(
+          `Meta counted ${clicks} link clicks on the ads Agentelse tagged in "${label}", but GA4 saw ${sessions} sessions from them (${loss} fewer). Check the landing page speed and that the Google tag loads before visitors leave.`,
+        );
+      }
+      if (evidence.checks.includes("results")) {
+        const results = printer.count("metaResults", evidence.meta.results ?? 0);
+        const keyEvents = printer.count("gaKeyEvents", evidence.ga.keyEvents);
+        const gap = printer.rate("resultsGap", evidence.resultsGap ?? 0);
+        // Meta'nın atıf penceresi sabittir; metindeki sayılar olgulara da girer.
+        printer.facts.metaClickWindowDays = META_CLICK_WINDOW_DAYS;
+        printer.facts.metaViewWindowDays = META_VIEW_WINDOW_DAYS;
+        sentences.push(
+          `Meta reported ${results} results and GA4 ${keyEvents} key events (${gap} apart). Meta counts results up to ${META_CLICK_WINDOW_DAYS} days after a click or ${META_VIEW_WINDOW_DAYS} day after a view, so some gap is normal; a gap this large is worth a tracking check.`,
+        );
+      }
+      if (evidence.costPerKeyEvent !== null) {
+        const cost = printer.moneyIn(
+          "costPerKeyEvent",
+          evidence.costPerKeyEvent,
+          evidence.metaCurrency,
+        );
+        sentences.push(`Cost per key event (GA4): ${cost}.`);
+      }
+      return sentences.join(" ");
+    }
+    case "AN14": {
+      const days = printer.count("windowDays", inclusiveDays(evidence.window));
+      const campaign = printer.subject("campaign", evidence.campaign);
+      const cost = printer.money(
+        "costPerKeyEvent",
+        evidence.current.costPerKeyEvent,
+      );
+      const before = printer.money(
+        "previousCostPerKeyEvent",
+        evidence.previous.costPerKeyEvent,
+      );
+      const change = printer.percent("changePct", evidence.changePct);
+      const sign = evidence.changePct < 0 ? "-" : "+";
+      let roas = "";
+      if (evidence.current.roas !== null) {
+        roas = ` ROAS ${printer.ratio("roas", evidence.current.roas)}×`;
+        if (evidence.previous.roas !== null) {
+          roas += ` (was ${printer.ratio("previousRoas", evidence.previous.roas)}×)`;
+        }
+        roas += ".";
+      }
+      return `"${campaign}": ${cost} per key event over the last ${days} days, ${before} before (${sign}${change}).${roas}`;
     }
     case "AN15": {
       const money = GOAL_FORMAT[evidence.metricKey] === "money";

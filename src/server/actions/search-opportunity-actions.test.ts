@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   allowed: vi.fn(),
   operator: vi.fn(),
   decideFinding: vi.fn(),
+  loop: vi.fn(),
+  seoAllowed: vi.fn(),
+  trackFindingDone: vi.fn(),
   reviewShadowFinding: vi.fn(),
   suggestBrandTerms: vi.fn(),
   acceptBrandTermSuggestion: vi.fn(),
@@ -41,6 +44,13 @@ vi.mock("@/lib/seo/insight-flags", () => ({
 }));
 vi.mock("@/server/security/operator", () => ({
   isPlatformOperator: mocks.operator,
+}));
+vi.mock("@/lib/seo/action-flags", () => ({
+  SeoActionFlags: { loop: mocks.loop },
+  seoActionsAllowedFor: mocks.seoAllowed,
+}));
+vi.mock("@/server/seo/actions/fix-this", () => ({
+  trackFindingDone: mocks.trackFindingDone,
 }));
 vi.mock("@/server/seo/opportunities/findings-store", () => ({
   decideFinding: mocks.decideFinding,
@@ -220,6 +230,34 @@ describe("opportunity decisions", () => {
     expect(mocks.decideFinding).toHaveBeenLastCalledWith(
       expect.objectContaining({ decision: "DONE" }),
     );
+  });
+
+  it("starts measurement on Done only with the action loop on and the project allowed (SC-F6)", async () => {
+    await markOpportunityDoneAction(form({ findingId: "f-1" }));
+    expect(mocks.trackFindingDone).not.toHaveBeenCalled();
+
+    mocks.loop.mockReturnValue(true);
+    mocks.seoAllowed.mockReturnValue(false);
+    await markOpportunityDoneAction(form({ findingId: "f-1" }));
+    expect(mocks.trackFindingDone).not.toHaveBeenCalled();
+
+    mocks.seoAllowed.mockReturnValue(true);
+    await acceptOpportunityAction(form({ findingId: "f-1" }));
+    expect(mocks.trackFindingDone).not.toHaveBeenCalled();
+    await markOpportunityDoneAction(form({ findingId: "f-1" }));
+    expect(mocks.trackFindingDone).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      findingId: "f-1",
+      userId: "user-1",
+      workspaceId: "ws-1",
+    });
+
+    // Ölçüm hatası Done kararını bozmaz.
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.trackFindingDone.mockRejectedValue(new Error("db"));
+    await expect(
+      markOpportunityDoneAction(form({ findingId: "f-1" })),
+    ).resolves.toEqual({ ok: true, message: "Marked as done" });
   });
 
   it("says the opportunity is no longer open when the store refuses", async () => {

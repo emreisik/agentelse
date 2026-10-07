@@ -12,7 +12,7 @@ Plan: [google-analytics-plan.md](google-analytics-plan.md) §3.5, §3.7, §9 GA-
 | SiteAlerts (GA4/GSC/SEO ortak uyarı katmanı), proje Telegram'ı, Meta tarafındaki `source: null` süzgeçleri      | Yapıldı                                  |
 | Website sayfası paneli + çip, Integrations satırı, Brand kartı noktası, Today satırları, sıradaki adım, /health | Yapıldı (bayraklı, tarayıcıda görülmedi) |
 | Gizlilik metni                                                                                                  | Yapıldı                                  |
-| MH25 (Agentelse UTM kapsamı)                                                                                    | GA-F6'ya kaldı (TrackedLink yok)         |
+| MH25 (Agentelse UTM kapsamı)                                                                                    | GA-F6'da etkin (docs/website-attribution.md) |
 
 ## Bayraklar ve açılış
 
@@ -65,7 +65,7 @@ Kaynak: `lib/website-analytics/health/registry.ts` (başlık, kategori, ağırl�
 | MH24   | Connection is healthy                        | INTEGRATION | data_flow / 3       | Kimlik ACTIVE değil ya da bağ AUTH/NEEDS_PERMISSION/ACCESS_LOST/GONE/API_DISABLED → FAIL; DEGRADED ya da veri 2 günden eski (saat ≥ 12) → WARN     | FAIL CRITICAL, WARN WARN           | ok, credential, auth, needs_permission, access_lost, gone, api_disabled, sync_failing, sync_late, no_data, error                    |
 
 - MH8–MH11, MH7 gibi diliminin ≥ 21 günlük kapsamını ister. MH18/MH19 rapor anahtarı başına `GaReportSlice.quality` bayraklarını okur (ayrı `otherRow` Json sütununu değil).
-- MH25 (Agentelse UTM kapsamı) GA-F6'ya kaldı; kayıtta yok.
+- MH25: Agentelse links carry tracking. GA-F6'dan gelen UZANTI kontrolüdür (INFO): `GA_UTM` + `GA_SYNC` açıkken okuma anında hesaplanır, saklanmaz, puanlanmaz, uyarı üretmez; `GA_CHECK_KEYS`'te değildir (bayrak kapalıyken saklanan satırlar, puan ve kontrol listesi aynı kalsın). Nedenler: `ok`, `no_ads`, `no_data`, `low_coverage` (kapsam < %90), `not_seen` (≥ 20 tıklamadan 48 sa sonra etiketli ziyaret yok). Panelin altında "Code MH25" kartı; ayrıntı [website-attribution.md](website-attribution.md).
 - Admin API v1alpha çağrısı yok (plan §10); MH17 ambardaki olaylardan, MH13 yalnız saat diliminden, MH15 `google/cpc` vekilinden.
 
 ## Çalışma
@@ -139,7 +139,6 @@ Kaynak: `lib/website-analytics/health/registry.ts` (başlık, kategori, ağırl�
 
 - GA-F7 "Fix it for me" (Admin API yazma).
 - Rehberlerdeki Google yardım bağlantıları canlıda doğrulanmadı.
-- MH25 (GA-F6, TrackedLink ile).
 - /bot sayfası SEO tarayıcısıyla ortak; canlıya çıkmadan önce yayında olmalı.
 - Eşikler (MH7 %5, MH9 %2, MH10 %0,5, MH20 3×/%5) 48 saatlik izinli çalışmadan sonra ayarlanmalı.
 - SC-F3 kendi robots ayrıştırıcısını yazdı (`lib/seo/robots-parser.ts`); GA'nın `lib/website-analytics/health/robots.ts`'i artık onun eşleştiricisini kullanır, ayrıştırıcılar ileride tekleştirilebilir.

@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ModuleFlowCardData } from "@/lib/module-flows/card";
 import type { WorkCardHostInput } from "@/components/works/work-card-host";
@@ -10,6 +10,24 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({ projectId: "p1" }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// Canlı kart SSE kancasını kullanır; sınamada aşama elle verilir.
+const live = vi.hoisted(() => ({
+  phase: null as null | "reading_page" | "researching" | "writing" | "checking",
+  fallback: false,
+}));
+vi.mock("./use-seo-live", () => ({ useSeoLive: () => live }));
+vi.mock("@/server/actions/seo-mode-actions", () => ({
+  startSeoCardAction: vi.fn(),
+  setSeoModeAction: vi.fn(),
+  seoTargetPagesAction: vi.fn(),
+  suggestSnippetAction: vi.fn(),
+  chooseSnippetAction: vi.fn(),
+  researchRefreshAction: vi.fn(),
+  markSeoAppliedAction: vi.fn(),
+  confirmSeoLiveAction: vi.fn(),
+  checkSeoNowAction: vi.fn(),
+  undoSeoAppliedAction: vi.fn(),
+}));
 vi.mock("@/server/actions/seo-flow-actions", () => ({
   goToSeoStepAction: vi.fn(),
   markSeoPublishedAction: vi.fn(),
@@ -336,5 +354,408 @@ describe("SeoFlow: Publish", () => {
     expect(html).not.toMatch(
       /disabled=""[^>]*>(?:(?!<\/button>)[\s\S])*Copy as Markdown/,
     );
+  });
+});
+
+// ---- SC-F6: kipler ve canlı koşu ----------------------------------------------
+
+const FEATURES = { modes: true, live: true };
+const stepLabels = (html: string) =>
+  [
+    ...html.matchAll(/<span class="text-xs whitespace-nowrap[^"]*"[^>]*>([^<]+)/g),
+  ].map((match) => match[1]);
+
+const TARGET = {
+  url: "https://www.example.com/blog/running-shoes",
+  path: "/blog/running-shoes",
+  title: "Running shoes",
+  metaDescription: "Our guide to running shoes.",
+  h1: "Running shoes",
+  h2: ["What running shoes do", "Old section"],
+  wordCount: 900,
+  textHash: null,
+  fetchedAt: "2026-10-07T08:00:00.000Z",
+  queryCount: 12,
+};
+
+const SNIPPET = {
+  variants: [
+    {
+      title: "Running shoes for beginners: how to choose",
+      metaDescription: "Pick a pair that fits, step by step.",
+      angle: "Benefit",
+    },
+    {
+      title: "Which running shoes should you buy?",
+      metaDescription: "Cushioning, drop and size explained.",
+      angle: "Question",
+    },
+  ],
+  chosen: null,
+  edited: null,
+  generatedAt: "2026-10-07T08:05:00.000Z",
+};
+
+beforeEach(() => {
+  live.phase = null;
+  live.fallback = false;
+});
+
+describe("SeoFlow: a card without features", () => {
+  it("renders none of the SC-F6 parts", () => {
+    for (const [step, data] of [
+      ["brief", {}],
+      ["plan", { brief: BRIEF, plan: PLAN }],
+      ["review", { brief: BRIEF, plan: PLAN, article: ARTICLE }],
+      ["deliver", { brief: BRIEF, plan: PLAN, article: ARTICLE }],
+    ] as const) {
+      const html = render(step, data);
+      expect(html).not.toContain("What do you want to do?");
+      expect(html).not.toContain("Refresh a page");
+      expect(html).not.toContain("Write another");
+      expect(html).not.toContain("Live page address");
+      expect(html).not.toContain("Suggested from Search Console");
+      expect(html).not.toContain("Changes to the page");
+      expect(stepLabels(html)).toHaveLength(5);
+    }
+  });
+
+  it("a stale features-less card keeps the Search Console quick wins", () => {
+    const html = render("plan", { brief: BRIEF, plan: PLAN });
+    expect(html).toContain("Quick wins from Search Console");
+  });
+});
+
+describe("SeoFlow: modes", () => {
+  it("Brief offers the three modes with the article form under it", () => {
+    const html = render("brief", { features: FEATURES });
+    expect(html).toContain("What do you want to do?");
+    expect(html).toContain('role="radiogroup"');
+    expect(html).toContain("Write an article");
+    expect(html).toContain("Refresh a page");
+    expect(html).toContain("Fix a snippet");
+    expect(html).toMatch(/aria-checked="true"[^>]*>(?:(?!<\/button>)[\s\S])*Write an article/);
+    expect(html).toContain('placeholder="What should the article be about?"');
+  });
+
+  it("refresh mode asks for the page instead of a topic", () => {
+    const html = render("brief", {
+      features: FEATURES,
+      mode: "refresh",
+      target: TARGET,
+    });
+    expect(html).toContain("Page address");
+    expect(html).toContain('value="https://www.example.com/blog/running-shoes"');
+    expect(html).toContain("Pick from your pages");
+    expect(html).toContain("This page today");
+    expect(html).toContain("Ranks for 12 searches");
+    expect(html).toContain("Plan the refresh");
+    expect(html).not.toContain("What should the article be about?");
+    expect(primaries(html)).toBe(1);
+  });
+
+  it("snippet mode asks for the page and says 'Suggest titles'", () => {
+    const html = render("brief", {
+      features: FEATURES,
+      mode: "snippet",
+      pendingUrl: "https://www.example.com/pricing",
+    });
+    expect(html).toContain('value="https://www.example.com/pricing"');
+    expect(html).toContain("Suggest titles");
+    expect(html).not.toContain("Ranks for");
+  });
+
+  it("the picker is gone once there is a plan to keep", () => {
+    const html = render("brief", {
+      features: FEATURES,
+      mode: "refresh",
+      target: TARGET,
+      brief: { ...BRIEF, topic: "Running shoes" },
+      plan: PLAN,
+    });
+    expect(html).not.toContain("What do you want to do?");
+    expect(html).toContain("Keep current plan");
+  });
+
+  it("snippet mode has three steps", () => {
+    const html = render("plan", {
+      features: FEATURES,
+      mode: "snippet",
+      brief: BRIEF,
+      target: TARGET,
+      snippet: SNIPPET,
+    });
+    expect(stepLabels(html)).toEqual(["Brief", "Plan", "Publish"]);
+    expect(currentStep(html)).toBe("Plan");
+  });
+
+  it("refresh mode keeps all five", () => {
+    const html = render("brief", {
+      features: FEATURES,
+      mode: "refresh",
+      target: TARGET,
+    });
+    expect(stepLabels(html)).toHaveLength(5);
+  });
+});
+
+describe("SeoFlow: Fix a snippet", () => {
+  it("Plan shows today's snippet and the options as search results", () => {
+    const html = render("plan", {
+      features: FEATURES,
+      mode: "snippet",
+      brief: BRIEF,
+      target: TARGET,
+      snippet: SNIPPET,
+    });
+    expect(html).toContain("Now");
+    expect(html).toContain("example.com");
+    expect(html).toContain("Option 1");
+    expect(html).toContain("Option 2");
+    expect(html).toContain("Benefit");
+    expect(html).toContain("Running shoes for beginners: how to choose");
+    expect(html).toContain("Title fits");
+    expect(html).toContain("Description fits");
+    expect(html.match(/type="radio"/g)).toHaveLength(2);
+    expect(html).toContain("42 / 60");
+    expect(html).toContain("36 / 155");
+    expect(html).toContain("Use this");
+    expect(html).toContain("Suggest again");
+    expect(primaries(html)).toBe(1);
+  });
+
+  it("says it is suggesting while the call runs", () => {
+    const html = render("plan", {
+      features: FEATURES,
+      mode: "snippet",
+      brief: BRIEF,
+      target: TARGET,
+      run: runNow("snippet"),
+    });
+    expect(html).toContain("Reading your page and writing three title options.");
+    expect(html).toContain('role="status"');
+    expect(html).not.toContain("Use this");
+  });
+
+  it("Publish hands over the chosen text and asks 'I've updated my site'", () => {
+    const html = render("deliver", {
+      features: FEATURES,
+      mode: "snippet",
+      brief: BRIEF,
+      target: TARGET,
+      snippet: { ...SNIPPET, chosen: 1 },
+    });
+    expect(currentStep(html)).toBe("Publish");
+    expect(html).toContain("Which running shoes should you buy?");
+    expect(html).toContain("Cushioning, drop and size explained.");
+    expect(html).toContain("I&#x27;ve updated my site");
+    expect(html).not.toContain("Add to calendar");
+    expect(html).not.toContain("Copy as Markdown");
+    expect(primaries(html)).toBe(1);
+  });
+
+  it("after it is applied: the day, the next cards, no more primary", () => {
+    const html = render("deliver", {
+      features: FEATURES,
+      mode: "snippet",
+      brief: BRIEF,
+      target: TARGET,
+      snippet: { ...SNIPPET, chosen: 0 },
+      applied: { at: "2026-10-08T08:00:00.000Z" },
+    });
+    expect(html).toContain("Updated · Thu 8 Oct");
+    expect(html).not.toContain("I&#x27;ve updated my site");
+    expect(html).toContain("Write another");
+    expect(html).toContain("Refresh a page");
+    expect(html).toContain("Fix a snippet");
+    expect(primaries(html)).toBe(0);
+    expect((html.match(/, done</g) ?? []).length).toBe(3);
+  });
+});
+
+describe("SeoFlow: Refresh a page", () => {
+  const REFRESH = {
+    features: FEATURES,
+    mode: "refresh",
+    brief: { ...BRIEF, topic: "Running shoes" },
+    target: TARGET,
+    refresh: {
+      missing: ["How to test a pair in the shop"],
+      keep: ["What running shoes do"],
+    },
+  };
+
+  it("Plan says what changes and leaves the quick wins out", () => {
+    const html = render("plan", { ...REFRESH, plan: PLAN });
+    expect(html).toContain("What changes");
+    expect(html).toContain("How to test a pair in the shop");
+    expect(html).toContain("What running shoes do");
+    expect(html).toContain(
+      "This page already gets search traffic for 12 searches.",
+    );
+    expect(html).not.toContain("Quick wins from Search Console");
+    expect(html).not.toContain("trail running shoes");
+    expect(html).toContain("Rewrite the page");
+  });
+
+  it("Review puts the diff above the checks", () => {
+    const html = render("review", { ...REFRESH, plan: PLAN, article: ARTICLE });
+    expect(html).toContain("Changes to the page");
+    expect(html).toContain("Title changes");
+    expect(html).toContain("900 → ");
+    expect(html.indexOf("Changes to the page")).toBeLessThan(
+      html.indexOf("On-page checks"),
+    );
+    // The article form is not touched.
+    expect(html).toMatch(/\d of 9 pass/);
+  });
+
+  it("Publish copies the page and asks 'I've updated my site', no calendar", () => {
+    const html = render("deliver", { ...REFRESH, plan: PLAN, article: ARTICLE });
+    expect(html).toContain("Copy as Markdown");
+    expect(html).toContain("I&#x27;ve updated my site");
+    expect(html).not.toContain("When does it go live?");
+    expect(html).not.toContain("Add to calendar");
+    expect(html).toContain("Back to review");
+  });
+});
+
+describe("SeoFlow: Publish with features", () => {
+  it("article mode can name the live page, before it is marked published", () => {
+    const html = render("deliver", {
+      features: FEATURES,
+      brief: BRIEF,
+      plan: PLAN,
+      article: ARTICLE,
+    });
+    expect(html).toContain("Live page address (optional)");
+    expect(html).toContain("Mark as published");
+    // Nothing to write another of until it is on the calendar.
+    expect(html).not.toContain("Write another");
+  });
+
+  it("on the calendar: next cards are offered, the address field stays until published", () => {
+    const placed = render("deliver", {
+      features: FEATURES,
+      brief: BRIEF,
+      plan: PLAN,
+      article: ARTICLE,
+      delivery: DELIVERY,
+    });
+    expect(placed).toContain("Write another");
+    expect(placed).toContain("Live page address (optional)");
+
+    const published = render("deliver", {
+      features: FEATURES,
+      brief: BRIEF,
+      plan: PLAN,
+      article: ARTICLE,
+      delivery: { ...DELIVERY, publishedAt: "2026-10-09T08:00:00.000Z" },
+    });
+    expect(published).toContain("Write another");
+    expect(published).not.toContain("Live page address");
+  });
+
+  it("only modes (no live) shows no next row and no status", () => {
+    const html = render("deliver", {
+      features: { modes: true, live: false },
+      brief: BRIEF,
+      plan: PLAN,
+      article: ARTICLE,
+      delivery: DELIVERY,
+    });
+    expect(html).not.toContain("Write another");
+  });
+});
+
+describe("SeoFlow: live runs", () => {
+  it("shows the live phase in the pill and in the working note", () => {
+    live.phase = "reading_page";
+    const html = render("plan", {
+      features: FEATURES,
+      brief: BRIEF,
+      run: runNow("research"),
+    });
+    expect(html).toContain("Reading page");
+    expect(html).toContain("Reading your page…");
+    expect(html).not.toContain("Researching keywords and what ranks today.");
+  });
+
+  it("without a live phase the kind's own words stay", () => {
+    const html = render("plan", {
+      features: FEATURES,
+      brief: BRIEF,
+      run: runNow("research"),
+    });
+    expect(html).toContain("Researching keywords and what ranks today.");
+    expect(html).toContain("Researching");
+  });
+
+  it("a card without features ignores the live phase", () => {
+    live.phase = "writing";
+    const html = render("plan", { brief: BRIEF, run: runNow("research") });
+    expect(html).toContain("Researching keywords and what ranks today.");
+    expect(html).not.toContain("Writing…");
+  });
+
+  it("a stopped run says why and offers Try again where the step has none", () => {
+    const lastError = {
+      runId: "r1",
+      kind: "rewrite",
+      message: "The rewrite came back empty.",
+      at: "2026-10-07T08:00:00.000Z",
+    };
+    const html = render("review", {
+      features: FEATURES,
+      brief: BRIEF,
+      plan: PLAN,
+      article: ARTICLE,
+      lastError,
+    });
+    expect(html).toContain('role="alert"');
+    expect(html).toContain("The rewrite came back empty.");
+    expect(html).toContain("Try again");
+  });
+
+  it("where the step retries itself, the message is shown once without a second button", () => {
+    const html = render("plan", {
+      features: FEATURES,
+      brief: BRIEF,
+      lastError: {
+        runId: "r1",
+        kind: "research",
+        message: "The research came back empty.",
+        at: "2026-10-07T08:00:00.000Z",
+      },
+    });
+    expect(html).toContain("The research came back empty.");
+    expect((html.match(/Try again/g) ?? []).length).toBe(1);
+  });
+
+  it("no error banner while a run is going, or without the live feature", () => {
+    const lastError = {
+      runId: "r1",
+      kind: "rewrite",
+      message: "The rewrite came back empty.",
+      at: "2026-10-07T08:00:00.000Z",
+    };
+    expect(
+      render("review", {
+        features: FEATURES,
+        brief: BRIEF,
+        plan: PLAN,
+        article: ARTICLE,
+        lastError,
+        run: runNow("rewrite"),
+      }),
+    ).not.toContain("The rewrite came back empty.");
+    expect(
+      render("review", {
+        brief: BRIEF,
+        plan: PLAN,
+        article: ARTICLE,
+        lastError,
+      }),
+    ).not.toContain("The rewrite came back empty.");
   });
 });

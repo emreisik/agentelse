@@ -51,6 +51,9 @@ for (const file of [
   "website-insights-actions",
   "measurement-health-actions",
   "search-opportunity-actions",
+  "seo-mode-actions",
+  "seo-action-actions",
+  "link-tracking-actions",
 ]) {
   vi.doMock(`@/server/actions/${file}`, inert);
 }

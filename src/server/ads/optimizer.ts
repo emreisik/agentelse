@@ -23,9 +23,11 @@ import { addDays, safeTimezone } from "@/lib/ads/sync-plan";
 import { metaWorkExcludedHere } from "@/lib/local-worker-policy";
 import { prisma } from "@/lib/prisma";
 import { dayKeyInTimezone } from "@/lib/timezone";
+import { withGaEvidence } from "@/lib/website-analytics/attribution/decision-evidence";
 import { AdsAlerts } from "@/server/ads/guard/alerts";
 import { IdeaEngine } from "@/server/ideas/idea-engine";
 import { claimPeriodic } from "@/server/observability/periodic";
+import { createGaCampaignEvidenceReader } from "@/server/website-analytics/attribution/outcomes";
 
 import { AdsAutopilot } from "./autopilot";
 import { AdsDecisions } from "./decisions";
@@ -221,6 +223,9 @@ export const AdsOptimizer = {
     );
     let written = 0;
 
+    // GA-F6 (GA_UTM): GA4'ün kampanya için gördüğü oturum/key event sayıları karara kanıt olarak eklenir (yalnız düz ga4_* alanları; kuralları değiştirmez). Okuyucu kararın kendi projesiyle çağrılır (paylaşılan hesapta proje karışmaz). Bayrak kapalıyken sorgu yok, null döner.
+    const gaEvidence = createGaCampaignEvidenceReader({ now });
+
     const consider = async (
       object: AdsObject,
       candidates: RuleCandidate[],
@@ -247,6 +252,10 @@ export const AdsOptimizer = {
           name: object.name,
           currency: account.currency,
         });
+        const ga4 = await gaEvidence(
+          object.projectId ?? link.projectId,
+          object.level === "CAMPAIGN" ? object.externalId : object.campaignExternalId,
+        );
         const decision = await AdsDecisions.create({
           workspaceId: project.workspaceId,
           projectId: object.projectId ?? link.projectId,
@@ -258,7 +267,7 @@ export const AdsOptimizer = {
           kind: candidate.kind,
           severity: candidate.severity,
           status: mode === "shadow" ? "SHADOW" : "PROPOSED",
-          evidence: candidate.evidence as Prisma.InputJsonValue,
+          evidence: withGaEvidence(candidate.evidence, ga4) as Prisma.InputJsonValue,
           explanation,
           ...(candidate.change
             ? { change: candidate.change as unknown as Prisma.InputJsonValue }

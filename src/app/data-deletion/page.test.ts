@@ -98,6 +98,14 @@ describe("data deletion page", () => {
     );
   });
 
+  it("says Disconnect also deletes the lessons from tagged links (GA-F6) and the measured SEO results (SC-F6)", async () => {
+    const html = await render();
+    expect(html).toContain("lessons learned from your tagged links");
+    expect(html).toContain(
+      "the measured results of SEO changes and the learnings drawn from them",
+    );
+  });
+
   it("ignores a made-up or tampered code and just shows the instructions", async () => {
     for (const bad of [
       "abc",

@@ -64,6 +64,16 @@ export type ReportTable = {
   notes: string[];
 };
 
+// GA-F6 "From Agentelse" bölümü: Agentelse'in yayınladığı bağlantılardan gelen
+// ziyaretler, reklamların sitedeki karşılığı ve Google Ads. Yalnızca haftalık
+// raporda, GA_UTM açıkken bulunur; ROAS sütunu yoktur (ReportValueFormat'ta oran yok).
+export type ReportAgentelseSection = {
+  tracked: ReportTable | null;
+  ads: ReportTable | null;
+  googleAds: ReportTable | null;
+  notes: string[];
+};
+
 // Açılış sayfası hareketi (kazanan ya da kaybeden).
 export type ReportMover = {
   page: string;
@@ -255,6 +265,8 @@ export type WeeklyBody = PeriodReportSections & {
   previous: { from: string; to: string };
   lastYear: { from: string; to: string } | null;
   forecasts: ReportForecastSnap[];
+  // GA-F6: bölüm boşsa alan hiç yazılmaz, böylece bayrak kapalıyken kart değişmez.
+  agentelse?: ReportAgentelseSection;
 };
 
 // Aylık rapor gövdesi (siteSearch aylıkta daima null).
@@ -371,6 +383,9 @@ export const REPORT_CAPS = {
   pulseChanges: 2,
   anomalies: 2,
   proposals: 3,
+  // GA-F6: "From Agentelse" tablosu ve reklam/Google Ads tabloları.
+  agentelse: 8,
+  agentelseAds: 5,
 } as const;
 
 // Bir rapor adımının sonucu.
@@ -459,6 +474,7 @@ export type PeriodReportInput = {
 
 export type WeeklyReportInput = PeriodReportInput & {
   forecasts: MonthForecastView[];
+  agentelse?: ReportAgentelseSection | null;
 };
 
 // goals = finalGoalProgress(...) ile rapor ayı için hesaplanır.

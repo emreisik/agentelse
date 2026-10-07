@@ -69,10 +69,19 @@ const FAILING: ReadonlySet<RobotsFetchVerdict> = new Set([
   "UNREACHABLE",
 ]);
 
+// SC-F6 doğrulayıcısı da aynı kapıyı hafif bir bağlamla kullanır.
+export type RobotsGateContext = Pick<
+  SiteRunContext,
+  "scope" | "deps" | "originHost" | "robots" | "twinRobots"
+>;
+
 // robots.txt, sitemap dosyaları ve http denetimi alan adının kökündedir; URL
 // önekli mülkte ("/blog/") önek dışında kalırlar. Bu getirmeler alan adı
 // (ve www eşi) kapsamıyla yapılır; sayfa kapsamı değişmez.
-export function hostScope(ctx: SiteRunContext, host: string): CrawlScope {
+export function hostScope(
+  ctx: Pick<SiteRunContext, "scope">,
+  host: string,
+): CrawlScope {
   if (ctx.scope.kind !== "GSC_PREFIX") return ctx.scope;
   return scopeFromVerifiedDomain(host.replace(/^www\./, "")) ?? ctx.scope;
 }
@@ -107,7 +116,7 @@ export function crawlIntervalMs(ctx: SiteRunContext): number {
 }
 
 async function fetchTwinRobots(
-  ctx: SiteRunContext,
+  ctx: RobotsGateContext,
   twin: string,
 ): Promise<ParsedRobots | null | "deny"> {
   const result = await siteFetch(
@@ -130,7 +139,7 @@ async function fetchTwinRobots(
 // eş alan adı (yalnız yönlendirme adımı) kendi robots.txt'sine bakar; bizim
 // belirtecimizin grubu, yoksa "*". Başka alan adı hiç getirilmez.
 export function robotsGate(
-  ctx: SiteRunContext,
+  ctx: RobotsGateContext,
 ): (url: string) => Promise<boolean> {
   return async (url: string) => {
     const host = hostOf(url);

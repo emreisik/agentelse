@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   deleteReportData: vi.fn(),
   sweepReports: vi.fn(),
   sweepInsights: vi.fn(),
+  deleteAttribution: vi.fn(),
+  sweepAttribution: vi.fn(),
   reportRetention: vi.fn(),
   linkFindMany: vi.fn(),
   linkDeleteMany: vi.fn(),
@@ -43,6 +45,10 @@ vi.mock("@/server/integrations/google-client", () => ({
 vi.mock("./analysis/cleanup", () => ({
   sweepOrphanGaInsightData: mocks.sweepInsights,
 }));
+vi.mock("./attribution/cleanup", () => ({
+  deleteGaAttributionData: mocks.deleteAttribution,
+  sweepOrphanGaAttributionData: mocks.sweepAttribution,
+}));
 vi.mock("./reports/cleanup", () => ({
   deleteGaReportData: mocks.deleteReportData,
   sweepOrphanGaReportData: mocks.sweepReports,
@@ -61,6 +67,8 @@ beforeEach(() => {
   mocks.deleteReportData.mockResolvedValue({});
   mocks.sweepReports.mockResolvedValue(0);
   mocks.sweepInsights.mockResolvedValue(0);
+  mocks.deleteAttribution.mockResolvedValue({ learnings: 0, decisions: 0 });
+  mocks.sweepAttribution.mockResolvedValue(0);
   mocks.reportRetention.mockResolvedValue(0);
 });
 
@@ -92,7 +100,17 @@ describe("GaRetention.runDue", () => {
     const now = new Date("2026-10-07T03:00:00Z");
     await GaRetention.runDue(now);
     expect(mocks.sweepReports).toHaveBeenCalledTimes(1);
+    expect(mocks.sweepAttribution).toHaveBeenCalledTimes(1);
     expect(mocks.reportRetention).toHaveBeenCalledWith(now);
+  });
+
+  it("keeps the daily step going when the attribution sweep fails", async () => {
+    mocks.linkFindMany.mockResolvedValue([]);
+    mocks.sweepAttribution.mockRejectedValue(new Error("boom"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await GaRetention.runDue(new Date("2026-10-07T03:00:00Z"));
+    expect(mocks.reportRetention).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 
   it("does nothing when the daily claim is taken", async () => {

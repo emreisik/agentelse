@@ -111,6 +111,25 @@ describe("SearchConsoleWarehouseCard", () => {
     expect(off).toContain('name="archive" value="true"');
   });
 
+  it("mentions the measured SEO results in the delete text only with SEO_ACTIONS and the crawler on", () => {
+    const keys = ["SEO_ACTIONS", "SEO_HEALTH", "SEO_CRAWL"] as const;
+    const saved = keys.map((key) => process.env[key]);
+    try {
+      for (const key of keys) delete process.env[key];
+      expect(render({ canManage: true })).not.toContain("Measured results of SEO changes");
+      for (const key of keys) process.env[key] = "true";
+      expect(render({ canManage: true })).toContain(
+        "Measured results of SEO changes and what Agentelse learned from them are deleted too and don&#x27;t come back.",
+      );
+    } finally {
+      keys.forEach((key, index) => {
+        const value = saved[index];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      });
+    }
+  });
+
   it("links the Search report only when the page is on", () => {
     expect(render()).not.toContain("Open Search report");
     const html = render({ searchHref: "/projects/proj-1/arama" });

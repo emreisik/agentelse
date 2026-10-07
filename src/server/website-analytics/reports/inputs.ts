@@ -45,6 +45,7 @@ import {
   projectCountry,
 } from "@/server/website-analytics/analysis/inputs";
 import { findingViewOf } from "@/server/website-analytics/analysis/read";
+import { loadAgentelseReportSection } from "@/server/website-analytics/attribution/report-section";
 import { loadMeasurementSummaryForLink } from "@/server/website-analytics/health/read";
 import {
   readDailyTotals,
@@ -460,6 +461,7 @@ export async function loadWeeklyReportInput(
     findings,
     goals,
     forecasts,
+    agentelse,
   ] = await Promise.all([
     loadReportWindow(link.id, { from: monday, to: sunday }, ALL_REPORTS),
     loadReportWindow(link.id, previousRange, COMPARE_REPORTS),
@@ -476,6 +478,12 @@ export async function loadWeeklyReportInput(
     }),
     GaGoals.loadProgress(ctx.projectId),
     loadMonthForecasts({ linkId: link.id, through, country: ctx.country }),
+    // GA-F6: bayrak kapalıysa sorgusuz null döner; hata da null'dır.
+    loadAgentelseReportSection({
+      projectId: ctx.projectId,
+      range: { from: monday, to: sunday },
+      gaCurrency: link.currencyCode,
+    }),
   ]);
   return {
     link: reportLinkInfo(ctx),
@@ -494,6 +502,7 @@ export async function loadWeeklyReportInput(
     goals,
     goalsMonth: through.slice(0, 7),
     forecasts,
+    ...(agentelse ? { agentelse } : {}),
   };
 }
 

@@ -12,6 +12,7 @@ import {
 import { gscMockMode } from "@/server/integrations/search-console/search-analytics";
 import { propertyTypeOf } from "@/server/integrations/search-console/sites";
 import { deleteSearchConsoleAlertsForProjects } from "@/server/seo/health/alerts";
+import { forgetSeoActionsForProjectMode } from "@/server/seo/actions/forget";
 import { forgetSearchOpportunitiesForLinks } from "@/server/seo/opportunities/forget";
 import { forgetSeoGoalValues } from "@/server/seo/reports/goals";
 import { SeoSites } from "@/server/seo/site/sites";
@@ -186,6 +187,8 @@ export async function deleteGscDataForProject(
     await prisma.gscSiteLink.findMany({ where: mode, select: { id: true } })
   ).map((row) => row.id);
   await forgetSearchOpportunitiesForLinks(forgetIds).catch(() => undefined);
+  // SC-F6: bu kipin bağlarına ait SEO eylemleri, SEO öğrenmeleri ve SEO kartlarındaki Search Console verisi de silinir (bayraktan bağımsız).
+  await forgetSeoActionsForProjectMode(projectId, gscMockMode());
   const result = await prisma.gscSiteLink.deleteMany({ where: mode });
   // SC-F5: SEO hedeflerinin değeri silinen ambardan geliyordu; boşaltılır (raporlar cascade ile gitti).
   await forgetSeoGoalValues([projectId], { isMock: gscMockMode() });

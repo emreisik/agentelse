@@ -1,7 +1,9 @@
+import { FixThisButton } from "@/components/search-actions/fix-this-button";
 import { ActionForm } from "@/components/shared/action-form";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { cn } from "@/lib/utils";
+import { isFixableFindingKind } from "@/lib/seo/actions/kinds";
 import {
   SEO_DISMISS_REASONS,
   type SeoDismissReason,
@@ -11,6 +13,7 @@ import {
   dismissOpportunityAction,
   markOpportunityDoneAction,
 } from "@/server/actions/search-opportunity-actions";
+import type { FixThisState } from "@/server/seo/actions/fix-this";
 import type {
   OpportunitiesPanel,
   OpportunityItem,
@@ -196,9 +199,11 @@ function DismissForm({
 function OpportunityRow({
   projectId,
   item,
+  fixThis,
 }: {
   projectId: string;
   item: OpportunityItem;
+  fixThis?: Record<string, FixThisState>;
 }) {
   const accepted = item.status === "ACCEPTED";
   return (
@@ -228,6 +233,13 @@ function OpportunityRow({
       ) : null}
       <OpportunityEvidence item={item} />
       <div className="flex flex-wrap items-center gap-2">
+        {fixThis !== undefined && isFixableFindingKind(item.actionKind) ? (
+          <FixThisButton
+            projectId={projectId}
+            findingId={item.id}
+            existing={fixThis[item.id] ?? null}
+          />
+        ) : null}
         {accepted ? (
           <ActionForm
             action={markOpportunityDoneAction}
@@ -253,8 +265,11 @@ function OpportunityRow({
 
 export function OpportunityListView({
   panel,
+  fixThis,
 }: {
   panel: OpportunitiesPanel;
+  // SC-F6: "Fix this" durumları; yoksa düğme çizilmez.
+  fixThis?: Record<string, FixThisState>;
 }): React.JSX.Element {
   const week = weekLabel(panel.week);
   return (
@@ -286,6 +301,7 @@ export function OpportunityListView({
               key={item.id}
               projectId={panel.projectId}
               item={item}
+              fixThis={fixThis}
             />
           ))}
         </ul>
@@ -299,6 +315,7 @@ export function OpportunityListView({
                 key={item.id}
                 projectId={panel.projectId}
                 item={item}
+                fixThis={fixThis}
               />
             ))}
           </ul>

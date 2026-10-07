@@ -15,7 +15,10 @@ import {
   samplePulseCard,
   sampleWeeklyCard,
 } from "./test-fixtures";
-import type { WebsiteReportCardData } from "./types";
+import type {
+  ReportAgentelseSection,
+  WebsiteReportCardData,
+} from "./types";
 
 // Kartın bir etiketini '|' içerecek şekilde değiştirir.
 function withPipeInChannel(card: WebsiteReportCardData): WebsiteReportCardData {
@@ -33,6 +36,66 @@ function withPipeInChannel(card: WebsiteReportCardData): WebsiteReportCardData {
     },
   };
 }
+
+
+// GA-F6 bölümü örneği: etiketlerden biri HTML karakteri taşır.
+const AGENTELSE: ReportAgentelseSection = {
+  tracked: {
+    columns: [
+      { label: "Sessions (GA4)", format: "count" },
+      { label: "Engagement rate", format: "percent" },
+      { label: "Key events (GA4)", format: "count" },
+    ],
+    rows: [{ label: "Meta ads: <b>Spring</b> sale", values: [1200, 61.2, 30] }],
+    other: [40, null, 1],
+    notes: [],
+  },
+  ads: {
+    columns: [
+      { label: "Link clicks (Meta)", format: "count" },
+      { label: "Sessions (GA4)", format: "count" },
+    ],
+    rows: [{ label: "Spring sale", values: [900, 700] }],
+    other: null,
+    notes: [],
+  },
+  googleAds: null,
+  notes: ["Only visits through links Agentelse tagged are counted."],
+};
+
+function weeklyWithSection(): WebsiteReportCardData {
+  const card = sampleWeeklyCard();
+  if (card.body.variant !== "weekly") throw new Error("variant");
+  return { ...card, body: { ...card.body, agentelse: AGENTELSE } };
+}
+
+describe("From Agentelse export", () => {
+  it("is absent when the card has no section", () => {
+    const card = sampleWeeklyCard();
+    expect(websiteReportMarkdown(card)).not.toContain("From Agentelse");
+    expect(websiteReportPrintHtml(card)).not.toContain("From Agentelse");
+  });
+
+  it("adds a block after the key events table in Markdown", () => {
+    const markdown = websiteReportMarkdown(weeklyWithSection());
+    expect(markdown).toContain("## From Agentelse");
+    expect(markdown).toContain("### Tracked links");
+    expect(markdown).toContain("### Your ads on your website");
+    expect(markdown).not.toContain("### Google Ads");
+    expect(markdown).toContain("| Source | Sessions (GA4) | Engagement rate | Key events (GA4) |");
+    expect(markdown).toContain("- Only visits through links Agentelse tagged are counted.");
+    expect(markdown.indexOf("### Key events")).toBeLessThan(
+      markdown.indexOf("## From Agentelse"),
+    );
+  });
+
+  it("escapes labels in the print HTML", () => {
+    const html = websiteReportPrintHtml(weeklyWithSection());
+    expect(html).toContain("<h2>From Agentelse</h2>");
+    expect(html).toContain("&lt;b&gt;Spring&lt;/b&gt;");
+    expect(html).not.toContain("<b>Spring</b>");
+  });
+});
 
 describe("websiteReportMarkdown", () => {
   const card = sampleMonthlyCard();

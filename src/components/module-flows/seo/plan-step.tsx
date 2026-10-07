@@ -18,6 +18,7 @@ import {
 import { compactCount } from "@/lib/module-flows/seo/quick-wins";
 import {
   SEO_LIMITS,
+  seoModeOf,
   type SeoPlan,
   type SeoQuickWins,
   type SeoState,
@@ -28,21 +29,25 @@ import {
   researchSeoAction,
   writeSeoArticleAction,
 } from "@/server/actions/seo-flow-actions";
+import { researchRefreshAction } from "@/server/actions/seo-mode-actions";
 
 import { INTENT_LABEL, SEO_FLOW_COPY as COPY } from "./copy";
 import {
   Field,
+  RunNote,
   WorkingNote,
   serverButton,
   useSeoStepAction,
   type OnMoving,
 } from "./parts";
+import { SnippetStep } from "./snippet-step";
 
 // Step 2, Plan: the researched keyword, intent, titles, meta description and
 // outline, all editable on the card (pick a title, reshape the sections, add a
 // Search Console quick win as a keyword). "Write article" sends the plan as
 // the person left it. While the research runs (or after it stopped) the step
-// says so instead.
+// says so instead. SC-F6: "Fix a snippet" has its own Plan (SnippetStep);
+// "Refresh a page" shows what changes instead of the quick wins.
 
 const WRITE = "write";
 const RETRY = "retry";
@@ -65,6 +70,9 @@ type Props = {
 
 export function PlanStep(props: Props) {
   const { plan } = props.state;
+  if (props.state.features?.modes && seoModeOf(props.state) === "snippet") {
+    return <SnippetStep {...props} />;
+  }
   if (props.running || !plan) return <PlanWaiting {...props} />;
   return <PlanEditor {...props} plan={plan} key={plan.researchedAt} />;
 }
@@ -73,10 +81,12 @@ export function PlanStep(props: Props) {
 function PlanWaiting({
   projectId,
   commandId,
+  state,
   running,
   blocked,
   onMoving,
 }: Props) {
+  const refreshing = seoModeOf(state) === "refresh";
   const { onAct, busyId, error } = useSeoStepAction({
     projectId,
     commandId,
@@ -85,10 +95,15 @@ function PlanWaiting({
     server: (id, card) =>
       id === BACK
         ? goToSeoStepAction(card.projectId, card.commandId, "brief")
-        : researchSeoAction(card.projectId, card.commandId),
+        : refreshing
+          ? researchRefreshAction(card.projectId, card.commandId, {
+              url: state.target?.url ?? "",
+              language: state.brief?.language ?? "",
+            })
+          : researchSeoAction(card.projectId, card.commandId),
   });
   if (running || busyId === RETRY) {
-    return <WorkingNote>{COPY.researchNote}</WorkingNote>;
+    return <RunNote text={refreshing ? COPY.refreshNote : COPY.researchNote} />;
   }
   return (
     <div className="space-y-3">
@@ -124,6 +139,7 @@ function PlanEditor({
 }: Props & { plan: SeoPlan }) {
   const host = useWorkCardHost();
   const ids = useId();
+  const refreshing = seoModeOf(state) === "refresh";
   const nextKey = useRef(plan.outline.length);
   const [titleIndex, setTitleIndex] = useState(plan.titleIndex);
   const [meta, setMeta] = useState(plan.metaDescription);
@@ -172,7 +188,13 @@ function PlanEditor({
   const buttons: CardButton[] = [
     serverButton(
       WRITE,
-      writing ? COPY.writing : COPY.write,
+      writing
+        ? refreshing
+          ? COPY.writingRefresh
+          : COPY.writing
+        : refreshing
+          ? COPY.writeRefresh
+          : COPY.write,
       "primary",
       blocked ?? (check.ok ? null : check.message),
     ),
@@ -243,21 +265,29 @@ function PlanEditor({
           )}
         </Field>
 
-        <QuickWins
-          quickWins={plan.quickWins}
-          keywords={keywords}
-          primary={plan.primaryKeyword}
-          connectHref={
-            projectId
-              ? `/projects/${projectId}/integrations?integration=${SEARCH_CONSOLE_INTEGRATION}${
-                  host?.workId ? `&from=${encodeURIComponent(host.workId)}` : ""
-                }`
-              : null
-          }
-          onAdd={(query) =>
-            setKeywords((list) => withKeyword(list, query, plan.primaryKeyword))
-          }
-        />
+        {refreshing ? (
+          <WhatChanges state={state} />
+        ) : (
+          <QuickWins
+            quickWins={plan.quickWins}
+            keywords={keywords}
+            primary={plan.primaryKeyword}
+            connectHref={
+              projectId
+                ? `/projects/${projectId}/integrations?integration=${SEARCH_CONSOLE_INTEGRATION}${
+                    host?.workId
+                      ? `&from=${encodeURIComponent(host.workId)}`
+                      : ""
+                  }`
+                : null
+            }
+            onAdd={(query) =>
+              setKeywords((list) =>
+                withKeyword(list, query, plan.primaryKeyword),
+              )
+            }
+          />
+        )}
 
         <fieldset className="space-y-1.5">
           <legend
@@ -428,6 +458,76 @@ function PlanEditor({
         error={error}
       />
     </div>
+  );
+}
+
+// SC-F6: tazeleme kipinde Plan'ın "ne değişir" bölümü: eklenecek eksik alt
+// konular, korunacak bölümler ve sayfanın zaten aldığı arama sayısı (yalnız
+// sayı; sorgu metni kartta tutulmaz). Hızlı kazanç listesi burada çizilmez.
+function WhatChanges({ state }: { state: SeoState }) {
+  const { refresh, target } = state;
+  const queryCount = target?.queryCount ?? 0;
+  const missing = refresh?.missing ?? [];
+  const keep = refresh?.keep ?? [];
+  return (
+    <Field label={COPY.whatChanges}>
+      <div className="space-y-2">
+        <div className="space-y-1">
+          <p
+            className="text-[11px] font-medium"
+            style={{ color: "var(--ws-text-2)" }}
+          >
+            {COPY.refreshAdd}
+          </p>
+          {missing.length > 0 ? (
+            <ul className="space-y-0.5">
+              {missing.map((item) => (
+                <li
+                  key={item}
+                  className="flex items-start gap-1.5 text-xs leading-5"
+                  style={{ color: "var(--ws-text)" }}
+                >
+                  <Plus
+                    aria-hidden="true"
+                    className="mt-1 size-3 shrink-0"
+                    style={{ color: "var(--ws-approved)" }}
+                  />
+                  <span className="min-w-0 break-words">{item}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs" style={{ color: "var(--ws-text-3)" }}>
+              {COPY.refreshNone}
+            </p>
+          )}
+        </div>
+        {keep.length > 0 ? (
+          <div className="space-y-1">
+            <p
+              className="text-[11px] font-medium"
+              style={{ color: "var(--ws-text-2)" }}
+            >
+              {COPY.refreshKeep}
+            </p>
+            <p
+              className="text-xs leading-5"
+              style={{ color: "var(--ws-text-2)" }}
+            >
+              {keep.join(" · ")}
+            </p>
+          </div>
+        ) : null}
+        {queryCount > 0 ? (
+          <p
+            className="text-xs leading-5"
+            style={{ color: "var(--ws-text-3)" }}
+          >
+            {COPY.refreshTraffic(queryCount)}
+          </p>
+        ) : null}
+      </div>
+    </Field>
   );
 }
 

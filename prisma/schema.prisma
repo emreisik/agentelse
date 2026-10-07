@@ -2938,6 +2938,58 @@ model GaGoalProgress {
   @@index([linkId])
 }
 
+// ---- GA-F6 (GA_UTM): etiketli dış linkler ve link izleme ayarı ----
+// GA-F6 (GA_UTM): Agentelse'in etiketlediği dış link (docs/google-analytics-plan.md §3.8, §4).
+// utm_content=agx_<code> GA4'te sessionManualAdContent olarak görünür; campaign
+// dilimleri bu kodla Agentelse varlığına bağlanır. Google verisi taşımaz:
+// GA Disconnect'te kalır, proje silinince (projectId tablosu) gider.
+model TrackedLink {
+  id                 String   @id @default(cuid())
+  // 6 karakter [a-z0-9]; bütün projelerde benzersiz (aynı GA mülkü iki projeye bağlı olabilir)
+  code               String   @unique
+  workspaceId        String
+  projectId          String
+  // "meta_ad" | "instagram_bio" | "facebook_post" | "social_post"
+  entityType         String
+  // meta_ad: "<commandId>:<adIndex>"; instagram_bio: "bio"; post: Creative/Post id
+  entityId           String
+  // UtmChannel: "meta_ads" | "facebook" | "instagram" | "linkedin" | "x" | "tiktok"
+  channel            String
+  destinationUrl     String
+  // Hedef adres + eklenen UTM'ler (Meta makroları ham); carriesCode buradan türetilir
+  taggedUrl          String
+  utmSource          String
+  utmMedium          String
+  utmCampaign        String
+  utmContent         String
+  // İnsan okunur kısa ad (kampanya / plan adı), en çok 120 karakter
+  label              String?
+  // meta_ad için tembel çözülür (AdsLaunch.campaignExternalId, progress.ads[i])
+  campaignExternalId String?
+  adExternalId       String?
+  createdByUserId    String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([projectId, entityType, entityId])
+  @@index([projectId, utmCampaign])
+  @@index([projectId, campaignExternalId])
+  @@index([projectId, adExternalId])
+  @@index([entityType, entityId])
+}
+
+// GA-F6 (GA_UTM): Settings → Publishing → "Add tracking (UTM) to links" (GK10).
+// Satır yoksa açık sayılır. Google verisi taşımaz.
+model LinkTrackingSetting {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  projectId       String   @unique
+  utmEnabled      Boolean  @default(true)
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
 // ---------------------------------------------------------------------------
 // Arama sağlığı ve teknik denetim (docs/google-search-console-plan.md SC-F3,
 // docs/search-health.md). Gsc* tabloları Search Console bağına (GscSiteLink)
@@ -3617,6 +3669,104 @@ model SeoGoalProgress {
 
   @@index([projectId, isMock])
   @@index([linkId])
+}
+
+// ---------------------------------------------------------------------------
+// Öneri → uygulama → ölçüm döngüsü (docs/google-search-console-plan.md SC-F6,
+// docs/search-actions.md). Bir SEO değişikliğinin önerisi, kullanıcının
+// uygulaması, tarayıcımızla doğrulanması ve kontrol gruplu değerlendirmesi.
+// linkId / findingId / pageId / creativeId / commandId / workId düz kimliktir
+// (FK yok). linkId dolu satırlar Search Console verisi taşır: Disconnect,
+// "Delete stored data", W1 saklama temizliği ve bağı kalmayan satır temizliği
+// onları (ve türeyen SEO öğrenmelerini) bayraktan bağımsız hemen siler
+// (src/server/seo/actions/forget.ts, retention.ts).
+// ---------------------------------------------------------------------------
+model SeoAction {
+  id          String  @id @default(cuid())
+  workspaceId String
+  projectId   String
+  isMock      Boolean @default(false)
+
+  // Bulgu/Done kaynaklı eylemde bulgunun bağı; diğerlerinde oluşturulduğu
+  // anda projenin aynı kipteki birincil GscSiteLink'i (yoksa null; ölçüme
+  // geçişte bağ varsa doldurulur). SEO kaynaklı sağlık uyarılarında null.
+  linkId    String?
+  findingId String?
+  // FINDING | SEO_MANAGER | HEALTH_ISSUE | OPPORTUNITY_DONE
+  source    String
+  // TITLE_META | CONTENT_REFRESH | NEW_CONTENT | LOCALIZE | INTERNAL_LINKS |
+  // CONSOLIDATE | TECH_FIX | SCHEMA | CWV_FIX | SITEMAP_FIX
+  kind      String
+  // Açık eylemin tekil anahtarı: "finding:<id>" | "card:<commandId>" |
+  // "alert:<dedupeKey>"; eylem sonuçlanınca (terminal durum) null olur
+  openKey   String?
+
+  // GscPage.id (birincil hedef sayfa)
+  pageId        String?
+  targetUrl     String?
+  // crawlUrlHash(normalizeCrawlUrl(targetUrl)): SeoPage/GscUrlInspection
+  // anahtarı; GscPage.urlHash ile KARŞILAŞTIRILMAZ
+  targetUrlHash String?
+  // GscQuery kimlikleri (en çok 10)
+  targetQueries String[] @default([])
+  // SeoActionProposalStored (src/lib/seo/actions/types.ts)
+  proposal      Json
+  // Değişiklik öncesi sayfa (PageSnapshot), kendi tarayıcımızdan
+  baseline      Json?
+
+  // PROPOSED | ACCEPTED | APPLIED | VERIFIED | EVALUATING | WORKED | DIDNT |
+  // INCONCLUSIVE | DISMISSED | EXPIRED
+  status          String    @default("PROPOSED")
+  // USER | DETECTED | CMS
+  appliedVia      String?
+  appliedAt       DateTime?
+  appliedByUserId String?
+  verifiedAt      DateTime?
+  // SeoVerification (tarayıcı kontrolleri + URL Inspection kanıtı)
+  verification    Json?
+  verifyAttempts  Int       @default(0)
+  // Doğrulanamayınca (türe göre 14/21/35 gün) kullanıcıya soruldu
+  askedAt         DateTime?
+  // Doğrulayıcı / değerlendiricinin bir sonraki bakış anı
+  nextCheckAt     DateTime?
+  leaseUntil      DateTime?
+  leaseOwner      String?
+
+  windowDays    Int
+  // Ölçüm çapası (measuringFields): ölçüme geçerken bir kez yazılır;
+  // değerlendirici pencereleri yalnız bundan kurar
+  measureFrom   DateTime?
+  evaluateAfter DateTime?
+  evaluatedAt   DateTime?
+  // SeoEvaluation (öncesi/sonrası, kontrol grubu, etki, aralık, güncelleme çakışması)
+  evaluation    Json?
+  // WORKED | DIDNT | INCONCLUSIVE
+  outcome       String?
+  // SIGNIFICANT | DIRECTIONAL
+  confidence    String?
+  // Yazılan BrandLearning.id (yalnız kapıyı geçen sonuçlar)
+  learningId    String?
+
+  // SEO Manager makalesi (seo.article Creative), kartın Command'ı ve Work'ü
+  creativeId      String?
+  commandId       String?
+  workId          String?
+  // SC-F8 CMS yazmaları için ayrıldı
+  approvalId      String?
+  createdByUserId String?
+  decidedAt       DateTime?
+  dismissReason   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, isMock, openKey])
+  @@index([projectId, status])
+  @@index([status, evaluateAfter])
+  @@index([isMock, status, nextCheckAt])
+  @@index([linkId])
+  @@index([findingId])
+  @@index([commandId])
 }
 
 model Skill {

@@ -11,6 +11,7 @@ import type {
   ReportFindingSnap,
   ReportForecastSnap,
   ReportGoalSnap,
+  ReportAgentelseSection,
   ReportMover,
   ReportTable,
   ReportValueFormat,
@@ -246,6 +247,30 @@ function kpiBlocks(
   ];
 }
 
+// GA-F6: "From Agentelse" bölümü; yalnız haftalık gövdede ve doluysa bulunur.
+function agentelseBlocks(
+  section: ReportAgentelseSection | undefined,
+  currency: string | null,
+): Block[] {
+  if (!section) return [];
+  const parts = [
+    ...tableBlocks("Tracked links", "Source", section.tracked, currency),
+    ...tableBlocks(
+      "Your ads on your website",
+      "Campaign",
+      section.ads,
+      currency,
+    ),
+    ...tableBlocks("Google Ads", "Campaign", section.googleAds, currency),
+  ];
+  if (parts.length === 0) return [];
+  const blocks: Block[] = [{ t: "h2", text: "From Agentelse" }, ...parts];
+  if (section.notes.length > 0) {
+    blocks.push({ t: "ul", items: [...section.notes] });
+  }
+  return blocks;
+}
+
 // Haftalık ve aylık raporun ortak gövdesi.
 function periodBlocks(
   card: WebsiteReportCardData,
@@ -259,6 +284,9 @@ function periodBlocks(
     ...moverBlocks("Landing pages up", body.winners),
     ...moverBlocks("Landing pages down", body.losers),
     ...tableBlocks("Key events", "Key event", body.keyEvents, currency),
+    ...(body.variant === "weekly"
+      ? agentelseBlocks(body.agentelse, currency)
+      : []),
     ...tableBlocks("AI assistants", "Assistant", body.aiAssistants, currency),
     ...tableBlocks("Site search", "Search term", body.siteSearch, currency),
   ];

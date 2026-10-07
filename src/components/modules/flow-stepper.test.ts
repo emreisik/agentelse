@@ -105,4 +105,56 @@ describe("FlowStepper", () => {
     (button?.props?.onClick as () => void)();
     expect(onPick).toHaveBeenCalledWith("plan");
   });
+  describe("steps (alt küme)", () => {
+    const circlesOf = (html: string) =>
+      [...html.matchAll(/<span class="grid size-5[^>]*>(?:<svg|(\d))/g)].map(
+        (match) => match[1] ?? "check",
+      );
+
+    it("without steps the markup is the one of the five steps", () => {
+      const plain = render({ module: "seo", current: "plan" });
+      const explicit = render({
+        module: "seo",
+        current: "plan",
+        steps: ["brief", "plan", "create", "review", "deliver"],
+      });
+      expect(explicit).toBe(plain);
+      expect(labelsOf(plain)).toHaveLength(5);
+    });
+
+    it("renders only the given steps, numbered by their place in the subset", () => {
+      const html = render({
+        module: "seo",
+        current: "plan",
+        steps: ["brief", "plan", "deliver"],
+      });
+      expect(labelsOf(html)).toEqual(["Brief", "Plan", "Publish"]);
+      // Brief done (check), Plan current (2), Publish to do (3).
+      expect(circlesOf(html)).toEqual(["check", "2", "3"]);
+      expect(html.match(/aria-current="step"/g)).toHaveLength(1);
+      expect(html.match(/, done/g)).toHaveLength(1);
+    });
+
+    it("complete marks every shown step done", () => {
+      const html = render({
+        module: "seo",
+        current: "deliver",
+        complete: true,
+        steps: ["brief", "plan", "deliver"],
+      });
+      expect(html).not.toContain("aria-current");
+      expect(html.match(/<svg/g)).toHaveLength(3);
+    });
+
+    it("openable steps outside the subset are not drawn", () => {
+      const html = render({
+        module: "seo",
+        current: "deliver",
+        steps: ["brief", "plan", "deliver"],
+        openable: { brief: true, plan: true, review: true },
+        onPick: vi.fn(),
+      });
+      expect(html.match(/<button/g)).toHaveLength(2);
+    });
+  });
 });

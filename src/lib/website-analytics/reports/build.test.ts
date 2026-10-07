@@ -14,11 +14,14 @@ import {
   withNarrative,
 } from "./build";
 import { readWebsiteReportCard } from "./card";
+import { reportFactsOf } from "./facts";
+import { websiteReportChatDigest } from "./text";
 import { WEBSITE_REPORT_COPY } from "./copy";
 import type {
   GoalProgressView,
   MonthlyReportInput,
   PulseInput,
+  ReportAgentelseSection,
   ReportFindingSnap,
   ReportLinkInfo,
   ReportWindowData,
@@ -298,6 +301,60 @@ function monthlyInput(
     ...partial,
   };
 }
+
+
+// GA-F6 bölümü örneği: etiketlerden biri HTML karakteri taşır.
+const AGENTELSE: ReportAgentelseSection = {
+  tracked: {
+    columns: [
+      { label: "Sessions (GA4)", format: "count" },
+      { label: "Engagement rate", format: "percent" },
+      { label: "Key events (GA4)", format: "count" },
+    ],
+    rows: [{ label: "Meta ads: <b>Spring</b> sale", values: [1200, 61.2, 30] }],
+    other: [40, null, 1],
+    notes: [],
+  },
+  ads: {
+    columns: [
+      { label: "Link clicks (Meta)", format: "count" },
+      { label: "Sessions (GA4)", format: "count" },
+    ],
+    rows: [{ label: "Spring sale", values: [900, 700] }],
+    other: null,
+    notes: [],
+  },
+  googleAds: null,
+  notes: ["Only visits through links Agentelse tagged are counted."],
+};
+
+describe("buildWeeklyCard agentelse section", () => {
+  it("adds no agentelse key without the input", () => {
+    for (const input of [weeklyInput(), weeklyInput({ agentelse: null })]) {
+      const card = buildWeeklyCard(input);
+      expect(Object.hasOwn(card.body, "agentelse")).toBe(false);
+    }
+  });
+
+  it("copies the section into the body and the reader keeps it", () => {
+    const card = buildWeeklyCard(weeklyInput({ agentelse: AGENTELSE }));
+    if (card.body.variant !== "weekly") throw new Error("variant");
+    expect(card.body.agentelse).toEqual(AGENTELSE);
+    expect(readWebsiteReportCard(JSON.parse(JSON.stringify(card)))).toEqual(
+      card,
+    );
+  });
+
+  it("leaves the narrative facts and the chat digest unchanged", () => {
+    const plain = buildWeeklyCard(weeklyInput());
+    const withSection = buildWeeklyCard(weeklyInput({ agentelse: AGENTELSE }));
+    expect(reportFactsOf(withSection, [])).toEqual(reportFactsOf(plain, []));
+    const digest = websiteReportChatDigest(withSection);
+    expect(digest).toBe(websiteReportChatDigest(plain));
+    expect(digest).not.toContain("Spring");
+    expect(digest).not.toContain("From Agentelse");
+  });
+});
 
 describe("buildWeeklyCard", () => {
   it("survives the card reader unchanged", () => {

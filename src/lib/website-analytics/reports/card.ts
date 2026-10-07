@@ -17,6 +17,7 @@ import {
   type PulseBody,
   type PulseChange,
   type PulseKpi,
+  type ReportAgentelseSection,
   type ReportFindingSnap,
   type ReportForecastSnap,
   type ReportGoalSnap,
@@ -262,6 +263,27 @@ function readSections(record: Record<string, unknown>): PeriodReportSections {
   };
 }
 
+const MAX_AGENTELSE_NOTES = 5;
+const MAX_AGENTELSE_NOTE_CHARS = 300;
+const agentelseNoteSchema = z.string().max(MAX_AGENTELSE_NOTE_CHARS);
+
+// GA-F6 bölümü isteğe bağlıdır: yok ya da bozuksa null döner ve kart kendi
+// başına yaşar (eski kartlar öncekiyle aynı okunur).
+function readAgentelse(value: unknown): ReportAgentelseSection | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const tracked = readTable(record.tracked, REPORT_CAPS.agentelse);
+  const ads = readTable(record.ads, REPORT_CAPS.agentelseAds);
+  const googleAds = readTable(record.googleAds, REPORT_CAPS.agentelseAds);
+  if (!tracked && !ads && !googleAds) return null;
+  return {
+    tracked,
+    ads,
+    googleAds,
+    notes: readList(record.notes, agentelseNoteSchema, MAX_AGENTELSE_NOTES),
+  };
+}
+
 const weeklyHeadSchema = z.object({
   from: z.string(),
   to: z.string(),
@@ -272,6 +294,7 @@ const weeklyHeadSchema = z.object({
 function readWeekly(record: Record<string, unknown>): WeeklyBody | null {
   const head = weeklyHeadSchema.safeParse(record);
   if (!head.success) return null;
+  const agentelse = readAgentelse(record.agentelse);
   return {
     variant: "weekly",
     ...readSections(record),
@@ -280,6 +303,7 @@ function readWeekly(record: Record<string, unknown>): WeeklyBody | null {
     previous: head.data.previous,
     lastYear: head.data.lastYear,
     forecasts: readList(record.forecasts, forecastSnapSchema, MAX_FORECASTS),
+    ...(agentelse ? { agentelse } : {}),
   };
 }
 

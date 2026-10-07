@@ -124,7 +124,15 @@ etki (aylık ek tıklama ya da erişim) × güven (SIGNIFICANT 1, DIRECTIONAL 0,
 - Kural değerlendirildi ve konu artık görülmüyorsa RESOLVED.
 - Kural değerlendirilemiyor ve 35 gündür görülmüyorsa EXPIRED.
 - Yeniden açılmama: reddedilen konu 56 gün; DONE değerlendirme penceresi boyunca (başlık 28, içerik yenileme 56, yeni içerik 90 gün); ACCEPTED 90 gün.
-- EVALUATED SC-F6'ya kaldı. Bulgular 24 ay saklanır; saklama bayrak kapatılsa da sürer.
+- EVALUATED SC-F6'da yazılır (eylem değerlendirilince; [search-actions.md](search-actions.md)). Bulgular 24 ay saklanır; saklama bayrak kapatılsa da sürer.
+
+## Fix this (SC-F6)
+
+`SEO_ACTIONS` + `SEO_HEALTH` + `SEO_CRAWL` açıkken fırsat satırlarında (Accept / Dismiss'in yanında) "Fix this" çıkar; ayrıntı [search-actions.md](search-actions.md).
+
+- `actionKind` TITLE_META → SEO Manager "Fix the snippet" Work'ü, CONTENT_REFRESH → "Refresh a page", NEW_CONTENT ve LOCALIZE → makale modu. INTERNAL_LINKS, CONSOLIDATE, TECH_FIX ve SCHEMA "Actions & results"ta kontrol listesi maddesine ("Mark as done") dönüşür. INVESTIGATE'te Fix this yoktur.
+- Bulgunun anahtar kelimesi karta yazılmaz: kullanıcıya "Suggested from Search Console" önerisi olarak sunulur, tek dokunuşla benimsenir.
+- "Mark done" (SEO_ACTIONS) ölçümü başlatır: her Done bir `SeoAction` doğurur ya da uygular. Bulgunun `evaluateAfter`'ı eylem değerlendirilebilene dek uzatılır; böylece aynı sayfa için ikinci fırsat ya da ikinci Fix this çıkmaz.
 
 ## LLM kullanımı ve Limited Use
 

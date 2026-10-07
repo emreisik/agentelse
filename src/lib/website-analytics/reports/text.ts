@@ -16,6 +16,7 @@ import {
   type ReportFindingSnap,
   type ReportForecastSnap,
   type ReportGoalSnap,
+  type ReportAgentelseSection,
   type ReportKpi,
   type ReportTable,
   type ReportValueFormat,
@@ -247,6 +248,28 @@ function tableLines(
   return lines;
 }
 
+// GA-F6: "From Agentelse" bölümü; yalnız haftalık gövdede ve doluysa yazılır.
+function agentelseLines(
+  section: ReportAgentelseSection | undefined,
+  currency: string | null,
+): string[] {
+  if (!section) return [];
+  const hasRows = (table: ReportTable | null): table is ReportTable =>
+    table !== null && (table.rows.length > 0 || table.other !== null);
+  const tables: [string, ReportTable | null][] = [
+    ["Tracked links", section.tracked],
+    ["Your ads on your website", section.ads],
+    ["Google Ads", section.googleAds],
+  ];
+  const lines: string[] = [];
+  for (const [title, table] of tables) {
+    if (hasRows(table)) lines.push(...tableLines(title, table, currency));
+  }
+  if (lines.length === 0) return [];
+  for (const note of section.notes) lines.push(`  ${note}`);
+  return ["From Agentelse", ...lines];
+}
+
 function kpiLines(kpis: readonly ReportKpi[], card: WebsiteReportCardData) {
   const lines: string[] = ["Key numbers"];
   for (const kpi of kpis) {
@@ -413,6 +436,9 @@ export function websiteReportPlainText(card: WebsiteReportCardData): string {
         moverLines("Pages gaining visits", body.winners),
         moverLines("Pages losing visits", body.losers),
         tableLines("Key events", body.keyEvents, currency),
+        body.variant === "weekly"
+          ? agentelseLines(body.agentelse, currency)
+          : [],
         body.aiAssistants
           ? tableLines("AI assistants", body.aiAssistants, currency)
           : [],

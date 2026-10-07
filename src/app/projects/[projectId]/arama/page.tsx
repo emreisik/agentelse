@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
 import { GscFlags } from "@/lib/seo/flags";
 import { SeoReportFlags } from "@/lib/seo/reports/flags";
+import { SeoActionFlags } from "@/lib/seo/action-flags";
 import { SeoInsightFlags } from "@/lib/seo/insight-flags";
 import { DEFAULT_SEARCH_PERIOD, isSearchPeriod } from "@/lib/seo/periods";
 import { refreshSearchAnalyticsAction } from "@/server/actions/search-analytics-actions";
@@ -21,6 +22,7 @@ import {
 } from "@/server/seo/report";
 import { AppShell } from "@/components/layout/app-shell";
 import { BrandTermsForm } from "@/components/search-analytics/brand-terms-form";
+import { SearchActionsSection } from "@/components/search-actions/actions-section";
 import { SearchHealthSection } from "@/components/search-health/search-health-section";
 import { BrandTermSuggestions } from "@/components/search-opportunities/brand-term-suggestions";
 import { SearchOpportunitiesSection } from "@/components/search-opportunities/opportunities-section";
@@ -144,6 +146,8 @@ export default async function SearchPage({
   const opportunity =
     typeof sp.opportunity === "string" ? sp.opportunity : null;
   const insights = SeoInsightFlags.active();
+  // SC-F6 (SEO_ACTIONS + SEO_HEALTH + SEO_CRAWL): "Actions & results" bölümü; bayrak kapalıyken işaretleme aynıdır. ?action= ile gelinen eylem vurgulanır.
+  const actionHighlight = typeof sp.action === "string" ? sp.action : null;
   const base = `/projects/${projectId}/arama`;
   const result = await buildSearchReport(projectId, periodKey, { queryFilter });
   const connectorsHref = `/projects/${projectId}/integrations?integration=google_search_console`;
@@ -223,6 +227,15 @@ export default async function SearchPage({
                 <SearchOpportunitiesSection
                   projectId={projectId}
                   highlight={opportunity}
+                />
+              </Suspense>
+            ) : null}
+            {/* SC-F6 (SEO_ACTIONS): Actions & results; bayrak kapalıyken hiç çizilmez. */}
+            {SeoActionFlags.loop() ? (
+              <Suspense fallback={null}>
+                <SearchActionsSection
+                  projectId={projectId}
+                  highlight={actionHighlight}
                 />
               </Suspense>
             ) : null}

@@ -189,6 +189,30 @@ export const GA_RULES: readonly GaRuleDef[] = [
     report: "campaign",
   },
   {
+    key: "AN13",
+    title: "Ad clicks and website visits don't line up",
+    cadence: "weekly",
+    list: "opportunities",
+    recurrence: "condition",
+    evaluable: never,
+    ttlDays: 28,
+    version: 1,
+    signal: null,
+    report: "campaign",
+  },
+  {
+    key: "AN14",
+    title: "Google Ads results changed",
+    cadence: "weekly",
+    list: "changed",
+    recurrence: "condition",
+    evaluable: never,
+    ttlDays: 28,
+    version: 1,
+    signal: null,
+    report: null,
+  },
+  {
     key: "AN15",
     title: "Goal pace",
     cadence: "daily",
@@ -204,13 +228,12 @@ export const GA_RULES: readonly GaRuleDef[] = [
 ];
 
 // Bulgu üretmeyen ya da ertelenen kurallar (dokümantasyon ve operatör kartı).
+// AN13 ve AN14 GA-F6 ile gerçek kural oldu (GA_RULES).
 export const GA_DEFERRED_RULES: readonly {
-  key: "AN13" | "AN14" | "AN16" | "AN11-AOV";
+  key: "AN16" | "AN11-AOV";
   title: string;
   note: string;
 }[] = [
-  { key: "AN13", title: "Meta results cross-check", note: "GA-F6" },
-  { key: "AN14", title: "Google Ads return on spend", note: "GA-F6" },
   {
     key: "AN16",
     title: "Holidays and seasonality",

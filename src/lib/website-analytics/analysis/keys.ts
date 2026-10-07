@@ -68,6 +68,11 @@ export function subjectLabelOf(subject: string): string {
     return to === undefined ? (from ?? "") : `${from} → ${to}`;
   }
   if (subject.startsWith("goal:")) return "Goal";
+  if (subject.startsWith("meta_campaign:")) return "Meta campaign";
+  // Google Ads kampanya adı konuya maskelenmiş yazılır.
+  if (subject.startsWith("google_ads:")) {
+    return subject.slice("google_ads:".length);
+  }
   switch (subject) {
     case "device:mobile":
       return "Mobile";
@@ -169,4 +174,8 @@ export const GaSubjects = {
   campaign: (name: string, source: string, medium: string): string =>
     `campaign:${cap(name)}|${cap(source)}|${cap(medium)}`,
   goal: (goalId: string): string => `goal:${cap(goalId)}`,
+  metaCampaign: (id: string): string => `meta_campaign:${cap(id)}`,
+  // Ad zaten maskelenmiş olmalı (google-ads.ts maskedAdsCampaign).
+  googleAdsCampaign: (maskedName: string): string =>
+    `google_ads:${cap(maskedName)}`,
 };

@@ -7,7 +7,12 @@ import {
   isEvaluable,
   isGaRuleKey,
 } from "./registry";
-import { GA_RULE_KEYS, type GaFindingEvidence, type GaRuleKey } from "./types";
+import {
+  GA_ADS_RULE_KEYS,
+  GA_RULE_KEYS,
+  type GaFindingEvidence,
+  type GaRuleKey,
+} from "./types";
 
 // Bu dosyanın kanıtladığı: her kural anahtarının tanımı var, başlıklarda
 // rakam yok, evaluable ve recurrence tabloları sözleşmeyle aynı.
@@ -74,6 +79,35 @@ describe("GA_RULES", () => {
     }
   });
 
+  it("has 15 rule keys with AN13 and AN14 between AN12 and AN15", () => {
+    expect(GA_RULE_KEYS).toHaveLength(15);
+    expect(GA_RULE_KEYS.slice(11)).toEqual(["AN12", "AN13", "AN14", "AN15"]);
+    expect([...GA_ADS_RULE_KEYS]).toEqual(["AN13", "AN14"]);
+  });
+
+  it("AN13 and AN14 rows follow the contract", () => {
+    expect(gaRule("AN13")).toMatchObject({
+      title: "Ad clicks and website visits don't line up",
+      cadence: "weekly",
+      list: "opportunities",
+      recurrence: "condition",
+      ttlDays: 28,
+      version: 1,
+      signal: null,
+      report: "campaign",
+    });
+    expect(gaRule("AN14")).toMatchObject({
+      title: "Google Ads results changed",
+      cadence: "weekly",
+      list: "changed",
+      recurrence: "condition",
+      ttlDays: 28,
+      version: 1,
+      signal: null,
+      report: null,
+    });
+  });
+
   it("recurrence: AN1, AN2, AN7, AN11, AN15 are event rules", () => {
     const events = GA_RULES.filter((rule) => rule.recurrence === "event").map(
       (rule) => rule.key,
@@ -98,6 +132,8 @@ describe("GA_RULES", () => {
       AN10: ["monthly", "opportunities", 35, null, null],
       AN11: ["weekly", "opportunities", 14, null, null],
       AN12: ["weekly", "opportunities", 28, null, "campaign"],
+      AN13: ["weekly", "opportunities", 28, null, "campaign"],
+      AN14: ["weekly", "changed", 28, null, null],
       AN15: ["daily", "opportunities", 31, null, null],
     };
     for (const rule of GA_RULES) {
@@ -129,24 +165,30 @@ describe("GA_RULES", () => {
     expect(isEvaluable("AN4", an4("above"))).toBe(false);
     expect(isEvaluable("AN12", an12("below"))).toBe(true);
     expect(isEvaluable("AN12", an12("above"))).toBe(false);
+    // AN13 ve AN14 hiçbir kanıtta üzerinde çalışılabilir değil.
+    expect(isEvaluable("AN13", an12("below"))).toBe(false);
+    expect(isEvaluable("AN14", an12("below"))).toBe(false);
   });
 });
 
 describe("GA_DEFERRED_RULES and keys", () => {
-  it("lists AN13, AN14, AN16 and the AOV part of AN11", () => {
+  it("lists only AN16 and the AOV part of AN11", () => {
     expect(GA_DEFERRED_RULES.map((rule) => [rule.key, rule.note])).toEqual([
-      ["AN13", "GA-F6"],
-      ["AN14", "GA-F6"],
       ["AN16", "modifier: holidays and seasonality"],
       ["AN11-AOV", "recorded in AN11 evidence, not evaluated yet"],
     ]);
-    expect(GA_DEFERRED_RULES[3]!.title).toBe("Basket value change");
+    expect(GA_DEFERRED_RULES[1]!.title).toBe("Basket value change");
+    const keys: string[] = GA_DEFERRED_RULES.map((rule) => rule.key);
+    expect(keys).not.toContain("AN13");
+    expect(keys).not.toContain("AN14");
   });
 
   it("isGaRuleKey accepts only finding rule keys", () => {
     expect(isGaRuleKey("AN1")).toBe(true);
     expect(isGaRuleKey("AN15")).toBe(true);
-    expect(isGaRuleKey("AN13")).toBe(false);
+    expect(isGaRuleKey("AN13")).toBe(true);
+    expect(isGaRuleKey("AN14")).toBe(true);
+    expect(isGaRuleKey("AN16")).toBe(false);
     expect(isGaRuleKey("MH1")).toBe(false);
     expect(isGaRuleKey(1)).toBe(false);
   });

@@ -30,6 +30,8 @@ const rules = vi.hoisted(() => ({
   evaluateNotFound: vi.fn(),
   evaluateContentEngagement: vi.fn(),
   evaluateFunnel: vi.fn(),
+  evaluateAdsCrossCheck: vi.fn(),
+  evaluateGoogleAds: vi.fn(),
 }));
 
 vi.mock("./anomaly", () => ({
@@ -60,6 +62,12 @@ vi.mock("./content", () => ({
   evaluateContentEngagement: rules.evaluateContentEngagement,
 }));
 vi.mock("./ecommerce", () => ({ evaluateFunnel: rules.evaluateFunnel }));
+vi.mock("./ads-cross-check", () => ({
+  evaluateAdsCrossCheck: rules.evaluateAdsCrossCheck,
+}));
+vi.mock("./google-ads", () => ({
+  evaluateGoogleAds: rules.evaluateGoogleAds,
+}));
 
 const {
   applyQualityGates,
@@ -165,6 +173,8 @@ beforeEach(() => {
   rules.evaluateNotFound.mockReturnValue(null);
   rules.evaluateContentEngagement.mockReturnValue(null);
   rules.evaluateFunnel.mockReturnValue(null);
+  rules.evaluateAdsCrossCheck.mockReturnValue([]);
+  rules.evaluateGoogleAds.mockReturnValue([]);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 
@@ -200,6 +210,48 @@ describe("runWeeklyRules", () => {
     expect(
       runWeeklyRules(weeklyInput({ month })).map((c) => c.ruleKey),
     ).toEqual(["AN10"]);
+  });
+});
+
+describe("runWeeklyRules, ads rules (GA-F6)", () => {
+  it("gives the old output when the input has no ads", () => {
+    rules.evaluateDeviceGap.mockReturnValue(candidate("AN5"));
+    const input = weeklyInput();
+    expect(Object.hasOwn(input, "ads")).toBe(false);
+    expect(runWeeklyRules(input).map((c) => c.ruleKey)).toEqual(["AN5"]);
+  });
+
+  it("includes AN13 and AN14 when the rules return candidates", () => {
+    rules.evaluateAdsCrossCheck.mockReturnValue([candidate("AN13")]);
+    rules.evaluateGoogleAds.mockReturnValue([
+      candidate("AN14", { kind: "CHANGE" }),
+    ]);
+    expect(runWeeklyRules(weeklyInput()).map((c) => c.ruleKey)).toEqual([
+      "AN13",
+      "AN14",
+    ]);
+  });
+
+  it("drops both below 21 used days, even though AN14 has no report", () => {
+    rules.evaluateAdsCrossCheck.mockReturnValue([candidate("AN13")]);
+    rules.evaluateGoogleAds.mockReturnValue([
+      candidate("AN14", { kind: "CHANGE" }),
+    ]);
+    const input = weeklyInput({ window28: window28(20) });
+    expect(runWeeklyRules(input)).toEqual([]);
+  });
+
+  it("an AN13 failure skips only AN13", () => {
+    rules.evaluateAdsCrossCheck.mockImplementation(() => {
+      throw new Error("boom");
+    });
+    rules.evaluateGoogleAds.mockReturnValue([
+      candidate("AN14", { kind: "CHANGE" }),
+    ]);
+    expect(runWeeklyRules(weeklyInput()).map((c) => c.ruleKey)).toEqual([
+      "AN14",
+    ]);
+    expect(console.warn).toHaveBeenCalledWith("[ga-analyze] rule AN13 failed");
   });
 });
 
@@ -279,6 +331,16 @@ describe("applyQualityGates", () => {
       window28: window28(26, 20),
     });
     expect(an4).toMatchObject({ confidence: "SIGNIFICANT", severity: "WARN" });
+  });
+
+  it("a rule without a report (AN14) is only gated by used days", () => {
+    const an14 = candidate("AN14", { kind: "CHANGE" });
+    expect(
+      applyQualityGates([an14], {
+        measurementDegraded: false,
+        window28: window28(26, 0),
+      }),
+    ).toEqual([an14]);
   });
 
   it("forces DIRECTIONAL on every candidate when measurement is degraded", () => {

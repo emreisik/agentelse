@@ -14,6 +14,7 @@ Plan: [google-analytics-plan.md](google-analytics-plan.md) §3.3, §3.4, §3.9, 
 | Integrations: "Data through …", mülk kartı, saklama beyanı; gizlilik metni                                                                                                                                                                                                                   | Yapıldı                                                       |
 | Bölüm 2: haftalık dilimler + site_search (`GA_WEEKLY`), katalog denetimi + google_ads/search_console (`GA_CATALOG_CHECKS`), Today so far / Right now (`GA_LIVE`), Analytics modülünde kanal/açılış sayfası/key event listeleri (`GA_MODULE_SECTIONS`), Brand sekmesi Website kartı (`GA_BRAND_CARD`), /health sayaçları | Yapıldı (bayraklı, canlı denenmedi) |
 | GA-F3 ölçüm sağlığı (`GA_HEALTH`) | Yapıldı, bkz. [measurement-health.md](measurement-health.md) |
+| GA-F6 UTM, atıf, AN13/AN14, MH25 (`GA_UTM`) | Yapıldı (canlı denenmedi), bkz. [website-attribution.md](website-attribution.md) |
 
 ## Bayraklar ve açılış
 
@@ -123,6 +124,10 @@ totals (10 metrik) + channel, source_medium, campaign, landing_page, page, event
 ## Website insights (GA-F4)
 
 Ambarın üstünde çalışan analiz motoru [website-insights.md](website-insights.md)'de anlatılır. `GA_INSIGHTS=off|shadow|on` (`GA_SYNC` gerekir) açıkken Website sayfasının (`/projects/[id]/site`) rapor gövdesinin altında "Insights" bölümü "What changed" ve "Opportunities" listelerini gösterir (Accept / Dismiss / Mark done). `GA_INSIGHTS=on` iken (ya da gölge kipte `GA_INSIGHTS_PROJECTS`'teki projelerde) eski `google-analytics-scanner.ts`'in GA kısmı (`DECLINING_TRAFFIC`) çalışmaz; düşüşleri AN1/AN2 bulur.
+
+## From Agentelse and your ads (GA-F6)
+
+`GA_UTM=true` + `GA_SYNC=true` açıkken Website sayfası (`/projects/[id]/site`) rapor gövdesinin hemen altında "From Agentelse" (Agentelse'in etiketlediği linklerden gelen ziyaretler: reklamlar ve bio linki) ve "Your ads on your website" (Meta reklamlarının harcama, tıklama, sonuçlarıyla GA4 oturum ve key event'leri; her sütun kaynağı başlıkta taşır) bölümlerini, `google_ads` raporu varsa "Google Ads (from GA4)" tablosunu gösterir. Ölçüm sağlığı panelinin altında "Code MH25" kartı (Agentelse UTM kapsamı) çıkar. AN13/AN14 `GA_INSIGHTS` içinde koşar; haftalık rapor `GA_REPORTS` ile "From Agentelse" bölümü taşır. Ayrıntı ve bayrak tablosu: [website-attribution.md](website-attribution.md).
 
 ## Website reports (GA-F5)
 

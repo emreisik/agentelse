@@ -20,6 +20,12 @@ vi.mock("@/server/actions/search-health-actions", () => ({
   deleteSiteAuditDataAction: vi.fn(),
 }));
 
+// SC-F6: "I fixed this" düğmesi sunucu eylemini içe aktarır; burada işaretlenir.
+vi.mock("@/components/search-actions/track-fix-button", () => ({
+  TrackFixButton: ({ alertId }: { alertId: string }) =>
+    createElement("span", { "data-track-fix": alertId }),
+}));
+
 // ActionForm geçirgen: eylem adını işaretler.
 vi.mock("@/components/shared/action-form", () => ({
   ActionForm: ({
@@ -261,6 +267,30 @@ describe("HealthPanelView", () => {
     expect(html.match(/<details[^>]*open=""/g)).toHaveLength(1);
     expect(plain).toContain("Mute for 7 days");
     expect(html).toContain('data-action="mute"');
+  });
+
+  it("renders the tracking button only for issues with a tracked state (SC-F6)", () => {
+    const issue = (id: string) => ({
+      id,
+      source: "SEO" as const,
+      kind: "SEO_KEY_PAGE_NOINDEX",
+      severity: "WARN" as const,
+      title: `Issue ${id}`,
+      detail: null,
+      lastSeenAt: NOW,
+      guide: { title: "Fix", steps: ["Do it"], screen: null, learnMoreUrl: null },
+      open: false,
+    });
+    const value = panel({ issues: [issue("a1"), issue("a2")] });
+    expect(render(value)).not.toContain("data-track-fix");
+    const html = renderToStaticMarkup(
+      createElement(HealthPanelView, {
+        panel: value,
+        tracked: { a1: { trackable: true } },
+      }),
+    );
+    expect(html).toContain('data-track-fix="a1"');
+    expect(html).not.toContain('data-track-fix="a2"');
   });
 
   it("shows the empty issue state", () => {

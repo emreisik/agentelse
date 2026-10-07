@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
 import { parseIdeaConcept } from "@/lib/ideas/concept";
+import { SeoActionFlags, seoActionsAllowedFor } from "@/lib/seo/action-flags";
 import {
   isFlowModuleKey,
   newModuleFlowCard,
@@ -107,13 +108,29 @@ export async function startModuleFlowAction(
         ...(source.success ? { sourceCreativeId: source.data } : {}),
         ...(ideaHint ?? {}),
       };
+      // SEO_ACTIONS açıkken SEO kartı oluşurken damgalanır; arayüz karardan bu
+      // damgaya bakar (bayrak kapalıyken kart bugünküyle aynıdır).
+      const features =
+        module === "seo" && SeoActionFlags.manager()
+          ? {
+              features: {
+                modes:
+                  SeoActionFlags.loop() && seoActionsAllowedFor(projectId),
+                live: true,
+              },
+            }
+          : {};
+      const cardData: Record<string, unknown> = {
+        ...(Object.keys(data).length > 0 ? { hint: data } : {}),
+        ...features,
+      };
       const row = await IdeaChatRepository.postSystemMessage({
         workspaceId: gate.auth.workspaceId,
         projectId,
         ideaId: null,
         workId: work.id,
         text: title,
-        card: Object.keys(data).length > 0 ? { ...card, data: { hint: data } } : card,
+        card: Object.keys(cardData).length > 0 ? { ...card, data: cardData } : card,
       });
       await WorkRepository.touch(projectId, work.id, {
         summary: title,

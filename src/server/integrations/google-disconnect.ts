@@ -11,10 +11,12 @@ import {
   type GoogleConnectionRef,
 } from "@/server/integrations/google/revoke-policy";
 import { GOOGLE_PROVIDER } from "@/server/integrations/google/services";
+import { forgetSeoActionsForCredential } from "@/server/seo/actions/forget";
 import { deleteSearchConsoleAlerts } from "@/server/seo/health/alerts";
 import { forgetSearchOpportunitiesForCredential } from "@/server/seo/opportunities/forget";
 import { SeoSites } from "@/server/seo/site/sites";
 import { deleteGaInsightDerivedDataForCredential } from "@/server/website-analytics/analysis/cleanup";
+import { deleteGaAttributionDataForCredential } from "@/server/website-analytics/attribution/cleanup";
 import { deleteGaHealthAlertsForCredential } from "@/server/website-analytics/health/cleanup";
 import { deleteGaReportDataForCredential } from "@/server/website-analytics/reports/cleanup";
 import { forgetSeoGoalValues } from "@/server/seo/reports/goals";
@@ -148,6 +150,16 @@ export async function disconnectGoogleCredential(
       );
     },
   );
+  // GA-F6: GA'dan türeyen "ga-utm:" öğrenmeleri ve Meta karar kanıtındaki bütün ga4_* sayıları hemen silinir. TrackedLink ve link izleme ayarı Google verisi değildir, kalır. Search Console kimliğinde no-op.
+  // Hata Disconnect'i durdurmasın; kalanı GaRetention'ın proje taraması (sweepOrphanGaAttributionData) siler.
+  await deleteGaAttributionDataForCredential(credential.id).catch(
+    (error: unknown) => {
+      console.error(
+        "[google-disconnect] attribution data could not be deleted:",
+        error instanceof Error ? error.name : error,
+      );
+    },
+  );
   await prisma.gaPropertyLink.deleteMany({
     where: { credentialId: credential.id },
   });
@@ -190,6 +202,15 @@ export async function disconnectGoogleCredential(
       select: { projectId: true },
     })
   ).map((row) => row.projectId);
+  // SC-F6: Search Console bağına ait SEO eylemleri (ölçüm sonuçları, inceleme kanıtı), onlardan türeyen SEO öğrenmeleri ve SEO kartlarındaki Search Console verisi bayraktan bağımsız hemen silinir.
+  await forgetSeoActionsForCredential(credential.id).catch(
+    (error: unknown) => {
+      console.error(
+        "[google-disconnect] seo actions could not be deleted:",
+        error instanceof Error ? error.message : error,
+      );
+    },
+  );
   await prisma.gscSiteLink.deleteMany({
     where: { credentialId: credential.id },
   });

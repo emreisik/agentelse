@@ -1,3 +1,8 @@
+import type {
+  AdsCrossCheckCampaign,
+  GaAdsCrossCheckInput,
+  GoogleAdsCampaignRow,
+} from "@/lib/website-analytics/attribution/types";
 import { addDays, daysInRange } from "@/lib/website-analytics/days";
 import { weekSunday } from "@/lib/website-analytics/weeks";
 
@@ -170,6 +175,72 @@ export function makeWeeklyInput(
     siteSearch: null,
     currency: null,
     measurementDegraded: false,
+    ...partial,
+  };
+}
+
+// GA-F6 (AN13): kodlu bir Meta kampanyası; varsayılan sağlıklı (200 tıklama,
+// 190 oturum, 20 sonuç / 18 key event). meta ve ga alanları ayrı ayrı ezilir.
+export function makeAdsCampaign(
+  partial: {
+    campaignExternalId?: string;
+    label?: string;
+    meta?: Partial<AdsCrossCheckCampaign["meta"]>;
+    ga?: Partial<AdsCrossCheckCampaign["ga"]>;
+  } = {},
+): AdsCrossCheckCampaign {
+  const campaignExternalId = partial.campaignExternalId ?? "c1";
+  const groupKey = `meta:${campaignExternalId}`;
+  return {
+    groupKey,
+    campaignExternalId,
+    label: partial.label ?? "Spring sale",
+    meta: {
+      groupKey,
+      ads: 2,
+      spend: 500,
+      linkClicks: 200,
+      landingPageViews: 150,
+      results: 20,
+      resultActionType: "offsite_conversion.fb_pixel_purchase",
+      activeDays: 14,
+      ...partial.meta,
+    },
+    ga: {
+      sessions: 190,
+      engagedSessions: 120,
+      keyEvents: 18,
+      revenue: 0,
+      ...partial.ga,
+    },
+  };
+}
+
+export function makeGoogleAdsRow(
+  partial: Partial<GoogleAdsCampaignRow> = {},
+): GoogleAdsCampaignRow {
+  return {
+    campaign: "Brand search",
+    cost: 1000,
+    clicks: 500,
+    sessions: 450,
+    keyEvents: 50,
+    revenue: 4000,
+    ...partial,
+  };
+}
+
+// Pencereler FIXTURE_WEEK'in 28 günlük penceresi ve bir öncesi.
+export function makeAdsInput(
+  partial: Partial<GaAdsCrossCheckInput> = {},
+): GaAdsCrossCheckInput {
+  const { sunday } = FIXTURE_WEEK;
+  return {
+    window: { from: addDays(sunday, -27), to: sunday },
+    previousWindow: { from: addDays(sunday, -55), to: addDays(sunday, -28) },
+    metaCurrency: "EUR",
+    campaigns: [],
+    googleAds: null,
     ...partial,
   };
 }

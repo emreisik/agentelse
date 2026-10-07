@@ -154,7 +154,7 @@ describe("findingViewOf", () => {
 
   it("rejects unreadable evidence and unknown rule keys", () => {
     expect(findingViewOf(row({ evidence: { v: 2 } }))).toBeNull();
-    expect(findingViewOf(row({ ruleKey: "AN13" }))).toBeNull();
+    expect(findingViewOf(row({ ruleKey: "AN16" }))).toBeNull();
     expect(findingViewOf(row({ status: "WHATEVER" }))).toBeNull();
   });
 });
@@ -289,6 +289,37 @@ describe("loadGaInsightsOperatorView", () => {
         createdAt: NOW.toISOString(),
         verdict: null,
       },
+    ]);
+  });
+
+  it("counts AN13 and AN14 per rule only while GA_UTM is on", async () => {
+    vi.stubEnv("GA_INSIGHTS", "on");
+    db.project.findMany.mockResolvedValue([]);
+    db.gaFinding.groupBy.mockImplementation((args: { by: string[] }) =>
+      Promise.resolve(
+        args.by[0] === "ruleKey"
+          ? [
+              { ruleKey: "AN3", _count: { _all: 2 } },
+              { ruleKey: "AN13", _count: { _all: 5 } },
+              { ruleKey: "AN14", _count: { _all: 1 } },
+            ]
+          : [],
+      ),
+    );
+    db.gaFinding.count.mockResolvedValue(0);
+    db.gaAnalysisRun.count.mockResolvedValue(0);
+    db.gaPropertyLink.count.mockResolvedValue(0);
+
+    vi.stubEnv("GA_UTM", "");
+    const off = await loadGaInsightsOperatorView({ userId: "u-1" }, NOW);
+    expect(off?.counters.byRule).toEqual([{ ruleKey: "AN3", open: 2 }]);
+
+    vi.stubEnv("GA_UTM", "true");
+    const on = await loadGaInsightsOperatorView({ userId: "u-1" }, NOW);
+    expect(on?.counters.byRule).toEqual([
+      { ruleKey: "AN13", open: 5 },
+      { ruleKey: "AN3", open: 2 },
+      { ruleKey: "AN14", open: 1 },
     ]);
   });
 

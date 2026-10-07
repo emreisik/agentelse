@@ -3,10 +3,12 @@ import {
   OpportunityListView,
 } from "@/components/search-opportunities/opportunity-list";
 import { ShadowReview } from "@/components/search-opportunities/shadow-review";
+import { SeoActionFlags, seoActionsAllowedFor } from "@/lib/seo/action-flags";
 import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
+import { loadFixThisStates } from "@/server/seo/actions/fix-this";
 import { loadOpportunitiesPanel } from "@/server/seo/opportunities/panel";
 
 // Search sayfasındaki "Opportunities" bölümü (SC-F4,
@@ -34,6 +36,14 @@ export async function SearchOpportunitiesSection({
     highlight: highlight ?? null,
   }).catch(() => null);
   if (!panel) return null;
+  // SC-F6: "Fix this" durumları yalnız eylem döngüsü açıkken okunur; kapalıyken liste bugünküyle aynı çizilir.
+  const fixThis =
+    SeoActionFlags.loop() && seoActionsAllowedFor(projectId)
+      ? await loadFixThisStates(
+          projectId,
+          [...panel.items, ...panel.accepted].map((item) => item.id),
+        ).catch(() => ({}))
+      : undefined;
   return (
     <section
       id="opportunities"
@@ -44,7 +54,7 @@ export async function SearchOpportunitiesSection({
       {panel.mode === "shadow" ? (
         <ShadowReview panel={panel} />
       ) : (
-        <OpportunityListView panel={panel} />
+        <OpportunityListView panel={panel} fixThis={fixThis} />
       )}
     </section>
   );

@@ -2,11 +2,13 @@ import {
   HealthPanelView,
   SEARCH_HEALTH_TITLE_ID,
 } from "@/components/search-health/health-panel-view";
+import { SeoActionFlags, seoActionsAllowedFor } from "@/lib/seo/action-flags";
 import { SeoFlags } from "@/lib/seo/health-flags";
 import {
   requireProjectAccess,
   requireUser,
 } from "@/server/security/tenant-context";
+import { loadHealthFixStates } from "@/server/seo/actions/fix-this";
 import { loadSearchHealthPanel } from "@/server/seo/health/panel";
 
 // Search sayfasındaki "Index & technical health" bölümü (SC-F3,
@@ -35,13 +37,21 @@ export async function SearchHealthSection({
     issueId: issueId ?? null,
   }).catch(() => null);
   if (!panel) return null;
+  // SC-F6: "I fixed this" durumları yalnız eylem döngüsü açıkken okunur; kapalıyken liste bugünküyle aynı çizilir.
+  const tracked =
+    SeoActionFlags.loop() && seoActionsAllowedFor(projectId)
+      ? await loadHealthFixStates(
+          projectId,
+          panel.issues.map((issue) => ({ id: issue.id, kind: issue.kind })),
+        ).catch(() => undefined)
+      : undefined;
   return (
     <section
       id="health"
       aria-labelledby={SEARCH_HEALTH_TITLE_ID}
       className="scroll-mt-20 space-y-4 border-t border-foreground/10 pt-6"
     >
-      <HealthPanelView panel={panel} />
+      <HealthPanelView panel={panel} tracked={tracked} />
     </section>
   );
 }

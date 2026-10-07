@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   allowedNumbersOf,
   isSupportedToken,
+  keepSupportedSentences,
   numberTokens,
 } from "@/lib/module-flows/analytics/number-check";
 
@@ -20,6 +21,8 @@ import {
   outcomeText,
 } from "./describe";
 import type {
+  An13Evidence,
+  An14Evidence,
   GaDecomposition,
   GaFindingEvidence,
   GaFindingKind,
@@ -41,6 +44,8 @@ const WEEK = { from: "2026-09-28", to: "2026-10-04" };
 
 const PAGE = "/pricing-2026";
 const CAMPAIGN = "autumn_sale_15";
+const ADS_LABEL = "Spring 2026 sale";
+const ADS_CAMPAIGN = "Brand search 2026-Q3";
 const TERMS = ["iphone 15", "return policy", "size 42.5", "gift card", "shoes"];
 
 function decomposition(
@@ -271,6 +276,64 @@ const EVIDENCE: Record<GaRuleKey, GaFindingEvidence> = {
     excludedDays: [],
     holidays: [],
   },
+  AN13: {
+    v: 1,
+    rule: "AN13",
+    window: WINDOW,
+    campaignExternalId: "120001",
+    label: ADS_LABEL,
+    metaCurrency: "EUR",
+    meta: {
+      ads: 3,
+      spend: 612.45,
+      linkClicks: 1830,
+      landingPageViews: 1204,
+      results: 74,
+      resultActionType: "offsite_conversion.fb_pixel_purchase",
+      activeDays: 21,
+    },
+    ga: { sessions: 702, engagedSessions: 455, keyEvents: 41, revenue: 0 },
+    checks: ["clicks", "results"],
+    clickLoss: 0.6164,
+    clickRateHigh: 0.4,
+    resultsGap: 0.446,
+    resultsP: 0.001,
+    costPerResult: 8.2764,
+    costPerKeyEvent: 14.9378,
+    excludedDays: [],
+    holidays: [],
+  },
+  AN14: {
+    v: 1,
+    rule: "AN14",
+    window: WINDOW,
+    previousWindow: { from: "2026-08-10", to: "2026-09-06" },
+    campaign: ADS_CAMPAIGN,
+    direction: "worse",
+    current: {
+      cost: 1543.2,
+      clicks: 912,
+      sessions: 801,
+      keyEvents: 31,
+      revenue: 3702.5,
+      costPerKeyEvent: 49.7806,
+      roas: 2.3993,
+    },
+    previous: {
+      cost: 1498.7,
+      clicks: 887,
+      sessions: 790,
+      keyEvents: 52,
+      revenue: 4100,
+      costPerKeyEvent: 28.8212,
+      roas: 2.7356,
+    },
+    changePct: 72.7,
+    p: 0.004,
+    bhAccepted: true,
+    excludedDays: [],
+    holidays: [],
+  },
   AN15: {
     v: 1,
     rule: "AN15",
@@ -301,6 +364,8 @@ const KIND: Record<GaRuleKey, GaFindingKind> = {
   AN10: "WIN",
   AN11: "RISK",
   AN12: "RISK",
+  AN13: "RISK",
+  AN14: "CHANGE",
   AN15: "RISK",
 };
 
@@ -327,6 +392,8 @@ const PERIOD: Record<GaRuleKey, GaPeriod> = {
   },
   AN11: { grain: "WEEK", ...WEEK, key: "2026-W40" },
   AN12: { grain: "WINDOW28", ...WINDOW, key: "2026-W40:28d" },
+  AN13: { grain: "WINDOW28", ...WINDOW, key: "2026-W40:28d" },
+  AN14: { grain: "WINDOW28", ...WINDOW, key: "2026-W40:28d" },
   AN15: {
     grain: "MONTH",
     from: "2026-10-01",
@@ -610,6 +677,137 @@ describe("status texts", () => {
     expect(outcomeText("DIDNT")).toBe("No clear effect");
     expect(outcomeText("INCONCLUSIVE")).toBe("Not enough data to tell");
     expect(findingConfidenceText("DIRECTIONAL")).toBe("Directional");
+  });
+});
+
+describe("ads rules (GA-F6)", () => {
+  const an13Raw = EVIDENCE.AN13;
+  const an14Raw = EVIDENCE.AN14;
+  if (an13Raw.rule !== "AN13" || an14Raw.rule !== "AN14") {
+    throw new Error("fixture");
+  }
+  // Daraltılmış tipler iç fonksiyonlara taşınsın diye ayrı sabitler.
+  const an13: An13Evidence = an13Raw;
+  const an14: An14Evidence = an14Raw;
+
+  function an13View(checks: ("clicks" | "results")[]) {
+    return view("AN13", { evidence: { ...an13, checks } });
+  }
+  function an14View(direction: "worse" | "better", changePct: number) {
+    return view("AN14", {
+      kind: direction === "worse" ? "CHANGE" : "WIN",
+      evidence: { ...an14, direction, changePct },
+    });
+  }
+
+  it("titles both AN13 variants and both AN14 directions", () => {
+    expect(findingTitle(an13View(["clicks"]))).toBe(
+      "Ad clicks and website visits don't line up",
+    );
+    expect(findingTitle(an13View(["clicks", "results"]))).toBe(
+      "Ad clicks and website visits don't line up",
+    );
+    expect(findingTitle(an13View(["results"]))).toBe(
+      "Meta and GA4 count conversions differently",
+    );
+    expect(findingTitle(an14View("worse", 72.7))).toBe(
+      "Google Ads: cost per key event went up",
+    );
+    expect(findingTitle(an14View("better", -41.2))).toBe(
+      "Google Ads: cost per key event went down",
+    );
+  });
+
+  it("writes the AN13 clicks detail with the cost suffix in the Meta currency", () => {
+    const detail = findingDetail(an13View(["clicks"]), { currency: "USD" });
+    expect(detail).toBe(
+      `Meta counted 1,830 link clicks on the ads Agentelse tagged in "${ADS_LABEL}", but GA4 saw 702 sessions from them (61.6% fewer). Check the landing page speed and that the Google tag loads before visitors leave. Cost per key event (GA4): 14.94 EUR.`,
+    );
+  });
+
+  it("writes the AN13 results detail", () => {
+    const detail = findingDetail(an13View(["results"]));
+    expect(detail).toContain(
+      "Meta reported 74 results and GA4 41 key events (44.6% apart).",
+    );
+    expect(detail).toContain(
+      "up to 7 days after a click or 1 day after a view",
+    );
+    expect(detail).not.toContain("link clicks");
+  });
+
+  it("drops the AN13 cost suffix when the cost is unknown", () => {
+    const view13 = view("AN13", {
+      evidence: { ...an13, checks: ["clicks"], costPerKeyEvent: null },
+    });
+    expect(findingDetail(view13)).not.toContain("Cost per key event");
+  });
+
+  it("writes the AN14 detail with ROAS and drops it when null", () => {
+    expect(findingDetail(an14View("worse", 72.7), { currency: "EUR" })).toBe(
+      `"${ADS_CAMPAIGN}": 49.78 EUR per key event over the last 28 days, 28.82 EUR before (+72.7%). ROAS 2.4× (was 2.74×).`,
+    );
+    expect(findingDetail(an14View("better", -41.2), { currency: "EUR" })).toContain(
+      "(-41.2%)",
+    );
+    const noRoas = view("AN14", {
+      evidence: {
+        ...an14,
+        current: { ...an14.current, roas: null },
+        previous: { ...an14.previous, roas: null },
+      },
+    });
+    const detail = findingDetail(noRoas, { currency: "EUR" });
+    expect(detail).not.toContain("ROAS");
+    expect(detail.endsWith("(+72.7%).")).toBe(true);
+    const onlyPrevious = view("AN14", {
+      evidence: { ...an14, previous: { ...an14.previous, roas: null } },
+    });
+    expect(findingDetail(onlyPrevious, { currency: "EUR" })).toMatch(
+      /ROAS 2\.4×\.$/,
+    );
+  });
+
+  it("keeps every sentence through the number check, digits in names included", () => {
+    const variants = [
+      an13View(["clicks"]),
+      an13View(["results"]),
+      an13View(["clicks", "results"]),
+      an14View("worse", 72.7),
+      an14View("better", -41.2),
+    ];
+    for (const f of variants) {
+      for (const currency of [null, "EUR"]) {
+        const detail = findingDetail(f, { currency });
+        const facts = findingFacts(f, { currency });
+        expect(
+          keepSupportedSentences(detail, allowedNumbersOf(facts)),
+          detail,
+        ).toBe(detail);
+      }
+    }
+  });
+
+  it("puts the label and the masked campaign into the facts as strings", () => {
+    expect(findingFacts(an13View(["clicks"])).label).toBe(ADS_LABEL);
+    expect(findingFacts(an13View(["results"])).label).toBe(ADS_LABEL);
+    expect(findingFacts(an14View("worse", 72.7)).campaign).toBe(ADS_CAMPAIGN);
+  });
+
+  it("signal, learning and operator texts are digit-free and name-free", () => {
+    for (const f of [an13View(["clicks"]), an14View("worse", 72.7)]) {
+      const signal = findingSignalText(f);
+      for (const text of [
+        signal.title,
+        signal.summary,
+        learningText(f),
+        operatorFindingTitle(f.ruleKey, f.kind),
+      ]) {
+        expect(text).not.toMatch(DIGIT);
+        expect(text).not.toContain(ADS_LABEL);
+        expect(text).not.toContain(ADS_CAMPAIGN);
+      }
+    }
   });
 });
 

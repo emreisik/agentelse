@@ -65,4 +65,17 @@ describe("ideaSeoDef prompt", () => {
     );
     expect(prompt.user).toContain(`${line}\n\nSearch Console quick wins`);
   });
+
+  it("appends the past-results line to the system prompt only when learnings exist (SC-F6)", () => {
+    const learnings = ["On this site, rewriting a title raised click-through."];
+    const prompt = ideaSeoDef.buildPrompt({ ...CONTEXT, seoLearnings: learnings });
+    expect(prompt.system).toBe(
+      `${SNAPSHOT_SYSTEM}\nPAST RESULTS on this site (prefer what worked):\n- ${learnings[0]}`,
+    );
+    expect(prompt.user).toBe(SNAPSHOT_USER);
+    // Boş dizi ya da dizi olmayan değer istemi değiştirmez.
+    expect(ideaSeoDef.buildPrompt({ ...CONTEXT, seoLearnings: [] }).system).toBe(
+      SNAPSHOT_SYSTEM,
+    );
+  });
 });

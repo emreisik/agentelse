@@ -179,6 +179,8 @@ export function buildWeeklyCard(
     previous: { from: previous.from, to: previous.to },
     lastYear: lastYear ? { from: lastYear.from, to: lastYear.to } : null,
     forecasts: forecastSnaps(input.forecasts),
+    // GA-F6: bölüm yoksa alan hiç yazılmaz (bayrak kapalıyken kart aynı kalır).
+    ...(input.agentelse ? { agentelse: input.agentelse } : {}),
   };
   return {
     ...cardBase(input.link, input.builtAt),

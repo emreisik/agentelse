@@ -1,0 +1,45 @@
+import {
+  ACTIONS_TITLE_ID,
+  ActionsListView,
+} from "@/components/search-actions/actions-list";
+import { SeoActionFlags } from "@/lib/seo/action-flags";
+import {
+  requireProjectAccess,
+  requireUser,
+} from "@/server/security/tenant-context";
+import { loadSeoActionsPanel } from "@/server/seo/actions/panel";
+
+// Search sayfasındaki "Actions & results" bölümü (SC-F6,
+// docs/search-actions.md). Sayfa bunu yalnız SEO_ACTIONS döngüsü etkinken
+// Suspense içinde çizer; W1 raporu bu bölümü beklemez. Bayrak ya da açılış
+// listesi kapalıyken null döner ve veritabanına gitmez. Oturum ve proje erişimi
+// sayfayla paylaşılan (React cache) okumalardır.
+
+export async function SearchActionsSection({
+  projectId,
+  highlight,
+}: {
+  projectId: string;
+  highlight?: string | null;
+}): Promise<React.JSX.Element | null> {
+  if (!SeoActionFlags.loop()) return null;
+  try {
+    const { userId } = await requireUser();
+    await requireProjectAccess(userId, projectId);
+  } catch {
+    return null;
+  }
+  const panel = await loadSeoActionsPanel(projectId, {
+    highlight: highlight ?? null,
+  }).catch(() => null);
+  if (!panel) return null;
+  return (
+    <section
+      id="actions"
+      aria-labelledby={ACTIONS_TITLE_ID}
+      className="scroll-mt-20 space-y-4 border-t border-foreground/10 pt-6"
+    >
+      <ActionsListView panel={panel} />
+    </section>
+  );
+}

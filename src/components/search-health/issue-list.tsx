@@ -1,9 +1,11 @@
 import { ExternalLink } from "lucide-react";
 
+import { TrackFixButton } from "@/components/search-actions/track-fix-button";
 import { ActionForm } from "@/components/shared/action-form";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { cn } from "@/lib/utils";
 import { muteSearchAlertAction } from "@/server/actions/search-health-actions";
+import type { HealthFixState } from "@/server/seo/actions/fix-this";
 import type { SearchHealthPanel } from "@/server/seo/health/panel";
 
 // Açık arama sağlığı uyarıları (SC-F3): önem çipi, başlık, ayrıntı, "How to
@@ -70,10 +72,12 @@ export function IssueList({
   projectId,
   issues,
   canMute,
+  tracked,
 }: {
   projectId: string;
   issues: Issue[];
   canMute: boolean;
+  tracked?: Record<string, HealthFixState>;
 }) {
   if (issues.length === 0) {
     return <p className="text-sm">No search health issues right now.</p>;
@@ -106,6 +110,13 @@ export function IssueList({
                 Mute for 7 days
               </SubmitButton>
             </ActionForm>
+          ) : null}
+          {tracked?.[issue.id] ? (
+            <TrackFixButton
+              projectId={projectId}
+              alertId={issue.id}
+              state={tracked[issue.id]!}
+            />
           ) : null}
         </li>
       ))}

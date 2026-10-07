@@ -14,7 +14,10 @@ import {
   websiteReportChatDigest,
   websiteReportPlainText,
 } from "./text";
-import type { WebsiteReportCardData } from "./types";
+import type {
+  ReportAgentelseSection,
+  WebsiteReportCardData,
+} from "./types";
 
 // Bu dosyanın kanıtladığı: sohbet özeti hassas metin taşımaz ve 1200
 // karakteri geçmez; operatör başlığı bilinmeyen anahtarda "Finding"; düz
@@ -27,6 +30,68 @@ const CARDS: [string, () => WebsiteReportCardData][] = [
   ["pulse", samplePulseCard],
   ["alert", sampleAlertCard],
 ];
+
+
+// GA-F6 bölümü örneği: etiketlerden biri HTML karakteri taşır.
+const AGENTELSE: ReportAgentelseSection = {
+  tracked: {
+    columns: [
+      { label: "Sessions (GA4)", format: "count" },
+      { label: "Engagement rate", format: "percent" },
+      { label: "Key events (GA4)", format: "count" },
+    ],
+    rows: [{ label: "Meta ads: <b>Spring</b> sale", values: [1200, 61.2, 30] }],
+    other: [40, null, 1],
+    notes: [],
+  },
+  ads: {
+    columns: [
+      { label: "Link clicks (Meta)", format: "count" },
+      { label: "Sessions (GA4)", format: "count" },
+    ],
+    rows: [{ label: "Spring sale", values: [900, 700] }],
+    other: null,
+    notes: [],
+  },
+  googleAds: null,
+  notes: ["Only visits through links Agentelse tagged are counted."],
+};
+
+function weeklyWithSection(): WebsiteReportCardData {
+  const card = sampleWeeklyCard();
+  if (card.body.variant !== "weekly") throw new Error("variant");
+  return { ...card, body: { ...card.body, agentelse: AGENTELSE } };
+}
+
+describe("From Agentelse plain text", () => {
+  it("is absent without a section", () => {
+    expect(websiteReportPlainText(sampleWeeklyCard())).not.toContain(
+      "From Agentelse",
+    );
+  });
+
+  it("is written after the key events with tables and notes", () => {
+    const text = websiteReportPlainText(weeklyWithSection());
+    expect(text).toContain("From Agentelse");
+    expect(text).toContain(
+      "Tracked links (Sessions (GA4) · Engagement rate · Key events (GA4))",
+    );
+    expect(text).toContain("- Meta ads: <b>Spring</b> sale: 1,200 · 61.2% · 30");
+    expect(text).toContain("- Other: 40 · – · 1");
+    expect(text).toContain("Your ads on your website (Link clicks (Meta) · Sessions (GA4))");
+    expect(text).toContain("  Only visits through links Agentelse tagged are counted.");
+    expect(text.indexOf("Key events (")).toBeLessThan(
+      text.indexOf("From Agentelse"),
+    );
+  });
+
+  it("never reaches the chat digest", () => {
+    const digest = websiteReportChatDigest(weeklyWithSection());
+    expect(digest).toBe(websiteReportChatDigest(sampleWeeklyCard()));
+    expect(digest).not.toContain("From Agentelse");
+    expect(digest).not.toContain("Spring");
+  });
+});
 
 describe("safeOperatorTitle", () => {
   it("falls back to Finding for unknown keys and kinds", () => {

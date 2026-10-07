@@ -55,6 +55,7 @@ vi.mock("@/server/repositories/reasoning-call.repository", () => ({
   },
 }));
 
+import { prisma } from "@/lib/prisma";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { ReasoningCallRepository } from "@/server/repositories/reasoning-call.repository";
@@ -273,5 +274,65 @@ describe("ReasoningService.run with web search", () => {
 
     expect(result).toMatchObject({ output: { value: "mocked" }, isMock: true });
     expect(searchMocks.runStructured).not.toHaveBeenCalled();
+  });
+});
+
+describe("ReasoningService.run locale directive", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    envMocks.REASONING_PROVIDER = "gemini";
+    geminiMocks.isConfigured = true;
+    geminiMocks.runStructured.mockResolvedValue({ raw: { value: "out" } });
+  });
+
+  const project = (language: string, country: string) =>
+    vi
+      .mocked(prisma.project.findUnique)
+      .mockResolvedValueOnce({ language, country } as never);
+  const systemOf = () =>
+    (geminiMocks.runStructured.mock.calls.at(-1)![0] as { system: string })
+      .system;
+
+  it("uses the project language and country when no override is given", async () => {
+    project("de", "AT");
+    await ReasoningService.run(def(), { ...input, projectId: "locale-plain" });
+    expect(systemOf()).toContain('language with code "de"');
+    expect(systemOf()).toContain('country code "AT"');
+  });
+
+  it("lets a supported override replace the language but keeps the project country", async () => {
+    project("de", "AT");
+    await ReasoningService.run(def(), {
+      ...input,
+      projectId: "locale-override",
+      language: "fr",
+    });
+    expect(systemOf()).toContain('language with code "fr"');
+    expect(systemOf()).toContain('country code "AT"');
+  });
+
+  it("ignores an unsupported override code", async () => {
+    project("de", "AT");
+    await ReasoningService.run(def(), {
+      ...input,
+      projectId: "locale-unsupported",
+      language: "xx-invalid",
+    });
+    expect(systemOf()).toContain('language with code "de"');
+    expect(systemOf()).not.toContain("xx-invalid");
+  });
+
+  it("does not share a cache entry between different overrides of one project", async () => {
+    project("de", "AT");
+    await ReasoningService.run(def(), { ...input, projectId: "locale-cache" });
+    expect(systemOf()).toContain('language with code "de"');
+    await ReasoningService.run(def(), {
+      ...input,
+      projectId: "locale-cache",
+      language: "es",
+    });
+    expect(systemOf()).toContain('language with code "es"');
+    await ReasoningService.run(def(), { ...input, projectId: "locale-cache" });
+    expect(systemOf()).toContain('language with code "de"');
   });
 });

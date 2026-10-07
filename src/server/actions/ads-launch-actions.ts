@@ -33,6 +33,7 @@ import {
   type AdsBrief,
   type AdsPlan,
 } from "@/lib/module-flows/ads/state";
+import { withTrackingNote } from "@/lib/tracked-links/ads";
 import { AdsAccounts } from "@/server/ads/accounts";
 import { driveLaunchInline } from "@/server/ads/launch/drive";
 import { AdsLaunches } from "@/server/ads/launch/store";
@@ -41,6 +42,7 @@ import {
   prepareLaunch,
   type LaunchValidation,
 } from "@/server/ads/launch/validate";
+import { adLaunchUrlTags } from "@/server/tracked-links/ads";
 import { driveJobInline } from "@/server/chat/inline-job";
 import { applyApprovalDecision } from "@/server/commands/approval-decisions";
 import { TaskPlanner } from "@/server/commands/task-planner";
@@ -254,6 +256,15 @@ export async function prepareAdsLaunchAction(
         return failed(ADS_FLOW_COPY.movedOn);
       }
       const now = new Date();
+      // GA-F6 (GA_UTM): reklam linklerine agx- UTM'leri yalnız burada (Review) hesaplanır; Meta validate_only bunları sınar. Bayrak/ayar kapalıysa undefined (DEFAULT_URL_TAGS).
+      const urlTags = await adLaunchUrlTags({
+        workspaceId: gate.auth.workspaceId,
+        projectId,
+        commandId: found.commandId,
+        userId: gate.auth.userId,
+        brief,
+        plan,
+      });
       const prepared = await prepareLaunch({
         workspaceId: gate.auth.workspaceId,
         projectId,
@@ -261,17 +272,15 @@ export async function prepareAdsLaunchAction(
         commandId: found.commandId,
         userId: gate.auth.userId,
         build: (context) =>
-          launchSpecFromFlow({ brief, plan, context, activate: true }),
+          launchSpecFromFlow({ brief, plan, context, activate: true, urlTags }),
         now,
       });
       if (!prepared.ok) return failed(prepared.message);
       return {
         ok: true,
-        check: checkOf(
-          prepared.launch.id,
+        check: withTrackingNote(
+          checkOf(prepared.launch.id, prepared.spec, prepared.validation, now),
           prepared.spec,
-          prepared.validation,
-          now,
         ),
       };
     },
@@ -314,6 +323,7 @@ export async function launchAdsV2Action(
       // Onay, kontrol edilen spec'e verilir: Brief / Plan sonradan değiştiyse
       // yeniden kontrol gerekir.
       const activate = options.activate !== false;
+      // GA-F6: onaylanan, Review'da doğrulanmış etiketler aynen kullanılır (specHash urlTags'i içermez).
       const spec = launchSpecFromFlow({
         brief,
         plan,
@@ -322,6 +332,7 @@ export async function launchAdsV2Action(
           latestSpec.guards.campaignSpendCapMinor,
         ),
         activate,
+        urlTags: latestSpec.ads.map((ad) => ad.urlTags),
       });
       spec.guards = latestSpec.guards;
       if (specHash(spec) !== specHash({ ...latestSpec, activate })) {

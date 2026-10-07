@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import type { ModuleFlowStep } from "@/lib/module-flows/card";
+import {
+  MODULE_FLOW_STEPS,
+  type ModuleFlowStep,
+} from "@/lib/module-flows/card";
 
 import type { SeoQuickWin } from "./quick-wins";
 
@@ -87,8 +90,64 @@ export type SeoDelivery = {
   publishedAt?: string;
 };
 
-export type SeoRunKind = "research" | "write" | "rewrite";
-export type SeoRun = { id: string; kind: SeoRunKind; startedAt: string };
+// SEO_ACTIONS açıkken SEO Manager üç kipte çalışır: yeni makale (bugünkü
+// akış), var olan sayfayı tazeleme ve yalnız başlık/meta düzeltme.
+export const SEO_MODES = ["article", "refresh", "snippet"] as const;
+export type SeoMode = (typeof SEO_MODES)[number];
+
+// Kart oluşturulurken bayrağa göre damgalanır; arayüz karardan bu damgaya
+// bakar, bayrak sonradan kapansa da eski kartlar aynen çizilir.
+export type SeoFeatures = { modes: boolean; live: boolean };
+
+// Hedef sayfa: kendi tarayıcımızla okunan sitenin kendi verisi. queryCount
+// Google kaynaklıdır ve bağlantı kesilince sıfırlanır (scrubSearchData).
+export type SeoTarget = {
+  url: string;
+  path: string;
+  title: string | null;
+  metaDescription: string | null;
+  h1: string | null;
+  h2: string[];
+  wordCount: number | null;
+  textHash: string | null;
+  fetchedAt: string;
+  queryCount: number;
+};
+
+// Kartı açan bulgu (Fix this): yalnız kimlik ve kural anahtarı.
+export type SeoOrigin = { findingId: string; ruleKey: string };
+
+export type SeoSnippetVariant = {
+  title: string;
+  metaDescription: string;
+  angle: string;
+};
+
+export type SeoSnippet = {
+  variants: SeoSnippetVariant[];
+  chosen: number | null;
+  edited: { title: string; metaDescription: string } | null;
+  generatedAt: string;
+};
+
+// Tazeleme araştırmasının çıktısı: eksik alt konular ve korunacak bölümler.
+export type SeoRefresh = { missing: string[]; keep: string[] };
+
+export type SeoRunKind = "research" | "write" | "rewrite" | "snippet";
+export type SeoRunPhase =
+  "reading_page" | "researching" | "writing" | "checking";
+export type SeoRun = {
+  id: string;
+  kind: SeoRunKind;
+  startedAt: string;
+  phase?: SeoRunPhase;
+};
+export type SeoRunError = {
+  runId: string;
+  kind: SeoRunKind;
+  message: string;
+  at: string;
+};
 
 export type SeoState = {
   brief?: SeoBrief;
@@ -96,6 +155,16 @@ export type SeoState = {
   article?: SeoArticle;
   delivery?: SeoDelivery;
   run?: SeoRun;
+  mode?: SeoMode;
+  features?: SeoFeatures;
+  target?: SeoTarget;
+  pendingUrl?: string;
+  origin?: SeoOrigin;
+  actionId?: string;
+  snippet?: SeoSnippet;
+  refresh?: SeoRefresh;
+  lastError?: SeoRunError;
+  applied?: { at: string };
 };
 
 // ---- stored shape -------------------------------------------------------------
@@ -120,7 +189,10 @@ function lenientArray<T>(item: z.ZodType<T>, max: number) {
 const line = (max: number) => z.string().min(1).max(max);
 
 const briefSchema = z.object({
-  topic: line(SEO_LIMITS.topic),
+  // "Fix this" makale kartı konusuz açılır (site ve dil önceden dolar, konuyu
+  // kullanıcı yazar); boş konu özetin tamamını düşürmesin. Asgari uzunluk
+  // (SEO_LIMITS.topicMin) gönderirken denetlenir, okurken değil.
+  topic: z.string().max(SEO_LIMITS.topic),
   siteUrl: z.string().max(SEO_LIMITS.siteUrl).catch(""),
   language: z.string().min(2).max(8),
   audience: z.string().max(SEO_LIMITS.audience).catch(""),
@@ -180,9 +252,82 @@ const deliverySchema = z.object({
 
 const runSchema = z.object({
   id: line(64),
-  kind: z.enum(["research", "write", "rewrite"]),
+  kind: z.enum(["research", "write", "rewrite", "snippet"]),
   startedAt: line(40),
+  phase: z
+    .enum(["reading_page", "researching", "writing", "checking"])
+    .optional()
+    .catch(undefined),
 });
+
+// Uzun metin reddedilmez, kırpılır: eski ya da şişmiş bir kayıt kartı
+// bozmasın.
+const clipped = (max: number) =>
+  z
+    .string()
+    .transform((value) => value.slice(0, max))
+    .pipe(z.string().min(1));
+const clippedOrNull = (max: number) =>
+  z
+    .string()
+    .transform((value) => value.slice(0, max))
+    .nullable()
+    .catch(null);
+
+const featuresSchema = z.object({
+  modes: z.boolean().catch(false),
+  live: z.boolean().catch(false),
+});
+
+const targetSchema = z.object({
+  url: clipped(2048),
+  path: clipped(512),
+  title: clippedOrNull(300),
+  metaDescription: clippedOrNull(600),
+  h1: clippedOrNull(300),
+  h2: lenientArray(clipped(200), 20),
+  wordCount: z.number().int().nonnegative().nullable().catch(null),
+  textHash: clippedOrNull(128),
+  fetchedAt: z.string().max(40).catch(""),
+  queryCount: z.number().int().nonnegative().catch(0),
+});
+
+const originSchema = z.object({
+  findingId: clipped(64),
+  ruleKey: clipped(80),
+});
+
+const ID_SHAPE = /^[A-Za-z0-9_-]{1,64}$/;
+
+const snippetVariantSchema = z.object({
+  title: clipped(120),
+  metaDescription: clipped(400),
+  angle: z.string().max(80).catch(""),
+});
+
+const snippetSchema = z.object({
+  variants: lenientArray(snippetVariantSchema, 3),
+  chosen: z.number().int().nonnegative().nullable().catch(null),
+  edited: z
+    .object({ title: clipped(120), metaDescription: clipped(400) })
+    .nullable()
+    .catch(null),
+  generatedAt: z.string().max(40).catch(""),
+});
+
+const refreshSchema = z.object({
+  missing: lenientArray(line(120), 8),
+  keep: lenientArray(line(120), 8),
+});
+
+const lastErrorSchema = z.object({
+  runId: line(64),
+  kind: z.enum(["research", "write", "rewrite", "snippet"]),
+  message: clipped(300),
+  at: z.string().max(40).catch(""),
+});
+
+const appliedSchema = z.object({ at: line(40) });
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -220,7 +365,52 @@ export function parseSeoState(data: unknown): SeoState {
   }
 
   const run = runSchema.safeParse(raw.run);
-  if (run.success) state.run = run.data;
+  if (run.success) {
+    const { phase, ...rest } = run.data;
+    state.run = phase ? { ...rest, phase } : rest;
+  }
+
+  // SC-F6'nın isteğe bağlı kısımları: eski kartlarda yoktur, o zaman hiçbir
+  // anahtar eklenmez (eski kart verisi aynen okunur).
+  const mode = z.enum(SEO_MODES).safeParse(raw.mode);
+  if (mode.success) state.mode = mode.data;
+
+  const features = featuresSchema.safeParse(raw.features);
+  if (features.success) state.features = features.data;
+
+  const target = targetSchema.safeParse(raw.target);
+  if (target.success) state.target = target.data;
+
+  if (typeof raw.pendingUrl === "string" && raw.pendingUrl.length > 0) {
+    state.pendingUrl = raw.pendingUrl.slice(0, 2048);
+  }
+
+  const origin = originSchema.safeParse(raw.origin);
+  if (origin.success) state.origin = origin.data;
+
+  if (typeof raw.actionId === "string" && ID_SHAPE.test(raw.actionId)) {
+    state.actionId = raw.actionId;
+  }
+
+  const snippet = snippetSchema.safeParse(raw.snippet);
+  if (snippet.success && snippet.data.variants.length > 0) {
+    const { variants, chosen, edited, generatedAt } = snippet.data;
+    state.snippet = {
+      variants,
+      chosen: chosen !== null && chosen < variants.length ? chosen : null,
+      edited,
+      generatedAt,
+    };
+  }
+
+  const refresh = refreshSchema.safeParse(raw.refresh);
+  if (refresh.success) state.refresh = refresh.data;
+
+  const lastError = lastErrorSchema.safeParse(raw.lastError);
+  if (lastError.success) state.lastError = lastError.data;
+
+  const applied = appliedSchema.safeParse(raw.applied);
+  if (applied.success) state.applied = applied.data;
 
   return state;
 }
@@ -248,6 +438,19 @@ export function seoRunActive(
   return now - started < SEO_RUN_TTL_MS;
 }
 
+// Kartın kipi: damgasız (eski) kartlar hep makale kipindedir.
+export function seoModeOf(state: SeoState): SeoMode {
+  return state.mode ?? "article";
+}
+
+// Kipin adımları: başlık düzeltme Brief, Plan (varyantlar), Deliver ile biter;
+// diğerleri beş standart adımı gösterir.
+export function seoStepsFor(mode: SeoMode): ModuleFlowStep[] {
+  return mode === "snippet"
+    ? ["brief", "plan", "deliver"]
+    : [...MODULE_FLOW_STEPS];
+}
+
 // Whether the card may move from `step` to `to` with a tap (Back, the stepper,
 // Publish). Never while a model call runs, never once the article is on the
 // calendar (its copy there would no longer match), never into Create (that is
@@ -262,6 +465,26 @@ export function canGoToSeoStep(input: {
   if (to === step) return false;
   if (seoRunActive(state.run, input.now)) return false;
   if (state.delivery) return false;
+  const mode = seoModeOf(state);
+  // Uygulandı işaretlendikten sonra kopya artık sitede: kart kilitlenir.
+  if (mode !== "article" && state.applied) return false;
+  if (mode === "snippet") {
+    switch (to) {
+      case "brief":
+        return true;
+      case "plan":
+        return Boolean(state.snippet);
+      case "deliver":
+        return (
+          state.snippet !== undefined &&
+          state.snippet.chosen !== null &&
+          step === "plan"
+        );
+      case "create":
+      case "review":
+        return false;
+    }
+  }
   switch (to) {
     case "brief":
       return true;
@@ -281,13 +504,17 @@ export function seoOpenableSteps(
   state: SeoState,
   now?: number,
 ): Partial<Record<ModuleFlowStep, boolean>> {
-  const steps: ModuleFlowStep[] = ["brief", "plan", "review"];
+  const steps: ModuleFlowStep[] =
+    seoModeOf(state) === "snippet"
+      ? ["brief", "plan"]
+      : ["brief", "plan", "review"];
   return Object.fromEntries(
     steps.map((to) => [to, canGoToSeoStep({ step, state, to, now })]),
   );
 }
 
 export function seoFlowComplete(state: SeoState): boolean {
+  if (seoModeOf(state) !== "article") return Boolean(state.applied);
   return Boolean(state.delivery?.publishedAt);
 }
 
@@ -300,6 +527,7 @@ const RUN_STATUS: Readonly<Record<SeoRunKind, string>> = {
   research: "Researching",
   write: "Writing",
   rewrite: "Rewriting",
+  snippet: "Writing titles",
 };
 
 // The pill beside the card's title.
@@ -307,9 +535,36 @@ export function seoStatusOf(state: SeoState, now?: number): SeoStatus | null {
   if (state.run && seoRunActive(state.run, now)) {
     return { label: RUN_STATUS[state.run.kind], tone: "waiting" };
   }
+  if (seoModeOf(state) !== "article" && state.applied) {
+    return { label: "Updated", tone: "positive" };
+  }
   if (state.delivery?.publishedAt) {
     return { label: "Published", tone: "positive" };
   }
   if (state.delivery) return { label: "On calendar", tone: "special" };
   return null;
+}
+
+// Google bağlantısı kesilince ya da "Delete stored data" ile kartta kalan
+// Google kaynaklı veriyi temizler: hızlı kazanç satırları ve hedef sayfanın
+// sorgu sayısı. Kullanıcının yazdığı içeriğe dokunmaz; değişiklik yoksa aynı
+// nesne döner.
+export function scrubSearchData(state: SeoState): {
+  state: SeoState;
+  changed: boolean;
+} {
+  let next = state;
+  let changed = false;
+  if (state.plan && state.plan.quickWins.state === "ok") {
+    next = {
+      ...next,
+      plan: { ...state.plan, quickWins: { state: "not-connected" } },
+    };
+    changed = true;
+  }
+  if (state.target && state.target.queryCount !== 0) {
+    next = { ...next, target: { ...state.target, queryCount: 0 } };
+    changed = true;
+  }
+  return { state: next, changed };
 }

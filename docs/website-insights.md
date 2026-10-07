@@ -69,7 +69,7 @@ Ortak kapılar (`run-rules.ts`, `applyQualityGates`):
 - GA-F3 özetinde kritik sorun varsa (`loadMeasurementSummaryForLink(...).critical > 0`) her aday DIRECTIONAL'a iner. Kapı SIGNIFICANT'ı indirdiyse WARN de INFO olur.
 - Canlı kipte haftalık çalışmada "Opportunities" listesinden bağ başına en çok 3 yeni satır açılır (önceliğe göre; plan §1.1 "en fazla 3 öneri"). Gölge kip hepsini (genel tavan 20) saklar.
 
-Ertelenenler (`GA_DEFERRED_RULES`): AN13 Meta sonuç çapraz kontrolü ve AN14 Google Ads getirisi GA-F6'ya (UTM/TrackedLink orada); AN11 sepet değeri (AOV) değişimi kanıtta tutulur, değerlendirilmez.
+Ertelenenler (`GA_DEFERRED_RULES`): AN16 ve AN11 sepet değeri (AOV) değişimi; AOV kanıtta tutulur, değerlendirilmez. AN13 (Meta çapraz kontrolü) ve AN14 (Google Ads) GA-F6'da gerçek kural oldu ve `GA_UTM` açıkken koşar: [website-attribution.md](website-attribution.md).
 
 AN16 bir değiştiricidir: tatil günlerini tabanlardan çıkarır, tatil haftasında SIGNIFICANT AN2'yi engeller, pencere bulgularına sabit "Includes a public holiday." cümlesini ekler; mevsimsellik AN1 ve AN2'de geçen yılın aynı dönemine bakar.
 

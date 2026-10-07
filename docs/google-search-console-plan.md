@@ -1,6 +1,6 @@
 # Agentelse · Google Search Console ve SEO Motoru: Mimari ve Uygulama Planı
 
-Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 arama sağlığı ve teknik denetim uygulandı (6 Ekim 2026, bayraklı; [search-health.md](search-health.md)); SC-F4 SEO fırsat motoru uygulandı (6 Ekim 2026, bayraklı; [search-opportunities.md](search-opportunities.md)); SC-F5 raporlama ve planlama uygulandı (6 Ekim 2026, bayraklı; [search-reports.md](search-reports.md)); SC-F6 ve sonrası henüz uygulanmadı.
+Durum: Plan (6 Ekim 2026). SC-F1 bağlantı katmanı ve SC-F2 arama ambarı + Search sayfası uygulandı (6 Ekim 2026, bayraklı; [search-analytics.md](search-analytics.md)); SC-F3 arama sağlığı ve teknik denetim uygulandı (6 Ekim 2026, bayraklı; [search-health.md](search-health.md)); SC-F4 SEO fırsat motoru uygulandı (6 Ekim 2026, bayraklı; [search-opportunities.md](search-opportunities.md)); SC-F5 raporlama ve planlama uygulandı (6 Ekim 2026, bayraklı; [search-reports.md](search-reports.md)); SC-F6 öneri döngüsü uygulandı (bayraklı; [search-actions.md](search-actions.md)); SC-F7 ve sonrası henüz uygulanmadı.
 
 > **Kapsam:** Google Search Console (GSC) entegrasyonu ve onun üzerine kurulan SEO motoru. Bu plan şunları kapsar: bağlantı ve kimlik; arama ambarı ve kalıcı arşiv; indeks ve teknik sağlık denetimi (URL Inspection, sitemap, robots, kendi site tarayıcımız, Core Web Vitals); SEO fırsat motoru; raporlama ve planlama; öneri → uygulama → ölçüm döngüsü. Sonraki aşamalarda içerik planı, CMS üzerinden onaylı uygulama ve AI arama görünürlüğü gelir.
 >
@@ -186,6 +186,8 @@ Tam liste §11'de. Cloud projesi kararı (SK1 = GK1) verildi. GA planındaki GK2
 | Araştırma ve yazma ~1 dk sürüyor; aynı sekmedeki diğer eylemler bekliyor                    | SC-F6: iş arka planda `driveJobInline` + SSE ile canlı ilerler ("sohbet eylemleri anında ve canlı" ilkesi) |
 | Takvimde taşınan ya da yayınlanan parça "Mark as published"a basılana dek kartta görünmüyor | SC-F6: yayın, tarayıcının sayfayı canlıda görmesiyle de doğrulanır (`SeoAction` VERIFIED)                  |
 | `liveSlotCount` yalnız content-plan-draft kartlarını sayıyor                                | SC-F6: SEO kartları da sayılır                                                                             |
+
+**SC-F6 (7 Ekim 2026): beş madde de kapandı** (`SEO_ACTIONS` bayrağı altında; [search-actions.md](search-actions.md)). Kayıtlı sapma: `driveJobInline` yerine `next/server` `after()` + veritabanı yoklamalı SSE (SEO Manager koşuları kuyruk Job'u değil kart sahiplenmesidir; outbox olayı yoktur; deploy yeniden başlatmasında 5 dk TTL kartı açar).
 
 ---
 
@@ -495,6 +497,17 @@ Haftalık rapor kartları sohbette **saklanan kart** olarak yazılır; gönderil
 - **"Fix the snippet":** SERP önizlemesiyle 3 başlık + 3 meta varyantı; bir `SeoAction(TITLE_META)` açılır.
 - **Fırsattan açılış:** bulgudaki "Fix this" düğmesi, brief'i doldurulmuş kartı açar.
 - Uzun işler arka planda ve SSE ile canlı çalışır (`driveJobInline` deseni); "Write another" aynı sohbette kalır.
+
+**SC-F6'da kaydedilen sapmalar** (ayrıntı [search-actions.md](search-actions.md)):
+
+- Haftalık ambar serisi ve hafta+sayfa bootstrap'i (günler üzerinden değil: W1 sayfa metriğini yalnız PT haftası olarak tutar ve değerlendirmenin Google bütçesi 0'dır).
+- Kalıcı ölçüm çapası (`measureFrom`): ölçüme geçerken her yazıcı bir kez yazar, değerlendirici olduğu gibi okur.
+- Örtüşme penceresi `[çapa − 28 gün, son pencerenin sonu]`, PT günleriyle karşılaştırılır.
+- Kontrol yoksa YoY düzeltmeli PRE_POST.
+- Tür başına metrik sadeleştirmeleri (CONTENT_REFRESH'te sorgu sayısı ve konum yok; CONSOLIDATE sayfa tabanlı, oynaklık yok; SCHEMA için CTR_adj; SITEMAP_FIX'te yeni indekslenen URL yok).
+- Sağlık sorunu düzeltmeleri uyarının çözülmesiyle ölçülür.
+- Yalnız WORKED, rakamsız öğrenmeler.
+- Disconnect GSC'ye bağlı `SeoAction` satırlarını ve SEO öğrenmelerini siler, SEO kartlarını temizler (ev kuralı §4'ün "yalnız Gsc*" cümlesini geçersiz kılar).
 
 ### 3.9 Uygulama katmanı ve AI arama görünürlüğü (SC-F8)
 
@@ -1049,6 +1062,8 @@ Durum (6 Ekim 2026): Kodlandı (SEO_REPORTS); ayrıntılar [search-reports.md](s
 **Görünür değişiklik:** Projede "Search & SEO" sohbeti; "Weekly SEO report" ve "SEO roadmap" kartları; Goals'ta SEO hedefleri.
 
 ### SC-F6 — Öneri döngüsü · M
+
+**Durum (7 Ekim 2026):** kodlandı (`SEO_ACTIONS`; migration `20261006218000_add_seo_action`); ayrıntı ve kayıtlı sapmalar [search-actions.md](search-actions.md). Canlıda denenmedi.
 
 **Amaç:** Her öneriyi uygulanan, doğrulanan ve ölçülen bir eyleme çevirmek; SEO Manager'ı mevcut sayfaları da iyileştirir hale getirmek.
 

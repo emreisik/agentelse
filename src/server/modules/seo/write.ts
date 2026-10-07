@@ -19,7 +19,10 @@ import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import {
   brandFacts,
   briefFacts,
+  languageInput,
+  learningsInput,
   modelFailure,
+  ruleLanguageInput,
   type SeoModelFailure,
   type SeoScope,
 } from "./context";
@@ -44,12 +47,30 @@ export type SeoDraft = Pick<
   "title" | "metaDescription" | "markdown"
 >;
 
+// Tazelenen sayfanın bugünkü hali: kendi sitemizden okunan metin (en çok 6.000
+// karakter) ve başlıklar; Google verisi değildir. missing/keep tazeleme
+// araştırmasının çıktısıdır.
+export type SeoCurrentPage = {
+  text: string | null;
+  title: string | null;
+  h2: string[];
+  missing?: string[];
+  keep?: string[];
+};
+
+const CURRENT_TEXT_CHARS = 6000;
+
 type WriteInput = {
   scope: SeoScope;
   brief: SeoBrief;
   plan: SeoPlan;
+  // SEO_ACTIONS açıkken kullanılır; kapalıyken yok sayılır.
+  language?: string;
+  learnings?: string[];
 } & (
-  { mode: "write" } | { mode: "rewrite"; article: SeoArticle; notes: string }
+  | { mode: "write" }
+  | { mode: "rewrite"; article: SeoArticle; notes: string }
+  | { mode: "refresh"; current?: SeoCurrentPage }
 );
 
 function planFacts(plan: SeoPlan): Record<string, unknown> {
@@ -69,15 +90,21 @@ export async function runSeoWrite(
 ): Promise<{ ok: true; draft: SeoDraft } | SeoModelFailure> {
   const { scope, brief, plan } = input;
   const rewrite = input.mode === "rewrite";
+  const refresh = input.mode === "refresh";
   const title = rewrite ? input.article.title : chosenTitle(plan);
   const metaDescription = rewrite
     ? input.article.metaDescription
     : plan.metaDescription;
 
   try {
-    const brand = await brandFacts(scope, { rules: true });
+    const ruleLanguage = await ruleLanguageInput(scope.projectId);
+    const brand = await brandFacts(scope, {
+      rules: true,
+      ...(ruleLanguage ? { ruleLanguage } : {}),
+      ...learningsInput(input.learnings),
+    });
     const facts: Record<string, unknown> = {
-      ...briefFacts(brief),
+      ...briefFacts(brief, ruleLanguage ? { ruleLanguage } : {}),
       ...planFacts(plan),
       title,
       metaDescription,
@@ -99,10 +126,22 @@ export async function runSeoWrite(
       ).map((check) => `${check.label}: ${check.line}`);
     }
 
+    if (input.mode === "refresh" && input.current) {
+      const { current } = input;
+      facts.current = {
+        title: current.title,
+        h2: current.h2.slice(0, 20),
+        text: current.text?.slice(0, CURRENT_TEXT_CHARS) ?? "",
+        missing: current.missing?.slice(0, 8) ?? [],
+        keep: current.keep?.slice(0, 8) ?? [],
+      };
+    }
+
     const { output } = await ReasoningService.run(seoArticleDef, {
       workspaceId: scope.workspaceId,
       projectId: scope.projectId,
       brandId: scope.brandId,
+      ...languageInput(input.language ?? brief.language),
       context: {
         facts,
         mode: input.mode,
@@ -120,9 +159,11 @@ export async function runSeoWrite(
       ok: true,
       draft: {
         title:
-          (rewrite && cleanModelLine(output.title, SEO_LIMITS.title)) || title,
+          ((rewrite || refresh) &&
+            cleanModelLine(output.title, SEO_LIMITS.title)) ||
+          title,
         metaDescription:
-          (rewrite &&
+          ((rewrite || refresh) &&
             cleanModelLine(output.metaDescription, SEO_LIMITS.meta)) ||
           metaDescription,
         markdown,

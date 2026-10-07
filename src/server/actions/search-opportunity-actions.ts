@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { SeoActionFlags, seoActionsAllowedFor } from "@/lib/seo/action-flags";
 import { GscFlags } from "@/lib/seo/flags";
 import {
   SeoInsightFlags,
@@ -25,6 +26,7 @@ import {
   dismissBrandTermSuggestion,
   suggestBrandTerms,
 } from "@/server/seo/opportunities/brand-suggest";
+import { trackFindingDone } from "@/server/seo/actions/fix-this";
 import {
   decideFinding,
   reviewShadowFinding,
@@ -189,6 +191,24 @@ async function decide(
       userId,
     });
     if (!result.ok) return { ok: false, message: NOT_OPEN };
+    // SC-F6: "Done" ölçüm başlatır; hata Done kararını bozmaz (günlük doğrulayıcı kalanı tamamlar).
+    if (
+      decision === "DONE" &&
+      SeoActionFlags.loop() &&
+      seoActionsAllowedFor(projectId)
+    ) {
+      await trackFindingDone({
+        projectId,
+        findingId,
+        userId,
+        workspaceId: gate.access.workspaceId,
+      }).catch((error: unknown) =>
+        console.error(
+          "[seo-actions] done tracking failed:",
+          error instanceof Error ? error.message : error,
+        ),
+      );
+    }
     revalidateSearch(projectId);
     return { ok: true, message: DECISION_MESSAGE[decision] };
   } catch (error) {

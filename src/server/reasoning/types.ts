@@ -30,6 +30,8 @@ export type ReasoningInput = {
   projectId: string;
   brandId: string;
   context: ReasoningContext;
+  // Bu çağrının çıktı dili; kişinin açık seçimi (ör. SEO Manager Brief dili) proje dilinin yerine geçer. Desteklenmeyen kod yok sayılır; yoksa proje dili.
+  language?: string;
   // Multi-modal input (image/PDF/text the user attached to the chat).
   // Used only on the real call path; the mock path never sees these, so
   // buildMock always keeps deriving solely from context.

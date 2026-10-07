@@ -31,6 +31,8 @@ import {
   WebsitePeriodSelector,
   WebsiteReportBody,
 } from "@/components/website-analytics/website-report-view";
+import { FromAgentelseSection } from "@/components/website-analytics/from-agentelse-section";
+import { UtmCoverageCheck } from "@/components/website-analytics/utm-coverage-check";
 import { WebsiteLiveStrip } from "@/components/website-analytics/website-live-strip";
 import { MeasurementHealthPanel } from "@/components/website-analytics/measurement-health-panel";
 import { MeasurementScoreChip } from "@/components/website-analytics/measurement-score";
@@ -218,11 +220,23 @@ export default async function WebsitePage({
             ) : (
               <WebsiteReportBody report={result.report} />
             )}
+            {result.report.period.days > 0 ? (
+              <FromAgentelseSection
+                projectId={projectId}
+                range={{
+                  from: result.report.period.from,
+                  to: result.report.period.to,
+                }}
+              />
+            ) : null}
             {insights ? (
               <WebsiteInsights projectId={projectId} view={insights} />
             ) : null}
             {measurement ? (
-              <MeasurementHealthPanel projectId={projectId} health={measurement} />
+              <>
+                <MeasurementHealthPanel projectId={projectId} health={measurement} />
+                <UtmCoverageCheck projectId={projectId} />
+              </>
             ) : null}
             {reports ? (
               <WebsiteReportArchive projectId={projectId} items={reports} />

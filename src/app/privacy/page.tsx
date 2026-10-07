@@ -409,6 +409,21 @@ const SECTIONS: PolicySection[] = [
           and the goal progress taken from it are deleted right away.
         </p>
         <p>
+          When link tracking is on, Agentelse adds standard tracking tags (UTM
+          parameters) to the links it puts in your ads and to the Instagram bio
+          link it makes for you, and keeps a short record of each tagged link
+          (the address and what it belongs to) until the project is deleted.
+          With Google Analytics connected, Agentelse matches the visits these
+          links bring, using the stored campaign summaries, to your ads and
+          posts; shows them next to your ad figures from Meta; may add Google
+          Analytics visit counts to the evidence of ad suggestions; and may save
+          a short lesson without any figures to your Brand Brain when a tagged
+          link clearly does better or worse than the rest of your website. These
+          lessons and the Google Analytics figures added to ad suggestions are
+          deleted right away when you disconnect Google Analytics. You can turn
+          link tracking off in Settings → Publishing.
+        </p>
+        <p>
           Agentelse also analyses these stored Google Analytics summaries to
           point out what changed and where your website can do better (for
           example a landing page that gets visits but few leads). Findings are
@@ -499,6 +514,17 @@ const SECTIONS: PolicySection[] = [
           Disconnecting Search Console deletes these opportunities, topic
           groups and suggestions right away, together with the article ideas
           made from them that you haven&rsquo;t used yet.
+        </p>
+        <p>
+          When you tell Agentelse you changed a page, it checks your public page
+          and compares your Search Console numbers before and after the change
+          to show what it did; these results are deleted right away when you
+          disconnect Search Console. When you ask the SEO Manager to rewrite a
+          page&rsquo;s title or description or to refresh an article, a few of
+          that page&rsquo;s top search words (personal details masked, at most
+          10) and the page text are sent to our AI provider to write the
+          suggestion; they are not used to train AI models and are not stored
+          there.
         </p>
         <p>
           Agentelse&rsquo;s use of information received from Google APIs will

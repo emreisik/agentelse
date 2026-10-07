@@ -5,6 +5,7 @@ import type { Prisma, WorkStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { ChannelKey } from "@/lib/content-channels";
 import { parseModuleKey, type ModuleKey } from "@/lib/modules/catalog";
+import { SeoActionFlags } from "@/lib/seo/action-flags";
 import {
   TODAY_WORK_PREFIX,
   WORK_DEFAULT_TITLE,
@@ -461,11 +462,22 @@ async function liveSlotCount(
   projectId: string,
   workId: string,
 ): Promise<number> {
+  const planCard = {
+    parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" },
+  };
+  // SEO_ACTIONS açıkken SEO Manager kartlarının makaleleri de (Creative.planId =
+  // kartın Command'ı) canlı slot sayılır: takvimdeki makalesi olan Work silinemez.
+  const seoCard = {
+    AND: [
+      { parsedIntent: { path: ["card", "kind"], equals: "module-flow" } },
+      { parsedIntent: { path: ["card", "module"], equals: "seo" } },
+    ],
+  };
   const plans = await db.command.findMany({
     where: {
       projectId,
       workId,
-      parsedIntent: { path: ["card", "kind"], equals: "content-plan-draft" },
+      ...(SeoActionFlags.manager() ? { OR: [planCard, seoCard] } : planCard),
     },
     select: { id: true },
     take: 500,

@@ -2,10 +2,15 @@
 
 import { startTransition, useEffect, useId, useRef, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CardActions } from "@/components/works/card-actions";
 import { SEO_LANGUAGES, validateSeoBrief } from "@/lib/module-flows/seo/brief";
-import { SEO_LIMITS, type SeoState } from "@/lib/module-flows/seo/state";
+import {
+  SEO_LIMITS,
+  seoModeOf,
+  type SeoState,
+} from "@/lib/module-flows/seo/state";
 import type { CardButton } from "@/lib/works/card-action";
 import {
   goToSeoStepAction,
@@ -13,31 +18,31 @@ import {
   seoBriefDefaultsAction,
 } from "@/server/actions/seo-flow-actions";
 
+import { cardStatusView } from "./card-status";
 import { SEO_FLOW_COPY as COPY } from "./copy";
+import { ModePicker } from "./mode-picker";
 import {
   Field,
   NATIVE_SELECT_CLASS,
-  WorkingNote,
+  RunNote,
   serverButton,
   useSeoStepAction,
   type OnMoving,
 } from "./parts";
+import { TargetPicker } from "./target-picker";
+import { useCardStatus } from "./use-card-status";
 
 // Step 1, Brief: the topic (required), the site, the article's language and,
 // optionally, who it is for. A brief never filled starts from the project's
 // website and the brand's language; "Find keywords" saves it and researches.
+// SC-F6 (state.features.modes): a mode picker on top; "Refresh a page" and
+// "Fix a snippet" ask for a page instead of a topic (TargetPicker); in article
+// mode an empty topic can adopt the topic Search Console suggested.
 
 const RESEARCH = "research";
 const KEEP_PLAN = "goto:plan";
 
-export function BriefStep({
-  projectId,
-  commandId,
-  state,
-  blocked,
-  onMoving,
-  defaultTopic,
-}: {
+type Props = {
   projectId?: string;
   commandId?: string;
   state: SeoState;
@@ -46,7 +51,58 @@ export function BriefStep({
   onMoving?: OnMoving;
   // The topic of the idea the flow was started from (docs/ideas.md).
   defaultTopic?: string;
-}) {
+  // A model call holds the card (only read when the card streams live).
+  running?: boolean;
+};
+
+export function BriefStep(props: Props) {
+  const { state } = props;
+  const modes = state.features?.modes === true;
+  if (!modes) return <ArticleBrief {...props} modes={false} />;
+  const mode = seoModeOf(state);
+  const picker =
+    !state.plan && !state.snippet ? (
+      <ModePicker
+        projectId={props.projectId}
+        commandId={props.commandId}
+        mode={mode}
+        blocked={props.blocked}
+      />
+    ) : null;
+  if (mode === "article") {
+    return (
+      <div className="space-y-4">
+        {picker}
+        <ArticleBrief {...props} modes />
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      {picker}
+      <TargetPicker
+        projectId={props.projectId}
+        commandId={props.commandId}
+        state={state}
+        mode={mode}
+        running={props.running === true && state.features?.live === true}
+        blocked={props.blocked}
+        onMoving={props.onMoving}
+      />
+    </div>
+  );
+}
+
+function ArticleBrief({
+  projectId,
+  commandId,
+  state,
+  blocked,
+  onMoving,
+  defaultTopic,
+  running = false,
+  modes,
+}: Props & { modes: boolean }) {
   const stored = state.brief;
   const [topic, setTopic] = useState(stored?.topic ?? defaultTopic ?? "");
   const [siteUrl, setSiteUrl] = useState(stored?.siteUrl ?? "");
@@ -88,7 +144,19 @@ export function BriefStep({
         ? goToSeoStepAction(card.projectId, card.commandId, "plan")
         : researchSeoAction(card.projectId, card.commandId, brief),
   });
-  const researching = busyId === RESEARCH;
+  // Canlı kartta koşu arka planda sürer: eylem hemen döner, kart çalışıyor
+  // notunu state.run'dan gösterir.
+  const researching =
+    busyId === RESEARCH || (state.features?.live === true && running);
+
+  // Search Console'un önerdiği konu: yalnız modlar açıkken, konu boşken.
+  const { status } = useCardStatus({
+    projectId,
+    commandId,
+    enabled: modes && topic.trim().length === 0,
+    version: "brief",
+  });
+  const suggestion = cardStatusView(status, { modes })?.suggestion ?? null;
 
   const buttons: CardButton[] = [
     serverButton(
@@ -120,6 +188,27 @@ export function BriefStep({
             }
             onChange={(event) => setTopic(event.target.value)}
           />
+          {suggestion && topic.trim().length === 0 ? (
+            <div
+              className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-dashed px-3 py-1.5"
+              style={{ borderColor: "var(--ws-border)" }}
+            >
+              <p
+                className="min-w-0 flex-1 text-xs leading-5 break-words"
+                style={{ color: "var(--ws-text-2)" }}
+              >
+                {COPY.suggestedTopic}: “{suggestion}”
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={() => setTopic(suggestion.slice(0, SEO_LIMITS.topic))}
+              >
+                {COPY.useSuggestion}
+              </Button>
+            </div>
+          ) : null}
         </Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_11rem]">
           <Field label={COPY.site} htmlFor={`${ids}-site`}>
@@ -169,7 +258,7 @@ export function BriefStep({
           />
         </Field>
       </fieldset>
-      {researching ? <WorkingNote>{COPY.researchNote}</WorkingNote> : null}
+      {researching ? <RunNote text={COPY.researchNote} /> : null}
       <CardActions
         buttons={buttons}
         onAct={onAct}

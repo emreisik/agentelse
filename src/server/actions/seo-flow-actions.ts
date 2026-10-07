@@ -2,43 +2,55 @@
 
 import { flowHintOf } from "@/lib/module-flows/card";
 import { markIdeasPlanned } from "@/server/chat/idea-pool";
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/prisma";
-import { isModuleFlowStep, type ModuleFlowStep } from "@/lib/module-flows/card";
+import { isModuleFlowStep } from "@/lib/module-flows/card";
 import { cleanLine, validateSeoBrief } from "@/lib/module-flows/seo/brief";
 import { formatWhen, isWallClock } from "@/lib/module-flows/seo/deliver";
 import { applyPlanEdits } from "@/lib/module-flows/seo/plan";
 import {
   SEO_LIMITS,
   canGoToSeoStep,
+  seoModeOf,
   seoRunActive,
-  withoutRun,
   type SeoBrief,
   type SeoDelivery,
-  type SeoRunKind,
-  type SeoState,
 } from "@/lib/module-flows/seo/state";
+import { SeoActionFlags, seoActionsAllowedFor } from "@/lib/seo/action-flags";
+import { hostTwin, inScope, normalizeCrawlUrl } from "@/lib/seo/crawl-url";
 import { utcToZonedDateTimeLocal, zonedDateTimeToUtc } from "@/lib/timezone";
 import { workSummaryFrom } from "@/lib/works/work";
 import { markCreativePublishedAction } from "@/server/actions/plan-progress-actions";
 import { getProjectTimezone } from "@/server/chat/content-plan";
+import {
+  runSeoClaimed,
+  verifyActionSoon,
+} from "@/server/modules/seo/background";
 import { placeSeoArticle, seoPieceStatus } from "@/server/modules/seo/calendar";
 import {
   readSeoCard,
-  releaseSeoRun,
   writeSeoCard,
-  type SeoCardNext,
   type SeoCardRead,
 } from "@/server/modules/seo/card";
 import type { SeoScope } from "@/server/modules/seo/context";
 import { loadSeoDefaults } from "@/server/modules/seo/defaults";
 import { runSeoResearch } from "@/server/modules/seo/research";
+import { readTarget } from "@/server/modules/seo/target";
 import { runSeoWrite, type SeoDraft } from "@/server/modules/seo/write";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { WorkRepository } from "@/server/repositories/work.repository";
+import { readSeoLearnings } from "@/server/seo/actions/learnings";
+import { pageCheckSite } from "@/server/seo/actions/page-check";
+import {
+  actionForCard,
+  attachCreative,
+  createSeoAction,
+  getAction,
+  transitionAction,
+  updateProposal,
+} from "@/server/seo/actions/store";
 import {
   GUARD_MESSAGE,
   assertWorkActive,
@@ -60,6 +72,9 @@ const AI_BUCKET = { bucket: "seo-flow-ai", limit: 20 } as const;
 const WRITE_BUCKET = { bucket: "seo-flow", limit: 60 } as const;
 const READ_BUCKET = { bucket: "seo-flow-read", limit: 120 } as const;
 
+// Tazeleme kipinde sayfanın metni modele en çok bu kadar karakterle gider.
+const PAGE_TEXT_CHARS = 6000;
+
 // A time a minute or two behind is the clock, not the past.
 const PAST_GRACE_MS = 2 * 60_000;
 
@@ -70,6 +85,9 @@ const COPY = {
   noBrief: "Fill in the brief first.",
   noPlan: "Research the topic first.",
   noArticle: "Write the article first.",
+  noTarget: "Pick the page to refresh first.",
+  liveUrlIgnored:
+    "That address isn't on your verified site, so we'll look for the page ourselves.",
   rewriteLimit: `This article was rewritten ${SEO_LIMITS.rewrites} times. Edit it on your site instead.`,
   when: "Pick a day and a time.",
   past: "Pick a time that's still ahead.",
@@ -82,7 +100,8 @@ const COPY = {
 } as const;
 
 export type SeoFlowResult =
-  | { ok: true; message?: string }
+  // runId: model çağrısı arka planda koşuyor (kart canlı güncellenir).
+  | { ok: true; message?: string; runId?: string }
   | { ok: false; message: string; code?: "STALE" };
 
 export type SeoDefaultsResult =
@@ -151,88 +170,9 @@ async function seoAction(
     : { ok: false, message: result.message };
 }
 
-type Current = { step: ModuleFlowStep; state: SeoState };
-
-// One model call on the card: claim (the card shows it working, a second tap
-// or tab is refused), call, then write the answer only while the claim is
-// still this run's. A failed call gives the claim back and returns the card to
-// `fallbackStep`, everything else kept.
-async function runClaimed<T>(input: {
-  projectId: string;
-  commandId: string;
-  kind: SeoRunKind;
-  fallbackStep: ModuleFlowStep;
-  claim: (current: Current) => SeoCardNext;
-  call: (
-    claimed: Current,
-  ) => Promise<{ ok: true; value: T } | { ok: false; message: string }>;
-  finish: (current: Current, value: T) => Current;
-  message: string;
-}): Promise<SeoFlowResult> {
-  const { projectId, commandId } = input;
-  const runId = randomUUID();
-  const startedAt = new Date();
-
-  const claimed = await writeSeoCard({
-    projectId,
-    commandId,
-    update: (current) => {
-      if (seoRunActive(current.state.run, startedAt.getTime())) {
-        return { reject: COPY.busy };
-      }
-      const next = input.claim(current);
-      if ("reject" in next) return next;
-      return {
-        step: next.step,
-        state: {
-          ...next.state,
-          run: {
-            id: runId,
-            kind: input.kind,
-            startedAt: startedAt.toISOString(),
-          },
-        },
-      };
-    },
-  });
-  if (!claimed.ok) return failed(claimed.message);
-
-  let outcome: { ok: true; value: T } | { ok: false; message: string };
-  try {
-    outcome = await input.call(claimed);
-  } catch (error) {
-    console.error(
-      `[works] seo ${input.kind} failed:`,
-      error instanceof Error ? error.message : error,
-    );
-    outcome = { ok: false, message: GUARD_MESSAGE.failed };
-  }
-  if (!outcome.ok) {
-    await releaseSeoRun({
-      projectId,
-      commandId,
-      runId,
-      step: input.fallbackStep,
-    });
-    refresh(projectId);
-    return { ok: false, message: outcome.message };
-  }
-
-  const value = outcome.value;
-  const done = await writeSeoCard({
-    projectId,
-    commandId,
-    update: (current) =>
-      current.state.run?.id === runId
-        ? input.finish(
-            { step: current.step, state: withoutRun(current.state) },
-            value,
-          )
-        : { reject: COPY.stale },
-  });
-  refresh(projectId);
-  return done.ok ? { ok: true, message: input.message } : failed(done.message);
-}
+// Model çağrısı sürücüsü background.ts'te (runSeoClaimed): sahiplen, çağır,
+// cevabı yalnız sahiplik sürüyorsa yaz; kart canlı damgalıysa arka planda koşar.
+const CLAIM_COPY = { busy: COPY.busy, stale: COPY.stale } as const;
 
 // ---- Brief ----------------------------------------------------------------------
 
@@ -279,17 +219,25 @@ export async function researchSeoAction(
       const researched: SeoBrief = input;
       const scope = scopeOf(auth, projectId);
 
-      const result = await runClaimed({
+      return runSeoClaimed({
         projectId,
         commandId: id,
         kind: "research",
         fallbackStep: "brief",
+        phase: "researching",
+        copy: CLAIM_COPY,
         claim: ({ step, state }) =>
           step === "brief" || (step === "plan" && !state.plan)
             ? { step: "plan", state: { ...state, brief: researched } }
             : { reject: COPY.stale },
         call: async () => {
-          const answer = await runSeoResearch({ scope, brief: researched });
+          const learnings = await readSeoLearnings(projectId, 5);
+          const answer = await runSeoResearch({
+            scope,
+            brief: researched,
+            language: researched.language,
+            learnings,
+          });
           return answer.ok
             ? { ok: true, value: answer.plan }
             : { ok: false, message: answer.message };
@@ -299,11 +247,10 @@ export async function researchSeoAction(
           step: "plan",
           state: { ...state, plan },
         }),
+        afterDone: () =>
+          touchWork(projectId, current.workId, researched.topic),
         message: COPY.researched,
       });
-      if (result.ok)
-        await touchWork(projectId, current.workId, researched.topic);
-      return result;
     },
   );
 }
@@ -337,12 +284,15 @@ export async function writeSeoArticleAction(
       const scope = scopeOf(auth, projectId);
       const writtenAt = () => new Date().toISOString();
 
-      let title = "";
-      const result = await runClaimed<SeoDraft>({
+      const refreshMode = seoModeOf(current.state) === "refresh";
+
+      return runSeoClaimed<SeoDraft>({
         projectId,
         commandId: id,
         kind: "write",
         fallbackStep: "plan",
+        phase: refreshMode ? "reading_page" : "writing",
+        copy: CLAIM_COPY,
         claim: ({ step, state }) => {
           if (!state.plan || !state.brief) return { reject: COPY.stale };
           if (step !== "plan" && step !== "create")
@@ -353,34 +303,67 @@ export async function writeSeoArticleAction(
             ? { step: "create", state: { ...state, plan: edited.plan } }
             : { reject: edited.message };
         },
-        call: async ({ state }) => {
+        call: async ({ state }, setPhase) => {
           if (!state.plan || !state.brief) {
             return { ok: false, message: COPY.noPlan };
+          }
+          const learnings = await readSeoLearnings(projectId, 5);
+          if (refreshMode) {
+            // Tazeleme: sayfa şimdiki hâliyle okunur (kendi sitemiz, en çok
+            // 6.000 karakter), sonra yazılır.
+            if (!state.target) return { ok: false, message: COPY.noTarget };
+            await setPhase("reading_page");
+            const read = await readTarget(projectId, state.target.url, {
+              textChars: PAGE_TEXT_CHARS,
+            });
+            if (!read.ok) return { ok: false, message: read.message };
+            await setPhase("writing");
+            const answer = await runSeoWrite({
+              scope,
+              brief: state.brief,
+              plan: state.plan,
+              mode: "refresh",
+              language: state.brief.language,
+              learnings,
+              current: {
+                text: read.text,
+                title: read.target.title,
+                h2: read.target.h2,
+                ...(state.refresh
+                  ? {
+                      missing: state.refresh.missing,
+                      keep: state.refresh.keep,
+                    }
+                  : {}),
+              },
+            });
+            return answer.ok
+              ? { ok: true, value: answer.draft }
+              : { ok: false, message: answer.message };
           }
           const answer = await runSeoWrite({
             scope,
             brief: state.brief,
             plan: state.plan,
             mode: "write",
+            language: state.brief.language,
+            learnings,
           });
           return answer.ok
             ? { ok: true, value: answer.draft }
             : { ok: false, message: answer.message };
         },
-        finish: ({ state }, draft) => {
-          title = draft.title;
-          return {
-            step: "review",
-            state: {
-              ...state,
-              article: { ...draft, writtenAt: writtenAt(), rewrites: 0 },
-            },
-          };
-        },
+        finish: ({ state }, draft) => ({
+          step: "review",
+          state: {
+            ...state,
+            article: { ...draft, writtenAt: writtenAt(), rewrites: 0 },
+          },
+        }),
+        afterDone: (draft) =>
+          touchWork(projectId, current.workId, draft.title),
         message: COPY.written,
       });
-      if (result.ok && title) await touchWork(projectId, current.workId, title);
-      return result;
     },
   );
 }
@@ -413,11 +396,13 @@ export async function rewriteSeoArticleAction(
       const cleanNotes = cleanLine(notes, SEO_LIMITS.notes);
       const scope = scopeOf(auth, projectId);
 
-      return runClaimed<SeoDraft>({
+      return runSeoClaimed<SeoDraft>({
         projectId,
         commandId: id,
         kind: "rewrite",
         fallbackStep: "review",
+        phase: "writing",
+        copy: CLAIM_COPY,
         claim: ({ step, state }) => {
           if (step !== "review" || !state.article)
             return { reject: COPY.stale };
@@ -437,6 +422,8 @@ export async function rewriteSeoArticleAction(
             mode: "rewrite",
             article: state.article,
             notes: cleanNotes,
+            language: state.brief.language,
+            learnings: await readSeoLearnings(projectId, 5),
           });
           return answer.ok
             ? { ok: true, value: answer.draft }
@@ -586,6 +573,241 @@ async function placeOnCalendar(input: {
   return { ok: true, delivery: written.state.delivery ?? delivery };
 }
 
+// ---- Ölçüm: makalenin eylemi (SC-F6) ----------------------------------------------
+
+function actionLoopOpen(projectId: string): boolean {
+  return SeoActionFlags.loop() && seoActionsAllowedFor(projectId);
+}
+
+function isArticleAction(
+  kind: string,
+): kind is "NEW_CONTENT" | "LOCALIZE" {
+  return kind === "NEW_CONTENT" || kind === "LOCALIZE";
+}
+
+// Kartın eylemini kartın actionId'sine bağlar (zaten bağlıysa dokunmaz).
+async function storeActionId(
+  projectId: string,
+  commandId: string,
+  actionId: string,
+): Promise<void> {
+  await writeSeoCard({
+    projectId,
+    commandId,
+    update: ({ step, state }) =>
+      state.actionId ? { step, state } : { step, state: { ...state, actionId } },
+  });
+}
+
+// Takvime konan makale ölçülür: Fix this'ten gelen eylem varsa AYNI eyleme
+// yaratıcı bağlanır (ikinci satır açılmaz, türü korunur); yoksa ve kart makale
+// kipindeyse NEW_CONTENT ACCEPTED açılır. Tazeleme ve başlık kartları burada
+// eylem açmaz. Hiçbir koşulda zamanlamayı bozmaz.
+async function trackScheduledArticle(input: {
+  projectId: string;
+  commandId: string;
+  auth: WorksAuth;
+  current: SeoCardRead;
+  delivery: SeoDelivery;
+}): Promise<void> {
+  const { projectId, commandId, auth, current, delivery } = input;
+  if (!actionLoopOpen(projectId)) return;
+  try {
+    const { state } = current;
+    const { article, plan, brief } = state;
+    if (!article) return;
+    const nextCheckAt = new Date(
+      Math.max(Date.now(), Date.parse(delivery.scheduledFor)),
+    );
+
+    if (state.actionId) {
+      const action = await getAction(projectId, state.actionId);
+      if (
+        !action ||
+        !isArticleAction(action.kind) ||
+        (action.status !== "PROPOSED" && action.status !== "ACCEPTED")
+      ) {
+        return;
+      }
+      const attached = await attachCreative({
+        projectId,
+        actionId: action.id,
+        creativeId: delivery.creativeId,
+        nextCheckAt,
+      });
+      if (
+        attached &&
+        (action.proposal.kind === "NEW_CONTENT" ||
+          action.proposal.kind === "LOCALIZE")
+      ) {
+        await updateProposal({
+          projectId,
+          actionId: action.id,
+          proposal: {
+            ...action.proposal,
+            title: article.title,
+            language: brief?.language ?? action.proposal.language,
+          },
+        });
+      }
+      return;
+    }
+    if (seoModeOf(state) !== "article") return;
+
+    const created = await createSeoAction({
+      workspaceId: auth.workspaceId,
+      projectId,
+      kind: "NEW_CONTENT",
+      source: "SEO_MANAGER",
+      status: "ACCEPTED",
+      openKey: `card:${commandId}`,
+      targetUrl: null,
+      pageId: null,
+      targetQueries: [],
+      proposal: {
+        v: 1,
+        kind: "NEW_CONTENT",
+        title: article.title,
+        primaryKeyword: plan?.primaryKeyword ?? null,
+        language: brief?.language ?? null,
+        liveUrl: null,
+        note: null,
+        alert: null,
+      },
+      creativeId: delivery.creativeId,
+      commandId,
+      workId: current.workId,
+      nextCheckAt,
+      userId: auth.userId,
+    });
+    await storeActionId(projectId, commandId, created.action.id);
+  } catch (error) {
+    console.error(
+      "[works] seo action tracking failed:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
+// Kullanıcının yazdığı canlı adres: kendi doğrulanmış sitemizdeyse normalleşmiş
+// hâli (eş alan adı köken alan adına çevrilir), değilse null.
+async function verifiedLiveUrl(
+  projectId: string,
+  raw: string,
+): Promise<string | null> {
+  const site = await pageCheckSite(projectId);
+  if (!site) return null;
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
+    ? raw
+    : `https://${raw}`;
+  let url = normalizeCrawlUrl(withScheme);
+  if (!url) return null;
+  const parsed = new URL(url);
+  if (parsed.hostname.toLowerCase() === hostTwin(site.originHost)) {
+    parsed.hostname = site.originHost;
+    url = normalizeCrawlUrl(parsed.toString());
+    if (!url) return null;
+  }
+  return inScope(url, site.scope) ? url : null;
+}
+
+// "Mark as published" sonrası: eylem uygulandı sayılır ve doğrulayıcı hemen
+// bakar. Eylem yoksa (bayraktan önce zamanlanmış) makale kipindeki kart için
+// APPLIED açılır. Not: kullanıcıya gösterilecek ek cümle (geçersiz adres).
+async function trackPublishedArticle(input: {
+  projectId: string;
+  commandId: string;
+  auth: WorksAuth;
+  current: SeoCardRead;
+  delivery: SeoDelivery;
+  liveUrl: unknown;
+}): Promise<string | null> {
+  const { projectId, commandId, auth, current, delivery } = input;
+  if (!actionLoopOpen(projectId)) return null;
+  let note: string | null = null;
+  try {
+    const raw = typeof input.liveUrl === "string" ? input.liveUrl.trim() : "";
+    let url: string | null = null;
+    if (raw) {
+      url = await verifiedLiveUrl(projectId, raw);
+      if (!url) note = COPY.liveUrlIgnored;
+    }
+
+    const { state } = current;
+    const action = state.actionId
+      ? await getAction(projectId, state.actionId)
+      : await actionForCard(projectId, commandId);
+
+    let actionId: string | null = null;
+    if (action) {
+      if (
+        isArticleAction(action.kind) &&
+        (action.status === "PROPOSED" || action.status === "ACCEPTED")
+      ) {
+        if (action.status === "PROPOSED") {
+          await transitionAction({
+            projectId,
+            actionId: action.id,
+            event: "ACCEPT",
+            userId: auth.userId,
+          });
+        }
+        const proposal =
+          url &&
+          (action.proposal.kind === "NEW_CONTENT" ||
+            action.proposal.kind === "LOCALIZE")
+            ? { ...action.proposal, liveUrl: url }
+            : undefined;
+        const applied = await transitionAction({
+          projectId,
+          actionId: action.id,
+          event: "APPLY",
+          userId: auth.userId,
+          ...(url ? { patch: { targetUrl: url, ...(proposal ? { proposal } : {}) } } : {}),
+        });
+        if (applied.ok) actionId = action.id;
+      }
+      if (!state.actionId) await storeActionId(projectId, commandId, action.id);
+    } else if (seoModeOf(state) === "article" && state.article) {
+      const created = await createSeoAction({
+        workspaceId: auth.workspaceId,
+        projectId,
+        kind: "NEW_CONTENT",
+        source: "SEO_MANAGER",
+        status: "APPLIED",
+        openKey: `card:${commandId}`,
+        targetUrl: url,
+        pageId: null,
+        targetQueries: [],
+        proposal: {
+          v: 1,
+          kind: "NEW_CONTENT",
+          title: state.article.title,
+          primaryKeyword: state.plan?.primaryKeyword ?? null,
+          language: state.brief?.language ?? null,
+          liveUrl: url,
+          note: null,
+          alert: null,
+        },
+        creativeId: delivery.creativeId,
+        commandId,
+        workId: current.workId,
+        userId: auth.userId,
+      });
+      await storeActionId(projectId, commandId, created.action.id);
+      if (created.created) actionId = created.action.id;
+    }
+
+    if (actionId) verifyActionSoon(actionId);
+  } catch (error) {
+    console.error(
+      "[works] seo action tracking failed:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+  return note;
+}
+
 // "Add to calendar": the day and time the article goes live on the site.
 export async function scheduleSeoArticleAction(
   projectId: string,
@@ -614,6 +836,13 @@ export async function scheduleSeoArticleAction(
       });
       refresh(projectId, true);
       if (!placed.ok) return placed;
+      await trackScheduledArticle({
+        projectId,
+        commandId: id,
+        auth,
+        current,
+        delivery: placed.delivery,
+      });
       const at = formatWhen(
         placed.delivery.scheduledFor,
         placed.delivery.timezone,
@@ -629,6 +858,7 @@ export async function scheduleSeoArticleAction(
 export async function markSeoPublishedAction(
   projectId: string,
   commandId: string,
+  liveUrl?: unknown,
 ): Promise<SeoFlowResult> {
   return seoAction(
     "seo-published",
@@ -707,9 +937,19 @@ export async function markSeoPublishedAction(
             : { reject: COPY.stale },
       });
       refresh(projectId, true);
-      return written.ok
-        ? { ok: true, message: COPY.published }
-        : failed(written.message);
+      if (!written.ok) return failed(written.message);
+      const note = await trackPublishedArticle({
+        projectId,
+        commandId: id,
+        auth,
+        current,
+        delivery,
+        liveUrl,
+      });
+      return {
+        ok: true,
+        message: note ? `${COPY.published} ${note}` : COPY.published,
+      };
     },
   );
 }

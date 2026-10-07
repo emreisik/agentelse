@@ -3,6 +3,7 @@
 import { Check } from "lucide-react";
 import type { CSSProperties } from "react";
 
+import type { ModuleFlowStep } from "@/lib/module-flows/card";
 import { MODULES, type ModuleKey } from "@/lib/modules/catalog";
 import {
   flowStatesOf,
@@ -19,7 +20,9 @@ import { cn } from "@/lib/utils";
 // "Launch", "Share"). Five words do not fit a phone's line, so there only the
 // current step keeps its word on screen; screen readers get every word, and
 // the state of each step. Presentational: a step is a button only when
-// `openable` says so and `onPick` is given.
+// `openable` says so and `onPick` is given. `steps` (isteğe bağlı) yalnız o
+// adımları, verilen sırayla çizer ve numarayı alt kümedeki sıraya göre verir
+// (SEO Manager'ın başlık düzeltme kipi üç adımlıdır); verilmezse beş adım.
 
 export const FLOW_STEPPER_COPY = {
   done: "done",
@@ -60,6 +63,7 @@ export function FlowStepper({
   openable,
   onPick,
   className,
+  steps,
 }: {
   module: ModuleKey;
   current: FlowStep;
@@ -68,15 +72,21 @@ export function FlowStepper({
   openable?: Partial<Record<FlowStep, boolean>>;
   onPick?: (step: FlowStep) => void;
   className?: string;
+  steps?: readonly ModuleFlowStep[];
 }) {
   const states = flowStatesOf(current, { complete });
+  const all = flowStepsOf(module);
+  // Alt küme verilmişse sırası korunur; bilinmeyen anahtar atlanır.
+  const shown = steps
+    ? steps.flatMap((key) => all.filter((item) => item.key === key))
+    : all;
   return (
     <nav aria-label={flowStepperAria(module)} className={className}>
       <ol
         className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b pb-3.5 sm:gap-x-5"
         style={{ borderColor: "var(--ws-border)" }}
       >
-        {flowStepsOf(module).map(({ key, label }, index) => {
+        {shown.map(({ key, label }, index) => {
           const state = states[key];
           const body = (
             <>

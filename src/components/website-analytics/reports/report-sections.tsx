@@ -14,6 +14,7 @@ import type {
   PeriodReportSections,
   PlanBody,
   PulseBody,
+  ReportAgentelseSection,
   ReportFindingSnap,
   ReportForecastSnap,
   ReportGoalSnap,
@@ -181,6 +182,41 @@ export function ReportTableBlock({
       currency={currency}
       empty={NOTHING}
     />
+  );
+}
+
+// GA-F6: "From Agentelse" bölümü (yalnız haftalık kartta, doluysa).
+export function AgentelseBlock({
+  section,
+  currency,
+}: {
+  section: ReportAgentelseSection | undefined;
+  currency: string | null;
+}) {
+  if (!section) return null;
+  return (
+    <div className="space-y-3">
+      <SectionTitle>From Agentelse</SectionTitle>
+      <ReportTableBlock
+        title="Tracked links"
+        firstColumn="Source"
+        table={section.tracked}
+        currency={currency}
+      />
+      <ReportTableBlock
+        title="Your ads on your website"
+        firstColumn="Campaign"
+        table={section.ads}
+        currency={currency}
+      />
+      <ReportTableBlock
+        title="Google Ads"
+        firstColumn="Campaign"
+        table={section.googleAds}
+        currency={currency}
+      />
+      <NotesList notes={section.notes} />
+    </div>
   );
 }
 
@@ -636,6 +672,9 @@ export function PeriodDetails({
         table={body.keyEvents}
         currency={currency}
       />
+      {weekly ? (
+        <AgentelseBlock section={weekly.agentelse} currency={currency} />
+      ) : null}
       <ReportTableBlock
         title="AI assistants"
         firstColumn="Assistant"

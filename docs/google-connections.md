@@ -57,6 +57,8 @@ Google, bir Google hesabı × OAuth istemcisi için en çok 100 canlı refresh t
   - `SeoFinding`, `SeoCluster`, `SeoQueryEmbedding` ve `SeoEngineState` bağla cascade gider.
   - Motorun sinyalleri ve bulgulardan yapılmış, kullanılmamış havuz fikirleri silinir; kullanılmış fikirlerin kanıtı çıkarılır.
   - Hiçbiri bayrağa bağlı değildir. Bkz. [search-opportunities.md](search-opportunities.md).
+- SC-F6: Search Console Disconnect, "Delete stored data" ve W1 bağ temizliği (seçimi değişmiş, sahipsiz ve mock bağlar) şunları da siler, bayraktan bağımsız: SEO eylemleri (`SeoAction`, Search Console bağına ait olanlar), SEO öğrenmeleri (`BrandLearning` `sourceType` SEO; öğrenme kimliği ya da `sourceRef` ile) ve SEO Manager kartlarındaki Search Console verisi (quick wins, sorgu sayısı). Bkz. [search-actions.md](search-actions.md).
+- GA-F6: Google Analytics Disconnect "ga-utm:" GA4 öğrenmelerini hemen siler ve projenin bütün `AdsDecision` kanıtlarından `ga4_*` anahtarlarını söker (`deleteGaAttributionDataForCredential`). `TrackedLink` ve link izleme ayarı Google verisi olmadığı için kalır. Bkz. [website-attribution.md](website-attribution.md).
 - **Akıllı iptal:** Google'a iptal (`oauth2.googleapis.com/revoke`) yalnız şu durumda gider: aynı Google hesabını kullanan, koparılmamış başka bir Google bağlantısı yoksa (hangi workspace ya da servis olursa olsun). Eşleşme sırası: aynı şifreli token (29 Eylül'den kalan GA/GSC çiftleri), aynı `googleSub`, kimliği olmayan eski satırlarda aynı e-posta. Hesap tanınamıyorsa iptal edilmez. İptal başarısız olsa da silme yapılır.
 - Denetim kaydında `revokedAtGoogle` tutulur.
 

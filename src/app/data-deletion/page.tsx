@@ -201,10 +201,16 @@ export default async function DataDeletionPage({
             breakdowns, and weekly and monthly query and page summaries.
             Disconnecting Search Console also deletes the URL Inspection
             results, sitemap status and search alerts based on Search Console
-            that Agentelse stored. Disconnecting Search Console also deletes
-            the search opportunities, topic groups and brand-term suggestions
-            built from it, and the article ideas made from them that you
-            haven&rsquo;t used yet. It also removes
+            that Agentelse stored. Disconnecting Google Analytics also deletes
+            the lessons learned from your tagged links and the Google Analytics
+            figures added to ad suggestions. The records of the links Agentelse
+            tagged are kept until the project is deleted, and you can turn link
+            tracking off in Settings &gt; Publishing. Disconnecting Search
+            Console also deletes the search opportunities, topic groups and
+            brand-term suggestions built from it, and the article ideas made
+            from them that you haven&rsquo;t used yet, as well as the measured
+            results of SEO changes and the learnings drawn from them. It also
+            removes
             Agentelse&rsquo;s access in your Google account, unless the same
             Google account is still used by your other Agentelse Google
             connection. You can remove that access yourself in your Google

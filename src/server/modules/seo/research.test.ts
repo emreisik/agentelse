@@ -38,6 +38,9 @@ vi.mock("@/server/brand/rule-language", () => ({
 vi.mock("@/server/works/brand-rule-loader", () => ({
   loadBrandRules: async () => null,
 }));
+vi.mock("@/lib/seo/actions/learning-prompt", () => ({
+  seoLearningsPromptLine: () => null,
+}));
 
 import { priorCurve } from "@/lib/seo/ctr-curve";
 import { AgentelseError } from "@/server/security/errors";
@@ -309,5 +312,40 @@ describe("runSeoResearch", () => {
       code: "FAILED",
       message: SEO_RESEARCH_COPY.failed,
     });
+  });
+
+  it("sends no language override and ignores learnings while SEO_ACTIONS is off", async () => {
+    await runSeoResearch({
+      scope: SCOPE,
+      brief: { ...BRIEF, language: "tr" },
+      language: "tr",
+      learnings: ["Titles helped."],
+    });
+    const [, call] = mocks.run.mock.calls[0]!;
+    expect(call).not.toHaveProperty("language");
+    expect(call.context.facts).not.toHaveProperty("seoLearnings");
+  });
+
+  it("passes the brief's language as the hard rule and the learnings when SEO_ACTIONS is on", async () => {
+    vi.stubEnv("SEO_ACTIONS", "true");
+    await runSeoResearch({
+      scope: SCOPE,
+      brief: { ...BRIEF, language: "tr" },
+      learnings: ["Titles helped."],
+    });
+    const [, call] = mocks.run.mock.calls[0]!;
+    expect(call.language).toBe("tr");
+    expect(call.context.facts.seoLearnings).toEqual(["Titles helped."]);
+  });
+
+  it("validates the language: an unsupported value is ignored", async () => {
+    vi.stubEnv("SEO_ACTIONS", "true");
+    await runSeoResearch({
+      scope: SCOPE,
+      brief: BRIEF,
+      language: "xx-nope",
+    });
+    const [, call] = mocks.run.mock.calls[0]!;
+    expect(call).not.toHaveProperty("language");
   });
 });

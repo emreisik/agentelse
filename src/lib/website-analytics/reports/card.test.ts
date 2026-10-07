@@ -9,7 +9,11 @@ import {
   samplePulseCard,
   sampleWeeklyCard,
 } from "./test-fixtures";
-import { REPORT_CAPS, type WebsiteReportCardData } from "./types";
+import {
+  REPORT_CAPS,
+  type ReportAgentelseSection,
+  type WebsiteReportCardData,
+} from "./types";
 
 // Bu dosyanın kanıtladığı: saklanan kart JSON gidiş dönüşünde birebir okunur;
 // bozuk, gelecek sürümden ya da çeşidi gövdeyle uyuşmayan kart null olur;
@@ -30,6 +34,41 @@ function json(card: WebsiteReportCardData): Record<string, unknown> {
 
 function bodyOf(raw: Record<string, unknown>): Record<string, unknown> {
   return raw.body as Record<string, unknown>;
+}
+
+
+// GA-F6 bölümü örneği: etiketlerden biri HTML karakteri taşır.
+const AGENTELSE: ReportAgentelseSection = {
+  tracked: {
+    columns: [
+      { label: "Sessions (GA4)", format: "count" },
+      { label: "Engagement rate", format: "percent" },
+      { label: "Key events (GA4)", format: "count" },
+    ],
+    rows: [{ label: "Meta ads: <b>Spring</b> sale", values: [1200, 61.2, 30] }],
+    other: [40, null, 1],
+    notes: [],
+  },
+  ads: {
+    columns: [
+      { label: "Link clicks (Meta)", format: "count" },
+      { label: "Sessions (GA4)", format: "count" },
+    ],
+    rows: [{ label: "Spring sale", values: [900, 700] }],
+    other: null,
+    notes: [],
+  },
+  googleAds: null,
+  notes: ["Only visits through links Agentelse tagged are counted."],
+};
+
+function weeklyWithAgentelse(value: unknown): WebsiteReportCardData {
+  const card = sampleWeeklyCard();
+  if (card.body.variant !== "weekly") throw new Error("variant");
+  return {
+    ...card,
+    body: { ...card.body, agentelse: value as ReportAgentelseSection },
+  };
 }
 
 describe("readWebsiteReportCard", () => {
@@ -220,5 +259,53 @@ describe("readWebsiteReportCard", () => {
       expect(() => readWebsiteReportCard(value)).not.toThrow();
       expect(readWebsiteReportCard(value)).toBeNull();
     }
+  });
+
+  it("reads an old weekly card exactly as before (no agentelse key)", () => {
+    const card = readWebsiteReportCard(json(sampleWeeklyCard()));
+    expect(card).toEqual(sampleWeeklyCard());
+    expect(Object.hasOwn(card?.body ?? {}, "agentelse")).toBe(false);
+  });
+
+  it("round-trips a valid agentelse section", () => {
+    const card = weeklyWithAgentelse(AGENTELSE);
+    expect(readWebsiteReportCard(json(card))).toEqual(card);
+  });
+
+  it("drops an invalid agentelse section and keeps the card", () => {
+    for (const bad of ["x", 5, [], { tracked: "no", ads: 3, googleAds: [] }]) {
+      const card = readWebsiteReportCard(json(weeklyWithAgentelse(bad)));
+      expect(card).toEqual(sampleWeeklyCard());
+    }
+  });
+
+  it("caps agentelse rows and notes and drops long notes", () => {
+    const row = { label: "x", values: [1, 2, 3] };
+    const raw = json(
+      weeklyWithAgentelse({
+        ...AGENTELSE,
+        tracked: {
+          ...AGENTELSE.tracked,
+          rows: Array.from({ length: 20 }, () => row),
+        },
+        ads: {
+          ...AGENTELSE.ads,
+          rows: Array.from({ length: 20 }, () => row),
+        },
+        notes: ["a", "b", "c", "d", "e", "f", "z".repeat(301)],
+      }),
+    );
+    const card = readWebsiteReportCard(raw);
+    if (!card || card.body.variant !== "weekly") throw new Error("unreadable");
+    expect(card.body.agentelse?.tracked?.rows).toHaveLength(REPORT_CAPS.agentelse);
+    expect(card.body.agentelse?.ads?.rows).toHaveLength(REPORT_CAPS.agentelseAds);
+    expect(card.body.agentelse?.notes).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("does not read agentelse from a monthly body", () => {
+    const raw = json(sampleMonthlyCard());
+    bodyOf(raw).agentelse = AGENTELSE;
+    const card = readWebsiteReportCard(raw);
+    expect(card?.body).not.toHaveProperty("agentelse");
   });
 });

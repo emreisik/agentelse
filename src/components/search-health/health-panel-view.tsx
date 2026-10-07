@@ -13,6 +13,7 @@ import {
   recrawlSiteAction,
   requestInspectionAction,
 } from "@/server/actions/search-health-actions";
+import type { HealthFixState } from "@/server/seo/actions/fix-this";
 import type { CwvView } from "@/server/seo/health/cwv";
 import type { SearchHealthPanel } from "@/server/seo/health/panel";
 
@@ -589,7 +590,14 @@ function UpdatesCard({ panel }: { panel: Panel }) {
   );
 }
 
-export function HealthPanelView({ panel }: { panel: SearchHealthPanel }) {
+export function HealthPanelView({
+  panel,
+  tracked,
+}: {
+  panel: SearchHealthPanel;
+  // SC-F6: "I fixed this" durumları; yoksa düğme çizilmez.
+  tracked?: Record<string, HealthFixState>;
+}) {
   return (
     <div className="space-y-4">
       <Header panel={panel} />
@@ -602,6 +610,7 @@ export function HealthPanelView({ panel }: { panel: SearchHealthPanel }) {
           projectId={panel.projectId}
           issues={panel.issues}
           canMute={panel.allowed}
+          tracked={tracked}
         />
       </div>
       <div className="grid gap-3 lg:grid-cols-2">

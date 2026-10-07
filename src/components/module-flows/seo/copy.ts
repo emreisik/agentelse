@@ -105,6 +105,148 @@ export const SEO_FLOW_COPY = {
   onCalendar: (when: string) => `On your calendar for ${when}.`,
   publishedOn: (day: string) => `Published · ${day}`,
   pickWhen: "Pick a day and a time.",
+
+  // SC-F6: kipler (state.features.modes)
+  modesLabel: "What do you want to do?",
+  modes: {
+    article: {
+      label: "Write an article",
+      hint: "A new post, from keyword research to the page.",
+    },
+    refresh: {
+      label: "Refresh a page",
+      hint: "Rewrite a page you already have.",
+    },
+    snippet: {
+      label: "Fix a snippet",
+      hint: "A better title and description for one page.",
+    },
+  },
+  modeFailed: "Couldn't change what to do. Try again.",
+
+  // Hedef sayfa seçici
+  pageUrl: "Page address",
+  pageUrlPlaceholder: "example.com/blog/your-page",
+  pickFromPages: "Pick from your pages",
+  hidePages: "Hide your pages",
+  pagesLoading: "Loading your pages…",
+  pagesNone: "No pages found yet. Paste the address instead.",
+  pagesFailed: "Couldn't load your pages. Paste the address instead.",
+  pageClicks: (clicks: string) => `${clicks} clicks`,
+  pageOnSite: "On your site",
+  pageSnapshot: "This page today",
+  pageNoTitle: "No title found",
+  pageWords: (words: number) => `${words.toLocaleString("en-US")} words`,
+  ranksFor: (count: number) =>
+    `Ranks for ${count.toLocaleString("en-US")} ${count === 1 ? "search" : "searches"}`,
+  suggestTitles: "Suggest titles",
+  suggestingTitles: "Suggesting…",
+  planRefresh: "Plan the refresh",
+  planningRefresh: "Planning…",
+  keepSuggestions: "Keep these suggestions",
+  snippetNote: "Reading your page and writing three title options.",
+  refreshNote:
+    "Reading your page and researching what it is missing. This takes about a minute.",
+
+  // Başlık düzeltme adımı
+  snippetNow: "Now",
+  snippetOption: (n: number) => `Option ${n}`,
+  snippetTitleLabel: "Title",
+  snippetMetaLabel: "Meta description",
+  snippetCounter: (count: number, limit: number) => `${count} / ${limit}`,
+  snippetCheck: {
+    title_length: "Title fits",
+    meta_length: "Description fits",
+    keyword_in_title: "Keyword in title",
+  },
+  snippetCheckFail: {
+    title_length: "Title is too long",
+    meta_length: "Description is too long",
+    keyword_in_title: "Keyword missing from title",
+  },
+  snippetEmpty: "Both the title and the description need text.",
+  snippetTooLong: "Shorten the title or the description first.",
+  useThis: "Use this",
+  suggestAgain: "Suggest again",
+  suggesting: "Suggesting…",
+  snippetStopped: "The suggestions stopped before they finished.",
+  snippetPreviewHost: "your-site.com",
+  editText: "Edit before using",
+
+  // Tazeleme: ne değişir
+  whatChanges: "What changes",
+  refreshAdd: "Adds",
+  refreshKeep: "Keeps",
+  refreshNone: "Nothing to add was found.",
+  refreshTraffic: (count: number) =>
+    `This page already gets search traffic for ${count.toLocaleString("en-US")} ${count === 1 ? "search" : "searches"}.`,
+  writeRefresh: "Rewrite the page",
+  writingRefresh: "Rewriting…",
+
+  // Tazeleme farkı (Review)
+  diffTitle: "Changes to the page",
+  diffTitleChanged: "Title changes",
+  diffTitleSame: "Title stays",
+  diffMetaChanged: "Description changes",
+  diffMetaSame: "Description stays",
+  diffAdded: "New sections",
+  diffRemoved: "Dropped sections",
+  diffKept: (count: number) =>
+    `${count} ${count === 1 ? "section" : "sections"} stay`,
+  diffWords: (before: number | null, after: number, pct: number | null) =>
+    before === null
+      ? `${after.toLocaleString("en-US")} words`
+      : `${before.toLocaleString("en-US")} → ${after.toLocaleString("en-US")} words${
+          pct === null ? "" : ` (${pct > 0 ? "+" : pct < 0 ? "−" : ""}${Math.abs(pct)}%)`
+        }`,
+  diffNone: "No changes to show.",
+
+  // Teslim: kipe göre
+  liveUrl: "Live page address (optional)",
+  liveUrlPlaceholder: "https://example.com/blog/your-article",
+  liveUrlHint:
+    "If you add it, Agentelse checks that page. Otherwise it looks for the page itself.",
+  updatedIntro:
+    "Copy it into your site, then tell Agentelse you've updated the page.",
+  snippetIntro:
+    "Paste the title and meta description into your site's own fields, then tell Agentelse.",
+  markApplied: "I've updated my site",
+  updatedOn: (day: string) => `Updated · ${day}`,
+
+  // Sonuç ve sorular
+  checkingStatus: "Checking…",
+  itsLive: "It's live",
+  checkAgain: "Check again",
+  notDoneYet: "Not done yet",
+  measuringUntil: (day: string) => `Measuring until ${day}`,
+  resultsRemoved:
+    "These results were removed when Search Console was disconnected.",
+  suggestedTopic: "Suggested from Search Console",
+  useSuggestion: "Use this",
+  statusFailed: "Couldn't update. Try again.",
+
+  // Sıradaki
+  next: "Next",
+  writeAnother: "Write another",
+  refreshPage: "Refresh a page",
+  fixSnippet: "Fix a snippet",
+  anotherFailed: "Couldn't start another card. Try again.",
+
+  // Canlı koşu
+  phase: {
+    reading_page: "Reading your page…",
+    researching: "Researching…",
+    writing: "Writing…",
+    checking: "Checking…",
+  },
+  phasePill: {
+    reading_page: "Reading page",
+    researching: "Researching",
+    writing: "Writing",
+    checking: "Checking",
+  },
+  liveFailed: "That stopped before it finished.",
+  lastErrorTitle: "That didn't finish",
 } as const;
 
 export const INTENT_LABEL: Readonly<Record<SeoIntent, string>> = {

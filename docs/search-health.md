@@ -18,7 +18,7 @@ Plan: [google-search-console-plan.md](google-search-console-plan.md) §3.5, §5,
 | Gizlilik, veri silme metni ve agentelse.com/bot                    | Yapıldı (bot sayfası deploy edilmedi)  |
 | /health sayaçları                                                  | Yapıldı                                |
 
-Bekleyenler: SH2 saatlik erken uyarı, grafik notları, Integrations "Search health" rozeti, inceleme bütçesi ayarı, PSI laboratuvar testleri, Domain mülkünün ikincil hostları, sohbet aracı `inspect_url` (SC-F4), SeoAction kaynaklı P1 (SC-F6).
+Bekleyenler: SH2 saatlik erken uyarı, grafik notları, Integrations "Search health" rozeti, inceleme bütçesi ayarı, PSI laboratuvar testleri, Domain mülkünün ikincil hostları, sohbet aracı `inspect_url` (SC-F4), SeoAction kaynaklı P1 (SC-F6'da "I fixed this" olarak kapandı).
 
 ## Bayraklar ve açılış
 
@@ -154,6 +154,15 @@ Silme kuralları:
 - Telegram: operatör sohbetine ASLA (`notifyIfDue` `source` dolu satırda döner). SiteAlerts CRITICAL `SEO` uyarılarını projenin kendi Telegram'ına türe göre sabit bir ifadeyle (`seoTelegramPhrase`; rakam, URL, sorgu, tırnak yok; test edilir) ve `/projects/<id>/arama#health` bağlantısıyla gönderir. `GSC` uyarıları yalnız genel ifadeyi (`SEARCH_TELEGRAM_FALLBACK`) taşır, bulgu sözcüğü yok. `telegramTextFor`'daki kaynak dalı yalnız savunma amaçlıdır.
 - Google sınırı: Google kökenli içerik (tıklama sayıları ya da oranları, GSC sayfa yolları, indeks hükümleri) yalnız Gsc* tablolarında ve `GSC` uyarılarında durur; üç silme yolu (Disconnect, Delete stored data, W1 yetim temizliği) bayraktan bağımsızdır. `SEO` uyarıları yalnız kendi taramamızın herkese açık yollarını ve sayıları taşır. Kilit sayfa seçiminde GSC tıklama sırası yalnız sıralama için kullanılır.
 - 7 gün susturma (her üye; yalnız o projenin GSC/SEO uyarıları).
+
+## "I fixed this" (SC-F6)
+
+`SEO_ACTIONS` + `SEO_HEALTH` + `SEO_CRAWL` açıkken TECH_FIX, SCHEMA, CWV_FIX ve SITEMAP_FIX türlerine karşılık gelen sorun satırlarında Mute'un yanında "I fixed this" çıkar (izlenen sorunda durum çipi); ayrıntı [search-actions.md](search-actions.md).
+
+- Doğrulama: uyarı çözülünce (AdsAlert RESOLVED, `resolvedAt ≥ appliedAt`). Denetim temelli GSC uyarıları (`GSC_CANONICAL_MISMATCH`, `GSC_RICH_RESULTS`) için doğrulayıcı etkilenen en çok 5 anahtar sayfayı yeniden inceletir.
+- CWV düzeltmeleri 35 gün sonra sorulur (CrUX 28 günlük kayan pencere), 70 günde süresi dolar.
+- Ölçüt: uyarının çözülmüş kalıp kalmadığı (WORKED / DIDNT; her zaman DIRECTIONAL, öğrenme yok).
+- Kapsam: `SEO_KEY_PAGE_NOINDEX`, `SEO_KEY_PAGE_ERROR`, `SEO_ROBOTS_BLOCK`, `SEO_CANONICAL_OFFSITE`, `GSC_CANONICAL_MISMATCH`, `SEO_REDIRECT_CHAINS`, `SEO_HREFLANG` (TECH_FIX); `SEO_STRUCTURED_DATA`, `GSC_RICH_RESULTS` (SCHEMA); `SEO_CWV_POOR` (CWV_FIX); `GSC_SITEMAP_ERRORS`, `SEO_SITEMAP_MISSING`, `SEO_SITEMAP_HYGIENE` (SITEMAP_FIX).
 
 ## Puan
 

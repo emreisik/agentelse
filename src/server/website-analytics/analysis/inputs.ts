@@ -37,6 +37,8 @@ import {
   readWeekSlices,
 } from "@/server/website-analytics/store";
 
+import { loadAdsCrossCheckInput } from "@/server/website-analytics/attribution/read";
+
 import { loadGaWindowTables } from "./windows";
 
 // GA-F4 kural girdileri (docs/website-insights.md "Veri"): günlük ve haftalık
@@ -277,6 +279,22 @@ export async function loadWeeklyAnalysisInput(
     measurementDegraded(link.id),
   ]);
 
+  // GA-F6: AN13/AN14 girdisi. Bayrak kapalıyken sorgu yok ve `ads` anahtarı
+  // hiç eklenmez. 28 günlük penceredeki "campaign" tablosunda reklam içeriği
+  // boyutu yok, bu yüzden ayrı okunur.
+  const ads = await loadAdsCrossCheckInput({
+    link,
+    window: { from: window28.from, to: window28.to },
+    previousWindow: {
+      from: window28Previous.from,
+      to: window28Previous.to,
+    },
+    exclude: new Set([
+      ...window28.excludedDays,
+      ...window28Previous.excludedDays,
+    ]),
+  }).catch(() => null);
+
   return {
     linkId: link.id,
     today: todayOf(link, now),
@@ -298,5 +316,6 @@ export async function loadWeeklyAnalysisInput(
     siteSearch,
     currency: link.currencyCode,
     measurementDegraded: degraded,
+    ...(ads ? { ads } : {}),
   };
 }

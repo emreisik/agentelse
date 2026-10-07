@@ -1,3 +1,4 @@
+import type { GaAdsCrossCheckInput } from "@/lib/website-analytics/attribution/types";
 import type { GaTableRow } from "@/lib/website-analytics/slices";
 
 // GA-F4 analiz motorunun ortak tipleri (docs/google-analytics-plan.md §3.6
@@ -5,8 +6,9 @@ import type { GaTableRow } from "@/lib/website-analytics/slices";
 // ayrıntı docs/website-insights.md). Yalnız tip ve sabit; saf ve izomorfik.
 // Gün anahtarları mülk saatindeki "YYYY-MM-DD"dir, aralıklar iki uç dahildir.
 
-// Bulgu üreten kurallar. AN13/AN14 GA-F6'ya ertelendi, AN16 (tatil ve
-// mevsimsellik) bulgu değil düzeltici (registry.ts GA_DEFERRED_RULES).
+// Bulgu üreten kurallar. AN13 (Meta çapraz kontrol) ve AN14 (Google Ads) GA-F6
+// ile geldi; AN16 (tatil ve mevsimsellik) bulgu değil düzeltici
+// (registry.ts GA_DEFERRED_RULES).
 export const GA_RULE_KEYS = [
   "AN1",
   "AN2",
@@ -20,9 +22,15 @@ export const GA_RULE_KEYS = [
   "AN10",
   "AN11",
   "AN12",
+  "AN13",
+  "AN14",
   "AN15",
 ] as const;
 export type GaRuleKey = (typeof GA_RULE_KEYS)[number];
+
+// Reklam kuralları yalnız GA_UTM açıkken üretilir (operatör sayaçları da buna
+// göre süzülür).
+export const GA_ADS_RULE_KEYS = ["AN13", "AN14"] as const;
 
 export type GaFindingKind =
   "ANOMALY" | "CHANGE" | "OPPORTUNITY" | "RISK" | "WIN";
@@ -309,6 +317,70 @@ export type An12Evidence = {
   excludedDays: string[];
   holidays: string[];
 };
+// AN13: Meta'nın AD düzeyi sayıları ile GA4'ün aynı reklamlar için gördüğü
+// oturum/key event karşılaştırması. Oranlar kesirdir (0..1); para Meta hesabının
+// ana birimidir.
+export type An13Evidence = {
+  v: 1;
+  rule: "AN13";
+  window: GaRange;
+  campaignExternalId: string;
+  // Agentelse'in kendi kampanya adı, en çok 80 karakter.
+  label: string;
+  metaCurrency: string | null;
+  meta: {
+    ads: number;
+    spend: number | null;
+    linkClicks: number;
+    landingPageViews: number;
+    results: number | null;
+    resultActionType: string | null;
+    activeDays: number;
+  };
+  ga: {
+    sessions: number;
+    engagedSessions: number;
+    keyEvents: number;
+    revenue: number;
+  };
+  checks: ("clicks" | "results")[];
+  clickLoss: number | null;
+  // Oturum/tıklama oranının Wilson üst sınırı.
+  clickRateHigh: number | null;
+  resultsGap: number | null;
+  resultsP: number | null;
+  costPerResult: number | null;
+  costPerKeyEvent: number | null;
+  excludedDays: string[];
+  holidays: string[];
+};
+// AN14: Google Ads kampanyasının key event başına maliyeti iki 28 günlük
+// pencerede; kampanya adı maskelenmiştir (en çok 80 karakter), para mülk
+// para biriminde.
+export type An14Evidence = {
+  v: 1;
+  rule: "AN14";
+  window: GaRange;
+  previousWindow: GaRange;
+  campaign: string;
+  direction: "worse" | "better";
+  current: An14Side;
+  previous: An14Side;
+  changePct: number;
+  p: number;
+  bhAccepted: boolean;
+  excludedDays: string[];
+  holidays: string[];
+};
+export type An14Side = {
+  cost: number;
+  clicks: number;
+  sessions: number;
+  keyEvents: number;
+  revenue: number;
+  costPerKeyEvent: number;
+  roas: number | null;
+};
 export type An15Evidence = {
   v: 1;
   rule: "AN15";
@@ -337,6 +409,8 @@ export type GaFindingEvidence =
   | An10Evidence
   | An11Evidence
   | An12Evidence
+  | An13Evidence
+  | An14Evidence
   | An15Evidence;
 
 // Bir kuralın bir dönem için önerdiği bulgu; persist.ts bunu GaFinding
@@ -506,4 +580,7 @@ export type GaWeeklyAnalysisInput = {
   siteSearch: { monday: string; rows: GaTableRow[] }[] | null;
   currency: string | null;
   measurementDegraded: boolean;
+  // GA-F6: AN13/AN14 girdisi. GA_UTM kapalıyken (ya da veri yokken) anahtar
+  // hiç yoktur.
+  ads?: GaAdsCrossCheckInput | null;
 };

@@ -21,6 +21,8 @@ import { GOOGLE_PROVIDER } from "@/server/integrations/google-client";
 import { gscMockMode } from "@/server/integrations/search-console/search-analytics";
 import { claimPeriodic } from "@/server/observability/periodic";
 import { deleteSearchConsoleAlertsForProjects } from "@/server/seo/health/alerts";
+import { sweepOrphanSeoCardsSearchData } from "@/server/modules/seo/forget-cards";
+import { forgetSeoActionsForLinks } from "@/server/seo/actions/forget";
 import { forgetSearchOpportunitiesForLinks } from "@/server/seo/opportunities/forget";
 import { SeoSites } from "@/server/seo/site/sites";
 
@@ -310,6 +312,8 @@ export const GscRetention = {
     ).map((link) => link.id);
     if (demoted.length > 0) {
       await forgetSearchOpportunitiesForLinks(demoted).catch(() => undefined);
+      // SC-F6: silinen bağların SEO eylemleri ve öğrenmeleri de silinir.
+      await forgetSeoActionsForLinks(demoted).catch(() => undefined);
       deleted += (
         await prisma.gscSiteLink.deleteMany({
           where: { id: { in: demoted } },
@@ -352,6 +356,7 @@ export const GscRetention = {
         await forgetSearchOpportunitiesForLinks(orphaned).catch(
           () => undefined,
         );
+        await forgetSeoActionsForLinks(orphaned).catch(() => undefined);
         deleted += (
           await prisma.gscSiteLink.deleteMany({
             where: { id: { in: orphaned } },
@@ -370,10 +375,26 @@ export const GscRetention = {
 
     // Canlı süreçte mock bağlar (yerel denemeden kalan) silinir.
     if (!gscMockMode()) {
+      const mockLinks = (
+        await prisma.gscSiteLink.findMany({
+          where: { isMock: true },
+          select: { id: true },
+        })
+      ).map((link) => link.id);
+      await forgetSeoActionsForLinks(mockLinks).catch(() => undefined);
       deleted += (
         await prisma.gscSiteLink.deleteMany({ where: { isMock: true } })
       ).count;
     }
+    // SC-F6: Search Console bağı kalmayan projelerin SEO kartlarında Disconnect'in
+    // yarıda bıraktığı Google türevi alanlar (plan.quickWins, target.queryCount).
+    await sweepOrphanSeoCardsSearchData().catch((error: unknown) => {
+      console.error(
+        "[seo-retention] seo card leftovers could not be scrubbed:",
+        error instanceof Error ? error.message : error,
+      );
+      return 0;
+    });
     return deleted;
   },
 

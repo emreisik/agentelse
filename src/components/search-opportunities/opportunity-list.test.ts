@@ -16,6 +16,20 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/components/search-actions/fix-this-button", () => ({
+  FixThisButton: ({
+    findingId,
+    existing,
+  }: {
+    findingId: string;
+    existing: { statusLabel: string } | null;
+  }) =>
+    createElement(
+      "span",
+      { "data-fix-this": findingId },
+      existing ? `Open fix · ${existing.statusLabel}` : "Fix this",
+    ),
+}));
 vi.mock("@/server/actions/search-opportunity-actions", () => ({
   acceptOpportunityAction: vi.fn(),
   dismissOpportunityAction: vi.fn(),
@@ -117,6 +131,30 @@ const render = (value: OpportunitiesPanel) =>
   renderToStaticMarkup(createElement(OpportunityListView, { panel: value }));
 
 describe("OpportunityListView", () => {
+  it("shows Fix this only with the fixThis prop and only for fixable kinds (SC-F6)", () => {
+    const value = panel({
+      accepted: [item({ id: "f-9", actionKind: "INVESTIGATE", status: "ACCEPTED" })],
+    });
+    expect(render(value)).not.toContain("data-fix-this");
+    const html = renderToStaticMarkup(
+      createElement(OpportunityListView, {
+        panel: value,
+        fixThis: {
+          "f-1": {
+            actionId: "a-1",
+            status: "ACCEPTED",
+            statusLabel: "To do",
+            href: "/projects/proj-1?work=seofix_a-1",
+          },
+        },
+      }),
+    );
+    expect(html).toContain('data-fix-this="f-1"');
+    expect(html).toContain("Open fix · To do");
+    // INVESTIGATE bulgusunda düğme yoktur.
+    expect(html).not.toContain('data-fix-this="f-9"');
+  });
+
   it("shows each opportunity with its chips, evidence and forms", () => {
     const html = render(panel());
     expect(html).toContain(">Opportunities</h2>");

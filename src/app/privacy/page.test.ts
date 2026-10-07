@@ -241,6 +241,25 @@ describe("privacy policy: Google Analytics and Search Console section", () => {
     );
   });
 
+  it("says what link tracking adds, keeps and deletes (GA-F6)", () => {
+    expect(google).toContain("standard tracking tags (UTM parameters)");
+    expect(google).toContain(
+      "until the project is deleted",
+    );
+    expect(google).toContain("You can turn link tracking off in Settings");
+  });
+
+  it("says Agentelse compares Search Console numbers before and after a change (SC-F6)", () => {
+    expect(google).toContain(
+      "compares your Search Console numbers before and after the change",
+    );
+  });
+
+  it("says the SEO Manager sends a few masked search words and the page text to the AI provider (SC-F6)", () => {
+    expect(google).toContain("top search words (personal details masked, at most 10)");
+    expect(google).toContain("are not used to train AI models");
+  });
+
   it("says how long the Search reports are kept (SC-F5)", () => {
     expect(google).toContain(
       "The weekly and monthly Search reports Agentelse writes from this data are kept for up to 36 months (16 months if you chose to keep only the last 16 months; daily notes for 90 days) and are deleted with it.",

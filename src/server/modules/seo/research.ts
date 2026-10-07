@@ -22,6 +22,8 @@ import { readQuickWinRows } from "@/server/seo/readers";
 import {
   brandFacts,
   briefFacts,
+  languageInput,
+  learningsInput,
   modelFailure,
   type SeoModelFailure,
   type SeoScope,
@@ -96,16 +98,24 @@ export async function runSeoResearch(input: {
   scope: SeoScope;
   brief: SeoBrief;
   now?: Date;
+  // SEO_ACTIONS açıkken: brief dili sert kural olarak modele gider; geçmiş
+  // sonuçlar isteme girer. Bayrak kapalıyken ikisi de yok sayılır.
+  language?: string;
+  learnings?: string[];
 }): Promise<{ ok: true; plan: SeoPlan } | SeoModelFailure> {
   const { scope, brief } = input;
   // Search Console is read while the model researches (it never throws).
   const quickWins = loadSeoQuickWins(scope.projectId);
   try {
-    const brand = await brandFacts(scope, { rules: false });
+    const brand = await brandFacts(scope, {
+      rules: false,
+      ...learningsInput(input.learnings),
+    });
     const { output } = await ReasoningService.run(seoResearchDef, {
       workspaceId: scope.workspaceId,
       projectId: scope.projectId,
       brandId: scope.brandId,
+      ...languageInput(input.language ?? brief.language),
       context: { facts: { ...briefFacts(brief), ...brand } },
     });
     const plan = planFromResearch(

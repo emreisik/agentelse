@@ -12,6 +12,7 @@ import { normalizeSeoIdeas } from "@/lib/ideas/normalize";
 import { IDEA_POOL_STATUSES } from "@/lib/idea-pool";
 import { utcToZonedDateTimeLocal } from "@/lib/timezone";
 import { blocksOf, checkText } from "@/lib/works/brand-rules";
+import { SeoActionFlags } from "@/lib/seo/action-flags";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { brandRuleLanguageOf } from "@/server/brand/rule-language";
 import { getProjectTimezone } from "@/server/chat/content-plan";
@@ -26,6 +27,7 @@ import { postResultSourceRef } from "@/server/memory/memory-service";
 import { loadAdsAccount } from "@/server/modules/ads/account";
 import { listSourcePosts } from "@/server/modules/ads/source-posts";
 import { loadSeoQuickWins } from "@/server/modules/seo/research";
+import { readSeoLearnings } from "@/server/seo/actions/learnings";
 import { ideaSeoDef } from "@/server/reasoning/prompts/idea-seo";
 import { refreshWebsiteIdeas } from "@/server/ideas/website-ideas";
 import {
@@ -163,6 +165,10 @@ export async function generateSeoIdeas(input: {
     opportunities,
     quickWins.state === "ok" ? quickWins.items.map((item) => item.query) : [],
   );
+  // SC-F6 (SEO_ACTIONS): bu sitede işe yaramış değişikliklerin rakamsız öğrenme metinleri; bayrak kapalıyken bağlam bugünküyle aynıdır.
+  const seoLearnings = SeoActionFlags.manager()
+    ? await readSeoLearnings(input.projectId, 5)
+    : [];
   const run = await ReasoningService.run(ideaSeoDef, {
     ...scope,
     context: {
@@ -171,6 +177,7 @@ export async function generateSeoIdeas(input: {
       brand,
       quickWins: quickWinRows,
       ...(opportunityRows.length > 0 ? { opportunities: opportunityRows } : {}),
+      ...(seoLearnings.length > 0 ? { seoLearnings } : {}),
       articles: articles.map((post) => post.topic),
       pool,
       ...(input.focus ? { focus: input.focus } : {}),

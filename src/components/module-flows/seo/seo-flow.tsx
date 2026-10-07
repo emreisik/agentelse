@@ -25,11 +25,15 @@ import type {
 import {
   parseSeoState,
   seoFlowComplete,
+  seoModeOf,
   seoOpenableSteps,
   seoRunActive,
   seoStatusOf,
+  seoStepsFor,
+  type SeoState,
 } from "@/lib/module-flows/seo/state";
 import { flowHintOf } from "@/lib/module-flows/card";
+import { CardActions } from "@/components/works/card-actions";
 import { MODULES } from "@/lib/modules/catalog";
 import { goToSeoStepAction } from "@/server/actions/seo-flow-actions";
 
@@ -37,9 +41,15 @@ import { BriefStep } from "./brief-step";
 import { SEO_FLOW_COPY as COPY } from "./copy";
 import { CreateStep } from "./create-step";
 import { DeliverStep } from "./deliver-step";
-import { useSeoStepAction } from "./parts";
+import {
+  LivePhaseProvider,
+  retryRun,
+  serverButton,
+  useSeoStepAction,
+} from "./parts";
 import { PlanStep } from "./plan-step";
 import { ReviewStep } from "./review-step";
+import { useSeoLive } from "./use-seo-live";
 
 // The SEO Manager flow card (docs/modules.md "SEO Manager"): Brief (topic,
 // site, language) -> Plan (keyword research with web search, Search Console
@@ -49,6 +59,10 @@ import { ReviewStep } from "./review-step";
 // action (seo-flow-actions.ts) followed by a refresh. While a model call holds
 // the card (another tab, a reload) the card says so and checks back on its
 // own until it is done.
+// SC-F6: a card stamped with state.features.live streams a running model call
+// over SSE (use-seo-live.ts: the phase in the pill and the working note, a
+// refresh when it ends) and shows why a run stopped; state.features.modes adds
+// the modes (Refresh a page, Fix a snippet; snippet mode has three steps).
 
 const POLL_MS = 6000;
 
@@ -90,13 +104,23 @@ export function SeoFlow({
   const moveTo = moving && moving.from === data ? moving.to : null;
   const shownStep = moveTo ?? step;
 
+  // Canlı kart: koşu SSE ile izlenir; bağlantı koparsa kendi 6 sn'lik yoklamasına
+  // düşer. Damgasız kart bugünkü yoklamayı kullanır.
+  const live = state.features?.live === true;
+  const liveRun = useSeoLive({
+    projectId,
+    commandId,
+    runId: state.run?.id,
+    enabled: live && running,
+  });
+
   // Someone else's model call (or one from before a reload): check back until
   // it lands. The tab that started it gets the answer with its own action.
   useEffect(() => {
-    if (!running) return;
+    if (!running || live) return;
     const timer = window.setInterval(() => router.refresh(), POLL_MS);
     return () => window.clearInterval(timer);
-  }, [running, router]);
+  }, [running, live, router]);
 
   // A step change moves the focus to the new step, not to <body>.
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -125,12 +149,25 @@ export function SeoFlow({
       action: { kind: "server", id: to },
     });
 
-  const status = seoStatusOf(state);
+  const stateStatus = seoStatusOf(state);
+  const phase =
+    live && running ? (liveRun.phase ?? state.run?.phase ?? null) : null;
+  const status =
+    phase && stateStatus
+      ? { ...stateStatus, label: COPY.phasePill[phase] }
+      : stateStatus;
+  const mode = seoModeOf(state);
   const common = { projectId, commandId, state, blocked, onMoving };
   let body: ReactNode;
   switch (step) {
     case "brief":
-      body = <BriefStep {...common} defaultTopic={flowHintOf(card.data).topic} />;
+      body = (
+        <BriefStep
+          {...common}
+          running={running}
+          defaultTopic={flowHintOf(card.data).topic}
+        />
+      );
       break;
     case "plan":
       body = <PlanStep {...common} running={running} />;
@@ -170,7 +207,17 @@ export function SeoFlow({
         complete={seoFlowComplete(state)}
         openable={openable}
         onPick={pick}
+        {...(mode !== "article" ? { steps: seoStepsFor(mode) } : {})}
       />
+      {live && !running && state.lastError ? (
+        <LastError
+          projectId={projectId}
+          commandId={commandId}
+          state={state}
+          step={step}
+          blocked={blocked}
+        />
+      ) : null}
       {nav.error ? (
         <p
           role="alert"
@@ -181,8 +228,68 @@ export function SeoFlow({
         </p>
       ) : null}
       <div ref={bodyRef} tabIndex={-1} className="pt-1 outline-none">
-        {body}
+        <LivePhaseProvider value={phase}>{body}</LivePhaseProvider>
       </div>
     </ActionCard>
+  );
+}
+
+// Bir koşunun neden bittiği: sunucu en son hatayı karta yazar. Adımın kendi
+// "Try again"i varsa (araştırma durduğunda Plan, yazım durduğunda Create)
+// yalnız mesaj gösterilir; yoksa buradan yeniden denenir.
+function stepRetriesItself(step: ModuleFlowCardData["step"], state: SeoState) {
+  if (step === "create") return true;
+  if (step !== "plan") return false;
+  return seoModeOf(state) === "snippet" ? !state.snippet : !state.plan;
+}
+
+const RETRY = "retry";
+
+function LastError({
+  projectId,
+  commandId,
+  state,
+  step,
+  blocked,
+}: {
+  projectId?: string;
+  commandId?: string;
+  state: SeoState;
+  step: ModuleFlowCardData["step"];
+  blocked: string | null;
+}) {
+  const error = state.lastError;
+  const {
+    onAct,
+    busyId,
+    error: retryError,
+  } = useSeoStepAction({
+    projectId,
+    commandId,
+    server: (_id, card) =>
+      error
+        ? retryRun(state, error.kind, card)
+        : Promise.resolve({ ok: false as const, message: COPY.unavailable }),
+  });
+  if (!error) return null;
+  const retry = !stepRetriesItself(step, state);
+  return (
+    <div
+      role="alert"
+      className="space-y-2 rounded-xl border px-3 py-2.5"
+      style={{ borderColor: "var(--ws-border)" }}
+    >
+      <p className="text-sm leading-5" style={{ color: "var(--ws-text)" }}>
+        {error.message}
+      </p>
+      {retry ? (
+        <CardActions
+          buttons={[serverButton(RETRY, COPY.tryAgain, "secondary", blocked)]}
+          onAct={onAct}
+          busyId={busyId}
+          error={retryError}
+        />
+      ) : null}
+    </div>
   );
 }

@@ -319,6 +319,75 @@ const an12 = z
   })
   .passthrough();
 
+const an13 = z
+  .object({
+    v: z.literal(1),
+    rule: z.literal("AN13"),
+    window: range,
+    campaignExternalId: str,
+    label: str,
+    metaCurrency: str.nullable(),
+    meta: z
+      .object({
+        ads: num,
+        spend: nnum,
+        linkClicks: num,
+        landingPageViews: num,
+        results: nnum,
+        resultActionType: str.nullable(),
+        activeDays: num,
+      })
+      .passthrough(),
+    ga: z
+      .object({
+        sessions: num,
+        engagedSessions: num,
+        keyEvents: num,
+        revenue: num,
+      })
+      .passthrough(),
+    checks: list(z.enum(["clicks", "results"])),
+    clickLoss: nnum,
+    clickRateHigh: nnum,
+    resultsGap: nnum,
+    resultsP: nnum,
+    costPerResult: nnum,
+    costPerKeyEvent: nnum,
+    excludedDays: strings.catch([]),
+    holidays,
+  })
+  .passthrough();
+
+const adsSide = z
+  .object({
+    cost: num,
+    clicks: num,
+    sessions: num,
+    keyEvents: num,
+    revenue: num,
+    costPerKeyEvent: num,
+    roas: nnum,
+  })
+  .passthrough();
+
+const an14 = z
+  .object({
+    v: z.literal(1),
+    rule: z.literal("AN14"),
+    window: range,
+    previousWindow: range,
+    campaign: str,
+    direction: z.enum(["worse", "better"]),
+    current: adsSide,
+    previous: adsSide,
+    changePct: num,
+    p: num,
+    bhAccepted: bool,
+    excludedDays: strings.catch([]),
+    holidays,
+  })
+  .passthrough();
+
 const an15 = z
   .object({
     v: z.literal(1),
@@ -374,6 +443,10 @@ export function parseGaFindingEvidence(
       return result(an11.safeParse(json));
     case "AN12":
       return result(an12.safeParse(json));
+    case "AN13":
+      return result(an13.safeParse(json));
+    case "AN14":
+      return result(an14.safeParse(json));
     case "AN15":
       return result(an15.safeParse(json));
   }

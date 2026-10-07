@@ -247,6 +247,64 @@ const samples: GaFindingEvidence[] = [
     daysInMonth: 31,
     through: "2026-10-07",
   },
+  {
+    v: 1,
+    rule: "AN13",
+    window,
+    campaignExternalId: "120001",
+    label: "Spring sale",
+    metaCurrency: "EUR",
+    meta: {
+      ads: 2,
+      spend: 500.5,
+      linkClicks: 200,
+      landingPageViews: 150,
+      results: 20,
+      resultActionType: "offsite_conversion.fb_pixel_purchase",
+      activeDays: 14,
+    },
+    ga: { sessions: 60, engagedSessions: 40, keyEvents: 18, revenue: 0 },
+    checks: ["clicks", "results"],
+    clickLoss: 0.7,
+    clickRateHigh: 0.37,
+    resultsGap: 0.1,
+    resultsP: null,
+    costPerResult: 25.025,
+    costPerKeyEvent: null,
+    excludedDays: ["2026-09-20"],
+    holidays: [],
+  },
+  {
+    v: 1,
+    rule: "AN14",
+    window,
+    previousWindow: { from: "2026-08-10", to: "2026-09-06" },
+    campaign: "Brand search",
+    direction: "worse",
+    current: {
+      cost: 1000,
+      clicks: 500,
+      sessions: 450,
+      keyEvents: 20,
+      revenue: 0,
+      costPerKeyEvent: 50,
+      roas: null,
+    },
+    previous: {
+      cost: 1000,
+      clicks: 500,
+      sessions: 450,
+      keyEvents: 40,
+      revenue: 4000,
+      costPerKeyEvent: 25,
+      roas: 4,
+    },
+    changePct: 100,
+    p: 0.01,
+    bhAccepted: true,
+    excludedDays: [],
+    holidays: ["2026-09-10"],
+  },
 ];
 
 function roundTrip(value: unknown): unknown {
@@ -274,6 +332,7 @@ describe("parseGaFindingEvidence", () => {
     expect(parseGaFindingEvidence([])).toBeNull();
     expect(parseGaFindingEvidence({ ...samples[0], v: 2 })).toBeNull();
     expect(parseGaFindingEvidence({ ...samples[0], v: undefined })).toBeNull();
+    expect(parseGaFindingEvidence({ ...samples[0], rule: "AN16" })).toBeNull();
     expect(parseGaFindingEvidence({ ...samples[0], rule: "AN13" })).toBeNull();
     expect(
       parseGaFindingEvidence({ ...samples[0], rule: undefined }),
@@ -288,6 +347,42 @@ describe("parseGaFindingEvidence", () => {
     expect(
       parseGaFindingEvidence({ ...samples[3], direction: "sideways" }),
     ).toBeNull();
+  });
+
+  it("rejects malformed AN13 and AN14 evidence", () => {
+    const an13 = samples[samples.length - 2]!;
+    const an14 = samples[samples.length - 1]!;
+    expect(
+      parseGaFindingEvidence({ ...an13, meta: { ...(an13 as { meta: object }).meta, linkClicks: "200" } }),
+    ).toBeNull();
+    expect(parseGaFindingEvidence({ ...an13, ga: null })).toBeNull();
+    expect(parseGaFindingEvidence({ ...an13, label: 5 })).toBeNull();
+    expect(
+      parseGaFindingEvidence({ ...an13, costPerKeyEvent: "12" }),
+    ).toBeNull();
+    expect(parseGaFindingEvidence({ ...an14, direction: "flat" })).toBeNull();
+    expect(parseGaFindingEvidence({ ...an14, current: undefined })).toBeNull();
+    expect(
+      parseGaFindingEvidence({
+        ...an14,
+        previous: { ...(an14 as { previous: object }).previous, roas: "4" },
+      }),
+    ).toBeNull();
+    expect(parseGaFindingEvidence({ ...an14, changePct: null })).toBeNull();
+  });
+
+  it("defaults missing excludedDays and holidays on AN13 and AN14", () => {
+    const an13 = samples[samples.length - 2]!;
+    const an14 = samples[samples.length - 1]!;
+    const parsed13 = parseGaFindingEvidence(
+      without(an13, "excludedDays", "holidays"),
+    )!;
+    expect(parsed13).toMatchObject({ excludedDays: [], holidays: [] });
+    const parsed14 = parseGaFindingEvidence(
+      without(an14, "excludedDays", "holidays"),
+    )!;
+    expect(parsed14).toMatchObject({ excludedDays: [], holidays: [] });
+    expect(evidenceHolidays(parsed14)).toEqual([]);
   });
 
   it("defaults fields added in this revision", () => {

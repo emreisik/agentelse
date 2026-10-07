@@ -28,6 +28,7 @@ import { ProjectDeletionService } from "@/server/projects/project-deletion.servi
 import { ActionForm } from "@/components/shared/action-form";
 import { WebsiteReportSettingsCard } from "@/components/website-analytics/reports/report-settings-card";
 import { DeleteProjectCard } from "@/components/projects/delete-project-card";
+import { LinkTrackingCard } from "@/components/projects/link-tracking-card";
 import { EmptyState } from "@/components/shared/empty-state";
 import { LiveRefresh } from "@/components/shared/live-refresh";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -645,6 +646,7 @@ async function PublishingTab({ projectId }: { projectId: string }) {
           <SubmitButton>Save</SubmitButton>
         </div>
       </ActionForm>
+      <LinkTrackingCard projectId={projectId} />
     </div>
   );
 }

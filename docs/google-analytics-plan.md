@@ -1,6 +1,6 @@
 # Agentelse · Google Analytics 4: Mimari ve Uygulama Planı
 
-Durum (6 Ekim 2026): GA-F0 – GA-F5 kodlandı (bayraklı; GA-F4 ayrıntısı [website-insights.md](website-insights.md), GA-F5 ayrıntısı [website-reports.md](website-reports.md)); GA-F6 ve sonrası plan.
+Durum (7 Ekim 2026): GA-F0 – GA-F6 kodlandı (bayraklı; GA-F4 ayrıntısı [website-insights.md](website-insights.md), GA-F5 ayrıntısı [website-reports.md](website-reports.md)); GA-F6 ayrıntısı [website-attribution.md](website-attribution.md); GA-F7 ve sonrası plan.
 
 > **Kapsam:** Google Analytics 4 (GA4) entegrasyonu: bağlantı ve kimlik, yerel veri ambarı, ölçüm sağlığı denetimi, analiz, raporlama, planlama, reklam ölçümü ve öneri döngüsü. **Search Console ayrı bir entegrasyondur** ve kendi planı vardır: `docs/google-search-console-plan.md`. İki entegrasyon yalnız kod çekirdeğini paylaşır (OAuth, HTTP, hata kataloğu, PII süzgeci; §3.1). Bağlantı, izin, token, veri tabloları, işler, sağlık durumu, bayraklar, arayüz ve silme akışı tamamen ayrıdır; biri bağlı değilken diğeri eksiksiz çalışır. İkisi birden bağlıysa §12'deki isteğe bağlı köprü devreye girer.
 >
@@ -193,7 +193,7 @@ Otomatik (onaysız) GA yazması hiçbir seviyede yoktur: GA yapılandırması bi
 | 15  | Sohbet GA sayısı okuyamıyor                     | Orta               | Analytics sohbetinde GA aracı yok (`tools.ts:2037-2088`); tek yol `create_task ANALYTICS_ANALYSIS`                                                                                                                   | "Leads neden düştü?" yanıtlanamaz                                                                                                        | GA-F4         |
 | 16  | `ProjectGoal.currentValue` hiç yazılmıyor       | Orta               | Yalnız gösteriliyor (`goals-section.tsx:146-150`)                                                                                                                                                                    | Hedef takibi yok                                                                                                                         | GA-F5         |
 | 17  | Rapor derlemesi yavaş ve arşivsiz               | Orta               | Tek Server Action'da 10-60 sn; rapor yalnız kart verisinde (`docs/modules.md:73`)                                                                                                                                    | Kötü deneyim; geçmiş rapor yok                                                                                                           | GA-F2 / GA-F5 |
-| 18  | UTM yok                                         | Yüksek             | Repo genelinde `utm_` ve `url_tags` yalnız bir test fikstüründe; reklam linkleri `link_data.link` (`meta-client.ts:1872-1995`)                                                                                       | Agentelse'in etkisi GA4'te görünmez                                                                                                      | GA-F6         |
+| 18  | UTM yok                                         | Yüksek             | Agentelse'in dış linkleri etiketlenmiyor: `DEFAULT_URL_TAGS` `src/lib/ads/launch-spec.ts`'te var ama yalnız Meta'nın reklam kimliği makrosunu taşır, `agx-` UTM'si yok; reklam linkleri `link_data.link` (`meta-client.ts:1872-1995`)                                                                                       | Agentelse'in etkisi GA4'te görünmez                                                                                                      | GA-F6         |
 | 19  | Gizlilik metninde Google yok                    | Yüksek (doğrulama) | `privacy/page.tsx:102-115` genel metin; Limited Use cümlesi yok                                                                                                                                                      | Google doğrulaması reddedilebilir                                                                                                        | GA-F1         |
 | 20  | Odak ayarı izlemeyi de kapatıyor                | Düşük              | `AGENCY_FOCUS=social_ads` tarama adımını kapatıyor (`agency-focus.ts:64-69`)                                                                                                                                         | Ölçüm kırığı fark edilmez                                                                                                                | GA-F2         |
 | 21  | `state_invalid` sessiz                          | Düşük              | Callback `/dashboard?googleError=state_invalid`'e gidiyor, dashboard bu parametreyi okumuyor (`callback/route.ts:83-85`)                                                                                             | Kullanıcı neden bağlanamadığını görmez                                                                                                   | GA-F1         |
@@ -990,7 +990,7 @@ Uygulamada plandan farklar (GA-F2 ve sonrası bunlara göre yazılır):
 
 **Durum (6 Ekim):** Yapıldı (bayraklı, canlı denenmedi); uygulanan hâl [measurement-health.md](measurement-health.md)'de. Plandan farklar:
 
-- MH25 GA-F6'ya kaldı.
+- MH25 GA-F6'da etkin ([website-attribution.md](website-attribution.md)).
 - MH17 ambardaki olaylardan.
 - MH13 yalnız saat dilimi.
 - MH15 google/cpc vekili.
@@ -1030,7 +1030,7 @@ Uygulamada plandan farklar (GA-F2 ve sonrası bunlara göre yazılır):
 
 ### GA-F4 — Analiz motoru · L
 
-**Durum (6 Ekim 2026):** kodlandı (GA_INSIGHTS=off|shadow|on, migration 20261006213000_add_ga_finding); ayrıntı [website-insights.md](website-insights.md). AN13/AN14 GA-F6'ya ertelendi; fikirler hafif model çağrısıyla (marka dili), uyarı üretilmez; haftalık canlı öneri en fazla 3.
+**Durum (6 Ekim 2026):** kodlandı (GA_INSIGHTS=off|shadow|on, migration 20261006213000_add_ga_finding); ayrıntı [website-insights.md](website-insights.md). AN13/AN14 GA-F6'ya ertelendi (GA-F6'da gerçek kural oldu, bkz. [website-attribution.md](website-attribution.md)); fikirler hafif model çağrısıyla (marka dili), uyarı üretilmez; haftalık canlı öneri en fazla 3.
 
 **Amaç:** Değişimleri nedenleriyle açıklamak ve fırsatları önceliklendirmek.
 
@@ -1090,6 +1090,8 @@ Uygulamada plandan farklar (GA-F2 ve sonrası bunlara göre yazılır):
 **Görünür değişiklik:** Projede "Website analytics" sohbeti; Pazartesi günü "Weekly website report" kartı; Brand Brain → Goals'ta canlı ilerleme ve "At risk" etiketi.
 
 ### GA-F6 — Kapalı döngü ve reklam ölçümü · M
+
+**Durum (7 Ekim 2026):** kodlandı (`GA_UTM`; migration `20261006217000_add_tracked_link`); ayrıntı [website-attribution.md](website-attribution.md). Meta reklam UTM'leri yalnız lansman v2 yolunda (`url_tags`, Review'da hesaplanır, Approve aynısını kullanır); ajans zincirinin eski `META_AD_CREATE` yolu etiketlemez ve MH25 kapsamında görünür. Facebook/LinkedIn/X/TikTok link yayınlamadığı için yalnız Instagram bio linki üretilir. Kanal bütçesi önerisi ve kampanya başına landing/cihaz kalitesi ertelendi.
 
 **Amaç:** Agentelse'in içerik ve reklamlarının sitede ne getirdiğini görünür kılmak; reklam kararlarına bağımsız kanıt sağlamak.
 

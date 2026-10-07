@@ -14,6 +14,7 @@ import {
   runOpenAIStructured,
 } from "@/server/reasoning/openai-client";
 import { runOpenAIStructuredWithSearch } from "@/server/reasoning/openai-search-client";
+import { SUPPORTED_LANGUAGES } from "@/lib/locales";
 import { prisma } from "@/lib/prisma";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
@@ -51,8 +52,18 @@ function shouldMock(): boolean {
 // had actually been generated this way).
 const localeCache = new Map<string, string>();
 
-async function localeDirective(projectId: string): Promise<string> {
-  const cached = localeCache.get(projectId);
+async function localeDirective(
+  projectId: string,
+  languageOverride?: string,
+): Promise<string> {
+  // SC-F6: desteklenmeyen kod yok sayılır; ülke yine projeden gelir.
+  const override =
+    languageOverride &&
+    SUPPORTED_LANGUAGES.some((l) => l.code === languageOverride)
+      ? languageOverride
+      : undefined;
+  const cacheKey = `${projectId}|${override ?? ""}`;
+  const cached = localeCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
   const project = await prisma.project
@@ -62,7 +73,7 @@ async function localeDirective(projectId: string): Promise<string> {
     })
     .catch(() => null);
 
-  const language = project?.language || "tr";
+  const language = override || project?.language || "tr";
   const country = project?.country || "TR";
   const directive = [
     `Write EVERY string in your JSON output in the language with code "${language}".`,
@@ -70,7 +81,7 @@ async function localeDirective(projectId: string): Promise<string> {
     "Field names stay in English; only the values are translated. Do not mix languages.",
   ].join(" ");
 
-  localeCache.set(projectId, directive);
+  localeCache.set(cacheKey, directive);
   return directive;
 }
 
@@ -135,7 +146,7 @@ export const ReasoningService = {
           );
         }
         const prompt = def.buildPrompt(input.context);
-        const directive = await localeDirective(input.projectId);
+        const directive = await localeDirective(input.projectId, input.language);
         // Live web search is an OpenAI Responses feature; a def that asks for
         // it on another backend simply runs without.
         const runStructured =

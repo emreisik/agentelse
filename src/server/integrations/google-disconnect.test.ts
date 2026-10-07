@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   forgetSearchConsoleData: vi.fn(),
   deleteGaInsights: vi.fn(),
   forgetOpportunities: vi.fn().mockResolvedValue({ ideas: 0, signals: 0 }),
+  deleteGaAttribution: vi.fn(),
+  forgetSeoActions: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -53,6 +55,12 @@ vi.mock("@/server/seo/health/alerts", () => ({
 }));
 vi.mock("@/server/website-analytics/analysis/cleanup", () => ({
   deleteGaInsightDerivedDataForCredential: mocks.deleteGaInsights,
+}));
+vi.mock("@/server/website-analytics/attribution/cleanup", () => ({
+  deleteGaAttributionDataForCredential: mocks.deleteGaAttribution,
+}));
+vi.mock("@/server/seo/actions/forget", () => ({
+  forgetSeoActionsForCredential: mocks.forgetSeoActions,
 }));
 vi.mock("@/server/seo/opportunities/forget", () => ({
   forgetSearchOpportunitiesForCredential: mocks.forgetOpportunities,
@@ -96,6 +104,8 @@ beforeEach(() => {
     ideas: 0,
   });
   mocks.forgetOpportunities.mockResolvedValue({ ideas: 0, signals: 0 });
+  mocks.deleteGaAttribution.mockResolvedValue({ learnings: 0, decisions: 0 });
+  mocks.forgetSeoActions.mockResolvedValue({ actions: 0, learnings: 0, cards: 0 });
 });
 
 function expectWiped() {
@@ -134,6 +144,18 @@ function expectWiped() {
   // SC-F5: bağ yoksa boş liste, hedef değerleri GSC bağı silindikten sonra boşaltılır.
   expect(mocks.forgetSeoGoalValues).toHaveBeenCalledTimes(1);
   expect(mocks.forgetSeoGoalValues.mock.invocationCallOrder[0]).toBeGreaterThan(
+    mocks.deleteGscLinks.mock.invocationCallOrder[0]!,
+  );
+  // GA-F6: atıf öğrenmeleri ve ga4_* kanıtı bir kez, GA bağından önce silinir.
+  expect(mocks.deleteGaAttribution).toHaveBeenCalledTimes(1);
+  expect(mocks.deleteGaAttribution).toHaveBeenCalledWith("cred-ga");
+  expect(mocks.deleteGaAttribution.mock.invocationCallOrder[0]).toBeLessThan(
+    mocks.deleteLinks.mock.invocationCallOrder[0]!,
+  );
+  // SC-F6: SEO eylemleri bir kez, GSC bağından önce silinir.
+  expect(mocks.forgetSeoActions).toHaveBeenCalledTimes(1);
+  expect(mocks.forgetSeoActions).toHaveBeenCalledWith("cred-ga");
+  expect(mocks.forgetSeoActions.mock.invocationCallOrder[0]).toBeLessThan(
     mocks.deleteGscLinks.mock.invocationCallOrder[0]!,
   );
   // SC-F4: fırsat sinyalleri ve havuz fikirleri GSC bağından önce silinir.
@@ -267,6 +289,17 @@ describe("disconnectGoogleCredential", () => {
     expect(mocks.findGscLinks.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.deleteGscLinks.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("still finishes when the attribution or SEO action cleanup fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.deleteGaAttribution.mockRejectedValue(new Error("db"));
+    mocks.forgetSeoActions.mockRejectedValue(new Error("db"));
+    await expect(disconnectGoogleCredential(credential)).resolves.toEqual({
+      revokedAtGoogle: true,
+    });
+    expect(mocks.deleteLinks).toHaveBeenCalled();
+    expect(mocks.deleteGscLinks).toHaveBeenCalled();
   });
 
   it("with no search link it passes an empty project list", async () => {

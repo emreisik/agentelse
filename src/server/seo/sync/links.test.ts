@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   forget: vi.fn(),
   forgetOpportunities: vi.fn(),
   forgetGoalValues: vi.fn(),
+  forgetSeoActions: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -46,6 +47,9 @@ vi.mock("@/server/seo/health/alerts", () => ({
 vi.mock("@/server/seo/opportunities/forget", () => ({
   forgetSearchOpportunitiesForLinks: mocks.forgetOpportunities,
 }));
+vi.mock("@/server/seo/actions/forget", () => ({
+  forgetSeoActionsForProjectMode: mocks.forgetSeoActions,
+}));
 vi.mock("@/server/seo/reports/goals", () => ({
   forgetSeoGoalValues: mocks.forgetGoalValues,
 }));
@@ -64,6 +68,7 @@ beforeEach(() => {
   mocks.deleteAlerts.mockResolvedValue(1);
   mocks.forget.mockResolvedValue(1);
   mocks.forgetGoalValues.mockResolvedValue(0);
+  mocks.forgetSeoActions.mockResolvedValue({ actions: 0, learnings: 0, cards: 0 });
 });
 
 describe("deleteGscDataForProject", () => {
@@ -83,6 +88,11 @@ describe("deleteGscDataForProject", () => {
       deleted,
     );
     expect(mocks.forget.mock.invocationCallOrder[0]).toBeGreaterThan(deleted);
+    // SC-F6: bu kipin SEO eylemleri bağlar silinmeden ÖNCE unutulur.
+    expect(mocks.forgetSeoActions).toHaveBeenCalledWith("proj-1", false);
+    expect(mocks.forgetSeoActions.mock.invocationCallOrder[0]).toBeLessThan(
+      deleted,
+    );
     // SC-F5: SEO hedeflerinin değeri bağlar silindikten sonra boşaltılır.
     expect(mocks.forgetGoalValues).toHaveBeenCalledWith(["proj-1"], {
       isMock: expect.any(Boolean),

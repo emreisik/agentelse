@@ -102,6 +102,13 @@ describe("GaSubjects and subjectLabelOf", () => {
       "funnel:add_to_cart>begin_checkout",
     );
     expect(GaSubjects.goal("g1")).toBe("goal:g1");
+    expect(GaSubjects.metaCampaign("120001")).toBe("meta_campaign:120001");
+    expect(GaSubjects.googleAdsCampaign("Brand search")).toBe(
+      "google_ads:Brand search",
+    );
+    expect(GaSubjects.googleAdsCampaign("x".repeat(300))).toHaveLength(
+      "google_ads:".length + 200,
+    );
     expect(GaSubjects.page(`/${"x".repeat(300)}`)).toHaveLength(
       "page:".length + 200,
     );
@@ -123,6 +130,12 @@ describe("GaSubjects and subjectLabelOf", () => {
       "autumn",
     );
     expect(subjectLabelOf(GaSubjects.funnel("a", "b"))).toBe("a → b");
+    expect(subjectLabelOf(GaSubjects.metaCampaign("120001"))).toBe(
+      "Meta campaign",
+    );
+    expect(subjectLabelOf(GaSubjects.googleAdsCampaign("Brand: search"))).toBe(
+      "Brand: search",
+    );
     expect(subjectLabelOf(GaSubjects.mobile())).toBe("Mobile");
     expect(subjectLabelOf(GaSubjects.returning())).toBe("Returning visitors");
     expect(subjectLabelOf(GaSubjects.ai())).toBe("AI assistants");

@@ -1,3 +1,4 @@
+import { evaluateAdsCrossCheck } from "./ads-cross-check";
 import { evaluateAiReferrals } from "./ai-referrals";
 import { evaluateDailyAnomalies, evaluateWeeklyAnomaly } from "./anomaly";
 import { evaluateReturningShare } from "./audience";
@@ -7,6 +8,7 @@ import { evaluateContentEngagement, evaluateNotFound } from "./content";
 import { evaluateDeviceGap } from "./devices";
 import { evaluateFunnel } from "./ecommerce";
 import { evaluateGoalPace } from "./goals";
+import { evaluateGoogleAds } from "./google-ads";
 import { evaluateLandingPages } from "./landing-pages";
 import { findingPriority } from "./priority";
 import { gaRule } from "./registry";
@@ -27,7 +29,7 @@ import type {
 } from "./types";
 
 // GA-F4 kural düzeni (docs/website-insights.md "Kurallar", "Ortak kapılar"):
-// günlük kısım AN1 (gün) + AN15, haftalık kısım AN1 (hafta), AN2-AN12 (AN10
+// günlük kısım AN1 (gün) + AN15, haftalık kısım AN1 (hafta), AN2-AN14 (AN10
 // yalnız ay turunda). Her kural kendi try/catch'inde koşar: biri patlarsa
 // yalnız o atlanır (log'a kural anahtarı düşer, veri düşmez). Ortak kalite
 // kapıları burada uygulanır, kural dosyaları sade kalır. Saf modül.
@@ -80,6 +82,9 @@ export function runWeeklyRules(
   if (input.month) one("AN10", () => evaluateContentEngagement(input));
   one("AN11", () => evaluateFunnel(input));
   many("AN12", () => evaluateCampaigns(input));
+  // GA-F6: girdi yalnız GA_UTM açıkken dolar; yoksa iki kural da boş döner.
+  many("AN13", () => evaluateAdsCrossCheck(input));
+  many("AN14", () => evaluateGoogleAds(input));
   return applyQualityGates(candidates, {
     measurementDegraded: input.measurementDegraded,
     window28: input.window28,
@@ -98,14 +103,13 @@ export function applyQualityGates(
   for (const candidate of candidates) {
     let directional = input.measurementDegraded;
     const report = gaRule(candidate.ruleKey).report;
-    if (
-      candidate.period.grain === "WINDOW28" &&
-      report !== null &&
-      input.window28
-    ) {
+    if (candidate.period.grain === "WINDOW28" && input.window28) {
       const window = input.window28;
       if (window.usedDays < GA_MIN_WINDOW_DAYS) continue;
-      if ((window.coverage[report] ?? 0) < window.usedDays) directional = true;
+      // Raporu olmayan pencere kuralı (AN14) için kapsam kapısı yok.
+      if (report !== null && (window.coverage[report] ?? 0) < window.usedDays) {
+        directional = true;
+      }
     }
     if (!directional || candidate.confidence === "DIRECTIONAL") {
       result.push(candidate);

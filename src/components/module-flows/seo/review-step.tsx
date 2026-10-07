@@ -8,8 +8,10 @@ import { CardActions } from "@/components/works/card-actions";
 import { siteLabel } from "@/lib/module-flows/seo/brief";
 import { articleStats } from "@/lib/module-flows/seo/markdown";
 import { checkOnPage } from "@/lib/module-flows/seo/on-page";
+import { refreshDiff } from "@/lib/module-flows/seo/refresh-diff";
 import {
   SEO_LIMITS,
+  seoModeOf,
   type SeoArticle,
   type SeoState,
 } from "@/lib/module-flows/seo/state";
@@ -21,9 +23,10 @@ import {
 
 import { ArticleView } from "./article-view";
 import { SEO_FLOW_COPY as COPY } from "./copy";
+import { RefreshDiffView } from "./refresh-diff-view";
 import {
   Field,
-  WorkingNote,
+  RunNote,
   serverButton,
   useSeoStepAction,
   type OnMoving,
@@ -32,6 +35,8 @@ import {
 // Step 4, Review: the article as it reads (with its search snippet), and the
 // on-page checks, each a pass or one line on what to fix. "Rewrite" takes
 // optional notes and stays here; "Publish" moves on to the hand-off.
+// SC-F6: when a page is being refreshed, a summary of what changes on the page
+// sits above the checks.
 
 const PUBLISH = "goto:deliver";
 const OPEN_REWRITE = "open-rewrite";
@@ -120,6 +125,18 @@ function ReviewBody({
     [article.markdown],
   );
   const passed = checks.filter((check) => check.status === "pass").length;
+  const { target } = state;
+  const diff = useMemo(
+    () =>
+      state.features?.modes && seoModeOf(state) === "refresh" && target
+        ? refreshDiff({
+            target,
+            article,
+            outline: state.plan?.outline ?? [],
+          })
+        : null,
+    [state, target, article],
+  );
 
   const { onAct, busyId, error } = useSeoStepAction({
     projectId,
@@ -206,6 +223,8 @@ function ReviewBody({
         </div>
       </Field>
 
+      {diff ? <RefreshDiffView diff={diff} /> : null}
+
       <Field
         label={COPY.checks}
         aside={
@@ -272,7 +291,7 @@ function ReviewBody({
       ) : null}
 
       {rewriting ? (
-        <WorkingNote>{COPY.rewriteNote}</WorkingNote>
+        <RunNote text={COPY.rewriteNote} />
       ) : (
         <CardActions
           buttons={buttons}

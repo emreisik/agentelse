@@ -4,6 +4,7 @@ import {
   deleteSearchDataAction,
   setSearchArchiveAction,
 } from "@/server/actions/search-analytics-actions";
+import { SeoActionFlags } from "@/lib/seo/action-flags";
 import type { SearchLinkInfo } from "@/server/seo/report";
 import { BrandTermsForm } from "@/components/search-analytics/brand-terms-form";
 import { ActionForm } from "@/components/shared/action-form";
@@ -117,6 +118,10 @@ export function SearchConsoleWarehouseCard({
                 This deletes the Search Console history Agentelse stored for
                 this project, including data older than Google keeps. The last
                 16 months load again from Google.
+                {/* SC-F6: ölçülen SEO sonuçları da silinir; bayrak kapalıyken metin aynıdır. */}
+                {SeoActionFlags.loop()
+                  ? " Measured results of SEO changes and what Agentelse learned from them are deleted too and don't come back."
+                  : null}
               </p>
               <ActionForm
                 action={deleteSearchDataAction}

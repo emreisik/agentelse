@@ -22,6 +22,10 @@ import { claimPeriodic } from "@/server/observability/periodic";
 
 import { sweepOrphanGaInsightData } from "./analysis/cleanup";
 import {
+  deleteGaAttributionData,
+  sweepOrphanGaAttributionData,
+} from "./attribution/cleanup";
+import {
   deleteGaReportData,
   sweepOrphanGaReportData,
 } from "./reports/cleanup";
@@ -152,6 +156,15 @@ export const GaRetention = {
             );
           });
         }
+        // GA-F6: aynı projelerde "ga-utm:" öğrenmeleri ve karar kanıtındaki ga4_* sayıları da silinir (kendi parti döngüsü bütün kararları kapsar).
+        for (const projectId of orphanProjects) {
+          await deleteGaAttributionData(projectId).catch((error: unknown) => {
+            console.error(
+              "[ga-retention] attribution leftovers could not be cleared:",
+              error instanceof Error ? error.name : error,
+            );
+          });
+        }
         deleted += (
           await prisma.gaPropertyLink.deleteMany({
             where: { id: { in: orphaned } },
@@ -172,6 +185,15 @@ export const GaRetention = {
     deleted += await sweepOrphanGaReportData().catch((error: unknown) => {
       console.error(
         "[ga-retention] website report leftovers could not be swept:",
+        error instanceof Error ? error.name : error,
+      );
+      return 0;
+    });
+    // GA-F6: Disconnect'te atıf temizliği yarıda kaldıysa kalan "ga-utm:"
+    // öğrenmeleri ve karar kanıtındaki ga4_* alanları.
+    deleted += await sweepOrphanGaAttributionData().catch((error: unknown) => {
+      console.error(
+        "[ga-retention] attribution leftovers could not be swept:",
         error instanceof Error ? error.name : error,
       );
       return 0;

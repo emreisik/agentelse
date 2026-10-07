@@ -58,6 +58,7 @@ import { GaInsights } from "@/server/website-analytics/analysis/runner";
 import { GaFindingEvaluator } from "@/server/website-analytics/analysis/evaluator";
 import { GaSync } from "@/server/website-analytics/sync/runner";
 import { GaReports } from "@/server/website-analytics/reports/runner";
+import { GaAttributionLearnings } from "@/server/website-analytics/attribution/learnings";
 import { GscRetention } from "@/server/seo/retention";
 import { GscSync } from "@/server/seo/sync/runner";
 import { SeoCrawler } from "@/server/seo/crawl/crawler";
@@ -69,6 +70,7 @@ import { SearchUpdates } from "@/server/seo/health/updates";
 import { SeoAuditRetention } from "@/server/seo/health/retention";
 import { SeoOpportunities } from "@/server/seo/opportunities/runner";
 import { SeoOpportunityRetention } from "@/server/seo/opportunities/retention";
+import { SeoActionJobs } from "@/server/seo/actions/jobs";
 import { SeoReports } from "@/server/seo/reports/runner";
 import { SeoReportRetention } from "@/server/seo/reports/retention";
 import { MetaPerformanceScanner } from "@/server/agency/performance/meta-performance-scanner";
@@ -336,6 +338,11 @@ registerAgencyTickStep({
 });
 // GA-F5 (GA_REPORTS=true): Website analytics sohbetine raporlar. Bağ başına CAS kilidi; sırasıyla hedeflerin günlük güncel değeri (ProjectGoal.currentValue + tahmin), kritik ölçüm uyarısı kartı, günlük nabız (yalnız not edilecek bir şey varsa), haftalık rapor (Pazartesi 08:00 proje saati, pazar verisi gelince), aylık rapor ve "Next month plan" (ayın 2'si 08:00). Bayrak kapalıyken sorgusuz 0 döner; odak ayarı kapatmaz.
 registerAgencyTickStep({ name: "ga-reports", run: () => GaReports.runDue(5) });
+// GA-F6 (GA_UTM + GA_SYNC): etiketli linklerin (reklam, bio) sitedeki sonucu kapıyı geçerse sayısız GA4 Brand Brain öğrenmesi; günde bir (claimPeriodic), projeler güne göre döner; yerel geliştirmede yalnız GA_SYNC_DEV_PROJECTS. Bayrak kapalıyken sorgusuz 0 döner.
+registerAgencyTickStep({
+  name: "ga-attribution-learnings",
+  run: () => GaAttributionLearnings.runDue(),
+});
 // SC-F2 (GSC_SYNC): Search Console ambarının senkronu (≤3 site bir tick'te,
 // site başına CAS kilidi, kota yöneticisi, 90 sn süre) ve günlük saklama
 // temizliği (SK3 arşivi). Bayrak kapalıyken senkron hemen 0 döner; saklama
@@ -375,6 +382,9 @@ registerAgencyTickStep({
     (await SeoOpportunities.runDue(2)) +
     (await SeoOpportunityRetention.runDue()),
 });
+// SC-F6 (SEO_ACTIONS): öneri → uygulama → ölçüm döngüsü; doğrulama günlük ve 45 sn bütçeli (kendi tarayıcımız + inceleme bütçesi), değerlendirme vadesi gelenlerde, kapıdan geçen sonuçlar öğrenmeye. Bayrak kapalıyken hemen 0 döner (saklama yalnız eylem satırı varsa); odak ayarı bunları kapatmaz.
+registerAgencyTickStep({ name: "seo-action-verify", run: () => SeoActionJobs.verify() });
+registerAgencyTickStep({ name: "seo-action-evaluate", run: () => SeoActionJobs.evaluate() });
 // SC-F5 (SEO_REPORTS): Search & SEO sohbeti; kesinleşen günde nabız (yalnız dikkat çekiciyse), Çarşamba haftalık rapor, ayın 4'ünde aylık rapor + SEO yol haritası, SEO hedeflerinin günlük ölçümü. Bayrak kapalıyken hemen 0 döner; saklama ayrı çalışır ve yalnız rapor verisi kaldıysa iş yapar. Odak ayarı bunları kapatmaz.
 registerAgencyTickStep({
   name: "seo-reports",

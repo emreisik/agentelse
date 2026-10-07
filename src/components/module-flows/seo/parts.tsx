@@ -1,14 +1,29 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { useCardAction } from "@/components/works/use-card-action";
 import type { ModuleFlowStep } from "@/lib/module-flows/card";
+import {
+  seoModeOf,
+  type SeoRunKind,
+  type SeoRunPhase,
+  type SeoState,
+} from "@/lib/module-flows/seo/state";
 import { cn } from "@/lib/utils";
 import type { CardActionResult, CardButton } from "@/lib/works/card-action";
-import type { SeoFlowResult } from "@/server/actions/seo-flow-actions";
+import {
+  researchSeoAction,
+  rewriteSeoArticleAction,
+  writeSeoArticleAction,
+  type SeoFlowResult,
+} from "@/server/actions/seo-flow-actions";
+import {
+  researchRefreshAction,
+  suggestSnippetAction,
+} from "@/server/actions/seo-mode-actions";
 
 import { SEO_FLOW_COPY } from "./copy";
 
@@ -91,6 +106,47 @@ export function serverButton(
   };
 }
 
+// SC-F6: durmuş bir koşunun yeniden denenmesi; hangi eylemin çağrılacağı koşu
+// türünden ve kartın kipinden çıkar. Kartta gereken veri yoksa denenemez.
+export function retryRun(
+  state: SeoState,
+  kind: SeoRunKind,
+  card: { projectId: string; commandId: string },
+): Promise<SeoFlowResult> {
+  const unavailable = Promise.resolve<SeoFlowResult>({
+    ok: false,
+    message: SEO_FLOW_COPY.unavailable,
+  });
+  const mode = seoModeOf(state);
+  const url = state.target?.url;
+  const language = state.brief?.language;
+  switch (kind) {
+    case "research":
+      if (mode === "refresh") {
+        return url && language
+          ? researchRefreshAction(card.projectId, card.commandId, {
+              url,
+              language,
+            })
+          : unavailable;
+      }
+      return mode === "article"
+        ? researchSeoAction(card.projectId, card.commandId)
+        : unavailable;
+    case "snippet":
+      return url && language
+        ? suggestSnippetAction(card.projectId, card.commandId, {
+            url,
+            language,
+          })
+        : unavailable;
+    case "write":
+      return writeSeoArticleAction(card.projectId, card.commandId);
+    case "rewrite":
+      return rewriteSeoArticleAction(card.projectId, card.commandId);
+  }
+}
+
 export function copyToClipboard(text: string, what: string): void {
   if (typeof navigator === "undefined" || !navigator.clipboard) {
     toast.error(SEO_FLOW_COPY.copyFailed);
@@ -152,6 +208,20 @@ export function Field({
       </div>
       {children}
     </div>
+  );
+}
+
+// SC-F6: canlı koşunun aşaması (SSE). Kart sağlayıcıyı yalnız canlı özellik
+// açıkken doldurur; yoksa RunNote eskisi gibi düz metin gösterir.
+const LivePhaseContext = createContext<SeoRunPhase | null>(null);
+export const LivePhaseProvider = LivePhaseContext.Provider;
+
+// Çalışan bir model çağrısının notu: canlı aşama varsa onu söyler, yoksa
+// verilen düz metni.
+export function RunNote({ text }: { text: string }) {
+  const phase = useContext(LivePhaseContext);
+  return (
+    <WorkingNote>{phase ? SEO_FLOW_COPY.phase[phase] : text}</WorkingNote>
   );
 }
 

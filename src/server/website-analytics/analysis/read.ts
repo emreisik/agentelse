@@ -7,6 +7,7 @@ import {
   gaInsightsMode,
   gaInsightsModeFor,
 } from "@/lib/website-analytics/analysis/flags";
+import { gaAttributionEnabled } from "@/lib/website-analytics/attribution/flags";
 import { subjectLabelOf } from "@/lib/website-analytics/analysis/keys";
 import {
   gaRule,
@@ -18,16 +19,17 @@ import {
   parseGaFindingEvidence,
   parseGaImpact,
 } from "@/lib/website-analytics/analysis/stored";
-import type {
-  GaFindingConfidence,
-  GaFindingKind,
-  GaFindingMode,
-  GaFindingOutcome,
-  GaFindingSeverity,
-  GaFindingStatus,
-  GaPeriodGrain,
-  GaReviewVerdict,
-  GaRuleKey,
+import {
+  GA_ADS_RULE_KEYS,
+  type GaFindingConfidence,
+  type GaFindingKind,
+  type GaFindingMode,
+  type GaFindingOutcome,
+  type GaFindingSeverity,
+  type GaFindingStatus,
+  type GaPeriodGrain,
+  type GaReviewVerdict,
+  type GaRuleKey,
 } from "@/lib/website-analytics/analysis/types";
 import type {
   GaFindingView,
@@ -319,11 +321,19 @@ export async function loadGaInsightsOperatorView(
   const reviewed = useful + notUseful;
   const lastBeat = heartbeat?.lastBeatAt ?? null;
 
+  // AN13/AN14 sayaçları yalnız GA_UTM açıkken görünür; kapalıyken /health
+  // kartı değişmez.
+  const adsRulesVisible = gaAttributionEnabled();
   const rules: { ruleKey: GaRuleKey; open: number }[] = [];
   for (const row of byRule) {
-    if (isGaRuleKey(row.ruleKey)) {
-      rules.push({ ruleKey: row.ruleKey, open: row._count._all });
+    if (!isGaRuleKey(row.ruleKey)) continue;
+    if (
+      !adsRulesVisible &&
+      (GA_ADS_RULE_KEYS as readonly string[]).includes(row.ruleKey)
+    ) {
+      continue;
     }
+    rules.push({ ruleKey: row.ruleKey, open: row._count._all });
   }
   rules.sort((a, b) => b.open - a.open || a.ruleKey.localeCompare(b.ruleKey));
 

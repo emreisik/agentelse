@@ -125,6 +125,7 @@ function checkOf(
         ? formatMoney(validation.grossMinor, spec.currency)
         : null,
     adding: Boolean(spec.existingAdSetId),
+    ...(validation.processing ? { processing: true } : {}),
   };
 }
 

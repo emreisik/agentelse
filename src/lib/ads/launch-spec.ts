@@ -153,6 +153,9 @@ export const AdsLaunchSpecSchema = z.object({
           // F8+: carousel. 2-10 kart; ilk kartın görseli `imageAssetId` ile
           // aynıdır (önizleme ve eski yollar için). Mesaj ve anında formla
           // birlikte olmaz.
+          // Video reklam (META_ADS_VIDEO): Library videosu; kapak görseli
+          // `imageAssetId`dir (video_data.image_url için herkese açık adres).
+          video: z.object({ assetId: z.string().min(1) }).optional(),
           cards: z
             .array(
               z.object({
@@ -201,6 +204,15 @@ export const AdsLaunchSpecSchema = z.object({
     ),
   { path: ["ads"], message: "A carousel can't be a message or lead form ad" },
 ).refine(
+  // Video reklam: carousel, mesaj ya da anında formla birlikte kurulmaz.
+  (spec) =>
+    spec.ads.every(
+      (ad) =>
+        !ad.creative.video ||
+        (!ad.creative.cards && !ad.creative.messaging && !spec.leadForm),
+    ),
+  { path: ["ads"], message: "A video ad can't be a carousel, message or lead form ad" },
+).refine(
   // Meta, adset_schedule'ı yalnız toplam (lifetime) bütçeli ad set'te kabul
   // eder; mevcut ad set'e eklemede ad set kurulmaz.
   (spec) =>
@@ -242,7 +254,8 @@ export function specHash(spec: AdsLaunchSpec): string {
         adSetIndex: ad.adSetIndex,
         image: ad.creative.imageAssetId,
         link: ad.creative.link,
-        // Yalnız carousel'de eklenir: eski spec'lerin özeti değişmez.
+        // Yalnız video / carousel'de eklenir: eski spec'lerin özeti değişmez.
+        ...(ad.creative.video ? { video: ad.creative.video.assetId } : {}),
         ...(ad.creative.cards
           ? {
               cards: ad.creative.cards.map((card) => ({
@@ -301,7 +314,9 @@ export function adSetEndTime(
 // ---- Yerel doğrulama (P kuralları) -------------------------------------------------
 
 export type LaunchIssue = {
-  rule: "P1" | "P2" | "P3" | "P5" | "P6" | "P8" | "P9" | "P12" | "META";
+  rule: "P1" | "P2" | "P3" | "P5" | "P6" | "P8" | "P9" | "P12"
+  // Video reklam: yükleme, işleme ve kapak.
+  | "VIDEO" | "META";
   field: string;
   severity: "block" | "warn";
   message: string;

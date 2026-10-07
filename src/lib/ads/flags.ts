@@ -32,6 +32,8 @@ export const AdsFlags = {
   webhooks: () => on("META_ADS_WEBHOOKS"),
   autopilot: () => on("META_ADS_AUTOPILOT"),
   adRules: () => on("META_ADS_RULES"),
+  // F8+: Library videosuyla video reklam (modül akışı).
+  video: () => on("META_ADS_VIDEO"),
   // F8: ajans ölçeği (FLfB + BISU, çoklu hesap).
   agency: () => on("META_ADS_AGENCY"),
   // Acil durdurma: yalnız PAUSE geçer (docs/meta-ads-plan.md §3.9).

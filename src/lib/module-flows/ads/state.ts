@@ -270,6 +270,20 @@ const linkWhenNeeded = (value: {
     ? !value.link || isWebLink(value.link)
     : isWebLink(value.link);
 
+// Video reklam tek reklamdır: carousel, ek post, mesaj ve formla olmaz.
+const videoFits = (value: {
+  videoAssetId?: string;
+  adFormat?: string;
+  extraCreativeIds?: unknown[];
+  objective: string;
+  messages?: unknown;
+}) =>
+  !value.videoAssetId ||
+  (value.adFormat !== "carousel" &&
+    (value.extraCreativeIds?.length ?? 0) === 0 &&
+    !value.messages &&
+    value.objective !== "OUTCOME_LEADS");
+
 // Profil ziyareti yalnız trafik amacıyla, mesaj ve formla birlikte olmaz.
 const profileFits = (value: {
   trafficEvent?: string;
@@ -324,6 +338,8 @@ export const AdsBriefInputSchema = briefFields
     // F5b: ayrı reklamlarda en çok iki ek post (aynı ad set'te 2-3 reklam);
     // carousel'de en çok dokuz (2-10 kart).
     extraCreativeIds: z.array(idField).max(ADS_LIMITS.maxCards - 1).optional(),
+    // Video reklam (META_ADS_VIDEO): Library videosu; kapak ana postun görseli.
+    videoAssetId: idField.optional(),
   })
   .refine(
     (value) =>
@@ -337,6 +353,7 @@ export const AdsBriefInputSchema = briefFields
     { path: ["extraCreativeIds"] },
   )
   .refine(carouselFits, { path: ["adFormat"] })
+  .refine(videoFits, { path: ["videoAssetId"] })
   .refine(profileFits, { path: ["trafficEvent"] })
   .refine(hoursFit, { path: ["hours"] })
   .refine(leadsNeedForm, { path: ["leadForm"] })
@@ -372,6 +389,8 @@ const AdsBriefSchema = briefFields
     adAccountId: z.string().max(64).optional(),
     // F5b: ek postlar (sunucu dondurur, ana post gibi); carousel'de kartlar.
     extraSources: z.array(AdsSourceSchema).max(ADS_LIMITS.maxCards - 1).optional(),
+    // Video reklam: seçilen Library videosu (sunucu dondurur).
+    video: z.object({ assetId: idField, name: z.string().max(200) }).optional(),
   })
   .refine(carouselFits, { path: ["adFormat"] })
   .refine(profileFits, { path: ["trafficEvent"] })
@@ -509,6 +528,8 @@ export type AdsBriefOptions = {
     // Instagram profil ziyareti: tarif açık ve hesapta Instagram var.
     instagramProfile?: boolean;
   };
+  // Video reklam (META_ADS_VIDEO açıkken): Library videoları.
+  videos?: { assetId: string; name: string }[];
   // Hesapta son 7 günde olay gönderen bir Meta Pixel var mı?
   hasPixel?: boolean;
   // F5b: Leads (anında form) sunuluyor mu; önerilen hedef; reklam eklenebilen
@@ -544,6 +565,7 @@ export const ADS_BRIEF_ISSUE = {
   whatsapp: "Enter the WhatsApp number your Facebook Page uses.",
   leadForm: "Add the link to your privacy policy: Meta shows it on the form.",
   hours: "Business hours need a total budget and an end hour after the start hour.",
+  video: "A video ad is a single ad: no carousel, no extra posts, and website goals only.",
   profile: "Instagram profile visits need the website goal and no messages.",
   carousel: "A carousel needs 2 to 10 posts, and works for website goals only (not messages or forms).",
   other: "Check the brief.",
@@ -559,6 +581,7 @@ const ISSUE_ORDER: readonly [string, string][] = [
   ["dsaPayor", ADS_BRIEF_ISSUE.dsa],
   ["messages", ADS_BRIEF_ISSUE.whatsapp],
   ["leadForm", ADS_BRIEF_ISSUE.leadForm],
+  ["videoAssetId", ADS_BRIEF_ISSUE.video],
   ["trafficEvent", ADS_BRIEF_ISSUE.profile],
   ["hours", ADS_BRIEF_ISSUE.hours],
   ["adFormat", ADS_BRIEF_ISSUE.carousel],
@@ -780,6 +803,7 @@ export function needsLaunchV2(brief: AdsBrief): boolean {
       brief.objective === "OUTCOME_LEADS" ||
       brief.budgetMode === "fixed" ||
       brief.extraSources?.length ||
+      brief.video ||
       brief.existingAdSetId ||
       brief.audienceMode === "suggest",
   );

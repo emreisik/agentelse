@@ -414,3 +414,33 @@ describe("Instagram profile brief rules", () => {
     ).not.toBeNull();
   });
 });
+
+describe("video brief rules", () => {
+  const input = {
+    creativeId: "c1",
+    objective: "OUTCOME_TRAFFIC",
+    dailyBudget: 20,
+    days: 7,
+    countries: ["TR"],
+    ageMin: 18,
+    ageMax: 65,
+    gender: "all",
+    link: "https://example.com",
+    callToAction: "LEARN_MORE",
+    videoAssetId: "vid1",
+  };
+
+  it("accepts one video with the main post as its cover", () => {
+    expect(briefIssue(input)).toBeNull();
+  });
+
+  it("is a single ad: no extra posts, carousel, messages or form", () => {
+    expect(briefIssue({ ...input, extraCreativeIds: ["c2"] })).toBe(ADS_BRIEF_ISSUE.video);
+    expect(
+      briefIssue({ ...input, adFormat: "carousel", extraCreativeIds: ["c2"] }),
+    ).not.toBeNull();
+    expect(
+      briefIssue({ ...input, objective: "OUTCOME_ENGAGEMENT", messages: { app: "MESSENGER" }, link: "" }),
+    ).not.toBeNull();
+  });
+});

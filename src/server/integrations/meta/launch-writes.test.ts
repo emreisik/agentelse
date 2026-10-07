@@ -51,6 +51,23 @@ describe("objectStorySpec", () => {
     });
   });
 
+  it("builds a video ad in the shape the old wizard proved: address inside the CTA, cover by URL", () => {
+    expect(
+      objectStorySpec({
+        ...common,
+        video: { videoId: "v1", thumbnailUrl: "https://cdn.test/cover.png" },
+      }),
+    ).toEqual({
+      page_id: "9",
+      video_data: {
+        video_id: "v1",
+        image_url: "https://cdn.test/cover.png",
+        message: "Spring sale",
+        call_to_action: { type: "LEARN_MORE", value: { link: "https://example.com" } },
+      },
+    });
+  });
+
   it("falls back to the single picture when fewer than two cards are given", () => {
     const spec = objectStorySpec({ ...common, cards: [{ imageHash: "h1", link: "https://example.com" }] });
     expect(JSON.stringify(spec)).not.toContain("child_attachments");

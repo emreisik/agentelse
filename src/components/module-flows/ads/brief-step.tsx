@@ -392,6 +392,9 @@ function BriefForm({
   const [extraIds, setExtraIds] = useState<string[]>(
     brief?.extraSources?.map((source) => source.creativeId) ?? [],
   );
+  const [videoId, setVideoId] = useState<string | null>(
+    brief?.video?.assetId ?? null,
+  );
   const [hoursOn, setHoursOn] = useState(Boolean(brief?.hours));
   const [hoursFrom, setHoursFrom] = useState(String(brief?.hours?.from ?? 9));
   const [hoursTo, setHoursTo] = useState(String(brief?.hours?.to ?? 18));
@@ -458,6 +461,16 @@ function BriefForm({
   const carouselOn =
     carouselAllowed && adFormat === "carousel" && extraIds.length > 0;
   const maxExtras = carouselAllowed && adFormat === "carousel" ? 9 : 2;
+  // Video reklam tek reklamdır: ek post, carousel, mesaj ve formla olmaz.
+  const videoAllowed =
+    planner &&
+    !messages &&
+    objective !== "OUTCOME_LEADS" &&
+    extraIds.length === 0 &&
+    adFormat !== "carousel" &&
+    Boolean(options.videos?.length);
+  const videoActive =
+    videoAllowed && options.videos?.some((video) => video.assetId === videoId);
   // Mesai saatleri yalnız toplam bütçeyle ve yeni kampanyada.
   const hoursAllowed = planner && budgetMode === "fixed" && !adding;
   const hoursActive = hoursAllowed && hoursOn;
@@ -500,6 +513,7 @@ function BriefForm({
       ? { extraCreativeIds: extraIds.filter((id) => id !== creativeId) }
       : {}),
     ...(carouselOn ? { adFormat: "carousel" as const } : {}),
+    ...(videoActive && videoId ? { videoAssetId: videoId } : {}),
     ...(hoursActive
       ? {
           hours: {
@@ -575,6 +589,29 @@ function BriefForm({
                   </Chip>
                 );
               })}
+          </div>
+        </Section>
+      ) : null}
+
+      {videoAllowed ? (
+        <Section label={COPY.videoLabel} hint={COPY.videoHint}>
+          <div
+            role="group"
+            aria-label={COPY.videoLabel}
+            className="flex flex-wrap gap-1.5"
+          >
+            <Chip active={!videoActive} onClick={() => setVideoId(null)}>
+              {COPY.pictureOnly}
+            </Chip>
+            {options.videos!.map((video) => (
+              <Chip
+                key={video.assetId}
+                active={videoId === video.assetId}
+                onClick={() => setVideoId(video.assetId)}
+              >
+                {video.name}
+              </Chip>
+            ))}
           </div>
         </Section>
       ) : null}

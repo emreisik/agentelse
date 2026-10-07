@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 
+import { AdsFlags } from "@/lib/ads/flags";
 import { prisma } from "@/lib/prisma";
 import type { AdsChain } from "@/lib/module-flows/ads/chain";
 import { ADS_ACCOUNT_COPY, ADS_FLOW_COPY } from "@/lib/module-flows/ads/copy";
@@ -156,6 +157,22 @@ export async function saveAdsBriefAction(
         extraSources.push(extra);
       }
 
+      // Video reklam: yalnız bayrak açıkken ve projenin kendi Library videosu.
+      let video: { assetId: string; name: string } | undefined;
+      if (given.videoAssetId) {
+        if (!AdsFlags.video()) return failed(ADS_BRIEF_ISSUE.video);
+        const asset = await prisma.asset.findFirst({
+          where: {
+            id: given.videoAssetId,
+            projectId,
+            mimeType: { startsWith: "video/" },
+          },
+          select: { id: true, filename: true },
+        });
+        if (!asset) return failed(ADS_FLOW_COPY.videoGone);
+        video = { assetId: asset.id, name: asset.filename.slice(0, 200) };
+      }
+
       // The budget as Meta will hold it in the ad account's currency.
       const dailyBudget = normalizeBudget(given.dailyBudget, account.currency);
       if (!(dailyBudget > 0)) return failed(ADS_BRIEF_ISSUE.budget);
@@ -183,6 +200,7 @@ export async function saveAdsBriefAction(
           ? { leadForm: given.leadForm }
           : {}),
         ...(extraSources.length > 0 ? { extraSources } : {}),
+        ...(video ? { video } : {}),
         // Mesai saatleri (toplam bütçeyle; şema bunu zaten denetler).
         ...(given.hours ? { hours: given.hours } : {}),
         // Carousel: seçilen bütün postlar tek reklamın kartları.

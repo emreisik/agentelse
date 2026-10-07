@@ -94,6 +94,11 @@ export function launchSpecFromFlow(input: {
     !brief.messages &&
     brief.objective !== "OUTCOME_LEADS" &&
     (brief.extraSources?.length ?? 0) >= 1;
+  // Video reklam: tek reklam; kapak ana postun görseli.
+  const video =
+    brief.video && !carousel && !brief.messages && brief.objective !== "OUTCOME_LEADS"
+      ? { assetId: brief.video.assetId }
+      : null;
   const promotedObject: Record<string, string> | undefined =
     recipe.promoted === "page" || recipe.promoted === "page_whatsapp"
       ? {
@@ -195,6 +200,7 @@ export function launchSpecFromFlow(input: {
           link: profileLink ?? (brief.link || brief.leadForm?.privacyUrl || "https://www.facebook.com/"),
           callToAction: brief.callToAction,
           ...(messaging ? { messaging } : {}),
+          ...(video ? { video } : {}),
         },
         urlTags: input.urlTags?.[0] ?? DEFAULT_URL_TAGS,
       },
@@ -247,6 +253,8 @@ export type AdsLaunchCheck = {
   gross: string | null;
   // F5b: mevcut ad set'e ekleme (yeni bütçe onaylanmaz).
   adding: boolean;
+  // Video reklam: Meta videoyu işliyor; kart birkaç saniyede bir yoklar.
+  processing?: boolean;
 };
 
 const COUNT = new Intl.NumberFormat("en-US");

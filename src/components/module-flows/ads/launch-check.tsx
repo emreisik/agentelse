@@ -24,6 +24,7 @@ import { LoadingLine } from "./parts";
 // harcama tavanı ve bitiş. Bayrak kapalıysa (V2_OFF) eski Review kalır.
 
 const COPY = ADS_FLOW_COPY;
+const VIDEO_POLL_MS = 15_000;
 
 export type LaunchCheckState =
   // Henüz sorulmadı (sunucu çizimi): eski Review görünür.
@@ -41,8 +42,9 @@ export function useLaunchCheck(
   const [state, setState] = useState<LaunchCheckState>({ status: "idle" });
   const [, startChecking] = useTransition();
   const live = useRef(true);
-  const run = useCallback(async () => {
-    setState({ status: "loading" });
+  const run = useCallback(async (quiet = false) => {
+    // Sessiz yoklama (video işlenirken) ekranı "kontrol ediliyor"a çevirmez.
+    if (!quiet) setState({ status: "loading" });
     const result = await prepareAdsLaunchAction(projectId, commandId).catch(
       () => null,
     );
@@ -67,6 +69,14 @@ export function useLaunchCheck(
       live.current = false;
     };
   }, [enabled, run]);
+  // Video reklam: Meta videoyu işlerken kontrol 15 sn'de bir kendiliğinden
+  // yenilenir (her yoklama yalnız durumu sorar).
+  const waiting = state.status === "ready" && state.check.processing === true;
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setTimeout(() => startChecking(() => run(true)), VIDEO_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [waiting, state, run]);
   return { state, reload: () => void run() };
 }
 

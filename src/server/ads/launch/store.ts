@@ -29,6 +29,9 @@ export type LaunchProgress = {
   featuresFallback?: boolean;
   // F5b: anında formun kimliği.
   leadForm?: string;
+  // Video reklam: reklam sırası → Meta video kimliği; işlenip hazır olanlar.
+  videos?: Record<string, string>;
+  videoReady?: Record<string, boolean>;
 };
 
 export type LaunchError = {

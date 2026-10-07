@@ -31,6 +31,8 @@ const meta = vi.hoisted(() => ({
   setObjectStatus: vi.fn(),
   lifetimeImpressions: vi.fn(),
   uploadMetaAdImage: vi.fn(),
+  uploadMetaAdVideo: vi.fn(),
+  checkMetaVideoStatus: vi.fn(),
   findMetaObjectsByTag: vi.fn(),
 }));
 
@@ -49,7 +51,10 @@ vi.mock("@/lib/prisma", () => ({
     },
   },
 }));
-vi.mock("@/server/storage/asset-storage", () => ({ readAsset: vi.fn(async () => Buffer.from("img")) }));
+vi.mock("@/server/storage/asset-storage", () => ({
+  readAsset: vi.fn(async () => Buffer.from("img")),
+  resolveDirectPublicUrl: vi.fn((key: string) => `https://cdn.test/${key.replace("local://", "")}`),
+}));
 vi.mock("@/server/ads/accounts", () => ({
   AdsAccounts: {
     resolveWithToken: vi.fn(async () => ({ status: "ready", adAccountId: "act_1", accessToken: "token", credentialId: "c" })),
@@ -63,6 +68,8 @@ vi.mock("@/server/integrations/meta-client", async () => {
   return {
     MetaApiError: errors.MetaApiError,
     uploadMetaAdImage: (...args: unknown[]) => meta.uploadMetaAdImage(...args),
+    uploadMetaAdVideo: (...args: unknown[]) => meta.uploadMetaAdVideo(...args),
+    checkMetaVideoStatus: (...args: unknown[]) => meta.checkMetaVideoStatus(...args),
     findMetaObjectsByTag: (...args: unknown[]) => meta.findMetaObjectsByTag(...args),
   };
 });
@@ -305,6 +312,61 @@ describe("LaunchExecutor.advance", () => {
       lifetimeBudgetMinor: 140_000,
       schedule: { days: [1, 2, 3, 4, 5], startMinute: 540, endMinute: 1080 },
     });
+  });
+
+  it("uploads a video once, waits for Meta to process it, then builds the video creative", async () => {
+    meta.uploadMetaAdVideo.mockImplementation(async () => (state.calls.push("video-upload"), { videoId: "v1" }));
+    let polls = 0;
+    meta.checkMetaVideoStatus.mockImplementation(async () => {
+      polls += 1;
+      state.calls.push("video-status");
+      return polls >= 3;
+    });
+    freshLaunch({
+      spec: {
+        ...spec,
+        ads: [
+          {
+            ...spec.ads[0]!,
+            creative: { ...spec.ads[0]!.creative, video: { assetId: "vid1" } },
+          },
+        ],
+      },
+    });
+    const { result } = await runToEnd();
+    expect(result.status).toBe("COMPLETED");
+    // One upload however many turns Meta needed to process it.
+    expect(state.calls.filter((call) => call === "video-upload")).toHaveLength(1);
+    expect(polls).toBe(3);
+    // No creative before the video is ready.
+    const order = state.calls.filter((call) => ["video-status", "creative"].includes(call));
+    expect(order.lastIndexOf("video-status")).toBeLessThan(order.indexOf("creative"));
+    expect(meta.postCreative.mock.calls[0]![0].video).toEqual({
+      videoId: "v1",
+      thumbnailUrl: "https://cdn.test/a.png",
+    });
+  });
+
+  it("stops with Meta's words when the video can't be processed", async () => {
+    meta.uploadMetaAdVideo.mockResolvedValue({ videoId: "v1" });
+    meta.checkMetaVideoStatus.mockRejectedValue(
+      new MetaApiError("Meta video could not be processed (video_status: error)"),
+    );
+    freshLaunch({
+      spec: {
+        ...spec,
+        ads: [
+          {
+            ...spec.ads[0]!,
+            creative: { ...spec.ads[0]!.creative, video: { assetId: "vid1" } },
+          },
+        ],
+      },
+    });
+    const { result } = await runToEnd();
+    expect(result.status).toBe("FAILED");
+    expect(meta.postCreative).not.toHaveBeenCalled();
+    expect(meta.postCampaign).not.toHaveBeenCalled();
   });
 
   it("never sends a finished step again", async () => {

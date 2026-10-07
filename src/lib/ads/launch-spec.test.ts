@@ -352,3 +352,62 @@ describe("closed recipes", () => {
     ).toBe(true);
   });
 });
+
+describe("video ads", () => {
+  const videoSpec: AdsLaunchSpec = {
+    ...spec,
+    ads: [
+      {
+        ...spec.ads[0]!,
+        creative: { ...spec.ads[0]!.creative, video: { assetId: "vid1" } },
+      },
+    ],
+  };
+
+  it("is accepted alone and refused with a carousel or messages", async () => {
+    const { parseLaunchSpec } = await import("./launch-spec");
+    expect(parseLaunchSpec(videoSpec)).not.toBeNull();
+    expect(
+      parseLaunchSpec({
+        ...videoSpec,
+        ads: [
+          {
+            ...videoSpec.ads[0]!,
+            creative: {
+              ...videoSpec.ads[0]!.creative,
+              cards: [
+                { imageAssetId: "a1", link: "https://example.com" },
+                { imageAssetId: "a2", link: "https://example.com" },
+              ],
+            },
+          },
+        ],
+      }),
+    ).toBeNull();
+    expect(
+      parseLaunchSpec({
+        ...videoSpec,
+        ads: [
+          {
+            ...videoSpec.ads[0]!,
+            creative: { ...videoSpec.ads[0]!.creative, messaging: "WHATSAPP" },
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("changes the approval hash when the video changes, not for picture ads", () => {
+    expect(specHash(videoSpec)).not.toBe(specHash(spec));
+    const other = {
+      ...videoSpec,
+      ads: [
+        {
+          ...videoSpec.ads[0]!,
+          creative: { ...videoSpec.ads[0]!.creative, video: { assetId: "vid2" } },
+        },
+      ],
+    };
+    expect(specHash(other)).not.toBe(specHash(videoSpec));
+  });
+});

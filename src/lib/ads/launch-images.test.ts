@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { creativeCards, imageSlots, slotKey } from "./launch-images";
+import { creativeCards, imageSlots, slotKey, videoSlots } from "./launch-images";
 import type { AdsLaunchSpec } from "./launch-spec";
 
 type Ad = AdsLaunchSpec["ads"][number];
@@ -59,5 +59,16 @@ describe("creative cards", () => {
   it("is null while a card's picture isn't uploaded", () => {
     expect(creativeCards(carousel, 1, { "1": "h1", "1:2": "h3" })).toBeNull();
     expect(creativeCards(carousel, 1, undefined)).toBeNull();
+  });
+});
+
+describe("video slots", () => {
+  it("lists the video of each video ad by the ad's own key", () => {
+    const video: Ad = {
+      ...single,
+      creative: { ...single.creative, video: { assetId: "vid1" } },
+    };
+    expect(videoSlots([single, video])).toEqual([{ key: "1", assetId: "vid1", adIndex: 1 }]);
+    expect(videoSlots([single, carousel])).toEqual([]);
   });
 });

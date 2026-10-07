@@ -151,6 +151,9 @@ export type CreativeInput = {
   messaging?: "WHATSAPP" | "MESSENGER" | "INSTAGRAM_DIRECT";
   // F5b: anında formun kimliği (CTA formu açar).
   leadFormId?: string;
+  // Video reklam: işlenmiş Meta video kimliği ve kapak görselinin herkese
+  // açık adresi (video_data hash kabul etmez).
+  video?: { videoId: string; thumbnailUrl: string };
   // Carousel (F8+): 2-10 kart. Her kartın kendi görsel özeti ve bağlantısı
   // vardır; üst düzey `imageHash` ilk karttır.
   cards?: { imageHash: string; link: string; headline?: string; description?: string }[];
@@ -169,6 +172,25 @@ export const MESSAGING_CTA: Readonly<
   INSTAGRAM_DIRECT: { type: "INSTAGRAM_MESSAGE", link: "https://www.instagram.com/" },
 };
 
+type StoryLinkData = {
+  link: string;
+  message: string;
+  call_to_action: { type: string; value?: Record<string, unknown> };
+  [key: string]: unknown;
+};
+
+export type ObjectStorySpec = {
+  page_id: string;
+  instagram_user_id?: string;
+  link_data?: StoryLinkData;
+  video_data?: {
+    video_id: string;
+    image_url: string;
+    message: string;
+    call_to_action: { type: string; value: { link: string } };
+  };
+};
+
 export function objectStorySpec(input: Pick<
   CreativeInput,
   | "pageId"
@@ -181,7 +203,22 @@ export function objectStorySpec(input: Pick<
   | "messaging"
   | "leadFormId"
   | "cards"
->) {
+  | "video"
+>): ObjectStorySpec {
+  // Video: eski sihirbazda canlıda kanıtlanmış biçim (createMetaVideoAdCreative):
+  // video_data'nın üst `link`i yoktur, adres CTA içindedir.
+  if (input.video) {
+    return {
+      page_id: input.pageId,
+      ...(input.instagramUserId ? { instagram_user_id: input.instagramUserId } : {}),
+      video_data: {
+        video_id: input.video.videoId,
+        image_url: input.video.thumbnailUrl,
+        message: input.message,
+        call_to_action: { type: input.callToAction, value: { link: input.link } },
+      },
+    };
+  }
   // Carousel: eski sihirbazda canlıda kanıtlanmış biçim (createMetaCarouselAdCreative):
   // link_data üst `link` (ilk kartın bağlantısı), `message` ve her kart için
   // child_attachments; CTA üst düzeyde.

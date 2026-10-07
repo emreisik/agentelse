@@ -72,3 +72,14 @@ export function creativeCards(
   }
   return cards;
 }
+
+// Video reklamın Meta'ya yüklenecek videosu (reklam başına en çok bir).
+export type VideoSlot = { key: string; assetId: string; adIndex: number };
+
+export function videoSlots(ads: readonly Ad[]): VideoSlot[] {
+  return ads.flatMap((ad, adIndex) =>
+    ad.creative.video
+      ? [{ key: String(adIndex), assetId: ad.creative.video.assetId, adIndex }]
+      : [],
+  );
+}

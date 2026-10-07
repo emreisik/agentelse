@@ -96,11 +96,11 @@ describe("recipes and spec (F5a)", () => {
       callToAction: "LEARN_MORE",
       messaging: "MESSENGER",
     });
-    expect(story.link_data.call_to_action).toEqual({
+    expect(story.link_data!.call_to_action).toEqual({
       type: "MESSAGE_PAGE",
       value: { app_destination: "MESSENGER" },
     });
-    expect(story.link_data.link).toBe("https://fb.com/messenger_doc/");
+    expect(story.link_data!.link).toBe("https://fb.com/messenger_doc/");
   });
 });
 

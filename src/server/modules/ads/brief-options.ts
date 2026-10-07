@@ -51,6 +51,17 @@ export async function loadAdsBriefOptions(
     return { account, posts, defaults };
   }
   const assets = await adsAccountAssets(projectId).catch(() => null);
+  // Video reklam (META_ADS_VIDEO): projenin Library videoları.
+  const videos = AdsFlags.video()
+    ? (
+        await prisma.asset.findMany({
+          where: { projectId, mimeType: { startsWith: "video/" } },
+          orderBy: { createdAt: "desc" },
+          take: 12,
+          select: { id: true, filename: true },
+        })
+      ).map((row) => ({ assetId: row.id, name: row.filename.slice(0, 80) }))
+    : [];
   // Reklam eklenebilen açık ad set'ler (ayna senkronlandıysa).
   const mirror = await AdsMirror.accountFor(projectId).catch(() => null);
   const [adSetRows, campaignRows] = mirror
@@ -83,6 +94,7 @@ export async function loadAdsBriefOptions(
       messagesOffered: true,
     }),
     ...(adSets.length > 0 ? { adSets } : {}),
+    ...(videos.length > 0 ? { videos } : {}),
     goals: {
       messages: true,
       messageApps: [

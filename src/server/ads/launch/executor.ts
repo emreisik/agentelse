@@ -17,6 +17,7 @@ import { prisma } from "@/lib/prisma";
 import { dayKeyInTimezone, zonedDateTimeToUtc } from "@/lib/timezone";
 import { AdsAccounts } from "@/server/ads/accounts";
 import { AdsOperations, type OperationKind } from "@/server/ads/operations";
+import { coverUrl, ensureVideos, type VideoStep } from "./video";
 import {
   fetchPageAccessToken,
   findMetaObjectsByTag,
@@ -323,6 +324,37 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
     }
   }
 
+  // 1a) Video reklam: Library videosu yüklenir ve Meta'nın işlemesi beklenir
+  // (çağrılar arasında; hiçbir yerde uyunmaz).
+  if (spec.ads.some((ad) => ad.creative.video)) {
+    if (ctx.writes >= MAX_WRITES) return { status: "RUNNING" };
+    ctx.writes += 1;
+    let step: VideoStep;
+    try {
+      step = await ensureVideos({
+        spec,
+        progress: ctx.progress,
+        projectId: ctx.launch.projectId,
+        adAccountId: ctx.adAccountId,
+        accessToken: ctx.accessToken,
+      });
+    } catch (error) {
+      if (notCreated(error) || classifyMetaError(error).class === "TRANSIENT") {
+        return { status: "RUNNING" };
+      }
+      return failLaunch(ctx.launch, launchError("video", error));
+    }
+    await save(ctx);
+    if (step.state === "processing") return { status: "RUNNING" };
+    if (step.state === "failed") {
+      return failLaunch(ctx.launch, {
+        step: "video",
+        class: "VALIDATION",
+        message: step.message,
+      });
+    }
+  }
+
   // 1b) Anında form (Leads): Sayfa token'ıyla, kreatiflerden önce.
   if (spec.leadForm && !ctx.progress.leadForm) {
     const form = spec.leadForm;
@@ -367,6 +399,23 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
         if (cards === null) {
           throw new MetaApiError("A carousel card's picture isn't uploaded yet");
         }
+        let video: { videoId: string; thumbnailUrl: string } | undefined;
+        if (ad.creative.video) {
+          const videoId = ctx.progress.videos?.[String(index)];
+          const thumbnailUrl = await coverUrl(
+            ctx.launch.projectId,
+            ad.creative.imageAssetId,
+          );
+          if (!videoId || !ctx.progress.videoReady?.[String(index)]) {
+            throw new MetaApiError("The video isn't ready yet");
+          }
+          if (!thumbnailUrl) {
+            throw new MetaApiError(
+              "The cover picture has no public address (cloud storage is off)",
+            );
+          }
+          video = { videoId, thumbnailUrl };
+        }
         const base = {
           adAccountId: ctx.adAccountId,
           accessToken: ctx.accessToken,
@@ -382,6 +431,7 @@ async function runCreate(ctx: Ctx): Promise<AdvanceResult> {
           messaging: ad.creative.messaging,
           ...(ctx.progress.leadForm ? { leadFormId: ctx.progress.leadForm } : {}),
           ...(cards ? { cards } : {}),
+          ...(video ? { video } : {}),
         };
         const withFeatures =
           spec.creativeFeatures.send && !ctx.progress.featuresFallback;

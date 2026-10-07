@@ -236,7 +236,7 @@ Bayrak: `META_ADS_PLANNER=true` ve `META_ADS_LAUNCH_V2=true`. Her amaç ayrıca 
 - **Ücret** (`src/lib/ads/fees.ts`, tarihli): konum ücretiyle tahmini fatura ("plus VAT where it applies"; KDV hesaplanmaz).
 - **Leads** (anında form): spec, yürütücü adımı (`/{page_id}/leadgen_forms`, Sayfa token'ı, Higher intent), CTA ve günlük "New leads today: N — open Leads Center" bildirimi kodlandı; `pages_manage_ads` App Review'dan geçene kadar `READY_RECIPES.leads_instant_form = false` (Brief'te görünmez). Lead'lerin kişisel verisi okunmaz ve saklanmaz (gizlilik metni güncellendi).
 - **Önerilen hedef**: piksel varsa Traffic, yoksa Messages (gerekçesiyle).
-- **Henüz yok**: video modülde (eski sihirbazda duruyor), iki oranlı `asset_feed_spec` (test hesabında doğrulanana kadar tek görsel + `adapt_to_placement`), içerik planındaki metin-tabanlı `ads.campaign` parçasına "Make this ad" köprüsü (görselli postlar için "Boost with an ad" zaten var).
+- **Henüz yok**: iki oranlı `asset_feed_spec` (test hesabında doğrulanana kadar tek görsel + `adapt_to_placement`), içerik planındaki metin-tabanlı `ads.campaign` parçasına "Make this ad" köprüsü (görselli postlar için "Boost with an ad" zaten var).
 
 ## F6 — Raporlama ve öğrenme
 
@@ -318,6 +318,15 @@ Trafik amacının ek hedefi: Brief'te "Instagram profile visits" kartı (yalnız
 - **Kapalı**: `READY_RECIPES` içinde `false`. Açmak için Railway'de `META_ADS_READY_RECIPES=traffic_instagram_profile` (kodsuz). Kapalıyken yerel kurallar lansmanı engeller ("… isn't open yet") ve kart Brief'te görünmez.
 - Sonuç sayısı Meta'nın `results` alanından gelir; `PROFILE_VISIT` için yedek eşleme yoktur (bilinmeyen hedef "unknown", optimizer yanlış "sonuçsuz" kararı üretmez).
 - Doğrulanmadı: ad set için `promoted_object` gerekip gerekmediği ve profil reklamının CTA'sı. Ad set için `validate_only` kullanılmadığından sorun lansmanın ad set adımında çıkar (kampanya o noktada kapalıdır). İlk denemeyi `socialmedia` test hesabında yap.
+
+## Video reklam (`META_ADS_VIDEO=true`, kapalı gelir)
+
+Brief'te "Video (optional)": projenin Library'sindeki videolardan biri seçilir; ana postun görseli kapağı olur. Video **tek reklamdır**: ek post, carousel, mesaj ve anında formla olmaz (Brief şeması, spec ve yerel kurallar üç yerde engeller). Yalnız bayrak açıkken ve Library'de video varken bölüm görünür; sunucu seçilen videonun bu projeye ait olduğunu yeniden doğrular.
+
+- **Yükleme ve işleme** (`src/server/ads/launch/video.ts`, testli): Review'da video Meta'ya bir kez yüklenir (`advideos`, eski sihirbazın yolu; Library sınırı 200 MB), Meta onu arka planda işler (dakikalar sürebilir). Her çağrı en çok bir yükleme yapar ve slot başına tek durum sorgusu atar, hiçbir yerde uyunmaz. İşleme sürerken Review "Meta is still processing your video…" der, **Approve & launch kapalı** kalır ve kart 15 sn'de bir sessizce yeniler; hazır olunca Meta ön kontrolü (validate_only + önizleme) çalışır. İşleme hatası ya da Library'den silinen video Review'da engeller.
+- **Yürütücü**: aynı yardımcı kreatiften önce videonun hazır olmasını bekler (`RUNNING`, işçi turları arasında); hata Meta'nın sözleriyle durdurur. Aynı video yeniden denemede tekrar yüklenmez (`progress.videos`).
+- **Kreatif**: eski sihirbazda canlıda kanıtlanmış `video_data` biçimi: adres CTA'nın içinde, kapak `image_url` ile herkese açık adresten (video_data hash kabul etmez). Cloud depolama (R2) kapalıysa kapağın adresi yoktur ve Review bunu söyler.
+- Doğrulanmadı: çok büyük videoda tek istekli yükleme sınırı (Meta parçalı yükleme önerir; 200 MB'a kadar eski sihirbazda çalışıyor). İlk denemeyi `socialmedia` test hesabında kısa bir videoyla yap.
 
 ## Sahip adımları (kod dışı)
 

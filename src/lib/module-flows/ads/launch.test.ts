@@ -49,6 +49,33 @@ describe("launchSpecFromFlow", () => {
   });
 });
 
+describe("launchSpecFromFlow video", () => {
+  const videoBrief: AdsBrief = {
+    ...brief,
+    objective: "OUTCOME_TRAFFIC",
+    video: { assetId: "vid1", name: "tour.mp4" },
+  };
+
+  it("makes one ad that carries the Library video, with the post picture as its cover", () => {
+    const spec = launchSpecFromFlow({ brief: videoBrief, plan, context, activate: false });
+    expect(spec.ads).toHaveLength(1);
+    expect(spec.ads[0]?.creative).toMatchObject({
+      imageAssetId: "a1",
+      video: { assetId: "vid1" },
+    });
+  });
+
+  it("never mixes a video with messages", () => {
+    const spec = launchSpecFromFlow({
+      brief: { ...videoBrief, objective: "OUTCOME_ENGAGEMENT", messages: { app: "MESSENGER" }, link: "" },
+      plan,
+      context,
+      activate: false,
+    });
+    expect(spec.ads[0]?.creative.video).toBeUndefined();
+  });
+});
+
 describe("launchSpecFromFlow Instagram profile visits", () => {
   const profileBrief: AdsBrief = {
     ...brief,

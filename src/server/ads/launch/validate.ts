@@ -20,6 +20,7 @@ import {
   type LaunchIssue,
 } from "@/lib/ads/launch-spec";
 import { dayPartLabel } from "@/lib/ads/day-parting";
+import { coverUrl, ensureVideos } from "./video";
 import { creativeCards, imageSlots } from "@/lib/ads/launch-images";
 import { safeTimezone } from "@/lib/ads/sync-plan";
 import type { LaunchBuildContext } from "@/lib/module-flows/ads/launch";
@@ -77,6 +78,8 @@ export type LaunchValidation = {
   spendCapMinor: number | null;
   timezone: string;
   featuresFallback?: boolean;
+  // Video reklam: Meta videoyu hâlâ işliyor; kart kendiliğinden yoklar.
+  processing?: boolean;
 };
 
 export type BuildContext = LaunchBuildContext;
@@ -134,6 +137,19 @@ async function accountFacts(
       .catch(() => undefined);
   }
   return facts;
+}
+
+// Hazır videonun Meta kimliği ve kapak adresi; hazır değilse undefined.
+async function videoOf(
+  projectId: string,
+  ad: AdsLaunchSpec["ads"][number],
+  progress: LaunchProgress,
+  index: number,
+): Promise<{ videoId: string; thumbnailUrl: string } | undefined> {
+  const videoId = progress.videos?.[String(index)];
+  if (!videoId || !progress.videoReady?.[String(index)]) return undefined;
+  const thumbnailUrl = await coverUrl(projectId, ad.creative.imageAssetId);
+  return thumbnailUrl ? { videoId, thumbnailUrl } : undefined;
 }
 
 function metaIssue(field: string, error: unknown): LaunchIssue {
@@ -322,6 +338,54 @@ export async function prepareLaunch(input: {
           }
         }
 
+        // Video reklam: Library videosu yüklenir ve Meta'nın işlemesi beklenir.
+        // Hazır olana dek bu adım her çağrıda yalnız durumu sorar.
+        let videoWaiting = false;
+        if (spec.ads.some((ad) => ad.creative.video)) {
+          try {
+            const step = await ensureVideos({
+              spec,
+              progress,
+              projectId: input.projectId,
+              adAccountId,
+              accessToken: account.accessToken,
+            });
+            if (step.state === "processing") {
+              videoWaiting = true;
+              validation.processing = true;
+              validation.issues.push({
+                rule: "VIDEO",
+                field: "ads.0.creative.video",
+                severity: "block",
+                message:
+                  "Meta is still processing your video. This takes a few minutes; this check continues on its own.",
+              });
+            } else if (step.state === "failed") {
+              videoWaiting = true;
+              validation.issues.push({
+                rule: "VIDEO",
+                field: "ads.0.creative.video",
+                severity: "block",
+                message: step.message,
+              });
+            }
+          } catch (error) {
+            videoWaiting = true;
+            validation.issues.push(metaIssue("ads.0.creative.video", error));
+          }
+          for (const [index, ad] of spec.ads.entries()) {
+            if (ad.creative.video && !(await coverUrl(input.projectId, ad.creative.imageAssetId))) {
+              videoWaiting = true;
+              validation.issues.push({
+                rule: "VIDEO",
+                field: `ads.${index}.creative.video`,
+                severity: "block",
+                message: "The video's cover picture has no public address (cloud storage is off).",
+              });
+            }
+          }
+        }
+
         // Meta ön kontrolü: kampanya ve her kreatif (validate_only). Mevcut
         // ad set'e eklemede kampanya kurulmaz.
         try {
@@ -343,6 +407,12 @@ export async function prepareLaunch(input: {
           const cards = creativeCards(ad, index, progress.images);
           // Carousel'de bir kartın görseli yüklenemediyse sorun zaten eklendi.
           if (cards === null) continue;
+          // Video hazır değilse (işleniyor ya da hata) kreatif denenmez.
+          if (ad.creative.video && videoWaiting) continue;
+          const video = ad.creative.video
+            ? await videoOf(input.projectId, ad, progress, index)
+            : undefined;
+          if (ad.creative.video && !video) continue;
           const base = {
             adAccountId,
             accessToken: account.accessToken,
@@ -357,6 +427,7 @@ export async function prepareLaunch(input: {
             urlTags: ad.urlTags,
             messaging: ad.creative.messaging,
             ...(cards ? { cards } : {}),
+            ...(video ? { video } : {}),
             validateOnly: true,
           };
           try {
@@ -381,7 +452,11 @@ export async function prepareLaunch(input: {
         const first = spec.ads[0];
         const hash = progress.images?.[0];
         const firstCards = first ? creativeCards(first, 0, progress.images) : undefined;
-        if (first && hash && firstCards !== null) {
+        const firstVideo =
+          first?.creative.video && !videoWaiting
+            ? await videoOf(input.projectId, first, progress, 0)
+            : undefined;
+        if (first && hash && firstCards !== null && !(first.creative.video && !firstVideo)) {
           const creative = {
             object_story_spec: objectStorySpec({
               pageId: spec.pageId,
@@ -393,6 +468,7 @@ export async function prepareLaunch(input: {
               headline: first.creative.headline,
               messaging: first.creative.messaging,
               ...(firstCards ? { cards: firstCards } : {}),
+              ...(firstVideo ? { video: firstVideo } : {}),
             }),
             ...(spec.creativeFeatures.send && !progress.featuresFallback
               ? { degrees_of_freedom_spec: creativeFeaturesSpec() }

@@ -39,3 +39,20 @@ describe("Meta Ads flags", () => {
     expect(flagValue("  TrUe ")).toBe("true");
   });
 });
+
+describe("ready recipes override (META_ADS_READY_RECIPES)", () => {
+  afterEach(() => {
+    delete process.env.META_ADS_READY_RECIPES;
+  });
+
+  it("opens a closed recipe from the environment, known keys only", async () => {
+    const { recipeReady } = await import("./objectives");
+    expect(recipeReady("leads_instant_form")).toBe(false);
+    process.env.META_ADS_READY_RECIPES = " Leads_Instant_Form , nonsense ";
+    expect(recipeReady("leads_instant_form")).toBe(true);
+    expect(recipeReady("sales_purchase")).toBe(false);
+    expect(recipeReady("nonsense")).toBe(false);
+    // Hazır olanlar etkilenmez.
+    expect(recipeReady("traffic_link_clicks")).toBe(true);
+  });
+});

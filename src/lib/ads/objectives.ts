@@ -178,8 +178,21 @@ export const READY_RECIPES: Readonly<Record<string, boolean>> = {
   sales_purchase: false,
 };
 
+// Kapalı bir amaç, kod değişikliği ve push beklemeden Railway'de açılabilir:
+// META_ADS_READY_RECIPES="leads_instant_form,sales_purchase" (virgülle ayrılmış
+// anahtarlar; büyük / küçük harf ve boşluk fark etmez). Yalnız bilinen anahtarlar
+// sayılır. Anında form için önkoşul: Meta'dan `pages_manage_ads` onayı.
+function extraReadyRecipes(): Set<string> {
+  return new Set(
+    (process.env.META_ADS_READY_RECIPES ?? "")
+      .split(",")
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part in READY_RECIPES),
+  );
+}
+
 export function recipeReady(key: string): boolean {
-  return READY_RECIPES[key] === true;
+  return READY_RECIPES[key] === true || extraReadyRecipes().has(key);
 }
 
 // Önerilen hedef (docs/meta-ads-plan.md §3.3 amaç karar ağacı, sade sürüm):

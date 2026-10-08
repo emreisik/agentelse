@@ -38,6 +38,7 @@ import { AdsAccounts } from "@/server/ads/accounts";
 import { driveLaunchInline } from "@/server/ads/launch/drive";
 import { AdsLaunches } from "@/server/ads/launch/store";
 import { upsertAdsGoal } from "@/server/ads/goals";
+import { loadCreativeOrigins } from "@/server/ads/lineage";
 import {
   prepareLaunch,
   type LaunchValidation,
@@ -265,6 +266,11 @@ export async function prepareAdsLaunchAction(
         brief,
         plan,
       });
+      // Fikirden reklama soy bağı: reklamın postlarının fikir kökeni.
+      const origins = await loadCreativeOrigins(
+        projectId,
+        [brief.source, ...(brief.extraSources ?? [])].map((s) => s.creativeId),
+      );
       const prepared = await prepareLaunch({
         workspaceId: gate.auth.workspaceId,
         projectId,
@@ -272,7 +278,14 @@ export async function prepareAdsLaunchAction(
         commandId: found.commandId,
         userId: gate.auth.userId,
         build: (context) =>
-          launchSpecFromFlow({ brief, plan, context, activate: true, urlTags }),
+          launchSpecFromFlow({
+            brief,
+            plan,
+            context,
+            activate: true,
+            urlTags,
+            origins,
+          }),
         now,
       });
       if (!prepared.ok) return failed(prepared.message);
@@ -335,6 +348,12 @@ export async function launchAdsV2Action(
         urlTags: latestSpec.ads.map((ad) => ad.urlTags),
       });
       spec.guards = latestSpec.guards;
+      // Review'da hesaplanan soy bağı aynen kalır (özete girmez, onaylı olanı
+      // taşır).
+      spec.ads = spec.ads.map((ad, index) => {
+        const lineage = latestSpec.ads[index]?.lineage;
+        return lineage ? { ...ad, lineage } : ad;
+      });
       if (specHash(spec) !== specHash({ ...latestSpec, activate })) {
         return failed(ADS_FLOW_COPY.briefChanged);
       }

@@ -29,6 +29,7 @@ import {
 import { claimPeriodic } from "@/server/observability/periodic";
 
 import { AdsLearnings } from "./learnings";
+import { AdsLineageLearnings } from "./lineage-learnings";
 
 // Haftalık ve aylık Ads raporları (docs/meta-ads-plan.md §3.7, F6,
 // `META_ADS_REPORTS`). Raporlar AdsInsightDaily'nin görünümleridir; ayrı tablo
@@ -176,6 +177,8 @@ export const AdsReports = {
     if (!(await claimPeriodic("ads.reports", RUN_EVERY_MS, now))) return 0;
     // Öğrenmeler raporlardan bağımsız: değerlendirilmiş kararlardan.
     await AdsLearnings.writeDue(now).catch(() => 0);
+    // Nitelik düzeyinde öğrenme: hangi kanca / teklif / biçim daha ucuza getiriyor.
+    await AdsLineageLearnings.writeDue(now).catch(() => 0);
 
     const links = await prisma.adsAccountProject.findMany({
       where: { selected: true, adsAccount: { lastStructureAt: { not: null } } },

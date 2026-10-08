@@ -25,6 +25,7 @@ import { creativeCards, imageSlots } from "@/lib/ads/launch-images";
 import { safeTimezone } from "@/lib/ads/sync-plan";
 import type { LaunchBuildContext } from "@/lib/module-flows/ads/launch";
 import { prisma } from "@/lib/prisma";
+import { brandGate } from "@/server/ads/brand-gate";
 import { AdsAccounts } from "@/server/ads/accounts";
 import { adsAccountAssets } from "@/server/ads/account-assets";
 import { AdsMirror } from "@/server/ads/mirror-reads";
@@ -211,6 +212,13 @@ export async function prepareLaunch(input: {
         dsaPayor: facts.dsaPayor ?? null,
       });
       const issues = validateLaunchSpec(spec, facts);
+      // Marka kapısı: yasak kurallar ve onaysız iddialar.
+      const brand = await brandGate({
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        spec,
+      }).catch(() => ({ issues: [], notes: [] }));
+      issues.push(...brand.issues);
 
       // Kartın açık (henüz başlatılmamış) lansmanı yeniden kullanılır.
       const latest = await AdsLaunches.latestForCommand(input.commandId);
@@ -223,7 +231,7 @@ export async function prepareLaunch(input: {
       }
 
       const messaging = spec.ads.find((ad) => ad.creative.messaging)?.creative.messaging;
-      const notes: string[] = [];
+      const notes: string[] = [...brand.notes];
       if (messaging) {
         notes.push(
           "Set an Instant Reply and an Away message in Meta Business Suite so people get an answer outside your hours.",

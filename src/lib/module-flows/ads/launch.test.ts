@@ -263,3 +263,67 @@ describe("chainFromLaunch", () => {
     expect(paused.v2).toMatchObject({ canTurnOn: true, canDiscard: true, live: false });
   });
 });
+
+describe("launchSpecFromFlow lineage", () => {
+  const origins = {
+    c1: { postId: "p1", ideaId: "i1", angle: "Spring is here", pillar: "Seasonal", ideaSource: "season" },
+    c2: { postId: "p2", ideaId: "i2" },
+  };
+
+  it("tags the ad with its post, idea and the words' qualities", () => {
+    const spec = launchSpecFromFlow({
+      brief,
+      plan: { ...plan, primaryText: "Bahar neden bu kadar güzel?" },
+      context,
+      activate: true,
+      origins,
+    });
+    expect(spec.ads[0]?.lineage).toMatchObject({
+      creativeIds: ["c1"],
+      ideaIds: ["i1"],
+      angle: "Spring is here",
+      tags: { format: "image", hook: "question", offer: "none", pillar: "seasonal", ideaSource: "season" },
+    });
+  });
+
+  it("gives every separate ad its own lineage", () => {
+    const spec = launchSpecFromFlow({
+      brief: {
+        ...brief,
+        extraSources: [{ creativeId: "c2", assetId: "a2", title: "Second", caption: "%20 indirim" }],
+      },
+      plan,
+      context,
+      activate: true,
+      origins,
+    });
+    expect(spec.ads.map((ad) => ad.lineage?.creativeIds)).toEqual([["c1"], ["c2"]]);
+    expect(spec.ads[1]?.lineage?.tags.offer).toBe("discount");
+  });
+
+  it("makes one lineage for a carousel with every card's post", () => {
+    const spec = launchSpecFromFlow({
+      brief: {
+        ...brief,
+        adFormat: "carousel",
+        extraSources: [{ creativeId: "c2", assetId: "a2", title: "Second" }],
+      },
+      plan,
+      context,
+      activate: true,
+      origins,
+    });
+    expect(spec.ads).toHaveLength(1);
+    expect(spec.ads[0]?.lineage).toMatchObject({
+      creativeIds: ["c1", "c2"],
+      ideaIds: ["i1", "i2"],
+      tags: { format: "carousel" },
+    });
+  });
+
+  it("still tags the ad when no origins are known", () => {
+    const spec = launchSpecFromFlow({ brief, plan, context, activate: true });
+    expect(spec.ads[0]?.lineage?.ideaIds).toEqual([]);
+    expect(spec.ads[0]?.lineage?.tags.format).toBe("image");
+  });
+});

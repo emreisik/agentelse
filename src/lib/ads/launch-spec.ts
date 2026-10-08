@@ -8,6 +8,7 @@ import {
   type LaunchObjective,
 } from "./objectives";
 import { policyLint, type PolicyFlag } from "./policy-lint";
+import { AdLineageSchema } from "./lineage";
 import { shortHash, stableStringify } from "./mirror";
 
 // Güvenli lansmanın spec'i (docs/meta-ads-plan.md §3.4, F3). Onay bu spec'e
@@ -170,6 +171,9 @@ export const AdsLaunchSpecSchema = z.object({
             .optional(),
         }),
         urlTags: z.string().max(1000),
+        // Fikirden reklama soy bağı ve nitelik etiketleri (lineage.ts):
+        // sonuçlar bu etiketlere dağıtılıp Brand Brain'e öğrenme olarak yazılır.
+        lineage: AdLineageSchema.optional(),
       }),
     )
     .min(1)
@@ -316,7 +320,9 @@ export function adSetEndTime(
 export type LaunchIssue = {
   rule: "P1" | "P2" | "P3" | "P5" | "P6" | "P8" | "P9" | "P12"
   // Video reklam: yükleme, işleme ve kapak.
-  | "VIDEO" | "META";
+  | "VIDEO" | "META"
+  // Marka kapısı: yasak kural ya da onaysız iddia (server/ads/brand-gate.ts).
+  | "BRAND";
   field: string;
   severity: "block" | "warn";
   message: string;

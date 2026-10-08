@@ -7,6 +7,7 @@ import {
 import { dayPartOf } from "@/lib/ads/day-parting";
 import { kpiMetricFor, targetCost } from "@/lib/ads/kpi";
 import { toMinorUnits } from "@/lib/ads/money";
+import { buildLineage, type CreativeOrigin } from "@/lib/ads/lineage";
 import { adTextFrom, clipWords } from "./state";
 import {
   defaultRecipeFor,
@@ -75,6 +76,9 @@ export function launchSpecFromFlow(input: {
   activate: boolean;
   // GA-F6 (GA_UTM): reklam başına Agentelse UTM etiketleri (src/server/tracked-links/ads.ts); verilmezse ya da boşsa DEFAULT_URL_TAGS.
   urlTags?: readonly (string | undefined)[];
+  // Postların fikir kökeni (sunucu çözer); verilmezse reklamlar yine metin
+  // etiketlerini taşır, fikir bağı olmadan.
+  origins?: Readonly<Record<string, CreativeOrigin | undefined>>;
 }): AdsLaunchSpec {
   const { brief, plan, context } = input;
   const recipe = recipeForBrief(brief);
@@ -187,6 +191,13 @@ export function launchSpecFromFlow(input: {
               })),
             },
             urlTags: input.urlTags?.[0] ?? DEFAULT_URL_TAGS,
+            lineage: buildLineage({
+              creativeIds: [brief.source, ...(brief.extraSources ?? [])].map((c) => c.creativeId),
+              text: [plan.primaryText, brief.source.title].filter(Boolean).join("\n"),
+              shape: "carousel",
+              callToAction: brief.callToAction,
+              origins: input.origins ?? {},
+            }),
           },
         ]
       : [
@@ -203,6 +214,13 @@ export function launchSpecFromFlow(input: {
           ...(video ? { video } : {}),
         },
         urlTags: input.urlTags?.[0] ?? DEFAULT_URL_TAGS,
+        lineage: buildLineage({
+          creativeIds: [brief.source.creativeId],
+          text: [plan.primaryText, brief.source.title].filter(Boolean).join("\n"),
+          shape: video ? "video" : "image",
+          callToAction: brief.callToAction,
+          origins: input.origins ?? {},
+        }),
       },
       // F5b: ek postlar aynı ad set'te ayrı reklamlar (kreatif çeşitliliği);
       // metinleri kendi açıklamalarından.
@@ -218,6 +236,15 @@ export function launchSpecFromFlow(input: {
           ...(messaging ? { messaging } : {}),
         },
         urlTags: input.urlTags?.[index + 1] ?? DEFAULT_URL_TAGS,
+        lineage: buildLineage({
+          creativeIds: [source.creativeId],
+          text:
+            clipWords(adTextFrom(source.caption ?? ""), 125, true) ||
+            [plan.primaryText, source.title].filter(Boolean).join("\n"),
+          shape: "image",
+          callToAction: brief.callToAction,
+          origins: input.origins ?? {},
+        }),
       })),
     ],
     guards: {

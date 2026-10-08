@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { learningText } from "@/server/ads/reports/learnings";
 
 import { diagnose } from "./diagnose";
-import { adLibraryUrl, monthlyReportText, weeklyReportText } from "./report-text";
+import { adLibraryUrl, monthlyReportText, shadowLine, weeklyReportText } from "./report-text";
 
 describe("diagnose", () => {
   it("splits the cost change into CPM, CTR and conversion", () => {
@@ -86,5 +86,60 @@ describe("learnings", () => {
     expect(learningText({ ruleKey: "O3_SCALE", kind: "BUDGET_UP", outcome: "DIDNT", ratio: 1.45, n: 12 })).toBe(
       "A 20% budget increase pushed the cost per result up 45% (n=12, directional).",
     );
+  });
+});
+
+describe("shadowLine", () => {
+  const card = {
+    kinds: [],
+    total: 24,
+    persistence: 0.75,
+    agreement: 0.5,
+    exposureMinor: 12_000,
+    readiness: "READY" as const,
+  };
+
+  it("says how many were judged, how many held, and whether you agreed", () => {
+    const line = shadowLine(card, "EUR");
+    expect(line).toContain("24 judged");
+    expect(line).toContain("75% still pointed at a real problem");
+    expect(line).toContain("same change on 50%");
+    expect(line).toContain("Enough evidence");
+  });
+
+  it("is honest when it is not ready", () => {
+    expect(shadowLine({ ...card, readiness: "NOT_YET" }, "EUR")).toContain(
+      "Not enough judged suggestions yet",
+    );
+    expect(shadowLine({ ...card, readiness: "NOISY" }, "EUR")).toContain(
+      "not ready to act",
+    );
+  });
+
+  it("is added to the weekly text only when there is a card", () => {
+    const totals = {
+      spendMinor: 0,
+      impressions: 0,
+      linkClicks: 0,
+      results: null,
+      resultLabel: "Results",
+      reach: null,
+      frequency: null,
+    };
+    const base = {
+      periodLabel: "w",
+      currency: "EUR",
+      current: totals,
+      previous: totals,
+      target: null,
+      diagnosis: null,
+      creatives: [],
+      decisions: [],
+      pending: 0,
+      metaSuggests: [],
+      attribution: null,
+    };
+    expect(weeklyReportText({ ...base, shadow: card })).toContain("Optimizer test run");
+    expect(weeklyReportText({ ...base, shadow: null })).not.toContain("Optimizer test run");
   });
 });

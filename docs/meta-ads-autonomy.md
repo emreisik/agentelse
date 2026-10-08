@@ -64,10 +64,19 @@ sıradaki adım kontrollü test (aşağıda).
 
 ## Sıradaki adımlar (sırayla, her biri bayrakla kapalı gelecek)
 
-1. **Shadow ölçümü (4 hafta):** optimizer kararları `AdsDecision` olarak SHADOW
-   yazılıyor; "bu karar uygulansaydı" sonucu sonradan okunur ve gerçekte ne
-   olduğuyla karşılaştırılır. Terfi kapısı: kararların isabet oranı ve insanın
-   gerçek kararına karşı sonuç farkı.
+1. **Shadow ölçümü (4 hafta): KODLANDI.** Optimizer SHADOW'da kararını yazar;
+   karardan 8 gün sonra `AdsShadow.evaluateDue` (karar yaşam döngüsü adımında)
+   iki şeyi ölçer ve kararın satırına yazar (`outcome` = `SHADOW_*`,
+   `evaluatedAt` boş kalır, yani aylık rapor ve öğrenme sayımları karışmaz):
+   (a) sinyal sürdü mü (önce/sonra 7 gün: harcama sürüyor ve sonuç yok ya da
+   maliyet düzelmedi = sürdü; maliyet kendiliğinden anlamlı düştü = geçti),
+   (b) sen aynı değişikliği yaptın mı (duraklatma, bütçe yönü). Haftalık rapora
+   tek satır eklenir ("Optimizer test run: N judged, %X still pointed at a real
+   problem, you made the same change on %Y"). Yeterlilik: en az 20 hükme varmış
+   karar ve sürme oranı ≥ %70 = READY; daha azı NOT_YET; düşük oran NOISY.
+   Bu karşı-olgusal değildir: uygulanmayan değişikliğin etkisi ölçülemez; etki
+   yalnız uygulanan kararlarda (`decisions.ts`) ölçülür. `META_ADS_OPTIMIZER`
+   `shadow` olmalı; `off` iken karar yazılmaz, `on` iken uygulanır.
 2. **Kontrollü test (deney):** havuzdaki bir fikir tek değişkenli hipotez olarak
    bütçenin küçük diliminde (%10-20) denenir; kazanan istatistik kapısıyla seçilir.
 3. **L3:** yetki sözleşmesi `ProjectGoal`'dan türer; olgun kampanyalarda

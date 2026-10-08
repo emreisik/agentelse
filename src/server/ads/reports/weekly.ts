@@ -30,6 +30,7 @@ import { claimPeriodic } from "@/server/observability/periodic";
 
 import { AdsLearnings } from "./learnings";
 import { AdsLineageLearnings } from "./lineage-learnings";
+import { AdsShadow } from "@/server/ads/shadow";
 
 // Haftalık ve aylık Ads raporları (docs/meta-ads-plan.md §3.7, F6,
 // `META_ADS_REPORTS`). Raporlar AdsInsightDaily'nin görünümleridir; ayrı tablo
@@ -296,7 +297,12 @@ export const AdsReports = {
     const pending = await prisma.adsDecision.count({
       where: { projectId, status: "PROPOSED", taskId: { not: null } },
     });
+    const shadow =
+      AdsFlags.optimizer() === "shadow"
+        ? await AdsShadow.scorecard(projectId, now).catch(() => null)
+        : null;
     const text = weeklyReportText({
+      shadow,
       periodLabel: `${since} – ${until}`,
       currency: account.currency,
       current,

@@ -1,3 +1,4 @@
+import type { ShadowScorecard } from "@/lib/ads/rules/shadow-score";
 import { formatMoney } from "../money";
 import { nameWithoutTag } from "../operation-tag";
 
@@ -41,6 +42,33 @@ function change(now: number, before: number): string {
   return ` (${value > 0 ? "+" : ""}${value}% vs the week before)`;
 }
 
+// Gölge karnesinin tek satırı: kaç öneri ölçüldü, kaçı bir hafta sonra hâlâ
+// gerçek bir sorunu işaret ediyordu, sen kaçında aynısını yaptın.
+export function shadowLine(card: ShadowScorecard, currency: string | null): string {
+  const pct = (value: number | null) =>
+    value === null ? null : `${Math.round(value * 100)}%`;
+  const parts = [
+    `Optimizer test run (suggestions only, nothing was changed): ${card.total} judged.`,
+  ];
+  const still = pct(card.persistence);
+  if (still) parts.push(`${still} still pointed at a real problem a week later.`);
+  const agreed = pct(card.agreement);
+  if (agreed) parts.push(`You made the same change on ${agreed}.`);
+  if (card.exposureMinor > 0) {
+    parts.push(
+      `${formatMoney(card.exposureMinor, currency)} kept going to the flagged ads that week.`,
+    );
+  }
+  parts.push(
+    card.readiness === "READY"
+      ? "Enough evidence to let it act within its limits."
+      : card.readiness === "NOISY"
+        ? "Too many suggestions fixed themselves; not ready to act."
+        : "Not enough judged suggestions yet.",
+  );
+  return parts.join(" ");
+}
+
 export function weeklyReportText(input: {
   periodLabel: string;
   currency: string | null;
@@ -53,6 +81,8 @@ export function weeklyReportText(input: {
   pending: number;
   metaSuggests: string[];
   attribution: string | null;
+  // Optimizer gölge modundaki karne (yoksa satır yazılmaz).
+  shadow?: ShadowScorecard | null;
 }): string {
   const { current, previous, currency } = input;
   const lines: string[] = [`Ads week ${input.periodLabel}`];
@@ -96,6 +126,9 @@ export function weeklyReportText(input: {
   }
   if (input.metaSuggests.length > 0) {
     lines.push(`Meta suggests (a second opinion, never applied by itself): ${input.metaSuggests.join("; ")}.`);
+  }
+  if (input.shadow && input.shadow.total > 0) {
+    lines.push(shadowLine(input.shadow, currency));
   }
   lines.push(
     `Meta's numbers${input.attribution ? `, attribution ${input.attribution}` : ""}, account time. Recent days may still change.`,

@@ -37,6 +37,7 @@ import { AdsRetention } from "@/server/ads/guard/retention";
 import { AdsGuard } from "@/server/ads/guard/watchdogs";
 import { LaunchWatchdog } from "@/server/ads/guard/launch-watchdog";
 import { AdsDecisions } from "@/server/ads/decisions";
+import { AdsShadow } from "@/server/ads/shadow";
 import { AdsOptimizer } from "@/server/ads/optimizer";
 import { refreshAdsGoals } from "@/server/ads/goals";
 import { AdsConnections } from "@/server/ads/connections";
@@ -264,9 +265,11 @@ registerAgencyTickStep({
     const expired = await AdsDecisions.expireDue();
     const verified = await AdsDecisions.verifyDue(10);
     const evaluated = await AdsDecisions.evaluateDue(20);
+    // Gölge modda yazılan kararların bir hafta sonraki ölçümü (docs/meta-ads-autonomy.md).
+    const shadowed = await AdsShadow.evaluateDue(20);
     // F5b: reklam KPI hedeflerinin güncel değeri (haftada bir, kendi kilidiyle).
     const goals = await refreshAdsGoals();
-    return expired + verified + evaluated + goals;
+    return expired + verified + evaluated + shadowed + goals;
   },
 });
 // F6 (META_ADS_REPORTS): weekly report (Monday 08:00 project time), monthly

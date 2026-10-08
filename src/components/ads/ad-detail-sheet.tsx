@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AdPreviewCard } from "@/components/ads/ad-preview-card";
 import type { MetaAdSummary } from "@/server/integrations/meta-client";
+import type { AdDetailMedia } from "@/server/integrations/meta-ads-query";
 
 function statusTone(status: string): "positive" | "waiting" | "neutral" {
   if (status === "ACTIVE") return "positive";
@@ -26,18 +27,20 @@ const CTA_LABEL: Record<string, string> = {
 // Read-only full detail for one Ad, driven by ?adDetail=<id> in
 // ads/page.tsx — creative content (format/message/link/CTA/carousel cards)
 // is new here (see listMetaAds' `creative` field in meta-client.ts). The
-// preview always renders as a single image (Meta's `thumbnail_url` is one
-// representative image regardless of format, usually the carousel's first
-// card) — a CAROUSEL's per-card links/headlines are listed separately below
-// since Meta doesn't expose a fetchable per-card image URL here.
+// preview uses the full-size pictures / playable video that `media` carries
+// (read for this one ad only); Meta's `thumbnail_url` is a ~64px image, so it
+// is only the fallback when `media` has nothing. A CAROUSEL's per-card
+// links/headlines are listed separately below.
 export function AdDetailSheet({
   ad,
   pageName,
+  media,
   closeHref,
   editHref,
 }: {
   ad: MetaAdSummary;
   pageName: string;
+  media?: AdDetailMedia;
   closeHref: string;
   editHref: string;
 }) {
@@ -56,8 +59,25 @@ export function AdDetailSheet({
         callToActionLabel={ctaLabel}
         media={
           format === "VIDEO"
-            ? { kind: "video", thumbnailUrl: ad.thumbnailUrl ?? null }
-            : { kind: "single", imageUrl: ad.thumbnailUrl ?? null }
+            ? {
+                kind: "video",
+                thumbnailUrl: media?.posterUrl ?? ad.thumbnailUrl ?? null,
+                videoUrl: media?.videoUrl ?? null,
+              }
+            : format === "CAROUSEL" && creative?.cards?.length
+              ? {
+                  kind: "carousel",
+                  cards: creative.cards.map((card, index) => ({
+                    imageUrl:
+                      media?.cardImageUrls?.[index] ??
+                      (index === 0 ? (ad.thumbnailUrl ?? null) : null),
+                    name: card.name,
+                  })),
+                }
+              : {
+                  kind: "single",
+                  imageUrl: media?.imageUrl ?? ad.thumbnailUrl ?? null,
+                }
         }
       />
       <dl className="divide-y divide-border/60 overflow-hidden rounded-xl ring-1 ring-foreground/10">

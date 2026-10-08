@@ -6,7 +6,9 @@ import { AdsAccounts } from "@/server/ads/accounts";
 import { AdsMirror } from "@/server/ads/mirror-reads";
 import { markMetaCredentialExpiredOn } from "@/server/integrations/meta-credential-health";
 import {
+  fetchMetaAdImageUrls,
   fetchMetaLevelInsights,
+  fetchMetaVideoPlayback,
   listMetaAdSets,
   listMetaAds,
   listMetaCampaigns,
@@ -35,6 +37,47 @@ export type DatePreset = (typeof DATE_PRESETS)[number]["value"];
 export function isDatePreset(value: string): value is DatePreset {
   return DATE_PRESETS.some((p) => p.value === value);
 }
+
+// The /ads page re-renders on every drill-down click and every detail sheet
+// (they are URL state), and each render used to pay full price at Meta. A
+// short per-process memo with in-flight sharing makes the second click cheap;
+// 20 s is short enough that a change Meta finished applying shows up almost
+// at once (nothing here writes — edits go through approvals).
+const READ_CACHE_TTL_MS = 20_000;
+const READ_CACHE_MAX = 200;
+const readCache = new Map<string, { at: number; value: Promise<unknown> }>();
+
+function memoRead<T>(key: string, load: () => Promise<T>): Promise<T> {
+  if (process.env.NODE_ENV === "test") return load();
+  const now = Date.now();
+  const hit = readCache.get(key);
+  if (hit && now - hit.at < READ_CACHE_TTL_MS) return hit.value as Promise<T>;
+  const value = load();
+  readCache.set(key, { at: now, value });
+  // A failed read must not stick for the whole window.
+  value.catch(() => {
+    if (readCache.get(key)?.value === value) readCache.delete(key);
+  });
+  if (readCache.size > READ_CACHE_MAX) {
+    for (const [k, v] of readCache) {
+      if (now - v.at >= READ_CACHE_TTL_MS) readCache.delete(k);
+    }
+    if (readCache.size > READ_CACHE_MAX) {
+      readCache.delete(readCache.keys().next().value as string);
+    }
+  }
+  return value;
+}
+
+// What the ad detail sheet needs beyond Meta's tiny thumbnail: full-size
+// pictures and a playable video file. Everything degrades to "no extra
+// media" — the sheet then falls back to the thumbnail.
+export type AdDetailMedia = {
+  imageUrl?: string;
+  cardImageUrls?: (string | undefined)[];
+  videoUrl?: string;
+  posterUrl?: string;
+};
 
 // Read-only query layer behind the /ads page — always hits Meta live (no
 // local Campaign/AdSet/Ad table), the same "fetch fresh every time" spirit
@@ -131,6 +174,20 @@ export const MetaAdsQuery = {
   ): Promise<WithInsights<MetaCampaignSummary>[]> {
     const mirror = await mirrorAccountFor(conn);
     if (mirror) return AdsMirror.campaigns(mirror, datePreset);
+    if (!options?.preferLeadForLeadsCampaigns) {
+      return memoRead(
+        `campaigns|${conn.adAccountId}|${datePreset}`,
+        () => MetaAdsQuery.campaignsLive(conn, datePreset),
+      );
+    }
+    return MetaAdsQuery.campaignsLive(conn, datePreset, options);
+  },
+
+  async campaignsLive(
+    conn: ReadyConnection,
+    datePreset: DatePreset,
+    options?: { preferLeadForLeadsCampaigns?: boolean },
+  ): Promise<WithInsights<MetaCampaignSummary>[]> {
     const baseInsights = {
       adAccountId: conn.adAccountId,
       accessToken: conn.accessToken,
@@ -175,6 +232,18 @@ export const MetaAdsQuery = {
     // Envanter canlı kalır (düzenleme formu hedeflemeyi ister); rakamlar
     // ayna varsa aynadan.
     const mirror = await mirrorAccountFor(conn);
+    return memoRead(
+      `adsets|${conn.adAccountId}|${campaignId}|${datePreset}|${mirror ? "m" : "l"}`,
+      () => MetaAdsQuery.adSetsLive(conn, campaignId, datePreset, mirror),
+    );
+  },
+
+  async adSetsLive(
+    conn: ReadyConnection,
+    campaignId: string,
+    datePreset: DatePreset,
+    mirror: Awaited<ReturnType<typeof mirrorAccountFor>>,
+  ): Promise<WithInsights<MetaAdSetSummary>[]> {
     const [adSets, insights] = await Promise.all([
       listMetaAdSets({ campaignId, accessToken: conn.accessToken }),
       mirror
@@ -199,6 +268,18 @@ export const MetaAdsQuery = {
     datePreset: DatePreset = DEFAULT_DATE_PRESET,
   ): Promise<WithInsights<MetaAdSummary>[]> {
     const mirror = await mirrorAccountFor(conn);
+    return memoRead(
+      `ads|${conn.adAccountId}|${adSetId}|${datePreset}|${mirror ? "m" : "l"}`,
+      () => MetaAdsQuery.adsLive(conn, adSetId, datePreset, mirror),
+    );
+  },
+
+  async adsLive(
+    conn: ReadyConnection,
+    adSetId: string,
+    datePreset: DatePreset,
+    mirror: Awaited<ReturnType<typeof mirrorAccountFor>>,
+  ): Promise<WithInsights<MetaAdSummary>[]> {
     const [ads, insights] = await Promise.all([
       listMetaAds({ adSetId, accessToken: conn.accessToken }),
       mirror
@@ -212,6 +293,54 @@ export const MetaAdsQuery = {
       }),
     ]);
     return ads.map((a) => ({ ...a, insights: insights.get(a.adId) }));
+  },
+
+  // Full-size pictures and the video file for ONE ad (its detail sheet).
+  // Each lookup is independent and failure-tolerant.
+  async adMedia(
+    conn: ReadyConnection,
+    ad: MetaAdSummary,
+  ): Promise<AdDetailMedia> {
+    const creative = ad.creative;
+    if (!creative) return {};
+    const media: AdDetailMedia = {};
+    const jobs: Promise<void>[] = [];
+    if (creative.format === "VIDEO" && creative.videoId) {
+      jobs.push(
+        fetchMetaVideoPlayback({
+          videoId: creative.videoId,
+          accessToken: conn.accessToken,
+        })
+          .then((v) => {
+            media.videoUrl = v.sourceUrl;
+            media.posterUrl = v.posterUrl;
+          })
+          .catch(() => undefined),
+      );
+    }
+    const hashes =
+      creative.format === "CAROUSEL"
+        ? (creative.cards ?? []).map((c) => c.imageHash ?? "")
+        : [creative.imageHash ?? ""];
+    if (hashes.some(Boolean)) {
+      jobs.push(
+        fetchMetaAdImageUrls({
+          adAccountId: conn.adAccountId,
+          accessToken: conn.accessToken,
+          hashes,
+        })
+          .then((urls) => {
+            if (creative.format === "CAROUSEL") {
+              media.cardImageUrls = hashes.map((h) => urls.get(h));
+            } else {
+              media.imageUrl = urls.get(hashes[0]!);
+            }
+          })
+          .catch(() => undefined),
+      );
+    }
+    await Promise.all(jobs);
+    return media;
   },
 
   // Compact snapshot for IdeaFoundry's "performance" lens (see

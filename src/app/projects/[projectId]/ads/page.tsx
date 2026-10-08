@@ -145,44 +145,47 @@ export default async function AdsPage({
   // between listing and drill-down) used to propagate uncaught out of this
   // RSC render and take down the whole page with a generic 500. Now it
   // degrades to a retry prompt for just that level instead.
-  let campaigns: Awaited<ReturnType<typeof MetaAdsQuery.campaigns>> = [];
-  let campaignsError: string | null = null;
-  try {
-    campaigns = await MetaAdsQuery.campaigns(connection, datePreset);
-  } catch (error) {
-    // 190: the connection is marked for a reconnect (F0b).
-    await MetaAdsQuery.noteFailure(connection, error);
-    campaignsError = metaErrorMessage(error);
-  }
+  // The three levels only depend on the URL, not on each other's results, so
+  // they load at the same time (they used to run one after another: three
+  // round trips to Meta before the page could render). What is shown still
+  // follows the same rules: a level's data and error only count once its
+  // parent was found.
+  const settle = async <T,>(
+    load: () => Promise<T>,
+  ): Promise<{ data: T; error: null } | { data: null; error: string }> => {
+    try {
+      return { data: await load(), error: null };
+    } catch (error) {
+      // 190: the connection is marked for a reconnect (F0b).
+      await MetaAdsQuery.noteFailure(connection, error);
+      return { data: null, error: metaErrorMessage(error) };
+    }
+  };
+  const [campaignsRead, adSetsRead, adsRead] = await Promise.all([
+    settle(() => MetaAdsQuery.campaigns(connection, datePreset)),
+    campaignId
+      ? settle(() => MetaAdsQuery.adSets(connection, campaignId, datePreset))
+      : null,
+    campaignId && adSetId
+      ? settle(() => MetaAdsQuery.ads(connection, adSetId, datePreset))
+      : null,
+  ]);
+
+  const campaigns = campaignsRead.data ?? [];
+  const campaignsError = campaignsRead.error;
   const activeCampaign = campaignId
     ? campaigns.find((c) => c.campaignId === campaignId)
     : undefined;
 
-  let adSets: Awaited<ReturnType<typeof MetaAdsQuery.adSets>> = [];
-  let adSetsError: string | null = null;
-  if (campaignId && activeCampaign) {
-    try {
-      adSets = await MetaAdsQuery.adSets(connection, campaignId, datePreset);
-    } catch (error) {
-      await MetaAdsQuery.noteFailure(connection, error);
-      adSetsError = metaErrorMessage(error);
-    }
-  }
+  const adSets = activeCampaign ? (adSetsRead?.data ?? []) : [];
+  const adSetsError = activeCampaign ? (adSetsRead?.error ?? null) : null;
   const activeAdSet =
     adSetId && adSets.length
       ? adSets.find((a) => a.adSetId === adSetId)
       : undefined;
 
-  let ads: Awaited<ReturnType<typeof MetaAdsQuery.ads>> = [];
-  let adsError: string | null = null;
-  if (adSetId && activeAdSet) {
-    try {
-      ads = await MetaAdsQuery.ads(connection, adSetId, datePreset);
-    } catch (error) {
-      await MetaAdsQuery.noteFailure(connection, error);
-      adsError = metaErrorMessage(error);
-    }
-  }
+  const ads = activeAdSet ? (adsRead?.data ?? []) : [];
+  const adsError = activeAdSet ? (adsRead?.error ?? null) : null;
 
   // F3: modüller ve güvenli lansman v2 açıkken eski oluşturma formları gizli;
   // reklam Ads kartında tek onayla kurulur.
@@ -205,6 +208,13 @@ export default async function AdsPage({
   const adSetEditId =
     typeof sp.adsetEdit === "string" ? sp.adsetEdit : undefined;
   const adEditId = typeof sp.adEdit === "string" ? sp.adEdit : undefined;
+  // Full-size picture / video file for the open ad only.
+  const detailAd = adDetailId
+    ? ads.find((a) => a.adId === adDetailId)
+    : undefined;
+  const adDetailMedia = detailAd
+    ? await MetaAdsQuery.adMedia(connection, detailAd)
+    : undefined;
   const currentUrl = new URLSearchParams();
   if (campaignId) currentUrl.set("campaignId", campaignId);
   if (adSetId) currentUrl.set("adSetId", adSetId);
@@ -396,6 +406,7 @@ export default async function AdsPage({
                 <AdDetailSheet
                   ad={ad}
                   pageName={metadata.selectedPageName ?? "Your Page"}
+                  media={adDetailMedia}
                   closeHref={closeHref}
                   editHref={editHref("adEdit", adDetailId)}
                 />

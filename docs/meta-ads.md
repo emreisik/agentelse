@@ -335,6 +335,14 @@ Brief'te "Video (optional)": projenin Library'sindeki videolardan biri seçilir;
 - Not: ad set için `validate_only` ön kontrolü yapılamaz (ad set, var olan bir kampanya kimliği ister; kampanya Review'da henüz kurulmamıştır). Bu tür hatalar yalnız lansman anında, kampanya kapalıyken görünür.
 - Doğrulanmadı: düzeltmenin bu hesapta işe yarayıp yaramadığı. İşe yaramazsa log satırındaki kod, alan ve `trace` değerleriyle devam edilir.
 
+## Reklam detay paneli: hız, net görsel, video
+
+`/projects/<id>/ads?adDetail=<id>` paneli üç şeyi düzeltti (7 Eki 2026):
+
+- **Hız:** kampanya, ad set ve reklam okumaları artık sırayla değil aynı anda yapılır (`ads/page.tsx`); `MetaAdsQuery` okumaları süreç içinde 20 sn saklanır ve aynı anda gelen istekler tek çağrıyı paylaşır (`memoRead`). Panel açıp kapamak Meta'ya yeniden gitmez. Yazma yolu yok (düzenlemeler onaydan geçer), 20 sn bayatlık güvenlidir.
+- **Bulanık görsel:** Meta'nın `thumbnail_url`'ü ~64 px'tir. Açık panel için `MetaAdsQuery.adMedia` hesabın görsel kitaplığından tam boyutlu URL'yi hash ile alır (`adimages?hashes=`); carousel kartları da kendi görseliyle gezilir. Bulunamazsa eski küçük resme düşer.
+- **Video:** `/{video_id}?fields=source,picture` ile oynatılabilir dosya ve kapak alınır, kart `<video controls>` gösterir. `source` gelmezse (Meta bazı videolar için vermez) yalnız kapak görünür.
+
 ## Sahip adımları (kod dışı)
 
 1. **Birikim raporunu oku**: yeni bir terminal sekmesinde, repo klasöründe `npm run db:report:backlog`. Çıktıyı Claude'a yapıştır.

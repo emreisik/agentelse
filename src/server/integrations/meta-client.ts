@@ -1787,6 +1787,47 @@ export async function listMetaAds(input: {
   }));
 }
 
+// Meta's `thumbnail_url` on a creative is a ~64px thumbnail whatever the
+// format, which is why the detail sheet's picture looked blurry. The real
+// pictures come from the account's image library by hash (full size) and a
+// video's playable file from the video node itself. Both are read only for
+// the one ad whose detail sheet is open, never for the whole listing.
+export async function fetchMetaAdImageUrls(input: {
+  adAccountId: string;
+  accessToken: string;
+  hashes: string[];
+}): Promise<Map<string, string>> {
+  const hashes = [...new Set(input.hashes.filter(Boolean))];
+  const urls = new Map<string, string>();
+  if (hashes.length === 0) return urls;
+  const params = new URLSearchParams({
+    fields: "hash,url",
+    hashes: JSON.stringify(hashes),
+    access_token: input.accessToken,
+  });
+  const rows = await request<{ data?: { hash?: string; url?: string }[] }>(
+    `${GRAPH_BASE}/${input.adAccountId}/adimages?${params.toString()}`,
+  );
+  for (const row of rows.data ?? []) {
+    if (row.hash && row.url) urls.set(row.hash, row.url);
+  }
+  return urls;
+}
+
+export async function fetchMetaVideoPlayback(input: {
+  videoId: string;
+  accessToken: string;
+}): Promise<{ sourceUrl?: string; posterUrl?: string }> {
+  const params = new URLSearchParams({
+    fields: "source,picture",
+    access_token: input.accessToken,
+  });
+  const result = await request<{ source?: string; picture?: string }>(
+    `${GRAPH_BASE}/${input.videoId}?${params.toString()}`,
+  );
+  return { sourceUrl: result.source, posterUrl: result.picture };
+}
+
 // ---------------------------------------------------------------------------
 // AdSet / Ad / AdCreative creation — the write path behind META_ADSET_CREATE
 // and META_AD_CREATE (see MetaApiProvider). Same spirit as createMetaCampaign:

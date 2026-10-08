@@ -15,7 +15,12 @@ import { cn } from "@/lib/utils";
 export type AdPreviewMedia =
   | { kind: "single"; imageUrl: string | null }
   | { kind: "carousel"; cards: { imageUrl: string | null; name: string }[] }
-  | { kind: "video"; thumbnailUrl: string | null };
+  | {
+      kind: "video";
+      thumbnailUrl: string | null;
+      // Meta's playable file; without it the card shows the cover only.
+      videoUrl?: string | null;
+    };
 
 export function AdPreviewCard({
   pageName,
@@ -89,6 +94,20 @@ function PreviewMedia({ media }: { media: AdPreviewMedia }) {
     return <SquareImage url={media.imageUrl} />;
   }
   if (media.kind === "video") {
+    if (media.videoUrl) {
+      return (
+        <div className="aspect-square w-full bg-black">
+          <video
+            src={media.videoUrl}
+            poster={media.thumbnailUrl ?? undefined}
+            controls
+            playsInline
+            preload="metadata"
+            className="size-full object-contain"
+          />
+        </div>
+      );
+    }
     return (
       <div className="relative aspect-square w-full bg-muted">
         {media.thumbnailUrl ? (

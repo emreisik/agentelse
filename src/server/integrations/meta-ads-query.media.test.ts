@@ -96,6 +96,34 @@ describe("MetaAdsQuery.adMedia", () => {
     });
   });
 
+  it("finds a Reel's video through the creative's own video id, with its page", async () => {
+    m.video.mockResolvedValue({
+      sourceUrl: "https://cdn/reel.mp4",
+      pageUrl: "https://www.facebook.com/reel/1",
+    });
+    const media = await MetaAdsQuery.adMedia(conn, {
+      ...ad({ format: "SINGLE_IMAGE" }),
+      videoId: "reel-video",
+    });
+    expect(m.video).toHaveBeenCalledWith({
+      videoId: "reel-video",
+      accessToken: "tok",
+    });
+    expect(media.videoUrl).toBe("https://cdn/reel.mp4");
+    expect(media.videoPageUrl).toBe("https://www.facebook.com/reel/1");
+  });
+
+  it("keeps the Instagram post as the place to watch when Meta gives no file", async () => {
+    m.video.mockRejectedValue(new Error("no source"));
+    const media = await MetaAdsQuery.adMedia(conn, {
+      ...ad(undefined),
+      permalinkUrl: "https://www.instagram.com/reel/abc/",
+    });
+    expect(media).toEqual({
+      videoPageUrl: "https://www.instagram.com/reel/abc/",
+    });
+  });
+
   it("degrades to no extra media when Meta refuses, instead of throwing", async () => {
     m.images.mockRejectedValue(new Error("boom"));
     m.video.mockRejectedValue(new Error("boom"));

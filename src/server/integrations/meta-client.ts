@@ -1752,6 +1752,13 @@ export type MetaAdSummary = {
   creativeId?: string;
   thumbnailUrl?: string;
   creative?: MetaAdCreativeDetail;
+  // Any video the creative points at, wherever Meta keeps it: the creative's
+  // own `video_id` (Reels and other video ads do not always carry an
+  // object_story_spec.video_data) or a video inside asset_feed_spec. Display
+  // only — `creative` above stays what the edit form rebuilds from.
+  videoId?: string;
+  // Instagram page of the post the ad runs (Reels promoted from Instagram).
+  permalinkUrl?: string;
 };
 
 export async function listMetaAds(input: {
@@ -1760,7 +1767,7 @@ export async function listMetaAds(input: {
 }): Promise<MetaAdSummary[]> {
   const params = new URLSearchParams({
     fields:
-      "id,name,status,effective_status,creative{id,thumbnail_url,object_story_spec}",
+      "id,name,status,effective_status,creative{id,thumbnail_url,object_story_spec,video_id,instagram_permalink_url,asset_feed_spec}",
     limit: "100",
     access_token: input.accessToken,
   });
@@ -1773,6 +1780,9 @@ export async function listMetaAds(input: {
       id: string;
       thumbnail_url?: string;
       object_story_spec?: RawObjectStorySpec;
+      video_id?: string;
+      instagram_permalink_url?: string;
+      asset_feed_spec?: { videos?: { video_id?: string }[] };
     };
   }>(`${GRAPH_BASE}/${input.adSetId}/ads?${params.toString()}`);
 
@@ -1784,6 +1794,11 @@ export async function listMetaAds(input: {
     creativeId: a.creative?.id,
     thumbnailUrl: a.creative?.thumbnail_url,
     creative: parseCreativeDetail(a.creative?.object_story_spec),
+    videoId:
+      a.creative?.object_story_spec?.video_data?.video_id ??
+      a.creative?.video_id ??
+      a.creative?.asset_feed_spec?.videos?.find((v) => v.video_id)?.video_id,
+    permalinkUrl: a.creative?.instagram_permalink_url,
   }));
 }
 
@@ -1817,15 +1832,24 @@ export async function fetchMetaAdImageUrls(input: {
 export async function fetchMetaVideoPlayback(input: {
   videoId: string;
   accessToken: string;
-}): Promise<{ sourceUrl?: string; posterUrl?: string }> {
+}): Promise<{ sourceUrl?: string; posterUrl?: string; pageUrl?: string }> {
   const params = new URLSearchParams({
-    fields: "source,picture",
+    fields: "source,picture,permalink_url",
     access_token: input.accessToken,
   });
-  const result = await request<{ source?: string; picture?: string }>(
-    `${GRAPH_BASE}/${input.videoId}?${params.toString()}`,
-  );
-  return { sourceUrl: result.source, posterUrl: result.picture };
+  const result = await request<{
+    source?: string;
+    picture?: string;
+    permalink_url?: string;
+  }>(`${GRAPH_BASE}/${input.videoId}?${params.toString()}`);
+  return {
+    sourceUrl: result.source,
+    posterUrl: result.picture,
+    // Meta returns a path ("/reel/…"), not a full address.
+    pageUrl: result.permalink_url
+      ? new URL(result.permalink_url, "https://www.facebook.com").toString()
+      : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------

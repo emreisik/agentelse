@@ -77,6 +77,9 @@ export type AdDetailMedia = {
   cardImageUrls?: (string | undefined)[];
   videoUrl?: string;
   posterUrl?: string;
+  // Where the video can be watched when Meta gives no playable file (a Reel
+  // promoted from Instagram): the video's own page, else the Instagram post.
+  videoPageUrl?: string;
 };
 
 // Read-only query layer behind the /ads page — always hits Meta live (no
@@ -302,27 +305,35 @@ export const MetaAdsQuery = {
     ad: MetaAdSummary,
   ): Promise<AdDetailMedia> {
     const creative = ad.creative;
-    if (!creative) return {};
     const media: AdDetailMedia = {};
     const jobs: Promise<void>[] = [];
-    if (creative.format === "VIDEO" && creative.videoId) {
+    const videoId = ad.videoId ?? creative?.videoId;
+    if (ad.permalinkUrl) media.videoPageUrl = ad.permalinkUrl;
+    if (videoId) {
       jobs.push(
         fetchMetaVideoPlayback({
-          videoId: creative.videoId,
+          videoId,
           accessToken: conn.accessToken,
         })
           .then((v) => {
             media.videoUrl = v.sourceUrl;
             media.posterUrl = v.posterUrl;
+            media.videoPageUrl = v.pageUrl ?? media.videoPageUrl;
           })
-          .catch(() => undefined),
+          .catch((error: unknown) => {
+            console.warn(
+              `[ads] video ${videoId} has no playable file: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }),
       );
     }
     const hashes =
-      creative.format === "CAROUSEL"
+      creative?.format === "CAROUSEL"
         ? (creative.cards ?? []).map((c) => c.imageHash ?? "")
-        : [creative.imageHash ?? ""];
-    if (hashes.some(Boolean)) {
+        : [creative?.imageHash ?? ""];
+    if (creative && hashes.some(Boolean)) {
       jobs.push(
         fetchMetaAdImageUrls({
           adAccountId: conn.adAccountId,

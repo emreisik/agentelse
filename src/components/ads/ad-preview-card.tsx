@@ -20,6 +20,8 @@ export type AdPreviewMedia =
       thumbnailUrl: string | null;
       // Meta's playable file; without it the card shows the cover only.
       videoUrl?: string | null;
+      // Where to watch it when there is no playable file.
+      pageUrl?: string | null;
     };
 
 export function AdPreviewCard({
@@ -121,9 +123,21 @@ function PreviewMedia({ media }: { media: AdPreviewMedia }) {
           <EmptyMedia />
         )}
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="flex size-12 items-center justify-center rounded-full bg-background/80">
-            <Play className="size-5 translate-x-0.5 fill-foreground text-foreground" />
-          </div>
+          {media.pageUrl ? (
+            <a
+              href={media.pageUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="flex items-center gap-1.5 rounded-full bg-background/90 px-3.5 py-2 text-xs font-medium text-foreground"
+            >
+              <Play className="size-3.5 fill-foreground text-foreground" />
+              Watch video
+            </a>
+          ) : (
+            <div className="flex size-12 items-center justify-center rounded-full bg-background/80">
+              <Play className="size-5 translate-x-0.5 fill-foreground text-foreground" />
+            </div>
+          )}
         </div>
       </div>
     );

@@ -45,7 +45,10 @@ export function AdDetailSheet({
   editHref: string;
 }) {
   const creative = ad.creative;
-  const format = creative?.format ?? "SINGLE_IMAGE";
+  // A Reel (or any ad whose creative has no video_data) can still point at a
+  // video; show it as one even though the edit form keeps its own reading.
+  const isVideo = creative?.format === "VIDEO" || Boolean(ad.videoId);
+  const format = isVideo ? "VIDEO" : (creative?.format ?? "SINGLE_IMAGE");
   const ctaLabel = creative?.callToActionType
     ? (CTA_LABEL[creative.callToActionType] ?? creative.callToActionType)
     : "—";
@@ -63,6 +66,7 @@ export function AdDetailSheet({
                 kind: "video",
                 thumbnailUrl: media?.posterUrl ?? ad.thumbnailUrl ?? null,
                 videoUrl: media?.videoUrl ?? null,
+                pageUrl: media?.videoPageUrl ?? null,
               }
             : format === "CAROUSEL" && creative?.cards?.length
               ? {

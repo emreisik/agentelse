@@ -455,10 +455,14 @@ describe("proposeGaFix dedupe", () => {
       proposedByType: "SYSTEM",
       proposedByUserId: null,
     });
-    // Gün verilmedi: mülkün bugünü (Europe/Istanbul) kullanılır.
+    // Gün verilmedi: mülkün bugünü (Europe/Istanbul) kullanılır. Sabit tarih
+    // her gün yarın bozulurdu; beklenen gün de aynı saat diliminden hesaplanır.
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Istanbul",
+    }).format(new Date());
     expect(created.params).toMatchObject({
       kind: "ANNOTATION_CREATE",
-      day: "2026-10-07",
+      day: today,
     });
   });
 

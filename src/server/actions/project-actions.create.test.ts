@@ -32,6 +32,13 @@ vi.mock("@/server/repositories/project.repository", () => ({
   ProjectRepository: { create: projectCreate },
 }));
 
+// Faturalama marka kapısı: varsayılan olarak eski oluşturma yoluna devreder
+// (BILLING_MODE=off davranışı); limit senaryoları kendi dönüşünü verir.
+const createWithinBrandLimit = vi.fn();
+vi.mock("@/server/billing/brand-limit", () => ({
+  createProjectWithinBrandLimit: createWithinBrandLimit,
+}));
+
 const auditRecord = vi.fn();
 vi.mock("@/server/repositories/audit-log.repository", () => ({
   AuditLogRepository: { record: auditRecord },
@@ -75,6 +82,12 @@ beforeEach(() => {
   requireUser.mockResolvedValue({ userId: "user-1", email: null });
   findFirstOrThrow.mockResolvedValue({ workspaceId: "ws-1" });
   projectCreate.mockResolvedValue({ id: "proj-1", brands: [{ id: "brand-1" }] });
+  createWithinBrandLimit.mockImplementation(
+    async (args: { input: unknown }) => ({
+      ok: true,
+      project: await projectCreate(args.input),
+    }),
+  );
   auditRecord.mockResolvedValue(undefined);
   ensureProjectActive.mockResolvedValue(undefined);
   startIntakeAtCreate.mockResolvedValue(undefined);
@@ -271,5 +284,53 @@ describe("createProjectAction (legacy, characterization) (G71)", () => {
       RedirectSignal,
     );
     expect(redirect.mock.calls[0]).toEqual(["/projects/proj-1"]);
+  });
+});
+
+// Faturalama marka kapısı (docs/billing-quota.md): plan reddi yeniden denenmez,
+// yönlendirme yapılmaz ve iki eylem de aynı tipli hatayı döndürür.
+describe("brand limit (billing)", () => {
+  const full = {
+    ok: false as const,
+    code: "BRAND_LIMIT" as const,
+    limit: 1,
+    current: 1,
+  };
+
+  it("guided: returns a typed failure, no retry, no audit, no redirect", async () => {
+    createWithinBrandLimit.mockResolvedValueOnce(full);
+    const result = await createGuidedProjectAction(valid());
+    expect(result).toEqual({
+      ok: false,
+      code: "BRAND_LIMIT",
+      message: "Your plan includes 1 brand. Upgrade to add more.",
+    });
+    expect(createWithinBrandLimit).toHaveBeenCalledTimes(1);
+    expect(auditRecord).not.toHaveBeenCalled();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("legacy wizard: the same typed failure instead of a silent return", async () => {
+    createWithinBrandLimit.mockResolvedValueOnce({
+      ...full,
+      code: "PLAN_REQUIRED" as const,
+      limit: 0,
+    });
+    const result = await createProjectAction(valid());
+    expect(result).toMatchObject({ ok: false, code: "PLAN_REQUIRED" });
+    expect(createWithinBrandLimit).toHaveBeenCalledTimes(1);
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("plural wording for a larger plan", async () => {
+    createWithinBrandLimit.mockResolvedValueOnce({
+      ...full,
+      limit: 3,
+      current: 3,
+    });
+    const result = await createGuidedProjectAction(valid());
+    expect(result).toMatchObject({
+      message: "Your plan includes 3 brands. Upgrade to add more.",
+    });
   });
 });

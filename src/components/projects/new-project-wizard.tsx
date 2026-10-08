@@ -159,8 +159,12 @@ export function NewProjectWizard() {
       // (the first is the primary market) — the server reads them all
       // with formData.getAll("country").
       for (const code of values.country) formData.append("country", code);
-      await createProjectAction(formData);
-      setSubmitError("Failed to create project. Please try again.");
+      // Başarıda redirect fırlatılır (aşağıdaki satır çalışmaz); dönen değer yalnız
+      // plan reddi (faturalama) olabilir.
+      const result = await createProjectAction(formData);
+      setSubmitError(
+        result?.message ?? "Failed to create project. Please try again.",
+      );
     });
   }
 

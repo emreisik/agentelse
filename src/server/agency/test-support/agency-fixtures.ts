@@ -66,6 +66,13 @@ export async function teardownAgencyFixture(
   if (!workspaceId) return;
 
   const where = { workspaceId };
+  // Faturalama defteri (FK'sız, marka silinince de kalır): fixture workspace'iyle
+  // birlikte temizlenir.
+  await prisma.usageEntry.deleteMany({ where });
+  await prisma.usageReservation.deleteMany({ where });
+  await prisma.usageGrant.deleteMany({ where });
+  await prisma.usageBalance.deleteMany({ where });
+  await prisma.subscription.deleteMany({ where });
   await prisma.reasoningCall.deleteMany({ where });
   await prisma.agencyDailyStat.deleteMany({ where });
   await prisma.agencyTrigger.deleteMany({ where });

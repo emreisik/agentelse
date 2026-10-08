@@ -12,7 +12,10 @@ import {
   requireUser,
   requireProjectAccess,
 } from "@/server/security/tenant-context";
-import { ProjectRepository } from "@/server/repositories/project.repository";
+import {
+  createProjectWithinBrandLimit,
+  type BrandLimitFailure,
+} from "@/server/billing/brand-limit";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { startIntakeAtCreate } from "@/server/brand/intake-start";
 import { ensureProjectActive } from "@/server/projects/activation";
@@ -47,7 +50,9 @@ function slugify(name: string): string {
 // the chat. There is no onboarding gate any more: the agent can work right
 // away and learns the brand as it goes (Quick Discovery), while the optional
 // 12-stage deep setup (ProjectSetupOrchestrator) can still be started later.
-export async function createProjectAction(formData: FormData) {
+export async function createProjectAction(
+  formData: FormData,
+): Promise<CreateProjectFailure | void> {
   const name = String(formData.get("name") ?? "").trim();
   const domain = String(formData.get("domain") ?? "").trim();
   const brandName = String(formData.get("brandName") ?? "").trim();
@@ -78,16 +83,22 @@ export async function createProjectAction(formData: FormData) {
   let project;
   for (;;) {
     try {
-      project = await ProjectRepository.create({
+      const created = await createProjectWithinBrandLimit({
         workspaceId,
-        name,
-        slug,
-        domain: domain || undefined,
-        brandName: brandName || undefined,
-        language,
-        country,
-        countries,
+        input: {
+          workspaceId,
+          name,
+          slug,
+          domain: domain || undefined,
+          brandName: brandName || undefined,
+          language,
+          country,
+          countries,
+        },
       });
+      // Plan reddi yeniden denenecek bir hata değil: döngüden doğrudan çık.
+      if (!created.ok) return brandLimitFailure(created);
+      project = created.project;
       break;
     } catch (error) {
       attempt += 1;
@@ -123,7 +134,21 @@ export type CreateProjectFailure = {
   ok: false;
   field?: CreateProjectField;
   message: string;
+  // Plan kaynaklı ret (faturalama): arayüz farklı eylem gösterebilir.
+  code?: BrandLimitFailure["code"];
 };
+
+// Faturalama marka kapısı reddi (metinler Faz 6'da son halini alır).
+function brandLimitFailure(failure: BrandLimitFailure): CreateProjectFailure {
+  return {
+    ok: false,
+    code: failure.code,
+    message:
+      failure.code === "PLAN_REQUIRED"
+        ? "Start your free trial or choose a plan to create a brand."
+        : `Your plan includes ${failure.limit} ${failure.limit === 1 ? "brand" : "brands"}. Upgrade to add more.`,
+  };
+}
 
 // The one-screen creation form's action (flag on). It only RETURNS on failure,
 // typed so the screen can print it next to the field; success redirects. The
@@ -152,16 +177,21 @@ export async function createGuidedProjectAction(
   let project;
   for (;;) {
     try {
-      project = await ProjectRepository.create({
+      const created = await createProjectWithinBrandLimit({
         workspaceId,
-        name,
-        slug,
-        domain,
-        brandName,
-        language,
-        country,
-        countries,
+        input: {
+          workspaceId,
+          name,
+          slug,
+          domain,
+          brandName,
+          language,
+          country,
+          countries,
+        },
       });
+      if (!created.ok) return brandLimitFailure(created);
+      project = created.project;
       break;
     } catch (error) {
       attempt += 1;

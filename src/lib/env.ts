@@ -92,6 +92,22 @@ const envSchema = z.object({
     .optional()
     .default("false")
     .transform((value) => value === "true"),
+  // Faturalama (docs/billing-quota.md). "off" (varsayılan): hiçbir şey değişmez ve
+  // canlı yola tek sorgu eklenmez. "shadow": hak kararı hesaplanır ve loglanır,
+  // HİÇBİR ŞEY engellenmez. "enforce": engellenir. Yazım hatası "off" okunur.
+  BILLING_MODE: z
+    .string()
+    .optional()
+    .default("off")
+    .transform((value): "off" | "shadow" | "enforce" =>
+      value === "shadow" || value === "enforce" ? value : "off",
+    ),
+  // ISO tarih: bundan ÖNCE açılmış ve aboneliği olmayan workspace'ler LEGACY
+  // (mevcut müşteri) sayılır; sonradan açılanlar önce deneme/plan seçmelidir.
+  BILLING_LEGACY_BEFORE: z.string().optional().default(""),
+  // ISO tarih: LEGACY tam erişimin bittiği an (7 günlük ücretsiz geçişin sonu).
+  // Boşsa LEGACY süresiz tam erişimdir.
+  BILLING_LEGACY_UNTIL: z.string().optional().default(""),
   // gpt-image-2 — see openai-image-client.ts. Separate model slot from
   // OPENAI_MODEL because it names an image model, not a chat one.
   OPENAI_IMAGE_MODEL: z.string().optional().default("gpt-image-2"),

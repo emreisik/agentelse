@@ -5612,6 +5612,143 @@ model UsageEntry {
   @@index([provider, createdAt])
 }
 
+// =============================================================================
+// ABONELİK ve KULLANIM HAKLARI (~/.claude/plans/billing-usage-plan.md, Faz 2)
+// =============================================================================
+// Hiçbiri başka tabloya yabancı anahtarla bağlı DEĞİL (UsageEntry gibi düz
+// workspaceId) ve hiçbirinde `projectId` adlı kolon YOK: ProjectDeletionService
+// `projectId` kolonlu her tabloyu siler, faturalama kayıtları marka silinince
+// gitmemeli. Para/kota sayaçları BigInt (görsel adedi; AI bütçesi mikro-dolar).
+// Durum alanları String + migration'daki CHECK (enum değil: yeni durum eklemek
+// ALTER TYPE gerektirmesin). Plan tanımı veritabanında DEĞİL: src/lib/billing/plans.ts.
+
+// Workspace başına en çok bir abonelik: sağlayıcının (Stripe, Faz 4) aynası.
+// Hak kararı `paidThrough` / `trialEndsAt` / `legacyUntil` alanlarından verilir
+// (src/lib/billing/entitlements-core.ts), sağlayıcı dönem alanlarından değil.
+model Subscription {
+  id          String @id @default(cuid())
+  workspaceId String @unique
+
+  // null: LEGACY (mevcut müşteri, plan seçmedi) ya da planı henüz seçmemiş deneme.
+  planKey  String?
+  // MONTH | YEAR (faturalama aralığı; KOTA her zaman aylık verilir)
+  interval String?
+  // LEGACY | TRIALING | ACTIVE | PAST_DUE | CANCELED
+  status   String
+
+  // Aylık kota pencerelerinin çapası (deneme başlangıcı ya da ilk ücretli dönem).
+  quotaAnchor DateTime?
+  // Ödenmiş süre: YALNIZ ödeme olayıyla ilerler (Faz 4). Yenileme gecikmesi payı
+  // ve ödeme başarısızlığı ek süresi plans.ts sabitlerinden gelir.
+  paidThrough DateTime?
+  // Bir kez yazılır, hiç silinmez: "daha önce deneme aldı" = dolu.
+  trialEndsAt DateTime?
+  graceUntil  DateTime?
+  legacyUntil DateTime?
+
+  cancelAtPeriodEnd Boolean @default(false)
+  // 1 = ilk ücretli FATURA dönemi (ilk ay kampanyası penceresi bundan türer).
+  periodIndex       Int     @default(1)
+  // İlk ay kampanya fiyatı kullanıldı mı (bonusla yığılmaz).
+  introOffer        Boolean @default(false)
+
+  // Zamanlanmış plan/aralık değişikliği (düşürme dönem sınırında uygulanır).
+  pendingPlanKey     String?
+  pendingInterval    String?
+  pendingEffectiveAt DateTime?
+
+  // İç/demo/ortak hesaplar için kalıcı tam erişim.
+  exempt      Boolean   @default(false)
+  endedAt     DateTime?
+  // CANCELED | REFUNDED | CHARGEBACK | PAYMENT_FAILED | TRIAL_ENDED | LEGACY_ENDED
+  endedReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// (workspace, birim) başına tek satır: iki havuz.
+//   PERIOD: plan kotası (süreli promosyonlar da buraya, pencereyle söner), her
+//           aylık pencerede sıfırlanır, periodEnd'de söner.
+//   EXTRA : YALNIZ satın alınan ek paket, süresiz; iptalde silinmez, tam erişimde
+//           harcanır.
+// Harcama sırası PERIOD → EXTRA (önce eriyen). used > granted olabilir (gerçekleşen
+// API maliyeti geri alınamaz: borç sonraki sıfırlamada affedilir). Sayaçlar
+// TÜREVDİR: reserved = RESERVED rezervasyonların from* toplamı (süpürücü onarır).
+model UsageBalance {
+  id          String @id
+  workspaceId String
+  // IMAGE | VIDEO | AI_MICROS
+  unit        String
+
+  periodStart    DateTime?
+  periodEnd      DateTime?
+  periodGranted  BigInt    @default(0)
+  periodUsed     BigInt    @default(0)
+  periodReserved BigInt    @default(0)
+
+  extraGranted   BigInt @default(0)
+  extraUsed      BigInt @default(0)
+  extraReserved  BigInt @default(0)
+
+  updatedAt DateTime
+
+  @@unique([workspaceId, unit])
+  @@index([periodEnd])
+}
+
+// Görev başlamadan ayrılan maksimum hak. reservationKey iş değil DENEME bazlıdır
+// (`${operationId}#${deneme}`): aynı denemenin yinelenen teslimi aynı satırı bulur,
+// yeniden deneme yeni anahtar alır. Bakiye ve satır tek SQL ifadesinde yazılır.
+model UsageReservation {
+  id             String @id
+  workspaceId    String
+  unit           String
+  reservationKey String
+  // Aynı işin rezervasyonlarını ve UsageEntry satırlarını bağlar (mutabakat);
+  // tekil DEĞİL: tekillik reservationKey'dedir.
+  operationId    String?
+  amount         BigInt
+  fromPeriod     BigInt @default(0)
+  fromExtra      BigInt @default(0)
+  // RESERVED | SETTLED | RELEASED
+  status         String
+  settledAmount  BigInt?
+  // Gölge modda bakiye yetmediği halde izin verildi (sayaçlara dokunulmadı).
+  overdraft      Boolean @default(false)
+  // Çökmüş işin tuttuğu hak süpürücüyle geri verilir.
+  expiresAt      DateTime
+  createdAt      DateTime
+  settledAt      DateTime?
+
+  @@unique([workspaceId, unit, reservationKey])
+  @@index([status, expiresAt])
+  @@index([workspaceId, operationId])
+}
+
+// Bakiyeye eklenen her hakkın değişmez kaydı. Webhook/satın alma tekrarı çift hak
+// vermesin: (workspaceId, idempotencyKey, unit, reason) tektir (aynı fatura iki
+// birimi ve plan + bonus gibi iki nedeni birden verebilir). amount işaretlidir
+// (iade/chargeback ters kaydı Faz 4-5).
+model UsageGrant {
+  id             String    @id
+  workspaceId    String
+  unit           String
+  // PERIOD | EXTRA
+  pool           String
+  amount         BigInt
+  // PLAN | PLAN_CHANGE | TRIAL | BONUS | REFERRAL | PURCHASE | ADJUST | REFUND
+  reason         String
+  idempotencyKey String
+  // pool=PERIOD için hibenin ait olduğu pencerenin başlangıcı.
+  periodStart    DateTime?
+  reverses       String?
+  createdAt      DateTime
+
+  @@unique([workspaceId, idempotencyKey, unit, reason])
+  @@index([workspaceId, createdAt])
+}
+
 model ReasoningCall {
   id          String  @id @default(cuid())
   workspaceId String

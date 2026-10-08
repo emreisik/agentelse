@@ -1,5 +1,6 @@
 import "server-only";
 
+import { runBillingTick } from "@/server/billing/period-tick";
 import { runDueMediaAnalysis } from "@/server/brand/media/tick";
 
 // Side-effect wiring module: registers the late setup-stage runners and the
@@ -200,6 +201,20 @@ registerSetupStageRunner("INITIAL_WORK_PLAN", async (scope) => {
 registerAgencyTickStep({
   name: "agency-loop-heartbeat",
   run: () => AgencyLoopHeartbeat.run(50),
+});
+// Faturalama bakımı (docs/billing-quota.md): vadesi gelen kota pencereleri ve
+// çökmüş işlerin tuttuğu rezervasyonlar. BILLING_MODE=off iken (varsayılan) ve canlı
+// veritabanını paylaşan geliştirme sürecinde sorgusuz 0 döner; hata tick'i durdurmaz.
+registerAgencyTickStep({
+  name: "billing-maintenance",
+  run: () =>
+    runBillingTick().catch((error) => {
+      console.error(
+        "[billing] tick",
+        error instanceof Error ? error.name : error,
+      );
+      return 0;
+    }),
 });
 // Meta Ads steps run right after the heartbeat, before every LLM step, so a
 // long tick never delays them (docs/meta-ads-plan.md §5). Each skips itself

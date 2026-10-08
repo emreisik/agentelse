@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getEnv } from "@/lib/env";
+import { recordUsage } from "@/server/billing/usage-recorder";
+import { priceReasoningCall } from "@/server/reasoning/reasoning-pricing";
 import { AgentelseError } from "@/server/security/errors";
 
 // OpenAI REST client — the sole LLM backend for ReasoningService (structured
@@ -36,6 +38,8 @@ export type OpenAIStructuredResult = {
   raw: unknown;
   inputTokens?: number;
   outputTokens?: number;
+  // inputTokens'ın içindeki önbellek tokenları (yalnız API raporladıysa).
+  cachedTokens?: number;
   // Only set by the web-search variant (openai-search-client.ts): each search
   // is billed on top of tokens.
   webSearchCalls?: number;
@@ -62,6 +66,7 @@ type OpenAIResponse = {
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number };
   };
   error?: { message?: string };
 };
@@ -108,6 +113,54 @@ function attachmentParts(
   });
 }
 
+// Her HTTP çağrısı kendi satırını yazar: kesik yanıtla yeniden deneme (token
+// iki katına çıkarma) ve zaman aşımı da faturalanmış olabilir, o yüzden
+// sonuçtan bağımsız ölçülür (docs: ~/.claude/plans/billing-usage-plan.md).
+async function meterTextCall(
+  model: string,
+  startedAt: number,
+  outcome:
+    | { ok: true; usage: OpenAIResponse["usage"] }
+    | { ok: false; errorCode: string },
+): Promise<void> {
+  if (!outcome.ok) {
+    // Zaman aşımı/ağ hatasında sağlayıcı işi yine de yapmış olabilir; kullanım
+    // bilinmez → 0 USD, tahmini işaretli (mutabakatta sayısı görünür).
+    await recordUsage({
+      kind: "TEXT",
+      provider: "openai",
+      model,
+      costUsd: 0,
+      costEstimated: true,
+      success: false,
+      errorCode: outcome.errorCode,
+      durationMs: Date.now() - startedAt,
+    });
+    return;
+  }
+  const inputTokens = outcome.usage?.prompt_tokens;
+  const outputTokens = outcome.usage?.completion_tokens;
+  const cachedTokens = outcome.usage?.prompt_tokens_details?.cached_tokens;
+  const priced = priceReasoningCall({
+    model,
+    inputTokens,
+    outputTokens,
+    cachedTokens,
+  });
+  await recordUsage({
+    kind: "TEXT",
+    provider: "openai",
+    model,
+    costUsd: priced.costUsd,
+    costEstimated: priced.estimated,
+    success: true,
+    durationMs: Date.now() - startedAt,
+    inputTokens,
+    outputTokens,
+    cachedTokens,
+  });
+}
+
 async function callOpenAI(input: {
   model: string;
   system: string;
@@ -145,6 +198,7 @@ async function callOpenAI(input: {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
     let response: Response;
+    const attemptStartedAt = Date.now();
     try {
       response = await fetch(CHAT_COMPLETIONS_URL, {
         method: "POST",
@@ -157,6 +211,10 @@ async function callOpenAI(input: {
       });
     } catch (error) {
       const isTimeout = error instanceof Error && error.name === "TimeoutError";
+      await meterTextCall(input.model, attemptStartedAt, {
+        ok: false,
+        errorCode: isTimeout ? "TIMEOUT" : "NETWORK",
+      });
       if (isLastAttempt) {
         if (isTimeout) {
           throw new AgentelseError(
@@ -175,7 +233,12 @@ async function callOpenAI(input: {
     }
 
     if (response.ok) {
-      return (await response.json()) as OpenAIResponse;
+      const payload = (await response.json()) as OpenAIResponse;
+      await meterTextCall(input.model, attemptStartedAt, {
+        ok: true,
+        usage: payload.usage,
+      });
+      return payload;
     }
 
     const payload = (await response.json().catch(() => ({}))) as OpenAIResponse;
@@ -229,7 +292,12 @@ export async function runOpenAIText(
     attachments?: OpenAIInlineAttachment[];
   },
   maxOutputTokens = input.maxOutputTokens,
-): Promise<{ text: string; inputTokens?: number; outputTokens?: number }> {
+): Promise<{
+  text: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedTokens?: number;
+}> {
   const payload = await callOpenAI({
     model: input.model,
     system: input.system,
@@ -260,6 +328,7 @@ export async function runOpenAIText(
     text,
     inputTokens: payload.usage?.prompt_tokens,
     outputTokens: payload.usage?.completion_tokens,
+    cachedTokens: payload.usage?.prompt_tokens_details?.cached_tokens,
   };
 }
 
@@ -305,6 +374,7 @@ export async function runOpenAIStructured(
       raw,
       inputTokens: payload.usage?.prompt_tokens,
       outputTokens: payload.usage?.completion_tokens,
+      cachedTokens: payload.usage?.prompt_tokens_details?.cached_tokens,
     };
   } catch {
     if (

@@ -11,6 +11,7 @@ vi.mock("@/lib/env", () => ({
   }),
 }));
 
+import { recordUsage } from "@/server/billing/usage-recorder";
 import {
   runOpenAIStructured,
   runOpenAIText,
@@ -212,6 +213,73 @@ describe("openai-client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const secondBody = JSON.parse(fetchMock.mock.calls[1]![1]!.body as string);
     expect(secondBody.max_completion_tokens).toBe(2000);
+  });
+
+  it("meters every HTTP call: the truncated first response and the retry each get a row, cached tokens priced at 10%", async () => {
+    vi.mocked(recordUsage).mockClear();
+    fetchMock
+      .mockResolvedValueOnce(
+        openaiResponse(200, {
+          choices: [
+            { message: { content: '{"a":"unfin' }, finish_reason: "length" },
+          ],
+          usage: { prompt_tokens: 1000, completion_tokens: 500 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        openaiResponse(200, {
+          choices: [
+            { message: { content: '{"a":"ok"}' }, finish_reason: "stop" },
+          ],
+          usage: {
+            prompt_tokens: 1000,
+            completion_tokens: 800,
+            prompt_tokens_details: { cached_tokens: 600 },
+          },
+        }),
+      );
+
+    const result = await runOpenAIStructured({
+      ...CALL_ARGS,
+      model: "gpt-5.6-luna",
+      maxOutputTokens: 1000,
+    });
+
+    expect(result.cachedTokens).toBe(600);
+    expect(recordUsage).toHaveBeenCalledTimes(2);
+    const [first, second] = vi
+      .mocked(recordUsage)
+      .mock.calls.map(([row]) => row);
+    // gpt-5.6-luna: $1 in / $6 out per million.
+    expect(first).toMatchObject({
+      kind: "TEXT",
+      provider: "openai",
+      success: true,
+      costEstimated: false,
+      cachedTokens: undefined,
+    });
+    expect(first!.costUsd).toBeCloseTo(0.001 + 0.003, 8);
+    expect(second!.cachedTokens).toBe(600);
+    // 400 full-price + 600 cached(10%) input, 800 output.
+    expect(second!.costUsd).toBeCloseTo(0.0004 + 0.00006 + 0.0048, 8);
+  });
+
+  it("records a connection failure as an estimated zero-cost failed row", async () => {
+    vi.mocked(recordUsage).mockClear();
+    fetchMock.mockRejectedValue(new Error("socket hang up"));
+
+    const promise = runOpenAIStructured(CALL_ARGS);
+    const assertion = expect(promise).rejects.toThrow("socket hang up");
+    await vi.runAllTimersAsync();
+    await assertion;
+
+    expect(recordUsage).toHaveBeenCalledTimes(4);
+    expect(vi.mocked(recordUsage).mock.calls[0]![0]).toMatchObject({
+      success: false,
+      costUsd: 0,
+      costEstimated: true,
+      errorCode: "NETWORK",
+    });
   });
 
   it("maps attachments to content parts placed before the user text", async () => {

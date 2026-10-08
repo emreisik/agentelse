@@ -3,6 +3,8 @@ import "server-only";
 import OpenAI from "openai";
 
 import { getEnv } from "@/lib/env";
+import { getUsageScope } from "@/server/billing/usage-context";
+import { recordUsage } from "@/server/billing/usage-recorder";
 import {
   estimateImageCostUsd,
   type ImageUsage,
@@ -93,35 +95,82 @@ type ImageBilling = {
   quality: ImageQuality;
   size: string;
   startedAt: number;
+  // Billed rows written so far (recordImageSpend). An attempt that already
+  // wrote its row must not also write a "failed" one when only the storing of
+  // the image fails afterwards.
+  spendRows: number;
 };
 
 // A high-quality render is the dearest thing this app buys, so each one is
-// logged as a ReasoningCall with its cost. No workspace reaches this client;
-// "system" keeps the row out of per-workspace reports. Never throws: a bookkeeping failure must
+// logged with its cost: a UsageEntry (the billing record, kept per workspace
+// even after a brand is deleted) and a ReasoningCall for the project's activity
+// view. The scope comes from the caller's usage context (usage-context.ts);
+// without one the ReasoningCall keeps the old "system" workspace and the
+// UsageEntry lands as "unattributed". Never throws: a bookkeeping failure must
 // not cost the caller a render OpenAI already billed.
 async function recordImageSpend(
   usage: ImageUsage | undefined,
   billing: ImageBilling,
 ): Promise<void> {
+  const scope = getUsageScope();
+  const costUsd = estimateImageCostUsd({
+    quality: billing.quality,
+    size: billing.size,
+    usage,
+  });
+  billing.spendRows += 1;
+  await recordUsage({
+    kind: "IMAGE",
+    provider: "openai",
+    // Kalite maliyetin ana sürücüsü (high ≈ 4x medium): raporda görünsün.
+    model: `${billing.model}/${billing.quality}`,
+    purpose: scope?.purpose ?? "image.generate",
+    costUsd,
+    // Kullanım döndürmeyen yanıtta kalite başına sabit fiyat kullanılır.
+    costEstimated: !usage?.output_tokens,
+    success: true,
+    durationMs: Date.now() - billing.startedAt,
+    inputTokens: usage?.input_tokens,
+    outputTokens: usage?.output_tokens,
+    units: 1,
+  });
   try {
     await ReasoningCallRepository.record({
-      workspaceId: "system",
+      workspaceId: scope?.workspaceId ?? "system",
+      projectId: scope?.projectId,
       purpose: "image.generate",
       model: billing.model,
       isMock: false,
       inputTokens: usage?.input_tokens,
       outputTokens: usage?.output_tokens,
-      costUsd: estimateImageCostUsd({
-        quality: billing.quality,
-        size: billing.size,
-        usage,
-      }),
+      costUsd,
       durationMs: Date.now() - billing.startedAt,
       status: "OK",
     });
   } catch (error) {
     console.error("[openai-image] could not record image spend", error);
   }
+}
+
+// A request that died on the wire (timeout, reset, broken stream) may still
+// have been rendered and billed by OpenAI; its usage is unknown. Recorded as
+// an estimated zero-cost failure so reconciliation can count them.
+async function recordImageFailure(
+  billing: ImageBilling,
+  errorCode: string,
+): Promise<void> {
+  await recordUsage({
+    kind: "IMAGE",
+    provider: "openai",
+    model: `${billing.model}/${billing.quality}`,
+    purpose: getUsageScope()?.purpose ?? "image.generate",
+    costUsd: 0,
+    costEstimated: true,
+    success: false,
+    errorCode,
+    durationMs: Date.now() - billing.startedAt,
+    units: 0,
+  });
 }
 
 async function storeResult(
@@ -188,7 +237,13 @@ export async function generateOpenAIImage(
         ? [referenceImage]
         : [];
   const inputImage = inputs[0];
-  const billing: ImageBilling = { model, quality, size, startedAt: Date.now() };
+  const billing: ImageBilling = {
+    model,
+    quality,
+    size,
+    startedAt: Date.now(),
+    spendRows: 0,
+  };
 
   if (onPartial && !inputImage) {
     const streamed = await streamOpenAIImage(
@@ -200,6 +255,7 @@ export async function generateOpenAIImage(
     if (streamed) return streamed;
   }
 
+  const rowsBefore = billing.spendRows;
   try {
     let response: Response;
     if (inputImage) {
@@ -254,6 +310,16 @@ export async function generateOpenAIImage(
     );
   } catch (error) {
     console.error("[openai-image] generation failed", error);
+    // The render may have been billed and recorded already (only storing it
+    // failed): no second, false "failed" row for the same call.
+    if (billing.spendRows === rowsBefore) {
+      await recordImageFailure(
+        billing,
+        error instanceof Error && error.name === "TimeoutError"
+          ? "TIMEOUT"
+          : "NETWORK",
+      );
+    }
     return null;
   }
 }
@@ -267,6 +333,7 @@ async function streamOpenAIImage(
   onPartial: (partial: ImagePartial) => void,
   billing: ImageBilling,
 ): Promise<GeneratedCreativeImage | null> {
+  const rowsBefore = billing.spendRows;
   try {
     const stream = await getSdkClient(apiKey).images.generate({
       model: params.model,
@@ -290,6 +357,9 @@ async function streamOpenAIImage(
     }
     if (!finalB64) {
       console.error("[openai-image] stream ended without a final image");
+      // Partial previews of a render that never completed may still have been
+      // billed, and the plain request that follows renders again.
+      await recordImageFailure(billing, "NO_FINAL");
       return null;
     }
     return await storeResult(
@@ -299,6 +369,9 @@ async function streamOpenAIImage(
     );
   } catch (error) {
     console.error("[openai-image] streaming generation failed", error);
+    if (billing.spendRows === rowsBefore) {
+      await recordImageFailure(billing, "STREAM");
+    }
     return null;
   }
 }

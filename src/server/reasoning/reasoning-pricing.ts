@@ -82,17 +82,81 @@ export function estimateImageCostUsd(input: {
   return IMAGE_FALLBACK_USD[tier] * scale;
 }
 
+// Faturalama ölçümü (UsageEntry.priceTable): bu dosyadaki liste fiyatlarının
+// son doğrulandığı ay. Fiyat değiştirirsen sürümü de güncelle; mutabakatta
+// hangi satırın hangi tabloyla hesaplandığı buradan anlaşılır.
+export const PRICE_TABLE_VERSION = "2026-08";
+
+// Önbellekten okunan girdi tokenı normal girdi fiyatının %10'udur (OpenAI
+// GPT-5 ailesi: $1.25 → $0.125; GPT-5.5: $5 → $0.50). İndirim YALNIZ API
+// `cached_tokens` döndürdüğünde uygulanır; raporlanmayan önbellek tam fiyattan
+// sayılır (fazla tahmin, eksik tahmin değil).
+const CACHED_INPUT_MULTIPLIER = 0.1;
+
+export type ReasoningCostDetail = {
+  costUsd: number;
+  // true: kullanım raporlanmadı ya da model tabloda yok (flagship fiyatı
+  // kullanıldı) — gerçek maliyet değil, tahmin.
+  estimated: boolean;
+};
+
+export function priceReasoningCall(input: {
+  model: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  // inputTokens'ın içinde sayılan önbellek tokenları.
+  cachedTokens?: number;
+  webSearchCalls?: number;
+}): ReasoningCostDetail {
+  const known = Object.hasOwn(OPENAI_PRICES, input.model);
+  const price = priceFor(input.model);
+  const totalIn = input.inputTokens ?? 0;
+  const cached = Math.min(Math.max(input.cachedTokens ?? 0, 0), totalIn);
+  const inputCost =
+    ((totalIn - cached) / 1_000_000) * price.inputPerMillion +
+    (cached / 1_000_000) * price.inputPerMillion * CACHED_INPUT_MULTIPLIER;
+  const outputCost =
+    ((input.outputTokens ?? 0) / 1_000_000) * price.outputPerMillion;
+  const searchCost = (input.webSearchCalls ?? 0) * WEB_SEARCH_USD_PER_CALL;
+  const usageReported =
+    input.inputTokens !== undefined || input.outputTokens !== undefined;
+  return {
+    costUsd: inputCost + outputCost + searchCost,
+    estimated: !known || !usageReported,
+  };
+}
+
 export function estimateReasoningCostUsd(input: {
   model: string;
   inputTokens?: number;
   outputTokens?: number;
+  cachedTokens?: number;
   webSearchCalls?: number;
 }): number {
-  const price = priceFor(input.model);
-  const inputCost =
-    ((input.inputTokens ?? 0) / 1_000_000) * price.inputPerMillion;
-  const outputCost =
-    ((input.outputTokens ?? 0) / 1_000_000) * price.outputPerMillion;
-  const searchCost = (input.webSearchCalls ?? 0) * WEB_SEARCH_USD_PER_CALL;
-  return inputCost + outputCost + searchCost;
+  return priceReasoningCall(input).costUsd;
+}
+
+// fal.ai kullanım döndürmez: görsel başına liste fiyatı (USD). Hepsi TAHMİNDİR
+// (UsageEntry.costEstimated = true) ve fal.ai/pricing ile doğrulanmalıdır;
+// listede olmayan uç nokta fazla tahmin edilir.
+const FAL_USD_PER_IMAGE: Record<string, number> = {
+  "fal-ai/flux/schnell": 0.003,
+  "fal-ai/flux/dev": 0.025,
+  "fal-ai/flux-pro/v1.1-ultra": 0.06,
+  "fal-ai/flux-2-pro": 0.045,
+  "fal-ai/qwen-image": 0.02,
+  "bytedance/seedream/v4": 0.03,
+  "fal-ai/imagen3": 0.05,
+  "fal-ai/imagen3/fast": 0.025,
+  "fal-ai/recraft/v3/text-to-image": 0.04,
+  "fal-ai/ideogram/v3": 0.06,
+  "fal-ai/flux-pro/kontext": 0.04,
+  "fal-ai/flux-pro/v1/fill": 0.05,
+  "fal-ai/bria/background/remove": 0.018,
+  "fal-ai/clarity-upscaler": 0.03,
+};
+const FAL_FALLBACK_USD_PER_IMAGE = 0.08;
+
+export function estimateFalImageCostUsd(endpointId: string): number {
+  return FAL_USD_PER_IMAGE[endpointId] ?? FAL_FALLBACK_USD_PER_IMAGE;
 }

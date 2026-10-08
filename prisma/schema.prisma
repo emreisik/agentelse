@@ -5560,6 +5560,58 @@ model AgencyDailyStat {
   @@index([projectId])
 }
 
+// Faturalama temeli (~/.claude/plans/billing-usage-plan.md, Faz 1): her ücretli
+// dış çağrının gerçek kullanımı ve USD maliyeti. ReasoningCall'dan farkı:
+// (1) çağrı başına tek satır (yeniden denemeler ve kesik yanıtlar dahil),
+// (2) workspace düzeyinde KALICIdır — kolon adı bilerek `projectRef` (FK'sız);
+// ProjectDeletionService `projectId` adlı kolonu olan her tabloyu siler, marka
+// silinince maliyet geçmişi de gitmesin. Para: USD x 1e6 (micros).
+model UsageEntry {
+  id          String  @id @default(cuid())
+  // Kapsam bulunamadıysa "unattributed" (rapor bunları ayrıca sayar).
+  workspaceId String
+  projectRef  String?
+  userId      String?
+
+  // SOCIAL | ADS | ANALYTICS | SEO | CHAT | OTHER
+  module      String?
+  // reasoning | execution | chat | action | cron | embeddings ...
+  source      String?
+  // Aynı işin çağrılarını toplar (iş, sohbet turu, tick adımı).
+  operationId String?
+  // Çağrı başına benzersiz: aynı yanıt iki kez yazılamaz.
+  callId      String  @unique
+
+  // TEXT | IMAGE | SEARCH | EMBED | VIDEO
+  kind     String
+  purpose  String
+  // openai | fal
+  provider String
+  model    String
+
+  inputTokens    Int?
+  outputTokens   Int?
+  cachedTokens   Int?
+  webSearchCalls Int?
+  // Görsel adedi gibi sayılabilir birim.
+  units          Int?
+
+  costMicros    BigInt
+  // true: sağlayıcı kullanım döndürmedi ya da fiyat tahmini (gerçek maliyet değil).
+  costEstimated Boolean
+  success       Boolean
+  errorCode     String?
+  durationMs    Int
+  // Fiyat tablosu sürümü (reasoning-pricing.ts PRICE_TABLE_VERSION).
+  priceTable    String
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([operationId])
+  @@index([provider, createdAt])
+}
+
 model ReasoningCall {
   id          String  @id @default(cuid())
   workspaceId String

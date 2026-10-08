@@ -96,6 +96,8 @@ export type ChatModelEvent =
       // The part of inputTokens OpenAI served from its prompt cache.
       cachedInputTokens?: number;
       outputTokens?: number;
+      // web_search calls the model ran this turn (billed on top of tokens).
+      webSearchCalls?: number;
     };
 
 export interface ChatModel {

@@ -5,6 +5,7 @@ import type { CreativeLens, Idea } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { dayKeyInTimezone, zonedDateTimeToUtc } from "@/lib/timezone";
+import { runWithUsageScope } from "@/server/billing/usage-context";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import {
   NO_STYLE_REFERENCES,
@@ -348,12 +349,23 @@ export async function planWeeklyInstagramContent(
       );
 
       const subject = `${idea.title}: ${idea.description}`;
+      // Everything paid for this one post — the words, the art direction and the
+      // picture — is billed to this workspace/project as one operation.
+      const usageScope = {
+        workspaceId,
+        projectId,
+        source: "action" as const,
+        purpose: "week-planner",
+        module: "SOCIAL" as const,
+        operationId: `week:${idea.id}`,
+      };
       // The words the post carries when its layout has a headline zone: written
       // for the brand and the room the layout gives them, typeset after the
       // picture is made. Best effort: without them the post is a clean picture.
       // The picture is directed from the brand and the idea (art-director.ts) at
       // the same time as the words are written.
-      const [words, direction] = await Promise.all([
+      const [words, direction] = await runWithUsageScope(usageScope, () =>
+        Promise.all([
         brandStyle && layoutPlan.textPlacement
           ? writeOnImageText({
               brandContext: copyBrief,
@@ -383,7 +395,8 @@ export async function planWeeklyInstagramContent(
               hasProductPhotos: styleRefs.productCount > 0,
             })
           : Promise.resolve(null),
-      ]);
+        ]),
+      );
       const textArea =
         words && layoutPlan.textPlacement
           ? headlineZonePhrase(layoutPlan.textPlacement.zone)
@@ -410,12 +423,16 @@ export async function planWeeklyInstagramContent(
             textArea,
           })
         : subject;
-      const generated = await generateCreativeImage(prompt, {
-        imageSize: format.pixelSize,
-        ...(styleRefs.exampleCount > 0 || styleRefs.productCount > 0
-          ? { referenceImages: styleRefs.images }
-          : { referenceImage: styleRefs.images[0] ?? undefined }),
-      });
+      const generated = await runWithUsageScope(
+        usageScope,
+        () =>
+          generateCreativeImage(prompt, {
+            imageSize: format.pixelSize,
+            ...(styleRefs.exampleCount > 0 || styleRefs.productCount > 0
+              ? { referenceImages: styleRefs.images }
+              : { referenceImage: styleRefs.images[0] ?? undefined }),
+          }),
+      );
       if (!generated) {
         result.imagesFailed += 1;
         continue;

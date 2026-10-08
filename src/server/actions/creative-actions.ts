@@ -20,6 +20,7 @@ import { CreativeRepository } from "@/server/repositories/creative.repository";
 import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
+import { runWithUsageScope } from "@/server/billing/usage-context";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
 import { barColorCandidates } from "@/lib/bar-color-candidates";
@@ -254,6 +255,16 @@ export async function performCreativeRevision({
       include: { versions: { orderBy: { version: "desc" }, take: 1 } },
     });
     await requireProjectAccess(userId, creative.projectId);
+    // Billing scope for everything this revision buys (art direction + picture).
+    const usageScope = {
+      workspaceId: creative.workspaceId,
+      projectId: creative.projectId,
+      userId,
+      source: "action" as const,
+      purpose: "creative.regenerate",
+      module: "SOCIAL" as const,
+      operationId: `revise:${creativeId}:${Date.now()}`,
+    };
 
     const currentVersion = creative.versions[0];
     const baseImage =
@@ -372,20 +383,22 @@ export async function performCreativeRevision({
       ? `${instruction}\n\nBrand/creative context: ${contextText}`
       : contextText;
     const direction = brandContext && !photo
-      ? await directImage({
-          brandContext,
-          brief: subject,
-          draft: subject,
-          platformLabel: platformFormat.label,
-          formatLabel: platformFormat.contentFormatLabel,
-          pixelSize: platformFormat.pixelSize,
-          calmArea: textPlacement
-            ? headlineZonePhrase(textPlacement.zone)
-            : undefined,
-          reservedZones: layoutPlan.reservedZones,
-          followsExamples: styleRefs.exampleCount > 0 && styleRefs.matchStyle,
-          hasProductPhotos: styleRefs.productCount > 0,
-        })
+      ? await runWithUsageScope(usageScope, () =>
+          directImage({
+            brandContext,
+            brief: subject,
+            draft: subject,
+            platformLabel: platformFormat.label,
+            formatLabel: platformFormat.contentFormatLabel,
+            pixelSize: platformFormat.pixelSize,
+            calmArea: textPlacement
+              ? headlineZonePhrase(textPlacement.zone)
+              : undefined,
+            reservedZones: layoutPlan.reservedZones,
+            followsExamples: styleRefs.exampleCount > 0 && styleRefs.matchStyle,
+            hasProductPhotos: styleRefs.productCount > 0,
+          }),
+        )
       : null;
 
     const prompt = photo
@@ -433,14 +446,18 @@ export async function performCreativeRevision({
         height: fitted.height,
       };
     } else {
-      generated = await generateCreativeImage(prompt, {
-        baseImage,
-        ...(styleRefs.exampleCount > 0 || styleRefs.productCount > 0
-          ? { referenceImages: styleRefs.images }
-          : { referenceImage: styleRefs.images[0] ?? undefined }),
-        imageSize: platformFormat.pixelSize,
-        falModelId,
-      });
+      generated = await runWithUsageScope(
+        usageScope,
+        () =>
+          generateCreativeImage(prompt, {
+            baseImage,
+            ...(styleRefs.exampleCount > 0 || styleRefs.productCount > 0
+              ? { referenceImages: styleRefs.images }
+              : { referenceImage: styleRefs.images[0] ?? undefined }),
+            imageSize: platformFormat.pixelSize,
+            falModelId,
+          }),
+      );
     }
     if (!generated) {
       return {

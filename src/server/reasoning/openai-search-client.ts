@@ -3,7 +3,9 @@ import "server-only";
 import OpenAI from "openai";
 
 import { getEnv } from "@/lib/env";
+import { recordUsage } from "@/server/billing/usage-recorder";
 import { toAgentelseError } from "@/server/chat/openai-chat-client";
+import { priceReasoningCall } from "@/server/reasoning/reasoning-pricing";
 import { AgentelseError } from "@/server/security/errors";
 
 import type {
@@ -53,6 +55,75 @@ function supportsReasoning(model: string): boolean {
   return /^(gpt-5|o\d)/.test(model);
 }
 
+type SearchResponse = {
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number };
+  } | null;
+  output: Array<{ type: string }>;
+};
+
+// Her Responses çağrısı (kesik yanıtla yeniden deneme dahil) kendi satırını
+// yazar; web_search çağrıları token üstüne ayrıca faturalanır.
+async function meterSearchCall(
+  model: string,
+  startedAt: number,
+  response: SearchResponse,
+): Promise<{ cachedTokens?: number; webSearchCalls: number }> {
+  const inputTokens = response.usage?.input_tokens;
+  const outputTokens = response.usage?.output_tokens;
+  const cachedTokens = response.usage?.input_tokens_details?.cached_tokens;
+  const webSearchCalls = response.output.filter(
+    (item) => item.type === "web_search_call",
+  ).length;
+  const priced = priceReasoningCall({
+    model,
+    inputTokens,
+    outputTokens,
+    cachedTokens,
+    webSearchCalls,
+  });
+  await recordUsage({
+    kind: "SEARCH",
+    provider: "openai",
+    model,
+    costUsd: priced.costUsd,
+    costEstimated: priced.estimated,
+    success: true,
+    durationMs: Date.now() - startedAt,
+    inputTokens,
+    outputTokens,
+    cachedTokens,
+    webSearchCalls,
+  });
+  return { cachedTokens, webSearchCalls };
+}
+
+// Zaman aşımı/ağ/5xx'te sağlayıcı işi yapmış olabilir (kullanım bilinmez):
+// 0 USD, tahmini işaretli satır. 4xx istek hatası faturalanmaz, yazılmaz.
+async function meterSearchFailure(
+  model: string,
+  startedAt: number,
+  error: unknown,
+): Promise<void> {
+  const status =
+    error && typeof error === "object" && "status" in error
+      ? (error as { status?: unknown }).status
+      : undefined;
+  if (typeof status === "number" && status < 500) return;
+  await recordUsage({
+    kind: "SEARCH",
+    provider: "openai",
+    model,
+    costUsd: 0,
+    costEstimated: true,
+    success: false,
+    errorCode: typeof status === "number" ? String(status) : "NETWORK",
+    durationMs: Date.now() - startedAt,
+  });
+}
+
 // Free-text report WITH live web search, for the research execution
 // capabilities (OpenAiAiProvider). Same transport and limits as the structured
 // variant below, but no schema: the report is turned into findings later by
@@ -69,9 +140,11 @@ export async function runOpenAITextWithSearch(
   text: string;
   inputTokens?: number;
   outputTokens?: number;
+  cachedTokens?: number;
   webSearchCalls: number;
 }> {
   let response;
+  const startedAt = Date.now();
   try {
     response = await getClient().responses.create({
       model: input.model,
@@ -85,8 +158,10 @@ export async function runOpenAITextWithSearch(
         : {}),
     });
   } catch (error) {
+    await meterSearchFailure(input.model, startedAt, error);
     throw toAgentelseError(error);
   }
+  const metered = await meterSearchCall(input.model, startedAt, response);
 
   if (
     response.status === "incomplete" &&
@@ -111,9 +186,8 @@ export async function runOpenAITextWithSearch(
     text,
     inputTokens: response.usage?.input_tokens,
     outputTokens: response.usage?.output_tokens,
-    webSearchCalls: response.output.filter(
-      (item) => item.type === "web_search_call",
-    ).length,
+    cachedTokens: metered.cachedTokens,
+    webSearchCalls: metered.webSearchCalls,
   };
 }
 
@@ -138,6 +212,7 @@ export async function runOpenAIStructuredWithSearch(
   }
 
   let response;
+  const startedAt = Date.now();
   try {
     response = await getClient().responses.create({
       model: input.model,
@@ -163,8 +238,10 @@ export async function runOpenAIStructuredWithSearch(
       },
     });
   } catch (error) {
+    await meterSearchFailure(input.model, startedAt, error);
     throw toAgentelseError(error);
   }
+  const metered = await meterSearchCall(input.model, startedAt, response);
 
   // The token budget covers hidden reasoning plus the JSON. A cut-off answer is
   // unparseable, so retry once with a bigger budget (same idea as the
@@ -201,8 +278,7 @@ export async function runOpenAIStructuredWithSearch(
     raw,
     inputTokens: response.usage?.input_tokens,
     outputTokens: response.usage?.output_tokens,
-    webSearchCalls: response.output.filter(
-      (item) => item.type === "web_search_call",
-    ).length,
+    cachedTokens: metered.cachedTokens,
+    webSearchCalls: metered.webSearchCalls,
   };
 }

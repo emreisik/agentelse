@@ -195,6 +195,9 @@ export const openaiChatModel: ChatModel = {
             cachedInputTokens:
               response.usage?.input_tokens_details?.cached_tokens,
             outputTokens: response.usage?.output_tokens,
+            webSearchCalls: response.output.filter(
+              (item) => item.type === "web_search_call",
+            ).length,
           };
         }
       }

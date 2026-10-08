@@ -10,6 +10,7 @@ import {
 import { runOpenAIStructuredWithSearch } from "@/server/reasoning/openai-search-client";
 import { SUPPORTED_LANGUAGES } from "@/lib/locales";
 import { prisma } from "@/lib/prisma";
+import { moduleOf, runWithUsageScope } from "@/server/billing/usage-context";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
 import { ReasoningCallRepository } from "@/server/repositories/reasoning-call.repository";
@@ -124,17 +125,29 @@ export const ReasoningService = {
         const runStructured = def.webSearch
           ? runOpenAIStructuredWithSearch
           : runOpenAIStructured;
-        const result = await runStructured({
-          model,
-          system: `${directive}\n\n${prompt.system}`,
-          // The directive goes both at the start and at the end: when
-          // placed only in the system prompt, it wasn't reliably followed
-          // on long prompts and part of the output came back in English.
-          user: `${prompt.user}\n\n${directive}`,
-          jsonSchema: z.toJSONSchema(def.schema),
-          maxOutputTokens: def.maxTokens ?? 8192,
-          attachments: input.attachments,
-        });
+        // Billing scope: every paid call below (including the doubled-budget
+        // retry) is attributed to this workspace/project and purpose.
+        const result = await runWithUsageScope(
+          {
+            workspaceId: input.workspaceId,
+            projectId: input.projectId,
+            source: "reasoning",
+            purpose: def.purpose,
+            module: moduleOf(def.purpose),
+          },
+          () =>
+            runStructured({
+              model,
+              system: `${directive}\n\n${prompt.system}`,
+              // The directive goes both at the start and at the end: when
+              // placed only in the system prompt, it wasn't reliably followed
+              // on long prompts and part of the output came back in English.
+              user: `${prompt.user}\n\n${directive}`,
+              jsonSchema: z.toJSONSchema(def.schema),
+              maxOutputTokens: def.maxTokens ?? 8192,
+              attachments: input.attachments,
+            }),
+        );
         output = def.schema.parse(result.raw);
         inputTokens = result.inputTokens;
         outputTokens = result.outputTokens;

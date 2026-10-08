@@ -16,6 +16,7 @@ import { ProjectRepository } from "@/server/repositories/project.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { startIntakeAtCreate } from "@/server/brand/intake-start";
 import { ensureProjectActive } from "@/server/projects/activation";
+import { runWithUsageScope } from "@/server/billing/usage-context";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import { putAsset, readAsset } from "@/server/storage/asset-storage";
 import { normalizeLogoUpload } from "@/server/media/logo-clean";
@@ -312,7 +313,17 @@ export async function generateLogoAction(formData: FormData) {
       : "a plain pure black background";
   const prompt = `A simple, modern, flat-design logo icon for a company called "${project.name}". ${dossier?.positioning ?? ""} Minimalist, vector style, centered on ${backdrop}, no text. ${colorInstruction}`;
 
-  const generated = await generateCreativeImage(prompt);
+  const generated = await runWithUsageScope(
+    {
+      workspaceId: access.workspaceId,
+      projectId,
+      userId,
+      source: "action",
+      purpose: "logo.generate",
+      module: "SOCIAL",
+    },
+    () => generateCreativeImage(prompt),
+  );
   if (!generated) {
     console.error(
       `[project-actions] logo generation failed for project ${projectId}`,

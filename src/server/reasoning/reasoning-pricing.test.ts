@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { estimateImageCostUsd, estimateReasoningCostUsd } from "./reasoning-pricing";
+import {
+  estimateFalImageCostUsd,
+  estimateImageCostUsd,
+  estimateReasoningCostUsd,
+  priceReasoningCall,
+} from "./reasoning-pricing";
 
 // Cost feeds the daily budget cap, so what matters is that nothing is left out
 // of it: tokens for both directions, and (new) each live web search, which
@@ -97,5 +102,44 @@ describe("estimateImageCostUsd", () => {
     expect(estimateImageCostUsd({ quality: "high", size: "2048x2048" })).toBeCloseTo(0.211 * 4, 6);
     // Smaller canvases are not discounted — never understate.
     expect(estimateImageCostUsd({ quality: "high", size: "512x512" })).toBeCloseTo(0.211, 6);
+  });
+});
+
+describe("priceReasoningCall", () => {
+  it("prices cached input tokens at 10% and only when the API reported them", () => {
+    const base = {
+      model: "gpt-5.6-luna",
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+    };
+    expect(priceReasoningCall(base).costUsd).toBeCloseTo(1, 8);
+    expect(
+      priceReasoningCall({ ...base, cachedTokens: 1_000_000 }).costUsd,
+    ).toBeCloseTo(0.1, 8);
+    // More cached than total is clamped, never a negative cost.
+    expect(
+      priceReasoningCall({ ...base, cachedTokens: 9_000_000 }).costUsd,
+    ).toBeCloseTo(0.1, 8);
+  });
+
+  it("flags the cost as an estimate for an unknown model or missing usage", () => {
+    expect(
+      priceReasoningCall({ model: "gpt-5.6-luna", inputTokens: 10, outputTokens: 5 })
+        .estimated,
+    ).toBe(false);
+    expect(
+      priceReasoningCall({ model: "some-future-model", inputTokens: 10, outputTokens: 5 })
+        .estimated,
+    ).toBe(true);
+    expect(priceReasoningCall({ model: "gpt-5.6-luna" }).estimated).toBe(true);
+  });
+});
+
+describe("estimateFalImageCostUsd", () => {
+  it("uses the listed price and overstates an unlisted endpoint", () => {
+    expect(estimateFalImageCostUsd("fal-ai/flux/schnell")).toBeLessThan(0.01);
+    expect(estimateFalImageCostUsd("fal-ai/unlisted")).toBeGreaterThan(
+      estimateFalImageCostUsd("fal-ai/flux-pro/v1.1-ultra"),
+    );
   });
 });

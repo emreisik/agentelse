@@ -1,6 +1,9 @@
 import "server-only";
 
 import { getEnv } from "@/lib/env";
+import { getUsageScope } from "@/server/billing/usage-context";
+import { recordUsage } from "@/server/billing/usage-recorder";
+import { estimateFalImageCostUsd } from "@/server/reasoning/reasoning-pricing";
 import { putAsset } from "@/server/storage/asset-storage";
 
 // fal.ai image generation — an additional, opt-in provider alongside
@@ -83,14 +86,43 @@ async function logHttpFailure(
   );
 }
 
+// fal.ai kullanım döndürmez: görsel başına liste fiyatı, hep TAHMİN olarak
+// işaretlenir (reasoning-pricing.ts FAL_USD_PER_IMAGE). Sonuç gelmişse fal
+// işi yapmış ve faturalamıştır; indirme/saklama başarısız olsa da yazılır.
+async function recordFalSpend(
+  endpointId: string,
+  startedAt: number,
+  outcome: { ok: true } | { ok: false; errorCode: string },
+): Promise<void> {
+  await recordUsage({
+    kind: "IMAGE",
+    provider: "fal",
+    model: endpointId,
+    purpose: getUsageScope()?.purpose ?? "image.generate",
+    costUsd: outcome.ok ? estimateFalImageCostUsd(endpointId) : 0,
+    costEstimated: true,
+    success: outcome.ok,
+    errorCode: outcome.ok ? undefined : outcome.errorCode,
+    durationMs: Date.now() - startedAt,
+    units: outcome.ok ? 1 : 0,
+  });
+}
+
 async function storeResult(
   result: FalImageResult,
+  endpointId: string,
+  startedAt: number,
 ): Promise<GeneratedFalImage | null> {
   const image = result.images?.[0];
   if (!image?.url) {
     console.error("[fal-image] no image in result", result.detail ?? "");
+    await recordFalSpend(endpointId, startedAt, {
+      ok: false,
+      errorCode: "NO_IMAGE",
+    });
     return null;
   }
+  await recordFalSpend(endpointId, startedAt, { ok: true });
 
   const response = await fetch(image.url);
   if (!response.ok) {
@@ -135,7 +167,8 @@ export async function generateFalImage(
   const env = getEnv();
   if (!env.FAL_API_KEY) return null;
 
-  const deadline = Date.now() + TOTAL_TIMEOUT_MS;
+  const startedAt = Date.now();
+  const deadline = startedAt + TOTAL_TIMEOUT_MS;
 
   try {
     const body: Record<string, unknown> = { prompt };
@@ -189,15 +222,28 @@ export async function generateFalImage(
           );
           return null;
         }
-        return storeResult((await resultResponse.json()) as FalImageResult);
+        return storeResult(
+          (await resultResponse.json()) as FalImageResult,
+          endpointId,
+          startedAt,
+        );
       }
       await sleep(POLL_INTERVAL_MS);
     }
 
     console.error(`[fal-image] timed out after ${TOTAL_TIMEOUT_MS}ms`);
+    // Kuyruğa girmiş iş iptal edilmedi: fal yine de üretip faturalamış olabilir.
+    await recordFalSpend(endpointId, startedAt, {
+      ok: false,
+      errorCode: "TIMEOUT",
+    });
     return null;
   } catch (error) {
     console.error("[fal-image] generation failed", error);
+    await recordFalSpend(endpointId, startedAt, {
+      ok: false,
+      errorCode: "NETWORK",
+    });
     return null;
   }
 }

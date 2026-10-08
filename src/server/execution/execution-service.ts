@@ -13,6 +13,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { remainingVariantSlots } from "@/lib/works/variants";
 import { capabilityLabel, PLATFORM_LABEL } from "@/lib/labels";
+import { moduleOf, runWithUsageScope } from "@/server/billing/usage-context";
 import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 import { CapabilityRouter } from "@/server/execution/capability-router";
@@ -250,17 +251,31 @@ export const ExecutionService = {
         })
       : null;
 
-    const accepted = await provider.execute({
-      executionJobId: job.id,
-      correlationId: job.correlationId,
-      idempotencyKey: job.idempotencyKey,
-      capability: job.capability,
-      context,
-      payload: {
-        ...((job.requestPayload as Record<string, unknown> | null) ?? {}),
-        brandContext: snapshot?.payload ?? {},
+    // Billing scope: whatever the provider buys (text, search, images — and the
+    // art-director / copywriter calls inside the creative provider) is
+    // attributed to this job's workspace and project, one operation per job.
+    const accepted = await runWithUsageScope(
+      {
+        workspaceId: job.workspaceId,
+        projectId: job.projectId,
+        source: "execution",
+        purpose: job.capability,
+        module: moduleOf(job.capability),
+        operationId: `exec:${job.id}`,
       },
-    });
+      () =>
+        provider.execute({
+          executionJobId: job.id,
+          correlationId: job.correlationId,
+          idempotencyKey: job.idempotencyKey,
+          capability: job.capability,
+          context,
+          payload: {
+            ...((job.requestPayload as Record<string, unknown> | null) ?? {}),
+            brandContext: snapshot?.payload ?? {},
+          },
+        }),
+    );
 
     const referencePersisted = await prisma.executionJob.updateMany({
       where: {

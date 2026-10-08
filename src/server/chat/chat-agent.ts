@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { CommandService } from "@/server/commands/command-service";
 import {
   limitNoticeFromError,
@@ -12,7 +14,10 @@ import { QuickDiscoveryService } from "@/server/brand/quick-discovery";
 import { memoryForPrompt } from "@/server/memory/relevance";
 import { ensureProjectActive } from "@/server/projects/activation";
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
-import { estimateReasoningCostUsd } from "@/server/reasoning/reasoning-pricing";
+import {
+  estimateReasoningCostUsd,
+  priceReasoningCall,
+} from "@/server/reasoning/reasoning-pricing";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
 import {
@@ -60,6 +65,7 @@ import {
 } from "@/lib/works/plan-layout";
 import { parsePlanBrief, stripPlanBriefMarker } from "@/lib/plan-brief";
 import { createBrandRulesGetter } from "@/server/works/brand-rule-loader";
+import { recordUsage as recordBillingUsage } from "@/server/billing/usage-recorder";
 import { loadRecentHistoryFiles } from "./history-files";
 import { createMockChatModel } from "./mock-chat-model";
 import {
@@ -242,6 +248,8 @@ export async function* runChatAgent(
   let cachedInputTokens = 0;
   let outputTokens = 0;
   let modelRan = false;
+  // Groups the billing rows (UsageEntry) of this message's model rounds.
+  const usageOperationId = `chat:${randomUUID()}`;
   // Where the time of this turn goes (logged once, see logTurnTiming): the
   // work before the first model call, the wait for the first token, the model
   // loop, and the writes after it.
@@ -715,6 +723,7 @@ export async function* runChatAgent(
       modelRan = true;
       timing.rounds += 1;
       timing.modelStartedAt ||= Date.now();
+      const roundStartedAt = Date.now();
       inFlight = "";
       let completed: Extract<ChatModelEvent, { type: "completed" }> | undefined;
 
@@ -747,6 +756,39 @@ export async function* runChatAgent(
         inputTokens += completed.inputTokens ?? 0;
         cachedInputTokens += completed.cachedInputTokens ?? 0;
         outputTokens += completed.outputTokens ?? 0;
+        if (modelName !== "mock") {
+          // One billing row per model round (explicit scope: an async
+          // generator does not reliably carry the caller's AsyncLocalStorage).
+          const priced = priceReasoningCall({
+            model: modelName,
+            inputTokens: completed.inputTokens,
+            outputTokens: completed.outputTokens,
+            cachedTokens: completed.cachedInputTokens,
+            webSearchCalls: completed.webSearchCalls,
+          });
+          await recordBillingUsage({
+            kind: completed.webSearchCalls ? "SEARCH" : "TEXT",
+            provider: "openai",
+            model: modelName,
+            purpose: "chat.turn",
+            costUsd: priced.costUsd,
+            costEstimated: priced.estimated,
+            success: true,
+            durationMs: timing.modelEndedAt - roundStartedAt,
+            inputTokens: completed.inputTokens,
+            outputTokens: completed.outputTokens,
+            cachedTokens: completed.cachedInputTokens,
+            webSearchCalls: completed.webSearchCalls,
+            scope: {
+              workspaceId: input.workspaceId,
+              projectId: input.projectId,
+              userId: input.userId,
+              source: "chat",
+              module: "CHAT",
+              operationId: usageOperationId,
+            },
+          });
+        }
       }
       // openai ends an aborted stream silently (no error, no `completed`):
       // a Stop in the middle of a reply must not be saved as an answer.

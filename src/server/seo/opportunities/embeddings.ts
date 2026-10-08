@@ -16,6 +16,7 @@ import {
   encodeVector,
   mockEmbedding,
 } from "@/lib/seo/vector";
+import { recordUsage } from "@/server/billing/usage-recorder";
 import { maskGoogleText } from "@/server/integrations/google/pii";
 import { gscMockMode } from "@/server/integrations/search-console/search-analytics";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
@@ -116,6 +117,24 @@ export async function embedTexts(
     }
     const tokens = response.usage?.total_tokens ?? 0;
     const costUsd = (tokens / 1_000_000) * EMBED_USD_PER_MTOKEN;
+    await recordUsage({
+      kind: "EMBED",
+      provider: "openai",
+      model: SEO_EMBEDDING_MODEL,
+      purpose: PURPOSE,
+      costUsd,
+      costEstimated: response.usage?.total_tokens === undefined,
+      success: true,
+      durationMs: Date.now() - startedAt,
+      inputTokens: tokens,
+      units: texts.length,
+      scope: {
+        workspaceId: scope.workspaceId,
+        projectId: scope.projectId,
+        source: "embeddings",
+        module: "SEO",
+      },
+    });
     await ReasoningCallRepository.record({
       ...scope,
       purpose: PURPOSE,

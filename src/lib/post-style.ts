@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { HEADLINE_ZONES, LAYOUT_LOGO_POSITIONS } from "@/lib/layout-templates";
+
 // The brand's Post Style Kit: example posts (pictures the client gave, or links
 // to them) plus standing instructions that every post is made by. The examples
 // are reverse-engineered once into a written design recipe and are sent to the
@@ -44,6 +46,18 @@ function text(max: number) {
 
 // What a design director reads off one example post, in words another designer
 // could rebuild the post from with a different product.
+// The few design facts the compositing can act on, read off an example (the
+// rest of the analysis is prose for the image model). "none" = the example has
+// no such element.
+export const PostStyleTraitsSchema = z.object({
+  logoCorner: z.enum([...LAYOUT_LOGO_POSITIONS, "none"]),
+  headlineZone: z.enum([...HEADLINE_ZONES, "none"]),
+  headlineAlign: z.enum(["left", "center"]),
+  headlineScale: z.enum(["M", "L", "XL"]),
+  bar: z.enum(["none", "line", "band"]),
+});
+export type PostStyleTraits = z.infer<typeof PostStyleTraitsSchema>;
+
 export const PostStyleAnalysisSchema = z.object({
   summary: text(160),
   layout: text(500),
@@ -55,6 +69,8 @@ export const PostStyleAnalysisSchema = z.object({
   mood: text(160),
   // The whole design as one instruction a model can follow.
   recipe: text(900),
+  // Absent on analyses made before it existed.
+  traits: PostStyleTraitsSchema.optional(),
 });
 export type PostStyleAnalysis = z.infer<typeof PostStyleAnalysisSchema>;
 
@@ -107,6 +123,42 @@ export type PostStyleContext = {
   directives: string;
   examples: PostStyleContextExample[];
 };
+
+// What the examples agree on, for the automatic design to follow: the most
+// common value of each trait among the enabled, analysed examples. Null when
+// none carries traits.
+export function postStyleTraitsOf(
+  context: PostStyleContext | null | undefined,
+): PostStyleTraits | null {
+  const all = (context?.examples ?? []).flatMap((example) =>
+    example.analysis?.traits ? [example.analysis.traits] : [],
+  );
+  if (all.length === 0) return null;
+  const most = <K extends keyof PostStyleTraits>(key: K): PostStyleTraits[K] => {
+    const counts = new Map<PostStyleTraits[K], number>();
+    for (const traits of all) {
+      counts.set(traits[key], (counts.get(traits[key]) ?? 0) + 1);
+    }
+    // Ties go to the newest example (the list is newest first).
+    let best = all[0]![key];
+    let bestCount = 0;
+    for (const traits of all) {
+      const count = counts.get(traits[key])!;
+      if (count > bestCount) {
+        best = traits[key];
+        bestCount = count;
+      }
+    }
+    return best;
+  };
+  return {
+    logoCorner: most("logoCorner"),
+    headlineZone: most("headlineZone"),
+    headlineAlign: most("headlineAlign"),
+    headlineScale: most("headlineScale"),
+    bar: most("bar"),
+  };
+}
 
 // Null when the kit holds nothing a render could use.
 export function buildPostStyleContext(input: {

@@ -119,6 +119,7 @@ export async function createPostsInTx(
         workId: plan.workId,
         planId: plan.commandId,
         ideaId: lead.ideaId,
+        photoAssetIds: lead.photoAssetIds ?? [],
         topic: lead.topic,
         idea: lead.captionIdea,
         goal: plan.goal,

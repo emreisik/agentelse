@@ -17,7 +17,8 @@ import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { startIntakeAtCreate } from "@/server/brand/intake-start";
 import { ensureProjectActive } from "@/server/projects/activation";
 import { generateCreativeImage } from "@/server/media/creative-image";
-import { putAsset } from "@/server/storage/asset-storage";
+import { putAsset, readAsset } from "@/server/storage/asset-storage";
+import { normalizeLogoUpload } from "@/server/media/logo-clean";
 import { isSupportedLanguage, isSupportedCountry } from "@/lib/locales";
 import { getEnv } from "@/lib/env";
 import { GUIDE_PARAM, GUIDE_VALUE } from "@/lib/guided-setup/contract";
@@ -247,8 +248,14 @@ export async function uploadLogoAction(formData: FormData) {
   const { userId } = await requireUser();
   const access = await requireProjectAccess(userId, projectId);
 
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const { storageKey, filename } = await putAsset(buffer, ext, file.type);
+  const original = Buffer.from(await file.arrayBuffer());
+  // Stored as the mark itself: a plain white backdrop is made transparent and
+  // the empty border trimmed, and its real size is recorded. An image that
+  // cannot be read that way is stored as it came.
+  const prepared = await normalizeLogoUpload(original);
+  const { storageKey, filename } = prepared
+    ? await putAsset(prepared.png, "png", "image/png")
+    : await putAsset(original, ext, file.type);
 
   const asset = await prisma.asset.create({
     data: {
@@ -258,9 +265,10 @@ export async function uploadLogoAction(formData: FormData) {
       type: "LOGO",
       source: "CUSTOMER_UPLOAD",
       filename,
-      mimeType: file.type,
+      mimeType: prepared ? "image/png" : file.type,
       storageKey,
-      size: file.size,
+      size: prepared ? prepared.png.byteLength : file.size,
+      ...(prepared ? { width: prepared.width, height: prepared.height } : {}),
     },
   });
 
@@ -296,7 +304,13 @@ export async function generateLogoAction(formData: FormData) {
     variant === "dark"
       ? "The logo mark itself must be dark-colored (black or a dark brand color) so it reads clearly on light backgrounds."
       : "The logo mark itself must be light-colored (white or a light brand color) so it reads clearly on dark backgrounds.";
-  const prompt = `A simple, modern, flat-design logo icon for a company called "${project.name}". ${dossier?.positioning ?? ""} Minimalist, vector style, centered on a plain white background, no text. ${colorInstruction}`;
+  // A plain backdrop the mark can be separated from afterwards: the opposite
+  // of the mark's own colour, so a white mark is not lost on white.
+  const backdrop =
+    variant === "dark"
+      ? "a plain pure white background"
+      : "a plain pure black background";
+  const prompt = `A simple, modern, flat-design logo icon for a company called "${project.name}". ${dossier?.positioning ?? ""} Minimalist, vector style, centered on ${backdrop}, no text. ${colorInstruction}`;
 
   const generated = await generateCreativeImage(prompt);
   if (!generated) {
@@ -306,6 +320,15 @@ export async function generateLogoAction(formData: FormData) {
     return;
   }
 
+  // The generated picture is a mark on a plain backdrop: store the mark alone.
+  const prepared = await normalizeLogoUpload(await readAsset(generated.storageKey), [
+    "light",
+    "dark",
+  ]).catch(() => null);
+  const stored = prepared
+    ? await putAsset(prepared.png, "png", "image/png")
+    : null;
+
   const asset = await prisma.asset.create({
     data: {
       workspaceId: access.workspaceId,
@@ -313,10 +336,11 @@ export async function generateLogoAction(formData: FormData) {
       brandId: access.defaultBrandId,
       type: "LOGO",
       source: "AI_GENERATED",
-      filename: generated.filename,
-      mimeType: generated.mimeType,
-      storageKey: generated.storageKey,
-      size: generated.size,
+      filename: stored?.filename ?? generated.filename,
+      mimeType: prepared ? "image/png" : generated.mimeType,
+      storageKey: stored?.storageKey ?? generated.storageKey,
+      size: prepared ? prepared.png.byteLength : generated.size,
+      ...(prepared ? { width: prepared.width, height: prepared.height } : {}),
     },
   });
 

@@ -28,18 +28,6 @@ import {
   ColorSwatchInput,
   type ColorSwatchValue,
 } from "@/components/brand/color-swatch-input";
-import { LayoutGallery } from "@/components/brand/layout-gallery";
-import type { PreviewLogos } from "@/components/brand/layout-preview";
-import {
-  DEFAULT_KIT_TEMPLATE,
-  type BrandKit,
-} from "@/lib/brand-kit";
-import {
-  buildPresetLayouts,
-  normalizeLayoutNames,
-  type LayoutPalette,
-  type LayoutTemplates,
-} from "@/lib/layout-templates";
 import {
   applyBrandScanAction,
   scanBrandWebsiteAction,
@@ -77,7 +65,6 @@ export function BrandScanButton({
   projectId,
   website,
   hasLogo,
-  kit,
   variant = "outline",
   size = "xs",
   label = "Scan site",
@@ -86,10 +73,6 @@ export function BrandScanButton({
   projectId: string;
   website: string | null;
   hasLogo: boolean;
-  // What the brand already has, for the layouts step (the current base
-  // template, saved layouts and both logo variants). Optional: without it the
-  // step starts from the defaults.
-  kit?: Pick<BrandKit, "template" | "layouts" | "logos">;
   variant?: "outline" | "default";
   size?: "xs" | "sm";
   label?: string;
@@ -115,7 +98,6 @@ export function BrandScanButton({
               projectId={projectId}
               initialUrl={website ?? ""}
               hasLogo={hasLogo}
-              kit={kit}
               onClose={() => setOpen(false)}
             />
           ) : null}
@@ -129,13 +111,11 @@ function ScanFlow({
   projectId,
   initialUrl,
   hasLogo,
-  kit,
   onClose,
 }: {
   projectId: string;
   initialUrl: string;
   hasLogo: boolean;
-  kit?: Pick<BrandKit, "template" | "layouts" | "logos">;
   onClose: () => void;
 }) {
   const [url, setUrl] = useState(initialUrl);
@@ -172,7 +152,6 @@ function ScanFlow({
         projectId={projectId}
         result={result}
         hasLogo={hasLogo}
-        kit={kit}
         onBack={() => setResult(null)}
         onDone={onClose}
       />
@@ -247,14 +226,12 @@ function ReviewStep({
   projectId,
   result,
   hasLogo,
-  kit,
   onBack,
   onDone,
 }: {
   projectId: string;
   result: SiteScanResult;
   hasLogo: boolean;
-  kit?: Pick<BrandKit, "template" | "layouts" | "logos">;
   onBack: () => void;
   onDone: () => void;
 }) {
@@ -276,27 +253,6 @@ function ReviewStep({
     Boolean(result.logo) && (!hasLogo || !result.logo!.fallback),
   );
 
-  // Post layouts: the brand's saved set, or presets built from its current
-  // logo / bar template. Reviewed and saved together with the identity.
-  const baseTemplate = kit?.template ?? DEFAULT_KIT_TEMPLATE;
-  const [layouts, setLayouts] = useState<LayoutTemplates>(
-    () => kit?.layouts ?? buildPresetLayouts(baseTemplate),
-  );
-  const layoutColors: LayoutPalette = {
-    primary: primary[0]?.hex ?? null,
-    secondary: secondary[0]?.hex ?? null,
-    accent: accent[0]?.hex ?? null,
-  };
-  // The logos the layouts will be previewed with: what the brand already has,
-  // with the scanned logo dropped into the slot its tone belongs to when the
-  // user is saving it.
-  const previewLogos: PreviewLogos = {
-    light: kit?.logos.light ? `/api/assets/${kit.logos.light}` : null,
-    dark: kit?.logos.dark ? `/api/assets/${kit.logos.dark}` : null,
-  };
-  if (useLogo && result.logo) {
-    previewLogos[result.logo.tone] = result.logo.dataUrl;
-  }
 
   function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -337,7 +293,6 @@ function ReviewStep({
         ) as ApplyBrandScanPayload["style"]["backgroundTone"],
         alwaysAvoid: list(form.get("alwaysAvoid"), /\n/),
       },
-      layouts: normalizeLayoutNames(layouts),
     };
 
     startApply(async () => {
@@ -541,22 +496,6 @@ function ReviewStep({
               rows={3}
             />
           </div>
-
-          <SectionTitle>Post layouts</SectionTitle>
-          <p className="-mt-2 text-xs text-muted-foreground">
-            Where the logo, color bar and headline go on your posts. The previews
-            use the colors and logo above. Click the layout new posts should use
-            (or pick another in chat). You can change these any time from the
-            Brand tab.
-          </p>
-          <LayoutGallery
-            value={layouts}
-            onChange={setLayouts}
-            colors={layoutColors}
-            logos={previewLogos}
-            baseTemplate={baseTemplate}
-            disabled={applying}
-          />
         </div>
         <DialogFooter className="shrink-0 border-t border-foreground/10 p-4">
           <Button

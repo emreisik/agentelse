@@ -29,6 +29,8 @@ export type RawSocialIdea = {
   channels?: string[];
   format?: string;
   layoutId?: string;
+  // The id of one of the brand's own photos listed in the prompt.
+  photoId?: string;
   pillar?: string;
   timing?: string;
   source?: string;
@@ -43,6 +45,9 @@ export type NormalizeContext = {
   channels: readonly ChannelKey[];
   // The brand's saved layouts.
   layoutIds: readonly string[];
+  // The brand's photos the prompt listed (asset ids); a model's pick that is
+  // not one of them is dropped.
+  photoIds?: readonly string[];
   // The signals the prompt listed, numbered from 1.
   signals: readonly { title: string; url?: string | null }[];
   today: string;
@@ -127,6 +132,9 @@ export function normalizeSocialIdea(
     raw.layoutId && ctx.layoutIds.includes(raw.layoutId.trim())
       ? raw.layoutId.trim()
       : undefined;
+  const photoId = raw.photoId?.trim();
+  const assetId =
+    photoId && ctx.photoIds?.includes(photoId) ? photoId : undefined;
   const pillar = clean(raw.pillar, 40);
   const timing = clean(raw.timing, 80);
   const why = clean(raw.why, 240);
@@ -164,6 +172,7 @@ export function normalizeSocialIdea(
         ? { formatKey: formatKeyFor(raw.format, channels) }
         : {}),
       ...(layoutId ? { layoutId } : {}),
+      ...(assetId ? { assetIds: [assetId] } : {}),
       ...(pillar ? { pillar } : {}),
       ...(timing ? { timing } : {}),
     },
@@ -179,11 +188,24 @@ export function normalizeSocialIdeas(
   ctx: NormalizeContext,
 ): SocialIdeaConcept[] {
   const seen: string[] = [...(ctx.avoid ?? [])];
+  const takenPhotos = new Set<string>();
   const out: SocialIdeaConcept[] = [];
   for (const raw of raws) {
-    const concept = normalizeSocialIdea(raw, ctx);
+    let concept = normalizeSocialIdea(raw, ctx);
     if (!concept) continue;
     if (isNearDuplicate(concept.draft.hook, seen)) continue;
+    // One photo is the picture of one idea: a later idea that names a photo an
+    // earlier one took makes its own picture instead.
+    const photo = concept.draft.assetIds?.[0];
+    if (photo) {
+      if (takenPhotos.has(photo)) {
+        const draft = { ...concept.draft };
+        delete draft.assetIds;
+        concept = { ...concept, draft };
+      } else {
+        takenPhotos.add(photo);
+      }
+    }
     seen.push(concept.draft.hook);
     out.push(concept);
   }

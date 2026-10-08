@@ -13,7 +13,9 @@ import {
   parseExample,
   pickReferenceExamples,
   postStyleSection,
+  postStyleTraitsOf,
   type PostStyleExample,
+  type PostStyleTraits,
 } from "./post-style";
 
 const analysis = (recipe = "Dark card, bold headline on top.") => ({
@@ -237,5 +239,83 @@ describe("exampleSummary", () => {
     expect(exampleSummary({ label: "x", analysis: analysis() })).toBe("Dark premium product ad");
     expect(exampleSummary({ label: "My post", analysis: null })).toBe("My post");
     expect(exampleSummary({ label: "", analysis: null })).toBe("Example post (not analysed yet)");
+  });
+});
+
+describe("postStyleTraitsOf", () => {
+  const traits = (over: Partial<PostStyleTraits> = {}): PostStyleTraits => ({
+    logoCorner: "BOTTOM_LEFT",
+    headlineZone: "TOP",
+    headlineAlign: "center",
+    headlineScale: "L",
+    bar: "line",
+    ...over,
+  });
+  const example = (assetId: string, t?: PostStyleTraits) => ({
+    assetId,
+    label: "",
+    analysis: t
+      ? {
+          summary: "s",
+          layout: "l",
+          typography: "t",
+          colors: "c",
+          product: "p",
+          graphics: "g",
+          background: "b",
+          mood: "m",
+          recipe: "r",
+          traits: t,
+        }
+      : null,
+  });
+  const context = (examples: ReturnType<typeof example>[]) => ({
+    fidelity: "match" as const,
+    directives: "",
+    examples,
+  });
+
+  it("takes what the examples agree on", () => {
+    const result = postStyleTraitsOf(
+      context([
+        example("a", traits({ headlineZone: "BOTTOM", bar: "band" })),
+        example("b", traits({ headlineZone: "BOTTOM" })),
+        example("c", traits({ headlineZone: "BOTTOM", bar: "band" })),
+      ]),
+    );
+    expect(result).toMatchObject({ headlineZone: "BOTTOM", bar: "band" });
+  });
+
+  it("lets the newest example decide a tie", () => {
+    const result = postStyleTraitsOf(
+      context([
+        example("new", traits({ headlineAlign: "left" })),
+        example("old", traits({ headlineAlign: "center" })),
+      ]),
+    );
+    expect(result?.headlineAlign).toBe("left");
+  });
+
+  it("skips examples without traits, and is null when none has them", () => {
+    expect(postStyleTraitsOf(context([example("a")]))).toBeNull();
+    expect(postStyleTraitsOf(null)).toBeNull();
+    expect(
+      postStyleTraitsOf(context([example("a"), example("b", traits())])),
+    ).toEqual(traits());
+  });
+
+  it("reads analyses stored before traits existed", () => {
+    const parsed = PostStyleAnalysisSchema.safeParse({
+      summary: "s",
+      layout: "l",
+      typography: "t",
+      colors: "c",
+      product: "p",
+      graphics: "g",
+      background: "b",
+      mood: "m",
+      recipe: "r",
+    });
+    expect(parsed.success).toBe(true);
   });
 });

@@ -74,6 +74,9 @@ export type SlotFirstImageArgs = {
   styleExampleIds?: string[];
   productAssetIds?: string[];
   onImageText?: string[];
+  // The brand's own photo this post is made from (already checked against the
+  // project): it is the picture, no model draws one.
+  photoAssetIds?: string[];
 };
 
 export type SlotFirstTextArgs = {
@@ -232,6 +235,7 @@ async function writeSlot(
     brief: string;
     brandFlags: BrandFlag[];
     brandCheck: BrandCheckState;
+    photoAssetIds?: string[];
   },
 ): Promise<
   { ok: true; slot: PlannedSlot } | { ok: false; stop: SlotFirstOutcome }
@@ -318,6 +322,9 @@ async function writeSlot(
       kind: "brief",
       ref: `${ctx.commandId}:${(ctx.slotsCreated ?? 0) + 1}`,
     },
+    ...(piece.photoAssetIds?.length
+      ? { photoAssetIds: piece.photoAssetIds }
+      : {}),
     ...(piece.brandFlags.length > 0 ? { brandFlags: piece.brandFlags } : {}),
   };
 
@@ -538,6 +545,7 @@ export async function slotFirstImage(
     brief,
     brandFlags: verdict.brandFlags,
     brandCheck: verdict.brandCheck,
+    photoAssetIds: args.photoAssetIds,
   });
   if (!written.ok) return written.stop;
   const slot = slotInfo(written.slot, channel, formatKey);
@@ -582,6 +590,10 @@ export async function slotFirstImage(
         },
         contentFormat: args.contentFormat,
         quality: args.quality === "final" ? "high" : "medium",
+        // The brand's own photo is the picture (the provider's photo mode).
+        ...(args.photoAssetIds?.length
+          ? { photoAssetIds: args.photoAssetIds.slice(0, 1) }
+          : {}),
       },
     });
   } catch (error) {

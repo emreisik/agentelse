@@ -44,6 +44,8 @@ export type SlotTarget = {
   captionIdea: string;
   origin: SlotOrigin;
   ideaId?: string;
+  // The brand's own photos the post is made from (docs/brand-media.md).
+  photoAssetIds?: string[];
   brandFlags?: BrandFlag[];
 };
 
@@ -171,6 +173,9 @@ function buildSlotItems(
       ...item,
       origin: target.origin,
       ...(target.ideaId ? { ideaId: target.ideaId } : {}),
+      ...(target.photoAssetIds && target.photoAssetIds.length > 0
+        ? { photoAssetIds: target.photoAssetIds }
+        : {}),
       ...(target.brandFlags && target.brandFlags.length > 0
         ? { brandFlags: target.brandFlags }
         : {}),

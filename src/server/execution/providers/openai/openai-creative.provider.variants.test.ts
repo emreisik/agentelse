@@ -13,6 +13,10 @@ vi.mock("@/server/reasoning/openai-client", () => ({
   runOpenAIStructured,
 }));
 
+// The art director has its own tests; here the text step's own prompt stands.
+const artDirector = vi.hoisted(() => ({ directImage: vi.fn() }));
+vi.mock("@/server/media/art-director", () => artDirector);
+
 const generateCreativeImage = vi.fn();
 vi.mock("@/server/media/creative-image", () => ({
   generateCreativeImage,
@@ -22,6 +26,11 @@ vi.mock("@/server/media/brand-logo", () => ({
   loadReferenceImage: vi.fn().mockResolvedValue(null),
 }));
 const applyBrandTemplate = vi.fn();
+// The copywriter step is covered by its own tests; here the model's draft stands.
+vi.mock("@/server/media/headline-copywriter", () => ({
+  writeOnImageText: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("@/server/media/creative-template", () => ({ applyBrandTemplate }));
 
 const { OpenAiCreativeProvider } = await import("./openai-creative.provider");
@@ -97,6 +106,7 @@ const isMain = (call: unknown[]) => promptOf(call).includes("MAIN-PROMPT");
 const isAlt = (call: unknown[]) => promptOf(call).includes("ALT-PROMPT");
 
 beforeEach(() => {
+  artDirector.directImage.mockResolvedValue(null);
   vi.clearAllMocks();
   runOpenAIStructured.mockResolvedValue(textStep);
   applyBrandTemplate.mockResolvedValue(null);
@@ -146,11 +156,39 @@ describe("variants: N-way renders", () => {
       jsonSchema: { properties: Record<string, unknown> };
     };
     expect(plainCall.system).not.toContain("alternativeImagePrompts");
+    // The automatic design has a headline zone, so the plain text step also
+    // writes the words; it never asks for alternatives.
     expect(Object.keys(plainCall.jsonSchema.properties)).toEqual([
       "caption",
       "copy",
       "imagePrompt",
+      "headline",
+      "highlight",
+      "lines",
     ]);
+  });
+
+  it("renders the art director's own alternatives, each a different scene", async () => {
+    artDirector.directImage.mockResolvedValue({
+      concept: "c",
+      subject: "Main subject",
+      setting: "Main setting",
+      composition: "Main composition",
+      lighting: "Main light",
+      technique: "Main technique",
+      texture: "Main texture",
+      mood: "Main mood",
+      avoid: [],
+      alternatives: ["DIRECTOR-ALT-ONE overhead flat lay", "DIRECTOR-ALT-TWO low angle"],
+    });
+    await run({ variantCount: 3 });
+
+    const prompts = generateCreativeImage.mock.calls.map((c) => c[0] as string);
+    expect(prompts.some((p) => p.includes("Main subject"))).toBe(true);
+    expect(prompts.some((p) => p.includes("DIRECTOR-ALT-ONE"))).toBe(true);
+    expect(prompts.some((p) => p.includes("DIRECTOR-ALT-TWO"))).toBe(true);
+    // The director is asked for the alternatives (pictures - 1 of them).
+    expect(artDirector.directImage.mock.calls[0]![0].pictures).toBe(3);
   });
 
   it("drops a failed alternative (null) and keeps the others", async () => {

@@ -232,6 +232,8 @@ export type IdeaDraftPatch = {
   visual?: string;
   caption?: string;
   layoutId?: string;
+  // The brand's own photo the post is made from; [] = a picture is made for it.
+  assetIds?: string[];
   channels?: string[];
 };
 
@@ -300,6 +302,21 @@ export async function updateIdeaDraftAction(
       if (patch.layoutId && ids.includes(patch.layoutId))
         draft.layoutId = patch.layoutId;
       else delete draft.layoutId;
+    }
+    if (Array.isArray(patch.assetIds)) {
+      const wanted = patch.assetIds
+        .filter((id): id is string => typeof id === "string" && validId(id))
+        .slice(0, 1);
+      // Only photos of this project: an id from anywhere else is dropped.
+      const found =
+        wanted.length > 0
+          ? await prisma.asset.findMany({
+              where: { id: { in: wanted }, projectId, type: "IMAGE" },
+              select: { id: true },
+            })
+          : [];
+      if (found.length > 0) draft.assetIds = found.map((asset) => asset.id);
+      else delete draft.assetIds;
     }
     if (Array.isArray(patch.channels)) {
       const connections = await getChannelConnections(projectId).catch(

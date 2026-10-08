@@ -64,6 +64,7 @@ const CAPABILITY_CONTEXT_FIELDS: Partial<
     "toneOfVoice",
     "visualGuidelines",
     "approvedColors",
+    "approvedFonts",
     "logoAssetId",
     "darkLogoAssetId",
     "visualIdentity",

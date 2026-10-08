@@ -14,6 +14,9 @@ vi.mock("@/server/reasoning/openai-client", () => ({
   runOpenAIStructured,
 }));
 
+const artDirector = vi.hoisted(() => ({ directImage: vi.fn() }));
+vi.mock("@/server/media/art-director", () => artDirector);
+
 const generateCreativeImage = vi.fn();
 vi.mock("@/server/media/creative-image", () => ({
   generateCreativeImage,
@@ -23,6 +26,9 @@ vi.mock("@/server/media/brand-logo", () => ({
   loadReferenceImage: vi.fn().mockResolvedValue(null),
 }));
 const applyBrandTemplate = vi.fn();
+const copywriter = vi.hoisted(() => ({ writeOnImageText: vi.fn() }));
+vi.mock("@/server/media/headline-copywriter", () => copywriter);
+
 vi.mock("@/server/media/creative-template", () => ({ applyBrandTemplate }));
 const storage = vi.hoisted(() => ({
   readAsset: vi.fn(),
@@ -111,6 +117,8 @@ const templateText = (call = 0) => applyBrandTemplate.mock.calls[call]![0].text;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  copywriter.writeOnImageText.mockResolvedValue(null);
+  artDirector.directImage.mockResolvedValue(null);
   runOpenAIStructured.mockResolvedValue({
     raw: {
       caption: "Brunch is back",
@@ -137,7 +145,9 @@ describe("a layout with a headline zone (Works plan path)", () => {
 
     expect(textStep().jsonSchema.properties).toHaveProperty("headline");
     expect(textStep().jsonSchema.properties).toHaveProperty("lines");
-    expect(textStep().system).toContain("at most 6 words");
+    // The draft is told what the layout can carry, not a blanket "six words".
+    expect(textStep().system).toMatch(/\d+-\d+ words, at most \d+ characters/);
+    expect(textStep().system).not.toContain("at most 6 words");
     expect(textStep().system).toContain("same language as the caption");
 
     const prompt = imagePrompt();
@@ -241,6 +251,103 @@ describe("a layout with a headline zone (Works plan path)", () => {
   });
 });
 
+describe("the art director step", () => {
+  const direction = {
+    concept: "A quiet Sunday ritual",
+    subject: "A copper kettle steaming above two ceramic cups",
+    setting: "A sunlit oak counter in a small Istanbul cafe",
+    composition: "Low three-quarter angle, subject lower right",
+    lighting: "Soft window light from the left",
+    technique: "85mm lens at f/2.0, shallow depth of field",
+    texture: "Visible steam and ring marks on the wood",
+    mood: "Calm and unhurried",
+    avoid: ["floating particles", "plastic-looking steam"],
+  };
+
+  it("makes the picture from the director's scene and adds its own avoid list", async () => {
+    artDirector.directImage.mockResolvedValue(direction);
+    await run({ brandContext: brandContext("headline-top") });
+
+    const prompt = imagePrompt();
+    expect(prompt).toContain("SUBJECT: A copper kettle steaming above two ceramic cups.");
+    expect(prompt).toContain("Lighting: Soft window light from the left.");
+    expect(prompt).toContain("For this picture: floating particles; plastic-looking steam.");
+    // The text step's own description is no longer what is rendered.
+    expect(prompt).not.toContain("A sunlit brunch table");
+  });
+
+  it("is given the brief, the draft, the format and the calm area for the words", async () => {
+    artDirector.directImage.mockResolvedValue(direction);
+    await run({ brandContext: brandContext("headline-top") });
+
+    const call = artDirector.directImage.mock.calls[0]![0];
+    expect(call.brief).toContain("Weekend brunch");
+    expect(call.caption).toBe("Brunch is back");
+    expect(call.draft).toBe("A sunlit brunch table");
+    expect(call.calmArea).toBe("in the upper third of the frame");
+    expect(call.platformLabel).toBeTruthy();
+    expect(call.pictures).toBe(1);
+  });
+
+  it("leaves the text step's prompt standing when the director cannot answer", async () => {
+    artDirector.directImage.mockResolvedValue(null);
+    await run({ brandContext: brandContext("headline-top") });
+    expect(imagePrompt()).toContain("SUBJECT: A sunlit brunch table");
+    expect(imagePrompt()).not.toContain("For this picture:");
+  });
+
+  it("records the idea the picture was directed from", async () => {
+    artDirector.directImage.mockResolvedValue(direction);
+    const status = await run({ brandContext: brandContext("headline-top") });
+    expect(status).toMatchObject({
+      rawResult: { artConcept: "A quiet Sunday ritual" },
+    });
+  });
+});
+
+describe("the copywriter step", () => {
+  it("rewrites the model's draft with the brand context and the layout's budget", async () => {
+    copywriter.writeOnImageText.mockResolvedValue({
+      headline: "Pazar sofrası, bu hafta sonu sizin için kuruldu",
+      highlight: "sizin için",
+      lines: ["Rezervasyon profilde", "Yer ayırt"],
+    });
+    await run({ brandContext: brandContext("headline-top") });
+
+    const call = copywriter.writeOnImageText.mock.calls[0]![0];
+    expect(call.draft).toMatchObject({ headline: "Pazar kahvaltısı geri döndü" });
+    expect(call.budget.maxChars).toBeGreaterThan(24);
+    expect(call.caption).toBe("Brunch is back");
+    // What reaches the picture is the copywriter's version.
+    expect(templateText()).toMatchObject({
+      headline: "Pazar sofrası, bu hafta sonu sizin için kuruldu",
+      highlight: "sizin için",
+      lines: ["Rezervasyon profilde", "Yer ayırt"],
+    });
+  });
+
+  it("keeps the draft when the copywriter cannot run", async () => {
+    copywriter.writeOnImageText.mockResolvedValue(null);
+    await run({ brandContext: brandContext("headline-top") });
+    expect(templateText()).toMatchObject({ headline: "Pazar kahvaltısı geri döndü" });
+  });
+
+  it("never rewrites words the client dictated in chat", async () => {
+    copywriter.writeOnImageText.mockResolvedValue({ headline: "Başka bir şey" });
+    await run({
+      brandContext: brandContext("headline-top"),
+      preset: {
+        caption: "c",
+        copy: "d",
+        imagePrompt: "p",
+        overlay: { headline: "Yaz indirimi başladı" },
+      },
+    });
+    expect(copywriter.writeOnImageText).not.toHaveBeenCalled();
+    expect(templateText()).toMatchObject({ headline: "Yaz indirimi başladı" });
+  });
+});
+
 describe("no words to set", () => {
   it("a layout without a headline zone keeps the textless post and the plain text step", async () => {
     runOpenAIStructured.mockResolvedValue({
@@ -252,18 +359,15 @@ describe("no words to set", () => {
     expect(storage.putAsset).not.toHaveBeenCalled();
   });
 
-  it("a brand with no layouts and no kit is exactly as before", async () => {
+  it("a brand with no layouts and no kit gets the automatic design's headline step", async () => {
     runOpenAIStructured.mockResolvedValue({
-      raw: { caption: "c", copy: "d", imagePrompt: "p" },
+      raw: { caption: "c", copy: "d", imagePrompt: "p", headline: "Kahvaltı hazır" },
     });
-    const status = await run({ brandContext: brandContext(null) });
-    expect(textStep().jsonSchema.properties).not.toHaveProperty("headline");
-    expect(textStep().system).not.toContain("ALSO produce");
-    expect(imagePrompt()).toContain("completely textless");
-    expect(imagePrompt()).not.toContain("typeset onto the image afterwards");
-    expect(templateText()).toBeUndefined();
-    const raw = (status as { rawResult: Record<string, unknown> }).rawResult;
-    expect(raw).not.toHaveProperty("onImageText");
+    await run({ brandContext: brandContext(null) });
+    expect(textStep().jsonSchema.properties).toHaveProperty("headline");
+    expect(textStep().system).toContain("ALSO produce");
+    expect(imagePrompt()).toContain("typeset onto the image afterwards");
+    expect(templateText()).toMatchObject({ headline: "Kahvaltı hazır" });
   });
 });
 

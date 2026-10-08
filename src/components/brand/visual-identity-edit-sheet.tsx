@@ -101,6 +101,7 @@ export function VisualIdentityEditSheet({
   open: openProp,
   onOpenChange: onOpenChangeProp,
   hideTrigger = false,
+  layoutsActive = false,
 }: {
   projectId: string;
   logoUrl: string | null;
@@ -119,6 +120,9 @@ export function VisualIdentityEditSheet({
   // The Instagram import flow renders its own trigger and drives `open`
   // itself; the plain "edit" entry point keeps the built-in pencil button.
   hideTrigger?: boolean;
+  // The brand has saved post layouts: they decide where the logo and the color
+  // bar go, so the placement fields below only apply once they are removed.
+  layoutsActive?: boolean;
 }) {
   const [openState, setOpenState] = useState(false);
   const open = openProp ?? openState;
@@ -338,9 +342,18 @@ export function VisualIdentityEditSheet({
                   Template — logo &amp; accent bar
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  Composited onto every generated image after AI generation —
-                  guaranteed, not a prompt suggestion.
+                  The logo and the brand bar are added to every generated image
+                  after AI generation, so they are always exact. Their size and
+                  position are chosen for you.
                 </p>
+                {layoutsActive ? (
+                  <p className="rounded-md bg-muted/60 px-2 py-1.5 text-[11px] text-foreground">
+                    You have saved post layouts. Each layout decides where the
+                    logo and the color bar go, so the position, size and bar
+                    settings below are used only when no layouts are saved. The
+                    switch below still turns the whole template off.
+                  </p>
+                ) : null}
               </div>
               <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2">
                 <div>
@@ -356,6 +369,16 @@ export function VisualIdentityEditSheet({
                   defaultChecked={effectiveIdentity.templateEnabled}
                 />
               </div>
+              <details className="rounded-lg border border-border/60 p-3">
+                <summary className="cursor-pointer text-xs font-medium text-foreground select-none">
+                  Advanced: place the logo and bar by hand
+                </summary>
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Not needed: the logo&apos;s size and position, the bar and the
+                  headline area are designed automatically for each post
+                  format. Changing these replaces that automatic design.
+                </p>
+                <div className="mt-3 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="vi-logo-position">Logo position</Label>
@@ -482,6 +505,8 @@ export function VisualIdentityEditSheet({
                   />
                 </div>
               </div>
+                </div>
+              </details>
             </div>
 
             <div className="sm:sticky sm:top-0">

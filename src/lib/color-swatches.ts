@@ -8,6 +8,8 @@
 // Lives in lib (not a component file) because both UI panels and the
 // server-only BrandTwin domain layer (src/server/brand-twin/) need it.
 
+import { cleanFontList } from "@/lib/font-names";
+
 export type ColorSwatch = { hex: string; name?: string };
 
 const HEX = /^#[0-9a-fA-F]{3,8}$/;
@@ -37,6 +39,10 @@ export function parseColorSwatches(value: unknown): ColorSwatch[] {
 }
 
 export function parseFontNames(value: unknown): string[] {
+  return cleanFontList(rawFontNames(value));
+}
+
+function rawFontNames(value: unknown): string[] {
   const entries = Array.isArray(value) ? value : value ? [value] : [];
   const names: string[] = [];
   for (const entry of entries) {

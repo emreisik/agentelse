@@ -16,6 +16,7 @@ import {
   CONSTITUTION_STATUS,
   FACT_CLASSIFICATION,
 } from "@/lib/labels";
+import { BrandKitSection } from "@/components/brand/brand-kit-section";
 import { PostStyleSection } from "@/components/brand/post-style-section";
 import { VisualIdentitySection } from "@/components/brand/visual-identity-section";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -40,6 +41,7 @@ import {
 } from "./brand-brain/assets-section";
 import { BrandBrainNav } from "./brand-brain/brand-brain-nav";
 import { GoalsSection } from "./brand-brain/goals-section";
+import { MediaSection } from "./brand-brain/media-section";
 import { IntelligenceSection } from "./brand-brain/intelligence-section";
 import type { PanelProps } from "./panel-props";
 
@@ -127,6 +129,7 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
     findingCount,
     insightCount,
     opportunityCount,
+    mediaCount,
   ] = await Promise.all([
     prisma.brandConstitution.count({ where: { brandId } }),
     prisma.brandLearning.count({ where: { projectId } }),
@@ -135,6 +138,7 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
     prisma.finding.count({ where: { projectId } }),
     prisma.insight.count({ where: { projectId } }),
     prisma.opportunity.count({ where: { projectId } }),
+    prisma.brandMedia.count({ where: { projectId, archivedAt: null } }),
   ]);
 
   const tabCount: Partial<Record<BrandBrainSubKey, number>> = {
@@ -148,6 +152,7 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
     goals: proposedGoalCount > 0 ? proposedGoalCount : undefined,
     intelligence: findingCount + insightCount + opportunityCount,
     learnings: learningCount,
+    media: mediaCount > 0 ? mediaCount : undefined,
   };
 
   return (
@@ -159,9 +164,20 @@ export async function BrandBrainPanel({ projectId, entity, sub }: PanelProps) {
       />
 
       <div className="min-w-0">
-        {activeSub === "visual-identity" ? (
+        {activeSub === "media" ? (
+          <MediaSection projectId={projectId} />
+        ) : activeSub === "visual-identity" ? (
           <div className="space-y-5">
-            <VisualIdentitySection projectId={projectId} brandId={brandId} />
+            <BrandKitSection
+              projectId={projectId}
+              brandId={brandId}
+              afterScan={
+                <VisualIdentitySection
+                  projectId={projectId}
+                  brandId={brandId}
+                />
+              }
+            />
             <PostStyleSection projectId={projectId} brandId={brandId} />
           </div>
         ) : activeSub === "constitution" ? (

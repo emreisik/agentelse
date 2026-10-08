@@ -37,6 +37,7 @@ describe("panels and Brand Brain tabs", () => {
       "assets",
       "rules",
       "visual-identity",
+      "media",
       "constitution",
       "goals",
       "intelligence",

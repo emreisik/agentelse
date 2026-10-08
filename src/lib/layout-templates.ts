@@ -484,6 +484,8 @@ export type LayoutTemplateConfig = {
   accentBarPosition: "TOP" | "BOTTOM";
   accentBarOpacity: number;
   logoOnBar: boolean;
+  // The size is a presence level fitted to the logo's own shape.
+  logoFit: "shape";
 };
 
 const LINE_OPACITY = 0.85;
@@ -509,6 +511,7 @@ export function layoutToTemplateConfig(
     // Only meaningful with a real band underneath.
     logoOnBar:
       layout.logo.onBand && layout.bar.enabled && band && Boolean(barColor),
+    logoFit: "shape",
   };
 }
 

@@ -56,6 +56,9 @@ export type LibraryAsset = {
   size: number;
   createdAt: string;
   type: string;
+  // One of the brand's own photos (Brand Brain, Media): listed apart in the
+  // Files panel.
+  photo?: boolean;
 };
 
 type TabKey = "all" | "images" | "videos" | "documents";

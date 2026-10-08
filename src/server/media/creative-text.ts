@@ -24,6 +24,8 @@ export type OnImageText = {
   highlight?: string;
   // Shorter supporting texts under the headline (at most 2 are set).
   lines?: string[];
+  // The call to action, set as a button-like pill under the texts.
+  cta?: string;
 };
 
 export type Rect = { left: number; top: number; width: number; height: number };
@@ -78,16 +80,33 @@ async function fetchGoogleFont(
   return bytes.byteLength > MAX_FONT_BYTES ? null : parseFont(bytes);
 }
 
+// A font that was found is kept for good. One that could not be fetched (Google
+// unreachable, a timeout) is tried again after a minute rather than never: a
+// brief outage must not set a brand's posts in Inter until the server restarts.
+const FONT_RETRY_MS = 60_000;
+const brandFontMisses = new Map<string, number>();
+
 function brandFont(
   family: string,
   weight: 400 | 700,
 ): Promise<OutlineFont | null> {
   const key = `${family.toLowerCase()}:${weight}`;
-  let font = brandFonts.get(key);
-  if (!font) {
-    font = fetchGoogleFont(family, weight).catch(() => null);
-    brandFonts.set(key, font);
+  const cached = brandFonts.get(key);
+  const missedAt = brandFontMisses.get(key);
+  if (cached && (missedAt === undefined || Date.now() - missedAt < FONT_RETRY_MS)) {
+    return cached;
   }
+  const font = fetchGoogleFont(family, weight)
+    .then((found) => {
+      if (found) brandFontMisses.delete(key);
+      else brandFontMisses.set(key, Date.now());
+      return found;
+    })
+    .catch(() => {
+      brandFontMisses.set(key, Date.now());
+      return null;
+    });
+  brandFonts.set(key, font);
   return font;
 }
 
@@ -113,8 +132,12 @@ export async function loadTextFonts(
   if (!name || !FAMILY.test(name)) {
     return { headline: interBold, body: interRegular };
   }
-  const regular = await brandFont(name, 400);
-  const bold = (await brandFont(name, 700)) ?? regular;
+  // Both weights at once: the first render of a font waits for one round trip.
+  const [regular, bold700] = await Promise.all([
+    brandFont(name, 400),
+    brandFont(name, 700),
+  ]);
+  const bold = bold700 ?? regular;
   return {
     headline: bold && covers(bold, text.headline) ? bold : interBold,
     body: regular && covers(regular, text.body) ? regular : interRegular,
@@ -133,7 +156,7 @@ const ZONE_LEFT: Record<HeadlineZone, number> = {
   LEFT_COLUMN: 0.08,
   BOTTOM: 0.08,
 };
-const ZONE_WIDTH: Record<HeadlineZone, number> = {
+export const ZONE_WIDTH: Record<HeadlineZone, number> = {
   TOP: 0.84,
   UPPER_LEFT: 0.62,
   CENTER: 0.8,
@@ -208,7 +231,7 @@ export function textZone(input: {
 // --- setting the words -----------------------------------------------------------
 
 // Headline size per layout scale, as a fraction of the canvas' short side.
-const SCALE_SIZE: Record<TextPlacement["scale"], number> = {
+export const SCALE_SIZE: Record<TextPlacement["scale"], number> = {
   M: 0.064,
   L: 0.08,
   XL: 0.1,
@@ -222,8 +245,14 @@ const BODY_RATIO = 0.44; // sub-line size to headline size
 const DESCENT = 0.24; // room under the last baseline (ğ ş ç p y), em
 const MAX_SUBLINES = 2;
 const ELLIPSIS = "…";
+// The call-to-action pill: label size to sub-line size, padding and height in
+// label sizes, and the gap above it in headline sizes.
+const CTA_SIZE_RATIO = 1.02;
+const CTA_PAD_X = 0.95;
+const CTA_HEIGHT = 1.95;
+const CTA_GAP = 0.3;
 
-type Role = "headline" | "highlight" | "line";
+type Role = "headline" | "highlight" | "line" | "cta";
 
 type Word = { text: string; width: number; role: Role };
 type Line = { words: Word[]; width: number };
@@ -239,6 +268,10 @@ export type GlyphRun = {
   role: Role;
 };
 
+// The call to action's pill: its shape, and where its label sits (the label is
+  // one of the runs, role "cta").
+export type CtaPill = { rect: Rect; radius: number };
+
 export type TextLayout = {
   zone: HeadlineZone;
   // The area the words were fitted into, and their own bounds.
@@ -247,6 +280,7 @@ export type TextLayout = {
   headlineSize: number;
   headlineLines: number;
   runs: GlyphRun[];
+  cta: CtaPill | null;
 };
 
 function textWidth(
@@ -393,11 +427,21 @@ function clampLines(
   return kept;
 }
 
+type FittedCta = {
+  text: string;
+  size: number;
+  textWidth: number;
+  width: number;
+  height: number;
+  padX: number;
+};
+
 type Fitted = {
   size: number;
   headline: Line[];
   bodySize: number;
   body: Line[];
+  cta: FittedCta | null;
   height: number;
   fits: boolean;
 };
@@ -471,6 +515,29 @@ function fitAt(
     );
   }
 
+  // The call to action: a pill that holds one line, shrunk to the zone's width.
+  let cta: FittedCta | null = null;
+  const ctaText = (text.cta ?? "").replace(/\s+/g, " ").trim();
+  if (ctaText) {
+    let ctaSize = bodySize * CTA_SIZE_RATIO;
+    const measure = (value: number) =>
+      textWidth(fonts.headline, ctaText, value, 0);
+    let padX = ctaSize * CTA_PAD_X;
+    const wanted = measure(ctaSize) + 2 * padX;
+    if (wanted > box.width) {
+      ctaSize *= box.width / wanted;
+      padX = ctaSize * CTA_PAD_X;
+    }
+    cta = {
+      text: ctaText,
+      size: ctaSize,
+      textWidth: measure(ctaSize),
+      width: measure(ctaSize) + 2 * padX,
+      height: ctaSize * CTA_HEIGHT,
+      padX,
+    };
+  }
+
   const cap = (fonts.headline.capHeight / fonts.headline.unitsPerEm) * size;
   const bodyCap = (fonts.body.capHeight / fonts.body.unitsPerEm) * bodySize;
   let height =
@@ -482,13 +549,17 @@ function fitAt(
       (body.length - 1) * bodySize * BODY_LEADING +
       DESCENT * bodySize;
   }
-  const widest = Math.max(...[...headline, ...body].map((line) => line.width));
+  if (cta) height += size * CTA_GAP + cta.height;
+  const widest = Math.max(
+    ...[...headline, ...body].map((line) => line.width),
+    cta?.width ?? 0,
+  );
   const fits =
     headline.length <= placement.maxLines &&
     body.length <= MAX_SUBLINES * 2 &&
     height <= box.height &&
     widest <= box.width + 0.5;
-  return { size, headline, bodySize, body, height, fits };
+  return { size, headline, bodySize, body, cta, height, fits };
 }
 
 export function layoutText(input: {
@@ -541,7 +612,7 @@ export function layoutText(input: {
     }
   }
 
-  const { size, headline, bodySize, body, height } = fitted;
+  const { size, headline, bodySize, body, cta, height } = fitted;
   const top =
     anchor === "top"
       ? box.top
@@ -596,7 +667,32 @@ export function layoutText(input: {
     }
   }
 
-  const widest = Math.max(...[...headline, ...body].map((line) => line.width));
+  // The pill is the last thing in the block; its label is a run of its own.
+  let pill: CtaPill | null = null;
+  if (cta) {
+    const pillLeft = xOf(cta.width);
+    const pillTop = top + height - cta.height;
+    pill = {
+      rect: { left: pillLeft, top: pillTop, width: cta.width, height: cta.height },
+      radius: cta.height / 2,
+    };
+    const labelCap =
+      (fonts.headline.capHeight / fonts.headline.unitsPerEm) * cta.size;
+    runs.push({
+      font: fonts.headline,
+      size: cta.size,
+      x: pillLeft + cta.padX,
+      baseline: pillTop + (cta.height + labelCap) / 2,
+      text: cta.text,
+      tracking: 0,
+      role: "cta",
+    });
+  }
+
+  const widest = Math.max(
+    ...[...headline, ...body].map((line) => line.width),
+    cta?.width ?? 0,
+  );
   return {
     zone: placement.zone,
     box,
@@ -604,6 +700,7 @@ export function layoutText(input: {
     headlineSize: size,
     headlineLines: headline.length,
     runs,
+    cta: pill,
   };
 }
 
@@ -774,18 +871,32 @@ export function textLayerSvg(
 ): string {
   const { width, height } = canvas;
   const { box } = layout;
+  // The pill takes the accent (else the ink); its label is whichever of white
+  // and near-black reads better on it.
+  const ctaFill = colors.highlight ?? colors.ink;
+  const ctaLabel =
+    contrastRatio(WHITE, ctaFill) >= contrastRatio(NEAR_BLACK, ctaFill)
+      ? WHITE
+      : NEAR_BLACK;
   const words = layout.runs
     .map((run) =>
       runPaths(
         run,
-        run.role === "highlight"
-          ? (colors.highlight ?? colors.ink)
-          : colors.ink,
+        run.role === "cta"
+          ? ctaLabel
+          : run.role === "highlight"
+            ? (colors.highlight ?? colors.ink)
+            : colors.ink,
         run.role === "line" ? colors.lineOpacity : 1,
       ),
     )
     .join("");
-  const lines = (text.lines ?? []).slice(0, MAX_SUBLINES).join(" / ");
+  const pill = layout.cta
+    ? `<rect x="${r2(layout.cta.rect.left)}" y="${r2(layout.cta.rect.top)}" width="${r2(layout.cta.rect.width)}" height="${r2(layout.cta.rect.height)}" rx="${r2(layout.cta.radius)}" fill="${ctaFill}"/>`
+    : "";
+  const lines = [...(text.lines ?? []).slice(0, MAX_SUBLINES), text.cta ?? ""]
+    .filter(Boolean)
+    .join(" / ");
   const shadow = colors.shadow
     ? `<filter id="soft" x="-10%" y="-20%" width="120%" height="140%"><feDropShadow dx="0" dy="${r2(layout.headlineSize * 0.03)}" stdDeviation="${r2(layout.headlineSize * 0.08)}" flood-color="#000000" flood-opacity="0.45"/></filter>`
     : "";
@@ -795,7 +906,7 @@ export function textLayerSvg(
     lines ? `<desc>${escapeXml(lines)}</desc>` : "",
     shadow ? `<defs>${shadow}</defs>` : "",
     scrimSvg(layout, colors, width, height),
-    `<g data-zone="${layout.zone}" data-box="${r2(box.left)} ${r2(box.top)} ${r2(box.width)} ${r2(box.height)}"${shadow ? ' filter="url(#soft)"' : ""}>${words}</g>`,
+    `<g data-zone="${layout.zone}" data-box="${r2(box.left)} ${r2(box.top)} ${r2(box.width)} ${r2(box.height)}"${shadow ? ' filter="url(#soft)"' : ""}>${pill}${words}</g>`,
     `</svg>`,
   ].join("");
 }

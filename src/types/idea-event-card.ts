@@ -254,6 +254,10 @@ export type IdeaEventCardData =
           ref: string;
         };
         ideaId?: string;
+        // The brand's own photos this post is made from (docs/brand-media.md):
+        // saved onto the Post, and the piece that renders its picture cuts it
+        // from the photo instead of asking an image model.
+        photoAssetIds?: string[];
         brandFlags?: BrandFlag[];
         // Set by removeSlotAction.
         removed?: boolean;

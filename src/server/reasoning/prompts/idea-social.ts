@@ -22,6 +22,8 @@ export const IdeaSocialSchema = z.object({
       // "post" | "carousel" | "story"
       format: z.string().optional(),
       layoutId: z.string().optional(),
+      // The id of one of the brand's own photos listed, when it IS the picture.
+      photoId: z.string().optional(),
       pillar: z.string().optional(),
       timing: z.string().optional(),
       source: z.string().optional(),
@@ -60,12 +62,13 @@ export const ideaSocialDef: ReasoningDef<IdeaSocialOutput> = {
         "You are the content strategist of an AI social media team. You keep one brand's idea pool full of strong, ready-to-make social post ideas; the client picks from it, nothing is published without them.\n\n" +
         "Every idea is ONE post (never a campaign or a list of tactics):\n" +
         '- hook: the post\'s first line, one specific, scroll-stopping sentence about this brand (a concrete benefit, a number, a sharp question or a tension), never a generic opener such as "Discover our…", "Introducing…" or "Check out…". At most 140 characters.\n' +
-        "- headline: the words printed on the picture, at most 6 words, no hashtags, emoji, quotation marks or full stop.\n" +
+        "- headline: the words printed on the picture, 4-8 words, a complete thought with a concrete benefit, number, question or tension (never a bare label), no hashtags, emoji, quotation marks or full stop.\n" +
         "- highlight (optional): the one or two words of the headline that carry the hook.\n" +
         "- visual: one concrete scene for the picture (subject, setting, framing and mood, in the brand's look). No text in the picture.\n" +
         "- caption: 1-3 sentences in the brand's voice, ending with one clear call to action.\n" +
         "- channels: from the allowed channels only. format: post, carousel or story.\n" +
         "- layoutId: one of the brand's layouts listed, preferring one with a headline; omit when none is listed.\n" +
+        "- photoId: the id of ONE photo from the brand's own photos listed, only when that real photo is the picture the post should have (the hook and the scene are about what it shows); then write `visual` as how to use it (the crop, the feeling), not a new scene. Omit when none fits: never force a photo and never invent an id. Use each photo at most once.\n" +
         "- pillar: 2-3 words (for example Behind the scenes, Product, Tips, Community, Offer, Seasonal).\n" +
         "- timing: when it fits best, in words (for example Thursday morning, before Halloween).\n" +
         "- source: trend (a market or culture signal), season (a date or season), results (builds on what worked), brand (the brand's own story or product), opportunity (the given opportunity) or search (what people search for).\n" +
@@ -85,6 +88,9 @@ export const ideaSocialDef: ReasoningDef<IdeaSocialOutput> = {
         `Brand profile: ${JSON.stringify(context.brand ?? {})}\n\n` +
         `Allowed channels: ${JSON.stringify(context.channels ?? ["instagram"])}\n\n` +
         `Brand layouts: ${JSON.stringify(context.layouts ?? [])}\n\n` +
+        (Array.isArray(context.photos) && context.photos.length > 0
+          ? `The brand's own photos (id, shape, what it shows): ${JSON.stringify(context.photos)}\n\n`
+          : "") +
         `Signals (numbered): ${JSON.stringify(context.signals ?? [])}\n\n` +
         `Open opportunities: ${JSON.stringify(context.opportunities ?? [])}\n\n` +
         `How the client judged published posts: ${JSON.stringify(context.postResults ?? {})}\n\n` +

@@ -131,6 +131,7 @@ export function LayoutPreview({
   text,
   fontFamily,
   showLogo = true,
+  photoSrc,
   className,
 }: {
   layout: LayoutTemplate;
@@ -147,13 +148,16 @@ export function LayoutPreview({
   fontFamily?: string;
   // false: no logo and no placeholder for one (a post that gets no logo).
   showLogo?: boolean;
+  // The brand's own photo the post is made from: it fills the canvas and the
+  // words are set light over a soft shade, as the real post does.
+  photoSrc?: string;
   className?: string;
 }) {
   const cls = aspect ?? previewAspect(layout);
   const ratio = ratioOverride ?? RATIO[cls];
   const base = colors.primary ?? FALLBACK_BASE;
   const deep = colors.secondary ?? colors.primary ?? FALLBACK_DEEP;
-  const ink = readableOn(base);
+  const ink = photoSrc ? LIGHT_INK : readableOn(base);
 
   const barColor = layout.bar.enabled
     ? (resolveLayoutColor(layout.bar.color, colors) ?? colors.accent ?? base)
@@ -266,11 +270,31 @@ export function LayoutPreview({
         containerType: "inline-size",
       }}
     >
-      <div
-        data-part="subject"
-        className="absolute rounded-[26%] bg-white/15 ring-1 ring-white/25"
-        style={subjectBox(layout)}
-      />
+      {photoSrc ? (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element -- a stored photo served by our own route */}
+          <img
+            src={photoSrc}
+            alt=""
+            data-part="photo"
+            className="absolute inset-0 size-full object-cover"
+          />
+          <div
+            aria-hidden
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(to bottom, rgba(0,0,0,0.32), rgba(0,0,0,0.05) 45%, rgba(0,0,0,0.32))",
+            }}
+          />
+        </>
+      ) : (
+        <div
+          data-part="subject"
+          className="absolute rounded-[26%] bg-white/15 ring-1 ring-white/25"
+          style={subjectBox(layout)}
+        />
+      )}
 
       {layout.bar.enabled && barColor ? (
         <div

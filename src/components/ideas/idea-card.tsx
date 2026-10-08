@@ -43,7 +43,11 @@ import {
   kitLayoutPalette,
   type BrandKit,
 } from "@/lib/brand-kit";
-import { boardStatusOf, type BoardIdea } from "@/lib/ideas/board";
+import {
+  boardStatusOf,
+  type BoardIdea,
+  type PickerPhoto,
+} from "@/lib/ideas/board";
 import {
   DISMISS_REASONS,
   strengthOf,
@@ -73,6 +77,8 @@ export type IdeaCardContext = {
   fontFamily?: string;
   timezone: string;
   now: Date;
+  // The brand's own photos, for the picture picker of the detail view.
+  photos?: PickerPhoto[];
 };
 
 export type IdeaCardHandlers = {
@@ -203,6 +209,11 @@ export function IdeaPostPreview({
       }}
       fontFamily={fontFamily}
       showLogo={Boolean(logos.light || logos.dark)}
+      photoSrc={
+        concept.draft.assetIds?.[0]
+          ? assetUrl(concept.draft.assetIds[0], "card")
+          : undefined
+      }
       className={cn("rounded-none ring-0", className)}
     />
   );

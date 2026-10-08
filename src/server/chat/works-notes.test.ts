@@ -138,7 +138,7 @@ describe("works-notes in a module chat", () => {
     // The headline on the picture, one visual idea and a caption with a CTA,
     // all in the plan tool's existing fields.
     expect(note).toContain("the on-image headline in double quotes");
-    expect(note).toContain("at most 6 words");
+    expect(note).toContain("4-8 words");
     expect(note).toContain("the visual idea (one concrete scene");
     expect(note).toContain("ending with one clear call to action");
     expect(note).toContain("`captionIdea` is three parts");

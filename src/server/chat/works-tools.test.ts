@@ -134,10 +134,12 @@ describe("tool registry", () => {
       "propose_plan_options",
       "propose_ideas",
       "propose_master_content",
+      "search_brand_photos",
     ]);
     for (const t of WORKS_ONLY_TOOLS) {
       expect((t as unknown as Loose).requiresWorks).toBe(true);
-      expect(t.kind).toBe("note");
+      // The photo search only reads; the rest put a card in the chat.
+      expect(t.kind).toBe(t.name === "search_brand_photos" ? "read" : "note");
     }
     expect(ideasTool.sensitive).toBe(true);
     expect(optionsTool.sensitive).toBeUndefined();

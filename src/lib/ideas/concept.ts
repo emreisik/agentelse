@@ -46,8 +46,10 @@ export const DISMISS_REASONS = [
 ] as const;
 export type DismissReason = (typeof DISMISS_REASONS)[number];
 
-// The words written on the picture (creative-text.ts typesets at most ~6).
-export const HEADLINE_MAX_WORDS = 6;
+// The most words an idea's headline may have. The idea's headline is a draft:
+// when the post is made, the copywriter step rewrites it for the room its
+// layout has (server/media/headline-budget.ts), so this only keeps it a line.
+export const HEADLINE_MAX_WORDS = 9;
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 
@@ -67,6 +69,9 @@ export const SocialDraftSchema = z.object({
   formatKey: z.string().max(40).optional(),
   // One of the brand's post layouts (src/lib/layout-templates.ts).
   layoutId: z.string().max(40).optional(),
+  // The brand's own photos (asset ids) the post is made from instead of a
+  // drawn picture (docs/brand-media.md). Absent = the picture is made for it.
+  assetIds: z.array(z.string().min(1).max(64)).max(3).optional(),
   // The content pillar, a word or two ("Behind the scenes").
   pillar: z.string().trim().max(40).optional(),
   // When it fits best, in words ("Thursday morning", "before Oct 31").

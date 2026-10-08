@@ -49,3 +49,11 @@ describe("constants vs estimateImageCostUsd", () => {
     expect(Math.abs(IMAGE_PIECE_COST_USD.story - s)).toBeLessThan(0.002);
   });
 });
+
+describe("a post made from the brand's own photo", () => {
+  it("costs nothing in pictures", () => {
+    expect(pieceCostUsd({ ...post, photo: true })).toBe(0);
+    expect(produceCostNote([{ ...post, photo: true }, { ...story, photo: true }])).toBeNull();
+    expect(produceCostNote([{ ...post, photo: true }, post])).toBe("about $0.08");
+  });
+});

@@ -143,9 +143,9 @@ const PRE_CHANGE_DEFINITIONS: Record<
       '{"type":"object","properties":{"capability":{"type":"string","enum":["CREATE_COPY","CREATE_CAPTION","CREATE_CAMPAIGN_BRIEF","COMPETITOR_RESEARCH","MARKET_RESEARCH","TREND_RESEARCH","CUSTOMER_INTELLIGENCE","PRODUCT_RESEARCH","WEB_RESEARCH","SEO_RESEARCH","SEO_ANALYSIS","SOCIAL_RESEARCH","SOCIAL_PROFILE_AUDIT","SOCIAL_ACCOUNT_SETUP","INSTAGRAM_PUBLISH","TIKTOK_PUBLISH","LINKEDIN_PUBLISH","X_PUBLISH","ANALYTICS_ANALYSIS","META_ADS_ANALYSIS","META_CAMPAIGN_CREATE","GOOGLE_ADS_ANALYSIS","EMAIL_DRAFT","REPORTING"]},"taskBrief":{"type":"string"},"platform":{"type":"string","enum":["INSTAGRAM","TIKTOK","LINKEDIN","X","FACEBOOK","YOUTUBE","PINTEREST"]},"contentFormat":{"type":"string","enum":["FEED_SQUARE","FEED_PORTRAIT","FEED_LANDSCAPE","STORY","REEL","COVER","THUMBNAIL","LINK_PREVIEW","HEADER","PIN","SHORTS"]}},"required":["capability","taskBrief"],"additionalProperties":false}',
   },
   generate_image: {
-    descriptionLength: 2479,
+    descriptionLength: 2687,
     descriptionSha:
-      "0d3eb747999a2bba69464babd0c1aec92d7417d91a4e70549d408c383b41dd76",
+      "61fe6f74b4acace353edcb7984051d727abe3da5af9f05982a2d5cfb143237c9",
     parameters:
       '{"type":"object","properties":{"imagePrompt":{"type":"string","minLength":1},"headline":{"type":"string"},"highlight":{"type":"string"},"caption":{"type":"string"},"copy":{"type":"string"},"platform":{"type":"string","enum":["INSTAGRAM","TIKTOK","LINKEDIN","X","FACEBOOK","YOUTUBE","PINTEREST"]},"contentFormat":{"type":"string","enum":["FEED_SQUARE","FEED_PORTRAIT","FEED_LANDSCAPE","STORY","REEL","COVER","THUMBNAIL","LINK_PREVIEW","HEADER","PIN","SHORTS"]},"layoutId":{"type":"string","maxLength":40},"quality":{"type":"string","enum":["draft","final"]}},"required":["imagePrompt","caption","copy"],"additionalProperties":false}',
   },
@@ -244,6 +244,7 @@ describe("the Works tool list", () => {
       "propose_plan_options",
       "propose_ideas",
       "propose_master_content",
+      "search_brand_photos",
     ]);
   });
 
@@ -278,7 +279,7 @@ describe("the Works tool list", () => {
     }
   });
 
-  it("a Work's picture tool takes three more fields (the examples to follow, the product photos of this message, the other on-image texts) and nothing else changes", () => {
+  it("a Work's picture tool takes four more fields (the examples to follow, the product photos of this message, the other on-image texts, an own photo) and nothing else changes", () => {
     type Params = { properties: Record<string, unknown>; required?: string[] };
     const works = toOpenAITools([worksTool("generate_image")])[0] as {
       parameters: Params;
@@ -286,8 +287,14 @@ describe("the Works tool list", () => {
     const plain = toOpenAITools([defaultTool("generate_image")])[0] as {
       parameters: Params;
     };
-    const { styleExampleIds, usePhotosFromThisMessage, onImageText, ...rest } =
-      works.parameters.properties;
+    const {
+      styleExampleIds,
+      usePhotosFromThisMessage,
+      onImageText,
+      photoAssetIds,
+      ...rest
+    } = works.parameters.properties;
+    expect(photoAssetIds).toBeDefined();
     expect(styleExampleIds).toBeDefined();
     expect(usePhotosFromThisMessage).toBeDefined();
     expect(onImageText).toBeDefined();
@@ -297,7 +304,7 @@ describe("the Works tool list", () => {
     expect("styleExampleIds" in plain.parameters.properties).toBe(false);
   });
 
-  it("a Work's plan tool takes two more fields per post, its purpose and its pool idea, and nothing else changes", () => {
+  it("a Work's plan tool takes three more fields per post (purpose, pool idea, own photo) and nothing else changes", () => {
     type Params = {
       properties: {
         title: unknown;
@@ -310,10 +317,11 @@ describe("the Works tool list", () => {
     const plain = toOpenAITools([defaultTool("propose_content_plan")])[0] as {
       parameters: Params;
     };
-    const { purpose, ideaId, ...rest } =
+    const { purpose, ideaId, photoAssetIds, ...rest } =
       works.parameters.properties.items.items.properties;
     expect(purpose).toBeDefined();
     expect(ideaId).toBeDefined();
+    expect(photoAssetIds).toBeDefined();
     expect(rest).toEqual(plain.parameters.properties.items.items.properties);
     expect(works.parameters.properties.title).toEqual(
       plain.parameters.properties.title,
@@ -383,6 +391,7 @@ describe("module chats (Work.module)", () => {
       "propose_plan_options",
       "propose_ideas",
       "propose_master_content",
+      "search_brand_photos",
     ]);
   });
 
@@ -398,6 +407,7 @@ describe("module chats (Work.module)", () => {
         "update_work_session",
         ...READS,
         "suggest_replies",
+        "search_brand_photos",
       ]);
     },
   );

@@ -346,6 +346,7 @@ export function IdeasBoard({
     fontFamily,
     timezone: data.timezone,
     now,
+    photos: data.photos,
   };
 
   const statusCounts = countByStatus(ideas, now);

@@ -6,7 +6,13 @@ import { prisma } from "@/lib/prisma";
 import { parseColorSwatches } from "@/lib/color-swatches";
 import type { TextPlacement } from "@/lib/layout-templates";
 import { readAsset, overwriteAsset } from "@/server/storage/asset-storage";
-import { trimTransparentBorders } from "@/server/media/logo-trim";
+import { fitLogoBox } from "@/lib/logo-fit";
+import {
+  cleanLogo,
+  isMonochromeLogo,
+  logoForegroundLuminance,
+  tintLogo,
+} from "@/server/media/logo-clean";
 import {
   renderTextLayer,
   type OnImageText,
@@ -34,6 +40,11 @@ export type TemplateConfig = {
   accentBarOpacity?: number;
   // Put the logo INSIDE the bar, centred on it — the "brand band" layout.
   logoOnBar?: boolean;
+  // "shape": the size is a presence level, turned into a box that fits the
+  // logo's own proportions (src/lib/logo-fit.ts), and the logo is checked to
+  // read against the picture. Absent: the size is a plain percent of the
+  // width, as it always was.
+  logoFit?: "shape";
 };
 
 // What applyBrandTemplate() accepts. The layout templates
@@ -104,6 +115,18 @@ function extractAccentColorHex(approvedColors: unknown): string | null {
 // region counts as "dark" -> the light logo variant is legible there.
 const DARK_REGION_LUMINANCE_THRESHOLD = 128;
 
+// Contrast (1-21, WCAG-style) a logo needs against what is behind it before it
+// is repainted or given a plate: lower on a photo (its brightness varies under
+// the logo) than on a flat brand band.
+const READABLE_ON_PICTURE = 2.4;
+const READABLE_ON_BAND = 3;
+
+function logoContrast(a: number, b: number): number {
+  const light = (value: number) => Math.pow(Math.max(0, value) / 255, 2.2);
+  const [hi, lo] = [light(a), light(b)].sort((x, y) => y - x);
+  return (hi! + 0.05) / (lo! + 0.05);
+}
+
 const DEFAULT_BAR_OPACITY = 0.85;
 // A logo goes inside the bar only when the bar is at least this tall
 // (fraction of the image height)...
@@ -123,16 +146,18 @@ function hexLuminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-export async function applyBrandTemplate(input: {
-  storageKey: string;
-  mimeType: string;
+// The compositing itself, on pictures in memory: used by applyBrandTemplate
+// (which reads and writes the stored files) and by the design previews, which
+// must show exactly what a post gets and so run the very same code.
+export async function composeBrandTemplate(input: {
+  base: Buffer;
   // Light-colored logo (legible on dark backgrounds) and dark-colored logo
   // (legible on light backgrounds) — when both are set, the region behind
   // the logo's placement is sampled for brightness and the matching variant
   // is picked automatically, no artificial backdrop needed. When only one
   // is set, that one is always used (today's single-logo behavior).
-  lightLogoAssetId?: string | null;
-  darkLogoAssetId?: string | null;
+  lightLogo?: Buffer | null;
+  darkLogo?: Buffer | null;
   // Structured accent colors (role-labeled) from BrandVisualIdentity —
   // used when template.accentBarColorHex isn't explicitly set. Legacy
   // approvedColors (BrandDossier, untyped Json) is the final fallback for
@@ -151,7 +176,7 @@ export async function applyBrandTemplate(input: {
   // The post's words, typeset in the layout's headline zone, clear of the
   // logo, the bar and the platform's UI. Absent = a picture without words.
   text?: TemplateText;
-}): Promise<{ size: number; textDrawn?: boolean } | null> {
+}): Promise<{ buffer: Buffer; textDrawn?: boolean } | null> {
   const cfg: AppliedTemplateConfig = {
     ...DEFAULT_TEMPLATE_CONFIG,
     ...input.template,
@@ -172,36 +197,21 @@ export async function applyBrandTemplate(input: {
   // Relaxed from the original "no logo -> bail out entirely": a brand with
   // no logo yet can still get a consistent accent-bar treatment. Only skip
   // when there's truly nothing to draw.
-  const hasLogo =
-    branded && Boolean(input.lightLogoAssetId || input.darkLogoAssetId);
+  const lightBuffer = branded ? (input.lightLogo ?? null) : null;
+  const darkBuffer = branded ? (input.darkLogo ?? null) : null;
+  const hasLogo = Boolean(lightBuffer || darkBuffer);
   if (!hasLogo && !accentHex && !text) return null;
 
-  const [lightLogoAsset, darkLogoAsset] = await Promise.all([
-    hasLogo && input.lightLogoAssetId
-      ? prisma.asset.findUnique({
-          where: { id: input.lightLogoAssetId },
-          select: { storageKey: true },
-        })
-      : null,
-    hasLogo && input.darkLogoAssetId
-      ? prisma.asset.findUnique({
-          where: { id: input.darkLogoAssetId },
-          select: { storageKey: true },
-        })
-      : null,
-  ]);
-  const lightLogoStorageKey = lightLogoAsset?.storageKey ?? null;
-  const darkLogoStorageKey = darkLogoAsset?.storageKey ?? null;
-  if (!lightLogoStorageKey && !darkLogoStorageKey && !accentHex && !text) {
-    return null;
-  }
+  const lightLogoStorageKey = lightBuffer ? "light" : null;
+  const darkLogoStorageKey = darkBuffer ? "dark" : null;
 
-  const readLogo = async (storageKey: string) => {
-    const buffer = await readAsset(storageKey);
-    return input.trimLogo ? trimTransparentBorders(buffer) : buffer;
+  const readLogo = async (which: string) => {
+    const buffer = which === "light" ? lightBuffer! : darkBuffer!;
+    // Cleaned: a plain light backdrop removed, the empty border trimmed.
+    return input.trimLogo ? cleanLogo(buffer) : buffer;
   };
 
-  const baseBuffer = await readAsset(input.storageKey);
+  const baseBuffer = input.base;
   const baseMeta = await sharp(baseBuffer).metadata();
   const width = baseMeta.width ?? 1024;
   const height = baseMeta.height ?? 1024;
@@ -241,6 +251,16 @@ export async function applyBrandTemplate(input: {
       barHeight >= Math.round(height * ON_BAR_MIN_HEIGHT_RATIO);
 
     let logoWidth = Math.round(width * (cfg.logoSizePercent / 100));
+    if (cfg.logoFit === "shape") {
+      const referenceMeta = await sharp(referenceBuffer).metadata();
+      if (referenceMeta.width && referenceMeta.height) {
+        logoWidth = fitLogoBox({
+          aspect: referenceMeta.width / referenceMeta.height,
+          canvas: { width, height },
+          sizePercent: cfg.logoSizePercent,
+        }).width;
+      }
+    }
     let referenceResized = await sharp(referenceBuffer)
       .resize({ width: logoWidth, withoutEnlargement: false })
       .toBuffer();
@@ -344,12 +364,10 @@ export async function applyBrandTemplate(input: {
     // decides instead. Only one variant present -> always use it (today's
     // behavior). No backdrop/badge is drawn behind the logo anymore; this
     // sampling IS the contrast strategy that replaces it.
-    let chosenStorageKey = referenceStorageKey;
-    if (lightLogoStorageKey && darkLogoStorageKey) {
-      let luminance: number;
-      if (onBar) {
-        luminance = hexLuminance(accentHex!);
-      } else {
+    let regionLuminance: number | null = null;
+    const sampleRegionLuminance = async (): Promise<number> => {
+      if (regionLuminance !== null) return regionLuminance;
+      {
         const sampleLeft = Math.max(0, Math.min(left, width - 1));
         const sampleTop = Math.max(0, Math.min(top, height - 1));
         const sampleWidth = Math.max(
@@ -372,11 +390,19 @@ export async function applyBrandTemplate(input: {
           .toBuffer();
         const stats = await sharp(region).stats();
         const [r, g, b] = stats.channels;
-        luminance =
+        regionLuminance =
           0.2126 * (r?.mean ?? 255) +
           0.7152 * (g?.mean ?? 255) +
           0.0722 * (b?.mean ?? 255);
+        return regionLuminance;
       }
+    };
+
+    let chosenStorageKey = referenceStorageKey;
+    if (lightLogoStorageKey && darkLogoStorageKey) {
+      const luminance = onBar
+        ? hexLuminance(accentHex!)
+        : await sampleRegionLuminance();
       chosenStorageKey =
         luminance < DARK_REGION_LUMINANCE_THRESHOLD
           ? lightLogoStorageKey
@@ -390,7 +416,45 @@ export async function applyBrandTemplate(input: {
             .resize({ width: logoWidth, withoutEnlargement: false })
             .toBuffer();
 
-    composites.push({ input: resizedLogo, left, top });
+    // A logo that cannot be told apart from what is behind it (one variant
+    // only, a picture that is neither light nor dark enough, a band in the
+    // logo's own colour) is made to read: a one-colour mark is repainted white
+    // or black, any other gets a soft plate. The variant pick above is what
+    // normally keeps it clear without either.
+    let logoToDraw: Buffer = resizedLogo;
+    if (cfg.logoFit === "shape") {
+      const logoLuminance = await logoForegroundLuminance(resizedLogo);
+      if (logoLuminance !== null) {
+        const behind = onBar
+          ? hexLuminance(accentHex!)
+          : await sampleRegionLuminance();
+        const needed = onBar ? READABLE_ON_BAND : READABLE_ON_PICTURE;
+        if (logoContrast(logoLuminance, behind) < needed) {
+          if (await isMonochromeLogo(resizedLogo)) {
+            logoToDraw = await tintLogo(
+              resizedLogo,
+              behind < 128 ? "#ffffff" : "#111111",
+            );
+          } else {
+            const pad = Math.round(logoHeight * 0.35);
+            const plateLeft = Math.max(0, left - pad);
+            const plateTop = Math.max(0, top - pad);
+            const plateWidth = Math.min(width - plateLeft, logoWidth + 2 * pad);
+            const plateHeight = Math.min(height - plateTop, logoHeight + 2 * pad);
+            const fill = logoLuminance < 128 ? "#ffffff" : "#111111";
+            composites.push({
+              input: Buffer.from(
+                `<svg width="${plateWidth}" height="${plateHeight}"><rect width="${plateWidth}" height="${plateHeight}" rx="${pad}" fill="${fill}" fill-opacity="0.86"/></svg>`,
+              ),
+              left: plateLeft,
+              top: plateTop,
+            });
+          }
+        }
+      }
+    }
+
+    composites.push({ input: logoToDraw, left, top });
     if (!onBar) logoRect = { left, top, width: logoWidth, height: logoHeight };
   }
 
@@ -424,7 +488,57 @@ export async function applyBrandTemplate(input: {
   if (composites.length === 0) return null;
 
   const outputBuffer = await sharp(baseBuffer).composite(composites).toBuffer();
-  await overwriteAsset(input.storageKey, outputBuffer, input.mimeType);
+  return { buffer: outputBuffer, ...(text ? { textDrawn } : {}) };
+}
 
-  return { size: outputBuffer.byteLength, ...(text ? { textDrawn } : {}) };
+// Adds the brand's logo, bar and the post's words to a stored picture, in
+// place. Everything about how it looks is composeBrandTemplate's.
+export async function applyBrandTemplate(input: {
+  storageKey: string;
+  mimeType: string;
+  lightLogoAssetId?: string | null;
+  darkLogoAssetId?: string | null;
+  accentColors?: { hex: string; name?: string }[];
+  legacyApprovedColors?: unknown;
+  template?: Partial<AppliedTemplateConfig>;
+  safeZone?: { top?: number; bottom?: number };
+  trimLogo?: boolean;
+  text?: TemplateText;
+}): Promise<{ size: number; textDrawn?: boolean } | null> {
+  const enabled = { ...DEFAULT_TEMPLATE_CONFIG, ...input.template }.enabled;
+  const words = input.text?.headline.trim() ? input.text : undefined;
+  // Nothing to add: no template and no words (a read-free early exit).
+  if (!enabled && !words) return null;
+
+  const loadLogo = async (assetId: string | null | undefined) => {
+    if (!enabled || !assetId) return null;
+    const asset = await prisma.asset.findUnique({
+      where: { id: assetId },
+      select: { storageKey: true },
+    });
+    return asset?.storageKey ? readAsset(asset.storageKey) : null;
+  };
+  const [lightLogo, darkLogo] = await Promise.all([
+    loadLogo(input.lightLogoAssetId),
+    loadLogo(input.darkLogoAssetId),
+  ]);
+
+  const composed = await composeBrandTemplate({
+    base: await readAsset(input.storageKey),
+    lightLogo,
+    darkLogo,
+    accentColors: input.accentColors,
+    legacyApprovedColors: input.legacyApprovedColors,
+    template: input.template,
+    safeZone: input.safeZone,
+    trimLogo: input.trimLogo,
+    text: input.text,
+  });
+  if (!composed) return null;
+
+  await overwriteAsset(input.storageKey, composed.buffer, input.mimeType);
+  return {
+    size: composed.buffer.byteLength,
+    ...(words ? { textDrawn: composed.textDrawn } : {}),
+  };
 }

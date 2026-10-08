@@ -12,6 +12,11 @@ vi.mock("@/server/reasoning/openai-client", () => ({
   runOpenAIStructured,
 }));
 
+// The art director has its own tests; here the text step's own prompt stands.
+vi.mock("@/server/media/art-director", () => ({
+  directImage: vi.fn().mockResolvedValue(null),
+}));
+
 const generateCreativeImage = vi.fn();
 vi.mock("@/server/media/creative-image", () => ({
   generateCreativeImage,
@@ -20,6 +25,11 @@ vi.mock("@/server/media/creative-image", () => ({
 vi.mock("@/server/media/brand-logo", () => ({
   loadReferenceImage: vi.fn().mockResolvedValue(null),
 }));
+// The copywriter step is covered by its own tests; here the model's draft stands.
+vi.mock("@/server/media/headline-copywriter", () => ({
+  writeOnImageText: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("@/server/media/creative-template", () => ({
   applyBrandTemplate: vi.fn().mockResolvedValue(null),
 }));
@@ -313,7 +323,7 @@ describe("OpenAiCreativeProvider with post layouts", () => {
     });
   });
 
-  it("brands without saved layouts keep the base template and record no layout", async () => {
+  it("brands without saved layouts get the automatic design for the format", async () => {
     const provider = new OpenAiCreativeProvider();
     const { executionReference } = await provider.execute(
       request({
@@ -327,12 +337,15 @@ describe("OpenAiCreativeProvider with post layouts", () => {
     );
 
     const args = templateArgs();
-    expect(args.template).toEqual(DEFAULT_KIT_TEMPLATE);
-    expect(args.safeZone).toBeUndefined();
-    // No layout: the logo is placed as stored, exactly as before layouts.
-    expect(args.trimLogo).toBe(false);
+    // A Story: no bar on the edge the app's controls cover, logo kept clear of them.
+    expect(args.template).toMatchObject({
+      logoFit: "shape",
+      accentBarEnabled: false,
+    });
+    expect(args.safeZone).toBeDefined();
+    expect(args.trimLogo).toBe(true);
     expect(await provider.getStatus(executionReference)).toMatchObject({
-      rawResult: { layoutTemplate: null },
+      rawResult: { layoutTemplate: { id: "auto-editorial-vertical" } },
     });
   });
 });

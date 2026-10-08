@@ -59,9 +59,12 @@ describe("typed idea concepts", () => {
     expect(parseIdeaConcept(null)).toBeNull();
   });
 
-  it("keeps the words on the picture to six, without a full stop", () => {
+  it("keeps the words on the picture to nine, without a full stop", () => {
+    expect(
+      clampHeadline("One two three four five six seven eight nine ten."),
+    ).toBe("One two three four five six seven eight nine");
     expect(clampHeadline("One two three four five six seven eight.")).toBe(
-      "One two three four five six",
+      "One two three four five six seven eight",
     );
     expect(clampHeadline("Hello there.")).toBe("Hello there");
   });
@@ -143,7 +146,9 @@ describe("normalizing the model's post ideas", () => {
   it("cleans, bounds and checks every field against the brand", () => {
     const concept = normalizeSocialIdea(RAW, CTX)!;
     expect(concept.module).toBe("social");
-    expect(concept.draft.headline).toBe("The autumn menu is here, finally");
+    expect(concept.draft.headline).toBe(
+      "The autumn menu is here, finally, for everyone",
+    );
     expect(concept.draft.highlight).toBe("autumn menu");
     // TikTok is not one of the brand's channels.
     expect(concept.draft.channels).toEqual(["instagram"]);

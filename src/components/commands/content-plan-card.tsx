@@ -264,6 +264,7 @@ export function ContentPlanCard({
         pieces.map((item) => ({
           formatKey: item.format?.key,
           channel: item.channel,
+          photo: item.photo,
         })),
       );
     if (card.state === "draft") {

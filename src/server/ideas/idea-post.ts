@@ -34,6 +34,7 @@ import { markIdeasPlanned } from "@/server/chat/idea-pool";
 import { createSlots, type SlotTarget } from "@/server/chat/schedule-slots";
 import { ideaChannelsOf } from "@/server/ideas/idea-context";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
+import { liveBrandPhotoIds } from "@/server/brand/media/photo-source";
 import { loadBrandRules } from "@/server/works/brand-rule-loader";
 import { loadSuggestedSlots } from "@/server/works/free-slot-loader";
 import { isModulesEnabled } from "@/server/works/flag";
@@ -143,6 +144,11 @@ export async function makeIdeaPost(input: {
     return { ok: false, code: "BRAND_RULES", message: IDEA_POST_COPY.blocked };
   }
 
+  // The brand's own photo the idea names, if it is still there.
+  const photoAssetIds = await liveBrandPhotoIds(
+    input.projectId,
+    concept.draft.assetIds,
+  ).catch(() => [] as string[]);
   const origin = { kind: "idea" as const, ref: idea.id };
   const targets: SlotTarget[] = channels.map((channel, index) => {
     const flags = flagsForItem(hits, index);
@@ -155,6 +161,7 @@ export async function makeIdeaPost(input: {
       captionIdea,
       origin,
       ideaId: idea.id,
+      ...(photoAssetIds.length > 0 ? { photoAssetIds } : {}),
       ...(flags.length > 0 ? { brandFlags: flags } : {}),
     };
   });

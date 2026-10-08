@@ -13,8 +13,10 @@ import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import {
   ideaChannelsOf,
   readIdeaRows,
+  readMatchPhotos,
   type IdeaRow,
 } from "@/server/ideas/idea-context";
+import type { PickerPhoto } from "@/lib/ideas/board";
 import { IDEA_MADE_POST_ACTION } from "@/server/ideas/idea-post";
 import { moduleIdeasAvailable } from "@/server/ideas/idea-modules";
 import { lowWaterOf, poolHealth, refillDue } from "@/server/ideas/idea-refill";
@@ -42,6 +44,8 @@ export type IdeaBoardData = {
   timezone: string;
   // The module lenses that can act on their ideas now (idea-modules.ts).
   modules: { seo: boolean; ads: boolean };
+  // The brand's own photos an idea can be made from (docs/brand-media.md).
+  photos: PickerPhoto[];
 };
 
 export function toBoardIdea(row: IdeaRow, link?: IdeaLink): BoardIdea {
@@ -119,7 +123,17 @@ export async function loadIdeaBoard(
     where: { id: projectId },
     select: { domain: true },
   });
-  const [rows, health, twin, style, accounts, connections, timezone, modules] =
+  const [
+    rows,
+    health,
+    twin,
+    style,
+    accounts,
+    connections,
+    timezone,
+    modules,
+    photos,
+  ] =
     await Promise.all([
       readIdeaRows(projectId),
       poolHealth(projectId, now),
@@ -131,6 +145,7 @@ export async function loadIdeaBoard(
       getChannelConnections(projectId).catch(() => ({})),
       getProjectTimezone(projectId),
       moduleIdeasAvailable(projectId).catch(() => ({ seo: false, ads: false })),
+      readMatchPhotos(projectId, { understoodOnly: false }),
     ]);
   const links = await linksOf(
     projectId,
@@ -176,5 +191,16 @@ export async function loadIdeaBoard(
     },
     timezone,
     modules,
+    photos: photos.map((photo) => ({
+      assetId: photo.assetId,
+      description: photo.description,
+      tags: [...photo.tags],
+      subjects: [...photo.subjects],
+      setting: photo.setting,
+      quality: photo.quality,
+      width: photo.width,
+      height: photo.height,
+      useCount: photo.useCount,
+    })),
   };
 }

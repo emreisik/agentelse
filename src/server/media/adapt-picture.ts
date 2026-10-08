@@ -25,7 +25,14 @@ export type PictureToAdapt = {
   // The post's words, to set again on the new format. Only with the clean
   // picture: a picture that already carries its words keeps them as they are.
   text?: OnImageText;
+  // Set when the post's picture is one of the brand's own photos (photo mode):
+  // its other formats are cut from that same photo again, not redrawn.
+  photoSource?: PhotoSource;
 };
+
+// A brand photo used as the picture of a post, as the render recorded it
+// (generationMetadata.photoSource).
+export type PhotoSource = { assetId: string; fit: "cover" | "extend" };
 
 // What the post's own render recorded (openai-creative.provider.ts, stored on
 // its CreativeVersion.generationMetadata).
@@ -33,6 +40,7 @@ const OnImageTextSchema = z.object({
   headline: z.string().min(1),
   highlight: z.string().optional(),
   lines: z.array(z.string()).max(6).optional(),
+  cta: z.string().optional(),
 });
 
 const CleanSourceSchema = z.object({
@@ -43,6 +51,18 @@ const CleanSourceSchema = z.object({
   onImageText: OnImageTextSchema,
 });
 
+const PhotoSourceSchema = z.object({
+  assetId: z.string().min(1),
+  fit: z.enum(["cover", "extend"]),
+});
+
+export function photoSourceOf(metadata: unknown): PhotoSource | undefined {
+  const parsed = z
+    .object({ photoSource: PhotoSourceSchema })
+    .safeParse(metadata);
+  return parsed.success ? parsed.data.photoSource : undefined;
+}
+
 // The words a version's picture carries, as its render recorded them
 // (generationMetadata.onImageText); undefined when it has none.
 export function onImageTextOf(metadata: unknown): OnImageText | undefined {
@@ -52,14 +72,13 @@ export function onImageTextOf(metadata: unknown): OnImageText | undefined {
   return parsed.success ? parsed.data.onImageText : undefined;
 }
 
-async function cleanSourceOf(assetId: string) {
+async function metadataOf(assetId: string): Promise<unknown> {
   const version = await prisma.creativeVersion.findFirst({
     where: { assetId },
     orderBy: { createdAt: "desc" },
     select: { generationMetadata: true },
   });
-  const parsed = CleanSourceSchema.safeParse(version?.generationMetadata);
-  return parsed.success ? parsed.data : null;
+  return version?.generationMetadata ?? null;
 }
 
 // The post's picture as the image edit takes it.
@@ -72,14 +91,17 @@ export async function readPictureForAdapting(
   });
   if (!asset) return undefined;
 
-  const clean = await cleanSourceOf(assetId).catch(() => null);
-  if (clean) {
+  const metadata = await metadataOf(assetId).catch(() => null);
+  const photoSource = photoSourceOf(metadata);
+  const clean = CleanSourceSchema.safeParse(metadata);
+  if (clean.success) {
     try {
-      const bytes = await readAsset(clean.cleanPicture.storageKey);
+      const bytes = await readAsset(clean.data.cleanPicture.storageKey);
       return {
         data: bytes.toString("base64"),
-        mimeType: clean.cleanPicture.mimeType,
-        text: clean.onImageText,
+        mimeType: clean.data.cleanPicture.mimeType,
+        text: clean.data.onImageText,
+        ...(photoSource ? { photoSource } : {}),
       };
     } catch {
       // The clean copy is gone: adapt the finished picture, words and all.
@@ -88,7 +110,11 @@ export async function readPictureForAdapting(
 
   try {
     const bytes = await readAsset(asset.storageKey);
-    return { data: bytes.toString("base64"), mimeType: asset.mimeType };
+    return {
+      data: bytes.toString("base64"),
+      mimeType: asset.mimeType,
+      ...(photoSource ? { photoSource } : {}),
+    };
   } catch {
     return undefined;
   }

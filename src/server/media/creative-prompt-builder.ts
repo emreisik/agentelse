@@ -61,6 +61,9 @@ export type CreativePromptInput = {
   // layout and typography, so the layout's own composition and headline
   // placement notes stand aside.
   matchStyle?: boolean;
+  // What the art director says would spoil THIS picture (art-direction.ts
+  // directionAvoid), added to the brand's own avoid list.
+  extraAvoid?: string;
 };
 
 export type CreativeTypography = {
@@ -358,6 +361,7 @@ export function buildCreativePrompt({
   postStyle,
   matchStyle,
   textArea,
+  extraAvoid,
 }: CreativePromptInput): string {
   const { brandLine, styleAddition, avoidAddition, compositionAddition } =
     extractBrandStyle(brandContext);
@@ -416,7 +420,7 @@ export function buildCreativePrompt({
       ? `TYPOGRAPHY: ${typographyBlock(typography, reservedZones, matchStyle)}`
       : null,
     brandLine ? `BRAND: ${brandLine}` : null,
-    `AVOID: ${[avoid, avoidAddition].filter(Boolean).join(" ")}`,
+    `AVOID: ${[avoid, avoidAddition, extraAvoid ? `For this picture: ${extraAvoid}.` : null].filter(Boolean).join(" ")}`,
   ]
     .filter((section): section is string => Boolean(section))
     .join("\n\n");

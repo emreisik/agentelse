@@ -51,10 +51,11 @@ function fitted(
   headline: string,
   placement: TextPlacement = TOP,
   lines?: string[],
+  cta?: string,
 ) {
   const zone = zoneFor(placement);
   const layout = layoutText({
-    text: { headline, lines },
+    text: { headline, lines, cta },
     placement,
     fonts,
     box: zone.box,
@@ -148,6 +149,78 @@ describe("where the words go", () => {
       width: 1080 * 0.5,
     });
     expect(zoneFor({ ...TOP, zone: "CENTER" }).anchor).toBe("center");
+  });
+});
+
+describe("the call to action", () => {
+  it("is a pill under the texts, inside the zone, with its label in it", () => {
+    const { zone, layout } = fitted(
+      "Pazar sofrası artık çok daha lezzetli",
+      TOP,
+      ["Bu hafta sonu rezervasyon yap"],
+      "Hemen ayırt",
+    );
+    const pill = layout.cta!;
+    expect(pill).not.toBeNull();
+    expect(pill.rect.left).toBeGreaterThanOrEqual(zone.box.left - 0.5);
+    expect(pill.rect.left + pill.rect.width).toBeLessThanOrEqual(
+      zone.box.left + zone.box.width + 0.5,
+    );
+    // The last thing in the block, below every other run.
+    const others = layout.runs.filter((run) => run.role !== "cta");
+    expect(pill.rect.top).toBeGreaterThan(Math.max(...others.map((r) => r.baseline)));
+    expect(pill.rect.top + pill.rect.height).toBeCloseTo(
+      layout.block.top + layout.block.height,
+      0,
+    );
+    // The label sits inside the pill.
+    const label = layout.runs.find((run) => run.role === "cta")!;
+    expect(label.text).toBe("Hemen ayırt");
+    expect(label.x).toBeGreaterThan(pill.rect.left);
+    expect(label.baseline).toBeGreaterThan(pill.rect.top);
+    expect(label.baseline).toBeLessThan(pill.rect.top + pill.rect.height);
+  });
+
+  it("is centred like the words when they are", () => {
+    const { layout } = fitted("Taze ekmek her sabah", TOP, undefined, "Sipariş ver");
+    const pill = layout.cta!;
+    const middle = pill.rect.left + pill.rect.width / 2;
+    expect(Math.abs(middle - PORTRAIT.width / 2)).toBeLessThan(2);
+  });
+
+  it("makes room for itself without leaving the zone", () => {
+    const { zone, layout } = fitted(
+      "Güneşli günlerde ağır çekim İstanbul turu başlıyor",
+      TOP,
+      ["Şimdi keşfet · ücretsiz ölçüm"],
+      "Hemen yerini ayırt",
+    );
+    expect(layout.block.top + layout.block.height).toBeLessThanOrEqual(
+      zone.box.top + zone.box.height + 0.5,
+    );
+  });
+
+  it("without one there is no pill", () => {
+    expect(fitted("Taze ekmek her sabah").layout.cta).toBeNull();
+  });
+
+  it("is drawn: a filled rounded rect in the accent with a readable label", () => {
+    const { layout } = fitted("Taze ekmek her sabah", TOP, undefined, "Sipariş ver");
+    const svg = textLayerSvg(
+      layout,
+      {
+        ink: "#ffffff",
+        highlight: "#f2b134",
+        scrim: null,
+        shadow: false,
+        lineOpacity: 0.9,
+      },
+      PORTRAIT,
+      { headline: "Taze ekmek her sabah", cta: "Sipariş ver" },
+    );
+    expect(svg).toMatch(/<rect [^>]*rx="[\d.]+" fill="#f2b134"/);
+    // Near-black label on the amber pill (white would not read).
+    expect(svg).toContain('<g fill="#111111">');
   });
 });
 

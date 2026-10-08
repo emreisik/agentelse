@@ -13,12 +13,22 @@ vi.mock("@/server/reasoning/openai-client", () => ({
   runOpenAIStructured,
 }));
 
+// The art director has its own tests; here the text step's own prompt stands.
+vi.mock("@/server/media/art-director", () => ({
+  directImage: vi.fn().mockResolvedValue(null),
+}));
+
 const generateCreativeImage = vi.fn();
 vi.mock("@/server/media/creative-image", () => ({
   generateCreativeImage,
   isCreativeImageConfigured: () => true,
 }));
 const applyBrandTemplate = vi.fn();
+// The copywriter step is covered by its own tests; here the model's draft stands.
+vi.mock("@/server/media/headline-copywriter", () => ({
+  writeOnImageText: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("@/server/media/creative-template", () => ({ applyBrandTemplate }));
 const loadStyleReferences = vi.fn();
 vi.mock("@/server/media/style-references", async (original) => ({

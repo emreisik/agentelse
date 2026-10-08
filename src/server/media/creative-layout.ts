@@ -8,7 +8,14 @@ import {
   type LayoutTemplate,
   type TextPlacement,
 } from "@/lib/layout-templates";
-import { DEFAULT_KIT_TEMPLATE } from "@/lib/brand-kit";
+import { DEFAULT_KIT_TEMPLATE, type KitTemplate } from "@/lib/brand-kit";
+import { designForAspect } from "@/lib/design-profile";
+import { postStyleTraitsOf } from "@/lib/post-style";
+import {
+  archetypeOfAutoId,
+  autoLayout,
+  type Archetype,
+} from "@/lib/auto-layout";
 import type { BrandVisualIdentityContext } from "@/server/media/brand-style-context";
 import type { AppliedTemplateConfig } from "@/server/media/creative-template";
 
@@ -18,6 +25,9 @@ import type { AppliedTemplateConfig } from "@/server/media/creative-template";
 // placement, scene guidance, areas to keep clear) and the record of what was
 // used. Pure: the provider, the Studio revise action and the weekly planner
 // all call it, so every path lays a post out the same way.
+
+// The canvas a plan is for when none is given (a feed post, as autoLayout).
+const DEFAULT_PLAN_CANVAS = { width: 1080, height: 1350 };
 
 const FALLBACK_HEADLINE_PLACEMENT =
   "large, centered, at most 3 lines, placed in the upper third of the frame";
@@ -41,9 +51,27 @@ export type CreativeLayoutPlan = {
   meta: { id: string; name: string } | null;
 };
 
+// A template the brand set itself, away from the defaults every brand starts
+// with. It is the brand's own decision and is kept as it is; a brand still on
+// the defaults gets the automatic design instead.
+export function isCustomTemplate(template: KitTemplate): boolean {
+  return (Object.keys(DEFAULT_KIT_TEMPLATE) as (keyof KitTemplate)[]).some(
+    (key) => template[key] !== DEFAULT_KIT_TEMPLATE[key],
+  );
+}
+
 export function planCreativeLayout(input: {
   visualIdentity: BrandVisualIdentityContext | null | undefined;
   hasLogo: boolean;
+  // What kind of brand this is (src/lib/auto-layout.ts), which decides the
+  // look of the automatic design. Absent: the editorial one.
+  archetype?: Archetype | null;
+  // Colours of the brand's dossier, for a brand with no Visual Identity yet:
+  // the bar or band takes them.
+  legacyColors?: string[];
+  // Keep the pre-layout composition as it was (a revision of an image made
+  // before layouts existed must not get a second logo).
+  forceLegacy?: boolean;
   // A layout id the caller asked for (the chat's pick, or a revise of a post
   // made with one). Unknown ids fall back to the brand's default.
   requestedId?: string | null;
@@ -69,6 +97,42 @@ export function planCreativeLayout(input: {
   }
 
   const saved = identity?.layoutTemplates ?? null;
+  const automatic =
+    !saved &&
+    !input.forceLegacy &&
+    !(baseTemplate && isCustomTemplate(baseTemplate));
+  if (automatic) {
+    // Nobody set a layout: design one from the brand and the canvas.
+    // A revision keeps the design its post was made with; else the design a
+    // person picked for this format; else what the brand's words point to.
+    const archetype =
+      archetypeOfAutoId(input.requestedId) ??
+      designForAspect(
+        identity?.designProfile,
+        aspectClassOf(input.pixelSize ?? DEFAULT_PLAN_CANVAS),
+      ) ??
+      input.archetype ??
+      "editorial";
+    // A kit that asks to follow its example posts places the logo, headline
+    // and bar the way they do.
+    const traits =
+      identity?.postStyle?.fidelity === "match"
+        ? postStyleTraitsOf(identity.postStyle)
+        : null;
+    const layout = autoLayout({
+      archetype,
+      pixelSize: input.pixelSize,
+      traits,
+    });
+    const legacy = input.legacyColors ?? [];
+    const palette = {
+      primary: identity?.primaryColors[0]?.hex ?? legacy[0] ?? null,
+      secondary: identity?.secondaryColors[0]?.hex ?? legacy[1] ?? null,
+      accent: identity?.accentColors[0]?.hex ?? legacy[1] ?? legacy[0] ?? null,
+    };
+    return layoutPlanFor(layout, palette, input);
+  }
+
   if (!saved) {
     // No layouts: today's behaviour, byte for byte. The "classic" preset is
     // the base template written as a layout, used only to describe the
@@ -95,7 +159,16 @@ export function planCreativeLayout(input: {
     secondary: identity?.secondaryColors[0]?.hex ?? null,
     accent: identity?.accentColors[0]?.hex ?? null,
   };
+  return layoutPlanFor(layout, palette, input);
+}
 
+// The plan for one chosen layout: the compositing settings, the written brief
+// for the image model and the record of what was used.
+function layoutPlanFor(
+  layout: LayoutTemplate,
+  palette: { primary: string | null; secondary: string | null; accent: string | null },
+  input: { hasLogo: boolean; hasHeadline: boolean },
+): CreativeLayoutPlan {
   return {
     layout,
     template: layoutToTemplateConfig(layout, palette),

@@ -58,6 +58,8 @@ async function loadBrandStyle(projectId: string) {
 // getBrandTwin() runs its own internal composition (see brand-twin.ts) but
 // is still just one more parallel branch here, not a second round-trip.
 export const FILES_PANEL_LIMIT = 120;
+// The brand's own photos listed in the panel (the newest).
+const PHOTOS_IN_PANEL = 60;
 
 export async function getWorkspaceRightPanelData(
   projectId: string,
@@ -96,6 +98,34 @@ export async function getWorkspaceRightPanelData(
       getProjectTimezone(projectId),
       loadBrandStyle(projectId),
     ]);
+  // The brand's own photos (Brand Brain, Media) are listed apart, newest first,
+  // even when generated images have pushed them out of the newest files.
+  const photoRows = await prisma.brandMedia
+    .findMany({
+      where: { projectId, kind: "IMAGE", archivedAt: null },
+      orderBy: { createdAt: "desc" },
+      take: PHOTOS_IN_PANEL,
+      select: { assetId: true },
+    })
+    .catch(() => []);
+  const photoIds = new Set(photoRows.map((row) => row.assetId));
+  const have = new Set(assets.map((asset) => asset.id));
+  const extraPhotos =
+    photoIds.size > 0
+      ? await prisma.asset
+          .findMany({
+            where: { projectId, id: { in: [...photoIds].filter((id) => !have.has(id)) } },
+            select: {
+              id: true,
+              filename: true,
+              mimeType: true,
+              size: true,
+              createdAt: true,
+              type: true,
+            },
+          })
+          .catch(() => [])
+      : [];
 
   const brandKit = brand
     ? buildBrandKit({
@@ -112,9 +142,10 @@ export async function getWorkspaceRightPanelData(
     brandKit,
     website: project?.domain ?? null,
     connections,
-    files: assets.map((asset) => ({
+    files: [...assets, ...extraPhotos].map((asset) => ({
       ...asset,
       createdAt: asset.createdAt.toISOString(),
+      ...(photoIds.has(asset.id) ? { photo: true } : {}),
     })),
     calendar: {
       timezone,

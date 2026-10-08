@@ -6,6 +6,9 @@ import {
   type IdeaConcept,
 } from "@/lib/ideas/concept";
 import { normalizeSocialIdeas } from "@/lib/ideas/normalize";
+import { isPoolStatus } from "@/lib/idea-pool";
+import { orientationOf } from "@/lib/brand-media";
+import { catalogOf } from "@/lib/media-match";
 import { blocksOf, checkText } from "@/lib/works/brand-rules";
 import { cleanWorksTextOrNull } from "@/lib/works/clean-text";
 import { brandRuleLanguageOf } from "@/server/brand/rule-language";
@@ -35,6 +38,8 @@ export const IDEA_POOL_TARGET = 20;
 export const IDEA_LOW_WATER = 8;
 // At most this many ideas per model call.
 export const IDEAS_PER_CALL = 6;
+// How many of the brand's own photos the model is shown.
+const PHOTOS_IN_PROMPT = 15;
 
 export type IdeaTrigger =
   "manual" | "refill" | "opportunity" | "angle" | "chat";
@@ -114,6 +119,22 @@ export const IdeaEngine = {
     if (fits <= 0) return { ok: false, reason: "FULL" };
     const focus = cleanWorksTextOrNull(input.focus, 300);
     const memory = ideaMemoryOf(ctx.ideas);
+    // The brand's own photos the model may use as a post's picture: the ones
+    // not already taken by an idea in the pool, the best first.
+    const taken = new Set(
+      ctx.ideas.flatMap((row) =>
+        row.concept?.module === "social" &&
+        isPoolStatus(row.status) &&
+        !row.isMock
+          ? (row.concept.draft.assetIds ?? [])
+          : [],
+      ),
+    );
+    const catalog = catalogOf(
+      ctx.photos.filter((photo) => !taken.has(photo.assetId)),
+      PHOTOS_IN_PROMPT,
+      focus ?? undefined,
+    );
 
     const run = await ReasoningService.run(ideaSocialDef, {
       ...scope,
@@ -124,6 +145,13 @@ export const IdeaEngine = {
         brand: ctx.brand,
         channels: ctx.channels,
         layouts: ctx.layouts,
+        photos: catalog.map((photo) => ({
+          id: photo.assetId,
+          shape: orientationOf(photo.width, photo.height) ?? "?",
+          shows: [photo.description, photo.tags.slice(0, 8).join(", ")]
+            .filter(Boolean)
+            .join(" - "),
+        })),
         // The model refers to a signal by its number; the link stays here.
         signals: ctx.signals.map((signal) => ({
           n: signal.n,
@@ -151,6 +179,7 @@ export const IdeaEngine = {
     const concepts = normalizeSocialIdeas(output.ideas, {
       channels: ctx.channels,
       layoutIds: ctx.layouts.map((layout) => layout.id),
+      photoIds: catalog.map((photo) => photo.assetId),
       signals: ctx.signals,
       today: ctx.today,
       timezone: ctx.timezone,

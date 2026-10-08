@@ -9,7 +9,12 @@ import {
 // keeps them within 0.002 USD of estimateImageCostUsd for the real sizes.
 export const IMAGE_PIECE_COST_USD = { post: 0.0791, story: 0.1055 } as const;
 
-type CostPiece = { formatKey?: string; channel?: ChannelKey };
+type CostPiece = {
+  formatKey?: string;
+  channel?: ChannelKey;
+  // Made from one of the brand's own photos: no image model draws it.
+  photo?: boolean;
+};
 
 export function isImagePiece(piece: CostPiece): boolean {
   if (!piece.formatKey) return piece.channel === "instagram";
@@ -19,7 +24,7 @@ export function isImagePiece(piece: CostPiece): boolean {
 }
 
 export function pieceCostUsd(piece: CostPiece): number {
-  if (!isImagePiece(piece)) return 0;
+  if (piece.photo || !isImagePiece(piece)) return 0;
   return piece.formatKey === "instagram.story"
     ? IMAGE_PIECE_COST_USD.story
     : IMAGE_PIECE_COST_USD.post;

@@ -86,6 +86,8 @@ export const WorksContentPlanArgsSchema = ContentPlanArgsSchema.extend({
       PlanItemShape.extend({
         purpose: z.string().optional(),
         ideaId: z.string().optional(),
+        // The brand's own photo this post is made from (search_brand_photos).
+        photoAssetIds: z.array(z.string().max(64)).max(1).optional(),
       }).refine(needsChannel, NEEDS_CHANNEL),
     )
     .min(1)
@@ -110,6 +112,28 @@ export function keepPoolIdeaIds<T extends object>(
       used.add(id);
       next.ideaId = id;
     }
+    return next as T;
+  });
+}
+
+// Keeps an item's `photoAssetIds` only for photos that are `valid` (still
+// images of the project) and that no earlier item took: one photo, one post.
+export function keepLivePhotoIds<T extends object>(
+  items: readonly T[],
+  valid: ReadonlySet<string>,
+): T[] {
+  const used = new Set<string>();
+  return items.map((item) => {
+    if (!("photoAssetIds" in item)) return item;
+    const raw = (item as { photoAssetIds?: unknown }).photoAssetIds;
+    const next: Record<string, unknown> = { ...item };
+    delete next.photoAssetIds;
+    const ids = (Array.isArray(raw) ? raw : []).filter(
+      (id): id is string =>
+        typeof id === "string" && valid.has(id) && !used.has(id),
+    );
+    for (const id of ids) used.add(id);
+    if (ids.length > 0) next.photoAssetIds = ids;
     return next as T;
   });
 }
@@ -210,6 +234,9 @@ export function buildPlanCard(
         captionIdea: item.captionIdea.trim(),
         ...(item.purpose?.trim()
           ? { purpose: item.purpose.trim().slice(0, MAX_PURPOSE) }
+          : {}),
+        ...(item.photoAssetIds?.length
+          ? { photoAssetIds: item.photoAssetIds }
           : {}),
         // A post built from a pool idea says so on the card ("From: Idea
         // pool") and keeps the link, so saving the plan marks the idea planned.

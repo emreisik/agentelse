@@ -34,6 +34,7 @@ export function LayoutEditorButton({
   colors,
   logoIds,
   label = "Edit layouts",
+  size = "xs",
   className,
 }: {
   projectId: string;
@@ -43,6 +44,7 @@ export function LayoutEditorButton({
   colors: LayoutPalette;
   logoIds: { light: string | null; dark: string | null };
   label?: string;
+  size?: "xs" | "sm";
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -51,11 +53,11 @@ export function LayoutEditorButton({
       <Button
         type="button"
         variant="outline"
-        size="xs"
+        size={size}
         onClick={() => setOpen(true)}
         className={className ?? "gap-1"}
       >
-        <LayoutIcon className="size-3" />
+        <LayoutIcon className={size === "xs" ? "size-3" : "size-3.5"} />
         {label}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>

@@ -6,6 +6,7 @@ import {
   parseLayoutTemplates,
   type LayoutTemplates,
 } from "@/lib/layout-templates";
+import { parseDesignProfile, type DesignProfile } from "@/lib/design-profile";
 import type { PostStyleContext } from "@/lib/post-style";
 import { loadPostStyleContext } from "@/server/brand/post-style-store";
 import type {
@@ -50,6 +51,8 @@ export type BrandVisualIdentityContext = {
   // below is the only layout, as it always was). Optional so existing callers
   // and fixtures need no change.
   layoutTemplates?: LayoutTemplates | null;
+  // The look a person chose for the automatic post design, if any.
+  designProfile?: DesignProfile | null;
   template: {
     enabled: boolean;
     logoPosition: LogoPositionValue;
@@ -114,6 +117,7 @@ export async function resolveBrandStyleContext(
           referenceImageAssetId: identity.referenceImageAssetId,
           ...(postStyle ? { postStyle } : {}),
           layoutTemplates: parseLayoutTemplates(identity.layoutTemplates),
+          designProfile: parseDesignProfile(identity.designProfile),
           template: {
             enabled: identity.templateEnabled,
             logoPosition: identity.logoPosition,

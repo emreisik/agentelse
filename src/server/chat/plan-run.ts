@@ -145,6 +145,10 @@ export type ClaimedSlot = {
   // for the piece that renders the post's own picture: what the Ideas board
   // showed is what is made. Adapting pieces take their own format's layout.
   layoutId?: string;
+  // The brand's own photos the post is made from (docs/brand-media.md), for
+  // the piece that renders the post's own picture: it is cut from the photo,
+  // no image model draws it. Adapting pieces follow the post's picture.
+  photoAssetIds?: string[];
 };
 
 export type PlanClaimResult =
@@ -156,7 +160,7 @@ export type PlanClaimResult =
 // carry) — only the unattended path (runPlan, input.userId === null) spends
 // against this.
 function slotCostUsd(slot: ClaimedSlot): number {
-  if (!slot.production.image) return 0;
+  if (!slot.production.image || slot.photoAssetIds) return 0;
   return slot.production.contentFormat === "STORY"
     ? IMAGE_PIECE_COST_USD.story
     : IMAGE_PIECE_COST_USD.post;
@@ -191,6 +195,54 @@ async function ideaLayoutsOf(
     if (layoutId) layouts.set(post.id, layoutId);
   }
   return layouts;
+}
+
+// postId -> the brand photos of the pool idea the post was made from (only
+// photos that still exist in the project: a deleted one means the picture is
+// made for the post as usual).
+async function ideaPhotosOf(
+  tx: Prisma.TransactionClient,
+  projectId: string,
+  postIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const photos = new Map<string, string[]>();
+  if (postIds.length === 0) return photos;
+  const posts = await tx.post.findMany({
+    where: { id: { in: [...new Set(postIds)] }, ideaId: { not: null } },
+    select: { id: true, ideaId: true },
+  });
+  const ideaIds = [
+    ...new Set(posts.flatMap((post) => (post.ideaId ? [post.ideaId] : []))),
+  ];
+  if (ideaIds.length === 0) return photos;
+  const ideas = await tx.idea.findMany({
+    where: { id: { in: ideaIds } },
+    select: { id: true, concept: true },
+  });
+  const byIdea = new Map<string, string[]>();
+  for (const idea of ideas) {
+    const concept = parseIdeaConcept(idea.concept);
+    if (concept?.module === "social" && concept.draft.assetIds?.length) {
+      byIdea.set(idea.id, concept.draft.assetIds);
+    }
+  }
+  const wanted = [...new Set([...byIdea.values()].flat())];
+  if (wanted.length === 0) return photos;
+  const alive = new Set(
+    (
+      await tx.asset.findMany({
+        where: { id: { in: wanted }, projectId, type: "IMAGE" },
+        select: { id: true },
+      })
+    ).map((asset) => asset.id),
+  );
+  for (const post of posts) {
+    const ids = (post.ideaId ? byIdea.get(post.ideaId) : undefined)?.filter(
+      (id) => alive.has(id),
+    );
+    if (ids?.length) photos.set(post.id, ids);
+  }
+  return photos;
 }
 
 function slotRequest(input: {
@@ -369,12 +421,20 @@ export async function claimPlanProduction(input: {
           batch = capPosts(batch, slotsNow, MAX_POSTS_PER_RUN);
         }
         const lookUp = new Set(leadsToLookUp(batch, slotsNow));
-        const [pictures, postPictures] = await Promise.all([
+        const [pictures, postPictures, postPhotos] = await Promise.all([
           currentPicturesOf(
             tx,
             creatives.filter((creative) => lookUp.has(creative.id)),
           ),
           postPicturesOf(
+            tx,
+            creatives.flatMap((creative) =>
+              creative.postId && batch.includes(creative.id)
+                ? [creative.postId]
+                : [],
+            ),
+          ),
+          postPhotosOf(
             tx,
             creatives.flatMap((creative) =>
               creative.postId && batch.includes(creative.id)
@@ -412,6 +472,14 @@ export async function claimPlanProduction(input: {
             return postId ? [postId] : [];
           }),
         );
+        const ideaPhotos = await ideaPhotosOf(
+          tx,
+          input.projectId,
+          batch.flatMap((id) => {
+            const postId = byId.get(id)?.row.postId;
+            return postId ? [postId] : [];
+          }),
+        );
         const slots = batch.map((id): ClaimedSlot => {
           const { production, row: creative } = byId.get(id)!;
           const layoutId =
@@ -424,11 +492,17 @@ export async function claimPlanProduction(input: {
           const title = creative.title?.trim() || production.label;
           const source = sources.get(id);
           const adapts = source?.kind === "wait" || source?.kind === "adapt";
+          const photoAssetIds =
+            production.image && creative.postId
+              ? (postPhotos.get(creative.postId) ??
+                ideaPhotos.get(creative.postId))
+              : undefined;
           return {
             id,
             title,
             ...(adapts ? { picture: source } : {}),
             ...(layoutId && !adapts ? { layoutId } : {}),
+            ...(photoAssetIds && !adapts ? { photoAssetIds } : {}),
             production,
             request: slotRequest({
               production,
@@ -509,6 +583,25 @@ function pictureSlotsOf(input: {
 }
 
 // The picture each of these posts already has, by post id.
+// postId -> the brand photos the post is made from (only posts that have any).
+async function postPhotosOf(
+  tx: Prisma.TransactionClient,
+  postIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  if (postIds.length === 0) return new Map();
+  const posts = await tx.post.findMany({
+    where: { id: { in: [...new Set(postIds)] } },
+    select: { id: true, photoAssetIds: true },
+  });
+  return new Map(
+    posts.flatMap((post) =>
+      post.photoAssetIds.length > 0
+        ? [[post.id, post.photoAssetIds] as const]
+        : [],
+    ),
+  );
+}
+
 async function postPicturesOf(
   tx: Prisma.TransactionClient,
   postIds: readonly string[],
@@ -599,6 +692,9 @@ function specOf(
             ...(adaptFromAssetId ? { adaptFromAssetId } : {}),
             ...(slot.layoutId && !adaptFromAssetId
               ? { layoutId: slot.layoutId }
+              : {}),
+            ...(slot.photoAssetIds && !adaptFromAssetId
+              ? { photoAssetIds: slot.photoAssetIds }
               : {}),
           }
         : {}),

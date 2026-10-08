@@ -1014,6 +1014,11 @@ model BrandVisualIdentity {
   // Null = the brand has none and the columns above apply, exactly as before.
   layoutTemplates Json?
 
+  // The automatic post design's one setting (src/lib/design-profile.ts):
+  // {archetype, source}. Null = the design follows from what the brand is, with
+  // nothing to configure.
+  designProfile Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1309,6 +1314,10 @@ model Post {
   // THE picture: the first one rendered for the post; every other image
   // delivery is this picture adapted to its own format.
   pictureAssetId String?
+
+  // The brand's own photos this post is made from (BrandMedia assets): the
+  // picture IS the photo, the app adds the design on it. Empty = generated.
+  photoAssetIds String[] @default([])
 
   approvedAt       DateTime?
   approvedByUserId String?
@@ -1707,6 +1716,74 @@ model Approval {
 // =============================================================================
 // CREATIVE WORKFLOW / ASSETS
 // =============================================================================
+
+enum BrandMediaKind {
+  IMAGE
+  VIDEO
+}
+
+enum BrandMediaStatus {
+  PENDING
+  OK
+  FAILED
+  SKIPPED
+}
+
+// A brand's own photo (and later video) as the library understands it: what is
+// in it, how it is shot, where its subject sits, how often it has been used.
+// One row per Asset; the Asset stays the file. Read by the idea engine and the
+// post production (docs/brand-media.md). projectId makes project deletion
+// cover it.
+model BrandMedia {
+  id          String @id @default(cuid())
+  workspaceId String
+  projectId   String
+  brandId     String
+  assetId     String @unique
+
+  kind   BrandMediaKind   @default(IMAGE)
+  status BrandMediaStatus @default(PENDING)
+
+  // Which analysis (prompt/schema generation) produced the fields below; 0 =
+  // never analysed. Bumping the app's version re-analyses the library.
+  version       Int       @default(0)
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime?
+  analyzedAt    DateTime?
+
+  // Understanding. Tags are in the brand's language, lower-case.
+  tags           String[] @default([])
+  description    String?
+  subjects       String[] @default([])
+  setting        String?
+  mood           String?
+  shotType       String?
+  orientation    String?
+  hasPeople      Boolean  @default(false)
+  // 0-100: how good it is as the picture of a post.
+  quality        Int?
+  dominantColors String[] @default([])
+  // Where the main subject sits, 0-1 from the left / top.
+  focalX         Float?
+  focalY         Float?
+  // A person edited the tags: a re-analysis keeps them.
+  tagsEdited     Boolean  @default(false)
+
+  useCount   Int       @default(0)
+  lastUsedAt DateTime?
+  archivedAt DateTime?
+
+  // Video (the model is ready for it; the pipeline comes later).
+  durationMs    Int?
+  posterAssetId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, status])
+  @@index([projectId, archivedAt, createdAt])
+  @@index([tags], type: Gin)
+}
 
 model Asset {
   id          String @id @default(cuid())
@@ -2580,6 +2657,7 @@ model GscWeeklyQuery {
 
   @@unique([linkId, weekStart, queryId])
   @@index([projectId, weekStart])
+
   // FK cascade (GscQuery/GscPage silinirken) için: bu sütun hiçbir indexin başında değildi.
   @@index([queryId])
 }
@@ -2599,6 +2677,7 @@ model GscWeeklyPage {
 
   @@unique([linkId, weekStart, pageId])
   @@index([projectId, weekStart])
+
   // FK cascade (GscQuery/GscPage silinirken) için: bu sütun hiçbir indexin başında değildi.
   @@index([pageId])
 }
@@ -2620,6 +2699,7 @@ model GscWeeklyQueryPage {
 
   @@unique([linkId, weekStart, queryId, pageId])
   @@index([projectId, weekStart])
+
   // FK cascade (GscQuery/GscPage silinirken) için: bu sütun hiçbir indexin başında değildi.
   @@index([queryId])
   @@index([pageId])
@@ -2641,6 +2721,7 @@ model GscMonthlyQuery {
 
   @@unique([linkId, month, queryId])
   @@index([projectId, month])
+
   // FK cascade (GscQuery/GscPage silinirken) için: bu sütun hiçbir indexin başında değildi.
   @@index([queryId])
 }
@@ -2660,6 +2741,7 @@ model GscMonthlyPage {
 
   @@unique([linkId, month, pageId])
   @@index([projectId, month])
+
   // FK cascade (GscQuery/GscPage silinirken) için: bu sütun hiçbir indexin başında değildi.
   @@index([pageId])
 }

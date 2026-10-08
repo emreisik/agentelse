@@ -207,7 +207,11 @@ export function PlannedSlotCard({
   const anyReason = blockedReason();
 
   const costNote = produceCostNote([
-    { formatKey: item.formatKey, channel: resolved?.channel },
+    {
+      formatKey: item.formatKey,
+      channel: resolved?.channel,
+      photo: (item.photoAssetIds?.length ?? 0) > 0,
+    },
   ]);
   const costLine = costNote
     ? copyText("slot.cost", { cost: costNote.replace(/^about /, "") })

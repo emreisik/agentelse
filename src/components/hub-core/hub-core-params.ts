@@ -45,6 +45,7 @@ export const BRAND_BRAIN_SUB_KEYS = [
   "assets",
   "rules",
   "visual-identity",
+  "media",
   "constitution",
   "goals",
   "intelligence",

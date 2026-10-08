@@ -1,5 +1,7 @@
 import "server-only";
 
+import { runDueMediaAnalysis } from "@/server/brand/media/tick";
+
 // Side-effect wiring module: registers the late setup-stage runners and the
 // intelligence pipeline steps into the orchestrator/engine extension points.
 // Imported once by ExecutionWorker so a single import activates the full
@@ -531,6 +533,13 @@ registerAgencyTickStep({
 // owner switched it off in Settings -> Autonomy. A draft only: saving, making
 // and publishing stay the owner's taps. Works only; one lite call per project
 // a week; the "nothing due" path is two queries.
+// The brand's own photos (docs/brand-media.md): new uploads are read once so
+// ideas can find them and posts can use them; failures and the AI budget retry
+// here, a few photos per tick.
+registerAgencyTickStep({
+  name: "brand-media-analysis",
+  run: () => runDueMediaAnalysis(),
+});
 registerAgencyTickStep({
   name: "weekly-plan-draft",
   run: () => WeeklyPlanDraft.runDue(2),

@@ -10,6 +10,11 @@ vi.mock("@/server/reasoning/openai-client", () => ({
   runOpenAIStructured: openaiMocks.runOpenAIStructured,
 }));
 
+// The art director has its own tests; here the text step's own prompt stands.
+vi.mock("@/server/media/art-director", () => ({
+  directImage: vi.fn().mockResolvedValue(null),
+}));
+
 // isCreativeImageConfigured reflects the REAL provider env vars — in this
 // dev checkout those are genuinely configured, so without this mock
 // isCreativeImageConfigured() returns true and execute() attempts a real,
@@ -24,6 +29,11 @@ vi.mock("@/server/media/creative-image", () => ({
 // no template compositing — see the provider's `if (image)` guard), but
 // mocked anyway so a future test enabling image generation can't
 // accidentally fall through to the real prisma-backed implementation.
+// The copywriter step is covered by its own tests; here the model's draft stands.
+vi.mock("@/server/media/headline-copywriter", () => ({
+  writeOnImageText: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("@/server/media/creative-template", () => ({
   applyBrandTemplate: vi.fn(),
 }));

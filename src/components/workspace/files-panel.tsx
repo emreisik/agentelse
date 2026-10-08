@@ -272,13 +272,16 @@ export function groupAssets(
   assets: LibraryAsset[],
 ): { label: string; kind: "images" | "list"; assets: LibraryAsset[] }[] {
   const brand: LibraryAsset[] = [];
+  const photos: LibraryAsset[] = [];
   const images: LibraryAsset[] = [];
   const documents: LibraryAsset[] = [];
 
   for (const asset of assets) {
     const name = asset.filename.toLowerCase();
     const isImage = asset.mimeType.startsWith("image/");
-    if (isImage && (name.includes("logo") || name.includes("brand"))) {
+    if (isImage && asset.photo) {
+      photos.push(asset);
+    } else if (isImage && (name.includes("logo") || name.includes("brand"))) {
       brand.push(asset);
     } else if (isImage) {
       images.push(asset);
@@ -290,6 +293,7 @@ export function groupAssets(
   return (
     [
       { label: "Brand", kind: "images", assets: brand },
+      { label: "Photos", kind: "images", assets: photos },
       { label: "Images", kind: "images", assets: images },
       { label: "Documents", kind: "list", assets: documents },
     ] as const

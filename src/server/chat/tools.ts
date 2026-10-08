@@ -48,6 +48,7 @@ import {
   buildPlanCard,
   getProjectTimezone,
   keepPoolIdeaIds,
+  keepLivePhotoIds,
   supersedeOpenDrafts,
   todayInTimezone,
   validatePlanChannels,
@@ -94,6 +95,7 @@ import {
 } from "./content-package";
 
 import { slotFirstImage, slotFirstText } from "./slot-first";
+import { liveBrandPhotoIds } from "@/server/brand/media/photo-source";
 import { worksSkill } from "./works-skills";
 import {
   WORKS_DESCRIPTION_SUFFIX,
@@ -688,6 +690,9 @@ const worksGenerateImageSchema = generateImageSchema.extend({
   styleExampleIds: z.array(z.string().max(64)).max(3).optional(),
   usePhotosFromThisMessage: z.boolean().optional(),
   onImageText: z.array(z.string().min(1).max(80)).max(6).optional(),
+  // The id of one of the brand's own photos (from search_brand_photos): that
+  // real photo is the picture, with the brand's design on top. No AI picture.
+  photoAssetIds: z.array(z.string().max(64)).max(1).optional(),
 });
 
 const PICTURE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -709,7 +714,7 @@ const generateImage = defineTool({
   kind: "work",
   phases: ["ACTIVE"],
   description:
-    "Create ONE social-media visual (post, story, reel cover) with its caption RIGHT NOW, rendered live in the chat. The DESIGN is not yours to invent: it must come from (a) the brand's own visual identity — call get_visual_identity first if you have not read it this conversation — and (b) what the client told you. If the brief leaves the design genuinely open (what the post should say, the look/mood, whether text goes on the image, the format), do NOT generate yet: ask with ask_user first (one round, max 2 questions, options built from THIS brand's identity, e.g. its photography style / mood tags / an option that means \"the brand's usual look\"). Skip questions the client already answered or that the brand identity settles. When you do generate: `imagePrompt` = the scene only — subject, setting, composition, light — described concretely in a way that follows the brand's palette, photography style, mood and always-include/always-avoid rules; NO text, NO logo in it (the brand logo and colour bar are composited automatically, pixel-accurate, in the position the brand configured). `headline` (+ optional `highlight`, the words to set in the accent colour) ONLY when the client wants text on the image: short, in the brand's language, correctly spelled with diacritics; otherwise omit it and the image stays textless. `layoutId` = the id of one of the brand's saved post layouts (listed by get_visual_identity; a layout fixes where the logo, the colour bar / band and the headline go). Pass it when the client picked a layout or when one clearly fits (e.g. a layout with a headline when the client wants text); omit it otherwise and the brand's default layout for the chosen format is used. Never invent an id. `caption` = short social caption and `copy` = longer supporting copy, brand voice, obeying every negative rule / approved claim. Set `platform` only when a channel is named or clearly implied. `contentFormat` is REQUIRED for Instagram (or when no channel is named) and must be the client's own choice, never a default: ALWAYS ask which format first unless they already named it — Post 3:4 (1080x1440) = FEED_PORTRAIT, Story 9:16 (1080x1920) = STORY, Reel cover 9:16 = REEL, Square 1:1 = FEED_SQUARE. `quality`: \"draft\" (default, fast) for anything shown in the conversation; \"final\" only when the client explicitly asks for publish-ready / highest quality. The finished image appears as a card for the client to review — do not describe it in detail afterwards.",
+    "Create ONE social-media visual (post, story, reel cover) with its caption RIGHT NOW, rendered live in the chat. The DESIGN is not yours to invent: it must come from (a) the brand's own visual identity — call get_visual_identity first if you have not read it this conversation — and (b) what the client told you. If the brief leaves the design genuinely open (what the post should say, the look/mood, whether text goes on the image, the format), do NOT generate yet: ask with ask_user first (one round, max 2 questions, options built from THIS brand's identity, e.g. its photography style / mood tags / an option that means \"the brand's usual look\"). Skip questions the client already answered or that the brand identity settles. When you do generate: `imagePrompt` = the scene only — subject, setting, composition, light — described concretely in a way that follows the brand's palette, photography style, mood and always-include/always-avoid rules; NO text, NO logo in it (the brand logo and colour bar are composited automatically, pixel-accurate, in the position the brand configured). `headline` (+ optional `highlight`, the words to set in the accent colour) ONLY when the client wants text on the image: 4-8 words, a complete punchy thought that leads with a concrete benefit, number, question or tension (never a bare label or generic filler like \"Discover our products\"), in the brand's language and voice, correctly spelled with diacritics, taking every fact from the client; otherwise omit it and the image stays textless. `layoutId` = the id of one of the brand's saved post layouts (listed by get_visual_identity; a layout fixes where the logo, the colour bar / band and the headline go). Pass it when the client picked a layout or when one clearly fits (e.g. a layout with a headline when the client wants text); omit it otherwise and the brand's default layout for the chosen format is used. Never invent an id. `caption` = short social caption and `copy` = longer supporting copy, brand voice, obeying every negative rule / approved claim. Set `platform` only when a channel is named or clearly implied. `contentFormat` is REQUIRED for Instagram (or when no channel is named) and must be the client's own choice, never a default: ALWAYS ask which format first unless they already named it — Post 3:4 (1080x1440) = FEED_PORTRAIT, Story 9:16 (1080x1920) = STORY, Reel cover 9:16 = REEL, Square 1:1 = FEED_SQUARE. `quality`: \"draft\" (default, fast) for anything shown in the conversation; \"final\" only when the client explicitly asks for publish-ready / highest quality. The finished image appears as a card for the client to review — do not describe it in detail afterwards.",
   schema: generateImageSchema,
   async execute(rawArgs, ctx) {
     // No channel named: a picture in a chat is made to Instagram's standard (the
@@ -738,6 +743,7 @@ const generateImage = defineTool({
         styleExampleIds?: string[];
         usePhotosFromThisMessage?: boolean;
         onImageText?: string[];
+        photoAssetIds?: string[];
       };
       return slotFirstImage(
         {
@@ -747,6 +753,10 @@ const generateImage = defineTool({
             ? attachedPictureIds(ctx.attachments)
             : undefined,
           onImageText: extra.onImageText,
+          photoAssetIds: await liveBrandPhotoIds(
+            ctx.projectId,
+            extra.photoAssetIds,
+          ).catch(() => []),
         },
         ctx,
       );
@@ -1852,6 +1862,24 @@ const proposeContentPlan = defineTool({
             },
           };
         }
+      }
+    }
+    // A post made from one of the brand's own photos keeps the photo only when
+    // it still is an image of this project, once per plan.
+    if (ctx.work) {
+      const namedPhotos = planArgs.items.flatMap((item) =>
+        "photoAssetIds" in item && Array.isArray(item.photoAssetIds)
+          ? item.photoAssetIds.filter((id): id is string => typeof id === "string")
+          : [],
+      );
+      if (namedPhotos.length > 0) {
+        const live = new Set(
+          await liveBrandPhotoIds(ctx.projectId, namedPhotos).catch(() => []),
+        );
+        planArgs = {
+          ...planArgs,
+          items: keepLivePhotoIds(planArgs.items, live),
+        };
       }
     }
     await supersedeOpenDrafts(ctx.projectId, ctx.commandId, ctx.work?.id);

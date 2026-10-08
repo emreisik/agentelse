@@ -44,7 +44,10 @@ import {
 } from "@/lib/works/master-content";
 import { channelListText } from "@/lib/works/work";
 import { parsePlanBrief, type PlanBrief } from "@/lib/plan-brief";
+import { orientationOf } from "@/lib/brand-media";
+import { catalogOf, rankPhotos } from "@/lib/media-match";
 import { foldForMatch } from "@/lib/text-fold";
+import { readMatchPhotos } from "@/server/ideas/idea-context";
 import { limitNoticeReplyText } from "@/server/commands/limit-notice";
 import { saveIdea } from "@/server/commands/strategic-request";
 import {} from "@/server/works/channel-gate";
@@ -796,10 +799,62 @@ const proposeMasterContent = defineWorksTool<MasterContentArgs>({
   },
 });
 
+const SearchBrandPhotosArgs = z.object({
+  // What the post is about, in a few words; omit to list the best photos.
+  query: z.string().max(200).optional(),
+  limit: z.number().int().min(1).max(12).optional(),
+});
+
+// The brand's own photos (docs/brand-media.md): a read tool, so the model sees
+// the real library before it describes a scene for an AI picture.
+const searchBrandPhotos = defineWorksTool<z.infer<typeof SearchBrandPhotosArgs>>({
+  name: "search_brand_photos",
+  label: "Looking through brand photos…",
+  kind: "read",
+  phases: ["ACTIVE"],
+  requiresWorks: true,
+  description:
+    "Search the brand's OWN real photos (the Media library the client uploaded: venue, product, team) for one that fits a post. Pass `query` = what the post is about in a few words (any language). Returns up to `limit` photos best fit first, each with an `id`, its `shape` (landscape | portrait | square), what it `shows`, and how often it was `used`. When one clearly fits, use it: pass its id as `photoAssetIds: [id]` to generate_image, or on the item in propose_content_plan; the real photo becomes the picture (the brand's logo and headline are put on it, no AI picture is made, no image cost). Prefer a real photo over an AI picture whenever one fits the post's subject; never invent an id and never use the same photo for two posts.",
+  schema: SearchBrandPhotosArgs,
+  async execute(args, ctx) {
+    const photos = await readMatchPhotos(ctx.projectId);
+    if (photos.length === 0) {
+      return {
+        result: {
+          photos: [],
+          note: "The brand has no analysed photos yet. Make the picture as usual; the client can add photos in Brand Brain, Media.",
+        },
+      };
+    }
+    const limit = args.limit ?? 6;
+    const query = args.query?.trim();
+    const found = query
+      ? rankPhotos({ text: query }, photos, { limit }).map((r) => r.photo)
+      : catalogOf(photos, limit);
+    return {
+      result: {
+        photos: found.map((photo) => ({
+          id: photo.assetId,
+          shape: orientationOf(photo.width, photo.height) ?? "unknown",
+          shows: [photo.description, photo.tags.slice(0, 8).join(", ")]
+            .filter(Boolean)
+            .join(" - "),
+          used: photo.useCount,
+        })),
+        note:
+          found.length === 0
+            ? "No photo fits this subject: make the picture as usual."
+            : "Photos, best fit first. Use one only when it truly shows what the post is about.",
+      },
+    };
+  },
+});
+
 export const WORKS_ONLY_TOOLS: readonly ChatTool[] = [
   proposePlanOptions,
   proposeIdeas,
   proposeMasterContent,
+  searchBrandPhotos,
 ];
 
 // Appended to the static descriptions by tools.ts only while a Work exists.
@@ -808,9 +863,9 @@ export const WORKS_DESCRIPTION_SUFFIX: Record<
   string
 > = {
   generate_image:
-    " In a Work the piece is planned first: the tool puts it on the calendar at the next free day and renders it there, so the result is a planned slot, not a loose picture. Pictures are for Instagram only (Post 3:4 = FEED_PORTRAIT, Story 9:16 = STORY); a Reel is planned as a script, there is no square format, and text for LinkedIn, X, TikTok or the website is written with create_task. Report the planned day in one short sentence. POST STYLE KIT: when get_visual_identity shows a `postStyle`, every render already follows the brand's example posts and standing instructions: keep your own design ideas out of `imagePrompt` and say only what the post is about (the subject and, for a product, which product). When the client attached the real product's photo(s) to this message, set `usePhotosFromThisMessage: true` so that exact product is shown. When the examples carry designed text, write it in the brand language in `headline` (+ `highlight`) and `onImageText` (up to 6 shorter texts: sub-headline, price, button label, badge); take every fact from the client, never invent prices or promises. `styleExampleIds` picks which examples to follow (their ids come from get_visual_identity); leave it out to use the newest.",
+    " In a Work the piece is planned first: the tool puts it on the calendar at the next free day and renders it there, so the result is a planned slot, not a loose picture. Pictures are for Instagram only (Post 3:4 = FEED_PORTRAIT, Story 9:16 = STORY); a Reel is planned as a script, there is no square format, and text for LinkedIn, X, TikTok or the website is written with create_task. Report the planned day in one short sentence. POST STYLE KIT: when get_visual_identity shows a `postStyle`, every render already follows the brand's example posts and standing instructions: keep your own design ideas out of `imagePrompt` and say only what the post is about (the subject and, for a product, which product). When the client attached the real product's photo(s) to this message, set `usePhotosFromThisMessage: true` so that exact product is shown. When the examples carry designed text, write it in the brand language in `headline` (+ `highlight`) and `onImageText` (up to 6 shorter texts: sub-headline, price, button label, badge); take every fact from the client, never invent prices or promises. `styleExampleIds` picks which examples to follow (their ids come from get_visual_identity); leave it out to use the newest. REAL PHOTOS: before you describe a new scene, call search_brand_photos with what the post is about; when one of the brand's own photos clearly fits, pass its id as `photoAssetIds: [id]`: that real photo becomes the picture (the brand design goes on it, no AI picture, no image cost) and `imagePrompt` then only says what the photo is used for.",
   create_task:
     " In a Work, copy and briefs for a channel become planned calendar slots (LinkedIn, X, TikTok, Blog/SEO, Ads); an Instagram caption goes with its visual via generate_image. Publishing is not a task: approved pieces are published from their card.",
   propose_content_plan:
-    ' In a Work (a free chat) this is THE planning tool: call it right away for any plan request (defaults for whatever the client left out: the default channels, 3 posts per week for the next 7 days from tomorrow), and again with the full updated plan to change it. A plan is general: ONE item per POST (never one per platform), every item on the first default channel with its natural format; the client chooses the platforms on the card, which makes each post for each of them. With a `[Plan brief]`, the posts sit on its first social channel: its other social channels are where every post also goes, so they get no items of their own (only Blog/SEO and Ads items take their own channel). Give the plan a general title (for example "Social media plan"), never naming a platform, and each post a `purpose` (2-4 words on what it does for the plan, for example "Introduce the product"). It stops your turn: the card shows the plan.',
+    ' In a Work (a free chat) this is THE planning tool: call it right away for any plan request (defaults for whatever the client left out: the default channels, 3 posts per week for the next 7 days from tomorrow), and again with the full updated plan to change it. A plan is general: ONE item per POST (never one per platform), every item on the first default channel with its natural format; the client chooses the platforms on the card, which makes each post for each of them. With a `[Plan brief]`, the posts sit on its first social channel: its other social channels are where every post also goes, so they get no items of their own (only Blog/SEO and Ads items take their own channel). Give the plan a general title (for example "Social media plan"), never naming a platform, and each post a `purpose` (2-4 words on what it does for the plan, for example "Introduce the product"). When the client has uploaded photos of their own, call search_brand_photos first and give a post a real photo with `photoAssetIds: [id]` on its item when one clearly fits its subject (never one photo for two posts, never an invented id). It stops your turn: the card shows the plan.',
 };

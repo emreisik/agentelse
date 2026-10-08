@@ -32,6 +32,8 @@ export type PlanViewItem = {
   publish?: PublishMode;
   // Where the saved slot stands right now (card.slots); absent before saving.
   slot?: { id: string; stage: PlanItemStage; assetId?: string };
+  // Made from one of the brand's own photos (no picture is drawn or paid for).
+  photo?: boolean;
 };
 
 // What actually happens to a piece once it is ready: an "auto" format only
@@ -67,6 +69,7 @@ export function toViewItems(
         ? effectivePublish(resolved.channel, resolved.format, connections)
         : undefined,
       slot: slots?.[index] ?? undefined,
+      ...((item.photoAssetIds?.length ?? 0) > 0 ? { photo: true } : {}),
     };
   });
 }

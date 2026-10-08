@@ -22,6 +22,10 @@ import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
+import { barColorCandidates } from "@/lib/bar-color-candidates";
+import { assembleScene, directionAvoid } from "@/lib/art-direction";
+import { directImage } from "@/server/media/art-director";
+import { resolveArchetype } from "@/server/brand/design-archetype";
 import { applyBrandTemplate } from "@/server/media/creative-template";
 import {
   planCreativeLayout,
@@ -34,9 +38,12 @@ import {
 } from "@/server/media/style-references";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
-import { readAsset } from "@/server/storage/asset-storage";
-import { onImageTextOf } from "@/server/media/adapt-picture";
-import { parseFontNames } from "@/lib/color-swatches";
+import { putAsset, readAsset } from "@/server/storage/asset-storage";
+import { onImageTextOf, photoSourceOf } from "@/server/media/adapt-picture";
+import { fitPhotoToCanvas } from "@/server/media/photo-fit";
+import { loadBrandPhoto } from "@/server/brand/media/photo-source";
+import type { GeneratedCreativeImage } from "@/server/media/creative-image";
+import { parseColorSwatches, parseFontNames } from "@/lib/color-swatches";
 import {
   FALLBACK_TEXT_PLACEMENT,
   headlineZonePhrase,
@@ -299,7 +306,15 @@ export async function performCreativeRevision({
     // together).
     // The brand's Post Style examples (else its one style board) go along in
     // from-scratch mode; an edit has its own picture and nothing else.
-    const styleRefs = baseImage
+    // A post made from the brand's own photo is re-cut from that photo, never
+    // redrawn: "regenerate" must not replace the real photo with an AI picture.
+    const photoSource = baseImage
+      ? undefined
+      : photoSourceOf(currentVersion?.generationMetadata);
+    const photo = photoSource
+      ? await loadBrandPhoto(photoSource.assetId, creative.projectId)
+      : null;
+    const styleRefs = baseImage || photo
       ? NO_STYLE_REFERENCES
       : await loadStyleReferences({ visualIdentity: brandStyle.visualIdentity });
 
@@ -321,6 +336,11 @@ export async function performCreativeRevision({
         revisionLayout.keepLegacy && identity
           ? { ...identity, layoutTemplates: null }
           : identity,
+      forceLegacy: revisionLayout.keepLegacy,
+      archetype: await resolveArchetype(creative.brandId),
+      legacyColors: parseColorSwatches(brandStyle.legacyApprovedColors).map(
+        (swatch) => swatch.hex,
+      ),
       hasLogo: Boolean(brandStyle.logoAssetId || brandStyle.darkLogoAssetId),
       requestedId: revisionLayout.requestedId,
       pixelSize: platformFormat.pixelSize,
@@ -338,19 +358,45 @@ export async function performCreativeRevision({
       ? (layoutPlan.textPlacement ?? FALLBACK_TEXT_PLACEMENT)
       : null;
 
-    const prompt = baseImage
+    // A fresh render is directed from the brand and the brief; an edit works on
+    // the picture it has.
+    const brandContext = baseImage
+      ? null
+      : {
+          ...(await ConstitutionService.getBrandContext(creative.brandId)),
+          visualGuidelines: brandStyle.legacyVisualGuidelines,
+          approvedColors: brandStyle.legacyApprovedColors,
+          visualIdentity: brandStyle.visualIdentity,
+        };
+    const subject = instruction
+      ? `${instruction}\n\nBrand/creative context: ${contextText}`
+      : contextText;
+    const direction = brandContext && !photo
+      ? await directImage({
+          brandContext,
+          brief: subject,
+          draft: subject,
+          platformLabel: platformFormat.label,
+          formatLabel: platformFormat.contentFormatLabel,
+          pixelSize: platformFormat.pixelSize,
+          calmArea: textPlacement
+            ? headlineZonePhrase(textPlacement.zone)
+            : undefined,
+          reservedZones: layoutPlan.reservedZones,
+          followsExamples: styleRefs.exampleCount > 0 && styleRefs.matchStyle,
+          hasProductPhotos: styleRefs.productCount > 0,
+        })
+      : null;
+
+    const prompt = photo
+      ? "The brand's own photo, cut to this format."
+      : baseImage
       ? instruction ||
         "Improve the overall visual quality while keeping the composition."
       : buildCreativePrompt({
-          subject: instruction
-            ? `${instruction}\n\nBrand/creative context: ${contextText}`
-            : contextText,
-          brandContext: {
-            ...(await ConstitutionService.getBrandContext(creative.brandId)),
-            visualGuidelines: brandStyle.legacyVisualGuidelines,
-            approvedColors: brandStyle.legacyApprovedColors,
-            visualIdentity: brandStyle.visualIdentity,
-          },
+          subject: direction ? assembleScene(direction) : subject,
+          extraAvoid: direction ? directionAvoid(direction) : undefined,
+          brandContext,
           platformLabel: platformFormat.label,
           contentFormatLabel: platformFormat.contentFormatLabel,
           pixelSize: platformFormat.pixelSize,
@@ -366,14 +412,36 @@ export async function performCreativeRevision({
             : undefined,
         });
 
-    const generated = await generateCreativeImage(prompt, {
-      baseImage,
-      ...(styleRefs.exampleCount > 0 || styleRefs.productCount > 0
-        ? { referenceImages: styleRefs.images }
-        : { referenceImage: styleRefs.images[0] ?? undefined }),
-      imageSize: platformFormat.pixelSize,
-      falModelId,
-    });
+    let photoFit: "cover" | "extend" | undefined;
+    let generated: GeneratedCreativeImage | null;
+    if (photo) {
+      const fitted = await fitPhotoToCanvas({
+        source: photo.bytes,
+        canvas: platformFormat.pixelSize,
+        focal: photo.focal,
+        avoidZone: textPlacement?.zone ?? null,
+      });
+      const stored = await putAsset(fitted.buffer, "jpg", fitted.mimeType);
+      photoFit = fitted.fit;
+      generated = {
+        storageKey: stored.storageKey,
+        filename: stored.filename,
+        mimeType: fitted.mimeType,
+        size: fitted.buffer.length,
+        provider: "openai",
+        width: fitted.width,
+        height: fitted.height,
+      };
+    } else {
+      generated = await generateCreativeImage(prompt, {
+        baseImage,
+        ...(styleRefs.exampleCount > 0 || styleRefs.productCount > 0
+          ? { referenceImages: styleRefs.images }
+          : { referenceImage: styleRefs.images[0] ?? undefined }),
+        imageSize: platformFormat.pixelSize,
+        falModelId,
+      });
+    }
     if (!generated) {
       return {
         ok: false,
@@ -403,7 +471,7 @@ export async function performCreativeRevision({
         mimeType: generated.mimeType,
         lightLogoAssetId: brandStyle.logoAssetId,
         darkLogoAssetId: brandStyle.darkLogoAssetId,
-        accentColors: brandStyle.visualIdentity?.accentColors,
+        accentColors: barColorCandidates(brandStyle.visualIdentity),
         legacyApprovedColors: brandStyle.legacyApprovedColors,
         template: layoutPlan.template,
         // Story / Reel: keep a corner logo out of the app's own UI bands.
@@ -481,6 +549,10 @@ export async function performCreativeRevision({
           // The words set on this picture, so the next regenerate sets them
           // again.
           ...(words && textDrawn ? { onImageText: words } : {}),
+          // The real photo this picture is cut from (no model drew it).
+          ...(photo && photoFit
+            ? { photoSource: { assetId: photo.assetId, fit: photoFit } }
+            : {}),
         },
         revisionReason: baseImage
           ? `Image edited per instruction: ${instruction.slice(0, 200)}`

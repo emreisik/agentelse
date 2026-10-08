@@ -38,6 +38,9 @@ const generateCreativeImage = vi.hoisted(() => vi.fn());
 vi.mock("@/server/media/creative-image", () => ({ generateCreativeImage }));
 const applyBrandTemplate = vi.hoisted(() => vi.fn());
 vi.mock("@/server/media/creative-template", () => ({ applyBrandTemplate }));
+// The art director has its own tests; here the prompt stands on its own.
+const directImage = vi.fn();
+vi.mock("@/server/media/art-director", () => ({ directImage }));
 vi.mock("@/server/media/brand-logo", () => ({
   loadReferenceImage: vi.fn().mockResolvedValue(null),
 }));
@@ -122,6 +125,7 @@ const versionMetadata = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  directImage.mockResolvedValue(null);
   prismaMock.asset.findUnique.mockResolvedValue({
     storageKey: "k",
     mimeType: "image/png",
@@ -241,9 +245,42 @@ describe("performCreativeRevision with post layouts", () => {
     expect(versionMetadata().onImageText).toBeUndefined();
   });
 
-  it("brands without saved layouts revise exactly as before", async () => {
+  it("a fresh render is directed from the brand and the brief, an edit is not", async () => {
+    directImage.mockResolvedValue({
+      concept: "c",
+      subject: "Directed subject",
+      setting: "s",
+      composition: "c",
+      lighting: "l",
+      technique: "t",
+      texture: "x",
+      mood: "m",
+      avoid: ["clutter"],
+    });
+    await revise("new", { prompt: "old", ...madeWith("headline-top") });
+    expect(directImage).toHaveBeenCalledTimes(1);
+    expect(generateCreativeImage.mock.calls.at(-1)![0]).toContain(
+      "SUBJECT: Directed subject.",
+    );
+
+    directImage.mockClear();
+    await revise("edit", { prompt: "old", ...madeWith("headline-top") });
+    expect(directImage).not.toHaveBeenCalled();
+  });
+
+  it("a fresh render for a brand without saved layouts gets the automatic design", async () => {
     resolveBrandStyleContext.mockResolvedValue(style(false));
     await revise("new", { prompt: "old" });
+
+    expect(templateArgs().template).toMatchObject({ logoFit: "shape" });
+    expect(versionMetadata().layoutTemplate).toMatchObject({
+      id: expect.stringMatching(/^auto-/),
+    });
+  });
+
+  it("editing an image made before layouts existed keeps its old composition", async () => {
+    resolveBrandStyleContext.mockResolvedValue(style(false));
+    await revise("edit", { prompt: "old" });
 
     expect(templateArgs().template).toEqual(DEFAULT_KIT_TEMPLATE);
     expect(templateArgs().safeZone).toBeUndefined();

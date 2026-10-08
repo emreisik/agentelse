@@ -13,19 +13,75 @@ Modal (`brand-scan-dialog.tsx`) üç adımdır: **URL** → **Bulunanlar** (logo
 - **Logo yuvası** tona göre seçilir: açık renkli logo `BrandDossier.logoAssetId` (koyu zemin için), koyu renkli logo `darkLogoAssetId` (açık zemin için). Uygulamanın tüm logo mantığı bu iki yuvaya dayanır.
 - JS ile çizilen (SPA) siteler boş HTML döndürebilir: manifest/og/theme-color ile "sınırlı veri" uyarısı verilir, kalanı elle düzenlenir.
 
-## 2. Brand sekmesi
+## 2. Marka kiti nerede düzenlenir
 
-`workspace-right-panel-data.ts` markanın kimliğini `buildBrandKit` (`src/lib/brand-kit.ts`) ile düz, serileştirilebilir bir `BrandKit` nesnesine çevirir; sağ panelin Marka sekmesi (`brand-summary-panel.tsx`) beş kart çizer.
+Marka kimliğine ait tüm düzenleme **yalnız Brand Brain'dedir**; sağ panelin Brand sekmesi artık marka profili, kit veya strateji göstermez (yalnız bağlı hesaplar ve Instagram / Ads / Website / Search kartları).
 
-Her kartın başlığında küçük bir ikon vardır (`card-title.tsx`), sıra en çok kullanılandan başlar:
+`src/server/brand/load-brand-kit.ts` markanın görünüşünü `buildBrandKit` (`src/lib/brand-kit.ts`) ile tek bir `BrandKit` nesnesine çevirir; Assets ve Visual Identity sekmeleri aynı okumayı kullanır, böylece bir renk iki yerde farklı görünmez (Visual Identity renkleri varsa onlar, yoksa dossier'in onaylı renkleri).
 
-1. **Bağlı hesaplar** (en üstte, `brand-overview-cards.tsx`): yalnız gerçekten bağlı hesaplar (`state === "connected"`), tek sıra gerçek marka logosu (`integrations/brand-icons.tsx`). Kurulumu yarım kalan (GA4 property / Search Console sitesi seçilmemiş), bağlı olmayan hesaplar ve Website (hesap değil; adresi özette) gösterilmez. İpucu "Instagram · @handle"; "Yönet" Integrations sayfasına gider. Hiç bağlı yoksa "Henüz bağlı hesap yok. Hesap bağla". Durumları `src/server/integrations/connected-accounts.ts` okur.
-2. **Marka özeti**: logo, ad, site; ikonlu Sektör / Hedef kitle / Ses tonu / Pazarlar satırları (boş olan satır hiç görünmez) ve en çok beş renk; "Düzenle" Brand Brain'e gider.
-3. **Instagram** (yalnız bağlıyken): profil + takipçi, son 28 gün erişim / görüntülenme, etkileşim oranı, son 3 gönderi.
-4. **Marka kiti** (kapalı kart; kimlik boşsa açık): logo kutuları (her varyant kendi zemininde), palet (tıkla-kopyala), font örnekleri, stil çipleri, layout galerisi (+ **Edit layouts**), **Scan site**. Kimlik boşsa büyük bir "Scan my website" kartı görünür.
-5. **Marka stratejisi** (kapalı kart): Marka özü, Şu anki odak, İşe yarayanlar, Asla yapma. Ses tonu ve pazarlar özette olduğu için burada tekrar edilmez.
+- **Assets** (`brand-brain/assets-section.tsx`): logo (açık/koyu), renk ve font özeti (salt okunur, "Edit in Visual Identity" bağlantısı), konumlandırma, ses tonu, kitle/pazar/ürün/hizmet, kural sayaçları, "Brand basics" kontrol listesi, **Edit details**.
+- **Visual Identity** (`brand/brand-kit-section.tsx` + `visual-identity-section.tsx` + `post-style-section.tsx`): **Scan site** şeridi, renkler ve stil (Visual Identity kartı), **Typography** (+ **Edit colors & fonts**, `brand-colors-fonts-edit.tsx`), **Post layouts** (+ **Edit layouts** / **Set up layouts**), post stili. Post şablonu kapalıysa layout kartı bunu söyler: layout'lar uygulanmaz.
 
-Sayfanın tepesindeki renkli "hero" kartı ve "Agentelse fark etti" kartı yoktur (tasarımda bilerek çıkarıldı).
+## 2b. Visual Identity ayarları tasarıma nasıl yansır
+
+Üç üretim yolu (ajans/sohbet işi `openai-creative.provider.ts`, Studio yeniden üret `creative-actions.ts`, haftalık planlayıcı `instagram-week-planner.ts`) aynı iki adımı kullanır. Sözleşme testi: `src/server/media/visual-identity-reach.test.ts`.
+
+| Ayar | Nereye gider | Garanti |
+|---|---|---|
+| Ana / ikincil / vurgu renkleri | görsel istemi (BRAND); layout'un çubuk rengi; yazıda koyu mürekkep (ana) ve vurgulu kelime (vurgu) | istem: model yaklaşık uyar; çubuk ve yazı: piksel kesin |
+| Fotoğraf stili, ince ayar, ruh hali | istem (STYLE & LIGHTING) | model yaklaşık uyar |
+| Kompozisyon notları | istem (COMPOSITION) | model yaklaşık uyar |
+| Arka plan tonu, hep ekle | istem (BRAND) | model yaklaşık uyar |
+| Hiç yapma | istem (AVOID) | model yaklaşık uyar |
+| Stil referansı görseli | modele referans görsel olarak eklenir | model yaklaşık uyar |
+| Logo (açık/koyu) | `applyBrandTemplate` ile sonradan yapıştırılır, arka plan parlaklığına göre varyant seçilir | piksel kesin |
+| Şablon açık/kapalı | kapalıysa logo, çubuk ve layout hiç uygulanmaz | kesin |
+| Logo konumu/boyutu, çubuk | **Kayıtlı layout YOKSA ve şablon varsayılandaysa otomatik tasarım** (aşağıda, §2c). Marka şablonu elle özelleştirdiyse o aynen uygulanır; kayıtlı layout varsa layout karar verir (şablon alanları yok sayılır, yalnız açık/kapalı geçerli) | piksel kesin |
+| Çubuk rengi | şablondaki renk, yoksa vurgu → ana → ikincil renk, en son eski dossier rengi (`lib/bar-color-candidates.ts`) | piksel kesin |
+| Yazı tipi (Typography) | post sözleri için ilk onaylı font Google Fonts'tan yüklenir; yoksa Inter | piksel kesin; Google'da olmayan font Inter'e düşer |
+
+Bağlam bir işin başında dondurulur (`ExecutionContextSnapshot`): bir ayarı değiştirmek, zaten kuyruktaki işi değil sonraki işleri etkiler. Reklam yeteneği (`CREATE_AD_CREATIVE`) de artık yazı tipini okur.
+
+## 2c. Otomatik tasarım (ayar gerektirmez)
+
+Hiçbir layout kaydedilmemişse ve marka şablonunu özelleştirmemişse her post, markadan ve formattan **türetilen** bir layout alır (`src/lib/auto-layout.ts` `autoLayout`; çıktı sıradan bir `LayoutTemplate`, yani `layoutToTemplateConfig`, `applyBrandTemplate` ve dizgici aynen çalışır). Seçim noktası `planCreativeLayout` (`creative-layout.ts`): sağlayıcı, Studio ve haftalık planlayıcı hepsi buradan geçer.
+
+- **Arketip** (5): `editorial` (varsayılan), `product`, `promo`, `minimal-luxe`, `info`. Markanın kendi metninden (özet, konumlandırma, ürünler, constitution) anahtar kelimelerle ve ruh hali etiketleriyle belirlenir (`classifyArchetype`, `archetypeOfBrandContext`; DB'den okuyan `server/brand/design-archetype.ts`). Eşleşme yoksa `editorial`. Tek ayar: Brand Brain → Visual Identity → Post layouts kartındaki **Look** seçici (Automatic + 5 görünüm). Seçim `BrandVisualIdentity.designProfile` (`{archetype, source:"user"}`, `src/lib/design-profile.ts`, migration `20261007100000_add_brand_design_profile`) alanında saklanır ve sözcüklerden çıkan tahmini geçersiz kılar; Automatic'e dönmek alanı temizler (`updateDesignLookAction`).
+- **Format başına ayrı tasarım:** feed, kare, yatay, Story. Story'de kenar şeridi yok, logo uygulamanın kontrol alanının üstünde. Kenar boşluğu her formatta kısa kenarın %4'ü.
+- **Logo boyutu şekle göre** (`src/lib/logo-fit.ts`): `sizePercent` bir "varlık düzeyi" olarak okunur, logonun kendi en-boy oranına sığdırılır; genişlik en çok yüzde 32, yükseklik en çok kısa kenarın yüzde 12'si, okunur taban. Geniş wordmark biraz daha geniş, kare amblem biraz daha küçük çizilir. Kayıtlı layout'lar da bundan yararlanır (`logoFit: "shape"`).
+- **Logo temizliği** (`server/media/logo-clean.ts`): düz beyaz arka plan şeffaflaştırılır (JPEG dahil), boş kenar kırpılır. Elle yüklenen ve AI ile üretilen logolar kayıtta bu hâle getirilir ve gerçek boyutu saklanır.
+- **Okunurluk:** logonun arkasındaki bölge ile logo arasındaki kontrast düşükse (tek varyant, aynı renkte bant) tek renkli logo beyaz/siyaha boyanır, çok renkliye yumuşak plaka konur.
+- **Yazı:** otomatik tasarımda `minimal-luxe` dışındakilerde başlık bölgesi vardır; yani layout'u olmayan markalar da artık görsel üzerinde başlık alır.
+
+### Post designs (çizgisiz, gerçek önizlemeli)
+
+Otomatik tasarım artık **6 profesyonel tasarım**dır ve hiçbirinde şerit, bant ya da çizgi yoktur: görsel, bir başlık ve logo. `Archetype` adları saklanan değerlerdir, görünen adlar `ARCHETYPE_LABEL`'dadır: `editorial` Editorial (üstte başlık, köşede logo), `statement` Statement (ortada dev tek satır, üstte logo), `product` Bottom headline (altta başlık, üst köşede logo), `promo` Poster (sol üstte XL başlık, sağ altta logo), `info` Column (solda metin sütunu), `minimal-luxe` Minimal (başlıksız, ortada küçük logo). Kitin "match" örneklerinden gelen şerit bilgisi (`traits.bar`) artık yok sayılır.
+
+Seçim Brand Brain → Visual Identity → **Post designs** galerisindedir (`design-gallery.tsx`): format sekmesi (Feed/Square/Landscape/Story), "Preview on" ile markanın kendi temiz fotoğrafı (kütüphane yüklemeleri, `type IMAGE`, `CUSTOMER_UPLOAD`) ya da yerleşik 3 sahne, her kart **gerçek üretim koduyla** çizilir. Önizleme `GET /api/projects/:id/design-preview?design&format&photo` (`server/brand/design-preview.ts`): `composeBrandTemplate` (`applyBrandTemplate`'in depolamadan bağımsız çekirdeği) markanın logosu, fontu, renkleri, güvenli alanı ve örnek yazıyla (markanın dilinde) çalışır; yani önizleme ile post birebir aynı kodtur. Seçim **format başınadır**: Feed, Square, Landscape ve Story'nin her biri kendi tasarımını alır (`BrandVisualIdentity.designProfile = {formats: {feed?, square?, landscape?, story?}, source:"user"}`, `lib/design-profile.ts`; ilk sürümdeki tek `archetype` alanı okunurken tüm formatlara açılır). Seçilmeyen format markanın sözcüklerinden çıkan otomatik tasarımı izler. Galeride sekme = format; "Use X for all formats", "Feed back to automatic" ve "All back to automatic" düğmeleri vardır (`updateDesignLookAction(projectId, format|"all", design|null)`). Çözüm sırası `planCreativeLayout`'ta: revizyonun kendi tasarımı → o formatın seçimi → markanın otomatik tasarımı. Seçim tüm yerlerde geçerlidir (sohbet, plan, fikir, haftalık plan, Studio). Marka kendi özel layout'larını kaydetmişse galeri yerine bir bildirim ve "Use the post designs instead" düğmesi çıkar (`clearLayoutTemplatesAction`). Tarama diyaloğunun layout adımı kaldırıldı: tarama artık layout kaydetmez, tasarımlar otomatik kalır. Eski layout düzenleyici ve galerisi kodda duruyor ama hiçbir ekrandan açılmıyor.
+
+### Görsel yönetmen (resim istemi mühendisliği)
+
+Görsel model artık fikrin "ortalama resmini" değil, markanın içinden çıkan bir çekim listesini alır. `server/media/art-director.ts` (`directImage`), fikir/brief + marka bağlamından (ne satıyor, kime, hangi ülke/kültür, constitution özeti, farklılaştırıcılar, kitle, ürünler, fotoğraf stili, ruh hali, always-include/avoid, "işe yarayanlar", "asla göster", son onaylı sahnelerin istemleri) ayrı bir model çağrısıyla `ArtDirection` üretir (`lib/art-direction.ts`): `concept` (görsel fikir), `subject`, `setting`, `composition`, `lighting`, `technique` (objektif/diyafram veya illüstrasyon yöntemi), `texture`, `mood`, bu resme özel `avoid` listesi ve çok resimli işlerde tam `alternatives` sahneleri. `assembleScene` bunları SUBJECT olarak birleştirir; `avoid` kaynağı `creative-prompt-builder` AVOID bölümüne "For this picture:" olarak eklenir.
+
+Kurallar: taslak istem (metin adımı veya sohbet) ve brief'in açıkça istediği her şey korunur, yönetmen yalnız zanaat ve özgüllük ekler; marka renkleri sahnede doğal biçimde (yüzey, aksesuar, ışık) görünür, düz renk filtresi olarak değil; başlığın dizileceği bölge ve logo köşeleri boş bırakılır; resimde yazı/logo yok; post stili örnekleri "match" ise tasarıma karışmaz; gerçek ürün fotoğrafı varsa o ürün birebir gösterilir. Yazı yazarıyla (copywriter) eşzamanlı çalışır, ek gecikme yaratmaz. Hata olursa eski istem aynen kalır. Üç yolda da bağlı: sağlayıcı (sohbet, plan, fikir), haftalık planlayıcı (artık metin adımı olmadan doğrudan fikirden üretiyordu) ve Studio yeniden üretimi (düzenleme modu hariç). Kayıt: `rawResult.artConcept` / `generationMetadata.artConcept`.
+
+### Performans (Post designs galerisi)
+
+Önizleme istekleri artık: marka bağlamı (stil, font, dil, iki logo) 30 sn boyunca tek okunur ve altı kart paylaşır; temizlenmiş logo bayt içeriğine göre önbelleklenir (üretim hattı da yararlanır: `cleanLogo`); sahne/fotoğraf boyutuna göre bir kez çizilir; en çok 2 render aynı anda koşar (kalanı sırada), böylece galeri uygulamayı dondurmaz; Google font ilk render'da iki ağırlık birlikte indirilir ve geçici bir ağ hatası kalıcı Inter'e yol açmaz (60 sn sonra yeniden denenir); her resmin adresine görünüm anahtarı (`v`) girer ve anahtar hâlâ geçerliyse `immutable` önbelleklenir: tarayıcı bir görünüm için her resmi bir kez ister.
+
+### Yazı tipi
+
+Yazı tipi seçici (`font-picker.tsx`): ~30 sosyal medyaya uygun Google Fonts, 5 ruh halinde (`lib/google-fonts.ts`), kendi harfleriyle ve Türkçe örnekle gösterilir; listede olmayan herhangi bir Google Font adıyla da eklenebilir (var olduğu doğrulanır). Seçim `approvedFonts[0]` olur ve postlardaki yazı bununla dizilir. Taramadan gelen next/font adları (`__Montserrat_0e8a88`, `..._Fallback_...`) `lib/font-names.ts` ile gerçek aileye çevrilir/atılır, hem taramada hem okurken.
+
+### Vurucu yazı (copywriter adımı)
+
+Görsel üzerindeki yazı artık ana çağrının son alanı değil. `headline-budget.ts` yerleşimin kapasitesinden bir bütçe çıkarır (örn. feed/TOP/L/3 satır: 4-8 kelime, ≤ ~50 karakter; "en fazla 6 kelime" kalktı). `headline-copywriter.ts` markanın sesi, kitlesi, onaylı iddiaları, "asla" kuralları, öğrenmeleri ve son başlıkları ile ayrı bir model çağrısı yapar (`{headline, highlight, subline, cta}`), çıktıyı temizler (tırnak/hashtag/emoji/nokta) ve bütçeyi doğrular. Sağlayıcıda yalnız modelin kendi yazdığı taslağa uygulanır; sohbette müşterinin dikte ettiği ve uyarlanan postun yazısına dokunulmaz. Hata olursa taslak kalır. Fikir motoru başlığı artık taslaktır (en çok 9 kelime).
+
+### Eylem satırı, planlayıcı ve örneklerden yerleşim
+
+- **Eylem çağrısı (CTA):** `OnImageText.cta` yazıya ayrı bir alan; dizgici (`creative-text.ts`) onu başlık/alt satırın altında, vurgu renginde (yoksa mürekkep renginde) bir hap olarak çizer, etiketi beyaz/near-black'ten okunur olanı alır. Yazar adımı `cta`'yı (en çok 24 karakter) `subline`'dan ayrı üretir.
+- **Haftalık planlayıcı** (`instagram-week-planner.ts`): layout'unda başlık bölgesi varsa her post için yazar adımı çalışır; görsel yazısız üretilir, sözler sonradan basılır ve `generationMetadata.onImageText` olarak kaydedilir. Yazar başarısız olursa post eskisi gibi temiz görsel olur.
+- **Örnek postlardan yerleşim** (`PostStyleAnalysisSchema.traits`): örnek analizi artık logo köşesi, başlık bölgesi/hizası/ölçeği ve şerit tipini yapısal olarak da çıkarır. Kit "match" iken örneklerin çoğunluğu (`postStyleTraitsOf`) otomatik tasarımı yönlendirir; "inspired"da yalnız görsel modele yön olarak gider. Story kendi güvenli alan tasarımında kalır. Eski analizlerde `traits` yoktur: örnek yeniden analiz edilince devreye girer.
 
 ## 3. Post layout'ları
 
@@ -80,9 +136,9 @@ Sütun yoksa `BrandVisualIdentity` okuyan her sorgu (marka stili, sohbet görsel
 
 ## 7. Elle doğrulama
 
-1. Brand sekmesi → **Scan site** → `webhealth.com.tr`: bulunan logo/renk/font doğru mu, logo doğru yuvaya (açık/koyu) düştü mü, Apply sonrası sekme dolu mu.
+1. Brand Brain → Visual Identity → **Scan site** → `webhealth.com.tr`: bulunan logo/renk/font doğru mu, logo doğru yuvaya (açık/koyu) düştü mü, Apply sonrası sekme dolu mu.
 2. Güvenlik: `http://127.0.0.1`, `http://169.254.169.254` ve özel IP'ye yönlendiren bir adres reddedilmeli.
-3. Layout galerisi: Edit layouts ile bir layout'u değiştirip kaydet; önizlemede logo/şerit konumu.
+3. Brand Brain → Visual Identity → Post layouts: Edit layouts ile bir layout'u değiştirip kaydet; önizlemede logo/şerit konumu.
 4. Sohbet: "Bir post üret" → format sor → görsel; logo/şerit layout'taki yerde, yanıt layout adını söylüyor. Bir de "başlıklı, bant layout'u ile" dene.
 5. Kartta **revize** → logo/band ikilenmemeli. Creative sayfasında Studio'da layout seçip "Regenerate from scratch".
 

@@ -16,6 +16,7 @@ import { ConstitutionService } from "@/server/agency/constitution/constitution-s
 import { getProjectTimezone } from "@/server/chat/content-plan";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
+import type { MatchPhoto } from "@/lib/media-match";
 import { MemoryService } from "@/server/memory/memory-service";
 
 // Everything the idea engine (idea-engine.ts) shows the model, read in one go:
@@ -64,7 +65,63 @@ export type IdeaContext = {
   postResults: { worked: string[]; didNotWork: string[] };
   recentPosts: string[];
   ideas: IdeaRow[];
+  // The brand's own photos that are ready to be a post's picture.
+  photos: MatchPhoto[];
 };
+
+const PHOTOS_READ = 200;
+
+// The library's analysed, live photos, as the matcher reads them.
+export async function readMatchPhotos(
+  projectId: string,
+  // The idea engine and the chat only use photos that were understood; a
+  // person choosing a photo by eye on the Ideas board sees every live one.
+  options: { understoodOnly?: boolean } = {},
+): Promise<MatchPhoto[]> {
+  const understoodOnly = options.understoodOnly ?? true;
+  const rows = await prisma.brandMedia
+    .findMany({
+      where: {
+        projectId,
+        kind: "IMAGE",
+        archivedAt: null,
+        ...(understoodOnly ? { status: "OK" as const } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+      take: PHOTOS_READ,
+      select: {
+        assetId: true,
+        description: true,
+        tags: true,
+        subjects: true,
+        setting: true,
+        quality: true,
+        useCount: true,
+        lastUsedAt: true,
+      },
+    })
+    .catch((error: unknown) => {
+      // Most often: the BrandMedia migration is not applied on this database.
+      console.error(
+        "[idea-context] brand photos not read:",
+        error instanceof Error ? error.message : error,
+      );
+      return [];
+    });
+  if (rows.length === 0) return [];
+  const sizes = await prisma.asset
+    .findMany({
+      where: { id: { in: rows.map((row) => row.assetId) }, projectId },
+      select: { id: true, width: true, height: true },
+    })
+    .catch(() => []);
+  const sizeOf = new Map(sizes.map((asset) => [asset.id, asset]));
+  return rows.map((row) => ({
+    ...row,
+    width: sizeOf.get(row.assetId)?.width ?? null,
+    height: sizeOf.get(row.assetId)?.height ?? null,
+  }));
+}
 
 // The social channels ideas are made for: the connected ones (as the chat's
 // defaults pick them), else Instagram.
@@ -127,6 +184,7 @@ export async function loadIdeaContext(input: {
     opportunities,
     posts,
     ideas,
+    photos,
   ] = await Promise.all([
     ConstitutionService.getBrandContext(brandId),
     MemoryService.postLessons(brandId),
@@ -160,6 +218,7 @@ export async function loadIdeaContext(input: {
       select: { topic: true },
     }),
     readIdeaRows(projectId),
+    readMatchPhotos(projectId),
   ]);
 
   const layouts = style?.visualIdentity?.layoutTemplates ?? null;
@@ -199,6 +258,7 @@ export async function loadIdeaContext(input: {
     postResults,
     recentPosts: posts.map((post) => post.topic).filter(Boolean),
     ideas,
+    photos,
   };
 }
 

@@ -11,6 +11,7 @@ import {
 } from "@/server/actions/brand-visual-identity-actions";
 import type { ColorSwatchValue } from "@/components/brand/color-swatch-input";
 import { VisualIdentityControls } from "@/components/brand/visual-identity-controls";
+import { parseLayoutTemplates } from "@/lib/layout-templates";
 import { DEFAULT_TEMPLATE_CONFIG } from "@/server/media/creative-template";
 
 function ColorRow({
@@ -89,6 +90,9 @@ export async function VisualIdentitySection({
     }),
   ]);
 
+  // Saved post layouts decide the logo and bar placement (planCreativeLayout):
+  // the template fields below then only matter as the on/off switch.
+  const layoutsActive = Boolean(parseLayoutTemplates(identity?.layoutTemplates));
   const logoUrl = dossier?.logoAssetId
     ? `/api/assets/${dossier.logoAssetId}`
     : null;
@@ -156,6 +160,7 @@ export async function VisualIdentitySection({
           logoUrl={logoUrl}
           identity={editable}
           action={updateBrandVisualIdentityAction}
+          layoutsActive={layoutsActive}
         />
       </CardHeader>
       <CardContent className="space-y-5">
@@ -246,9 +251,11 @@ export async function VisualIdentitySection({
         <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2 text-sm">
           <span>
             Template:{" "}
-            {editable.templateEnabled
-              ? `logo ${LOGO_POSITION_LABEL[editable.logoPosition]}, ${editable.accentBarEnabled ? "accent bar on" : "no accent bar"}`
-              : "off (pure AI output)"}
+            {!editable.templateEnabled
+              ? "off (pure AI output)"
+              : layoutsActive
+                ? "on — logo and bar placement come from your Post layouts"
+                : `logo ${LOGO_POSITION_LABEL[editable.logoPosition]}, ${editable.accentBarEnabled ? "accent bar on" : "no accent bar"}`}
           </span>
         </div>
 

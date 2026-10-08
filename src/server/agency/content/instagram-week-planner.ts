@@ -15,8 +15,16 @@ import {
   planCreativeLayout,
   safeZonePercent,
 } from "@/server/media/creative-layout";
+import { headlineZonePhrase } from "@/lib/layout-templates";
 import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
+import { barColorCandidates } from "@/lib/bar-color-candidates";
+import { parseColorSwatches } from "@/lib/color-swatches";
+import { resolveArchetype } from "@/server/brand/design-archetype";
 import { applyBrandTemplate } from "@/server/media/creative-template";
+import { headlineBudget } from "@/server/media/headline-budget";
+import { writeOnImageText } from "@/server/media/headline-copywriter";
+import { directImage } from "@/server/media/art-director";
+import { assembleScene, directionAvoid } from "@/lib/art-direction";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { CreativeRepository } from "@/server/repositories/creative.repository";
@@ -291,10 +299,29 @@ export async function planWeeklyInstagramContent(
   // one layout decision covers them all (the brand's default for the format).
   const layoutPlan = planCreativeLayout({
     visualIdentity: brandStyle?.visualIdentity,
+    // Without the brand's look nothing is composited, so no layout is claimed.
+    forceLegacy: !brandStyle,
+    archetype: await resolveArchetype(brandId),
+    legacyColors: parseColorSwatches(brandStyle?.legacyApprovedColors).map(
+      (swatch) => swatch.hex,
+    ),
     hasLogo: Boolean(brandStyle?.logoAssetId || brandStyle?.darkLogoAssetId),
     pixelSize: format.pixelSize,
     hasHeadline: false,
   });
+
+  // What the copywriter needs of the brand, from the brand twin read above.
+  const copyBrief = {
+    positioning: brandTwin?.positioning ?? null,
+    toneOfVoice: brandTwin?.voice?.toneOfVoice ?? brandTwin?.voice?.personality ?? null,
+    targetAudiences: brandTwin?.audience ?? [],
+    products: brandTwin?.products ?? [],
+    approvedClaims: brandTwin?.approvedClaims ?? [],
+    negativeBrief: brandTwin?.negativeRules ?? [],
+    brandLearnings: (brandTwin?.creativeMemory?.works ?? []).map((w) => ({
+      insight: w.insight,
+    })),
+  };
 
   // Best-effort per idea — one failed generation (provider outage, content
   // policy rejection) must not stop the rest of the week's batch, same
@@ -321,9 +348,51 @@ export async function planWeeklyInstagramContent(
       );
 
       const subject = `${idea.title}: ${idea.description}`;
+      // The words the post carries when its layout has a headline zone: written
+      // for the brand and the room the layout gives them, typeset after the
+      // picture is made. Best effort: without them the post is a clean picture.
+      // The picture is directed from the brand and the idea (art-director.ts) at
+      // the same time as the words are written.
+      const [words, direction] = await Promise.all([
+        brandStyle && layoutPlan.textPlacement
+          ? writeOnImageText({
+              brandContext: copyBrief,
+              brief: subject,
+              budget: headlineBudget({
+                placement: layoutPlan.textPlacement,
+                canvas: format.pixelSize ?? { width: 1080, height: 1080 },
+              }),
+            })
+          : Promise.resolve(null),
+        brandStyle
+          ? directImage({
+              brandContext: {
+                ...copyBrief,
+                visualIdentity: brandStyle.visualIdentity,
+              },
+              brief: subject,
+              draft: subject,
+              platformLabel: format.label,
+              formatLabel: format.contentFormatLabel,
+              pixelSize: format.pixelSize,
+              calmArea: layoutPlan.textPlacement
+                ? headlineZonePhrase(layoutPlan.textPlacement.zone)
+                : undefined,
+              reservedZones: layoutPlan.reservedZones,
+              followsExamples: styleRefs.exampleCount > 0 && styleRefs.matchStyle,
+              hasProductPhotos: styleRefs.productCount > 0,
+            })
+          : Promise.resolve(null),
+      ]);
+      const textArea =
+        words && layoutPlan.textPlacement
+          ? headlineZonePhrase(layoutPlan.textPlacement.zone)
+          : undefined;
+      let textDrawn = false;
       const prompt = brandStyle
         ? buildCreativePrompt({
-            subject,
+            subject: direction ? assembleScene(direction) : subject,
+            extraAvoid: direction ? directionAvoid(direction) : undefined,
             brandContext: {
               visualGuidelines: brandStyle.legacyVisualGuidelines,
               approvedColors: brandStyle.legacyApprovedColors,
@@ -338,6 +407,7 @@ export async function planWeeklyInstagramContent(
             matchStyle: styleRefs.matchStyle,
             reservedZones: layoutPlan.reservedZones,
             layoutComposition: layoutPlan.composition,
+            textArea,
           })
         : subject;
       const generated = await generateCreativeImage(prompt, {
@@ -361,15 +431,28 @@ export async function planWeeklyInstagramContent(
             mimeType: generated.mimeType,
             lightLogoAssetId: brandStyle.logoAssetId,
             darkLogoAssetId: brandStyle.darkLogoAssetId,
-            accentColors: brandStyle.visualIdentity?.accentColors,
+            accentColors: barColorCandidates(brandStyle.visualIdentity),
             legacyApprovedColors: brandStyle.legacyApprovedColors,
             template: layoutPlan.template,
             safeZone: layoutPlan.layout
               ? safeZonePercent(format.safeZone, format.pixelSize)
               : undefined,
             trimLogo: Boolean(layoutPlan.layout),
+            ...(words && layoutPlan.textPlacement
+              ? {
+                  text: {
+                    ...words,
+                    placement: layoutPlan.textPlacement,
+                    fontFamily: brandTwin?.visualDNA?.fonts?.[0] ?? null,
+                    darkInk: brandStyle.visualIdentity?.primaryColors[0]?.hex ?? null,
+                    accentHex: brandStyle.visualIdentity?.accentColors[0]?.hex ?? null,
+                    safeZone: safeZonePercent(format.safeZone, format.pixelSize),
+                  },
+                }
+              : {}),
           });
           if (templated) generated.size = templated.size;
+          if (templated?.textDrawn) textDrawn = true;
         } catch (error) {
           console.error(
             `[instagram-week-planner] applyBrandTemplate failed for idea ${idea.id}:`,
@@ -414,6 +497,8 @@ export async function planWeeklyInstagramContent(
             source: "auto_weekly_plan",
             ideaId: idea.id,
             layoutTemplate: layoutPlan.meta,
+            ...(words && textDrawn ? { onImageText: words } : {}),
+            ...(direction ? { artConcept: direction.concept } : {}),
           },
         },
       );

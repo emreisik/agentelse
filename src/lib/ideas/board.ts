@@ -47,6 +47,19 @@ export type BoardIdea = {
   link?: IdeaLink;
 };
 
+// A photo of the brand's library as the idea picker reads it (client-safe).
+export type PickerPhoto = {
+  assetId: string;
+  description: string | null;
+  tags: string[];
+  subjects: string[];
+  setting: string | null;
+  quality: number | null;
+  width: number | null;
+  height: number | null;
+  useCount: number;
+};
+
 export type BoardFilters = {
   module: IdeaModule | "all" | "untyped";
   status: BoardStatus;

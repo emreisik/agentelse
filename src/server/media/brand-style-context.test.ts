@@ -93,6 +93,8 @@ describe("resolveBrandStyleContext", () => {
       // A brand that never saved layouts reads as null (its template above
       // then applies, exactly as before layouts existed).
       layoutTemplates: null,
+      // Nobody picked a look for the automatic design.
+      designProfile: null,
       template: {
         enabled: true,
         logoPosition: "TOP_RIGHT",

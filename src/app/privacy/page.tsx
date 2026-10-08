@@ -100,6 +100,22 @@ const SECTIONS: PolicySection[] = [
     ),
   },
   {
+    id: "photos-and-media",
+    title: "Photos you upload",
+    body: (
+      <p>
+        Photos you add to your brand&rsquo;s media library are stored for your
+        project only. When you add one, it is sent once to our AI provider to
+        be described (what is in it, how it is shot) so ideas can find it; the
+        description never identifies anyone. Location data inside a photo is
+        removed when it is added. We do not use your photos to train models of
+        our own, and they are deleted when you delete the photo or the project. You confirm when
+        you upload that you have the right to use the photos and the permission
+        of the people shown in them.
+      </p>
+    ),
+  },
+  {
     id: "connected-integrations",
     title: "Connected integrations",
     body: (

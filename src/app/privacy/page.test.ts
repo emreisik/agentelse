@@ -342,4 +342,13 @@ describe("privacy policy: WordPress connection and website changes (SC-F8)", () 
       "without any Google Analytics or Search Console data",
     );
   });
+
+  it("says what happens to the photos a brand uploads", () => {
+    const photos = plain(sectionBetween("photos-and-media", "connected-integrations"));
+    expect(photos).toContain("Photos you upload");
+    expect(photos).toContain("sent once to our AI provider to be described");
+    expect(photos).toContain("Location data inside a photo is removed");
+    expect(photos).toContain("deleted when you delete the photo or the project");
+    expect(photos).toContain("permission of the people shown in them");
+  });
 });

@@ -33,6 +33,7 @@ export const postStyleExampleDef: ReasoningDef<PostStyleAnalysis> = {
         "graphics: every non-photographic element (badges, frames, buttons, icons, price tags, interface or phone mock-ups, dividers, gradients, light effects, a logo and where it sits).",
         "background: the background treatment and depth.",
         "mood: the feeling in a few words.",
+        "traits: the few facts a program places by, read off the image. logoCorner: where the brand's logo or mark sits (TOP_LEFT, TOP_CENTER, TOP_RIGHT, BOTTOM_LEFT, CENTER_BOTTOM, BOTTOM_RIGHT, or none if the post shows no logo). headlineZone: where the main headline sits (TOP = upper third, UPPER_LEFT, CENTER, LEFT_COLUMN = a text column along the left side, BOTTOM = lower third, or none if the post has no headline). headlineAlign: left or center. headlineScale: M (modest), L (large) or XL (dominant). bar: a solid brand-colour band along an edge (band), a thin stripe (line) or neither (none).",
         "recipe: the whole design as ONE imperative instruction (about 120-170 words) an image model can follow to make a new post in this exact design for any product: name the layout, the text roles, the typography, the colours with hex codes, the product treatment and the graphic elements. Write it so the PRODUCT AND THE WORDS are placeholders (do not name this example's product or copy its wording).",
         "",
         "Base everything strictly on what is visible. Read any text in the image only to understand its ROLE and style. Never invent details.",
@@ -58,6 +59,13 @@ export const postStyleExampleDef: ReasoningDef<PostStyleAnalysis> = {
       background: "Mock background.",
       mood: "mock",
       recipe: `Mock design recipe derived from ${label}.`,
+      traits: {
+        logoCorner: "BOTTOM_LEFT",
+        headlineZone: "TOP",
+        headlineAlign: "center",
+        headlineScale: "L",
+        bar: "line",
+      },
     };
   },
 };

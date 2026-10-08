@@ -60,6 +60,7 @@ const CONTEXT = {
   postResults: { worked: [], didNotWork: [] },
   recentPosts: ["Behind the roast: our new single origin"],
   ideas: [],
+  photos: [],
 };
 
 function raw(hook: string, caption = "Come try it this week.") {

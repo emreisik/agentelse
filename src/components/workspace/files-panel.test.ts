@@ -27,6 +27,19 @@ const render = (assets: LibraryAsset[]) =>
 // not as a generic icon row; documents stay a list; a long image list is cut
 // with a "Show all".
 describe("FilesPanel", () => {
+  it("lists the brand's own photos in a Photos group of their own", () => {
+    const html = render([
+      { ...asset("ph1", "terrace.jpg", "image/jpeg"), photo: true },
+      asset("img1", "post.jpg", "image/jpeg"),
+    ]);
+    expect(html).toContain("Photos");
+    const photos = html.indexOf("Photos");
+    expect(html.indexOf('data-file-thumb="ph1"')).toBeGreaterThan(photos);
+    expect(html.indexOf('data-file-thumb="img1"')).toBeGreaterThan(
+      html.indexOf('data-file-thumb="ph1"'),
+    );
+  });
+
   it("shows images and logos as thumbnails and documents as a list", () => {
     const html = render([
       asset("logo1", "brand-logo.png", "image/png"),

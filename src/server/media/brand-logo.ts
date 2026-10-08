@@ -12,12 +12,15 @@ import { readAsset } from "@/server/storage/asset-storage";
 // it in try/catch.
 async function loadImageAsset(
   assetId: string | null | undefined,
+  // When given, the asset must belong to this project: an id taken from a
+  // model or a request never reaches another project's picture.
+  projectId?: string,
 ): Promise<{ data: string; mimeType: string } | null> {
   if (!assetId) return null;
 
   try {
-    const asset = await prisma.asset.findUnique({
-      where: { id: assetId },
+    const asset = await prisma.asset.findFirst({
+      where: { id: assetId, ...(projectId ? { projectId } : {}) },
       select: { storageKey: true, mimeType: true },
     });
     if (!asset) return null;

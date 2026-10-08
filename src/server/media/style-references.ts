@@ -50,6 +50,8 @@ export async function loadStyleReferences(input: {
   productAssetIds?: readonly string[];
   // False when the render edits a picture: it has one input only.
   withReferences?: boolean;
+  // The post's project: every picture is looked up inside it.
+  projectId?: string;
 }): Promise<StyleReferences> {
   if (input.withReferences === false) return NO_STYLE_REFERENCES;
   const kit = input.visualIdentity?.postStyle ?? null;
@@ -58,7 +60,7 @@ export async function loadStyleReferences(input: {
   const loaded = await Promise.all(
     picked.map(async (example) => ({
       example,
-      image: await loadReferenceImage(example.assetId),
+      image: await loadReferenceImage(example.assetId, input.projectId),
     })),
   );
   const examples = loaded.flatMap((entry) =>
@@ -69,7 +71,7 @@ export async function loadStyleReferences(input: {
     await Promise.all(
       (input.productAssetIds ?? [])
         .slice(0, MAX_PRODUCT_IMAGES)
-        .map((assetId) => loadReferenceImage(assetId)),
+        .map((assetId) => loadReferenceImage(assetId, input.projectId)),
     )
   ).flatMap((image) => (image ? [image] : []));
 
@@ -77,6 +79,7 @@ export async function loadStyleReferences(input: {
   if (examples.length === 0) {
     board = await loadReferenceImage(
       input.visualIdentity?.referenceImageAssetId ?? undefined,
+      input.projectId,
     );
   }
 

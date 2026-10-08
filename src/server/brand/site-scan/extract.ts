@@ -3,6 +3,8 @@
 // well-known tags and declarations, and a hostile or malformed page must
 // degrade to "less data", never to an exception or a hang.
 
+import { normalizeFontName } from "@/lib/font-names";
+
 const MAX_ATTR_TAGS = 4000; // hard ceiling on tags inspected per kind
 
 // --- attribute + tag helpers -------------------------------------------------
@@ -328,10 +330,9 @@ const GENERIC_FONTS = new Set([
 ]);
 
 function cleanFontName(raw: string): string | null {
-  const name = raw
-    .trim()
-    .replace(/^["']|["']$/g, "")
-    .trim();
+  // next/font's hashed family becomes the font; its fallback is dropped.
+  const name = normalizeFontName(raw);
+  if (!name) return null;
   if (!name || name.length > 60 || /^var\(|^\d/.test(name)) return null;
   if (GENERIC_FONTS.has(name.toLowerCase())) return null;
   return name;

@@ -4,6 +4,7 @@ import {
   Compass,
   Gem,
   GraduationCap,
+  Images,
   Palette,
   ShieldCheck,
   Target,
@@ -17,6 +18,7 @@ export const BRAND_BRAIN_TAB_LABEL: Record<BrandBrainSubKey, string> = {
   assets: "Assets",
   rules: "Rules & Knowledge",
   "visual-identity": "Visual Identity",
+  media: "Media",
   constitution: "Constitution",
   goals: "Goals",
   intelligence: "Intelligence",
@@ -28,6 +30,7 @@ const BRAND_BRAIN_TAB_ICON: Record<BrandBrainSubKey, LucideIcon> = {
   assets: Gem,
   rules: ShieldCheck,
   "visual-identity": Palette,
+  media: Images,
   constitution: BookOpen,
   goals: Target,
   intelligence: Compass,
@@ -39,7 +42,7 @@ const BRAND_BRAIN_TAB_ICON: Record<BrandBrainSubKey, LucideIcon> = {
 const NAV_GROUPS: { label: string; keys: BrandBrainSubKey[] }[] = [
   {
     label: "Brand",
-    keys: ["assets", "visual-identity", "rules", "constitution"],
+    keys: ["assets", "visual-identity", "media", "rules", "constitution"],
   },
   { label: "Strategy", keys: ["goals", "intelligence", "learnings"] },
 ];

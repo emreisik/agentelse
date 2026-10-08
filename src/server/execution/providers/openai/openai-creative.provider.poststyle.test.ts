@@ -12,6 +12,11 @@ vi.mock("@/server/reasoning/openai-client", () => ({
   runOpenAIStructured,
 }));
 
+// The art director has its own tests; here the text step's own prompt stands.
+vi.mock("@/server/media/art-director", () => ({
+  directImage: vi.fn().mockResolvedValue(null),
+}));
+
 const generateCreativeImage = vi.fn();
 vi.mock("@/server/media/creative-image", () => ({
   generateCreativeImage,
@@ -20,6 +25,11 @@ vi.mock("@/server/media/creative-image", () => ({
 const loadReferenceImage = vi.fn();
 vi.mock("@/server/media/brand-logo", () => ({ loadReferenceImage }));
 const applyBrandTemplate = vi.fn();
+// The copywriter step is covered by its own tests; here the model's draft stands.
+vi.mock("@/server/media/headline-copywriter", () => ({
+  writeOnImageText: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("@/server/media/creative-template", () => ({ applyBrandTemplate }));
 // The clean copy a post with words keeps for its other formats: no storage.
 vi.mock("@/server/storage/asset-storage", () => ({
@@ -279,7 +289,8 @@ describe("OpenAiCreativeProvider with a Post Style Kit", () => {
       system: string;
       jsonSchema: { properties: Record<string, unknown> };
     };
-    expect(call.jsonSchema.properties).not.toHaveProperty("headline");
+    // "inspired" does not switch the text step into the kit's own mode.
+    expect(call.system).not.toContain("example posts carry designed text");
     expect(generateCreativeImage.mock.calls[0]![0]).toContain("as the design direction");
   });
 

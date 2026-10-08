@@ -14,7 +14,13 @@ import {
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { kitLayoutPalette } from "@/lib/brand-kit";
-import { boardStatusOf, type BoardIdea } from "@/lib/ideas/board";
+import {
+  boardStatusOf,
+  type BoardIdea,
+  type PickerPhoto,
+} from "@/lib/ideas/board";
+import { assetUrl } from "@/lib/asset-url";
+import { rankPhotos, type MatchPhoto } from "@/lib/media-match";
 import {
   HEADLINE_MAX_WORDS,
   type SocialIdeaConcept,
@@ -71,6 +77,128 @@ function Field({
   );
 }
 
+// Where the post's picture comes from: made for it, or one of the brand's own
+// photos, offered best fit first.
+function PicturePicker({
+  photos,
+  ideaText,
+  value,
+  onChange,
+  disabled,
+}: {
+  photos: PickerPhoto[];
+  ideaText: string;
+  value: string;
+  onChange: (assetId: string) => void;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(Boolean(value));
+  const match: MatchPhoto[] = photos.map((photo) => ({
+    ...photo,
+    lastUsedAt: null,
+  }));
+  const fitting = rankPhotos({ text: ideaText }, match, { limit: 6 }).map(
+    (entry) => entry.photo.assetId,
+  );
+  const ordered = [
+    ...fitting,
+    ...photos
+      .map((photo) => photo.assetId)
+      .filter((id) => !fitting.includes(id)),
+  ].slice(0, 18);
+  const own = open || Boolean(value);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="flex items-baseline justify-between gap-2">
+        <span
+          className="text-[12px] font-medium"
+          style={{ color: "var(--ws-text)" }}
+        >
+          {COPY.picture}
+        </span>
+        <span className="text-[11px]" style={{ color: "var(--ws-text-3)" }}>
+          {COPY.pictureHint}
+        </span>
+      </span>
+      <div className="flex flex-col gap-2">
+        <div className="flex gap-1.5">
+          {[
+            { own: false, label: COPY.pictureMade },
+            { own: true, label: COPY.pictureOwn },
+          ].map((option) => (
+            <button
+              key={option.label}
+              type="button"
+              disabled={disabled}
+              aria-pressed={own === option.own}
+              onClick={() => {
+                setOpen(option.own);
+                if (!option.own) onChange("");
+              }}
+              className={cn(
+                "rounded-full px-3 py-1 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-60",
+                own === option.own ? "font-medium" : "hover:bg-[var(--ws-hover)]",
+              )}
+              style={
+                own === option.own
+                  ? {
+                      background: "var(--ws-surface-2)",
+                      boxShadow: "0 0 0 1.5px var(--ws-accent)",
+                    }
+                  : { color: "var(--ws-text-2)" }
+              }
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        {own ? (
+          ordered.length === 0 ? (
+            <span className="text-[12px]" style={{ color: "var(--ws-text-3)" }}>
+              {COPY.pictureNone}
+            </span>
+          ) : (
+            <div className="grid grid-cols-6 gap-1.5">
+              {ordered.map((id, index) => (
+                <button
+                  key={id}
+                  type="button"
+                  disabled={disabled}
+                  aria-pressed={value === id}
+                  title={index < fitting.length ? COPY.pictureSuggested : COPY.pictureAll}
+                  onClick={() => onChange(value === id ? "" : id)}
+                  className="relative aspect-square overflow-hidden rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-60"
+                  style={
+                    value === id
+                      ? { boxShadow: "0 0 0 2px var(--ws-accent)" }
+                      : undefined
+                  }
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element -- a stored photo served by our own route */}
+                  <img
+                    src={assetUrl(id, "thumb")}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className="size-full object-cover"
+                  />
+                  {index < fitting.length ? (
+                    <span
+                      className="absolute top-1 left-1 size-1.5 rounded-full"
+                      style={{ background: "var(--ws-accent)" }}
+                    />
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          )
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function SocialDetail({
   idea,
   concept,
@@ -96,6 +224,7 @@ function SocialDetail({
   const [caption, setCaption] = useState(draft.caption);
   const [visual, setVisual] = useState(draft.visual);
   const [layoutId, setLayoutId] = useState(draft.layoutId ?? "");
+  const [photoId, setPhotoId] = useState(draft.assetIds?.[0] ?? "");
   const [saving, setSaving] = useState(false);
 
 
@@ -105,7 +234,8 @@ function SocialDetail({
     highlight !== (draft.highlight ?? "") ||
     caption !== draft.caption ||
     visual !== draft.visual ||
-    layoutId !== (draft.layoutId ?? "");
+    layoutId !== (draft.layoutId ?? "") ||
+    photoId !== (draft.assetIds?.[0] ?? "");
 
   // The preview follows the form as it is typed.
   const live: SocialIdeaConcept = {
@@ -120,6 +250,7 @@ function SocialDetail({
       caption,
       visual,
       ...(layoutId ? { layoutId } : { layoutId: undefined }),
+      ...(photoId ? { assetIds: [photoId] } : { assetIds: undefined }),
     },
   };
   const kit = ctx.kit;
@@ -135,6 +266,7 @@ function SocialDetail({
       caption,
       visual,
       layoutId,
+      assetIds: photoId ? [photoId] : [],
     });
     setSaving(false);
     return ok;
@@ -262,6 +394,13 @@ function SocialDetail({
             disabled={!editable}
           />
         </Field>
+        <PicturePicker
+          photos={ctx.photos ?? []}
+          ideaText={`${hook} ${visual} ${headline} ${draft.pillar ?? ""}`}
+          value={photoId}
+          onChange={setPhotoId}
+          disabled={!editable}
+        />
         {kit && layouts.length > 0 ? (
           <Field label={COPY.layout} hint={COPY.layoutHint}>
             <div className="flex flex-wrap gap-2">

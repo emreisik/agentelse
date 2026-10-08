@@ -25,11 +25,13 @@ export function VisualIdentityControls({
   logoUrl,
   identity,
   action,
+  layoutsActive = false,
 }: {
   projectId: string;
   logoUrl: string | null;
   identity: VisualIdentityEditable;
   action: (formData: FormData) => Promise<ActionResult>;
+  layoutsActive?: boolean;
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const [suggestion, setSuggestion] =
@@ -59,6 +61,7 @@ export function VisualIdentityControls({
         identity={identity}
         action={action}
         suggestion={suggestion}
+        layoutsActive={layoutsActive}
         open={editOpen}
         onOpenChange={handleOpenChange}
       />

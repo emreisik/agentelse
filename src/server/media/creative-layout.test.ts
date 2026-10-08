@@ -54,8 +54,13 @@ describe("planCreativeLayout without saved layouts (today's behaviour)", () => {
     expect(plan.reservedZones).toContain("thin band along the bottom edge");
   });
 
-  it("works for a brand with no Visual Identity row at all", () => {
-    const plan = planCreativeLayout({ visualIdentity: null, hasLogo: true, hasHeadline: false });
+  it("keeps the brand's own pre-layout composition when asked to (a revision of an old image)", () => {
+    const plan = planCreativeLayout({
+      visualIdentity: null,
+      hasLogo: true,
+      forceLegacy: true,
+      hasHeadline: false,
+    });
     expect(plan.template).toBeUndefined();
     expect(plan.reservedZones).toContain("bottom-right corner");
     expect(plan.meta).toBeNull();
@@ -63,13 +68,188 @@ describe("planCreativeLayout without saved layouts (today's behaviour)", () => {
 
   it("does not mention a logo that does not exist", () => {
     const plan = planCreativeLayout({ visualIdentity: null, hasLogo: false, hasHeadline: false });
-    expect(plan.reservedZones).not.toContain("logo");
+    expect(plan.reservedZones ?? "").not.toContain("logo");
   });
 
   it("uses the generic headline spot when one is requested", () => {
-    const plan = planCreativeLayout({ visualIdentity: null, hasLogo: true, hasHeadline: true });
+    const plan = planCreativeLayout({
+      visualIdentity: null,
+      hasLogo: true,
+      forceLegacy: true,
+      hasHeadline: true,
+    });
     // No layout to place it: the prompt builder's generic wording applies.
     expect(plan.headlinePlacement).toBeUndefined();
+  });
+});
+
+describe("planCreativeLayout with the automatic design", () => {
+  it("designs a layout for a brand that set none, even with no Visual Identity row", () => {
+    const plan = planCreativeLayout({
+      visualIdentity: null,
+      hasLogo: true,
+      legacyColors: ["#0b1f3a", "#2dd4bf"],
+      pixelSize: FEED,
+      hasHeadline: false,
+    });
+    expect(plan.layout).not.toBeNull();
+    expect(plan.meta?.id).toBe("auto-editorial-portrait");
+    // No bar, band or line: the design is the picture, a headline and the logo.
+    expect(plan.template).toMatchObject({
+      enabled: true,
+      logoFit: "shape",
+      accentBarEnabled: false,
+    });
+    // The words get a zone, so the text step writes a headline for it.
+    expect(plan.textPlacement).not.toBeNull();
+  });
+
+  it("follows the brand's archetype and the post's format", () => {
+    const product = planCreativeLayout({
+      visualIdentity: identity(),
+      hasLogo: true,
+      archetype: "product",
+      pixelSize: FEED,
+      hasHeadline: false,
+    });
+    expect(product.meta?.id).toBe("auto-product-portrait");
+    expect(product.template).toMatchObject({
+      logoPosition: "TOP_LEFT",
+      logoOnBar: false,
+      accentBarEnabled: false,
+    });
+    expect(product.textPlacement).toMatchObject({ zone: "BOTTOM" });
+
+    const story = planCreativeLayout({
+      visualIdentity: identity(),
+      hasLogo: true,
+      archetype: "product",
+      pixelSize: STORY,
+      hasHeadline: false,
+    });
+    // No bar on the edge the app's controls cover.
+    expect(story.meta?.id).toBe("auto-product-vertical");
+    expect(story.template).toMatchObject({ accentBarEnabled: false });
+  });
+
+  it("a revision keeps the archetype the post was made with", () => {
+    const plan = planCreativeLayout({
+      visualIdentity: identity(),
+      hasLogo: true,
+      archetype: "editorial",
+      requestedId: "auto-promo-square",
+      pixelSize: FEED,
+      hasHeadline: false,
+    });
+    expect(plan.meta?.id).toBe("auto-promo-portrait");
+  });
+
+  it("follows the example posts of a kit that asks to match them", () => {
+    const kit = (fidelity: "match" | "inspired") => ({
+      fidelity,
+      directives: "",
+      examples: [
+        {
+          assetId: "a",
+          label: "",
+          analysis: {
+            summary: "s",
+            layout: "l",
+            typography: "t",
+            colors: "c",
+            product: "p",
+            graphics: "g",
+            background: "b",
+            mood: "m",
+            recipe: "r",
+            traits: {
+              logoCorner: "TOP_RIGHT" as const,
+              headlineZone: "BOTTOM" as const,
+              headlineAlign: "left" as const,
+              headlineScale: "XL" as const,
+              bar: "none" as const,
+            },
+          },
+        },
+      ],
+    });
+    const plan = (fidelity: "match" | "inspired") =>
+      planCreativeLayout({
+        visualIdentity: identity({ postStyle: kit(fidelity) }),
+        hasLogo: true,
+        archetype: "editorial",
+        pixelSize: FEED,
+        hasHeadline: false,
+      });
+    expect(plan("match").template).toMatchObject({
+      logoPosition: "TOP_RIGHT",
+      accentBarEnabled: false,
+    });
+    expect(plan("match").textPlacement).toMatchObject({
+      zone: "BOTTOM",
+      scale: "XL",
+    });
+    // "inspired" takes the look as a direction, not as a placement to copy.
+    expect(plan("inspired").template).toMatchObject({ logoPosition: "BOTTOM_LEFT" });
+  });
+
+  it("uses the design a person picked for each format, and the brand's own for the rest", () => {
+    const pick = {
+      formats: { feed: "statement" as const, story: "minimal-luxe" as const },
+      source: "user" as const,
+    };
+    const plan = (pixelSize: { width: number; height: number }) =>
+      planCreativeLayout({
+        visualIdentity: identity({ designProfile: pick }),
+        hasLogo: true,
+        archetype: "info",
+        pixelSize,
+        hasHeadline: false,
+      });
+    expect(plan(FEED).meta?.id).toBe("auto-statement-portrait");
+    expect(plan(STORY).meta?.id).toBe("auto-minimal-luxe-vertical");
+    // No pick for the square: what the brand's words point to.
+    expect(plan({ width: 1080, height: 1080 }).meta?.id).toBe("auto-info-square");
+    // The design picked for one format never leaks into another.
+    expect(plan({ width: 1080, height: 566 }).meta?.id).toBe("auto-info-landscape");
+  });
+
+  it("a revision keeps its own design even when the picks have changed since", () => {
+    const plan = planCreativeLayout({
+      visualIdentity: identity({
+        designProfile: { formats: { feed: "statement" }, source: "user" },
+      }),
+      hasLogo: true,
+      requestedId: "auto-promo-portrait",
+      pixelSize: FEED,
+      hasHeadline: false,
+    });
+    expect(plan.meta?.id).toBe("auto-promo-portrait");
+  });
+
+  it("leaves a template the brand customised alone", () => {
+    const base = { ...DEFAULT_KIT_TEMPLATE, logoSizePercent: 22 };
+    const plan = planCreativeLayout({
+      visualIdentity: identity({ template: base }),
+      hasLogo: true,
+      pixelSize: FEED,
+      hasHeadline: false,
+    });
+    expect(plan.layout).toBeNull();
+    expect(plan.template).toBe(base);
+  });
+
+  it("switching compositing off still means no design at all", () => {
+    const plan = planCreativeLayout({
+      visualIdentity: identity({
+        template: { ...DEFAULT_KIT_TEMPLATE, enabled: false },
+      }),
+      hasLogo: true,
+      pixelSize: FEED,
+      hasHeadline: false,
+    });
+    expect(plan.layout).toBeNull();
+    expect(plan.reservedZones).toBeUndefined();
   });
 });
 
@@ -208,7 +388,7 @@ describe("planCreativeLayout with saved layouts", () => {
       maxLines: 4,
       scale: "M",
     });
-    // A layout without a headline zone, and a brand without layouts, carry none.
+    // A layout without a headline zone, and a template the brand customised, carry none.
     expect(
       planCreativeLayout({
         visualIdentity: withLayouts(),
@@ -222,6 +402,7 @@ describe("planCreativeLayout with saved layouts", () => {
       planCreativeLayout({
         visualIdentity: identity(),
         hasLogo: true,
+        forceLegacy: true,
         pixelSize: FEED,
         hasHeadline: true,
       }).textPlacement,

@@ -889,9 +889,6 @@ export default async function ProjectChatPage({
           brand={
             <BrandSummaryPanel
               projectId={projectId}
-              brand={rightPanelData.brand}
-              website={rightPanelData.website}
-              kit={rightPanelData.brandKit}
               connections={rightPanelData.connections}
               searchOverview={GscFlags.sync()}
             />

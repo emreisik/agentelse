@@ -42,6 +42,11 @@ vi.mock("@/server/media/brand-style-context", () => ({
 }));
 const applyBrandTemplate = vi.fn();
 vi.mock("@/server/media/creative-template", () => ({ applyBrandTemplate }));
+// The copywriter step has its own tests; here it is a switch.
+const writeOnImageText = vi.fn();
+vi.mock("@/server/media/headline-copywriter", () => ({ writeOnImageText }));
+const directImage = vi.fn();
+vi.mock("@/server/media/art-director", () => ({ directImage }));
 vi.mock("@/server/media/brand-logo", () => ({
   loadReferenceImage: vi.fn().mockResolvedValue(null),
 }));
@@ -136,6 +141,8 @@ beforeEach(() => {
   getBrandTwin.mockResolvedValue(null);
   resolveBrandStyleContext.mockResolvedValue(BARE_BRAND_STYLE);
   applyBrandTemplate.mockResolvedValue(null);
+  writeOnImageText.mockResolvedValue(null);
+  directImage.mockResolvedValue(null);
   brandFindUnique.mockResolvedValue({ name: "Acme" });
   reasoningRun.mockResolvedValue({ output: { safe: true } });
   approvalCreate.mockResolvedValue({ id: "approval-1" });
@@ -622,6 +629,118 @@ describe("planWeeklyInstagramContent — brand look and post layouts", () => {
 
     expect(assetCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ size: 4321 }),
+    });
+  });
+
+  describe("the words of the post", () => {
+    const WORDS = {
+      headline: "Sonbahar menüsü sofrada, sıra sizde",
+      highlight: "sıra sizde",
+      cta: "Masa ayırt",
+    };
+    const setUp = () => {
+      // No saved layouts: the automatic design, which has a headline zone.
+      resolveBrandStyleContext.mockResolvedValue(BARE_BRAND_STYLE);
+      ideaFindMany.mockResolvedValueOnce([idea("a")]);
+      generateCreativeImage.mockResolvedValueOnce(generatedImage("a"));
+    };
+
+    it("writes them for the brand and the room, keeps the picture textless and typesets them", async () => {
+      setUp();
+      writeOnImageText.mockResolvedValue(WORDS);
+      applyBrandTemplate.mockResolvedValue({ size: 5, textDrawn: true });
+
+      await planWeeklyInstagramContent(SCOPE, 3);
+
+      const call = writeOnImageText.mock.calls[0]![0];
+      expect(call.brief).toBe("Idea a: Description a");
+      expect(call.budget.maxChars).toBeGreaterThan(24);
+      const prompt = generateCreativeImage.mock.calls[0]![0] as string;
+      expect(prompt).toContain("typeset onto the image afterwards");
+      expect(applyBrandTemplate.mock.calls[0]![0].text).toMatchObject({
+        ...WORDS,
+        placement: { zone: expect.any(String) },
+      });
+      expect(creativeAddVersion).toHaveBeenCalledWith(
+        "creative-Idea a",
+        "p-1",
+        expect.objectContaining({
+          generationMetadata: expect.objectContaining({ onImageText: WORDS }),
+        }),
+      );
+    });
+
+    it("leaves a clean picture when the copywriter cannot deliver", async () => {
+      setUp();
+      writeOnImageText.mockResolvedValue(null);
+
+      const result = await planWeeklyInstagramContent(SCOPE, 3);
+
+      expect(result.imagesGenerated).toBe(1);
+      expect(generateCreativeImage.mock.calls[0]![0]).not.toContain(
+        "typeset onto the image afterwards",
+      );
+      expect(applyBrandTemplate.mock.calls[0]![0].text).toBeUndefined();
+    });
+
+    it("does not ask for words a layout has no place for", async () => {
+      resolveBrandStyleContext.mockResolvedValue(await brandWithLayouts());
+      ideaFindMany.mockResolvedValueOnce([idea("a")]);
+      generateCreativeImage.mockResolvedValueOnce(generatedImage("a"));
+
+      await planWeeklyInstagramContent(SCOPE, 3);
+
+      expect(writeOnImageText).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the picture direction", () => {
+    const direction = {
+      concept: "A table laid for an autumn menu",
+      subject: "A rustic table with three plated autumn dishes",
+      setting: "A small family restaurant at golden hour",
+      composition: "High three-quarter angle, dishes in the lower half",
+      lighting: "Warm low sun through a side window",
+      technique: "50mm lens at f/2.8",
+      texture: "Steam, crumbs and a creased linen napkin",
+      mood: "Warm and generous",
+      avoid: ["stock-photo smiles"],
+    };
+
+    it("makes the picture from the director's scene for the idea and the brand", async () => {
+      ideaFindMany.mockResolvedValueOnce([idea("a")]);
+      generateCreativeImage.mockResolvedValueOnce(generatedImage("a"));
+      directImage.mockResolvedValue(direction);
+
+      await planWeeklyInstagramContent(SCOPE, 3);
+
+      const call = directImage.mock.calls[0]![0];
+      expect(call.brief).toBe("Idea a: Description a");
+      expect(call.platformLabel).toBeTruthy();
+      const prompt = generateCreativeImage.mock.calls[0]![0] as string;
+      expect(prompt).toContain("SUBJECT: A rustic table with three plated autumn dishes.");
+      expect(prompt).toContain("For this picture: stock-photo smiles.");
+      expect(creativeAddVersion).toHaveBeenCalledWith(
+        "creative-Idea a",
+        "p-1",
+        expect.objectContaining({
+          generationMetadata: expect.objectContaining({
+            artConcept: "A table laid for an autumn menu",
+          }),
+        }),
+      );
+    });
+
+    it("falls back to the idea itself when the director cannot answer", async () => {
+      ideaFindMany.mockResolvedValueOnce([idea("a")]);
+      generateCreativeImage.mockResolvedValueOnce(generatedImage("a"));
+      directImage.mockResolvedValue(null);
+
+      await planWeeklyInstagramContent(SCOPE, 3);
+
+      expect(generateCreativeImage.mock.calls[0]![0]).toContain(
+        "SUBJECT: Idea a: Description a",
+      );
     });
   });
 

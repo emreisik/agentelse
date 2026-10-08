@@ -17,7 +17,7 @@ import type { LucideIcon } from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
 import { cn } from "@/lib/utils";
-import { parseColorSwatches, parseFontNames } from "@/lib/color-swatches";
+import { loadBrandKit } from "@/server/brand/load-brand-kit";
 import {
   ASSET_READINESS_LABEL,
   assetReadiness,
@@ -72,14 +72,23 @@ export async function AssetsSection({
   brandId: string;
   knowledge: BrandKnowledgeCounts;
 }) {
-  const dossier = await prisma.brandDossier.findUnique({ where: { brandId } });
+  const [dossier, kit] = await Promise.all([
+    prisma.brandDossier.findUnique({ where: { brandId } }),
+    loadBrandKit(brandId),
+  ]);
   // The fields an AI suggestion filled (see brand/dossier-suggest.ts): the
   // note stays until a person edits the dossier afterwards.
   const suggestionsOn = isGuidedSetupEnabled();
   const aiNote = suggestionsOn ? await aiSuggestedFieldsOf(brandId) : null;
 
-  const colors = parseColorSwatches(dossier?.approvedColors);
-  const fonts = parseFontNames(dossier?.approvedFonts);
+  // The same colors and fonts the Visual Identity tab edits: its role-split
+  // colors when the brand has set them, else the dossier's approved colors.
+  const colors = [
+    ...kit.palette.primary,
+    ...kit.palette.secondary,
+    ...kit.palette.accent,
+  ];
+  const fonts = kit.fonts;
   // If colors/fonts arrive in a shape that doesn't fit a list (free text or an
   // unexpected object), the raw data stays visible as a JsonViewer — nothing
   // goes missing.
@@ -214,7 +223,7 @@ export async function AssetsSection({
             scroll={false}
             className="text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
           >
-            Fine-tune in Visual Identity
+            Edit in Visual Identity
           </Link>
         }
       >

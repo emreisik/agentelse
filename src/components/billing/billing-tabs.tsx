@@ -11,7 +11,9 @@ export const BILLING_TABS = [
 
 export type BillingTab = (typeof BILLING_TABS)[number]["id"];
 
-export function parseBillingTab(value: string | string[] | undefined): BillingTab {
+export function parseBillingTab(
+  value: string | string[] | undefined,
+): BillingTab {
   const first = Array.isArray(value) ? value[0] : value;
   return BILLING_TABS.find((tab) => tab.id === first)?.id ?? "plans";
 }

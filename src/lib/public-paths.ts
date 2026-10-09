@@ -26,6 +26,10 @@ export function isPublicPath(pathname: string): boolean {
     // RS256 imzalı jetonunu kendisi doğrular, GOOGLE_RISC kapalıyken 404,
     // geçersiz jetonda 400 döner.
     pathname === "/api/webhooks/google-risc" ||
+    // Stripe ödeme webhook'u (docs/billing-payments.md): oturum yok; route
+    // Stripe-Signature başlığını webhook sırrıyla kendisi doğrular, geçersizse 401,
+    // ödeme kapalıyken 503 döner.
+    pathname === "/api/webhooks/billing" ||
     pathname === "/api/auth" ||
     pathname.startsWith("/api/auth/") ||
     // Has its own signed-token verification (see

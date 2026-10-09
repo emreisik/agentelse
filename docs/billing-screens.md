@@ -17,10 +17,17 @@
 
 Plan fiyatları ve kotalar `src/lib/billing/plans.ts`'ten (`catalog.ts` türetir, kopya yok). Yıllık fiyat ve ilk ay fiyatı aynı sabitlerdendir; "Apply first-month discount" yalnız aylık faturalamada geçerlidir, yıllık fiyata yığılmaz.
 
-## Henüz pasif olanlar
+## Ödeme bağlıyken (Faz 4) ve bağlı değilken
 
-Ödeme sağlayıcısı (Faz 4) bağlanana kadar: plan seçme düğmeleri, ek paket satın alma, iptal, ödeme yöntemi ve promosyon kodu pasiftir ve sayfa bunu açıkça söyler. `PAYMENTS_OPEN` sabiti (`app/billing/page.tsx`) ödeme kurulumuyla `true` olur.
+Ödeme `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` ile açılır (`docs/billing-payments.md`). **Kapalıyken** plan düğmeleri, ek paket satın alma, iptal ve ödeme yöntemi pasiftir ve sayfa bunu açıkça söyler. **Açıkken** (`pickerModeFor`, `src/lib/billing/picker-mode.ts`):
+
+- Ödeme yapmamış workspace: her kartta *Subscribe to X* (Stripe Checkout'a gider), ilk ay indirimi düğmesi yalnız ilk abonelikte çalışır.
+- Ödeme yapan workspace: *Upgrade to X* (hemen, farkı öder) / *Switch to X* (yenilemede), bekleyen düşürme için *Keep this plan*; aralık değişmez. Ödeme sorunu ya da iptali planlanmış aboneliğte düğmeler kapalı ve nedeni yazılı.
+- Yalnız sahip/yönetici eylem yapar; diğerleri nedenini görür.
+- *My subscription*: iptal (dönem sonunda) / devam, ödeme yöntemi (Stripe portalı), Stripe faturaları (tarih, no, tutar, durum, görüntüle/PDF).
+- *Usage*: ek paket *Buy* (planı olan yöneticide).
+- Stripe'tan dönüşte (`?checkout=success&session_id=…`) sayfa durumu webhook'u beklemeden eşitler ve sabit metinli bir bilgi şeridi gösterir. Test anahtarıyla çalışırken başlıkta "Test mode · no real charges" rozeti görünür.
 
 ## Testler
 
-`src/lib/billing/catalog.test.ts`, `src/components/billing/billing-screens.test.ts` (sunucuda render: fiyatlar, uyarılar, durumlar), `src/server/billing/overview.integration.test.ts` (gerçek veritabanı), `src/app/billing/page.test.ts` (bayrak, çalışma alanı, sekme).
+`src/lib/billing/catalog.test.ts`, `src/lib/billing/picker-mode.test.ts` (düğme modları, bilgi şeridi), `src/components/billing/billing-screens.test.ts` (sunucuda render: fiyatlar, uyarılar, durumlar, canlı düğmeler), `src/server/billing/overview.integration.test.ts` (gerçek veritabanı), `src/app/billing/page.test.ts` (bayrak, çalışma alanı, sekme, Stripe dönüşü).

@@ -1,4 +1,8 @@
-import { limitLevel, usedPercent, type LimitLevel } from "@/lib/billing/catalog";
+import {
+  limitLevel,
+  usedPercent,
+  type LimitLevel,
+} from "@/lib/billing/catalog";
 
 const LEVEL_COLOR: Record<LimitLevel, string> = {
   ok: "var(--ws-accent)",

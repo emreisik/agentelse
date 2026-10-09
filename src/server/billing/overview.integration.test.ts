@@ -191,6 +191,59 @@ describeIntegration("getBillingOverview", () => {
     });
   });
 
+  it("tells a paying workspace from one that never paid, and keeps paid time after a cancel", async () => {
+    const now = new Date();
+    const future = new Date(now.getTime() + 10 * DAY_MS);
+    const past = new Date(now.getTime() - 10 * DAY_MS);
+    const cases = [
+      // [row, stripeLinked, paidAccess]
+      [{ status: "ACTIVE", stripeSubscriptionId: null }, false, false],
+      [{ status: "TRIALING", stripeSubscriptionId: null }, false, false],
+      [{ status: "ACTIVE", stripeSubscriptionId: "sub_a" }, true, true],
+      [{ status: "PAST_DUE", stripeSubscriptionId: "sub_p" }, true, true],
+      [
+        {
+          status: "CANCELED",
+          stripeSubscriptionId: "sub_c1",
+          paidThrough: future,
+        },
+        true,
+        true,
+      ],
+      [
+        {
+          status: "CANCELED",
+          stripeSubscriptionId: "sub_c2",
+          paidThrough: past,
+        },
+        true,
+        false,
+      ],
+    ] as const;
+    for (const [data, stripeLinked, paidAccess] of cases) {
+      const fixture = await workspace();
+      await prisma.subscription.create({
+        data: {
+          workspaceId: fixture.workspaceId,
+          planKey: "growth",
+          interval: "MONTH",
+          introOffer: true,
+          ...data,
+          stripeSubscriptionId:
+            data.stripeSubscriptionId === null
+              ? null
+              : `${data.stripeSubscriptionId}_${randomUUID().slice(0, 8)}`,
+        },
+      });
+      const overview = await getBillingOverview(fixture.workspaceId, now);
+      expect(overview.subscription).toMatchObject({
+        stripeLinked,
+        paidAccess,
+        introOffer: true,
+      });
+    }
+  });
+
   it("an unknown plan key or a scheduled change reads safely", async () => {
     const fixture = await workspace();
     await prisma.subscription.create({

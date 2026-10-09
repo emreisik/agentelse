@@ -10,8 +10,10 @@ import type {
   AllowanceOverview,
   BillingOverview,
 } from "@/server/billing/overview";
+import { startPackCheckoutAction } from "@/server/actions/billing-actions";
 import { Button } from "@/components/ui/button";
 
+import { BillingActionButton } from "./billing-action-button";
 import { UsageBar } from "./usage-bar";
 
 const MODULE_LABEL: Record<string, string> = {
@@ -125,7 +127,18 @@ function AllowanceCard({ allowance }: { allowance: AllowanceOverview }) {
   );
 }
 
-export function UsagePanel({ overview }: { overview: BillingOverview }) {
+export function UsagePanel({
+  overview,
+  packsOpen = false,
+  packsNote,
+}: {
+  overview: BillingOverview;
+  // Buying extra usage works (payments are connected, the viewer can manage billing
+  // and the workspace has a plan).
+  packsOpen?: boolean;
+  // Why buying is not available right now, when payments are connected.
+  packsNote?: string;
+}) {
   const { allowances, measured } = overview;
   const since = formatDay(measured.since);
 
@@ -300,14 +313,27 @@ export function UsagePanel({ overview }: { overview: BillingOverview }) {
                   ${(pack.priceCents / 100).toLocaleString("en-US")}
                 </div>
               </div>
-              <Button type="button" variant="outline" size="lg" disabled>
-                Buy
-              </Button>
+              {packsOpen ? (
+                <BillingActionButton
+                  variant="outline"
+                  busyLabel="Opening…"
+                  action={startPackCheckoutAction}
+                  input={{ packKey: pack.key }}
+                >
+                  Buy
+                </BillingActionButton>
+              ) : (
+                <Button type="button" variant="outline" size="lg" disabled>
+                  Buy
+                </Button>
+              )}
             </div>
           ))}
         </div>
         <p className="text-xs" style={faint}>
-          Buying opens together with plans.
+          {packsOpen
+            ? "Payment is handled by Stripe. The extra usage is added as soon as the payment clears."
+            : (packsNote ?? "Buying opens together with plans.")}
         </p>
       </Section>
     </div>

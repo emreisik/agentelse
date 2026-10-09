@@ -1,8 +1,16 @@
 import { notFound } from "next/navigation";
 
+import { bannerFor } from "@/lib/billing/banner";
 import { comparisonRows, planCards } from "@/lib/billing/catalog";
+import { pickerModeFor } from "@/lib/billing/picker-mode";
 import { YEARLY_DISCOUNT_PCT } from "@/lib/billing/plans";
 import { getBillingOverview } from "@/server/billing/overview";
+import { getPaymentDeps } from "@/server/billing/payments/deps";
+import {
+  listWorkspaceInvoices,
+  reconcileCheckoutReturn,
+  type ReturnState,
+} from "@/server/billing/payments/service";
 import { isBillingUiEnabled } from "@/server/billing/ui-flag";
 import {
   isWorkspaceManager,
@@ -15,20 +23,25 @@ import {
   parseBillingTab,
 } from "@/components/billing/billing-tabs";
 import { PlanPicker } from "@/components/billing/plan-picker";
-import { SubscriptionPanel } from "@/components/billing/subscription-panel";
+import {
+  SubscriptionPanel,
+  type InvoiceRow,
+} from "@/components/billing/subscription-panel";
 import { TasksPanel } from "@/components/billing/tasks-panel";
 import { UsagePanel } from "@/components/billing/usage-panel";
-
-// Payments are not connected yet (docs/billing-quota.md, Faz 4): plans can be
-// looked at and compared, not bought. Flipped by the payment provider setup.
-const PAYMENTS_OPEN = false;
+import { Badge } from "@/components/ui/badge";
 
 export const metadata = { title: "Plan & usage" };
+
+type Params = Record<string, string | string[] | undefined>;
+
+const first = (value: string | string[] | undefined): string | undefined =>
+  Array.isArray(value) ? value[0] : value;
 
 export default async function BillingPage({
   searchParams,
 }: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
+  searchParams: Promise<Params>;
 }) {
   if (!isBillingUiEnabled()) notFound();
 
@@ -36,26 +49,94 @@ export default async function BillingPage({
   const { workspaceId } = await requireWorkspaceMembership(userId);
   const params = await searchParams;
   const tab = parseBillingTab(params.tab);
+  const deps = getPaymentDeps();
+
+  // Coming back from Stripe Checkout: bring the state up to date right now instead of
+  // waiting for the webhook (the same handler, safe to run twice).
+  const sessionId = first(params.session_id);
+  const comingBack =
+    first(params.checkout) === "success" ||
+    first(params.purchase) === "success";
+  const returned: ReturnState | null =
+    deps && comingBack && sessionId
+      ? await reconcileCheckoutReturn({ workspaceId, sessionId }, deps)
+      : null;
 
   const [overview, canManage] = await Promise.all([
     getBillingOverview(workspaceId),
     isWorkspaceManager(userId, workspaceId),
   ]);
+  const subscription = overview.subscription;
+
+  const invoices: InvoiceRow[] =
+    deps && canManage && tab === "subscription" && subscription?.stripeLinked
+      ? (await listWorkspaceInvoices({ workspaceId }, deps)).map((row) => ({
+          ...row,
+          createdAt: row.createdAt?.toISOString() ?? null,
+        }))
+      : [];
+
+  const mode = pickerModeFor({
+    paymentsOpen: deps !== null,
+    canManage,
+    subscription: subscription
+      ? {
+          planKey: subscription.planKey,
+          interval: subscription.interval,
+          status: subscription.status,
+          paidThrough: subscription.paidThrough,
+          cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+          pendingPlanKey: subscription.pending?.planKey ?? null,
+          stripeLinked: subscription.stripeLinked,
+          introOffer: subscription.introOffer,
+        }
+      : null,
+  });
+
+  const packsOpen =
+    deps !== null && canManage && subscription?.paidAccess === true;
+  const packsNote =
+    deps === null
+      ? undefined
+      : !canManage
+        ? "Only a workspace owner or admin can buy extra usage."
+        : "Extra usage can be added while you have a plan.";
+
+  const banner = bannerFor(params, returned);
 
   return (
     <AppShell>
       <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-6 px-4 py-8 md:py-12">
         <div>
-          <h1
-            className="font-heading text-2xl font-semibold tracking-tight"
-            style={{ color: "var(--ws-text)" }}
-          >
-            Plan &amp; usage
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1
+              className="font-heading text-2xl font-semibold tracking-tight"
+              style={{ color: "var(--ws-text)" }}
+            >
+              Plan &amp; usage
+            </h1>
+            {deps?.mode === "test" ? (
+              <Badge variant="secondary">Test mode · no real charges</Badge>
+            ) : null}
+          </div>
           <p className="text-sm" style={{ color: "var(--ws-text-2)" }}>
             Your plan, what is left of it, and the work that is waiting.
           </p>
         </div>
+
+        {banner ? (
+          <div
+            role="status"
+            className="rounded-[13px] border px-4 py-3 text-[13px]"
+            style={{
+              borderColor: "var(--ws-border)",
+              background: "var(--ws-surface-2)",
+              color: "var(--ws-text-body)",
+            }}
+          >
+            {banner}
+          </div>
+        ) : null}
 
         <BillingTabs active={tab} />
 
@@ -63,15 +144,26 @@ export default async function BillingPage({
           <PlanPicker
             cards={planCards()}
             comparison={comparisonRows()}
-            currentPlanKey={overview.subscription?.planKey ?? null}
+            currentPlanKey={subscription?.planKey ?? null}
             yearlyDiscountPct={YEARLY_DISCOUNT_PCT}
-            paymentsOpen={PAYMENTS_OPEN}
+            mode={mode}
           />
         ) : null}
         {tab === "subscription" ? (
-          <SubscriptionPanel overview={overview} canManage={canManage} />
+          <SubscriptionPanel
+            overview={overview}
+            canManage={canManage}
+            paymentsOpen={deps !== null}
+            invoices={invoices}
+          />
         ) : null}
-        {tab === "usage" ? <UsagePanel overview={overview} /> : null}
+        {tab === "usage" ? (
+          <UsagePanel
+            overview={overview}
+            packsOpen={packsOpen}
+            packsNote={packsNote}
+          />
+        ) : null}
         {tab === "tasks" ? <TasksPanel tasks={overview.tasks} /> : null}
       </div>
     </AppShell>

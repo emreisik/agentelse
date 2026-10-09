@@ -29,6 +29,8 @@ import {
   RESERVATION_LOOKUP_SQL,
   RESERVE_OVERDRAFT_SQL,
   RESERVE_SQL,
+  REVOKE_EXTRA_SQL,
+  REVOKE_PERIOD_SQL,
   SETTLE_SQL,
 } from "./ledger-sql";
 import { recordShadowDecision } from "./shadow-log";
@@ -493,6 +495,11 @@ export type GrantReason =
   | "PURCHASE"
   | "ADJUST";
 
+// Ham SQL çalıştırabilen istemci: `prisma` ya da bir işlem içindeki `tx`. Ödeme
+// işleyicisi abonelik satırını ve hibeyi AYNI işlemde yazabilsin diye hibe/geri alma
+// bir istemci kabul eder (varsayılan: prisma).
+export type LedgerClient = Pick<typeof prisma, "$queryRawUnsafe">;
+
 export type GrantInput = {
   workspaceId: string;
   unit: UsageUnit;
@@ -512,12 +519,15 @@ export type GrantResult =
   | { applied: false; duplicate: true }
   | { applied: false; windowClosed: true };
 
-export async function grantUsage(input: GrantInput): Promise<GrantResult> {
+export async function grantUsage(
+  input: GrantInput,
+  client: LedgerClient = prisma,
+): Promise<GrantResult> {
   const amount = assertAmount(input.amount);
   const now = input.now ?? new Date();
   let rows: unknown[];
   if (input.pool === "EXTRA") {
-    rows = await prisma.$queryRawUnsafe(
+    rows = await client.$queryRawUnsafe(
       GRANT_EXTRA_SQL,
       randomUUID(),
       input.workspaceId,
@@ -532,7 +542,7 @@ export async function grantUsage(input: GrantInput): Promise<GrantResult> {
     if (!input.periodStart) {
       throw new RangeError("periodStart is required for a PERIOD grant");
     }
-    rows = await prisma.$queryRawUnsafe(
+    rows = await client.$queryRawUnsafe(
       GRANT_PERIOD_SQL,
       randomUUID(),
       input.workspaceId,
@@ -546,7 +556,7 @@ export async function grantUsage(input: GrantInput): Promise<GrantResult> {
   }
   if (rows.length > 0) return { applied: true };
 
-  const existing = await prisma.$queryRawUnsafe<
+  const existing = await client.$queryRawUnsafe<
     Array<{ pool: string; amount: bigint }>
   >(
     GRANT_LOOKUP_SQL,
@@ -563,6 +573,76 @@ export async function grantUsage(input: GrantInput): Promise<GrantResult> {
     return { applied: false, duplicate: true };
   }
   return { applied: false, windowClosed: true };
+}
+
+// ---------------------------------------------------------------------------
+// revoke (iade, chargeback): işaretli ters kayıt, taban used + reserved
+
+export type RevokeInput = {
+  workspaceId: string;
+  unit: UsageUnit;
+  pool: "EXTRA" | "PERIOD";
+  // Geri alınmak istenen azami miktar; "ALL_UNUSED": havuzda kalan kullanılmamış her şey.
+  amount: Bigish | "ALL_UNUSED";
+  // Ters kaydın anahtarı (iade/ödeme kimliğinden türer): aynı anahtar ikinci kez düşmez.
+  idempotencyKey: string;
+  // Tersi alınan hibenin kimliği (biliniyorsa; toplam iade takibi için).
+  reverses?: string;
+  // pool=PERIOD için çağıranın bildiği açık pencerenin başlangıcı.
+  periodStart?: Date;
+  now?: Date;
+};
+
+export type RevokeResult =
+  // revoked: gerçekten düşülen miktar (taban yüzünden istenenden az olabilir).
+  { revoked: bigint } | { revoked: bigint; duplicate: true };
+
+const MAX_INT8 = BigInt("9223372036854775807");
+
+export async function revokeUsage(
+  input: RevokeInput,
+  client: LedgerClient = prisma,
+): Promise<RevokeResult> {
+  const requested =
+    input.amount === "ALL_UNUSED" ? MAX_INT8 : assertAmount(input.amount);
+  const now = input.now ?? new Date();
+  const base = [
+    randomUUID(),
+    input.workspaceId,
+    input.unit,
+    requested,
+    input.idempotencyKey,
+    input.reverses ?? null,
+    now,
+  ] as const;
+  let rows: Array<{ revoked: bigint }>;
+  if (input.pool === "EXTRA") {
+    rows = await client.$queryRawUnsafe(REVOKE_EXTRA_SQL, ...base);
+  } else {
+    if (!input.periodStart) {
+      throw new RangeError("periodStart is required for a PERIOD revoke");
+    }
+    rows = await client.$queryRawUnsafe(
+      REVOKE_PERIOD_SQL,
+      ...base,
+      input.periodStart,
+    );
+  }
+  if (rows.length > 0) return { revoked: rows[0]!.revoked };
+
+  // 0 satır: tekrarlı anahtar mı, yoksa alınacak boşluk mu yok?
+  const existing = await client.$queryRawUnsafe<
+    Array<{ pool: string; amount: bigint }>
+  >(
+    GRANT_LOOKUP_SQL,
+    input.workspaceId,
+    input.unit,
+    input.idempotencyKey,
+    "REFUND",
+  );
+  const row = existing[0];
+  if (row) return { revoked: -row.amount, duplicate: true };
+  return { revoked: BigInt(0) };
 }
 
 // ---------------------------------------------------------------------------

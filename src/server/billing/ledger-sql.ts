@@ -276,3 +276,75 @@ SELECT "pool", "amount"
  WHERE "workspaceId" = $1::text AND "unit" = $2::text
    AND "idempotencyKey" = $3::text AND "reason" = $4::text
 `;
+
+// Geri alma (iade / chargeback): işaretli TERS KAYIT. Hibenin kendisi silinmez ya da
+// azaltılmaz (defter yalnız eklenir); `UsageGrant(amount < 0, reason REFUND, reverses)`
+// yazılır ve bakiyenin ilgili havuzu o kadar düşer. Düşüş TABANLIDIR: havuzda
+// kullanılmış + rezerve edilmiş kısım geri alınamaz (gerçekleşen maliyet/iş), yani
+// alınan = min(istenen, granted - used - reserved), en az 0. 0 satır = tekrarlı anahtar
+// ya da alınacak boşluk yok (çağıran GRANT_LOOKUP_SQL ile ayırır).
+// $1 hibe id, $2 workspaceId, $3 unit, $4 azami miktar, $5 idempotencyKey,
+// $6 reverses (yoksa NULL), $7 now
+export const REVOKE_EXTRA_SQL = `
+WITH bal AS (
+  SELECT "id", GREATEST(0, "extraGranted" - "extraUsed" - "extraReserved") AS room
+    FROM "UsageBalance"
+   WHERE "workspaceId" = $2::text AND "unit" = $3::text
+     FOR UPDATE
+), take AS (
+  SELECT bal."id", LEAST($4::bigint, bal.room) AS n FROM bal
+), g AS (
+  INSERT INTO "UsageGrant" ("id","workspaceId","unit","pool","amount","reason","idempotencyKey","reverses","createdAt")
+  SELECT $1::text, $2::text, $3::text, 'EXTRA', -take.n, 'REFUND', $5::text, $6::text, ($7::timestamptz AT TIME ZONE 'UTC')
+    FROM take
+   WHERE take.n > 0
+  ON CONFLICT ("workspaceId","idempotencyKey","unit","reason") DO NOTHING
+  RETURNING "amount"
+)
+UPDATE "UsageBalance" t
+   SET "extraGranted" = t."extraGranted" + g."amount", "updatedAt" = ($7::timestamptz AT TIME ZONE 'UTC')
+  FROM g, bal
+ WHERE t."id" = bal."id"
+RETURNING (-g."amount")::bigint AS revoked
+`;
+
+// PERIOD havuzu: yalnız çağıranın açık saydığı pencere hâlâ açıksa ($8 pencere başı).
+export const REVOKE_PERIOD_SQL = `
+WITH bal AS (
+  SELECT "id", "periodStart", GREATEST(0, "periodGranted" - "periodUsed" - "periodReserved") AS room
+    FROM "UsageBalance"
+   WHERE "workspaceId" = $2::text AND "unit" = $3::text
+     AND "periodStart" = ($8::timestamptz AT TIME ZONE 'UTC')
+     FOR UPDATE
+), take AS (
+  SELECT bal."id", bal."periodStart", LEAST($4::bigint, bal.room) AS n FROM bal
+), g AS (
+  INSERT INTO "UsageGrant" ("id","workspaceId","unit","pool","amount","reason","idempotencyKey","reverses","periodStart","createdAt")
+  SELECT $1::text, $2::text, $3::text, 'PERIOD', -take.n, 'REFUND', $5::text, $6::text, take."periodStart", ($7::timestamptz AT TIME ZONE 'UTC')
+    FROM take
+   WHERE take.n > 0
+  ON CONFLICT ("workspaceId","idempotencyKey","unit","reason") DO NOTHING
+  RETURNING "amount"
+)
+UPDATE "UsageBalance" t
+   SET "periodGranted" = t."periodGranted" + g."amount", "updatedAt" = ($7::timestamptz AT TIME ZONE 'UTC')
+  FROM g, bal
+ WHERE t."id" = bal."id"
+RETURNING (-g."amount")::bigint AS revoked
+`;
+
+// Bir hibenin şimdiye dek geri alınan toplamı (pozitif). $1 reverses (hibe id).
+export const REVOKED_SO_FAR_SQL = `
+SELECT COALESCE(SUM(-"amount"), 0)::bigint AS revoked
+  FROM "UsageGrant"
+ WHERE "reverses" = $1::text AND "reason" = 'REFUND'
+`;
+
+// Hibeyi (anahtar, birim, neden) ile bul. $1 workspaceId, $2 unit, $3 idempotencyKey,
+// $4 reason
+export const FIND_GRANT_SQL = `
+SELECT "id", "pool", "amount"
+  FROM "UsageGrant"
+ WHERE "workspaceId" = $1::text AND "unit" = $2::text
+   AND "idempotencyKey" = $3::text AND "reason" = $4::text
+`;

@@ -3,8 +3,27 @@ import Link from "next/link";
 import { formatDay, formatUsd, trialSummary } from "@/lib/billing/catalog";
 import { PLANS, yearlyCents } from "@/lib/billing/plans";
 import type { BillingOverview } from "@/server/billing/overview";
+import {
+  cancelSubscriptionAction,
+  openPortalAction,
+  resumeSubscriptionAction,
+} from "@/server/actions/billing-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+
+import { BillingActionButton } from "./billing-action-button";
+
+// One invoice row for the table (dates as ISO strings: it crosses the server boundary).
+export type InvoiceRow = {
+  id: string;
+  number: string | null;
+  createdAt: string | null;
+  amountPaid: number;
+  currency: string | null;
+  status: string | null;
+  hostedInvoiceUrl: string | null;
+  invoicePdf: string | null;
+};
 
 const muted = { color: "var(--ws-text-2)" } as const;
 const faint = { color: "var(--ws-text-3)" } as const;
@@ -32,11 +51,21 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 export function SubscriptionPanel({
   overview,
   canManage,
+  paymentsOpen = false,
+  invoices = [],
 }: {
   overview: BillingOverview;
   canManage: boolean;
+  // Payments are connected: cancel / resume / payment method work.
+  paymentsOpen?: boolean;
+  invoices?: InvoiceRow[];
 }) {
   const subscription = overview.subscription;
+  const paying =
+    paymentsOpen &&
+    canManage &&
+    subscription?.stripeLinked === true &&
+    (subscription.status === "ACTIVE" || subscription.status === "PAST_DUE");
   const plan = subscription?.planKey ? PLANS[subscription.planKey] : null;
   const yearly = subscription?.interval === "YEAR";
 
@@ -78,7 +107,8 @@ export function SubscriptionPanel({
                 <Badge variant="secondary">
                   {subscription.exempt
                     ? "Full access"
-                    : (STATUS_LABEL[subscription.status] ?? subscription.status)}
+                    : (STATUS_LABEL[subscription.status] ??
+                      subscription.status)}
                 </Badge>
               </div>
               {subscription.paidThrough ? (
@@ -126,19 +156,53 @@ export function SubscriptionPanel({
             </div>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-start gap-2">
           <Link
             href="/billing?tab=plans"
             className={buttonVariants({ size: "lg", variant: "default" })}
           >
             {plan ? "Change plan" : "See plans"}
           </Link>
-          <Button type="button" size="lg" variant="outline" disabled>
-            Cancel subscription
-          </Button>
-          <Button type="button" size="lg" variant="outline" disabled>
-            Payment method
-          </Button>
+          {paying && subscription?.cancelAtPeriodEnd ? (
+            <BillingActionButton
+              variant="outline"
+              busyLabel="Resuming…"
+              action={resumeSubscriptionAction}
+            >
+              Resume subscription
+            </BillingActionButton>
+          ) : paying ? (
+            <BillingActionButton
+              variant="outline"
+              busyLabel="Canceling…"
+              confirm={{
+                title: "Cancel your subscription?",
+                description: `Nothing more is charged. You keep your plan and your remaining usage until ${subscription?.paidThrough ? formatDay(subscription.paidThrough) : "the end of the paid period"}; after that the workspace becomes read-only. You can resume before then.`,
+                confirmLabel: "Cancel at period end",
+              }}
+              action={cancelSubscriptionAction}
+              doneHref="/billing?tab=subscription&notice=canceled"
+            >
+              Cancel subscription
+            </BillingActionButton>
+          ) : (
+            <Button type="button" size="lg" variant="outline" disabled>
+              Cancel subscription
+            </Button>
+          )}
+          {paying ? (
+            <BillingActionButton
+              variant="outline"
+              busyLabel="Opening…"
+              action={openPortalAction}
+            >
+              Payment method
+            </BillingActionButton>
+          ) : (
+            <Button type="button" size="lg" variant="outline" disabled>
+              Payment method
+            </Button>
+          )}
         </div>
         {!canManage ? (
           <p className="text-xs" style={faint}>
@@ -154,13 +218,95 @@ export function SubscriptionPanel({
         >
           Invoices and payments
         </h3>
-        <div
-          className="rounded-[13px] border px-4 py-6 text-center text-[13px]"
-          style={{ borderColor: "var(--ws-border)", ...muted }}
-        >
-          Nothing to show yet. Invoices and payments appear here once you
-          subscribe.
-        </div>
+        {invoices.length > 0 ? (
+          <div
+            className="overflow-x-auto rounded-[13px] border"
+            style={{ borderColor: "var(--ws-border)" }}
+          >
+            <table className="w-full min-w-[480px] text-[13px]">
+              <thead>
+                <tr style={{ background: "var(--ws-surface-2)" }}>
+                  <th className="px-4 py-2 text-left font-medium" style={muted}>
+                    Date
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium" style={muted}>
+                    Invoice
+                  </th>
+                  <th
+                    className="px-4 py-2 text-right font-medium"
+                    style={muted}
+                  >
+                    Amount
+                  </th>
+                  <th className="px-4 py-2 text-left font-medium" style={muted}>
+                    Status
+                  </th>
+                  <th className="px-4 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {invoices.map((invoice) => (
+                  <tr
+                    key={invoice.id}
+                    className="border-t"
+                    style={{ borderColor: "var(--ws-border)" }}
+                  >
+                    <td
+                      className="px-4 py-2"
+                      style={{ color: "var(--ws-text-body)" }}
+                    >
+                      {invoice.createdAt ? formatDay(invoice.createdAt) : "—"}
+                    </td>
+                    <td className="px-4 py-2" style={muted}>
+                      {invoice.number ?? "—"}
+                    </td>
+                    <td
+                      className="px-4 py-2 text-right tabular-nums"
+                      style={{ color: "var(--ws-text-body)" }}
+                    >
+                      {formatUsd(invoice.amountPaid)}
+                    </td>
+                    <td className="px-4 py-2 capitalize" style={muted}>
+                      {invoice.status ?? "—"}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      {invoice.hostedInvoiceUrl ? (
+                        <a
+                          href={invoice.hostedInvoiceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs underline underline-offset-2"
+                          style={muted}
+                        >
+                          View
+                        </a>
+                      ) : null}
+                      {invoice.invoicePdf ? (
+                        <a
+                          href={invoice.invoicePdf}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-3 text-xs underline underline-offset-2"
+                          style={muted}
+                        >
+                          PDF
+                        </a>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div
+            className="rounded-[13px] border px-4 py-6 text-center text-[13px]"
+            style={{ borderColor: "var(--ws-border)", ...muted }}
+          >
+            Nothing to show yet. Invoices and payments appear here once you
+            subscribe.
+          </div>
+        )}
       </section>
     </div>
   );

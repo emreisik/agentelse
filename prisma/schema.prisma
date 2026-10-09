@@ -5668,8 +5668,64 @@ model Subscription {
   // CANCELED | REFUNDED | CHARGEBACK | PAYMENT_FAILED | TRIAL_ENDED | LEGACY_ENDED
   endedReason String?
 
+  // Geçerli Stripe aboneliği (Faz 4). YALNIZ ödeme olayı yazar (satırın varlığı
+  // LEGACY/NO_SUBSCRIPTION kararını değiştirir); eski bir aboneliğin geç gelen olayı
+  // yeni aboneliği ezmesin diye işleyiciler bu kimlikle eşleşmeyen olayı yok sayar.
+  stripeSubscriptionId String? @unique
+  // Abonelik canlı mı test modunda mı açıldı. Geliştirme süreçleri canlı veritabanını
+  // paylaşır: test modunda açılmış bir bağ, aynı workspace'in gerçek (canlı) ödemesini
+  // "çift abonelik" diye engellemesin, canlı ödeme onu değiştirsin.
+  stripeLivemode       Boolean?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Workspace ↔ Stripe müşterisi (Faz 4). Subscription satırından AYRI tutulur: müşteri
+// Checkout açılırken oluşur, ama ödeme gelmeden Subscription satırı YAZILMAZ (satır
+// varlığı hak kararını değiştirir: satırsız mevcut müşteri LEGACY sayılır, "Subscribe"a
+// basması onu kilitlememeli). Düz workspaceId, projectId kolonu yok (marka silinince
+// faturalama kaydı gitmez).
+//
+// Canlı ve test müşterisi AYRI satırlardır (workspace başına mod başına bir tane): paylaşılan
+// veritabanında test anahtarıyla çalışan bir geliştirme süreci canlı eşlemeyi ezmesin.
+model BillingCustomer {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  livemode         Boolean
+  stripeCustomerId String   @unique
+  createdAt        DateTime @default(now())
+
+  @@unique([workspaceId, livemode])
+}
+
+// Ödeme sağlayıcısı webhook gelen kutusu (Faz 4): imzası doğrulanan her olay işlenmeden
+// ÖNCE buraya yazılır (olay kimliği tekildir: tekrar teslim ikinci kez işlenmez),
+// sonra işlenir. Olay GÖVDESİ saklanmaz: işleyiciler nesneyi sağlayıcıdan güncel hâliyle
+// okur (sıra bozuk teslim ve sürüm farkı etkilemez, kişisel veri tutulmaz); burada yalnız
+// ne geldiği ve ne olduğu durur.
+model BillingEvent {
+  id          String    @id @default(cuid())
+  // stripe
+  provider    String
+  eventId     String
+  type        String
+  // Olayın baktığı nesne (sub_… in_… cs_… ch_… dp_…).
+  objectId    String?
+  livemode    Boolean   @default(false)
+  // İşleyicinin çözdüğü workspace (tenant eşleşmesi doğrulanınca).
+  workspaceId String?
+  // PENDING | PROCESSED | IGNORED | FAILED
+  status      String    @default("PENDING")
+  attempts    Int       @default(0)
+  // Kısa, sır içermeyen hata/özet (ör. "tenant-mismatch").
+  note        String?
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  @@unique([provider, eventId])
+  @@index([status, receivedAt])
+  @@index([workspaceId, receivedAt])
 }
 
 // (workspace, birim) başına tek satır: iki havuz.

@@ -1,6 +1,19 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The buttons call server actions and the router; here only what they show matters.
+vi.mock("@/server/actions/billing-actions", () => ({
+  startCheckoutAction: vi.fn(),
+  startPackCheckoutAction: vi.fn(),
+  openPortalAction: vi.fn(),
+  cancelSubscriptionAction: vi.fn(),
+  resumeSubscriptionAction: vi.fn(),
+  changePlanAction: vi.fn(),
+}));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+}));
 
 import { comparisonRows, planCards } from "@/lib/billing/catalog";
 import { YEARLY_DISCOUNT_PCT } from "@/lib/billing/plans";
@@ -43,7 +56,8 @@ describe("BillingTabs", () => {
     expect(parseBillingTab(undefined)).toBe("plans");
     expect(parseBillingTab("nope")).toBe("plans");
     expect(parseBillingTab(["usage", "tasks"])).toBe("usage");
-    for (const tab of BILLING_TABS) expect(parseBillingTab(tab.id)).toBe(tab.id);
+    for (const tab of BILLING_TABS)
+      expect(parseBillingTab(tab.id)).toBe(tab.id);
   });
 
   it("links every tab by address and marks the open one", () => {
@@ -63,8 +77,8 @@ describe("PlanPicker", () => {
     comparison: comparisonRows(),
     currentPlanKey: null,
     yearlyDiscountPct: YEARLY_DISCOUNT_PCT,
-    paymentsOpen: false,
-  } as const;
+    mode: { kind: "browse" },
+  } as const satisfies Parameters<typeof PlanPicker>[0];
 
   it("shows the four plans at their monthly prices and what each includes", () => {
     const markup = html(createElement(PlanPicker, props));
@@ -92,26 +106,119 @@ describe("PlanPicker", () => {
     const markup = html(createElement(PlanPicker, props));
     expect(markup).toContain("Plans are not on sale yet");
     // Every plan button is disabled.
-    const buttons = markup.match(/<button[^>]*>Choose [A-Za-z]+<\/button>/g) ?? [];
+    const buttons =
+      markup.match(/<button[^>]*>Choose [A-Za-z]+<\/button>/g) ?? [];
     expect(buttons).toHaveLength(4);
     for (const button of buttons) expect(isDisabled(button)).toBe(true);
   });
 
-  it("once payments are open the plan buttons work, except for the current plan", () => {
+  it("a workspace with no paying subscription gets a Subscribe button on every plan", () => {
+    const markup = html(
+      createElement(PlanPicker, {
+        ...props,
+        mode: { kind: "subscribe", firstMonthAvailable: true },
+      }),
+    );
+    expect(markup).not.toContain("Plans are not on sale yet");
+    const buttons =
+      markup.match(/<button[^>]*>Subscribe to [A-Za-z]+<\/button>/g) ?? [];
+    expect(buttons).toHaveLength(4);
+    for (const button of buttons) expect(isDisabled(button)).toBe(false);
+    expect(markup).toContain("Payment is handled by Stripe");
+    // The discount button works.
+    expect(
+      isDisabled(
+        markup.match(
+          /<button[^>]*>(?:<svg.*?<\/svg>)?Apply first-month discount<\/button>/,
+        )![0],
+      ),
+    ).toBe(false);
+  });
+
+  it("offers the first-month discount only to a first subscription", () => {
+    const markup = html(
+      createElement(PlanPicker, {
+        ...props,
+        mode: { kind: "subscribe", firstMonthAvailable: false },
+      }),
+    );
+    expect(markup).toContain(
+      "The first-month discount is for a first subscription",
+    );
+    expect(
+      isDisabled(
+        markup.match(
+          /<button[^>]*>(?:<svg.*?<\/svg>)?Apply first-month discount<\/button>/,
+        )![0],
+      ),
+    ).toBe(true);
+  });
+
+  it("a paying workspace switches plans: upgrade above, switch below, its own plan marked", () => {
     const markup = html(
       createElement(PlanPicker, {
         ...props,
         currentPlanKey: "growth",
-        paymentsOpen: true,
+        mode: {
+          kind: "change",
+          planKey: "growth",
+          interval: "month",
+          pendingPlanKey: null,
+          renewsOn: "2026-12-01T00:00:00.000Z",
+        },
       }),
     );
-    expect(markup).not.toContain("Plans are not on sale yet");
     expect(markup).toContain("Current plan");
     expect(markup).toContain("Your plan");
-    const choose = markup.match(/<button[^>]*>Choose [A-Za-z]+<\/button>/g) ?? [];
-    expect(choose).toHaveLength(3);
-    for (const button of choose) expect(isDisabled(button)).toBe(false);
+    expect(markup).toContain("Switch to Starter");
+    expect(markup).toContain("Upgrade to Business");
+    expect(markup).toContain("Upgrade to Agency");
+    expect(markup).not.toContain("Subscribe to");
+    expect(markup).not.toContain("Apply first-month discount");
+    // The interval is the subscription's; the other one cannot be picked.
+    expect(markup).toMatch(/aria-pressed="false"[^>]*disabled=""[^>]*>Yearly/);
+    expect(markup).toContain("Dec 1, 2026");
   });
+
+  it("shows a scheduled downgrade: the paid plan can be kept, the scheduled one says when it starts", () => {
+    const markup = html(
+      createElement(PlanPicker, {
+        ...props,
+        currentPlanKey: "business",
+        mode: {
+          kind: "change",
+          planKey: "business",
+          interval: "month",
+          pendingPlanKey: "growth",
+          renewsOn: "2026-12-01T00:00:00.000Z",
+        },
+      }),
+    );
+    expect(markup).toContain("Keep this plan");
+    expect(markup).toMatch(/<button[^>]*>Starts Dec 1, 2026<\/button>/);
+  });
+
+  it.each([
+    ["not-manager", "Only a workspace owner or admin can change the plan"],
+    ["past-due", "The last payment did not go through"],
+    ["ending", "Your subscription is set to end"],
+  ] as const)(
+    "a blocked workspace (%s) cannot press anything and is told why",
+    (reason, text) => {
+      const markup = html(
+        createElement(PlanPicker, {
+          ...props,
+          currentPlanKey: "growth",
+          mode: { kind: "blocked", reason },
+        }),
+      );
+      expect(markup).toContain(text);
+      const buttons =
+        markup.match(/<button[^>]*>Choose [A-Za-z]+<\/button>/g) ?? [];
+      expect(buttons).toHaveLength(3);
+      for (const button of buttons) expect(isDisabled(button)).toBe(true);
+    },
+  );
 
   it("compares the plans in a table and lists what the product works with", () => {
     const markup = html(createElement(PlanPicker, props));
@@ -119,7 +226,12 @@ describe("PlanPicker", () => {
     expect(markup).toContain("Post images per month");
     expect(markup).toContain("120 (90 in the first month)");
     expect(markup).toContain("Works with");
-    for (const name of ["Instagram", "Facebook", "Meta Ads", "Google Analytics"]) {
+    for (const name of [
+      "Instagram",
+      "Facebook",
+      "Meta Ads",
+      "Google Analytics",
+    ]) {
       expect(markup).toContain(name);
     }
   });
@@ -128,6 +240,100 @@ describe("PlanPicker", () => {
     expect(html(createElement(PlanPicker, props)).toLowerCase()).not.toContain(
       "video",
     );
+  });
+});
+
+describe("SubscriptionPanel with payments connected", () => {
+  const paying: BillingOverview = {
+    ...EMPTY,
+    subscription: {
+      planKey: "growth",
+      planLabel: "Growth",
+      interval: "MONTH",
+      status: "ACTIVE",
+      paidThrough: "2026-12-01T00:00:00.000Z",
+      trialEndsAt: null,
+      cancelAtPeriodEnd: false,
+      pending: null,
+      exempt: false,
+      stripeLinked: true,
+      introOffer: false,
+      paidAccess: true,
+    },
+  };
+  const render = (
+    overview: BillingOverview,
+    extra: Partial<Parameters<typeof SubscriptionPanel>[0]> = {},
+  ) =>
+    html(
+      createElement(SubscriptionPanel, {
+        overview,
+        canManage: true,
+        paymentsOpen: true,
+        ...extra,
+      }),
+    );
+
+  it("lets an owner cancel and open the payment method page", () => {
+    const markup = render(paying);
+    const cancel = markup.match(
+      /<button[^>]*>Cancel subscription<\/button>/,
+    )![0];
+    const payment = markup.match(/<button[^>]*>Payment method<\/button>/)![0];
+    expect(isDisabled(cancel)).toBe(false);
+    expect(isDisabled(payment)).toBe(false);
+  });
+
+  it("offers Resume instead of Cancel once the subscription is set to end", () => {
+    const markup = render({
+      ...paying,
+      subscription: { ...paying.subscription!, cancelAtPeriodEnd: true },
+    });
+    expect(markup).toContain("Resume subscription");
+    expect(markup).not.toContain("Cancel subscription");
+    expect(markup).toContain("Ends on");
+  });
+
+  it("keeps the buttons off for someone who cannot manage billing, or without a Stripe subscription", () => {
+    expect(
+      isDisabled(
+        render(paying, { canManage: false }).match(
+          /<button[^>]*>Cancel subscription<\/button>/,
+        )![0],
+      ),
+    ).toBe(true);
+    const notLinked: BillingOverview = {
+      ...paying,
+      subscription: { ...paying.subscription!, stripeLinked: false },
+    };
+    expect(
+      isDisabled(
+        render(notLinked).match(/<button[^>]*>Payment method<\/button>/)![0],
+      ),
+    ).toBe(true);
+  });
+
+  it("lists invoices with links", () => {
+    const markup = render(paying, {
+      invoices: [
+        {
+          id: "in_1",
+          number: "ABC-0001",
+          createdAt: "2026-11-01T00:00:00.000Z",
+          amountPaid: 14_900,
+          currency: "usd",
+          status: "paid",
+          hostedInvoiceUrl: "https://invoice.stripe.com/i/x",
+          invoicePdf: "https://pay.stripe.com/invoice/x/pdf",
+        },
+      ],
+    });
+    expect(markup).toContain("ABC-0001");
+    expect(markup).toContain("$149");
+    expect(markup).toContain("Nov 1, 2026");
+    expect(markup).toContain('href="https://invoice.stripe.com/i/x"');
+    expect(markup).toContain('rel="noopener noreferrer"');
+    expect(markup).not.toContain("Nothing to show yet");
   });
 });
 
@@ -171,7 +377,9 @@ describe("UsagePanel", () => {
   };
 
   it("shows what is left of each allowance, with a bar and the renewal date", () => {
-    const markup = html(createElement(UsagePanel, { overview: withAllowances }));
+    const markup = html(
+      createElement(UsagePanel, { overview: withAllowances }),
+    );
     expect(markup).toContain("Post images");
     expect(markup).toContain("left of 50");
     expect(markup).toContain("AI assistant usage");
@@ -182,7 +390,9 @@ describe("UsagePanel", () => {
   });
 
   it("warns before an allowance runs out and again when it is used up", () => {
-    const markup = html(createElement(UsagePanel, { overview: withAllowances }));
+    const markup = html(
+      createElement(UsagePanel, { overview: withAllowances }),
+    );
     expect(markup).toContain("You are running low on post images");
     expect(markup).toContain("You have used all of your AI assistant usage");
     expect(markup).toContain("continues by itself");
@@ -190,12 +400,16 @@ describe("UsagePanel", () => {
   });
 
   it("shows neither tokens nor dollars of cost", () => {
-    const markup = html(createElement(UsagePanel, { overview: withAllowances }));
+    const markup = html(
+      createElement(UsagePanel, { overview: withAllowances }),
+    );
     expect(markup.toLowerCase()).not.toContain("token");
   });
 
   it("breaks the month down by module and lists the last days", () => {
-    const markup = html(createElement(UsagePanel, { overview: withAllowances }));
+    const markup = html(
+      createElement(UsagePanel, { overview: withAllowances }),
+    );
     expect(markup).toContain("Social Media");
     expect(markup).toContain("Assistant chat");
     expect(markup).toContain("40 pictures");
@@ -226,6 +440,31 @@ describe("UsagePanel", () => {
     expect(markup).toContain("$2.50 of AI assistant usage");
     expect(markup).toContain("$10");
     expect(markup).toContain("Buying opens together with plans");
+    const buy = markup.match(/<button[^>]*>Buy<\/button>/g) ?? [];
+    expect(buy).toHaveLength(2);
+    for (const button of buy) expect(isDisabled(button)).toBe(true);
+  });
+
+  it("with a plan and payments connected the packs can be bought", () => {
+    const markup = html(
+      createElement(UsagePanel, { overview: EMPTY, packsOpen: true }),
+    );
+    const buy = markup.match(/<button[^>]*>Buy<\/button>/g) ?? [];
+    expect(buy).toHaveLength(2);
+    for (const button of buy) expect(isDisabled(button)).toBe(false);
+    expect(markup).toContain("Payment is handled by Stripe");
+    expect(markup).not.toContain("Buying opens together with plans");
+  });
+
+  it("says why buying is off when payments are connected but the workspace cannot buy", () => {
+    const markup = html(
+      createElement(UsagePanel, {
+        overview: EMPTY,
+        packsOpen: false,
+        packsNote: "Extra usage can be added while you have a plan.",
+      }),
+    );
+    expect(markup).toContain("Extra usage can be added while you have a plan.");
   });
 });
 
@@ -254,6 +493,9 @@ describe("SubscriptionPanel", () => {
       cancelAtPeriodEnd: false,
       pending: null,
       exempt: false,
+      stripeLinked: true,
+      introOffer: false,
+      paidAccess: true,
     },
   };
 
@@ -323,7 +565,9 @@ describe("SubscriptionPanel", () => {
     const markup = html(
       createElement(SubscriptionPanel, { overview: EMPTY, canManage: false }),
     );
-    expect(markup).toContain("Only a workspace owner or admin can change the plan");
+    expect(markup).toContain(
+      "Only a workspace owner or admin can change the plan",
+    );
   });
 });
 
@@ -371,7 +615,13 @@ describe("TasksPanel", () => {
             },
           ],
           awaitingApproval: [
-            { id: "a1", title: "Publish to Instagram", projectId: "p1", projectName: "Acme", at },
+            {
+              id: "a1",
+              title: "Publish to Instagram",
+              projectId: "p1",
+              projectName: "Acme",
+              at,
+            },
           ],
         },
       }),

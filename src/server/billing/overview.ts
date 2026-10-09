@@ -30,6 +30,14 @@ export type SubscriptionOverview = {
     effectiveAt: string | null;
   } | null;
   exempt: boolean;
+  // A Stripe subscription is linked (the workspace has paid at least once): the plan
+  // buttons switch plans instead of opening a first checkout.
+  stripeLinked: boolean;
+  // The first-month discount was used (it is offered once).
+  introOffer: boolean;
+  // The workspace has paid for a plan that is still running (extra packs can be bought):
+  // paying or past due, or canceled with paid time left.
+  paidAccess: boolean;
 };
 
 export type AllowanceOverview = {
@@ -107,18 +115,23 @@ const HISTORY_DAYS = 14;
 const isPlanKey = (value: string | null): value is PlanKey =>
   value !== null && Object.hasOwn(PLANS, value);
 
-function toSubscriptionOverview(row: {
-  planKey: string | null;
-  interval: string | null;
-  status: string;
-  paidThrough: Date | null;
-  trialEndsAt: Date | null;
-  cancelAtPeriodEnd: boolean;
-  pendingPlanKey: string | null;
-  pendingInterval: string | null;
-  pendingEffectiveAt: Date | null;
-  exempt: boolean;
-}): SubscriptionOverview {
+function toSubscriptionOverview(
+  row: {
+    planKey: string | null;
+    interval: string | null;
+    status: string;
+    paidThrough: Date | null;
+    trialEndsAt: Date | null;
+    cancelAtPeriodEnd: boolean;
+    pendingPlanKey: string | null;
+    pendingInterval: string | null;
+    pendingEffectiveAt: Date | null;
+    exempt: boolean;
+    stripeSubscriptionId: string | null;
+    introOffer: boolean;
+  },
+  now: Date,
+): SubscriptionOverview {
   const planKey = isPlanKey(row.planKey) ? row.planKey : null;
   const hasPending = Boolean(
     row.pendingPlanKey || row.pendingInterval || row.pendingEffectiveAt,
@@ -140,6 +153,15 @@ function toSubscriptionOverview(row: {
         }
       : null,
     exempt: row.exempt,
+    stripeLinked: row.stripeSubscriptionId !== null,
+    introOffer: row.introOffer,
+    paidAccess:
+      row.stripeSubscriptionId !== null &&
+      (row.status === "ACTIVE" ||
+        row.status === "PAST_DUE" ||
+        (row.status === "CANCELED" &&
+          row.paidThrough !== null &&
+          row.paidThrough.getTime() > now.getTime())),
   };
 }
 
@@ -324,7 +346,9 @@ export async function getBillingOverview(
 
   return {
     mode: getBillingConfig().mode,
-    subscription: subscription ? toSubscriptionOverview(subscription) : null,
+    subscription: subscription
+      ? toSubscriptionOverview(subscription, now)
+      : null,
     allowances,
     measured,
     tasks,

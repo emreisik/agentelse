@@ -16,6 +16,7 @@ describe("proxy public path matching", () => {
     "/api/integrations/meta/data-deletion",
     "/api/webhooks/meta-ads",
     "/api/webhooks/google-risc",
+    "/api/webhooks/billing",
     "/r/abc.def",
     "/r/abc.def/logo",
   ])("allows %s", (pathname) => {
@@ -37,6 +38,8 @@ describe("proxy public path matching", () => {
     "/api/webhooks/other",
     "/api/webhooks",
     "/api/webhooks/google-risc/x",
+    "/api/webhooks/billing/extra",
+    "/api/billing",
     "/r",
     "/reports/x",
     "/projects/p/arama",

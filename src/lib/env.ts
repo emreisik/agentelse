@@ -108,6 +108,14 @@ const envSchema = z.object({
   // ISO tarih: LEGACY tam erişimin bittiği an (7 günlük ücretsiz geçişin sonu).
   // Boşsa LEGACY süresiz tam erişimdir.
   BILLING_LEGACY_UNTIL: z.string().optional().default(""),
+  // Ödemeler (docs/billing-payments.md, Faz 4). Secret key + webhook secret ikisi de
+  // doluysa ödeme açılır; biri boşsa fiyat ekranı salt-okunur kalır. Geliştirmede
+  // test anahtarı (sk_test_…) kullanın: canlı anahtar yalnız production'da çalışır.
+  STRIPE_SECRET_KEY: z.string().optional().default(""),
+  STRIPE_WEBHOOK_SECRET: z.string().optional().default(""),
+  // Webhook sırrını döndürürken (Stripe'ta "roll secret") eski sır kısa süre daha
+  // kabul edilir; boş bırakılabilir.
+  STRIPE_WEBHOOK_SECRET_PREVIOUS: z.string().optional().default(""),
   // gpt-image-2 — see openai-image-client.ts. Separate model slot from
   // OPENAI_MODEL because it names an image model, not a chat one.
   OPENAI_IMAGE_MODEL: z.string().optional().default("gpt-image-2"),

@@ -10,7 +10,9 @@ import type {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { clampUserLimits } from "@/lib/billing/user-limits";
 import { handsOnLevelFor } from "@/lib/weekly-draft";
+import { getEntitlements } from "@/server/billing/entitlements";
 import { nextScanAt } from "@/server/agency/signals/scan-cadence";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { AutonomyPolicyRepository } from "@/server/repositories/autonomy-policy.repository";
@@ -122,6 +124,10 @@ const AutonomyPolicySchema = z.object({
   dailyBudgetUsd: z
     .union([z.literal(""), z.coerce.number().min(0)])
     .transform((v) => (v === "" ? null : v)),
+  // Ask before an automatic task bigger than this (USD); blank = the plan's default.
+  approveAboveUsd: z
+    .union([z.literal(""), z.coerce.number().min(0)])
+    .transform((v) => (v === "" ? null : v)),
   unlimitedMode: z.coerce.boolean(),
   weeklyAutoProduce: z.coerce.boolean(),
 });
@@ -138,6 +144,7 @@ export async function updateAutonomyPolicyAction(
       maxReasoningCallsPerDay: formData.get("maxReasoningCallsPerDay"),
       maxActiveIdeas: formData.get("maxActiveIdeas"),
       dailyBudgetUsd: formData.get("dailyBudgetUsd") ?? "",
+      approveAboveUsd: formData.get("approveAboveUsd") ?? "",
       unlimitedMode: formData.get("unlimitedMode") === "on",
       weeklyAutoProduce: formData.get("weeklyAutoProduce") === "on",
     });
@@ -152,8 +159,18 @@ export async function updateAutonomyPolicyAction(
       current?.autopilotMode,
     );
 
+    // The user's own limits never go past the plan (daily budget at most the plan's
+    // monthly AI budget; the approval size within the plan's range).
+    const entitlements = await getEntitlements(access.workspaceId);
+    const limits = clampUserLimits({
+      planKey: entitlements.unlimited ? null : entitlements.planKey,
+      approveAboveUsd: parsed.approveAboveUsd,
+      dailyBudgetUsd: parsed.dailyBudgetUsd,
+    });
+
     await AutonomyPolicyRepository.update(projectId, {
       ...parsed,
+      ...limits,
       autopilotMode,
     });
 

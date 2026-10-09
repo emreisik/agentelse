@@ -112,3 +112,16 @@ Otonom döngüler (tick adımları: sinyal/fikir/hafta planı ...) ve kullanıc�
 - **Sonuç:** payı aşan sistem işi diğer hak yetmezlikleri gibi `WAITING_BUDGET`'e park edilir ve hak yenilenince ya da ek paket gelince devam eder. Devam sırasında bir sistem işinin reddi yalnız sonraki SİSTEM işlerini eler; kullanıcı işleri yine denenir. Kullanıcı işi bile sığmıyorsa sistem işleri hiç denenmez.
 - **Kullanıcı ayarı yok** (bu sürümde pay plana bağlı sabittir; proje başına ayar eklenirse yalnız DÜŞÜREBİLİR).
 - Testler: `background-share.integration.test.ts`, `park.integration.test.ts` ("background share"), `continuous-agency-engine.isolation.test.ts`, `usage-context.test.ts`.
+
+## Onay eşiği ve kullanıcı sınırları (Faz 3C)
+
+**Onay eşiği:** sistemin KENDİ başlattığı (SYSTEM/AI) bir görevin tahmini maliyeti eşiği aşarsa görev planlanırken insan onayına (L3) düşer; kullanıcının kendi isteği asla bu eşiğe takılmaz. Yalnız `BILLING_MODE=enforce` iken uygulanır (gölge/kapalıyken görevlerin onay davranışı DEĞİŞMEZ).
+
+- Tahmin: `usageNeedOf` (bir işin hak ihtiyacı) → görsel x ~$0,40 ya da AI bütçesi (`src/lib/billing/approval-threshold.ts`). Eşik paket varsayılanıdır: Starter $0,50 / Growth $1 / Business $1,50 / Agency $2,50. Böylece tek görselli bir iş hiçbir pakette sorulmaz; çok görselli (varyantlı) otomatik iş Starter'da ve büyük işler diğerlerinde sorulur.
+- Kullanıcı eşiği proje ayarından (Settings → Autonomy → "Ask me before an automatic task costs more than") paket varsayılanının [$0,10 … 5 katı] aralığında seçer; boş = paket varsayılanı; aralık dışı değer sınıra çekilir (`AutonomyPolicy.approveAboveUsd`, migration `20261009140000_add_approve_above`).
+- Kart: "Why you are asked" satırı dolar değil hak söyler ("This automatic task would use 3 post images of your plan ..."). Onay yolu mevcut hattır (`TaskPlanner.requestApproval`); bekleyen onaylar Plan & usage → Tasks sekmesinde listelenir. Planlı (ertelenmiş) düğümler hazır olduklarında aynı kuralla yeniden değerlendirilir.
+- Kod: `server/billing/approval-threshold.ts` (plan + proje tercihi + tahmin; HİÇ fırlatmaz, tahmin edilemezse eşik uygulanmaz), `ApprovalPolicy.resolveLevel` (`estimatedCostUsd` / `approveAboveUsd`, yalnız yükseltir), `task-planner.ts`.
+
+**Kullanıcı sınırları plana bağlı (`src/lib/billing/user-limits.ts`):** günlük AI bütçesi planın aylık AI bütçesinden büyük olamaz; onay eşiği yukarıdaki aralıkta; plan yoksa (faturalama kapalı/sınırsız) yalnız mutlak sınırlar. **Sınırsız mod** yalnız günlük sayaçları ve bütçeyi kaldırır; planın kullanım hakkı (kota) ona bağlı DEĞİLDİR ve her zaman geçerlidir (ayar ekranı bunu söyler).
+
+Testler: `approval-threshold.test.ts`, `approval-threshold.integration.test.ts`, `approval-policy.test.ts`, `task-planner.cost-approval.test.ts`, `agency-config-actions.autonomy.test.ts`.

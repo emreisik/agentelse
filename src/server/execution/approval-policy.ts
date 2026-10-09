@@ -55,6 +55,11 @@ export type ApprovalLevelContext = {
   riskReducing?: boolean;
   // FULL: aylık tavan içinde en çok %20 bütçe artışı.
   autoBudgetRaise?: boolean;
+  // Onay eşiği (billing, Faz 3C): sistemin kendi başlattığı görevin tahmini maliyeti eşiği
+  // aşarsa insan onayı gerekir. İkisi de yalnız faturalama etkinken ve yalnız ücretli
+  // iş için doldurulur (server/billing/approval-threshold.ts); yalnız YÜKSELTİR.
+  estimatedCostUsd?: number;
+  approveAboveUsd?: number;
 };
 
 // "Yalnız yükseltir" kuralının yazılı ve testli istisnaları (F7): sistemin
@@ -137,6 +142,17 @@ export const ApprovalPolicy = {
     // Project overrides may only raise, never lower.
     const override = context.approvalOverrides?.[capability];
     if (override) level = maxLevel(level, override);
+
+    // Costly autonomous work waits for a person (only raises, and never for the
+    // user's own request).
+    if (
+      (context.createdByType === "SYSTEM" || context.createdByType === "AI") &&
+      context.estimatedCostUsd !== undefined &&
+      context.approveAboveUsd !== undefined &&
+      context.estimatedCostUsd > context.approveAboveUsd
+    ) {
+      level = maxLevel(level, "LEVEL_3_CLIENT");
+    }
 
     return level;
   },

@@ -27,6 +27,7 @@ import {
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
 import { missingCapabilityInput } from "@/server/execution/capability-input";
 import { ExecutionService } from "@/server/execution/execution-service";
+import { costApprovalContext } from "@/server/billing/approval-threshold";
 
 export type PlanCapabilityInput = {
   workspaceId: string;
@@ -86,6 +87,19 @@ export const TaskPlanner = {
     // otherwise resolve from policy. Legacy callers land on exactly the old
     // requiresApproval boundary because the legacy capability set IS the L3
     // floor inside ApprovalPolicy.
+    // Sistemin kendi başlattığı pahalı iş insan onayı bekler (billing, Faz 3C): yalnız
+    // faturalama etkinken, yalnız yükseltir, kullanıcı isteğine dokunmaz.
+    const cost = await costApprovalContext({
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      capability: input.capability,
+      payload: {
+        request: input.request,
+        platform: input.targetPlatform,
+        ...(input.payloadExtra ?? {}),
+      },
+      createdByType: input.createdByType,
+    });
     const resolvedLevel = ApprovalPolicy.resolveLevel(input.capability, {
       createdByType: input.createdByType,
       riskLevel,
@@ -93,6 +107,8 @@ export const TaskPlanner = {
       adsAutonomy: input.adsAutonomy,
       riskReducing: input.riskReducing,
       autoBudgetRaise: input.autoBudgetRaise,
+      estimatedCostUsd: cost.estimatedCostUsd,
+      approveAboveUsd: cost.approveAboveUsd,
     });
     // Caller-supplied level may only RAISE strictness, never lower it.
     const requestedLevel = input.approvalLevel
@@ -164,7 +180,7 @@ export const TaskPlanner = {
     }
 
     if (requiresApproval) {
-      return TaskPlanner.requestApproval(task, level);
+      return TaskPlanner.requestApproval(task, level, cost.note);
     }
 
     await TaskRepository.transition(task.id, input.projectId, "QUEUED");
@@ -276,13 +292,28 @@ export const TaskPlanner = {
       payload?: unknown;
     },
     level?: ApprovalLevel,
+    // Why the task is asked about when it is only the cost (planForCapability
+    // already knows it; the deferred path asks again below).
+    costNote?: string,
   ) {
-    const resolvedLevel =
-      level ??
-      ApprovalPolicy.resolveLevel(task.capability, {
+    let note = costNote;
+    let resolvedLevel = level;
+    if (!resolvedLevel) {
+      const cost = await costApprovalContext({
+        workspaceId: task.workspaceId,
+        projectId: task.projectId,
+        capability: task.capability,
+        payload: task.payload,
+        createdByType: task.createdByType,
+      });
+      note = cost.note;
+      resolvedLevel = ApprovalPolicy.resolveLevel(task.capability, {
         createdByType: task.createdByType,
         riskLevel: task.riskLevel,
+        estimatedCostUsd: cost.estimatedCostUsd,
+        approveAboveUsd: cost.approveAboveUsd,
       });
+    }
 
     await TaskRepository.transition(
       task.id,
@@ -320,7 +351,9 @@ export const TaskPlanner = {
       title: task.title,
       riskLevel: task.riskLevel,
       departmentKey: task.departmentKey ?? undefined,
-      details: buildApprovalDetails(task.capability, task.payload),
+      details:
+        buildApprovalDetails(task.capability, task.payload) ??
+        (note ? [{ label: "Why you are asked", value: note }] : undefined),
       category: approvalCategory(approval.type, approval.level),
     }).catch((error) => {
       console.error("[task-planner] postApprovalRequestCard failed:", error);

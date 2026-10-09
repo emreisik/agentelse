@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
+import { userLimitRanges } from "@/lib/billing/user-limits";
+import { getEntitlements } from "@/server/billing/entitlements";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/dates";
 import { updateAutonomyPolicyAction } from "@/server/actions/agency-config-actions";
@@ -127,6 +129,15 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
     }),
   ]);
 
+  // The plan the workspace is on (when billing is active) sets the range the user's own
+  // limits can be chosen in.
+  const entitlements = policy
+    ? await getEntitlements(policy.workspaceId)
+    : null;
+  const planKey =
+    entitlements && !entitlements.unlimited ? entitlements.planKey : null;
+  const ranges = userLimitRanges(planKey);
+
   if (!policy) {
     return (
       <EmptyState
@@ -195,15 +206,45 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
                 type="number"
                 step="0.01"
                 min={0}
+                max={ranges.dailyBudgetMax ?? undefined}
                 defaultValue={policy.dailyBudgetUsd ?? ""}
               />
               <p className="text-xs text-muted-foreground">
+                {ranges.dailyBudgetMax !== null
+                  ? `At most $${ranges.dailyBudgetMax.toFixed(2)}, your plan's AI budget for a month. `
+                  : null}
                 Daily cap on AI reasoning spend — this month so far:{" "}
                 <span className="font-medium text-foreground">
                   ${(monthlySpend._sum.reasoningCostUsd ?? 0).toFixed(2)}
                 </span>
               </p>
             </div>
+            {planKey ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="policy-approveAboveUsd">
+                  Ask me before an automatic task costs more than (USD)
+                </Label>
+                <Input
+                  id="policy-approveAboveUsd"
+                  name="approveAboveUsd"
+                  type="number"
+                  step="0.05"
+                  min={ranges.approveAbove.min}
+                  max={ranges.approveAbove.max}
+                  placeholder={
+                    ranges.approveAbove.planDefault?.toFixed(2) ?? undefined
+                  }
+                  defaultValue={policy.approveAboveUsd ?? ""}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Blank uses your plan&apos;s size ($
+                  {ranges.approveAbove.planDefault?.toFixed(2)}). You can set it
+                  between ${ranges.approveAbove.min.toFixed(2)} and $
+                  {ranges.approveAbove.max.toFixed(2)}. Bigger automatic tasks
+                  wait for your OK; what you start yourself never does.
+                </p>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -276,7 +317,8 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
               <p className="text-xs text-muted-foreground">
                 All the caps above and the daily budget are ignored: the agency
                 runs without stopping. Counters keep tracking, only the blocking
-                is lifted — you can monitor spend from the Activity tab.
+                is lifted — you can monitor spend from the Activity tab. Your
+                plan&apos;s usage allowance still applies.
               </p>
               {policy.unlimitedMode ? (
                 <p className="text-xs font-medium text-warning">

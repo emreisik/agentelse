@@ -5403,6 +5403,12 @@ model AutonomyPolicy {
   dailyBudgetUsd    Float?
   taskCooldownHours Int    @default(72)
 
+  // Onay eşiği (billing, Faz 3C): sistemin kendi başlattığı bir görevin tahmini
+  // maliyeti bunu aşarsa görev insan onayı bekler. null = paket varsayılanı
+  // (src/lib/billing/approval-threshold.ts); kullanıcı yalnız paket varsayılanının
+  // [0,10 ... 5 katı] aralığında seçer. Yalnız faturalama etkinken uygulanır.
+  approveAboveUsd Float?
+
   // Hard ceiling for a single autonomously-proposed Meta ad campaign's
   // daily budget (see agency/meta-ads — the LLM-proposed dailyBudgetCents
   // is clamped to this before the campaign task is ever planned, so an

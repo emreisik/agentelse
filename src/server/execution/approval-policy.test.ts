@@ -261,3 +261,59 @@ describe("ApprovalPolicy — Ads autopilot exception", () => {
     ).toBe("LEVEL_4_CRITICAL");
   });
 });
+
+describe("cost approval threshold (billing)", () => {
+  const costly = { estimatedCostUsd: 1.2, approveAboveUsd: 1 };
+
+  it("makes costly work started by the system wait for a person", () => {
+    for (const createdByType of ["SYSTEM", "AI"] as const) {
+      expect(
+        ApprovalPolicy.resolveLevel("CREATE_SOCIAL_CREATIVE", {
+          createdByType,
+          ...costly,
+        }),
+      ).toBe("LEVEL_3_CLIENT");
+    }
+  });
+
+  it("does not ask for work at or under the size", () => {
+    expect(
+      ApprovalPolicy.resolveLevel("CREATE_SOCIAL_CREATIVE", {
+        createdByType: "SYSTEM",
+        estimatedCostUsd: 1,
+        approveAboveUsd: 1,
+      }),
+    ).toBe("LEVEL_1_INTERNAL_AUTOMATIC");
+  });
+
+  it("never asks about what the user started themselves", () => {
+    expect(
+      ApprovalPolicy.resolveLevel("CREATE_SOCIAL_CREATIVE", {
+        createdByType: "USER",
+        ...costly,
+      }),
+    ).toBe("LEVEL_0_AUTO_OBSERVE");
+  });
+
+  it("needs both numbers, and only ever raises", () => {
+    expect(
+      ApprovalPolicy.resolveLevel("CREATE_SOCIAL_CREATIVE", {
+        createdByType: "SYSTEM",
+        estimatedCostUsd: 5,
+      }),
+    ).toBe("LEVEL_1_INTERNAL_AUTOMATIC");
+    expect(
+      ApprovalPolicy.resolveLevel("CREATE_SOCIAL_CREATIVE", {
+        createdByType: "SYSTEM",
+        approveAboveUsd: 0.1,
+      }),
+    ).toBe("LEVEL_1_INTERNAL_AUTOMATIC");
+    // A level that is already higher stays.
+    expect(
+      ApprovalPolicy.resolveLevel("META_CAMPAIGN_CREATE", {
+        createdByType: "SYSTEM",
+        ...costly,
+      }),
+    ).toBe("LEVEL_4_CRITICAL");
+  });
+});

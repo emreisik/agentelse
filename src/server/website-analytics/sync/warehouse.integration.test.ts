@@ -129,14 +129,19 @@ describeIntegration("GA warehouse sync (mock Google)", () => {
     const before = await prisma.gaDailyTotal.count({
       where: { linkId: link.id },
     });
-    const refreshed = await GaSync.refreshNow(
-      fixture.projectId,
-      new Date(Date.now() + 10 * 60_000),
-    );
+    const later = new Date(Date.now() + 10 * 60_000);
+    // Mülkün saat diliminde gece yarısına 10 dakikadan az kalmışsa "10 dakika sonra" yeni bir
+    // gündür ve o gün haklı olarak bir satır ekler; kopya olmadığını yine kanıtlar.
+    const dayOf = (instant: Date) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: link.timeZone ?? "Europe/Istanbul",
+      }).format(instant);
+    const newDay = dayOf(later) !== dayOf(new Date());
+    const refreshed = await GaSync.refreshNow(fixture.projectId, later);
     expect(refreshed).toBe("refreshed");
     expect(
       await prisma.gaDailyTotal.count({ where: { linkId: link.id } }),
-    ).toBe(before);
+    ).toBe(before + (newDay ? 1 : 0));
   }, 60_000);
 
   it("builds the Website report from the warehouse", async () => {

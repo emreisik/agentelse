@@ -250,6 +250,13 @@ function imitation(options: Options = {}) {
       });
       return subs.get(subId);
     }
+    if (method === "GET" && path === "/v1/subscriptions") {
+      return {
+        data: [...subs.values()].filter(
+          (sub) => sub.customer === request.query?.customer,
+        ),
+      };
+    }
     if (method === "GET" && /^\/v1\/subscriptions\//.test(path)) {
       const found = subs.get(path.split("/").pop()!);
       if (!found) throw notFound();

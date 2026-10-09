@@ -381,6 +381,16 @@ export async function runStripeSmoke(
         state.firstInvoiceId = sub.latestInvoice.id;
         state.latestInvoiceId = sub.latestInvoice.id;
 
+        // Checkout asks Stripe for a customer's running subscriptions before it opens a
+        // second one: the list request must return this one with its latest invoice.
+        const listed = await gateway.listSubscriptions(customerId);
+        const found = listed.find((item) => item.id === created.id);
+        ensure(found, "the customer's subscription list does not contain it");
+        ensure(
+          found.latestInvoice?.status === "paid",
+          `listed latest invoice ${found.latestInvoice?.status}`,
+        );
+
         const invoice = await gateway.getInvoice(sub.latestInvoice.id);
         ensure(invoice, "the invoice cannot be read back");
         ensure(invoice.status === "paid", `invoice status ${invoice.status}`);
@@ -435,6 +445,12 @@ export async function runStripeSmoke(
         ensure(
           updated.latestInvoice.status === "paid",
           `proration invoice ${updated.latestInvoice.status}`,
+        );
+        // The state machine grants an upgrade only for a PAID invoice of this exact kind,
+        // read from the subscription's expanded latest_invoice.
+        ensure(
+          updated.latestInvoice.billingReason === "subscription_update",
+          `latest_invoice billing_reason ${updated.latestInvoice.billingReason}`,
         );
         const invoice = await gateway.getInvoice(updated.latestInvoice.id);
         ensure(invoice, "the proration invoice cannot be read back");

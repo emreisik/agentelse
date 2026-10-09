@@ -1,7 +1,9 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { costApprovalDetails } from "@/lib/billing/approval-threshold";
 import { stripCapabilityPrefix } from "@/lib/labels/core";
+import { costApprovalNotes } from "@/server/billing/approval-threshold";
 import { getPublishTargets } from "@/server/integrations/meta-connection-status";
 import { countEnabledPublishSchedules } from "@/server/chat/publish-schedule";
 import {
@@ -60,6 +62,7 @@ export async function getPendingDecisions(
               riskLevel: true,
               departmentKey: true,
               payload: true,
+              createdByType: true,
             },
           })
         : Promise.resolve([]),
@@ -108,6 +111,16 @@ export async function getPendingDecisions(
 
   const taskById = new Map(tasks.map((t) => [t.id, t]));
   const creativeById = new Map(creatives.map((c) => [c.id, c]));
+  // The one-time chat card says why an automatic task costs a question (its "Why
+  // you are asked" line), but that sentence is not stored: it is worked out again
+  // from the task and today's plan for the tasks that have no details of their own.
+  const costNotes = await costApprovalNotes({
+    workspaceId: first.workspaceId,
+    projectId,
+    tasks: tasks.filter(
+      (task) => !buildApprovalDetails(task.capability, task.payload),
+    ),
+  });
   // Mirrors autoPublishCreative's own gates: no Instagram connection → it
   // skips and asks instead, so no calendar/publish promise on the button.
   // Instagram specifically: a TikTok, LinkedIn, X or Facebook Page target
@@ -135,7 +148,9 @@ export async function getPendingDecisions(
           title: stripCapabilityPrefix(task.title),
           department: task.departmentKey ?? undefined,
           riskLevel: task.riskLevel,
-          details: buildApprovalDetails(task.capability, task.payload),
+          details:
+            buildApprovalDetails(task.capability, task.payload) ??
+            costApprovalDetails(costNotes.get(task.id)),
           category: approvalCategory(approval.type, approval.level),
         },
       });

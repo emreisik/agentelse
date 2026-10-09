@@ -5,7 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // reach a terminal status — see task.repository.ts's TASK_FAILED/
 // TASK_CANCELLED triggers and this file's onTaskTerminal.
 
-const task = { findUnique: vi.fn(), findMany: vi.fn() };
+const task = {
+  findUnique: vi.fn(),
+  findMany: vi.fn(),
+  updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+};
 const taskDependency = { findMany: vi.fn() };
 const idea = { findUnique: vi.fn() };
 
@@ -15,6 +19,7 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/server/commands/task-planner", () => ({
   TaskPlanner: {
+    approvalNow: vi.fn(),
     requestApproval: vi.fn().mockResolvedValue(undefined),
     dispatchApprovedTask: vi.fn().mockResolvedValue(undefined),
   },
@@ -57,8 +62,24 @@ const { WorkPlanRepository } =
   await import("@/server/repositories/work-plan.repository");
 const { TaskPlanner } = await import("@/server/commands/task-planner");
 
+// What the planner answers for a ready node. By default it agrees with the flag the
+// node was stored with (nothing changed since it was made); a test says otherwise.
+function approvalFollowsStoredFlag() {
+  vi.mocked(TaskPlanner.approvalNow).mockImplementation(async (node) => {
+    const flagged =
+      (node as { requiresApproval?: boolean }).requiresApproval === true;
+    return {
+      level: flagged ? "LEVEL_3_CLIENT" : "LEVEL_1_INTERNAL_AUTOMATIC",
+      requiresApproval: flagged,
+      note: undefined,
+    };
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  approvalFollowsStoredFlag();
+  task.updateMany.mockResolvedValue({ count: 1 });
   task.findMany.mockResolvedValue([]);
   taskDependency.findMany.mockResolvedValue([]);
   isProjectAgencyActive.mockResolvedValue(true);
@@ -339,6 +360,133 @@ describe("WorkPlanProgressor.dispatchReadyTasks", () => {
     expect(result).toBe(0);
     expect(task.findMany).not.toHaveBeenCalled();
     expect(isProjectAgencyActive).toHaveBeenCalledWith("p-paused");
+  });
+});
+
+// A plan node is judged again when its dependencies are done: the flag stored at
+// creation is not what decides. (The real policy, planner and database:
+// work-plan-progressor.cost-approval.integration.test.ts.)
+describe("WorkPlanProgressor.dispatchReadyTasks: the approval decision", () => {
+  const node = (overrides: Record<string, unknown> = {}) => ({
+    id: "task-1",
+    workspaceId: "ws-1",
+    projectId: "p-1",
+    brandId: "b-1",
+    title: "Do the thing",
+    capability: "CREATE_SOCIAL_CREATIVE",
+    riskLevel: "LOW",
+    createdByType: "SYSTEM",
+    createdByUserId: null,
+    departmentKey: null,
+    requiresApproval: false,
+    payload: { request: "a post", variantCount: 3 },
+    ...overrides,
+  });
+
+  it("asks the planner about every ready node with the payload it is stored with", async () => {
+    task.findMany.mockResolvedValueOnce([node(), node({ id: "task-2" })]);
+
+    await WorkPlanProgressor.dispatchReadyTasks("plan-1", "p-1");
+
+    expect(TaskPlanner.approvalNow).toHaveBeenCalledTimes(2);
+    expect(TaskPlanner.approvalNow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capability: "CREATE_SOCIAL_CREATIVE",
+        createdByType: "SYSTEM",
+        payload: { request: "a post", variantCount: 3 },
+      }),
+    );
+    expect(task.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ payload: true }),
+      }),
+    );
+  });
+
+  it("parks a node that is not flagged but now needs asking, flags it, and hands the card its reason", async () => {
+    task.findMany.mockResolvedValueOnce([node({ requiresApproval: false })]);
+    vi.mocked(TaskPlanner.approvalNow).mockResolvedValue({
+      level: "LEVEL_3_CLIENT",
+      requiresApproval: true,
+      note: "This automatic task would use 3 post images of your plan.",
+    });
+
+    const result = await WorkPlanProgressor.dispatchReadyTasks("plan-1", "p-1");
+
+    expect(result).toBe(1);
+    expect(task.updateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "READY" },
+      data: { requiresApproval: true },
+    });
+    expect(TaskPlanner.requestApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "task-1" }),
+      "LEVEL_3_CLIENT",
+      "This automatic task would use 3 post images of your plan.",
+    );
+    expect(TaskPlanner.dispatchApprovedTask).not.toHaveBeenCalled();
+  });
+
+  it("dispatches a flagged node that no longer needs asking, and clears its flag", async () => {
+    task.findMany.mockResolvedValueOnce([node({ requiresApproval: true })]);
+    vi.mocked(TaskPlanner.approvalNow).mockResolvedValue({
+      level: "LEVEL_1_INTERNAL_AUTOMATIC",
+      requiresApproval: false,
+      note: undefined,
+    });
+
+    await WorkPlanProgressor.dispatchReadyTasks("plan-1", "p-1");
+
+    expect(task.updateMany).toHaveBeenCalledWith({
+      where: { id: "task-1", status: "READY" },
+      data: { requiresApproval: false },
+    });
+    expect(TaskPlanner.dispatchApprovedTask).toHaveBeenCalledWith(
+      "task-1",
+      "p-1",
+    );
+    expect(TaskPlanner.requestApproval).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when the answer is the flag it already has", async () => {
+    task.findMany.mockResolvedValueOnce([
+      node({ requiresApproval: true }),
+      node({ id: "task-2", requiresApproval: false }),
+    ]);
+
+    await WorkPlanProgressor.dispatchReadyTasks("plan-1", "p-1");
+
+    expect(task.updateMany).not.toHaveBeenCalled();
+    expect(TaskPlanner.requestApproval).toHaveBeenCalledTimes(1);
+    expect(TaskPlanner.dispatchApprovedTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a node whose dependencies are not done alone: it is not even judged", async () => {
+    task.findMany.mockResolvedValueOnce([node()]);
+    vi.mocked(TaskRepository.dependenciesSatisfied).mockResolvedValueOnce(
+      false,
+    );
+
+    const result = await WorkPlanProgressor.dispatchReadyTasks("plan-1", "p-1");
+
+    expect(result).toBe(0);
+    expect(TaskPlanner.approvalNow).not.toHaveBeenCalled();
+  });
+
+  it("one node failing does not stop the others", async () => {
+    task.findMany.mockResolvedValueOnce([node(), node({ id: "task-2" })]);
+    vi.mocked(TaskPlanner.approvalNow).mockRejectedValueOnce(
+      new Error("exploded"),
+    );
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await WorkPlanProgressor.dispatchReadyTasks("plan-1", "p-1");
+    spy.mockRestore();
+
+    expect(result).toBe(1);
+    expect(TaskPlanner.dispatchApprovedTask).toHaveBeenCalledWith(
+      "task-2",
+      "p-1",
+    );
   });
 });
 

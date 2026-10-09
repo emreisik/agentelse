@@ -26,9 +26,13 @@ const STALE_READY_TASK_AFTER_MS = 30 * 60_000;
 // Tasks are created deferred (READY) regardless of whether their capability
 // requires approval; this progressor acts on each one the moment all its
 // dependencies are COMPLETED — dispatching it straight to execution, or, if
-// the capability requires approval, parking it (WAITING_APPROVAL) only now
-// that its inputs actually exist. From there the normal human-approval flow
-// takes over and calls TaskPlanner.dispatchApprovedTask itself.
+// the node requires approval, parking it (WAITING_APPROVAL) only now that its
+// inputs actually exist. Whether it does is decided AGAIN here, from the stored
+// payload and today's plan and settings (TaskPlanner.approvalNow), not taken
+// from the flag stored at creation: the cost approval (billing, Faz 3C) depends
+// on things that change while a node waits. From there the normal
+// human-approval flow takes over and calls TaskPlanner.dispatchApprovedTask
+// itself.
 export const WorkPlanProgressor = {
   async dispatchReadyTasks(
     workPlanId: string,
@@ -54,6 +58,7 @@ export const WorkPlanProgressor = {
         createdByUserId: true,
         departmentKey: true,
         requiresApproval: true,
+        payload: true,
       },
     });
 
@@ -65,11 +70,25 @@ export const WorkPlanProgressor = {
       // of this loop and leave every other READY node in the plan
       // undispatched for this pass.
       try {
-        if (task.requiresApproval) {
+        // Judged again, for EVERY ready node: one made while billing was off
+        // (or before the person lowered the approval size) may need asking
+        // now, one made for a size the person has since raised no longer does.
+        const approval = await TaskPlanner.approvalNow(task);
+        if (approval.requiresApproval !== task.requiresApproval) {
+          await prisma.task.updateMany({
+            where: { id: task.id, status: "READY" },
+            data: { requiresApproval: approval.requiresApproval },
+          });
+        }
+        if (approval.requiresApproval) {
           // Dependency just cleared — only now is it safe to surface the
           // approval card (see task-planner.ts's deferDispatch branch for
           // why this can't happen at plan-creation time).
-          await TaskPlanner.requestApproval(task);
+          await TaskPlanner.requestApproval(
+            task,
+            approval.level,
+            approval.note,
+          );
         } else {
           await TaskPlanner.dispatchApprovedTask(task.id, projectId);
         }

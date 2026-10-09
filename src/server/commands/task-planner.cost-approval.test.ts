@@ -186,3 +186,61 @@ describe("requestApproval for a task that was deferred", () => {
     );
   });
 });
+
+describe("approvalNow: what a stored task needs right now", () => {
+  const stored = {
+    workspaceId: "w1",
+    projectId: "p1",
+    capability: "CREATE_SOCIAL_CREATIVE" as const,
+    riskLevel: "LOW" as const,
+    createdByType: "SYSTEM" as const,
+    payload: { request: "a post", variantCount: 3 },
+  };
+
+  it("sizes the task with its own stored payload and says it needs a person when it is costly", async () => {
+    costApprovalContext.mockResolvedValue(COSTLY);
+
+    const answer = await TaskPlanner.approvalNow(stored);
+
+    expect(costApprovalContext).toHaveBeenCalledWith({
+      workspaceId: "w1",
+      projectId: "p1",
+      capability: "CREATE_SOCIAL_CREATIVE",
+      payload: stored.payload,
+      createdByType: "SYSTEM",
+    });
+    expect(answer).toEqual({
+      level: "LEVEL_3_CLIENT",
+      requiresApproval: true,
+      note: COSTLY.note,
+    });
+  });
+
+  it("says it does not for work within the size, and for the user's own", async () => {
+    costApprovalContext.mockResolvedValue(CHEAP);
+    expect(await TaskPlanner.approvalNow(stored)).toEqual({
+      level: "LEVEL_1_INTERNAL_AUTOMATIC",
+      requiresApproval: false,
+      note: undefined,
+    });
+
+    costApprovalContext.mockResolvedValue({});
+    expect(
+      await TaskPlanner.approvalNow({ ...stored, createdByType: "USER" }),
+    ).toMatchObject({ level: "LEVEL_0_AUTO_OBSERVE", requiresApproval: false });
+  });
+
+  it("keeps the capability's own floor whatever the cost", async () => {
+    costApprovalContext.mockResolvedValue({});
+
+    const answer = await TaskPlanner.approvalNow({
+      ...stored,
+      capability: "TIKTOK_PUBLISH",
+    });
+
+    expect(answer).toMatchObject({
+      level: "LEVEL_3_CLIENT",
+      requiresApproval: true,
+    });
+  });
+});

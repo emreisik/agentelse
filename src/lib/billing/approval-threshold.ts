@@ -63,6 +63,15 @@ export function estimateCostUsd(need: {
   return amount * TASK_CEILING.perImageUsd * 4;
 }
 
+// Onay kartındaki satırın başlığı; cümle costApprovalNote'tur.
+export const COST_APPROVAL_LABEL = "Why you are asked";
+
+export function costApprovalDetails(
+  note: string | undefined,
+): Array<{ label: string; value: string }> | undefined {
+  return note ? [{ label: COST_APPROVAL_LABEL, value: note }] : undefined;
+}
+
 // Onay kartında gösterilecek cümle: dolar değil hak.
 export function costApprovalNote(need: {
   unit: "IMAGE" | "VIDEO" | "AI_MICROS";

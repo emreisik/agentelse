@@ -1,0 +1,332 @@
+import "server-only";
+
+import { startOfMonth, subDays } from "date-fns";
+
+import { PLANS, isUnitSellable, type PlanKey } from "@/lib/billing/plans";
+import { prisma } from "@/lib/prisma";
+
+import { getBillingConfig } from "./config";
+import { toUsageView } from "./ledger";
+
+// Everything the Plan & usage screens show, read for ONE workspace. A display
+// model: it never decides, reserves or charges anything, and it is independent of
+// BILLING_MODE on purpose (the ledger gates are invisible while billing is off, but
+// the screens still show what is measured and what the workspace has).
+//
+// Customer wording: counts and percentages, never tokens or cost.
+
+export type SubscriptionOverview = {
+  planKey: PlanKey | null;
+  planLabel: string | null;
+  interval: "MONTH" | "YEAR" | null;
+  status: string;
+  // Paid up to (the renewal date), ISO.
+  paidThrough: string | null;
+  trialEndsAt: string | null;
+  cancelAtPeriodEnd: boolean;
+  pending: {
+    planKey: PlanKey | null;
+    interval: string | null;
+    effectiveAt: string | null;
+  } | null;
+  exempt: boolean;
+};
+
+export type AllowanceOverview = {
+  unit: "IMAGE" | "AI_MICROS";
+  granted: number;
+  used: number;
+  reserved: number;
+  // Left to spend now: this window's allowance plus extra packs.
+  available: number;
+  // Of which bought separately; never expires with the window.
+  extraAvailable: number;
+  endsAt: string | null;
+};
+
+export type ModuleUsage = {
+  module: string;
+  images: number;
+  aiRequests: number;
+};
+
+export type DailyUsage = { day: string; images: number; aiRequests: number };
+
+export type MeasuredUsage = {
+  // Start of the window the numbers cover, ISO.
+  since: string;
+  images: number;
+  aiRequests: number;
+  byModule: ModuleUsage[];
+  daily: DailyUsage[];
+};
+
+export type TaskRow = {
+  id: string;
+  title: string;
+  capability: string;
+  projectId: string;
+  projectName: string;
+  at: string;
+  // Paused tasks only: why they wait.
+  pausedFor?: "allowance" | "no-plan";
+};
+
+export type ApprovalRow = {
+  id: string;
+  title: string;
+  projectId: string;
+  projectName: string;
+  at: string;
+};
+
+export type TasksOverview = {
+  active: TaskRow[];
+  paused: TaskRow[];
+  awaitingApproval: ApprovalRow[];
+};
+
+export type BillingOverview = {
+  mode: "off" | "shadow" | "enforce";
+  subscription: SubscriptionOverview | null;
+  allowances: AllowanceOverview[];
+  measured: MeasuredUsage;
+  tasks: TasksOverview;
+};
+
+const ACTIVE_JOB_STATUSES = [
+  "QUEUED",
+  "RUNNING",
+  "WAITING_PROVIDER",
+  "WAITING_HUMAN",
+] as const;
+
+const LIST_LIMIT = 15;
+const HISTORY_DAYS = 14;
+
+const isPlanKey = (value: string | null): value is PlanKey =>
+  value !== null && Object.hasOwn(PLANS, value);
+
+function toSubscriptionOverview(row: {
+  planKey: string | null;
+  interval: string | null;
+  status: string;
+  paidThrough: Date | null;
+  trialEndsAt: Date | null;
+  cancelAtPeriodEnd: boolean;
+  pendingPlanKey: string | null;
+  pendingInterval: string | null;
+  pendingEffectiveAt: Date | null;
+  exempt: boolean;
+}): SubscriptionOverview {
+  const planKey = isPlanKey(row.planKey) ? row.planKey : null;
+  const hasPending = Boolean(
+    row.pendingPlanKey || row.pendingInterval || row.pendingEffectiveAt,
+  );
+  return {
+    planKey,
+    planLabel: planKey ? PLANS[planKey].label : null,
+    interval:
+      row.interval === "MONTH" || row.interval === "YEAR" ? row.interval : null,
+    status: row.status,
+    paidThrough: row.paidThrough?.toISOString() ?? null,
+    trialEndsAt: row.trialEndsAt?.toISOString() ?? null,
+    cancelAtPeriodEnd: row.cancelAtPeriodEnd,
+    pending: hasPending
+      ? {
+          planKey: isPlanKey(row.pendingPlanKey) ? row.pendingPlanKey : null,
+          interval: row.pendingInterval,
+          effectiveAt: row.pendingEffectiveAt?.toISOString() ?? null,
+        }
+      : null,
+    exempt: row.exempt,
+  };
+}
+
+async function measuredUsage(
+  workspaceId: string,
+  now: Date,
+): Promise<MeasuredUsage> {
+  const since = startOfMonth(now);
+  const historyFrom = subDays(now, HISTORY_DAYS - 1);
+  historyFrom.setUTCHours(0, 0, 0, 0);
+
+  const [byKind, daily] = await Promise.all([
+    prisma.usageEntry.groupBy({
+      by: ["module", "kind"],
+      where: {
+        workspaceId,
+        success: true,
+        createdAt: { gte: since },
+        kind: { in: ["IMAGE", "TEXT", "SEARCH"] },
+      },
+      _count: { _all: true },
+      _sum: { units: true },
+    }),
+    prisma.$queryRaw<
+      Array<{ day: string; images: number; requests: number }>
+    >`SELECT to_char(date_trunc('day', "createdAt"), 'YYYY-MM-DD') AS "day",
+             COALESCE(SUM(CASE WHEN "kind" = 'IMAGE' THEN COALESCE("units", 1) ELSE 0 END), 0)::int AS "images",
+             COALESCE(SUM(CASE WHEN "kind" IN ('TEXT', 'SEARCH') THEN 1 ELSE 0 END), 0)::int AS "requests"
+        FROM "UsageEntry"
+       WHERE "workspaceId" = ${workspaceId}
+         AND "success" = true
+         AND "kind" IN ('IMAGE', 'TEXT', 'SEARCH')
+         AND "createdAt" >= (${historyFrom}::timestamptz AT TIME ZONE 'UTC')
+       GROUP BY 1
+       ORDER BY 1 DESC`,
+  ]);
+
+  const modules = new Map<string, ModuleUsage>();
+  let images = 0;
+  let aiRequests = 0;
+  for (const row of byKind) {
+    const key = row.module ?? "OTHER";
+    const entry = modules.get(key) ?? { module: key, images: 0, aiRequests: 0 };
+    if (row.kind === "IMAGE") {
+      const count = row._sum.units ?? row._count._all;
+      entry.images += count;
+      images += count;
+    } else {
+      entry.aiRequests += row._count._all;
+      aiRequests += row._count._all;
+    }
+    modules.set(key, entry);
+  }
+
+  return {
+    since: since.toISOString(),
+    images,
+    aiRequests,
+    byModule: [...modules.values()].sort(
+      (a, b) => b.images + b.aiRequests - (a.images + a.aiRequests),
+    ),
+    daily: daily.map((row) => ({
+      day: row.day,
+      images: row.images,
+      aiRequests: row.requests,
+    })),
+  };
+}
+
+async function tasksOverview(workspaceId: string): Promise<TasksOverview> {
+  const jobSelect = {
+    id: true,
+    projectId: true,
+    capability: true,
+    createdAt: true,
+    updatedAt: true,
+    errorCode: true,
+    task: { select: { title: true } },
+  } as const;
+
+  const [active, paused, approvals] = await Promise.all([
+    prisma.executionJob.findMany({
+      where: { workspaceId, status: { in: [...ACTIVE_JOB_STATUSES] } },
+      orderBy: { createdAt: "desc" },
+      take: LIST_LIMIT,
+      select: jobSelect,
+    }),
+    prisma.executionJob.findMany({
+      where: { workspaceId, status: "WAITING_BUDGET" },
+      orderBy: { updatedAt: "desc" },
+      take: LIST_LIMIT,
+      select: jobSelect,
+    }),
+    prisma.approval.findMany({
+      where: { workspaceId, status: "PENDING" },
+      orderBy: { createdAt: "desc" },
+      take: LIST_LIMIT,
+      select: {
+        id: true,
+        projectId: true,
+        createdAt: true,
+        entityType: true,
+        task: { select: { title: true } },
+      },
+    }),
+  ]);
+
+  const projectIds = [
+    ...new Set(
+      [...active, ...paused, ...approvals].map((row) => row.projectId),
+    ),
+  ];
+  const projects = projectIds.length
+    ? await prisma.project.findMany({
+        where: { workspaceId, id: { in: projectIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const nameOf = new Map(projects.map((project) => [project.id, project.name]));
+
+  const toRow = (
+    job: (typeof active)[number],
+    at: Date,
+    pausedFor?: TaskRow["pausedFor"],
+  ): TaskRow => ({
+    id: job.id,
+    title: job.task?.title ?? job.capability,
+    capability: job.capability,
+    projectId: job.projectId,
+    projectName: nameOf.get(job.projectId) ?? "Brand",
+    at: at.toISOString(),
+    ...(pausedFor ? { pausedFor } : {}),
+  });
+
+  return {
+    active: active.map((job) => toRow(job, job.createdAt)),
+    paused: paused.map((job) =>
+      toRow(
+        job,
+        job.updatedAt,
+        job.errorCode === "NO_PLAN" ? "no-plan" : "allowance",
+      ),
+    ),
+    awaitingApproval: approvals.map((approval) => ({
+      id: approval.id,
+      title: approval.task?.title ?? approval.entityType,
+      projectId: approval.projectId,
+      projectName: nameOf.get(approval.projectId) ?? "Brand",
+      at: approval.createdAt.toISOString(),
+    })),
+  };
+}
+
+export async function getBillingOverview(
+  workspaceId: string,
+  now: Date = new Date(),
+): Promise<BillingOverview> {
+  const [subscription, balances, measured, tasks] = await Promise.all([
+    prisma.subscription.findUnique({ where: { workspaceId } }),
+    prisma.usageBalance.findMany({ where: { workspaceId } }),
+    measuredUsage(workspaceId, now),
+    tasksOverview(workspaceId),
+  ]);
+
+  const allowances = balances
+    .filter((row) => isUnitSellable(row.unit as "IMAGE"))
+    .filter((row) => row.unit === "IMAGE" || row.unit === "AI_MICROS")
+    .map((row) => {
+      const view = toUsageView(row, now);
+      return {
+        unit: view.unit as "IMAGE" | "AI_MICROS",
+        // The window's allowance plus anything bought on top.
+        granted: view.period.granted + view.extra.granted,
+        used: view.period.used + view.extra.used,
+        reserved: view.period.reserved + view.extra.reserved,
+        available: view.available,
+        extraAvailable: view.extra.available,
+        endsAt: view.period.endsAt,
+      };
+    })
+    .sort((a, b) => (a.unit === b.unit ? 0 : a.unit === "IMAGE" ? -1 : 1));
+
+  return {
+    mode: getBillingConfig().mode,
+    subscription: subscription ? toSubscriptionOverview(subscription) : null,
+    allowances,
+    measured,
+    tasks,
+  };
+}

@@ -1,0 +1,388 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+
+import { comparisonRows, planCards } from "@/lib/billing/catalog";
+import { YEARLY_DISCOUNT_PCT } from "@/lib/billing/plans";
+import type { BillingOverview } from "@/server/billing/overview";
+
+import { BILLING_TABS, BillingTabs, parseBillingTab } from "./billing-tabs";
+import { PlanPicker } from "./plan-picker";
+import { SubscriptionPanel } from "./subscription-panel";
+import { TasksPanel } from "./tasks-panel";
+import { UsagePanel } from "./usage-panel";
+
+// The Plan & usage screens rendered on the server with realistic data: what a
+// person reads, and that the states (running low, used up, no plan yet, paused
+// work) say the right thing. The prices come from plans.ts, so these numbers are
+// the product's.
+
+const EMPTY: BillingOverview = {
+  mode: "off",
+  subscription: null,
+  allowances: [],
+  measured: {
+    since: "2026-10-01T00:00:00.000Z",
+    images: 0,
+    aiRequests: 0,
+    byModule: [],
+    daily: [],
+  },
+  tasks: { active: [], paused: [], awaitingApproval: [] },
+};
+
+const html = (element: Parameters<typeof renderToStaticMarkup>[0]) =>
+  renderToStaticMarkup(element);
+
+// The button's class list always mentions "disabled:" (a style variant); only the
+// attribute says whether it is disabled.
+const isDisabled = (button: string) => / disabled=""/.test(button);
+
+describe("BillingTabs", () => {
+  it("falls back to the plans tab for anything unknown", () => {
+    expect(parseBillingTab(undefined)).toBe("plans");
+    expect(parseBillingTab("nope")).toBe("plans");
+    expect(parseBillingTab(["usage", "tasks"])).toBe("usage");
+    for (const tab of BILLING_TABS) expect(parseBillingTab(tab.id)).toBe(tab.id);
+  });
+
+  it("links every tab by address and marks the open one", () => {
+    const markup = html(createElement(BillingTabs, { active: "usage" }));
+    for (const tab of BILLING_TABS) {
+      expect(markup).toContain(`href="/billing?tab=${tab.id}"`);
+      expect(markup).toContain(tab.label);
+    }
+    expect(markup.match(/aria-current="page"/g)).toHaveLength(1);
+    expect(markup).toMatch(/aria-current="page"[^>]*>Usage</);
+  });
+});
+
+describe("PlanPicker", () => {
+  const props = {
+    cards: planCards(),
+    comparison: comparisonRows(),
+    currentPlanKey: null,
+    yearlyDiscountPct: YEARLY_DISCOUNT_PCT,
+    paymentsOpen: false,
+  } as const;
+
+  it("shows the four plans at their monthly prices and what each includes", () => {
+    const markup = html(createElement(PlanPicker, props));
+    for (const label of ["Starter", "Growth", "Business", "Agency"]) {
+      expect(markup).toContain(label);
+    }
+    for (const price of ["$79", "$149", "$299", "$599"]) {
+      expect(markup).toContain(price);
+    }
+    expect(markup).toContain("20 post images a month");
+    expect(markup).toContain("300 post images a month");
+    expect(markup).toContain("Limited background automation");
+    expect(markup).toContain("Full background automation");
+  });
+
+  it("has the discount button, the promo field and the yearly switch", () => {
+    const markup = html(createElement(PlanPicker, props));
+    expect(markup).toContain("Apply first-month discount");
+    expect(markup).toContain("Promo code");
+    expect(markup).toContain(`Yearly · save ${YEARLY_DISCOUNT_PCT}%`);
+    expect(markup).toContain("Monthly");
+  });
+
+  it("does not offer a plan that cannot be bought yet, and says so", () => {
+    const markup = html(createElement(PlanPicker, props));
+    expect(markup).toContain("Plans are not on sale yet");
+    // Every plan button is disabled.
+    const buttons = markup.match(/<button[^>]*>Choose [A-Za-z]+<\/button>/g) ?? [];
+    expect(buttons).toHaveLength(4);
+    for (const button of buttons) expect(isDisabled(button)).toBe(true);
+  });
+
+  it("once payments are open the plan buttons work, except for the current plan", () => {
+    const markup = html(
+      createElement(PlanPicker, {
+        ...props,
+        currentPlanKey: "growth",
+        paymentsOpen: true,
+      }),
+    );
+    expect(markup).not.toContain("Plans are not on sale yet");
+    expect(markup).toContain("Current plan");
+    expect(markup).toContain("Your plan");
+    const choose = markup.match(/<button[^>]*>Choose [A-Za-z]+<\/button>/g) ?? [];
+    expect(choose).toHaveLength(3);
+    for (const button of choose) expect(isDisabled(button)).toBe(false);
+  });
+
+  it("compares the plans in a table and lists what the product works with", () => {
+    const markup = html(createElement(PlanPicker, props));
+    expect(markup).toContain("Compare plans");
+    expect(markup).toContain("Post images per month");
+    expect(markup).toContain("120 (90 in the first month)");
+    expect(markup).toContain("Works with");
+    for (const name of ["Instagram", "Facebook", "Meta Ads", "Google Analytics"]) {
+      expect(markup).toContain(name);
+    }
+  });
+
+  it("sells no video", () => {
+    expect(html(createElement(PlanPicker, props)).toLowerCase()).not.toContain(
+      "video",
+    );
+  });
+});
+
+describe("UsagePanel", () => {
+  const withAllowances: BillingOverview = {
+    ...EMPTY,
+    mode: "enforce",
+    allowances: [
+      {
+        unit: "IMAGE",
+        granted: 50,
+        used: 42,
+        reserved: 0,
+        available: 8,
+        extraAvailable: 0,
+        endsAt: "2026-11-01T00:00:00.000Z",
+      },
+      {
+        unit: "AI_MICROS",
+        granted: 8_000_000,
+        used: 8_000_000,
+        reserved: 0,
+        available: 0,
+        extraAvailable: 0,
+        endsAt: "2026-11-01T00:00:00.000Z",
+      },
+    ],
+    measured: {
+      since: "2026-10-01T00:00:00.000Z",
+      images: 42,
+      aiRequests: 310,
+      byModule: [
+        { module: "SOCIAL", images: 40, aiRequests: 120 },
+        { module: "CHAT", images: 2, aiRequests: 190 },
+      ],
+      daily: [
+        { day: "2026-10-08", images: 3, aiRequests: 25 },
+        { day: "2026-10-07", images: 0, aiRequests: 4 },
+      ],
+    },
+  };
+
+  it("shows what is left of each allowance, with a bar and the renewal date", () => {
+    const markup = html(createElement(UsagePanel, { overview: withAllowances }));
+    expect(markup).toContain("Post images");
+    expect(markup).toContain("left of 50");
+    expect(markup).toContain("AI assistant usage");
+    expect(markup).toContain("Renews");
+    expect(markup).toContain('role="progressbar"');
+    expect(markup).toContain('aria-valuenow="84"'); // 42 of 50 spent
+    expect(markup).toContain('aria-valuenow="100"');
+  });
+
+  it("warns before an allowance runs out and again when it is used up", () => {
+    const markup = html(createElement(UsagePanel, { overview: withAllowances }));
+    expect(markup).toContain("You are running low on post images");
+    expect(markup).toContain("You have used all of your AI assistant usage");
+    expect(markup).toContain("continues by itself");
+    expect(markup).not.toContain("Usage is measured, not limited yet");
+  });
+
+  it("shows neither tokens nor dollars of cost", () => {
+    const markup = html(createElement(UsagePanel, { overview: withAllowances }));
+    expect(markup.toLowerCase()).not.toContain("token");
+  });
+
+  it("breaks the month down by module and lists the last days", () => {
+    const markup = html(createElement(UsagePanel, { overview: withAllowances }));
+    expect(markup).toContain("Social Media");
+    expect(markup).toContain("Assistant chat");
+    expect(markup).toContain("40 pictures");
+    expect(markup).toContain("Last 14 days");
+    expect(markup).toContain("Oct 8");
+  });
+
+  it("without a plan it says usage is measured, not limited, and still shows the numbers", () => {
+    const markup = html(
+      createElement(UsagePanel, {
+        overview: {
+          ...EMPTY,
+          measured: { ...EMPTY.measured, images: 7, aiRequests: 31 },
+        },
+      }),
+    );
+    expect(markup).toContain("Usage is measured, not limited yet");
+    expect(markup).toContain(">7<");
+    expect(markup).toContain(">31<");
+    expect(markup).toContain("Nothing used yet this month");
+    expect(markup).toContain("No activity in the last 14 days");
+  });
+
+  it("offers the extra packs that are sold, at their prices, not buyable yet", () => {
+    const markup = html(createElement(UsagePanel, { overview: EMPTY }));
+    expect(markup).toContain("20 post images");
+    expect(markup).toContain("$12");
+    expect(markup).toContain("$2.50 of AI assistant usage");
+    expect(markup).toContain("$10");
+    expect(markup).toContain("Buying opens together with plans");
+  });
+});
+
+describe("SubscriptionPanel", () => {
+  it("with no plan: says so, sends the person to the plans, offers nothing to cancel", () => {
+    const markup = html(
+      createElement(SubscriptionPanel, { overview: EMPTY, canManage: true }),
+    );
+    expect(markup).toContain("No plan yet");
+    expect(markup).toContain('href="/billing?tab=plans"');
+    expect(markup).toContain("See plans");
+    expect(markup).toMatch(/<button[^>]*disabled[^>]*>Cancel subscription</);
+    expect(markup).toContain("Invoices and payments");
+    expect(markup).toContain("Nothing to show yet");
+  });
+
+  const active: BillingOverview = {
+    ...EMPTY,
+    subscription: {
+      planKey: "growth",
+      planLabel: "Growth",
+      interval: "MONTH",
+      status: "ACTIVE",
+      paidThrough: "2026-11-15T00:00:00.000Z",
+      trialEndsAt: null,
+      cancelAtPeriodEnd: false,
+      pending: null,
+      exempt: false,
+    },
+  };
+
+  it("shows the plan, its price, its status and the renewal date", () => {
+    const markup = html(
+      createElement(SubscriptionPanel, { overview: active, canManage: true }),
+    );
+    expect(markup).toContain("Growth");
+    expect(markup).toContain("$149/month");
+    expect(markup).toContain("Active");
+    expect(markup).toContain("Renews on");
+    expect(markup).toContain("Nov 15, 2026");
+    expect(markup).toContain("Change plan");
+  });
+
+  it("says when the plan ends instead of renewing, and what is scheduled", () => {
+    const markup = html(
+      createElement(SubscriptionPanel, {
+        canManage: true,
+        overview: {
+          ...active,
+          subscription: {
+            ...active.subscription!,
+            cancelAtPeriodEnd: true,
+            pending: {
+              planKey: "starter",
+              interval: "MONTH",
+              effectiveAt: "2026-11-15T00:00:00.000Z",
+            },
+          },
+        },
+      }),
+    );
+    expect(markup).toContain("Ends on");
+    expect(markup).not.toContain("Renews on");
+    expect(markup).toContain("Scheduled change");
+    expect(markup).toContain("Starter on Nov 15, 2026");
+  });
+
+  it("shows the yearly invoice for a yearly plan", () => {
+    const markup = html(
+      createElement(SubscriptionPanel, {
+        canManage: true,
+        overview: {
+          ...active,
+          subscription: { ...active.subscription!, interval: "YEAR" },
+        },
+      }),
+    );
+    expect(markup).toContain("$1,430.40 billed yearly");
+  });
+
+  it("an internal account reads as full access", () => {
+    const markup = html(
+      createElement(SubscriptionPanel, {
+        canManage: true,
+        overview: {
+          ...active,
+          subscription: { ...active.subscription!, exempt: true },
+        },
+      }),
+    );
+    expect(markup).toContain("Full access");
+  });
+
+  it("tells a member who cannot change the plan who can", () => {
+    const markup = html(
+      createElement(SubscriptionPanel, { overview: EMPTY, canManage: false }),
+    );
+    expect(markup).toContain("Only a workspace owner or admin can change the plan");
+  });
+});
+
+describe("TasksPanel", () => {
+  it("says so when there is nothing in any list", () => {
+    const markup = html(createElement(TasksPanel, { tasks: EMPTY.tasks }));
+    expect(markup).toContain("Nothing is waiting for you");
+    expect(markup).toContain("Nothing is paused");
+    expect(markup).toContain("Nothing is running right now");
+  });
+
+  it("lists paused work with the reason and how it continues", () => {
+    const at = new Date().toISOString();
+    const markup = html(
+      createElement(TasksPanel, {
+        tasks: {
+          active: [
+            {
+              id: "j1",
+              title: "Research competitors",
+              capability: "COMPETITOR_RESEARCH",
+              projectId: "p1",
+              projectName: "Acme",
+              at,
+            },
+          ],
+          paused: [
+            {
+              id: "j2",
+              title: "Weekend post",
+              capability: "CREATE_SOCIAL_CREATIVE",
+              projectId: "p1",
+              projectName: "Acme",
+              at,
+              pausedFor: "allowance",
+            },
+            {
+              id: "j3",
+              title: "Story",
+              capability: "CREATE_SOCIAL_CREATIVE",
+              projectId: "p2",
+              projectName: "Globex",
+              at,
+              pausedFor: "no-plan",
+            },
+          ],
+          awaitingApproval: [
+            { id: "a1", title: "Publish to Instagram", projectId: "p1", projectName: "Acme", at },
+          ],
+        },
+      }),
+    );
+    expect(markup).toContain("Weekend post");
+    expect(markup).toContain("Allowance used up");
+    expect(markup).toContain("Needs a plan");
+    expect(markup).toContain("continue by themselves");
+    expect(markup).toContain("Research competitors");
+    expect(markup).toContain("Publish to Instagram");
+    expect(markup).toContain('href="/projects/p1"');
+    expect(markup).toContain('href="/projects/p2"');
+  });
+});

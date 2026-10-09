@@ -1,5 +1,8 @@
+import Link from "next/link";
+
 import { prisma } from "@/lib/prisma";
 import { shortDate } from "@/lib/dates";
+import { isBillingUiEnabled } from "@/server/billing/ui-flag";
 import { requireUser } from "@/server/security/tenant-context";
 import {
   updateProfileAction,
@@ -9,6 +12,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { ActionForm } from "@/components/shared/action-form";
 import { SubmitButton } from "@/components/shared/submit-button";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -94,6 +98,25 @@ export default async function ProfilePage() {
             </div>
           </CardContent>
         </Card>
+
+        {isBillingUiEnabled() ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Plan &amp; usage</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Your plan, what is left of it, and the work that is waiting.
+              </p>
+              <Link
+                href="/billing"
+                className={buttonVariants({ variant: "outline", size: "lg" })}
+              >
+                Open
+              </Link>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {user.passwordHash ? (
           <Card>

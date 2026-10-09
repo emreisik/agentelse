@@ -10,8 +10,8 @@
 
 `getBillingOverview(workspaceId)` (`src/server/billing/overview.ts`) yalnız OKUR ve `BILLING_MODE`'dan bağımsızdır (kapıların kendisi kapalıyken görünmezdir, ama ekran ölçülen kullanımı ve çalışma alanının sahip olduklarını yine gösterir):
 
-- **Abonelik**: `Subscription` satırı (plan, aralık, durum, yenileme tarihi, iptal/zamanlı değişiklik). Satır yoksa "No plan yet".
-- **Haklar**: `UsageBalance` satırları (görsel ve AI), dönem + ek paket; kalan, kullanılan, yenilenme tarihi. Satır yoksa "Usage is measured, not limited yet".
+- **Abonelik**: `Subscription` satırı (plan, aralık, durum, tarih, iptal/zamanlı değişiklik). Tarih satırının adı duruma göre: Renews on / Ends on / Paid through (ödeme sorunu) / Access until (iptal, süre sürüyor) / Ended on; iade ve itirazla biten abonelikte neden satırı ("Refunded", "Payment disputed", "Payment failed"). "Stripe'a bağlı" ve "ödenmiş erişim" ÇALIŞAN anahtarın moduna göre hesaplanır (test modunda bağlanmış abonelik canlı anahtarla bağlı sayılmaz). Satır yoksa "No plan yet" (ödeme açıkken "Choose a plan in Plans"; deneme vaadi YOK: `startTrial` henüz bağlı değil).
+- **Haklar**: `UsageBalance` satırları (görsel ve AI), dönem + ek paket; kalan, kullanılan, yenilenme tarihi. Çubuk bu pencerenin hakkı + ek paketten KALAN üzerinden hesaplanır (paketlerin ömür boyu sayaçları şişirmez). Satır yoksa metin duruma göre: ödeme kapalı → "Usage is measured, not limited yet"; ödeme açık, plan yok → "No plan yet"; planı olan ama pencere açılmamış (limitler kapalı) → "Your plan is active".
 - **Ölçülen kullanım**: bu ayın başarılı `UsageEntry` satırları: oluşturulan görsel ve AI isteği sayısı, modül dökümü, son 14 gün. Müşteriye token ya da maliyet GÖSTERİLMEZ, yalnız sayı ve yüzde.
 - **Görevler**: çalışanlar, `WAITING_BUDGET` (neden: hak bitti / plan yok), onay bekleyenler.
 
@@ -26,8 +26,10 @@ Plan fiyatları ve kotalar `src/lib/billing/plans.ts`'ten (`catalog.ts` türetir
 - Yalnız sahip/yönetici eylem yapar; diğerleri nedenini görür.
 - *My subscription*: iptal (dönem sonunda) / devam, ödeme yöntemi (Stripe portalı), Stripe faturaları (tarih, no, tutar, durum, görüntüle/PDF).
 - *Usage*: ek paket *Buy* (planı olan yöneticide).
-- Stripe'tan dönüşte (`?checkout=success&session_id=…`) sayfa durumu webhook'u beklemeden eşitler ve sabit metinli bir bilgi şeridi gösterir. Test anahtarıyla çalışırken başlıkta "Test mode · no real charges" rozeti görünür.
+- Stripe'tan dönüşte (`?checkout=success&session_id=…`) sayfa durumu webhook'u beklemeden eşitler (yalnız yönetici için, workspace başına 10 dakikada 10) ve sabit metinli bir bilgi şeridi gösterir: ödeme uygulandı / henüz işlenmedi ("reload this page in a minute") / iade edildi / bu workspace ile eşleştirilemedi. Şerit gösterildikten sonra tek seferlik adres parametreleri (`notice`, `checkout`, `purchase`, `session_id`) adresten silinir. Test anahtarıyla çalışırken başlıkta "Test mode · no real charges" rozeti görünür.
+- Muaf (kalıcı tam erişimli) workspace'te Subscribe/ek paket yok ("This workspace has full access, so there is nothing to buy."). Ödeme kapalıyken mevcut abone, "Plan changes, cancellation and invoices are temporarily unavailable" notunu görür. Faturalar: ödenmemiş fatura ödenecek tutarla ve "Unpaid" ile görünür, taslak/iptal edilmiş faturalar gizlenir, Stripe okunamazsa "could not load your invoices" yazar (boş liste ile karışmaz).
+- Başarısız ya da belirsiz sonuçlu plan değişikliği/iptal sonrasında sayfa yenilenir; düğme Stripe'a giderken kapalı kalır ve beklenmeyen hatada "değişmedi" denmez ("We could not confirm this. Check My subscription before trying again.").
 
 ## Testler
 
-`src/lib/billing/catalog.test.ts`, `src/lib/billing/picker-mode.test.ts` (düğme modları, bilgi şeridi), `src/components/billing/billing-screens.test.ts` (sunucuda render: fiyatlar, uyarılar, durumlar, canlı düğmeler), `src/server/billing/overview.integration.test.ts` (gerçek veritabanı), `src/app/billing/page.test.ts` (bayrak, çalışma alanı, sekme, Stripe dönüşü).
+`src/lib/billing/catalog.test.ts`, `src/lib/billing/picker-mode.test.ts` (düğme modları, bilgi şeridi), `src/lib/billing/one-shot-params.test.ts`, `src/components/billing/billing-screens.test.ts` (sunucuda render: fiyatlar, uyarılar, durumlar, canlı düğmeler), `src/server/billing/overview.integration.test.ts` (gerçek veritabanı), `src/app/billing/page.test.ts` (bayrak, çalışma alanı, sekme, Stripe dönüşü).

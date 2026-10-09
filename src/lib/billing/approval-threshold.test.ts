@@ -13,6 +13,7 @@ import {
 import { PLAN_KEYS } from "./plans";
 import {
   APPROVE_ABOVE_ABSOLUTE_MAX_USD,
+  autonomyFormView,
   clampUserLimits,
   monthlyAiBudgetUsd,
   userLimitRanges,
@@ -174,5 +175,106 @@ describe("user limits stay inside the plan", () => {
       expect(high.approveAboveUsd).toBe(ranges.approveAbove.max);
       expect(low.dailyBudgetUsd).toBe(ranges.dailyBudgetMax);
     }
+  });
+});
+
+// What the Autonomy form shows (Settings → Autonomy): a saved value outside today's
+// range must never reach the browser's min/max check, or it would refuse the WHOLE
+// form over a field the person did not touch.
+describe("the Autonomy form's view of the limits", () => {
+  const stored = (
+    approveAboveUsd: number | null,
+    dailyBudgetUsd: number | null,
+  ) => ({
+    approveAboveUsd,
+    dailyBudgetUsd,
+  });
+
+  it("shows a saved value inside the range as it is", () => {
+    const view = autonomyFormView({
+      mode: "enforce",
+      planKey: "growth",
+      stored: stored(1.5, 4),
+    });
+    expect(view).toMatchObject({
+      approveAboveUsd: 1.5,
+      dailyBudgetUsd: 4,
+      approveAboveClamped: false,
+      dailyBudgetClamped: false,
+    });
+  });
+
+  it("pulls a stale value into the range, the way a save would store it, and says so", () => {
+    // A daily budget saved before the plan's cap existed, and a size from a bigger
+    // plan the workspace has since left (Agency's 12.5 on Starter, whose cap is 2.5).
+    const view = autonomyFormView({
+      mode: "enforce",
+      planKey: "starter",
+      stored: stored(12.5, 10),
+    });
+    const ranges = userLimitRanges("starter");
+    expect(view.approveAboveUsd).toBe(ranges.approveAbove.max);
+    expect(view.dailyBudgetUsd).toBe(ranges.dailyBudgetMax);
+    expect(view.approveAboveClamped).toBe(true);
+    expect(view.dailyBudgetClamped).toBe(true);
+    // What the form shows can always be submitted: it satisfies the inputs' own min/max.
+    expect(view.approveAboveUsd!).toBeLessThanOrEqual(ranges.approveAbove.max);
+    expect(view.approveAboveUsd!).toBeGreaterThanOrEqual(
+      ranges.approveAbove.min,
+    );
+    expect(view.dailyBudgetUsd!).toBeLessThanOrEqual(ranges.dailyBudgetMax!);
+    // ... and is exactly what saving it would store.
+    expect(view).toMatchObject(
+      clampUserLimits({
+        planKey: "starter",
+        approveAboveUsd: 12.5,
+        dailyBudgetUsd: 10,
+      }),
+    );
+  });
+
+  it("raises a size below the smallest allowed, and leaves blank blank", () => {
+    expect(
+      autonomyFormView({
+        mode: "enforce",
+        planKey: "growth",
+        stored: stored(0.02, null),
+      }),
+    ).toMatchObject({
+      approveAboveUsd: APPROVE_ABOVE_MIN_USD,
+      approveAboveClamped: true,
+      dailyBudgetUsd: null,
+      dailyBudgetClamped: false,
+    });
+    expect(
+      autonomyFormView({
+        mode: "enforce",
+        planKey: "growth",
+        stored: stored(null, null),
+      }),
+    ).toMatchObject({ approveAboveUsd: null, approveAboveClamped: false });
+  });
+
+  it("has no cap on the daily budget without a plan", () => {
+    const view = autonomyFormView({
+      mode: "off",
+      planKey: null,
+      stored: stored(null, 500),
+    });
+    expect(view.dailyBudgetUsd).toBe(500);
+    expect(view.dailyBudgetClamped).toBe(false);
+  });
+
+  it("shows the approval size only where it does something: an enforcing mode and a plan", () => {
+    const show = (
+      mode: "off" | "shadow" | "enforce",
+      planKey: "starter" | null,
+    ) =>
+      autonomyFormView({ mode, planKey, stored: stored(null, null) })
+        .showApproveAbove;
+    expect(show("enforce", "starter")).toBe(true);
+    expect(show("shadow", "starter")).toBe(false);
+    expect(show("off", "starter")).toBe(false);
+    expect(show("enforce", null)).toBe(false);
   });
 });

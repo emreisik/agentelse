@@ -3,6 +3,7 @@ import {
   approveAboveRange,
   effectiveApproveAbove,
 } from "./approval-threshold";
+import type { BillingMode } from "./entitlements-core";
 import { PLANS, type PlanKey } from "./plans";
 
 // Kullanıcının kendi koyduğu sınırların PLANI AŞMAMASI (Faz 3C): saf ve izomorfik.
@@ -74,5 +75,45 @@ export function clampUserLimits(input: {
     approveAboveUsd:
       approveAboveUsd === null ? null : Math.round(approveAboveUsd * 100) / 100,
     dailyBudgetUsd,
+  };
+}
+
+// Ayar ekranının (Settings → Autonomy) gösterdiği değerler. Kayıtlı değer, kaydedilince
+// olacağı gibi plan aralığına ÇEKİLMİŞ gösterilir: plan düşürüldüyse ya da değer aralık
+// konmadan önce kaydedildiyse, aralık dışı bir değer tarayıcının min/max denetimiyle
+// kullanıcının dokunmadığı bir alan yüzünden TÜM formu reddettirirdi.
+export type AutonomyFormView = {
+  ranges: UserLimitRanges;
+  // Onay boyutu yalnız faturalama zorunluyken ve bir plan varken bir şey yapar
+  // (server/billing/approval-threshold.ts); gölgede ya da kapalıyken alan gösterilmez.
+  showApproveAbove: boolean;
+  approveAboveUsd: number | null;
+  dailyBudgetUsd: number | null;
+  // Kayıtlı değer aralığın dışındaydı ve gösterim için çekildi (ekran söyler).
+  approveAboveClamped: boolean;
+  dailyBudgetClamped: boolean;
+};
+
+export function autonomyFormView(input: {
+  mode: BillingMode;
+  planKey: PlanKey | null;
+  stored: { approveAboveUsd: number | null; dailyBudgetUsd: number | null };
+}): AutonomyFormView {
+  const ranges = userLimitRanges(input.planKey);
+  const shown = clampUserLimits({ planKey: input.planKey, ...input.stored });
+  const { approveAboveUsd, dailyBudgetUsd } = input.stored;
+  return {
+    ranges,
+    showApproveAbove: input.planKey !== null && input.mode === "enforce",
+    approveAboveUsd: shown.approveAboveUsd,
+    dailyBudgetUsd: shown.dailyBudgetUsd,
+    approveAboveClamped:
+      approveAboveUsd !== null &&
+      (approveAboveUsd < ranges.approveAbove.min ||
+        approveAboveUsd > ranges.approveAbove.max),
+    dailyBudgetClamped:
+      dailyBudgetUsd !== null &&
+      ranges.dailyBudgetMax !== null &&
+      dailyBudgetUsd > ranges.dailyBudgetMax,
   };
 }

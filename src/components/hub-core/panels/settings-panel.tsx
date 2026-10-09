@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 
 import { prisma } from "@/lib/prisma";
-import { userLimitRanges } from "@/lib/billing/user-limits";
+import { autonomyFormView } from "@/lib/billing/user-limits";
 import { getEntitlements } from "@/server/billing/entitlements";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/dates";
@@ -136,7 +136,6 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
     : null;
   const planKey =
     entitlements && !entitlements.unlimited ? entitlements.planKey : null;
-  const ranges = userLimitRanges(planKey);
 
   if (!policy) {
     return (
@@ -147,6 +146,19 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
       />
     );
   }
+
+  // What the limit fields show: a saved value outside today's range is shown pulled
+  // into it (the browser would otherwise refuse the whole form over it), and the
+  // approval size only where it does something (billing enforcing, with a plan).
+  const view = autonomyFormView({
+    mode: entitlements?.mode ?? "off",
+    planKey,
+    stored: {
+      approveAboveUsd: policy.approveAboveUsd,
+      dailyBudgetUsd: policy.dailyBudgetUsd,
+    },
+  });
+  const { ranges } = view;
 
   const limitFields: Array<{
     name: string;
@@ -207,11 +219,14 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
                 step="0.01"
                 min={0}
                 max={ranges.dailyBudgetMax ?? undefined}
-                defaultValue={policy.dailyBudgetUsd ?? ""}
+                defaultValue={view.dailyBudgetUsd ?? ""}
               />
               <p className="text-xs text-muted-foreground">
                 {ranges.dailyBudgetMax !== null
                   ? `At most $${ranges.dailyBudgetMax.toFixed(2)}, your plan's AI budget for a month. `
+                  : null}
+                {view.dailyBudgetClamped
+                  ? "Your saved budget was above that, so it is shown at the limit; saving applies it. "
                   : null}
                 Daily cap on AI reasoning spend — this month so far:{" "}
                 <span className="font-medium text-foreground">
@@ -219,7 +234,7 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
                 </span>
               </p>
             </div>
-            {planKey ? (
+            {view.showApproveAbove ? (
               <div className="space-y-1.5">
                 <Label htmlFor="policy-approveAboveUsd">
                   Ask me before an automatic task costs more than (USD)
@@ -228,13 +243,13 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
                   id="policy-approveAboveUsd"
                   name="approveAboveUsd"
                   type="number"
-                  step="0.05"
+                  step="0.01"
                   min={ranges.approveAbove.min}
                   max={ranges.approveAbove.max}
                   placeholder={
                     ranges.approveAbove.planDefault?.toFixed(2) ?? undefined
                   }
-                  defaultValue={policy.approveAboveUsd ?? ""}
+                  defaultValue={view.approveAboveUsd ?? ""}
                 />
                 <p className="text-xs text-muted-foreground">
                   Blank uses your plan&apos;s size ($
@@ -242,6 +257,9 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
                   between ${ranges.approveAbove.min.toFixed(2)} and $
                   {ranges.approveAbove.max.toFixed(2)}. Bigger automatic tasks
                   wait for your OK; what you start yourself never does.
+                  {view.approveAboveClamped
+                    ? " Your saved size was outside that range, so it is shown inside it; saving applies it."
+                    : null}
                 </p>
               </div>
             ) : null}
@@ -315,10 +333,15 @@ async function AutonomyTab({ projectId }: { projectId: string }) {
             <div className="space-y-1">
               <Label htmlFor="policy-unlimitedMode">Disable daily limits</Label>
               <p className="text-xs text-muted-foreground">
-                All the caps above and the daily budget are ignored: the agency
-                runs without stopping. Counters keep tracking, only the blocking
-                is lifted — you can monitor spend from the Activity tab. Your
-                plan&apos;s usage allowance still applies.
+                The daily AI call limit, the idea pool size and the daily budget
+                above are ignored: the agency runs without stopping. Counters
+                keep tracking, only the blocking is lifted — you can monitor
+                spend from the Activity tab. Your plan&apos;s usage allowance
+                still applies
+                {view.showApproveAbove
+                  ? ", and so does the size above which automatic tasks wait for your OK"
+                  : null}
+                .
               </p>
               {policy.unlimitedMode ? (
                 <p className="text-xs font-medium text-warning">

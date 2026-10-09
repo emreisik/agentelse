@@ -114,6 +114,61 @@ describe("updateAutonomyPolicyAction and the plan", () => {
     expect(saved()).toMatchObject({ unlimitedMode: true, dailyBudgetUsd: 3 });
   });
 
+  // The settings screen leaves the approval size out when it does not apply (no
+  // enforcing plan: billing off or in shadow, no plan, unlimited). An absent field
+  // reads as blank, and a blank one means "the plan's size": saving the form from
+  // such a screen must not wipe the value the person chose while it did apply.
+  describe("a limit the form did not send", () => {
+    it("is left as it is: the approval size survives a save from a screen that does not show it", async () => {
+      mocks.entitlements.mockResolvedValue({ unlimited: true, planKey: null });
+
+      const result = await updateAutonomyPolicyAction(
+        form({ weeklyAutoProduce: "on" }),
+      );
+
+      expect(result).toEqual({ ok: true });
+      expect(saved()).not.toHaveProperty("approveAboveUsd");
+      // The rest of the form is saved as usual.
+      expect(saved()).toMatchObject({
+        maxReasoningCallsPerDay: 200,
+        maxActiveIdeas: 20,
+        weeklyAutoProduce: true,
+        unlimitedMode: false,
+      });
+    });
+
+    it.each([
+      ["a plan-less screen", { unlimited: true, planKey: null }],
+      ["a plan that could not be read", { unlimited: false, planKey: null }],
+      ["a plan", { unlimited: false, planKey: "starter" }],
+    ])("is left as it is under %s", async (_label, entitlements) => {
+      mocks.entitlements.mockResolvedValue(entitlements);
+
+      await updateAutonomyPolicyAction(form({}));
+
+      expect(saved()).not.toHaveProperty("approveAboveUsd");
+      expect(saved()).not.toHaveProperty("dailyBudgetUsd");
+    });
+
+    it("is written when it is sent, blank included: blank still means the plan's size / no daily cap", async () => {
+      await updateAutonomyPolicyAction(
+        form({ approveAboveUsd: "", dailyBudgetUsd: "" }),
+      );
+
+      expect(saved()).toMatchObject({
+        approveAboveUsd: null,
+        dailyBudgetUsd: null,
+      });
+    });
+
+    it("writes only the one that was sent", async () => {
+      await updateAutonomyPolicyAction(form({ dailyBudgetUsd: "1.5" }));
+
+      expect(saved()).toMatchObject({ dailyBudgetUsd: 1.5 });
+      expect(saved()).not.toHaveProperty("approveAboveUsd");
+    });
+  });
+
   it("refuses a value that is not a number", async () => {
     const result = await updateAutonomyPolicyAction(
       form({ approveAboveUsd: "lots" }),

@@ -135,4 +135,6 @@ npm run billing:stripe-smoke
 
 ## Testler
 
-`stripe/*.test.ts` (imza, form kodlama, istemci, ayrıştırıcılar, katalog, ağ geçidi istek şekilleri, ayar), `payments/*.integration.test.ts` (durum makinesi, iade/geri alma, olay işleme, kullanıcı eylemleri — gerçek Postgres), `api/webhooks/billing/route.test.ts`, `actions/billing-actions.test.ts`, `billing/page.test.ts`, `billing-screens.test.ts`, `picker-mode.test.ts`.
+`stripe/*.test.ts` (imza, form kodlama, istemci, ayrıştırıcılar, katalog, ağ geçidi istek şekilleri, ayar), `payments/*.integration.test.ts` (durum makinesi, iade/geri alma, olay işleme, kullanıcı eylemleri — gerçek Postgres; `review-fixes` = inceleme düzeltmelerinin kanıtı, `review-gaps` = mutasyon incelemesinin bulduğu boşluklar: kiracı denetimi her olay yolunda, canlı mod/yıllık faturalama, ödeme sonrası bekleyen işin uyanması, eşzamanlı eşitleme), `api/webhooks/billing/route*.test.ts`, `actions/billing-actions*.test.ts`, `billing/page*.test.ts`, `billing-screens.test.ts`, `plan-picker.wiring.test.ts` (düğmelerin GÖNDERDİĞİ eylem/girdi/onay/yönlendirme), `picker-mode.test.ts`. Düğmenin kendi davranışı (tıklama, meşgul durumu, hata metni, yönlendirme) için DOM test kütüphanesi (happy-dom/jsdom) gerekir; yeni bağımlılık olduğu için sahip onayı bekliyor.
+
+Test yazarken: sürüm/süre sabitlerini testte içe aktarıp oracle yapma (5 dk imza toleransı, 6 saat bekleme payı, 100 USD sınırı gibi belgelenmiş değerler sabit sayı olarak sınanır); `toBeLessThanOrEqual(1)` gibi gevşek sayım yerine tam sayı kullan.

@@ -1,6 +1,9 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
+import { BACKGROUND_SHARE_PCT } from "@/lib/billing/plans";
+import { getEntitlements } from "@/server/billing/entitlements";
+import { HELD_BACK_CODE } from "@/server/billing/quota-errors";
 
 // A job the plan allowance could not pay for waits (WAITING_BUDGET) and goes on by
 // itself when the allowance renews or more is added. It is neither "still
@@ -14,10 +17,14 @@ export function isParked(job: { status: string }): boolean {
 }
 
 export type PauseNotice = {
-  reason: "allowance-used" | "no-plan";
+  // "held-back": the allowance is not used up, the system's own work reached its
+  // share of it (a job nobody asked for in person).
+  reason: "allowance-used" | "no-plan" | "held-back";
   unit?: "IMAGE" | "AI_MICROS";
   // When the allowance renews (ISO), the moment the job is woken again.
   resetsAt?: string;
+  // held-back only: the share of the plan automatic work may use, in percent.
+  sharePct?: number;
 };
 
 // Why a parked job waits and which allowance it waits for, for the chat to say so
@@ -37,11 +44,25 @@ export async function describePause(jobId: string): Promise<PauseNotice> {
         requestPayload: true,
       },
     });
-    const reason = job?.errorCode === "NO_PLAN" ? "no-plan" : "allowance-used";
+    const reason: PauseNotice["reason"] =
+      job?.errorCode === "NO_PLAN"
+        ? "no-plan"
+        : job?.errorCode === HELD_BACK_CODE
+          ? "held-back"
+          : "allowance-used";
     if (!job) return { reason };
+    const share =
+      reason === "held-back"
+        ? {
+            sharePct:
+              BACKGROUND_SHARE_PCT[
+                (await getEntitlements(job.workspaceId)).autonomy
+              ],
+          }
+        : {};
     const { usageNeedOf } = await import("@/server/execution/usage-need");
     const need = usageNeedOf(job.capability, job.requestPayload);
-    if (!need) return { reason };
+    if (!need) return { reason, ...share };
     if (reason === "no-plan") return { reason, unit: need.unit };
     // The window the allowance renews with: the same moment the resume sweep wakes
     // the job. A window that has already ended renews on the next sweep: no date.
@@ -53,8 +74,8 @@ export async function describePause(jobId: string): Promise<PauseNotice> {
     });
     const endsAt = balance?.periodEnd ?? null;
     return endsAt && endsAt.getTime() > Date.now()
-      ? { reason, unit: need.unit, resetsAt: endsAt.toISOString() }
-      : { reason, unit: need.unit };
+      ? { reason, unit: need.unit, resetsAt: endsAt.toISOString(), ...share }
+      : { reason, unit: need.unit, ...share };
   } catch (error) {
     console.error(
       "[parked-job] could not describe a pause:",

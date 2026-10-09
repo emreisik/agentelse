@@ -19,6 +19,16 @@ const quota = () =>
     resetsAt: new Date("2026-11-01T00:00:00.000Z"),
   });
 
+// The refusal of the system's own work that ran into its share of the plan.
+const heldBack = () =>
+  new QuotaExceededError({
+    unit: "IMAGE",
+    needed: 1,
+    available: 3,
+    resetsAt: null,
+    heldBack: true,
+  });
+
 describe("quota errors", () => {
   it("carry a stable code and structured detail", () => {
     const error = quota();
@@ -31,6 +41,20 @@ describe("quota errors", () => {
       resetsAt: "2026-11-01T00:00:00.000Z",
     });
     expect(new NoPlanError("NO_SUBSCRIPTION").code).toBe("NO_PLAN");
+  });
+
+  it("say when the system's own work ran into its share, and only then", () => {
+    expect(quota().meta).not.toHaveProperty("heldBack");
+    const error = heldBack();
+    expect(error.code).toBe("QUOTA_EXCEEDED");
+    expect(error.meta).toMatchObject({ heldBack: true, available: 3 });
+    // The message does not claim the allowance ran out.
+    expect(error.message).not.toMatch(/used up/i);
+    // The engine's budget stop keeps the flag for its consumers.
+    expect(asBudgetStop(error).meta).toMatchObject({
+      limit: "planAllowance",
+      heldBack: true,
+    });
   });
 
   it("are recognised by code, not class identity", () => {
@@ -48,6 +72,7 @@ describe("quota errors", () => {
   it("never read as a provider failure to the error classifier", () => {
     for (const error of [
       quota(),
+      heldBack(),
       new NoPlanError("NO_SUBSCRIPTION"),
       new NoPlanError("UNIT_NOT_SOLD"),
     ]) {

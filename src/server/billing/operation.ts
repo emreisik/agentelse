@@ -263,6 +263,7 @@ export class Operation {
       amount,
       reservationKey,
       operationId: this.spec.operationId,
+      initiator: this.spec.initiator,
       ttlMs: this.spec.ttlMs,
       now: this.spec.now,
     });
@@ -327,6 +328,7 @@ async function reserveUnit(
         needed: Number(amount),
         available: Number(result.available),
         resetsAt: result.resetsAt,
+        heldBack: result.heldBack,
       });
     }
     if (result.reason === "NOT_ENTITLED") {

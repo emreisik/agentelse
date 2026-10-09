@@ -47,7 +47,12 @@ describe("decayStatus", () => {
 // provider's: it must not close the provider for everybody, whatever its message
 // happens to say.
 describe("failureDegrades: plan allowance", () => {
-  it.each(["QUOTA_EXCEEDED", "NO_PLAN", "BILLING_UNAVAILABLE"])(
+  it.each([
+    "QUOTA_EXCEEDED",
+    "QUOTA_HELD_BACK",
+    "NO_PLAN",
+    "BILLING_UNAVAILABLE",
+  ])(
     "never degrades the provider for %s, even if the message reads like a billing failure",
     (errorCode) => {
       expect(

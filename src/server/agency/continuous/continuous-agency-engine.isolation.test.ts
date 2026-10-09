@@ -10,8 +10,15 @@ vi.mock("@/server/agency/intelligence/research-result-materializer", () => ({
   ResultMaterializer: { materializeTask },
 }));
 
+// Who the setup step's work belongs to, as seen from inside the orchestrator.
+const setupSeen: boolean[] = [];
 vi.mock("@/server/agency/setup/project-setup-orchestrator", () => ({
-  ProjectSetupOrchestrator: { advanceAll: vi.fn().mockResolvedValue(0) },
+  ProjectSetupOrchestrator: {
+    advanceAll: vi.fn(async () => {
+      setupSeen.push(isBackground());
+      return 0;
+    }),
+  },
 }));
 
 const claimPending = vi.fn();
@@ -76,6 +83,8 @@ registerTaskTerminalHandler(terminalFailing, "work-plan-terminal");
 registerTaskTerminalHandler(terminalReal, "some-real-terminal-handler");
 
 const stepRuns: string[] = [];
+// Whether each registered step ran as the system's own background work.
+const stepBackground: Record<string, boolean> = {};
 for (const name of [
   "signal-scans",
   "council-evaluation",
@@ -91,6 +100,7 @@ for (const name of [
     name,
     run: async () => {
       stepRuns.push(name);
+      stepBackground[name] = isBackground();
     },
   });
 }
@@ -109,6 +119,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   stepRuns.length = 0;
   backgroundSeen.length = 0;
+  setupSeen.length = 0;
+  for (const name of Object.keys(stepBackground)) delete stepBackground[name];
   materializeTask.mockResolvedValue(undefined);
   failingLegacy.mockResolvedValue(undefined);
   publishCompletion.mockResolvedValue(undefined);
@@ -293,11 +305,41 @@ describe("tick step gating", () => {
   });
 });
 
-describe("tick steps are the system's own work", () => {
-  it("runs each step as background work, and only the step", async () => {
+// The plan's background share (billing, Faz 3C) holds the system's own work to a part
+// of the allowance. The label follows who STARTED the work, not the step it runs in:
+// the autonomous steps are the system's, what a person started is not.
+describe("who a tick step's work belongs to", () => {
+  it("runs each autonomous step as background work, and only the step", async () => {
     expect(isBackground()).toBe(false);
     await ContinuousAgencyEngine.tick();
     expect(backgroundSeen).toEqual([true]);
     expect(isBackground()).toBe(false);
+  });
+
+  it("runs every registered step as background work, none of them as the user's", async () => {
+    await ContinuousAgencyEngine.tick();
+
+    expect(Object.keys(stepBackground).length).toBeGreaterThanOrEqual(9);
+    expect(Object.values(stepBackground).every(Boolean)).toBe(true);
+  });
+
+  it("runs the trigger step as background work: the result materializer labels a person's task itself", async () => {
+    const seen: boolean[] = [];
+    materializeTask.mockImplementation(async () => {
+      seen.push(isBackground());
+    });
+    claimPending.mockResolvedValue([trigger()]);
+
+    await ContinuousAgencyEngine.tick();
+
+    // Inside the tick the default for a trigger is the system's; research-result-
+    // materializer.test.ts proves a USER task's call is set apart from it.
+    expect(seen).toEqual([true]);
+  });
+
+  it("runs the setup step as the user's work: every setup is started by a person", async () => {
+    await ContinuousAgencyEngine.tick();
+
+    expect(setupSeen).toEqual([false]);
   });
 });

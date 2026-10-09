@@ -34,13 +34,14 @@ export function limitNoticeFromError(error: unknown): LimitNoticeCard | null {
       used?: unknown;
       unit?: unknown;
       resetsAt?: unknown;
+      heldBack?: unknown;
     };
     // Plan allowance seen through an engine call (billing/quota-errors.ts
     // asBudgetStop): the client's plan, not the project's daily counters.
     if (meta.limit === "planAllowance") {
       return {
         kind: "limit-notice",
-        reason: "allowance-used",
+        reason: meta.heldBack === true ? "held-back" : "allowance-used",
         ...(meta.unit === "IMAGE" || meta.unit === "AI_MICROS"
           ? { unit: meta.unit }
           : {}),
@@ -61,10 +62,14 @@ export function limitNoticeFromError(error: unknown): LimitNoticeCard | null {
     };
   }
   if (error.code === "QUOTA_EXCEEDED") {
-    const meta = (error.meta ?? {}) as { unit?: unknown; resetsAt?: unknown };
+    const meta = (error.meta ?? {}) as {
+      unit?: unknown;
+      resetsAt?: unknown;
+      heldBack?: unknown;
+    };
     return {
       kind: "limit-notice",
-      reason: "allowance-used",
+      reason: meta.heldBack === true ? "held-back" : "allowance-used",
       ...(meta.unit === "IMAGE" || meta.unit === "AI_MICROS"
         ? { unit: meta.unit }
         : {}),
@@ -109,6 +114,8 @@ export function limitNoticeReplyText(card: LimitNoticeCard): string {
       return "The AI provider took too long to respond. Please send the message again.";
     case "allowance-used":
       return allowanceUsedText(card);
+    case "held-back":
+      return heldBackText(card);
     case "no-plan":
       return "This workspace has no active plan, so I can't start new work right now. Your existing content stays available.";
   }
@@ -125,6 +132,15 @@ function allowanceUsedText(card: LimitNoticeCard): string {
         : "plan allowance";
   const when = renewalSuffix(card.resetsAt);
   return `This period's ${what} ${card.unit === "IMAGE" ? "are" : "is"} used up${when}. Work in progress is paused and continues by itself when the allowance renews or more is added.`;
+}
+
+// Automatic work reached its own share; what the user starts is not touched. A
+// percentage, never a token or dollar figure.
+function heldBackText(card: LimitNoticeCard): string {
+  const share = card.sharePct
+    ? `${card.sharePct}% of your plan`
+    : "a share of your plan";
+  return `Waiting: automatic work is limited to ${share}, so this has to wait. Your own requests are not affected, and it continues by itself when the allowance renews or more is added.`;
 }
 
 function renewalSuffix(resetsAt: string | undefined): string {

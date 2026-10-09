@@ -3,6 +3,7 @@ import "server-only";
 import type { ProviderHealthStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { HELD_BACK_CODE } from "@/server/billing/quota-errors";
 import { ProviderRegistry } from "@/server/execution/provider-registry";
 import { classifyError } from "@/server/observability/error-classifier";
 import {
@@ -282,6 +283,7 @@ export function failureDegrades(job: {
   // kiracının durumu (docs/billing-tasks.md). Metin eşleşmesine bırakılmaz.
   if (
     job.errorCode === "QUOTA_EXCEEDED" ||
+    job.errorCode === HELD_BACK_CODE ||
     job.errorCode === "NO_PLAN" ||
     job.errorCode === "BILLING_UNAVAILABLE"
   ) {

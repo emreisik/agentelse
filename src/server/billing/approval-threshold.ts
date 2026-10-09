@@ -25,6 +25,22 @@ export type CostApprovalContext = {
   note?: string;
 };
 
+// Bu çalışma alanı + proje için "bundan büyük otomatik iş sorulur" eşiği (USD); plan
+// yoksa ya da sınırsızsa null (eşik uygulanmaz).
+async function approveAboveFor(
+  workspaceId: string,
+  projectId: string,
+): Promise<number | null> {
+  const entitlements = await getEntitlements(workspaceId);
+  if (entitlements.unlimited || !entitlements.planKey) return null;
+
+  const policy = await prisma.autonomyPolicy.findUnique({
+    where: { projectId },
+    select: { approveAboveUsd: true },
+  });
+  return effectiveApproveAbove(entitlements.planKey, policy?.approveAboveUsd);
+}
+
 export async function costApprovalContext(input: {
   workspaceId: string;
   projectId: string;
@@ -42,17 +58,11 @@ export async function costApprovalContext(input: {
     const need = usageNeedOf(input.capability, input.payload);
     if (!need) return {};
 
-    const entitlements = await getEntitlements(input.workspaceId);
-    if (entitlements.unlimited || !entitlements.planKey) return {};
-
-    const policy = await prisma.autonomyPolicy.findUnique({
-      where: { projectId: input.projectId },
-      select: { approveAboveUsd: true },
-    });
-    const approveAboveUsd = effectiveApproveAbove(
-      entitlements.planKey,
-      policy?.approveAboveUsd,
+    const approveAboveUsd = await approveAboveFor(
+      input.workspaceId,
+      input.projectId,
     );
+    if (approveAboveUsd === null) return {};
     const estimatedCostUsd = estimateCostUsd(need);
     return {
       estimatedCostUsd,
@@ -67,4 +77,50 @@ export async function costApprovalContext(input: {
     );
     return {};
   }
+}
+
+// Bekleyen onayların "neden soruluyorsun" cümleleri (karar tepsisi). Planlama anında
+// karta yazılan cümle hiçbir yerde saklanmaz; görevin tipinden/yükünden ve GÜNCEL
+// plandan yeniden hesaplanır (aynı girdi, aynı cümle). Eşik bir projenin tüm görevleri
+// için bir kez okunur. HİÇ fırlatmaz.
+export async function costApprovalNotes(input: {
+  workspaceId: string;
+  projectId: string;
+  tasks: ReadonlyArray<{
+    id: string;
+    capability: CapabilityKey;
+    payload: unknown;
+    createdByType: ActorType;
+  }>;
+}): Promise<Map<string, string>> {
+  const notes = new Map<string, string>();
+  if (getBillingConfig().mode !== "enforce") return notes;
+  try {
+    const { usageNeedOf } = await import("@/server/execution/usage-need");
+    const sized = input.tasks.flatMap((task) => {
+      if (task.createdByType !== "SYSTEM" && task.createdByType !== "AI") {
+        return [];
+      }
+      const need = usageNeedOf(task.capability, task.payload);
+      return need ? [{ id: task.id, need }] : [];
+    });
+    if (sized.length === 0) return notes;
+
+    const approveAboveUsd = await approveAboveFor(
+      input.workspaceId,
+      input.projectId,
+    );
+    if (approveAboveUsd === null) return notes;
+    for (const { id, need } of sized) {
+      if (estimateCostUsd(need) > approveAboveUsd) {
+        notes.set(id, costApprovalNote(need));
+      }
+    }
+  } catch (error) {
+    console.error(
+      "[billing] could not explain the pending approvals:",
+      error instanceof Error ? error.name : error,
+    );
+  }
+  return notes;
 }

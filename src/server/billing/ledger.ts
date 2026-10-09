@@ -144,6 +144,9 @@ export type ReserveResult =
       available: bigint;
       // Dönem havuzunun yenileneceği an (bilinmiyorsa null).
       resetsAt: Date | null;
+      // Hak bitmedi: sistemin işi kullanıcıya ayrılan payı aşacağı için reddedildi
+      // (kullanıcının aynı işi sığardı). Park edilen iş buna göre anlatılır.
+      heldBack: boolean;
     }
   | { ok: false; reason: "NOT_ENTITLED"; entitlement: AccessReason }
   | { ok: false; reason: "UNIT_NOT_SOLD" }
@@ -157,6 +160,7 @@ type ReserveRow = {
   fromExtra: bigint | null;
   periodEnd: Date | null;
   available: bigint | null;
+  held: bigint | null;
 };
 
 type ReservationRow = {
@@ -236,7 +240,7 @@ export async function reserveUsage(
       now.getTime() + (input.ttlMs ?? RESERVATION_TTL_MS),
     );
     // Sistemin kendi başlattığı iş, kullanıcının payına dokunamaz.
-    const held =
+    const heldPct =
       input.initiator === "system" ? heldBackPct(entitlements.autonomy) : 0;
     const tryReserve = async (): Promise<ReserveRow> => {
       const rows = await prisma.$queryRawUnsafe<ReserveRow[]>(
@@ -249,7 +253,7 @@ export async function reserveUsage(
         input.operationId ?? null,
         expiresAt,
         now,
-        held,
+        heldPct,
       );
       return rows[0]!;
     };
@@ -311,21 +315,35 @@ export async function reserveUsage(
     }
 
     // Gerçekten yetersiz (ya da bakiye hiç yok).
+    const available = row.available ?? BigInt(0);
+    const heldBack =
+      heldPct > 0 && (row.held ?? BigInt(0)) > BigInt(0) && available >= amount;
     if (enforced) {
       return {
         ok: false,
         reason: "INSUFFICIENT",
-        available: row.available ?? BigInt(0),
+        available,
         resetsAt:
           row.periodEnd && row.periodEnd.getTime() > now.getTime()
             ? row.periodEnd
             : null,
+        heldBack,
       };
     }
+    // Başlatıcı ve ayrılan pay kayıtta durur: sistemin pay darlığı, kullanıcının gerçek
+    // yetersizliğinin saatlik satırını almasın ve ikisi ayırt edilebilsin.
     await recordShadowDecision({
       workspaceId: input.workspaceId,
       kind: "insufficient",
-      detail: { unit: input.unit, amount: amount.toString() },
+      initiator: input.initiator ?? "user",
+      detail: {
+        unit: input.unit,
+        amount: amount.toString(),
+        initiator: input.initiator ?? "user",
+        available: available.toString(),
+        held: (row.held ?? BigInt(0)).toString(),
+        heldBack,
+      },
       now,
     });
     if (row.balanceRows === 0) {

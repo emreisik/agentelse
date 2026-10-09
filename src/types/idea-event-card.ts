@@ -168,11 +168,16 @@ export type IdeaEventCardData =
         // used up, or the workspace has no active plan. Paused work resumes by
         // itself; `unit` says which allowance, `resetsAt` (ISO) when it renews.
         | "allowance-used"
-        | "no-plan";
+        | "no-plan"
+        // The allowance is not used up: work the system started itself reached the
+        // share of the plan it may use (`sharePct`); the user's own requests are
+        // unaffected and the paused work continues by itself.
+        | "held-back";
       cap?: number;
       used?: number;
       unit?: "IMAGE" | "AI_MICROS";
       resetsAt?: string;
+      sharePct?: number;
     }
   // The chat surface's structured "AskUserQuestion"-style fork (see
   // chat-turn.ts's `questions` field) — clickable options instead of a

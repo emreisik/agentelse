@@ -4,11 +4,18 @@ import { startOfMonth, subDays } from "date-fns";
 
 import { paidPlanRunning } from "@/lib/billing/entitlements-core";
 import { linkedForMode, type StripeModeName } from "@/lib/billing/linkage";
-import { PLANS, isUnitSellable, type PlanKey } from "@/lib/billing/plans";
+import {
+  BACKGROUND_SHARE_PCT,
+  PLANS,
+  isUnitSellable,
+  type PlanKey,
+} from "@/lib/billing/plans";
 import { prisma } from "@/lib/prisma";
 
 import { getBillingConfig } from "./config";
+import { getEntitlements } from "./entitlements";
 import { toUsageView } from "./ledger";
+import { HELD_BACK_CODE } from "./quota-errors";
 
 // Everything the Plan & usage screens show, read for ONE workspace. A display
 // model: it never decides, reserves or charges anything, and it is independent of
@@ -85,8 +92,9 @@ export type TaskRow = {
   projectId: string;
   projectName: string;
   at: string;
-  // Paused tasks only: why they wait.
-  pausedFor?: "allowance" | "no-plan";
+  // Paused tasks only: why they wait. "held-back": the allowance is not used up,
+  // automatic work reached its own share of it (the user's requests are unaffected).
+  pausedFor?: "allowance" | "no-plan" | "held-back";
 };
 
 export type ApprovalRow = {
@@ -101,6 +109,9 @@ export type TasksOverview = {
   active: TaskRow[];
   paused: TaskRow[];
   awaitingApproval: ApprovalRow[];
+  // Share of the plan automatic work may use (percent); only set while a paused task
+  // waits because of it.
+  backgroundSharePct?: number;
 };
 
 export type BillingOverview = {
@@ -243,6 +254,11 @@ async function measuredUsage(
   };
 }
 
+function pausedForOf(errorCode: string | null): TaskRow["pausedFor"] {
+  if (errorCode === "NO_PLAN") return "no-plan";
+  return errorCode === HELD_BACK_CODE ? "held-back" : "allowance";
+}
+
 async function tasksOverview(workspaceId: string): Promise<TasksOverview> {
   const jobSelect = {
     id: true,
@@ -308,15 +324,17 @@ async function tasksOverview(workspaceId: string): Promise<TasksOverview> {
     ...(pausedFor ? { pausedFor } : {}),
   });
 
+  const heldBack = paused.some((job) => job.errorCode === HELD_BACK_CODE);
+  const share = heldBack
+    ? BACKGROUND_SHARE_PCT[(await getEntitlements(workspaceId)).autonomy]
+    : undefined;
+
   return {
     active: active.map((job) => toRow(job, job.createdAt)),
     paused: paused.map((job) =>
-      toRow(
-        job,
-        job.updatedAt,
-        job.errorCode === "NO_PLAN" ? "no-plan" : "allowance",
-      ),
+      toRow(job, job.updatedAt, pausedForOf(job.errorCode)),
     ),
+    ...(share !== undefined ? { backgroundSharePct: share } : {}),
     awaitingApproval: approvals.map((approval) => ({
       id: approval.id,
       title: approval.task?.title ?? approval.entityType,

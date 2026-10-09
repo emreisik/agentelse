@@ -168,10 +168,22 @@ export async function updateAutonomyPolicyAction(
       dailyBudgetUsd: parsed.dailyBudgetUsd,
     });
 
+    // The two plan-bound limits are written only when the form sent them. The
+    // settings screen leaves a field out when it does not apply (the approval size
+    // needs an enforcing plan), and an absent field reads as blank: writing it would
+    // wipe the value the person chose while it did apply.
     await AutonomyPolicyRepository.update(projectId, {
-      ...parsed,
-      ...limits,
+      maxReasoningCallsPerDay: parsed.maxReasoningCallsPerDay,
+      maxActiveIdeas: parsed.maxActiveIdeas,
+      unlimitedMode: parsed.unlimitedMode,
+      weeklyAutoProduce: parsed.weeklyAutoProduce,
       autopilotMode,
+      ...(formData.has("dailyBudgetUsd")
+        ? { dailyBudgetUsd: limits.dailyBudgetUsd }
+        : {}),
+      ...(formData.has("approveAboveUsd")
+        ? { approveAboveUsd: limits.approveAboveUsd }
+        : {}),
     });
 
     await AuditLogRepository.record({

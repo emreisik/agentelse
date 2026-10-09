@@ -23,7 +23,7 @@ import {
 import { ApprovalPolicy } from "@/server/execution/approval-policy";
 import { describeIntegration } from "@/test-support/integration-suite";
 
-import { costApprovalContext } from "./approval-threshold";
+import { costApprovalContext, costApprovalNotes } from "./approval-threshold";
 
 // The size of automatic work that waits for a person (Faz 3C), read for a real
 // workspace: its plan decides the default, the project's own choice overrides it
@@ -167,5 +167,96 @@ describeIntegration("cost approval context", () => {
     expect(await ask(fixture, { variants: 3 })).toEqual({});
     config.current = { mode: "off", legacyBefore: null, legacyUntil: null };
     expect(await ask(fixture, { variants: 3 })).toEqual({});
+  });
+});
+
+// The decisions tray works the sentence of a waiting approval out again, from the
+// task and today's plan, for every waiting task of the project at once.
+describeIntegration("cost approval notes for the waiting approvals", () => {
+  afterEach(() => {
+    config.current = { mode: "enforce", legacyBefore: null, legacyUntil: null };
+  });
+
+  afterAll(async () => {
+    for (const fixture of fixtures.splice(0)) {
+      await prisma.subscription.deleteMany({
+        where: { workspaceId: fixture.workspaceId },
+      });
+      await teardownAgencyFixture(fixture.workspaceId);
+    }
+  });
+
+  const task = (
+    id: string,
+    options: {
+      createdByType?: "USER" | "SYSTEM" | "AI";
+      capability?: "CREATE_SOCIAL_CREATIVE" | "INSTAGRAM_PUBLISH";
+      variants?: number;
+    } = {},
+  ) => ({
+    id,
+    capability: options.capability ?? ("CREATE_SOCIAL_CREATIVE" as const),
+    payload: { request: "a post", variantCount: options.variants },
+    createdByType: options.createdByType ?? ("SYSTEM" as const),
+  });
+
+  const notesFor = (fixture: AgencyFixture, tasks: ReturnType<typeof task>[]) =>
+    costApprovalNotes({
+      workspaceId: fixture.workspaceId,
+      projectId: fixture.projectId,
+      tasks,
+    });
+
+  it("gives each costly automatic task the same sentence the card was posted with", async () => {
+    const fixture = await workspace("starter");
+
+    const notes = await notesFor(fixture, [
+      task("big", { variants: 3 }),
+      task("two", { variants: 2 }),
+    ]);
+
+    const asked = await ask(fixture, { variants: 3 });
+    expect(notes.get("big")).toBe(asked.note);
+    expect(notes.get("big")).toContain("3 post images");
+    expect(notes.get("two")).toContain("2 post images");
+  });
+
+  it("says nothing for what fits the size, what the user started, or free work", async () => {
+    const fixture = await workspace("starter");
+
+    const notes = await notesFor(fixture, [
+      task("single"),
+      task("mine", { createdByType: "USER", variants: 3 }),
+      task("publish", { capability: "INSTAGRAM_PUBLISH" }),
+    ]);
+
+    expect([...notes.keys()]).toEqual([]);
+  });
+
+  it("follows the plan and the size the person chose today", async () => {
+    const strict = await workspace("growth", { approveAboveUsd: 0.2 });
+    const relaxed = await workspace("starter", { approveAboveUsd: 2.5 });
+
+    expect((await notesFor(strict, [task("one")])).has("one")).toBe(true);
+    expect(
+      (await notesFor(relaxed, [task("three", { variants: 3 })])).has("three"),
+    ).toBe(false);
+  });
+
+  it("is empty without a plan, and when billing is not enforcing", async () => {
+    const fixture = await workspace("starter");
+    expect(
+      (await notesFor(await workspace(null), [task("a", { variants: 3 })]))
+        .size,
+    ).toBe(0);
+
+    config.current = { mode: "shadow", legacyBefore: null, legacyUntil: null };
+    expect((await notesFor(fixture, [task("a", { variants: 3 })])).size).toBe(
+      0,
+    );
+    config.current = { mode: "off", legacyBefore: null, legacyUntil: null };
+    expect((await notesFor(fixture, [task("a", { variants: 3 })])).size).toBe(
+      0,
+    );
   });
 });

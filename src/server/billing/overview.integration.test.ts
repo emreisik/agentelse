@@ -1,8 +1,18 @@
 import { randomUUID } from "node:crypto";
 
-import { afterAll, expect, it, vi } from "vitest";
+import { afterAll, afterEach, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+
+// Off unless a test says otherwise (what the environment gives without a setting).
+const config = vi.hoisted(() => ({
+  current: {
+    mode: "off" as "off" | "shadow" | "enforce",
+    legacyBefore: null as Date | null,
+    legacyUntil: null as Date | null,
+  },
+}));
+vi.mock("./config", () => ({ getBillingConfig: () => config.current }));
 
 import { prisma } from "@/lib/prisma";
 import {
@@ -95,6 +105,10 @@ async function job(
 }
 
 describeIntegration("getBillingOverview", () => {
+  afterEach(() => {
+    config.current = { mode: "off", legacyBefore: null, legacyUntil: null };
+  });
+
   afterAll(async () => {
     for (const fixture of fixtures) {
       const where = { workspaceId: fixture.workspaceId };
@@ -479,5 +493,44 @@ describeIntegration("getBillingOverview", () => {
       expect(row.projectId).toBe(fixture.projectId);
       expect(row.projectName.length).toBeGreaterThan(0);
     }
+    // Nothing waits for the automatic share: no share is named.
+    expect(tasks).not.toHaveProperty("backgroundSharePct");
+  });
+
+  // Work the system started that ran into its own share of the plan is waiting,
+  // but the allowance is not used up: the screen must not say it is (Faz 3C).
+  it("tells work held back for the automatic share from work that ran out, and names the plan's share", async () => {
+    config.current = { mode: "enforce", legacyBefore: null, legacyUntil: null };
+    const fixture = await workspace();
+    const now = new Date();
+    await prisma.subscription.create({
+      data: {
+        workspaceId: fixture.workspaceId,
+        planKey: "starter",
+        interval: "MONTH",
+        status: "ACTIVE",
+        quotaAnchor: new Date(now.getTime() - 5 * DAY_MS),
+        paidThrough: new Date(now.getTime() + 25 * DAY_MS),
+      },
+    });
+    await job(fixture, "WAITING_BUDGET", {
+      title: "Weekly auto post",
+      errorCode: "QUOTA_HELD_BACK",
+    });
+    await job(fixture, "WAITING_BUDGET", {
+      title: "Weekend post",
+      errorCode: "QUOTA_EXCEEDED",
+    });
+
+    const { tasks } = await getBillingOverview(fixture.workspaceId);
+
+    expect(
+      tasks.paused.map((row) => [row.title, row.pausedFor]).sort(),
+    ).toEqual([
+      ["Weekend post", "allowance"],
+      ["Weekly auto post", "held-back"],
+    ]);
+    // Starter is a limited plan: automatic work may use 45% of it.
+    expect(tasks.backgroundSharePct).toBe(45);
   });
 });

@@ -25,6 +25,11 @@ vi.mock("@/lib/prisma", () => ({
     usageBalance: { findUnique: balanceFindUnique },
   },
 }));
+// The plan's autonomy decides how much of the allowance automatic work may use.
+const entitlements = vi.hoisted(() => vi.fn());
+vi.mock("@/server/billing/entitlements", () => ({
+  getEntitlements: entitlements,
+}));
 
 const { PAUSED_NOTE, describePause, isParked } = await import("./parked-job");
 
@@ -40,6 +45,8 @@ beforeEach(() => {
   balanceFindUnique.mockReset();
   // No allowance window known unless a test says so.
   balanceFindUnique.mockResolvedValue(null);
+  entitlements.mockReset();
+  entitlements.mockResolvedValue({ autonomy: "full" });
 });
 
 describe("isParked", () => {
@@ -132,6 +139,63 @@ describe("describePause", () => {
     expect(notice.reason).toBe("no-plan");
     // Not mistaken for the allowance story.
     expect(notice.reason).not.toBe("allowance-used");
+  });
+
+  // Automatic work that ran into its own share of the plan: the allowance is NOT
+  // used up, so the card must not say so (docs/billing-tasks.md, background share).
+  describe("a job parked on QUOTA_HELD_BACK", () => {
+    it("says the share automatic work may use, not that the allowance ran out", async () => {
+      findUnique.mockResolvedValue(parkedJob({ errorCode: "QUOTA_HELD_BACK" }));
+
+      const notice = await describePause("job-1");
+
+      expect(notice).toMatchObject({
+        reason: "held-back",
+        unit: "IMAGE",
+        sharePct: 70,
+      });
+      expect(notice.reason).not.toBe("allowance-used");
+    });
+
+    it("names the smaller share of a limited plan", async () => {
+      entitlements.mockResolvedValue({ autonomy: "limited" });
+      findUnique.mockResolvedValue(parkedJob({ errorCode: "QUOTA_HELD_BACK" }));
+
+      await expect(describePause("job-1")).resolves.toMatchObject({
+        reason: "held-back",
+        sharePct: 45,
+      });
+    });
+
+    it("reads the plan of the job's own workspace", async () => {
+      findUnique.mockResolvedValue(parkedJob({ errorCode: "QUOTA_HELD_BACK" }));
+
+      await describePause("job-1");
+
+      expect(entitlements).toHaveBeenCalledWith("w-1");
+    });
+
+    it("reaches the card as a short, customer-facing sentence with a percentage", async () => {
+      entitlements.mockResolvedValue({ autonomy: "limited" });
+      findUnique.mockResolvedValue(parkedJob({ errorCode: "QUOTA_HELD_BACK" }));
+
+      const text = limitNoticeReplyText({
+        kind: "limit-notice",
+        ...(await describePause("job-1")),
+      });
+
+      expect(text).toContain("limited to 45% of your plan");
+      expect(text).toContain("Your own requests are not affected");
+      expect(text).not.toMatch(/used up|\$|token/i);
+    });
+
+    it("is not asked for the plan when the job waits for anything else", async () => {
+      findUnique.mockResolvedValue(parkedJob({ errorCode: "QUOTA_EXCEEDED" }));
+
+      await describePause("job-1");
+
+      expect(entitlements).not.toHaveBeenCalled();
+    });
   });
 
   it.each([null, "SOMETHING_ELSE"])(

@@ -223,6 +223,42 @@ describeIntegration("billing operation lifecycle", () => {
       });
     });
 
+    // The charge is a reservation like any other: a job the system started stays
+    // inside the system's share with it (Faz 3C), a user's job is never held back.
+    it("keeps the text charge of a job the system started out of the user's share", async () => {
+      // 1M AI budget, 800k used: 200k left, and Growth keeps 300k of the 1M for the user.
+      const nearlyUsedUp = async () => {
+        const ws = await fundedWorkspace(5, 1_000_000);
+        await prisma.usageBalance.updateMany({
+          where: { workspaceId: ws, unit: "AI_MICROS" },
+          data: { periodUsed: B(800_000) },
+        });
+        return ws;
+      };
+
+      const bySystem = await nearlyUsedUp();
+      const a = await beginOperation(
+        spec(bySystem, { IMAGE: 1 }, { initiator: "system" }),
+      );
+      spent(a, 20_000);
+      await a.finish("delivered");
+      expect(await balanceOf(bySystem, "AI_MICROS")).toEqual({
+        used: 800_000,
+        reserved: 0,
+      });
+
+      const byUser = await nearlyUsedUp();
+      const b = await beginOperation(
+        spec(byUser, { IMAGE: 1 }, { initiator: "user" }),
+      );
+      spent(b, 20_000);
+      await b.finish("delivered");
+      expect(await balanceOf(byUser, "AI_MICROS")).toEqual({
+        used: 820_000,
+        reserved: 0,
+      });
+    });
+
     it("charges the text work on the operation's own clock, not on the wall clock", async () => {
       const ws = await fundedWorkspace(5, 3_000_000);
       // The operation lives in the simulated November window; the wall clock stands

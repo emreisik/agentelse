@@ -6,7 +6,7 @@ import type { ExecutionJob } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { JOB_RESERVATION_TTL_MS, TASK_CEILING } from "@/lib/billing/plans";
-import { initiatorOfActor, moduleOf } from "@/server/billing/usage-context";
+import { moduleOf } from "@/server/billing/usage-context";
 import type {
   ExecutionPolicyContext,
   ExecutionProvider,
@@ -15,6 +15,7 @@ import type {
 import { AgentelseError } from "@/server/security/errors";
 
 import { getBillingConfig } from "./config";
+import { initiatorOfTask } from "./job-initiator";
 import {
   beginOperation,
   releaseAttemptReservations,
@@ -149,8 +150,13 @@ export async function beginJobBilling(input: {
       select: { status: true, createdByType: true },
     });
     // Sistemin kendi başlattığı görev (otonom döngü) planın arka plan payına tabidir;
-    // kullanıcının görevi etiketsizdir.
-    if (task) spec.initiator = initiatorOfActor(task.createdByType);
+    // kullanıcının görevi ve bir insanın onayladığı görev etiketsizdir.
+    if (task) {
+      spec.initiator = await initiatorOfTask({
+        id: job.taskId,
+        createdByType: task.createdByType,
+      });
+    }
     if (task && TERMINAL_TASK.has(task.status)) {
       await prisma.executionJob.updateMany({
         where: { id: job.id, status: "QUEUED" },

@@ -27,6 +27,7 @@ import {
 import { ExecutionPolicy } from "@/server/execution/execution-policy";
 import { missingCapabilityInput } from "@/server/execution/capability-input";
 import { ExecutionService } from "@/server/execution/execution-service";
+import { costApprovalDetails } from "@/lib/billing/approval-threshold";
 import { costApprovalContext } from "@/server/billing/approval-threshold";
 
 export type PlanCapabilityInput = {
@@ -271,12 +272,45 @@ export const TaskPlanner = {
     }
   },
 
+  // The approval a stored task needs RIGHT NOW. A deferred plan node is judged
+  // again when its dependencies are done (WorkPlanProgressor.dispatchReadyTasks):
+  // what it costs and what the person allows can have changed since it was created
+  // (billing mode, plan, the approval size), and its stored payload is what sizes
+  // it. The callers that use deferDispatch never pass approvalOverrides or an
+  // explicit level, so this matches the original resolution exactly, apart from
+  // the cost.
+  async approvalNow(task: {
+    workspaceId: string;
+    projectId: string;
+    capability: CapabilityKey;
+    riskLevel: RiskLevel;
+    createdByType: ActorType;
+    payload?: unknown;
+  }) {
+    const cost = await costApprovalContext({
+      workspaceId: task.workspaceId,
+      projectId: task.projectId,
+      capability: task.capability,
+      payload: task.payload,
+      createdByType: task.createdByType,
+    });
+    const level = ApprovalPolicy.resolveLevel(task.capability, {
+      createdByType: task.createdByType,
+      riskLevel: task.riskLevel,
+      estimatedCostUsd: cost.estimatedCostUsd,
+      approveAboveUsd: cost.approveAboveUsd,
+    });
+    return {
+      level,
+      requiresApproval: !isAutoExecutable(level),
+      note: cost.note,
+    };
+  },
+
   // Parks a task behind an Approval and posts the chat card. Shared by the
   // immediate path (planForCapability, level already resolved) and
   // WorkPlanProgressor.dispatchReadyTasks (deferred node becomes ready,
-  // level re-resolved from the persisted task — the callers that use
-  // deferDispatch never pass approvalOverrides, so this matches the
-  // original resolution exactly).
+  // judged again from the persisted task: approvalNow).
   async requestApproval(
     task: {
       id: string;
@@ -293,26 +327,15 @@ export const TaskPlanner = {
     },
     level?: ApprovalLevel,
     // Why the task is asked about when it is only the cost (planForCapability
-    // already knows it; the deferred path asks again below).
+    // and the deferred path already know it).
     costNote?: string,
   ) {
     let note = costNote;
     let resolvedLevel = level;
     if (!resolvedLevel) {
-      const cost = await costApprovalContext({
-        workspaceId: task.workspaceId,
-        projectId: task.projectId,
-        capability: task.capability,
-        payload: task.payload,
-        createdByType: task.createdByType,
-      });
-      note = cost.note;
-      resolvedLevel = ApprovalPolicy.resolveLevel(task.capability, {
-        createdByType: task.createdByType,
-        riskLevel: task.riskLevel,
-        estimatedCostUsd: cost.estimatedCostUsd,
-        approveAboveUsd: cost.approveAboveUsd,
-      });
+      const now = await TaskPlanner.approvalNow(task);
+      note = now.note;
+      resolvedLevel = now.level;
     }
 
     await TaskRepository.transition(
@@ -353,7 +376,7 @@ export const TaskPlanner = {
       departmentKey: task.departmentKey ?? undefined,
       details:
         buildApprovalDetails(task.capability, task.payload) ??
-        (note ? [{ label: "Why you are asked", value: note }] : undefined),
+        costApprovalDetails(note),
       category: approvalCategory(approval.type, approval.level),
     }).catch((error) => {
       console.error("[task-planner] postApprovalRequestCard failed:", error);

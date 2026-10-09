@@ -16,12 +16,18 @@ import { TaskRepository } from "@/server/repositories/task.repository";
 import { JOB_RESERVATION_TTL_MS } from "@/lib/billing/plans";
 
 import { getBillingConfig } from "./config";
+import { approvedByPerson } from "./job-initiator";
 import {
   beginOperation,
   releaseOperationReservations,
   type OperationReserve,
 } from "./operation";
-import { NoPlanError, QuotaExceededError, isQuotaError } from "./quota-errors";
+import {
+  HELD_BACK_CODE,
+  NoPlanError,
+  QuotaExceededError,
+  isQuotaError,
+} from "./quota-errors";
 import { initiatorOfActor } from "./usage-context";
 
 // Plan hakkı bitince iş HATA olmaz, BEKLER (WAITING_BUDGET): üretilmiş içerik ve
@@ -93,11 +99,14 @@ export async function parkJob(
   });
   if (!job) return false;
 
+  // Hak bitmedi, sistemin işi arka plan payını aştı: ekranlar "hak bitti" demesin diye
+  // ayrı bir kodla park edilir (yenilenince ya da ek paket gelince yine devam eder).
+  const heldBack = error.meta?.heldBack === true;
   const moved = await prisma.executionJob.updateMany({
     where: { id: executionJobId, status: "QUEUED" },
     data: {
       status: "WAITING_BUDGET",
-      errorCode: error.code,
+      errorCode: heldBack ? HELD_BACK_CODE : error.code,
       errorMessage: error.message,
       retryable: true,
       ...(attemptedAt ? { updatedAt: attemptedAt } : {}),
@@ -187,12 +196,14 @@ const PARKED_SELECT = {
 } as const;
 
 // Sıralama anahtarı: öncelik (URGENT→LOW), sonra kullanıcının kendi isteği (arka
-// plan işinden önce), sonra son tarih (boş sonda), sonra oluşturulma. Task.priority
+// plan işinden önce; `isOwn`: kullanıcının yarattığı ya da bir insanın onayladığı
+// görev), sonra son tarih (boş sonda), sonra oluşturulma. Task.priority
 // ve Task.dueAt bugün hiçbir yerde yazılmıyor (hepsi MEDIUM/boş): son tarih,
 // görevin takvim slotunun planlı zamanından türetilir (deadlines). İkisi de
 // ileride yazılırsa kendiliğinden önce gelir.
 export function resumeOrder(
   deadlines: ReadonlyMap<string, Date>,
+  isOwn: (row: ParkedRow) => boolean,
 ): (a: ParkedRow, b: ParkedRow) => number {
   const due = (row: ParkedRow) =>
     (row.task.dueAt ?? deadlines.get(row.id))?.getTime() ??
@@ -201,9 +212,7 @@ export function resumeOrder(
     const priority =
       PRIORITY_RANK[b.task.priority] - PRIORITY_RANK[a.task.priority];
     if (priority !== 0) return priority;
-    const own =
-      Number(b.task.createdByType === "USER") -
-      Number(a.task.createdByType === "USER");
+    const own = Number(isOwn(b)) - Number(isOwn(a));
     if (own !== 0) return own;
     const aDue = due(a);
     const bDue = due(b);
@@ -399,7 +408,19 @@ async function resumeWorkspace(
   const deadlines = await slotDeadlines(live);
   const { usageNeedOf } = await import("@/server/execution/usage-need");
   const blocked = new Set<string>();
-  const ordered = [...live].sort(resumeOrder(deadlines));
+  // Kullanıcının kendi işi: yarattığı görev ya da bir insanın onayladığı görev.
+  const approved = await approvedByPerson(
+    live
+      .filter((row) => initiatorOfActor(row.task.createdByType) === "system")
+      .map((row) => row.taskId),
+  );
+  const initiatorOf = (row: ParkedRow): "user" | "system" =>
+    approved.has(row.taskId)
+      ? "user"
+      : initiatorOfActor(row.task.createdByType);
+  const ordered = [...live].sort(
+    resumeOrder(deadlines, (row) => initiatorOf(row) === "user"),
+  );
 
   // Request payloads are read in small batches as the loop reaches them (the scan
   // above is light on purpose; most jobs of a long queue are never tried).
@@ -439,7 +460,7 @@ async function resumeWorkspace(
     // pay), kullanıcının işi takılmaz: bir sistem işinin reddi yalnız sonraki sistem
     // işlerini eler, kullanıcı işleri yine denenir. Kullanıcı işi bile sığmıyorsa
     // sistem işleri hiç sığmaz.
-    const initiator = initiatorOfActor(job.task.createdByType);
+    const initiator = initiatorOf(job);
     const blockedFor = (unit: string) =>
       blocked.has(`${unit}:user`) ||
       (initiator === "system" && blocked.has(`${unit}:system`));

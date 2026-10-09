@@ -3,19 +3,22 @@ import "server-only";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 
 // Gölge modda "enforce olsaydı engellenirdi" kararları: sorgulanabilir olsun diye
-// AuditLog'a (workspace düzeyinde, projectId'siz) yazılır. Aynı workspace ve neden
-// için süreç başına saatte en çok bir satır: sıcak yolu ve tabloyu şişirmez.
+// AuditLog'a (workspace düzeyinde, projectId'siz) yazılır. Aynı workspace, neden ve
+// başlatıcı için süreç başına saatte en çok bir satır: sıcak yolu ve tabloyu şişirmez.
+// Başlatıcı anahtardadır (Faz 3C): sistemin arka plan payına çarpması, kullanıcının
+// gerçek yetersizliğinin satırını almasın.
 const WINDOW_MS = 60 * 60 * 1000;
 const seen = new Map<string, number>();
 
 export async function recordShadowDecision(input: {
   workspaceId: string;
   kind: "brand_limit" | "not_entitled" | "unit_not_sold" | "insufficient";
+  initiator?: "user" | "system";
   detail?: Record<string, unknown>;
   now?: Date;
 }): Promise<void> {
   const nowMs = (input.now ?? new Date()).getTime();
-  const key = `${input.workspaceId}:${input.kind}`;
+  const key = `${input.workspaceId}:${input.kind}:${input.initiator ?? ""}`;
   const last = seen.get(key);
   if (last !== undefined && nowMs - last < WINDOW_MS) return;
   seen.set(key, nowMs);

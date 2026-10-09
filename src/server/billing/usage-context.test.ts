@@ -7,6 +7,7 @@ import {
   initiatorOfActor,
   isBackground,
   moduleOf,
+  runAs,
   runAsBackground,
   runWithUsageScope,
 } from "./usage-context";
@@ -161,6 +162,27 @@ describe("background marker", () => {
 
   it("returns what the function returns", () => {
     expect(runAsBackground(() => 42)).toBe(42);
+  });
+
+  // The label follows who started the work, not the step it runs in: inside a
+  // background step, work that a person started says so, through awaits and timers.
+  it("runAs sets the label either way, and 'user' turns an outer background marker off only inside", async () => {
+    await runAsBackground(async () => {
+      await runAs("user", async () => {
+        expect(isBackground()).toBe(false);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        expect(isBackground()).toBe(false);
+        runWithUsageScope({ workspaceId: "w1" }, () => {
+          expect(isBackground()).toBe(false);
+        });
+      });
+      // Back outside: the step is still the system's.
+      expect(isBackground()).toBe(true);
+    });
+
+    expect(runAs("system", () => isBackground())).toBe(true);
+    expect(runAs("user", () => isBackground())).toBe(false);
+    expect(isBackground()).toBe(false);
   });
 });
 

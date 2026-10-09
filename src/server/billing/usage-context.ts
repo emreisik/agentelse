@@ -50,10 +50,18 @@ export function getUsageScope(): UsageScope | undefined {
 // hafta planlayıcı) varsayılan olarak "sistem başlattı" sayılır ve plan hakkının
 // arka plan payına tabidir (plans.ts BACKGROUND_SHARE_PCT). İşaretsiz her akış
 // kullanıcıdır ve payla hiç karşılaşmaz: eksik bir işaret kimseyi engellemez.
-const background = new AsyncLocalStorage<true>();
+//
+// Etiket KAYNAĞA göre konur, adıma göre değil: tick'in içinde de kullanıcının başlattığı
+// iş döner (kullanıcının görevinin sonuç işlemesi, kullanıcının başlattığı kurulum).
+// Bunlar `runAs("user")` ile işaretin üstünü açıkça kullanıcıya çevirir.
+const background = new AsyncLocalStorage<boolean>();
+
+export function runAs<T>(initiator: "user" | "system", fn: () => T): T {
+  return background.run(initiator === "system", fn);
+}
 
 export function runAsBackground<T>(fn: () => T): T {
-  return background.run(true, fn);
+  return runAs("system", fn);
 }
 
 export function isBackground(): boolean {

@@ -4,6 +4,7 @@ import type { FactClassification, SignalCategory } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { signalFingerprint } from "@/server/agency/fingerprint";
+import { initiatorOfActor, runAs } from "@/server/billing/usage-context";
 import { SignalRepository } from "@/server/repositories/signal.repository";
 
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
@@ -169,10 +170,11 @@ export const ResultMaterializer = {
     if (rawFindings.length === 0 && shouldExtractFindings(task.capability)) {
       const report = extractReportText(raw);
       if (report) {
-        rawFindings = await extractFindingsFromReport(
-          scope,
-          task.capability,
-          report,
+        // Etiket görevi kim yarattıysa ona göre (billing, Faz 3C): bu işlem tick'in
+        // "triggers" adımında koşar ama kullanıcının görevinin sonucunu işler; arka
+        // plan payına takılırsa kullanıcının kendi araştırması sessizce bulgusuz kalırdı.
+        rawFindings = await runAs(initiatorOfActor(task.createdByType), () =>
+          extractFindingsFromReport(scope, task.capability, report),
         );
       }
     }

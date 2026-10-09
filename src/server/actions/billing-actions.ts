@@ -135,7 +135,7 @@ export async function cancelSubscriptionAction(): Promise<ActionResult> {
   const gate = await guard("cancel");
   if (!gate.ok) return gate.result;
   const result = await cancelAtPeriodEnd(gate.ctx.workspaceId, gate.ctx.deps);
-  if (result.ok) revalidatePath("/billing");
+  revalidatePath("/billing");
   return result;
 }
 
@@ -143,7 +143,7 @@ export async function resumeSubscriptionAction(): Promise<ActionResult> {
   const gate = await guard("resume");
   if (!gate.ok) return gate.result;
   const result = await resumeSubscription(gate.ctx.workspaceId, gate.ctx.deps);
-  if (result.ok) revalidatePath("/billing");
+  revalidatePath("/billing");
   return result;
 }
 
@@ -156,6 +156,8 @@ export async function changePlanAction(input: {
     { workspaceId: gate.ctx.workspaceId, planKey: input.planKey },
     gate.ctx.deps,
   );
-  if (result.ok) revalidatePath("/billing");
+  // Başarısız denemede de yenilenir: durum Stripe'tan yeniden eşitlenmiş (ör. belirsiz
+  // sonuç, geri konan zamanlanmış düşürme) olabilir; ekran eski hâli göstermesin.
+  revalidatePath("/billing");
   return result;
 }

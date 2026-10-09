@@ -27,13 +27,18 @@ export async function POST(request: Request) {
     );
   }
 
+  // İmza başlığı yoksa gövde hiç okunmaz: kimliksiz istekler 512 KB tamponlatamaz.
+  const signatureHeader = request.headers.get("stripe-signature");
+  if (!signatureHeader) {
+    return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
+  }
   const raw = await readLimitedBody(request, MAX_WEBHOOK_BODY_BYTES);
   if (raw === null) {
     return NextResponse.json({ error: "payload_too_large" }, { status: 413 });
   }
   const check = verifyStripeSignature({
     rawBody: raw,
-    header: request.headers.get("stripe-signature"),
+    header: signatureHeader,
     secrets: config.webhookSecrets,
   });
   if (!check.ok) {

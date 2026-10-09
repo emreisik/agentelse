@@ -22,7 +22,7 @@ import type { BillingOverview } from "@/server/billing/overview";
 
 import { BILLING_TABS, BillingTabs, parseBillingTab } from "./billing-tabs";
 import { PlanPicker } from "./plan-picker";
-import { SubscriptionPanel } from "./subscription-panel";
+import { SubscriptionPanel, cancelDescription } from "./subscription-panel";
 import { TasksPanel } from "./tasks-panel";
 import { UsagePanel } from "./usage-panel";
 
@@ -280,6 +280,7 @@ describe("SubscriptionPanel with payments connected", () => {
       stripeLinked: true,
       introOffer: false,
       paidAccess: true,
+      endedReason: null,
     },
   };
   const render = (
@@ -334,6 +335,115 @@ describe("SubscriptionPanel with payments connected", () => {
     ).toBe(true);
   });
 
+  it("says what the date means in each state, and why an ended subscription ended", () => {
+    const at = (
+      overrides: Partial<NonNullable<BillingOverview["subscription"]>>,
+    ) =>
+      render({
+        ...paying,
+        subscription: { ...paying.subscription!, ...overrides },
+      });
+
+    expect(at({})).toContain("Renews on");
+    expect(at({ status: "PAST_DUE" })).toContain("Paid through");
+    // Paid time still running after a cancel: access, not a renewal.
+    expect(at({ status: "CANCELED", paidAccess: true })).toContain(
+      "Access until",
+    );
+    // A refunded subscription ended; nothing "renews" and the reason is shown.
+    const refunded = at({
+      status: "CANCELED",
+      paidAccess: false,
+      endedReason: "REFUNDED",
+    });
+    expect(refunded).toContain("Ended on");
+    expect(refunded).not.toContain("Renews on");
+    expect(refunded).toContain("Refunded");
+    expect(
+      at({ status: "CANCELED", paidAccess: false, endedReason: "CHARGEBACK" }),
+    ).toContain("Payment disputed");
+  });
+
+  it("tells an existing subscriber when billing changes are unavailable (payments closed), without touching the subscription", () => {
+    const closed = html(
+      createElement(SubscriptionPanel, {
+        overview: paying,
+        canManage: true,
+        paymentsOpen: false,
+      }),
+    );
+    expect(closed).toContain("temporarily unavailable");
+    expect(closed).toContain("Your subscription is not affected");
+    // Open payments, and a workspace that never paid, do not get the note.
+    expect(render(paying)).not.toContain("temporarily unavailable");
+    expect(
+      html(
+        createElement(SubscriptionPanel, {
+          overview: EMPTY,
+          canManage: true,
+        }),
+      ),
+    ).not.toContain("temporarily unavailable");
+  });
+
+  it("promises no trial and says plans can be chosen once payments are open", () => {
+    const open = html(
+      createElement(SubscriptionPanel, {
+        overview: EMPTY,
+        canManage: true,
+        paymentsOpen: true,
+      }),
+    );
+    expect(open).toContain("Choose a plan in Plans");
+    expect(open).not.toContain("not on sale yet");
+    expect(open).not.toMatch(/trial/i);
+    const closed = html(
+      createElement(SubscriptionPanel, {
+        overview: EMPTY,
+        canManage: true,
+      }),
+    );
+    expect(closed).toContain("not on sale yet");
+    expect(closed).not.toMatch(/trial/i);
+  });
+
+  it("qualifies the read-only warning by the billing mode", () => {
+    const until = "2026-12-01T00:00:00.000Z";
+    expect(cancelDescription(until, "enforce")).toContain(
+      "after that the workspace becomes read-only",
+    );
+    for (const mode of ["off", "shadow"] as const) {
+      const text = cancelDescription(until, mode);
+      expect(text).toContain("after that your plan ends");
+      expect(text).not.toContain("read-only");
+    }
+    expect(cancelDescription(null, "off")).toContain(
+      "the end of the paid period",
+    );
+  });
+
+  it("shows the amount due for an unpaid invoice, hides drafts' noise and says when invoices could not load", () => {
+    const row = {
+      id: "in_open",
+      number: "ABC-0002",
+      createdAt: "2026-11-01T00:00:00.000Z",
+      amountPaid: 0,
+      amountDue: 7_900,
+      currency: "usd",
+      status: "open",
+      hostedInvoiceUrl: null,
+      invoicePdf: null,
+    };
+    const markup = render(paying, { invoices: [row] });
+    expect(markup).toContain("$79");
+    expect(markup).toContain("Unpaid");
+    expect(markup).not.toContain("$0");
+
+    const failed = render(paying, { invoices: [], invoicesFailed: true });
+    expect(failed).toContain("could not load your invoices");
+    expect(failed).not.toContain("Nothing to show yet");
+  });
+
   it("lists invoices with links", () => {
     const markup = render(paying, {
       invoices: [
@@ -342,6 +452,7 @@ describe("SubscriptionPanel with payments connected", () => {
           number: "ABC-0001",
           createdAt: "2026-11-01T00:00:00.000Z",
           amountPaid: 14_900,
+          amountDue: 0,
           currency: "usd",
           status: "paid",
           hostedInvoiceUrl: "https://invoice.stripe.com/i/x",
@@ -517,6 +628,7 @@ describe("SubscriptionPanel", () => {
       stripeLinked: true,
       introOffer: false,
       paidAccess: true,
+      endedReason: null,
     },
   };
 

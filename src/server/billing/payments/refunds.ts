@@ -15,6 +15,13 @@ import { lockWorkspace } from "./subscription-state";
 // erişim hemen biter ve açık penceredeki KULLANILMAMIŞ hak geri alınır (taban: kullanılmış
 // + rezerve). Kısmi iade erişimi değiştirmez. İade/itiraz politikası sahip kararı bekliyor
 // (docs/billing-payments.md): bunlar güvenli varsayılandır.
+//
+// Her iade/itiraz, erişim değişsin değişmesin, faturayı BillingReversal'a (mezar taşı)
+// yazar: Stripe faturayı "paid" bırakır; mezar taşı olmadan aynı faturanın yeniden işlenmesi
+// (Checkout dönüş adresi, yeniden gönderilen olay) ya da ödemeden ÖNCE işlenen bir iade
+// erişimi geri getirirdi. İtiraz hangi dönemin faturasında olursa olsun aboneliği bitirir
+// (para riski dönemden bağımsızdır); kısmen/eski dönem iadesi ise sahibin elle ele alacağı
+// bir durumdur.
 
 // Faturanın dönemi, ödenmiş sürenin bu kadar gerisindeyse "geçmiş dönem" sayılır.
 const CURRENT_PERIOD_SLACK_MS = 24 * 60 * 60 * 1000;
@@ -35,20 +42,33 @@ export async function endSubscriptionAfterRefund(input: {
   return prisma.$transaction(
     async (tx): Promise<SubscriptionRefundResult> => {
       await lockWorkspace(tx, workspaceId);
+      await tx.billingReversal.upsert({
+        where: { stripeInvoiceId: invoice.id },
+        create: {
+          stripeInvoiceId: invoice.id,
+          workspaceId,
+          reason: input.reason,
+        },
+        update: {},
+      });
       const row = await tx.subscription.findUnique({ where: { workspaceId } });
       if (!row || row.stripeSubscriptionId !== sub.id) {
         return { applied: false, note: "stale-subscription" };
       }
-      // Yalnız GEÇERLİ dönemin faturası erişimi bitirir; geçmiş dönem ya da orantı
-      // faturası (plan değişikliği) iadesi sahibin elle ele alacağı bir durumdur.
-      if (!invoice.periodEnd)
-        return { applied: false, note: "not-a-period-invoice" };
-      if (
-        row.paidThrough &&
-        invoice.periodEnd.getTime() <
-          row.paidThrough.getTime() - CURRENT_PERIOD_SLACK_MS
-      ) {
-        return { applied: false, note: "older-period" };
+      // İade: yalnız GEÇERLİ dönemin faturası erişimi bitirir; geçmiş dönem ya da orantı
+      // faturası (plan değişikliği) iadesi sahibin elle ele alacağı bir durumdur. İtiraz
+      // bu korumaları atlar.
+      if (input.reason === "REFUNDED") {
+        if (!invoice.periodEnd) {
+          return { applied: false, note: "not-a-period-invoice" };
+        }
+        if (
+          row.paidThrough &&
+          invoice.periodEnd.getTime() <
+            row.paidThrough.getTime() - CURRENT_PERIOD_SLACK_MS
+        ) {
+          return { applied: false, note: "older-period" };
+        }
       }
 
       const alreadyEnded =

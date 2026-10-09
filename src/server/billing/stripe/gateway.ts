@@ -28,6 +28,7 @@ import {
   parsePromotionCodeList,
   parseRedirect,
   parseSubscription,
+  parseSubscriptionList,
   type StripeChargeFacts,
   type StripeDisputeFacts,
   type StripeInvoiceFacts,
@@ -83,6 +84,8 @@ export type ChangePlanInput = {
 
 export type StripeGateway = {
   getSubscription(id: string): Promise<StripeSubscriptionFacts | null>;
+  // Müşterinin tüm abonelikleri (iptal edilenler dahil, en yeni önce, en çok 10).
+  listSubscriptions(customerId: string): Promise<StripeSubscriptionFacts[]>;
   getInvoice(id: string): Promise<StripeInvoiceFacts | null>;
   getCheckoutSession(id: string): Promise<StripeSessionFacts | null>;
   getCharge(id: string): Promise<StripeChargeFacts | null>;
@@ -164,7 +167,10 @@ export function createStripeGateway(http: StripeHttp): StripeGateway {
           method: "POST",
           path: "/v1/products",
           body: { id, name: planProductName(planKey), metadata: { planKey } },
-          idempotencyKey: `agentelse:product:${id}`,
+          // Kimlik zaten sabit (ikinci yaratma resource_already_exists verir): sabit bir
+          // anahtar Stripe'ta 24 saat boyunca eski hatayı ya da SİLİNMİŞ nesnenin
+          // başarısını tekrar ederdi.
+          idempotencyKey: `agentelse:product:${id}:${cryptoRandom()}`,
         });
       },
     );
@@ -187,7 +193,7 @@ export function createStripeGateway(http: StripeHttp): StripeGateway {
             duration: "once",
             metadata: { planKey },
           },
-          idempotencyKey: `agentelse:coupon:${id}`,
+          idempotencyKey: `agentelse:coupon:${id}:${cryptoRandom()}`,
         });
       },
     );
@@ -202,10 +208,25 @@ export function createStripeGateway(http: StripeHttp): StripeGateway {
 
   return {
     async getSubscription(id) {
+      const startedAt = new Date();
       const raw = await getOrNull(http, `/v1/subscriptions/${id}`, {
         expand: ["latest_invoice"],
       });
-      return raw === null ? null : parseSubscription(raw);
+      return raw === null ? null : parseSubscription(raw, startedAt);
+    },
+    async listSubscriptions(customerId) {
+      const startedAt = new Date();
+      const raw = await http({
+        method: "GET",
+        path: "/v1/subscriptions",
+        query: {
+          customer: customerId,
+          status: "all",
+          limit: 10,
+          expand: ["data.latest_invoice"],
+        },
+      });
+      return parseSubscriptionList(raw, startedAt);
     },
     async getInvoice(id) {
       const raw = await getOrNull(http, `/v1/invoices/${id}`);
@@ -254,11 +275,14 @@ export function createStripeGateway(http: StripeHttp): StripeGateway {
         method: "POST",
         path: "/v1/customers",
         body: {
-          email: input.email ?? undefined,
-          name: input.name ?? undefined,
+          email: customerEmail(input.email),
+          name: customerName(input.name),
           metadata: { workspaceId: input.workspaceId },
         },
-        idempotencyKey: `agentelse:customer:${input.workspaceId}`,
+        // Rastgele anahtar: workspace başına tekillik BillingCustomer satırında (eşzamanlı
+        // ikinci istek yetim bir Stripe müşterisi bırakabilir, zararsız). Sabit anahtar,
+        // Stripe'ta silinen müşterinin yanıtını 24 saat tekrar ederdi.
+        idempotencyKey: `agentelse:customer:${input.workspaceId}:${cryptoRandom()}`,
       });
       return parseId("customer", raw);
     },
@@ -352,6 +376,7 @@ export function createStripeGateway(http: StripeHttp): StripeGateway {
 
     async changeSubscriptionPlan(input) {
       await ensureProduct(input.planKey);
+      const startedAt = new Date();
       const raw = await http({
         method: "POST",
         path: `/v1/subscriptions/${input.subscriptionId}`,
@@ -375,17 +400,18 @@ export function createStripeGateway(http: StripeHttp): StripeGateway {
         // kart düzeltilip yeniden denenince eski reddi tekrar ederdi.
         idempotencyKey: `agentelse:plan:${input.subscriptionId}:${cryptoRandom()}`,
       });
-      return parseSubscription(raw);
+      return parseSubscription(raw, startedAt);
     },
 
     async setCancelAtPeriodEnd(subscriptionId, cancel) {
+      const startedAt = new Date();
       const raw = await http({
         method: "POST",
         path: `/v1/subscriptions/${subscriptionId}`,
         body: { cancel_at_period_end: cancel, expand: ["latest_invoice"] },
         idempotencyKey: `agentelse:cancel:${subscriptionId}:${cryptoRandom()}`,
       });
-      return parseSubscription(raw);
+      return parseSubscription(raw, startedAt);
     },
 
     async cancelSubscriptionNow(subscriptionId) {
@@ -405,4 +431,32 @@ export function createStripeGateway(http: StripeHttp): StripeGateway {
 
 function cryptoRandom(): string {
   return globalThis.crypto.randomUUID();
+}
+
+// Stripe müşteri alanı sınırları: ad 256, e-posta 512 karakter; aşan değer isteği
+// reddettirir ve çalışma alanı adı uzun biri ASLA abone olamazdı. Güvenli tarafta kısa
+// tutulur; e-posta biçimsizse hiç gönderilmez (Checkout müşteriden ister).
+const CUSTOMER_NAME_MAX = 200;
+const CUSTOMER_EMAIL_MAX = 254;
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function customerName(
+  value: string | null | undefined,
+): string | undefined {
+  const name = (value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, CUSTOMER_NAME_MAX);
+  return name ? name : undefined;
+}
+
+export function customerEmail(
+  value: string | null | undefined,
+): string | undefined {
+  const email = (value ?? "").trim();
+  return email.length > 0 &&
+    email.length <= CUSTOMER_EMAIL_MAX &&
+    EMAIL_SHAPE.test(email)
+    ? email
+    : undefined;
 }

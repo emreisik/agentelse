@@ -192,7 +192,7 @@ describe("what the actions pass on", () => {
     );
   });
 
-  it("refreshes the billing page after a change, not after a failure", async () => {
+  it("refreshes the billing page after every attempt that reached the service, but not when the guard refused", async () => {
     await actions.cancelSubscriptionAction();
     await actions.resumeSubscriptionAction();
     await actions.changePlanAction({ planKey: "business" });
@@ -211,6 +211,15 @@ describe("what the actions pass on", () => {
       message: "x",
     });
     await actions.cancelSubscriptionAction();
+    await actions.changePlanAction({ planKey: "business" });
+    // A failed attempt may still have re-read Stripe (unknown outcome, a restored
+    // scheduled downgrade): the screen must not keep showing the old state.
+    expect(mocks.revalidate).toHaveBeenCalledTimes(2);
+
+    mocks.revalidate.mockClear();
+    mocks.manager.mockResolvedValue(false);
+    await actions.cancelSubscriptionAction();
+    await actions.resumeSubscriptionAction();
     await actions.changePlanAction({ planKey: "business" });
     expect(mocks.revalidate).not.toHaveBeenCalled();
   });

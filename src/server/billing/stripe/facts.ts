@@ -74,6 +74,9 @@ export type StripeSubscriptionFacts = {
     status: string | null;
     billingReason: string | null;
   } | null;
+  // Bu görüntünün Stripe'tan okunmaya BAŞLANDIĞI an. Kilitten önce okunmuş eski bir
+  // görüntü, sonradan uygulanmış yenisini ezmesin diye durum makinesi bununla karşılaştırır.
+  fetchedAt: Date;
 };
 
 const subscriptionSchema = z.object({
@@ -123,7 +126,10 @@ const subscriptionSchema = z.object({
     .optional(),
 });
 
-export function parseSubscription(raw: unknown): StripeSubscriptionFacts {
+export function parseSubscription(
+  raw: unknown,
+  fetchedAt: Date = new Date(),
+): StripeSubscriptionFacts {
   const sub = parse("subscription", subscriptionSchema, raw);
   const item = sub.items?.data[0] ?? null;
   const productId = item?.price?.product ?? null;
@@ -154,7 +160,21 @@ export function parseSubscription(raw: unknown): StripeSubscriptionFacts {
               billingReason: latest.billing_reason ?? null,
             }
           : null,
+    fetchedAt,
   };
+}
+
+// Bir müşterinin abonelik listesi (Stripe list yanıtı: { data: [...] }).
+export function parseSubscriptionList(
+  raw: unknown,
+  fetchedAt: Date = new Date(),
+): StripeSubscriptionFacts[] {
+  const list = parse(
+    "subscription list",
+    z.object({ data: z.array(z.unknown()) }),
+    raw,
+  );
+  return list.data.map((item) => parseSubscription(item, fetchedAt));
 }
 
 // ---------------------------------------------------------------------------
@@ -546,6 +566,8 @@ export type StripeInvoiceRow = {
   number: string | null;
   createdAt: Date | null;
   amountPaid: number;
+  // Ödenecek tutar (ödenmemiş faturada gösterilen: amountPaid 0 iken 0 $ yazılmasın).
+  amountDue: number;
   currency: string | null;
   status: string | null;
   hostedInvoiceUrl: string | null;
@@ -557,6 +579,7 @@ const invoiceRowSchema = z.object({
   number: z.string().nullable().optional(),
   created: seconds,
   amount_paid: z.number().default(0),
+  amount_due: z.number().default(0),
   currency: z.string().nullable().optional(),
   status: z.string().nullable().optional(),
   hosted_invoice_url: z.string().nullable().optional(),
@@ -574,6 +597,7 @@ export function parseInvoiceList(raw: unknown): StripeInvoiceRow[] {
     number: row.number ?? null,
     createdAt: toDate(row.created),
     amountPaid: row.amount_paid,
+    amountDue: row.amount_due,
     currency: row.currency ?? null,
     status: row.status ?? null,
     hostedInvoiceUrl: row.hosted_invoice_url ?? null,

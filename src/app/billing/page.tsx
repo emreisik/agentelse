@@ -4,6 +4,7 @@ import { bannerFor } from "@/lib/billing/banner";
 import { comparisonRows, planCards } from "@/lib/billing/catalog";
 import { pickerModeFor } from "@/lib/billing/picker-mode";
 import { YEARLY_DISCOUNT_PCT } from "@/lib/billing/plans";
+import { isRateLimited } from "@/lib/rate-limit";
 import { getBillingOverview } from "@/server/billing/overview";
 import { getPaymentDeps } from "@/server/billing/payments/deps";
 import {
@@ -22,6 +23,7 @@ import {
   BillingTabs,
   parseBillingTab,
 } from "@/components/billing/billing-tabs";
+import { ClearOneShotParams } from "@/components/billing/clear-one-shot-params";
 import { PlanPicker } from "@/components/billing/plan-picker";
 import {
   SubscriptionPanel,
@@ -50,31 +52,38 @@ export default async function BillingPage({
   const params = await searchParams;
   const tab = parseBillingTab(params.tab);
   const deps = getPaymentDeps();
+  const canManage = await isWorkspaceManager(userId, workspaceId);
 
   // Coming back from Stripe Checkout: bring the state up to date right now instead of
-  // waiting for the webhook (the same handler, safe to run twice).
+  // waiting for the webhook (the same handler, safe to run twice). Only for the person who
+  // can manage billing, at a bounded rate (this page must not become a way to make the
+  // server query Stripe at will).
   const sessionId = first(params.session_id);
   const comingBack =
     first(params.checkout) === "success" ||
     first(params.purchase) === "success";
-  const returned: ReturnState | null =
-    deps && comingBack && sessionId
-      ? await reconcileCheckoutReturn({ workspaceId, sessionId }, deps)
-      : null;
+  let returned: ReturnState | null = null;
+  if (deps && canManage && comingBack && sessionId) {
+    returned = isRateLimited(`billing:return:${workspaceId}`, 10, 10 * 60_000)
+      ? "pending"
+      : await reconcileCheckoutReturn({ workspaceId, sessionId }, deps);
+  }
 
-  const [overview, canManage] = await Promise.all([
-    getBillingOverview(workspaceId),
-    isWorkspaceManager(userId, workspaceId),
-  ]);
+  const overview = await getBillingOverview(
+    workspaceId,
+    new Date(),
+    deps?.mode ?? null,
+  );
   const subscription = overview.subscription;
 
-  const invoices: InvoiceRow[] =
+  const listing =
     deps && canManage && tab === "subscription" && subscription?.stripeLinked
-      ? (await listWorkspaceInvoices({ workspaceId }, deps)).map((row) => ({
-          ...row,
-          createdAt: row.createdAt?.toISOString() ?? null,
-        }))
-      : [];
+      ? await listWorkspaceInvoices({ workspaceId }, deps)
+      : { rows: [], failed: false };
+  const invoices: InvoiceRow[] = listing.rows.map((row) => ({
+    ...row,
+    createdAt: row.createdAt?.toISOString() ?? null,
+  }));
 
   const mode = pickerModeFor({
     paymentsOpen: deps !== null,
@@ -89,18 +98,24 @@ export default async function BillingPage({
           pendingPlanKey: subscription.pending?.planKey ?? null,
           stripeLinked: subscription.stripeLinked,
           introOffer: subscription.introOffer,
+          exempt: subscription.exempt,
         }
       : null,
   });
 
   const packsOpen =
-    deps !== null && canManage && subscription?.paidAccess === true;
+    deps !== null &&
+    canManage &&
+    subscription?.paidAccess === true &&
+    !subscription.exempt;
   const packsNote =
     deps === null
       ? undefined
       : !canManage
         ? "Only a workspace owner or admin can buy extra usage."
-        : "Extra usage can be added while you have a plan.";
+        : subscription?.exempt
+          ? "This workspace has full access, so there is nothing to buy."
+          : "Extra usage can be added while you have a plan.";
 
   const banner = bannerFor(params, returned);
 
@@ -124,6 +139,8 @@ export default async function BillingPage({
           </p>
         </div>
 
+        <ClearOneShotParams />
+
         {banner ? (
           <div
             role="status"
@@ -144,7 +161,9 @@ export default async function BillingPage({
           <PlanPicker
             cards={planCards()}
             comparison={comparisonRows()}
-            currentPlanKey={subscription?.planKey ?? null}
+            currentPlanKey={
+              subscription?.paidAccess ? subscription.planKey : null
+            }
             yearlyDiscountPct={YEARLY_DISCOUNT_PCT}
             mode={mode}
           />
@@ -155,6 +174,7 @@ export default async function BillingPage({
             canManage={canManage}
             paymentsOpen={deps !== null}
             invoices={invoices}
+            invoicesFailed={listing.failed}
           />
         ) : null}
         {tab === "usage" ? (
@@ -162,6 +182,7 @@ export default async function BillingPage({
             overview={overview}
             packsOpen={packsOpen}
             packsNote={packsNote}
+            paymentsOpen={deps !== null}
           />
         ) : null}
         {tab === "tasks" ? <TasksPanel tasks={overview.tasks} /> : null}

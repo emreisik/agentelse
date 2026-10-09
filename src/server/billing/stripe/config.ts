@@ -2,6 +2,7 @@ import "server-only";
 
 import { getEnv } from "@/lib/env";
 
+import { getBillingConfig } from "../config";
 import { stripeModeOfKey, type StripeMode } from "./key-mode";
 
 export { stripeModeOfKey, type StripeMode };
@@ -18,6 +19,10 @@ export type StripeConfig = {
 };
 
 const warned = new Set<string>();
+// Stripe imzalama sırrı: whsec_ + en az 24 karakter. "whsec_" ya da "whsec_…" gibi yer
+// tutucular kabul edilirse HMAC anahtarı herkesçe bilinir olurdu.
+const WEBHOOK_SECRET_SHAPE = /^whsec_[A-Za-z0-9+/=_-]{24,}$/;
+
 function warnOnce(code: string, message: string): void {
   if (warned.has(code)) return;
   warned.add(code);
@@ -33,7 +38,17 @@ export function getStripeConfig(): StripeConfig | null {
   const env = getEnv();
   const secretKey = (env.STRIPE_SECRET_KEY ?? "").trim();
   const webhookSecret = (env.STRIPE_WEBHOOK_SECRET ?? "").trim();
-  if (!secretKey || !webhookSecret) return null;
+  if (!secretKey || !webhookSecret) {
+    // En olası sahip hatası: biri girilmiş, öteki unutulmuş ya da yanlış adla yazılmış.
+    if (secretKey || webhookSecret) {
+      const missing = secretKey ? "STRIPE_WEBHOOK_SECRET" : "STRIPE_SECRET_KEY";
+      warnOnce(
+        `half-configured:${missing}`,
+        `${missing} is not set; payments stay closed (set both)`,
+      );
+    }
+    return null;
+  }
 
   const mode = stripeModeOfKey(secretKey);
   if (!mode) {
@@ -52,19 +67,39 @@ export function getStripeConfig(): StripeConfig | null {
     );
     return null;
   }
-  if (!webhookSecret.startsWith("whsec_")) {
+  if (!WEBHOOK_SECRET_SHAPE.test(webhookSecret)) {
     warnOnce(
       "webhook-secret-format",
-      "STRIPE_WEBHOOK_SECRET must start with whsec_; payments stay closed",
+      "STRIPE_WEBHOOK_SECRET must be the full signing secret (whsec_ + at least 24 characters); payments stay closed",
     );
     return null;
+  }
+  // Sınırlar UYGULANIRKEN üretimde TEST anahtarı kapalıdır: herkes test kartıyla
+  // (4242 ...) ücretsiz plan alıp tam hak kazanırdı.
+  if (
+    mode === "test" &&
+    process.env.NODE_ENV === "production" &&
+    getBillingConfig().mode === "enforce"
+  ) {
+    warnOnce(
+      "test-key-with-enforce",
+      "BILLING_MODE=enforce with a Stripe TEST key in production would sell plans for test cards; payments stay closed (use the live key)",
+    );
+    return null;
+  }
+
+  if (mode === "test" && process.env.NODE_ENV === "production") {
+    warnOnce(
+      "test-key-in-production",
+      "a Stripe TEST key is running in production: checkouts charge nothing; switch to the live key before taking real customers",
+    );
   }
 
   const previous = (env.STRIPE_WEBHOOK_SECRET_PREVIOUS ?? "").trim();
   return {
     secretKey,
     webhookSecrets:
-      previous && previous.startsWith("whsec_")
+      previous && WEBHOOK_SECRET_SHAPE.test(previous)
         ? [webhookSecret, previous]
         : [webhookSecret],
     mode,

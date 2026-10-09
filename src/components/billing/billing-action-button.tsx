@@ -62,6 +62,9 @@ export function BillingActionButton<Input = undefined>({
   const [pending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Stripe'a gidilirken tarayıcı sayfayı bırakana dek düğme kapalı kalır (geçiş bitse de
+  // ikinci tıklama ikinci bir Checkout oturumu açmasın).
+  const [leaving, setLeaving] = useState(false);
 
   function execute() {
     setError(null);
@@ -74,7 +77,7 @@ export function BillingActionButton<Input = undefined>({
           return;
         }
         if (response.url) {
-          // Leaving for Stripe: keep the button busy until the page unloads.
+          setLeaving(true);
           window.location.assign(response.url);
           return;
         }
@@ -87,8 +90,13 @@ export function BillingActionButton<Input = undefined>({
           router.refresh();
         }
       } catch {
-        setError("That did not work. Nothing was changed. Try again.");
+        // The server may have changed something before it failed (a charge accepted,
+        // a reply lost on a bad connection): never claim that nothing happened.
+        setError(
+          "We could not confirm this. Check My subscription before trying again.",
+        );
         setOpen(false);
+        router.refresh();
       }
     });
   }
@@ -99,16 +107,16 @@ export function BillingActionButton<Input = undefined>({
         type="button"
         size="lg"
         variant={variant}
-        disabled={disabled || pending}
+        disabled={disabled || pending || leaving}
         className="w-full"
         onClick={() => (confirm ? setOpen(true) : execute())}
       >
-        {pending && !open ? busyLabel : children}
+        {(pending || leaving) && !open ? busyLabel : children}
       </Button>
       {error ? (
         <p
           role="alert"
-          className="mt-1.5 text-xs"
+          className="mt-1.5 min-w-[14rem] text-xs"
           style={{ color: "var(--destructive)" }}
         >
           {error}
@@ -130,8 +138,12 @@ export function BillingActionButton<Input = undefined>({
               >
                 Not now
               </Button>
-              <Button type="button" disabled={pending} onClick={execute}>
-                {pending ? busyLabel : confirm.confirmLabel}
+              <Button
+                type="button"
+                disabled={pending || leaving}
+                onClick={execute}
+              >
+                {pending || leaving ? busyLabel : confirm.confirmLabel}
               </Button>
             </DialogFooter>
           </DialogContent>

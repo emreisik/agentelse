@@ -5,7 +5,8 @@ import type { PlanKey } from "./plans";
 //  browse     payments are not open: look and compare only.
 //  subscribe  no paying subscription: a button opens Stripe Checkout.
 //  change     a paying subscription: switch plans (the interval stays).
-//  blocked    the buttons are off, with the reason shown.
+//  blocked    the buttons are off, with the reason shown (also a workspace that
+//             has full access, where there is nothing to buy).
 export type PlanPickerMode =
   | { kind: "browse" }
   | { kind: "subscribe"; firstMonthAvailable: boolean }
@@ -18,7 +19,7 @@ export type PlanPickerMode =
     }
   | {
       kind: "blocked";
-      reason: "not-manager" | "past-due" | "ending";
+      reason: "not-manager" | "past-due" | "ending" | "full-access";
       interval?: Interval;
     };
 
@@ -31,6 +32,8 @@ export type PickerSubscription = {
   pendingPlanKey: PlanKey | null;
   stripeLinked: boolean;
   introOffer: boolean;
+  // Permanent full access (internal / demo accounts): nothing to buy.
+  exempt: boolean;
 };
 
 const intervalOf = (value: "MONTH" | "YEAR" | null): Interval | undefined =>
@@ -49,6 +52,10 @@ export function pickerModeFor(input: {
       reason: "not-manager",
       interval: sub?.stripeLinked ? intervalOf(sub.interval) : undefined,
     };
+  }
+
+  if (sub?.exempt) {
+    return { kind: "blocked", reason: "full-access" };
   }
 
   const paying =

@@ -199,8 +199,44 @@ describeIntegration("getBillingOverview", () => {
       // [row, stripeLinked, paidAccess]
       [{ status: "ACTIVE", stripeSubscriptionId: null }, false, false],
       [{ status: "TRIALING", stripeSubscriptionId: null }, false, false],
-      [{ status: "ACTIVE", stripeSubscriptionId: "sub_a" }, true, true],
-      [{ status: "PAST_DUE", stripeSubscriptionId: "sub_p" }, true, true],
+      [
+        {
+          status: "ACTIVE",
+          stripeSubscriptionId: "sub_a",
+          paidThrough: future,
+        },
+        true,
+        true,
+      ],
+      // Paid time (plus the renewal lag) ran out: the plan is not running any more.
+      [
+        {
+          status: "ACTIVE",
+          stripeSubscriptionId: "sub_a2",
+          paidThrough: past,
+        },
+        true,
+        false,
+      ],
+      // Payment trouble: the plan still works only inside the grace period.
+      [
+        {
+          status: "PAST_DUE",
+          stripeSubscriptionId: "sub_p",
+          graceUntil: future,
+        },
+        true,
+        true,
+      ],
+      [
+        {
+          status: "PAST_DUE",
+          stripeSubscriptionId: "sub_p2",
+          graceUntil: past,
+        },
+        true,
+        false,
+      ],
       [
         {
           status: "CANCELED",
@@ -242,6 +278,77 @@ describeIntegration("getBillingOverview", () => {
         introOffer: true,
       });
     }
+  });
+
+  it("a link from the other payment mode does not count as this mode's subscription", async () => {
+    const now = new Date();
+    const fixture = await workspace();
+    await prisma.subscription.create({
+      data: {
+        workspaceId: fixture.workspaceId,
+        planKey: "growth",
+        interval: "MONTH",
+        status: "ACTIVE",
+        paidThrough: new Date(now.getTime() + 10 * DAY_MS),
+        stripeSubscriptionId: `sub_t_${randomUUID().slice(0, 8)}`,
+        stripeLivemode: false,
+      },
+    });
+
+    const asLive = await getBillingOverview(fixture.workspaceId, now, "live");
+    const asTest = await getBillingOverview(fixture.workspaceId, now, "test");
+    const unknown = await getBillingOverview(fixture.workspaceId, now);
+
+    expect(asLive.subscription).toMatchObject({
+      stripeLinked: false,
+      paidAccess: false,
+    });
+    expect(asTest.subscription).toMatchObject({
+      stripeLinked: true,
+      paidAccess: true,
+    });
+    // Payments closed (no mode): any link counts, as before.
+    expect(unknown.subscription?.stripeLinked).toBe(true);
+  });
+
+  it("an old pack already used up does not inflate this window's bar", async () => {
+    const fixture = await workspace();
+    const now = new Date();
+    await prisma.subscription.create({
+      data: {
+        workspaceId: fixture.workspaceId,
+        planKey: "growth",
+        interval: "MONTH",
+        status: "ACTIVE",
+        quotaAnchor: new Date(now.getTime() - 5 * DAY_MS),
+        paidThrough: new Date(now.getTime() + 25 * DAY_MS),
+      },
+    });
+    // Lifetime counters: 40 images bought over the months, all of them already used.
+    await prisma.usageBalance.create({
+      data: {
+        id: randomUUID(),
+        workspaceId: fixture.workspaceId,
+        unit: "IMAGE",
+        periodStart: new Date(now.getTime() - 5 * DAY_MS),
+        periodEnd: new Date(now.getTime() + 25 * DAY_MS),
+        periodGranted: B(50),
+        periodUsed: B(10),
+        extraGranted: B(40),
+        extraUsed: B(40),
+        updatedAt: now,
+      },
+    });
+
+    const { allowances } = await getBillingOverview(fixture.workspaceId, now);
+
+    // 10 of this window's 50 are spent: the bar says 20 %, not (10+40)/(50+40).
+    expect(allowances[0]).toMatchObject({
+      granted: 50,
+      used: 10,
+      available: 40,
+      extraAvailable: 0,
+    });
   });
 
   it("an unknown plan key or a scheduled change reads safely", async () => {

@@ -3,7 +3,10 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { pastDueGraceEnd } from "@/lib/billing/entitlements-core";
+import {
+  paidPlanRunning,
+  pastDueGraceEnd,
+} from "@/lib/billing/entitlements-core";
 import {
   isPlanKey,
   quotaFor,
@@ -31,7 +34,13 @@ import type {
 // sırası ya da tekrar teslim sonucu değiştirmez (monoton ve idempotent).
 //
 // Sözleşme (docs/billing-quota.md):
-//  - `paidThrough` YALNIZ ödenmiş fatura (paid) ile ilerler; geri gitmez.
+//  - `paidThrough` YALNIZ ödenmiş fatura (paid) ile ilerler; geri gitmez (tek istisna:
+//    iade/itiraz erişimi hemen bitirir, bkz. refunds.ts).
+//  - Parası iade/itiraz edilen fatura (BillingReversal) ASLA "ödenmiş" sayılmaz: aynı
+//    faturanın yeniden işlenmesi (Checkout dönüş adresi, yeniden gönderilen olay) erişimi
+//    geri getirmez.
+//  - Durum, iptal bayrağı ve plan GÖRÜNTÜYE dayanır: kilitten önce okunmuş eski bir
+//    görüntü, daha yeni uygulanmış olanı ezmez (stripeSyncedAt). Ödeme ve iptal monotondur.
 //  - Satır YALNIZ ödeme kanıtıyla yazılır/bağlanır (satır varlığı LEGACY kararını
 //    değiştirir): ödenmemiş abonelik olayı satır yaratmaz.
 //  - Yükseltme anında geçerlidir ve ORANTILI fark hakkı verir; düşürme/aralık
@@ -50,24 +59,41 @@ export const PENDING_SLACK_MS = 6 * 60 * 60 * 1000;
 
 type Tx = Prisma.TransactionClient;
 
-type LinkDecision = "link" | "unknown-plan" | "duplicate-subscription";
+type LinkDecision =
+  | "link"
+  | "unknown-plan"
+  | "duplicate-subscription"
+  | "live-subscription-exists";
 
+type RowForLink = {
+  planKey: string | null;
+  status: string;
+  paidThrough: Date | null;
+  graceUntil: Date | null;
+  cancelAtPeriodEnd: boolean;
+  stripeSubscriptionId: string | null;
+  stripeLivemode: boolean | null;
+};
+
+// Yalnız hâlâ erişim veren bir abonelik ikinci bir aboneliğin bağlanmasını engeller.
+// Ödenmiş süresi bitmiş ("zombi") ACTIVE satır, iptal olayı kaçmış olsa da yeni ödemeyi
+// engellemez; canlı ödeme yapan bir satırı TEST aboneliği ezemez (tersi serbest: canlı
+// ödeme, test bağını değiştirir).
 function decideLink(
-  row: {
-    status: string;
-    stripeSubscriptionId: string | null;
-    stripeLivemode: boolean | null;
-  } | null,
+  row: RowForLink | null,
   sub: StripeSubscriptionFacts,
+  now: Date,
 ): LinkDecision {
   if (!sub.planKey || !sub.interval) return "unknown-plan";
   if (
     row?.stripeSubscriptionId &&
     row.stripeSubscriptionId !== sub.id &&
-    (row.stripeLivemode ?? sub.livemode) === sub.livemode &&
-    (row.status === "ACTIVE" || row.status === "PAST_DUE")
+    (row.status === "ACTIVE" || row.status === "PAST_DUE") &&
+    paidPlanRunning(row, now)
   ) {
-    return "duplicate-subscription";
+    const sameMode = (row.stripeLivemode ?? sub.livemode) === sub.livemode;
+    if (sameMode) return "duplicate-subscription";
+    if (row.stripeLivemode === true) return "live-subscription-exists";
   }
   return "link";
 }
@@ -95,7 +121,6 @@ export async function syncSubscriptionState(input: {
 }): Promise<SubscriptionSyncResult> {
   const now = input.now ?? new Date();
   const { workspaceId, sub } = input;
-  const paid = input.paid ?? null;
 
   const result = await prisma.$transaction(
     async (tx): Promise<SubscriptionSyncResult> => {
@@ -103,17 +128,31 @@ export async function syncSubscriptionState(input: {
       const row = await tx.subscription.findUnique({ where: { workspaceId } });
       const notes: string[] = [];
 
+      // Parası iade/itiraz edilen fatura ödenmiş SAYILMAZ (Stripe onu "paid" bırakır).
+      const reversed = await reversedInvoiceIds(tx, [
+        input.paid?.id,
+        sub.latestInvoice?.id,
+      ]);
+      const paidReversed = Boolean(input.paid && reversed.has(input.paid.id));
+      const paid = paidReversed ? null : (input.paid ?? null);
+      const latest =
+        sub.latestInvoice && !reversed.has(sub.latestInvoice.id)
+          ? sub.latestInvoice
+          : null;
+
       // -- bağlanmamış abonelik --------------------------------------------
       if (row?.stripeSubscriptionId !== sub.id) {
         if (!paid) {
           return {
             applied: false,
-            note: row?.stripeSubscriptionId
-              ? "stale-subscription"
-              : "awaiting-payment",
+            note: paidReversed
+              ? "invoice-reversed"
+              : row?.stripeSubscriptionId
+                ? "stale-subscription"
+                : "awaiting-payment",
           };
         }
-        const decision = decideLink(row, sub);
+        const decision = decideLink(row, sub, now);
         if (decision !== "link") return { applied: false, note: decision };
 
         const periodEnd = paid.periodEnd ?? sub.currentPeriodEnd;
@@ -124,12 +163,22 @@ export async function syncSubscriptionState(input: {
         const intro =
           isFirstInvoice && !introUsedBefore && sub.metadata.intro === "1";
         const canceled = sub.status === "canceled";
+        // İptal edilmiş ama ödenmiş süresi SÜREN satır (ör. yıllık plan, panelden anında
+        // iptal): yeni abonelik bu süreyi kısaltmaz.
+        const keptPaidThrough =
+          row?.status === "CANCELED" &&
+          row.paidThrough &&
+          row.paidThrough.getTime() >
+            Math.max(now.getTime(), periodEnd.getTime())
+            ? row.paidThrough
+            : null;
+        if (keptPaidThrough) notes.push("kept-paid-time");
         const data = {
           planKey: sub.planKey!,
           interval: sub.interval!,
           status: canceled ? "CANCELED" : "ACTIVE",
           quotaAnchor: sub.startDate ?? paid.periodStart ?? now,
-          paidThrough: periodEnd,
+          paidThrough: keptPaidThrough ?? periodEnd,
           graceUntil: null,
           endedAt: canceled ? (sub.endedAt ?? now) : null,
           endedReason: canceled ? endedReasonFor(sub.cancellationReason) : null,
@@ -141,6 +190,7 @@ export async function syncSubscriptionState(input: {
           pendingEffectiveAt: null,
           stripeSubscriptionId: sub.id,
           stripeLivemode: sub.livemode,
+          stripeSyncedAt: sub.fetchedAt,
         };
         await tx.subscription.upsert({
           where: { workspaceId },
@@ -152,9 +202,18 @@ export async function syncSubscriptionState(input: {
       }
 
       // -- bağlı abonelik -----------------------------------------------------
+      // Bu görüntü, satıra zaten uygulanmış olandan ESKİ mi (kilitten önce okunmuştu)?
+      // Eskiyse durum/iptal bayrağı/plan değişmez; ödeme ve iptal yine uygulanır.
+      const stale =
+        row.stripeSyncedAt !== null &&
+        sub.fetchedAt.getTime() < row.stripeSyncedAt.getTime();
+      if (stale) notes.push("stale-snapshot");
+      if (paidReversed) notes.push("invoice-reversed");
       const data: Prisma.SubscriptionUpdateInput = {};
       let reopened = false;
       let status = row.status;
+      // Stripe da aboneliği iyi durumda görüyor (ödeme gecikmesi/iptal yok).
+      const goodStanding = sub.status === "active" || sub.status === "trialing";
 
       // 1. Para: ödenmiş süre yalnız ilerler.
       if (paid) {
@@ -163,7 +222,7 @@ export async function syncSubscriptionState(input: {
           data.paidThrough = periodEnd;
           reopened = true;
         }
-        if (sub.status !== "canceled") {
+        if (goodStanding) {
           if (row.status !== "ACTIVE") {
             // Ödeme düzeldi ya da iade sonrası yeniden ödeme geldi.
             data.status = "ACTIVE";
@@ -180,6 +239,18 @@ export async function syncSubscriptionState(input: {
         ) {
           data.periodIndex = 2;
         }
+      } else if (
+        !stale &&
+        goodStanding &&
+        row.status === "PAST_DUE" &&
+        latest?.status === "paid"
+      ) {
+        // Ödeme olayı kaçsa da Stripe aboneliği "active" + son fatura ödenmiş görüyor:
+        // gecikme bitti (paidThrough ödeme olayıyla ilerler).
+        data.status = "ACTIVE";
+        data.graceUntil = null;
+        status = "ACTIVE";
+        reopened = true;
       }
 
       // 2. Durum (para olmayan geçişler): iptal ve ödeme gecikmesi.
@@ -201,6 +272,7 @@ export async function syncSubscriptionState(input: {
           data.pendingEffectiveAt = null;
         }
       } else if (
+        !stale &&
         (sub.status === "past_due" || sub.status === "unpaid") &&
         status === "ACTIVE" &&
         !paid
@@ -213,6 +285,7 @@ export async function syncSubscriptionState(input: {
 
       // 3. "Dönem sonunda iptal" işareti.
       if (
+        !stale &&
         (status === "ACTIVE" || status === "PAST_DUE") &&
         row.cancelAtPeriodEnd !== sub.cancelAtPeriodEnd
       ) {
@@ -221,6 +294,7 @@ export async function syncSubscriptionState(input: {
 
       // 4. Plan / aralık.
       if (
+        !stale &&
         (status === "ACTIVE" || status === "PAST_DUE") &&
         sub.planKey &&
         sub.interval
@@ -236,14 +310,30 @@ export async function syncSubscriptionState(input: {
             (data.paidThrough as Date | undefined) ?? row.paidThrough,
           introWindow: row.introOffer && row.periodIndex === 1,
           cycleInvoicePaid: paid?.billingReason === "subscription_cycle",
+          cycleAdvanced: data.paidThrough !== undefined,
+          // Yükseltmenin parası: uygulamanın yaptığı (always_invoice) orantı faturası.
+          updateInvoice:
+            latest?.status === "paid" &&
+            latest.billingReason === "subscription_update"
+              ? latest
+              : null,
         });
         notes.push(...planChange.notes);
         if (planChange.reopened) reopened = true;
       }
 
       const changed = Object.keys(data).length > 0;
-      if (changed) {
-        await tx.subscription.update({ where: { workspaceId }, data });
+      const syncedAt =
+        !stale &&
+        (!row.stripeSyncedAt ||
+          sub.fetchedAt.getTime() > row.stripeSyncedAt.getTime())
+          ? sub.fetchedAt
+          : null;
+      if (changed || syncedAt) {
+        await tx.subscription.update({
+          where: { workspaceId },
+          data: { ...data, ...(syncedAt ? { stripeSyncedAt: syncedAt } : {}) },
+        });
       }
       return { applied: true, changed, reopened, notes };
     },
@@ -254,6 +344,20 @@ export async function syncSubscriptionState(input: {
     await afterEntitlementGrowth(workspaceId, now);
   }
   return result;
+}
+
+// Parası iade/itiraz edilmiş fatura kimlikleri (kilit altında okunur).
+async function reversedInvoiceIds(
+  tx: Tx,
+  ids: Array<string | null | undefined>,
+): Promise<Set<string>> {
+  const wanted = [...new Set(ids.filter((id): id is string => Boolean(id)))];
+  if (wanted.length === 0) return new Set();
+  const rows = await tx.billingReversal.findMany({
+    where: { stripeInvoiceId: { in: wanted } },
+    select: { stripeInvoiceId: true },
+  });
+  return new Set(rows.map((row) => row.stripeInvoiceId));
 }
 
 // Hakkı artmış olabilecek bir değişiklikten sonra (ödeme, yükseltme, bağlama): penceresi
@@ -284,6 +388,10 @@ async function reconcilePlan(input: {
   paidThrough: Date | null;
   introWindow: boolean;
   cycleInvoicePaid: boolean;
+  // Bu eşitlemede ödenmiş süre ilerledi mi (yeni dönem ödendi).
+  cycleAdvanced: boolean;
+  // Aboneliğin SON faturası ödenmiş bir plan değişikliği (orantı) faturasıysa o.
+  updateInvoice: { id: string } | null;
 }): Promise<{ reopened: boolean; notes: string[] }> {
   const { tx, workspaceId, row, sub, data, now } = input;
   const notes: string[] = [];
@@ -336,27 +444,38 @@ async function reconcilePlan(input: {
       { planKey: stripePlan, interval: stripeInterval },
     )
   ) {
-    // Yükseltme parası ödenmeden hak vermeyiz (fatura ödendi görünene dek bekle; ödeme
-    // olayı aynı eşitlemeyi yeniden çağırır).
-    if (sub.latestInvoice?.status !== "paid") {
-      notes.push("upgrade-awaiting-payment");
-      return { reopened: false, notes };
+    // Yükseltme parası ödenmeden hak vermeyiz. Ödenmiş sayılan yalnız plan değişikliği
+    // (orantı) faturasıdır; aboneliğin eski bir ödenmiş faturası (panelden "sonraki faturada
+    // orantıla" ile yapılan değişiklik) hak doğurmaz. Ödeme olayı aynı eşitlemeyi çağırır.
+    if (input.updateInvoice) {
+      await grantUpgradeDelta({
+        tx,
+        workspaceId,
+        row,
+        from: localPlan,
+        to: stripePlan,
+        invoiceId: input.updateInvoice.id,
+        introWindow: input.introWindow,
+        now,
+      });
+      data.planKey = stripePlan;
+      data.interval = stripeInterval;
+      clearPending();
+      notes.push("upgraded");
+      return { reopened: true, notes };
     }
-    await grantUpgradeDelta({
-      tx,
-      workspaceId,
-      row,
-      from: localPlan,
-      to: stripePlan,
-      invoiceId: sub.latestInvoice.id,
-      introWindow: input.introWindow,
-      now,
-    });
-    data.planKey = stripePlan;
-    data.interval = stripeInterval;
-    clearPending();
-    notes.push("upgraded");
-    return { reopened: true, notes };
+    // Dışarıdan yapılmış, orantısı sonraki faturaya bırakılmış yükseltme: yeni plan,
+    // yenileme faturası ödenince başlar. Yeni pencere yeni planın kotasıyla açılır; ek
+    // fark hakkı verilmez.
+    if (input.cycleInvoicePaid && input.cycleAdvanced) {
+      data.planKey = stripePlan;
+      data.interval = stripeInterval;
+      clearPending();
+      notes.push("upgraded-at-renewal");
+      return { reopened: true, notes };
+    }
+    notes.push("upgrade-awaiting-payment");
+    return { reopened: false, notes };
   }
 
   // Düşürme (ya da daha ucuz aralık): ödenmiş sürenin sonunda devreye girer.

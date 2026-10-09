@@ -1,8 +1,11 @@
 import Link from "next/link";
 
-import { formatDay, formatUsd, trialSummary } from "@/lib/billing/catalog";
+import { formatDay, formatUsd } from "@/lib/billing/catalog";
 import { PLANS, yearlyCents } from "@/lib/billing/plans";
-import type { BillingOverview } from "@/server/billing/overview";
+import type {
+  BillingOverview,
+  SubscriptionOverview,
+} from "@/server/billing/overview";
 import {
   cancelSubscriptionAction,
   openPortalAction,
@@ -19,6 +22,7 @@ export type InvoiceRow = {
   number: string | null;
   createdAt: string | null;
   amountPaid: number;
+  amountDue: number;
   currency: string | null;
   status: string | null;
   hostedInvoiceUrl: string | null;
@@ -35,6 +39,59 @@ const STATUS_LABEL: Record<string, string> = {
   PAST_DUE: "Payment overdue",
   CANCELED: "Canceled",
 };
+
+const ENDED_REASON_LABEL: Record<string, string> = {
+  REFUNDED: "Refunded",
+  CHARGEBACK: "Payment disputed",
+  PAYMENT_FAILED: "Payment failed",
+};
+
+const INVOICE_STATUS_LABEL: Record<string, string> = {
+  paid: "Paid",
+  open: "Unpaid",
+  uncollectible: "Uncollectible",
+};
+
+// What cancelling means, said honestly for the billing mode: only while limits are
+// enforced does the workspace become read-only afterwards.
+export function cancelDescription(
+  paidThrough: string | null,
+  mode: BillingOverview["mode"],
+): string {
+  const until = paidThrough
+    ? formatDay(paidThrough)
+    : "the end of the paid period";
+  const after =
+    mode === "enforce"
+      ? "after that the workspace becomes read-only"
+      : "after that your plan ends";
+  return `Nothing more is charged. You keep your plan and your remaining usage until ${until}; ${after}. You can resume before then.`;
+}
+
+// The date row says what the date means for THIS state (a canceled or refunded
+// subscription does not "renew").
+function dateRow(
+  subscription: SubscriptionOverview,
+): { label: string; value: string } | null {
+  if (!subscription.paidThrough) return null;
+  const value = formatDay(subscription.paidThrough);
+  switch (subscription.status) {
+    case "ACTIVE":
+      return {
+        label: subscription.cancelAtPeriodEnd ? "Ends on" : "Renews on",
+        value,
+      };
+    case "PAST_DUE":
+      return { label: "Paid through", value };
+    case "CANCELED":
+      return {
+        label: subscription.paidAccess ? "Access until" : "Ended on",
+        value,
+      };
+    default:
+      return { label: "Paid through", value };
+  }
+}
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -53,12 +110,15 @@ export function SubscriptionPanel({
   canManage,
   paymentsOpen = false,
   invoices = [],
+  invoicesFailed = false,
 }: {
   overview: BillingOverview;
   canManage: boolean;
   // Payments are connected: cancel / resume / payment method work.
   paymentsOpen?: boolean;
   invoices?: InvoiceRow[];
+  // The invoice list could not be loaded (not the same as "no invoices yet").
+  invoicesFailed?: boolean;
 }) {
   const subscription = overview.subscription;
   const paying =
@@ -68,6 +128,10 @@ export function SubscriptionPanel({
     (subscription.status === "ACTIVE" || subscription.status === "PAST_DUE");
   const plan = subscription?.planKey ? PLANS[subscription.planKey] : null;
   const yearly = subscription?.interval === "YEAR";
+  const dateInfo = subscription ? dateRow(subscription) : null;
+  const endedReason = subscription?.endedReason
+    ? ENDED_REASON_LABEL[subscription.endedReason]
+    : undefined;
 
   return (
     <div className="flex flex-col gap-8">
@@ -111,13 +175,11 @@ export function SubscriptionPanel({
                       subscription.status)}
                 </Badge>
               </div>
-              {subscription.paidThrough ? (
-                <Row
-                  label={
-                    subscription.cancelAtPeriodEnd ? "Ends on" : "Renews on"
-                  }
-                  value={formatDay(subscription.paidThrough)}
-                />
+              {dateInfo ? (
+                <Row label={dateInfo.label} value={dateInfo.value} />
+              ) : null}
+              {subscription.status === "CANCELED" && endedReason ? (
+                <Row label="Reason" value={endedReason} />
               ) : null}
               {subscription.trialEndsAt ? (
                 <Row
@@ -149,9 +211,9 @@ export function SubscriptionPanel({
                 No plan yet
               </div>
               <p className="mt-1 text-[13px]" style={muted}>
-                Plans are not on sale yet, so nothing is charged and nothing is
-                limited. When they open, new accounts start with a{" "}
-                {trialSummary()}.
+                {paymentsOpen
+                  ? "Choose a plan in Plans to get a monthly allowance."
+                  : "Plans are not on sale yet, so nothing is charged and nothing is limited."}
               </p>
             </div>
           )}
@@ -168,6 +230,7 @@ export function SubscriptionPanel({
               variant="outline"
               busyLabel="Resuming…"
               action={resumeSubscriptionAction}
+              doneHref="/billing?tab=subscription&notice=resumed"
             >
               Resume subscription
             </BillingActionButton>
@@ -177,7 +240,10 @@ export function SubscriptionPanel({
               busyLabel="Canceling…"
               confirm={{
                 title: "Cancel your subscription?",
-                description: `Nothing more is charged. You keep your plan and your remaining usage until ${subscription?.paidThrough ? formatDay(subscription.paidThrough) : "the end of the paid period"}; after that the workspace becomes read-only. You can resume before then.`,
+                description: cancelDescription(
+                  subscription?.paidThrough ?? null,
+                  overview.mode,
+                ),
                 confirmLabel: "Cancel at period end",
               }}
               action={cancelSubscriptionAction}
@@ -204,6 +270,12 @@ export function SubscriptionPanel({
             </Button>
           )}
         </div>
+        {!paymentsOpen && subscription?.paidAccess ? (
+          <p className="text-xs" style={faint}>
+            Plan changes, cancellation and invoices are temporarily unavailable.
+            Your subscription is not affected.
+          </p>
+        ) : null}
         {!canManage ? (
           <p className="text-xs" style={faint}>
             Only a workspace owner or admin can change the plan.
@@ -264,10 +336,17 @@ export function SubscriptionPanel({
                       className="px-4 py-2 text-right tabular-nums"
                       style={{ color: "var(--ws-text-body)" }}
                     >
-                      {formatUsd(invoice.amountPaid)}
+                      {formatUsd(
+                        invoice.status === "paid"
+                          ? invoice.amountPaid
+                          : invoice.amountDue,
+                      )}
                     </td>
-                    <td className="px-4 py-2 capitalize" style={muted}>
-                      {invoice.status ?? "—"}
+                    <td className="px-4 py-2" style={muted}>
+                      {invoice.status
+                        ? (INVOICE_STATUS_LABEL[invoice.status] ??
+                          invoice.status)
+                        : "—"}
                     </td>
                     <td className="px-4 py-2 text-right">
                       {invoice.hostedInvoiceUrl ? (
@@ -303,8 +382,9 @@ export function SubscriptionPanel({
             className="rounded-[13px] border px-4 py-6 text-center text-[13px]"
             style={{ borderColor: "var(--ws-border)", ...muted }}
           >
-            Nothing to show yet. Invoices and payments appear here once you
-            subscribe.
+            {invoicesFailed
+              ? "We could not load your invoices just now. Reload this page in a minute."
+              : "Nothing to show yet. Invoices and payments appear here once you subscribe."}
           </div>
         )}
       </section>

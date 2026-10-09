@@ -277,7 +277,7 @@ describeIntegration(
       it("refuses a second subscription while one is paying, allows one after it ended", async () => {
         const fake = createFakeStripe();
         const workspaceId = newWs();
-        await subscribed(fake, workspaceId);
+        const { sub } = await subscribed(fake, workspaceId);
 
         expect(
           await startSubscriptionCheckout(
@@ -291,6 +291,11 @@ describeIntegration(
           ),
         ).toMatchObject({ ok: false, error: "ALREADY_SUBSCRIBED" });
 
+        // It ended: in Stripe (the source of truth the checkout asks) and in the row.
+        fake.subs.set(sub.id, {
+          ...fake.subs.get(sub.id)!,
+          status: "canceled",
+        });
         await prisma.subscription.update({
           where: { workspaceId },
           data: { status: "CANCELED" },
@@ -812,7 +817,7 @@ describeIntegration(
         const workspaceId = newWs();
         expect(
           await listWorkspaceInvoices({ workspaceId }, depsFor(fake)),
-        ).toEqual([]);
+        ).toEqual({ rows: [], failed: false });
 
         await subscribed(fake, workspaceId);
         fake.invoiceRows.push({
@@ -820,13 +825,14 @@ describeIntegration(
           number: "N-1",
           createdAt: T0,
           amountPaid: 100,
+          amountDue: 0,
           currency: "usd",
           status: "paid",
           hostedInvoiceUrl: null,
           invoicePdf: null,
         });
         expect(
-          await listWorkspaceInvoices({ workspaceId }, depsFor(fake)),
+          (await listWorkspaceInvoices({ workspaceId }, depsFor(fake))).rows,
         ).toHaveLength(1);
       });
     });
@@ -947,7 +953,7 @@ describeIntegration(
           AT,
         );
 
-        expect(back).toEqual({ ok: true, kind: "unchanged" });
+        expect(back).toEqual({ ok: true, kind: "switch-cancelled" });
         const calls = fake
           .callsNamed("changeSubscriptionPlan")
           .map((call) => call.args);

@@ -131,8 +131,11 @@ export function UsagePanel({
   overview,
   packsOpen = false,
   packsNote,
+  paymentsOpen = false,
 }: {
   overview: BillingOverview;
+  // Payments are connected (plans can be bought): changes what the empty state says.
+  paymentsOpen?: boolean;
   // Buying extra usage works (payments are connected, the viewer can manage billing
   // and the workspace has a plan).
   packsOpen?: boolean;
@@ -162,11 +165,18 @@ export function UsagePanel({
           }}
         >
           <span className="font-medium" style={{ color: "var(--ws-text)" }}>
-            Usage is measured, not limited yet.
+            {overview.subscription?.paidAccess
+              ? "Your plan is active."
+              : paymentsOpen
+                ? "No plan yet."
+                : "Usage is measured, not limited yet."}
           </span>{" "}
           <span style={muted}>
-            Allowances start when plans go on sale. Until then you can see
-            exactly what your brands use below.
+            {overview.subscription?.paidAccess
+              ? "Allowances show here once usage limits are switched on. Until then you can see exactly what your brands use below."
+              : paymentsOpen
+                ? "Choose a plan in Plans to get a monthly allowance. Until then you can see exactly what your brands use below."
+                : "Allowances start when plans go on sale. Until then you can see exactly what your brands use below."}
           </span>
         </div>
       )}

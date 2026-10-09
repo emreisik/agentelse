@@ -13,6 +13,7 @@ import {
   parsePromotionCodeList,
   parseRedirect,
   parseSubscription,
+  parseSubscriptionList,
 } from "./facts";
 
 // Fixtures follow the pinned API version (2024-06-20).
@@ -364,6 +365,55 @@ describe("parseEventEnvelope", () => {
   });
 });
 
+describe("parseSubscriptionList", () => {
+  it("parses every item and stamps them with the same read time; rejects a malformed list", () => {
+    const started = new Date("2026-10-09T12:00:00.000Z");
+    const item = (id: string) => ({
+      id,
+      customer: "cus_1",
+      status: "active",
+      livemode: false,
+      metadata: {},
+      items: { data: [] },
+    });
+    const list = parseSubscriptionList(
+      { data: [item("sub_1"), item("sub_2")] },
+      started,
+    );
+    expect(list.map((sub) => sub.id)).toEqual(["sub_1", "sub_2"]);
+    expect(
+      list.every((sub) => sub.fetchedAt.getTime() === started.getTime()),
+    ).toBe(true);
+    expect(parseSubscriptionList({ data: [] })).toEqual([]);
+    expect(() => parseSubscriptionList({ nope: true })).toThrow(
+      StripeShapeError,
+    );
+    expect(() => parseSubscriptionList({ data: [{ id: "sub_1" }] })).toThrow(
+      StripeShapeError,
+    );
+  });
+});
+
+describe("parseSubscription fetchedAt", () => {
+  const raw = {
+    id: "sub_1",
+    customer: "cus_1",
+    status: "active",
+    livemode: false,
+    metadata: {},
+    items: { data: [] },
+  };
+
+  it("takes the time the caller started reading, and defaults to now", () => {
+    const started = new Date("2026-10-09T12:00:00.000Z");
+    expect(parseSubscription(raw, started).fetchedAt).toEqual(started);
+    const before = Date.now();
+    const defaulted = parseSubscription(raw).fetchedAt.getTime();
+    expect(defaulted).toBeGreaterThanOrEqual(before);
+    expect(defaulted).toBeLessThanOrEqual(Date.now());
+  });
+});
+
 describe("parseInvoiceList / parseRedirect", () => {
   it("reads the fields the invoices table needs", () => {
     const rows = parseInvoiceList({
@@ -373,6 +423,7 @@ describe("parseInvoiceList / parseRedirect", () => {
           number: "ABC-0001",
           created: 1_760_000_000,
           amount_paid: 3900,
+          amount_due: 0,
           currency: "usd",
           status: "paid",
           hosted_invoice_url: "https://invoice.stripe.com/i/x",
@@ -386,6 +437,7 @@ describe("parseInvoiceList / parseRedirect", () => {
         number: "ABC-0001",
         createdAt: new Date(1_760_000_000 * 1000),
         amountPaid: 3900,
+        amountDue: 0,
         currency: "usd",
         status: "paid",
         hostedInvoiceUrl: "https://invoice.stripe.com/i/x",

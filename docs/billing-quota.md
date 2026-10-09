@@ -57,7 +57,7 @@ Diğer ayarlar (hepsi opsiyonel): `BILLING_LEGACY_BEFORE` (ISO tarih: bundan ön
 
 ## enforce'a geçmeden önce (önkoşullar)
 
-1. Faz 3 (rezervasyon bağlantısı), Faz 4 (Stripe + webhook), Faz 5 (kayıtta deneme: `startTrial`), Faz 6 (plan seçimi ekranı) tamam. **Faz 4 + 6 bitmeden yeni kayıtlar için `enforce` açılamaz** (satırsız yeni kullanıcı READ_ONLY olur ve ilk markayı açamaz).
+1. Faz 3 (rezervasyon bağlantısı), Faz 4 (Stripe + webhook), Faz 5 (kayıtta deneme: `startTrial` kodda hazır ama HİÇBİR yerde çağrılmıyor; deneme kararı açık, bkz. `docs/billing-rollout.md` adım 6), Faz 6 (plan seçimi ekranı) tamam. **Faz 4 + 6 bitmeden yeni kayıtlar için `enforce` açılamaz** (satırsız yeni kullanıcı READ_ONLY olur ve ilk markayı açamaz).
 2. Migration'lar uygulandı (`20261009110000_add_billing_core`).
 3. Mevcut müşteriler için `BILLING_LEGACY_BEFORE` ayarlı; 7 günlük geçiş `BILLING_LEGACY_UNTIL` ile başlatılır (Faz 4 checkout + Faz 6 ekranı yayında olmadan başlatılmaz).
 4. `db:report:cost` birim maliyetleri `economics.ts` varsayımlarıyla uyumlu; fiyat kilitlendi.

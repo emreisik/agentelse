@@ -5682,6 +5682,11 @@ model Subscription {
   // paylaşır: test modunda açılmış bir bağ, aynı workspace'in gerçek (canlı) ödemesini
   // "çift abonelik" diye engellemesin, canlı ödeme onu değiştirsin.
   stripeLivemode       Boolean?
+  // Satıra en son UYGULANAN Stripe anlık görüntüsünün okunma anı. Kilitten ÖNCE okunmuş
+  // eski bir görüntü (durum/iptal bayrağı/plan) sonradan gelip yeni olanı ezmesin diye
+  // yalnız bundan yeni görüntüler bu alanları değiştirir (ödeme ve iptal monotondur,
+  // bu korumadan bağımsız uygulanır).
+  stripeSyncedAt       DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5703,6 +5708,22 @@ model BillingCustomer {
   createdAt        DateTime @default(now())
 
   @@unique([workspaceId, livemode])
+}
+
+// Parası iade edilen ya da itiraz (chargeback) edilen abonelik faturaları (Faz 4 inceleme
+// düzeltmesi). Stripe faturayı "paid" bırakır (iade yalnız tahsilatı değiştirir): bu mezar
+// taşı olmadan aynı faturanın yeniden işlenmesi (Checkout dönüş adresi, yeniden gönderilen
+// olay, ödemeden ÖNCE işlenen iade) erişimi ve kotayı geri getirirdi. Fatura başına tek
+// satır; ödeme durum makinesi bu faturayı "ödenmiş" saymaz.
+model BillingReversal {
+  id              String   @id @default(cuid())
+  stripeInvoiceId String   @unique
+  workspaceId     String
+  // REFUNDED | CHARGEBACK
+  reason          String
+  createdAt       DateTime @default(now())
+
+  @@index([workspaceId])
 }
 
 // Ödeme sağlayıcısı webhook gelen kutusu (Faz 4): imzası doğrulanan her olay işlenmeden

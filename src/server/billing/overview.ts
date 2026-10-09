@@ -2,6 +2,8 @@ import "server-only";
 
 import { startOfMonth, subDays } from "date-fns";
 
+import { paidPlanRunning } from "@/lib/billing/entitlements-core";
+import { linkedForMode, type StripeModeName } from "@/lib/billing/linkage";
 import { PLANS, isUnitSellable, type PlanKey } from "@/lib/billing/plans";
 import { prisma } from "@/lib/prisma";
 
@@ -30,19 +32,26 @@ export type SubscriptionOverview = {
     effectiveAt: string | null;
   } | null;
   exempt: boolean;
-  // A Stripe subscription is linked (the workspace has paid at least once): the plan
-  // buttons switch plans instead of opening a first checkout.
+  // A Stripe subscription of the RUNNING payment mode is linked (the workspace has paid
+  // at least once): the plan buttons switch plans instead of opening a first checkout.
+  // A test-mode link seen with the live key (shared database) counts as not linked.
   stripeLinked: boolean;
   // The first-month discount was used (it is offered once).
   introOffer: boolean;
   // The workspace has paid for a plan that is still running (extra packs can be bought):
-  // paying or past due, or canceled with paid time left.
+  // paying, or in the payment grace period, or canceled with paid time left.
   paidAccess: boolean;
+  // Why a canceled subscription ended (REFUNDED | CHARGEBACK | PAYMENT_FAILED | ...).
+  endedReason: string | null;
 };
 
 export type AllowanceOverview = {
   unit: "IMAGE" | "AI_MICROS";
+  // This window's allowance plus what is still left of the extra packs bought (their
+  // lifetime counters are not part of it: a pack bought and used long ago says nothing
+  // about this window).
   granted: number;
+  // Spent from this window's allowance.
   used: number;
   reserved: number;
   // Left to spend now: this window's allowance plus extra packs.
@@ -128,14 +137,22 @@ function toSubscriptionOverview(
     pendingEffectiveAt: Date | null;
     exempt: boolean;
     stripeSubscriptionId: string | null;
+    stripeLivemode: boolean | null;
+    graceUntil: Date | null;
+    endedReason: string | null;
     introOffer: boolean;
   },
   now: Date,
+  stripeMode: StripeModeName | null,
 ): SubscriptionOverview {
   const planKey = isPlanKey(row.planKey) ? row.planKey : null;
   const hasPending = Boolean(
     row.pendingPlanKey || row.pendingInterval || row.pendingEffectiveAt,
   );
+  // Ekran modu bilinmiyorsa (ödeme kapalı) yalnız bir bağ olup olmadığına bakılır.
+  const linked = stripeMode
+    ? linkedForMode(row, stripeMode)
+    : row.stripeSubscriptionId !== null;
   return {
     planKey,
     planLabel: planKey ? PLANS[planKey].label : null,
@@ -153,15 +170,10 @@ function toSubscriptionOverview(
         }
       : null,
     exempt: row.exempt,
-    stripeLinked: row.stripeSubscriptionId !== null,
+    stripeLinked: linked,
     introOffer: row.introOffer,
-    paidAccess:
-      row.stripeSubscriptionId !== null &&
-      (row.status === "ACTIVE" ||
-        row.status === "PAST_DUE" ||
-        (row.status === "CANCELED" &&
-          row.paidThrough !== null &&
-          row.paidThrough.getTime() > now.getTime())),
+    paidAccess: linked && paidPlanRunning(row, now),
+    endedReason: row.endedReason,
   };
 }
 
@@ -318,6 +330,9 @@ async function tasksOverview(workspaceId: string): Promise<TasksOverview> {
 export async function getBillingOverview(
   workspaceId: string,
   now: Date = new Date(),
+  // Çalışan ödeme anahtarının modu (ödeme kapalıysa null): başka moddaki abonelik bağı
+  // "bağlı" sayılmaz.
+  stripeMode: StripeModeName | null = null,
 ): Promise<BillingOverview> {
   const [subscription, balances, measured, tasks] = await Promise.all([
     prisma.subscription.findUnique({ where: { workspaceId } }),
@@ -333,9 +348,8 @@ export async function getBillingOverview(
       const view = toUsageView(row, now);
       return {
         unit: view.unit as "IMAGE" | "AI_MICROS",
-        // The window's allowance plus anything bought on top.
-        granted: view.period.granted + view.extra.granted,
-        used: view.period.used + view.extra.used,
+        granted: view.period.granted + view.extra.available,
+        used: view.period.used,
         reserved: view.period.reserved + view.extra.reserved,
         available: view.available,
         extraAvailable: view.extra.available,
@@ -347,7 +361,7 @@ export async function getBillingOverview(
   return {
     mode: getBillingConfig().mode,
     subscription: subscription
-      ? toSubscriptionOverview(subscription, now)
+      ? toSubscriptionOverview(subscription, now, stripeMode)
       : null,
     allowances,
     measured,

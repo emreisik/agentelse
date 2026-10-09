@@ -50,6 +50,7 @@ const BLOCKED_NOTE = {
     "The last payment did not go through. Update the payment method in My subscription first.",
   ending:
     "Your subscription is set to end. Resume it in My subscription to change plans.",
+  "full-access": "This workspace has full access, so there is nothing to buy.",
 } as const;
 
 export function PlanPicker({
@@ -523,14 +524,12 @@ function PlanButton({
         busyLabel="Keeping…"
         confirm={{
           title: `Keep ${card.label}?`,
-          description: `The scheduled switch to ${scheduled?.label ?? "the other plan"} is cancelled. You stay on ${card.label} and nothing is charged.`,
+          description: `The scheduled switch to ${scheduled?.label ?? "the other plan"} is canceled. You stay on ${card.label} and nothing is charged.`,
           confirmLabel: `Keep ${card.label}`,
         }}
         action={changePlanAction}
         input={{ planKey: card.key }}
-        doneHref={(response) =>
-          doneHref(response.kind === "unchanged" ? "kept" : response.kind)
-        }
+        doneHref={(response) => doneHref(response.kind)}
       >
         Keep this plan
       </BillingActionButton>

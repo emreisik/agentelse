@@ -430,3 +430,32 @@ export function pastDueGraceEnd(pastDueSince: Date): Date {
     pastDueSince.getTime() + PAST_DUE_GRACE_DAYS * 24 * 60 * 60 * 1000,
   );
 }
+
+// Ödenmiş bir plan şu an SÜRÜYOR mu? Faturalama kipinden bağımsız (kapalıyken de ek paket
+// alınabilir mi / ikinci abonelik açılabilir mi sorusunun cevabı); ACTIVE, PAST_DUE ve
+// CANCELED kollarının erişim kurallarıyla aynıdır (yenileme payı, ek süre, ödenmiş süre).
+export function paidPlanRunning(
+  sub: Pick<
+    SubscriptionFacts,
+    "planKey" | "status" | "paidThrough" | "graceUntil" | "cancelAtPeriodEnd"
+  >,
+  now: Date,
+): boolean {
+  if (!isPlanKey(sub.planKey)) return false;
+  const t = now.getTime();
+  switch (sub.status) {
+    case "ACTIVE": {
+      if (!sub.paidThrough) return false;
+      const end = sub.cancelAtPeriodEnd
+        ? sub.paidThrough.getTime()
+        : sub.paidThrough.getTime() + RENEWAL_LAG_MS;
+      return t < end;
+    }
+    case "PAST_DUE":
+      return sub.graceUntil !== null && t < sub.graceUntil.getTime();
+    case "CANCELED":
+      return sub.paidThrough !== null && t < sub.paidThrough.getTime();
+    default:
+      return false;
+  }
+}

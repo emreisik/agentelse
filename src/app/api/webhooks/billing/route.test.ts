@@ -115,6 +115,20 @@ describe("POST /api/webhooks/billing", () => {
     expect(processStripeEvent).not.toHaveBeenCalled();
   });
 
+  it("does not read the body of a request that carries no signature at all", async () => {
+    const unsigned = request(event(), null);
+
+    const response = await POST(unsigned);
+
+    expect(response.status).toBe(401);
+    expect(unsigned.bodyUsed).toBe(false);
+    // Even an oversized claim gets the cheap answer first.
+    const big = request("{}", null, {
+      "content-length": String(MAX_WEBHOOK_BODY_BYTES + 1),
+    });
+    expect((await POST(big)).status).toBe(401);
+  });
+
   it("rejects a body changed after it was signed", async () => {
     const body = event();
     const header = signed(body);

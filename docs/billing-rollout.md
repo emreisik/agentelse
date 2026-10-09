@@ -8,6 +8,13 @@ Abonelik sistemi kodca hazır ve canlıda KAPALI. Bu belge, kapalıdan "ücretli
 - `/billing` ekranları `BILLING_UI=true` olana dek 404.
 - Stripe anahtarı yok: satın alma yok, webhook ucu 503.
 
+## Canlıya geçmeden önce (özet kontrol listesi)
+
+- Stripe: webhook ucu + `whsec_` tam sır, portalda plan/aralık/iptal KAPALI, yeniden denemeler tükenince abonelik İPTAL, "tek abonelik" AÇIK (`docs/billing-payments.md` adım 3).
+- Üretimde `BILLING_MODE=enforce` ile TEST anahtarı ödemeyi kapatır; sırayı bozmayın: önce canlı anahtar, sonra `enforce`.
+- Gizlilik politikasına Stripe (ödeme işleyicisi) ve şartlara iade metni EKLENMELİ (hukuki metin, sahip kararı; kodda değiştirilmedi).
+- İade/itiraz politikası sahip kararı bekliyor (`docs/billing-payments.md`): varsayılan tam iade = anında bitir, kısmi iade = dokunma, itiraz = bitir.
+
 ## Sıra
 
 **1. Stripe TEST modu (kimseyi etkilemez).** `docs/billing-payments.md` adımları 1–5 (test anahtarı, webhook ucu, portal ayarı, ortam değişkenleri). Sonra yerelde:
@@ -26,7 +33,7 @@ SELECT action, count(*) FROM "AuditLog" WHERE action LIKE 'billing.shadow.%' AND
 
 1–2 hafta sonra: (a) `npm run db:report:cost` ile gerçek birim maliyeti `src/lib/billing/economics.ts` varsayımlarıyla karşılaştırın; fiyat ve kotalar `src/lib/billing/plans.ts`'te bir BAŞLANGIÇ HİPOTEZİDİR, marj ≥ %70 değilse rakamları değiştirin (`PLANS_VERSION`'ı güncelleyin); (b) kaç workspace'in hak sınırına yaklaştığına bakın; (c) "arka plan payı" (Starter %45, diğerleri %70) gölgede "engellenirdi" olarak görünür: çok sık isabet alıyorsa payı artırın.
 
-**3. Canlı Stripe.** Test anahtarlarını canlılarıyla değiştirin: canlı mod için AYRI bir webhook ucu (yeni `whsec_…`), AYRI portal ayarı ("Settings → Billing → Customer portal" canlı modda da kaydedilmeli), `STRIPE_SECRET_KEY=sk_live_…`. Canlı anahtar yalnız production'da çalışır; yerelde reddedilir. Duman testi yalnız test anahtarıyla koşar.
+**3. Canlı Stripe.** ÖNCE test sürecinde bağlanmış abonelikleri emekli edin (`npm run billing:retire-test-subscriptions`, önce kuru çalışma; `docs/billing-payments.md` adım 7). Sonra test anahtarlarını canlılarıyla değiştirin: canlı mod için AYRI bir webhook ucu (yeni `whsec_…`), AYRI portal ayarı ("Settings → Billing → Customer portal" canlı modda da kaydedilmeli), `STRIPE_SECRET_KEY=sk_live_…`. Canlı anahtar yalnız production'da çalışır; yerelde reddedilir. Duman testi yalnız test anahtarıyla koşar.
 
 **4. Kanarya.** Önce yalnız kendi workspace'inizi plana geçirin (canlı kartla ya da %100'lük bir promosyon koduyla) ve sınırların gerçekten uygulandığını görün. `enforce` küresel bir modtur ama LEGACY workspace'ler sınırsızdır: yalnız plana geçen workspace'ler sınırlanır. **Önkoşul: `BILLING_LEGACY_BEFORE` ayarlı olmalı** (adım 2); ayarlı değilse aboneliği olmayan her workspace `NO_SUBSCRIPTION` sayılır ve `enforce`'ta engellenir. Geçersiz bir tarih `enforce`'u `shadow`'a düşürür ve günlüğe yazar (kimse yanlışlıkla engellenmez).
 

@@ -4,7 +4,11 @@ import { prisma } from "@/lib/prisma";
 
 import { isExtraPackKey } from "../stripe/catalog";
 import type { StripeMode } from "../stripe/config";
-import type { StripeEventEnvelope, StripeChargeFacts } from "../stripe/facts";
+import type {
+  StripeChargeFacts,
+  StripeEventEnvelope,
+  StripeInvoiceFacts,
+} from "../stripe/facts";
 import type { StripeGateway } from "../stripe/gateway";
 import { resolveWorkspaceForCustomer } from "./customers";
 import { grantExtraPack, reconcilePackRefund } from "./purchases";
@@ -40,8 +44,15 @@ export type ProcessedEvent = {
 const LOUD_NOTES = new Set([
   "tenant-mismatch",
   "duplicate-subscription",
+  "live-subscription-exists",
   "unknown-plan",
   "no-paid-period",
+  // Anahtarın modu ile olayın modu çelişiyor: yanlış kurulum (ters moddaki anahtar ya da
+  // webhook sırrı). Olay kalıcı IGNORED kalır; sebep sessiz kalmasın.
+  "livemode-mismatch",
+  // İade/itiraz erişimi değiştirmedi (eski dönem ya da orantı faturası): sahip elle bakar.
+  "older-period",
+  "not-a-period-invoice",
 ]);
 
 export async function processStripeEvent(
@@ -151,13 +162,21 @@ export async function handleSubscription(
     sub,
     now: deps.now,
   });
-  return result.applied
-    ? { status: "PROCESSED", workspaceId: resolved.workspaceId }
-    : {
-        status: "IGNORED",
-        workspaceId: resolved.workspaceId,
-        note: result.note,
-      };
+  return outcomeOf(resolved.workspaceId, result);
+}
+
+function outcomeOf(
+  workspaceId: string,
+  result: Awaited<ReturnType<typeof syncSubscriptionState>>,
+): Outcome {
+  if (!result.applied) {
+    return { status: "IGNORED", workspaceId, note: result.note };
+  }
+  // Ödeme olayının faturası zaten iade/itiraz edilmiş: durum eşitlendi ama ödeme sayılmadı.
+  if (result.notes.includes("invoice-reversed")) {
+    return { status: "IGNORED", workspaceId, note: "invoice-reversed" };
+  }
+  return { status: "PROCESSED", workspaceId };
 }
 
 async function handleInvoice(
@@ -184,19 +203,59 @@ async function handleInvoice(
 
   // Olay "ödendi" dese de GÜNCEL fatura durumuna bakılır (iptal/void edilmiş olabilir).
   const paid = options.paid && invoice.status === "paid";
+  const paidInvoice = paid ? invoice : null;
   const result = await syncSubscriptionState({
     workspaceId: resolved.workspaceId,
     sub,
-    paid: paid ? invoice : null,
+    paid: paidInvoice,
     now: deps.now,
   });
-  return result.applied
-    ? { status: "PROCESSED", workspaceId: resolved.workspaceId }
-    : {
-        status: "IGNORED",
-        workspaceId: resolved.workspaceId,
-        note: result.note,
-      };
+  if (
+    !result.applied &&
+    result.note === "duplicate-subscription" &&
+    paidInvoice
+  ) {
+    return settleDuplicate(resolved.workspaceId, sub, paidInvoice, deps);
+  }
+  return outcomeOf(resolved.workspaceId, result);
+}
+
+// Çift abonelik: ikinci bir abonelik ödendi ama satır başka bir (hâlâ erişim veren)
+// abonelikle bağlı. Yeni aboneliğin, kimsenin göremeyeceği bir hak için her dönem tahsilat
+// yapmaya devam etmesi engellenir. Önce bağlı olanın Stripe'ta GERÇEKTEN yaşadığı doğrulanır
+// (iptal olayı kaçmış olabilir: öyleyse satır eşitlenir ve yeni abonelik bağlanır); yaşıyorsa
+// yenisi iptal edilir. Fatura ödenmiş kalır: sahip elle iade eder (iade olayı mezar taşı yazar).
+async function settleDuplicate(
+  workspaceId: string,
+  sub: NonNullable<Awaited<ReturnType<StripeGateway["getSubscription"]>>>,
+  paid: StripeInvoiceFacts,
+  deps: EventDeps,
+): Promise<Outcome> {
+  const row = await prisma.subscription.findUnique({ where: { workspaceId } });
+  const linkedId = row?.stripeSubscriptionId;
+  if (linkedId && linkedId !== sub.id) {
+    const linked = await deps.gateway.getSubscription(linkedId);
+    if (!linked) {
+      // Stripe bağlı aboneliği tanımıyor: hangisinin doğru olduğu bilinmez, elle bakılır.
+      return { status: "IGNORED", workspaceId, note: "duplicate-subscription" };
+    }
+    if (linked.status === "canceled") {
+      await syncSubscriptionState({ workspaceId, sub: linked, now: deps.now });
+      return outcomeOf(
+        workspaceId,
+        await syncSubscriptionState({
+          workspaceId,
+          sub,
+          paid,
+          now: deps.now,
+        }),
+      );
+    }
+  }
+  if (sub.status !== "canceled") {
+    await deps.gateway.cancelSubscriptionNow(sub.id);
+  }
+  return { status: "IGNORED", workspaceId, note: "duplicate-subscription" };
 }
 
 // -- Checkout -------------------------------------------------------------------
@@ -242,9 +301,10 @@ export async function handleCheckoutSession(
       paid: invoice,
       now: deps.now,
     });
-    return result.applied
-      ? { status: "PROCESSED", workspaceId }
-      : { status: "IGNORED", workspaceId, note: result.note };
+    if (!result.applied && result.note === "duplicate-subscription") {
+      return settleDuplicate(workspaceId, sub, invoice, deps);
+    }
+    return outcomeOf(workspaceId, result);
   }
 
   if (session.mode === "payment") {
@@ -348,6 +408,8 @@ async function reverseSubscriptionCharge(
   );
   if (!resolved.ok) return { status: "IGNORED", note: resolved.note };
 
+  // Mezar taşı (faturanın parası geri verildi) her durumda yazılır; yeniden işlenen aynı
+  // fatura erişimi geri getirmez ve ödemeden ÖNCE gelen iade de kaybolmaz.
   const ended = await endSubscriptionAfterRefund({
     workspaceId: resolved.workspaceId,
     sub,
@@ -355,19 +417,29 @@ async function reverseSubscriptionCharge(
     reason,
     now: deps.now,
   });
-  if (!ended.applied) {
-    return {
-      status: "IGNORED",
-      workspaceId: resolved.workspaceId,
-      note: ended.note,
-    };
-  }
-  // Para iade edilen abonelik yenilenmesin: Stripe tarafını da kapat. Başarısızsa olay
-  // yeniden denenir (yukarıdaki adım tekrara dayanıklı).
-  if (sub.status !== "canceled") {
+  const reversedHere = ended.applied || ended.note === "stale-subscription";
+  // Para iade edilen abonelik yenilenmesin: Stripe tarafını da kapat (bağlı olmayan, henüz
+  // uygulanmamış ya da yinelenen abonelik dahil). Başarısızsa olay yeniden denenir
+  // (yukarıdaki adım tekrara dayanıklı). Eski dönem / orantı faturası iadesi aboneliği
+  // KAPATMAZ: sahibin elle ele alacağı bir durumdur.
+  if (reversedHere && sub.status !== "canceled") {
     await deps.gateway.cancelSubscriptionNow(sub.id);
   }
-  return { status: "PROCESSED", workspaceId: resolved.workspaceId };
+  if (ended.applied) {
+    return { status: "PROCESSED", workspaceId: resolved.workspaceId };
+  }
+  if (ended.note === "stale-subscription") {
+    return {
+      status: "PROCESSED",
+      workspaceId: resolved.workspaceId,
+      note: "reversal-recorded",
+    };
+  }
+  return {
+    status: "IGNORED",
+    workspaceId: resolved.workspaceId,
+    note: ended.note,
+  };
 }
 
 async function reversePackCharge(

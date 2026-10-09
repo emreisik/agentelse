@@ -14,7 +14,7 @@ import type {
   StripeSessionFacts,
   StripeSubscriptionFacts,
 } from "../../stripe/facts";
-import type { StripeGateway } from "../../stripe/gateway";
+import type { ChangePlanInput, StripeGateway } from "../../stripe/gateway";
 
 // Testler için bellek içi Stripe: ağ geçidinin TÜM arayüzünü uygular, nesneleri testin
 // kurduğu hâlde tutar ve yapılan çağrıları kaydeder. Gerçek Stripe davranışı Faz 7'de
@@ -43,6 +43,8 @@ export function createFakeStripe() {
   const calls: FakeCall[] = [];
   const failures: {
     changePlan?: Error;
+    // Yalnız seçilen plan değişikliği çağrıları patlar (ör. yalnız yükseltme reddedilir).
+    changePlanWhen?: (input: ChangePlanInput) => Error | null | undefined;
     cancel?: Error;
     read?: Error;
     checkout?: Error;
@@ -74,10 +76,17 @@ export function createFakeStripe() {
       planKey: partial.planKey === undefined ? planKey : partial.planKey,
       interval: partial.interval === undefined ? "MONTH" : partial.interval,
       latestInvoice: partial.latestInvoice ?? null,
+      fetchedAt: partial.fetchedAt ?? new Date(),
     };
     subs.set(sub.id, sub);
     return sub;
   }
+
+  // Gerçek ağ geçidi gibi: her okuma/yazma yanıtı OKUNDUĞU anı taşır.
+  const stamped = (sub: StripeSubscriptionFacts): StripeSubscriptionFacts => ({
+    ...sub,
+    fetchedAt: new Date(),
+  });
 
   function invoice(
     partial: Partial<StripeInvoiceFacts> & {
@@ -205,7 +214,15 @@ export function createFakeStripe() {
     async getSubscription(id) {
       record("getSubscription", id);
       read();
-      return subs.get(id) ?? null;
+      const found = subs.get(id);
+      return found ? stamped(found) : null;
+    },
+    async listSubscriptions(customerId) {
+      record("listSubscriptions", customerId);
+      read();
+      return [...subs.values()]
+        .filter((sub) => sub.customerId === customerId)
+        .map(stamped);
     },
     async getInvoice(id) {
       record("getInvoice", id);
@@ -266,6 +283,8 @@ export function createFakeStripe() {
     async changeSubscriptionPlan(input) {
       record("changeSubscriptionPlan", input);
       if (failures.changePlan) throw failures.changePlan;
+      const selective = failures.changePlanWhen?.(input);
+      if (selective) throw selective;
       const sub = subs.get(input.subscriptionId);
       if (!sub)
         throw new StripeApiError({
@@ -298,7 +317,7 @@ export function createFakeStripe() {
         latestInvoice,
       };
       subs.set(sub.id, updated);
-      return updated;
+      return stamped(updated);
     },
     async setCancelAtPeriodEnd(subscriptionId, cancel) {
       record("setCancelAtPeriodEnd", { subscriptionId, cancel });
@@ -311,7 +330,7 @@ export function createFakeStripe() {
         });
       const updated = { ...sub, cancelAtPeriodEnd: cancel };
       subs.set(subscriptionId, updated);
-      return updated;
+      return stamped(updated);
     },
     async cancelSubscriptionNow(subscriptionId) {
       record("cancelSubscriptionNow", subscriptionId);

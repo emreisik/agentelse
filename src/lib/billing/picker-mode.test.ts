@@ -14,6 +14,7 @@ const paying = (
   pendingPlanKey: null,
   stripeLinked: true,
   introOffer: false,
+  exempt: false,
   ...overrides,
 });
 
@@ -123,9 +124,15 @@ describe("bannerFor", () => {
     expect(bannerFor({ checkout: "success" }, "pending")).toMatch(
       /still being confirmed/,
     );
-    expect(bannerFor({ checkout: "success" }, "unknown")).toMatch(
-      /still being confirmed/,
+    expect(bannerFor({ checkout: "success" }, "reversed")).toMatch(
+      /was refunded/,
     );
+    // A payment we cannot match is not "received", and no update is promised.
+    for (const returned of ["unknown", null] as const) {
+      const text = bannerFor({ checkout: "success" }, returned);
+      expect(text).toMatch(/could not match this payment/);
+      expect(text).not.toMatch(/Payment received|still being confirmed/);
+    }
     expect(bannerFor({ checkout: "cancelled" }, null)).toMatch(
       /Nothing was charged/,
     );
@@ -134,6 +141,12 @@ describe("bannerFor", () => {
     );
     expect(bannerFor({ purchase: "success" }, "pending")).toMatch(
       /as soon as it clears/,
+    );
+    expect(bannerFor({ purchase: "success" }, "reversed")).toMatch(
+      /no extra usage was added/,
+    );
+    expect(bannerFor({ purchase: "success" }, "unknown")).toMatch(
+      /could not match this payment/,
     );
     expect(bannerFor({ purchase: "cancelled" }, null)).toMatch(
       /Nothing was charged/,
@@ -148,13 +161,18 @@ describe("bannerFor", () => {
     expect(bannerFor({ notice: "downgrade-scheduled" }, null)).toMatch(
       /next renewal/,
     );
+    expect(bannerFor({ notice: "switch-cancelled" }, null)).toMatch(
+      /scheduled switch was canceled. You stay on your plan/,
+    );
     expect(bannerFor({ notice: "kept" }, null)).toMatch(/stay on your plan/);
+    // A stale tab pressing the plan the workspace is already on is not a "cancelled switch".
     expect(bannerFor({ notice: "unchanged" }, null)).toMatch(
-      /stay on your plan/,
+      /already on this plan/,
     );
     expect(bannerFor({ notice: "canceled" }, null)).toMatch(
       /end of the paid period/,
     );
+    expect(bannerFor({ notice: "resumed" }, null)).toMatch(/resumed/);
   });
 
   it("shows nothing for an unknown value and never echoes the address", () => {

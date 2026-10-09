@@ -93,10 +93,116 @@ describe("reads", () => {
   });
 });
 
+describe("listSubscriptions", () => {
+  it("asks for every subscription of the customer (ended ones too) with the latest invoice expanded", async () => {
+    const { http, calls } = fakeHttp(() => ({
+      data: [
+        subscriptionJson(),
+        subscriptionJson({ id: "sub_2", status: "canceled" }),
+      ],
+    }));
+    const before = Date.now();
+
+    const subs = await createStripeGateway(http).listSubscriptions("cus_1");
+
+    expect(calls[0]).toMatchObject({
+      method: "GET",
+      path: "/v1/subscriptions",
+      query: {
+        customer: "cus_1",
+        status: "all",
+        limit: 10,
+        expand: ["data.latest_invoice"],
+      },
+    });
+    expect(subs.map((sub) => [sub.id, sub.status])).toEqual([
+      ["sub_1", "active"],
+      ["sub_2", "canceled"],
+    ]);
+    expect(subs[0]!.fetchedAt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(subs[0]!.latestInvoice).toMatchObject({
+      id: "in_1",
+      status: "paid",
+    });
+  });
+});
+
+describe("snapshots carry the time their read STARTED", () => {
+  it("stamps getSubscription, a plan change and a cancel flag with a time no later than the answer", async () => {
+    const { http } = fakeHttp(() => subscriptionJson());
+    const gateway = createStripeGateway(http);
+    const before = Date.now();
+
+    const read = await gateway.getSubscription("sub_1");
+    const changed = await gateway.changeSubscriptionPlan({
+      subscriptionId: "sub_1",
+      itemId: "si_1",
+      planKey: "growth",
+      interval: "MONTH",
+      proration: "none",
+    });
+    const flagged = await gateway.setCancelAtPeriodEnd("sub_1", true);
+
+    for (const facts of [read, changed, flagged]) {
+      expect(facts!.fetchedAt.getTime()).toBeGreaterThanOrEqual(before);
+      expect(facts!.fetchedAt.getTime()).toBeLessThanOrEqual(Date.now());
+    }
+    expect(read!.fetchedAt.getTime()).toBeLessThanOrEqual(
+      changed.fetchedAt.getTime(),
+    );
+  });
+});
+
+describe("products and coupons are created with fresh idempotency keys", () => {
+  it("never pins a failure (or the success of a deleted object) to a fixed 24-hour key", async () => {
+    const created: Array<string | undefined> = [];
+    const make = () => {
+      const { http, calls } = fakeHttp((request) => {
+        if (request.method === "GET") return notFound();
+        if (request.path === "/v1/checkout/sessions") {
+          return { id: "cs_1", url: "https://checkout.stripe.com/c/pay/cs_1" };
+        }
+        return { id: "created" };
+      });
+      return { gateway: createStripeGateway(http), calls };
+    };
+    const input = {
+      customerId: "cus_1",
+      workspaceId: "w1",
+      planKey: "growth" as const,
+      interval: "MONTH" as const,
+      firstMonth: true,
+      successUrl: "https://app.test/ok",
+      cancelUrl: "https://app.test/no",
+    };
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const { gateway, calls } = make();
+      await gateway.createSubscriptionCheckout(input);
+      created.push(
+        ...calls
+          .filter(
+            (call) =>
+              call.method === "POST" &&
+              (call.path === "/v1/products" || call.path === "/v1/coupons"),
+          )
+          .map((call) => call.idempotencyKey),
+      );
+    }
+
+    expect(created).toHaveLength(4);
+    expect(new Set(created).size).toBe(4);
+    for (const key of created) {
+      expect(key).toMatch(/^agentelse:(product|coupon):[^:]+:[0-9a-f-]{36}$/);
+    }
+  });
+});
+
 describe("createCustomer", () => {
-  it("sends the workspace in metadata with a stable idempotency key", async () => {
+  it("sends the workspace in metadata with a fresh idempotency key per attempt", async () => {
     const { http, calls } = fakeHttp(() => ({ id: "cus_9" }));
-    const id = await createStripeGateway(http).createCustomer({
+    const gateway = createStripeGateway(http);
+    const id = await gateway.createCustomer({
       workspaceId: "w1",
       email: "a@b.co",
       name: "Acme",
@@ -106,8 +212,37 @@ describe("createCustomer", () => {
       method: "POST",
       path: "/v1/customers",
       body: { email: "a@b.co", name: "Acme", metadata: { workspaceId: "w1" } },
-      idempotencyKey: "agentelse:customer:w1",
     });
+    // A fixed key would replay the first answer for 24 hours, including the answer for a
+    // customer that was deleted in the dashboard since (the BillingCustomer row already
+    // keeps one customer per workspace).
+    await gateway.createCustomer({ workspaceId: "w1" });
+    const keys = calls.map((call) => call.idempotencyKey);
+    expect(keys[0]).toMatch(/^agentelse:customer:w1:[0-9a-f-]{36}$/);
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it("keeps the name and email inside what Stripe accepts, and drops an email that is not one", async () => {
+    const { http, calls } = fakeHttp(() => ({ id: "cus_9" }));
+    const gateway = createStripeGateway(http);
+    await gateway.createCustomer({
+      workspaceId: "w1",
+      email: "  not an email ",
+      name: `  ${"A".repeat(400)}  with\n  spaces`,
+    });
+    const body = calls[0]!.body as { name?: string; email?: string };
+    expect(body.email).toBeUndefined();
+    expect(body.name).toHaveLength(200);
+    expect(body.name).not.toContain("\n");
+
+    await gateway.createCustomer({
+      workspaceId: "w1",
+      email: `${"a".repeat(260)}@b.co`,
+      name: "   ",
+    });
+    const second = calls[1]!.body as { name?: string; email?: string };
+    expect(second.email).toBeUndefined();
+    expect(second.name).toBeUndefined();
   });
 });
 

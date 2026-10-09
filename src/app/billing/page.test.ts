@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   deps: vi.fn(),
   reconcile: vi.fn(),
   invoices: vi.fn(),
+  limited: vi.fn(),
 }));
 
 class NotFoundSignal extends Error {}
@@ -42,6 +43,7 @@ vi.mock("@/server/actions/billing-actions", () => ({
   resumeSubscriptionAction: vi.fn(),
   changePlanAction: vi.fn(),
 }));
+vi.mock("@/lib/rate-limit", () => ({ isRateLimited: mocks.limited }));
 vi.mock("@/server/billing/ui-flag", () => ({
   isBillingUiEnabled: mocks.enabled,
 }));
@@ -94,7 +96,8 @@ beforeEach(() => {
   // Payments closed unless a test opens them.
   mocks.deps.mockReturnValue(null);
   mocks.reconcile.mockResolvedValue("active");
-  mocks.invoices.mockResolvedValue([]);
+  mocks.invoices.mockResolvedValue({ rows: [], failed: false });
+  mocks.limited.mockReturnValue(false);
 });
 
 describe("/billing", () => {
@@ -166,11 +169,25 @@ describe("/billing", () => {
         stripeLinked: true,
         introOffer: false,
         paidAccess: true,
+        endedReason: null,
       },
     };
 
     beforeEach(() => {
       mocks.deps.mockReturnValue(DEPS);
+    });
+
+    it("asks the overview about the payment mode that is running", async () => {
+      await render();
+      expect(mocks.overview).toHaveBeenCalledWith(
+        "w1",
+        expect.any(Date),
+        "test",
+      );
+      mocks.deps.mockReturnValue(null);
+      mocks.overview.mockClear();
+      await render();
+      expect(mocks.overview).toHaveBeenCalledWith("w1", expect.any(Date), null);
     });
 
     it("badges test mode so nobody mistakes the charges for real ones", async () => {
@@ -217,6 +234,44 @@ describe("/billing", () => {
       expect(markup).toContain("still being confirmed");
     });
 
+    it("says so when the payment was refunded, and never claims a payment it cannot match", async () => {
+      mocks.reconcile.mockResolvedValue("reversed");
+      const refunded = await render({
+        checkout: "success",
+        session_id: "cs_test_abc12345",
+      });
+      expect(refunded).toContain("was refunded");
+      expect(refunded).not.toContain("Your plan is active");
+
+      mocks.reconcile.mockResolvedValue("unknown");
+      const unmatched = await render({
+        checkout: "success",
+        session_id: "cs_test_abc12345",
+      });
+      expect(unmatched).toContain("could not match this payment");
+      expect(unmatched).not.toContain("Payment received");
+    });
+
+    it("only a manager can make the page reconcile a Checkout return, at a bounded rate", async () => {
+      mocks.manager.mockResolvedValue(false);
+      await render({ checkout: "success", session_id: "cs_test_abc12345" });
+      expect(mocks.reconcile).not.toHaveBeenCalled();
+
+      mocks.manager.mockResolvedValue(true);
+      mocks.limited.mockReturnValue(true);
+      const markup = await render({
+        checkout: "success",
+        session_id: "cs_test_abc12345",
+      });
+      expect(mocks.reconcile).not.toHaveBeenCalled();
+      expect(mocks.limited).toHaveBeenCalledWith(
+        "billing:return:w1",
+        expect.any(Number),
+        expect.any(Number),
+      );
+      expect(markup).toContain("still being confirmed");
+    });
+
     it("does not call Stripe on an ordinary visit, or without a session, or when payments are closed", async () => {
       await render({ tab: "subscription" });
       await render({ checkout: "success" });
@@ -225,26 +280,30 @@ describe("/billing", () => {
       expect(mocks.reconcile).not.toHaveBeenCalled();
     });
 
-    it("shows a cancelled checkout without touching Stripe", async () => {
+    it("shows a canceled checkout without touching Stripe", async () => {
       const markup = await render({ checkout: "cancelled" });
-      expect(markup).toContain("Checkout was cancelled. Nothing was charged.");
+      expect(markup).toContain("Checkout was canceled. Nothing was charged.");
       expect(mocks.reconcile).not.toHaveBeenCalled();
     });
 
     it("lists invoices only to a manager of a workspace that has paid", async () => {
       mocks.overview.mockResolvedValue(PAYING);
-      mocks.invoices.mockResolvedValue([
-        {
-          id: "in_1",
-          number: "N-1",
-          createdAt: new Date("2026-11-01T00:00:00.000Z"),
-          amountPaid: 14_900,
-          currency: "usd",
-          status: "paid",
-          hostedInvoiceUrl: null,
-          invoicePdf: null,
-        },
-      ]);
+      mocks.invoices.mockResolvedValue({
+        rows: [
+          {
+            id: "in_1",
+            number: "N-1",
+            createdAt: new Date("2026-11-01T00:00:00.000Z"),
+            amountPaid: 14_900,
+            amountDue: 0,
+            currency: "usd",
+            status: "paid",
+            hostedInvoiceUrl: null,
+            invoicePdf: null,
+          },
+        ],
+        failed: false,
+      });
 
       expect(await render({ tab: "subscription" })).toContain("N-1");
       expect(mocks.invoices).toHaveBeenCalledWith({ workspaceId: "w1" }, DEPS);

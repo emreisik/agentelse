@@ -726,7 +726,7 @@ describeIntegration("billing webhook events", () => {
         await prisma.usageGrant.count({
           where: { workspaceId, reason: "REFUND", unit: "IMAGE" },
         }),
-      ).toBeLessThanOrEqual(1);
+      ).toBe(1);
     });
   });
 });

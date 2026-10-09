@@ -77,6 +77,7 @@ describe("limitNoticeFromError", () => {
       "provider-rate-limited",
       "provider-timeout",
       "allowance-used",
+      "held-back",
       "no-plan",
     ] as const;
     for (const reason of reasons) {
@@ -114,6 +115,42 @@ describe("limitNoticeFromError", () => {
       expect(limitNoticeFromError(quota({ unit: "VIDEO", resetsAt: 5 }))).toEqual(
         { kind: "limit-notice", reason: "allowance-used" },
       );
+    });
+
+    // Automatic work that reached its own share of the plan (Faz 3C): the allowance
+    // is NOT used up, and the card must not say it is.
+    it("maps a held-back refusal to its own card, not to 'used up'", () => {
+      expect(
+        limitNoticeFromError(
+          quota({ unit: "IMAGE", heldBack: true, resetsAt: null }),
+        ),
+      ).toEqual({ kind: "limit-notice", reason: "held-back", unit: "IMAGE" });
+      expect(
+        limitNoticeFromError(
+          new AgentelseError("BUDGET_EXCEEDED", "share", {
+            meta: { limit: "planAllowance", unit: "AI_MICROS", heldBack: true },
+          }),
+        ),
+      ).toEqual({
+        kind: "limit-notice",
+        reason: "held-back",
+        unit: "AI_MICROS",
+      });
+    });
+
+    it("words the held-back reply with a percentage, for the user's own requests it says nothing is held", () => {
+      const text = limitNoticeReplyText({
+        kind: "limit-notice",
+        reason: "held-back",
+        sharePct: 45,
+      });
+      expect(text).toContain("limited to 45% of your plan");
+      expect(text).toContain("Your own requests are not affected");
+      expect(text).not.toMatch(/used up|\$|token|micro/i);
+      // Without a number it still reads whole.
+      expect(
+        limitNoticeReplyText({ kind: "limit-notice", reason: "held-back" }),
+      ).toContain("limited to a share of your plan");
     });
 
     it("maps NO_PLAN to its own card", () => {

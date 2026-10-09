@@ -581,6 +581,18 @@ const LIMIT_NOTICE_COPY: Record<
     },
     settingsCta: false,
   },
+  "held-back": {
+    icon: Gauge,
+    tone: "waiting",
+    title: "Automatic work is waiting",
+    description: (card) =>
+      `Automatic work is limited to ${
+        card.sharePct
+          ? `${card.sharePct}% of your plan`
+          : "a share of your plan"
+      }, so this waits. Your own requests are not affected. It continues by itself when the allowance renews or more is added.`,
+    settingsCta: false,
+  },
   "no-plan": {
     icon: KeyRound,
     tone: "waiting",

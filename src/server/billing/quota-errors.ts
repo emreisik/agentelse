@@ -24,21 +24,36 @@ export type QuotaDetail = {
   available: number;
   // Dönem havuzunun yenileneceği an (bilinmiyorsa null).
   resetsAt: Date | null;
+  // Hak bitmedi: sistemin kendi işi kullanıcıya ayrılan payı aşacağı için durdu
+  // (plans.ts BACKGROUND_SHARE_PCT). Kullanıcının aynı işi sığardı.
+  heldBack?: boolean;
 };
+
+// Park edilen işin errorCode'u, hak bitmediği hâlde arka plan payı yüzünden
+// bekleyen iş için (QUOTA_EXCEEDED yerine): ekranlar "hak bitti" demesin. Atılan
+// hatanın kodu değildir (ERROR_CODES'a girmez), yalnız işin satırında durur.
+export const HELD_BACK_CODE = "QUOTA_HELD_BACK";
 
 export class QuotaExceededError extends AgentelseError {
   readonly detail: QuotaDetail;
 
   constructor(detail: QuotaDetail) {
-    super("QUOTA_EXCEEDED", "Plan allowance used up for this period", {
-      retryable: false,
-      meta: {
-        unit: detail.unit,
-        needed: detail.needed,
-        available: detail.available,
-        resetsAt: detail.resetsAt?.toISOString() ?? null,
+    super(
+      "QUOTA_EXCEEDED",
+      detail.heldBack
+        ? "Automatic work is limited to its share of the plan allowance"
+        : "Plan allowance used up for this period",
+      {
+        retryable: false,
+        meta: {
+          unit: detail.unit,
+          needed: detail.needed,
+          available: detail.available,
+          resetsAt: detail.resetsAt?.toISOString() ?? null,
+          ...(detail.heldBack ? { heldBack: true } : {}),
+        },
       },
-    });
+    );
     this.name = "QuotaExceededError";
     this.detail = detail;
   }

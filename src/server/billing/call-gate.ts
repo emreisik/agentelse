@@ -10,7 +10,7 @@ import {
   asBudgetStop,
   isQuotaError,
 } from "./quota-errors";
-import { getUsageScope, type UsageModule } from "./usage-context";
+import { getUsageScope, isBackground, type UsageModule } from "./usage-context";
 
 // Plan hakkı kapısı: giriş noktası olmayan tek bir ücretli motor çağrısı
 // (ReasoningService.run) için. Çağrı ya zaten rezervasyonlu bir operasyonun
@@ -24,14 +24,48 @@ import { getUsageScope, type UsageModule } from "./usage-context";
 // Kısa olumsuz önbellek: hakkı biten bir kiracının bekleyen işleri her tick'te bu
 // kapıya gelir; aynı reddi her seferinde defterden sormak yerine 30 sn hatırlanır
 // (daha küçük bir çağrı yine denenir, çünkü sığabilir).
+//
+// Önbellek BAŞLATICIYA göre ayrıdır (Faz 3C): sistemin çağrısı arka plan payı yüzünden
+// reddedilebilir, aynı boyutta bir kullanıcı çağrısı ise sığar. Sistemin reddi bu yüzden
+// yalnız sistemin sonraki çağrılarını eler; kullanıcının reddi (hak gerçekten bitti)
+// ikisini de eler. Plansız (NoPlanError) ret başlatıcıdan bağımsızdır, kullanıcı
+// bölmesinde durur.
 
 const REFUSAL_TTL_MS = 30_000;
 const MAX_REFUSALS = 5_000;
 
-const refusals = new Map<
-  string,
-  { until: number; amount: bigint; error: QuotaExceededError | NoPlanError }
->();
+type Initiator = "user" | "system";
+type Refusal = {
+  until: number;
+  amount: bigint;
+  error: QuotaExceededError | NoPlanError;
+};
+
+const refusals = new Map<string, Refusal>();
+
+const refusalKey = (workspaceId: string, initiator: Initiator) =>
+  `${workspaceId}:${initiator}`;
+
+// Bu çağrıyı eleyen canlı ret: kullanıcı çağrısı yalnız kullanıcı retlerine, sistem
+// çağrısı ikisine de takılır. Ret, aynı boyutta ya da daha büyük çağrıyı eler (daha
+// küçüğü sığabilir); plansız ret her boyutu eler.
+function blockingRefusal(
+  workspaceId: string,
+  initiator: Initiator,
+  amount: bigint,
+  now: number,
+): Refusal | undefined {
+  const slots: Initiator[] =
+    initiator === "user" ? ["user"] : ["user", "system"];
+  for (const slot of slots) {
+    const entry = refusals.get(refusalKey(workspaceId, slot));
+    if (!entry || entry.until <= now) continue;
+    if (entry.error instanceof NoPlanError || amount >= entry.amount) {
+      return entry;
+    }
+  }
+  return undefined;
+}
 
 export function resetCallGate(): void {
   refusals.clear();
@@ -65,12 +99,10 @@ export async function gatedAiCall<T>(
 
   const amount = input.estimateMicros();
   const now = Date.now();
-  const cached = refusals.get(input.workspaceId);
-  if (cached && cached.until > now) {
-    if (cached.error instanceof NoPlanError || amount >= cached.amount) {
-      throw asBudgetStop(cached.error);
-    }
-  }
+  // Ledger ile önbellek aynı etiketi okur: operasyona açıkça verilir.
+  const initiator: Initiator = isBackground() ? "system" : "user";
+  const refused = blockingRefusal(input.workspaceId, initiator, amount, now);
+  if (refused) throw asBudgetStop(refused.error);
 
   try {
     return await runMetered(
@@ -84,6 +116,7 @@ export async function gatedAiCall<T>(
         operationId: `${input.source}:${randomUUID()}`,
         attemptToken: "1",
         reserve: { AI_MICROS: amount },
+        initiator,
         requireAccess: true,
       },
       fn,
@@ -91,7 +124,9 @@ export async function gatedAiCall<T>(
   } catch (error) {
     if (isQuotaError(error)) {
       if (refusals.size >= MAX_REFUSALS) refusals.clear();
-      refusals.set(input.workspaceId, {
+      // Plansız ret herkesi eler: kullanıcı bölmesine yazılır.
+      const slot = error instanceof NoPlanError ? "user" : initiator;
+      refusals.set(refusalKey(input.workspaceId, slot), {
         until: now + REFUSAL_TTL_MS,
         amount,
         error,

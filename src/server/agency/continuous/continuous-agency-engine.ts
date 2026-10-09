@@ -11,7 +11,7 @@ import { AgencyTriggerRepository } from "@/server/repositories/agency-trigger.re
 import { AgencyCycleRepository } from "@/server/repositories/agency-cycle.repository";
 import { AgencyLoopStateRepository } from "@/server/repositories/agency-loop-state.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
-import { runAsBackground } from "@/server/billing/usage-context";
+import { runAs } from "@/server/billing/usage-context";
 import { isAgentelseError } from "@/server/security/errors";
 
 // The Agency OS main loop (spec section 33). NOT recursion — a DB-polled
@@ -23,7 +23,14 @@ import { isAgentelseError } from "@/server/security/errors";
 // the intelligence/opportunity/idea/decision/measurement/learning steps via
 // the STEP list below.
 
-type TickStep = { name: string; run: () => Promise<unknown> };
+type TickStep = {
+  name: string;
+  run: () => Promise<unknown>;
+  // Tick adımları sistemin kendi akışıdır (billing, Faz 3C): içindeki ücretli işlemler
+  // plan hakkının arka plan payına tabidir. Bir kullanıcının başlattığı işi yürüten adım
+  // false verir ve etiketsiz (kullanıcı) koşar; etiketi o işin kaynağı koyar.
+  background?: boolean;
+};
 
 // Later waves push additional steps here (signal scans, insight synthesis,
 // opportunity evaluation, idea generation, council, director, measurement,
@@ -240,8 +247,16 @@ export const ContinuousAgencyEngine = {
 
   async tick(): Promise<void> {
     const steps: TickStep[] = [
+      // Sonuç işleme görevi kimin yarattığına göre etiketlenir (ResultMaterializer):
+      // kullanıcının görevi kullanıcı, otonom görev arka plan sayılır.
       { name: "triggers", run: () => this.processTriggers(20) },
-      { name: "setup", run: () => ProjectSetupOrchestrator.advanceAll(5) },
+      // Kurulum her zaman kullanıcının başlattığı iştir (agency-setup-actions.ts), yalnız
+      // tick'le ilerler: arka plan payına takılırsa ilk kurulum yarıda kalırdı.
+      {
+        name: "setup",
+        background: false,
+        run: () => ProjectSetupOrchestrator.advanceAll(5),
+      },
       // Focus mode (agency-focus.ts) skips steps outside social/ads work;
       // LEGACY_AGENCY_LOOP (legacy-loop.ts) winds down the old pipeline steps.
       ...EXTRA_STEPS.filter(
@@ -254,8 +269,11 @@ export const ContinuousAgencyEngine = {
     for (const step of steps) {
       try {
         // Tick sistemin kendi akışıdır: içindeki ücretli işlemler plan hakkının arka
-        // plan payına tabidir (billing/usage-context.ts runAsBackground).
-        await runAsBackground(() => step.run());
+        // plan payına tabidir (billing/usage-context.ts runAs), kullanıcının başlattığı
+        // işi yürüten adım hariç.
+        await runAs(step.background === false ? "user" : "system", () =>
+          step.run(),
+        );
       } catch (error) {
         // BUDGET_EXCEEDED is the cap system working as intended — skip
         // quietly; anything else gets an audit trail entry but never

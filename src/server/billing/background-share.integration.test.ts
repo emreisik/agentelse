@@ -195,6 +195,98 @@ describeIntegration("background share of the plan allowance", () => {
 
       expect(result).toMatchObject({ ok: true, kind: "OVERDRAFT_SHADOW" });
     });
+
+    // The user's part is rounded UP: on a small allowance the system must not take
+    // more than its share (floor would give a 5-image Starter trial's system 60%).
+    it.each([
+      // [plan, granted, what the system may use]
+      ["starter", 3, 1],
+      ["starter", 5, 2],
+      ["starter", 10, 4],
+      ["starter", 20, 9],
+      ["growth", 3, 2],
+      ["growth", 5, 3],
+      ["growth", 10, 7],
+      ["growth", 20, 14],
+    ] as const)(
+      "%s with %i granted: the system may use %i, the rest is the user's",
+      async (plan, granted, systemMay) => {
+        const ws = await workspace(plan, { granted });
+        let taken = 0;
+        while ((await reserve(ws, "system")).ok) taken += 1;
+        expect(taken).toBe(systemMay);
+        // Whatever the system could not take is the user's, all of it.
+        for (let i = 0; i < granted - taken; i += 1) {
+          expect(await reserve(ws, "user")).toMatchObject({ ok: true });
+        }
+      },
+    );
+
+    it("a refusal says whether it was the user's share or the allowance itself that ran out", async () => {
+      const ws = await workspace("growth", { granted: 10, used: 7 });
+
+      // 3 left, all held back: the user would fit, the system does not.
+      expect(await reserve(ws, "system")).toMatchObject({
+        ok: false,
+        reason: "INSUFFICIENT",
+        heldBack: true,
+      });
+      // Asking for more than is left is the allowance running out, for anyone.
+      expect(await reserve(ws, "user", 4)).toMatchObject({
+        ok: false,
+        heldBack: false,
+      });
+      expect(await reserve(ws, "system", 4)).toMatchObject({
+        ok: false,
+        heldBack: false,
+      });
+      // Nothing left at all.
+      const empty = await workspace("growth", { granted: 10, used: 10 });
+      expect(await reserve(empty, "system")).toMatchObject({
+        ok: false,
+        heldBack: false,
+      });
+    });
+  });
+
+  describe("shadow log", () => {
+    const shadowRows = (workspaceId: string) =>
+      prisma.auditLog.findMany({
+        where: { workspaceId, action: "billing.shadow.insufficient" },
+        orderBy: { createdAt: "asc" },
+      });
+
+    it("says who asked and what was held, and a system floor hit does not hide the user's shortfall", async () => {
+      config.current = {
+        mode: "shadow",
+        legacyBefore: null,
+        legacyUntil: null,
+      };
+      const ws = await workspace("growth", { granted: 10, used: 7 });
+
+      // The system runs into the user's share first ...
+      await reserve(ws, "system");
+      // ... and the user then asks for more than is left. Both are recorded.
+      await reserve(ws, "user", 4);
+      // A second system hit in the same hour adds nothing.
+      await reserve(ws, "system");
+
+      const rows = await shadowRows(ws);
+      expect(rows.map((row) => row.metadata)).toEqual([
+        expect.objectContaining({
+          initiator: "system",
+          heldBack: true,
+          held: "3",
+          available: "3",
+          amount: "1",
+        }),
+        expect.objectContaining({
+          initiator: "user",
+          heldBack: false,
+          amount: "4",
+        }),
+      ]);
+    });
   });
 
   describe("beginOperation", () => {

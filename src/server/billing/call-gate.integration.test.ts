@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
@@ -19,7 +27,7 @@ import { describeIntegration } from "@/test-support/integration-suite";
 
 import { gatedAiCall, resetCallGate } from "./call-gate";
 import { beginOperation } from "./operation";
-import { getUsageScope } from "./usage-context";
+import { getUsageScope, runAsBackground } from "./usage-context";
 
 // The plan-allowance gate around a single engine call, against a real Postgres.
 
@@ -42,8 +50,9 @@ const WINDOW_END = new Date(WINDOW_START.getTime() + 400 * DAY_MS);
 // call-gate.ts remembers a refused workspace for this long (REFUSAL_TTL_MS).
 const REFUSAL_TTL_MS = 30_000;
 
-// An active plan whose period allowance is `micros` for the workspace.
-async function grantPlan(ws: string, micros: number) {
+// An active plan whose period allowance is `micros` for the workspace (Growth: a
+// full plan, the system's own work may use 70% of it), `used` of it already spent.
+async function grantPlan(ws: string, micros: number, used = 0) {
   await prisma.subscription.create({
     data: {
       workspaceId: ws,
@@ -62,14 +71,15 @@ async function grantPlan(ws: string, micros: number) {
       periodStart: WINDOW_START,
       periodEnd: WINDOW_END,
       periodGranted: B(micros),
+      periodUsed: B(used),
       updatedAt: new Date(),
     },
   });
 }
 
-async function workspace(micros: number | null) {
+async function workspace(micros: number | null, used = 0) {
   const ws = newWs();
-  if (micros !== null) await grantPlan(ws, micros); // null: no plan
+  if (micros !== null) await grantPlan(ws, micros, used); // null: no plan
   return ws;
 }
 
@@ -243,6 +253,97 @@ describeIntegration("plan allowance gate for one engine call", () => {
     await expect(
       gatedAiCall(call(funded, 60_000), spend(1_000)),
     ).resolves.toBe("done");
+  });
+
+  describe("who asked decides who is turned away (the system's share, Faz 3C)", () => {
+    // Growth: of 10M, the system may use 7M; 3M stay for the user.
+    const system = <T>(run: () => Promise<T>) => runAsBackground(run);
+
+    it("a refusal of the system's call does not turn the user's identical call away", async () => {
+      const ws = await workspace(10_000_000, 5_000_000);
+
+      // 5M left, 3M of them the user's: the system's 3M call does not fit ...
+      await expect(
+        system(() => gatedAiCall(call(ws, 3_000_000), async () => "no")),
+      ).rejects.toMatchObject({
+        code: "BUDGET_EXCEEDED",
+        meta: { limit: "planAllowance" },
+      });
+      // ... and the user, right after, is asked of the ledger and fits.
+      await expect(
+        gatedAiCall(call(ws, 3_000_000), spend(1_000)),
+      ).resolves.toBe("done");
+      expect(await balanceOf(ws)).toEqual({ used: 5_001_000, reserved: 0 });
+    });
+
+    it("remembers the system's refusal for the system only", async () => {
+      const ws = await workspace(10_000_000, 5_000_000);
+      await expect(
+        system(() => gatedAiCall(call(ws, 3_000_000), async () => "no")),
+      ).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
+
+      // Money arrives: the system would fit now, but its refusal is still fresh ...
+      await topUp(ws, 5_000_000);
+      const fn = vi.fn(async () => "never");
+      await expect(
+        system(() => gatedAiCall(call(ws, 3_000_000), fn)),
+      ).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
+      expect(fn).not.toHaveBeenCalled();
+      // ... while the user is untouched by it.
+      await expect(
+        gatedAiCall(call(ws, 3_000_000), spend(1_000)),
+      ).resolves.toBe("done");
+    });
+
+    it("a smaller call of the system is not lowered to the refused one: the user is never asked about it", async () => {
+      const ws = await workspace(10_000_000, 5_000_000);
+      // A tiny system call fits above the user's 3M (2M of room): not refused.
+      await expect(
+        system(() => gatedAiCall(call(ws, 1_000_000), spend(1_000))),
+      ).resolves.toBe("done");
+      // The bigger one is refused, and that leaves the user's 4M call alone.
+      await expect(
+        system(() => gatedAiCall(call(ws, 2_500_000), async () => "no")),
+      ).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
+      await expect(
+        gatedAiCall(call(ws, 4_000_000), spend(1_000)),
+      ).resolves.toBe("done");
+    });
+
+    it("a refusal of the user's call turns the system away too: the allowance is really used up", async () => {
+      const ws = await workspace(10_000_000, 9_000_000);
+      await expect(
+        gatedAiCall(call(ws, 2_000_000), async () => "no"),
+      ).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
+
+      // Money arrives (the ledger would take the system's call now); the user's
+      // refusal is still fresh, and a system call of that size or more is turned away.
+      await topUp(ws, 8_000_000);
+      const fn = vi.fn(async () => "never");
+      await expect(
+        system(() => gatedAiCall(call(ws, 2_000_000), fn)),
+      ).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
+      expect(fn).not.toHaveBeenCalled();
+      expect(await balanceOf(ws)).toEqual({ used: 9_000_000, reserved: 0 });
+    });
+
+    it("a missing plan is refused for everyone, whoever asked first", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const t0 = Date.now();
+      const ws = await workspace(null);
+      await expect(
+        system(() => gatedAiCall(call(ws, 60_000), async () => "no")),
+      ).rejects.toMatchObject({ meta: { limit: "noPlan" } });
+
+      await grantPlan(ws, 3_000_000);
+      vi.setSystemTime(t0 + REFUSAL_TTL_MS - 1_000);
+      await expect(
+        gatedAiCall(call(ws, 1), async () => "never"),
+      ).rejects.toMatchObject({ meta: { limit: "noPlan" } });
+
+      vi.setSystemTime(t0 + REFUSAL_TTL_MS + 1_000);
+      await expect(gatedAiCall(call(ws, 1), spend(1))).resolves.toBe("done");
+    });
   });
 
   it("joins the reservation of the job it runs inside instead of asking for its own", async () => {

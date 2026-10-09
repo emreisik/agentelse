@@ -19,9 +19,12 @@ import "server-only";
 //  - Kilit sırası her yerde bakiye satırı → rezervasyon satırıdır (ölü kilit yok).
 
 // $9, KULLANICIYA AYRILAN yüzdedir (0-100; 0 = ayrılan yok): sistemin kendi başlattığı
-// işler (Faz 3C) rezervasyondan sonra bu orandaki dönem hakkını (periodGranted x $9 / 100)
-// kullanıcı için BOŞTA bırakmak zorundadır; kullanıcı işleri 0 geçer ve etkilenmez.
-// Ayrılan pay yalnız dönem penceresi açıkken vardır.
+// işler (Faz 3C) rezervasyondan sonra bu orandaki dönem hakkını (periodGranted x $9 / 100,
+// YUKARI yuvarlanır) kullanıcı için BOŞTA bırakmak zorundadır; kullanıcı işleri 0 geçer ve
+// etkilenmez. Yukarı yuvarlama: küçük bir hakta sistemin payı kullanıcının aleyhine
+// büyümesin (5 görsellik Starter denemesinde %45 yerine %60 olurdu). Ayrılan pay yalnız
+// dönem penceresi açıkken vardır; `held` sonuçta döner (reddin paydan mı, hak bitiminden
+// mi geldiğini ayırmak için).
 // $1 workspaceId, $2 unit, $3 amount, $4 yeni rezervasyon id, $5 reservationKey,
 // $6 operationId|null, $7 expiresAt, $8 now, $9 ayrılan yüzde
 export const RESERVE_SQL = `
@@ -32,7 +35,7 @@ WITH cur AS (
               ELSE 0 END AS pavail,
          GREATEST("extraGranted" - "extraUsed" - "extraReserved", 0) AS eavail,
          CASE WHEN "periodEnd" > ($8::timestamptz AT TIME ZONE 'UTC')
-              THEN ("periodGranted" * $9::int) / 100
+              THEN ("periodGranted" * $9::int + 99) / 100
               ELSE 0 END AS held
     FROM "UsageBalance"
    WHERE "workspaceId" = $1::text AND "unit" = $2::text
@@ -64,7 +67,8 @@ SELECT (SELECT count(*) FROM cur)::int  AS "balanceRows",
        (SELECT "fromPeriod" FROM ins)   AS "fromPeriod",
        (SELECT "fromExtra"  FROM ins)   AS "fromExtra",
        (SELECT "periodEnd"  FROM cur)   AS "periodEnd",
-       (SELECT pavail + eavail FROM cur)::bigint AS "available"
+       (SELECT pavail + eavail FROM cur)::bigint AS "available",
+       (SELECT held FROM cur)::bigint AS "held"
 `;
 
 // reserve inserted=0 döndürdüğünde: aynı anahtar daha önce yazılmış mı?

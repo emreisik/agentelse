@@ -100,6 +100,23 @@ function Item({
 
 const projectHref = (projectId: string) => `/projects/${projectId}`;
 
+const PAUSED_NOTE: Record<NonNullable<TaskRow["pausedFor"]>, string> = {
+  allowance: "Allowance used up",
+  "no-plan": "Needs a plan",
+  "held-back": "Automatic work limit",
+};
+
+const PAUSED_HINT =
+  "These are waiting for plan allowance. They continue by themselves when it renews or you add more, most important first.";
+
+// Automatic work has its own share of the plan: say it in a percentage, and that
+// what the person starts is never held back.
+function pausedHint(sharePct: number | undefined): string {
+  return sharePct
+    ? `${PAUSED_HINT} Automatic work is limited to ${sharePct}% of your plan; your own requests are not affected.`
+    : PAUSED_HINT;
+}
+
 const taskItem = (row: TaskRow, index: number, note?: string) => (
   <Item
     key={row.id}
@@ -135,16 +152,12 @@ export function TasksPanel({ tasks }: { tasks: TasksOverview }) {
       </List>
       <List
         title="Paused"
-        hint="These stopped because the plan allowance ran out. They continue by themselves when it renews or you add more, most important first."
+        hint={pausedHint(tasks.backgroundSharePct)}
         icon={<Pause className="size-4" />}
         empty="Nothing is paused."
       >
         {tasks.paused.map((row, index) =>
-          taskItem(
-            row,
-            index,
-            row.pausedFor === "no-plan" ? "Needs a plan" : "Allowance used up",
-          ),
+          taskItem(row, index, PAUSED_NOTE[row.pausedFor ?? "allowance"]),
         )}
       </List>
       <List

@@ -31,10 +31,16 @@ vi.mock("@/server/repositories/signal.repository", () => ({
 const { ResultMaterializer, shouldExtractFindings } = await import(
   "./research-result-materializer"
 );
+const { isBackground, runAsBackground } =
+  await import("@/server/billing/usage-context");
 
 const LONG_REPORT = "A long report about the market. ".repeat(10);
 
-function completedTask(capability: string, rawResult: unknown) {
+function completedTask(
+  capability: string,
+  rawResult: unknown,
+  createdByType: "USER" | "SYSTEM" | "AI" = "SYSTEM",
+) {
   return {
     id: "task-1",
     workspaceId: "ws-1",
@@ -42,6 +48,7 @@ function completedTask(capability: string, rawResult: unknown) {
     brandId: "brand-1",
     capability,
     status: "COMPLETED",
+    createdByType,
     executionJobs: [{ rawResult }],
   };
 }
@@ -113,6 +120,60 @@ describe("ResultMaterializer.materializeTask", () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(writeMany).toHaveBeenCalled();
     expect(result.findings).toBe(1);
+  });
+
+  // The extraction call is paid for from the plan (billing, Faz 3C). It runs in the
+  // tick's trigger step, but it works on a task's result: whose call it is follows
+  // who created the task, so a person's own research is never held to the share the
+  // system's own work gets.
+  describe("whose call the extraction is", () => {
+    const labelsSeenByExtraction = () => {
+      const seen: boolean[] = [];
+      run.mockImplementation(async () => {
+        seen.push(isBackground());
+        return { output: { findings: [] } };
+      });
+      return seen;
+    };
+
+    it("is the user's for a task the user created, even inside a background step", async () => {
+      const seen = labelsSeenByExtraction();
+      taskFindUnique.mockResolvedValue(
+        completedTask("WEB_RESEARCH", { final: LONG_REPORT }, "USER"),
+      );
+
+      await runAsBackground(() => ResultMaterializer.materializeTask("task-1"));
+
+      expect(seen).toEqual([false]);
+    });
+
+    it.each(["SYSTEM", "AI"] as const)(
+      "is the system's for a task created by %s, with or without a background step around it",
+      async (createdByType) => {
+        const seen = labelsSeenByExtraction();
+        taskFindUnique.mockResolvedValue(
+          completedTask("WEB_RESEARCH", { final: LONG_REPORT }, createdByType),
+        );
+
+        await ResultMaterializer.materializeTask("task-1");
+        await runAsBackground(() =>
+          ResultMaterializer.materializeTask("task-1"),
+        );
+
+        expect(seen).toEqual([true, true]);
+      },
+    );
+
+    it("does not leave a label behind", async () => {
+      labelsSeenByExtraction();
+      taskFindUnique.mockResolvedValue(
+        completedTask("WEB_RESEARCH", { final: LONG_REPORT }, "SYSTEM"),
+      );
+
+      await ResultMaterializer.materializeTask("task-1");
+
+      expect(isBackground()).toBe(false);
+    });
   });
 
   it("still writes structured findings a deliverable task happens to return", async () => {

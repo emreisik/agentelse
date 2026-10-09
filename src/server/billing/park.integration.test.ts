@@ -274,6 +274,35 @@ const newSlot = (fixture: AgencyFixture, scheduledFor: Date) =>
     },
   });
 
+// A person's decision on a task (the record a task's approval leaves behind).
+const approve = (
+  fixture: AgencyFixture,
+  taskId: string,
+  overrides: Partial<{
+    entityType: string;
+    status: "PENDING" | "APPROVED" | "REJECTED";
+    reviewedByUserId: string | null;
+  }> = {},
+) =>
+  prisma.approval.create({
+    data: {
+      workspaceId: fixture.workspaceId,
+      projectId: fixture.projectId,
+      brandId: fixture.brandId,
+      taskId,
+      entityType: overrides.entityType ?? "Task",
+      entityId: overrides.entityType === "Creative" ? randomUUID() : taskId,
+      type:
+        overrides.entityType === "Creative" ? "CREATIVE_APPROVAL" : "GENERIC",
+      status: overrides.status ?? "APPROVED",
+      requestedByType: "SYSTEM",
+      reviewedByUserId:
+        overrides.reviewedByUserId === undefined
+          ? "user-1"
+          : overrides.reviewedByUserId,
+    },
+  });
+
 const statusOf = async (jobId: string) =>
   (await prisma.executionJob.findUniqueOrThrow({ where: { id: jobId } }))
     .status;
@@ -614,6 +643,21 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
     describe("order", () => {
       const oneRoom = () => newWorkspace({ images: 1, micros: 3_000_000 });
 
+      // Room that exactly one of a client's own 3-picture request and a background
+      // job of 1 picture can have: 4 granted, 1 used, 3 left. Growth keeps 2 of the 4
+      // (30%, rounded up) for the client, so the background job still fits above that
+      // (1 + 2 = 3); but once it has taken its picture only 2 are left, and the
+      // client's 3 no longer fit. Whichever the order puts first decides who goes.
+      const contested = async () => {
+        const fixture = await newWorkspace({ images: 4, micros: 3_000_000 });
+        await prisma.usageBalance.updateMany({
+          where: { workspaceId: fixture.workspaceId, unit: "IMAGE" },
+          data: { periodUsed: B(1) },
+        });
+        return fixture;
+      };
+      const THREE_PICTURES = { request: "a post", variantCount: 3 };
+
       async function expectWoken(
         fixture: AgencyFixture,
         winner: { job: { id: string } },
@@ -629,7 +673,7 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       }
 
       it("the client's own request goes before background work, even when the background post is due sooner", async () => {
-        const fixture = await oneRoom();
+        const fixture = await contested();
         const soonSlot = await newSlot(fixture, later(NOW, DAY));
         const lateSlot = await newSlot(fixture, later(NOW, 5 * DAY));
         // The background job is due sooner AND was created first: nothing but the
@@ -641,6 +685,7 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
         });
         const own = await seedJob(fixture, {
           createdBy: "USER",
+          payload: THREE_PICTURES,
           taskPayload: { planCreativeId: lateSlot.id },
           createdAt: earlier(NOW, 2 * HOUR),
         });
@@ -683,13 +728,14 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       });
 
       it("priority goes before everything else: a high-priority background job beats the client's own earlier, sooner request", async () => {
-        const fixture = await oneRoom();
+        const fixture = await contested();
         const soonSlot = await newSlot(fixture, later(NOW, DAY));
         const lateSlot = await newSlot(fixture, later(NOW, 5 * DAY));
         // The own job wins on every other rule (own request, slot, age).
         const own = await seedJob(fixture, {
           priority: "MEDIUM",
           createdBy: "USER",
+          payload: THREE_PICTURES,
           taskPayload: { planCreativeId: soonSlot.id },
           createdAt: earlier(NOW, 3 * HOUR),
         });
@@ -1475,22 +1521,14 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
     });
 
     it("a limited plan (Starter) leaves the system less room than a full one", async () => {
-      // Same state on both: 10 granted. Starter holds back 5 (55%), Growth 3 (30%).
+      // The same state on both: 10 granted, 5 used, 5 left. Starter keeps 6 of the
+      // 10 for the user (55%, rounded up), so a system job does not fit; Growth
+      // keeps 3, so the same job does.
       const starter = await nearlyUsedUp("starter");
       const growth = await nearlyUsedUp("growth");
-      // Starter: 5 used, 5 left, 5 held back: the system fits nothing more.
-      // Growth: 7 used, 3 left, 3 held back: the system fits nothing more either.
-      // Give both one more image of room by lowering the use by one.
-      await prisma.usageBalance.updateMany({
-        where: {
-          workspaceId: { in: [starter.workspaceId, growth.workspaceId] },
-          unit: "IMAGE",
-        },
-        data: { periodUsed: B(4) },
-      });
       await prisma.usageBalance.updateMany({
         where: { workspaceId: growth.workspaceId, unit: "IMAGE" },
-        data: { periodUsed: B(6) },
+        data: { periodUsed: B(5) },
       });
       const onStarter = await seedJob(starter, { createdBy: "SYSTEM" });
       const onGrowth = await seedJob(growth, { createdBy: "SYSTEM" });
@@ -1498,58 +1536,154 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       await resumeParkedWork({ workspaceId: starter.workspaceId, now: NOW });
       await resumeParkedWork({ workspaceId: growth.workspaceId, now: NOW });
 
-      // Starter has 6 left and holds back 5: 6 >= 1 + 5 goes. Growth has 4 left, holds back 3: goes.
-      expect(await statusOf(onStarter.job.id)).toBe("QUEUED");
+      expect(await statusOf(onStarter.job.id)).toBe("WAITING_BUDGET");
       expect(await statusOf(onGrowth.job.id)).toBe("QUEUED");
     });
 
-    it("beginJobBilling labels the job by who created its task", async () => {
-      const fixture = await nearlyUsedUp();
-      const provider: ExecutionProvider = {
-        key: "test-paid",
-        type: "AI",
-        isConfigured: true,
-        canExecute: async () => true,
-        usageEstimate: () => ({ class: "content", images: 1 }),
-        execute: async (request) => ({
-          executionReference: request.correlationId,
-          isMock: false,
-        }),
-        getStatus: async () => ({ status: "COMPLETED", isMock: false }),
+    // A queued job of a task made by `createdBy`, started the way the worker does.
+    // beginJobBilling reads the clock itself: it is put inside the window.
+    const paidProvider: ExecutionProvider = {
+      key: "test-paid",
+      type: "AI",
+      isConfigured: true,
+      canExecute: async () => true,
+      usageEstimate: () => ({ class: "content", images: 1 }),
+      execute: async (request) => ({
+        executionReference: request.correlationId,
+        isMock: false,
+      }),
+      getStatus: async () => ({ status: "COMPLETED", isMock: false }),
+    };
+    async function startAs(
+      fixture: AgencyFixture,
+      createdBy: ActorType,
+      approval?: Partial<{
+        entityType: string;
+        status: "PENDING" | "APPROVED" | "REJECTED";
+        reviewedByUserId: string | null;
+      }>,
+    ) {
+      const { job, task } = await seedJob(fixture, {
+        createdBy,
+        jobStatus: "QUEUED",
+      });
+      if (approval) await approve(fixture, task.id, approval);
+      const queued = await prisma.executionJob.findUniqueOrThrow({
+        where: { id: job.id },
+      });
+      const context: ExecutionPolicyContext = {
+        workspaceId: fixture.workspaceId,
+        projectId: fixture.projectId,
+        brandId: fixture.brandId,
+        taskId: task.id,
+        capability: "CREATE_SOCIAL_CREATIVE",
+        riskLevel: "MEDIUM",
       };
-      const start = async (createdBy: ActorType) => {
-        const { job, task } = await seedJob(fixture, {
-          createdBy,
-          jobStatus: "QUEUED",
-        });
-        const queued = await prisma.executionJob.findUniqueOrThrow({
-          where: { id: job.id },
-        });
-        const context: ExecutionPolicyContext = {
-          workspaceId: fixture.workspaceId,
-          projectId: fixture.projectId,
-          brandId: fixture.brandId,
-          taskId: task.id,
-          capability: "CREATE_SOCIAL_CREATIVE",
-          riskLevel: "MEDIUM",
-        };
-        return beginJobBilling({ job: queued, provider, context });
-      };
-
-      // beginJobBilling reads the clock itself: put it inside the window.
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(NOW);
-      let bySystem, byUser;
       try {
-        bySystem = await start("SYSTEM");
-        byUser = await start("USER");
+        return await beginJobBilling({
+          job: queued,
+          provider: paidProvider,
+          context,
+        });
       } finally {
         vi.useRealTimers();
       }
+    }
+
+    it("beginJobBilling labels the job by who created its task", async () => {
+      const fixture = await nearlyUsedUp();
+
+      const bySystem = await startAs(fixture, "SYSTEM");
+      const byUser = await startAs(fixture, "USER");
 
       expect(bySystem.kind).toBe("stop"); // parked: it would eat into the user's share
       expect(byUser.kind).toBe("run");
       if (byUser.kind === "run") await byUser.operation.finish("aborted");
+      if (bySystem.kind === "stop") {
+        // The allowance is not used up (3 left): the job says it waits for its share.
+        expect(bySystem.job).toMatchObject({
+          status: "WAITING_BUDGET",
+          errorCode: "QUOTA_HELD_BACK",
+        });
+      }
+    });
+
+    it("a job parked because the allowance itself is used up is not called held back", async () => {
+      const fixture = await nearlyUsedUp();
+      await prisma.usageBalance.updateMany({
+        where: { workspaceId: fixture.workspaceId, unit: "IMAGE" },
+        data: { periodUsed: B(10) },
+      });
+
+      const bySystem = await startAs(fixture, "SYSTEM");
+      const byUser = await startAs(fixture, "USER");
+
+      for (const started of [bySystem, byUser]) {
+        expect(started.kind).toBe("stop");
+        if (started.kind === "stop") {
+          expect(started.job.errorCode).toBe("QUOTA_EXCEEDED");
+        }
+      }
+    });
+
+    describe("a system task that a person approved", () => {
+      it("is the user's own work: it goes where the system's share would have parked it", async () => {
+        const fixture = await nearlyUsedUp(); // 3 left, all of them the user's
+
+        const unapproved = await startAs(fixture, "SYSTEM");
+        const approved = await startAs(fixture, "SYSTEM", {
+          status: "APPROVED",
+          reviewedByUserId: "user-1",
+        });
+
+        expect(unapproved.kind).toBe("stop");
+        expect(approved.kind).toBe("run");
+        if (approved.kind === "run") await approved.operation.finish("aborted");
+      });
+
+      it.each([
+        ["still waiting", { status: "PENDING" as const }],
+        ["rejected", { status: "REJECTED" as const }],
+        [
+          "approved without a person behind it",
+          { status: "APPROVED" as const, reviewedByUserId: null },
+        ],
+        [
+          "an approval of the made piece, not of the task",
+          { entityType: "Creative", status: "APPROVED" as const },
+        ],
+      ])(
+        "stays the system's when the approval is %s",
+        async (_label, approval) => {
+          const fixture = await nearlyUsedUp();
+
+          const started = await startAs(fixture, "SYSTEM", {
+            reviewedByUserId: "user-1",
+            ...approval,
+          });
+
+          expect(started.kind).toBe("stop");
+        },
+      );
+
+      it("resumes with the user's work: into the user's share, ahead of the system's", async () => {
+        const fixture = await nearlyUsedUp(); // 3 left, all of them the user's
+        // The system's job is older, so it would go first if nothing set them apart.
+        const plain = await seedJob(fixture, { createdBy: "SYSTEM" });
+        const approved = await seedJob(fixture, { createdBy: "SYSTEM" });
+        await approve(fixture, approved.task.id);
+
+        const summary = await resumeParkedWork({
+          workspaceId: fixture.workspaceId,
+          now: NOW,
+        });
+
+        expect(summary).toEqual({ resumed: 1, cancelled: 0, stillParked: 1 });
+        expect(await statusOf(approved.job.id)).toBe("QUEUED");
+        expect(await statusOf(plain.job.id)).toBe("WAITING_BUDGET");
+      });
     });
   });
 

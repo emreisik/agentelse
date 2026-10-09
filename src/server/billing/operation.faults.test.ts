@@ -73,6 +73,7 @@ const noRoom: ReserveResult = {
   reason: "INSUFFICIENT",
   available: B(0),
   resetsAt: null,
+  heldBack: false,
 };
 
 const settled: SettleResult = {

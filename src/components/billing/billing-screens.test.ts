@@ -655,5 +655,40 @@ describe("TasksPanel", () => {
     expect(markup).toContain("Publish to Instagram");
     expect(markup).toContain('href="/projects/p1"');
     expect(markup).toContain('href="/projects/p2"');
+    // Nothing is held back here: no word about the automatic share.
+    expect(markup).not.toContain("Automatic work");
+  });
+
+  // Automatic work that reached its own share: the allowance is not used up, and
+  // the screen says so in a percentage (never a token or a dollar figure).
+  it("tells work held back for the automatic share from work that ran out of allowance", () => {
+    const at = new Date().toISOString();
+    const markup = html(
+      createElement(TasksPanel, {
+        tasks: {
+          active: [],
+          paused: [
+            {
+              id: "j1",
+              title: "Weekly auto post",
+              capability: "CREATE_SOCIAL_CREATIVE",
+              projectId: "p1",
+              projectName: "Acme",
+              at,
+              pausedFor: "held-back",
+            },
+          ],
+          awaitingApproval: [],
+          backgroundSharePct: 45,
+        },
+      }),
+    );
+    expect(markup).toContain("Weekly auto post");
+    expect(markup).toContain("Automatic work limit");
+    expect(markup).not.toContain("Allowance used up");
+    expect(markup).toContain("limited to 45% of your plan");
+    expect(markup).toContain("your own requests are not affected");
+    expect(markup).toContain("continue by themselves");
+    expect(markup).not.toMatch(/\$|token/i);
   });
 });

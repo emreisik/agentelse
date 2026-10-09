@@ -8,6 +8,7 @@ import { getPaymentDeps } from "@/server/billing/payments/deps";
 import {
   cancelAtPeriodEnd,
   changePlan,
+  checkPromoCode,
   fail,
   openBillingPortal,
   resumeSubscription,
@@ -40,6 +41,7 @@ type Context = {
 
 async function guard(
   scope: string,
+  max: number = RATE.max,
 ): Promise<
   { ok: true; ctx: Context } | { ok: false; result: ReturnType<typeof fail> }
 > {
@@ -52,7 +54,7 @@ async function guard(
   }
   const deps = getPaymentDeps();
   if (!deps) return { ok: false, result: fail("PAYMENTS_CLOSED") };
-  if (isRateLimited(`billing:${scope}:${userId}`, RATE.max, RATE.windowMs)) {
+  if (isRateLimited(`billing:${scope}:${userId}`, max, RATE.windowMs)) {
     return { ok: false, result: fail("RATE_LIMITED") };
   }
   return { ok: true, ctx: { userId, email, workspaceId, deps } };
@@ -66,10 +68,23 @@ async function workspaceName(workspaceId: string): Promise<string | null> {
   return workspace?.name ?? null;
 }
 
+// Promosyon kodunu sorgular (kod tahmin etmeye karşı daha sıkı sınır: 10 / 10 dakika).
+export async function checkPromoCodeAction(input: {
+  code: string;
+}): Promise<ActionResult<{ code: string; description: string }>> {
+  const gate = await guard("promo", 10);
+  if (!gate.ok) return gate.result;
+  return checkPromoCode(
+    { workspaceId: gate.ctx.workspaceId, code: input.code },
+    gate.ctx.deps,
+  );
+}
+
 export async function startCheckoutAction(input: {
   planKey: string;
   interval: string;
   applyFirstMonth: boolean;
+  promoCode?: string;
 }): Promise<ActionResult<{ url: string }>> {
   const gate = await guard("checkout");
   if (!gate.ok) return gate.result;
@@ -82,6 +97,7 @@ export async function startCheckoutAction(input: {
       planKey: input.planKey,
       interval: input.interval,
       applyFirstMonth: input.applyFirstMonth === true,
+      promoCode: input.promoCode,
     },
     ctx.deps,
   );

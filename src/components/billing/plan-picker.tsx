@@ -1,10 +1,11 @@
 "use client";
 
-import { Check, Tag } from "lucide-react";
-import { useState } from "react";
+import { Check, Tag, X } from "lucide-react";
+import { useState, useTransition } from "react";
 
 import {
   changePlanAction,
+  checkPromoCodeAction,
   startCheckoutAction,
 } from "@/server/actions/billing-actions";
 
@@ -72,6 +73,14 @@ export function PlanPicker({
         : null;
   const [interval, setBilling] = useState<Interval>(lockedInterval ?? "month");
   const [firstMonthDiscount, setFirstMonthDiscount] = useState(false);
+  // A promo code the server has checked; it replaces the first-month discount.
+  const [promoText, setPromoText] = useState("");
+  const [promo, setPromo] = useState<{
+    code: string;
+    description: string;
+  } | null>(null);
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [checkingPromo, startCheckingPromo] = useTransition();
   const firstMonthAvailable =
     mode.kind === "subscribe"
       ? mode.firstMonthAvailable
@@ -80,6 +89,25 @@ export function PlanPicker({
   const showDiscountButton =
     mode.kind === "subscribe" || mode.kind === "browse";
   const paymentsOpen = mode.kind !== "browse";
+  const promoOpen = mode.kind === "subscribe";
+
+  function applyPromo() {
+    setPromoError(null);
+    startCheckingPromo(async () => {
+      try {
+        const result = await checkPromoCodeAction({ code: promoText.trim() });
+        if (result.ok) {
+          setPromo({ code: result.code, description: result.description });
+          setFirstMonthDiscount(false);
+          setPromoText("");
+        } else {
+          setPromoError(result.message);
+        }
+      } catch {
+        setPromoError("That did not work. Try again.");
+      }
+    });
+  }
 
   return (
     <div className="flex flex-col gap-8">
@@ -125,7 +153,9 @@ export function PlanPicker({
               variant={
                 firstMonthDiscount && discountApplies ? "secondary" : "default"
               }
-              disabled={!discountApplies || !firstMonthAvailable}
+              disabled={
+                !discountApplies || !firstMonthAvailable || promo !== null
+              }
               aria-pressed={firstMonthDiscount && discountApplies}
               onClick={() => setFirstMonthDiscount((value) => !value)}
             >
@@ -134,17 +164,57 @@ export function PlanPicker({
                 ? "First-month discount applied"
                 : "Apply first-month discount"}
             </Button>
-            <div className="flex items-center gap-1.5">
-              <Input
-                disabled
-                aria-label="Promo code"
-                placeholder="Promo code"
-                className="h-9 w-32 text-[13px]"
-              />
-              <Button type="button" size="lg" variant="outline" disabled>
-                Apply
-              </Button>
-            </div>
+            {promo ? (
+              <div
+                className="flex h-9 items-center gap-2 rounded-lg border px-2.5 text-[13px]"
+                style={{
+                  borderColor: "var(--ws-border)",
+                  color: "var(--ws-text)",
+                }}
+              >
+                <Tag className="size-3.5" style={muted} />
+                <span>
+                  <span className="font-medium">{promo.code}</span>
+                  <span style={muted}> · {promo.description}</span>
+                </span>
+                <button
+                  type="button"
+                  aria-label="Remove promo code"
+                  className="rounded p-0.5"
+                  style={muted}
+                  onClick={() => setPromo(null)}
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            ) : (
+              <form
+                className="flex items-center gap-1.5"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (promoOpen && promoText.trim()) applyPromo();
+                }}
+              >
+                <Input
+                  disabled={!promoOpen || checkingPromo}
+                  aria-label="Promo code"
+                  placeholder="Promo code"
+                  value={promoText}
+                  maxLength={40}
+                  autoComplete="off"
+                  onChange={(event) => setPromoText(event.target.value)}
+                  className="h-9 w-32 text-[13px]"
+                />
+                <Button
+                  type="submit"
+                  size="lg"
+                  variant="outline"
+                  disabled={!promoOpen || checkingPromo || !promoText.trim()}
+                >
+                  {checkingPromo ? "Checking…" : "Apply"}
+                </Button>
+              </form>
+            )}
           </div>
         ) : null}
       </div>
@@ -152,6 +222,21 @@ export function PlanPicker({
         <p className="-mt-6 text-xs" style={faint}>
           The yearly price already includes {yearlyDiscountPct}% off; the
           first-month discount is for monthly billing.
+        </p>
+      ) : null}
+      {promoError ? (
+        <p
+          role="alert"
+          className="-mt-6 text-xs"
+          style={{ color: "var(--destructive)" }}
+        >
+          {promoError}
+        </p>
+      ) : null}
+      {promo ? (
+        <p className="-mt-6 text-xs" style={faint}>
+          The promo code replaces the first-month discount. Stripe checks it
+          again at checkout.
         </p>
       ) : null}
       {showDiscountButton && !firstMonthAvailable ? (
@@ -251,8 +336,12 @@ export function PlanPicker({
                 mode={mode}
                 interval={interval}
                 useFirstMonthDiscount={
-                  firstMonthDiscount && discountApplies && firstMonthAvailable
+                  firstMonthDiscount &&
+                  discountApplies &&
+                  firstMonthAvailable &&
+                  promo === null
                 }
+                promoCode={promo?.code}
                 current={current}
               />
             </div>
@@ -360,6 +449,7 @@ function PlanButton({
   mode,
   interval,
   useFirstMonthDiscount,
+  promoCode,
   current,
 }: {
   card: PlanCard;
@@ -367,6 +457,7 @@ function PlanButton({
   mode: PlanPickerMode;
   interval: Interval;
   useFirstMonthDiscount: boolean;
+  promoCode?: string;
   current: boolean;
 }) {
   const className = "mt-auto w-full";
@@ -395,6 +486,7 @@ function PlanButton({
           planKey: card.key,
           interval: interval === "year" ? "YEAR" : "MONTH",
           applyFirstMonth: useFirstMonthDiscount,
+          promoCode,
         }}
       >
         {`Subscribe to ${card.label}`}

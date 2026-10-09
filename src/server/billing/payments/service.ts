@@ -9,14 +9,21 @@ import {
   type PlanKey,
 } from "@/lib/billing/plans";
 
+import { formatUsd } from "@/lib/billing/catalog";
+
 import {
   isBillingInterval,
   isUpgrade,
+  planUnitAmountCents,
   type BillingInterval,
 } from "../stripe/catalog";
 import { StripeApiError, StripeNetworkError } from "../stripe/client";
 import type { StripeMode } from "../stripe/config";
-import { StripeShapeError, type StripeInvoiceRow } from "../stripe/facts";
+import {
+  StripeShapeError,
+  type StripeInvoiceRow,
+  type StripePromotionFacts,
+} from "../stripe/facts";
 import type { StripeGateway } from "../stripe/gateway";
 import { ensureBillingCustomer, forgetBillingCustomer } from "./customers";
 import { handleCheckoutSession } from "./events";
@@ -43,6 +50,7 @@ export type BillingActionError =
   | "NO_CUSTOMER"
   | "PLAN_REQUIRED"
   | "DISCOUNT_NOT_AVAILABLE"
+  | "PROMO_INVALID"
   | "PAYMENT_PROBLEM"
   | "CARD_DECLINED"
   | "INVALID_INPUT"
@@ -63,6 +71,7 @@ const MESSAGES: Record<BillingActionError, string> = {
   PLAN_REQUIRED: "Extra packs are available while you have a plan.",
   DISCOUNT_NOT_AVAILABLE:
     "The first-month discount is only available on a first monthly subscription.",
+  PROMO_INVALID: "That code is not valid or has expired.",
   PAYMENT_PROBLEM:
     "The last payment did not go through. Update the payment method first, then change the plan.",
   CARD_DECLINED:
@@ -128,6 +137,121 @@ export function firstMonthEligible(
 const returnUrl = (deps: PaymentDeps, query: string) =>
   `${deps.appUrl}/billing?${query}`;
 
+// -- Promosyon kodu -----------------------------------------------------------------
+// Kodlar Stripe'ta (Dashboard > Product catalog > Coupons > Promotion codes) sahip
+// tarafından yaratılır; Stripe kullanım sınırını Checkout'ta kendisi uygular. Burada yalnız
+// "bu kod geçerli mi, ne veriyor" ön denetimi ve Checkout'a kod kimliğinin verilmesi vardır.
+// Kod YALNIZ fiyatı etkiler: kota ve ilk ay kota çarpanı değişmez (kod = tam kota).
+
+export const PROMO_CODE_PATTERN = /^[A-Za-z0-9-]{3,40}$/;
+
+export function describePromotion(promotion: StripePromotionFacts): string {
+  const coupon = promotion.coupon;
+  const percent = coupon?.percentOff;
+  const what =
+    percent !== null && percent !== undefined
+      ? `${Number.isInteger(percent) ? percent : percent.toFixed(1)}% off`
+      : coupon?.amountOff && coupon.currency === "usd"
+        ? `${formatUsd(coupon.amountOff)} off`
+        : "A discount";
+  if (coupon?.duration === "forever") return `${what} every payment`;
+  if (coupon?.duration === "repeating" && coupon.durationInMonths) {
+    const months = coupon.durationInMonths;
+    return `${what} for ${months} ${months === 1 ? "month" : "months"}`;
+  }
+  return `${what} your first payment`;
+}
+
+function promotionUsable(
+  promotion: StripePromotionFacts,
+  context: { now: Date; customerId: string | null; amountCents?: number },
+): boolean {
+  const { coupon } = promotion;
+  if (!promotion.active || !coupon || !coupon.valid) return false;
+  if (
+    promotion.expiresAt &&
+    promotion.expiresAt.getTime() <= context.now.getTime()
+  ) {
+    return false;
+  }
+  if (coupon.redeemBy && coupon.redeemBy.getTime() <= context.now.getTime()) {
+    return false;
+  }
+  if (
+    promotion.maxRedemptions !== null &&
+    promotion.timesRedeemed >= promotion.maxRedemptions
+  ) {
+    return false;
+  }
+  // Belirli bir müşteriye bağlı kod başkasında çalışmaz (nedeni söylenmez).
+  if (promotion.customerId && promotion.customerId !== context.customerId) {
+    return false;
+  }
+  if (
+    promotion.minimumAmount !== null &&
+    context.amountCents !== undefined &&
+    context.amountCents < promotion.minimumAmount
+  ) {
+    return false;
+  }
+  return true;
+}
+
+async function resolvePromotion(
+  input: { workspaceId: string; code: unknown; amountCents?: number },
+  deps: PaymentDeps,
+  now: Date,
+): Promise<
+  | { ok: true; promotion: StripePromotionFacts }
+  | { ok: false; error: BillingActionError; message: string }
+> {
+  if (
+    typeof input.code !== "string" ||
+    !PROMO_CODE_PATTERN.test(input.code.trim())
+  ) {
+    return fail("PROMO_INVALID");
+  }
+  const link = await prisma.billingCustomer.findUnique({
+    where: {
+      workspaceId_livemode: {
+        workspaceId: input.workspaceId,
+        livemode: deps.mode === "live",
+      },
+    },
+    select: { stripeCustomerId: true },
+  });
+  try {
+    const promotion = await deps.gateway.lookupPromotionCode(input.code.trim());
+    if (
+      !promotion ||
+      !promotionUsable(promotion, {
+        now,
+        customerId: link?.stripeCustomerId ?? null,
+        amountCents: input.amountCents,
+      })
+    ) {
+      return fail("PROMO_INVALID");
+    }
+    return { ok: true, promotion };
+  } catch (error) {
+    return fail(describeProviderError(error));
+  }
+}
+
+export async function checkPromoCode(
+  input: { workspaceId: string; code: unknown },
+  deps: PaymentDeps,
+  now: Date = new Date(),
+): Promise<ActionResult<{ code: string; description: string }>> {
+  const resolved = await resolvePromotion(input, deps, now);
+  if (!resolved.ok) return resolved;
+  return {
+    ok: true,
+    code: resolved.promotion.code,
+    description: describePromotion(resolved.promotion),
+  };
+}
+
 // -- Checkout ---------------------------------------------------------------------
 
 export async function startSubscriptionCheckout(
@@ -138,8 +262,12 @@ export async function startSubscriptionCheckout(
     planKey: unknown;
     interval: unknown;
     applyFirstMonth: boolean;
+    // Müşterinin girdiği promosyon kodu (isteğe bağlı). İlk ay indirimiyle birlikte
+    // kullanılamaz: kod ilk ay indiriminin YERİNE geçer.
+    promoCode?: unknown;
   },
   deps: PaymentDeps,
+  now: Date = new Date(),
 ): Promise<ActionResult<{ url: string }>> {
   if (!isPlanKey(input.planKey) || !isBillingInterval(input.interval)) {
     return fail("INVALID_INPUT");
@@ -155,8 +283,29 @@ export async function startSubscriptionCheckout(
   ) {
     return fail("ALREADY_SUBSCRIBED");
   }
+  const hasPromo =
+    input.promoCode !== undefined &&
+    input.promoCode !== null &&
+    input.promoCode !== "";
+  if (hasPromo && input.applyFirstMonth) return fail("INVALID_INPUT");
   const eligible = firstMonthEligible(row, planKey, interval);
   if (input.applyFirstMonth && !eligible) return fail("DISCOUNT_NOT_AVAILABLE");
+
+  // Kod geçersizse Stripe'a müşteri bile açılmaz (yazım hatası kayıt bırakmasın).
+  let promotionCodeId: string | undefined;
+  if (hasPromo) {
+    const resolved = await resolvePromotion(
+      {
+        workspaceId: input.workspaceId,
+        code: input.promoCode,
+        amountCents: planUnitAmountCents(planKey, interval),
+      },
+      deps,
+      now,
+    );
+    if (!resolved.ok) return resolved;
+    promotionCodeId = resolved.promotion.id;
+  }
 
   try {
     const create = async () => {
@@ -173,6 +322,7 @@ export async function startSubscriptionCheckout(
         planKey,
         interval,
         firstMonth: input.applyFirstMonth,
+        promotionCodeId,
         successUrl: returnUrl(
           deps,
           "tab=subscription&checkout=success&session_id={CHECKOUT_SESSION_ID}",

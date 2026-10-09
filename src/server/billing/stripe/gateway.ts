@@ -19,11 +19,13 @@ import { StripeApiError, type StripeHttp } from "./client";
 import {
   parseCharge,
   parseCheckoutSession,
+  parseCoupon,
   parseDispute,
   parseId,
   parseInvoice,
   parseInvoiceList,
   parsePaymentIntent,
+  parsePromotionCodeList,
   parseRedirect,
   parseSubscription,
   type StripeChargeFacts,
@@ -31,6 +33,7 @@ import {
   type StripeInvoiceFacts,
   type StripeInvoiceRow,
   type StripePaymentIntentFacts,
+  type StripePromotionFacts,
   type StripeSessionFacts,
   type StripeSubscriptionFacts,
 } from "./facts";
@@ -52,6 +55,9 @@ export type SubscriptionCheckoutInput = {
   interval: BillingInterval;
   // İlk ay kampanya kuponu uygulansın mı (sunucu karar verir, istemci değil).
   firstMonth: boolean;
+  // Müşterinin girdiği promosyon kodu (Stripe promotion code kimliği, promo_...). İlk ay
+  // kuponuyla BİRLİKTE kullanılmaz (Checkout tek indirim kabul eder).
+  promotionCodeId?: string;
   successUrl: string;
   cancelUrl: string;
 };
@@ -83,6 +89,9 @@ export type StripeGateway = {
   getPaymentIntent(id: string): Promise<StripePaymentIntentFacts | null>;
   getDispute(id: string): Promise<StripeDisputeFacts | null>;
   listInvoices(customerId: string, limit?: number): Promise<StripeInvoiceRow[]>;
+  // Etkin bir promosyon kodunu koduyla bul (büyük/küçük harf duyarsız); yoksa null. Kupon
+  // ayrıntısı yanıtta yoksa ayrıca okunur.
+  lookupPromotionCode(code: string): Promise<StripePromotionFacts | null>;
 
   createCustomer(input: CustomerInput): Promise<string>;
   createSubscriptionCheckout(
@@ -227,6 +236,19 @@ export function createStripeGateway(http: StripeHttp): StripeGateway {
       return parseInvoiceList(raw);
     },
 
+    async lookupPromotionCode(code) {
+      const raw = await http({
+        method: "GET",
+        path: "/v1/promotion_codes",
+        query: { code, active: true, limit: 1 },
+      });
+      const [found] = parsePromotionCodeList(raw);
+      if (!found) return null;
+      if (found.coupon || !found.couponId) return found;
+      const coupon = await getOrNull(http, `/v1/coupons/${found.couponId}`);
+      return { ...found, coupon: coupon === null ? null : parseCoupon(coupon) };
+    },
+
     async createCustomer(input) {
       const raw = await http({
         method: "POST",
@@ -243,13 +265,16 @@ export function createStripeGateway(http: StripeHttp): StripeGateway {
 
     async createSubscriptionCheckout(input) {
       await ensureProduct(input.planKey);
-      if (input.firstMonth) await ensureCoupon(input.planKey);
+      if (input.firstMonth && !input.promotionCodeId) {
+        await ensureCoupon(input.planKey);
+      }
       const metadata = {
         kind: "subscription",
         workspaceId: input.workspaceId,
         planKey: input.planKey,
         interval: input.interval,
-        intro: input.firstMonth ? "1" : "0",
+        // Ilk ay kuponu yalnız promosyon kodu yokken uygulanır; ikisi birden verilirse kod kazanır.
+        intro: input.firstMonth && !input.promotionCodeId ? "1" : "0",
       };
       const raw = await http({
         method: "POST",
@@ -266,9 +291,12 @@ export function createStripeGateway(http: StripeHttp): StripeGateway {
               price_data: planPriceData(input.planKey, input.interval),
             },
           ],
-          discounts: input.firstMonth
-            ? [{ coupon: firstMonthCouponId(input.planKey) }]
-            : undefined,
+          // Checkout tek indirim kabul eder: promosyon kodu varsa o, yoksa ilk ay kuponu.
+          discounts: input.promotionCodeId
+            ? [{ promotion_code: input.promotionCodeId }]
+            : input.firstMonth
+              ? [{ coupon: firstMonthCouponId(input.planKey) }]
+              : undefined,
           metadata,
           subscription_data: { metadata },
         },

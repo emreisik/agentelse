@@ -1,5 +1,6 @@
 import "server-only";
 
+import { runPaymentsSweepTick } from "@/server/billing/payments/sweep";
 import { runBillingTick } from "@/server/billing/period-tick";
 import { runDueMediaAnalysis } from "@/server/brand/media/tick";
 
@@ -211,6 +212,20 @@ registerAgencyTickStep({
     runBillingTick().catch((error) => {
       console.error(
         "[billing] tick",
+        error instanceof Error ? error.name : error,
+      );
+      return 0;
+    }),
+});
+// Ödeme güvenlik ağı (docs/billing-payments.md): yenileme tarihi gelmiş abonelikleri Stripe'tan
+// yeniden okur; webhook günlerce kaçsa da ödeyen müşteri erişimsiz, bitmiş abonelik açık
+// kalmaz. Ödeme kapalıyken sorgusuz 0 döner; hata tick'i durdurmaz.
+registerAgencyTickStep({
+  name: "billing-payments-sweep",
+  run: () =>
+    runPaymentsSweepTick().catch((error) => {
+      console.error(
+        "[billing] payments sweep",
         error instanceof Error ? error.name : error,
       );
       return 0;

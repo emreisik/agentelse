@@ -136,9 +136,7 @@ export function createStripeHttp(options: StripeHttpOptions): StripeHttp {
           await sleep(retryDelayMs(attempt));
           continue;
         }
-        throw new StripeNetworkError(
-          cause instanceof Error ? cause.name : "network error",
-        );
+        throw new StripeNetworkError(describeNetworkFailure(cause));
       }
 
       const requestId = response.headers.get("request-id");
@@ -164,6 +162,14 @@ export function createStripeHttp(options: StripeHttpOptions): StripeHttp {
       throw errorFrom(response.status, parsed, requestId);
     }
   };
+}
+
+// Ağ hatasının nedeni (zaman aşımı, DNS, bağlantı reddi ...): teşhis için gerekli, sır
+// içermez (istek adresi ve anahtar mesaja girmez).
+function describeNetworkFailure(cause: unknown): string {
+  if (!(cause instanceof Error)) return "network error";
+  const code = (cause.cause as { code?: unknown } | undefined)?.code;
+  return `${cause.name}: ${cause.message}${typeof code === "string" ? ` (${code})` : ""}`;
 }
 
 function retryDelayMs(attempt: number): number {

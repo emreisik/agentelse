@@ -436,6 +436,109 @@ export function parseEventEnvelope(raw: unknown): StripeEventEnvelope {
 }
 
 // ---------------------------------------------------------------------------
+// Promosyon kodu (Stripe Promotion Code) ve kuponu
+
+export type StripeCouponFacts = {
+  id: string;
+  valid: boolean;
+  percentOff: number | null;
+  amountOff: number | null;
+  currency: string | null;
+  // once | repeating | forever
+  duration: string;
+  durationInMonths: number | null;
+  redeemBy: Date | null;
+};
+
+const couponSchema = z.object({
+  id: z.string(),
+  valid: z.boolean().default(true),
+  percent_off: z.number().nullable().optional(),
+  amount_off: z.number().nullable().optional(),
+  currency: z.string().nullable().optional(),
+  duration: z.string().default("once"),
+  duration_in_months: z.number().nullable().optional(),
+  redeem_by: seconds,
+});
+
+function couponFacts(coupon: z.infer<typeof couponSchema>): StripeCouponFacts {
+  return {
+    id: coupon.id,
+    valid: coupon.valid,
+    percentOff: coupon.percent_off ?? null,
+    amountOff: coupon.amount_off ?? null,
+    currency: coupon.currency ?? null,
+    duration: coupon.duration,
+    durationInMonths: coupon.duration_in_months ?? null,
+    redeemBy: toDate(coupon.redeem_by),
+  };
+}
+
+export function parseCoupon(raw: unknown): StripeCouponFacts {
+  return couponFacts(parse("coupon", couponSchema, raw));
+}
+
+export type StripePromotionFacts = {
+  id: string;
+  code: string;
+  active: boolean;
+  expiresAt: Date | null;
+  maxRedemptions: number | null;
+  timesRedeemed: number;
+  firstTimeOnly: boolean;
+  minimumAmount: number | null;
+  // Yalnız bu müşteri kullanabilir (null: herkes).
+  customerId: string | null;
+  couponId: string | null;
+  // 2024-06-20 şeklinde kupon nesnesi koduyla gelir; daha yeni sürümlerde yalnız kimliği
+  // gelir (null): çağıran kuponu ayrıca okur.
+  coupon: StripeCouponFacts | null;
+};
+
+const promotionCodeSchema = z.object({
+  id: z.string(),
+  code: z.string(),
+  active: z.boolean().default(false),
+  expires_at: seconds,
+  max_redemptions: z.number().nullable().optional(),
+  times_redeemed: z.number().default(0),
+  customer: idOrObject.nullable().optional(),
+  restrictions: z
+    .object({
+      first_time_transaction: z.boolean().default(false),
+      minimum_amount: z.number().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  coupon: couponSchema.nullable().optional(),
+  promotion: z
+    .object({ coupon: idOrObject.nullable().optional() })
+    .nullable()
+    .optional(),
+});
+
+export function parsePromotionCodeList(raw: unknown): StripePromotionFacts[] {
+  const list = parse(
+    "promotion code list",
+    z.object({ data: z.array(promotionCodeSchema) }),
+    raw,
+  );
+  return list.data.map((row) => ({
+    id: row.id,
+    code: row.code,
+    active: row.active,
+    expiresAt: toDate(row.expires_at),
+    maxRedemptions: row.max_redemptions ?? null,
+    timesRedeemed: row.times_redeemed,
+    firstTimeOnly: row.restrictions?.first_time_transaction ?? false,
+    minimumAmount: row.restrictions?.minimum_amount ?? null,
+    customerId: row.customer ?? null,
+    couponId: row.coupon?.id ?? row.promotion?.coupon ?? null,
+    coupon: row.coupon ? couponFacts(row.coupon) : null,
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Fatura listesi (ekran): yalnız gösterilecek alanlar.
 
 export type StripeInvoiceRow = {

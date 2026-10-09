@@ -437,3 +437,113 @@ describe("portal, plan change, cancellation", () => {
     );
   });
 });
+
+describe("promotion codes", () => {
+  it("looks a code up by its text among the active ones (case-insensitive on Stripe's side)", async () => {
+    const { http, calls } = fakeHttp(() => ({
+      data: [
+        {
+          id: "promo_1",
+          code: "SPRING20",
+          active: true,
+          coupon: {
+            id: "coupon_1",
+            valid: true,
+            percent_off: 20,
+            duration: "once",
+          },
+        },
+      ],
+    }));
+
+    const found =
+      await createStripeGateway(http).lookupPromotionCode("spring20");
+
+    expect(found).toMatchObject({ id: "promo_1", coupon: { percentOff: 20 } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: "GET",
+      path: "/v1/promotion_codes",
+      query: { code: "spring20", active: true, limit: 1 },
+    });
+  });
+
+  it("returns null when no active code matches", async () => {
+    const { http } = fakeHttp(() => ({ data: [] }));
+    expect(
+      await createStripeGateway(http).lookupPromotionCode("nope"),
+    ).toBeNull();
+  });
+
+  it("reads the coupon separately when the code only names it", async () => {
+    const { http, calls } = fakeHttp((request) =>
+      request.path === "/v1/promotion_codes"
+        ? {
+            data: [
+              {
+                id: "promo_2",
+                code: "NEW",
+                active: true,
+                promotion: { type: "coupon", coupon: "coupon_9" },
+              },
+            ],
+          }
+        : {
+            id: "coupon_9",
+            valid: true,
+            amount_off: 1000,
+            currency: "usd",
+            duration: "forever",
+          },
+    );
+
+    const found = await createStripeGateway(http).lookupPromotionCode("NEW");
+
+    expect(found?.coupon).toMatchObject({
+      id: "coupon_9",
+      amountOff: 1000,
+      duration: "forever",
+    });
+    expect(calls.map((call) => call.path)).toEqual([
+      "/v1/promotion_codes",
+      "/v1/coupons/coupon_9",
+    ]);
+  });
+
+  it("checkout gets the promotion code INSTEAD of the first-month coupon, and no intro marker", async () => {
+    const { http, calls } = fakeHttp((request) => {
+      if (request.method === "GET") return { id: "exists" };
+      return {
+        id: "cs_test_promo0001",
+        url: "https://checkout.stripe.com/c/pay/cs_test_promo0001",
+      };
+    });
+
+    await createStripeGateway(http).createSubscriptionCheckout({
+      customerId: "cus_1",
+      workspaceId: "w1",
+      planKey: "growth",
+      interval: "MONTH",
+      firstMonth: true,
+      promotionCodeId: "promo_1",
+      successUrl: "https://app.test/ok",
+      cancelUrl: "https://app.test/no",
+    });
+
+    const checkout = calls.find(
+      (call) => call.path === "/v1/checkout/sessions",
+    )!;
+    expect(checkout.body).toMatchObject({
+      discounts: [{ promotion_code: "promo_1" }],
+      metadata: { intro: "0" },
+      subscription_data: { metadata: { intro: "0" } },
+    });
+    // The first-month coupon was neither created nor sent.
+    expect(calls.some((call) => call.path.startsWith("/v1/coupons"))).toBe(
+      false,
+    );
+    expect(JSON.stringify(checkout.body)).not.toContain(
+      "agentelse_first_month",
+    );
+  });
+});

@@ -7,8 +7,10 @@ import {
   parseDispute,
   parseEventEnvelope,
   parseInvoice,
+  parseCoupon,
   parseInvoiceList,
   parsePaymentIntent,
+  parsePromotionCodeList,
   parseRedirect,
   parseSubscription,
 } from "./facts";
@@ -405,5 +407,111 @@ describe("parseInvoiceList / parseRedirect", () => {
     expect(() => parseRedirect("x", { id: "cs_1", url: null })).toThrow(
       StripeShapeError,
     );
+  });
+});
+
+describe("parsePromotionCodeList / parseCoupon", () => {
+  const promo = (overrides: Record<string, unknown> = {}) => ({
+    id: "promo_1",
+    object: "promotion_code",
+    code: "SPRING20",
+    active: true,
+    expires_at: 1_790_000_000,
+    max_redemptions: 100,
+    times_redeemed: 3,
+    customer: null,
+    restrictions: { first_time_transaction: true, minimum_amount: 5_000 },
+    coupon: {
+      id: "coupon_1",
+      object: "coupon",
+      valid: true,
+      percent_off: 20,
+      amount_off: null,
+      currency: null,
+      duration: "repeating",
+      duration_in_months: 3,
+      redeem_by: null,
+    },
+    ...overrides,
+  });
+
+  it("reads the promotion code with its coupon (API 2024-06-20 shape)", () => {
+    const [found] = parsePromotionCodeList({ object: "list", data: [promo()] });
+    expect(found).toMatchObject({
+      id: "promo_1",
+      code: "SPRING20",
+      active: true,
+      maxRedemptions: 100,
+      timesRedeemed: 3,
+      firstTimeOnly: true,
+      minimumAmount: 5_000,
+      customerId: null,
+      couponId: "coupon_1",
+      coupon: {
+        id: "coupon_1",
+        valid: true,
+        percentOff: 20,
+        amountOff: null,
+        duration: "repeating",
+        durationInMonths: 3,
+      },
+    });
+    expect(found!.expiresAt).toEqual(new Date(1_790_000_000 * 1000));
+  });
+
+  it("reads the newer shape that only names the coupon (the caller fetches it)", () => {
+    const [found] = parsePromotionCodeList({
+      data: [
+        promo({
+          coupon: undefined,
+          promotion: { type: "coupon", coupon: "coupon_9" },
+        }),
+      ],
+    });
+    expect(found).toMatchObject({ couponId: "coupon_9", coupon: null });
+  });
+
+  it("copes with the optional fields absent", () => {
+    const [found] = parsePromotionCodeList({
+      data: [{ id: "promo_2", code: "X-1", active: true, coupon: { id: "c" } }],
+    });
+    expect(found).toMatchObject({
+      expiresAt: null,
+      maxRedemptions: null,
+      timesRedeemed: 0,
+      firstTimeOnly: false,
+      minimumAmount: null,
+      coupon: {
+        valid: true,
+        duration: "once",
+        percentOff: null,
+        amountOff: null,
+      },
+    });
+  });
+
+  it("returns an empty list for no match and refuses a malformed row", () => {
+    expect(parsePromotionCodeList({ data: [] })).toEqual([]);
+    expect(() => parsePromotionCodeList({ data: [{ id: "promo_3" }] })).toThrow(
+      StripeShapeError,
+    );
+    expect(() => parsePromotionCodeList(null)).toThrow(StripeShapeError);
+  });
+
+  it("reads a coupon on its own", () => {
+    expect(
+      parseCoupon({
+        id: "c1",
+        valid: false,
+        amount_off: 1000,
+        currency: "usd",
+        duration: "forever",
+      }),
+    ).toMatchObject({
+      valid: false,
+      amountOff: 1000,
+      currency: "usd",
+      duration: "forever",
+    });
   });
 });

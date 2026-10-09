@@ -200,6 +200,20 @@ describe("createStripeHttp", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it("says why the network failed (cause and code) without the key or the address", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError("fetch failed", { cause: { code: "ENOTFOUND" } });
+    });
+    const http = client(fetchImpl as unknown as typeof fetch, { maxRetries: 0 });
+
+    const error = (await http({ method: "GET", path: "/v1/x" }).catch((e) => e)) as Error;
+
+    expect(error).toBeInstanceOf(StripeNetworkError);
+    expect(error.message).toBe("TypeError: fetch failed (ENOTFOUND)");
+    expect(error.message).not.toContain("sk_test");
+    expect(error.message).not.toContain("api.stripe.com");
+  });
+
   it("does not leak the secret key into an error message", async () => {
     const http = client((async () =>
       json(401, {

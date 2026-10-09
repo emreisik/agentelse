@@ -21,7 +21,7 @@ Plan fiyatları ve kotalar `src/lib/billing/plans.ts`'ten (`catalog.ts` türetir
 
 Ödeme `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` ile açılır (`docs/billing-payments.md`). **Kapalıyken** plan düğmeleri, ek paket satın alma, iptal ve ödeme yöntemi pasiftir ve sayfa bunu açıkça söyler. **Açıkken** (`pickerModeFor`, `src/lib/billing/picker-mode.ts`):
 
-- Ödeme yapmamış workspace: her kartta *Subscribe to X* (Stripe Checkout'a gider), ilk ay indirimi düğmesi yalnız ilk abonelikte çalışır.
+- Ödeme yapmamış workspace: her kartta *Subscribe to X* (Stripe Checkout'a gider), ilk ay indirimi düğmesi yalnız ilk abonelikte çalışır; "Promo code" alanı kodu sunucuda denetler ve ne verdiğini gösterir (kod ilk ay indiriminin yerine geçer).
 - Ödeme yapan workspace: *Upgrade to X* (hemen, farkı öder) / *Switch to X* (yenilemede), bekleyen düşürme için *Keep this plan*; aralık değişmez. Ödeme sorunu ya da iptali planlanmış aboneliğte düğmeler kapalı ve nedeni yazılı.
 - Yalnız sahip/yönetici eylem yapar; diğerleri nedenini görür.
 - *My subscription*: iptal (dönem sonunda) / devam, ödeme yöntemi (Stripe portalı), Stripe faturaları (tarih, no, tutar, durum, görüntüle/PDF).

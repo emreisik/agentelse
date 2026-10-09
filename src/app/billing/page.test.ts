@@ -35,6 +35,7 @@ vi.mock("@/server/billing/payments/service", () => ({
 }));
 vi.mock("@/server/actions/billing-actions", () => ({
   startCheckoutAction: vi.fn(),
+  checkPromoCodeAction: vi.fn(),
   startPackCheckoutAction: vi.fn(),
   openPortalAction: vi.fn(),
   cancelSubscriptionAction: vi.fn(),

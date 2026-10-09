@@ -21,6 +21,8 @@ import { StripeApiError, StripeNetworkError } from "../stripe/client";
 import {
   cancelAtPeriodEnd,
   changePlan,
+  checkPromoCode,
+  describePromotion,
   firstMonthEligible,
   listWorkspaceInvoices,
   openBillingPortal,
@@ -387,6 +389,320 @@ describeIntegration(
           where: { workspaceId_livemode: { workspaceId, livemode: false } },
         });
         expect(link.stripeCustomerId).not.toBe("cus_gone");
+      });
+    });
+
+    describe("promo codes", () => {
+      const usd = (cents: number) => ({
+        id: "c_usd",
+        valid: true,
+        percentOff: null,
+        amountOff: cents,
+        currency: "usd",
+        duration: "once",
+        durationInMonths: null,
+        redeemBy: null,
+      });
+      const percent = (
+        percentOff: number,
+        duration = "once",
+        months: number | null = null,
+      ) => ({
+        id: "c_pct",
+        valid: true,
+        percentOff,
+        amountOff: null,
+        currency: null,
+        duration,
+        durationInMonths: months,
+        redeemBy: null,
+      });
+
+      it("describes what a code gives in plain words", () => {
+        const fake = createFakeStripe();
+        const words = (
+          coupon: ReturnType<typeof percent> | ReturnType<typeof usd>,
+          code = "A-1",
+        ) => describePromotion(fake.promotion({ code, coupon }));
+
+        expect(words(percent(20))).toBe("20% off your first payment");
+        expect(words(percent(12.5, "repeating", 3), "A-2")).toBe(
+          "12.5% off for 3 months",
+        );
+        expect(words(percent(10, "repeating", 1), "A-3")).toBe(
+          "10% off for 1 month",
+        );
+        expect(words(percent(50, "forever"), "A-4")).toBe(
+          "50% off every payment",
+        );
+        expect(words(usd(1000), "A-5")).toBe("$10 off your first payment");
+        expect(
+          describePromotion(
+            fake.promotion({
+              code: "A-6",
+              coupon: { ...usd(500), currency: "eur" },
+            }),
+          ),
+        ).toBe("A discount your first payment");
+      });
+
+      it("accepts a live code (any letter case) and says what it gives", async () => {
+        const fake = createFakeStripe();
+        fake.promotion({ code: "SPRING20" });
+
+        const result = await checkPromoCode(
+          { workspaceId: newWs(), code: "  spring20 " },
+          depsFor(fake),
+          AT,
+        );
+
+        expect(result).toEqual({
+          ok: true,
+          code: "SPRING20",
+          description: "20% off your first payment",
+        });
+      });
+
+      it.each([
+        ["a code that does not exist", () => "NOPE-1"],
+        ["a code with odd characters", () => "no spaces!"],
+        ["an empty code", () => ""],
+        ["a code that is too long", () => "X".repeat(41)],
+        ["something that is not text", () => 42 as unknown as string],
+      ])("refuses %s with one generic message", async (_name, code) => {
+        const fake = createFakeStripe();
+        fake.promotion({ code: "SPRING20" });
+
+        const result = await checkPromoCode(
+          { workspaceId: newWs(), code: code() },
+          depsFor(fake),
+          AT,
+        );
+
+        expect(result).toMatchObject({
+          ok: false,
+          error: "PROMO_INVALID",
+          message: "That code is not valid or has expired.",
+        });
+      });
+
+      it("refuses a code that is expired, used up, inactive, or whose coupon is no longer valid, without saying which", async () => {
+        const fake = createFakeStripe();
+        fake.promotion({
+          code: "OLD",
+          expiresAt: new Date(AT.getTime() - 1000),
+        });
+        fake.promotion({ code: "FULL", maxRedemptions: 5, timesRedeemed: 5 });
+        fake.promotion({ code: "OFF", active: false });
+        fake.promotion({
+          code: "DEAD",
+          coupon: { ...percent(20), valid: false },
+        });
+        fake.promotion({
+          code: "LATE",
+          coupon: { ...percent(20), redeemBy: new Date(AT.getTime() - 1000) },
+        });
+        fake.promotion({ code: "NOCOUPON", coupon: null, couponId: null });
+
+        for (const code of ["OLD", "FULL", "OFF", "DEAD", "LATE", "NOCOUPON"]) {
+          expect(
+            await checkPromoCode(
+              { workspaceId: newWs(), code },
+              depsFor(fake),
+              AT,
+            ),
+          ).toMatchObject({
+            ok: false,
+            error: "PROMO_INVALID",
+          });
+        }
+      });
+
+      it("a code made for one customer works only for that customer's workspace", async () => {
+        const fake = createFakeStripe();
+        const owner = newWs();
+        await prisma.billingCustomer.create({
+          data: {
+            workspaceId: owner,
+            livemode: false,
+            stripeCustomerId: "cus_vip",
+          },
+        });
+        fake.promotion({ code: "VIP", customerId: "cus_vip" });
+
+        expect(
+          (
+            await checkPromoCode(
+              { workspaceId: owner, code: "VIP" },
+              depsFor(fake),
+              AT,
+            )
+          ).ok,
+        ).toBe(true);
+        expect(
+          await checkPromoCode(
+            { workspaceId: newWs(), code: "VIP" },
+            depsFor(fake),
+            AT,
+          ),
+        ).toMatchObject({
+          ok: false,
+          error: "PROMO_INVALID",
+        });
+      });
+
+      it("a lookup failure is a provider error, not 'invalid code'", async () => {
+        const fake = createFakeStripe();
+        fake.failures.read = new StripeNetworkError("fetch failed");
+
+        expect(
+          await checkPromoCode(
+            { workspaceId: newWs(), code: "SPRING20" },
+            depsFor(fake),
+            AT,
+          ),
+        ).toMatchObject({
+          ok: false,
+          error: "PROVIDER_ERROR",
+        });
+      });
+
+      it("checkout carries the code and no first-month discount", async () => {
+        const fake = createFakeStripe();
+        const promo = fake.promotion({ code: "SPRING20" });
+        const workspaceId = newWs();
+
+        const result = await startSubscriptionCheckout(
+          {
+            workspaceId,
+            planKey: "growth",
+            interval: "MONTH",
+            applyFirstMonth: false,
+            promoCode: "spring20",
+          },
+          depsFor(fake),
+          AT,
+        );
+
+        expect(result.ok).toBe(true);
+        expect(
+          fake.callsNamed("createSubscriptionCheckout")[0]!.args,
+        ).toMatchObject({
+          promotionCodeId: promo.id,
+          firstMonth: false,
+        });
+      });
+
+      it("works for yearly billing too", async () => {
+        const fake = createFakeStripe();
+        fake.promotion({ code: "SPRING20" });
+
+        const result = await startSubscriptionCheckout(
+          {
+            workspaceId: newWs(),
+            planKey: "growth",
+            interval: "YEAR",
+            applyFirstMonth: false,
+            promoCode: "SPRING20",
+          },
+          depsFor(fake),
+          AT,
+        );
+
+        expect(result.ok).toBe(true);
+      });
+
+      it("a code and the first-month discount together are refused (the code replaces it)", async () => {
+        const fake = createFakeStripe();
+        fake.promotion({ code: "SPRING20" });
+
+        const result = await startSubscriptionCheckout(
+          {
+            workspaceId: newWs(),
+            planKey: "growth",
+            interval: "MONTH",
+            applyFirstMonth: true,
+            promoCode: "SPRING20",
+          },
+          depsFor(fake),
+          AT,
+        );
+
+        expect(result).toMatchObject({ ok: false, error: "INVALID_INPUT" });
+        expect(fake.callsNamed("createSubscriptionCheckout")).toHaveLength(0);
+      });
+
+      it("a bad code stops before any customer is created at Stripe", async () => {
+        const fake = createFakeStripe();
+
+        const result = await startSubscriptionCheckout(
+          {
+            workspaceId: newWs(),
+            planKey: "growth",
+            interval: "MONTH",
+            applyFirstMonth: false,
+            promoCode: "TYPO-1",
+          },
+          depsFor(fake),
+          AT,
+        );
+
+        expect(result).toMatchObject({ ok: false, error: "PROMO_INVALID" });
+        expect(fake.callsNamed("createCustomer")).toHaveLength(0);
+        expect(fake.callsNamed("createSubscriptionCheckout")).toHaveLength(0);
+      });
+
+      it("honors a code's minimum amount against the plan chosen", async () => {
+        const fake = createFakeStripe();
+        fake.promotion({ code: "BIGONLY", minimumAmount: 20_000 });
+
+        const small = await startSubscriptionCheckout(
+          {
+            workspaceId: newWs(),
+            planKey: "starter",
+            interval: "MONTH",
+            applyFirstMonth: false,
+            promoCode: "BIGONLY",
+          },
+          depsFor(fake),
+          AT,
+        );
+        const big = await startSubscriptionCheckout(
+          {
+            workspaceId: newWs(),
+            planKey: "business",
+            interval: "MONTH",
+            applyFirstMonth: false,
+            promoCode: "BIGONLY",
+          },
+          depsFor(fake),
+          AT,
+        );
+
+        expect(small).toMatchObject({ ok: false, error: "PROMO_INVALID" });
+        expect(big.ok).toBe(true);
+      });
+
+      it("an empty promo field is simply no code", async () => {
+        const fake = createFakeStripe();
+
+        const result = await startSubscriptionCheckout(
+          {
+            workspaceId: newWs(),
+            planKey: "growth",
+            interval: "MONTH",
+            applyFirstMonth: true,
+            promoCode: "",
+          },
+          depsFor(fake),
+          AT,
+        );
+
+        expect(result.ok).toBe(true);
+        expect(fake.callsNamed("lookupPromotionCode")).toHaveLength(0);
+        expect(
+          fake.callsNamed("createSubscriptionCheckout")[0]!.args,
+        ).toMatchObject({ firstMonth: true });
       });
     });
 

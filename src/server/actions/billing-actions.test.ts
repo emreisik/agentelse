@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   revalidate: vi.fn(),
   workspace: vi.fn(),
   startSubscriptionCheckout: vi.fn(),
+  checkPromoCode: vi.fn(),
   startPackCheckout: vi.fn(),
   openBillingPortal: vi.fn(),
   cancelAtPeriodEnd: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock("@/server/security/tenant-context", () => ({
 vi.mock("@/server/billing/payments/service", async (importActual) => ({
   ...(await importActual<typeof import("@/server/billing/payments/service")>()),
   startSubscriptionCheckout: mocks.startSubscriptionCheckout,
+  checkPromoCode: mocks.checkPromoCode,
   startPackCheckout: mocks.startPackCheckout,
   openBillingPortal: mocks.openBillingPortal,
   cancelAtPeriodEnd: mocks.cancelAtPeriodEnd,
@@ -68,6 +70,11 @@ beforeEach(() => {
   ]) {
     fn.mockResolvedValue({ ok: true, url: "https://stripe.test/x" });
   }
+  mocks.checkPromoCode.mockResolvedValue({
+    ok: true,
+    code: "SPRING20",
+    description: "20% off your first payment",
+  });
   for (const fn of [mocks.cancelAtPeriodEnd, mocks.resumeSubscription]) {
     fn.mockResolvedValue({ ok: true });
   }
@@ -83,6 +90,10 @@ const everyAction: Array<[string, () => Promise<unknown>]> = [
         interval: "MONTH",
         applyFirstMonth: false,
       }),
+  ],
+  [
+    "checkPromoCodeAction",
+    () => actions.checkPromoCodeAction({ code: "SPRING20" }),
   ],
   [
     "startPackCheckoutAction",
@@ -214,6 +225,60 @@ describe("what the actions pass on", () => {
       ok: false,
       error: "CARD_DECLINED",
       message: "The card was declined.",
+    });
+  });
+});
+
+describe("promo codes", () => {
+  it("checks a code for the caller's own workspace, with a stricter limit than other actions", async () => {
+    const result = await actions.checkPromoCodeAction({ code: "SPRING20" });
+
+    expect(result).toEqual({
+      ok: true,
+      code: "SPRING20",
+      description: "20% off your first payment",
+    });
+    expect(mocks.checkPromoCode).toHaveBeenCalledWith(
+      { workspaceId: "w-mine", code: "SPRING20" },
+      DEPS,
+    );
+    // 10 tries / 10 minutes (the other billing actions allow 20): guessing codes is slow.
+    expect(mocks.limited).toHaveBeenCalledWith("billing:promo:u1", 10, 600_000);
+    mocks.limited.mockClear();
+    await actions.cancelSubscriptionAction();
+    expect(mocks.limited).toHaveBeenCalledWith(
+      "billing:cancel:u1",
+      20,
+      600_000,
+    );
+  });
+
+  it("hands the code to checkout, and a client cannot name another workspace", async () => {
+    await actions.startCheckoutAction({
+      planKey: "growth",
+      interval: "MONTH",
+      applyFirstMonth: false,
+      promoCode: "SPRING20",
+      workspaceId: "w-victim",
+    } as unknown as Parameters<typeof actions.startCheckoutAction>[0]);
+
+    expect(mocks.startSubscriptionCheckout.mock.calls[0]![0]).toMatchObject({
+      workspaceId: "w-mine",
+      promoCode: "SPRING20",
+    });
+  });
+
+  it("answers a bad code with the service's one generic message", async () => {
+    mocks.checkPromoCode.mockResolvedValue({
+      ok: false,
+      error: "PROMO_INVALID",
+      message: "That code is not valid or has expired.",
+    });
+
+    expect(await actions.checkPromoCodeAction({ code: "NOPE" })).toEqual({
+      ok: false,
+      error: "PROMO_INVALID",
+      message: "That code is not valid or has expired.",
     });
   });
 });

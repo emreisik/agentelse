@@ -10,6 +10,7 @@ import type {
   StripeInvoiceFacts,
   StripeInvoiceRow,
   StripePaymentIntentFacts,
+  StripePromotionFacts,
   StripeSessionFacts,
   StripeSubscriptionFacts,
 } from "../../stripe/facts";
@@ -37,6 +38,7 @@ export function createFakeStripe() {
   const charges = new Map<string, StripeChargeFacts>();
   const intents = new Map<string, StripePaymentIntentFacts>();
   const disputes = new Map<string, StripeDisputeFacts>();
+  const promotions = new Map<string, StripePromotionFacts>();
   const invoiceRows: StripeInvoiceRow[] = [];
   const calls: FakeCall[] = [];
   const failures: {
@@ -162,6 +164,39 @@ export function createFakeStripe() {
     return d;
   }
 
+  function promotion(
+    partial: Partial<StripePromotionFacts> & { code: string },
+  ): StripePromotionFacts {
+    const id = partial.id ?? next("promo");
+    const promo: StripePromotionFacts = {
+      id,
+      code: partial.code,
+      active: partial.active ?? true,
+      expiresAt: partial.expiresAt ?? null,
+      maxRedemptions: partial.maxRedemptions ?? null,
+      timesRedeemed: partial.timesRedeemed ?? 0,
+      firstTimeOnly: partial.firstTimeOnly ?? false,
+      minimumAmount: partial.minimumAmount ?? null,
+      customerId: partial.customerId ?? null,
+      couponId: partial.couponId ?? "coupon_fake",
+      coupon:
+        partial.coupon === undefined
+          ? {
+              id: "coupon_fake",
+              valid: true,
+              percentOff: 20,
+              amountOff: null,
+              currency: null,
+              duration: "once",
+              durationInMonths: null,
+              redeemBy: null,
+            }
+          : partial.coupon,
+    };
+    promotions.set(id, promo);
+    return promo;
+  }
+
   const read = () => {
     if (failures.read) throw failures.read;
   };
@@ -200,6 +235,15 @@ export function createFakeStripe() {
     async listInvoices(customerId, limit) {
       record("listInvoices", { customerId, limit });
       return invoiceRows;
+    },
+    async lookupPromotionCode(code) {
+      record("lookupPromotionCode", code);
+      read();
+      const wanted = code.toLowerCase();
+      for (const promo of promotions.values()) {
+        if (promo.active && promo.code.toLowerCase() === wanted) return promo;
+      }
+      return null;
     },
     async createCustomer(input) {
       record("createCustomer", input);
@@ -294,6 +338,7 @@ export function createFakeStripe() {
     charges,
     intents,
     disputes,
+    promotions,
     invoiceRows,
     subscription,
     invoice,
@@ -301,6 +346,7 @@ export function createFakeStripe() {
     charge,
     intent,
     dispute,
+    promotion,
     callsNamed: (name: string) => calls.filter((call) => call.name === name),
   };
 }

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 // The buttons call server actions and the router; here only what they show matters.
 vi.mock("@/server/actions/billing-actions", () => ({
   startCheckoutAction: vi.fn(),
+  checkPromoCodeAction: vi.fn(),
   startPackCheckoutAction: vi.fn(),
   openPortalAction: vi.fn(),
   cancelSubscriptionAction: vi.fn(),
@@ -133,6 +134,26 @@ describe("PlanPicker", () => {
         )![0],
       ),
     ).toBe(false);
+  });
+
+  it("the promo code field works once plans can be bought, and is off while they cannot", () => {
+    const open = html(
+      createElement(PlanPicker, {
+        ...props,
+        mode: { kind: "subscribe", firstMonthAvailable: true },
+      }),
+    );
+    const field = open.match(/<input[^>]*aria-label="Promo code"[^>]*>/)![0];
+    expect(isDisabled(field)).toBe(false);
+    expect(field).toContain('maxLength="40"');
+    expect(isDisabled(open.match(/<button[^>]*>Apply<\/button>/)![0])).toBe(
+      true,
+    ); // nothing typed yet
+
+    const closed = html(createElement(PlanPicker, props));
+    expect(
+      isDisabled(closed.match(/<input[^>]*aria-label="Promo code"[^>]*>/)![0]),
+    ).toBe(true);
   });
 
   it("offers the first-month discount only to a first subscription", () => {

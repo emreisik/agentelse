@@ -2,11 +2,13 @@ import "server-only";
 
 import { getEnv } from "@/lib/env";
 
+import { stripeModeOfKey, type StripeMode } from "./key-mode";
+
+export { stripeModeOfKey, type StripeMode };
+
 // Ödeme sağlayıcısı (Stripe) ayarı. Anahtar yoksa ya da biçimi tanınmıyorsa ödeme
 // KAPALIDIR (fiyat ekranı salt-okunur): yarım kurulum ne bir müşteriyi Stripe'a
 // yollar ne de imzasız bir webhook'u kabul eder.
-
-export type StripeMode = "test" | "live";
 
 export type StripeConfig = {
   secretKey: string;
@@ -14,14 +16,6 @@ export type StripeConfig = {
   webhookSecrets: readonly string[];
   mode: StripeMode;
 };
-
-const KEY_PATTERN = /^(?:sk|rk)_(test|live)_[A-Za-z0-9]{8,}$/;
-
-export function stripeModeOfKey(secretKey: string): StripeMode | null {
-  const match = KEY_PATTERN.exec(secretKey.trim());
-  if (!match) return null;
-  return match[1] === "live" ? "live" : "test";
-}
 
 const warned = new Set<string>();
 function warnOnce(code: string, message: string): void {

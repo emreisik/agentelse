@@ -1388,6 +1388,171 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
     });
   });
 
+  describe("background share: the system's own work does not take the user's part", () => {
+    // Growth is a full-autonomy plan: the system may use 70% of the window, so with
+    // 10 images and 7 used the 3 left are the user's.
+    async function nearlyUsedUp(plan: "growth" | "starter" = "growth") {
+      const fixture = await newWorkspace({ images: 10, micros: 0 });
+      await prisma.subscription.updateMany({
+        where: { workspaceId: fixture.workspaceId },
+        data: { planKey: plan },
+      });
+      await prisma.usageBalance.updateMany({
+        where: { workspaceId: fixture.workspaceId, unit: "IMAGE" },
+        data: { periodUsed: B(plan === "growth" ? 7 : 5) },
+      });
+      return fixture;
+    }
+
+    it("a system job waits for the user's share, and a user job behind it still goes", async () => {
+      const fixture = await nearlyUsedUp();
+      // The system's job ranks first (HIGH) but cannot take what is held back.
+      const system = await seedJob(fixture, {
+        createdBy: "SYSTEM",
+        priority: "HIGH",
+      });
+      const user = await seedJob(fixture, { createdBy: "USER" });
+
+      const summary = await resumeParkedWork({
+        workspaceId: fixture.workspaceId,
+        now: NOW,
+      });
+
+      expect(summary).toEqual({ resumed: 1, cancelled: 0, stillParked: 1 });
+      expect(await statusOf(system.job.id)).toBe("WAITING_BUDGET");
+      expect(await statusOf(user.job.id)).toBe("QUEUED");
+    });
+
+    it("one blocked system job does not stop the next system jobs from being tried, nor does it hide the user's", async () => {
+      const fixture = await nearlyUsedUp();
+      const first = await seedJob(fixture, {
+        createdBy: "AI",
+        priority: "HIGH",
+      });
+      const second = await seedJob(fixture, {
+        createdBy: "SYSTEM",
+        priority: "MEDIUM",
+      });
+      const user = await seedJob(fixture, {
+        createdBy: "USER",
+        priority: "LOW",
+      });
+
+      const summary = await resumeParkedWork({
+        workspaceId: fixture.workspaceId,
+        now: NOW,
+      });
+
+      expect(summary.resumed).toBe(1);
+      expect(await statusOf(first.job.id)).toBe("WAITING_BUDGET");
+      expect(await statusOf(second.job.id)).toBe("WAITING_BUDGET");
+      expect(await statusOf(user.job.id)).toBe("QUEUED");
+    });
+
+    it("when even the user's job does not fit, system jobs are not tried at all", async () => {
+      const fixture = await nearlyUsedUp();
+      await prisma.usageBalance.updateMany({
+        where: { workspaceId: fixture.workspaceId, unit: "IMAGE" },
+        data: { periodUsed: B(10) },
+      });
+      const user = await seedJob(fixture, {
+        createdBy: "USER",
+        priority: "HIGH",
+      });
+      const system = await seedJob(fixture, {
+        createdBy: "SYSTEM",
+        priority: "MEDIUM",
+      });
+
+      const summary = await resumeParkedWork({
+        workspaceId: fixture.workspaceId,
+        now: NOW,
+      });
+
+      expect(summary).toEqual({ resumed: 0, cancelled: 0, stillParked: 2 });
+      expect(await statusOf(user.job.id)).toBe("WAITING_BUDGET");
+      expect(await statusOf(system.job.id)).toBe("WAITING_BUDGET");
+    });
+
+    it("a limited plan (Starter) leaves the system less room than a full one", async () => {
+      // Same state on both: 10 granted. Starter holds back 5 (55%), Growth 3 (30%).
+      const starter = await nearlyUsedUp("starter");
+      const growth = await nearlyUsedUp("growth");
+      // Starter: 5 used, 5 left, 5 held back: the system fits nothing more.
+      // Growth: 7 used, 3 left, 3 held back: the system fits nothing more either.
+      // Give both one more image of room by lowering the use by one.
+      await prisma.usageBalance.updateMany({
+        where: {
+          workspaceId: { in: [starter.workspaceId, growth.workspaceId] },
+          unit: "IMAGE",
+        },
+        data: { periodUsed: B(4) },
+      });
+      await prisma.usageBalance.updateMany({
+        where: { workspaceId: growth.workspaceId, unit: "IMAGE" },
+        data: { periodUsed: B(6) },
+      });
+      const onStarter = await seedJob(starter, { createdBy: "SYSTEM" });
+      const onGrowth = await seedJob(growth, { createdBy: "SYSTEM" });
+
+      await resumeParkedWork({ workspaceId: starter.workspaceId, now: NOW });
+      await resumeParkedWork({ workspaceId: growth.workspaceId, now: NOW });
+
+      // Starter has 6 left and holds back 5: 6 >= 1 + 5 goes. Growth has 4 left, holds back 3: goes.
+      expect(await statusOf(onStarter.job.id)).toBe("QUEUED");
+      expect(await statusOf(onGrowth.job.id)).toBe("QUEUED");
+    });
+
+    it("beginJobBilling labels the job by who created its task", async () => {
+      const fixture = await nearlyUsedUp();
+      const provider: ExecutionProvider = {
+        key: "test-paid",
+        type: "AI",
+        isConfigured: true,
+        canExecute: async () => true,
+        usageEstimate: () => ({ class: "content", images: 1 }),
+        execute: async (request) => ({
+          executionReference: request.correlationId,
+          isMock: false,
+        }),
+        getStatus: async () => ({ status: "COMPLETED", isMock: false }),
+      };
+      const start = async (createdBy: ActorType) => {
+        const { job, task } = await seedJob(fixture, {
+          createdBy,
+          jobStatus: "QUEUED",
+        });
+        const queued = await prisma.executionJob.findUniqueOrThrow({
+          where: { id: job.id },
+        });
+        const context: ExecutionPolicyContext = {
+          workspaceId: fixture.workspaceId,
+          projectId: fixture.projectId,
+          brandId: fixture.brandId,
+          taskId: task.id,
+          capability: "CREATE_SOCIAL_CREATIVE",
+          riskLevel: "MEDIUM",
+        };
+        return beginJobBilling({ job: queued, provider, context });
+      };
+
+      // beginJobBilling reads the clock itself: put it inside the window.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(NOW);
+      let bySystem, byUser;
+      try {
+        bySystem = await start("SYSTEM");
+        byUser = await start("USER");
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(bySystem.kind).toBe("stop"); // parked: it would eat into the user's share
+      expect(byUser.kind).toBe("run");
+      if (byUser.kind === "run") await byUser.operation.finish("aborted");
+    });
+  });
+
   describe("kill-switch: leaving enforce mode", () => {
     it("shadow wakes parked work at once, without looking at the allowance", async () => {
       config.current = { ...config.current, mode: "shadow" };

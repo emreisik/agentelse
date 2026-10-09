@@ -10,6 +10,7 @@ import {
 } from "@/lib/billing/entitlements-core";
 import {
   RESERVATION_TTL_MS,
+  heldBackPct,
   isUnitSellable,
   sellableUnits,
   type UsageUnit,
@@ -100,6 +101,11 @@ export type ReserveInput = {
   reservationKey: string;
   // UsageEntry satırlarıyla mutabakat için iş kimliği.
   operationId?: string;
+  // Kim başlattı (Faz 3C). "system": sistemin kendi başlattığı iş; planın otonomisine
+  // göre dönem hakkının bir kısmı kullanıcı için boş bırakılmak zorundadır
+  // (plans.ts BACKGROUND_SHARE_PCT). Verilmezse (varsayılan) kullanıcıdır ve paya
+  // takılmaz.
+  initiator?: "user" | "system";
   ttlMs?: number;
   now?: Date;
 };
@@ -229,6 +235,9 @@ export async function reserveUsage(
     const expiresAt = new Date(
       now.getTime() + (input.ttlMs ?? RESERVATION_TTL_MS),
     );
+    // Sistemin kendi başlattığı iş, kullanıcının payına dokunamaz.
+    const held =
+      input.initiator === "system" ? heldBackPct(entitlements.autonomy) : 0;
     const tryReserve = async (): Promise<ReserveRow> => {
       const rows = await prisma.$queryRawUnsafe<ReserveRow[]>(
         RESERVE_SQL,
@@ -240,6 +249,7 @@ export async function reserveUsage(
         input.operationId ?? null,
         expiresAt,
         now,
+        held,
       );
       return rows[0]!;
     };

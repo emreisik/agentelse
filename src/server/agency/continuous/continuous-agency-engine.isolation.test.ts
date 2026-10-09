@@ -41,6 +41,7 @@ vi.mock("@/server/repositories/agency-cycle.repository", () => ({
   },
 }));
 
+const { isBackground } = await import("@/server/billing/usage-context");
 const {
   ContinuousAgencyEngine,
   registerAgencyTickStep,
@@ -94,9 +95,20 @@ for (const name of [
   });
 }
 
+// Records whether the step ran as the system's own background work (billing: the
+// plan's background share applies to everything paid that a tick step starts).
+const backgroundSeen: boolean[] = [];
+registerAgencyTickStep({
+  name: "background-probe",
+  run: async () => {
+    backgroundSeen.push(isBackground());
+  },
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   stepRuns.length = 0;
+  backgroundSeen.length = 0;
   materializeTask.mockResolvedValue(undefined);
   failingLegacy.mockResolvedValue(undefined);
   publishCompletion.mockResolvedValue(undefined);
@@ -278,5 +290,14 @@ describe("tick step gating", () => {
     vi.stubEnv("LEGACY_AGENCY_LOOP", "off");
     await ContinuousAgencyEngine.tick();
     expect(stepRuns).toEqual(KEPT);
+  });
+});
+
+describe("tick steps are the system's own work", () => {
+  it("runs each step as background work, and only the step", async () => {
+    expect(isBackground()).toBe(false);
+    await ContinuousAgencyEngine.tick();
+    expect(backgroundSeen).toEqual([true]);
+    expect(isBackground()).toBe(false);
   });
 });

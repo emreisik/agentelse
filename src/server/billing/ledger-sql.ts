@@ -18,15 +18,22 @@ import "server-only";
 //    kapasiteyi aşar (gerçek DB testinde 80 kapasiteye 134-180 ayrıldı).
 //  - Kilit sırası her yerde bakiye satırı → rezervasyon satırıdır (ölü kilit yok).
 
+// $9, KULLANICIYA AYRILAN yüzdedir (0-100; 0 = ayrılan yok): sistemin kendi başlattığı
+// işler (Faz 3C) rezervasyondan sonra bu orandaki dönem hakkını (periodGranted x $9 / 100)
+// kullanıcı için BOŞTA bırakmak zorundadır; kullanıcı işleri 0 geçer ve etkilenmez.
+// Ayrılan pay yalnız dönem penceresi açıkken vardır.
 // $1 workspaceId, $2 unit, $3 amount, $4 yeni rezervasyon id, $5 reservationKey,
-// $6 operationId|null, $7 expiresAt, $8 now
+// $6 operationId|null, $7 expiresAt, $8 now, $9 ayrılan yüzde
 export const RESERVE_SQL = `
 WITH cur AS (
   SELECT "id", "periodEnd",
          CASE WHEN "periodEnd" > ($8::timestamptz AT TIME ZONE 'UTC')
               THEN GREATEST("periodGranted" - "periodUsed" - "periodReserved", 0)
               ELSE 0 END AS pavail,
-         GREATEST("extraGranted" - "extraUsed" - "extraReserved", 0) AS eavail
+         GREATEST("extraGranted" - "extraUsed" - "extraReserved", 0) AS eavail,
+         CASE WHEN "periodEnd" > ($8::timestamptz AT TIME ZONE 'UTC')
+              THEN ("periodGranted" * $9::int) / 100
+              ELSE 0 END AS held
     FROM "UsageBalance"
    WHERE "workspaceId" = $1::text AND "unit" = $2::text
      FOR UPDATE
@@ -34,7 +41,7 @@ WITH cur AS (
   SELECT LEAST($3::bigint, cur.pavail)              AS fp,
          $3::bigint - LEAST($3::bigint, cur.pavail) AS fe
     FROM cur
-   WHERE cur.pavail + cur.eavail >= $3::bigint
+   WHERE cur.pavail + cur.eavail >= $3::bigint + cur.held
 ), ins AS (
   INSERT INTO "UsageReservation"
          ("id","workspaceId","unit","reservationKey","operationId","amount","fromPeriod","fromExtra","status","overdraft","expiresAt","createdAt")

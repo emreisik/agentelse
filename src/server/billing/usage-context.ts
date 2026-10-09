@@ -45,6 +45,27 @@ export function getUsageScope(): UsageScope | undefined {
   return storage.getStore();
 }
 
+// Arka plan işareti (Faz 3C): zamanlayıcı tick'inin adımları gibi sistemin KENDİ
+// başlattığı akışlar bununla çalışır; içeride açılan ücretli işlemler (motor çağrıları,
+// hafta planlayıcı) varsayılan olarak "sistem başlattı" sayılır ve plan hakkının
+// arka plan payına tabidir (plans.ts BACKGROUND_SHARE_PCT). İşaretsiz her akış
+// kullanıcıdır ve payla hiç karşılaşmaz: eksik bir işaret kimseyi engellemez.
+const background = new AsyncLocalStorage<true>();
+
+export function runAsBackground<T>(fn: () => T): T {
+  return background.run(true, fn);
+}
+
+export function isBackground(): boolean {
+  return background.getStore() === true;
+}
+
+// Görevi kim yarattıysa o başlatmıştır: kullanıcının kendisi ise kullanıcı, sistem ya da
+// yapay zekâ (otonom döngü, öneri) ise sistem.
+export function initiatorOfActor(createdByType: string): "user" | "system" {
+  return createdByType === "USER" ? "user" : "system";
+}
+
 // Görev başına azami maliyet ("her göreve maksimum bütçe"): operasyonun sayacı
 // tavanı aştıysa SONRAKİ ücretli çağrı başlamaz (aşan çağrı yapılmıştır, ücreti
 // sayaçta). Her ücretli istemci çağrıdan önce bunu çağırır. Tavan yalnız

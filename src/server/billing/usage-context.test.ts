@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 import {
   assertTaskRoom,
   getUsageScope,
+  initiatorOfActor,
+  isBackground,
   moduleOf,
+  runAsBackground,
   runWithUsageScope,
 } from "./usage-context";
 import { UsageMeter } from "./usage-meter";
@@ -138,5 +141,34 @@ describe("assertTaskRoom (the per-task cost ceiling)", () => {
         expect(() => assertTaskRoom()).toThrow();
       });
     });
+  });
+});
+
+describe("background marker", () => {
+  it("is off by default and on only inside runAsBackground, through awaits and timers", async () => {
+    expect(isBackground()).toBe(false);
+    await runAsBackground(async () => {
+      expect(isBackground()).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      expect(isBackground()).toBe(true);
+      // A usage scope opened inside keeps the marker.
+      runWithUsageScope({ workspaceId: "w1" }, () => {
+        expect(isBackground()).toBe(true);
+      });
+    });
+    expect(isBackground()).toBe(false);
+  });
+
+  it("returns what the function returns", () => {
+    expect(runAsBackground(() => 42)).toBe(42);
+  });
+});
+
+describe("initiatorOfActor", () => {
+  it("is the user only for a task the user created", () => {
+    expect(initiatorOfActor("USER")).toBe("user");
+    expect(initiatorOfActor("SYSTEM")).toBe("system");
+    expect(initiatorOfActor("AI")).toBe("system");
+    expect(initiatorOfActor("anything else")).toBe("system");
   });
 });

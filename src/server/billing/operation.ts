@@ -11,6 +11,7 @@ import { NoPlanError, QuotaExceededError } from "./quota-errors";
 import { recordShadowDecision } from "./shadow-log";
 import {
   getUsageScope,
+  isBackground,
   runWithUsageScope,
   type UsageModule,
   type UsageScope,
@@ -66,6 +67,10 @@ export type OperationSpec = {
   // yeni jeton. Rezervasyon anahtarı `${operationId}#${attemptToken}`.
   attemptToken: string;
   reserve: OperationReserve;
+  // Kim başlattı (Faz 3C): "system" = otonom döngü / kullanıcı isteği olmayan görev;
+  // planın arka plan payına tabidir. Verilmezse arka plan işaretinden türer
+  // (usage-context.ts runAsBackground), o da yoksa kullanıcıdır.
+  initiator?: "user" | "system";
   // Rezervasyonu olmayan işte de planın geçerli olması gerekir mi (uyarlama,
   // fotoğraflı gönderi: hak yemez ama READ_ONLY çalışma alanında koşmamalı).
   // OPT-IN: yayın/reklam yazması gibi ücretsiz işler plan sorgusu yapmaz.
@@ -299,6 +304,7 @@ async function reserveUnit(
       amount,
       reservationKey,
       operationId: spec.operationId,
+      initiator: spec.initiator,
       ttlMs: spec.ttlMs,
       now,
     });
@@ -362,8 +368,13 @@ async function assertAccess(spec: OperationSpec, now: Date): Promise<void> {
   });
 }
 
-export async function beginOperation(spec: OperationSpec): Promise<Operation> {
-  if (getBillingConfig().mode === "off") return new Operation(spec, []);
+export async function beginOperation(input: OperationSpec): Promise<Operation> {
+  if (getBillingConfig().mode === "off") return new Operation(input, []);
+  // Başlatıcı bir kez çözülür: açıkça verilen kazanır, yoksa arka plan işareti.
+  const spec: OperationSpec = {
+    ...input,
+    initiator: input.initiator ?? (isBackground() ? "system" : "user"),
+  };
 
   const now = spec.now ?? new Date();
   const held: Held[] = [];

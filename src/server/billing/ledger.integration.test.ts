@@ -313,6 +313,7 @@ describeIntegration("usage ledger (UsageBalance / Reservation / Grant)", () => {
                 null,
                 new Date("2026-11-15T14:00:00.000Z"),
                 NOW,
+                0,
               ),
             ),
           wide,

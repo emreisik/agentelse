@@ -22,6 +22,7 @@ import {
   type OperationReserve,
 } from "./operation";
 import { NoPlanError, QuotaExceededError, isQuotaError } from "./quota-errors";
+import { initiatorOfActor } from "./usage-context";
 
 // Plan hakkı bitince iş HATA olmaz, BEKLER (WAITING_BUDGET): üretilmiş içerik ve
 // tamamlanan aşamalar yerinde kalır, hak yenilenince ya da ek paket alınınca iş
@@ -126,9 +127,7 @@ export async function parkJob(
   } catch (sideEffectError) {
     console.error(
       "[billing] parked job side effects failed:",
-      sideEffectError instanceof Error
-        ? sideEffectError.name
-        : sideEffectError,
+      sideEffectError instanceof Error ? sideEffectError.name : sideEffectError,
     );
   }
   return true;
@@ -436,7 +435,15 @@ async function resumeWorkspace(
         : { AI_MICROS: need.amount }
       : {};
     const units = need ? [need.unit] : [];
-    if (units.some((unit) => blocked.has(unit))) {
+    // Sistemin kendi başlattığı iş arka plan payına da takılır (kullanıcı için ayrılan
+    // pay), kullanıcının işi takılmaz: bir sistem işinin reddi yalnız sonraki sistem
+    // işlerini eler, kullanıcı işleri yine denenir. Kullanıcı işi bile sığmıyorsa
+    // sistem işleri hiç sığmaz.
+    const initiator = initiatorOfActor(job.task.createdByType);
+    const blockedFor = (unit: string) =>
+      blocked.has(`${unit}:user`) ||
+      (initiator === "system" && blocked.has(`${unit}:system`));
+    if (units.some(blockedFor)) {
       outcome.stillParked += 1;
       continue;
     }
@@ -450,6 +457,7 @@ async function resumeWorkspace(
         operationId: `exec:${job.id}`,
         attemptToken,
         reserve,
+        initiator,
         requireAccess: true,
         ttlMs: JOB_RESERVATION_TTL_MS,
         now,
@@ -461,7 +469,7 @@ async function resumeWorkspace(
         return outcome;
       }
       if (isQuotaError(error)) {
-        for (const unit of units) blocked.add(unit);
+        for (const unit of units) blocked.add(`${unit}:${initiator}`);
         outcome.stillParked += 1;
         continue;
       }

@@ -11,6 +11,7 @@ import { AgencyTriggerRepository } from "@/server/repositories/agency-trigger.re
 import { AgencyCycleRepository } from "@/server/repositories/agency-cycle.repository";
 import { AgencyLoopStateRepository } from "@/server/repositories/agency-loop-state.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
+import { runAsBackground } from "@/server/billing/usage-context";
 import { isAgentelseError } from "@/server/security/errors";
 
 // The Agency OS main loop (spec section 33). NOT recursion — a DB-polled
@@ -252,7 +253,9 @@ export const ContinuousAgencyEngine = {
 
     for (const step of steps) {
       try {
-        await step.run();
+        // Tick sistemin kendi akışıdır: içindeki ücretli işlemler plan hakkının arka
+        // plan payına tabidir (billing/usage-context.ts runAsBackground).
+        await runAsBackground(() => step.run());
       } catch (error) {
         // BUDGET_EXCEEDED is the cap system working as intended — skip
         // quietly; anything else gets an audit trail entry but never

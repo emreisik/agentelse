@@ -141,6 +141,21 @@ export const EXTRA_PACKS = {
 >;
 export type ExtraPackKey = keyof typeof EXTRA_PACKS;
 
+// Arka plan payı (Faz 3C): sistemin kendi başlattığı işler (otonom döngüler, tick
+// adımları, kullanıcı isteği olmayan görevler) dönem hakkının en çok bu yüzdesini
+// kullanır; kalanı kullanıcının kendi istekleri için ayrılır. Starter'ın "sınırlı"
+// otonomisi daha küçük paydır. Rakamlar BAŞLANGIÇ HİPOTEZİDİR (UsageEntry verisiyle
+// ayarlanır). Kullanıcının kendi başlattığı hiçbir iş bu paya takılmaz.
+export const BACKGROUND_SHARE_PCT: Readonly<Record<Autonomy, number>> = {
+  limited: 45,
+  full: 70,
+};
+
+// Kullanıcı istekleri için ayrılan (sistemin dokunamadığı) yüzde.
+export function heldBackPct(autonomy: Autonomy): number {
+  return 100 - BACKGROUND_SHARE_PCT[autonomy];
+}
+
 // Yenileme gecikmesi payı: dönem sonundan sonra webhook gelene kadar kullanıcı
 // karartılmaz (ödeme genelde birkaç dakikada işlenir).
 export const RENEWAL_LAG_MS = 6 * 60 * 60 * 1000;

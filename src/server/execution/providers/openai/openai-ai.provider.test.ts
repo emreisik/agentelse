@@ -279,3 +279,30 @@ describe("OpenAiAiProvider", () => {
     });
   });
 });
+
+describe("OpenAiAiProvider.usageEstimate", () => {
+  const provider = new OpenAiAiProvider();
+
+  it("declares an AI-budget job with a positive azami cost", () => {
+    const estimate = provider.usageEstimate(request("CREATE_COPY"));
+    expect(estimate.class).toBe("ai");
+    expect(estimate.class === "ai" && estimate.maxCostUsd).toBeGreaterThan(0);
+  });
+
+  it("prices a search-backed research job above a plain text job", () => {
+    const text = provider.usageEstimate(request("CREATE_COPY"));
+    const search = provider.usageEstimate(request("WEB_RESEARCH"));
+    if (text.class !== "ai" || search.class !== "ai") throw new Error("class");
+    expect(search.maxCostUsd).toBeGreaterThan(text.maxCostUsd);
+  });
+
+  it("grows with the request but is never below the fixed prompt overhead", () => {
+    const small = provider.usageEstimate(request("CREATE_COPY", { request: "a" }));
+    const big = provider.usageEstimate(
+      request("CREATE_COPY", { request: "a".repeat(30_000) }),
+    );
+    if (small.class !== "ai" || big.class !== "ai") throw new Error("class");
+    expect(big.maxCostUsd).toBeGreaterThan(small.maxCostUsd);
+    expect(small.maxCostUsd).toBeGreaterThan(0);
+  });
+});

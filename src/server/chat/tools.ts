@@ -87,6 +87,7 @@ import {
 } from "@/server/works/channel-gate";
 import { activeDeliverables } from "./deliverables";
 import { driveJobInline } from "./inline-job";
+import { PAUSED_NOTE, describePause, isParked } from "./parked-job";
 import {
   buildPackageCard,
   ContentPackageArgsSchema,
@@ -545,6 +546,13 @@ async function runTextTaskInline(taskId: string): Promise<ToolOutcome | null> {
   // dispatch event first, so the worker never runs the provider a second time.
   const settled = await driveJobInline(job.id, task.riskLevel);
 
+  if (isParked(settled)) {
+    return {
+      status: "PLANNED",
+      card: { kind: "limit-notice", ...(await describePause(job.id)) },
+      result: { outcome: "task_paused", taskId, note: PAUSED_NOTE },
+    };
+  }
   if (settled.status === "FAILED") {
     return {
       status: "ERROR",
@@ -821,6 +829,17 @@ const generateImage = defineTool({
     );
     try {
       const settled = await driveJobInline(job.id, task.riskLevel);
+      if (isParked(settled)) {
+        return {
+          status: "PLANNED",
+          card: { kind: "limit-notice", ...(await describePause(job.id)) },
+          result: {
+            outcome: "image_paused",
+            taskId: submission.taskId,
+            note: PAUSED_NOTE,
+          },
+        };
+      }
       if (settled.status === "FAILED") {
         return {
           status: "ERROR",

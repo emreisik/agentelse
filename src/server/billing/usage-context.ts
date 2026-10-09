@@ -5,6 +5,10 @@ import { randomUUID } from "node:crypto";
 
 import type { CapabilityKey } from "@prisma/client";
 
+import { AgentelseError } from "@/server/security/errors";
+
+import type { UsageMeter } from "./usage-meter";
+
 // Kullanım kapsamı: bir ücretli dış çağrının KİME ve HANGİ işe ait olduğu.
 // Giriş noktaları (worker işi, ReasoningService.run, sunucu eylemi, cron adımı)
 // kapsamı bir kez kurar; alt seviye istemciler (openai-client, görsel, fal, ...)
@@ -29,12 +33,35 @@ export type UsageScope = {
   purpose?: string;
   // Aynı işin çağrılarını toplar; verilmezse yeni üretilir.
   operationId: string;
+  // Bu operasyonun gerçek maliyet sayacı (operation.ts kurar; recordUsage her
+  // ücretli çağrıyı buraya da ekler). İç içe kapsamlar dıştakini miras alır, ama
+  // YALNIZ aynı workspace'te: başka bir workspace'e geçen kapsam sayacı bırakır.
+  meter?: UsageMeter;
 };
 
 const storage = new AsyncLocalStorage<UsageScope>();
 
 export function getUsageScope(): UsageScope | undefined {
   return storage.getStore();
+}
+
+// Görev başına azami maliyet ("her göreve maksimum bütçe"): operasyonun sayacı
+// tavanı aştıysa SONRAKİ ücretli çağrı başlamaz (aşan çağrı yapılmıştır, ücreti
+// sayaçta). Her ücretli istemci çağrıdan önce bunu çağırır. Tavan yalnız
+// faturalama açıkken konur (job-billing.ts); kapalıyken sayaçta tavan yoktur ve
+// burası hiçbir şey yapmaz. Hata BUDGET_EXCEEDED'dır: bütçe duruşunu tanıyan
+// tüm tüketiciler (iş: kalıcı hata, motor: ertele) zaten bunu işler.
+export function assertTaskRoom(): void {
+  const meter = storage.getStore()?.meter;
+  if (meter?.exceeded) {
+    throw new AgentelseError(
+      "BUDGET_EXCEEDED",
+      "This task reached its cost limit",
+      {
+        meta: { limit: "taskCeiling" },
+      },
+    );
+  }
 }
 
 export type UsageScopeInput = Omit<UsageScope, "operationId"> & {
@@ -52,6 +79,10 @@ export function runWithUsageScope<T>(scope: UsageScopeInput, fn: () => T): T {
     workspaceId: scope.workspaceId,
     operationId: scope.operationId ?? parent?.operationId ?? randomUUID(),
   };
+  // Tenant izolasyonu: sayaç kendi workspace'inin dışında hiçbir şey toplamaz.
+  if (merged.meter && merged.meter.workspaceId !== merged.workspaceId) {
+    delete merged.meter;
+  }
   return storage.run(merged, fn);
 }
 

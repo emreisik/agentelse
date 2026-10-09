@@ -76,11 +76,69 @@ describe("limitNoticeFromError", () => {
       "provider-unconfigured",
       "provider-rate-limited",
       "provider-timeout",
+      "allowance-used",
+      "no-plan",
     ] as const;
     for (const reason of reasons) {
       expect(
         limitNoticeReplyText({ kind: "limit-notice", reason }).length,
       ).toBeGreaterThan(20);
     }
+  });
+
+  // Plan allowance (Faz 3): the client is told what they can do next, in
+  // credits and a date, never in tokens or dollars.
+  describe("plan allowance", () => {
+    const quota = (meta: Record<string, unknown>) =>
+      new AgentelseError("QUOTA_EXCEEDED", "used up", { meta });
+
+    it("maps QUOTA_EXCEEDED to the allowance card with the unit and renewal", () => {
+      expect(
+        limitNoticeFromError(
+          quota({
+            unit: "IMAGE",
+            needed: 1,
+            available: 0,
+            resetsAt: "2026-11-01T00:00:00.000Z",
+          }),
+        ),
+      ).toEqual({
+        kind: "limit-notice",
+        reason: "allowance-used",
+        unit: "IMAGE",
+        resetsAt: "2026-11-01T00:00:00.000Z",
+      });
+    });
+
+    it("keeps working when the error carries no usable meta", () => {
+      expect(limitNoticeFromError(quota({ unit: "VIDEO", resetsAt: 5 }))).toEqual(
+        { kind: "limit-notice", reason: "allowance-used" },
+      );
+    });
+
+    it("maps NO_PLAN to its own card", () => {
+      expect(
+        limitNoticeFromError(new AgentelseError("NO_PLAN", "no plan")),
+      ).toEqual({ kind: "limit-notice", reason: "no-plan" });
+    });
+
+    it("words the reply per unit and shows the renewal date, never a number", () => {
+      const images = limitNoticeReplyText({
+        kind: "limit-notice",
+        reason: "allowance-used",
+        unit: "IMAGE",
+        resetsAt: "2026-11-01T00:00:00.000Z",
+      });
+      expect(images).toContain("image credits are used up");
+      expect(images).toContain("renews on Nov 1");
+      const ai = limitNoticeReplyText({
+        kind: "limit-notice",
+        reason: "allowance-used",
+        unit: "AI_MICROS",
+      });
+      expect(ai).toContain("AI allowance is used up");
+      expect(ai).not.toContain("renews on");
+      expect(ai).not.toMatch(/\$|token|micro/i);
+    });
   });
 });

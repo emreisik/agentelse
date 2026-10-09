@@ -3,7 +3,7 @@ import "server-only";
 import OpenAI from "openai";
 
 import { getEnv } from "@/lib/env";
-import { getUsageScope } from "@/server/billing/usage-context";
+import { assertTaskRoom, getUsageScope } from "@/server/billing/usage-context";
 import { recordUsage } from "@/server/billing/usage-recorder";
 import {
   estimateImageCostUsd,
@@ -226,6 +226,7 @@ export async function generateOpenAIImage(
 ): Promise<GeneratedCreativeImage | null> {
   const env = getEnv();
   if (!env.OPENAI_API_KEY) return null;
+  assertTaskRoom();
 
   const model = env.OPENAI_IMAGE_MODEL;
   const size = sizeParam(imageSize);

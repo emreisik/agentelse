@@ -15,6 +15,7 @@ import {
   UNATTRIBUTED_WORKSPACE,
   usdToMicros,
 } from "./usage-recorder";
+import { UsageMeter } from "./usage-meter";
 
 const base = {
   kind: "TEXT" as const,
@@ -112,5 +113,83 @@ describe("recordUsage", () => {
     await expect(recordUsage(base)).resolves.toBeUndefined();
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe("recordUsage -> operation meter", () => {
+  const meterFor = (workspaceId: string) =>
+    new UsageMeter({ workspaceId, operationId: "op" });
+
+  it("adds every paid call of the ambient operation to its meter", async () => {
+    const meter = meterFor("w1");
+    await runWithUsageScope({ workspaceId: "w1", meter }, async () => {
+      await recordUsage({ ...base, costUsd: 0.01 });
+      await recordUsage({ ...base, kind: "IMAGE", costUsd: 0.08, units: 1 });
+    });
+    expect(meter.costMicros).toBe(BigInt(90_000));
+    expect(meter.images).toBe(1);
+    expect(meter.calls).toBe(2);
+  });
+
+  it("counts a failed call's cost but not its picture", async () => {
+    const meter = meterFor("w1");
+    await runWithUsageScope({ workspaceId: "w1", meter }, () =>
+      recordUsage({ ...base, kind: "IMAGE", costUsd: 0.02, success: false }),
+    );
+    expect(meter.costMicros).toBe(BigInt(20_000));
+    expect(meter.images).toBe(0);
+  });
+
+  it("still adds to the meter when the UsageEntry write fails", async () => {
+    create.mockRejectedValue(new Error("db down"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const meter = meterFor("w1");
+    await runWithUsageScope({ workspaceId: "w1", meter }, () =>
+      recordUsage({ ...base, costUsd: 0.5 }),
+    );
+    expect(meter.costMicros).toBe(BigInt(500_000));
+    spy.mockRestore();
+  });
+
+  it("does not double-count a repeated callId", async () => {
+    const meter = meterFor("w1");
+    await runWithUsageScope({ workspaceId: "w1", meter }, async () => {
+      await recordUsage({ ...base, callId: "c1", costUsd: 0.1 });
+      await recordUsage({ ...base, callId: "c1", costUsd: 0.1 });
+    });
+    expect(meter.costMicros).toBe(BigInt(100_000));
+  });
+
+  it("never feeds another workspace's meter", async () => {
+    const meter = meterFor("w1");
+    // Explicit scope names a different workspace than the meter's owner.
+    await runWithUsageScope({ workspaceId: "w1", meter }, () =>
+      recordUsage({
+        ...base,
+        costUsd: 0.3,
+        scope: { workspaceId: "w2", meter },
+      }),
+    );
+    expect(meter.costMicros).toBe(BigInt(0));
+  });
+
+  it("drops an inherited meter when a nested scope moves to another workspace", async () => {
+    const meter = meterFor("w1");
+    await runWithUsageScope({ workspaceId: "w1", meter }, () =>
+      runWithUsageScope({ workspaceId: "w2" }, () =>
+        recordUsage({ ...base, costUsd: 0.3 }),
+      ),
+    );
+    expect(meter.costMicros).toBe(BigInt(0));
+  });
+
+  it("lets a nested scope of the same workspace keep feeding the meter", async () => {
+    const meter = meterFor("w1");
+    await runWithUsageScope({ workspaceId: "w1", meter }, () =>
+      runWithUsageScope({ workspaceId: "w1", purpose: "inner" }, () =>
+        recordUsage({ ...base, costUsd: 0.3 }),
+      ),
+    );
+    expect(meter.costMicros).toBe(BigInt(300_000));
   });
 });

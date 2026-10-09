@@ -287,6 +287,7 @@ describe("ExecutionWorker.tick", () => {
     expect(mocks.executionStart).toHaveBeenCalledTimes(1);
     expect(mocks.executionStart).toHaveBeenCalledWith("job-1", "LOW", {
       recoverStalledDispatch: true,
+      attemptToken: "event-1.1",
     });
     expect(mocks.markProcessed).toHaveBeenCalledTimes(1);
     expect(mocks.markProcessed).toHaveBeenCalledWith("event-1", claimedUntil);
@@ -409,6 +410,76 @@ describe("ExecutionWorker.tick", () => {
     expect(mocks.deadLetterCreate).not.toHaveBeenCalled();
   });
 
+  // Plan allowance (Faz 3). The ledger being unreadable (enforce fails closed) is
+  // not the job's fault: the event goes back without spending an attempt, or a
+  // one-minute outage would dead-letter the whole queue.
+  it("puts the event back without spending an attempt when the usage ledger is unavailable", async () => {
+    const claimedUntil = new Date("2026-08-08T00:15:00.000Z");
+    mocks.claimBatch.mockResolvedValue([
+      {
+        id: "event-1",
+        eventType: "execution.dispatch",
+        payload: { executionJobId: "job-1", riskLevel: "LOW" },
+        attemptCount: 3,
+        nextAttemptAt: claimedUntil,
+        reclaimed: false,
+      },
+    ]);
+    mocks.isAgentelseError.mockReturnValue(true);
+    mocks.executionStart.mockRejectedValue(
+      Object.assign(new Error("Usage ledger is temporarily unavailable"), {
+        code: "BILLING_UNAVAILABLE",
+        retryable: true,
+      }),
+    );
+
+    await expect(ExecutionWorker.processDispatchQueue()).resolves.toBe(0);
+
+    // attemptCount stays 3, fixed 60 s delay, same lease.
+    expect(mocks.scheduleRetry).toHaveBeenCalledWith(
+      "event-1",
+      3,
+      60_000,
+      claimedUntil,
+    );
+    expect(mocks.markFailed).not.toHaveBeenCalled();
+    expect(mocks.deadLetterCreate).not.toHaveBeenCalled();
+  });
+
+  it("hands a resume event's own token to startExecution so the allowance it reserved is adopted", async () => {
+    const claimedUntil = new Date("2026-08-08T00:15:00.000Z");
+    mocks.claimBatch.mockResolvedValue([
+      {
+        id: "event-9",
+        eventType: "execution.dispatch",
+        payload: {
+          executionJobId: "job-1",
+          riskLevel: "LOW",
+          attemptToken: "resume.abc",
+        },
+        attemptCount: 0,
+        nextAttemptAt: claimedUntil,
+        reclaimed: false,
+      },
+    ]);
+    mocks.executionStart.mockResolvedValue({
+      id: "job-1",
+      status: "WAITING_BUDGET",
+      providerExecutionReference: null,
+    });
+
+    await expect(ExecutionWorker.processDispatchQueue()).resolves.toBe(1);
+
+    expect(mocks.executionStart).toHaveBeenCalledWith("job-1", "LOW", {
+      recoverStalledDispatch: true,
+      attemptToken: "resume.abc",
+    });
+    // A parked job is a normal outcome: the event is done (the resume step
+    // makes a new one), never retried or dead-lettered.
+    expect(mocks.markProcessed).toHaveBeenCalledWith("event-9", claimedUntil);
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+
   it("resolves a pending verification in only one concurrent worker", async () => {
     const verification = {
       id: "verification-1",
@@ -496,6 +567,7 @@ describe("ExecutionWorker.tick", () => {
 
     expect(mocks.executionStart).toHaveBeenCalledWith("job-1", "LOW", {
       recoverStalledDispatch: true,
+      attemptToken: "event-1.1",
     });
     expect(mocks.markProcessed).not.toHaveBeenCalled();
     // Backoff has jitter (+-25%): a range is verified, not the exact value —
@@ -532,6 +604,7 @@ describe("ExecutionWorker.tick", () => {
 
     expect(mocks.executionStart).toHaveBeenCalledWith("job-1", "LOW", {
       recoverStalledDispatch: true,
+      attemptToken: "event-1.2",
     });
     expect(mocks.markProcessed).not.toHaveBeenCalled();
     expectBackoffRetry(2, 8_000, claimedUntil);

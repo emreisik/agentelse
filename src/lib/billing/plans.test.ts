@@ -4,10 +4,12 @@ import {
   EXTRA_PACKS,
   PLAN_KEYS,
   PLANS,
+  REVISION_POLICY,
   TRIAL,
   VIDEO_SELLABLE,
   isUnitSellable,
   quotaFor,
+  revisionCostsRight,
   sellableUnits,
   trialQuota,
   upgradeDelta,
@@ -166,5 +168,17 @@ describe("pazarlık koruması: satılan teklifte brüt marj ≥ %70", () => {
     expect(grossMargin("business", "firstMonth", 1.25)).toBeLessThan(
       grossMargin("business", "firstMonth", 1),
     );
+  });
+});
+
+describe("revizyon politikası", () => {
+  it("ilk revizyonlar ücretsiz, sonrakiler 1 görsel hakkı yer", () => {
+    expect(REVISION_POLICY.freePerPost).toBe(2);
+    // Sürüm 1 = ilk görsel: 1. ve 2. revizyon (sürüm 2 ve 3'ü üretir) bedava.
+    expect(revisionCostsRight(1)).toBe(false);
+    expect(revisionCostsRight(2)).toBe(false);
+    // 3. revizyon (sürüm 4'ü üretir) hak yer.
+    expect(revisionCostsRight(3)).toBe(true);
+    expect(revisionCostsRight(10)).toBe(true);
   });
 });

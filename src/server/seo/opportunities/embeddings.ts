@@ -16,6 +16,7 @@ import {
   encodeVector,
   mockEmbedding,
 } from "@/lib/seo/vector";
+import { gatedAiCall } from "@/server/billing/call-gate";
 import { recordUsage } from "@/server/billing/usage-recorder";
 import { maskGoogleText } from "@/server/integrations/google/pii";
 import { gscMockMode } from "@/server/integrations/search-console/search-analytics";
@@ -77,7 +78,44 @@ export async function embedTexts(
   const mock = seoEmbeddingsMock();
   const apiKey = mock ? "" : getEnv().OPENAI_API_KEY;
   if (!mock && !apiKey) return { vectors: null, budgetHit: false };
+  if (mock) return embedWithinDailyBudget(texts, scope, mock, apiKey);
 
+  // Plan hakkı (docs/billing-tasks.md): ücretli çağrı, günlük sayaçtan ÖNCE, hak
+  // yoksa günlük sınır gibi "bütçe doldu" döner (çağıran zaten bunu işler).
+  try {
+    return await gatedAiCall(
+      {
+        workspaceId: scope.workspaceId,
+        projectId: scope.projectId,
+        module: "SEO",
+        source: "embeddings",
+        purpose: PURPOSE,
+        estimateMicros: () => embeddingHoldMicros(texts),
+      },
+      () => embedWithinDailyBudget(texts, scope, mock, apiKey),
+    );
+  } catch (error) {
+    if (isBudgetError(error)) return { vectors: null, budgetHit: true };
+    throw error;
+  }
+}
+
+// Gömme çok ucuzdur (milyon token başına $0,02): tutar küçük bir tabandır, ama
+// sıfır değil (defter sıfır rezervasyonu reddeder).
+const MIN_EMBED_HOLD_MICROS = BigInt(1_000);
+function embeddingHoldMicros(texts: readonly string[]): bigint {
+  const chars = texts.reduce((sum, text) => sum + text.length, 0);
+  const tokens = Math.ceil(chars / 3);
+  const micros = BigInt(Math.ceil(tokens * EMBED_USD_PER_MTOKEN));
+  return micros > MIN_EMBED_HOLD_MICROS ? micros : MIN_EMBED_HOLD_MICROS;
+}
+
+async function embedWithinDailyBudget(
+  texts: readonly string[],
+  scope: SeoScope,
+  mock: boolean,
+  apiKey: string,
+): Promise<{ vectors: Float32Array[] | null; budgetHit: boolean }> {
   // Bütçe kapısı önce: mock çağrı da sayılır (ReasoningService gibi).
   try {
     await AutonomyPolicyRepository.checkAndIncrement(scope, "reasoningCalls");

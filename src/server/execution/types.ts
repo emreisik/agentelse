@@ -43,6 +43,19 @@ export type ProviderExecutionStatus = {
   isMock: boolean;
 };
 
+// Ücretli bir sağlayıcının bir isteğin AZAMİ kullanımına dair beyanı (Faz 3,
+// src/server/billing/operation.ts). Tahmin sağlayıcıdadır çünkü maliyeti
+// belirleyen sabitler (maxOutputTokens, fotoğraf/uyarlama/varyant kolları) orada
+// yaşar: yanında durursa kodla birlikte kayar, ayrı bir tabloda sessizce eskir.
+//  - content: sonucu "görselli içerik" olan iş. `images` rezerve edilecek görsel
+//    hakkı sayısıdır; işin içindeki metin/arama maliyetleri hakka DAHİLDİR.
+//  - ai: "diğer AI" bütçesinden harcayan iş; `maxCostUsd` azami maliyet tahmini.
+// Beyan yoksa (yayın/yazma sağlayıcıları, mock'lar) iş ücretsiz sınıftır: yalnız
+// ölçülür, hakka dokunmaz.
+export type ProviderUsageEstimate =
+  | { class: "content"; images: number }
+  | { class: "ai"; maxCostUsd: number };
+
 // Every execution provider (OpenClaw, AI, direct API integrations, human
 // task queues, ...) implements this. Domain services never import a
 // concrete provider — only ProviderRegistry/CapabilityRouter do, so swapping
@@ -60,6 +73,8 @@ export interface ExecutionProvider {
   ): Promise<boolean>;
   execute(request: ExecutionRequest): Promise<ExecutionAcceptedResult>;
   getStatus(executionReference: string): Promise<ProviderExecutionStatus>;
+  // Bu istek en çok neye mal olur? Yalnız ücretli sağlayıcılar tanımlar.
+  usageEstimate?(request: ExecutionRequest): ProviderUsageEstimate;
   cancel?(executionReference: string): Promise<void>;
   // Sends a human-provided continuation value (OTP code, confirmation,
   // chosen option, ...) back to a WAITING_HUMAN execution so it can resume.

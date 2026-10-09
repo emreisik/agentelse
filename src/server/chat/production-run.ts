@@ -23,6 +23,7 @@ import { isWorksEnabled } from "@/server/works/flag";
 import { updateCommandCard } from "./card-store";
 
 import { driveJobInline } from "./inline-job";
+import { describePause, isParked } from "./parked-job";
 import type { ChatStreamEvent } from "./types";
 
 // The part of a live production run that does not care WHAT is being produced:
@@ -282,6 +283,18 @@ export async function runProductionItem(
         reply: `The ${lowerLabel} was cancelled.`,
       });
       return { itemId: spec.itemId, planned: true, ok: false };
+    }
+    if (isParked(settled)) {
+      // The plan allowance ran out before this piece could start. It is
+      // planned and goes on by itself; it is not "being made".
+      emit({
+        type: "item.done",
+        itemId: spec.itemId,
+        ok: true,
+        reply: `${spec.label} is paused: this period's plan allowance is used up. It continues by itself when the allowance renews or more is added.`,
+        card: { kind: "limit-notice", ...(await describePause(plan.job.id)) },
+      });
+      return { itemId: spec.itemId, planned: true, ok: true };
     }
     if (settled.status !== "COMPLETED" && settled.status !== "FAILED") {
       emit({

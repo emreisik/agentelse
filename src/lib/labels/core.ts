@@ -182,6 +182,8 @@ export const EXECUTION_JOB_STATUS: EnumMap<ExecutionJobStatus> = {
   COMPLETED: { label: "Completed", tone: "positive" },
   FAILED: { label: "Failed", tone: "danger" },
   CANCELLED: { label: "Cancelled", tone: "neutral" },
+  // Plan allowance used up: paused, resumes by itself (Faz 3).
+  WAITING_BUDGET: { label: "Paused: allowance used up", tone: "waiting" },
 };
 
 export const CREATIVE_STATUS: EnumMap<CreativeStatus> = {

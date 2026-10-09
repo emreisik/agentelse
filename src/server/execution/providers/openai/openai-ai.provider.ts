@@ -9,11 +9,17 @@ import {
   runOpenAIText,
 } from "@/server/reasoning/openai-client";
 import { runOpenAITextWithSearch } from "@/server/reasoning/openai-search-client";
+import {
+  ASSUMED_SEARCH_CALLS,
+  PROMPT_OVERHEAD_CHARS,
+  estimateTextCallCostUsd,
+} from "@/server/billing/cost-estimate";
 import type {
   ExecutionAcceptedResult,
   ExecutionProvider,
   ExecutionRequest,
   ProviderExecutionStatus,
+  ProviderUsageEstimate,
 } from "@/server/execution/types";
 
 // Public-web research capabilities: they need live facts, so they run through
@@ -54,6 +60,11 @@ const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
   "BRAND_SAFETY",
   "REPORTING",
 ]);
+
+// Output budgets of the one call execute() makes. Read by execute() AND by the
+// usage declaration below, so the amount reserved up front tracks the call.
+const SEARCH_MAX_OUTPUT_TOKENS = 8192;
+const TEXT_MAX_OUTPUT_TOKENS = 4096;
 
 type StoredResult = {
   status: "completed" | "failed";
@@ -160,6 +171,31 @@ function buildSystemPrompt(
   ].join("\n\n");
 }
 
+// Azami cost of the one call execute() makes for this capability and payload.
+// Exported so a parked job can be sized again (src/server/execution/
+// usage-need.ts) with exactly the number the provider reserves when it runs.
+export function aiJobMaxCostUsd(
+  capability: CapabilityKey,
+  payload: unknown,
+): number {
+  const input = (payload ?? {}) as Record<string, unknown>;
+  const requestText =
+    typeof input.request === "string" ? input.request : JSON.stringify(input);
+  const search = SEARCH_CAPABILITIES.has(capability);
+  return estimateTextCallCostUsd({
+    model: openaiModelForTier(),
+    inputChars: requestText.length + PROMPT_OVERHEAD_CHARS,
+    maxOutputTokens: search ? SEARCH_MAX_OUTPUT_TOKENS : TEXT_MAX_OUTPUT_TOKENS,
+    searchCalls: search ? ASSUMED_SEARCH_CALLS : 0,
+  });
+}
+
+export function isAiBudgetCapability(capability: CapabilityKey): boolean {
+  return (
+    OWNED_CAPABILITIES.has(capability) || SEARCH_CAPABILITIES.has(capability)
+  );
+}
+
 export class OpenAiAiProvider implements ExecutionProvider {
   readonly key = "openai-ai";
   readonly type: ExecutionProviderType = "AI";
@@ -169,9 +205,16 @@ export class OpenAiAiProvider implements ExecutionProvider {
   }
 
   async canExecute(capability: CapabilityKey): Promise<boolean> {
-    return (
-      OWNED_CAPABILITIES.has(capability) || SEARCH_CAPABILITIES.has(capability)
-    );
+    return isAiBudgetCapability(capability);
+  }
+
+  // One text (or search-backed) call: its azami cost is the "other AI" budget
+  // this job holds while it runs.
+  usageEstimate(request: ExecutionRequest): ProviderUsageEstimate {
+    return {
+      class: "ai",
+      maxCostUsd: aiJobMaxCostUsd(request.capability, request.payload),
+    };
   }
 
   async execute(request: ExecutionRequest): Promise<ExecutionAcceptedResult> {
@@ -187,8 +230,14 @@ export class OpenAiAiProvider implements ExecutionProvider {
         user: requestText,
       };
       const { text } = SEARCH_CAPABILITIES.has(request.capability)
-        ? await runOpenAITextWithSearch({ ...call, maxOutputTokens: 8192 })
-        : await runOpenAIText({ ...call, maxOutputTokens: 4096 });
+        ? await runOpenAITextWithSearch({
+            ...call,
+            maxOutputTokens: SEARCH_MAX_OUTPUT_TOKENS,
+          })
+        : await runOpenAIText({
+            ...call,
+            maxOutputTokens: TEXT_MAX_OUTPUT_TOKENS,
+          });
       result = { status: "completed", text };
     } catch (error) {
       result = {

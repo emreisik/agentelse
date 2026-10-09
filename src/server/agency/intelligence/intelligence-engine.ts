@@ -1,6 +1,7 @@
 import "server-only";
 
 import { insightFingerprint } from "@/server/agency/fingerprint";
+import { isAgentelseError } from "@/server/security/errors";
 import { ConstitutionService } from "@/server/agency/constitution/constitution-service";
 import { insightSynthesisDef } from "@/server/reasoning/prompts/insight-synthesis";
 import { signalRelevanceDef } from "@/server/reasoning/prompts/signal-relevance";
@@ -18,16 +19,62 @@ import { FindingWriter } from "./finding-writer";
 // promoted ones.
 const SCORING_CONCURRENCY = 5;
 
+// The step serves every client at once. Taking simply the oldest `limit` signals
+// lets one client with a pile of old ones (or one whose AI budget is spent, whose
+// signals therefore never leave NEW) fill every tick and starve the rest. Signals
+// are picked one client at a time in turn instead, oldest first within a client.
+const CANDIDATE_POOL_FACTOR = 5;
+
+export function fairShare<T extends { workspaceId: string }>(
+  rows: readonly T[],
+  limit: number,
+): T[] {
+  const queues = new Map<string, T[]>();
+  for (const row of rows) {
+    const queue = queues.get(row.workspaceId) ?? [];
+    queue.push(row);
+    queues.set(row.workspaceId, queue);
+  }
+  const picked: T[] = [];
+  while (picked.length < limit && queues.size > 0) {
+    for (const [workspaceId, queue] of queues) {
+      picked.push(queue.shift()!);
+      if (queue.length === 0) queues.delete(workspaceId);
+      if (picked.length >= limit) break;
+    }
+  }
+  return picked;
+}
+
 export const IntelligenceEngine = {
   async processNewSignals(limit = 20): Promise<number> {
-    const signals = await SignalRepository.listByStatus("NEW", limit);
+    const signals = fairShare(
+      await SignalRepository.listByStatus("NEW", limit * CANDIDATE_POOL_FACTOR),
+      limit,
+    );
     let processed = 0;
+    // Clients whose AI budget (daily cap or plan allowance) stopped a call in
+    // THIS run: their remaining signals wait for the next tick, everybody else's
+    // go on. A budget stop is the client's own limit working, not the step's.
+    const stalled = new Set<string>();
 
     // One independent LLM relevance call per signal — scored in bounded
     // parallel chunks instead of strictly one after another (20 sequential
-    // calls used to dominate the tick). A thrown error (e.g.
-    // BUDGET_EXCEEDED) still ends the step like before.
+    // calls used to dominate the tick). Any other thrown error still ends the
+    // step like before.
     const scoreOne = async (signal: (typeof signals)[number]) => {
+      if (stalled.has(signal.workspaceId)) return;
+      try {
+        await scoreSignal(signal);
+      } catch (error) {
+        if (isAgentelseError(error) && error.code === "BUDGET_EXCEEDED") {
+          stalled.add(signal.workspaceId);
+          return;
+        }
+        throw error;
+      }
+    };
+    const scoreSignal = async (signal: (typeof signals)[number]) => {
       // Paused project — push forward without processing, exactly like
       // signal-universe.ts's own scan skip. Try again next tick.
       if (!(await isProjectAgencyActive(signal.projectId))) return;

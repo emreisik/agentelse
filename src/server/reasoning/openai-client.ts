@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getEnv } from "@/lib/env";
+import { assertTaskRoom } from "@/server/billing/usage-context";
 import { recordUsage } from "@/server/billing/usage-recorder";
 import { priceReasoningCall } from "@/server/reasoning/reasoning-pricing";
 import { AgentelseError } from "@/server/security/errors";
@@ -196,6 +197,7 @@ async function callOpenAI(input: {
   });
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    assertTaskRoom();
     const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
     let response: Response;
     const attemptStartedAt = Date.now();

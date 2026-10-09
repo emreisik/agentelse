@@ -163,9 +163,16 @@ export type IdeaEventCardData =
         | "active-ideas"
         | "provider-unconfigured"
         | "provider-rate-limited"
-        | "provider-timeout";
+        | "provider-timeout"
+        // Plan allowance (Faz 3): the period's image credits / AI allowance are
+        // used up, or the workspace has no active plan. Paused work resumes by
+        // itself; `unit` says which allowance, `resetsAt` (ISO) when it renews.
+        | "allowance-used"
+        | "no-plan";
       cap?: number;
       used?: number;
+      unit?: "IMAGE" | "AI_MICROS";
+      resetsAt?: string;
     }
   // The chat surface's structured "AskUserQuestion"-style fork (see
   // chat-turn.ts's `questions` field) — clickable options instead of a

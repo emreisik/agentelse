@@ -151,6 +151,43 @@ export const PAST_DUE_GRACE_DAYS = 3;
 // süpürücüyle geri verilir.
 export const RESERVATION_TTL_MS = 45 * 60 * 1000;
 
+// Yürütme işi (görsel/metin üretimi) rezervasyonu: sağlayıcı yeniden denemeleri
+// (token ikiye katlama zinciri, 4 deneme x ~2 dk) bir işi 45 dakikanın üstüne
+// uzatabilir; süpürücü hâlâ koşan işin hakkını geri vermesin. Çökmüş iş en çok bu
+// kadar tutar (self-healing 30 dk'da zaten FAILED yapar).
+export const JOB_RESERVATION_TTL_MS = 90 * 60 * 1000;
+
+// Görev başına azami maliyet ("her göreve maksimum bütçe", Faz 3): bir işin
+// gerçek maliyeti bu tavanı aşarsa SONRAKİ ücretli çağrı başlamaz. Tavan
+// rezervasyondan bağımsız bir emniyet kemeridir (sağlayıcı yeniden denemeleri,
+// token ikiye katlama zinciri); normal işler tavanın çok altında kalır.
+//  - perImageUsd: içerik işinde her görsel hakkı için (metin + art direction +
+//    çizim yüksek kalitede bile ≈ $0,4);
+//  - noImageUsd: görsel hakkı yemeyen içerik işi (uyarlama, fotoğraflı gönderi);
+//  - aiMultiplier: AI işinde rezervasyonun katı.
+export const TASK_CEILING = {
+  perImageUsd: 0.75,
+  noImageUsd: 0.5,
+  aiMultiplier: 3,
+} as const;
+
+// Revizyon politikası (Faz 3): bir gönderinin görselini düzenlemek ya da yeniden
+// üretmek (Studio, "revize et") bir görsel modeli çağırır ve gerçek maliyet
+// doğurur. Açık ve maliyeti sınırlı kural: gönderi başına ilk `freePerPost`
+// görsel revizyon ek hak yemez (deneme yanılma payı); sonrakilerin her biri 1
+// IMAGE hakkı yer. Kalite varsayılanı DEĞİŞMEZ (maliyeti düşürmek için kaliteyi
+// kontrolsüz azaltmak şartnameye aykırı); gerçek maliyet verisiyle sahip karar verir.
+export const REVISION_POLICY = {
+  freePerPost: 2,
+} as const;
+
+// `currentVersion`: gönderinin şu anki (en yeni) sürüm numarası, 1'den başlar.
+// Yapılacak revizyon bir sonraki sürümü üretir; ilk `freePerPost` revizyon
+// (sürüm 2, 3) ücretsizdir, 4. sürümden itibaren her revizyon 1 hak yer.
+export function revisionCostsRight(currentVersion: number): boolean {
+  return currentVersion > REVISION_POLICY.freePerPost;
+}
+
 export function getPlan(key: PlanKey): PlanDef {
   return PLANS[key];
 }

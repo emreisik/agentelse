@@ -65,6 +65,7 @@ import type {
   ExecutionProvider,
   ExecutionRequest,
   ProviderExecutionStatus,
+  ProviderUsageEstimate,
 } from "@/server/execution/types";
 
 const OWNED_CAPABILITIES: ReadonlySet<CapabilityKey> = new Set<CapabilityKey>([
@@ -197,6 +198,53 @@ function clampVariantQuality(
   return quality === "low" ? "low" : VARIANT_QUALITY;
 }
 
+export function isCreativeImageCapability(capability: CapabilityKey): boolean {
+  return OWNED_CAPABILITIES.has(capability);
+}
+
+// Photo mode (docs/brand-media.md): the asset ids a job names, bounded strings
+// only (an empty string passes the bound but is not a photo: see jobShapeOf).
+function photoAssetIdsOf(input: Record<string, unknown>): string[] {
+  return Array.isArray(input.photoAssetIds)
+    ? input.photoAssetIds.filter(
+        (id): id is string => typeof id === "string" && id.length <= 64,
+      )
+    : [];
+}
+
+// What a job asks for, decided in ONE place. execute() and the billing
+// declaration (creativeImageCount) both read the payload through this function,
+// so what a job is billed for never differs from what it does.
+//  - photoAssetIds: any listed id turns variants off (one photo is one picture);
+//  - namesPhoto: the FIRST id is a real one: execute() cuts that photo (and
+//    throws when it cannot be read), it never draws;
+//  - variantCount: 2..VARIANT_COUNT pictures in total, only without photo ids;
+//  - adapts: another format of a post that already has its picture, re-laid
+//    out from it.
+function jobShapeOf(input: Record<string, unknown>) {
+  const photoAssetIds = photoAssetIdsOf(input);
+  const variantCount = photoAssetIds.length
+    ? undefined
+    : variantCountOf(input.variantCount);
+  return {
+    photoAssetIds,
+    namesPhoto: Boolean(photoAssetIds[0]),
+    variantCount,
+    adapts: typeof input.adaptFromAssetId === "string" && !variantCount,
+  };
+}
+
+// How many pictures an image model DRAWS for this job (the plan's "image
+// rights", src/server/billing/operation.ts). The brand's own photo is cut, not
+// drawn (0); an adaptation re-lays out the post's existing picture and is not a
+// picture of its own (0, its cost is only recorded); a variants job draws all
+// of its pictures; an ordinary job draws one.
+export function creativeImageCount(input: Record<string, unknown>): number {
+  const shape = jobShapeOf(input);
+  if (shape.namesPhoto || shape.adapts) return 0;
+  return shape.variantCount ?? 1;
+}
+
 // The words a post carries on its picture, from the text step's answer or the
 // chat's preset (empty headline = the post has none).
 function overlayOf(value: unknown): OnImageText | undefined {
@@ -275,7 +323,18 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
   }
 
   async canExecute(capability: CapabilityKey): Promise<boolean> {
-    return OWNED_CAPABILITIES.has(capability);
+    return isCreativeImageCapability(capability);
+  }
+
+  // The post's text step, art direction and copywriting ride on its picture
+  // right; only the drawn pictures are counted.
+  usageEstimate(request: ExecutionRequest): ProviderUsageEstimate {
+    return {
+      class: "content",
+      images: creativeImageCount(
+        (request.payload ?? {}) as Record<string, unknown>,
+      ),
+    };
   }
 
   async execute(request: ExecutionRequest): Promise<ExecutionAcceptedResult> {
@@ -284,23 +343,15 @@ export class OpenAiCreativeProvider implements ExecutionProvider {
       typeof input.request === "string" ? input.request : JSON.stringify(input);
     // Photo mode: the brand's own photo is the picture (docs/brand-media.md).
     // One photo is one picture, so a variants request does not apply.
-    const photoAssetIds = Array.isArray(input.photoAssetIds)
-      ? input.photoAssetIds.filter(
-          (id): id is string => typeof id === "string" && id.length <= 64,
-        )
-      : [];
-    const variantCount = photoAssetIds.length
-      ? undefined
-      : variantCountOf(input.variantCount);
+    const { photoAssetIds, variantCount, adapts } = jobShapeOf(input);
 
     try {
       // Another format of a post that already has its picture (plan-run.ts,
       // "one post, one picture"): that picture is re-laid out, never redrawn.
-      const adaptFrom =
-        typeof input.adaptFromAssetId === "string" && !variantCount
-          ? await readPictureForAdapting(input.adaptFromAssetId)
-          : undefined;
-      if (typeof input.adaptFromAssetId === "string" && !variantCount && !adaptFrom) {
+      const adaptFrom = adapts
+        ? await readPictureForAdapting(input.adaptFromAssetId as string)
+        : undefined;
+      if (adapts && !adaptFrom) {
         throw new Error("The post's picture could not be read.");
       }
       // The photo: the one the job names, or the one the post's own picture was

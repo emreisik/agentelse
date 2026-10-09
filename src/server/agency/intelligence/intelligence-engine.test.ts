@@ -58,8 +58,9 @@ vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
   isProjectAgencyActive,
 }));
 
-const { IntelligenceEngine, needsInsightSynthesis } =
+const { IntelligenceEngine, fairShare, needsInsightSynthesis } =
   await import("@/server/agency/intelligence/intelligence-engine");
+const { AgentelseError } = await import("@/server/security/errors");
 
 function signalRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -120,6 +121,107 @@ describe("IntelligenceEngine.processNewSignals (paused-project guard, audit scen
       "proj-paused",
       expect.anything(),
       expect.anything(),
+    );
+  });
+});
+
+describe("fairShare", () => {
+  const rows = (workspaceId: string, count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      workspaceId,
+      id: `${workspaceId}-${i}`,
+    }));
+
+  it("serves the clients in turn, oldest first within each", () => {
+    const picked = fairShare(
+      [...rows("A", 5), ...rows("B", 2), ...rows("C", 1)],
+      6,
+    );
+    expect(picked.map((row) => row.id)).toEqual([
+      "A-0",
+      "B-0",
+      "C-0",
+      "A-1",
+      "B-1",
+      "A-2",
+    ]);
+  });
+
+  it("never lets one client with a pile take the whole batch", () => {
+    const picked = fairShare([...rows("A", 50), ...rows("B", 3)], 10);
+    expect(picked.filter((row) => row.workspaceId === "B")).toHaveLength(3);
+    expect(picked).toHaveLength(10);
+  });
+
+  it("returns what exists when there are fewer rows than the limit", () => {
+    expect(fairShare(rows("A", 2), 10)).toHaveLength(2);
+    expect(fairShare([], 10)).toEqual([]);
+  });
+});
+
+describe("IntelligenceEngine.processNewSignals (a client's spent budget)", () => {
+  const budgetStop = () =>
+    new AgentelseError("BUDGET_EXCEEDED", "used up", {
+      meta: { limit: "planAllowance" },
+    });
+
+  it("a client whose budget stops a call does not end the step for the others", async () => {
+    listByStatus.mockResolvedValue([
+      signalRow({ id: "a1", workspaceId: "ws-a", projectId: "p-a" }),
+      signalRow({ id: "a2", workspaceId: "ws-a", projectId: "p-a" }),
+      signalRow({ id: "b1", workspaceId: "ws-b", projectId: "p-b" }),
+      signalRow({ id: "b2", workspaceId: "ws-b", projectId: "p-b" }),
+    ]);
+    run.mockImplementation(async (_def: unknown, input: { workspaceId: string }) => {
+      if (input.workspaceId === "ws-a") throw budgetStop();
+      return {
+        output: { relevanceScore: 80, shouldPromote: false },
+        isMock: false,
+      };
+    });
+
+    const processed = await IntelligenceEngine.processNewSignals(20);
+
+    // Both of B's signals are scored; A's stay NEW for a later tick.
+    expect(processed).toBe(2);
+    expect(signalTransition).toHaveBeenCalledWith(
+      "b1",
+      "p-b",
+      "SCORED",
+      expect.anything(),
+    );
+    expect(signalTransition).toHaveBeenCalledWith(
+      "b2",
+      "p-b",
+      "SCORED",
+      expect.anything(),
+    );
+    expect(signalTransition).not.toHaveBeenCalledWith(
+      "a1",
+      "p-a",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("stops asking the model for a client once its budget has said no in this run", async () => {
+    // Sequential chunks of 5: the first chunk finds out, the second is skipped.
+    const aSignals = Array.from({ length: 9 }, (_, i) =>
+      signalRow({ id: `a${i}`, workspaceId: "ws-a", projectId: "p-a" }),
+    );
+    listByStatus.mockResolvedValue(aSignals);
+    run.mockRejectedValue(budgetStop());
+
+    await IntelligenceEngine.processNewSignals(20);
+
+    expect(run.mock.calls.length).toBeLessThanOrEqual(5);
+  });
+
+  it("any other failure still ends the step", async () => {
+    listByStatus.mockResolvedValue([signalRow({ id: "a1" })]);
+    run.mockRejectedValue(new Error("provider exploded"));
+    await expect(IntelligenceEngine.processNewSignals(20)).rejects.toThrow(
+      "provider exploded",
     );
   });
 });

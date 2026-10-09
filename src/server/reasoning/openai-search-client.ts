@@ -3,6 +3,7 @@ import "server-only";
 import OpenAI from "openai";
 
 import { getEnv } from "@/lib/env";
+import { assertTaskRoom } from "@/server/billing/usage-context";
 import { recordUsage } from "@/server/billing/usage-recorder";
 import { toAgentelseError } from "@/server/chat/openai-chat-client";
 import { priceReasoningCall } from "@/server/reasoning/reasoning-pricing";
@@ -143,6 +144,7 @@ export async function runOpenAITextWithSearch(
   cachedTokens?: number;
   webSearchCalls: number;
 }> {
+  assertTaskRoom();
   let response;
   const startedAt = Date.now();
   try {
@@ -211,6 +213,7 @@ export async function runOpenAIStructuredWithSearch(
     );
   }
 
+  assertTaskRoom();
   let response;
   const startedAt = Date.now();
   try {

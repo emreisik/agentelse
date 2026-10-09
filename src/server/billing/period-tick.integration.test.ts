@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
@@ -14,6 +22,11 @@ const config = vi.hoisted(() => ({
 vi.mock("./config", () => ({ getBillingConfig: () => config.current }));
 
 import { prisma } from "@/lib/prisma";
+import {
+  createAgencyFixture,
+  teardownAgencyFixture,
+  type AgencyFixture,
+} from "@/server/agency/test-support/agency-fixtures";
 import { describeIntegration } from "@/test-support/integration-suite";
 
 import { reserveUsage } from "./ledger";
@@ -30,7 +43,9 @@ describeIntegration("billing maintenance tick", () => {
   beforeEach(async () => {
     resetBillingTickThrottle();
     // claimPeriodic 5 dk'lık kilidi: önceki testin izini temizle.
-    await prisma.systemHeartbeat.deleteMany({ where: { key: "billing.tick" } });
+    await prisma.systemHeartbeat.deleteMany({
+      where: { key: { in: ["billing.tick", "billing.drain"] } },
+    });
   });
 
   afterEach(() => {
@@ -59,7 +74,7 @@ describeIntegration("billing maintenance tick", () => {
     });
   }
 
-  it("off: sorgusuz 0 (kilit satırı bile yazılmaz), hiçbir şey değişmez", async () => {
+  it("off: defter işlerine dokunmaz (pencere, bakiye, bakım kilidi), hiçbir şey değişmez", async () => {
     config.current = { ...config.current, mode: "off" };
     const ws = newWs();
     await subscription(ws, new Date("2027-01-01T00:00:00.000Z"));
@@ -178,5 +193,185 @@ describeIntegration("billing maintenance tick", () => {
       await runBillingTick(new Date(now.getTime() + 6 * 60_000)),
     ).toBeGreaterThanOrEqual(1);
     expect(await prisma.usageBalance.count({ where: { workspaceId: ws } })).toBe(2);
+  });
+
+
+  describe("park edilmiş iş ve uzlaştırma (Faz 3)", () => {
+    const executionFixtures: AgencyFixture[] = [];
+
+    afterAll(async () => {
+      for (const fixture of executionFixtures) {
+        const where = { workspaceId: fixture.workspaceId };
+        await prisma.outboxEvent.deleteMany({ where });
+        await prisma.executionJob.deleteMany({ where });
+        await prisma.task.deleteMany({ where });
+        await prisma.auditLog.deleteMany({ where });
+        await teardownAgencyFixture(fixture.workspaceId);
+      }
+    });
+
+    async function parkedJob(images: number) {
+      const fixture = await createAgencyFixture(
+        `${runId}-tick-${executionFixtures.length}`,
+      );
+      executionFixtures.push(fixture);
+      await prisma.subscription.create({
+        data: {
+          workspaceId: fixture.workspaceId,
+          planKey: "growth",
+          interval: "MONTH",
+          status: "ACTIVE",
+          quotaAnchor: NOV,
+          paidThrough: new Date("2027-01-01T00:00:00.000Z"),
+        },
+      });
+      await prisma.usageBalance.create({
+        data: {
+          id: randomUUID(),
+          workspaceId: fixture.workspaceId,
+          unit: "IMAGE",
+          periodStart: NOV,
+          periodEnd: new Date("2026-12-01T00:00:00.000Z"),
+          periodGranted: BigInt(images),
+          updatedAt: new Date("2026-11-15T12:00:00.000Z"),
+        },
+      });
+      const task = await prisma.task.create({
+        data: {
+          workspaceId: fixture.workspaceId,
+          projectId: fixture.projectId,
+          brandId: fixture.brandId,
+          title: "A post",
+          capability: "CREATE_SOCIAL_CREATIVE",
+          status: "QUEUED",
+          riskLevel: "LOW",
+          createdByType: "USER",
+        },
+      });
+      const job = await prisma.executionJob.create({
+        data: {
+          workspaceId: fixture.workspaceId,
+          projectId: fixture.projectId,
+          brandId: fixture.brandId,
+          taskId: task.id,
+          capability: "CREATE_SOCIAL_CREATIVE",
+          providerType: "SYSTEM",
+          correlationId: randomUUID(),
+          idempotencyKey: randomUUID(),
+          requestPayload: { request: "x" } as never,
+          status: "WAITING_BUDGET",
+        },
+      });
+      // Parked an hour before the simulated clock below.
+      await prisma.$executeRaw`UPDATE "ExecutionJob" SET "updatedAt" = ${new Date("2026-11-15T11:00:00.000Z")} WHERE id = ${job.id}`;
+      return { fixture, job };
+    }
+
+    it("bakım adımı, hakkı yenilenen workspace'in park edilmiş işini kuyruğa döndürür", async () => {
+      const { job } = await parkedJob(1);
+      const work = await runBillingTick(new Date("2026-11-15T12:00:00.000Z"));
+      expect(work).toBeGreaterThanOrEqual(1);
+      expect(
+        (await prisma.executionJob.findUniqueOrThrow({ where: { id: job.id } }))
+          .status,
+      ).toBe("QUEUED");
+    });
+
+    it("teslim edilmiş işin süresi dolan rezervasyonu iade edilmez, mahsup edilir (süreç çökmesi)", async () => {
+      const { fixture, job } = await parkedJob(3);
+      await prisma.executionJob.update({
+        where: { id: job.id },
+        data: { status: "COMPLETED" },
+      });
+      // The process died after the job was delivered and before it settled.
+      const t0 = new Date("2026-11-15T12:00:00.000Z");
+      const held = await reserveUsage({
+        workspaceId: fixture.workspaceId,
+        unit: "IMAGE",
+        amount: 1,
+        reservationKey: `exec:${job.id}#evt.1`,
+        operationId: `exec:${job.id}`,
+        ttlMs: 60_000,
+        now: t0,
+      });
+      expect(held.ok).toBe(true);
+
+      await runBillingTick(new Date(t0.getTime() + 10 * 60_000));
+
+      const row = await prisma.usageBalance.findUniqueOrThrow({
+        where: {
+          workspaceId_unit: { workspaceId: fixture.workspaceId, unit: "IMAGE" },
+        },
+      });
+      expect(row.periodUsed).toBe(BigInt(1)); // charged, not handed back
+      expect(row.periodReserved).toBe(BigInt(0));
+      const reservation = await prisma.usageReservation.findFirstOrThrow({
+        where: { workspaceId: fixture.workspaceId },
+      });
+      expect(reservation.status).toBe("SETTLED");
+    });
+
+    it("başarısız ya da bitmemiş işin süresi dolan rezervasyonu iade edilir", async () => {
+      const { fixture, job } = await parkedJob(3);
+      await prisma.executionJob.update({
+        where: { id: job.id },
+        data: { status: "FAILED" },
+      });
+      const t0 = new Date("2026-11-15T12:00:00.000Z");
+      await reserveUsage({
+        workspaceId: fixture.workspaceId,
+        unit: "IMAGE",
+        amount: 1,
+        reservationKey: `exec:${job.id}#evt.1`,
+        operationId: `exec:${job.id}`,
+        ttlMs: 60_000,
+        now: t0,
+      });
+      await runBillingTick(new Date(t0.getTime() + 10 * 60_000));
+      const row = await prisma.usageBalance.findUniqueOrThrow({
+        where: {
+          workspaceId_unit: { workspaceId: fixture.workspaceId, unit: "IMAGE" },
+        },
+      });
+      expect(row.periodUsed).toBe(BigInt(0));
+      expect(row.periodReserved).toBe(BigInt(0));
+    });
+
+    it("shadow: park edilmiş kalıntıyı hakka bakmadan boşaltır", async () => {
+      config.current = { ...config.current, mode: "shadow" };
+      const { job } = await parkedJob(0);
+      await runBillingTick(new Date("2026-11-15T12:00:00.000Z"));
+      expect(
+        (await prisma.executionJob.findUniqueOrThrow({ where: { id: job.id } }))
+          .status,
+      ).toBe("QUEUED");
+    });
+
+    it("off: saatte bir park edilmiş işi boşaltır (kill-switch), arada tekrar etmez", async () => {
+      config.current = { ...config.current, mode: "off" };
+      const { job } = await parkedJob(0);
+      const t0 = new Date("2026-11-15T12:00:00.000Z");
+      expect(await runBillingTick(t0)).toBeGreaterThanOrEqual(1);
+      expect(
+        (await prisma.executionJob.findUniqueOrThrow({ where: { id: job.id } }))
+          .status,
+      ).toBe("QUEUED");
+
+      // An hour has not passed: nothing is looked at again.
+      const { job: second } = await parkedJob(0);
+      expect(await runBillingTick(new Date(t0.getTime() + 60_000))).toBe(0);
+      expect(
+        (await prisma.executionJob.findUniqueOrThrow({ where: { id: second.id } }))
+          .status,
+      ).toBe("WAITING_BUDGET");
+      // The next hour picks it up.
+      resetBillingTickThrottle();
+      await prisma.systemHeartbeat.deleteMany({ where: { key: "billing.drain" } });
+      await runBillingTick(new Date(t0.getTime() + 61 * 60_000));
+      expect(
+        (await prisma.executionJob.findUniqueOrThrow({ where: { id: second.id } }))
+          .status,
+      ).toBe("QUEUED");
+    });
   });
 });

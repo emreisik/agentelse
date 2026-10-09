@@ -65,6 +65,9 @@ import {
 } from "@/lib/works/plan-layout";
 import { parsePlanBrief, stripPlanBriefMarker } from "@/lib/plan-brief";
 import { createBrandRulesGetter } from "@/server/works/brand-rule-loader";
+import { beginChatRound } from "@/server/billing/chat-gate";
+import type { Operation, OperationOutcome } from "@/server/billing/operation";
+import { isQuotaError } from "@/server/billing/quota-errors";
 import { recordUsage as recordBillingUsage } from "@/server/billing/usage-recorder";
 import { loadRecentHistoryFiles } from "./history-files";
 import { createMockChatModel } from "./mock-chat-model";
@@ -95,6 +98,9 @@ import type { ChatModel, ChatModelEvent, ChatStreamEvent } from "./types";
 // searches + one model call). Past this the reply goes ahead without it.
 const QUICK_DISCOVERY_WAIT_MS = 75_000;
 const MAX_OUTPUT_TOKENS = 8192;
+// Said when the plan's AI allowance runs out between two rounds of one turn.
+const ALLOWANCE_STOP_NOTICE =
+  "I had to stop here: this period's AI allowance is used up. Everything done so far is saved, and I can carry on when the allowance renews or more is added.";
 // ~25k tokens of prior conversation; the rest of the window is left for the
 // brand context, attachments, tool round trips and the reply.
 const HISTORY_CHAR_BUDGET = 100_000;
@@ -651,6 +657,8 @@ export async function* runChatAgent(
     // An end-turn card exists: the rest of its round is answered, not run.
     let endedByCard = false;
     let stopReason: StopReason | undefined;
+    // The plan's AI allowance ran out between two rounds of this turn.
+    let allowanceStop = false;
 
     // Decides whether a tool call the model made may run, and with what
     // arguments; otherwise what the model is told instead. The order matters:
@@ -720,75 +728,113 @@ export async function* runChatAgent(
         }
       }
 
+      // Plan allowance: this round's maximum is held BEFORE the model is called.
+      // On the first round a refusal ends the turn with the allowance card (the
+      // catch below); after the person already got something it stops cleanly at
+      // this boundary, what earlier rounds did stays saved. Off / mock: nothing.
+      let roundOperation: Operation | undefined;
+      if (modelName !== "mock") {
+        try {
+          roundOperation = await beginChatRound({
+            workspaceId: input.workspaceId,
+            projectId: input.projectId,
+            userId: input.userId,
+            operationId: usageOperationId,
+            round,
+            model: modelName,
+            instructions: CHAT_INSTRUCTIONS,
+            conversation,
+            maxOutputTokens: MAX_OUTPUT_TOKENS,
+            webSearch: CHAT_WEB_SEARCH,
+          });
+        } catch (error) {
+          if (round > 0 && isQuotaError(error)) {
+            allowanceStop = true;
+            break;
+          }
+          throw error;
+        }
+      }
+
       modelRan = true;
       timing.rounds += 1;
       timing.modelStartedAt ||= Date.now();
       const roundStartedAt = Date.now();
       inFlight = "";
       let completed: Extract<ChatModelEvent, { type: "completed" }> | undefined;
-
-      for await (const event of model.stream({
-        model: modelName,
-        instructions: CHAT_INSTRUCTIONS,
-        input: conversation,
-        tools: openaiTools,
-        effort: CHAT_REASONING_EFFORT,
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
-        signal: input.signal,
-      })) {
-        if (event.type === "text.delta") {
-          timing.firstTokenAt ||= Date.now();
-          // Text from a later round (the wrap-up after a tool ran) starts a
-          // new paragraph instead of gluing onto the lead-in.
-          const separator =
-            inFlight === "" && replyParts.length > 0 ? "\n\n" : "";
-          inFlight += event.text;
-          yield { type: "text.delta", text: separator + event.text };
-        } else {
-          completed = event;
+      // The round's hold is settled in `finally`, whatever happens to the stream:
+      // charged at the metered cost when the model finished, handed back when it
+      // was cut or failed (no usage was reported then, nothing to charge).
+      let roundOutcome: OperationOutcome = "aborted";
+      try {
+        for await (const event of model.stream({
+          model: modelName,
+          instructions: CHAT_INSTRUCTIONS,
+          input: conversation,
+          tools: openaiTools,
+          effort: CHAT_REASONING_EFFORT,
+          maxOutputTokens: MAX_OUTPUT_TOKENS,
+          signal: input.signal,
+        })) {
+          if (event.type === "text.delta") {
+            timing.firstTokenAt ||= Date.now();
+            // Text from a later round (the wrap-up after a tool ran) starts a
+            // new paragraph instead of gluing onto the lead-in.
+            const separator =
+              inFlight === "" && replyParts.length > 0 ? "\n\n" : "";
+            inFlight += event.text;
+            yield { type: "text.delta", text: separator + event.text };
+          } else {
+            completed = event;
+          }
         }
-      }
 
-      if (inFlight.trim()) replyParts.push(inFlight.trim());
-      inFlight = "";
-      timing.modelEndedAt = Date.now();
-      if (completed) {
-        inputTokens += completed.inputTokens ?? 0;
-        cachedInputTokens += completed.cachedInputTokens ?? 0;
-        outputTokens += completed.outputTokens ?? 0;
-        if (modelName !== "mock") {
-          // One billing row per model round (explicit scope: an async
-          // generator does not reliably carry the caller's AsyncLocalStorage).
-          const priced = priceReasoningCall({
-            model: modelName,
-            inputTokens: completed.inputTokens,
-            outputTokens: completed.outputTokens,
-            cachedTokens: completed.cachedInputTokens,
-            webSearchCalls: completed.webSearchCalls,
-          });
-          await recordBillingUsage({
-            kind: completed.webSearchCalls ? "SEARCH" : "TEXT",
-            provider: "openai",
-            model: modelName,
-            purpose: "chat.turn",
-            costUsd: priced.costUsd,
-            costEstimated: priced.estimated,
-            success: true,
-            durationMs: timing.modelEndedAt - roundStartedAt,
-            inputTokens: completed.inputTokens,
-            outputTokens: completed.outputTokens,
-            cachedTokens: completed.cachedInputTokens,
-            webSearchCalls: completed.webSearchCalls,
-            scope: {
-              workspaceId: input.workspaceId,
-              projectId: input.projectId,
-              userId: input.userId,
-              source: "chat",
-              module: "CHAT",
-              operationId: usageOperationId,
-            },
-          });
+        if (inFlight.trim()) replyParts.push(inFlight.trim());
+        inFlight = "";
+        timing.modelEndedAt = Date.now();
+        if (completed) {
+          inputTokens += completed.inputTokens ?? 0;
+          cachedInputTokens += completed.cachedInputTokens ?? 0;
+          outputTokens += completed.outputTokens ?? 0;
+          if (modelName !== "mock") {
+            // One billing row per model round (explicit scope: an async
+            // generator does not reliably carry the caller's AsyncLocalStorage).
+            const priced = priceReasoningCall({
+              model: modelName,
+              inputTokens: completed.inputTokens,
+              outputTokens: completed.outputTokens,
+              cachedTokens: completed.cachedInputTokens,
+              webSearchCalls: completed.webSearchCalls,
+            });
+            await recordBillingUsage({
+              kind: completed.webSearchCalls ? "SEARCH" : "TEXT",
+              provider: "openai",
+              model: modelName,
+              purpose: "chat.turn",
+              costUsd: priced.costUsd,
+              costEstimated: priced.estimated,
+              success: true,
+              durationMs: timing.modelEndedAt - roundStartedAt,
+              inputTokens: completed.inputTokens,
+              outputTokens: completed.outputTokens,
+              cachedTokens: completed.cachedInputTokens,
+              webSearchCalls: completed.webSearchCalls,
+              scope: {
+                workspaceId: input.workspaceId,
+                projectId: input.projectId,
+                userId: input.userId,
+                source: "chat",
+                module: "CHAT",
+                operationId: usageOperationId,
+                // The round's meter: what was just recorded is what it settles to.
+                ...(roundOperation ? { meter: roundOperation.meter } : {}),
+              },
+            });
+          }
+          roundOutcome = "delivered";
         }
+      } finally {
+        await roundOperation?.finish(roundOutcome);
       }
       // openai ends an aborted stream silently (no error, no `completed`):
       // a Stop in the middle of a reply must not be saved as an answer.
@@ -1001,6 +1047,8 @@ export async function* runChatAgent(
     // A work session's message that was cut short says why, and how to go on.
     // (An ordinary message that ran out of rounds stays silent, as before.)
     if (stopReason && guard.inSession) appended.push(STOP_NOTICES[stopReason]);
+    // The allowance ran out mid-turn: what earlier rounds did is saved; say so.
+    if (allowanceStop) appended.push(ALLOWANCE_STOP_NOTICE);
 
     // Deterministic text the app owns (approval note, form link) goes after
     // the model's own words; streamed so the client shows what is persisted.

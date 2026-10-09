@@ -6,6 +6,7 @@ import {
   Prisma,
   type CapabilityKey,
   type CreativeContentFormat,
+  type ExecutionJobStatus,
   type RiskLevel,
   type SocialPlatform,
 } from "@prisma/client";
@@ -13,7 +14,8 @@ import {
 import { prisma } from "@/lib/prisma";
 import { remainingVariantSlots } from "@/lib/works/variants";
 import { capabilityLabel, PLATFORM_LABEL } from "@/lib/labels";
-import { moduleOf, runWithUsageScope } from "@/server/billing/usage-context";
+import { beginJobBilling } from "@/server/billing/job-billing";
+import type { OperationOutcome } from "@/server/billing/operation";
 import { AgentelseError } from "@/server/security/errors";
 import { StateMachine } from "@/server/state-machine/transitions";
 import { CapabilityRouter } from "@/server/execution/capability-router";
@@ -140,7 +142,12 @@ export const ExecutionService = {
   async startExecution(
     executionJobId: string,
     riskLevel: RiskLevel,
-    options: { recoverStalledDispatch?: boolean } = {},
+    options: {
+      recoverStalledDispatch?: boolean;
+      // Names this attempt's plan-allowance reservation (docs/billing-tasks.md).
+      // Stable on redelivery of the same attempt so it is adopted, not repeated.
+      attemptToken?: string;
+    } = {},
   ) {
     let job = await prisma.executionJob.findUniqueOrThrow({
       where: { id: executionJobId },
@@ -180,54 +187,46 @@ export const ExecutionService = {
 
     const provider = await CapabilityRouter.route(job.capability, context);
 
-    StateMachine.assertExecutionJobTransition(job.status, "RUNNING");
-    const claimed = await ExecutionJobRepository.claimQueuedForProvider(
-      job.id,
+    // Plan allowance: reserved BEFORE any side effect (Task -> RUNNING, the
+    // "starting" card, the provider call). A job the allowance cannot pay for is
+    // parked (WAITING_BUDGET) and returned as it is: waiting, not failed. A job
+    // whose task is gone is closed. With BILLING_MODE=off this is a no-op.
+    const billing = await beginJobBilling({
+      job,
       provider,
-    );
-    if (!claimed) {
-      return prisma.executionJob.findUniqueOrThrow({
-        where: { id: executionJobId },
-      });
-    }
+      context,
+      attemptToken: options.attemptToken,
+    });
+    if (billing.kind === "stop") return billing.job;
+    const operation = billing.operation;
 
-    const task = await prisma.task.findUnique({ where: { id: job.taskId } });
-    if (task && task.status !== "RUNNING") {
-      await TaskRepository.transition(job.taskId, job.projectId, "RUNNING");
-      if (ExecutionPolicy.isCreative(job.capability)) {
-        await IdeaChatRepository.postCreativeLoadingCard({
-          workspaceId: job.workspaceId,
-          projectId: job.projectId,
-          taskId: job.taskId,
-          title: task.title,
-          departmentKey: task.departmentKey ?? undefined,
-        }).catch((error) => {
-          console.error(
-            "[execution-service] postCreativeLoadingCard failed:",
-            error,
-          );
+    // The reservation is settled exactly once, in `finally`, and the try opens
+    // right here so that nothing between the reservation and the end can leave it
+    // dangling. Default "aborted" = handed back in full: an error anywhere (the
+    // claim, the provider call, the database) means no result was delivered, and
+    // the retry that does deliver one pays then. Only a result pollOnce RETURNED
+    // as COMPLETED/VERIFYING is charged (for what was actually metered).
+    let abandoned = false;
+    let outcome: OperationOutcome = "aborted";
+    try {
+      StateMachine.assertExecutionJobTransition(job.status, "RUNNING");
+      const claimed = await ExecutionJobRepository.claimQueuedForProvider(
+        job.id,
+        provider,
+      );
+      if (!claimed) {
+        // Someone else owns this job now (their reservation is theirs).
+        abandoned = true;
+        return await prisma.executionJob.findUniqueOrThrow({
+          where: { id: executionJobId },
         });
-      } else {
-        // A publish job whose creativeId matches a creative-ready card
-        // already in the chat mirrors its progress onto THAT card instead
-        // of spawning its own "Task started" row — see
-        // markCreativePublishState's own comment. Falls through to the
-        // normal running card for every other capability, and for a
-        // publish with no matching card (e.g. a scheduled/cron publish
-        // with nothing currently in the chat window).
-        const publishCreativeId = ExecutionPolicy.isPublish(job.capability)
-          ? ((job.requestPayload as Record<string, unknown> | null)
-              ?.creativeId as string | undefined)
-          : undefined;
-        const mirroredOntoCard = publishCreativeId
-          ? await IdeaChatRepository.markCreativePublishState({
-              taskId: job.taskId,
-              creativeId: publishCreativeId,
-              publishState: "publishing",
-            }).catch(() => false)
-          : false;
-        if (!mirroredOntoCard) {
-          await IdeaChatRepository.postTaskRunningCard({
+      }
+
+      const task = await prisma.task.findUnique({ where: { id: job.taskId } });
+      if (task && task.status !== "RUNNING") {
+        await TaskRepository.transition(job.taskId, job.projectId, "RUNNING");
+        if (ExecutionPolicy.isCreative(job.capability)) {
+          await IdeaChatRepository.postCreativeLoadingCard({
             workspaceId: job.workspaceId,
             projectId: job.projectId,
             taskId: job.taskId,
@@ -235,35 +234,59 @@ export const ExecutionService = {
             departmentKey: task.departmentKey ?? undefined,
           }).catch((error) => {
             console.error(
-              "[execution-service] postTaskRunningCard failed:",
+              "[execution-service] postCreativeLoadingCard failed:",
               error,
             );
           });
+        } else {
+          // A publish job whose creativeId matches a creative-ready card
+          // already in the chat mirrors its progress onto THAT card instead
+          // of spawning its own "Task started" row — see
+          // markCreativePublishState's own comment. Falls through to the
+          // normal running card for every other capability, and for a
+          // publish with no matching card (e.g. a scheduled/cron publish
+          // with nothing currently in the chat window).
+          const publishCreativeId = ExecutionPolicy.isPublish(job.capability)
+            ? ((job.requestPayload as Record<string, unknown> | null)
+                ?.creativeId as string | undefined)
+            : undefined;
+          const mirroredOntoCard = publishCreativeId
+            ? await IdeaChatRepository.markCreativePublishState({
+                taskId: job.taskId,
+                creativeId: publishCreativeId,
+                publishState: "publishing",
+              }).catch(() => false)
+            : false;
+          if (!mirroredOntoCard) {
+            await IdeaChatRepository.postTaskRunningCard({
+              workspaceId: job.workspaceId,
+              projectId: job.projectId,
+              taskId: job.taskId,
+              title: task.title,
+              departmentKey: task.departmentKey ?? undefined,
+            }).catch((error) => {
+              console.error(
+                "[execution-service] postTaskRunningCard failed:",
+                error,
+              );
+            });
+          }
         }
       }
-    }
 
-    // Providers never read Brand Brain tables directly — they only see the
-    // frozen snapshot taken when this job was planned (spec section 35).
-    const snapshot = job.contextSnapshotId
-      ? await prisma.executionContextSnapshot.findUnique({
-          where: { id: job.contextSnapshotId },
-        })
-      : null;
+      // Providers never read Brand Brain tables directly — they only see the
+      // frozen snapshot taken when this job was planned (spec section 35).
+      const snapshot = job.contextSnapshotId
+        ? await prisma.executionContextSnapshot.findUnique({
+            where: { id: job.contextSnapshotId },
+          })
+        : null;
 
-    // Billing scope: whatever the provider buys (text, search, images — and the
-    // art-director / copywriter calls inside the creative provider) is
-    // attributed to this job's workspace and project, one operation per job.
-    const accepted = await runWithUsageScope(
-      {
-        workspaceId: job.workspaceId,
-        projectId: job.projectId,
-        source: "execution",
-        purpose: job.capability,
-        module: moduleOf(job.capability),
-        operationId: `exec:${job.id}`,
-      },
-      () =>
+      // Billing scope: whatever the provider buys (text, search, images — and
+      // the art-director / copywriter calls inside the creative provider) is
+      // attributed to this job's workspace and project, one operation per job,
+      // and added to the operation's meter (what the reservation settles to).
+      const accepted = await operation.run(() =>
         provider.execute({
           executionJobId: job.id,
           correlationId: job.correlationId,
@@ -275,24 +298,36 @@ export const ExecutionService = {
             brandContext: snapshot?.payload ?? {},
           },
         }),
-    );
+      );
 
-    const referencePersisted = await prisma.executionJob.updateMany({
-      where: {
-        id: job.id,
-        status: "RUNNING",
-        providerId: provider.key,
-        providerExecutionReference: null,
-      },
-      data: { providerExecutionReference: accepted.executionReference },
-    });
-    if (referencePersisted.count !== 1) {
-      return prisma.executionJob.findUniqueOrThrow({
-        where: { id: executionJobId },
+      const referencePersisted = await prisma.executionJob.updateMany({
+        where: {
+          id: job.id,
+          status: "RUNNING",
+          providerId: provider.key,
+          providerExecutionReference: null,
+        },
+        data: { providerExecutionReference: accepted.executionReference },
       });
-    }
+      if (referencePersisted.count !== 1) {
+        return await prisma.executionJob.findUniqueOrThrow({
+          where: { id: executionJobId },
+        });
+      }
 
-    return this.pollOnce(job.id);
+      const result = await this.pollOnce(job.id);
+      // The OpenAI providers report a provider failure through getStatus (read by
+      // pollOnce above), not by throwing from execute(): the status of the job
+      // pollOnce handed back decides what the customer pays for.
+      outcome = outcomeOf(result.status);
+      return result;
+    } finally {
+      if (abandoned) {
+        await operation.abandon();
+      } else {
+        await operation.finish(outcome);
+      }
+    }
   },
 
   // Polls the provider once and applies whatever transition the result
@@ -568,6 +603,22 @@ export const ExecutionService = {
     return this.pollOnce(job.id);
   },
 };
+
+// What a job's final status means for the plan allowance it reserved.
+function outcomeOf(status: ExecutionJobStatus): OperationOutcome {
+  switch (status) {
+    case "COMPLETED":
+    case "VERIFYING":
+      return "delivered";
+    case "FAILED":
+    case "CANCELLED":
+      return "failed";
+    default:
+      // Still running / waiting: undecided. The reservation stays open until the
+      // result is known (reconcile.ts) or it expires.
+      return "pending";
+  }
+}
 
 // The provider result arrives schema-less as `unknown` — verify all four
 // fields are of the expected type before writing the Asset.

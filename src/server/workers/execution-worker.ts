@@ -52,6 +52,8 @@ const PERMANENT_ERROR_CODES = new Set([
 // codebase's existing bounded-batch pattern (see baseline-audit.service.ts
 // BATCH=5).
 const DISPATCH_CONCURRENCY = 5;
+// How long a dispatch waits when the plan-allowance ledger was unreadable.
+const LEDGER_UNAVAILABLE_RETRY_MS = 60_000;
 // Generous last-resort backstop, not a normal-path budget: a legitimate
 // tick can itself take a couple of minutes (e.g. an OpenClaw dispatch's own
 // 135s timeout, or advanceOneProject's 45s per-project setup budget) — this
@@ -238,6 +240,9 @@ export const ExecutionWorker = {
     const payload = event.payload as {
       executionJobId: string;
       riskLevel: string;
+      // Set by the resume step (src/server/billing/park.ts): the token under
+      // which it already reserved the allowance this run will spend.
+      attemptToken?: string;
     };
 
     try {
@@ -256,7 +261,15 @@ export const ExecutionWorker = {
       const job = await ExecutionService.startExecution(
         payload.executionJobId,
         payload.riskLevel as never,
-        { recoverStalledDispatch: true },
+        {
+          recoverStalledDispatch: true,
+          // Names this attempt's plan-allowance reservation. Stable when the
+          // same attempt is delivered again (a lease-expiry reclaim finds and
+          // adopts its own reservation instead of reserving twice), new for
+          // every retry (scheduleRetry raises attemptCount).
+          attemptToken:
+            payload.attemptToken ?? `${event.id}.${event.attemptCount + 1}`,
+        },
       );
       if (job.status === "RUNNING" && !job.providerExecutionReference) {
         throw new Error(
@@ -274,6 +287,20 @@ export const ExecutionWorker = {
         `[execution-worker] dispatch failed for job ${payload.executionJobId}:`,
         error,
       );
+      // The usage ledger could not be read (enforce fails closed). That is not
+      // this job's fault and says nothing about the next attempt: put the event
+      // back WITHOUT spending an attempt. Counting it would let a one-minute
+      // database blip run every queued job through MAX_ATTEMPTS and
+      // dead-letter the lot (the plan then cascade-cancels its dependents).
+      if (isAgentelseError(error) && error.code === "BILLING_UNAVAILABLE") {
+        await OutboxRepository.scheduleRetry(
+          event.id,
+          event.attemptCount,
+          LEDGER_UNAVAILABLE_RETRY_MS,
+          event.nextAttemptAt,
+        );
+        return 0;
+      }
       const attempt = event.attemptCount + 1;
       // A permanent-class failure (auth/config/budget) will produce the
       // exact same error on every retry — classifyError/isAutoRecoverable

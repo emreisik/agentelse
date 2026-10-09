@@ -278,6 +278,15 @@ export function failureDegrades(job: {
   errorCode?: string | null;
   errorMessage?: string | null;
 }): boolean {
+  // Bir kiracının plan hakkı bitti ya da defter okunamadı: sağlayıcının değil
+  // kiracının durumu (docs/billing-tasks.md). Metin eşleşmesine bırakılmaz.
+  if (
+    job.errorCode === "QUOTA_EXCEEDED" ||
+    job.errorCode === "NO_PLAN" ||
+    job.errorCode === "BILLING_UNAVAILABLE"
+  ) {
+    return false;
+  }
   const metaClass = parseMetaErrorCode(job.errorCode);
   if (metaClass) return metaClassDegradesProvider(metaClass);
   // Google için aynı kural (GOOGLE:<SINIF>, google/error-catalog.ts): bir

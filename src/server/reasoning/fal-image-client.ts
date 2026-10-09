@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getEnv } from "@/lib/env";
-import { getUsageScope } from "@/server/billing/usage-context";
+import { assertTaskRoom, getUsageScope } from "@/server/billing/usage-context";
 import { recordUsage } from "@/server/billing/usage-recorder";
 import { estimateFalImageCostUsd } from "@/server/reasoning/reasoning-pricing";
 import { putAsset } from "@/server/storage/asset-storage";
@@ -166,6 +166,7 @@ export async function generateFalImage(
 ): Promise<GeneratedFalImage | null> {
   const env = getEnv();
   if (!env.FAL_API_KEY) return null;
+  assertTaskRoom();
 
   const startedAt = Date.now();
   const deadline = startedAt + TOTAL_TIMEOUT_MS;

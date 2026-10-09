@@ -119,6 +119,11 @@ enum ExecutionJobStatus {
   COMPLETED
   FAILED
   CANCELLED
+  // Plan hakkı (görsel adedi / AI bütçesi) bitti ya da planı yok: iş hata değil
+  // BEKLEMEDE (Faz 3, docs/billing-tasks.md). Hak yenilenince ya da ek paket
+  // alınınca öncelik + son tarih sırasıyla QUEUED'a döner. Sona eklendi: Prisma
+  // `ADD VALUE`'yu veritabanında sona yazar, sıra ayrışmasın.
+  WAITING_BUDGET
 }
 
 enum CapabilityKey {

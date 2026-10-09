@@ -5,7 +5,9 @@ vi.mock("@/server/execution/provider-registry", () => ({
   ProviderRegistry: { registered: () => [] },
 }));
 
-const { decayStatus } = await import("./provider-health.service");
+const { decayStatus, failureDegrades } = await import(
+  "./provider-health.service"
+);
 
 describe("decayStatus", () => {
   it("lets a locked AUTH_REQUIRED provider be retried once the window is empty and it is configured", () => {
@@ -38,5 +40,31 @@ describe("decayStatus", () => {
 
   it("without context, never unlocks AUTH_REQUIRED (safe default)", () => {
     expect(decayStatus("AUTH_REQUIRED")).toBe("AUTH_REQUIRED");
+  });
+});
+
+// A client running out of its plan allowance is that client's state, never the
+// provider's: it must not close the provider for everybody, whatever its message
+// happens to say.
+describe("failureDegrades: plan allowance", () => {
+  it.each(["QUOTA_EXCEEDED", "NO_PLAN", "BILLING_UNAVAILABLE"])(
+    "never degrades the provider for %s, even if the message reads like a billing failure",
+    (errorCode) => {
+      expect(
+        failureDegrades({
+          errorCode,
+          errorMessage: "billing: insufficient quota exceeded",
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("still degrades it for a genuine provider billing failure", () => {
+    expect(
+      failureDegrades({
+        errorCode: null,
+        errorMessage: "OpenAI 429: insufficient_quota",
+      }),
+    ).toBe(true);
   });
 });

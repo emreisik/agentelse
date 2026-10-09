@@ -41,6 +41,7 @@ import {
 
 import { DELIVERABLES } from "./deliverables";
 import { driveJobInline } from "./inline-job";
+import { PAUSED_NOTE, isParked } from "./parked-job";
 import { productionFor } from "./plan-run";
 import { cleanPublishText } from "./publish-text";
 import {
@@ -636,6 +637,17 @@ export async function slotFirstImage(
   );
   try {
     const settled = await driveJobInline(plan.job.id, plan.task.riskLevel);
+    if (isParked(settled)) {
+      return await withStoredCard(ctx, {
+        status: "ANSWERED",
+        result: {
+          outcome: "image_paused",
+          taskId: plan.task.id,
+          slot,
+          note: `${PAUSED_NOTE} The day stays planned. ${WHEN_NOTE}`,
+        },
+      });
+    }
     if (settled.status === "FAILED" || settled.status === "CANCELLED") {
       return await withStoredCard(ctx, {
         status: "ERROR",
@@ -813,6 +825,17 @@ export async function slotFirstText(
   }
 
   const settled = await driveJobInline(plan.job.id, plan.task.riskLevel);
+  if (isParked(settled)) {
+    return withStoredCard(ctx, {
+      status: "ANSWERED",
+      result: {
+        outcome: "task_paused",
+        taskId: plan.task.id,
+        slot,
+        note: `${PAUSED_NOTE} The day stays planned. ${WHEN_NOTE}`,
+      },
+    });
+  }
   if (settled.status === "FAILED" || settled.status === "CANCELLED") {
     return withStoredCard(ctx, {
       status: "ERROR",

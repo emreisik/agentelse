@@ -13,7 +13,9 @@ export type RecordReasoningCallInput = {
   outputTokens?: number;
   costUsd?: number;
   durationMs: number;
-  status: "OK" | "ERROR";
+  // BLOCKED: refused by the plan allowance before any model was called
+  // (reasoning-service.ts). Not an error: System Health reads only ERROR.
+  status: "OK" | "ERROR" | "BLOCKED";
   errorMessage?: string;
 };
 

@@ -19,7 +19,11 @@ import {
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { startIntakeAtCreate } from "@/server/brand/intake-start";
 import { ensureProjectActive } from "@/server/projects/activation";
-import { runWithUsageScope } from "@/server/billing/usage-context";
+import {
+  beginOperation,
+  type OperationOutcome,
+} from "@/server/billing/operation";
+import { isQuotaError } from "@/server/billing/quota-errors";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import { putAsset, readAsset } from "@/server/storage/asset-storage";
 import { normalizeLogoUpload } from "@/server/media/logo-clean";
@@ -343,59 +347,84 @@ export async function generateLogoAction(formData: FormData) {
       : "a plain pure black background";
   const prompt = `A simple, modern, flat-design logo icon for a company called "${project.name}". ${dossier?.positioning ?? ""} Minimalist, vector style, centered on ${backdrop}, no text. ${colorInstruction}`;
 
-  const generated = await runWithUsageScope(
-    {
+  // A logo is a picture the plan pays for: one image right (docs/billing-tasks.md).
+  // Out of credits: nothing is drawn (the card shows the same nothing a failed
+  // generation shows today; the Usage screen is where credits are explained).
+  let allowance;
+  try {
+    allowance = await beginOperation({
       workspaceId: access.workspaceId,
       projectId,
       userId,
+      module: "SOCIAL",
       source: "action",
       purpose: "logo.generate",
-      module: "SOCIAL",
-    },
-    () => generateCreativeImage(prompt),
-  );
-  if (!generated) {
-    console.error(
-      `[project-actions] logo generation failed for project ${projectId}`,
-    );
-    return;
+      operationId: `logo:${projectId}:${Date.now()}`,
+      attemptToken: "1",
+      reserve: { IMAGE: 1 },
+      requireAccess: true,
+    });
+  } catch (error) {
+    if (isQuotaError(error)) {
+      console.error(
+        `[project-actions] logo not generated for project ${projectId}: ${error.message}`,
+      );
+      return;
+    }
+    throw error;
   }
 
-  // The generated picture is a mark on a plain backdrop: store the mark alone.
-  const prepared = await normalizeLogoUpload(await readAsset(generated.storageKey), [
-    "light",
-    "dark",
-  ]).catch(() => null);
-  const stored = prepared
-    ? await putAsset(prepared.png, "png", "image/png")
-    : null;
+  let outcome: OperationOutcome = "aborted";
+  try {
+    const generated = await allowance.run(() => generateCreativeImage(prompt));
+    if (!generated) {
+      outcome = "failed";
+      console.error(
+        `[project-actions] logo generation failed for project ${projectId}`,
+      );
+      return;
+    }
 
-  const asset = await prisma.asset.create({
-    data: {
-      workspaceId: access.workspaceId,
-      projectId,
-      brandId: access.defaultBrandId,
-      type: "LOGO",
-      source: "AI_GENERATED",
-      filename: stored?.filename ?? generated.filename,
-      mimeType: prepared ? "image/png" : generated.mimeType,
-      storageKey: stored?.storageKey ?? generated.storageKey,
-      size: prepared ? prepared.png.byteLength : generated.size,
-      ...(prepared ? { width: prepared.width, height: prepared.height } : {}),
-    },
-  });
+    // The generated picture is a mark on a plain backdrop: store the mark alone.
+    const prepared = await normalizeLogoUpload(
+      await readAsset(generated.storageKey),
+      ["light", "dark"],
+    ).catch(() => null);
+    const stored = prepared
+      ? await putAsset(prepared.png, "png", "image/png")
+      : null;
 
-  const field = variant === "dark" ? "darkLogoAssetId" : "logoAssetId";
-  await prisma.brandDossier.upsert({
-    where: { brandId: access.defaultBrandId },
-    create: {
-      workspaceId: access.workspaceId,
-      projectId,
-      brandId: access.defaultBrandId,
-      [field]: asset.id,
-    },
-    update: { [field]: asset.id },
-  });
+    const asset = await prisma.asset.create({
+      data: {
+        workspaceId: access.workspaceId,
+        projectId,
+        brandId: access.defaultBrandId,
+        type: "LOGO",
+        source: "AI_GENERATED",
+        filename: stored?.filename ?? generated.filename,
+        mimeType: prepared ? "image/png" : generated.mimeType,
+        storageKey: stored?.storageKey ?? generated.storageKey,
+        size: prepared ? prepared.png.byteLength : generated.size,
+        ...(prepared ? { width: prepared.width, height: prepared.height } : {}),
+      },
+    });
+    // The logo is stored: it was delivered, so it is charged.
+    outcome = "delivered";
+
+    const field = variant === "dark" ? "darkLogoAssetId" : "logoAssetId";
+    await prisma.brandDossier.upsert({
+      where: { brandId: access.defaultBrandId },
+      create: {
+        workspaceId: access.workspaceId,
+        projectId,
+        brandId: access.defaultBrandId,
+        [field]: asset.id,
+      },
+      update: { [field]: asset.id },
+    });
+  } finally {
+    await allowance.finish(outcome);
+  }
 
   revalidatePath(`/projects/${projectId}`);
 }

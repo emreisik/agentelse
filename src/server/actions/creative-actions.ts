@@ -20,7 +20,18 @@ import { CreativeRepository } from "@/server/repositories/creative.repository";
 import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
+import { revisionCostsRight } from "@/lib/billing/plans";
+import {
+  beginOperation,
+  type Operation,
+  type OperationOutcome,
+} from "@/server/billing/operation";
+import { isQuotaError } from "@/server/billing/quota-errors";
 import { runWithUsageScope } from "@/server/billing/usage-context";
+import {
+  limitNoticeFromError,
+  limitNoticeReplyText,
+} from "@/server/commands/limit-notice";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import { buildCreativePrompt } from "@/server/media/creative-prompt-builder";
 import { barColorCandidates } from "@/lib/bar-color-candidates";
@@ -249,22 +260,17 @@ export async function performCreativeRevision({
   layoutId?: string;
   userId: string;
 }): Promise<ActionResult> {
+  // The plan allowance this revision holds (docs/billing-tasks.md), settled in
+  // `finally`: charged for the picture when one was delivered, handed back
+  // otherwise. Billing off: an empty hold, nothing changes.
+  let allowance: Operation | undefined;
+  let outcome: OperationOutcome = "aborted";
   try {
     const creative = await prisma.creative.findUniqueOrThrow({
       where: { id: creativeId },
       include: { versions: { orderBy: { version: "desc" }, take: 1 } },
     });
     await requireProjectAccess(userId, creative.projectId);
-    // Billing scope for everything this revision buys (art direction + picture).
-    const usageScope = {
-      workspaceId: creative.workspaceId,
-      projectId: creative.projectId,
-      userId,
-      source: "action" as const,
-      purpose: "creative.regenerate",
-      module: "SOCIAL" as const,
-      operationId: `revise:${creativeId}:${Date.now()}`,
-    };
 
     const currentVersion = creative.versions[0];
     const baseImage =
@@ -278,6 +284,41 @@ export async function performCreativeRevision({
         message: "No existing image to edit — generate an image first",
       };
     }
+
+    // Revision policy: the first revisions of a post's picture are free, later
+    // ones cost one image right (lib/billing/plans.ts REVISION_POLICY); the
+    // post's first picture is its main image and always costs one; a picture
+    // cut from the brand's own photo is never drawn and costs nothing.
+    const cutFromPhoto =
+      !baseImage && Boolean(photoSourceOf(currentVersion?.generationMetadata));
+    const spendsRight =
+      !cutFromPhoto &&
+      (!currentVersion?.assetId || revisionCostsRight(currentVersion.version));
+    const operationId = `revise:${creativeId}:${Date.now()}`;
+    allowance = await beginOperation({
+      workspaceId: creative.workspaceId,
+      projectId: creative.projectId,
+      userId,
+      module: "SOCIAL",
+      source: "action",
+      purpose: "creative.regenerate",
+      operationId,
+      attemptToken: "1",
+      reserve: spendsRight ? { IMAGE: 1 } : {},
+      // A free revision still needs a valid plan.
+      requireAccess: true,
+    });
+    // Billing scope for everything this revision buys (art direction + picture).
+    const usageScope = {
+      workspaceId: creative.workspaceId,
+      projectId: creative.projectId,
+      userId,
+      source: "action" as const,
+      purpose: "creative.regenerate",
+      module: "SOCIAL" as const,
+      operationId,
+      meter: allowance.meter,
+    };
 
     // In edit mode the instruction alone is enough (the image already carries
     // context); when generating from scratch, the creative's text + brand
@@ -325,9 +366,12 @@ export async function performCreativeRevision({
     const photo = photoSource
       ? await loadBrandPhoto(photoSource.assetId, creative.projectId)
       : null;
-    const styleRefs = baseImage || photo
-      ? NO_STYLE_REFERENCES
-      : await loadStyleReferences({ visualIdentity: brandStyle.visualIdentity });
+    const styleRefs =
+      baseImage || photo
+        ? NO_STYLE_REFERENCES
+        : await loadStyleReferences({
+            visualIdentity: brandStyle.visualIdentity,
+          });
 
     // Which post layout this revision uses. Editing keeps the layout the image
     // already carries (its logo and band are baked into the pixels being
@@ -382,48 +426,50 @@ export async function performCreativeRevision({
     const subject = instruction
       ? `${instruction}\n\nBrand/creative context: ${contextText}`
       : contextText;
-    const direction = brandContext && !photo
-      ? await runWithUsageScope(usageScope, () =>
-          directImage({
-            brandContext,
-            brief: subject,
-            draft: subject,
-            platformLabel: platformFormat.label,
-            formatLabel: platformFormat.contentFormatLabel,
-            pixelSize: platformFormat.pixelSize,
-            calmArea: textPlacement
-              ? headlineZonePhrase(textPlacement.zone)
-              : undefined,
-            reservedZones: layoutPlan.reservedZones,
-            followsExamples: styleRefs.exampleCount > 0 && styleRefs.matchStyle,
-            hasProductPhotos: styleRefs.productCount > 0,
-          }),
-        )
-      : null;
+    const direction =
+      brandContext && !photo
+        ? await runWithUsageScope(usageScope, () =>
+            directImage({
+              brandContext,
+              brief: subject,
+              draft: subject,
+              platformLabel: platformFormat.label,
+              formatLabel: platformFormat.contentFormatLabel,
+              pixelSize: platformFormat.pixelSize,
+              calmArea: textPlacement
+                ? headlineZonePhrase(textPlacement.zone)
+                : undefined,
+              reservedZones: layoutPlan.reservedZones,
+              followsExamples:
+                styleRefs.exampleCount > 0 && styleRefs.matchStyle,
+              hasProductPhotos: styleRefs.productCount > 0,
+            }),
+          )
+        : null;
 
     const prompt = photo
       ? "The brand's own photo, cut to this format."
       : baseImage
-      ? instruction ||
-        "Improve the overall visual quality while keeping the composition."
-      : buildCreativePrompt({
-          subject: direction ? assembleScene(direction) : subject,
-          extraAvoid: direction ? directionAvoid(direction) : undefined,
-          brandContext,
-          platformLabel: platformFormat.label,
-          contentFormatLabel: platformFormat.contentFormatLabel,
-          pixelSize: platformFormat.pixelSize,
-          safeZone: platformFormat.safeZone,
-          hasStyleReference: styleRefs.legacyBoard,
-          postStyle: styleRefs.section,
-          matchStyle: styleRefs.matchStyle,
-          reservedZones: layoutPlan.reservedZones,
-          layoutComposition: layoutPlan.composition,
-          // A textless picture with a calm area where the words go.
-          textArea: textPlacement
-            ? headlineZonePhrase(textPlacement.zone)
-            : undefined,
-        });
+        ? instruction ||
+          "Improve the overall visual quality while keeping the composition."
+        : buildCreativePrompt({
+            subject: direction ? assembleScene(direction) : subject,
+            extraAvoid: direction ? directionAvoid(direction) : undefined,
+            brandContext,
+            platformLabel: platformFormat.label,
+            contentFormatLabel: platformFormat.contentFormatLabel,
+            pixelSize: platformFormat.pixelSize,
+            safeZone: platformFormat.safeZone,
+            hasStyleReference: styleRefs.legacyBoard,
+            postStyle: styleRefs.section,
+            matchStyle: styleRefs.matchStyle,
+            reservedZones: layoutPlan.reservedZones,
+            layoutComposition: layoutPlan.composition,
+            // A textless picture with a calm area where the words go.
+            textArea: textPlacement
+              ? headlineZonePhrase(textPlacement.zone)
+              : undefined,
+          });
 
     let photoFit: "cover" | "extend" | undefined;
     let generated: GeneratedCreativeImage | null;
@@ -446,20 +492,19 @@ export async function performCreativeRevision({
         height: fitted.height,
       };
     } else {
-      generated = await runWithUsageScope(
-        usageScope,
-        () =>
-          generateCreativeImage(prompt, {
-            baseImage,
-            ...(styleRefs.exampleCount > 0 || styleRefs.productCount > 0
-              ? { referenceImages: styleRefs.images }
-              : { referenceImage: styleRefs.images[0] ?? undefined }),
-            imageSize: platformFormat.pixelSize,
-            falModelId,
-          }),
+      generated = await runWithUsageScope(usageScope, () =>
+        generateCreativeImage(prompt, {
+          baseImage,
+          ...(styleRefs.exampleCount > 0 || styleRefs.productCount > 0
+            ? { referenceImages: styleRefs.images }
+            : { referenceImage: styleRefs.images[0] ?? undefined }),
+          imageSize: platformFormat.pixelSize,
+          falModelId,
+        }),
       );
     }
     if (!generated) {
+      outcome = "failed";
       return {
         ok: false,
         message:
@@ -578,6 +623,9 @@ export async function performCreativeRevision({
             : "Image regenerated",
       },
     );
+    // The new picture is stored: it was delivered, so it is charged. (What follows
+    // - reopening the review, the chat card - does not undo it.)
+    outcome = "delivered";
 
     // A REJECTED or APPROVED creative had a decision already made against
     // its previous version — that decision must not silently carry over to
@@ -689,10 +737,18 @@ export async function performCreativeRevision({
     revalidatePath(`/creatives/${creativeId}`);
     return { ok: true };
   } catch (error) {
+    // Out of image credits / no plan: say so in the client's terms, not as an error.
+    const notice = isQuotaError(error) ? limitNoticeFromError(error) : null;
     return {
       ok: false,
-      message: error instanceof Error ? error.message : "Operation failed",
+      message: notice
+        ? limitNoticeReplyText(notice)
+        : error instanceof Error
+          ? error.message
+          : "Operation failed",
     };
+  } finally {
+    await allowance?.finish(outcome);
   }
 }
 

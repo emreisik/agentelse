@@ -557,6 +557,38 @@ const LIMIT_NOTICE_COPY: Record<
       "The AI provider took too long to respond. Send your message again.",
     settingsCta: false,
   },
+  "allowance-used": {
+    icon: Gauge,
+    tone: "waiting",
+    title: "Plan allowance used up",
+    description: (card) => {
+      const what =
+        card.unit === "IMAGE"
+          ? "image credits are"
+          : card.unit === "AI_MICROS"
+            ? "AI allowance is"
+            : "plan allowance is";
+      const renews = card.resetsAt
+        ? new Date(card.resetsAt).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            timeZone: "UTC",
+          })
+        : null;
+      return `This period's ${what} used up${
+        renews && renews !== "Invalid Date" ? `; it renews on ${renews}` : ""
+      }. Work in progress is paused and continues by itself when the allowance renews or more is added.`;
+    },
+    settingsCta: false,
+  },
+  "no-plan": {
+    icon: KeyRound,
+    tone: "waiting",
+    title: "No active plan",
+    description: () =>
+      "This workspace has no active plan, so new work can't start right now. Your existing content stays available.",
+    settingsCta: false,
+  },
 };
 
 // Why the assistant couldn't reply — cause + (when fixable there) a CTA

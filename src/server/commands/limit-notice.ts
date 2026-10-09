@@ -32,7 +32,24 @@ export function limitNoticeFromError(error: unknown): LimitNoticeCard | null {
       limit?: string;
       cap?: unknown;
       used?: unknown;
+      unit?: unknown;
+      resetsAt?: unknown;
     };
+    // Plan allowance seen through an engine call (billing/quota-errors.ts
+    // asBudgetStop): the client's plan, not the project's daily counters.
+    if (meta.limit === "planAllowance") {
+      return {
+        kind: "limit-notice",
+        reason: "allowance-used",
+        ...(meta.unit === "IMAGE" || meta.unit === "AI_MICROS"
+          ? { unit: meta.unit }
+          : {}),
+        ...(typeof meta.resetsAt === "string" ? { resetsAt: meta.resetsAt } : {}),
+      };
+    }
+    if (meta.limit === "noPlan") {
+      return { kind: "limit-notice", reason: "no-plan" };
+    }
     return {
       kind: "limit-notice",
       // A BUDGET_EXCEEDED without a recognizable meta.limit still gets the
@@ -42,6 +59,20 @@ export function limitNoticeFromError(error: unknown): LimitNoticeCard | null {
       cap: typeof meta.cap === "number" ? meta.cap : undefined,
       used: typeof meta.used === "number" ? meta.used : undefined,
     };
+  }
+  if (error.code === "QUOTA_EXCEEDED") {
+    const meta = (error.meta ?? {}) as { unit?: unknown; resetsAt?: unknown };
+    return {
+      kind: "limit-notice",
+      reason: "allowance-used",
+      ...(meta.unit === "IMAGE" || meta.unit === "AI_MICROS"
+        ? { unit: meta.unit }
+        : {}),
+      ...(typeof meta.resetsAt === "string" ? { resetsAt: meta.resetsAt } : {}),
+    };
+  }
+  if (error.code === "NO_PLAN") {
+    return { kind: "limit-notice", reason: "no-plan" };
   }
   if (error.code === "PROVIDER_UNAVAILABLE") {
     return { kind: "limit-notice", reason: "provider-unconfigured" };
@@ -76,5 +107,34 @@ export function limitNoticeReplyText(card: LimitNoticeCard): string {
       return "The AI provider is temporarily rate-limiting requests. Please try again in a minute.";
     case "provider-timeout":
       return "The AI provider took too long to respond. Please send the message again.";
+    case "allowance-used":
+      return allowanceUsedText(card);
+    case "no-plan":
+      return "This workspace has no active plan, so I can't start new work right now. Your existing content stays available.";
   }
+}
+
+// "image credits" / "AI allowance" and, when known, the renewal date. Never a
+// token or dollar figure: the client sees what they can do, not what it costs.
+function allowanceUsedText(card: LimitNoticeCard): string {
+  const what =
+    card.unit === "IMAGE"
+      ? "image credits"
+      : card.unit === "AI_MICROS"
+        ? "AI allowance"
+        : "plan allowance";
+  const when = renewalSuffix(card.resetsAt);
+  return `This period's ${what} ${card.unit === "IMAGE" ? "are" : "is"} used up${when}. Work in progress is paused and continues by itself when the allowance renews or more is added.`;
+}
+
+function renewalSuffix(resetsAt: string | undefined): string {
+  if (!resetsAt) return "";
+  const date = new Date(resetsAt);
+  if (Number.isNaN(date.getTime())) return "";
+  const label = date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  return `; it renews on ${label}`;
 }

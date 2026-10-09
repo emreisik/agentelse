@@ -2,10 +2,12 @@ import { CapabilityKey } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
 import {
+  assertTaskRoom,
   getUsageScope,
   moduleOf,
   runWithUsageScope,
 } from "./usage-context";
+import { UsageMeter } from "./usage-meter";
 
 describe("runWithUsageScope", () => {
   it("has no scope outside a run", () => {
@@ -84,5 +86,57 @@ describe("moduleOf", () => {
     for (const capability of Object.values(CapabilityKey)) {
       expect(valid.has(moduleOf(capability))).toBe(true);
     }
+  });
+});
+
+describe("assertTaskRoom (the per-task cost ceiling)", () => {
+  const spend = (meter: UsageMeter, micros: number) =>
+    meter.add({
+      callId: `c${micros}-${Math.random()}`,
+      kind: "TEXT",
+      costMicros: BigInt(micros),
+      success: true,
+    });
+
+  it("does nothing outside any scope or without a ceiling", () => {
+    expect(() => assertTaskRoom()).not.toThrow();
+    const meter = new UsageMeter({ workspaceId: "w1", operationId: "op" });
+    spend(meter, 9_999_999);
+    runWithUsageScope({ workspaceId: "w1", meter }, () => {
+      expect(() => assertTaskRoom()).not.toThrow();
+    });
+  });
+
+  it("lets the call that crosses the ceiling happen and refuses the NEXT one", () => {
+    const meter = new UsageMeter({
+      workspaceId: "w1",
+      operationId: "op",
+      ceilingMicros: BigInt(1_000),
+    });
+    runWithUsageScope({ workspaceId: "w1", meter }, () => {
+      spend(meter, 1_000);
+      expect(() => assertTaskRoom()).not.toThrow(); // at the ceiling: still fine
+      spend(meter, 1); // this one crossed it
+      expect(() => assertTaskRoom()).toThrowError(
+        expect.objectContaining({
+          code: "BUDGET_EXCEEDED",
+          meta: { limit: "taskCeiling" },
+        }),
+      );
+    });
+  });
+
+  it("applies to calls nested inside the job's scope too", () => {
+    const meter = new UsageMeter({
+      workspaceId: "w1",
+      operationId: "op",
+      ceilingMicros: BigInt(10),
+    });
+    spend(meter, 11);
+    runWithUsageScope({ workspaceId: "w1", meter }, () => {
+      runWithUsageScope({ workspaceId: "w1", purpose: "art-director" }, () => {
+        expect(() => assertTaskRoom()).toThrow();
+      });
+    });
   });
 });

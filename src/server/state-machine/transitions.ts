@@ -57,7 +57,9 @@ const EXECUTION_JOB_TRANSITIONS: Record<
   ExecutionJobStatus,
   ExecutionJobStatus[]
 > = {
-  QUEUED: ["RUNNING", "FAILED", "CANCELLED"],
+  // QUEUED <-> WAITING_BUDGET: the plan allowance ran out before the provider
+  // was called (park), and came back (resume). Nothing was spent in between.
+  QUEUED: ["RUNNING", "FAILED", "CANCELLED", "WAITING_BUDGET"],
   RUNNING: [
     "WAITING_HUMAN",
     "WAITING_PROVIDER",
@@ -68,6 +70,7 @@ const EXECUTION_JOB_TRANSITIONS: Record<
   ],
   WAITING_HUMAN: ["RUNNING", "FAILED", "CANCELLED"],
   WAITING_PROVIDER: ["RUNNING", "FAILED", "CANCELLED"],
+  WAITING_BUDGET: ["QUEUED", "FAILED", "CANCELLED"],
   VERIFYING: ["COMPLETED", "FAILED"],
   COMPLETED: [],
   FAILED: ["QUEUED"],

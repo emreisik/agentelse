@@ -55,6 +55,21 @@ export async function recordUsage(input: RecordUsageInput): Promise<void> {
     const scope: Partial<UsageScope> = { ...ambient, ...input.scope };
     const purpose = input.purpose ?? scope.purpose ?? "unknown";
     const usageModule: UsageModule = scope.module ?? moduleOf(purpose);
+    const callId = input.callId ?? randomUUID();
+    const costMicros = usdToMicros(input.costUsd);
+
+    // Operasyonun sayacı (operation.ts) DB yazımından ÖNCE ve ondan bağımsız
+    // güncellenir: yazım hatası, mahsup edilecek gerçek tutarı kaybettirmemeli.
+    // Başka workspace'in sayacına asla eklenmez.
+    if (scope.meter && scope.meter.workspaceId === scope.workspaceId) {
+      scope.meter.add({
+        callId,
+        kind: input.kind,
+        costMicros,
+        success: input.success,
+        units: input.units,
+      });
+    }
 
     await prisma.usageEntry.create({
       data: {
@@ -64,7 +79,7 @@ export async function recordUsage(input: RecordUsageInput): Promise<void> {
         module: usageModule,
         source: scope.source,
         operationId: scope.operationId,
-        callId: input.callId ?? randomUUID(),
+        callId,
         kind: input.kind,
         purpose,
         provider: input.provider,
@@ -74,7 +89,7 @@ export async function recordUsage(input: RecordUsageInput): Promise<void> {
         cachedTokens: input.cachedTokens,
         webSearchCalls: input.webSearchCalls,
         units: input.units,
-        costMicros: usdToMicros(input.costUsd),
+        costMicros,
         costEstimated: input.costEstimated,
         success: input.success,
         errorCode: input.errorCode,

@@ -5,6 +5,12 @@ import type { CreativeLens, Idea } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCreativePlatformFormat } from "@/lib/creative-platform-format";
 import { dayKeyInTimezone, zonedDateTimeToUtc } from "@/lib/timezone";
+import {
+  beginOperation,
+  type Operation,
+  type OperationOutcome,
+} from "@/server/billing/operation";
+import { asBudgetStop, isQuotaError } from "@/server/billing/quota-errors";
 import { runWithUsageScope } from "@/server/billing/usage-context";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import {
@@ -341,7 +347,28 @@ export async function planWeeklyInstagramContent(
   // into reasoningCostUsd) — this is a task-count throttle, not a new
   // dollar-budget mechanism.
   for (const idea of ideas) {
+    // Each post is one image right (docs/billing-tasks.md), held before anything
+    // is paid for and settled once the post is stored. The plan having no credits
+    // left ends the batch the way the daily cap does (BUDGET_EXCEEDED, below).
+    let allowance: Operation | undefined;
+    let outcome: OperationOutcome = "aborted";
     try {
+      try {
+        allowance = await beginOperation({
+          workspaceId,
+          projectId,
+          module: "SOCIAL",
+          source: "action",
+          purpose: "week-planner",
+          operationId: `week:${idea.id}`,
+          attemptToken: Date.now().toString(36),
+          reserve: { IMAGE: 1 },
+          requireAccess: true,
+        });
+      } catch (error) {
+        throw isQuotaError(error) ? asBudgetStop(error) : error;
+      }
+
       await AutonomyPolicyRepository.checkAndIncrement(
         scope,
         "tasksCreated",
@@ -358,6 +385,7 @@ export async function planWeeklyInstagramContent(
         purpose: "week-planner",
         module: "SOCIAL" as const,
         operationId: `week:${idea.id}`,
+        meter: allowance.meter,
       };
       // The words the post carries when its layout has a headline zone: written
       // for the brand and the room the layout gives them, typeset after the
@@ -434,6 +462,7 @@ export async function planWeeklyInstagramContent(
           }),
       );
       if (!generated) {
+        outcome = "failed";
         result.imagesFailed += 1;
         continue;
       }
@@ -519,6 +548,8 @@ export async function planWeeklyInstagramContent(
           },
         },
       );
+      // The post is stored: its picture was delivered, so it is charged.
+      outcome = "delivered";
       await CreativeRepository.transition(creative.id, projectId, "IN_REVIEW");
 
       // Brand-safety/claim gate (spec: CLAIM_VALIDATION/BRAND_SAFETY) — a
@@ -631,6 +662,8 @@ export async function planWeeklyInstagramContent(
       }
       result.imagesFailed += 1;
       console.error(`[instagram-week-planner] idea ${idea.id} failed:`, error);
+    } finally {
+      await allowance?.finish(outcome);
     }
   }
 

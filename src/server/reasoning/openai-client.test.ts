@@ -11,6 +11,8 @@ vi.mock("@/lib/env", () => ({
   }),
 }));
 
+import { runWithUsageScope } from "@/server/billing/usage-context";
+import { UsageMeter } from "@/server/billing/usage-meter";
 import { recordUsage } from "@/server/billing/usage-recorder";
 import {
   runOpenAIStructured,
@@ -400,5 +402,43 @@ describe("runOpenAIText", () => {
         error.message.includes("length"),
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  // "Max budget per task": once a job has spent past its ceiling the NEXT paid
+  // call is refused before any request is sent.
+  it("refuses a paid call once the job's cost ceiling has been crossed", async () => {
+    const meter = new UsageMeter({
+      workspaceId: "w1",
+      operationId: "exec:j1",
+      ceilingMicros: BigInt(1_000),
+    });
+    meter.add({
+      callId: "earlier",
+      kind: "TEXT",
+      costMicros: BigInt(1_001),
+      success: true,
+    });
+    await expect(
+      runWithUsageScope({ workspaceId: "w1", meter }, () =>
+        runOpenAIStructured(CALL_ARGS),
+      ),
+    ).rejects.toMatchObject({
+      code: "BUDGET_EXCEEDED",
+      meta: { limit: "taskCeiling" },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not interfere with a job that is under its ceiling", async () => {
+    fetchMock.mockResolvedValue(openaiResponse(200, STRUCTURED_BODY));
+    const meter = new UsageMeter({
+      workspaceId: "w1",
+      operationId: "exec:j2",
+      ceilingMicros: BigInt(1_000),
+    });
+    const result = await runWithUsageScope({ workspaceId: "w1", meter }, () =>
+      runOpenAIStructured(CALL_ARGS),
+    );
+    expect(result.raw).toEqual({ answer: "hello" });
   });
 });

@@ -96,8 +96,14 @@ vi.mock("@/server/repositories/audit-log.repository", () => ({
   AuditLogRepository: { record: auditRecord },
 }));
 
+// The plan-allowance hold of one post: billing off by default (an empty hold).
+const hold = { meter: {}, finish: vi.fn() };
+const beginOperation = vi.fn();
+vi.mock("@/server/billing/operation", () => ({ beginOperation }));
+
 const { planWeeklyInstagramContent, selectIdeasForWeek } =
   await import("./instagram-week-planner");
+const { AgentelseError } = await import("@/server/security/errors");
 
 const SCOPE = { workspaceId: "w-1", projectId: "p-1", brandId: "b-1" };
 
@@ -135,6 +141,9 @@ const BARE_BRAND_STYLE = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  hold.finish.mockReset();
+  beginOperation.mockReset();
+  beginOperation.mockResolvedValue(hold);
   scheduleFindMany.mockResolvedValue([]);
   checkAndIncrement.mockResolvedValue(undefined);
   getOrCreate.mockResolvedValue({ autopilotMode: "AUTOPILOT" });
@@ -774,5 +783,80 @@ describe("planWeeklyInstagramContent — brand look and post layouts", () => {
     expect(result.imagesGenerated).toBe(1);
     expect(result.imagesFailed).toBe(0);
     expect(ideaTransition).toHaveBeenCalledWith("a", "p-1", "MEASURING");
+  });
+});
+
+describe("planWeeklyInstagramContent plan allowance", () => {
+  const outOfCredits = () =>
+    new AgentelseError("QUOTA_EXCEEDED", "Plan allowance used up", {
+      meta: { unit: "IMAGE" },
+    });
+
+  it("holds one image right per post, before anything is paid for, and charges it once the post is stored", async () => {
+    ideaFindMany.mockResolvedValueOnce([idea("a"), idea("b")]);
+    generateCreativeImage
+      .mockResolvedValueOnce(generatedImage("a"))
+      .mockResolvedValueOnce(generatedImage("b"));
+
+    await planWeeklyInstagramContent(SCOPE, 3);
+
+    expect(beginOperation).toHaveBeenCalledTimes(2);
+    expect(beginOperation.mock.calls[0]![0]).toMatchObject({
+      workspaceId: "w-1",
+      projectId: "p-1",
+      module: "SOCIAL",
+      operationId: "week:a",
+      reserve: { IMAGE: 1 },
+      requireAccess: true,
+    });
+    expect(hold.finish).toHaveBeenCalledTimes(2);
+    expect(hold.finish).toHaveBeenNthCalledWith(1, "delivered");
+    expect(hold.finish).toHaveBeenNthCalledWith(2, "delivered");
+  });
+
+  it("hands the right back for a post whose picture could not be made", async () => {
+    ideaFindMany.mockResolvedValueOnce([idea("fails"), idea("ok")]);
+    generateCreativeImage
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(generatedImage("ok"));
+
+    await planWeeklyInstagramContent(SCOPE, 3);
+
+    expect(hold.finish).toHaveBeenNthCalledWith(1, "failed");
+    expect(hold.finish).toHaveBeenNthCalledWith(2, "delivered");
+  });
+
+  it("hands the right back when the work blows up before the post is stored", async () => {
+    ideaFindMany.mockResolvedValueOnce([idea("a")]);
+    generateCreativeImage.mockResolvedValueOnce(generatedImage("a"));
+    assetCreate.mockRejectedValueOnce(new Error("storage down"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await planWeeklyInstagramContent(SCOPE, 3);
+
+    expect(result.imagesFailed).toBe(1);
+    expect(hold.finish).toHaveBeenCalledWith("aborted");
+    spy.mockRestore();
+  });
+
+  it("ends the batch when the credits run out, like the daily cap, and leaves the rest of the ideas alone", async () => {
+    ideaFindMany.mockResolvedValueOnce([idea("a"), idea("b"), idea("c")]);
+    generateCreativeImage.mockResolvedValueOnce(generatedImage("a"));
+    beginOperation
+      .mockResolvedValueOnce(hold)
+      .mockRejectedValueOnce(outOfCredits());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const result = await planWeeklyInstagramContent(SCOPE, 3);
+
+    expect(result.imagesGenerated).toBe(1);
+    expect(result.cappedForToday).toBe(true);
+    // Nothing was drawn or consumed for the refused post or those after it.
+    expect(generateCreativeImage).toHaveBeenCalledTimes(1);
+    expect(ideaTransition).not.toHaveBeenCalledWith("b", "p-1", "APPROVED");
+    expect(ideaTransition).not.toHaveBeenCalledWith("c", "p-1", "APPROVED");
+    // The refused post did not use up the day's task count either.
+    expect(checkAndIncrement).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });

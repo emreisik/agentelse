@@ -159,6 +159,11 @@ vi.mock("./tools", async (importOriginal) => {
   return { ...actual, toolsForPhase: toolsForPhaseSpy };
 });
 
+// The plan-allowance gate of one model round: off by default (undefined = no
+// hold); the allowance tests arm it.
+const beginChatRound = vi.fn().mockResolvedValue(undefined);
+vi.mock("@/server/billing/chat-gate", () => ({ beginChatRound }));
+
 const checkAndIncrement = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/server/repositories/autonomy-policy.repository", () => ({
   AutonomyPolicyRepository: { checkAndIncrement },
@@ -173,6 +178,12 @@ vi.mock("@/server/repositories/audit-log.repository", () => ({
 }));
 
 const { runChatAgent } = await import("./chat-agent");
+const { recordUsage: recordBillingUsage } = await import(
+  "@/server/billing/usage-recorder"
+);
+const { UsageMeter } = await import("@/server/billing/usage-meter");
+// The real tool list, captured before any test swaps in fake tools.
+const realToolsForPhase = toolsForPhaseSpy.getMockImplementation()!;
 const { AgentelseError } = await import("@/server/security/errors");
 const { serializePlanBrief } = await import("@/lib/plan-brief");
 
@@ -293,6 +304,8 @@ beforeEach(() => {
   commandCreate.mockResolvedValue({ id: "cmd-1" });
   checkAndIncrement.mockResolvedValue(undefined);
   addSessionSpend.mockResolvedValue(undefined);
+  beginChatRound.mockReset();
+  beginChatRound.mockResolvedValue(undefined);
 });
 
 describe("runChatAgent", () => {
@@ -3002,6 +3015,169 @@ describe("runChatAgent: Works", () => {
         "proj-1",
         "brand-1",
       );
+    });
+  });
+});
+
+describe("runChatAgent plan allowance", () => {
+  beforeEach(() => {
+    // Earlier suites swap in fake tools and leave one-shot answers queued; these
+    // tests run the real create_task tool against a clean submit.
+    toolsForPhaseSpy.mockImplementation(realToolsForPhase);
+    submit.mockReset();
+    taskFindMany.mockReset().mockResolvedValue([]);
+    taskFindUnique.mockReset().mockResolvedValue(null);
+    jobFindFirst.mockReset().mockResolvedValue(null);
+    commandFindMany.mockReset().mockResolvedValue([]);
+  });
+
+  // A round's hold: what beginChatRound returns while billing is on.
+  function roundHold() {
+    return {
+      meter: new UsageMeter({ workspaceId: "ws-1", operationId: "chat:x" }),
+      finish: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+  const usedUp = () =>
+    new AgentelseError("QUOTA_EXCEEDED", "Plan allowance used up", {
+      meta: { unit: "AI_MICROS", resetsAt: "2026-11-01T00:00:00.000Z" },
+    });
+
+  it("holds each round's maximum, records the round on that hold and charges it", async () => {
+    const hold = roundHold();
+    beginChatRound.mockResolvedValueOnce(hold);
+    const { model } = scriptedModel([{ text: ["Merhaba."] }]);
+
+    const events = await collect(runChatAgent(baseInput, { model }));
+
+    expect(beginChatRound).toHaveBeenCalledTimes(1);
+    expect(beginChatRound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws-1",
+        projectId: "proj-1",
+        userId: "user-1",
+        round: 0,
+        maxOutputTokens: 8192,
+      }),
+    );
+    // The usage row of the round is written on the hold's own meter ...
+    expect(recordBillingUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: expect.objectContaining({ meter: hold.meter, module: "CHAT" }),
+      }),
+    );
+    // ... and the hold is settled as delivered.
+    expect(hold.finish).toHaveBeenCalledWith("delivered");
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "ANSWERED" });
+  });
+
+  it("hands the hold back when the model stream fails, charging nothing", async () => {
+    const hold = roundHold();
+    beginChatRound.mockResolvedValueOnce(hold);
+    const { model } = scriptedModel([{ fail: new Error("stream broke") }]);
+
+    await collect(runChatAgent(baseInput, { model }));
+
+    expect(hold.finish).toHaveBeenCalledTimes(1);
+    expect(hold.finish).toHaveBeenCalledWith("aborted");
+  });
+
+  it("settles a Stop in the middle of a round as handed back", async () => {
+    const hold = roundHold();
+    beginChatRound.mockResolvedValueOnce(hold);
+    const controller = new AbortController();
+    const { model } = scriptedModel([{ text: ["Bir "], hang: true }]);
+    const run = collect(
+      runChatAgent({ ...baseInput, signal: controller.signal }, { model }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    controller.abort();
+    const events = await run;
+
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "STOPPED" });
+    expect(hold.finish).toHaveBeenCalledWith("aborted");
+  });
+
+  it("ends the turn with the allowance card when the FIRST round cannot be paid for", async () => {
+    beginChatRound.mockRejectedValueOnce(usedUp());
+    const { model, requests } = scriptedModel([{ text: ["never"] }]);
+
+    const events = await collect(runChatAgent(baseInput, { model }));
+
+    expect(requests).toHaveLength(0); // the model was never called
+    const error = events.find((e) => e.type === "error");
+    expect(error).toMatchObject({
+      type: "error",
+      code: "LIMIT",
+      card: {
+        kind: "limit-notice",
+        reason: "allowance-used",
+        unit: "AI_MICROS",
+        resetsAt: "2026-11-01T00:00:00.000Z",
+      },
+    });
+    expect(recordReply).toHaveBeenCalledWith(
+      "cmd-1",
+      expect.stringContaining("AI allowance is used up"),
+      "ERROR",
+    );
+  });
+
+  it("stops cleanly between rounds when the allowance runs out mid-turn, keeping what was done", async () => {
+    submit.mockResolvedValue({
+      status: "PLANNED",
+      commandId: "cmd-1",
+      taskId: "t-1",
+      dispatched: true,
+      requiresApproval: true,
+    });
+    const first = roundHold();
+    beginChatRound
+      .mockResolvedValueOnce(first)
+      .mockRejectedValueOnce(usedUp());
+    const { model, requests } = scriptedModel([
+      {
+        text: ["Hemen hazırlıyorum."],
+        calls: [
+          {
+            name: "create_task",
+            args: {
+              capability: "CREATE_CAPTION",
+              taskBrief: "Premium bir Instagram postu",
+              platform: "INSTAGRAM",
+            },
+          },
+        ],
+      },
+      { text: ["never reached"] },
+    ]);
+
+    const events = await collect(runChatAgent(baseInput, { model }));
+
+    // The work the first round started is kept ...
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(requests).toHaveLength(1);
+    const done = events.at(-1);
+    expect(done).toMatchObject({ type: "done", status: "PLANNED" });
+    // ... and the person is told why the turn stopped there. No error event.
+    const reply = done?.type === "done" ? done.reply : "";
+    expect(reply).toContain("Hemen hazırlıyorum.");
+    expect(reply).toContain("AI allowance is used up");
+    expect(events.some((e) => e.type === "error")).toBe(false);
+    expect(first.finish).toHaveBeenCalledWith("delivered");
+  });
+
+  it("a workspace without a plan gets its own card", async () => {
+    beginChatRound.mockRejectedValueOnce(
+      new AgentelseError("NO_PLAN", "no plan", {
+        meta: { reason: "NO_SUBSCRIPTION" },
+      }),
+    );
+    const { model } = scriptedModel([{ text: ["never"] }]);
+    const events = await collect(runChatAgent(baseInput, { model }));
+    expect(events.find((e) => e.type === "error")).toMatchObject({
+      code: "LIMIT",
+      card: { kind: "limit-notice", reason: "no-plan" },
     });
   });
 });

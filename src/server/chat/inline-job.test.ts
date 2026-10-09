@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AgentelseError } from "@/server/security/errors";
+
 // What this suite proves about running a job inline: exactly one side runs the
 // provider (this caller after taking the job's dispatch event, or the worker
 // that already holds it), and the caller always gets the settled outcome.
 
 const findUniqueOrThrow = vi.fn();
+const findUnique = vi.fn();
 vi.mock("@/lib/prisma", () => ({
-  prisma: { executionJob: { findUniqueOrThrow } },
+  prisma: { executionJob: { findUniqueOrThrow, findUnique } },
 }));
 
 const startExecution = vi.fn();
@@ -15,11 +18,14 @@ vi.mock("@/server/execution/execution-service", () => ({
 }));
 
 const claimDispatchForInline = vi.fn();
+const enqueue = vi.fn();
 vi.mock("@/server/repositories/outbox.repository", () => ({
-  OutboxRepository: { claimDispatchForInline },
+  OUTBOX_EVENT_TYPES: { EXECUTION_DISPATCH: "execution.dispatch" },
+  OutboxRepository: { claimDispatchForInline, enqueue },
 }));
 
 const { driveJobInline, waitForJobToSettle } = await import("./inline-job");
+const { isParked } = await import("./parked-job");
 
 const completed = { status: "COMPLETED", errorMessage: null };
 const running = { status: "RUNNING", errorMessage: null };
@@ -85,5 +91,54 @@ describe("waitForJobToSettle", () => {
     await vi.advanceTimersByTimeAsync(160_000);
 
     await expect(result).resolves.toEqual(running);
+  });
+});
+
+describe("plan allowance", () => {
+  it("returns a parked job as it is: waiting, not failed and not rendering", async () => {
+    const parked = { status: "WAITING_BUDGET", errorMessage: "used up" };
+    claimDispatchForInline.mockResolvedValue("claimed");
+    startExecution.mockResolvedValue(parked);
+
+    const result = await driveJobInline("job-1", "LOW");
+
+    expect(result).toEqual(parked);
+    expect(isParked(result)).toBe(true);
+    // A parked job is a settled outcome: nothing to wait for here.
+    expect(findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(isParked({ status: "COMPLETED" })).toBe(false);
+    expect(isParked({ status: "QUEUED" })).toBe(false);
+  });
+
+  it("hands the job back to the worker when the usage ledger cannot be read", async () => {
+    claimDispatchForInline.mockResolvedValue("claimed");
+    startExecution.mockRejectedValue(
+      new AgentelseError("BILLING_UNAVAILABLE", "ledger down", {
+        retryable: true,
+      }),
+    );
+    findUnique.mockResolvedValue({
+      workspaceId: "ws-1",
+      projectId: "p-1",
+      status: "QUEUED",
+    });
+
+    await expect(driveJobInline("job-1", "LOW")).resolves.toEqual({
+      status: "QUEUED",
+      errorMessage: null,
+    });
+
+    // The event taken above is replaced, so the job is not left queued with
+    // nothing that would ever start it.
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        workspaceId: "ws-1",
+        projectId: "p-1",
+        eventType: "execution.dispatch",
+        executionJobId: "job-1",
+        payload: { executionJobId: "job-1", riskLevel: "LOW" },
+      }),
+    );
   });
 });

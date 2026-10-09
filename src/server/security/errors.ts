@@ -19,6 +19,15 @@ export const ERROR_CODES = [
   "NOT_FOUND",
   "INVALID_STATE_TRANSITION",
   "BUDGET_EXCEEDED",
+  // Plan hakkı (görsel adedi ya da AI bütçesi) bu dönem için bitti / çalışma
+  // alanının geçerli planı yok (src/server/billing/operation.ts, Faz 3). Hata
+  // DEĞİL, bekleme: worker bunları yeniden denemez ya da dead-letter yapmaz, işi
+  // WAITING_BUDGET'e park eder. BUDGET_EXCEEDED'dan ayrı tutulur: o, günlük proje
+  // sayaçlarıdır ve 15'ten fazla tüketicisi günlük sıfırlanma varsayar.
+  "QUOTA_EXCEEDED",
+  "NO_PLAN",
+  // Hak defteri okunamadı (enforce'ta fail-closed): geçici, yeniden denenir.
+  "BILLING_UNAVAILABLE",
   "DUPLICATE",
   // The request cannot run as stated: a required input is missing or not
   // supported (see execution/capability-input.ts). Not retryable.

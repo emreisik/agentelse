@@ -1,6 +1,6 @@
 # Abonelik hakları ve kota defteri (Faz 2)
 
-Plan: `~/.claude/plans/billing-usage-plan.md`. Ölçüm (Faz 1): `docs/billing-metering.md`. Bu faz kota ilkellerini kurar; HİÇBİR ücretli çağrıya bağlı değildir (Faz 3). Varsayılan `BILLING_MODE=off`: hiçbir kullanıcı davranışı değişmez ve canlı yola tek sorgu eklenmez.
+Plan: `~/.claude/plans/billing-usage-plan.md`. Ölçüm (Faz 1): `docs/billing-metering.md`. Bu faz kota ilkellerini kurar; ücretli çağrılara bağlanışı Faz 3'tedir (`docs/billing-tasks.md`). Varsayılan `BILLING_MODE=off`: hiçbir kullanıcı davranışı değişmez ve canlı yola tek sorgu eklenmez.
 
 ## Modlar
 
@@ -70,7 +70,7 @@ Testler **saat diliminden bağımsız** olmalıdır: tüm tarih parametreleri SQ
 
 ## Sonraki fazlara devir
 
-- **Faz 3**: `BUDGET_EXCEEDED` yetersiz kota için yeniden kullanılmaz (15'ten fazla tüketicisi günlük sınır varsayar). `QUOTA_EXCEEDED` ve `NO_PLAN` hata kodları eklenir; worker bunları `PERMANENT_ERROR_CODES`'a KOYMAZ, işi `WAITING_BUDGET`'e park eder. Rezervasyon YALNIZ giriş noktalarında (iş, sohbet turu, tick adımı, sunucu eylemi); iç çağrılar yalnız `UsageEntry` yazar. AI_MICROS gerçek tutarı: giriş noktasında kurulan paylaşımlı birikim nesnesi (`recordUsage` IMAGE-dışı maliyeti ekler), `UsageEntry` toplamı DEĞİL (denemeler karışır). Deneme anahtarı: worker `OutboxEvent.attemptCount + 1`. `autonomy` alanının tüketicisi Faz 3'te bağlanır (Temel pakette otonom döngüler).
+- **Faz 3** (yapıldı, `docs/billing-tasks.md`): rezervasyon yürütme işlerine, motor çağrılarına, sohbet turlarına, revizyon/logo/haftalık planlayıcı/gömmelere bağlandı; hak yoksa iş `WAITING_BUDGET`'e park edilir ve hak gelince öncelik+son tarih sırasıyla gerçek rezervasyonla devam eder. Motor çağrıları hakkı bitince `BUDGET_EXCEEDED` (`meta.limit = planAllowance`) görür, yürütme işleri `QUOTA_EXCEEDED`/`NO_PLAN` (bekleme, `PERMANENT_ERROR_CODES`'a konmadı). Kalan: 3C (onay eşiği, kullanıcı ayarı, `autonomy: limited`).
 - **Faz 4**: `paidThrough` yalnız `invoice.paid` ile ilerler; `PAST_DUE` için `graceUntil`; plan değişimi işleyicisi tek workspace kilidi altında; yükseltme = ORANTILI delta `PERIOD` hibesi (`upgradeDelta`, anahtar `plan-change:<olayId>`); düşürme `pendingPlanKey` ile pencere sınırında; iade/chargeback `revoke` (işaretli hibe, taban `used+reserved`).
 - **Faz 5**: BONUS havuzu gerekirse (60 günlük) additive migration; ilk abonelik %25 bonus ve referans ödülleri şimdilik PERIOD'a (pencereyle söner).
 - **Açık sahip kararları**: erişim bitince zamanlı postlar / canlı Meta kampanyaları; marka limiti aşımında kalacak markalar; deneme kartlı mı kartsız mı; iade politikası.

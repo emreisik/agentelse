@@ -1,10 +1,14 @@
 import "server-only";
 
-import type { RiskLevel } from "@prisma/client";
+import type { ExecutionJobStatus, RiskLevel } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { ExecutionService } from "@/server/execution/execution-service";
-import { OutboxRepository } from "@/server/repositories/outbox.repository";
+import {
+  OUTBOX_EVENT_TYPES,
+  OutboxRepository,
+} from "@/server/repositories/outbox.repository";
+import { isAgentelseError } from "@/server/security/errors";
 
 // Running an execution job "inline" — inside a chat request, right now,
 // instead of waiting for the worker's next tick (generate_image, content
@@ -16,7 +20,10 @@ import { OutboxRepository } from "@/server/repositories/outbox.repository";
 const INLINE_JOB_WAIT_MS = 150_000;
 const INLINE_JOB_POLL_MS = 2_000;
 
-export type SettledJob = { status: string; errorMessage: string | null };
+export type SettledJob = {
+  status: ExecutionJobStatus;
+  errorMessage: string | null;
+};
 
 export async function waitForJobToSettle(jobId: string): Promise<SettledJob> {
   const deadline = Date.now() + INLINE_JOB_WAIT_MS;
@@ -47,12 +54,42 @@ export async function driveJobInline(
   const ownership = await OutboxRepository.claimDispatchForInline(jobId);
   if (ownership === "worker") return waitForJobToSettle(jobId);
 
-  let settled: SettledJob = await ExecutionService.startExecution(
-    jobId,
-    riskLevel,
-  );
+  let settled: SettledJob;
+  try {
+    settled = await ExecutionService.startExecution(jobId, riskLevel);
+  } catch (error) {
+    // The usage ledger could not be read, which says nothing about this job. The
+    // dispatch event was taken above, so give the job back to the worker (it
+    // retries without spending an attempt) instead of leaving it queued with
+    // nothing left to start it.
+    if (isAgentelseError(error) && error.code === "BILLING_UNAVAILABLE") {
+      await handBackToWorker(jobId, riskLevel);
+      return { status: "QUEUED", errorMessage: null };
+    }
+    throw error;
+  }
   if (settled.status === "QUEUED" || settled.status === "RUNNING") {
     settled = await waitForJobToSettle(jobId);
   }
   return settled;
+}
+
+async function handBackToWorker(
+  jobId: string,
+  riskLevel: RiskLevel,
+): Promise<void> {
+  const job = await prisma.executionJob.findUnique({
+    where: { id: jobId },
+    select: { workspaceId: true, projectId: true, status: true },
+  });
+  if (!job || job.status !== "QUEUED") return;
+  await OutboxRepository.enqueue(prisma, {
+    workspaceId: job.workspaceId,
+    projectId: job.projectId,
+    aggregateType: "ExecutionJob",
+    aggregateId: jobId,
+    eventType: OUTBOX_EVENT_TYPES.EXECUTION_DISPATCH,
+    payload: { executionJobId: jobId, riskLevel },
+    executionJobId: jobId,
+  });
 }

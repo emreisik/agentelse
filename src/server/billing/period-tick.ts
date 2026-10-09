@@ -6,18 +6,29 @@ import { claimPeriodic } from "@/server/observability/periodic";
 
 import { getBillingConfig } from "./config";
 import { ensurePeriod, reapExpiredReservations } from "./ledger";
+import { drainParkedWork, resumeParkedWork } from "./park";
+import { settleDeliveredOrphans } from "./reconcile";
 
 // Bakım adımı (agency tick'ine bağlı): (1) vadesi gelen pencereleri yeniler,
-// (2) çökmüş işlerin tuttuğu rezervasyonları iade eder. Reserve öncesi tembel
+// (2) teslim edilmiş ama mahsup edilmemiş işleri (süreç çökmesi) mahsup eder,
+// (3) çökmüş işlerin tuttuğu rezervasyonları iade eder, (4) hakkı yenilenen/yatan
+// workspace'lerin park edilmiş işlerini kuyruğa döndürür. Reserve öncesi tembel
 // ensurePeriod zaten vardır; bu adım yalnız boşta kalan workspace'lerin sayılarını
 // güncel tutar ve sızıntıyı kapatır.
 //
-// BILLING_MODE=off iken ya da canlı veritabanını paylaşan geliştirme sürecinde
-// (metaWorkExcludedHere ile aynı yüklem) SORGUSUZ 0 döner: yerel bir makine canlı
-// bakiyeleri taslak plan sabitleriyle yeniden yazmasın.
+// Canlı veritabanını paylaşan geliştirme sürecinde (metaWorkExcludedHere ile aynı
+// yüklem) SORGUSUZ 0 döner: yerel bir makine canlı bakiyeleri taslak plan
+// sabitleriyle yeniden yazmasın.
+//
+// BILLING_MODE=off iken defter işlerine dokunulmaz; yalnız SAATTE BİR parklı iş var
+// mı diye bakılır (tek ucuz sorgu): operatör enforce'u kapatınca park edilmiş işler
+// sonsuza dek asılı kalmamalı (kill-switch). shadow'da hiçbir şey park olmaz,
+// kalanlar her tick boşaltılır.
 
 const MIN_INTERVAL_MS = 5 * 60 * 1000;
+const DRAIN_INTERVAL_MS = 60 * 60 * 1000;
 let lastRunMs = 0;
+let lastDrainMs = 0;
 
 const DUE_BALANCES_SQL = `
 SELECT DISTINCT b."workspaceId"
@@ -38,9 +49,26 @@ SELECT s."workspaceId"
  LIMIT $1::int
 `;
 
+// Faturalama kapalıyken: yalnız saatte bir, park edilmiş iş kaldıysa onları bırak.
+async function drainWhenOff(now: Date): Promise<number> {
+  if (now.getTime() - lastDrainMs < DRAIN_INTERVAL_MS) return 0;
+  lastDrainMs = now.getTime();
+  if (!(await claimPeriodic("billing.drain", DRAIN_INTERVAL_MS, now))) return 0;
+  try {
+    const drained = await drainParkedWork({ now });
+    return drained.resumed + drained.cancelled;
+  } catch (error) {
+    console.error(
+      "[billing] could not drain parked work:",
+      error instanceof Error ? error.name : error,
+    );
+    return 0;
+  }
+}
+
 export async function runBillingTick(now: Date = new Date()): Promise<number> {
-  if (getBillingConfig().mode === "off") return 0;
   if (metaWorkExcludedHere(process.env)) return 0;
+  if (getBillingConfig().mode === "off") return drainWhenOff(now);
   if (now.getTime() - lastRunMs < MIN_INTERVAL_MS) return 0;
   lastRunMs = now.getTime();
   if (!(await claimPeriodic("billing.tick", MIN_INTERVAL_MS, now))) return 0;
@@ -75,6 +103,17 @@ export async function runBillingTick(now: Date = new Date()): Promise<number> {
     );
   }
 
+  // Teslim edilmiş işin süresi dolan rezervasyonu iade DEĞİL mahsup edilir:
+  // süpürücüden ÖNCE.
+  try {
+    work += await settleDeliveredOrphans({ now, limit: 100 });
+  } catch (error) {
+    console.error(
+      "[billing] reconcile failed:",
+      error instanceof Error ? error.name : error,
+    );
+  }
+
   try {
     const { released } = await reapExpiredReservations({ now, limit: 100 });
     work += released;
@@ -85,10 +124,21 @@ export async function runBillingTick(now: Date = new Date()): Promise<number> {
     );
   }
 
+  try {
+    const resumed = await resumeParkedWork({ now, limit: 100 });
+    work += resumed.resumed + resumed.cancelled;
+  } catch (error) {
+    console.error(
+      "[billing] resume failed:",
+      error instanceof Error ? error.name : error,
+    );
+  }
+
   return work;
 }
 
 // Testler için: bellek içi kısmayı sıfırla.
 export function resetBillingTickThrottle(): void {
   lastRunMs = 0;
+  lastDrainMs = 0;
 }

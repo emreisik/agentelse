@@ -77,6 +77,29 @@ describe("StateMachine — ExecutionJob transitions", () => {
       StateMachine.assertExecutionJobTransition("FAILED", "QUEUED"),
     ).not.toThrow();
   });
+
+  // Plan allowance (Faz 3): a job is parked BEFORE the provider is called and
+  // wakes up in the queue again; it can never skip the queue and start running,
+  // and a parked job that is no longer wanted can be cancelled or failed.
+  it("parks a queued job and resumes it through the queue only", () => {
+    const allowed = (
+      from: Parameters<typeof StateMachine.assertExecutionJobTransition>[0],
+      to: Parameters<typeof StateMachine.assertExecutionJobTransition>[1],
+    ) => StateMachine.assertExecutionJobTransition(from, to);
+    expect(() => allowed("QUEUED", "WAITING_BUDGET")).not.toThrow();
+    expect(() => allowed("WAITING_BUDGET", "QUEUED")).not.toThrow();
+    expect(() => allowed("WAITING_BUDGET", "CANCELLED")).not.toThrow();
+    expect(() => allowed("WAITING_BUDGET", "FAILED")).not.toThrow();
+    expect(() => allowed("WAITING_BUDGET", "RUNNING")).toThrow(AgentelseError);
+    expect(() => allowed("WAITING_BUDGET", "COMPLETED")).toThrow(
+      AgentelseError,
+    );
+    // Only a queued job (nothing spent yet) can be parked.
+    expect(() => allowed("RUNNING", "WAITING_BUDGET")).toThrow(AgentelseError);
+    expect(() => allowed("COMPLETED", "WAITING_BUDGET")).toThrow(
+      AgentelseError,
+    );
+  });
 });
 
 describe("StateMachine — Approval transitions", () => {

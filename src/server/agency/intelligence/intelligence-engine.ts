@@ -49,13 +49,15 @@ export function fairShare<T extends { workspaceId: string }>(
 export const IntelligenceEngine = {
   async processNewSignals(limit = 20): Promise<number> {
     const signals = fairShare(
-      await SignalRepository.listByStatus("NEW", limit * CANDIDATE_POOL_FACTOR),
+      await SignalRepository.listNewForScoring(limit * CANDIDATE_POOL_FACTOR),
       limit,
     );
     let processed = 0;
     // Clients whose AI budget (daily cap or plan allowance) stopped a call in
-    // THIS run: their remaining signals wait for the next tick, everybody else's
-    // go on. A budget stop is the client's own limit working, not the step's.
+    // THIS run: their remaining signals wait, everybody else's go on. A budget
+    // stop is the client's own limit working, not the step's. The stalled client's
+    // whole backlog is moved to the back of the queue, so it cannot fill the head
+    // of the next tick as well.
     const stalled = new Set<string>();
 
     // One independent LLM relevance call per signal — scored in bounded
@@ -68,7 +70,10 @@ export const IntelligenceEngine = {
         await scoreSignal(signal);
       } catch (error) {
         if (isAgentelseError(error) && error.code === "BUDGET_EXCEEDED") {
-          stalled.add(signal.workspaceId);
+          if (!stalled.has(signal.workspaceId)) {
+            stalled.add(signal.workspaceId);
+            await SignalRepository.deferWorkspace(signal.workspaceId);
+          }
           return;
         }
         throw error;

@@ -3087,12 +3087,16 @@ describe("runChatAgent plan allowance", () => {
     beginChatRound.mockResolvedValueOnce(hold);
     const controller = new AbortController();
     const { model } = scriptedModel([{ text: ["Bir "], hang: true }]);
-    const run = collect(
-      runChatAgent({ ...baseInput, signal: controller.signal }, { model }),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    controller.abort();
-    const events = await run;
+    const events: ChatStreamEvent[] = [];
+    // Stop on the first text delta: the round (and its hold) has certainly begun
+    // and the model is hanging, however slow the machine is.
+    for await (const event of runChatAgent(
+      { ...baseInput, signal: controller.signal },
+      { model },
+    )) {
+      events.push(event);
+      if (event.type === "text.delta") controller.abort();
+    }
 
     expect(events.at(-1)).toMatchObject({ type: "done", status: "STOPPED" });
     expect(hold.finish).toHaveBeenCalledWith("aborted");

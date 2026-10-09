@@ -88,6 +88,28 @@ export const SignalRepository = {
     });
   },
 
+  // The scoring step's queue: NEW signals, the ones attempted longest ago first.
+  // A new signal's updatedAt is its createdAt, so this is oldest-first until
+  // something is deferred (below).
+  listNewForScoring(limit: number) {
+    return prisma.signal.findMany({
+      where: { status: "NEW" },
+      take: limit,
+      orderBy: { updatedAt: "asc" },
+    });
+  },
+
+  // A workspace whose AI allowance (or daily cap) is spent cannot have its signals
+  // scored, and they stay NEW. Moving them ALL to the back of the queue at once
+  // keeps that backlog from sitting at the head of every tick and starving the
+  // workspaces that can pay; they come back round once the others are done.
+  deferWorkspace(workspaceId: string) {
+    return prisma.signal.updateMany({
+      where: { workspaceId, status: "NEW" },
+      data: { updatedAt: new Date() },
+    });
+  },
+
   listForProject(
     projectId: string,
     filter?: { status?: SignalStatus; limit?: number },

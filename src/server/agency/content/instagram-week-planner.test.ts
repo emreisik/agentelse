@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { OperationSpec } from "@/server/billing/operation";
+import { getUsageScope, type UsageScope } from "@/server/billing/usage-context";
+import { UsageMeter } from "@/server/billing/usage-meter";
 
 // The weekly auto-planner's riskiest behaviors: (1) it must fully consume
 // every idea it successfully turns into a post through the SAME
@@ -96,8 +100,13 @@ vi.mock("@/server/repositories/audit-log.repository", () => ({
   AuditLogRepository: { record: auditRecord },
 }));
 
-// The plan-allowance hold of one post: billing off by default (an empty hold).
-const hold = { meter: {}, finish: vi.fn() };
+// The plan-allowance hold of one post: billing off by default (an empty hold). Its
+// meter is a real one, like beginOperation's: the scope a post's paid steps run in
+// must carry it (see "the post's meter" at the end).
+const hold = {
+  meter: new UsageMeter({ workspaceId: "w-1", operationId: "week:hold" }),
+  finish: vi.fn(),
+};
 const beginOperation = vi.fn();
 vi.mock("@/server/billing/operation", () => ({ beginOperation }));
 
@@ -858,5 +867,111 @@ describe("planWeeklyInstagramContent plan allowance", () => {
     // The refused post did not use up the day's task count either.
     expect(checkAndIncrement).toHaveBeenCalledTimes(1);
     warn.mockRestore();
+  });
+});
+
+// A post is billed from its operation's meter (billing/operation.ts charges the
+// pictures the meter counted, and the text-only work when no picture came out).
+// The meter only sees a paid call that runs in a usage scope carrying it, which the
+// planner builds by hand for every post: the words, the art direction and the
+// picture. These tests read that scope from inside the paid steps.
+describe("planWeeklyInstagramContent — the post's meter", () => {
+  type Step = { step: string; scope: UsageScope | undefined };
+
+  // The picture double below is a standing implementation, not a one-shot value.
+  afterEach(() => {
+    generateCreativeImage.mockReset();
+  });
+
+  // beginOperation hands every post its own operation with its own real meter.
+  function holdsPerPost() {
+    const holds: { spec: OperationSpec; meter: UsageMeter }[] = [];
+    beginOperation.mockImplementation(async (spec: OperationSpec) => {
+      const meter = new UsageMeter({
+        workspaceId: spec.workspaceId,
+        operationId: spec.operationId,
+      });
+      holds.push({ spec, meter });
+      return { meter, finish: hold.finish };
+    });
+    return holds;
+  }
+
+  // The paid steps are doubles that note the scope they ran in. The picture also
+  // reports itself to the scope's meter, as the real recorder does.
+  function watchPaidSteps() {
+    const steps: Step[] = [];
+    let calls = 0;
+    writeOnImageText.mockImplementation(async () => {
+      steps.push({ step: "words", scope: getUsageScope() });
+      return null;
+    });
+    directImage.mockImplementation(async () => {
+      steps.push({ step: "direction", scope: getUsageScope() });
+      return null;
+    });
+    generateCreativeImage.mockImplementation(async () => {
+      steps.push({ step: "picture", scope: getUsageScope() });
+      getUsageScope()?.meter?.add({
+        callId: `picture-${(calls += 1)}`,
+        kind: "IMAGE",
+        costMicros: BigInt(80_000),
+        success: true,
+        units: 1,
+      });
+      return generatedImage(`p${calls}`);
+    });
+    return steps;
+  }
+
+  it("runs the words, the art direction and the picture of each post in a scope carrying that post's own meter", async () => {
+    const holds = holdsPerPost();
+    const steps = watchPaidSteps();
+    ideaFindMany.mockResolvedValueOnce([idea("a"), idea("b")]);
+
+    const result = await planWeeklyInstagramContent(SCOPE, 3);
+
+    expect(result.imagesGenerated).toBe(2);
+    expect(holds.map((h) => h.spec.operationId)).toEqual(["week:a", "week:b"]);
+    expect(
+      steps.map(({ step, scope }) => `${scope?.operationId}:${step}`).sort(),
+    ).toEqual([
+      "week:a:direction",
+      "week:a:picture",
+      "week:a:words",
+      "week:b:direction",
+      "week:b:picture",
+      "week:b:words",
+    ]);
+    for (const { step, scope } of steps) {
+      const owner = holds.find(
+        (h) => h.spec.operationId === scope?.operationId,
+      );
+      expect(owner, `${step} names no operation of this batch`).toBeDefined();
+      expect(scope?.meter, `${step} of ${scope?.operationId}`).toBe(
+        owner?.meter,
+      );
+      expect(scope).toMatchObject({
+        workspaceId: "w-1",
+        projectId: "p-1",
+        module: "SOCIAL",
+        source: "action",
+        purpose: "week-planner",
+      });
+    }
+  });
+
+  it("leaves every post's operation with exactly its own picture to charge", async () => {
+    const holds = holdsPerPost();
+    watchPaidSteps();
+    ideaFindMany.mockResolvedValueOnce([idea("a"), idea("b")]);
+
+    await planWeeklyInstagramContent(SCOPE, 3);
+
+    expect(holds.map((h) => h.meter.images)).toEqual([1, 1]);
+    expect(holds.map((h) => h.meter.costMicros)).toEqual([
+      BigInt(80_000),
+      BigInt(80_000),
+    ]);
   });
 });

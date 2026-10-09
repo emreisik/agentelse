@@ -30,6 +30,9 @@ vi.mock("@/server/repositories/reasoning-call.repository", () => ({
   ReasoningCallRepository: { record },
 }));
 
+import { UsageMeter } from "@/server/billing/usage-meter";
+import { recordUsage, usdToMicros } from "@/server/billing/usage-recorder";
+
 const { generateOpenAIImage } = await import("./openai-image-client");
 
 async function* events(...items: unknown[]) {
@@ -69,6 +72,11 @@ describe("generateOpenAIImage streaming", () => {
     ]);
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({
+        model: "gpt-image-2",
+        prompt: "a clinic",
+        // One picture per call: the operation's meter counts one drawn picture
+        // for it, so a request for more would be billed by OpenAI but never charged.
+        n: 1,
         stream: true,
         partial_images: 2,
         quality: "medium",
@@ -177,5 +185,110 @@ describe("generateOpenAIImage streaming", () => {
 
     expect(record).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
+  });
+
+  // The streamed path is the one chat renders take (onPartial given). Like the
+  // plain path it hands the operation's meter a successful IMAGE unit for the
+  // picture; a stream that died is a failed, unit-less row, because the plain
+  // request that follows is the render that counts: one post is never charged
+  // two pictures.
+  describe("usage rows handed to the operation meter", () => {
+    const rows = () => vi.mocked(recordUsage).mock.calls.map(([row]) => row);
+
+    it("counts a streamed render as exactly one drawn picture", async () => {
+      generate.mockResolvedValue(
+        events({ type: "image_generation.completed", b64_json: FINAL }),
+      );
+
+      await generateOpenAIImage(
+        "a clinic",
+        undefined,
+        undefined,
+        undefined,
+        "medium",
+        () => undefined,
+      );
+
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({
+        kind: "IMAGE",
+        provider: "openai",
+        success: true,
+        units: 1,
+      });
+      expect(rows()[0]!.costUsd).toBeGreaterThan(0);
+      expect(rows()[0]!.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it.each([
+      [
+        "dies",
+        () => generate.mockRejectedValue(new Error("stream unsupported")),
+        "STREAM",
+      ],
+      [
+        "ends without a final image",
+        () =>
+          generate.mockResolvedValue(
+            events({
+              type: "image_generation.partial_image",
+              partial_image_index: 0,
+              b64_json: "P0",
+            }),
+          ),
+        "NO_FINAL",
+      ],
+    ])(
+      "counts one picture when a stream that %s falls back to the plain request",
+      async (_label, breakStream, errorCode) => {
+        breakStream();
+        vi.stubGlobal(
+          "fetch",
+          vi.fn().mockResolvedValue(
+            new Response(JSON.stringify({ data: [{ b64_json: FINAL }] }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+
+        await generateOpenAIImage(
+          "a clinic",
+          undefined,
+          undefined,
+          undefined,
+          "medium",
+          () => undefined,
+        );
+        vi.unstubAllGlobals();
+
+        expect(rows()).toHaveLength(2);
+        expect(rows()[0]).toMatchObject({
+          kind: "IMAGE",
+          success: false,
+          units: 0,
+          costUsd: 0,
+          errorCode,
+        });
+        expect(rows()[1]).toMatchObject({
+          kind: "IMAGE",
+          success: true,
+          units: 1,
+        });
+
+        // The rows as the operation's meter takes them in (usage-recorder.ts).
+        const meter = new UsageMeter({ workspaceId: "w", operationId: "op" });
+        rows().forEach((row, index) =>
+          meter.add({
+            callId: `call-${index}`,
+            kind: row.kind,
+            costMicros: usdToMicros(row.costUsd),
+            success: row.success,
+            units: row.units,
+          }),
+        );
+        expect(meter.images).toBe(1);
+      },
+    );
   });
 });

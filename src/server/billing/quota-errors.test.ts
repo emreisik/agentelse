@@ -6,6 +6,8 @@ import { AgentelseError } from "@/server/security/errors";
 import {
   NoPlanError,
   QuotaExceededError,
+  asBudgetStop,
+  isAllowanceStop,
   isQuotaError,
 } from "./quota-errors";
 
@@ -53,5 +55,47 @@ describe("quota errors", () => {
       expect(classification.category).toBe("UNKNOWN");
       expect(classification.degradesProvider).toBe(false);
     }
+  });
+});
+
+// A plan-allowance stop looks like a daily-cap stop to every engine consumer (the
+// same BUDGET_EXCEEDED code), but it does not reopen tomorrow: best-effort paths
+// that "carry on anyway" must be able to tell the two apart.
+describe("isAllowanceStop", () => {
+  it("is true for the plan-allowance and no-plan stops engine callers receive", () => {
+    expect(isAllowanceStop(asBudgetStop(quota()))).toBe(true);
+    expect(isAllowanceStop(asBudgetStop(new NoPlanError("NO_SUBSCRIPTION")))).toBe(
+      true,
+    );
+    expect(isAllowanceStop(asBudgetStop(new NoPlanError("UNIT_NOT_SOLD")))).toBe(
+      true,
+    );
+  });
+
+  it("is false for the project's daily caps and the per-task ceiling", () => {
+    for (const limit of ["reasoningCalls", "dailyBudgetUsd", "taskCeiling"]) {
+      expect(
+        isAllowanceStop(
+          new AgentelseError("BUDGET_EXCEEDED", "x", { meta: { limit } }),
+        ),
+      ).toBe(false);
+    }
+    expect(isAllowanceStop(new AgentelseError("BUDGET_EXCEEDED", "x"))).toBe(
+      false,
+    );
+  });
+
+  it("is false for anything that is not a budget stop", () => {
+    expect(isAllowanceStop(quota())).toBe(false);
+    expect(isAllowanceStop(new Error("x"))).toBe(false);
+    expect(isAllowanceStop(null)).toBe(false);
+    expect(isAllowanceStop(undefined)).toBe(false);
+    expect(
+      isAllowanceStop(
+        new AgentelseError("PERMISSION_DENIED", "x", {
+          meta: { limit: "planAllowance" },
+        }),
+      ),
+    ).toBe(false);
   });
 });

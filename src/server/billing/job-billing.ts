@@ -42,8 +42,9 @@ export type JobBilling =
   | { kind: "stop"; job: ExecutionJob };
 
 // A bug in a provider's declaration must not take job starts down while billing
-// is off (nothing changes there), and must not hand out free work while it is on:
-// then the start is refused as "ledger unavailable" (retried, no attempt spent).
+// does not block anything (off, shadow: the job runs as free work and the error
+// is logged), and must not hand out free work while it does: in enforce the start
+// is refused as "ledger unavailable" (retried, no attempt spent).
 function safeEstimate(
   declare: () => ProviderUsageEstimate | undefined,
 ): ProviderUsageEstimate | undefined {
@@ -54,7 +55,7 @@ function safeEstimate(
       "[billing] provider usage declaration failed:",
       error instanceof Error ? error.message : error,
     );
-    if (getBillingConfig().mode === "off") return undefined;
+    if (getBillingConfig().mode !== "enforce") return undefined;
     throw new AgentelseError(
       "BILLING_UNAVAILABLE",
       "Usage estimate is temporarily unavailable",
@@ -109,10 +110,10 @@ export function jobOperationSpec(input: {
         ? { AI_MICROS: usdToMicros(estimate.maxCostUsd) }
         : {};
   return {
-    // Görev başına azami maliyet: yalnız faturalama açıkken (kapalıyken sayaçta
-    // tavan yoktur, hiçbir çağrı kesilmez).
+    // Görev başına azami maliyet: yalnız enforce'ta. Kapalıyken ve gölgede hiçbir
+    // çağrı kesilmez (gölge, canlı davranışı değiştirmeden ölçmek içindir).
     ceilingMicros:
-      getBillingConfig().mode === "off" ? undefined : ceilingFor(estimate),
+      getBillingConfig().mode === "enforce" ? ceilingFor(estimate) : undefined,
     workspaceId: job.workspaceId,
     projectId: job.projectId,
     source: "execution",
@@ -166,11 +167,12 @@ export async function beginJobBilling(input: {
     }
   }
 
+  const attemptedAt = new Date();
   try {
     return { kind: "run", operation: await beginOperation(spec) };
   } catch (error) {
     if (!isQuotaError(error)) throw error;
-    await parkJob(job.id, error);
+    await parkJob(job.id, error, attemptedAt);
     return {
       kind: "stop",
       job: await prisma.executionJob.findUniqueOrThrow({

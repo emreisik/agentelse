@@ -6,7 +6,7 @@ Plan: `~/.claude/plans/billing-usage-plan.md`. Ölçüm (Faz 1): `docs/billing-m
 
 | `BILLING_MODE`     | Davranış                                                                                                                                                                        |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `off` (varsayılan) | Hak kararı, rezervasyon, marka limiti, tick adımı veritabanına HİÇ dokunmaz. Yazım hatası da `off` okunur.                                                                      |
+| `off` (varsayılan) | Hak kararı, rezervasyon, marka limiti ve kullanıcı yolları veritabanına HİÇ dokunmaz. Tek istisna bakım adımındaki kill-switch: saatte bir tek ucuz sorgu (`billing.drain`, aşağıda). Yazım hatası da `off` okunur. |
 | `shadow`           | Karar hesaplanır, **hiçbir şey engellenmez**; "enforce olsaydı engellenirdi" kararları `AuditLog`'a (`billing.shadow.*`, workspace düzeyinde, saatte en çok bir satır) yazılır. |
 | `enforce`          | Engeller. Okuma hatasında fail-closed (`ERROR`/`DEGRADED`), `off`/`shadow`'da fail-open.                                                                                        |
 
@@ -14,7 +14,7 @@ Diğer ayarlar (hepsi opsiyonel): `BILLING_LEGACY_BEFORE` (ISO tarih: bundan ön
 
 **Kohort veriyle yönetilir** (izin listesi yok): LEGACY sınırsızdır; kohort, LEGACY'den TRIALING/ACTIVE'e geçen workspace'lerdir.
 
-**Kapılar `off` iken nasıl davranır:** `reserveUsage`, `getEntitlements`, `ensurePeriod`, `runBillingTick` ve marka limiti kontrolü veritabanına HİÇ dokunmaz (tutar doğrulaması bile yapılmaz: hatalı bir tahmin kapalıyken ücretli çağrıyı düşüremez). `settleUsage`/`releaseUsage` `NOT_FOUND`, `getUsageView` `[]` döner. `grantUsage` (ödeme olayı: para alındıysa hak verilir) modtan BAĞIMSIZDIR.
+**Kapılar `off` iken nasıl davranır:** `reserveUsage`, `getEntitlements`, `ensurePeriod` ve marka limiti kontrolü veritabanına HİÇ dokunmaz; `runBillingTick` defter işlerine dokunmaz, yalnız SAATTE BİR (süreç başına ilk çağrıda ve sonra saat başı) `billing.drain` kilidini alır (`SystemHeartbeat` yazımı) ve park edilmiş iş var mı diye `ExecutionJob`'u okur (docs/billing-tasks.md, kill-switch) (tutar doğrulaması bile yapılmaz: hatalı bir tahmin kapalıyken ücretli çağrıyı düşüremez). `settleUsage`/`releaseUsage` `NOT_FOUND`, `getUsageView` `[]` döner. `grantUsage` (ödeme olayı: para alındıysa hak verilir) modtan BAĞIMSIZDIR.
 
 **Ücretli çağrının önünde hiçbir şey fırlatmaz:** `reserveUsage` geçersiz tutarda ya da altyapı hatasında `enforce`'ta `{ok:false, reason:"ERROR"}`, `shadow`'da `BYPASS(ERROR_OPEN)` döner; `settleUsage`/`releaseUsage` hatada `{status:"ERROR"}` döner (loglanır; süpürücü rezervasyonu zamanla iade eder). Yalnız `grantUsage` çelişen anahtarda `GrantKeyConflictError` fırlatır (webhook işleyicisi bilmeli).
 

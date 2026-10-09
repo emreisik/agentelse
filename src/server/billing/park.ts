@@ -43,7 +43,12 @@ export const RESUME_TOKEN_PREFIX = "resume.";
 // olmayan tek bir kiracının çok sayıda parklı işi, hak yatıran diğer kiracıların
 // işlerini görünmez kılmasın.
 const MAX_WORKSPACES_PER_SWEEP = 50;
-const MAX_JOBS_PER_WORKSPACE = 50;
+// Every parked job of a workspace is ranked before any is tried (priority, own
+// request, deadline); a window of the OLDEST few would leave a client's newer
+// urgent post waiting behind older background work. The scan reads light columns
+// only (no request payload); a payload is read for the jobs actually tried.
+const MAX_JOBS_SCANNED_PER_WORKSPACE = 1000;
+const PAYLOAD_BATCH = 50;
 
 const PRIORITY_RANK: Record<TaskPriority, number> = {
   URGENT: 3,
@@ -71,9 +76,15 @@ async function touchTask(taskId: string): Promise<void> {
 // çağrılır ve işi döndürür; "olay işlendi" işareti startExecution döndükten sonra
 // çağıranın normal akışında konur, arada çökme olsa olay yeniden teslim edilir ve
 // iş artık QUEUED olmadığı için erken döner (yetim iş doğmaz).
+//
+// `attemptedAt`: the moment the failed reservation attempt STARTED. The job is
+// stamped with it (not with the moment the park lands, a few queries later), so a
+// release or top-up that happened in between still counts as "newer than the
+// job" for the sweep filter (resumeParkedWork) instead of being lost.
 export async function parkJob(
   executionJobId: string,
   error: QuotaExceededError | NoPlanError,
+  attemptedAt?: Date,
 ): Promise<boolean> {
   const job = await prisma.executionJob.findUnique({
     where: { id: executionJobId },
@@ -88,6 +99,7 @@ export async function parkJob(
       errorCode: error.code,
       errorMessage: error.message,
       retryable: true,
+      ...(attemptedAt ? { updatedAt: attemptedAt } : {}),
     },
   });
   if (moved.count !== 1) return false;
@@ -143,7 +155,6 @@ type ParkedRow = {
   projectId: string;
   taskId: string;
   capability: CapabilityKey;
-  requestPayload: unknown;
   createdAt: Date;
   updatedAt: Date;
   task: {
@@ -162,7 +173,6 @@ const PARKED_SELECT = {
   projectId: true,
   taskId: true,
   capability: true,
-  requestPayload: true,
   createdAt: true,
   updatedAt: true,
   task: {
@@ -359,7 +369,7 @@ async function resumeWorkspace(
   const rows = (await prisma.executionJob.findMany({
     where: { workspaceId, status: "WAITING_BUDGET" },
     orderBy: { updatedAt: "asc" },
-    take: MAX_JOBS_PER_WORKSPACE,
+    take: MAX_JOBS_SCANNED_PER_WORKSPACE,
     select: PARKED_SELECT,
   })) as ParkedRow[];
 
@@ -392,6 +402,22 @@ async function resumeWorkspace(
   const blocked = new Set<string>();
   const ordered = [...live].sort(resumeOrder(deadlines));
 
+  // Request payloads are read in small batches as the loop reaches them (the scan
+  // above is light on purpose; most jobs of a long queue are never tried).
+  const payloads = new Map<string, unknown>();
+  const loadPayloads = async (from: number) => {
+    const ids = ordered
+      .slice(from, from + PAYLOAD_BATCH)
+      .map((row) => row.id)
+      .filter((id) => !payloads.has(id));
+    if (ids.length === 0) return;
+    const rows = await prisma.executionJob.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, requestPayload: true },
+    });
+    for (const row of rows) payloads.set(row.id, row.requestPayload);
+  };
+
   for (const [index, job] of ordered.entries()) {
     if (outcome.resumed >= budget || outcome.ledgerDown) {
       outcome.stillParked += 1;
@@ -402,7 +428,8 @@ async function resumeWorkspace(
       continue;
     }
 
-    const need = usageNeedOf(job.capability, job.requestPayload);
+    if (!payloads.has(job.id)) await loadPayloads(index);
+    const need = usageNeedOf(job.capability, payloads.get(job.id));
     const reserve: OperationReserve = need
       ? need.unit === "IMAGE"
         ? { IMAGE: Number(need.amount) }

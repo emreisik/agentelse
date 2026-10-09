@@ -9,6 +9,7 @@ import {
   isAutoRecoverable,
 } from "@/server/observability/error-classifier";
 import { ExecutionService } from "@/server/execution/execution-service";
+import { dispatchAttemptToken } from "@/server/execution/attempt-token";
 import {
   OutboxRepository,
   OUTBOX_EVENT_TYPES,
@@ -54,6 +55,11 @@ const PERMANENT_ERROR_CODES = new Set([
 const DISPATCH_CONCURRENCY = 5;
 // How long a dispatch waits when the plan-allowance ledger was unreadable.
 const LEDGER_UNAVAILABLE_RETRY_MS = 60_000;
+// An event that has been waiting this long and STILL cannot read the ledger is
+// not a blip: from then on the failure counts as an attempt like any other, so a
+// deterministic cause (a provider whose usage declaration throws) reaches the
+// dead letter instead of cycling every minute for ever.
+export const LEDGER_UNAVAILABLE_GIVE_UP_MS = 6 * 60 * 60 * 1000;
 // Generous last-resort backstop, not a normal-path budget: a legitimate
 // tick can itself take a couple of minutes (e.g. an OpenClaw dispatch's own
 // 135s timeout, or advanceOneProject's 45s per-project setup budget) — this
@@ -263,12 +269,8 @@ export const ExecutionWorker = {
         payload.riskLevel as never,
         {
           recoverStalledDispatch: true,
-          // Names this attempt's plan-allowance reservation. Stable when the
-          // same attempt is delivered again (a lease-expiry reclaim finds and
-          // adopts its own reservation instead of reserving twice), new for
-          // every retry (scheduleRetry raises attemptCount).
-          attemptToken:
-            payload.attemptToken ?? `${event.id}.${event.attemptCount + 1}`,
+          // Names this attempt's plan-allowance reservation (see above).
+          attemptToken: dispatchAttemptToken(event, payload.attemptToken),
         },
       );
       if (job.status === "RUNNING" && !job.providerExecutionReference) {
@@ -292,7 +294,11 @@ export const ExecutionWorker = {
       // back WITHOUT spending an attempt. Counting it would let a one-minute
       // database blip run every queued job through MAX_ATTEMPTS and
       // dead-letter the lot (the plan then cascade-cancels its dependents).
-      if (isAgentelseError(error) && error.code === "BILLING_UNAVAILABLE") {
+      if (
+        isAgentelseError(error) &&
+        error.code === "BILLING_UNAVAILABLE" &&
+        Date.now() - event.createdAt.getTime() < LEDGER_UNAVAILABLE_GIVE_UP_MS
+      ) {
         await OutboxRepository.scheduleRetry(
           event.id,
           event.attemptCount,

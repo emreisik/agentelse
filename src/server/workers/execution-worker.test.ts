@@ -101,7 +101,11 @@ vi.mock("@/server/agency/continuous/continuous-agency-engine", () => ({
 }));
 vi.mock("@/server/agency/continuous/agency-wiring", () => ({}));
 
-import { ExecutionWorker } from "@/server/workers/execution-worker";
+import { dispatchAttemptToken } from "@/server/execution/attempt-token";
+import {
+  ExecutionWorker,
+  LEDGER_UNAVAILABLE_GIVE_UP_MS,
+} from "@/server/workers/execution-worker";
 
 describe("ExecutionWorker.tick", () => {
   beforeEach(() => {
@@ -422,6 +426,7 @@ describe("ExecutionWorker.tick", () => {
         payload: { executionJobId: "job-1", riskLevel: "LOW" },
         attemptCount: 3,
         nextAttemptAt: claimedUntil,
+        createdAt: new Date(),
         reclaimed: false,
       },
     ]);
@@ -477,6 +482,131 @@ describe("ExecutionWorker.tick", () => {
     // A parked job is a normal outcome: the event is done (the resume step
     // makes a new one), never retried or dead-lettered.
     expect(mocks.markProcessed).toHaveBeenCalledWith("event-9", claimedUntil);
+    expect(mocks.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it("gives a retry of a resume event its own token, so a failed attempt's released key is not reused", async () => {
+    const claimedUntil = new Date("2026-08-08T00:15:00.000Z");
+    mocks.claimBatch.mockResolvedValue([
+      {
+        id: "event-9",
+        eventType: "execution.dispatch",
+        payload: {
+          executionJobId: "job-1",
+          riskLevel: "LOW",
+          attemptToken: "resume.abc",
+        },
+        attemptCount: 2,
+        nextAttemptAt: claimedUntil,
+        reclaimed: false,
+      },
+    ]);
+    mocks.executionStart.mockResolvedValue({
+      id: "job-1",
+      status: "COMPLETED",
+      providerExecutionReference: "ref-1",
+    });
+
+    await ExecutionWorker.processDispatchQueue();
+
+    expect(mocks.executionStart).toHaveBeenCalledWith("job-1", "LOW", {
+      recoverStalledDispatch: true,
+      attemptToken: "resume.abc.3",
+    });
+  });
+
+  // A ledger that stays unreadable for hours is not a blip: from then on the
+  // failure counts as an attempt, so a deterministic cause (a provider whose usage
+  // declaration throws) ends at the dead letter instead of cycling for ever.
+  it("counts an unreadable ledger as an attempt once the event has waited for hours", async () => {
+    const claimedUntil = new Date("2026-08-08T00:15:00.000Z");
+    mocks.claimBatch.mockResolvedValue([
+      {
+        id: "event-1",
+        eventType: "execution.dispatch",
+        payload: { executionJobId: "job-1", riskLevel: "LOW" },
+        attemptCount: 1,
+        nextAttemptAt: claimedUntil,
+        createdAt: new Date(Date.now() - LEDGER_UNAVAILABLE_GIVE_UP_MS - 60_000),
+        reclaimed: false,
+      },
+    ]);
+    mocks.isAgentelseError.mockReturnValue(true);
+    mocks.executionStart.mockRejectedValue(
+      Object.assign(new Error("Usage ledger is temporarily unavailable"), {
+        code: "BILLING_UNAVAILABLE",
+        retryable: true,
+      }),
+    );
+
+    await ExecutionWorker.processDispatchQueue();
+
+    // Attempt 2 is scheduled with the normal backoff, not the fixed 60 s wait.
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    const [, attempt, delay] = mocks.scheduleRetry.mock.calls[0]!;
+    expect(attempt).toBe(2);
+    expect(delay).not.toBe(60_000);
+  });
+
+  // When every reservation key of an attempt is used up the job cannot reserve at
+  // all. That is not a ledger outage (which the worker waits out for free): it must
+  // count as an attempt, or the job would loop for ever and never reach the dead
+  // letter.
+  it("counts a used-up reservation key space as an ordinary attempt, not as a free wait", async () => {
+    const claimedUntil = new Date("2026-08-08T00:15:00.000Z");
+    mocks.claimBatch.mockResolvedValue([
+      {
+        id: "event-1",
+        eventType: "execution.dispatch",
+        payload: { executionJobId: "job-1", riskLevel: "LOW" },
+        attemptCount: 2,
+        nextAttemptAt: claimedUntil,
+        createdAt: new Date(),
+        reclaimed: false,
+      },
+    ]);
+    mocks.isAgentelseError.mockReturnValue(true);
+    mocks.executionStart.mockRejectedValue(
+      Object.assign(new Error("No reservation key is left for this attempt"), {
+        code: "INVALID_STATE_TRANSITION",
+        retryable: false,
+      }),
+    );
+
+    await ExecutionWorker.processDispatchQueue();
+
+    expect(mocks.scheduleRetry).toHaveBeenCalledTimes(1);
+    const [, attempt, delay] = mocks.scheduleRetry.mock.calls[0]!;
+    expect(attempt).toBe(3);
+    expect(delay).not.toBe(60_000);
+    expect(mocks.markFailed).not.toHaveBeenCalled();
+  });
+
+  it("dead-letters it at the last attempt like any other failure", async () => {
+    const claimedUntil = new Date("2026-08-08T00:15:00.000Z");
+    mocks.claimBatch.mockResolvedValue([
+      {
+        id: "event-1",
+        eventType: "execution.dispatch",
+        payload: { executionJobId: "job-1", riskLevel: "LOW" },
+        attemptCount: 4,
+        nextAttemptAt: claimedUntil,
+        createdAt: new Date(Date.now() - LEDGER_UNAVAILABLE_GIVE_UP_MS - 60_000),
+        reclaimed: false,
+      },
+    ]);
+    mocks.isAgentelseError.mockReturnValue(true);
+    mocks.markFailed.mockResolvedValue({ count: 1 });
+    mocks.executionStart.mockRejectedValue(
+      Object.assign(new Error("Usage ledger is temporarily unavailable"), {
+        code: "BILLING_UNAVAILABLE",
+        retryable: true,
+      }),
+    );
+
+    await ExecutionWorker.processDispatchQueue();
+
+    expect(mocks.markFailed).toHaveBeenCalled();
     expect(mocks.scheduleRetry).not.toHaveBeenCalled();
   });
 
@@ -626,3 +756,34 @@ function expectBackoffRetry(
   expect(call?.[2]).toBeLessThanOrEqual(baseMs * 1.25);
   expect(call?.[3]).toBe(claimedUntil);
 }
+
+describe("dispatchAttemptToken", () => {
+  it("names a normal event's attempt after the event and the attempt number", () => {
+    expect(dispatchAttemptToken({ id: "evt", attemptCount: 0 }, undefined)).toBe(
+      "evt.1",
+    );
+    expect(dispatchAttemptToken({ id: "evt", attemptCount: 3 }, undefined)).toBe(
+      "evt.4",
+    );
+  });
+
+  it("lets the first attempt of a resume event adopt the hold it was created with", () => {
+    expect(
+      dispatchAttemptToken({ id: "evt", attemptCount: 0 }, "resume.abc"),
+    ).toBe("resume.abc");
+  });
+
+  it("gives every later attempt of a resume event a token of its own", () => {
+    const tokens = [1, 2, 3, 4].map((attemptCount) =>
+      dispatchAttemptToken({ id: "evt", attemptCount }, "resume.abc"),
+    );
+    expect(new Set(tokens).size).toBe(tokens.length);
+    expect(tokens).not.toContain("resume.abc");
+  });
+
+  it("is stable for a redelivery of the same attempt", () => {
+    const a = dispatchAttemptToken({ id: "evt", attemptCount: 2 }, "resume.abc");
+    const b = dispatchAttemptToken({ id: "evt", attemptCount: 2 }, "resume.abc");
+    expect(a).toBe(b);
+  });
+});

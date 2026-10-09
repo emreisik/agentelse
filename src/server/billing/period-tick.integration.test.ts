@@ -37,14 +37,48 @@ import { resetBillingTickThrottle, runBillingTick } from "./period-tick";
 const runId = randomUUID().slice(0, 8);
 let counter = 0;
 const newWs = () => `ws_tick_${runId}_${++counter}`;
-const NOV = new Date("2026-11-01T00:00:00.000Z");
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+// Bakım adımına verilen "şimdi" benzetilmiş bir saattir ve gerçek saatten türetilir:
+// ÖNCEKİ ayın 15'i, öğlen (UTC). Böylece gerçek saatin her zaman geçmişindedir:
+// veritabanının kendi damgaladığı her şey (Prisma @updatedAt, default now()) NOW'a
+// göre damgalanan her şeyden sonradır, takvimin hangi gününde olursak olalım.
+// Sırası sonucu belirleyen yerlerde (süpürme iki damgayı karşılaştırır) test iki
+// damgayı da kendisi yazar.
+const REAL = new Date();
+const monthStart = (offset: number) =>
+  new Date(Date.UTC(REAL.getUTCFullYear(), REAL.getUTCMonth() + offset, 1));
+const MONTH_START = monthStart(-1); // kota penceresinin çapası ve başlangıcı
+const MONTH_END = monthStart(0); // ilk pencerenin sonu = ikinci pencerenin başı
+const NEXT_MONTH_END = monthStart(1); // ikinci pencerenin sonu
+const MID = new Date(MONTH_START.getTime() + 14 * DAY + 12 * HOUR);
+// Hiçbir testteki işin park edilmiş olabileceğinden daha eski.
+const LONG_AGO = new Date(MID.getTime() - 90 * DAY);
+
+const statusOf = async (jobId: string) =>
+  (await prisma.executionJob.findUniqueOrThrow({ where: { id: jobId } }))
+    .status;
 
 describeIntegration("billing maintenance tick", () => {
+  const executionFixtures: AgencyFixture[] = [];
+
   beforeEach(async () => {
     resetBillingTickThrottle();
     // claimPeriodic 5 dk'lık kilidi: önceki testin izini temizle.
     await prisma.systemHeartbeat.deleteMany({
       where: { key: { in: ["billing.tick", "billing.drain"] } },
+    });
+    // off ve shadow tick'i veritabanındaki HER park edilmiş işi boşaltır, enforce
+    // süpürmesi her workspace'e bakar: başka bir test dosyasının park edilmiş bıraktığı
+    // iş buradaki sayıları ve sonuçları değiştirirdi. Önce emekliye ayrılır (bu
+    // noktada bu dosyanın park edilmiş hiçbir işi yoktur: işler testlerin içinde
+    // kurulur ve her tick'ten sonra boşalmış ya da kapanmıştır).
+    await prisma.executionJob.updateMany({
+      where: { status: "WAITING_BUDGET" },
+      data: { status: "CANCELLED" },
     });
   });
 
@@ -53,12 +87,22 @@ describeIntegration("billing maintenance tick", () => {
   });
 
   afterAll(async () => {
+    for (const fixture of executionFixtures) {
+      const where = { workspaceId: fixture.workspaceId };
+      await prisma.outboxEvent.deleteMany({ where });
+      await prisma.executionJob.deleteMany({ where });
+      await prisma.task.deleteMany({ where });
+      await prisma.auditLog.deleteMany({ where });
+      await teardownAgencyFixture(fixture.workspaceId);
+    }
     const where = { workspaceId: { startsWith: `ws_tick_${runId}` } };
     await prisma.usageReservation.deleteMany({ where });
     await prisma.usageGrant.deleteMany({ where });
     await prisma.usageBalance.deleteMany({ where });
     await prisma.subscription.deleteMany({ where });
-    await prisma.systemHeartbeat.deleteMany({ where: { key: "billing.tick" } });
+    await prisma.systemHeartbeat.deleteMany({
+      where: { key: { in: ["billing.tick", "billing.drain"] } },
+    });
   });
 
   async function subscription(workspaceId: string, paidThrough: Date) {
@@ -68,28 +112,56 @@ describeIntegration("billing maintenance tick", () => {
         planKey: "growth",
         interval: "MONTH",
         status: "ACTIVE",
-        quotaAnchor: NOV,
+        quotaAnchor: MONTH_START,
         paidThrough,
       },
     });
   }
 
-  it("off: defter işlerine dokunmaz (pencere, bakiye, bakım kilidi), hiçbir şey değişmez", async () => {
+  it("off: defter işlerine dokunmaz (pencere, bakiye, rezervasyon, bakım kilidi); yalnız kendi park edilmiş işini boşaltır", async () => {
     config.current = { ...config.current, mode: "off" };
+    // Ödenmiş ama bakiyesi yok: defter işi çalışsaydı bu tick ilk pencereyi açardı.
     const ws = newWs();
-    await subscription(ws, new Date("2027-01-01T00:00:00.000Z"));
-    expect(await runBillingTick(new Date("2026-12-02T00:00:00.000Z"))).toBe(0);
-    expect(await prisma.usageBalance.count({ where: { workspaceId: ws } })).toBe(0);
-    // Koruma kalkarsa claimPeriodic en az bu kilit satırını yazardı.
+    await subscription(ws, NEXT_MONTH_END);
+    // Boşaltmanın dokunabileceği tek şey: bu testin kendi park edilmiş işi (hiçbir
+    // defter satırı olmayan bir workspace'te).
+    const { fixture, job } = await parkedJob(null);
+    expect(
+      await prisma.systemHeartbeat.count({ where: { key: "billing.drain" } }),
+    ).toBe(0);
+
+    const now = new Date(MONTH_END.getTime() + DAY);
+    const work = await runBillingTick(now);
+
+    // Yapılan iş tek bir şeydir: kendi işimizin kuyruğa dönmesi. Başka bir
+    // workspace'in park edilmiş işi beforeEach'te emekliye ayrıldı.
+    expect(work).toBe(1);
+    expect(await statusOf(job.id)).toBe("QUEUED");
+    // Hiçbir defter satırı yazılmadı: ne pencere/bakiye ne rezervasyon.
+    for (const workspaceId of [ws, fixture.workspaceId]) {
+      expect(await prisma.usageBalance.count({ where: { workspaceId } })).toBe(
+        0,
+      );
+      expect(
+        await prisma.usageReservation.count({ where: { workspaceId } }),
+      ).toBe(0);
+    }
+    // Bakım kilidi alınmadı (koruma kalkarsa claimPeriodic en az bu satırı yazardı);
+    // alınan tek kilit saatlik boşaltma kilididir, tek satır.
     expect(
       await prisma.systemHeartbeat.count({ where: { key: "billing.tick" } }),
     ).toBe(0);
+    const drainBeats = await prisma.systemHeartbeat.findMany({
+      where: { key: "billing.drain" },
+    });
+    expect(drainBeats).toHaveLength(1);
+    expect(drainBeats[0]!.lastBeatAt).toEqual(now);
   });
 
   it("ödenmiş ama bakiyesiz abonelik ilk pencereyi kazanır", async () => {
     const ws = newWs();
-    await subscription(ws, new Date("2026-12-01T00:00:00.000Z"));
-    const work = await runBillingTick(new Date("2026-11-15T12:00:00.000Z"));
+    await subscription(ws, MONTH_END);
+    const work = await runBillingTick(MID);
     expect(work).toBeGreaterThanOrEqual(1);
     const rows = await prisma.usageBalance.findMany({
       where: { workspaceId: ws },
@@ -100,17 +172,16 @@ describeIntegration("billing maintenance tick", () => {
   it("vadesi gelen pencere ÖDEME geldiyse yenilenir, ödeme gelmediyse yenilenmez", async () => {
     const paid = newWs();
     const unpaid = newWs();
-    await subscription(paid, new Date("2027-01-01T00:00:00.000Z"));
-    await subscription(unpaid, new Date("2026-12-01T00:00:00.000Z"));
-    // Kasım penceresini kur ve kullandır.
-    const nov = new Date("2026-11-15T12:00:00.000Z");
+    await subscription(paid, NEXT_MONTH_END);
+    await subscription(unpaid, MONTH_END);
+    // İlk pencereyi kur ve kullandır.
     for (const ws of [paid, unpaid]) {
       await reserveUsage({
         workspaceId: ws,
         unit: "IMAGE",
         amount: 10,
         reservationKey: "k#1",
-        now: nov,
+        now: MID,
       });
       await prisma.usageBalance.update({
         where: { workspaceId_unit: { workspaceId: ws, unit: "IMAGE" } },
@@ -119,25 +190,25 @@ describeIntegration("billing maintenance tick", () => {
       await prisma.usageReservation.deleteMany({ where: { workspaceId: ws } });
     }
 
-    await runBillingTick(new Date("2026-12-01T02:00:00.000Z"));
+    await runBillingTick(new Date(MONTH_END.getTime() + 2 * HOUR));
 
     const paidRow = await prisma.usageBalance.findUniqueOrThrow({
       where: { workspaceId_unit: { workspaceId: paid, unit: "IMAGE" } },
     });
-    expect(paidRow.periodStart).toEqual(new Date("2026-12-01T00:00:00.000Z"));
+    expect(paidRow.periodStart).toEqual(MONTH_END);
     expect(paidRow.periodUsed).toBe(BigInt(0));
     const unpaidRow = await prisma.usageBalance.findUniqueOrThrow({
       where: { workspaceId_unit: { workspaceId: unpaid, unit: "IMAGE" } },
     });
     // Ödenmemiş yenileme bedava pencere açmaz.
-    expect(unpaidRow.periodStart).toEqual(NOV);
+    expect(unpaidRow.periodStart).toEqual(MONTH_START);
     expect(unpaidRow.periodUsed).toBe(BigInt(10));
   });
 
   it("çökmüş rezervasyonu iade eder", async () => {
     const ws = newWs();
-    await subscription(ws, new Date("2026-12-01T00:00:00.000Z"));
-    const now = new Date("2026-11-15T12:00:00.000Z");
+    await subscription(ws, MONTH_END);
+    const now = MID;
     await runBillingTick(now);
     resetBillingTickThrottle();
     await prisma.systemHeartbeat.deleteMany({ where: { key: "billing.tick" } });
@@ -157,7 +228,7 @@ describeIntegration("billing maintenance tick", () => {
       ).periodReserved,
     ).toBe(BigInt(5));
 
-    await runBillingTick(new Date(now.getTime() + 10 * 60_000));
+    await runBillingTick(new Date(now.getTime() + 10 * MINUTE));
     const after = await prisma.usageBalance.findUniqueOrThrow({
       where: { workspaceId_unit: { workspaceId: ws, unit: "IMAGE" } },
     });
@@ -172,57 +243,54 @@ describeIntegration("billing maintenance tick", () => {
   });
 
   it("5 dakikalık kısma: ilk çağrıdan sonra çıkan iş, aynı pencerede işlenmez; sonraki pencerede işlenir", async () => {
-    const now = new Date("2026-11-15T12:00:00.000Z");
+    const now = MID;
     await runBillingTick(now);
 
     // İlk çağrıdan SONRA bir iş çıkıyor: ödenmiş ama bakiyesiz abonelik.
     const ws = newWs();
-    await subscription(ws, new Date("2026-12-01T00:00:00.000Z"));
-    expect(await runBillingTick(new Date(now.getTime() + 60_000))).toBe(0);
-    expect(await prisma.usageBalance.count({ where: { workspaceId: ws } })).toBe(0);
+    await subscription(ws, MONTH_END);
+    expect(await runBillingTick(new Date(now.getTime() + MINUTE))).toBe(0);
+    expect(
+      await prisma.usageBalance.count({ where: { workspaceId: ws } }),
+    ).toBe(0);
 
     // Bellek içi kısma bu süreçte sıfırlansa bile paylaşılan kilit (SystemHeartbeat)
     // aynı 5 dakikayı tutar: süreçler arası tek çalıştırıcı.
     resetBillingTickThrottle();
-    expect(await runBillingTick(new Date(now.getTime() + 2 * 60_000))).toBe(0);
-    expect(await prisma.usageBalance.count({ where: { workspaceId: ws } })).toBe(0);
+    expect(await runBillingTick(new Date(now.getTime() + 2 * MINUTE))).toBe(0);
+    expect(
+      await prisma.usageBalance.count({ where: { workspaceId: ws } }),
+    ).toBe(0);
 
     // 5 dakika geçince iş işlenir.
     resetBillingTickThrottle();
     expect(
-      await runBillingTick(new Date(now.getTime() + 6 * 60_000)),
+      await runBillingTick(new Date(now.getTime() + 6 * MINUTE)),
     ).toBeGreaterThanOrEqual(1);
-    expect(await prisma.usageBalance.count({ where: { workspaceId: ws } })).toBe(2);
+    expect(
+      await prisma.usageBalance.count({ where: { workspaceId: ws } }),
+    ).toBe(2);
   });
 
-
-  describe("park edilmiş iş ve uzlaştırma (Faz 3)", () => {
-    const executionFixtures: AgencyFixture[] = [];
-
-    afterAll(async () => {
-      for (const fixture of executionFixtures) {
-        const where = { workspaceId: fixture.workspaceId };
-        await prisma.outboxEvent.deleteMany({ where });
-        await prisma.executionJob.deleteMany({ where });
-        await prisma.task.deleteMany({ where });
-        await prisma.auditLog.deleteMany({ where });
-        await teardownAgencyFixture(fixture.workspaceId);
-      }
-    });
-
-    async function parkedJob(images: number) {
-      const fixture = await createAgencyFixture(
-        `${runId}-tick-${executionFixtures.length}`,
-      );
-      executionFixtures.push(fixture);
+  // Park edilmiş iş kurar. `images` null ise workspace'in hiçbir defter satırı
+  // (abonelik, bakiye) yoktur; sayı ise o kadar görsel hakkı olan bir pencere.
+  async function parkedJob(images: number | null) {
+    const fixture = await createAgencyFixture(
+      `${runId}-tick-${executionFixtures.length}`,
+    );
+    executionFixtures.push(fixture);
+    if (images !== null) {
       await prisma.subscription.create({
         data: {
           workspaceId: fixture.workspaceId,
           planKey: "growth",
           interval: "MONTH",
           status: "ACTIVE",
-          quotaAnchor: NOV,
-          paidThrough: new Date("2027-01-01T00:00:00.000Z"),
+          quotaAnchor: MONTH_START,
+          paidThrough: NEXT_MONTH_END,
+          // Aksi halde veritabanının kendi saatiyle damgalanır; süpürme bunu
+          // işlerin benzetilmiş saatleriyle karşılaştırır.
+          updatedAt: LONG_AGO,
         },
       });
       await prisma.usageBalance.create({
@@ -230,51 +298,50 @@ describeIntegration("billing maintenance tick", () => {
           id: randomUUID(),
           workspaceId: fixture.workspaceId,
           unit: "IMAGE",
-          periodStart: NOV,
-          periodEnd: new Date("2026-12-01T00:00:00.000Z"),
+          periodStart: MONTH_START,
+          periodEnd: MONTH_END,
           periodGranted: BigInt(images),
-          updatedAt: new Date("2026-11-15T12:00:00.000Z"),
+          updatedAt: MID,
         },
       });
-      const task = await prisma.task.create({
-        data: {
-          workspaceId: fixture.workspaceId,
-          projectId: fixture.projectId,
-          brandId: fixture.brandId,
-          title: "A post",
-          capability: "CREATE_SOCIAL_CREATIVE",
-          status: "QUEUED",
-          riskLevel: "LOW",
-          createdByType: "USER",
-        },
-      });
-      const job = await prisma.executionJob.create({
-        data: {
-          workspaceId: fixture.workspaceId,
-          projectId: fixture.projectId,
-          brandId: fixture.brandId,
-          taskId: task.id,
-          capability: "CREATE_SOCIAL_CREATIVE",
-          providerType: "SYSTEM",
-          correlationId: randomUUID(),
-          idempotencyKey: randomUUID(),
-          requestPayload: { request: "x" } as never,
-          status: "WAITING_BUDGET",
-        },
-      });
-      // Parked an hour before the simulated clock below.
-      await prisma.$executeRaw`UPDATE "ExecutionJob" SET "updatedAt" = ${new Date("2026-11-15T11:00:00.000Z")} WHERE id = ${job.id}`;
-      return { fixture, job };
     }
+    const task = await prisma.task.create({
+      data: {
+        workspaceId: fixture.workspaceId,
+        projectId: fixture.projectId,
+        brandId: fixture.brandId,
+        title: "A post",
+        capability: "CREATE_SOCIAL_CREATIVE",
+        status: "QUEUED",
+        riskLevel: "LOW",
+        createdByType: "USER",
+      },
+    });
+    const job = await prisma.executionJob.create({
+      data: {
+        workspaceId: fixture.workspaceId,
+        projectId: fixture.projectId,
+        brandId: fixture.brandId,
+        taskId: task.id,
+        capability: "CREATE_SOCIAL_CREATIVE",
+        providerType: "SYSTEM",
+        correlationId: randomUUID(),
+        idempotencyKey: randomUUID(),
+        requestPayload: { request: "x" } as never,
+        status: "WAITING_BUDGET",
+        // Benzetilmiş saatten (MID) bir saat önce park edildi.
+        updatedAt: new Date(MID.getTime() - HOUR),
+      },
+    });
+    return { fixture, job };
+  }
 
+  describe("park edilmiş iş ve uzlaştırma (Faz 3)", () => {
     it("bakım adımı, hakkı yenilenen workspace'in park edilmiş işini kuyruğa döndürür", async () => {
       const { job } = await parkedJob(1);
-      const work = await runBillingTick(new Date("2026-11-15T12:00:00.000Z"));
+      const work = await runBillingTick(MID);
       expect(work).toBeGreaterThanOrEqual(1);
-      expect(
-        (await prisma.executionJob.findUniqueOrThrow({ where: { id: job.id } }))
-          .status,
-      ).toBe("QUEUED");
+      expect(await statusOf(job.id)).toBe("QUEUED");
     });
 
     it("teslim edilmiş işin süresi dolan rezervasyonu iade edilmez, mahsup edilir (süreç çökmesi)", async () => {
@@ -284,7 +351,7 @@ describeIntegration("billing maintenance tick", () => {
         data: { status: "COMPLETED" },
       });
       // The process died after the job was delivered and before it settled.
-      const t0 = new Date("2026-11-15T12:00:00.000Z");
+      const t0 = MID;
       const held = await reserveUsage({
         workspaceId: fixture.workspaceId,
         unit: "IMAGE",
@@ -296,7 +363,7 @@ describeIntegration("billing maintenance tick", () => {
       });
       expect(held.ok).toBe(true);
 
-      await runBillingTick(new Date(t0.getTime() + 10 * 60_000));
+      await runBillingTick(new Date(t0.getTime() + 10 * MINUTE));
 
       const row = await prisma.usageBalance.findUniqueOrThrow({
         where: {
@@ -317,7 +384,7 @@ describeIntegration("billing maintenance tick", () => {
         where: { id: job.id },
         data: { status: "FAILED" },
       });
-      const t0 = new Date("2026-11-15T12:00:00.000Z");
+      const t0 = MID;
       await reserveUsage({
         workspaceId: fixture.workspaceId,
         unit: "IMAGE",
@@ -327,7 +394,7 @@ describeIntegration("billing maintenance tick", () => {
         ttlMs: 60_000,
         now: t0,
       });
-      await runBillingTick(new Date(t0.getTime() + 10 * 60_000));
+      await runBillingTick(new Date(t0.getTime() + 10 * MINUTE));
       const row = await prisma.usageBalance.findUniqueOrThrow({
         where: {
           workspaceId_unit: { workspaceId: fixture.workspaceId, unit: "IMAGE" },
@@ -340,38 +407,28 @@ describeIntegration("billing maintenance tick", () => {
     it("shadow: park edilmiş kalıntıyı hakka bakmadan boşaltır", async () => {
       config.current = { ...config.current, mode: "shadow" };
       const { job } = await parkedJob(0);
-      await runBillingTick(new Date("2026-11-15T12:00:00.000Z"));
-      expect(
-        (await prisma.executionJob.findUniqueOrThrow({ where: { id: job.id } }))
-          .status,
-      ).toBe("QUEUED");
+      await runBillingTick(MID);
+      expect(await statusOf(job.id)).toBe("QUEUED");
     });
 
     it("off: saatte bir park edilmiş işi boşaltır (kill-switch), arada tekrar etmez", async () => {
       config.current = { ...config.current, mode: "off" };
       const { job } = await parkedJob(0);
-      const t0 = new Date("2026-11-15T12:00:00.000Z");
+      const t0 = MID;
       expect(await runBillingTick(t0)).toBeGreaterThanOrEqual(1);
-      expect(
-        (await prisma.executionJob.findUniqueOrThrow({ where: { id: job.id } }))
-          .status,
-      ).toBe("QUEUED");
+      expect(await statusOf(job.id)).toBe("QUEUED");
 
       // An hour has not passed: nothing is looked at again.
       const { job: second } = await parkedJob(0);
-      expect(await runBillingTick(new Date(t0.getTime() + 60_000))).toBe(0);
-      expect(
-        (await prisma.executionJob.findUniqueOrThrow({ where: { id: second.id } }))
-          .status,
-      ).toBe("WAITING_BUDGET");
+      expect(await runBillingTick(new Date(t0.getTime() + MINUTE))).toBe(0);
+      expect(await statusOf(second.id)).toBe("WAITING_BUDGET");
       // The next hour picks it up.
       resetBillingTickThrottle();
-      await prisma.systemHeartbeat.deleteMany({ where: { key: "billing.drain" } });
-      await runBillingTick(new Date(t0.getTime() + 61 * 60_000));
-      expect(
-        (await prisma.executionJob.findUniqueOrThrow({ where: { id: second.id } }))
-          .status,
-      ).toBe("QUEUED");
+      await prisma.systemHeartbeat.deleteMany({
+        where: { key: "billing.drain" },
+      });
+      await runBillingTick(new Date(t0.getTime() + 61 * MINUTE));
+      expect(await statusOf(second.id)).toBe("QUEUED");
     });
   });
 });

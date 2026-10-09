@@ -359,7 +359,7 @@ export async function generateLogoAction(formData: FormData) {
       module: "SOCIAL",
       source: "action",
       purpose: "logo.generate",
-      operationId: `logo:${projectId}:${Date.now()}`,
+      operationId: `logo:${projectId}:${randomUUID()}`,
       attemptToken: "1",
       reserve: { IMAGE: 1 },
       requireAccess: true,

@@ -259,6 +259,7 @@ export class Operation {
       reservationKey,
       operationId: this.spec.operationId,
       ttlMs: this.spec.ttlMs,
+      now: this.spec.now,
     });
     if (
       reserved.ok &&
@@ -332,7 +333,14 @@ async function reserveUnit(
     await releaseUsage({ workspaceId: spec.workspaceId, unit, reservationKey });
     throw ledgerUnavailable();
   }
-  throw ledgerUnavailable();
+  // Every key of this attempt is already used up (settled or released). That is
+  // the attempt's own doing, not a ledger outage, so it must NOT read as
+  // BILLING_UNAVAILABLE (the worker waits that out for free, for ever): it is a
+  // plain failure that counts as an attempt and ends at the dead letter.
+  throw new AgentelseError(
+    "INVALID_STATE_TRANSITION",
+    "No reservation key is left for this attempt",
+  );
 }
 
 // Rezervasyonsuz işte yalnız planın geçerli olduğunu doğrular.

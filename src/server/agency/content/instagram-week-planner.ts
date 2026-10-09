@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import type { CreativeLens, Idea } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
@@ -10,7 +12,11 @@ import {
   type Operation,
   type OperationOutcome,
 } from "@/server/billing/operation";
-import { asBudgetStop, isQuotaError } from "@/server/billing/quota-errors";
+import {
+  asBudgetStop,
+  isAllowanceStop,
+  isQuotaError,
+} from "@/server/billing/quota-errors";
 import { runWithUsageScope } from "@/server/billing/usage-context";
 import { generateCreativeImage } from "@/server/media/creative-image";
 import {
@@ -361,7 +367,7 @@ export async function planWeeklyInstagramContent(
           source: "action",
           purpose: "week-planner",
           operationId: `week:${idea.id}`,
-          attemptToken: Date.now().toString(36),
+          attemptToken: randomUUID(),
           reserve: { IMAGE: 1 },
           requireAccess: true,
         });
@@ -557,7 +563,10 @@ export async function planWeeklyInstagramContent(
       // negativeRules, not a visual check. Fails OPEN (treated as safe) on
       // a reasoning-service error: this is strictly additional coverage on
       // top of a path that had NONE before, so a transient failure here
-      // degrades to today's prior behavior, not a new risk.
+      // degrades to today's prior behavior, not a new risk. The exception is
+      // the plan's AI allowance being spent: that is not transient (it holds for
+      // every post of the batch until the plan renews), so failing open would
+      // auto-approve the whole week unchecked. The post waits for a person.
       const claimCheck = await ReasoningService.run(creativeClaimCheckDef, {
         workspaceId,
         projectId,
@@ -571,6 +580,7 @@ export async function planWeeklyInstagramContent(
       })
         .then((r) => r.output)
         .catch((error) => {
+          if (isAllowanceStop(error)) return { safe: false } as const;
           console.error(
             `[instagram-week-planner] claim check failed for idea ${idea.id}, defaulting to safe:`,
             error,

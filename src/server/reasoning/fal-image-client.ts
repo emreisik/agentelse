@@ -223,7 +223,9 @@ export async function generateFalImage(
           );
           return null;
         }
-        return storeResult(
+        // `await`: a rejection while the result is downloaded or stored must reach
+        // the catch below (return null, record the failure), not escape this function.
+        return await storeResult(
           (await resultResponse.json()) as FalImageResult,
           endpointId,
           startedAt,

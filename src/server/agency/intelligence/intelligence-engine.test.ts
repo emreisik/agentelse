@@ -33,12 +33,14 @@ vi.mock("@/server/reasoning/reasoning-service", () => ({
   ReasoningService: { run, isMockMode },
 }));
 
-const listByStatus = vi.fn();
+const listNewForScoring = vi.fn();
+const deferWorkspace = vi.fn().mockResolvedValue({ count: 0 });
 const signalTransition = vi.fn().mockResolvedValue(undefined);
 const listForProject = vi.fn().mockResolvedValue([]);
 vi.mock("@/server/repositories/signal.repository", () => ({
   SignalRepository: {
-    listByStatus,
+    listNewForScoring,
+    deferWorkspace,
     transition: signalTransition,
     listForProject,
   },
@@ -99,7 +101,7 @@ describe("IntelligenceEngine.processNewSignals (paused-project guard, audit scen
       id: "sig-active",
       projectId: "proj-active",
     });
-    listByStatus.mockResolvedValue([pausedSignal, activeSignal]);
+    listNewForScoring.mockResolvedValue([pausedSignal, activeSignal]);
     isProjectAgencyActive.mockImplementation(
       async (projectId: string) => projectId !== "proj-paused",
     );
@@ -166,7 +168,7 @@ describe("IntelligenceEngine.processNewSignals (a client's spent budget)", () =>
     });
 
   it("a client whose budget stops a call does not end the step for the others", async () => {
-    listByStatus.mockResolvedValue([
+    listNewForScoring.mockResolvedValue([
       signalRow({ id: "a1", workspaceId: "ws-a", projectId: "p-a" }),
       signalRow({ id: "a2", workspaceId: "ws-a", projectId: "p-a" }),
       signalRow({ id: "b1", workspaceId: "ws-b", projectId: "p-b" }),
@@ -209,7 +211,7 @@ describe("IntelligenceEngine.processNewSignals (a client's spent budget)", () =>
     const aSignals = Array.from({ length: 9 }, (_, i) =>
       signalRow({ id: `a${i}`, workspaceId: "ws-a", projectId: "p-a" }),
     );
-    listByStatus.mockResolvedValue(aSignals);
+    listNewForScoring.mockResolvedValue(aSignals);
     run.mockRejectedValue(budgetStop());
 
     await IntelligenceEngine.processNewSignals(20);
@@ -218,11 +220,76 @@ describe("IntelligenceEngine.processNewSignals (a client's spent budget)", () =>
   });
 
   it("any other failure still ends the step", async () => {
-    listByStatus.mockResolvedValue([signalRow({ id: "a1" })]);
+    listNewForScoring.mockResolvedValue([signalRow({ id: "a1" })]);
     run.mockRejectedValue(new Error("provider exploded"));
     await expect(IntelligenceEngine.processNewSignals(20)).rejects.toThrow(
       "provider exploded",
     );
+  });
+
+  it("moves a stopped client's whole backlog to the back, once per client", async () => {
+    listNewForScoring.mockResolvedValue([
+      signalRow({ id: "a1", workspaceId: "ws-a", projectId: "p-a" }),
+      signalRow({ id: "a2", workspaceId: "ws-a", projectId: "p-a" }),
+      signalRow({ id: "a3", workspaceId: "ws-a", projectId: "p-a" }),
+      signalRow({ id: "b1", workspaceId: "ws-b", projectId: "p-b" }),
+    ]);
+    run.mockImplementation(async (_def: unknown, input: { workspaceId: string }) => {
+      if (input.workspaceId === "ws-a") throw budgetStop();
+      return {
+        output: { relevanceScore: 80, shouldPromote: false },
+        isMock: false,
+      };
+    });
+
+    await IntelligenceEngine.processNewSignals(20);
+
+    expect(deferWorkspace).toHaveBeenCalledTimes(1);
+    expect(deferWorkspace).toHaveBeenCalledWith("ws-a");
+  });
+
+  // The queue as the repository serves it: NEW signals, least recently attempted
+  // first, `take` honoured, and a deferral moving a client's rows to the back.
+  // (Earlier tests handed the engine an already-mixed list, which cannot show a
+  // pile of stuck signals filling the whole candidate window.)
+  it("a pile of stuck signals does not keep a healthy client from being scored", async () => {
+    type Row = ReturnType<typeof signalRow> & { attemptedAt: number };
+    let clock = 0;
+    const queue: Row[] = [
+      ...Array.from({ length: 120 }, (_, i) => ({
+        ...signalRow({ id: `a${i}`, workspaceId: "ws-a", projectId: "p-a" }),
+        attemptedAt: clock++,
+      })),
+      ...Array.from({ length: 3 }, (_, i) => ({
+        ...signalRow({ id: `b${i}`, workspaceId: "ws-b", projectId: "p-b" }),
+        attemptedAt: clock++,
+      })),
+    ];
+    listNewForScoring.mockImplementation(async (take: number) =>
+      [...queue].sort((x, y) => x.attemptedAt - y.attemptedAt).slice(0, take),
+    );
+    deferWorkspace.mockImplementation(async (workspaceId: string) => {
+      for (const row of queue) {
+        if (row.workspaceId === workspaceId) row.attemptedAt = clock++;
+      }
+      return { count: 0 };
+    });
+    signalTransition.mockImplementation(async (id: string) => {
+      const at = queue.findIndex((row) => row.id === id);
+      if (at >= 0) queue.splice(at, 1);
+    });
+    run.mockImplementation(async (_def: unknown, input: { workspaceId: string }) => {
+      if (input.workspaceId === "ws-a") throw budgetStop();
+      return {
+        output: { relevanceScore: 80, shouldPromote: false },
+        isMock: false,
+      };
+    });
+
+    // Tick 1 finds out that A cannot pay (the 100 oldest rows are all A's).
+    expect(await IntelligenceEngine.processNewSignals(20)).toBe(0);
+    // Tick 2: A's backlog is at the back, B's signals are next in line.
+    expect(await IntelligenceEngine.processNewSignals(20)).toBe(3);
   });
 });
 

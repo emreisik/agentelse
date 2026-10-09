@@ -38,6 +38,7 @@ const newWs = () => `ws_op_${runId}_${++counter}`;
 const NOW = new Date("2026-11-15T12:00:00.000Z");
 const WINDOW_START = new Date("2026-11-01T00:00:00.000Z");
 const WINDOW_END = new Date("2026-12-01T00:00:00.000Z");
+const DAY = 86_400_000;
 
 type Unit = "IMAGE" | "AI_MICROS";
 
@@ -220,6 +221,32 @@ describeIntegration("billing operation lifecycle", () => {
         used: 0,
         reserved: 0,
       });
+    });
+
+    it("charges the text work on the operation's own clock, not on the wall clock", async () => {
+      const ws = await fundedWorkspace(5, 3_000_000);
+      // The operation lives in the simulated November window; the wall clock stands
+      // two months after it, where the plan has ended. A text hold reserved at wall
+      // clock time would find no plan and the best-effort charge would silently
+      // be skipped.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(WINDOW_END.getTime() + 62 * DAY));
+      try {
+        const op = await beginOperation(spec(ws, { IMAGE: 1 }));
+        spent(op, 20_000); // text step ran, the image model refused the brief
+        await op.finish("delivered");
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(await balanceOf(ws, "IMAGE")).toEqual({ used: 0, reserved: 0 });
+      expect(await balanceOf(ws, "AI_MICROS")).toEqual({
+        used: 20_000,
+        reserved: 0,
+      });
+      // The text hold is dated with the operation's time, not the wall clock's.
+      const [textHold] = await reservationsOf(ws, "AI_MICROS");
+      expect(textHold).toMatchObject({ status: "SETTLED", createdAt: NOW });
     });
 
     it("finish is idempotent: a second call never charges again", async () => {

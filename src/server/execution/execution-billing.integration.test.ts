@@ -64,9 +64,13 @@ import {
   teardownAgencyFixture,
   type AgencyFixture,
 } from "@/server/agency/test-support/agency-fixtures";
+import { beginOperation } from "@/server/billing/operation";
 import { resumeParkedWork } from "@/server/billing/park";
+import { settleDeliveredOrphans } from "@/server/billing/reconcile";
 import { getUsageScope } from "@/server/billing/usage-context";
+import { dispatchAttemptToken } from "@/server/execution/attempt-token";
 import { usageNeedOf } from "@/server/execution/usage-need";
+import { ExecutionJobRepository } from "@/server/repositories/execution-job.repository";
 import { describeIntegration } from "@/test-support/integration-suite";
 
 import { ExecutionService } from "./execution-service";
@@ -79,8 +83,11 @@ const B = (value: number) => BigInt(value);
 const runId = randomUUID().slice(0, 8);
 const fixtures: AgencyFixture[] = [];
 
-const WINDOW_START = new Date("2026-10-01T00:00:00.000Z");
-const WINDOW_END = new Date("2027-12-01T00:00:00.000Z");
+// The quota window around the REAL clock (the ledger decides on it): starts a few
+// days ago and runs well past any plausible test run, so the file never goes stale.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WINDOW_START = new Date(Date.now() - 5 * DAY_MS);
+const WINDOW_END = new Date(Date.now() + 400 * DAY_MS);
 
 fake.provider = {
   key: "test-ai",
@@ -277,7 +284,11 @@ describeIntegration("a job against the plan allowance (startExecution)", () => {
       });
     });
 
-    it("charges nothing for an error that happened after the provider ran: no result was delivered", async () => {
+    // The provider has done the work and the job carries its reference, so the
+    // poller can finish it later; a redelivery returns early and never re-runs it.
+    // Handing the right back here would give the picture away: the hold stays open
+    // and is settled for what was delivered (billing/reconcile.ts).
+    it("keeps the hold open when the status lookup fails after the provider ran, and charges the picture once it is delivered", async () => {
       const fixture = await funded({ images: 3, micros: 3_000_000 });
       const { job } = await queuedJob(fixture);
       fake.onExecute = draws(1);
@@ -289,7 +300,47 @@ describeIntegration("a job against the plan allowance (startExecution)", () => {
         }),
       ).rejects.toThrow("status lookup exploded");
 
-      // The retry that delivers pays then; paying now would charge the same post twice.
+      // Not refunded, not charged yet.
+      expect(await balanceOf(fixture.workspaceId, "IMAGE")).toEqual({
+        used: 0,
+        reserved: 1,
+      });
+
+      // The poller finishes the job on its next tick; the provider is not run again.
+      fake.getStatusThrows = false;
+      const finished = await ExecutionService.pollOnce(job.id);
+      expect(finished.status).toMatch(/COMPLETED|VERIFYING/);
+      const again = await ExecutionService.startExecution(job.id, "LOW", {
+        attemptToken: "evt.2",
+      });
+      expect(again.id).toBe(job.id);
+      expect(fake.executed).toBe(1);
+
+      // The hold runs out; the reconciler sees a delivered job and charges it.
+      await prisma.usageReservation.updateMany({
+        where: { workspaceId: fixture.workspaceId },
+        data: { expiresAt: new Date(Date.now() - 60_000) },
+      });
+      expect(await settleDeliveredOrphans({ limit: 500 })).toBeGreaterThanOrEqual(1);
+      expect(await balanceOf(fixture.workspaceId, "IMAGE")).toEqual({
+        used: 1,
+        reserved: 0,
+      });
+    });
+
+    it("hands the right back when the provider call itself fails: nothing was accepted, the retry re-runs and pays", async () => {
+      const fixture = await funded({ images: 3, micros: 3_000_000 });
+      const { job } = await queuedJob(fixture);
+      fake.onExecute = () => {
+        throw new Error("provider call exploded");
+      };
+
+      await expect(
+        ExecutionService.startExecution(job.id, "LOW", {
+          attemptToken: "evt.1",
+        }),
+      ).rejects.toThrow("provider call exploded");
+
       expect(await balanceOf(fixture.workspaceId, "IMAGE")).toEqual({
         used: 0,
         reserved: 0,
@@ -447,6 +498,76 @@ describeIntegration("a job against the plan allowance (startExecution)", () => {
       });
     });
 
+    // A resumed event keeps ONE payload token. Every failed attempt releases its
+    // key, so the retries must not reuse it: they would burn through the reroll
+    // keys and the job could no longer reserve (and never reach the dead letter).
+    it("a resumed job's retries get their own keys and still pay once", async () => {
+      const need = usageNeedOf("CREATE_COPY", { request: "write" })!;
+      fake.estimate = {
+        class: "ai",
+        maxCostUsd: Number(need.amount) / 1_000_000,
+      };
+      const fixture = await funded({ images: 0, micros: 0 });
+      const { job } = await queuedJob(fixture);
+      await ExecutionService.startExecution(job.id, "LOW", {
+        attemptToken: "evt.1",
+      });
+      await prisma.usageBalance.update({
+        where: {
+          workspaceId_unit: {
+            workspaceId: fixture.workspaceId,
+            unit: "AI_MICROS",
+          },
+        },
+        data: { extraGranted: B(Number(need.amount) * 10) },
+      });
+      await resumeParkedWork({ workspaceId: fixture.workspaceId });
+      const [event] = await prisma.outboxEvent.findMany({
+        where: { executionJobId: job.id, status: "PENDING" },
+      });
+      const payloadToken = (event!.payload as { attemptToken: string })
+        .attemptToken;
+
+      // Four attempts fail after the hold was taken; each one hands it back.
+      fake.onExecute = () => {
+        throw new Error("provider call exploded");
+      };
+      for (let attemptCount = 0; attemptCount < 4; attemptCount += 1) {
+        await expect(
+          ExecutionService.startExecution(job.id, "LOW", {
+            attemptToken: dispatchAttemptToken(
+              { id: event!.id, attemptCount },
+              payloadToken,
+            ),
+          }),
+        ).rejects.toThrow("provider call exploded");
+        // The job went back to QUEUED for the next attempt (the worker's recovery).
+        await prisma.executionJob.update({
+          where: { id: job.id },
+          data: {
+            status: "QUEUED",
+            providerId: null,
+            providerExecutionReference: null,
+          },
+        });
+      }
+
+      // The fifth attempt - the last one before the dead letter - reserves and runs.
+      fake.onExecute = spends(Number(need.amount) - 1_000);
+      const result = await ExecutionService.startExecution(job.id, "LOW", {
+        attemptToken: dispatchAttemptToken(
+          { id: event!.id, attemptCount: 4 },
+          payloadToken,
+        ),
+      });
+
+      expect(result.status).toBe("COMPLETED");
+      expect(await balanceOf(fixture.workspaceId, "AI_MICROS")).toEqual({
+        used: Number(need.amount) - 1_000,
+        reserved: 0,
+      });
+    });
+
     it("releases the allowance it held for a resumed job whose task was cancelled meanwhile", async () => {
       const need = usageNeedOf("CREATE_COPY", { request: "write" })!;
       fake.estimate = {
@@ -546,6 +667,68 @@ describeIntegration("a job against the plan allowance (startExecution)", () => {
     });
   });
 
+  describe("losing the race for the job", () => {
+    // Another delivery took the job between our hold and our claim. What we
+    // reserved ourselves goes back; a hold we only ADOPTED (the running attempt's
+    // own, found under the same token) is the winner's and must stay.
+    it("hands back its own hold when someone else claims the job first", async () => {
+      fake.estimate = { class: "content", images: 1 };
+      const fixture = await funded({ images: 3, micros: 3_000_000 });
+      const { job } = await queuedJob(fixture);
+      const claim = vi
+        .spyOn(ExecutionJobRepository, "claimQueuedForProvider")
+        .mockResolvedValue(false);
+      let claimAttempts = 0;
+      try {
+        await ExecutionService.startExecution(job.id, "LOW", {
+          attemptToken: "evt.1",
+        });
+        claimAttempts = claim.mock.calls.length;
+      } finally {
+        claim.mockRestore();
+      }
+
+      expect(claimAttempts).toBe(1);
+      expect(fake.executed).toBe(0);
+      expect(await balanceOf(fixture.workspaceId, "IMAGE")).toEqual({
+        used: 0,
+        reserved: 0,
+      });
+    });
+
+    it("leaves a hold it only adopted to the attempt that owns it", async () => {
+      fake.estimate = { class: "content", images: 1 };
+      const fixture = await funded({ images: 3, micros: 3_000_000 });
+      const { job } = await queuedJob(fixture);
+      // The running attempt's hold, under the token a redelivery will carry.
+      const winner = await beginOperation({
+        workspaceId: fixture.workspaceId,
+        operationId: `exec:${job.id}`,
+        attemptToken: "evt.1",
+        reserve: { IMAGE: 1 },
+      });
+      expect(winner.holdsReservation).toBe(true);
+      const claim = vi
+        .spyOn(ExecutionJobRepository, "claimQueuedForProvider")
+        .mockResolvedValue(false);
+      try {
+        await ExecutionService.startExecution(job.id, "LOW", {
+          attemptToken: "evt.1",
+        });
+      } finally {
+        claim.mockRestore();
+      }
+
+      expect(fake.executed).toBe(0);
+      // Still held: the owner will settle it.
+      expect(await balanceOf(fixture.workspaceId, "IMAGE")).toEqual({
+        used: 0,
+        reserved: 1,
+      });
+      await winner.finish("aborted");
+    });
+  });
+
   describe("the per-task cost ceiling", () => {
     async function ceilingSeenByProvider(
       estimate: ProviderUsageEstimate | undefined,
@@ -582,6 +765,18 @@ describeIntegration("a job against the plan allowance (startExecution)", () => {
       config.current = { ...config.current, mode: "off" };
       expect(
         await ceilingSeenByProvider({ class: "content", images: 1 }),
+      ).toBeUndefined();
+    });
+
+    // Shadow exists to measure without changing what customers get: a ceiling
+    // would fail a real job (an expensive retry chain) in the observation period.
+    it("is not set in shadow either: it is a block, and shadow blocks nothing", async () => {
+      config.current = { ...config.current, mode: "shadow" };
+      expect(
+        await ceilingSeenByProvider({ class: "content", images: 1 }),
+      ).toBeUndefined();
+      expect(
+        await ceilingSeenByProvider({ class: "ai", maxCostUsd: 0.09 }),
       ).toBeUndefined();
     });
   });
@@ -660,6 +855,30 @@ describeIntegration("a job against the plan allowance (startExecution)", () => {
           retryable: true,
         });
         expect(fake.executed).toBe(0);
+      } finally {
+        fake.provider.usageEstimate = original;
+        spy.mockRestore();
+      }
+    });
+
+    it("shadow: a bug in a provider's declaration does not stop the job either (it runs as free work and the bug is logged)", async () => {
+      config.current = { ...config.current, mode: "shadow" };
+      const original = fake.provider.usageEstimate;
+      fake.provider.usageEstimate = () => {
+        throw new Error("estimator bug");
+      };
+      const spy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => undefined);
+      try {
+        const fixture = await funded({ images: 5, micros: 3_000_000 });
+        const { job } = await queuedJob(fixture);
+        const result = await ExecutionService.startExecution(job.id, "LOW", {
+          attemptToken: "e.1",
+        });
+        expect(result.status).toBe("COMPLETED");
+        expect(fake.executed).toBe(1);
+        expect(spy).toHaveBeenCalled();
       } finally {
         fake.provider.usageEstimate = original;
         spy.mockRestore();

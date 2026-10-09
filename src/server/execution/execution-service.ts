@@ -202,10 +202,13 @@ export const ExecutionService = {
 
     // The reservation is settled exactly once, in `finally`, and the try opens
     // right here so that nothing between the reservation and the end can leave it
-    // dangling. Default "aborted" = handed back in full: an error anywhere (the
-    // claim, the provider call, the database) means no result was delivered, and
-    // the retry that does deliver one pays then. Only a result pollOnce RETURNED
-    // as COMPLETED/VERIFYING is charged (for what was actually metered).
+    // dangling. Default "aborted" = handed back in full: an error before the
+    // provider's reference is saved (the claim, the provider call, the database)
+    // means no result can be delivered by THIS attempt, and the retry that re-runs
+    // the job and delivers one pays then. Once the reference is saved the job can
+    // finish without a retry, so an error from there on leaves the hold open
+    // ("pending"). Only a result pollOnce RETURNED as COMPLETED/VERIFYING is
+    // charged here (for what was actually metered).
     let abandoned = false;
     let outcome: OperationOutcome = "aborted";
     try {
@@ -315,6 +318,14 @@ export const ExecutionService = {
         });
       }
 
+      // The provider has done the work and the job carries its reference, so from
+      // here on the job can be finished by the poller even if this call fails: it
+      // is never re-executed (a redelivery returns early, a stalled-dispatch reset
+      // only touches jobs WITHOUT a reference). An error in the poll below must
+      // therefore NOT refund: the hold stays open ("pending") and is settled for
+      // what was delivered once it expires (billing/reconcile.ts), or released if
+      // the job ended without a result.
+      outcome = "pending";
       const result = await this.pollOnce(job.id);
       // The OpenAI providers report a provider failure through getStatus (read by
       // pollOnce above), not by throwing from execute(): the status of the job
@@ -848,10 +859,7 @@ async function patchCardAfterVariantsOnly(
     where: {
       projectId: job.projectId,
       source: "SYSTEM",
-      AND: [
-        { cardCreativeId: creativeId },
-        { cardKind: "creative-ready" },
-      ],
+      AND: [{ cardCreativeId: creativeId }, { cardKind: "creative-ready" }],
     },
     orderBy: { createdAt: "desc" },
     select: { id: true, parsedIntent: true },

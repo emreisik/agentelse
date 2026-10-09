@@ -1,5 +1,7 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
+
 import { revalidatePath } from "next/cache";
 
 import type {
@@ -20,7 +22,9 @@ import { CreativeRepository } from "@/server/repositories/creative.repository";
 import { ApprovalRepository } from "@/server/repositories/approval.repository";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { IdeaChatRepository } from "@/server/repositories/idea-chat.repository";
-import { revisionCostsRight } from "@/lib/billing/plans";
+import { quoteRevision } from "@/lib/billing/revision-policy";
+import { getBillingConfig } from "@/server/billing/config";
+import { acquireLease, type Lease } from "@/server/billing/lease";
 import {
   beginOperation,
   type Operation,
@@ -160,6 +164,10 @@ export async function getCreativePreviewAction(
 // creative creation.
 export type ActionResult = { ok: true } | { ok: false; message: string };
 
+// The longest a picture change is expected to take. The per-post lock (billing on)
+// frees itself after this if the process dies mid-render.
+const REVISION_LEASE_MS = 4 * 60 * 1000;
+
 // Reads the file as base64 so the existing image can be edited. mock://
 // placeholders have no content to edit.
 async function readAssetForEditing(
@@ -264,6 +272,7 @@ export async function performCreativeRevision({
   // `finally`: charged for the picture when one was delivered, handed back
   // otherwise. Billing off: an empty hold, nothing changes.
   let allowance: Operation | undefined;
+  let lease: Lease | null = null;
   let outcome: OperationOutcome = "aborted";
   try {
     const creative = await prisma.creative.findUniqueOrThrow({
@@ -271,6 +280,24 @@ export async function performCreativeRevision({
       include: { versions: { orderBy: { version: "desc" }, take: 1 } },
     });
     await requireProjectAccess(userId, creative.projectId);
+
+    // Billing on: one picture change per post at a time. Whether a revision is
+    // free is read from the post's history and the picture is drawn afterwards
+    // (30-120 s), so without this N parallel requests would all see "free".
+    const billingOn = getBillingConfig().mode !== "off";
+    if (billingOn) {
+      lease = await acquireLease(
+        `creative.revise:${creativeId}`,
+        REVISION_LEASE_MS,
+      );
+      if (!lease) {
+        return {
+          ok: false,
+          message:
+            "This post's picture is already being changed. Wait for that to finish, then try again.",
+        };
+      }
+    }
 
     const currentVersion = creative.versions[0];
     const baseImage =
@@ -285,16 +312,39 @@ export async function performCreativeRevision({
       };
     }
 
-    // Revision policy: the first revisions of a post's picture are free, later
-    // ones cost one image right (lib/billing/plans.ts REVISION_POLICY); the
-    // post's first picture is its main image and always costs one; a picture
-    // cut from the brand's own photo is never drawn and costs nothing.
-    const cutFromPhoto =
-      !baseImage && Boolean(photoSourceOf(currentVersion?.generationMetadata));
-    const spendsRight =
-      !cutFromPhoto &&
-      (!currentVersion?.assetId || revisionCostsRight(currentVersion.version));
-    const operationId = `revise:${creativeId}:${Date.now()}`;
+    // A post made from the brand's own photo is re-cut from that photo, never
+    // redrawn: "regenerate" must not replace the real photo with an AI picture.
+    // The photo is resolved BEFORE the cost is decided: if it can no longer be
+    // loaded, what follows draws a new picture, and that costs a right.
+    const photoSource = baseImage
+      ? undefined
+      : photoSourceOf(currentVersion?.generationMetadata);
+    const photo = photoSource
+      ? await loadBrandPhoto(photoSource.assetId, creative.projectId)
+      : null;
+
+    // Revision policy (lib/billing/revision-policy.ts): the post's first picture
+    // and the first AI picture over one nobody paid for (an upload, a photo, an
+    // adaptation) cost a right; then the first revisions are free, later ones cost
+    // one; re-cutting a brand photo draws nothing and costs nothing.
+    let spendsRight = false;
+    if (billingOn) {
+      const versions = await prisma.creativeVersion.findMany({
+        where: { creativeId },
+        select: {
+          version: true,
+          assetId: true,
+          generationProvider: true,
+          generationMetadata: true,
+          revisionReason: true,
+        },
+      });
+      spendsRight = quoteRevision({
+        versions,
+        cutsPhoto: Boolean(photo),
+      }).spendsRight;
+    }
+    const operationId = `revise:${creativeId}:${randomUUID()}`;
     allowance = await beginOperation({
       workspaceId: creative.workspaceId,
       projectId: creative.projectId,
@@ -358,14 +408,6 @@ export async function performCreativeRevision({
     // together).
     // The brand's Post Style examples (else its one style board) go along in
     // from-scratch mode; an edit has its own picture and nothing else.
-    // A post made from the brand's own photo is re-cut from that photo, never
-    // redrawn: "regenerate" must not replace the real photo with an AI picture.
-    const photoSource = baseImage
-      ? undefined
-      : photoSourceOf(currentVersion?.generationMetadata);
-    const photo = photoSource
-      ? await loadBrandPhoto(photoSource.assetId, creative.projectId)
-      : null;
     const styleRefs =
       baseImage || photo
         ? NO_STYLE_REFERENCES
@@ -615,6 +657,8 @@ export async function performCreativeRevision({
           ...(photo && photoFit
             ? { photoSource: { assetId: photo.assetId, fit: photoFit } }
             : {}),
+          // This picture cost an image right: it is not one of the free revisions.
+          ...(spendsRight ? { paid: true } : {}),
         },
         revisionReason: baseImage
           ? `Image edited per instruction: ${instruction.slice(0, 200)}`
@@ -749,6 +793,7 @@ export async function performCreativeRevision({
     };
   } finally {
     await allowance?.finish(outcome);
+    await lease?.release();
   }
 }
 

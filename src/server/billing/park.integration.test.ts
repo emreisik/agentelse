@@ -8,7 +8,15 @@ import type {
   TaskPriority,
   TaskStatus,
 } from "@prisma/client";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
@@ -21,21 +29,49 @@ const config = vi.hoisted(() => ({
 }));
 vi.mock("./config", () => ({ getBillingConfig: () => config.current }));
 
+// Every reservation attempt of a resume and of a job start goes through
+// beginOperation. The real function always runs; a test can hook in right AFTER
+// an attempt (before its result reaches the caller) to hold resumers at a barrier
+// or to let time and writes pass in the middle of a park.
+const gate = vi.hoisted(() => ({
+  afterAttempt: null as null | (() => Promise<void>),
+}));
+vi.mock("./operation", async (importActual) => {
+  const actual = await importActual<typeof import("./operation")>();
+  return {
+    ...actual,
+    beginOperation: async (spec: OperationSpec) => {
+      try {
+        return await actual.beginOperation(spec);
+      } finally {
+        await gate.afterAttempt?.();
+      }
+    },
+  };
+});
+
 import { prisma } from "@/lib/prisma";
 import {
   createAgencyFixture,
   teardownAgencyFixture,
   type AgencyFixture,
 } from "@/server/agency/test-support/agency-fixtures";
+import type {
+  ExecutionPolicyContext,
+  ExecutionProvider,
+} from "@/server/execution/types";
+import { usageNeedOf } from "@/server/execution/usage-need";
 import { describeIntegration } from "@/test-support/integration-suite";
 
-import { beginOperation } from "./operation";
+import { beginJobBilling } from "./job-billing";
+import { beginOperation, type OperationSpec } from "./operation";
 import {
   MAX_PARK_AGE_MS,
   RESUME_TOKEN_PREFIX,
   drainParkedWork,
   parkJob,
   resumeParkedWork,
+  type ResumeSummary,
 } from "./park";
 import { NoPlanError, QuotaExceededError } from "./quota-errors";
 
@@ -44,16 +80,35 @@ import { NoPlanError, QuotaExceededError } from "./quota-errors";
 const B = (value: number) => BigInt(value);
 const runId = randomUUID().slice(0, 8);
 const fixtures: AgencyFixture[] = [];
+let workspaceCount = 0;
 
-const NOW = new Date("2026-11-15T12:00:00.000Z");
-const WINDOW_START = new Date("2026-11-01T00:00:00.000Z");
-const WINDOW_END = new Date("2026-12-01T00:00:00.000Z");
-const DAY = 86_400_000;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+// The code under test is handed a simulated clock (`now`). It is derived from
+// the real clock, the 15th of the PREVIOUS month at noon UTC, so it is always in
+// the past of the real one: whatever the database stamps on its own (Prisma's
+// @updatedAt, default now()) is later than anything stamped relative to NOW, on
+// every day of the calendar. Where the order of two stamps decides the outcome
+// (the sweep compares them) the test writes both itself.
+const REAL = new Date();
+const monthStart = (offset: number) =>
+  new Date(Date.UTC(REAL.getUTCFullYear(), REAL.getUTCMonth() + offset, 1));
+const WINDOW_START = monthStart(-1);
+const WINDOW_END = monthStart(0);
+const NEXT_WINDOW_END = monthStart(1);
+const NOW = new Date(WINDOW_START.getTime() + 14 * DAY + 12 * HOUR);
+// Older than any job in these tests could have been parked (the limit is 45 days).
+const LONG_AGO = new Date(NOW.getTime() - 90 * DAY);
+
+const earlier = (when: Date, by: number) => new Date(when.getTime() - by);
+const later = (when: Date, by: number) => new Date(when.getTime() + by);
 
 async function newWorkspace(
   options: { images?: number; micros?: number } = {},
 ) {
-  const fixture = await createAgencyFixture(`${runId}-${fixtures.length}`);
+  const fixture = await createAgencyFixture(`${runId}-${workspaceCount++}`);
   fixtures.push(fixture);
   if (options.images !== undefined || options.micros !== undefined) {
     await prisma.subscription.create({
@@ -64,6 +119,9 @@ async function newWorkspace(
         status: "ACTIVE",
         quotaAnchor: WINDOW_START,
         paidThrough: WINDOW_END,
+        // Otherwise stamped by the database's own clock, which the sweep would
+        // compare with the simulated times of the jobs.
+        updatedAt: LONG_AGO,
       },
     });
     for (const [unit, granted] of [
@@ -86,6 +144,28 @@ async function newWorkspace(
   return fixture;
 }
 
+// When the plan and the balances of a workspace were last written. The sweep
+// looks at a workspace again only if one of them is newer than its oldest parked
+// job, so the tests that probe that filter set both explicitly (EVERY balance row
+// counts, whatever its unit).
+async function stampLedger(
+  workspaceId: string,
+  stamps: { balance?: Date; subscription?: Date },
+) {
+  if (stamps.balance) {
+    await prisma.usageBalance.updateMany({
+      where: { workspaceId },
+      data: { updatedAt: stamps.balance },
+    });
+  }
+  if (stamps.subscription) {
+    await prisma.subscription.updateMany({
+      where: { workspaceId },
+      data: { updatedAt: stamps.subscription },
+    });
+  }
+}
+
 type JobSeed = {
   capability?: CapabilityKey;
   payload?: Record<string, unknown>;
@@ -98,6 +178,11 @@ type JobSeed = {
   createdAt?: Date;
   parkedAt?: Date;
 };
+
+// The tests run on a simulated clock (NOW). updatedAt is when the job was parked:
+// an hour ago by default, so the age rule (MAX_PARK_AGE_MS) only fires for the
+// tests that ask for it.
+const parkedAtOf = (seed: JobSeed) => seed.parkedAt ?? earlier(NOW, HOUR);
 
 // Bir görev + (varsayılan) WAITING_BUDGET işi.
 async function seedJob(fixture: AgencyFixture, seed: JobSeed = {}) {
@@ -128,20 +213,74 @@ async function seedJob(fixture: AgencyFixture, seed: JobSeed = {}) {
       idempotencyKey: randomUUID(),
       requestPayload: (seed.payload ?? { request: "a post" }) as never,
       status: seed.jobStatus ?? "WAITING_BUDGET",
+      updatedAt: parkedAtOf(seed),
       ...(seed.createdAt ? { createdAt: seed.createdAt } : {}),
     },
   });
-  // The tests run on a simulated clock (NOW). updatedAt is @updatedAt, so set when
-  // the job was parked with raw SQL: an hour ago by default, so the age rule
-  // (MAX_PARK_AGE_MS) only fires for the tests that ask for it.
-  const parkedAt = seed.parkedAt ?? new Date(NOW.getTime() - 3_600_000);
-  await prisma.$executeRaw`UPDATE "ExecutionJob" SET "updatedAt" = ${parkedAt} WHERE id = ${job.id}`;
   return { task, job };
 }
+
+// The same for a long queue: two statements instead of two per job.
+async function seedJobs(fixture: AgencyFixture, seeds: JobSeed[]) {
+  const rows = seeds.map((seed) => ({
+    seed,
+    taskId: randomUUID(),
+    jobId: randomUUID(),
+  }));
+  await prisma.task.createMany({
+    data: rows.map(({ seed, taskId }) => ({
+      id: taskId,
+      workspaceId: fixture.workspaceId,
+      projectId: fixture.projectId,
+      brandId: fixture.brandId,
+      title: `Task ${taskId.slice(0, 6)}`,
+      capability: seed.capability ?? "CREATE_SOCIAL_CREATIVE",
+      status: seed.taskStatus ?? "QUEUED",
+      priority: seed.priority ?? "MEDIUM",
+      riskLevel: "MEDIUM" as const,
+      createdByType: seed.createdBy ?? "USER",
+    })),
+  });
+  await prisma.executionJob.createMany({
+    data: rows.map(({ seed, taskId, jobId }) => ({
+      id: jobId,
+      workspaceId: fixture.workspaceId,
+      projectId: fixture.projectId,
+      brandId: fixture.brandId,
+      taskId,
+      capability: seed.capability ?? "CREATE_SOCIAL_CREATIVE",
+      providerType: "SYSTEM" as const,
+      correlationId: randomUUID(),
+      idempotencyKey: randomUUID(),
+      requestPayload: (seed.payload ?? { request: "a post" }) as never,
+      status: seed.jobStatus ?? "WAITING_BUDGET",
+      updatedAt: parkedAtOf(seed),
+      ...(seed.createdAt ? { createdAt: seed.createdAt } : {}),
+    })),
+  });
+  return rows.map(({ taskId, jobId }) => ({ taskId, jobId }));
+}
+
+// A calendar slot: the empty Creative a saved content plan leaves for a post. A
+// job reaches it through Task.payload.planCreativeId.
+const newSlot = (fixture: AgencyFixture, scheduledFor: Date) =>
+  prisma.creative.create({
+    data: {
+      workspaceId: fixture.workspaceId,
+      projectId: fixture.projectId,
+      brandId: fixture.brandId,
+      type: "SOCIAL_POST",
+      scheduledFor,
+    },
+  });
 
 const statusOf = async (jobId: string) =>
   (await prisma.executionJob.findUniqueOrThrow({ where: { id: jobId } }))
     .status;
+
+const updatedAtOf = async (jobId: string) =>
+  (await prisma.executionJob.findUniqueOrThrow({ where: { id: jobId } }))
+    .updatedAt;
 
 const dispatchEventsOf = (jobId: string) =>
   prisma.outboxEvent.findMany({
@@ -168,22 +307,70 @@ const imageError = () =>
     resetsAt: WINDOW_END,
   });
 
+// A barrier for `parties` callers. Installed as the hook after a reservation
+// attempt, it holds every resumer there until all of them have reserved, so they
+// reach the wake-up together instead of one finishing before the next one starts.
+// The watchdog turns a barrier that is never reached into a failure, not a hang.
+function rendezvous(parties: number) {
+  let arrived = 0;
+  let open!: () => void;
+  const met = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const watchdog = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("the resumers never met at the barrier")),
+      3_000,
+    );
+  });
+  return {
+    arrive: async () => {
+      arrived += 1;
+      if (arrived === parties) open();
+      await Promise.race([met, watchdog]);
+    },
+    arrived: () => arrived,
+    done: () => clearTimeout(timer),
+  };
+}
+
+const sum = (summaries: ResumeSummary[], key: keyof ResumeSummary) =>
+  summaries.reduce((total, summary) => total + summary[key], 0);
+
+async function tearDownFixtures() {
+  for (const fixture of fixtures.splice(0)) {
+    const where = { workspaceId: fixture.workspaceId };
+    await prisma.outboxEvent.deleteMany({ where });
+    await prisma.executionJob.deleteMany({ where });
+    await prisma.creative.deleteMany({ where });
+    await prisma.task.deleteMany({ where });
+    await prisma.auditLog.deleteMany({ where });
+    await teardownAgencyFixture(fixture.workspaceId);
+  }
+}
+
 describeIntegration("parked work (WAITING_BUDGET)", () => {
-  afterEach(() => {
-    config.current = { mode: "enforce", legacyBefore: null, legacyUntil: null };
+  // A sweep without a workspaceId looks at EVERY workspace of the database (at
+  // most 50, oldest first) and the shadow and off drains take every parked job. A
+  // job some other test file left parked would crowd the sweeps below out or
+  // change their counts, so strays are retired before each test (nothing of this
+  // file's is parked at this point: each test removes its own fixtures).
+  beforeEach(async () => {
+    await prisma.executionJob.updateMany({
+      where: { status: "WAITING_BUDGET" },
+      data: { status: "CANCELLED" },
+    });
   });
 
-  afterAll(async () => {
-    for (const fixture of fixtures) {
-      const where = { workspaceId: fixture.workspaceId };
-      await prisma.outboxEvent.deleteMany({ where });
-      await prisma.executionJob.deleteMany({ where });
-      await prisma.creative.deleteMany({ where });
-      await prisma.task.deleteMany({ where });
-      await prisma.auditLog.deleteMany({ where });
-      await teardownAgencyFixture(fixture.workspaceId);
-    }
+  afterEach(async () => {
+    config.current = { mode: "enforce", legacyBefore: null, legacyUntil: null };
+    gate.afterAttempt = null;
+    vi.useRealTimers();
+    await tearDownFixtures();
   });
+
+  afterAll(tearDownFixtures);
 
   describe("parking", () => {
     it("parks a queued job, records why, nudges the task and frees leftover holds", async () => {
@@ -198,9 +385,13 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
         now: NOW,
       });
       expect((await balanceOf(fixture.workspaceId, "IMAGE")).reserved).toBe(1);
-      const before = (
-        await prisma.task.findUniqueOrThrow({ where: { id: task.id } })
-      ).updatedAt;
+      // The task last changed long ago (by the simulated clock): the nudge below
+      // is the only thing that can move it past this.
+      const lastChanged = earlier(NOW, HOUR);
+      await prisma.task.update({
+        where: { id: task.id },
+        data: { updatedAt: lastChanged },
+      });
 
       expect(await parkJob(job.id, imageError())).toBe(true);
 
@@ -215,11 +406,13 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       // Never worded like a provider billing failure.
       expect(parked.errorMessage).not.toMatch(/quota|billing/i);
       expect((await balanceOf(fixture.workspaceId, "IMAGE")).reserved).toBe(0);
-      const after = await prisma.task.findUniqueOrThrow({
+      const afterPark = await prisma.task.findUniqueOrThrow({
         where: { id: task.id },
       });
-      expect(after.status).toBe("QUEUED"); // the task itself is untouched
-      expect(after.updatedAt.getTime()).toBeGreaterThan(before.getTime());
+      expect(afterPark.status).toBe("QUEUED"); // the task itself is untouched
+      expect(afterPark.updatedAt.getTime()).toBeGreaterThan(
+        lastChanged.getTime(),
+      );
       const audit = await prisma.auditLog.findFirst({
         where: { entityId: job.id, action: "billing.job.parked" },
       });
@@ -237,12 +430,140 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       );
       expect(await statusOf(job.id)).toBe("RUNNING");
     });
+
+    describe("a refill that lands while the job is being parked", () => {
+      // No pictures when the attempt began; an extra pack of 3 lands afterwards.
+      const attemptBegan = earlier(NOW, 30 * MINUTE);
+      const refilled = earlier(NOW, 20 * MINUTE);
+
+      async function workspaceRefilledAt(when: Date) {
+        const fixture = await newWorkspace({ images: 0, micros: 0 });
+        await stampLedger(fixture.workspaceId, { balance: when });
+        await prisma.usageBalance.update({
+          where: {
+            workspaceId_unit: {
+              workspaceId: fixture.workspaceId,
+              unit: "IMAGE",
+            },
+          },
+          data: { extraGranted: B(3) },
+        });
+        return fixture;
+      }
+
+      it("stamps the job with when the attempt began, so a sweep sees the refill as newer", async () => {
+        // The same refill in two identical workspaces. Only the stamp of the job
+        // differs: in one the attempt began before the refill, in the other after.
+        const earlyWorkspace = await workspaceRefilledAt(refilled);
+        const lateWorkspace = await workspaceRefilledAt(refilled);
+        const early = await seedJob(earlyWorkspace, { jobStatus: "QUEUED" });
+        const late = await seedJob(lateWorkspace, { jobStatus: "QUEUED" });
+        const lateAttempt = later(refilled, 10 * MINUTE);
+
+        expect(await parkJob(early.job.id, imageError(), attemptBegan)).toBe(
+          true,
+        );
+        expect(await parkJob(late.job.id, imageError(), lateAttempt)).toBe(
+          true,
+        );
+
+        // The stored stamp is what the sweep compares with the ledger writes.
+        expect(await updatedAtOf(early.job.id)).toEqual(attemptBegan);
+        expect(await updatedAtOf(late.job.id)).toEqual(lateAttempt);
+
+        await resumeParkedWork({ now: NOW });
+
+        // The refill is newer than the early job, older than the late one.
+        expect(await statusOf(early.job.id)).toBe("QUEUED");
+        expect(await statusOf(late.job.id)).toBe("WAITING_BUDGET");
+      });
+
+      it("beginJobBilling parks with the moment its reservation attempt began", async () => {
+        const fixture = await newWorkspace({ images: 0, micros: 0 });
+        await stampLedger(fixture.workspaceId, {
+          balance: earlier(attemptBegan, HOUR),
+        });
+        const { job, task } = await seedJob(fixture, { jobStatus: "QUEUED" });
+        const queued = await prisma.executionJob.findUniqueOrThrow({
+          where: { id: job.id },
+        });
+        const provider: ExecutionProvider = {
+          key: "test-paid",
+          type: "AI",
+          isConfigured: true,
+          canExecute: async () => true,
+          usageEstimate: () => ({ class: "content", images: 1 }),
+          execute: async (request) => ({
+            executionReference: request.correlationId,
+            isMock: false,
+          }),
+          getStatus: async () => ({ status: "COMPLETED", isMock: false }),
+        };
+        const context: ExecutionPolicyContext = {
+          workspaceId: fixture.workspaceId,
+          projectId: fixture.projectId,
+          brandId: fixture.brandId,
+          taskId: task.id,
+          capability: "CREATE_SOCIAL_CREATIVE",
+          riskLevel: "MEDIUM",
+        };
+
+        // The clock stands still at the moment the attempt begins. The attempt is
+        // refused (no pictures); then, before the job is parked, the extra pack
+        // lands and the clock moves on.
+        let attempts = 0;
+        let attemptEnded: Date | undefined;
+        gate.afterAttempt = async () => {
+          attempts += 1;
+          vi.setSystemTime(refilled);
+          attemptEnded = new Date();
+          await prisma.usageBalance.update({
+            where: {
+              workspaceId_unit: {
+                workspaceId: fixture.workspaceId,
+                unit: "IMAGE",
+              },
+            },
+            data: { extraGranted: B(3), updatedAt: refilled },
+          });
+          vi.setSystemTime(later(refilled, MINUTE));
+        };
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(attemptBegan);
+        const billing = await beginJobBilling({
+          job: queued,
+          provider,
+          context,
+        }).finally(() => {
+          vi.useRealTimers();
+          gate.afterAttempt = null;
+        });
+
+        expect(attempts).toBe(1);
+        if (billing.kind !== "stop") throw new Error("expected a parked job");
+        expect(billing.job).toMatchObject({
+          status: "WAITING_BUDGET",
+          errorCode: "QUOTA_EXCEEDED",
+        });
+        // Stamped with the start of the attempt, not with the moment the park
+        // landed: a time not after the moment the attempt finished.
+        expect(billing.job.updatedAt).toEqual(attemptBegan);
+        expect(billing.job.updatedAt.getTime()).toBeLessThanOrEqual(
+          attemptEnded!.getTime(),
+        );
+
+        // So the refill, newer than the job, brings the workspace back in view.
+        const summary = await resumeParkedWork({ now: NOW });
+        expect(summary.resumed).toBe(1);
+        expect(await statusOf(job.id)).toBe("QUEUED");
+      });
+    });
   });
 
   describe("resuming", () => {
     it("reserves the allowance for the jobs it wakes, in priority then own-request then deadline order", async () => {
       const fixture = await newWorkspace({ images: 3, micros: 3_000_000 });
-      const day = (n: number) => new Date(NOW.getTime() + n * DAY);
+      const day = (n: number) => later(NOW, n * DAY);
       const low = await seedJob(fixture, { priority: "LOW", dueAt: day(1) });
       const highLate = await seedJob(fixture, {
         priority: "HIGH",
@@ -285,37 +606,116 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       });
     });
 
-    it("puts the client's own request ahead of background work, and the sooner slot first", async () => {
-      const fixture = await newWorkspace({ images: 2, micros: 3_000_000 });
-      const slot = async (daysAhead: number) =>
-        prisma.creative.create({
-          data: {
-            workspaceId: fixture.workspaceId,
-            projectId: fixture.projectId,
-            brandId: fixture.brandId,
-            type: "SOCIAL_POST",
-            scheduledFor: new Date(NOW.getTime() + daysAhead * DAY),
-          },
+    // Room for ONE picture and exactly two candidates: whichever the order puts
+    // first is woken, so only the rule under test can pick the winner. Task.priority
+    // and Task.dueAt are never written today; the order comes from who asked and
+    // from the calendar slot of the post, but all of them rank the same way once
+    // they are written.
+    describe("order", () => {
+      const oneRoom = () => newWorkspace({ images: 1, micros: 3_000_000 });
+
+      async function expectWoken(
+        fixture: AgencyFixture,
+        winner: { job: { id: string } },
+        loser: { job: { id: string } },
+      ) {
+        const summary = await resumeParkedWork({
+          workspaceId: fixture.workspaceId,
+          now: NOW,
         });
-      const lateSlot = await slot(10);
-      const soonSlot = await slot(2);
-      const system = await seedJob(fixture, { createdBy: "SYSTEM" });
-      const ownLate = await seedJob(fixture, {
-        createdBy: "USER",
-        taskPayload: { planCreativeId: lateSlot.id },
-      });
-      const ownSoon = await seedJob(fixture, {
-        createdBy: "USER",
-        taskPayload: { planCreativeId: soonSlot.id },
+        expect(await statusOf(winner.job.id)).toBe("QUEUED");
+        expect(await statusOf(loser.job.id)).toBe("WAITING_BUDGET");
+        expect(summary).toEqual({ resumed: 1, cancelled: 0, stillParked: 1 });
+      }
+
+      it("the client's own request goes before background work, even when the background post is due sooner", async () => {
+        const fixture = await oneRoom();
+        const soonSlot = await newSlot(fixture, later(NOW, DAY));
+        const lateSlot = await newSlot(fixture, later(NOW, 5 * DAY));
+        // The background job is due sooner AND was created first: nothing but the
+        // own-request rule can put the other job ahead of it.
+        const background = await seedJob(fixture, {
+          createdBy: "SYSTEM",
+          taskPayload: { planCreativeId: soonSlot.id },
+          createdAt: earlier(NOW, 3 * HOUR),
+        });
+        const own = await seedJob(fixture, {
+          createdBy: "USER",
+          taskPayload: { planCreativeId: lateSlot.id },
+          createdAt: earlier(NOW, 2 * HOUR),
+        });
+        await expectWoken(fixture, own, background);
       });
 
-      await resumeParkedWork({ workspaceId: fixture.workspaceId, now: NOW });
+      it("of two requests of the client, the post whose slot comes first goes first", async () => {
+        const fixture = await oneRoom();
+        const soonSlot = await newSlot(fixture, later(NOW, DAY));
+        const lateSlot = await newSlot(fixture, later(NOW, 5 * DAY));
+        // The post with the later slot was asked for first, so the age of the
+        // jobs cannot pick the right one by accident.
+        const forLateSlot = await seedJob(fixture, {
+          taskPayload: { planCreativeId: lateSlot.id },
+          createdAt: earlier(NOW, 3 * HOUR),
+        });
+        const forSoonSlot = await seedJob(fixture, {
+          taskPayload: { planCreativeId: soonSlot.id },
+          createdAt: earlier(NOW, 2 * HOUR),
+        });
+        await expectWoken(fixture, forSoonSlot, forLateSlot);
+      });
 
-      // Task.priority and Task.dueAt are never written today, so the order comes
-      // from who asked and from the calendar slot of the post.
-      expect(await statusOf(ownSoon.job.id)).toBe("QUEUED");
-      expect(await statusOf(ownLate.job.id)).toBe("QUEUED");
-      expect(await statusOf(system.job.id)).toBe("WAITING_BUDGET");
+      it("Task.dueAt is the deadline when there is one, and the slot only when there is none", async () => {
+        const fixture = await oneRoom();
+        const near = await newSlot(fixture, later(NOW, DAY));
+        const middle = await newSlot(fixture, later(NOW, 3 * DAY));
+        // A's slot is the nearest of all, but its own dueAt (5 days) says
+        // otherwise; B has no dueAt and falls back to its slot (3 days).
+        const dueLater = await seedJob(fixture, {
+          taskPayload: { planCreativeId: near.id },
+          dueAt: later(NOW, 5 * DAY),
+          createdAt: earlier(NOW, 3 * HOUR),
+        });
+        const slotOnly = await seedJob(fixture, {
+          taskPayload: { planCreativeId: middle.id },
+          createdAt: earlier(NOW, 2 * HOUR),
+        });
+        await expectWoken(fixture, slotOnly, dueLater);
+      });
+
+      it("priority goes before everything else: a high-priority background job beats the client's own earlier, sooner request", async () => {
+        const fixture = await oneRoom();
+        const soonSlot = await newSlot(fixture, later(NOW, DAY));
+        const lateSlot = await newSlot(fixture, later(NOW, 5 * DAY));
+        // The own job wins on every other rule (own request, slot, age).
+        const own = await seedJob(fixture, {
+          priority: "MEDIUM",
+          createdBy: "USER",
+          taskPayload: { planCreativeId: soonSlot.id },
+          createdAt: earlier(NOW, 3 * HOUR),
+        });
+        const high = await seedJob(fixture, {
+          priority: "HIGH",
+          createdBy: "SYSTEM",
+          taskPayload: { planCreativeId: lateSlot.id },
+          createdAt: earlier(NOW, 2 * HOUR),
+        });
+        await expectWoken(fixture, high, own);
+      });
+
+      it("with everything else equal, the job created first goes first", async () => {
+        const fixture = await oneRoom();
+        // The newer job was parked first, so leaving the order to the database
+        // would hand it the room.
+        const older = await seedJob(fixture, {
+          createdAt: earlier(NOW, 5 * HOUR),
+          parkedAt: earlier(NOW, HOUR),
+        });
+        const newer = await seedJob(fixture, {
+          createdAt: earlier(NOW, 4 * HOUR),
+          parkedAt: earlier(NOW, 2 * HOUR),
+        });
+        await expectWoken(fixture, older, newer);
+      });
     });
 
     it("hands each woken job its own token inside a fresh dispatch event", async () => {
@@ -391,6 +791,89 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       expect(event!.payload).not.toHaveProperty("attemptToken");
     });
 
+    // A job that draws nothing (a photo of the brand, another format of a post
+    // that has its picture) reserves no picture, so the only thing that can keep
+    // it waiting is the plan itself: the resume step asks for a valid plan even
+    // when there is nothing to reserve.
+    describe("a job that spends no allowance still needs a valid plan", () => {
+      const photo = { request: "a", photoAssetIds: ["asset-1"] };
+      const adaptation = { request: "a", adaptFromAssetId: "asset-1" };
+
+      it("stays parked while the workspace has no plan, and wakes once it has one", async () => {
+        // Both really are free of pictures: nothing but the plan can stop them.
+        expect(usageNeedOf("CREATE_SOCIAL_CREATIVE", photo)).toBeNull();
+        expect(usageNeedOf("CREATE_SOCIAL_CREATIVE", adaptation)).toBeNull();
+
+        const fixture = await newWorkspace(); // no subscription
+        const photoJob = await seedJob(fixture, { payload: photo });
+        const adaptJob = await seedJob(fixture, { payload: adaptation });
+
+        const waiting = await resumeParkedWork({
+          workspaceId: fixture.workspaceId,
+          now: NOW,
+        });
+        expect(waiting).toEqual({ resumed: 0, cancelled: 0, stillParked: 2 });
+        expect(await statusOf(photoJob.job.id)).toBe("WAITING_BUDGET");
+        expect(await statusOf(adaptJob.job.id)).toBe("WAITING_BUDGET");
+        expect(await dispatchEventsOf(photoJob.job.id)).toHaveLength(0);
+        expect(await dispatchEventsOf(adaptJob.job.id)).toHaveLength(0);
+
+        await prisma.subscription.create({
+          data: {
+            workspaceId: fixture.workspaceId,
+            planKey: "starter",
+            interval: "MONTH",
+            status: "ACTIVE",
+            quotaAnchor: WINDOW_START,
+            paidThrough: WINDOW_END,
+          },
+        });
+        const woken = await resumeParkedWork({
+          workspaceId: fixture.workspaceId,
+          now: NOW,
+        });
+        expect(woken).toEqual({ resumed: 2, cancelled: 0, stillParked: 0 });
+        expect(await statusOf(photoJob.job.id)).toBe("QUEUED");
+        expect(await statusOf(adaptJob.job.id)).toBe("QUEUED");
+        expect(await reservationsOf(fixture.workspaceId)).toHaveLength(0);
+      });
+
+      it("stays parked while the plan has lapsed (read-only), and wakes on renewal", async () => {
+        const fixture = await newWorkspace();
+        // Paid until 10 days ago: past the renewal grace, so the workspace is
+        // read-only and may not start new paid work.
+        await prisma.subscription.create({
+          data: {
+            workspaceId: fixture.workspaceId,
+            planKey: "growth",
+            interval: "MONTH",
+            status: "ACTIVE",
+            quotaAnchor: WINDOW_START,
+            paidThrough: earlier(NOW, 10 * DAY),
+          },
+        });
+        const { job } = await seedJob(fixture, { payload: adaptation });
+
+        const lapsed = await resumeParkedWork({
+          workspaceId: fixture.workspaceId,
+          now: NOW,
+        });
+        expect(lapsed).toEqual({ resumed: 0, cancelled: 0, stillParked: 1 });
+        expect(await statusOf(job.id)).toBe("WAITING_BUDGET");
+
+        await prisma.subscription.update({
+          where: { workspaceId: fixture.workspaceId },
+          data: { paidThrough: WINDOW_END },
+        });
+        const renewed = await resumeParkedWork({
+          workspaceId: fixture.workspaceId,
+          now: NOW,
+        });
+        expect(renewed.resumed).toBe(1);
+        expect(await statusOf(job.id)).toBe("QUEUED");
+      });
+    });
+
     it("keeps everything parked while the workspace has no plan, then wakes it", async () => {
       const fixture = await newWorkspace(); // no subscription
       const { job } = await seedJob(fixture);
@@ -411,12 +894,12 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
           paidThrough: WINDOW_END,
         },
       });
-      const after = await resumeParkedWork({
+      const afterPlan = await resumeParkedWork({
         workspaceId: fixture.workspaceId,
         now: NOW,
       });
       // The first window is opened on the way and pays for the job.
-      expect(after.resumed).toBe(1);
+      expect(afterPlan.resumed).toBe(1);
       expect(await statusOf(job.id)).toBe("QUEUED");
     });
 
@@ -438,11 +921,11 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       // The renewal payment arrives: the plan is paid one more month.
       await prisma.subscription.update({
         where: { workspaceId: fixture.workspaceId },
-        data: { paidThrough: new Date("2027-01-01T00:00:00.000Z") },
+        data: { paidThrough: NEXT_WINDOW_END },
       });
       const renewed = await resumeParkedWork({
         workspaceId: fixture.workspaceId,
-        now: new Date("2026-12-01T01:00:00.000Z"),
+        now: later(WINDOW_END, HOUR),
       });
       expect(renewed.resumed).toBe(1);
       expect(await statusOf(job.id)).toBe("QUEUED");
@@ -486,7 +969,7 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
     it("gives up on work that has waited longer than the limit and cancels its task", async () => {
       const fixture = await newWorkspace({ images: 5, micros: 3_000_000 });
       const stale = await seedJob(fixture, {
-        parkedAt: new Date(NOW.getTime() - MAX_PARK_AGE_MS - DAY),
+        parkedAt: earlier(NOW, MAX_PARK_AGE_MS + DAY),
       });
       const summary = await resumeParkedWork({
         workspaceId: fixture.workspaceId,
@@ -530,31 +1013,92 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       ).toBe(1);
     });
 
-    it("never wakes a job twice and never over-reserves when resumers run at once", async () => {
-      const fixture = await newWorkspace({ images: 4, micros: 3_000_000 });
-      const jobs = await Promise.all(
-        Array.from({ length: 8 }, () => seedJob(fixture)),
-      );
-      await Promise.all([
-        resumeParkedWork({ workspaceId: fixture.workspaceId, now: NOW }),
-        resumeParkedWork({ workspaceId: fixture.workspaceId, now: NOW }),
-        resumeParkedWork({ workspaceId: fixture.workspaceId, now: NOW }),
-      ]);
-      let woken = 0;
-      for (const { job } of jobs) {
-        const queued = (await statusOf(job.id)) === "QUEUED";
-        expect(await dispatchEventsOf(job.id)).toHaveLength(queued ? 1 : 0);
-        if (queued) woken += 1;
-      }
-      // Exactly the four pictures that exist, each held once.
-      expect(woken).toBe(4);
-      const open = (await reservationsOf(fixture.workspaceId, "IMAGE")).filter(
-        (row) => row.status === "RESERVED",
-      );
-      expect(open).toHaveLength(4);
-      expect(await balanceOf(fixture.workspaceId, "IMAGE")).toEqual({
-        used: 0,
-        reserved: 4,
+    // Every resumer reserves a picture of its own (its own token) before it tries
+    // to wake the job, and only the wake-up decides: the job leaves WAITING_BUDGET
+    // for exactly one of them. The barrier holds all three at the reservation, so
+    // they always reach the wake-up together (a free-running race would often
+    // finish one resumer before the next one started and prove nothing).
+    describe("resumers running at once", () => {
+      it("wakes a job once when three resumers reach it at the same moment", async () => {
+        const fixture = await newWorkspace({ images: 3, micros: 3_000_000 });
+        const { job } = await seedJob(fixture);
+        const meeting = rendezvous(3);
+        gate.afterAttempt = meeting.arrive;
+
+        const summaries = await Promise.all(
+          [1, 2, 3].map(() =>
+            resumeParkedWork({ workspaceId: fixture.workspaceId, now: NOW }),
+          ),
+        ).finally(() => {
+          gate.afterAttempt = null;
+          meeting.done();
+        });
+
+        // The control: all three really did reserve a picture for the same job
+        // before any of them tried to wake it.
+        const reservations = await reservationsOf(fixture.workspaceId, "IMAGE");
+        expect(meeting.arrived()).toBe(3);
+        expect(reservations).toHaveLength(3);
+
+        // Exactly one wake-up won.
+        expect(sum(summaries, "resumed")).toBe(1);
+        expect(sum(summaries, "stillParked")).toBe(2);
+        expect(await statusOf(job.id)).toBe("QUEUED");
+        const events = await dispatchEventsOf(job.id);
+        expect(events).toHaveLength(1);
+
+        // The winner kept its picture, under the token the event carries; the
+        // other two handed theirs back.
+        const { attemptToken } = events[0]!.payload as { attemptToken: string };
+        expect(
+          reservations
+            .filter((row) => row.status === "RESERVED")
+            .map((row) => row.reservationKey),
+        ).toEqual([`exec:${job.id}#${attemptToken}`]);
+        expect(
+          reservations.filter((row) => row.status === "RELEASED"),
+        ).toHaveLength(2);
+        expect(await balanceOf(fixture.workspaceId, "IMAGE")).toEqual({
+          used: 0,
+          reserved: 1,
+        });
+      });
+
+      it("never wakes a job twice and never over-reserves, with a queue longer than the room", async () => {
+        const fixture = await newWorkspace({ images: 4, micros: 3_000_000 });
+        const jobs = await Promise.all(
+          Array.from({ length: 8 }, () => seedJob(fixture)),
+        );
+        // The three collide on the head of the queue; from there on they race
+        // freely for the rest.
+        const meeting = rendezvous(3);
+        gate.afterAttempt = meeting.arrive;
+        const summaries = await Promise.all(
+          [1, 2, 3].map(() =>
+            resumeParkedWork({ workspaceId: fixture.workspaceId, now: NOW }),
+          ),
+        ).finally(() => {
+          gate.afterAttempt = null;
+          meeting.done();
+        });
+
+        let woken = 0;
+        for (const { job } of jobs) {
+          const queued = (await statusOf(job.id)) === "QUEUED";
+          expect(await dispatchEventsOf(job.id)).toHaveLength(queued ? 1 : 0);
+          if (queued) woken += 1;
+        }
+        // Exactly the four pictures that exist, each held once.
+        expect(woken).toBe(4);
+        expect(sum(summaries, "resumed")).toBe(4);
+        const open = (
+          await reservationsOf(fixture.workspaceId, "IMAGE")
+        ).filter((row) => row.status === "RESERVED");
+        expect(open).toHaveLength(4);
+        expect(await balanceOf(fixture.workspaceId, "IMAGE")).toEqual({
+          used: 0,
+          reserved: 4,
+        });
       });
     });
 
@@ -573,44 +1117,216 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       const funded = await newWorkspace({ images: 3, micros: 3_000_000 });
       // The broke workspace has the older and far larger backlog.
       for (let i = 0; i < 6; i += 1) {
-        await seedJob(broke, { parkedAt: new Date(NOW.getTime() - 3 * DAY) });
+        await seedJob(broke, { parkedAt: earlier(NOW, 3 * DAY) });
       }
       const mine = await seedJob(funded, {
-        parkedAt: new Date(NOW.getTime() - DAY),
+        parkedAt: earlier(NOW, DAY),
       });
       await resumeParkedWork({ now: NOW });
       expect(await statusOf(mine.job.id)).toBe("QUEUED");
     });
 
-    it("a sweep skips a workspace whose allowance has not changed since the job parked, and looks again when it does", async () => {
-      const fixture = await newWorkspace({ images: 5, micros: 3_000_000 });
-      const { job } = await seedJob(fixture, {
-        parkedAt: new Date(NOW.getTime() - 3_600_000),
+    describe("which workspaces a sweep looks at again", () => {
+      // The job parked at PARKED; the plan and the balances, when they were
+      // last written, either side of it. The allowance (5 pictures) is there
+      // all the time: what a sweep reacts to is a WRITE after the job parked.
+      const PARKED = earlier(NOW, 3 * HOUR);
+
+      it("a sweep skips a workspace whose allowance has not changed since the job parked, and looks again when it does", async () => {
+        const fixture = await newWorkspace({ images: 5, micros: 3_000_000 });
+        const { job } = await seedJob(fixture, { parkedAt: PARKED });
+        // Nothing about the plan or the balance has moved since the job parked.
+        const quiet = earlier(PARKED, HOUR);
+        await stampLedger(fixture.workspaceId, {
+          balance: quiet,
+          subscription: quiet,
+        });
+
+        await resumeParkedWork({ now: NOW });
+        expect(await statusOf(job.id)).toBe("WAITING_BUDGET");
+
+        // A top-up (any balance write) after the job parked brings it back in view.
+        await stampLedger(fixture.workspaceId, { balance: NOW });
+        await resumeParkedWork({ now: NOW });
+        expect(await statusOf(job.id)).toBe("QUEUED");
       });
-      // Nothing about the plan or the balance has moved since the job parked.
-      const before = new Date(NOW.getTime() - 2 * 3_600_000);
-      await prisma.$executeRaw`UPDATE "UsageBalance" SET "updatedAt" = ${before} WHERE "workspaceId" = ${fixture.workspaceId}`;
-      await prisma.$executeRaw`UPDATE "Subscription" SET "updatedAt" = ${before} WHERE "workspaceId" = ${fixture.workspaceId}`;
 
-      await resumeParkedWork({ now: NOW });
-      expect(await statusOf(job.id)).toBe("WAITING_BUDGET");
+      it("a sweep looks again when only the plan changed after the job parked (renewal, plan switch)", async () => {
+        const fixture = await newWorkspace({ images: 5, micros: 3_000_000 });
+        const { job } = await seedJob(fixture, { parkedAt: PARKED });
+        const quiet = earlier(PARKED, HOUR);
+        await stampLedger(fixture.workspaceId, {
+          balance: quiet,
+          subscription: quiet,
+        });
+        await resumeParkedWork({ now: NOW });
+        expect(await statusOf(job.id)).toBe("WAITING_BUDGET");
 
-      // A top-up (any balance write) after the job parked brings it back in view.
-      await prisma.$executeRaw`UPDATE "UsageBalance" SET "updatedAt" = ${NOW} WHERE "workspaceId" = ${fixture.workspaceId} AND "unit" = 'IMAGE'`;
-      await resumeParkedWork({ now: NOW });
-      expect(await statusOf(job.id)).toBe("QUEUED");
+        // The balances stay as quiet as they were: the subscription row alone is
+        // newer than the job.
+        await stampLedger(fixture.workspaceId, {
+          subscription: later(PARKED, HOUR),
+        });
+        const summary = await resumeParkedWork({ now: NOW });
+        expect(summary.resumed).toBe(1);
+        expect(await statusOf(job.id)).toBe("QUEUED");
+      });
+
+      it("a sweep closes a job whose task is gone even when nothing about the allowance changed", async () => {
+        const fixture = await newWorkspace({ images: 5, micros: 3_000_000 });
+        const { job } = await seedJob(fixture, {
+          taskStatus: "CANCELLED",
+          parkedAt: PARKED,
+        });
+        const quiet = earlier(PARKED, HOUR);
+        await stampLedger(fixture.workspaceId, {
+          balance: quiet,
+          subscription: quiet,
+        });
+
+        const summary = await resumeParkedWork({ now: NOW });
+
+        expect(summary).toEqual({ resumed: 0, cancelled: 1, stillParked: 0 });
+        expect(await statusOf(job.id)).toBe("CANCELLED");
+        expect(await dispatchEventsOf(job.id)).toHaveLength(0);
+        expect(await reservationsOf(fixture.workspaceId)).toHaveLength(0);
+      });
+
+      // A workspace is judged by its OLDEST parked job. A newer job of the same
+      // workspace that parked after the write must not hide it from the sweep: the
+      // older job is the one waiting for it.
+      it.each(["balance", "subscription"] as const)(
+        "a %s write after the oldest job brings the workspace back in view, although a newer job parked after the write",
+        async (kind) => {
+          const fixture = await newWorkspace({ images: 5, micros: 3_000_000 });
+          const oldest = await seedJob(fixture, {
+            parkedAt: earlier(NOW, 5 * HOUR),
+          });
+          const newest = await seedJob(fixture, {
+            parkedAt: earlier(NOW, HOUR),
+          });
+          // Quiet since before either job parked, except for the one write under
+          // test: after the oldest job parked, before the newest one did.
+          const quiet = earlier(NOW, 6 * HOUR);
+          await stampLedger(fixture.workspaceId, {
+            balance: quiet,
+            subscription: quiet,
+          });
+          const between = earlier(NOW, 3 * HOUR);
+          await stampLedger(
+            fixture.workspaceId,
+            kind === "balance"
+              ? { balance: between }
+              : { subscription: between },
+          );
+
+          const summary = await resumeParkedWork({ now: NOW });
+
+          expect(summary).toEqual({ resumed: 2, cancelled: 0, stillParked: 0 });
+          expect(await statusOf(oldest.job.id)).toBe("QUEUED");
+          expect(await statusOf(newest.job.id)).toBe("QUEUED");
+        },
+      );
+
+      it("a sweep closes a job that has waited too long, although a newer job of the workspace parked later", async () => {
+        const fixture = await newWorkspace({ images: 5, micros: 3_000_000 });
+        const stale = await seedJob(fixture, {
+          parkedAt: earlier(NOW, MAX_PARK_AGE_MS + DAY),
+        });
+        const fresh = await seedJob(fixture, { parkedAt: earlier(NOW, HOUR) });
+        const quiet = earlier(NOW, MAX_PARK_AGE_MS + 2 * DAY);
+        await stampLedger(fixture.workspaceId, {
+          balance: quiet,
+          subscription: quiet,
+        });
+
+        const summary = await resumeParkedWork({ now: NOW });
+
+        expect(summary).toEqual({ resumed: 1, cancelled: 1, stillParked: 0 });
+        expect(await statusOf(stale.job.id)).toBe("CANCELLED");
+        expect(await statusOf(fresh.job.id)).toBe("QUEUED");
+      });
+
+      it("a sweep still closes work that has waited too long in a workspace nothing happened in", async () => {
+        const fixture = await newWorkspace({ images: 0, micros: 0 });
+        const stale = await seedJob(fixture, {
+          parkedAt: earlier(NOW, MAX_PARK_AGE_MS + DAY),
+        });
+        const quiet = earlier(NOW, MAX_PARK_AGE_MS + 2 * DAY);
+        await stampLedger(fixture.workspaceId, {
+          balance: quiet,
+          subscription: quiet,
+        });
+        await resumeParkedWork({ now: NOW });
+        expect(await statusOf(stale.job.id)).toBe("CANCELLED");
+      });
     });
 
-    it("a sweep still closes work that has waited too long in a workspace nothing happened in", async () => {
-      const fixture = await newWorkspace({ images: 0, micros: 0 });
-      const stale = await seedJob(fixture, {
-        parkedAt: new Date(NOW.getTime() - MAX_PARK_AGE_MS - DAY),
+    describe("a long queue", () => {
+      it("ranks every parked job of the workspace before trying any, not just the oldest 50", async () => {
+        const fixture = await newWorkspace({ images: 1, micros: 3_000_000 });
+        // 60 background posts parked one after the other; the client's urgent
+        // request is parked after all of them: the 61st by when it parked.
+        const background = Array.from({ length: 60 }, (_, index): JobSeed => ({
+          priority: "LOW",
+          createdBy: "SYSTEM",
+          parkedAt: later(earlier(NOW, 2 * HOUR), index * 1_000),
+        }));
+        const ids = await seedJobs(fixture, [
+          ...background,
+          { priority: "HIGH", createdBy: "USER", parkedAt: earlier(NOW, HOUR) },
+        ]);
+        const urgent = ids[60]!;
+
+        const summary = await resumeParkedWork({
+          workspaceId: fixture.workspaceId,
+          now: NOW,
+        });
+
+        // Room for one picture, and it goes to the urgent request.
+        expect(await statusOf(urgent.jobId)).toBe("QUEUED");
+        expect(summary).toEqual({ resumed: 1, cancelled: 0, stillParked: 60 });
+        expect(
+          await prisma.executionJob.count({
+            where: { workspaceId: fixture.workspaceId, status: "QUEUED" },
+          }),
+        ).toBe(1);
+        expect(await balanceOf(fixture.workspaceId, "IMAGE")).toEqual({
+          used: 0,
+          reserved: 1,
+        });
       });
-      const before = new Date(NOW.getTime() - MAX_PARK_AGE_MS - 2 * DAY);
-      await prisma.$executeRaw`UPDATE "UsageBalance" SET "updatedAt" = ${before} WHERE "workspaceId" = ${fixture.workspaceId}`;
-      await prisma.$executeRaw`UPDATE "Subscription" SET "updatedAt" = ${before} WHERE "workspaceId" = ${fixture.workspaceId}`;
-      await resumeParkedWork({ now: NOW });
-      expect(await statusOf(stale.job.id)).toBe("CANCELLED");
+
+      it("sizes each job from its own request, also past the first batch of 50 payloads", async () => {
+        const fixture = await newWorkspace({ images: 60, micros: 3_000_000 });
+        // 55 ordinary posts (1 picture each) and, last in line, a request for 3
+        // variants: its request is not among the first 50 that were read.
+        const created = (index: number) =>
+          later(earlier(NOW, 3 * HOUR), index * 1_000);
+        const ordinary = Array.from({ length: 55 }, (_, index): JobSeed => ({
+          createdAt: created(index),
+        }));
+        const ids = await seedJobs(fixture, [
+          ...ordinary,
+          {
+            payload: { request: "a", variantCount: 3 },
+            createdAt: created(55),
+          },
+        ]);
+
+        const summary = await resumeParkedWork({
+          workspaceId: fixture.workspaceId,
+          now: NOW,
+        });
+
+        expect(summary).toEqual({ resumed: 56, cancelled: 0, stillParked: 0 });
+        expect(await statusOf(ids[55]!.jobId)).toBe("QUEUED");
+        // 55 + 3 pictures: the variants request was sized from its own payload.
+        expect(await balanceOf(fixture.workspaceId, "IMAGE")).toEqual({
+          used: 0,
+          reserved: 58,
+        });
+      });
     });
 
     it("honours the limit", async () => {
@@ -650,8 +1366,9 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
         workspaceId: fixture.workspaceId,
         now: NOW,
       });
-      // Shadow sweeps every workspace: other tests' leftovers are drained too.
-      expect(summary.resumed).toBeGreaterThanOrEqual(1);
+      // Shadow sweeps every workspace; the strays of other files were retired
+      // before the test, so the job is the only one.
+      expect(summary.resumed).toBe(1);
       expect(await statusOf(job.id)).toBe("QUEUED");
       const [event] = await dispatchEventsOf(job.id);
       expect(event!.payload).not.toHaveProperty("attemptToken");
@@ -663,7 +1380,7 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       const alive = await seedJob(fixture);
       const gone = await seedJob(fixture, { taskStatus: "CANCELLED" });
       const summary = await drainParkedWork({ now: NOW });
-      expect(summary.resumed).toBeGreaterThanOrEqual(1);
+      expect(summary).toEqual({ resumed: 1, cancelled: 1, stillParked: 0 });
       expect(await statusOf(alive.job.id)).toBe("QUEUED");
       expect(await statusOf(gone.job.id)).toBe("CANCELLED");
     });

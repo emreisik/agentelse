@@ -840,13 +840,17 @@ const generateImage = defineTool({
           },
         };
       }
-      if (settled.status === "FAILED") {
+      if (settled.status === "FAILED" || settled.status === "CANCELLED") {
         return {
           status: "ERROR",
           result: {
             outcome: "image_failed",
             taskId: submission.taskId,
-            error: settled.errorMessage ?? "unknown error",
+            error:
+              settled.errorMessage ??
+              (settled.status === "CANCELLED"
+                ? "the task was cancelled"
+                : "unknown error"),
             note: "Tell the client honestly that the image could not be generated and offer to try again.",
           },
         };

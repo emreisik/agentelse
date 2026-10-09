@@ -23,6 +23,9 @@ vi.mock("openai", () => {
 const toAgentelseError = vi.fn((error: unknown) => error);
 vi.mock("@/server/chat/openai-chat-client", () => ({ toAgentelseError }));
 
+import { recordUsage } from "@/server/billing/usage-recorder";
+import { priceReasoningCall } from "@/server/reasoning/reasoning-pricing";
+
 const { runOpenAIStructuredWithSearch, runOpenAITextWithSearch } =
   await import("./openai-search-client");
 
@@ -269,4 +272,115 @@ describe("runOpenAIStructuredWithSearch", () => {
     });
     expect(create).not.toHaveBeenCalled();
   });
+});
+
+// A search call is paid text work: recordUsage hands it to the operation's meter
+// (billing/usage-meter.ts) and the meter's cost is what an AI_MICROS operation
+// settles (and what the per-task ceiling is measured against). So every Responses
+// call, the cut-off one included, must leave a row with its real cost and the
+// number of searches the model ran (each is billed on top of tokens). (recordUsage
+// is the setup file's stub here; the real one is proven against the ledger in
+// billing/meter-wiring.integration.test.ts.)
+describe("usage rows handed to the operation meter", () => {
+  const rows = () => vi.mocked(recordUsage).mock.calls.map(([row]) => row);
+
+  const calls: [string, () => Promise<unknown>][] = [
+    ["runOpenAITextWithSearch", () => runOpenAITextWithSearch(input)],
+    [
+      "runOpenAIStructuredWithSearch",
+      () => runOpenAIStructuredWithSearch(input),
+    ],
+  ];
+
+  it.each(calls)(
+    "%s records one SEARCH row with the real cost and the number of searches",
+    async (_name, run) => {
+      await run();
+
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({
+        kind: "SEARCH",
+        provider: "openai",
+        model: "gpt-5.6-luna",
+        success: true,
+        costEstimated: false,
+        inputTokens: 1_200,
+        outputTokens: 340,
+        webSearchCalls: 2,
+      });
+      const priced = priceReasoningCall({
+        model: "gpt-5.6-luna",
+        inputTokens: 1_200,
+        outputTokens: 340,
+        webSearchCalls: 2,
+      }).costUsd;
+      expect(rows()[0]!.costUsd).toBeGreaterThan(0);
+      expect(rows()[0]!.costUsd).toBeCloseTo(priced, 8);
+      // The searches are part of the price, not just the tokens.
+      expect(rows()[0]!.costUsd).toBeGreaterThan(
+        priceReasoningCall({
+          model: "gpt-5.6-luna",
+          inputTokens: 1_200,
+          outputTokens: 340,
+          webSearchCalls: 0,
+        }).costUsd,
+      );
+    },
+  );
+
+  it.each(calls)(
+    "%s records the cut-off answer too: both calls are billed",
+    async (_name, run) => {
+      create
+        .mockResolvedValueOnce(
+          response({
+            status: "incomplete",
+            incomplete_details: { reason: "max_output_tokens" },
+            output_text: "",
+            output: [{ type: "web_search_call" }],
+          }),
+        )
+        .mockResolvedValueOnce(response());
+
+      await run();
+
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(rows().map((row) => row.webSearchCalls)).toEqual([1, 2]);
+      expect(rows().every((row) => row.kind === "SEARCH" && row.success)).toBe(
+        true,
+      );
+      expect(rows()[1]!.costUsd).toBeGreaterThan(rows()[0]!.costUsd);
+    },
+  );
+
+  it.each(calls)(
+    "%s records a failed call as a zero-cost row, but not a request the API refused",
+    async (_name, run) => {
+      create.mockRejectedValueOnce(
+        Object.assign(new Error("overloaded"), { status: 503 }),
+      );
+      await expect(run()).rejects.toThrow("overloaded");
+      create.mockRejectedValueOnce(new Error("socket hang up"));
+      await expect(run()).rejects.toThrow("socket hang up");
+      create.mockRejectedValueOnce(
+        Object.assign(new Error("bad request"), { status: 400 }),
+      );
+      await expect(run()).rejects.toThrow("bad request");
+
+      // The 400 was never billed: no row. The other two may have been.
+      expect(rows()).toHaveLength(2);
+      expect(rows()[0]).toMatchObject({
+        kind: "SEARCH",
+        success: false,
+        costUsd: 0,
+        costEstimated: true,
+        errorCode: "503",
+      });
+      expect(rows()[1]).toMatchObject({
+        success: false,
+        costUsd: 0,
+        errorCode: "NETWORK",
+      });
+    },
+  );
 });

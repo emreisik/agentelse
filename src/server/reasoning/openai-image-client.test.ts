@@ -8,7 +8,7 @@ vi.mock("@/lib/env", () => ({
 }));
 
 const putAssetMock = vi.fn(
-  async (buffer: Buffer, ext: string, mimeType: string) => ({
+  async (buffer: Buffer, ext: string) => ({
     storageKey: `r2://fake.${ext}`,
     filename: `fake.${ext}`,
   }),
@@ -26,6 +26,7 @@ vi.mock("@/server/repositories/reasoning-call.repository", () => ({
   },
 }));
 
+import { recordUsage } from "@/server/billing/usage-recorder";
 import { generateOpenAIImage } from "@/server/reasoning/openai-image-client";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -47,6 +48,7 @@ describe("openai-image-client", () => {
     putAssetMock.mockClear();
     recordMock.mockClear();
     recordMock.mockResolvedValue({});
+    vi.mocked(recordUsage).mockClear();
   });
 
   afterEach(() => {
@@ -285,5 +287,125 @@ describe("openai-image-client", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     expect(await generateOpenAIImage("a red apple")).not.toBeNull();
+  });
+
+  // The plan charges an IMAGE right for the pictures the operation's meter counted
+  // (billing/operation.ts), and recordUsage hands a call to that meter only as
+  // { kind: "IMAGE", success: true, units }. So what this client reports is what a
+  // delivered post costs: a drawn picture must come out as exactly one successful
+  // unit, a failed attempt as none. (recordUsage is the setup file's stub here; the
+  // real one is proven against the ledger in billing/meter-wiring.integration.test.ts.)
+  describe("usage rows handed to the operation meter", () => {
+    const rows = () => vi.mocked(recordUsage).mock.calls.map(([row]) => row);
+
+    it.each([
+      ["a text-to-image render", undefined],
+      [
+        "an edit of an existing picture",
+        { data: "aGVsbG8=", mimeType: "image/jpeg" },
+      ],
+    ])("counts %s as exactly one drawn picture", async (_label, baseImage) => {
+      fetchMock.mockResolvedValue(
+        jsonResponse(200, { data: [{ b64_json: ONE_PX_PNG_B64 }] }),
+      );
+
+      expect(
+        await generateOpenAIImage("a red apple", baseImage),
+      ).not.toBeNull();
+
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({
+        kind: "IMAGE",
+        provider: "openai",
+        model: "gpt-image-2/high",
+        success: true,
+        units: 1,
+      });
+      // A billed render: a zero here would let the cost ceiling and the
+      // text-only charge see a free picture.
+      expect(rows()[0]!.costUsd).toBeGreaterThan(0);
+      // The row has to be storable as it is: a NaN duration makes the UsageEntry
+      // write fail (the meter would still count the picture).
+      expect(rows()[0]!.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("prices the row from the usage OpenAI reported, not from the list price", async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse(200, {
+          data: [{ b64_json: ONE_PX_PNG_B64 }],
+          usage: {
+            input_tokens: 1_000,
+            input_tokens_details: { text_tokens: 1_000, image_tokens: 0 },
+            output_tokens: 4_000,
+          },
+        }),
+      );
+
+      await generateOpenAIImage("a red apple");
+
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({
+        costEstimated: false,
+        inputTokens: 1_000,
+        outputTokens: 4_000,
+      });
+      // 1K text in @ $5/M + 4K image out @ $30/M
+      expect(rows()[0]!.costUsd).toBeCloseTo(0.005 + 0.12, 6);
+    });
+
+    it("counts a render that was billed but could not be stored once, as a drawn picture", async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse(200, { data: [{ b64_json: ONE_PX_PNG_B64 }] }),
+      );
+      putAssetMock.mockRejectedValueOnce(new Error("disk full"));
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      // The caller gets nothing back (and so hands the right back), but OpenAI
+      // billed the render: one success row, not a second "failed" one on top.
+      await expect(generateOpenAIImage("a red apple")).resolves.toBeNull();
+      spy.mockRestore();
+
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({ success: true, units: 1 });
+    });
+
+    it.each([
+      ["a network error", new Error("network down"), "NETWORK"],
+      ["a timeout", new DOMException("timed out", "TimeoutError"), "TIMEOUT"],
+    ])(
+      "counts %s as a failed attempt that drew nothing",
+      async (_label, failure, errorCode) => {
+        fetchMock.mockRejectedValue(failure);
+        const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        await expect(generateOpenAIImage("a red apple")).resolves.toBeNull();
+        spy.mockRestore();
+
+        expect(rows()).toHaveLength(1);
+        expect(rows()[0]).toMatchObject({
+          kind: "IMAGE",
+          provider: "openai",
+          success: false,
+          units: 0,
+          costUsd: 0,
+          costEstimated: true,
+          errorCode,
+        });
+      },
+    );
+
+    it("never counts a picture for a call the API refused or answered without one", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(500, { error: { message: "boom" } }),
+      );
+      await expect(generateOpenAIImage("a red apple")).resolves.toBeNull();
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { data: [] }));
+      await expect(generateOpenAIImage("a red apple")).resolves.toBeNull();
+      spy.mockRestore();
+
+      expect(rows().filter((row) => row.success)).toEqual([]);
+    });
   });
 });

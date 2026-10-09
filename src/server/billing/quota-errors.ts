@@ -79,6 +79,16 @@ export function isQuotaError(
 export const PLAN_ALLOWANCE_LIMIT = "planAllowance";
 export const NO_PLAN_LIMIT = "noPlan";
 
+// Bir BUDGET_EXCEEDED'ın günlük sayaçtan değil PLAN HAKKINDAN geldiğini söyler
+// (asBudgetStop'un işaretlediği `meta.limit`). Günlük sayaç ertesi gün açılır;
+// plan hakkı dönem yenilenene ya da ek paket gelene kadar kapalı kalır — bu fark,
+// "yine de devam et" diyen en-iyi-çaba yollarında önemlidir (bkz. hafta planlayıcı).
+export function isAllowanceStop(error: unknown): boolean {
+  if (!isAgentelseError(error) || error.code !== "BUDGET_EXCEEDED") return false;
+  const limit = (error.meta as { limit?: unknown } | undefined)?.limit;
+  return limit === PLAN_ALLOWANCE_LIMIT || limit === NO_PLAN_LIMIT;
+}
+
 export function asBudgetStop(error: QuotaExceededError | NoPlanError) {
   return new AgentelseError("BUDGET_EXCEEDED", error.message, {
     retryable: false,

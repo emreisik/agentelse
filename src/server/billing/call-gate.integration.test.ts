@@ -27,12 +27,23 @@ const B = (value: number) => BigInt(value);
 const runId = randomUUID().slice(0, 8);
 let counter = 0;
 const newWs = () => `ws_gate_${runId}_${++counter}`;
-const WINDOW_START = new Date("2026-10-01T00:00:00.000Z");
-const WINDOW_END = new Date("2027-12-01T00:00:00.000Z");
 
-async function workspace(micros: number | null) {
-  const ws = newWs();
-  if (micros === null) return ws; // no plan
+// The paid window comes from the clock, never from a written date: a fixed end
+// date is one day in the past, every workspace below would then read as "no plan"
+// and this suite would fail for no reason. It starts with the current month and
+// runs about 13 months on.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const today = new Date();
+const WINDOW_START = new Date(
+  Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1),
+);
+const WINDOW_END = new Date(WINDOW_START.getTime() + 400 * DAY_MS);
+
+// call-gate.ts remembers a refused workspace for this long (REFUSAL_TTL_MS).
+const REFUSAL_TTL_MS = 30_000;
+
+// An active plan whose period allowance is `micros` for the workspace.
+async function grantPlan(ws: string, micros: number) {
   await prisma.subscription.create({
     data: {
       workspaceId: ws,
@@ -54,8 +65,20 @@ async function workspace(micros: number | null) {
       updatedAt: new Date(),
     },
   });
+}
+
+async function workspace(micros: number | null) {
+  const ws = newWs();
+  if (micros !== null) await grantPlan(ws, micros); // null: no plan
   return ws;
 }
+
+// Allowance that arrives later (a purchased add-on).
+const topUp = (workspaceId: string, micros: number) =>
+  prisma.usageBalance.update({
+    where: { workspaceId_unit: { workspaceId, unit: "AI_MICROS" } },
+    data: { extraGranted: B(micros) },
+  });
 
 const balanceOf = async (workspaceId: string) => {
   const row = await prisma.usageBalance.findUniqueOrThrow({
@@ -86,6 +109,7 @@ const spend = (micros: number) => async () => {
 describeIntegration("plan allowance gate for one engine call", () => {
   beforeEach(() => resetCallGate());
   afterEach(() => {
+    vi.useRealTimers();
     config.current = { mode: "enforce", legacyBefore: null, legacyUntil: null };
   });
   afterAll(async () => {
@@ -153,6 +177,71 @@ describeIntegration("plan allowance gate for one engine call", () => {
     resetCallGate();
     await expect(
       gatedAiCall(call(ws, 60_000), spend(1_000)),
+    ).resolves.toBe("done");
+  });
+
+  // Only the clock is faked in the next tests: the database connection keeps its
+  // real timers.
+  it("forgets a refusal after 30 seconds: a customer who topped up is served again, and not before", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = Date.now();
+    const ws = await workspace(10_000);
+    await expect(
+      gatedAiCall(call(ws, 60_000), async () => "no"),
+    ).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
+
+    // Money arrives. The refusal is still fresh, so the same call is turned away
+    // without the ledger being asked ...
+    await topUp(ws, 500_000);
+    vi.setSystemTime(t0 + REFUSAL_TTL_MS - 1_000);
+    await expect(
+      gatedAiCall(call(ws, 60_000), async () => "no"),
+    ).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
+    expect(await balanceOf(ws)).toEqual({ used: 0, reserved: 0 });
+
+    // ... but once the 30 seconds are over the same call reaches the ledger
+    // again, and now it fits.
+    vi.setSystemTime(t0 + REFUSAL_TTL_MS + 1_000);
+    await expect(
+      gatedAiCall(call(ws, 60_000), spend(1_000)),
+    ).resolves.toBe("done");
+    expect(await balanceOf(ws)).toEqual({ used: 1_000, reserved: 0 });
+  });
+
+  it("remembers a workspace without a plan as refused for ANY amount, until the 30 seconds are over", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const t0 = Date.now();
+    const ws = await workspace(null);
+    await expect(
+      gatedAiCall(call(ws, 60_000), async () => "no"),
+    ).rejects.toMatchObject({ meta: { limit: "noPlan" } });
+
+    // The customer subscribes. Inside the 30 seconds even a call far smaller than
+    // the refused one is turned away (a missing plan refuses every amount, unlike
+    // a balance that is merely too small) ...
+    await grantPlan(ws, 3_000_000);
+    vi.setSystemTime(t0 + REFUSAL_TTL_MS - 1_000);
+    const smaller = vi.fn(async () => "never");
+    await expect(gatedAiCall(call(ws, 1), smaller)).rejects.toMatchObject({
+      code: "BUDGET_EXCEEDED",
+      meta: { limit: "noPlan" },
+    });
+    expect(smaller).not.toHaveBeenCalled();
+
+    // ... and afterwards the ledger is asked again.
+    vi.setSystemTime(t0 + REFUSAL_TTL_MS + 1_000);
+    await expect(gatedAiCall(call(ws, 1), spend(1))).resolves.toBe("done");
+  });
+
+  it("remembers a refusal per workspace: another customer is not turned away because of it", async () => {
+    const short = await workspace(10_000);
+    const funded = await workspace(3_000_000);
+    await expect(
+      gatedAiCall(call(short, 60_000), async () => "no"),
+    ).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
+
+    await expect(
+      gatedAiCall(call(funded, 60_000), spend(1_000)),
     ).resolves.toBe("done");
   });
 

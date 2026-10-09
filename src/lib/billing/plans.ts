@@ -175,18 +175,12 @@ export const TASK_CEILING = {
 // üretmek (Studio, "revize et") bir görsel modeli çağırır ve gerçek maliyet
 // doğurur. Açık ve maliyeti sınırlı kural: gönderi başına ilk `freePerPost`
 // görsel revizyon ek hak yemez (deneme yanılma payı); sonrakilerin her biri 1
-// IMAGE hakkı yer. Kalite varsayılanı DEĞİŞMEZ (maliyeti düşürmek için kaliteyi
+// IMAGE hakkı yer. Hangi revizyonun hangisi olduğunu sürüm geçmişi belirler
+// (revision-policy.ts). Kalite varsayılanı DEĞİŞMEZ (maliyeti düşürmek için kaliteyi
 // kontrolsüz azaltmak şartnameye aykırı); gerçek maliyet verisiyle sahip karar verir.
 export const REVISION_POLICY = {
   freePerPost: 2,
 } as const;
-
-// `currentVersion`: gönderinin şu anki (en yeni) sürüm numarası, 1'den başlar.
-// Yapılacak revizyon bir sonraki sürümü üretir; ilk `freePerPost` revizyon
-// (sürüm 2, 3) ücretsizdir, 4. sürümden itibaren her revizyon 1 hak yer.
-export function revisionCostsRight(currentVersion: number): boolean {
-  return currentVersion > REVISION_POLICY.freePerPost;
-}
 
 export function getPlan(key: PlanKey): PlanDef {
   return PLANS[key];

@@ -122,6 +122,7 @@ describeIntegration("billing webhook events", () => {
     await prisma.usageBalance.deleteMany({ where });
     await prisma.subscription.deleteMany({ where });
     await prisma.billingCustomer.deleteMany({ where });
+    await prisma.billingReversal.deleteMany({ where });
     await prisma.billingEvent.deleteMany({
       where: { workspaceId: { startsWith: `ws_evt_${runId}` } },
     });

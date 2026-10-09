@@ -875,8 +875,11 @@ const SESSION_ID = /^cs_(?:test|live)_[A-Za-z0-9]{8,}$/;
 // active   : ödeme uygulandı.
 // pending  : ödeme henüz işlenmedi (gecikmeli yöntem, olay yolda).
 // reversed : bu ödemenin parası iade/itiraz edildi; plan açılmadı.
+// duplicate: workspace'in zaten süren bir aboneliği var; bu ikinci ödeme uygulanmadı
+//            (abonelik Stripe'ta iptal edildi, ödeme elle iade edilir).
 // unknown  : oturum bu workspace'e ait değil / tanınmadı / okunamadı.
-export type ReturnState = "active" | "pending" | "reversed" | "unknown";
+export type ReturnState =
+  "active" | "pending" | "reversed" | "duplicate" | "unknown";
 
 // Kullanıcı Checkout'tan dönünce webhook'u BEKLEMEDEN durumu eşitler (aynı işleyici:
 // tekrar teslim zararsız). Oturum bu workspace'in müşterisine ait değilse hiçbir şey
@@ -913,7 +916,8 @@ export async function reconcileCheckoutReturn(
       now,
     });
     if (outcome.status === "PROCESSED") return "active";
-    return outcome.note === "invoice-reversed" ? "reversed" : "pending";
+    if (outcome.note === "invoice-reversed") return "reversed";
+    return outcome.note === "duplicate-subscription" ? "duplicate" : "pending";
   } catch (error) {
     console.error(
       "[billing] could not reconcile a checkout return:",

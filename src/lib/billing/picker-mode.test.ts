@@ -127,6 +127,9 @@ describe("bannerFor", () => {
     expect(bannerFor({ checkout: "success" }, "reversed")).toMatch(
       /was refunded/,
     );
+    expect(bannerFor({ checkout: "success" }, "duplicate")).toMatch(
+      /second payment was not applied/,
+    );
     // A payment we cannot match is not "received", and no update is promised.
     for (const returned of ["unknown", null] as const) {
       const text = bannerFor({ checkout: "success" }, returned);

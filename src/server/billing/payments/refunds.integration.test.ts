@@ -77,6 +77,7 @@ describeIntegration("revoking allowance (refund, chargeback)", () => {
     await prisma.usageGrant.deleteMany({ where });
     await prisma.usageBalance.deleteMany({ where });
     await prisma.subscription.deleteMany({ where });
+    await prisma.billingReversal.deleteMany({ where });
   });
 
   describe("ledger.revokeUsage", () => {

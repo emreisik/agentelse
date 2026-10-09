@@ -561,6 +561,35 @@ describeIntegration("Faz 4 review fixes", () => {
       expect((await rowOf(workspaceId)).status).toBe("ACTIVE");
     });
 
+    it("the customer who comes back from the second checkout is told it was not applied", async () => {
+      const fake = createFakeStripe();
+      const workspaceId = newWs();
+      const first = await paidAndProcessed(fake, workspaceId);
+      const second = await secondSubscription(
+        fake,
+        workspaceId,
+        first.customerId,
+      );
+      const session = fake.session({
+        mode: "subscription",
+        customerId: first.customerId,
+        subscriptionId: second.sub.id,
+        clientReferenceId: workspaceId,
+        metadata: { kind: "subscription", workspaceId },
+      });
+
+      expect(
+        await reconcileCheckoutReturn(
+          { workspaceId, sessionId: session.id },
+          pay(fake),
+          NOW,
+        ),
+      ).toBe("duplicate");
+      expect((await rowOf(workspaceId)).stripeSubscriptionId).toBe(
+        first.sub.id,
+      );
+    });
+
     it("takes over when the linked subscription already ended in Stripe (a missed cancellation event)", async () => {
       const fake = createFakeStripe();
       const workspaceId = newWs();

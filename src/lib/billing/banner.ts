@@ -5,10 +5,15 @@
 type Params = Record<string, string | string[] | undefined>;
 
 export type CheckoutReturn =
-  "active" | "pending" | "reversed" | "unknown" | null;
+  "active" | "pending" | "reversed" | "duplicate" | "unknown" | null;
 
 const first = (value: string | string[] | undefined): string | undefined =>
   Array.isArray(value) ? value[0] : value;
+
+// A second subscription was paid while the first one is running: it was not applied (and
+// is canceled so it cannot renew); the money is refunded by hand.
+const DUPLICATE =
+  "This workspace already has an active subscription, so this second payment was not applied and the extra subscription was canceled. Please contact support to be refunded.";
 
 // Not a payment we can match to this workspace (another workspace's session, an old
 // link, a payment outage): neutral, and it does not promise an update.
@@ -35,6 +40,8 @@ export function bannerFor(
         return "Payment received. It is still being confirmed; reload this page in a minute.";
       case "reversed":
         return "This payment was refunded, so the plan was not activated.";
+      case "duplicate":
+        return DUPLICATE;
       default:
         return UNMATCHED;
     }

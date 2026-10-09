@@ -1102,6 +1102,37 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       });
     });
 
+    // The wake-up also asks that the task is still wanted. A client who cancels the
+    // post after its picture was reserved but before the job is woken must not get
+    // the job revived (nor keep a picture held for it).
+    it("does not wake a job whose task was cancelled while its allowance was being reserved", async () => {
+      const fixture = await newWorkspace({ images: 3, micros: 3_000_000 });
+      const { job, task } = await seedJob(fixture);
+      gate.afterAttempt = async () => {
+        gate.afterAttempt = null;
+        await prisma.task.update({
+          where: { id: task.id },
+          data: { status: "CANCELLED" },
+        });
+      };
+
+      const summary = await resumeParkedWork({
+        workspaceId: fixture.workspaceId,
+        now: NOW,
+      });
+
+      expect(summary).toEqual({ resumed: 0, cancelled: 0, stillParked: 1 });
+      expect(await statusOf(job.id)).toBe("WAITING_BUDGET");
+      expect(await dispatchEventsOf(job.id)).toHaveLength(0);
+      // The picture was reserved and handed back: nothing stays held.
+      const reservations = await reservationsOf(fixture.workspaceId, "IMAGE");
+      expect(reservations.map((row) => row.status)).toEqual(["RELEASED"]);
+      expect(await balanceOf(fixture.workspaceId, "IMAGE")).toEqual({
+        used: 0,
+        reserved: 0,
+      });
+    });
+
     it("only touches the workspace it was asked about", async () => {
       const a = await newWorkspace({ images: 5, micros: 3_000_000 });
       const b = await newWorkspace({ images: 5, micros: 3_000_000 });

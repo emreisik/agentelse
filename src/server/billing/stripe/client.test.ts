@@ -214,6 +214,71 @@ describe("createStripeHttp", () => {
     expect(error.message).not.toContain("api.stripe.com");
   });
 
+  describe("a 2xx answer whose body cannot be read", () => {
+    const html = () => new Response("<html>bad gateway page</html>", { status: 200 });
+    const cutOff = () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"id":"in_1","sta'));
+            controller.error(new Error("connection reset"));
+          },
+        }),
+        { status: 200 },
+      );
+
+    it("is NEVER returned as an empty answer: a read that finds nothing would look like 'no such object'", async () => {
+      for (const bad of [html, cutOff]) {
+        const fetchImpl = vi.fn(async () => bad());
+        const http = client(fetchImpl as unknown as typeof fetch, {
+          maxRetries: 1,
+        });
+
+        const error = (await http({ method: "GET", path: "/v1/charges/ch_1" }).catch(
+          (e) => e,
+        )) as Error;
+
+        expect(error).toBeInstanceOf(StripeNetworkError);
+        expect(error.message).toContain("unreadable response");
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+      }
+    });
+
+    it("a read that was cut off is retried and the second, whole answer is used", async () => {
+      const fetchImpl = vi
+        .fn()
+        .mockImplementationOnce(async () => cutOff())
+        .mockImplementationOnce(async () => json(200, { id: "ch_1" }));
+      const http = client(fetchImpl as unknown as typeof fetch);
+
+      expect(await http({ method: "GET", path: "/v1/charges/ch_1" })).toEqual({
+        id: "ch_1",
+      });
+    });
+
+    it("a write without an idempotency key is not repeated (it may have been applied) and is reported as a network failure", async () => {
+      const fetchImpl = vi.fn(async () => html());
+      const http = client(fetchImpl as unknown as typeof fetch);
+
+      await expect(
+        http({ method: "POST", path: "/v1/refunds", body: { charge: "ch_1" } }),
+      ).rejects.toBeInstanceOf(StripeNetworkError);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it("a real error status with an unreadable body is still the API error, not a network one", async () => {
+      const fetchImpl = vi.fn(async () => new Response("<html>", { status: 404 }));
+      const http = client(fetchImpl as unknown as typeof fetch);
+
+      const error = (await http({ method: "GET", path: "/v1/x" }).catch(
+        (e) => e,
+      )) as StripeApiError;
+
+      expect(error).toBeInstanceOf(StripeApiError);
+      expect(error.isNotFound).toBe(true);
+    });
+  });
+
   it("does not leak the secret key into an error message", async () => {
     const http = client((async () =>
       json(401, {

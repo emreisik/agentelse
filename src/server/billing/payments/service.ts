@@ -2,7 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { paidPlanRunning } from "@/lib/billing/entitlements-core";
-import { linkedForMode } from "@/lib/billing/linkage";
+import { firstMonthUsed, linkedForMode } from "@/lib/billing/linkage";
 import {
   EXTRA_PACKS,
   PLANS,
@@ -25,6 +25,7 @@ import {
   StripeShapeError,
   type StripeInvoiceRow,
   type StripePromotionFacts,
+  type StripeSubscriptionFacts,
 } from "../stripe/facts";
 import type { StripeGateway } from "../stripe/gateway";
 import { ensureBillingCustomer, forgetBillingCustomer } from "./customers";
@@ -96,11 +97,11 @@ const MESSAGES: Record<BillingActionError, string> = {
     "The payment provider could not complete this just now. Nothing was charged. Try again in a moment.",
   FULL_ACCESS: "This workspace has full access, so there is nothing to buy.",
   BILLING_UNAVAILABLE:
-    "Billing is temporarily unavailable. We have been notified. Please try again later.",
+    "Billing is temporarily unavailable. Please try again later.",
   SUBSCRIPTION_ENDING:
     "This subscription is set to end. Resume it in My subscription, then change the plan.",
   BILLING_CHANGED_OUTSIDE:
-    "The billing period of this subscription was changed outside the app, so the plan cannot be changed here. Please contact support.",
+    "The billing period of this subscription was changed outside the app, so the plan cannot be changed here. Please contact hello@agentelse.ai.",
   CHANGE_IN_PROGRESS:
     "A plan change is still being processed. Check My subscription in a minute.",
   OUTCOME_UNKNOWN:
@@ -177,14 +178,18 @@ export function describeProviderError(error: unknown): BillingActionError {
   throw error;
 }
 
-// Stripe'a gönderilen bir DEĞİŞİKLİĞİN sonucu bilinmiyor mu? Ağ hatası, bozuk yanıt ve 5xx
-// değişikliğin uygulanmış olabileceği anlamına gelir (4xx kesin reddir). Bu durumda
-// "hiçbir şey değişmedi / tahsil edilmedi" denemez: durum yeniden okunur ve dürüst mesaj verilir.
+// Stripe'a gönderilen bir DEĞİŞİKLİĞİN sonucu bilinmiyor mu? Ağ hatası, bozuk yanıt, 5xx ve
+// 409 değişikliğin uygulanmış olabileceği anlamına gelir (diğer 4xx kesin reddir). 409:
+// aynı Idempotency-Key ile bir istek sürüyor ya da sürmüştü (istemci zaman aşımından sonra
+// aynı anahtarla yeniden dener); yani değişiklik büyük olasılıkla Stripe'ta işleniyor.
+// Bu durumda "hiçbir şey değişmedi / tahsil edilmedi" denemez: durum yeniden okunur ve
+// dürüst mesaj verilir.
 export function isAmbiguousProviderError(error: unknown): boolean {
   return (
     error instanceof StripeNetworkError ||
     error instanceof StripeShapeError ||
-    (error instanceof StripeApiError && error.status >= 500)
+    (error instanceof StripeApiError &&
+      (error.status >= 500 || error.status === 409))
   );
 }
 
@@ -195,17 +200,22 @@ class OutcomeUnknownError extends Error {
   }
 }
 
-// İlk ay kampanyası: yalnız ilk aylık aboneliğe (bu workspace daha önce Stripe ile
-// ödeme yapmadı, kampanyayı kullanmadı) ve kampanya fiyatı olan plana.
+// İlk ay kampanyası: yalnız ilk aylık aboneliğe (bu workspace ÇALIŞAN modda daha önce Stripe
+// ile ödeme yapmadı, kampanyayı kullanmadı) ve kampanya fiyatı olan plana. Plan seçicideki
+// "indirim sunuluyor" kararıyla AYNI kural (`firstMonthUsed`): ekran sunup sunucu reddetmez.
 export function firstMonthEligible(
-  row: { introOffer: boolean; stripeSubscriptionId: string | null } | null,
+  row: {
+    introOffer: boolean;
+    stripeSubscriptionId: string | null;
+    stripeLivemode: boolean | null;
+  } | null,
   planKey: PlanKey,
   interval: BillingInterval,
+  mode: StripeMode,
 ): boolean {
   return (
     interval === "MONTH" &&
-    !row?.stripeSubscriptionId &&
-    !row?.introOffer &&
+    !firstMonthUsed(row, mode) &&
     PLANS[planKey].firstMonthCents < PLANS[planKey].monthlyCents
   );
 }
@@ -240,7 +250,13 @@ export function describePromotion(promotion: StripePromotionFacts): string {
 
 function promotionUsable(
   promotion: StripePromotionFacts,
-  context: { now: Date; customerId: string | null; amountCents?: number },
+  context: {
+    now: Date;
+    customerId: string | null;
+    amountCents?: number;
+    // Bu workspace bu modda daha önce ödeme yaptı mı (first_time_transaction kısıtı için).
+    paidBefore: boolean;
+  },
 ): boolean {
   const { coupon } = promotion;
   if (!promotion.active || !coupon || !coupon.valid) return false;
@@ -263,12 +279,22 @@ function promotionUsable(
   if (promotion.customerId && promotion.customerId !== context.customerId) {
     return false;
   }
-  if (
-    promotion.minimumAmount !== null &&
-    context.amountCents !== undefined &&
-    context.amountCents < promotion.minimumAmount
-  ) {
-    return false;
+  // "Yalnız ilk işlem" kısıtı: Stripe geçmişi olan müşteride Checkout'ta reddederdi.
+  if (promotion.firstTimeOnly && context.paidBefore) return false;
+  if (promotion.minimumAmount !== null) {
+    // Fiyatlarımız USD: başka para biriminde bir alt sınır hiçbir Checkout'ta sağlanamaz.
+    if (
+      promotion.minimumAmountCurrency !== null &&
+      promotion.minimumAmountCurrency.toLowerCase() !== "usd"
+    ) {
+      return false;
+    }
+    if (
+      context.amountCents !== undefined &&
+      context.amountCents < promotion.minimumAmount
+    ) {
+      return false;
+    }
   }
   return true;
 }
@@ -297,13 +323,30 @@ async function resolvePromotion(
     select: { stripeCustomerId: true },
   });
   try {
-    const promotion = await deps.gateway.lookupPromotionCode(input.code.trim());
+    const promotion = await deps.gateway.lookupPromotionCode(
+      input.code.trim(),
+      link?.stripeCustomerId ?? null,
+    );
+    if (!promotion) return fail("PROMO_INVALID");
+    const paidBefore = promotion.firstTimeOnly
+      ? firstMonthUsed(
+          await prisma.subscription.findUnique({
+            where: { workspaceId: input.workspaceId },
+            select: {
+              stripeSubscriptionId: true,
+              stripeLivemode: true,
+              introOffer: true,
+            },
+          }),
+          deps.mode,
+        )
+      : false;
     if (
-      !promotion ||
       !promotionUsable(promotion, {
         now,
         customerId: link?.stripeCustomerId ?? null,
         amountCents: input.amountCents,
+        paidBefore,
       })
     ) {
       return fail("PROMO_INVALID");
@@ -369,12 +412,15 @@ export async function startSubscriptionCheckout(
   if (
     row &&
     linkedForMode(row, deps.mode) &&
-    (row.status === "ACTIVE" || row.status === "PAST_DUE") &&
-    (await stillPaying(row, deps, now))
+    (row.status === "ACTIVE" || row.status === "PAST_DUE")
   ) {
-    return fail(
-      row.status === "PAST_DUE" ? "PAYMENT_PROBLEM" : "ALREADY_SUBSCRIBED",
-    );
+    const paying = await stillPaying(row, deps, now);
+    if (paying !== "ended") {
+      const failing =
+        paying === "failing" ||
+        (paying === "unverified" && row.status === "PAST_DUE");
+      return fail(failing ? "PAYMENT_PROBLEM" : "ALREADY_SUBSCRIBED");
+    }
   }
   // Webhook kaçmış / alıcı geri dönmemiş olabilir: Stripe bu müşterinin ZATEN süren bir
   // aboneliğini tutuyorsa ikinci bir Checkout çift tahsilat olurdu. Ödenmişse ayrıca bağlanır.
@@ -397,7 +443,7 @@ export async function startSubscriptionCheckout(
     input.promoCode !== null &&
     input.promoCode !== "";
   if (hasPromo && input.applyFirstMonth) return fail("INVALID_INPUT");
-  const eligible = firstMonthEligible(row, planKey, interval);
+  const eligible = firstMonthEligible(row, planKey, interval, deps.mode);
   if (input.applyFirstMonth && !eligible) return fail("DISCOUNT_NOT_AVAILABLE");
 
   // Kod geçersizse Stripe'a müşteri bile açılmaz (yazım hatası kayıt bırakmasın).
@@ -446,6 +492,19 @@ export async function startSubscriptionCheckout(
     );
     return { ok: true, url: session.url };
   } catch (error) {
+    // Ön denetimin görmediği bir kod kısıtı (Stripe'ın kendi kuralı): genel "tekrar dene"
+    // yerine müşteri kodun geçerli olmadığını görür.
+    if (
+      promotionCodeId &&
+      error instanceof StripeApiError &&
+      error.status === 400 &&
+      /promotion[_ ]code|coupon/i.test(`${error.param ?? ""} ${error.message}`)
+    ) {
+      console.error(
+        `[billing] Stripe refused a promotion code at checkout: ${error.message.slice(0, 160)}`,
+      );
+      return fail("PROMO_INVALID");
+    }
     return fail(describeProviderError(error));
   }
 }
@@ -573,7 +632,10 @@ async function loadPayingRow(workspaceId: string, mode: StripeMode) {
 
 // Yerel kayıt "ödüyor" diyor; abonelik Stripe'ta gerçekten sürüyor mu? Bitmişse satır
 // eşitlenir (CANCELED) ve yeniden abone olunabilir. Doğrulanamazsa çift tahsilat riskine
-// karşı "sürüyor" sayılır.
+// karşı engellenir ("unverified"). "failing": Stripe ödemeyi başarısız görüyor (satır bu
+// çağrıda eşitlendi); cevap eşitlemeden ÖNCE okunmuş satır durumuna göre seçilmez.
+type PayingState = "ended" | "failing" | "running" | "unverified";
+
 async function stillPaying(
   row: {
     workspaceId: string;
@@ -586,19 +648,24 @@ async function stillPaying(
   },
   deps: PaymentDeps,
   now: Date,
-): Promise<boolean> {
+): Promise<PayingState> {
   try {
     const sub = await deps.gateway.getSubscription(row.stripeSubscriptionId!);
     // Stripe nesneyi tanımıyor (ör. test verisi silinmiş): ödenmiş süre bittiyse engelleme.
-    if (!sub) return paidPlanRunning(row, now);
+    if (!sub) return paidPlanRunning(row, now) ? "running" : "ended";
     await syncSubscriptionState({ workspaceId: row.workspaceId, sub, now });
-    return sub.status !== "canceled" && sub.status !== "incomplete_expired";
+    if (sub.status === "canceled" || sub.status === "incomplete_expired") {
+      return "ended";
+    }
+    return sub.status === "past_due" || sub.status === "unpaid"
+      ? "failing"
+      : "running";
   } catch (error) {
     console.error(
       "[billing] could not verify the subscription before checkout:",
       error instanceof Error ? error.name : error,
     );
-    return true;
+    return "unverified";
   }
 }
 
@@ -676,6 +743,30 @@ async function mutate<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+// Stripe'tan yeniden okuyup yerel satırla eşitler. "gone": Stripe artık böyle bir abonelik
+// tanımıyor; "unreadable": okunamadı ya da eşitlenemedi (tick/süpürme sonra eşitler).
+type Resynced =
+  | { state: "alive" | "ended"; sub: StripeSubscriptionFacts }
+  | { state: "gone" | "unreadable" };
+
+async function resyncFromStripe(
+  workspaceId: string,
+  subscriptionId: string,
+  deps: PaymentDeps,
+  now?: Date,
+): Promise<Resynced> {
+  try {
+    const sub = await deps.gateway.getSubscription(subscriptionId);
+    if (!sub) return { state: "gone" };
+    await syncSubscriptionState({ workspaceId, sub, now });
+    const ended =
+      sub.status === "canceled" || sub.status === "incomplete_expired";
+    return { state: ended ? "ended" : "alive", sub };
+  } catch {
+    return { state: "unreadable" };
+  }
+}
+
 // Bir değişiklik denemesi hatayla bitti. Sonuç belirsizse durum Stripe'tan yeniden okunup
 // eşitlenir (uygulandıysa ekran doğruyu gösterir) ve dürüst mesaj verilir.
 async function failedChange(
@@ -686,12 +777,7 @@ async function failedChange(
   now?: Date,
 ) {
   if (error instanceof OutcomeUnknownError) {
-    try {
-      const fresh = await deps.gateway.getSubscription(subscriptionId);
-      if (fresh) await syncSubscriptionState({ workspaceId, sub: fresh, now });
-    } catch {
-      // Yeniden okuma da olmadı: tick/süpürme sonra eşitler.
-    }
+    await resyncFromStripe(workspaceId, subscriptionId, deps, now);
     return fail("OUTCOME_UNKNOWN");
   }
   return fail(describeProviderError(error));
@@ -712,6 +798,23 @@ async function setCancel(
     await syncAfterMutation(workspaceId, sub, now);
     return { ok: true };
   } catch (error) {
+    // Stripe kesin reddettiyse (4xx) çoğu zaman abonelik zaten bitmiştir (kaçmış bir iptal
+    // olayı): gerçeği eşitle ki satır "devam ediyor" kalıp "tekrar dene" döngüsü olmasın.
+    if (
+      error instanceof StripeApiError &&
+      error.status >= 400 &&
+      error.status < 500
+    ) {
+      const fresh = await resyncFromStripe(
+        workspaceId,
+        row.stripeSubscriptionId,
+        deps,
+        now,
+      );
+      if (fresh.state === "gone" || fresh.state === "ended") {
+        return fail("NO_SUBSCRIPTION");
+      }
+    }
     return failedChange(
       error,
       workspaceId,
@@ -735,6 +838,30 @@ export const resumeSubscription = (
 ) => setCancel(workspaceId, false, deps, now);
 
 // -- Plan değiştirme --------------------------------------------------------------
+
+// Stripe'tan okuyup satırla eşitler. Eşitleme "bayat görüntü" derse (araya başka bir istek
+// daha yeni bir durum yazmış) bir kez daha okur; ikinci okuma da bayatsa "stale".
+type ReadAndSynced =
+  | { kind: "ok"; sub: StripeSubscriptionFacts }
+  | { kind: "gone" }
+  | { kind: "stale" };
+
+async function readAndSync(
+  workspaceId: string,
+  subscriptionId: string,
+  deps: PaymentDeps,
+  now?: Date,
+): Promise<ReadAndSynced> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const sub = await deps.gateway.getSubscription(subscriptionId);
+    if (!sub) return { kind: "gone" };
+    const synced = await syncSubscriptionState({ workspaceId, sub, now });
+    if (!(synced.applied && synced.notes.includes("stale-snapshot"))) {
+      return { kind: "ok", sub };
+    }
+  }
+  return { kind: "stale" };
+}
 
 export type PlanChangeKind =
   | "unchanged"
@@ -771,13 +898,25 @@ export async function changePlan(
   if (first.cancelAtPeriodEnd) return fail("SUBSCRIPTION_ENDING");
 
   try {
-    const current = await deps.gateway.getSubscription(
+    // Karar vermeden ÖNCE Stripe'ın güncel hâliyle eşitle (ödemesi başarısız / bitmiş bir
+    // abonelik satırı eski bırakılmasın), eşitlenen anlık görüntüyle karar ver.
+    const read = await readAndSync(
+      workspaceId,
       first.stripeSubscriptionId,
+      deps,
+      now,
     );
-    if (!current || current.status !== "active" || !current.itemId) {
+    if (read.kind === "gone") return fail("NO_SUBSCRIPTION");
+    // İki kez okundu, ikisi de başka bir isteğin yazdığı durumdan eski: aynı anda başka bir
+    // değişiklik (ikinci sekme, webhook) sürüyor; eski görüntüyle plan kararı verilmez.
+    if (read.kind === "stale") return fail("CHANGE_IN_PROGRESS");
+    const current = read.sub;
+    if (current.status === "past_due" || current.status === "unpaid") {
+      return fail("PAYMENT_PROBLEM");
+    }
+    if (current.status !== "active" || !current.itemId) {
       return fail("NO_SUBSCRIPTION");
     }
-    await syncSubscriptionState({ workspaceId, sub: current, now });
     const row = await loadPayingRow(workspaceId, deps.mode);
     if (
       !row ||
@@ -839,12 +978,27 @@ export async function changePlan(
       updated = await setItem(target, "always_invoice");
     } catch (error) {
       // Kesin ret (kart vb.): zamanlanmış düşürmeyi geri koy ki "plan değişmedi" doğru
-      // kalsın. Sonuç belirsizse dokunulmaz (yükseltme uygulanmış olabilir).
-      if (scheduled && !(error instanceof OutcomeUnknownError)) {
-        try {
-          await record(await setItem(stripePlan, "none"));
-        } catch {
-          throw new OutcomeUnknownError();
+      // kalsın. Sonuç belirsizse yükseltmenin uygulanıp uygulanmadığına bakılır: Stripe hâlâ
+      // ödenen plandaysa yükseltme uygulanmamıştır ve kullanıcının düşürme seçimi geri konur
+      // (yoksa sessizce kaybolur ve eski, pahalı plan yenilenirdi).
+      if (scheduled) {
+        let restore = !(error instanceof OutcomeUnknownError);
+        if (!restore) {
+          const fresh = await resyncFromStripe(
+            workspaceId,
+            current.id,
+            deps,
+            now,
+          );
+          restore =
+            fresh.state === "alive" && fresh.sub.planKey === entitled.planKey;
+        }
+        if (restore) {
+          try {
+            await record(await setItem(stripePlan, "none"));
+          } catch {
+            throw new OutcomeUnknownError();
+          }
         }
       }
       throw error;
@@ -877,9 +1031,22 @@ const SESSION_ID = /^cs_(?:test|live)_[A-Za-z0-9]{8,}$/;
 // reversed : bu ödemenin parası iade/itiraz edildi; plan açılmadı.
 // duplicate: workspace'in zaten süren bir aboneliği var; bu ikinci ödeme uygulanmadı
 //            (abonelik Stripe'ta iptal edildi, ödeme elle iade edilir).
+// problem  : ödeme alındı ama kendiliğinden uygulanamıyor (bilinmeyen plan, çelişen kayıt);
+//            sahibin elle bakması gerekir.
 // unknown  : oturum bu workspace'e ait değil / tanınmadı / okunamadı.
 export type ReturnState =
-  "active" | "pending" | "reversed" | "duplicate" | "unknown";
+  "active" | "pending" | "reversed" | "duplicate" | "problem" | "unknown";
+
+// Ödeme alındı ama kendiliğinden uygulanmayacak durumlar (olay gelen kutusunda kalıcı
+// IGNORED, Stripe'tan yeniden göndermek aynı sonucu verir): "birazdan görünür" denmez.
+const STUCK_RETURN_NOTES = new Set([
+  "unknown-plan",
+  "live-subscription-exists",
+  "no-paid-period",
+  "tenant-mismatch",
+  "unknown-purchase",
+  "no-subscription",
+]);
 
 // Kullanıcı Checkout'tan dönünce webhook'u BEKLEMEDEN durumu eşitler (aynı işleyici:
 // tekrar teslim zararsız). Oturum bu workspace'in müşterisine ait değilse hiçbir şey
@@ -917,7 +1084,10 @@ export async function reconcileCheckoutReturn(
     });
     if (outcome.status === "PROCESSED") return "active";
     if (outcome.note === "invoice-reversed") return "reversed";
-    return outcome.note === "duplicate-subscription" ? "duplicate" : "pending";
+    if (outcome.note === "duplicate-subscription") return "duplicate";
+    return outcome.note && STUCK_RETURN_NOTES.has(outcome.note)
+      ? "problem"
+      : "pending";
   } catch (error) {
     console.error(
       "[billing] could not reconcile a checkout return:",

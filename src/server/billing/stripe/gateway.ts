@@ -94,7 +94,12 @@ export type StripeGateway = {
   listInvoices(customerId: string, limit?: number): Promise<StripeInvoiceRow[]>;
   // Etkin bir promosyon kodunu koduyla bul (büyük/küçük harf duyarsız); yoksa null. Kupon
   // ayrıntısı yanıtta yoksa ayrıca okunur.
-  lookupPromotionCode(code: string): Promise<StripePromotionFacts | null>;
+  // Aynı metinli birden çok etkin kod olabilir (müşteriye özel olanlar): `forCustomerId`
+  // verilmişse önce o müşteriye özel olan, yoksa herkese açık olan, yoksa ilki döner.
+  lookupPromotionCode(
+    code: string,
+    forCustomerId?: string | null,
+  ): Promise<StripePromotionFacts | null>;
 
   createCustomer(input: CustomerInput): Promise<string>;
   createSubscriptionCheckout(
@@ -257,13 +262,21 @@ export function createStripeGateway(http: StripeHttp): StripeGateway {
       return parseInvoiceList(raw);
     },
 
-    async lookupPromotionCode(code) {
+    async lookupPromotionCode(code, forCustomerId) {
       const raw = await http({
         method: "GET",
         path: "/v1/promotion_codes",
-        query: { code, active: true, limit: 1 },
+        query: { code, active: true, limit: 100 },
       });
-      const [found] = parsePromotionCodeList(raw);
+      // limit:1 başka bir müşterinin aynı metinli özel kodunu getirip bu müşterininkini
+      // gizleyebilirdi.
+      const rows = parsePromotionCodeList(raw);
+      const found =
+        (forCustomerId
+          ? rows.find((row) => row.customerId === forCustomerId)
+          : undefined) ??
+        rows.find((row) => row.customerId === null) ??
+        rows[0];
       if (!found) return null;
       if (found.coupon || !found.couponId) return found;
       const coupon = await getOrNull(http, `/v1/coupons/${found.couponId}`);
@@ -443,10 +456,12 @@ const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function customerName(
   value: string | null | undefined,
 ): string | undefined {
-  const name = (value ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, CUSTOMER_NAME_MAX);
+  // Kod noktasına göre kes: UTF-16 birimine göre kesmek bir emojiyi ortadan bölüp tek başına
+  // yüksek vekil (surrogate) bırakır; encodeURIComponent buna URIError fırlatır ve o
+  // çalışma alanı bir daha abone olamazdı.
+  const name = Array.from((value ?? "").replace(/\s+/g, " ").trim())
+    .slice(0, CUSTOMER_NAME_MAX)
+    .join("");
   return name ? name : undefined;
 }
 

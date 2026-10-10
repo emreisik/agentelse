@@ -34,21 +34,15 @@ export function resetStripeConfigWarnings(): void {
   warned.clear();
 }
 
-export function getStripeConfig(): StripeConfig | null {
+// Anahtarın kendisi: şekil, mod ve ortam kuralları. Webhook sırrı BURADA aranmaz: abonelik
+// süpürmesi ve var olan abonelerin yönetimi yalnız API anahtarına bağlıdır (webhook sırrı
+// eksik/yanlış yazıldığında Stripe olayları reddedilirken güvenlik ağı da kapanmasın).
+export type StripeKeyConfig = { secretKey: string; mode: StripeMode };
+
+export function getStripeKeyConfig(): StripeKeyConfig | null {
   const env = getEnv();
   const secretKey = (env.STRIPE_SECRET_KEY ?? "").trim();
-  const webhookSecret = (env.STRIPE_WEBHOOK_SECRET ?? "").trim();
-  if (!secretKey || !webhookSecret) {
-    // En olası sahip hatası: biri girilmiş, öteki unutulmuş ya da yanlış adla yazılmış.
-    if (secretKey || webhookSecret) {
-      const missing = secretKey ? "STRIPE_WEBHOOK_SECRET" : "STRIPE_SECRET_KEY";
-      warnOnce(
-        `half-configured:${missing}`,
-        `${missing} is not set; payments stay closed (set both)`,
-      );
-    }
-    return null;
-  }
+  if (!secretKey) return null;
 
   const mode = stripeModeOfKey(secretKey);
   if (!mode) {
@@ -64,13 +58,6 @@ export function getStripeConfig(): StripeConfig | null {
     warnOnce(
       "live-key-outside-production",
       "a live Stripe key is set outside production; payments stay closed (use a test key locally)",
-    );
-    return null;
-  }
-  if (!WEBHOOK_SECRET_SHAPE.test(webhookSecret)) {
-    warnOnce(
-      "webhook-secret-format",
-      "STRIPE_WEBHOOK_SECRET must be the full signing secret (whsec_ + at least 24 characters); payments stay closed",
     );
     return null;
   }
@@ -94,15 +81,44 @@ export function getStripeConfig(): StripeConfig | null {
       "a Stripe TEST key is running in production: checkouts charge nothing; switch to the live key before taking real customers",
     );
   }
+  return { secretKey, mode };
+}
+
+// Tam ödeme yapılandırması (satış + webhook): anahtar VE geçerli webhook sırrı gerekir.
+export function getStripeConfig(): StripeConfig | null {
+  const env = getEnv();
+  const secretKey = (env.STRIPE_SECRET_KEY ?? "").trim();
+  const webhookSecret = (env.STRIPE_WEBHOOK_SECRET ?? "").trim();
+  if (!secretKey || !webhookSecret) {
+    // En olası sahip hatası: biri girilmiş, öteki unutulmuş ya da yanlış adla yazılmış.
+    if (secretKey || webhookSecret) {
+      const missing = secretKey ? "STRIPE_WEBHOOK_SECRET" : "STRIPE_SECRET_KEY";
+      warnOnce(
+        `half-configured:${missing}`,
+        `${missing} is not set; payments stay closed (set both)`,
+      );
+    }
+    return null;
+  }
+
+  const key = getStripeKeyConfig();
+  if (!key) return null;
+  if (!WEBHOOK_SECRET_SHAPE.test(webhookSecret)) {
+    warnOnce(
+      "webhook-secret-format",
+      "STRIPE_WEBHOOK_SECRET must be the full signing secret (whsec_ + at least 24 characters); payments stay closed",
+    );
+    return null;
+  }
 
   const previous = (env.STRIPE_WEBHOOK_SECRET_PREVIOUS ?? "").trim();
   return {
-    secretKey,
+    secretKey: key.secretKey,
     webhookSecrets:
       previous && WEBHOOK_SECRET_SHAPE.test(previous)
         ? [webhookSecret, previous]
         : [webhookSecret],
-    mode,
+    mode: key.mode,
   };
 }
 

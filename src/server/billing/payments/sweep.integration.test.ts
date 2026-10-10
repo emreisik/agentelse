@@ -26,8 +26,16 @@ vi.mock("@/server/observability/periodic", () => ({
   claimPeriodic: periodic.claim,
 }));
 
-const paymentDeps = vi.hoisted(() => ({ current: null as unknown }));
-vi.mock("./deps", () => ({ getPaymentDeps: () => paymentDeps.current }));
+const paymentDeps = vi.hoisted(() => ({
+  current: null as unknown,
+  lastOptions: undefined as unknown,
+}));
+vi.mock("./deps", () => ({
+  getPaymentDeps: (options?: unknown) => {
+    paymentDeps.lastOptions = options;
+    return paymentDeps.current;
+  },
+}));
 
 import { prisma } from "@/lib/prisma";
 import { quotaFor } from "@/lib/billing/plans";
@@ -327,6 +335,141 @@ describeIntegration("payments sweep", () => {
     expect(SWEEP_BATCH).toBeGreaterThan(2);
   });
 
+  describe("which rows come first, how long a run may take, and what it says", () => {
+    const readOrder = (fake: FakeStripe) =>
+      fake.calls
+        .filter((call) => call.name === "getSubscription")
+        .map((call) => call.args as string);
+
+    it("reads the least recently verified first, so rows that never change cannot starve the missed renewals behind them", async () => {
+      const fake = createFakeStripe();
+      // Four renewals the webhook missed; the OLDEST paid period belongs to the row verified
+      // longest ago, and two newer rows were verified a moment ago (they keep failing to pay
+      // but nothing changes, so they stay in the window).
+      const rows = [];
+      for (let i = 0; i < 4; i += 1) rows.push(await subscribed(fake));
+      const verifiedAt = [5, 1, 4, 2].map(
+        (hoursAgo) => new Date(AFTER_RENEWAL_DATE.getTime() - hoursAgo * HOUR),
+      );
+      for (const [i, row] of rows.entries()) {
+        await prisma.subscription.update({
+          where: { workspaceId: row.workspaceId },
+          data: { stripeSyncedAt: verifiedAt[i] },
+        });
+        renewed(fake, row.customerId, row.sub.id);
+      }
+
+      await sweepSubscriptions(
+        { gateway: fake.gateway, mode: "test" },
+        { now: AFTER_RENEWAL_DATE, limit: 2 },
+      );
+
+      // verified 5h ago (rows[0]) and 4h ago (rows[2]) go first
+      expect(readOrder(fake)).toEqual([rows[0]!.sub.id, rows[2]!.sub.id]);
+      // and they are stamped, so the next run reaches the other two
+      fake.calls.length = 0;
+      await sweepSubscriptions(
+        { gateway: fake.gateway, mode: "test" },
+        { now: AFTER_RENEWAL_DATE, limit: 2 },
+      );
+      expect(readOrder(fake)).toEqual([rows[3]!.sub.id, rows[1]!.sub.id]);
+    });
+
+    it("a row that was never verified comes before every verified one", async () => {
+      const fake = createFakeStripe();
+      const a = await subscribed(fake);
+      const b = await subscribed(fake);
+      await prisma.subscription.update({
+        where: { workspaceId: a.workspaceId },
+        data: { stripeSyncedAt: new Date(AFTER_RENEWAL_DATE.getTime() - 40 * HOUR) },
+      });
+      await prisma.subscription.update({
+        where: { workspaceId: b.workspaceId },
+        data: { stripeSyncedAt: null },
+      });
+
+      await sweepSubscriptions(
+        { gateway: fake.gateway, mode: "test" },
+        { now: AFTER_RENEWAL_DATE, limit: 1 },
+      );
+
+      expect(readOrder(fake)).toEqual([b.sub.id]);
+    });
+
+    it("still reaches a renewal that was missed more than two weeks ago (a long webhook outage)", async () => {
+      const fake = createFakeStripe();
+      const { workspaceId, customerId, sub } = await subscribed(fake);
+      renewed(fake, customerId, sub.id);
+      const muchLater = new Date(T1.getTime() + 30 * 24 * HOUR);
+
+      const summary = await sweepSubscriptions(
+        { gateway: fake.gateway, mode: "test" },
+        { now: muchLater },
+      );
+
+      expect(summary.checked).toBe(1);
+      expect((await rowOf(workspaceId)).paidThrough).toEqual(T2);
+      expect(SWEEP_LOOKBACK_MS).toBeGreaterThan(30 * 24 * HOUR);
+    });
+
+    it("stops at its time budget and leaves the rest for the next run, saying so", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const fake = createFakeStripe();
+      for (let i = 0; i < 3; i += 1) await subscribed(fake);
+      // The clock moves 100 ms per look; the budget is 150 ms: the first row is read, then the
+      // budget is gone.
+      let t = 0;
+      const clock = () => (t += 100);
+
+      const summary = await sweepSubscriptions(
+        { gateway: fake.gateway, mode: "test" },
+        { now: AFTER_RENEWAL_DATE, budgetMs: 150, clock },
+      );
+
+      expect(summary).toMatchObject({ checked: 1, skipped: 2, failed: 0 });
+      expect(
+        vi
+          .mocked(console.error)
+          .mock.calls.some((call) => String(call[0]).includes("skipped=2")),
+      ).toBe(true);
+    });
+
+    it("names the workspace, the subscription and the Stripe status when a read fails, and says when EVERY read failed", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const fake = createFakeStripe();
+      const one = await subscribed(fake);
+      const two = await subscribed(fake);
+      fake.failures.read = new StripeApiError({
+        status: 401,
+        code: "api_key_expired",
+        message: "Stripe 401 api_key_expired: expired",
+      });
+
+      const summary = await sweepSubscriptions(
+        { gateway: fake.gateway, mode: "test" },
+        { now: AFTER_RENEWAL_DATE },
+      );
+
+      expect(summary).toMatchObject({ checked: 2, failed: 2 });
+      const lines = vi
+        .mocked(console.error)
+        .mock.calls.map((call) => String(call[0]));
+      for (const row of [one, two]) {
+        expect(
+          lines.some(
+            (line) =>
+              line.includes(row.workspaceId) &&
+              line.includes(row.sub.id) &&
+              line.includes("Stripe 401 api_key_expired"),
+          ),
+        ).toBe(true);
+      }
+      expect(lines.some((line) => line.includes("EVERY read failed"))).toBe(
+        true,
+      );
+    });
+  });
+
   describe("the tick step", () => {
     it("does nothing while payments are closed, and does not even claim the slot", async () => {
       paymentDeps.current = null;
@@ -350,6 +493,9 @@ describeIntegration("payments sweep", () => {
 
       expect(first).toBeGreaterThanOrEqual(1);
       expect(second).toBe(0);
+      // The sweep needs the API key only: a missing or mistyped webhook secret (the very
+      // situation it exists for) must not switch it off.
+      expect(paymentDeps.lastOptions).toEqual({ webhookRequired: false });
       expect(periodic.claim).toHaveBeenCalledWith(
         "billing.payments-sweep",
         expect.any(Number),

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   BILLING_OFF,
+  paidPlanRunning,
   planWindow,
   resolveEntitlements,
   type BillingConfig,
@@ -12,6 +13,7 @@ import { RENEWAL_LAG_MS } from "./plans";
 const d = (iso: string) => new Date(iso);
 const NOW = d("2026-11-15T12:00:00.000Z");
 const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 
 const enforce: BillingConfig = { ...BILLING_OFF, mode: "enforce" };
 const shadow: BillingConfig = { ...BILLING_OFF, mode: "shadow" };
@@ -502,5 +504,72 @@ describe("planWindow", () => {
     expect(
       planWindow({ subscription: row, entitlements: fullEnt(row), now: NOW }),
     ).toBeNull();
+  });
+});
+
+// Ödenmiş plan SÜRÜYOR mu: ikinci abonelik / ek paket / test anahtarı korumasının tek
+// ölçüsü. Sabitler BİLEREK sayı olarak yazılır (6 saat yenileme payı): sabiti kendi
+// beklentisi yapan test, sabit değişince birlikte değişirdi.
+describe("paidPlanRunning", () => {
+  const paidThrough = d("2026-12-01T00:00:00.000Z");
+  const running = (
+    status: string,
+    now: Date,
+    extra: Partial<SubscriptionFacts> = {},
+  ) =>
+    paidPlanRunning(
+      {
+        planKey: "growth",
+        status,
+        paidThrough,
+        graceUntil: null,
+        cancelAtPeriodEnd: false,
+        ...extra,
+      },
+      now,
+    );
+  const at = (offsetMs: number) => new Date(paidThrough.getTime() + offsetMs);
+  const SIX_HOURS = 6 * 60 * 60 * 1000;
+
+  it("ACTIVE runs until six hours AFTER the paid time (the renewal is allowed to be late), not a second longer", () => {
+    expect(RENEWAL_LAG_MS).toBe(SIX_HOURS);
+    expect(running("ACTIVE", at(-1))).toBe(true);
+    expect(running("ACTIVE", at(0))).toBe(true);
+    expect(running("ACTIVE", at(SIX_HOURS - 1))).toBe(true);
+    expect(running("ACTIVE", at(SIX_HOURS))).toBe(false);
+    expect(running("ACTIVE", at(SIX_HOURS + 1))).toBe(false);
+  });
+
+  it("ACTIVE with the end already scheduled gets no lag: nothing renews", () => {
+    expect(running("ACTIVE", at(-1), { cancelAtPeriodEnd: true })).toBe(true);
+    expect(running("ACTIVE", at(0), { cancelAtPeriodEnd: true })).toBe(false);
+    expect(running("ACTIVE", at(SIX_HOURS - 1), { cancelAtPeriodEnd: true })).toBe(
+      false,
+    );
+  });
+
+  it("ACTIVE without paid time is not running", () => {
+    expect(running("ACTIVE", at(-DAY), { paidThrough: null })).toBe(false);
+  });
+
+  it("PAST_DUE runs through the grace period only (the old paid time does not matter)", () => {
+    const graceUntil = at(3 * DAY);
+    expect(running("PAST_DUE", at(3 * DAY - 1), { graceUntil })).toBe(true);
+    expect(running("PAST_DUE", at(3 * DAY), { graceUntil })).toBe(false);
+    expect(running("PAST_DUE", at(-DAY), { graceUntil: null })).toBe(false);
+  });
+
+  it("CANCELED runs while paid time is left, to the second, and without it never", () => {
+    expect(running("CANCELED", at(-1))).toBe(true);
+    expect(running("CANCELED", at(0))).toBe(false);
+    expect(running("CANCELED", at(-DAY), { paidThrough: null })).toBe(false);
+  });
+
+  it("other states never run, and neither does an unknown plan", () => {
+    for (const status of ["TRIALING", "LEGACY", "SOMETHING_ELSE"]) {
+      expect(running(status, at(-1))).toBe(false);
+    }
+    expect(running("ACTIVE", at(-1), { planKey: "retired-plan" })).toBe(false);
+    expect(running("ACTIVE", at(-1), { planKey: null })).toBe(false);
   });
 });

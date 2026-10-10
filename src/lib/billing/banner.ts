@@ -5,7 +5,13 @@
 type Params = Record<string, string | string[] | undefined>;
 
 export type CheckoutReturn =
-  "active" | "pending" | "reversed" | "duplicate" | "unknown" | null;
+  | "active"
+  | "pending"
+  | "reversed"
+  | "duplicate"
+  | "problem"
+  | "unknown"
+  | null;
 
 const first = (value: string | string[] | undefined): string | undefined =>
   Array.isArray(value) ? value[0] : value;
@@ -13,12 +19,17 @@ const first = (value: string | string[] | undefined): string | undefined =>
 // A second subscription was paid while the first one is running: it was not applied (and
 // is canceled so it cannot renew); the money is refunded by hand.
 const DUPLICATE =
-  "This workspace already has an active subscription, so this second payment was not applied and the extra subscription was canceled. Please contact support to be refunded.";
+  "This workspace already has an active subscription, so this second payment was not applied and the extra subscription was canceled. Please contact hello@agentelse.ai to be refunded.";
+
+// The payment arrived but cannot be applied by itself (a plan we do not recognise, records
+// that disagree). Waiting does not help; a person has to look, so it says who.
+const PROBLEM =
+  "We received your payment but could not apply it to your plan automatically. Please contact hello@agentelse.ai and we will fix it.";
 
 // Not a payment we can match to this workspace (another workspace's session, an old
 // link, a payment outage): neutral, and it does not promise an update.
 const UNMATCHED =
-  "We could not match this payment to your workspace. If you were charged, it will appear in My subscription shortly; reload this page in a minute.";
+  "We could not match this payment to your workspace. If you were charged, it will appear in My subscription shortly.";
 
 export function bannerFor(
   params: Params,
@@ -37,11 +48,13 @@ export function bannerFor(
       case "active":
         return "Payment received. Your plan is active.";
       case "pending":
-        return "Payment received. It is still being confirmed; reload this page in a minute.";
+        return "Payment received. It is still being confirmed and will show in My subscription shortly.";
       case "reversed":
         return "This payment was refunded, so the plan was not activated.";
       case "duplicate":
         return DUPLICATE;
+      case "problem":
+        return PROBLEM;
       default:
         return UNMATCHED;
     }
@@ -51,9 +64,11 @@ export function bannerFor(
       case "active":
         return "Payment received. The extra usage was added to your balance.";
       case "pending":
-        return "Payment received. The extra usage is added as soon as it clears; reload this page in a minute.";
+        return "Payment received. The extra usage is added as soon as it clears.";
       case "reversed":
         return "This payment was refunded, so no extra usage was added.";
+      case "problem":
+        return PROBLEM;
       default:
         return UNMATCHED;
     }

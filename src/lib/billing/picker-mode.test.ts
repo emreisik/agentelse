@@ -136,6 +136,13 @@ describe("bannerFor", () => {
       expect(text).toMatch(/could not match this payment/);
       expect(text).not.toMatch(/Payment received|still being confirmed/);
     }
+    // Paid but it cannot be applied by itself: no "reload in a minute", a person to write to.
+    for (const query of [{ checkout: "success" }, { purchase: "success" }]) {
+      const text = bannerFor(query, "problem");
+      expect(text).toMatch(/could not apply it to your plan automatically/);
+      expect(text).toMatch(/hello@agentelse\.ai/);
+      expect(text).not.toMatch(/shortly|minute|still being confirmed/);
+    }
     expect(bannerFor({ checkout: "cancelled" }, null)).toMatch(
       /Nothing was charged/,
     );

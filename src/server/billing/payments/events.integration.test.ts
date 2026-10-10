@@ -694,6 +694,109 @@ describeIntegration("billing webhook events", () => {
       expect(fake.callsNamed("cancelSubscriptionNow")).toHaveLength(1);
     });
 
+    describe("what kind of dispute it is", () => {
+      it("an inquiry (no money withdrawn) keeps access and is flagged for a person; it ends the subscription only if it turns into a real dispute", async () => {
+        const fake = createFakeStripe();
+        const workspaceId = newWs();
+        const { charge } = await paid(fake, workspaceId);
+        const dispute = fake.dispute({
+          chargeId: charge.id,
+          status: "warning_needs_response",
+        });
+        vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+        const created = await processStripeEvent(
+          evt("charge.dispute.created", dispute.id),
+          deps(fake),
+        );
+
+        expect(created).toEqual({ result: "ignored", note: "dispute-inquiry" });
+        expect(await rowOf(workspaceId)).toMatchObject({ status: "ACTIVE" });
+        expect(fake.callsNamed("cancelSubscriptionNow")).toHaveLength(0);
+        expect(
+          vi
+            .mocked(console.error)
+            .mock.calls.some((call) =>
+              String(call[0]).includes("dispute-inquiry"),
+            ),
+        ).toBe(true);
+
+        // The inquiry becomes a real dispute: the same object is updated.
+        fake.disputes.set(dispute.id, { ...dispute, status: "needs_response" });
+        const escalated = await processStripeEvent(
+          evt("charge.dispute.updated", dispute.id),
+          deps(fake),
+        );
+
+        expect(escalated.result).toBe("processed");
+        expect(await rowOf(workspaceId)).toMatchObject({
+          status: "CANCELED",
+          endedReason: "CHARGEBACK",
+        });
+        expect(fake.callsNamed("cancelSubscriptionNow")).toHaveLength(1);
+      });
+
+      it("later updates of a dispute that already ended access change nothing more", async () => {
+        const fake = createFakeStripe();
+        const workspaceId = newWs();
+        const { charge } = await paid(fake, workspaceId);
+        const dispute = fake.dispute({ chargeId: charge.id });
+        await processStripeEvent(
+          evt("charge.dispute.created", dispute.id),
+          deps(fake),
+        );
+        const ended = await rowOf(workspaceId);
+
+        fake.disputes.set(dispute.id, { ...dispute, status: "under_review" });
+        const again = await processStripeEvent(
+          evt("charge.dispute.updated", dispute.id),
+          deps(fake),
+        );
+
+        expect(again.result).toBe("processed");
+        expect(await rowOf(workspaceId)).toMatchObject({
+          status: "CANCELED",
+          endedReason: "CHARGEBACK",
+          endedAt: ended.endedAt,
+        });
+        expect(fake.callsNamed("cancelSubscriptionNow")).toHaveLength(1);
+      });
+
+      it("a dispute that is won does not end anything, and says so loudly", async () => {
+        const fake = createFakeStripe();
+        const workspaceId = newWs();
+        const { charge } = await paid(fake, workspaceId);
+        const dispute = fake.dispute({ chargeId: charge.id, status: "won" });
+        vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+        const outcome = await processStripeEvent(
+          evt("charge.dispute.updated", dispute.id),
+          deps(fake),
+        );
+
+        expect(outcome).toEqual({ result: "ignored", note: "dispute-won" });
+        expect(await rowOf(workspaceId)).toMatchObject({ status: "ACTIVE" });
+      });
+
+      it("a dispute whose status Stripe did not report is treated as at risk, as before", async () => {
+        const fake = createFakeStripe();
+        const workspaceId = newWs();
+        const { charge } = await paid(fake, workspaceId);
+        const dispute = fake.dispute({ chargeId: charge.id });
+        fake.disputes.set(dispute.id, { ...dispute, status: null });
+
+        await processStripeEvent(
+          evt("charge.dispute.created", dispute.id),
+          deps(fake),
+        );
+
+        expect(await rowOf(workspaceId)).toMatchObject({
+          status: "CANCELED",
+          endedReason: "CHARGEBACK",
+        });
+      });
+    });
+
     it("if closing the subscription in Stripe fails the event is retried and still ends up correct", async () => {
       const fake = createFakeStripe();
       const workspaceId = newWs();

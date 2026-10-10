@@ -17,6 +17,7 @@ vi.mock("../config", () => ({
 
 const {
   getStripeConfig,
+  getStripeKeyConfig,
   isPaymentsConfigured,
   resetStripeConfigWarnings,
   stripeModeOfKey,
@@ -199,5 +200,50 @@ describe("getStripeConfig", () => {
     expect(getStripeConfig()).toBeNull();
     vi.stubEnv("NODE_ENV", "production");
     expect(getStripeConfig()?.mode).toBe("live");
+  });
+});
+
+describe("getStripeKeyConfig (what the subscription sweep and subscriber management need)", () => {
+  it("opens with the API key alone: a missing or mistyped webhook secret must not switch the safety net off", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    env.current = { STRIPE_SECRET_KEY: TEST_KEY };
+    expect(getStripeKeyConfig()).toEqual({ secretKey: TEST_KEY, mode: "test" });
+    // while the full configuration (selling + webhooks) stays closed
+    expect(getStripeConfig()).toBeNull();
+
+    env.current = {
+      STRIPE_SECRET_KEY: TEST_KEY,
+      STRIPE_WEBHOOK_SECRET: "whsec_",
+    };
+    expect(getStripeKeyConfig()).toEqual({ secretKey: TEST_KEY, mode: "test" });
+    expect(getStripeConfig()).toBeNull();
+  });
+
+  it("is closed without a key, and keeps every rule about the key itself", () => {
+    expect(getStripeKeyConfig()).toBeNull();
+
+    env.current = { STRIPE_SECRET_KEY: "pk_test_notasecretkey1234" };
+    expect(getStripeKeyConfig()).toBeNull();
+
+    vi.stubEnv("NODE_ENV", "development");
+    env.current = { STRIPE_SECRET_KEY: LIVE_KEY };
+    expect(getStripeKeyConfig()).toBeNull();
+
+    vi.stubEnv("NODE_ENV", "production");
+    billing.mode = "enforce";
+    env.current = { STRIPE_SECRET_KEY: TEST_KEY };
+    expect(getStripeKeyConfig()).toBeNull();
+  });
+
+  it("is the same key and mode the full configuration reports", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    env.current = {
+      STRIPE_SECRET_KEY: TEST_KEY,
+      STRIPE_WEBHOOK_SECRET: SECRET,
+    };
+    expect(getStripeKeyConfig()).toMatchObject({
+      secretKey: getStripeConfig()!.secretKey,
+      mode: getStripeConfig()!.mode,
+    });
   });
 });

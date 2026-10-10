@@ -873,6 +873,95 @@ describeIntegration("subscription state from Stripe", () => {
     });
   });
 
+  describe("a leftover TEST-mode row never shapes the LIVE subscription", () => {
+    it("a canceled test row that still holds paid time does not lend it to the live subscription", async () => {
+      const fake = createFakeStripe();
+      const workspaceId = newWs();
+      const test = firstPayment(fake, { workspaceId, livemode: false });
+      await syncSubscriptionState({
+        workspaceId,
+        sub: test.sub,
+        paid: test.paid,
+        now: NOW,
+      });
+      // The test subscription is canceled with a long paid period still running.
+      const farAway = new Date("2027-09-01T00:00:00.000Z");
+      await prisma.subscription.update({
+        where: { workspaceId },
+        data: { status: "CANCELED", paidThrough: farAway },
+      });
+      const live = firstPayment(fake, {
+        workspaceId,
+        livemode: true,
+        customerId: "cus_live_2",
+      });
+
+      await syncSubscriptionState({
+        workspaceId,
+        sub: live.sub,
+        paid: live.paid,
+        now: NOW,
+      });
+
+      const row = await rowOf(workspaceId);
+      expect(row).toMatchObject({
+        stripeSubscriptionId: live.sub.id,
+        stripeLivemode: true,
+        status: "ACTIVE",
+      });
+      // The live period end, not the test card's far-away date.
+      expect(row.paidThrough?.getTime()).toBeLessThan(farAway.getTime());
+    });
+
+    it("the first-month discount used with a test card is not 'used' for the live purchase", async () => {
+      const fake = createFakeStripe();
+      const workspaceId = newWs();
+      const test = firstPayment(fake, {
+        workspaceId,
+        planKey: "business",
+        intro: true,
+        livemode: false,
+      });
+      await syncSubscriptionState({
+        workspaceId,
+        sub: test.sub,
+        paid: test.paid,
+        now: NOW,
+      });
+      await syncSubscriptionState({
+        workspaceId,
+        sub: { ...test.sub, status: "canceled", endedAt: NOW },
+        now: NOW,
+      });
+      expect(await rowOf(workspaceId)).toMatchObject({ introOffer: true });
+      const live = firstPayment(fake, {
+        workspaceId,
+        planKey: "business",
+        intro: true,
+        livemode: true,
+        customerId: "cus_live_3",
+      });
+
+      await syncSubscriptionState({
+        workspaceId,
+        sub: live.sub,
+        paid: live.paid,
+        now: NOW,
+      });
+
+      // The live first month IS a first month: first billing period, intro remembered, and
+      // the reduced first-window quota that goes with the discount that was charged.
+      expect(await rowOf(workspaceId)).toMatchObject({
+        stripeLivemode: true,
+        introOffer: true,
+        periodIndex: 1,
+      });
+      expect((await balance(workspaceId, "IMAGE")).granted).toBeLessThan(
+        quotaFor("business").IMAGE,
+      );
+    });
+  });
+
   describe("billing mode off", () => {
     it("still records the subscription (so switching the mode on later is correct) but opens no window", async () => {
       config.current = { mode: "off", legacyBefore: null, legacyUntil: null };

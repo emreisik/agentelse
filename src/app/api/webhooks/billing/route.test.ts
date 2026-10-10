@@ -129,6 +129,38 @@ describe("POST /api/webhooks/billing", () => {
     expect((await POST(big)).status).toBe(401);
   });
 
+  it("does not read the body when the header is junk or stale either: a made-up header buys no 512 KB buffer", async () => {
+    const body = event();
+    const stale = signed(body, SECRET, Math.floor(Date.now() / 1000) - 3600);
+    for (const header of [
+      "x",
+      "t=abc,v1=zz",
+      "v1=" + "a".repeat(64), // no timestamp
+      `t=${Math.floor(Date.now() / 1000)}`, // no signature
+      `t=${Math.floor(Date.now() / 1000)},v1=${"a".repeat(63)}`, // too short
+      stale, // well formed, but a replay
+    ]) {
+      const junk = request(body, header);
+
+      const response = await POST(junk);
+
+      expect(response.status, header).toBe(401);
+      expect(junk.bodyUsed, header).toBe(false);
+    }
+    expect(processStripeEvent).not.toHaveBeenCalled();
+  });
+
+  it("a well-formed header with the wrong signature is still checked against the body (and refused)", async () => {
+    const body = event();
+    const forged = `t=${Math.floor(Date.now() / 1000)},v1=${"a".repeat(64)}`;
+    const attempt = request(body, forged);
+
+    const response = await POST(attempt);
+
+    expect(response.status).toBe(401);
+    expect(attempt.bodyUsed).toBe(true);
+  });
+
   it("rejects a body changed after it was signed", async () => {
     const body = event();
     const header = signed(body);

@@ -472,6 +472,10 @@ describeIntegration("Faz 4 review fixes", () => {
         ),
       ).toEqual({ result: "ignored", note: "older-period" });
       expect((await rowOf(workspaceId)).status).toBe("ACTIVE");
+      // ...and the running subscription is not closed in Stripe either (a refunded old month
+      // must not stop a customer who is still paying).
+      expect(fake.callsNamed("cancelSubscriptionNow")).toHaveLength(0);
+      expect(fake.subs.get(sub.id)!.status).toBe("active");
 
       // Dispute of the same earlier charge: the bank takes the money, so it ends.
       const dispute = fake.dispute({ chargeId: charge.id });
@@ -771,6 +775,105 @@ describeIntegration("Faz 4 review fixes", () => {
         status: "ACTIVE",
         graceUntil: null,
         cancelAtPeriodEnd: true,
+      });
+    });
+
+    it("Stripe past due with an old paid invoice as the latest one does not recover the row", async () => {
+      const fake = createFakeStripe();
+      const workspaceId = newWs();
+      const { sub, paid } = await linked(fake, workspaceId, {
+        fetchedAt: at(0),
+      });
+      await syncSubscriptionState({
+        workspaceId,
+        sub: { ...sub, status: "past_due", fetchedAt: at(10) },
+        now: NOW,
+      });
+      expect((await rowOf(workspaceId)).status).toBe("PAST_DUE");
+
+      // Stripe still says past_due; the latest invoice it reports is last month's paid one.
+      await syncSubscriptionState({
+        workspaceId,
+        sub: {
+          ...sub,
+          status: "past_due",
+          latestInvoice: {
+            id: paid.id,
+            status: "paid",
+            billingReason: "subscription_create",
+          },
+          fetchedAt: at(20),
+        },
+        now: NOW,
+      });
+
+      expect((await rowOf(workspaceId)).status).toBe("PAST_DUE");
+    });
+
+    it("recovering without the payment event does not trade the grace period for an already expired paid period", async () => {
+      const fake = createFakeStripe();
+      const workspaceId = newWs();
+      const { sub, paid, customerId } = await linked(fake, workspaceId, {
+        fetchedAt: at(0),
+      });
+      // The renewal failed on Dec 1; two days later the customer fixed the card.
+      const failedAt = new Date(T1.getTime() + 60 * 60 * 1000);
+      const twoDaysLater = new Date(T1.getTime() + 2 * DAY);
+      await syncSubscriptionState({
+        workspaceId,
+        sub: { ...sub, status: "past_due", fetchedAt: at(10) },
+        now: failedAt,
+      });
+      const pastDue = await rowOf(workspaceId);
+      expect(pastDue.status).toBe("PAST_DUE");
+      expect(pastDue.graceUntil!.getTime()).toBeGreaterThan(
+        twoDaysLater.getTime(),
+      );
+
+      // customer.subscription.updated arrives BEFORE invoice.paid: Stripe says active, the
+      // latest invoice is paid, but this snapshot cannot say which period it paid for.
+      await syncSubscriptionState({
+        workspaceId,
+        sub: {
+          ...sub,
+          latestInvoice: {
+            id: paid.id,
+            status: "paid",
+            billingReason: "subscription_cycle",
+          },
+          fetchedAt: at(20),
+        },
+        now: twoDaysLater,
+      });
+
+      // Still inside the grace period (full access), not an ACTIVE row whose paid period
+      // ended two days ago (read-only).
+      expect(await rowOf(workspaceId)).toMatchObject({
+        status: "PAST_DUE",
+        graceUntil: pastDue.graceUntil,
+      });
+      expect(
+        (await getEntitlements(workspaceId, { now: twoDaysLater })).access,
+      ).toBe("FULL");
+
+      // The payment event (with the invoice and its period) completes the recovery.
+      const renewal = fake.invoice({
+        subscriptionId: sub.id,
+        customerId,
+        billingReason: "subscription_cycle",
+        periodStart: T1,
+        periodEnd: T2,
+      });
+      await syncSubscriptionState({
+        workspaceId,
+        sub: { ...sub, fetchedAt: at(30) },
+        paid: renewal,
+        now: twoDaysLater,
+      });
+      expect(await rowOf(workspaceId)).toMatchObject({
+        status: "ACTIVE",
+        graceUntil: null,
+        paidThrough: T2,
       });
     });
 
@@ -1514,9 +1617,11 @@ describeIntegration("Faz 4 review fixes", () => {
           ok: false,
           error: "BILLING_UNAVAILABLE",
         });
+        // Only a log line exists (no alerting): the customer is not promised that anyone was told.
         expect(result.ok === false && result.message).toMatch(
-          /We have been notified/,
+          /temporarily unavailable/,
         );
+        expect(result.ok === false && result.message).not.toMatch(/notified/);
         expect(
           vi
             .mocked(console.error)

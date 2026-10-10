@@ -238,6 +238,52 @@ describe("what the actions pass on", () => {
   });
 });
 
+describe("a refused checkout, pack or portal call refreshes the page", () => {
+  it("only when the service refused: it may have healed the row from Stripe first; a success leaves the page anyway", async () => {
+    await actions.startCheckoutAction({
+      planKey: "growth",
+      interval: "MONTH",
+      applyFirstMonth: false,
+    });
+    await actions.startPackCheckoutAction({ packKey: "images20" });
+    await actions.openPortalAction();
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+
+    const refusal = { ok: false, error: "ALREADY_SUBSCRIBED", message: "x" };
+    mocks.startSubscriptionCheckout.mockResolvedValue(refusal);
+    mocks.startPackCheckout.mockResolvedValue({
+      ...refusal,
+      error: "PLAN_REQUIRED",
+    });
+    mocks.openBillingPortal.mockResolvedValue({
+      ...refusal,
+      error: "NO_CUSTOMER",
+    });
+    await actions.startCheckoutAction({
+      planKey: "growth",
+      interval: "MONTH",
+      applyFirstMonth: false,
+    });
+    await actions.startPackCheckoutAction({ packKey: "images20" });
+    await actions.openPortalAction();
+
+    expect(mocks.revalidate).toHaveBeenCalledTimes(3);
+    expect(mocks.revalidate).toHaveBeenCalledWith("/billing");
+  });
+
+  it("not when the guard refused before the service was reached", async () => {
+    mocks.manager.mockResolvedValue(false);
+    await actions.startCheckoutAction({
+      planKey: "growth",
+      interval: "MONTH",
+      applyFirstMonth: false,
+    });
+    await actions.startPackCheckoutAction({ packKey: "images20" });
+    await actions.openPortalAction();
+    expect(mocks.revalidate).not.toHaveBeenCalled();
+  });
+});
+
 describe("promo codes", () => {
   it("checks a code for the caller's own workspace, with a stricter limit than other actions", async () => {
     const result = await actions.checkPromoCodeAction({ code: "SPRING20" });
@@ -275,6 +321,54 @@ describe("promo codes", () => {
       workspaceId: "w-mine",
       promoCode: "SPRING20",
     });
+  });
+
+  it("a checkout WITH a code is a code guess too: it spends the same 10-per-10-minutes allowance as Apply", async () => {
+    await actions.startCheckoutAction({
+      planKey: "growth",
+      interval: "MONTH",
+      applyFirstMonth: false,
+      promoCode: "FREE100",
+    });
+
+    expect(mocks.limited).toHaveBeenCalledWith(
+      "billing:checkout:u1",
+      20,
+      600_000,
+    );
+    expect(mocks.limited).toHaveBeenCalledWith("billing:promo:u1", 10, 600_000);
+  });
+
+  it("when the code allowance is spent, the checkout is refused before the service (and Stripe) is touched", async () => {
+    mocks.limited.mockImplementation((key: string) =>
+      key.startsWith("billing:promo:"),
+    );
+
+    const result = await actions.startCheckoutAction({
+      planKey: "growth",
+      interval: "MONTH",
+      applyFirstMonth: false,
+      promoCode: "GUESS",
+    });
+
+    expect(result).toMatchObject({ ok: false, error: "RATE_LIMITED" });
+    expect(mocks.startSubscriptionCheckout).not.toHaveBeenCalled();
+  });
+
+  it("a checkout without a code (or with a blank one) never touches the code allowance", async () => {
+    for (const promoCode of [undefined, "", "   "]) {
+      await actions.startCheckoutAction({
+        planKey: "growth",
+        interval: "MONTH",
+        applyFirstMonth: false,
+        promoCode,
+      });
+    }
+
+    const keys = mocks.limited.mock.calls.map((call) => call[0]);
+    expect(keys.some((key) => String(key).startsWith("billing:promo:"))).toBe(
+      false,
+    );
   });
 
   it("answers a bad code with the service's one generic message", async () => {

@@ -141,12 +141,29 @@ export function createStripeHttp(options: StripeHttpOptions): StripeHttp {
 
       const requestId = response.headers.get("request-id");
       let parsed: unknown = null;
+      let unreadable = false;
       try {
         parsed = await response.json();
       } catch {
-        parsed = null;
+        unreadable = true;
       }
-      if (response.ok) return parsed;
+      if (response.ok) {
+        // 2xx ama gövde okunamadı (bağlantı yarıda koptu, zaman aşımı, HTML): "nesne yok"
+        // diye geri DÖNME. GET okumaları null'ı "Stripe böyle bir nesne bilmiyor" diye
+        // okur (yanlış IGNORED olay, yanlış erişim kararı); hata fırlatınca webhook 500
+        // olur ve Stripe yeniden dener. Yazma çağrıları zaten belirsiz sayılır.
+        if (unreadable) {
+          if (retryable && attempt < maxRetries) {
+            attempt += 1;
+            await sleep(retryDelayMs(attempt));
+            continue;
+          }
+          throw new StripeNetworkError(
+            `unreadable response (status ${response.status})`,
+          );
+        }
+        return parsed;
+      }
 
       const shouldRetryHeader = response.headers.get("stripe-should-retry");
       if (

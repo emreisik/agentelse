@@ -249,29 +249,41 @@ describeIntegration(
       });
 
       it("eligibility rule on its own", () => {
-        expect(firstMonthEligible(null, "growth", "MONTH")).toBe(true);
+        const row = (extra: object = {}) => ({
+          introOffer: false,
+          stripeSubscriptionId: null,
+          stripeLivemode: null,
+          ...extra,
+        });
+        expect(firstMonthEligible(null, "growth", "MONTH", "test")).toBe(true);
+        expect(firstMonthEligible(row(), "growth", "MONTH", "test")).toBe(true);
         expect(
-          firstMonthEligible(
-            { introOffer: false, stripeSubscriptionId: null },
-            "growth",
-            "MONTH",
-          ),
-        ).toBe(true);
-        expect(
-          firstMonthEligible(
-            { introOffer: true, stripeSubscriptionId: null },
-            "growth",
-            "MONTH",
-          ),
+          firstMonthEligible(row({ introOffer: true }), "growth", "MONTH", "test"),
         ).toBe(false);
         expect(
           firstMonthEligible(
-            { introOffer: false, stripeSubscriptionId: "sub_1" },
+            row({ stripeSubscriptionId: "sub_1" }),
             "growth",
             "MONTH",
+            "test",
           ),
         ).toBe(false);
-        expect(firstMonthEligible(null, "growth", "YEAR")).toBe(false);
+        expect(firstMonthEligible(null, "growth", "YEAR", "test")).toBe(false);
+      });
+
+      it("a TEST-mode purchase does not use up the discount for the LIVE key (and the picker says the same)", () => {
+        const testRow = {
+          introOffer: true,
+          stripeSubscriptionId: "sub_test",
+          stripeLivemode: false,
+        };
+        // Same database, other key: the test history is not this mode's history.
+        expect(firstMonthEligible(testRow, "growth", "MONTH", "live")).toBe(true);
+        expect(firstMonthEligible(testRow, "growth", "MONTH", "test")).toBe(false);
+        // A live purchase still counts under the live key, and not under the test key.
+        const liveRow = { ...testRow, stripeLivemode: true };
+        expect(firstMonthEligible(liveRow, "growth", "MONTH", "live")).toBe(false);
+        expect(firstMonthEligible(liveRow, "growth", "MONTH", "test")).toBe(true);
       });
 
       it("refuses a second subscription while one is paying, allows one after it ended", async () => {
@@ -1119,6 +1131,53 @@ describeIntegration(
           ),
         ).toBe("active");
         expect((await rowOf(workspaceId)).status).toBe("ACTIVE");
+      });
+
+      it("a payment that cannot be applied by itself is a problem, not 'still being confirmed'", async () => {
+        const fake = createFakeStripe();
+        const workspaceId = newWs();
+        const customerId = `cus_${workspaceId}`;
+        await prisma.billingCustomer.create({
+          data: { workspaceId, livemode: false, stripeCustomerId: customerId },
+        });
+        // The subscription is for a product the catalogue does not know (catalogue drift).
+        const sub = fake.subscription({
+          customerId,
+          metadata: { workspaceId },
+          planKey: null,
+          productId: "prod_someone_elses",
+        });
+        const invoice = fake.invoice({
+          subscriptionId: sub.id,
+          customerId,
+          billingReason: "subscription_create",
+        });
+        fake.subs.set(sub.id, {
+          ...fake.subs.get(sub.id)!,
+          latestInvoice: {
+            id: invoice.id,
+            status: "paid",
+            billingReason: "subscription_create",
+          },
+        });
+        const session = fake.session({
+          id: "cs_test_problemsession1",
+          mode: "subscription",
+          customerId,
+          subscriptionId: sub.id,
+          clientReferenceId: workspaceId,
+        });
+
+        expect(
+          await reconcileCheckoutReturn(
+            { workspaceId, sessionId: session.id },
+            depsFor(fake),
+            AT,
+          ),
+        ).toBe("problem");
+        expect(
+          await prisma.subscription.findUnique({ where: { workspaceId } }),
+        ).toBeNull();
       });
 
       it("reports a payment that has not cleared yet as pending, and refuses malformed ids", async () => {

@@ -28,6 +28,8 @@ type Options = {
   dispute?: boolean;
   // A promotion code does not reduce the Checkout total.
   ignorePromotion?: boolean;
+  // Turning the test promotion code off at the end is refused (e.g. a restricted key).
+  promoOffFails?: boolean;
 };
 
 type Body = Record<string, unknown>;
@@ -163,6 +165,13 @@ function imitation(options: Options = {}) {
       return { id: promoId };
     }
     if (method === "POST" && /^\/v1\/promotion_codes\/promo_/.test(path)) {
+      if (options.promoOffFails) {
+        throw new StripeApiError({
+          status: 403,
+          code: "permission_error",
+          message: "Stripe 403 permission_error: this key cannot update promotion codes",
+        });
+      }
       const promo = promotions.get(path.split("/").pop()!)!;
       promo.active = body.active;
       return promo;
@@ -470,6 +479,23 @@ describe("runStripeSmoke", () => {
           call.method === "DELETE" && call.path === "/v1/customers/cus_smoke1",
       ),
     ).toBe(true);
+  });
+
+  it("one clean-up action failing does not leave the rest behind, and the leftovers are named", async () => {
+    const { report, calls } = await run({ promoOffFails: true });
+
+    const cleanup = report.steps.find((step) => step.name.startsWith("Cleanup"))!;
+    expect(cleanup.status).toBe("FAIL");
+    expect(cleanup.detail).toContain("promotion code");
+    expect(cleanup.detail).toContain("by hand");
+    // the subscription and the customer were still removed after the refused call
+    const deleted = calls
+      .filter((call) => call.method === "DELETE")
+      .map((call) => call.path);
+    expect(deleted).toContain("/v1/customers/cus_smoke1");
+    expect(deleted.some((path) => path.startsWith("/v1/subscriptions/"))).toBe(
+      true,
+    );
   });
 
   it("covers promotion codes: made, found by lowercase text, priced at checkout, and turned off at the end", async () => {

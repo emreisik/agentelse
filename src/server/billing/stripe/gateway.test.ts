@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PLANS, yearlyCents } from "@/lib/billing/plans";
 
 import { StripeApiError, type StripeHttp, type StripeRequest } from "./client";
-import { createStripeGateway } from "./gateway";
+import { createStripeGateway, customerName } from "./gateway";
 
 // What this suite proves: the exact requests the billing code sends to Stripe. There is
 // no live Stripe here, so the parameter NAMES and the amounts are asserted literally;
@@ -153,6 +153,54 @@ describe("snapshots carry the time their read STARTED", () => {
   });
 });
 
+describe("the stamp is taken BEFORE the request, not after the answer (the stale-snapshot guard relies on it)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a read that takes a while is stamped with the moment it started, for every snapshot-returning call", async () => {
+    vi.useFakeTimers();
+    const START = new Date("2026-11-20T10:00:00.000Z");
+    vi.setSystemTime(START);
+    // Stripe takes 30 seconds to answer: a stamp taken after the answer would claim the
+    // snapshot is newer than a webhook that was applied meanwhile.
+    const slow: StripeHttp = async (request) => {
+      vi.setSystemTime(new Date(Date.now() + 30_000));
+      return request.method === "GET" && request.path === "/v1/subscriptions"
+        ? { data: [subscriptionJson()] }
+        : subscriptionJson();
+    };
+    const gateway = createStripeGateway(slow);
+
+    const stamps: Array<[string, number]> = [];
+    let t = Date.now();
+    stamps.push(["get", (await gateway.getSubscription("sub_1"))!.fetchedAt.getTime()]);
+    expect(stamps[0]![1]).toBe(t);
+
+    t = Date.now();
+    const [listed] = await gateway.listSubscriptions("cus_1");
+    expect(listed!.fetchedAt.getTime()).toBe(t);
+
+    // A plan change first makes sure the product exists (more slow calls), then updates the
+    // subscription: the stamp is taken before THAT request, so at least its 30 s earlier than
+    // the answer.
+    const changed = await gateway.changeSubscriptionPlan({
+      subscriptionId: "sub_1",
+      itemId: "si_1",
+      planKey: "growth",
+      interval: "MONTH",
+      proration: "none",
+    });
+    expect(Date.now() - changed.fetchedAt.getTime()).toBeGreaterThanOrEqual(
+      30_000,
+    );
+
+    t = Date.now();
+    const flagged = await gateway.setCancelAtPeriodEnd("sub_1", true);
+    expect(flagged.fetchedAt.getTime()).toBe(t);
+  });
+});
+
 describe("products and coupons are created with fresh idempotency keys", () => {
   it("never pins a failure (or the success of a deleted object) to a fixed 24-hour key", async () => {
     const created: Array<string | undefined> = [];
@@ -243,6 +291,23 @@ describe("createCustomer", () => {
     const second = calls[1]!.body as { name?: string; email?: string };
     expect(second.email).toBeUndefined();
     expect(second.name).toBeUndefined();
+  });
+});
+
+describe("customerName", () => {
+  it("cuts by characters, never through the middle of an emoji (a lone surrogate makes the form encoder throw)", () => {
+    // 199 letters, then an emoji (2 UTF-16 units): a unit-based cut at 200 leaves half of it.
+    const name = `${"a".repeat(199)}\u{1F600}${"b".repeat(50)}`;
+
+    const cut = customerName(name)!;
+
+    expect(Array.from(cut)).toHaveLength(200);
+    expect(cut.endsWith("\u{1F600}")).toBe(true);
+    expect(() => encodeURIComponent(cut)).not.toThrow();
+    // and a name that is all emoji stays whole and well-formed
+    const many = customerName("\u{1F600}".repeat(300))!;
+    expect(Array.from(many)).toHaveLength(200);
+    expect(() => encodeURIComponent(many)).not.toThrow();
   });
 });
 
@@ -599,8 +664,37 @@ describe("promotion codes", () => {
     expect(calls[0]).toMatchObject({
       method: "GET",
       path: "/v1/promotion_codes",
-      query: { code: "spring20", active: true, limit: 1 },
+      query: { code: "spring20", active: true, limit: 100 },
     });
+  });
+
+  it("with several active codes of the same text, a customer's own code is found even when another customer's was created later", async () => {
+    const row = (id: string, customer: string | null) => ({
+      id,
+      code: "WELCOME-BACK",
+      active: true,
+      customer,
+      coupon: { id: "coupon_1", valid: true, percent_off: 30, duration: "once" },
+    });
+    // Stripe lists the newest first: B's code before A's, and a general one last.
+    const { http } = fakeHttp(() => ({
+      data: [row("promo_b", "cus_B"), row("promo_a", "cus_A"), row("promo_all", null)],
+    }));
+    const gateway = createStripeGateway(http);
+
+    expect((await gateway.lookupPromotionCode("welcome-back", "cus_A"))?.id).toBe(
+      "promo_a",
+    );
+    expect((await gateway.lookupPromotionCode("welcome-back", "cus_B"))?.id).toBe(
+      "promo_b",
+    );
+    // Someone else (or nobody yet) gets the one that is open to everyone, never a stranger's.
+    expect((await gateway.lookupPromotionCode("welcome-back", "cus_C"))?.id).toBe(
+      "promo_all",
+    );
+    expect((await gateway.lookupPromotionCode("welcome-back"))?.id).toBe(
+      "promo_all",
+    );
   });
 
   it("returns null when no active code matches", async () => {

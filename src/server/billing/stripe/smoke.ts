@@ -678,21 +678,42 @@ export async function runStripeSmoke(
     await step(
       "Cleanup: subscription canceled, customer deleted, test code turned off",
       async () => {
+        // Each action on its own: the first failure must not leave the rest behind.
+        const problems: string[] = [];
+        const attempt = async (what: string, run: () => Promise<unknown>) => {
+          try {
+            await run();
+          } catch (error) {
+            problems.push(
+              `${what}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        };
         if (state.promotionCodeId) {
-          await http({
-            method: "POST",
-            path: `/v1/promotion_codes/${state.promotionCodeId}`,
-            body: { active: false },
-            idempotencyKey: `smoke:${runId}:promo-off`,
-          });
+          const id = state.promotionCodeId;
+          await attempt("promotion code", () =>
+            http({
+              method: "POST",
+              path: `/v1/promotion_codes/${id}`,
+              body: { active: false },
+              idempotencyKey: `smoke:${runId}:promo-off`,
+            }),
+          );
         }
-        if (state.subscriptionId)
-          await gateway.cancelSubscriptionNow(state.subscriptionId);
+        if (state.subscriptionId) {
+          const id = state.subscriptionId;
+          await attempt("subscription", () => gateway.cancelSubscriptionNow(id));
+        }
         if (state.customerId) {
-          await http({
-            method: "DELETE",
-            path: `/v1/customers/${state.customerId}`,
-          });
+          const id = state.customerId;
+          await attempt("customer", () =>
+            http({ method: "DELETE", path: `/v1/customers/${id}` }),
+          );
+        }
+        if (problems.length > 0) {
+          throw new Error(
+            `could not clean up everything, remove these by hand in the Stripe TEST dashboard: ${problems.join("; ")}`,
+          );
         }
       },
     );

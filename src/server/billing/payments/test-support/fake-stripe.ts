@@ -46,6 +46,8 @@ export function createFakeStripe() {
     // Yalnız seçilen plan değişikliği çağrıları patlar (ör. yalnız yükseltme reddedilir).
     changePlanWhen?: (input: ChangePlanInput) => Error | null | undefined;
     cancel?: Error;
+    // The cancel-at-period-end flag call (resume / cancel) is refused.
+    setCancel?: Error;
     read?: Error;
     checkout?: Error;
   } = {};
@@ -186,6 +188,7 @@ export function createFakeStripe() {
       timesRedeemed: partial.timesRedeemed ?? 0,
       firstTimeOnly: partial.firstTimeOnly ?? false,
       minimumAmount: partial.minimumAmount ?? null,
+      minimumAmountCurrency: partial.minimumAmountCurrency ?? null,
       customerId: partial.customerId ?? null,
       couponId: partial.couponId ?? "coupon_fake",
       coupon:
@@ -253,14 +256,21 @@ export function createFakeStripe() {
       record("listInvoices", { customerId, limit });
       return invoiceRows;
     },
-    async lookupPromotionCode(code) {
+    async lookupPromotionCode(code, forCustomerId) {
       record("lookupPromotionCode", code);
       read();
       const wanted = code.toLowerCase();
-      for (const promo of promotions.values()) {
-        if (promo.active && promo.code.toLowerCase() === wanted) return promo;
-      }
-      return null;
+      const matches = [...promotions.values()].filter(
+        (promo) => promo.active && promo.code.toLowerCase() === wanted,
+      );
+      return (
+        (forCustomerId
+          ? matches.find((promo) => promo.customerId === forCustomerId)
+          : undefined) ??
+        matches.find((promo) => promo.customerId === null) ??
+        matches[0] ??
+        null
+      );
     },
     async createCustomer(input) {
       record("createCustomer", input);
@@ -321,6 +331,7 @@ export function createFakeStripe() {
     },
     async setCancelAtPeriodEnd(subscriptionId, cancel) {
       record("setCancelAtPeriodEnd", { subscriptionId, cancel });
+      if (failures.setCancel) throw failures.setCancel;
       const sub = subs.get(subscriptionId);
       if (!sub)
         throw new StripeApiError({

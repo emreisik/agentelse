@@ -31,6 +31,10 @@ import {
 // serviste doğrulanır (fiyat zaten plans.ts'ten gelir).
 
 const RATE = { max: 20, windowMs: 10 * 60_000 };
+// Promosyon kodu tahmini kullanıcı başına 10 / 10 dk: HEM "Uygula" HEM de kodlu Checkout
+// aynı sayacı kullanır (ikisi de "kod geçerli mi" sorusunu yanıtlar; ayrı sayaçlar tahmin
+// hakkını katlardı).
+const PROMO_ATTEMPTS = 10;
 
 type Context = {
   userId: string;
@@ -72,7 +76,7 @@ async function workspaceName(workspaceId: string): Promise<string | null> {
 export async function checkPromoCodeAction(input: {
   code: string;
 }): Promise<ActionResult<{ code: string; description: string }>> {
-  const gate = await guard("promo", 10);
+  const gate = await guard("promo", PROMO_ATTEMPTS);
   if (!gate.ok) return gate.result;
   return checkPromoCode(
     { workspaceId: gate.ctx.workspaceId, code: input.code },
@@ -89,7 +93,17 @@ export async function startCheckoutAction(input: {
   const gate = await guard("checkout");
   if (!gate.ok) return gate.result;
   const { ctx } = gate;
-  return startSubscriptionCheckout(
+  // Kodlu Checkout da bir kod sorgusudur (geçersizse PROMO_INVALID, geçerliyse Checkout
+  // adresi döner): "Uygula"daki sınırın dışında bir tahmin yolu olmasın.
+  const hasPromo =
+    typeof input.promoCode === "string" && input.promoCode.trim() !== "";
+  if (
+    hasPromo &&
+    isRateLimited(`billing:promo:${ctx.userId}`, PROMO_ATTEMPTS, RATE.windowMs)
+  ) {
+    return fail("RATE_LIMITED");
+  }
+  const result = await startSubscriptionCheckout(
     {
       workspaceId: ctx.workspaceId,
       email: ctx.email,
@@ -101,6 +115,11 @@ export async function startCheckoutAction(input: {
     },
     ctx.deps,
   );
+  // Servis reddetmeden önce satırı Stripe'a göre eşitlemiş olabilir (kaçmış ödeme bağlandı,
+  // bitmiş abonelik kapandı): ekran eski kalıp aynı hatayı tekrarlatmasın. Başarıda sayfa
+  // zaten Stripe'a gider.
+  if (!result.ok) revalidatePath("/billing");
+  return result;
 }
 
 export async function startPackCheckoutAction(input: {
@@ -109,7 +128,7 @@ export async function startPackCheckoutAction(input: {
   const gate = await guard("pack");
   if (!gate.ok) return gate.result;
   const { ctx } = gate;
-  return startPackCheckout(
+  const result = await startPackCheckout(
     {
       workspaceId: ctx.workspaceId,
       email: ctx.email,
@@ -118,6 +137,8 @@ export async function startPackCheckoutAction(input: {
     },
     ctx.deps,
   );
+  if (!result.ok) revalidatePath("/billing");
+  return result;
 }
 
 export async function openPortalAction(): Promise<
@@ -125,10 +146,12 @@ export async function openPortalAction(): Promise<
 > {
   const gate = await guard("portal");
   if (!gate.ok) return gate.result;
-  return openBillingPortal(
+  const result = await openBillingPortal(
     { workspaceId: gate.ctx.workspaceId },
     gate.ctx.deps,
   );
+  if (!result.ok) revalidatePath("/billing");
+  return result;
 }
 
 export async function cancelSubscriptionAction(): Promise<ActionResult> {

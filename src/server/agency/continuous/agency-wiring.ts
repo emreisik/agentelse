@@ -217,20 +217,6 @@ registerAgencyTickStep({
       return 0;
     }),
 });
-// Ödeme güvenlik ağı (docs/billing-payments.md): yenileme tarihi gelmiş abonelikleri Stripe'tan
-// yeniden okur; webhook günlerce kaçsa da ödeyen müşteri erişimsiz, bitmiş abonelik açık
-// kalmaz. Ödeme kapalıyken sorgusuz 0 döner; hata tick'i durdurmaz.
-registerAgencyTickStep({
-  name: "billing-payments-sweep",
-  run: () =>
-    runPaymentsSweepTick().catch((error) => {
-      console.error(
-        "[billing] payments sweep",
-        error instanceof Error ? error.name : error,
-      );
-      return 0;
-    }),
-});
 // Meta Ads steps run right after the heartbeat, before every LLM step, so a
 // long tick never delays them (docs/meta-ads-plan.md §5). Each skips itself
 // on a dev process sharing the live database (K19).
@@ -316,6 +302,22 @@ registerAgencyTickStep({
 registerAgencyTickStep({
   name: "ads-retention",
   run: () => AdsRetention.runDue(),
+});
+// Ödeme güvenlik ağı (docs/billing-payments.md): yenileme tarihi gelmiş abonelikleri Stripe'tan
+// yeniden okur; webhook günlerce kaçsa da ödeyen müşteri erişimsiz, bitmiş abonelik açık
+// kalmaz. Ödeme kapalıyken sorgusuz 0 döner; hata tick'i durdurmaz. Ağa bağlı olduğu için
+// zamana duyarlı Meta Ads adımlarının ARKASINDA koşar ve 60 sn'lik bir bütçesi vardır (yavaş
+// bir Stripe reklam bütçe korumasını geciktirmesin).
+registerAgencyTickStep({
+  name: "billing-payments-sweep",
+  run: () =>
+    runPaymentsSweepTick().catch((error) => {
+      console.error(
+        "[billing] payments sweep",
+        error instanceof Error ? error.name : error,
+      );
+      return 0;
+    }),
 });
 // Approvals answered in Telegram are applied right after the Meta steps, not
 // behind the LLM steps below.

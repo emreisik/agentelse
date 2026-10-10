@@ -27,6 +27,14 @@ async function main() {
     );
     process.exit(1);
   }
+  // Kısıtlı anahtar (rk_...) yarı yolda reddedilir ve geride test verisi bırakır: tam test
+  // anahtarı gerekir (docs/billing-payments.md).
+  if (secretKey.startsWith("rk_")) {
+    console.error(
+      "The smoke test needs the full TEST secret key (sk_test_...), not a restricted key (rk_...): a restricted key is refused halfway and leaves test data behind. Nothing was sent.",
+    );
+    process.exit(1);
+  }
   const mode = stripeModeOfKey(secretKey);
   if (mode !== "test") {
     console.error(

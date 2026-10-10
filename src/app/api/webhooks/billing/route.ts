@@ -10,7 +10,10 @@ import {
   parseEventEnvelope,
   StripeShapeError,
 } from "@/server/billing/stripe/facts";
-import { verifyStripeSignature } from "@/server/billing/stripe/signature";
+import {
+  isPlausibleSignatureHeader,
+  verifyStripeSignature,
+} from "@/server/billing/stripe/signature";
 
 // Stripe webhook ucu (docs/billing-payments.md). Oturum yok: istek yalnız Stripe-Signature
 // webhook sırrıyla doğrulanırsa kabul edilir (aksi hâlde 401). Olay işleyiciye verilir ve
@@ -27,9 +30,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // İmza başlığı yoksa gövde hiç okunmaz: kimliksiz istekler 512 KB tamponlatamaz.
+  // İmza başlığı yok / biçimsiz / süresi geçmişse gövde hiç okunmaz: kimliksiz istekler
+  // (rastgele bir başlıkla bile) 512 KB tamponlatamaz. Gerçek imza denetimi gövdeyle yapılır.
   const signatureHeader = request.headers.get("stripe-signature");
-  if (!signatureHeader) {
+  if (!signatureHeader || !isPlausibleSignatureHeader(signatureHeader)) {
+    console.warn(
+      `[billing-webhook] rejected: ${signatureHeader ? "malformed-or-stale-header" : "missing-header"}`,
+    );
     return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
   }
   const raw = await readLimitedBody(request, MAX_WEBHOOK_BODY_BYTES);

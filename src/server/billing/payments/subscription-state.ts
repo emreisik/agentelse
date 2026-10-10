@@ -8,6 +8,7 @@ import {
   pastDueGraceEnd,
 } from "@/lib/billing/entitlements-core";
 import {
+  RENEWAL_LAG_MS,
   isPlanKey,
   quotaFor,
   sellableUnits,
@@ -158,7 +159,11 @@ export async function syncSubscriptionState(input: {
         const periodEnd = paid.periodEnd ?? sub.currentPeriodEnd;
         if (!periodEnd) return { applied: false, note: "no-paid-period" };
 
-        const introUsedBefore = row?.introOffer === true;
+        // Eski satırın geçmişi (ilk ay indirimi, ödenmiş süre) YALNIZ aynı Stripe modundaysa
+        // yeni aboneliğe geçer: test kartıyla alınmış bir indirim ya da süre, canlı aboneliğe
+        // sızmasın (canlıda ilk ay indirimi hâlâ sunulur, test süresi canlı erişim vermez).
+        const sameMode = (row?.stripeLivemode ?? sub.livemode) === sub.livemode;
+        const introUsedBefore = sameMode && row?.introOffer === true;
         const isFirstInvoice = paid.billingReason === "subscription_create";
         const intro =
           isFirstInvoice && !introUsedBefore && sub.metadata.intro === "1";
@@ -166,6 +171,7 @@ export async function syncSubscriptionState(input: {
         // İptal edilmiş ama ödenmiş süresi SÜREN satır (ör. yıllık plan, panelden anında
         // iptal): yeni abonelik bu süreyi kısaltmaz.
         const keptPaidThrough =
+          sameMode &&
           row?.status === "CANCELED" &&
           row.paidThrough &&
           row.paidThrough.getTime() >
@@ -243,7 +249,13 @@ export async function syncSubscriptionState(input: {
         !stale &&
         goodStanding &&
         row.status === "PAST_DUE" &&
-        latest?.status === "paid"
+        latest?.status === "paid" &&
+        // Bu dalda süre ilerletilemez (anlık görüntü faturanın dönemini taşımaz): ACTIVE'e
+        // yalnız mevcut ödenmiş süre hâlâ örtüyorsa dönülür. Örtmüyorsa PAST_DUE ve ek süre
+        // kalır; yenilenen dönemi ödeme olayı / süpürme (fatura ile) getirir. Aksi hâlde
+        // kartını düzelten müşteri, ek sürenin yerine geçen ESKİ süre yüzünden salt-okunur olurdu.
+        row.paidThrough !== null &&
+        row.paidThrough.getTime() + RENEWAL_LAG_MS > now.getTime()
       ) {
         // Ödeme olayı kaçsa da Stripe aboneliği "active" + son fatura ödenmiş görüyor:
         // gecikme bitti (paidThrough ödeme olayıyla ilerler).

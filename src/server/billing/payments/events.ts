@@ -53,6 +53,10 @@ const LOUD_NOTES = new Set([
   // İade/itiraz erişimi değiştirmedi (eski dönem ya da orantı faturası): sahip elle bakar.
   "older-period",
   "not-a-period-invoice",
+  // İtiraz soruşturma aşamasında (para çekilmedi; erişim kesilmedi) ya da kazanıldı (erişim
+  // daha önce kesilmişse otomatik geri GELMEZ): sahip bakar.
+  "dispute-inquiry",
+  "dispute-won",
 ]);
 
 export async function processStripeEvent(
@@ -138,6 +142,9 @@ async function dispatch(
     case "charge.refunded":
       return handleChargeRefunded(id, deps);
     case "charge.dispute.created":
+    // Soruşturma (warning_*) gerçek bir itiraza dönüşünce AYNI itiraz nesnesi güncellenir:
+    // erişim o zaman kesilir. Tekrar işlenmesi zararsızdır (mezar taşı tekil).
+    case "charge.dispute.updated":
       return handleDispute(id, deps);
     default:
       return { status: "IGNORED", note: "unhandled-type" };
@@ -360,6 +367,11 @@ async function handleChargeRefunded(
   return applyChargeReversal(charge, deps, "REFUNDED");
 }
 
+// Paranın riske girdiği ya da gittiği itiraz durumları. Durum bilinmiyorsa (null) da risk
+// sayılır (eski davranış). "warning_*" soruşturma aşamasıdır (Amex, Discover, bazı yerel
+// ağlar): para ÇEKİLMEZ, satıcı kanıtla ya da iadeyle çözebilir; "won" kazanılmış itirazdır.
+const DISPUTE_AT_RISK = new Set(["needs_response", "under_review", "lost"]);
+
 async function handleDispute(
   disputeId: string,
   deps: EventDeps,
@@ -367,6 +379,19 @@ async function handleDispute(
   const dispute = await deps.gateway.getDispute(disputeId);
   if (!dispute?.chargeId)
     return { status: "IGNORED", note: "dispute-without-charge" };
+  if (dispute.status && !DISPUTE_AT_RISK.has(dispute.status)) {
+    // Erişim kesilmez. Soruşturma gerçek itiraza dönerse charge.dispute.updated gelir;
+    // kazanılan itirazda önceden kesilmiş erişim otomatik geri gelmez (Stripe'ta abonelik
+    // kapatıldı): sahip müşteriyi yeniden abone olmaya yönlendirir (docs/billing-payments.md).
+    return {
+      status: "IGNORED",
+      note: dispute.status.startsWith("warning_")
+        ? "dispute-inquiry"
+        : dispute.status === "won"
+          ? "dispute-won"
+          : "dispute-closed",
+    };
+  }
   const charge = await deps.gateway.getCharge(dispute.chargeId);
   if (!charge) return { status: "IGNORED", note: "charge-missing" };
   // İtiraz tutarın tamamını riske atar: ek paket tamamen, abonelik hemen sona erer.

@@ -507,6 +507,8 @@ export type StripePromotionFacts = {
   timesRedeemed: number;
   firstTimeOnly: boolean;
   minimumAmount: number | null;
+  // Alt sınırın para birimi (Stripe minimum_amount ile birlikte verir; yoksa null).
+  minimumAmountCurrency: string | null;
   // Yalnız bu müşteri kullanabilir (null: herkes).
   customerId: string | null;
   couponId: string | null;
@@ -527,6 +529,7 @@ const promotionCodeSchema = z.object({
     .object({
       first_time_transaction: z.boolean().default(false),
       minimum_amount: z.number().nullable().optional(),
+      minimum_amount_currency: z.string().nullable().optional(),
     })
     .nullable()
     .optional(),
@@ -552,6 +555,7 @@ export function parsePromotionCodeList(raw: unknown): StripePromotionFacts[] {
     timesRedeemed: row.times_redeemed,
     firstTimeOnly: row.restrictions?.first_time_transaction ?? false,
     minimumAmount: row.restrictions?.minimum_amount ?? null,
+    minimumAmountCurrency: row.restrictions?.minimum_amount_currency ?? null,
     customerId: row.customer ?? null,
     couponId: row.coupon?.id ?? row.promotion?.coupon ?? null,
     coupon: row.coupon ? couponFacts(row.coupon) : null,

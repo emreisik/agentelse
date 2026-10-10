@@ -7,8 +7,12 @@
 //   npm run billing:retire-test-subscriptions            -> kuru çalışma: yalnız listeler
 //   npm run billing:retire-test-subscriptions -- --apply -> yazar
 //
-// Tekrar çalıştırmak güvenlidir: zaten emekli edilmiş (CANCELED, ödenmiş süresi geçmiş) satıra
-// dokunulmaz. Stripe'a hiç gitmez; test müşterilerini Stripe panelinden silmek isteğe bağlıdır.
+// SIRA: önce canlı anahtara geçin (test anahtarı hâlâ çalışırken emekli edilen satır, yeniden
+// gönderilen bir olayla canlanabilir), sonra bunu çalıştırın, sonra BILLING_MODE=enforce.
+// Betik Stripe'a hiç gitmez (yalnız veritabanına yazar); test müşterilerini Stripe panelinden
+// silmek isteğe bağlıdır. Tekrar çalıştırmak güvenlidir.
+//
+// Mantık src/server/billing/retire-test-subscriptions.ts'te (testli); burası komut satırıdır.
 
 import { existsSync } from "node:fs";
 
@@ -16,34 +20,47 @@ if (existsSync(".env")) process.loadEnvFile(".env");
 
 import { PrismaClient } from "@prisma/client";
 
+import {
+  describeDatabase,
+  parseLegacyBefore,
+  planRetirement,
+  retireCandidates,
+} from "../src/server/billing/retire-test-subscriptions";
+
 const prisma = new PrismaClient();
 const apply = process.argv.includes("--apply");
 
 async function main() {
   const now = new Date();
-  const rows = await prisma.subscription.findMany({
-    where: { stripeLivemode: false, stripeSubscriptionId: { not: null } },
-    select: {
-      workspaceId: true,
-      planKey: true,
-      interval: true,
-      status: true,
-      paidThrough: true,
-    },
-    orderBy: { paidThrough: "desc" },
-  });
-  const active = rows.filter(
-    (row) =>
-      row.status !== "CANCELED" ||
-      (row.paidThrough !== null && row.paidThrough.getTime() > now.getTime()),
-  );
-
+  const legacyBefore = parseLegacyBefore(process.env.BILLING_LEGACY_BEFORE);
   console.log(
-    `TEST modunda bağlanmış abonelik: ${rows.length} (hâlâ erişim verenler: ${active.length}).`,
+    `Veritabanı: ${describeDatabase(process.env.DATABASE_URL)} (kimlik bilgisi gösterilmez). ${apply ? "YAZACAK" : "Kuru çalışma"}.`,
   );
-  for (const row of active) {
+  if (!legacyBefore) {
     console.log(
-      `- ${row.workspaceId} · ${row.planKey ?? "-"}/${row.interval ?? "-"} · ${row.status} · ödenmiş süre ${row.paidThrough?.toISOString() ?? "-"}`,
+      "Uyarı: BILLING_LEGACY_BEFORE okunamadı; eski müşteri (LEGACY) işareti gösterilemez.",
+    );
+  }
+
+  const plan = await planRetirement(prisma, { now, legacyBefore });
+  console.log(
+    `TEST modunda bağlanmış abonelik: ${plan.total} (hâlâ erişim verenler: ${plan.active.length}).`,
+  );
+  for (const row of plan.active) {
+    console.log(
+      `- ${row.workspaceId} · ${row.planKey ?? "-"}/${row.interval ?? "-"} · ${row.status} · ödenmiş süre ${row.paidThrough?.toISOString() ?? "-"}${row.wasLegacy ? " · ESKİ MÜŞTERİ" : ""}${row.extraLeft > 0 ? ` · test kartıyla alınmış ek hak kaldı: ${row.extraLeft}` : ""}`,
+    );
+  }
+  const legacy = plan.active.filter((row) => row.wasLegacy);
+  if (legacy.length > 0) {
+    console.log(
+      `\n${legacy.length} workspace BILLING_LEGACY_BEFORE'dan önce açılmış: satırsız kalsalardı mevcut müşteri (sınırsız) sayılırlardı; emekli edilirse İPTAL EDİLMİŞ (salt-okunur) olurlar. İstemiyorsanız önce o workspace'in Subscription satırını elle silin (silinen satır listeden düşer), sonra --apply çalıştırın.`,
+    );
+  }
+  const withExtra = plan.active.filter((row) => row.extraLeft > 0);
+  if (withExtra.length > 0) {
+    console.log(
+      `\n${withExtra.length} workspace test kartıyla alınmış ek paket hakkı taşıyor (süresiz, emekli edilince silinmez); canlıda plan alınınca harcanabilir hâle gelir. İstemiyorsanız hakkı elle geri alın.`,
     );
   }
 
@@ -54,24 +71,7 @@ async function main() {
     return;
   }
 
-  let written = 0;
-  for (const row of active) {
-    const result = await prisma.subscription.updateMany({
-      where: { workspaceId: row.workspaceId, stripeLivemode: false },
-      data: {
-        status: "CANCELED",
-        endedAt: now,
-        endedReason: "CANCELED",
-        paidThrough: now,
-        graceUntil: null,
-        cancelAtPeriodEnd: false,
-        pendingPlanKey: null,
-        pendingInterval: null,
-        pendingEffectiveAt: null,
-      },
-    });
-    written += result.count;
-  }
+  const written = await retireCandidates(prisma, plan.active, now);
   console.log(`\nEmekli edilen satır: ${written}.`);
 }
 

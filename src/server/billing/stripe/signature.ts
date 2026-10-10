@@ -41,6 +41,22 @@ function parseHeader(header: string): ParsedHeader {
     : { timestamp, signatures };
 }
 
+// Gövdeyi OKUMADAN önceki ucuz denetim: başlık biçimli mi (t=<sayı>, en az bir 64 onaltılık
+// v1) ve zaman damgası toleransta mı? Kimliksiz bir istek rastgele bir başlıkla (ör. "x")
+// 512 KB'lık gövde tamponlatamaz; imzanın gerçekten tutup tutmadığı gövde okunduktan sonra
+// verifyStripeSignature ile belirlenir.
+export function isPlausibleSignatureHeader(
+  header: string | null,
+  options: { now?: Date; toleranceSec?: number } = {},
+): boolean {
+  if (!header) return false;
+  const parsed = parseHeader(header);
+  if (!parsed) return false;
+  const nowSec = Math.floor((options.now ?? new Date()).getTime() / 1000);
+  const tolerance = options.toleranceSec ?? STRIPE_SIGNATURE_TOLERANCE_SEC;
+  return Math.abs(nowSec - parsed.timestamp) <= tolerance;
+}
+
 export function verifyStripeSignature(input: {
   rawBody: Buffer | string;
   header: string | null;

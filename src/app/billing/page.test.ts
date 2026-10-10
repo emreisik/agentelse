@@ -61,7 +61,7 @@ vi.mock("@/components/layout/app-shell", () => ({
     createElement("div", { "data-shell": "" }, children),
 }));
 
-import BillingPage from "./page";
+import BillingPage, { dynamic } from "./page";
 
 const OVERVIEW: BillingOverview = {
   mode: "off",
@@ -101,6 +101,12 @@ beforeEach(() => {
 });
 
 describe("/billing", () => {
+  it("is rendered per request: BILLING_UI is read when the page is asked for, not when the app is built", () => {
+    // Otherwise `next build` prerenders the flag-off 404 (it throws before touching the
+    // session) and setting BILLING_UI=true afterwards would still serve that 404.
+    expect(dynamic).toBe("force-dynamic");
+  });
+
   it("is not found while the screens are switched off, and reads nothing", async () => {
     mocks.enabled.mockReturnValue(false);
     await expect(render()).rejects.toBeInstanceOf(NotFoundSignal);

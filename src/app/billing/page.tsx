@@ -36,6 +36,12 @@ import { Badge } from "@/components/ui/badge";
 
 export const metadata = { title: "Plan & usage" };
 
+// Rendered per request, never frozen into the build: the page decides before it reads the
+// session (BILLING_UI is read at call time, ui-flag.ts), so without this the production
+// build prerenders it as a static 404 whenever BILLING_UI is not set during the build, and
+// turning the screens on later would need a rebuild instead of just the variable.
+export const dynamic = "force-dynamic";
+
 type Params = Record<string, string | string[] | undefined>;
 
 const first = (value: string | string[] | undefined): string | undefined =>

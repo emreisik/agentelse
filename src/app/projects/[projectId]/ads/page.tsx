@@ -215,6 +215,12 @@ export default async function AdsPage({
   const adDetailMedia = detailAd
     ? await MetaAdsQuery.adMedia(connection, detailAd)
     : undefined;
+  // The edit dialog previews the same full-size picture as the detail sheet;
+  // Meta's creative thumbnail is ~64px and looks blurry at preview size.
+  const editAd = adEditId ? ads.find((a) => a.adId === adEditId) : undefined;
+  const adEditMedia = editAd
+    ? await MetaAdsQuery.adMedia(connection, editAd)
+    : undefined;
   const currentUrl = new URLSearchParams();
   if (campaignId) currentUrl.set("campaignId", campaignId);
   if (adSetId) currentUrl.set("adSetId", adSetId);
@@ -471,6 +477,7 @@ export default async function AdsPage({
                   <AdEditWizard
                     projectId={projectId}
                     ad={ad}
+                    media={adEditMedia}
                     closeHref={closeHref}
                     pageName={metadata.selectedPageName ?? "Your Page"}
                   />

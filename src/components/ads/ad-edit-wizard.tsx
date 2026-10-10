@@ -23,6 +23,7 @@ import {
 import { useObjectUrl, useObjectUrls } from "@/lib/use-object-url";
 import { updateMetaAdAction } from "@/server/actions/meta-ads-actions";
 import type { MetaAdSummary } from "@/server/integrations/meta-client";
+import type { AdDetailMedia } from "@/server/integrations/meta-ads-query";
 
 const CALL_TO_ACTIONS = [
   "LEARN_MORE",
@@ -78,11 +79,13 @@ function nextCardId(): string {
 export function AdEditWizard({
   projectId,
   ad,
+  media,
   closeHref,
   pageName,
 }: {
   projectId: string;
   ad: MetaAdSummary;
+  media?: AdDetailMedia;
   closeHref: string;
   pageName: string;
 }) {
@@ -142,6 +145,20 @@ export function AdEditWizard({
   const [video, setVideo] = useState<File | null>(null);
   const [thumbnail, setThumbnail] = useState<File | null>(null);
   const thumbnailPreviewUrl = useObjectUrl(thumbnail);
+
+  // Full-size pictures of the current creative (Meta's thumbnail is ~64px).
+  const currentImageUrl = media?.imageUrl ?? ad.thumbnailUrl ?? null;
+  const currentPosterUrl = media?.posterUrl ?? ad.thumbnailUrl ?? null;
+  const currentCardUrlByHash = new Map<string, string>();
+  (ad.creative?.cards ?? []).forEach((c, i) => {
+    const url = media?.cardImageUrls?.[i];
+    if (c.imageHash && url) currentCardUrlByHash.set(c.imageHash, url);
+  });
+  const cardPreviewOf = (index: number): string | null =>
+    cardPreviewUrls[index] ??
+    (cards[index]?.existingImageHash
+      ? (currentCardUrlByHash.get(cards[index]!.existingImageHash!) ?? null)
+      : null);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -300,18 +317,18 @@ export function AdEditWizard({
       ? {
           kind: "carousel",
           cards: cards.map((c, i) => ({
-            imageUrl: cardPreviewUrls[i] ?? null,
+            imageUrl: cardPreviewOf(i),
             name: c.name,
           })),
         }
       : format === "VIDEO"
         ? {
             kind: "video",
-            thumbnailUrl: thumbnailPreviewUrl ?? ad.thumbnailUrl ?? null,
+            thumbnailUrl: thumbnailPreviewUrl ?? currentPosterUrl,
           }
         : {
             kind: "single",
-            imageUrl: imagePreviewUrl ?? ad.thumbnailUrl ?? null,
+            imageUrl: imagePreviewUrl ?? currentImageUrl,
           };
 
   return (
@@ -386,7 +403,7 @@ export function AdEditWizard({
             <div className="flex items-center gap-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={imagePreviewUrl ?? ad.thumbnailUrl ?? undefined}
+                src={imagePreviewUrl ?? currentImageUrl ?? undefined}
                 alt=""
                 className="size-16 shrink-0 rounded-lg object-cover ring-1 ring-foreground/10"
               />
@@ -480,10 +497,10 @@ export function AdEditWizard({
                   ) : null}
                 </div>
                 <div className="flex items-start gap-3">
-                  {cardPreviewUrls[index] ? (
+                  {cardPreviewOf(index) ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={cardPreviewUrls[index]!}
+                      src={cardPreviewOf(index)!}
                       alt=""
                       className="size-14 shrink-0 rounded-lg object-cover ring-1 ring-foreground/10"
                     />

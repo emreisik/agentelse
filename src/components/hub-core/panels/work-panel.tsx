@@ -504,16 +504,6 @@ async function TaskDetail({
                         value: capabilityLabel(job.capability),
                       },
                       {
-                        type: "text",
-                        label: "Estimated cost",
-                        value: job.estimatedCost,
-                      },
-                      {
-                        type: "text",
-                        label: "Actual cost",
-                        value: job.actualCost,
-                      },
-                      {
                         type: "date",
                         label: "Started",
                         value: job.startedAt,

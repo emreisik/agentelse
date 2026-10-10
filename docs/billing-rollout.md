@@ -14,6 +14,8 @@ Abonelik sistemi kodca hazır ve canlıda KAPALI. Bu belge, kapalıdan "ücretli
 - Üretimde `BILLING_MODE=enforce` ile TEST anahtarı ödemeyi kapatır; sırayı bozmayın: önce canlı anahtar, sonra `enforce`.
 - Gizlilik politikasına Stripe (ödeme işleyicisi) ve şartlara iade metni EKLENMELİ (hukuki metin, sahip kararı; kodda değiştirilmedi).
 - İade/itiraz politikası sahip kararı bekliyor (`docs/billing-payments.md`): varsayılan tam iade = anında bitir, kısmi iade = dokunma, itiraz = bitir.
+- Herkese açık metinler ürünle aynı anda güncellenir (kodda DEĞİŞTİRİLMEDİ, sahip işi): pazarlama sitesindeki `/pricing` (`apps/marketing`) bugün yalnız "Early access $0 / Agencies" gösterir; gerçek planlar `src/lib/billing/plans.ts`'ten yazılmalı. `src/app/terms/page.tsx` (ücretli planlardan ve /pricing'den söz eden bölüm) ve gizlilik politikası (Stripe ödeme işleyicisi, müşteri e-postası/çalışma alanı adı/ödeme verisi) ile Meta App Review "Data handling" işlemci listesi de güncellenir.
+- Kenar çubuğunda "Plan & usage" girişi yok (menü dosyaları sahibin commit'siz çalışmasında); giriş şimdilik Profile kartı ve doğrudan `/billing` adresidir. Sahibin menü çalışması commit'lenince hesap menüsüne eklenir.
 
 ## Sıra
 

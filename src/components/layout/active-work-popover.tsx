@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { X } from "lucide-react";
 import type { AgencyLoopStatus } from "@prisma/client";
+import { toast } from "sonner";
 
 import { timeAgo } from "@/lib/dates";
 import { AGENCY_LOOP_STATUS } from "@/lib/labels/work";
@@ -11,7 +12,15 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import type { AgencyStatusSnapshot } from "@/server/agency/agency-status-snapshot";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import {
+  approveApprovalAction,
+  rejectApprovalAction,
+} from "@/server/actions/approval-actions";
+import type {
+  ActiveJob,
+  AgencyStatusSnapshot,
+} from "@/server/agency/agency-status-snapshot";
 
 const POLL_MS = 10_000;
 
@@ -59,22 +68,23 @@ export function ActiveWorkPopover({
   const [snapshot, setSnapshot] = useState(initial);
   const [open, setOpen] = useState(false);
 
+  const poll = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/agency-status`, {
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        snapshot: AgencyStatusSnapshot | null;
+      };
+      setSnapshot(data.snapshot);
+    } catch {
+      // Transient network hiccup — next poll retries, current value stays.
+    }
+  }, [projectId]);
+
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/projects/${projectId}/agency-status`, {
-          cache: "no-store",
-        });
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          snapshot: AgencyStatusSnapshot | null;
-        };
-        setSnapshot(data.snapshot);
-      } catch {
-        // Transient network hiccup — next poll retries, current value stays.
-      }
-    };
     const start = () => {
       if (timer) return;
       timer = setInterval(poll, POLL_MS);
@@ -92,7 +102,7 @@ export function ActiveWorkPopover({
       stop();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [projectId]);
+  }, [poll]);
 
   const status = snapshot?.status ?? null;
   const activeCount = snapshot?.tasksNow ?? 0;
@@ -241,19 +251,24 @@ export function ActiveWorkPopover({
                 <span
                   className="min-w-0 truncate text-xs"
                   style={{ color: "var(--ws-text-body)" }}
+                  title={job.title}
                 >
                   {job.title}
                 </span>
-                <span
-                  className="flex shrink-0 items-center gap-1.5 text-[11px]"
-                  style={{ color: "var(--ws-text-3)" }}
-                >
+                {job.approval ? (
+                  <ApprovalButtons job={job} onDecided={poll} />
+                ) : (
                   <span
-                    className="size-1.5 rounded-full"
-                    style={{ background: "var(--ws-text-3)" }}
-                  />
-                  {job.statusWord}
-                </span>
+                    className="flex shrink-0 items-center gap-1.5 text-[11px]"
+                    style={{ color: "var(--ws-text-3)" }}
+                  >
+                    <span
+                      className="size-1.5 rounded-full"
+                      style={{ background: "var(--ws-text-3)" }}
+                    />
+                    {job.statusWord}
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -311,6 +326,73 @@ export function ActiveWorkPopover({
         ) : null}
       </PopoverContent>
     </Popover>
+  );
+}
+
+// Approve / Reject for a task waiting on a decision. The server action
+// re-checks who may decide (budget-level approvals are OWNER/ADMIN only); a
+// refusal comes back as a toast.
+function ApprovalButtons({
+  job,
+  onDecided,
+}: {
+  job: ActiveJob;
+  onDecided: () => void;
+}) {
+  const confirm = useConfirm();
+  const [pending, startTransition] = useTransition();
+  const approval = job.approval;
+  if (!approval) return null;
+
+  const decide = (kind: "approve" | "reject") => {
+    startTransition(async () => {
+      if (
+        kind === "approve" &&
+        approval.spend &&
+        !(await confirm({
+          title: "Approve this budget change?",
+          description: job.title,
+          confirmLabel: "Approve",
+        }))
+      ) {
+        return;
+      }
+      const formData = new FormData();
+      formData.set("approvalId", approval.id);
+      const result =
+        kind === "approve"
+          ? await approveApprovalAction(formData)
+          : await rejectApprovalAction(formData);
+      if (result.ok) {
+        toast.success(kind === "approve" ? "Approved" : "Rejected");
+        onDecided();
+      } else {
+        toast.error(result.message);
+      }
+    });
+  };
+
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => decide("reject")}
+        className="rounded-md px-1.5 py-0.5 text-[11px] transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-50"
+        style={{ color: "var(--ws-text-3)" }}
+      >
+        Reject
+      </button>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => decide("approve")}
+        className="rounded-md px-1.5 py-0.5 text-[11px] font-medium transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-50"
+        style={{ color: "var(--ws-text)" }}
+      >
+        Approve
+      </button>
+    </span>
   );
 }
 

@@ -8,9 +8,11 @@ vi.mock("@/server/repositories/agency-loop-state.repository", () => ({
 const taskCount = vi.fn();
 const taskFindMany = vi.fn().mockResolvedValue([]);
 const dailyStatFindUnique = vi.fn();
+const approvalFindMany = vi.fn().mockResolvedValue([]);
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     task: { count: taskCount, findMany: taskFindMany },
+    approval: { findMany: approvalFindMany },
     agencyDailyStat: { findUnique: dailyStatFindUnique },
   },
 }));
@@ -20,6 +22,7 @@ const { getAgencyStatusSnapshot } = await import("./agency-status-snapshot");
 beforeEach(() => {
   vi.clearAllMocks();
   taskFindMany.mockResolvedValue([]);
+  approvalFindMany.mockResolvedValue([]);
 });
 
 describe("getAgencyStatusSnapshot", () => {
@@ -144,6 +147,10 @@ describe("getAgencyStatusSnapshot", () => {
       { id: "task-2", title: "Friday Reel", status: "WAITING_APPROVAL" },
     ]);
 
+    approvalFindMany.mockResolvedValue([
+      { id: "appr-2", taskId: "task-2", level: "LEVEL_3_CLIENT" },
+    ]);
+
     const snapshot = await getAgencyStatusSnapshot("proj-3");
 
     expect(snapshot?.activeJobs).toEqual([
@@ -152,7 +159,43 @@ describe("getAgencyStatusSnapshot", () => {
         title: "Russia Wholesale Campaign",
         statusWord: "Creating",
       },
-      { id: "task-2", title: "Friday Reel", statusWord: "Needs approval" },
+      {
+        id: "task-2",
+        title: "Friday Reel",
+        statusWord: "Needs approval",
+        approval: { id: "appr-2", spend: false },
+      },
     ]);
+    // Only the waiting task is looked up, and only its pending approval.
+    expect(approvalFindMany).toHaveBeenCalledWith({
+      where: { projectId: "proj-3", taskId: { in: ["task-2"] }, status: "PENDING" },
+      select: { id: true, taskId: true, level: true },
+    });
+  });
+
+  it("marks a LEVEL_4 approval as spend so the popover asks twice", async () => {
+    getForProject.mockResolvedValue({
+      status: "RUNNING",
+      lastTickAt: null,
+      lastProgressAt: null,
+      nextWakeAt: null,
+      blockedReason: null,
+      consecutiveNoProgressCycles: 0,
+    });
+    taskCount.mockResolvedValue(0);
+    dailyStatFindUnique.mockResolvedValue(null);
+    taskFindMany.mockResolvedValue([
+      { id: "task-9", title: "Update Meta campaign budget", status: "WAITING_APPROVAL" },
+    ]);
+    approvalFindMany.mockResolvedValue([
+      { id: "appr-9", taskId: "task-9", level: "LEVEL_4_CRITICAL" },
+    ]);
+
+    const snapshot = await getAgencyStatusSnapshot("proj-4");
+
+    expect(snapshot?.activeJobs[0]?.approval).toEqual({
+      id: "appr-9",
+      spend: true,
+    });
   });
 });

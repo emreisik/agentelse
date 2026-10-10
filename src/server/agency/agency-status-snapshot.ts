@@ -29,6 +29,9 @@ export type ActiveJob = {
   id: string;
   title: string;
   statusWord: string;
+  // Set on a task waiting for a decision: the popover shows Approve / Reject.
+  // `spend` marks budget-level (LEVEL_4) approvals, which ask once more.
+  approval?: { id: string; spend: boolean };
 };
 
 export type AgencyStatusSnapshot = {
@@ -117,11 +120,39 @@ export async function getAgencyStatusSnapshot(
     }),
   ]);
 
-  const activeJobs: ActiveJob[] = activeJobRows.map((task) => ({
-    id: task.id,
-    title: stripCapabilityPrefix(task.title),
-    statusWord: ACTIVE_JOB_STATUS_WORD[task.status] ?? "In progress",
-  }));
+  const waitingTaskIds = activeJobRows
+    .filter((task) => task.status === "WAITING_APPROVAL")
+    .map((task) => task.id);
+  const pendingApprovals = waitingTaskIds.length
+    ? await prisma.approval.findMany({
+        where: {
+          projectId,
+          taskId: { in: waitingTaskIds },
+          status: "PENDING",
+        },
+        select: { id: true, taskId: true, level: true },
+      })
+    : [];
+  const approvalOfTask = new Map(
+    pendingApprovals.map((approval) => [approval.taskId, approval]),
+  );
+
+  const activeJobs: ActiveJob[] = activeJobRows.map((task) => {
+    const approval = approvalOfTask.get(task.id);
+    return {
+      id: task.id,
+      title: stripCapabilityPrefix(task.title),
+      statusWord: ACTIVE_JOB_STATUS_WORD[task.status] ?? "In progress",
+      ...(approval
+        ? {
+            approval: {
+              id: approval.id,
+              spend: approval.level === "LEVEL_4_CRITICAL",
+            },
+          }
+        : {}),
+    };
+  });
 
   return {
     status: loopState.status,

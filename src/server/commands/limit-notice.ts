@@ -131,7 +131,7 @@ function allowanceUsedText(card: LimitNoticeCard): string {
         ? "AI allowance"
         : "plan allowance";
   const when = renewalSuffix(card.resetsAt);
-  return `This period's ${what} ${card.unit === "IMAGE" ? "are" : "is"} used up${when}. Work in progress is paused and continues by itself when the allowance renews or more is added.`;
+  return `This period's ${what} ${card.unit === "IMAGE" ? "are" : "is"} used up${when}. You can add more in Plan & usage. Anything waiting for it continues by itself once it renews or more is added.`;
 }
 
 // Automatic work reached its own share; what the user starts is not touched. A

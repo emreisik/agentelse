@@ -110,8 +110,11 @@ const hold = {
 const beginOperation = vi.fn();
 vi.mock("@/server/billing/operation", () => ({ beginOperation }));
 
-const { planWeeklyInstagramContent, selectIdeasForWeek } =
-  await import("./instagram-week-planner");
+const {
+  planWeeklyInstagramContent,
+  selectIdeasForWeek,
+  summarizeWeeklyPlanResult,
+} = await import("./instagram-week-planner");
 const { AgentelseError } = await import("@/server/security/errors");
 
 const SCOPE = { workspaceId: "w-1", projectId: "p-1", brandId: "b-1" };
@@ -304,6 +307,8 @@ describe("planWeeklyInstagramContent", () => {
 
     expect(result.imagesGenerated).toBe(1);
     expect(result.cappedForToday).toBe(true);
+    // The project's own daily counter, not the plan: tomorrow it opens again.
+    expect(result.allowanceUsedUp).toBeUndefined();
     expect(result.imagesFailed).toBe(0); // a cap hit isn't counted as a failure
     expect(generateCreativeImage).toHaveBeenCalledTimes(1); // idea "c" never attempted
     expect(checkAndIncrement).toHaveBeenCalledTimes(2);
@@ -860,6 +865,12 @@ describe("planWeeklyInstagramContent plan allowance", () => {
 
     expect(result.imagesGenerated).toBe(1);
     expect(result.cappedForToday).toBe(true);
+    // ...and it says so: the plan's allowance renews with the period, not tomorrow.
+    expect(result.allowanceUsedUp).toBe(true);
+    expect(summarizeWeeklyPlanResult(result)).toContain(
+      "stopped early (plan allowance used up)",
+    );
+    expect(summarizeWeeklyPlanResult(result)).not.toContain("daily cap");
     // Nothing was drawn or consumed for the refused post or those after it.
     expect(generateCreativeImage).toHaveBeenCalledTimes(1);
     expect(ideaTransition).not.toHaveBeenCalledWith("b", "p-1", "APPROVED");

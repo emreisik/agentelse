@@ -205,6 +205,8 @@ export type IdeaEventCardData =
       scheduled: number;
       pendingReview: number;
       cappedForToday: boolean;
+      // With cappedForToday: the plan's allowance ran out (not the daily counter).
+      allowanceUsedUp?: boolean;
       items: {
         creativeId: string;
         assetId?: string;

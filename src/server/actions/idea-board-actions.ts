@@ -28,6 +28,7 @@ import { ideaChannelsOf, readIdeaRows } from "@/server/ideas/idea-context";
 import { makeIdeaPost } from "@/server/ideas/idea-post";
 import { generateSeoIdeas, moduleRefillIfDue } from "@/server/ideas/idea-modules";
 import { refillIfDue, type RefillResult } from "@/server/ideas/idea-refill";
+import { budgetMessageForProject } from "@/server/billing/budget-stop";
 import { getChannelConnections } from "@/server/integrations/channel-connections";
 import { resolveBrandStyleContext } from "@/server/media/brand-style-context";
 import { IdeaRepository } from "@/server/repositories/idea.repository";
@@ -51,10 +52,22 @@ type Fail = { ok: false; code: string; message: string };
 export type IdeasResult =
   { ok: true; ideas: BoardIdea[]; rotated: number } | Fail | GuardFail;
 
-function failOf(result: Exclude<RefillResult, { ok: true }>): Fail {
+async function failOf(
+  projectId: string,
+  result: Exclude<RefillResult, { ok: true }>,
+): Promise<Fail> {
   switch (result.reason) {
     case "BUDGET":
-      return { ok: false, code: "BUDGET", message: IDEA_ACTION_COPY.budget };
+      // "Come tomorrow / raise it in Settings" is true for the daily counter only; a used-up
+      // plan allowance renews with the period (billing/budget-stop.ts).
+      return {
+        ok: false,
+        code: "BUDGET",
+        message: await budgetMessageForProject(
+          projectId,
+          IDEA_ACTION_COPY.budget,
+        ),
+      };
     case "FULL":
       return { ok: false, code: "FULL", message: IDEA_ACTION_COPY.full };
     case "EMPTY":
@@ -70,7 +83,7 @@ async function created(
   projectId: string,
   result: GenerateIdeasResult | RefillResult,
 ): Promise<IdeasResult> {
-  if (!result.ok) return failOf(result);
+  if (!result.ok) return failOf(projectId, result);
   const ids = new Set(result.created);
   const rows = (await readIdeaRows(projectId)).filter((row) => ids.has(row.id));
   refreshWorkPages(projectId);

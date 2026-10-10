@@ -19,12 +19,17 @@ const mocks = vi.hoisted(() => ({
   moveSlot: vi.fn(),
   currentLocalMonth: vi.fn(),
   savePlanSettings: vi.fn(),
+  // billing/budget-stop.ts: the daily-counter sentence unless the PLAN is what ran out.
+  budgetMessage: vi.fn(async (_projectId: string, daily: string) => daily),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("@/server/security/tenant-context", () => ({
   requireUser: mocks.requireUser,
   requireProjectAccess: mocks.requireProjectAccess,
+}));
+vi.mock("@/server/billing/budget-stop", () => ({
+  budgetMessageForProject: mocks.budgetMessage,
 }));
 vi.mock("@/server/seo/store", () => ({ primaryGscLink: mocks.primaryGscLink }));
 vi.mock("@/server/seo/content-plan/planner", () => ({
@@ -185,6 +190,31 @@ describe("planThisMonthAction", () => {
     });
     const busy = await actions.planThisMonthAction(form(BASE));
     expect(busy.ok).toBe(false);
+  });
+
+  it("yapay zekâ sınırı: günlük sayaç ise günlük cümle, plan hakkı bittiyse planın cümlesi (planla ve yenile)", async () => {
+    const PLAN = "Your plan's AI usage for this period is used up.";
+    mocks.budgetMessage.mockResolvedValue(PLAN);
+    mocks.createMonthlyPlan.mockResolvedValueOnce({
+      status: "retry",
+      reason: "BUDGET",
+    });
+    expect(await actions.planThisMonthAction(form(BASE))).toEqual({
+      ok: false,
+      message: PLAN,
+    });
+    mocks.regenerateContentPlan.mockResolvedValueOnce({
+      ok: false,
+      reason: "budget",
+    });
+    expect(await actions.refreshPlanAction(form(BASE))).toEqual({
+      ok: false,
+      message: PLAN,
+    });
+    // The surface's own sentence is what the helper is given to fall back on.
+    expect(mocks.budgetMessage).toHaveBeenCalledWith("p1", EMPTY_COPY.AI_LIMIT);
+    expect(mocks.budgetMessage).toHaveBeenCalledTimes(2);
+    mocks.budgetMessage.mockImplementation(async (_projectId, daily) => daily);
   });
 
   it("bağlı Search Console yoksa planlayıcıya gitmez", async () => {

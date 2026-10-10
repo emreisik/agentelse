@@ -10,6 +10,7 @@ import { OpportunityRepository } from "@/server/repositories/opportunity.reposit
 import { ProjectGoalRepository } from "@/server/repositories/project-goal.repository";
 import { TaskRepository } from "@/server/repositories/task.repository";
 import { IdeaFoundry } from "@/server/agency/ideas/idea-foundry";
+import { budgetMessage } from "@/server/billing/budget-stop";
 import { IdeaEngine } from "@/server/ideas/idea-engine";
 import { IDEA_ACTION_COPY } from "@/lib/ideas/copy";
 import { prisma } from "@/lib/prisma";
@@ -215,11 +216,12 @@ export async function opportunityToIdeasAction(
     if (!result.ok || result.created.length === 0) {
       return {
         ok: false,
-        message: !result.ok && result.reason === "BUDGET"
-          ? IDEA_ACTION_COPY.budget
-          : !result.ok && result.reason === "FULL"
-            ? IDEA_ACTION_COPY.full
-            : IDEA_ACTION_COPY.empty,
+        message:
+          !result.ok && result.reason === "BUDGET"
+            ? await budgetMessage(access.workspaceId, IDEA_ACTION_COPY.budget)
+            : !result.ok && result.reason === "FULL"
+              ? IDEA_ACTION_COPY.full
+              : IDEA_ACTION_COPY.empty,
       };
     }
     if (opportunity.status === "EVALUATED") {

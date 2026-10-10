@@ -8,6 +8,7 @@ import { EMPTY_COPY } from "@/lib/seo/content-plan/copy";
 import { seoContentPlanActiveFor } from "@/lib/seo/content-plan/flags";
 import { manualPlanAllowed } from "@/lib/seo/content-plan/schedule";
 import { utcToZonedDateTimeLocal } from "@/lib/timezone";
+import { budgetMessageForProject } from "@/server/billing/budget-stop";
 import { isAgentelseError } from "@/server/security/errors";
 import {
   requireProjectAccess,
@@ -162,7 +163,14 @@ export async function planThisMonthAction(
         return { ok: false, message: EMPTY_COPY[outcome.reason] };
       case "retry":
         if (outcome.reason === "BUDGET") {
-          return { ok: false, message: EMPTY_COPY.AI_LIMIT };
+          // Daily counter or a used-up plan allowance: the wording differs (budget-stop.ts).
+          return {
+            ok: false,
+            message: await budgetMessageForProject(
+              projectId,
+              EMPTY_COPY.AI_LIMIT,
+            ),
+          };
         }
         return {
           ok: false,
@@ -178,7 +186,10 @@ export async function planThisMonthAction(
 
 type RegenerateResult = Awaited<ReturnType<typeof regenerateContentPlan>>;
 
-function regenerateMessage(result: RegenerateResult): ActionResult {
+async function regenerateMessage(
+  projectId: string,
+  result: RegenerateResult,
+): Promise<ActionResult> {
   if (result.ok) {
     return {
       ok: true,
@@ -200,7 +211,10 @@ function regenerateMessage(result: RegenerateResult): ActionResult {
     case "nothing_to_replace":
       return { ok: false, message: NOTHING_TO_REPLACE };
     case "budget":
-      return { ok: false, message: EMPTY_COPY.AI_LIMIT };
+      return {
+        ok: false,
+        message: await budgetMessageForProject(projectId, EMPTY_COPY.AI_LIMIT),
+      };
     case "behind":
       return { ok: false, message: BEHIND };
     case "failed":
@@ -222,7 +236,7 @@ export async function refreshPlanAction(
       trigger: "manual",
     });
     revalidateSearch(projectId);
-    return regenerateMessage(result);
+    return regenerateMessage(projectId, result);
   } catch (error) {
     return failure(error, REFRESH_FAILED);
   }
@@ -248,7 +262,7 @@ export async function replaceSlotAction(
     if (!result.ok && result.reason === "nothing_to_replace") {
       return { ok: false, message: WRITTEN };
     }
-    return regenerateMessage(result);
+    return regenerateMessage(projectId, result);
   } catch (error) {
     return failure(error, REFRESH_FAILED);
   }

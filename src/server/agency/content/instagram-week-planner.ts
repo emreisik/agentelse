@@ -66,6 +66,9 @@ export type WeeklyPlanResult = {
   // imagesFailed: a capped idea was never attempted, not a generation
   // failure.
   cappedForToday: boolean;
+  // With cappedForToday: it was the PLAN'S allowance that ran out (it renews with the
+  // billing period, not tomorrow), not the project's daily counter.
+  allowanceUsedUp?: boolean;
   // Landed at IN_REVIEW instead of auto-APPROVED — either because the
   // project's AutopilotMode isn't AUTOPILOT, or the claim-safety check
   // flagged it. See the main loop below.
@@ -121,7 +124,13 @@ export function summarizeWeeklyPlanResult(result: WeeklyPlanResult): string {
     parts.push(`${result.pendingReview} awaiting approval`);
   }
   if (result.imagesFailed > 0) parts.push(`${result.imagesFailed} failed`);
-  if (result.cappedForToday) parts.push("stopped early (daily cap reached)");
+  if (result.cappedForToday) {
+    parts.push(
+      result.allowanceUsedUp
+        ? "stopped early (plan allowance used up)"
+        : "stopped early (daily cap reached)",
+    );
+  }
   return `📅 Weekly content plan: ${parts.join(", ")}.`;
 }
 
@@ -664,8 +673,9 @@ export async function planWeeklyInstagramContent(
       // burning through the rest of `ideas` for nothing.
       if (isAgentelseError(error) && error.code === "BUDGET_EXCEEDED") {
         result.cappedForToday = true;
+        if (isAllowanceStop(error)) result.allowanceUsedUp = true;
         console.warn(
-          `[instagram-week-planner] stopped early — daily cap hit after ${result.imagesGenerated} images:`,
+          `[instagram-week-planner] stopped early — daily cap or plan allowance hit after ${result.imagesGenerated} images:`,
           error.message,
         );
         break;
@@ -730,6 +740,7 @@ export async function planWeeklyInstagramContent(
       scheduled: result.scheduled,
       dailyImageCap: cap,
       cappedForToday: result.cappedForToday,
+      allowanceUsedUp: result.allowanceUsedUp === true,
       pendingReview: result.pendingReview,
       autopilotMode: autonomyPolicy.autopilotMode,
     },
@@ -757,6 +768,7 @@ export async function planWeeklyInstagramContent(
         scheduled: result.scheduled,
         pendingReview: result.pendingReview,
         cappedForToday: result.cappedForToday,
+        ...(result.allowanceUsedUp ? { allowanceUsedUp: true } : {}),
         items: result.items,
       },
     }).catch((error) => {

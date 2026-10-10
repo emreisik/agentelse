@@ -106,9 +106,10 @@ const LEDGER_ATTEMPTS = 3;
 const TEXT_ONLY_CHARGE_CAP_MICROS = BigInt(100_000);
 
 function ledgerUnavailable(): AgentelseError {
+  // The words can reach a person (a refused turn, a failed step): no internal terms.
   return new AgentelseError(
     "BILLING_UNAVAILABLE",
-    "Usage ledger is temporarily unavailable",
+    "Billing is temporarily unavailable. Please try again in a moment.",
     { retryable: true },
   );
 }

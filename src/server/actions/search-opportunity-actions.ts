@@ -14,6 +14,7 @@ import {
   type SeoShadowVerdict,
 } from "@/lib/seo/opportunity-types";
 import type { SeoDecision } from "@/lib/seo/finding-lifecycle";
+import { budgetMessageForProject } from "@/server/billing/budget-stop";
 import { AuditLogRepository } from "@/server/repositories/audit-log.repository";
 import { isAgentelseError } from "@/server/security/errors";
 import { isPlatformOperator } from "@/server/security/operator";
@@ -291,7 +292,16 @@ export async function suggestBrandTermsAction(
     const { access } = gate;
     const result = await suggestBrandTerms(access.projectId);
     if (!result.ok) {
-      return { ok: false, message: SUGGEST_MESSAGES[result.reason] };
+      return {
+        ok: false,
+        message:
+          result.reason === "budget"
+            ? await budgetMessageForProject(
+                access.projectId,
+                SUGGEST_MESSAGES.budget,
+              )
+            : SUGGEST_MESSAGES[result.reason],
+      };
     }
     await recordBrandAudit(
       access,

@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   suggestBrandTerms: vi.fn(),
   acceptBrandTermSuggestion: vi.fn(),
   dismissBrandTermSuggestion: vi.fn(),
+  // billing/budget-stop.ts: the daily-counter sentence unless the PLAN is what ran out.
+  budgetMessage: vi.fn(async (_projectId: string, daily: string) => daily),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
@@ -55,6 +57,9 @@ vi.mock("@/server/seo/actions/fix-this", () => ({
 vi.mock("@/server/seo/opportunities/findings-store", () => ({
   decideFinding: mocks.decideFinding,
   reviewShadowFinding: mocks.reviewShadowFinding,
+}));
+vi.mock("@/server/billing/budget-stop", () => ({
+  budgetMessageForProject: mocks.budgetMessage,
 }));
 vi.mock("@/server/seo/opportunities/brand-suggest", () => ({
   suggestBrandTerms: mocks.suggestBrandTerms,
@@ -124,6 +129,8 @@ beforeEach(() => {
     projectId: "proj-1",
     defaultBrandId: "brand-1",
   });
+  // The surface's own daily-counter sentence unless a test says the PLAN ran out.
+  mocks.budgetMessage.mockImplementation(async (_projectId, daily) => daily);
   mocks.sync.mockReturnValue(true);
   mocks.userFacing.mockReturnValue(true);
   mocks.active.mockReturnValue(true);
@@ -358,9 +365,31 @@ describe("brand-term suggestions", () => {
   it("explains why suggesting did not run", async () => {
     mocks.suggestBrandTerms.mockResolvedValue({ ok: false, reason: "budget" });
     const result = await suggestBrandTermsAction(form());
+    expect(result).toEqual({
+      ok: false,
+      message: "The AI budget for today is used up. Try again tomorrow.",
+    });
     expect(result.ok).toBe(false);
     expect(mocks.record).not.toHaveBeenCalled();
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("says the plan's usage is what ran out when it is (not 'try again tomorrow')", async () => {
+    mocks.suggestBrandTerms.mockResolvedValue({ ok: false, reason: "budget" });
+    mocks.budgetMessage.mockResolvedValueOnce(
+      "Your plan's AI usage for this period is used up; it renews on Nov 1.",
+    );
+
+    const result = await suggestBrandTermsAction(form());
+
+    expect(result).toEqual({
+      ok: false,
+      message: "Your plan's AI usage for this period is used up; it renews on Nov 1.",
+    });
+    expect(mocks.budgetMessage).toHaveBeenCalledWith(
+      "proj-1",
+      "The AI budget for today is used up. Try again tomorrow.",
+    );
   });
 
   it("adds a suggested term through P4 with the acting user", async () => {

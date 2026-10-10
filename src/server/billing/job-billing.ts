@@ -59,7 +59,7 @@ function safeEstimate(
     if (getBillingConfig().mode !== "enforce") return undefined;
     throw new AgentelseError(
       "BILLING_UNAVAILABLE",
-      "Usage estimate is temporarily unavailable",
+      "Billing is temporarily unavailable. Please try again in a moment.",
       { retryable: true },
     );
   }

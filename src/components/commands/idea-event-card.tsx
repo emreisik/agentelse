@@ -577,7 +577,7 @@ const LIMIT_NOTICE_COPY: Record<
         : null;
       return `This period's ${what} used up${
         renews && renews !== "Invalid Date" ? `; it renews on ${renews}` : ""
-      }. Work in progress is paused and continues by itself when the allowance renews or more is added.`;
+      }. You can add more in Plan & usage. Anything waiting for it continues by itself once it renews or more is added.`;
     },
     settingsCta: false,
   },
@@ -1275,7 +1275,14 @@ function ContentPlanSummaryCard({
           <WsStatusPill label={`${card.imagesFailed} failed`} tone="danger" />
         ) : null}
         {card.cappedForToday ? (
-          <WsStatusPill label="Stopped early — daily cap" tone="waiting" />
+          <WsStatusPill
+            label={
+              card.allowanceUsedUp
+                ? "Stopped early — plan allowance used up"
+                : "Stopped early — daily cap"
+            }
+            tone="waiting"
+          />
         ) : null}
       </div>
 

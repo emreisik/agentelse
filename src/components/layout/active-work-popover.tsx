@@ -12,7 +12,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   approveApprovalAction,
   rejectApprovalAction,
@@ -339,24 +338,19 @@ function ApprovalButtons({
   job: ActiveJob;
   onDecided: () => void;
 }) {
-  const confirm = useConfirm();
   const [pending, startTransition] = useTransition();
+  // A budget-level approval asks once more: the first click arms "Confirm".
+  const [armed, setArmed] = useState(false);
   const approval = job.approval;
   if (!approval) return null;
 
   const decide = (kind: "approve" | "reject") => {
+    if (kind === "approve" && approval.spend && !armed) {
+      setArmed(true);
+      return;
+    }
+    setArmed(false);
     startTransition(async () => {
-      if (
-        kind === "approve" &&
-        approval.spend &&
-        !(await confirm({
-          title: "Approve this budget change?",
-          description: job.title,
-          confirmLabel: "Approve",
-        }))
-      ) {
-        return;
-      }
       const formData = new FormData();
       formData.set("approvalId", approval.id);
       const result =
@@ -377,11 +371,11 @@ function ApprovalButtons({
       <button
         type="button"
         disabled={pending}
-        onClick={() => decide("reject")}
+        onClick={() => (armed ? setArmed(false) : decide("reject"))}
         className="rounded-md px-1.5 py-0.5 text-[11px] transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-50"
         style={{ color: "var(--ws-text-3)" }}
       >
-        Reject
+        {armed ? "Cancel" : "Reject"}
       </button>
       <button
         type="button"
@@ -390,7 +384,7 @@ function ApprovalButtons({
         className="rounded-md px-1.5 py-0.5 text-[11px] font-medium transition-colors hover:bg-[var(--ws-hover)] disabled:opacity-50"
         style={{ color: "var(--ws-text)" }}
       >
-        Approve
+        {armed ? "Confirm budget change" : "Approve"}
       </button>
     </span>
   );

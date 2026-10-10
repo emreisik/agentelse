@@ -4,7 +4,7 @@
 
 ## Açma/kapama
 
-`BILLING_UI` (`src/server/billing/ui-flag.ts`): geliştirmede AÇIK, canlıda yalnız `BILLING_UI=true` iken açık (`false` her yerde kapatır). Kapalıyken `/billing` 404 verir ve Profile kartı görünmez. Menüde ayrı bir giriş YOK (kenar çubuğu başka bir çalışmada); giriş Profile kartıdır.
+`BILLING_UI` (`src/server/billing/ui-flag.ts`): geliştirmede AÇIK, canlıda yalnız `BILLING_UI=true` iken açık (`false` her yerde kapatır). Kapalıyken `/billing` 404 verir ve Profile kartı görünmez. Sayfa her istekte üretilir (`dynamic = "force-dynamic"`): bayrak derlemeye gömülmez, Railway'de `BILLING_UI` değişince yeniden başlatma yeter (yeniden derleme gerekmez; üretim derlemesi sayfayı aksi hâlde statik 404 olarak dondururdu). Menüde ayrı bir giriş YOK (kenar çubuğu başka bir çalışmada); giriş Profile kartıdır.
 
 ## Veri
 

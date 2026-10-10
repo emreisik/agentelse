@@ -147,6 +147,9 @@ export type ReserveResult =
       // Hak bitmedi: sistemin işi kullanıcıya ayrılan payı aşacağı için reddedildi
       // (kullanıcının aynı işi sığardı). Park edilen iş buna göre anlatılır.
       heldBack: boolean;
+      // Ücretsiz deneme: pencere "yenilenmez", deneme sonunda biter (müşteriye "yenilenir"
+      // denmez, plan seçmesi söylenir).
+      trial?: boolean;
     }
   | { ok: false; reason: "NOT_ENTITLED"; entitlement: AccessReason }
   | { ok: false; reason: "UNIT_NOT_SOLD" }
@@ -328,6 +331,7 @@ export async function reserveUsage(
             ? row.periodEnd
             : null,
         heldBack,
+        ...(entitlements.isTrial ? { trial: true } : {}),
       };
     }
     // Başlatıcı ve ayrılan pay kayıtta durur: sistemin pay darlığı, kullanıcının gerçek

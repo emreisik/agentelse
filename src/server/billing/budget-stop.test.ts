@@ -80,6 +80,27 @@ describe("budgetStopCause", () => {
     });
   });
 
+  it("a free trial's usage is its own story: it does not renew, the person chooses a plan", async () => {
+    mocks.getEntitlements.mockResolvedValue(
+      full({ isTrial: true, reason: "TRIAL" }),
+    );
+    mocks.getUsageView.mockResolvedValue([
+      view("AI_MICROS", 0, "2026-10-27T00:00:00.000Z"),
+    ]);
+
+    const cause = await budgetStopCause("ws-1", NOW);
+
+    expect(cause).toEqual({
+      kind: "allowance",
+      resetsAt: "2026-10-27T00:00:00.000Z",
+      trial: true,
+    });
+    const text = budgetStopMessage(cause, DAILY);
+    expect(text).toContain("free trial");
+    expect(text).toContain("Choose a plan in Plan & usage");
+    expect(text).not.toMatch(/renew|tomorrow|Settings/i);
+  });
+
   it("is still the daily counter while AI usage is left, even if the image credits are gone", async () => {
     mocks.getUsageView.mockResolvedValue([
       view("IMAGE", 0, "2026-11-01T00:00:00.000Z"),

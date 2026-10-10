@@ -178,6 +178,9 @@ export type IdeaEventCardData =
       unit?: "IMAGE" | "AI_MICROS";
       resetsAt?: string;
       sharePct?: number;
+      // With "allowance-used": the allowance is a free trial's. It does not renew; the
+      // person is told to choose a plan.
+      trial?: boolean;
     }
   // The chat surface's structured "AskUserQuestion"-style fork (see
   // chat-turn.ts's `questions` field) — clickable options instead of a

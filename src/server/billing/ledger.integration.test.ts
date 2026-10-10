@@ -691,15 +691,16 @@ describeIntegration("usage ledger (UsageBalance / Reservation / Grant)", () => {
       });
       // Yenileme payı (5 saat) içinde sönmüş pencere harcanmaz ama erişim sürer.
       const lag = new Date(WINDOW_END.getTime() + 5 * 60 * 60 * 1000);
-      expect(
-        await reserveUsage({
-          workspaceId: ws,
-          unit: "IMAGE",
-          amount: 1,
-          reservationKey: "lag#1",
-          now: lag,
-        }),
-      ).toMatchObject({ ok: false, reason: "INSUFFICIENT" });
+      const refused = await reserveUsage({
+        workspaceId: ws,
+        unit: "IMAGE",
+        amount: 1,
+        reservationKey: "lag#1",
+        now: lag,
+      });
+      expect(refused).toMatchObject({ ok: false, reason: "INSUFFICIENT" });
+      // A paid plan renews; only the free trial's refusal says it does not.
+      expect(refused).not.toHaveProperty("trial");
     });
 
     it("shadow: hiçbir şey engellenmez; yetersizlik 'olsaydı engellenirdi' kaydı bırakır", async () => {
@@ -1017,7 +1018,7 @@ describeIntegration("usage ledger (UsageBalance / Reservation / Grant)", () => {
           reservationKey: "t#2",
           now: NOW,
         }),
-      ).toMatchObject({ ok: false, reason: "INSUFFICIENT" });
+      ).toMatchObject({ ok: false, reason: "INSUFFICIENT", trial: true });
 
       const after = new Date(NOW.getTime() + 7 * 24 * 60 * 60 * 1000 + 1000);
       expect(

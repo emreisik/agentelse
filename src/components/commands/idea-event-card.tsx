@@ -568,6 +568,10 @@ const LIMIT_NOTICE_COPY: Record<
           : card.unit === "AI_MICROS"
             ? "AI allowance is"
             : "plan allowance is";
+      if (card.trial) {
+        // A free trial's allowance does not renew: say what to do, not when it comes back.
+        return `Your free trial's ${what} used up. Choose a plan in Plan & usage to keep creating.`;
+      }
       const renews = card.resetsAt
         ? new Date(card.resetsAt).toLocaleDateString("en-US", {
             month: "short",

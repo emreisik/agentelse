@@ -65,8 +65,9 @@ export type SubscriptionOverview = {
 //  overdue   the window is over and the renewal payment is overdue (the allowance is paused)
 //  renewing  the window is over but the plan is still paid: the renewal is being recorded
 //  ended     the window is over and the plan has ended
+//  trial-ended  the window is over and it was the free trial's
 export type AllowanceWindow =
-  "renews" | "ends" | "overdue" | "renewing" | "ended";
+  "renews" | "ends" | "overdue" | "renewing" | "ended" | "trial-ended";
 
 export type AllowanceOverview = {
   unit: "IMAGE" | "AI_MICROS";
@@ -397,7 +398,9 @@ export async function getBillingOverview(
           ? "overdue"
           : status === "ACTIVE"
             ? "renewing"
-            : "ended"
+            : status === "TRIALING"
+              ? "trial-ended"
+              : "ended"
         : subscription &&
             (subscription.cancelAtPeriodEnd ||
               status === "CANCELED" ||

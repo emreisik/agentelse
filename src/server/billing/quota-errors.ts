@@ -27,6 +27,8 @@ export type QuotaDetail = {
   // Hak bitmedi: sistemin kendi işi kullanıcıya ayrılan payı aşacağı için durdu
   // (plans.ts BACKGROUND_SHARE_PCT). Kullanıcının aynı işi sığardı.
   heldBack?: boolean;
+  // Ücretsiz deneme penceresi: "yenilenir" denmez, plan seçmesi söylenir.
+  trial?: boolean;
 };
 
 // Park edilen işin errorCode'u, hak bitmediği hâlde arka plan payı yüzünden
@@ -51,6 +53,7 @@ export class QuotaExceededError extends AgentelseError {
           available: detail.available,
           resetsAt: detail.resetsAt?.toISOString() ?? null,
           ...(detail.heldBack ? { heldBack: true } : {}),
+          ...(detail.trial ? { trial: true } : {}),
         },
       },
     );

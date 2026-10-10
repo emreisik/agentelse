@@ -19,7 +19,8 @@ import { getUsageView } from "./ledger";
 
 export type BudgetStopCause =
   | { kind: "daily" }
-  | { kind: "allowance"; resetsAt: string | null }
+  // `trial`: the allowance is a free trial's. It does not renew; the person chooses a plan.
+  | { kind: "allowance"; resetsAt: string | null; trial?: boolean }
   | { kind: "no-plan" };
 
 export async function budgetStopCause(
@@ -38,7 +39,11 @@ export async function budgetStopCause(
       (view) => view.unit === "AI_MICROS",
     );
     if (ai && ai.available <= 0) {
-      return { kind: "allowance", resetsAt: ai.period.endsAt };
+      return {
+        kind: "allowance",
+        resetsAt: ai.period.endsAt,
+        ...(entitlements.isTrial ? { trial: true } : {}),
+      };
     }
     return { kind: "daily" };
   } catch {
@@ -53,6 +58,9 @@ export function budgetStopMessage(
 ): string {
   switch (cause.kind) {
     case "allowance": {
+      if (cause.trial) {
+        return "Your free trial's AI usage is used up. Choose a plan in Plan & usage to keep creating.";
+      }
       const renews = cause.resetsAt
         ? `; it renews on ${formatDay(cause.resetsAt, { year: false })}`
         : "";

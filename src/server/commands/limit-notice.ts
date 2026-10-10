@@ -35,6 +35,7 @@ export function limitNoticeFromError(error: unknown): LimitNoticeCard | null {
       unit?: unknown;
       resetsAt?: unknown;
       heldBack?: unknown;
+      trial?: unknown;
     };
     // Plan allowance seen through an engine call (billing/quota-errors.ts
     // asBudgetStop): the client's plan, not the project's daily counters.
@@ -46,6 +47,7 @@ export function limitNoticeFromError(error: unknown): LimitNoticeCard | null {
           ? { unit: meta.unit }
           : {}),
         ...(typeof meta.resetsAt === "string" ? { resetsAt: meta.resetsAt } : {}),
+        ...(meta.trial === true ? { trial: true } : {}),
       };
     }
     if (meta.limit === "noPlan") {
@@ -66,6 +68,7 @@ export function limitNoticeFromError(error: unknown): LimitNoticeCard | null {
       unit?: unknown;
       resetsAt?: unknown;
       heldBack?: unknown;
+      trial?: unknown;
     };
     return {
       kind: "limit-notice",
@@ -74,6 +77,7 @@ export function limitNoticeFromError(error: unknown): LimitNoticeCard | null {
         ? { unit: meta.unit }
         : {}),
       ...(typeof meta.resetsAt === "string" ? { resetsAt: meta.resetsAt } : {}),
+      ...(meta.trial === true ? { trial: true } : {}),
     };
   }
   if (error.code === "NO_PLAN") {
@@ -130,8 +134,13 @@ function allowanceUsedText(card: LimitNoticeCard): string {
       : card.unit === "AI_MICROS"
         ? "AI allowance"
         : "plan allowance";
+  const verb = card.unit === "IMAGE" ? "are" : "is";
+  // A free trial's allowance does not renew: say what to do, not when it comes back.
+  if (card.trial) {
+    return `Your free trial's ${what} ${verb} used up. Choose a plan in Plan & usage to keep creating.`;
+  }
   const when = renewalSuffix(card.resetsAt);
-  return `This period's ${what} ${card.unit === "IMAGE" ? "are" : "is"} used up${when}. You can add more in Plan & usage. Anything waiting for it continues by itself once it renews or more is added.`;
+  return `This period's ${what} ${verb} used up${when}. You can add more in Plan & usage. Anything waiting for it continues by itself once it renews or more is added.`;
 }
 
 // Automatic work reached its own share; what the user starts is not touched. A

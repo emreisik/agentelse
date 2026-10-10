@@ -79,6 +79,8 @@ function windowCaption(
       return "Renewing: the new allowance appears as soon as the payment is recorded";
     case "ended":
       return "Your plan has ended";
+    case "trial-ended":
+      return "Your free trial has ended. Choose a plan in Plans to keep creating.";
     default:
       return day ? `Renews ${day}` : "No renewal date yet";
   }

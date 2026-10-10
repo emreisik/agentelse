@@ -613,7 +613,13 @@ describe("UsagePanel", () => {
 
   describe("the end date of the window says what is really going to happen", () => {
     const withWindow = (
-      window: "renews" | "ends" | "overdue" | "renewing" | "ended",
+      window:
+        | "renews"
+        | "ends"
+        | "overdue"
+        | "renewing"
+        | "ended"
+        | "trial-ended",
       patch: Partial<(typeof withAllowances)["allowances"][number]> = {},
     ): BillingOverview => ({
       ...withAllowances,
@@ -669,6 +675,17 @@ describe("UsagePanel", () => {
       expect(markup).not.toContain("Renews");
       expect(markup).toContain("left of 15");
       expect(markup).not.toContain("You have used all");
+    });
+
+    it("a free trial that is over says so and points to the plans, instead of 'Your plan has ended'", () => {
+      const markup = render(
+        withWindow("trial-ended", { granted: 0, used: 0, available: 0 }),
+      );
+
+      expect(markup).toContain("Your free trial has ended");
+      expect(markup).toContain("Choose a plan in Plans");
+      expect(markup).not.toContain("Your plan has ended");
+      expect(markup).not.toContain("Renews");
     });
 
     it("a window waiting for its renewal to be recorded says it is renewing, not that it renews on a past date", () => {

@@ -111,6 +111,58 @@ describe("limitNoticeFromError", () => {
       });
     });
 
+    it("a free trial's allowance does not renew: the card says so and sends the person to a plan", () => {
+      const card = limitNoticeFromError(
+        quota({
+          unit: "AI_MICROS",
+          needed: 1,
+          available: 0,
+          resetsAt: "2026-11-01T00:00:00.000Z",
+          trial: true,
+        }),
+      );
+      expect(card).toEqual({
+        kind: "limit-notice",
+        reason: "allowance-used",
+        unit: "AI_MICROS",
+        resetsAt: "2026-11-01T00:00:00.000Z",
+        trial: true,
+      });
+
+      const text = limitNoticeReplyText(card!);
+      expect(text).toContain("free trial");
+      expect(text).toContain("Choose a plan in Plan & usage");
+      // It does not promise a renewal that will never come.
+      expect(text).not.toMatch(/renew/i);
+      expect(text).not.toMatch(/\$|token|micro/i);
+
+      // The same through the engine's budget stop (asBudgetStop keeps the flag).
+      expect(
+        limitNoticeFromError(
+          new AgentelseError("BUDGET_EXCEEDED", "used up", {
+            meta: {
+              limit: "planAllowance",
+              unit: "IMAGE",
+              resetsAt: "2026-11-01T00:00:00.000Z",
+              trial: true,
+            },
+          }),
+        ),
+      ).toMatchObject({ reason: "allowance-used", trial: true });
+    });
+
+    it("a paid plan's refusal still says when it renews", () => {
+      const text = limitNoticeReplyText({
+        kind: "limit-notice",
+        reason: "allowance-used",
+        unit: "IMAGE",
+        resetsAt: "2026-11-01T00:00:00.000Z",
+      });
+      expect(text).toContain("renews on Nov 1");
+      expect(text).toContain("You can add more in Plan & usage");
+      expect(text).not.toContain("free trial");
+    });
+
     it("keeps working when the error carries no usable meta", () => {
       expect(limitNoticeFromError(quota({ unit: "VIDEO", resetsAt: 5 }))).toEqual(
         { kind: "limit-notice", reason: "allowance-used" },

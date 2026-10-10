@@ -330,6 +330,7 @@ async function reserveUnit(
         available: Number(result.available),
         resetsAt: result.resetsAt,
         heldBack: result.heldBack,
+        trial: result.trial,
       });
     }
     if (result.reason === "NOT_ENTITLED") {

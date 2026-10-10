@@ -493,6 +493,29 @@ describeIntegration("getBillingOverview", () => {
       expect(await view(canceled.workspaceId)).toMatchObject({ window: "ends" });
     });
 
+    it("a free trial's window is 'ends' while it runs and 'trial-ended' when it is over", async () => {
+      const now = new Date();
+      const trialRunning = await withWindow(
+        { status: "TRIALING", windowEnd: open },
+        now,
+      );
+      const trialOver = await withWindow(
+        { status: "TRIALING", windowEnd: over },
+        now,
+      );
+
+      const view = async (workspaceId: string) =>
+        (await getBillingOverview(workspaceId, now, "test")).allowances[0];
+
+      expect(await view(trialRunning.workspaceId)).toMatchObject({
+        window: "ends",
+      });
+      expect(await view(trialOver.workspaceId)).toMatchObject({
+        window: "trial-ended",
+        granted: 15,
+      });
+    });
+
     it("a window that is over grants nothing: only the bought extra usage is shown, whatever the plan state", async () => {
       const now = new Date();
       const cases = [

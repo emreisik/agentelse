@@ -43,6 +43,23 @@ describe("quota errors", () => {
     expect(new NoPlanError("NO_SUBSCRIPTION").code).toBe("NO_PLAN");
   });
 
+  it("say when the allowance was a free trial's, and only then (it does not renew)", () => {
+    expect(quota().meta).not.toHaveProperty("trial");
+    const error = new QuotaExceededError({
+      unit: "IMAGE",
+      needed: 1,
+      available: 0,
+      resetsAt: new Date("2026-11-01T00:00:00.000Z"),
+      trial: true,
+    });
+    expect(error.meta).toMatchObject({ trial: true });
+    // The engine's budget stop keeps the flag for the surfaces that explain it.
+    expect(asBudgetStop(error).meta).toMatchObject({
+      limit: "planAllowance",
+      trial: true,
+    });
+  });
+
   it("say when the system's own work ran into its share, and only then", () => {
     expect(quota().meta).not.toHaveProperty("heldBack");
     const error = heldBack();

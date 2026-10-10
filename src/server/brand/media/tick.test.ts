@@ -12,6 +12,7 @@ vi.mock("@/server/brand/media/analyze", () => ({ analyzeBrandMedia: mocks.analyz
 vi.mock("@/server/brand/media/store", () => ({ adoptExistingPhotos: mocks.adopt }));
 
 import { MEDIA_ANALYSIS_VERSION } from "@/lib/brand-media";
+import { isBackground, runAsBackground } from "@/server/billing/usage-context";
 
 import { runDueMediaAnalysis } from "./tick";
 
@@ -22,7 +23,11 @@ describe("runDueMediaAnalysis", () => {
   });
 
   it("reads the waiting photos oldest first, a few at a time, and counts the ones that worked", async () => {
-    mocks.findMany.mockResolvedValue([{ id: "a" }, { id: "b" }, { id: "c" }]);
+    mocks.findMany.mockResolvedValue([
+      { id: "a", status: "PENDING" },
+      { id: "b", status: "PENDING" },
+      { id: "c", status: "PENDING" },
+    ]);
     mocks.analyze.mockImplementation(async (id: string) => (id === "b" ? "failed" : "ok"));
     const now = new Date("2026-10-07T10:00:00Z");
 
@@ -39,6 +44,22 @@ describe("runDueMediaAnalysis", () => {
     ]);
   });
 
+  it("reads a photo the person uploaded as THEIR work even inside the system's tick step, and a library re-read as the system's", async () => {
+    mocks.findMany.mockResolvedValue([
+      { id: "waiting", status: "PENDING" },
+      { id: "old-version", status: "OK" },
+    ]);
+    const background: Record<string, boolean> = {};
+    mocks.analyze.mockImplementation(async (id: string) => {
+      background[id] = isBackground();
+      return "ok";
+    });
+
+    await runAsBackground(() => runDueMediaAnalysis(2));
+
+    expect(background).toEqual({ waiting: false, "old-version": true });
+  });
+
   it("brings in older uploads now and then, not on every tick", async () => {
     mocks.findMany.mockResolvedValue([]);
     const later = new Date(Date.now() + 10 * 3_600_000);
@@ -52,7 +73,7 @@ describe("runDueMediaAnalysis", () => {
   it("still analyses when bringing in older uploads fails", async () => {
     const quiet = vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.adopt.mockRejectedValue(new Error("db"));
-    mocks.findMany.mockResolvedValue([{ id: "a" }]);
+    mocks.findMany.mockResolvedValue([{ id: "a", status: "PENDING" }]);
     mocks.analyze.mockResolvedValue("ok");
     const later = new Date(Date.now() + 100 * 3_600_000);
     expect(await runDueMediaAnalysis(4, later)).toBe(1);

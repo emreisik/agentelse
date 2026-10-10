@@ -74,19 +74,28 @@ export const WorkPlanProgressor = {
         // (or before the person lowered the approval size) may need asking
         // now, one made for a size the person has since raised no longer does.
         const approval = await TaskPlanner.approvalNow(task);
-        if (approval.requiresApproval !== task.requiresApproval) {
+        // "Could not size it" (the plan or settings could not be read this once) is not
+        // "sized and under the size": a node flagged for its cost keeps asking until a
+        // successful sizing says otherwise. Dropping the flag here would let an expensive
+        // automatic task run with no approval, and nobody would be asked afterwards.
+        const keepAsking =
+          approval.sizeUnknown &&
+          task.requiresApproval &&
+          !approval.requiresApproval;
+        const requiresApproval = approval.requiresApproval || keepAsking;
+        if (requiresApproval !== task.requiresApproval) {
           await prisma.task.updateMany({
             where: { id: task.id, status: "READY" },
-            data: { requiresApproval: approval.requiresApproval },
+            data: { requiresApproval },
           });
         }
-        if (approval.requiresApproval) {
+        if (requiresApproval) {
           // Dependency just cleared — only now is it safe to surface the
           // approval card (see task-planner.ts's deferDispatch branch for
           // why this can't happen at plan-creation time).
           await TaskPlanner.requestApproval(
             task,
-            approval.level,
+            keepAsking ? "LEVEL_3_CLIENT" : approval.level,
             approval.note,
           );
         } else {

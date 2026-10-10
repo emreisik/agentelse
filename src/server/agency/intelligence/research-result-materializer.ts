@@ -4,7 +4,8 @@ import type { FactClassification, SignalCategory } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { signalFingerprint } from "@/server/agency/fingerprint";
-import { initiatorOfActor, runAs } from "@/server/billing/usage-context";
+import { initiatorOfTask } from "@/server/billing/job-initiator";
+import { runAs } from "@/server/billing/usage-context";
 import { SignalRepository } from "@/server/repositories/signal.repository";
 
 import { ReasoningService } from "@/server/reasoning/reasoning-service";
@@ -170,10 +171,16 @@ export const ResultMaterializer = {
     if (rawFindings.length === 0 && shouldExtractFindings(task.capability)) {
       const report = extractReportText(raw);
       if (report) {
-        // Etiket görevi kim yarattıysa ona göre (billing, Faz 3C): bu işlem tick'in
-        // "triggers" adımında koşar ama kullanıcının görevinin sonucunu işler; arka
-        // plan payına takılırsa kullanıcının kendi araştırması sessizce bulgusuz kalırdı.
-        rawFindings = await runAs(initiatorOfActor(task.createdByType), () =>
+        // Etiket, işin faturalandığı kuralla AYNI (billing, Faz 3C): görevi kim yarattıysa
+        // o, ama sistemin yarattığı görevi bir insan onayladıysa kullanıcı işi. Bu işlem
+        // tick'in "triggers" adımında koşar ama kullanıcının görevinin sonucunu işler;
+        // arka plan payına takılırsa kullanıcının kendi araştırması sessizce bulgusuz
+        // kalırdı (iş kullanıcı payından koşup bulgu çıkarma sistem payına takılmasın).
+        const initiator = await initiatorOfTask({
+          id: task.id,
+          createdByType: task.createdByType,
+        });
+        rawFindings = await runAs(initiator, () =>
           extractFindingsFromReport(scope, task.capability, report),
         );
       }

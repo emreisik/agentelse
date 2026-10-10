@@ -95,7 +95,37 @@ describeIntegration("cost approval context: gaps", () => {
       },
     );
 
-    await expect(ask(fixture, "SYSTEM", hostile)).resolves.toEqual({});
+    // Nothing could be sized (the payload itself is unreadable): "unknown", not "under the size".
+    await expect(ask(fixture, "SYSTEM", hostile)).resolves.toEqual({
+      unknown: true,
+    });
     expect(console.error).toHaveBeenCalled();
+  });
+
+  it("a plan that cannot be read right now is 'unknown', not 'no threshold'; the sentence for the card is still there", async () => {
+    const fixture = await starterWorkspace();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    // getEntitlements swallows a read error and answers DEGRADED (closed while enforcing).
+    // A workspace id the database cannot look up is such an error.
+    const answer = await costApprovalContext({
+      workspaceId: undefined as unknown as string,
+      projectId: fixture.projectId,
+      capability: "CREATE_SOCIAL_CREATIVE",
+      payload: { request: "a post", variantCount: 3 },
+      createdByType: "SYSTEM",
+    });
+
+    expect(answer).toMatchObject({ unknown: true });
+    expect(answer.estimatedCostUsd).toBeUndefined();
+    expect(answer.approveAboveUsd).toBeUndefined();
+    expect(answer.note).toContain("3 post images");
+  });
+
+  it("a workspace with no plan is not 'unknown': there is simply no threshold to apply", async () => {
+    const fixture = await createAgencyFixture(`thrgap-${runId}-noplan`);
+    fixtures.push(fixture);
+
+    await expect(ask(fixture, "SYSTEM")).resolves.toEqual({});
   });
 });

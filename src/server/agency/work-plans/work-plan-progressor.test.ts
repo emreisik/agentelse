@@ -72,6 +72,7 @@ function approvalFollowsStoredFlag() {
       level: flagged ? "LEVEL_3_CLIENT" : "LEVEL_1_INTERNAL_AUTOMATIC",
       requiresApproval: flagged,
       note: undefined,
+      sizeUnknown: false,
     };
   });
 }
@@ -409,6 +410,7 @@ describe("WorkPlanProgressor.dispatchReadyTasks: the approval decision", () => {
       level: "LEVEL_3_CLIENT",
       requiresApproval: true,
       note: "This automatic task would use 3 post images of your plan.",
+      sizeUnknown: false,
     });
 
     const result = await WorkPlanProgressor.dispatchReadyTasks("plan-1", "p-1");
@@ -432,6 +434,7 @@ describe("WorkPlanProgressor.dispatchReadyTasks: the approval decision", () => {
       level: "LEVEL_1_INTERNAL_AUTOMATIC",
       requiresApproval: false,
       note: undefined,
+      sizeUnknown: false,
     });
 
     await WorkPlanProgressor.dispatchReadyTasks("plan-1", "p-1");
@@ -445,6 +448,66 @@ describe("WorkPlanProgressor.dispatchReadyTasks: the approval decision", () => {
       "p-1",
     );
     expect(TaskPlanner.requestApproval).not.toHaveBeenCalled();
+  });
+
+  describe("when the cost could not be sized this time", () => {
+    // The plan or the settings could not be read once: the planner answers "no threshold"
+    // but says it did not size anything.
+    const couldNotSize = {
+      level: "LEVEL_1_INTERNAL_AUTOMATIC" as const,
+      requiresApproval: false,
+      note: "This automatic task would use 3 post images of your plan, more than the size you chose to approve on your own.",
+      sizeUnknown: true,
+    };
+
+    it("a node flagged for its cost keeps asking: the flag is not cleared and the task does not run", async () => {
+      task.findMany.mockResolvedValueOnce([node({ requiresApproval: true })]);
+      vi.mocked(TaskPlanner.approvalNow).mockResolvedValue(couldNotSize);
+
+      const result = await WorkPlanProgressor.dispatchReadyTasks(
+        "plan-1",
+        "p-1",
+      );
+
+      expect(result).toBe(1);
+      expect(task.updateMany).not.toHaveBeenCalled();
+      expect(TaskPlanner.requestApproval).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "task-1" }),
+        "LEVEL_3_CLIENT",
+        couldNotSize.note,
+      );
+      expect(TaskPlanner.dispatchApprovedTask).not.toHaveBeenCalled();
+    });
+
+    it("a node that was never flagged goes on as before (nothing says it is expensive)", async () => {
+      task.findMany.mockResolvedValueOnce([node({ requiresApproval: false })]);
+      vi.mocked(TaskPlanner.approvalNow).mockResolvedValue(couldNotSize);
+
+      await WorkPlanProgressor.dispatchReadyTasks("plan-1", "p-1");
+
+      expect(TaskPlanner.requestApproval).not.toHaveBeenCalled();
+      expect(TaskPlanner.dispatchApprovedTask).toHaveBeenCalledWith(
+        "task-1",
+        "p-1",
+      );
+    });
+
+    it("a successful sizing under the size still clears the flag", async () => {
+      task.findMany.mockResolvedValueOnce([node({ requiresApproval: true })]);
+      vi.mocked(TaskPlanner.approvalNow).mockResolvedValue({
+        ...couldNotSize,
+        sizeUnknown: false,
+        note: undefined,
+      });
+
+      await WorkPlanProgressor.dispatchReadyTasks("plan-1", "p-1");
+
+      expect(task.updateMany).toHaveBeenCalledWith({
+        where: { id: "task-1", status: "READY" },
+        data: { requiresApproval: false },
+      });
+      expect(TaskPlanner.dispatchApprovedTask).toHaveBeenCalled();
+    });
   });
 
   it("writes nothing when the answer is the flag it already has", async () => {

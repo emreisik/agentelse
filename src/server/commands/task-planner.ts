@@ -304,6 +304,8 @@ export const TaskPlanner = {
       level,
       requiresApproval: !isAutoExecutable(level),
       note: cost.note,
+      // Maliyet BOYUTLANAMADI: dönen karar "eşiğin altında" demek değildir.
+      sizeUnknown: cost.unknown === true,
     };
   },
 

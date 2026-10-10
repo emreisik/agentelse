@@ -165,6 +165,7 @@ type ParkedRow = {
   capability: CapabilityKey;
   createdAt: Date;
   updatedAt: Date;
+  errorCode: string | null;
   task: {
     status: string;
     priority: TaskPriority;
@@ -183,6 +184,7 @@ const PARKED_SELECT = {
   capability: true,
   createdAt: true,
   updatedAt: true,
+  errorCode: true,
   task: {
     select: {
       status: true,
@@ -492,6 +494,7 @@ async function resumeWorkspace(
       if (isQuotaError(error)) {
         for (const unit of units) blocked.add(`${unit}:${initiator}`);
         outcome.stillParked += 1;
+        await refreshParkedReason(job, error);
         continue;
       }
       // Defter okunamadı: bu süpürmeyi bırak, bir sonraki tick yeniden dener.
@@ -514,6 +517,25 @@ async function resumeWorkspace(
     else outcome.stillParked += 1;
   }
   return outcome;
+}
+
+// Park nedeni park anında yazılır ("hak bitti" ya da "arka plan payı"); ama durum sonradan
+// değişebilir (kullanıcı kendi hakkını harcadı, paket aldı). Devam denemesi yine reddedilince
+// ekranların söylediği neden GÜNCEL reddin nedenine çekilir; yoksa "kendi isteklerin
+// etkilenmez" yazan bir iş, kullanıcının hakkı bittiği hâlde öyle yazmaya devam ederdi.
+// `updatedAt` KORUNUR: park yaşı (bekleme sınırı) ve süpürme süzgeci ondan okunur.
+async function refreshParkedReason(
+  job: ParkedRow,
+  error: QuotaExceededError | NoPlanError,
+): Promise<void> {
+  const code = error.meta?.heldBack === true ? HELD_BACK_CODE : error.code;
+  if (job.errorCode === code) return;
+  await prisma.executionJob
+    .updateMany({
+      where: { id: job.id, status: "WAITING_BUDGET", errorCode: { not: code } },
+      data: { errorCode: code, updatedAt: job.updatedAt },
+    })
+    .catch(() => undefined);
 }
 
 // Görevin takvim slotunun planlı zamanı (Task.payload.planCreativeId →

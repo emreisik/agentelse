@@ -23,6 +23,11 @@ export type CostApprovalContext = {
   approveAboveUsd?: number;
   // Eşik aşıldıysa onay kartında gösterilecek cümle.
   note?: string;
+  // Görev ücretli iş ama BOYUTLANAMADI (okuma hatası, hak durumu okunamadı): "eşiğin
+  // altında" demek değildir. Yeni görevde eşik uygulanmaz (eskisi gibi yürür); ama zaten
+  // maliyet için işaretlenmiş bir plan düğümü bu belirsizlikle serbest bırakılmaz
+  // (WorkPlanProgressor.dispatchReadyTasks).
+  unknown?: boolean;
 };
 
 // Bu çalışma alanı + proje için "bundan büyük otomatik iş sorulur" eşiği (USD); plan
@@ -32,6 +37,10 @@ async function approveAboveFor(
   projectId: string,
 ): Promise<number | null> {
   const entitlements = await getEntitlements(workspaceId);
+  // Hak durumu okunamadı: "plan yok" ile karışmasın (çağıran bunu "bilinmiyor" sayar).
+  if (entitlements.reason === "DEGRADED") {
+    throw new Error("entitlements could not be read");
+  }
   if (entitlements.unlimited || !entitlements.planKey) return null;
 
   const policy = await prisma.autonomyPolicy.findUnique({
@@ -52,10 +61,13 @@ export async function costApprovalContext(input: {
     return {};
   }
   if (getBillingConfig().mode !== "enforce") return {};
+  let need: ReturnType<
+    typeof import("@/server/execution/usage-need").usageNeedOf
+  > = null;
   try {
     // Lazy: işi ölçmek yürütme sağlayıcılarını yükler (park.ts ile aynı gerekçe).
     const { usageNeedOf } = await import("@/server/execution/usage-need");
-    const need = usageNeedOf(input.capability, input.payload);
+    need = usageNeedOf(input.capability, input.payload);
     if (!need) return {};
 
     const approveAboveUsd = await approveAboveFor(
@@ -75,7 +87,11 @@ export async function costApprovalContext(input: {
       "[billing] could not size a task for the approval threshold:",
       error instanceof Error ? error.name : error,
     );
-    return {};
+    return {
+      unknown: true,
+      // Zaten işaretli bir düğüm sorulacaksa kartta yazılacak cümle (ilk işaretlemedeki aynı).
+      ...(need ? { note: costApprovalNote(need) } : {}),
+    };
   }
 }
 

@@ -1628,6 +1628,74 @@ describeIntegration("parked work (WAITING_BUDGET)", () => {
       }
     });
 
+    describe("the reason a job waits follows the real state, not the moment it was parked", () => {
+      const codeOf = (id: string) =>
+        prisma.executionJob.findUniqueOrThrow({
+          where: { id },
+          select: { errorCode: true, updatedAt: true, status: true },
+        });
+
+      it("held back by the share, then the person uses up their own allowance: it no longer says their requests are unaffected", async () => {
+        const fixture = await nearlyUsedUp();
+        const parked = await startAs(fixture, "SYSTEM");
+        expect(parked.kind).toBe("stop");
+        if (parked.kind !== "stop") return;
+        const before = await codeOf(parked.job.id);
+        expect(before.errorCode).toBe("QUOTA_HELD_BACK");
+        await prisma.usageBalance.updateMany({
+          where: { workspaceId: fixture.workspaceId, unit: "IMAGE" },
+          data: { periodUsed: B(10) },
+        });
+
+        const summary = await resumeParkedWork({
+          workspaceId: fixture.workspaceId,
+          now: NOW,
+        });
+
+        expect(summary).toMatchObject({ resumed: 0, stillParked: 1 });
+        const after = await codeOf(parked.job.id);
+        expect(after.errorCode).toBe("QUOTA_EXCEEDED");
+        // Still waiting, and the clock of the wait (expiry, sweep filter) did not move.
+        expect(after.status).toBe("WAITING_BUDGET");
+        expect(after.updatedAt).toEqual(before.updatedAt);
+      });
+
+      it("used up, then the window gives room but not enough for the system's share: it now says held back", async () => {
+        const fixture = await nearlyUsedUp();
+        await prisma.usageBalance.updateMany({
+          where: { workspaceId: fixture.workspaceId, unit: "IMAGE" },
+          data: { periodUsed: B(10) },
+        });
+        const parked = await startAs(fixture, "SYSTEM");
+        expect(parked.kind).toBe("stop");
+        if (parked.kind !== "stop") return;
+        expect((await codeOf(parked.job.id)).errorCode).toBe("QUOTA_EXCEEDED");
+        // 3 images are available again, all of them the user's share.
+        await prisma.usageBalance.updateMany({
+          where: { workspaceId: fixture.workspaceId, unit: "IMAGE" },
+          data: { periodUsed: B(7) },
+        });
+
+        await resumeParkedWork({ workspaceId: fixture.workspaceId, now: NOW });
+
+        const after = await codeOf(parked.job.id);
+        expect(after.status).toBe("WAITING_BUDGET");
+        expect(after.errorCode).toBe("QUOTA_HELD_BACK");
+      });
+
+      it("an unchanged refusal writes nothing", async () => {
+        const fixture = await nearlyUsedUp();
+        const parked = await startAs(fixture, "SYSTEM");
+        expect(parked.kind).toBe("stop");
+        if (parked.kind !== "stop") return;
+        const before = await codeOf(parked.job.id);
+
+        await resumeParkedWork({ workspaceId: fixture.workspaceId, now: NOW });
+
+        expect(await codeOf(parked.job.id)).toEqual(before);
+      });
+    });
+
     describe("a system task that a person approved", () => {
       it("is the user's own work: it goes where the system's share would have parked it", async () => {
         const fixture = await nearlyUsedUp(); // 3 left, all of them the user's

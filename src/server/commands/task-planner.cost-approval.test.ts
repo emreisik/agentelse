@@ -213,6 +213,7 @@ describe("approvalNow: what a stored task needs right now", () => {
       level: "LEVEL_3_CLIENT",
       requiresApproval: true,
       note: COSTLY.note,
+      sizeUnknown: false,
     });
   });
 
@@ -222,12 +223,29 @@ describe("approvalNow: what a stored task needs right now", () => {
       level: "LEVEL_1_INTERNAL_AUTOMATIC",
       requiresApproval: false,
       note: undefined,
+      sizeUnknown: false,
     });
 
     costApprovalContext.mockResolvedValue({});
     expect(
       await TaskPlanner.approvalNow({ ...stored, createdByType: "USER" }),
     ).toMatchObject({ level: "LEVEL_0_AUTO_OBSERVE", requiresApproval: false });
+  });
+
+  it("passes on that the cost could not be sized, instead of passing it off as 'under the size'", async () => {
+    costApprovalContext.mockResolvedValue({
+      unknown: true,
+      note: "This automatic task would use 3 post images of your plan.",
+    });
+
+    const answer = await TaskPlanner.approvalNow(stored);
+
+    expect(answer).toMatchObject({
+      level: "LEVEL_1_INTERNAL_AUTOMATIC",
+      requiresApproval: false,
+      sizeUnknown: true,
+      note: "This automatic task would use 3 post images of your plan.",
+    });
   });
 
   it("keeps the capability's own floor whatever the cost", async () => {

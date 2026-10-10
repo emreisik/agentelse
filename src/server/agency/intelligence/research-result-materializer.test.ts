@@ -7,8 +7,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // facts.
 
 const taskFindUnique = vi.fn();
+// A person's approval of a system task (job-initiator.ts): none unless a test says so.
+const approvalFindMany = vi.fn();
 vi.mock("@/lib/prisma", () => ({
-  prisma: { task: { findUnique: taskFindUnique } },
+  prisma: {
+    task: { findUnique: taskFindUnique },
+    approval: { findMany: approvalFindMany },
+  },
 }));
 
 const run = vi.fn();
@@ -55,6 +60,7 @@ function completedTask(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  approvalFindMany.mockResolvedValue([]);
   run.mockResolvedValue({
     output: {
       findings: [
@@ -163,6 +169,38 @@ describe("ResultMaterializer.materializeTask", () => {
         expect(seen).toEqual([true, true]);
       },
     );
+
+    it("is the user's for a system task a person approved: the same rule that billed the job", async () => {
+      const seen = labelsSeenByExtraction();
+      taskFindUnique.mockResolvedValue(
+        completedTask("WEB_RESEARCH", { final: LONG_REPORT }, "SYSTEM"),
+      );
+      approvalFindMany.mockResolvedValue([{ taskId: "task-1" }]);
+
+      await runAsBackground(() => ResultMaterializer.materializeTask("task-1"));
+
+      expect(seen).toEqual([false]);
+      expect(approvalFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            taskId: { in: ["task-1"] },
+            entityType: "Task",
+            status: "APPROVED",
+          }),
+        }),
+      );
+    });
+
+    it("a task the user created needs no approval lookup", async () => {
+      labelsSeenByExtraction();
+      taskFindUnique.mockResolvedValue(
+        completedTask("WEB_RESEARCH", { final: LONG_REPORT }, "USER"),
+      );
+
+      await ResultMaterializer.materializeTask("task-1");
+
+      expect(approvalFindMany).not.toHaveBeenCalled();
+    });
 
     it("does not leave a label behind", async () => {
       labelsSeenByExtraction();

@@ -294,6 +294,40 @@ describeIntegration("getBillingOverview", () => {
     }
   });
 
+  it("tells a running free trial from one that has ended", async () => {
+    const now = new Date();
+    const cases = [
+      ["running", new Date(now.getTime() + 3 * DAY_MS), true],
+      ["over", new Date(now.getTime() - DAY_MS), false],
+    ] as const;
+    for (const [, trialEndsAt, trialActive] of cases) {
+      const fixture = await workspace();
+      await prisma.subscription.create({
+        data: {
+          workspaceId: fixture.workspaceId,
+          status: "TRIALING",
+          interval: "MONTH",
+          quotaAnchor: new Date(trialEndsAt.getTime() - 7 * DAY_MS),
+          trialEndsAt,
+        },
+      });
+
+      const { subscription } = await getBillingOverview(
+        fixture.workspaceId,
+        now,
+      );
+
+      expect(subscription).toMatchObject({
+        status: "TRIALING",
+        planKey: null,
+        trialActive,
+        paidAccess: false,
+        stripeLinked: false,
+      });
+      expect(subscription?.trialEndsAt).toBe(trialEndsAt.toISOString());
+    }
+  });
+
   it("a link from the other payment mode does not count as this mode's subscription", async () => {
     const now = new Date();
     const fixture = await workspace();

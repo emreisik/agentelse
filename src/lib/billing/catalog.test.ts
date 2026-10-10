@@ -35,7 +35,9 @@ describe("formatDay", () => {
     expect(formatDay("2026-11-15T00:00:00.000Z")).toBe("Nov 15, 2026");
     expect(formatDay("2026-11-15T23:59:59.000Z")).toBe("Nov 15, 2026");
     expect(formatDay(new Date("2026-12-01T00:00:00.000Z"))).toBe("Dec 1, 2026");
-    expect(formatDay("2026-10-08T12:00:00.000Z", { year: false })).toBe("Oct 8");
+    expect(formatDay("2026-10-08T12:00:00.000Z", { year: false })).toBe(
+      "Oct 8",
+    );
   });
 });
 
@@ -187,8 +189,10 @@ describe("extra packs and the trial", () => {
 
   it("describes the trial from the same constants", () => {
     expect(trialSummary()).toBe(
-      "7-day trial: 5 post images and $1 of AI usage",
+      "7-day free trial: 5 post images and a starter amount of AI assistant usage",
     );
+    // The internal AI budget is never printed.
+    expect(trialSummary()).not.toMatch(/\$/);
   });
 });
 

@@ -41,7 +41,7 @@ SELECT action, count(*) FROM "AuditLog" WHERE action LIKE 'billing.shadow.%' AND
 
 **5. Mevcut müşterilere 7 günlük geçiş.** `BILLING_LEGACY_UNTIL=<bugün + 7 gün>` ayarlayın. Süre dolunca planı seçmemiş workspace'ler salt-okunur (READ_ONLY) olur: görüntüleme, dışa aktarma, silme, bağlantı kesme açık; yeni ücretli iş yok. Duyuruyu bu tarihten ÖNCE yapın (uygulama içi bildirim şimdilik yok: Profile → Plan & usage ve e-posta).
 
-**6. Yeni kayıtlar.** Satırı olmayan yeni bir workspace `NO_SUBSCRIPTION` olur ve ilk markayı açamaz. Bunun çözümü AÇIK SAHİP KARARIDIR: (a) kayıtta kartsız 7 günlük deneme (`startTrial`, kodda hazır; kötüye kullanım riski), (b) kartlı deneme (Stripe Checkout'ta `trial_period_days`; kodda YOK), (c) önce plan seçtirme. Karar verilmeden yeni kayıtlar için `enforce` açmayın ya da (a)'yı bağlayın.
+**6. Yeni kayıtlar.** Karar verildi ve kod bağlı: yeni kayıt **kartsız 7 günlük deneme** alır (5 görsel + AI payı; `registerAction` → `startSignupTrial`, `docs/billing-quota.md` "Kayıtta deneme"). `BILLING_MODE=off` iken hiçbir şey yazılmaz; `shadow`/`enforce`'ta ve `BILLING_LEGACY_BEFORE` geçildiyse kayıt deneme satırı açar. Kötüye kullanım devre kesicisi `TRIAL_MAX_PER_DAY` (varsayılan 100/gün, `0` = deneme yok): Railway'de ayarlanır. Deneme bitince `enforce`'ta workspace salt-okunur olur ve plan seçmesi gerekir. Kayıtta e-posta doğrulaması YOK: sınır bu yüzden vardır; günlük kayıt sayınız sınırın altında kalıyorsa bir şey yapmanız gerekmez. Kartlı deneme, ilk aboneliğe bonus kullanım ve referans ödülü yapılmıyor.
 
 ## İzleme (enforce açıkken)
 

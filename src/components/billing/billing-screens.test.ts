@@ -274,6 +274,7 @@ describe("SubscriptionPanel with payments connected", () => {
       status: "ACTIVE",
       paidThrough: "2026-12-01T00:00:00.000Z",
       trialEndsAt: null,
+      trialActive: false,
       cancelAtPeriodEnd: false,
       pending: null,
       exempt: false,
@@ -469,6 +470,67 @@ describe("SubscriptionPanel with payments connected", () => {
   });
 });
 
+describe("SubscriptionPanel during and after the free trial", () => {
+  const trial = (trialActive: boolean): BillingOverview => ({
+    ...EMPTY,
+    subscription: {
+      planKey: null,
+      planLabel: null,
+      interval: "MONTH",
+      status: "TRIALING",
+      paidThrough: null,
+      trialEndsAt: "2026-11-22T12:00:00.000Z",
+      trialActive,
+      cancelAtPeriodEnd: false,
+      pending: null,
+      exempt: false,
+      stripeLinked: false,
+      introOffer: false,
+      paidAccess: false,
+      endedReason: null,
+    },
+  });
+  const render = (overview: BillingOverview) =>
+    html(
+      createElement(SubscriptionPanel, {
+        overview,
+        canManage: true,
+        paymentsOpen: true,
+      }),
+    );
+
+  it("says what the trial includes and when it ends, without printing the internal AI budget", () => {
+    const markup = render(trial(true));
+
+    expect(markup).toContain("Free trial");
+    expect(markup).toContain(">Trial<");
+    expect(markup).toContain("Trial ends");
+    expect(markup).toContain(
+      "7-day free trial: 5 post images and a starter amount of AI assistant usage",
+    );
+    expect(markup).not.toContain("No plan chosen");
+    expect(markup).not.toContain("$");
+  });
+
+  it("says plainly when the trial is over and what to do", () => {
+    const markup = render(trial(false));
+
+    expect(markup).toContain("Trial ended");
+    expect(markup).toContain(
+      "Your free trial has ended. Choose a plan in Plans",
+    );
+    expect(markup).not.toContain("Trial ends");
+    expect(markup).not.toContain("You are on the");
+  });
+
+  it("a full-access workspace never gets the trial text", () => {
+    const overview = trial(true);
+    overview.subscription!.exempt = true;
+
+    expect(render(overview)).not.toContain("free trial");
+  });
+});
+
 describe("UsagePanel", () => {
   const withAllowances: BillingOverview = {
     ...EMPTY,
@@ -622,6 +684,7 @@ describe("SubscriptionPanel", () => {
       status: "ACTIVE",
       paidThrough: "2026-11-15T00:00:00.000Z",
       trialEndsAt: null,
+      trialActive: false,
       cancelAtPeriodEnd: false,
       pending: null,
       exempt: false,

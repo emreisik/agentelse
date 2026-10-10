@@ -8,6 +8,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { signOut } from "@/lib/auth";
 import { isRateLimited } from "@/lib/rate-limit";
+import { startSignupTrial } from "@/server/billing/subscription";
 
 const REGISTER_WINDOW_MS = 60 * 60_000;
 const REGISTER_MAX_PER_IP = 10;
@@ -75,8 +76,9 @@ export async function registerAction(
 
   const passwordHash = await bcrypt.hash(password, 12);
 
+  let workspaceId: string;
   try {
-    await prisma.$transaction(async (tx) => {
+    workspaceId = await prisma.$transaction(async (tx) => {
       const workspace = await tx.workspace.create({
         data: { name: workspaceName, slug },
       });
@@ -86,6 +88,7 @@ export async function registerAction(
       await tx.workspaceMember.create({
         data: { workspaceId: workspace.id, userId: user.id, role: "OWNER" },
       });
+      return workspace.id;
     });
   } catch (error) {
     if (
@@ -96,6 +99,10 @@ export async function registerAction(
     }
     throw error;
   }
+
+  // Yeni kayıt kartsız 7 günlük deneme alır (faturalama kapalıyken hiçbir şey yazılmaz;
+  // asla fırlatmaz: kayıt faturalama yüzünden başarısız olmaz).
+  await startSignupTrial(workspaceId);
 
   return { ok: true };
 }

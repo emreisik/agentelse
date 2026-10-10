@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { formatDay, formatUsd } from "@/lib/billing/catalog";
+import { formatDay, formatUsd, trialSummary } from "@/lib/billing/catalog";
 import { PLANS, yearlyCents } from "@/lib/billing/plans";
 import type {
   BillingOverview,
@@ -158,7 +158,11 @@ export function SubscriptionPanel({
                     className="font-heading text-base font-semibold"
                     style={{ color: "var(--ws-text)" }}
                   >
-                    {plan ? plan.label : "No plan chosen"}
+                    {plan
+                      ? plan.label
+                      : subscription.status === "TRIALING"
+                        ? "Free trial"
+                        : "No plan chosen"}
                   </div>
                   {plan ? (
                     <div className="text-xs" style={muted}>
@@ -171,8 +175,11 @@ export function SubscriptionPanel({
                 <Badge variant="secondary">
                   {subscription.exempt
                     ? "Full access"
-                    : (STATUS_LABEL[subscription.status] ??
-                      subscription.status)}
+                    : subscription.status === "TRIALING" &&
+                        !subscription.trialActive
+                      ? "Trial ended"
+                      : (STATUS_LABEL[subscription.status] ??
+                        subscription.status)}
                 </Badge>
               </div>
               {dateInfo ? (
@@ -183,9 +190,21 @@ export function SubscriptionPanel({
               ) : null}
               {subscription.trialEndsAt ? (
                 <Row
-                  label="Trial ends"
+                  label={
+                    subscription.trialActive ? "Trial ends" : "Trial ended"
+                  }
                   value={formatDay(subscription.trialEndsAt)}
                 />
+              ) : null}
+              {subscription.status === "TRIALING" && !subscription.exempt ? (
+                <p
+                  className="border-t px-4 py-3 text-[13px]"
+                  style={{ borderColor: "var(--ws-border)", ...muted }}
+                >
+                  {subscription.trialActive
+                    ? `You are on the ${trialSummary()}. Choose a plan any time to keep going after it ends.`
+                    : "Your free trial has ended. Choose a plan in Plans to keep creating."}
+                </p>
               ) : null}
               {subscription.pending ? (
                 <Row

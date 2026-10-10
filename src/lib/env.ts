@@ -108,6 +108,16 @@ const envSchema = z.object({
   // ISO tarih: LEGACY tam erişimin bittiği an (7 günlük ücretsiz geçişin sonu).
   // Boşsa LEGACY süresiz tam erişimdir.
   BILLING_LEGACY_UNTIL: z.string().optional().default(""),
+  // Kayıtta verilen kartsız 7 günlük deneme sayısının GÜNLÜK üst sınırı (kötüye kullanım
+  // devre kesicisi: her deneme gerçek bir AI maliyeti taşır). Aşılırsa yeni kayıt deneme
+  // almaz (plan seçmesi gerekir). 0 = kayıtta deneme verilmez. Boş / geçersiz = 100.
+  TRIAL_MAX_PER_DAY: z
+    .string()
+    .optional()
+    .default("")
+    .transform((value): number =>
+      /^\d+$/.test(value.trim()) ? Number.parseInt(value.trim(), 10) : 100,
+    ),
   // Ödemeler (docs/billing-payments.md, Faz 4). Secret key + webhook secret ikisi de
   // doluysa ödeme açılır; biri boşsa fiyat ekranı salt-okunur kalır. Geliştirmede
   // test anahtarı (sk_test_…) kullanın: canlı anahtar yalnız production'da çalışır.

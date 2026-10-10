@@ -212,8 +212,10 @@ export function extraPackCards(): ExtraPackCard[] {
   ];
 }
 
+// What the free trial includes, in customer words (counts only: the AI budget behind it
+// is an internal figure and is never shown as dollars).
 export function trialSummary(): string {
-  return `${TRIAL.days}-day trial: ${TRIAL.quota.IMAGE} post images and ${formatUsd(TRIAL.quota.AI_MICROS / 10_000)} of AI usage`;
+  return `${TRIAL.days}-day free trial: ${TRIAL.quota.IMAGE} post images and a starter amount of AI assistant usage`;
 }
 
 export { VIDEO_SELLABLE };

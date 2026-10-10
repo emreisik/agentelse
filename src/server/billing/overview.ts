@@ -32,6 +32,8 @@ export type SubscriptionOverview = {
   // Paid up to (the renewal date), ISO.
   paidThrough: string | null;
   trialEndsAt: string | null;
+  // The free trial is running right now (status TRIALING and its end is in the future).
+  trialActive: boolean;
   cancelAtPeriodEnd: boolean;
   pending: {
     planKey: PlanKey | null;
@@ -172,6 +174,10 @@ function toSubscriptionOverview(
     status: row.status,
     paidThrough: row.paidThrough?.toISOString() ?? null,
     trialEndsAt: row.trialEndsAt?.toISOString() ?? null,
+    trialActive:
+      row.status === "TRIALING" &&
+      row.trialEndsAt !== null &&
+      row.trialEndsAt.getTime() > now.getTime(),
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,
     pending: hasPending
       ? {

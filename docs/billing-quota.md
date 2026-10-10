@@ -33,7 +33,7 @@ Diğer ayarlar (hepsi opsiyonel): `BILLING_LEGACY_BEFORE` (ISO tarih: bundan ön
 `access`: **FULL** (yeni ücretli AI, marka, otonom döngü serbest) | **READ_ONLY** (görüntüleme, dışa aktarma, silme, bağlantı kesme açık; yeni ücretli AI/marka yok). Satırsız/eşik sonrası workspace → `NO_SUBSCRIPTION`. Karar ÖDEME olaylarının yazdığı alanlardan verilir (`paidThrough`, `trialEndsAt`, `graceUntil`, `legacyUntil`), sağlayıcı dönem alanlarından değil.
 
 - ACTIVE: ödenmiş süre + 6 saat yenileme payı (iptal edilmişse pay yok). **Pay yalnız ERİŞİM toleransıdır**: ödeme gelene kadar yeni aylık pencere AÇILMAZ (`windowHorizon`), bedava ay yok.
-- TRIALING: 7 gün, tek pencere, 5 görsel + 1 USD AI, 1 marka, sınırlı otonomi. `trialEndsAt` bir kez yazılır (ikinci deneme yok).
+- TRIALING: 7 gün, tek pencere, 5 görsel + 1 USD AI, 1 marka, sınırlı otonomi. `trialEndsAt` bir kez yazılır (ikinci deneme yok). Kayıtta kartsız verilir (aşağıda "Kayıtta deneme").
 - PAST_DUE: `graceUntil`'e kadar mevcut kalan harcanır, yeni pencere yok. CANCELED: `paidThrough`'a kadar (yıllıkta kalan aylar dahil).
 - Marka limiti: plana göre (1 / 1 / 3 / 10); READ_ONLY'de 0.
 
@@ -51,13 +51,23 @@ Diğer ayarlar (hepsi opsiyonel): `BILLING_LEGACY_BEFORE` (ISO tarih: bundan ön
 
 **Kilit sırası** her yerde bakiye satırı → rezervasyon satırı (ölü kilit yok). `ensurePeriod`, deneme ve Faz 4 webhook işleyicisi ayrıca workspace advisory kilidini (`usage:<workspaceId>`) alır.
 
+## Kayıtta deneme (Faz 5)
+
+Self-signup (`registerAction`, `src/server/actions/auth-actions.ts`) hesap oluştuktan SONRA `startSignupTrial(workspaceId)` (`src/server/billing/subscription.ts`) çağırır. Sonuç ne olursa olsun kayıt başarılıdır (fonksiyon asla fırlatmaz). Kurallar:
+
+- **`BILLING_MODE=off`: hiçbir şey yazılmaz.** Satır varlığı LEGACY kararını değiştirir; kapalıyken kohort yalnız açılış tarihinden türer, deneme satırı mevcut kullanıcıları kohorttan çıkarırdı.
+- **Eski müşteri kohortu:** `BILLING_LEGACY_BEFORE` bugünden ileri bir tarihse (ya da henüz geçmediyse) yeni kayıt da kohorttadır ve deneme almaz (satırsız LEGACY kalır, 7 günlük geçişten yararlanır). Tarih geçince yeni kayıtlar deneme alır.
+- **Günlük üst sınır `TRIAL_MAX_PER_DAY`** (varsayılan 100; `0` = kayıtta deneme yok; boş/geçersiz = 100): her deneme gerçek AI maliyeti taşır (≈ 5 görsel + 1 USD AI bütçesi) ve kayıtta e-posta doğrulaması yoktur. Sayım, son 24 saatte BAŞLAYAN denemelerdir (`trialEndsAt` bir kez yazılır: başlangıç + 7 gün). Sınır aşılırsa yeni kayıt deneme almaz, günlükte `TRIAL_MAX_PER_DAY` geçen bir satır düşer. Ek koruma: IP başına saatte 10 kayıt (`registerAction`). Kötüye kullanım hâlâ mümkündür (çok IP / çok e-posta); en kötü günlük maliyet ≈ sınır × deneme maliyeti.
+- Deneme bitince (`enforce`'ta) workspace READ_ONLY olur (`TRIAL_ENDED`); plan seçince Stripe Checkout aboneliği bağlar, deneme penceresi ödenen pencereyle değişir ve kullanılmamış deneme kullanımı affedilir. İlk ay indirimi denemeden etkilenmez.
+- Karar (sahip, 10 Eki 2026): **kartsız 7 gün**. Kartlı deneme (Stripe `trial_period_days`), ilk aboneliğe %25 bonus kullanım ve referans ödülü YAPILMIYOR (bonus, ilk ay indirimiyle yığılınca Business/Agency marjını %52-57'ye indirir).
+
 ## Marka limiti
 
 `createProjectWithinBrandLimit` (`brand-limit.ts`): `off` → eski yol, faturalama sorgusu yok. `shadow` → yine oluşturur, "engellenirdi"yi loglar. `enforce` → `ProjectRepository.createWithinLimit`: sayma + oluşturma tek işlemde advisory kilit altında (eşzamanlı N istek limiti aşamaz); limit 0 "sınırsız" değil "yasak"; sayım durumdan bağımsız. İki eylem de (`createProjectAction`, `createGuidedProjectAction`) tipli `CreateProjectFailure{code: BRAND_LIMIT | PLAN_REQUIRED}` döner.
 
 ## enforce'a geçmeden önce (önkoşullar)
 
-1. Faz 3 (rezervasyon bağlantısı), Faz 4 (Stripe + webhook), Faz 5 (kayıtta deneme: `startTrial` kodda hazır ama HİÇBİR yerde çağrılmıyor; deneme kararı açık, bkz. `docs/billing-rollout.md` adım 6), Faz 6 (plan seçimi ekranı) tamam. **Faz 4 + 6 bitmeden yeni kayıtlar için `enforce` açılamaz** (satırsız yeni kullanıcı READ_ONLY olur ve ilk markayı açamaz).
+1. Faz 3 (rezervasyon bağlantısı), Faz 4 (Stripe + webhook), Faz 5 (kayıtta kartsız 7 günlük deneme: `registerAction` → `startSignupTrial`, bağlandı; bonus ve referans ödülü YAPILMIYOR), Faz 6 (plan seçimi ekranı) tamam. **Faz 4 + 6 bitmeden yeni kayıtlar için `enforce` açılamaz** (satırsız yeni kullanıcı READ_ONLY olur ve ilk markayı açamaz).
 2. Migration'lar uygulandı (`20261009110000_add_billing_core`).
 3. Mevcut müşteriler için `BILLING_LEGACY_BEFORE` ayarlı; 7 günlük geçiş `BILLING_LEGACY_UNTIL` ile başlatılır (Faz 4 checkout + Faz 6 ekranı yayında olmadan başlatılmaz).
 4. `db:report:cost` birim maliyetleri `economics.ts` varsayımlarıyla uyumlu; fiyat kilitlendi.
@@ -73,4 +83,4 @@ Testler **saat diliminden bağımsız** olmalıdır: tüm tarih parametreleri SQ
 - **Faz 3** (yapıldı, `docs/billing-tasks.md`): rezervasyon yürütme işlerine, motor çağrılarına, sohbet turlarına, revizyon/logo/haftalık planlayıcı/gömmelere bağlandı; hak yoksa iş `WAITING_BUDGET`'e park edilir ve hak gelince öncelik+son tarih sırasıyla gerçek rezervasyonla devam eder. Motor çağrıları hakkı bitince `BUDGET_EXCEEDED` (`meta.limit = planAllowance`) görür, yürütme işleri `QUOTA_EXCEEDED`/`NO_PLAN` (bekleme, `PERMANENT_ERROR_CODES`'a konmadı). 3C de yapıldı (arka plan payı = `autonomy: limited`, onay eşiği, plana bağlı kullanıcı sınırları; `docs/billing-tasks.md`).
 - **Faz 4** (yapıldı, `docs/billing-payments.md`): `paidThrough` yalnız ödenmiş fatura ile ilerler (asla geri); `PAST_DUE` için `graceUntil` (yeniden denemede uzamaz); tüm durum yazımı tek workspace kilidi altında tek işlemde (satır + hibe birlikte); yükseltme = ORANTILI delta `PERIOD` hibesi (`upgradeDelta`, anahtar `plan-change:<fatura>:<eski>><yeni>`); düşürme `pendingPlanKey` ile ödenmiş dönemin sonunda; iade/chargeback `revokeUsage` (işaretli ters kayıt, taban `used+reserved`). Canlıda kapalıdır: Stripe anahtarları girilene kadar satın alma yok, `BILLING_MODE` değişmedi.
 - **Faz 5**: BONUS havuzu gerekirse (60 günlük) additive migration; ilk abonelik %25 bonus ve referans ödülleri şimdilik PERIOD'a (pencereyle söner).
-- **Açık sahip kararları**: erişim bitince zamanlı postlar / canlı Meta kampanyaları; marka limiti aşımında kalacak markalar; deneme kartlı mı kartsız mı; iade politikası.
+- **Açık sahip kararları**: erişim bitince zamanlı postlar / canlı Meta kampanyaları; marka limiti aşımında kalacak markalar; iade politikası. (Deneme kararı verildi: kartsız 7 gün; ilk aboneliğe bonus kullanım ve referans ödülü yapılmıyor.)

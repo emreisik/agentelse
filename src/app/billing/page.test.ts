@@ -163,6 +163,7 @@ describe("/billing", () => {
         status: "ACTIVE",
         paidThrough: "2999-12-01T00:00:00.000Z",
         trialEndsAt: null,
+        trialActive: false,
         cancelAtPeriodEnd: false,
         pending: null,
         exempt: false,

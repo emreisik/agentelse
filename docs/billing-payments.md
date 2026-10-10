@@ -129,7 +129,7 @@ npm run billing:stripe-smoke
 - Aylık↔yıllık geçiş bu ekrandan yok (plan değişir, aralık kalır). Portal'da açılırsa sistem bunu düşürme gibi (dönem sonunda) işler ama o abonelik için uygulama içi plan değişikliği kapanır (`BILLING_CHANGED_OUTSIDE`): portalda plan/aralık değiştirmeyi KAPALI tutun.
 - 3D Secure gerektiren yükseltme ödemesi hata verir ("kart reddedildi / ek doğrulama"): çözüm kullanıcıya portaldan kartı güncelletmek ya da yeniden denetmektir; sayfa içi doğrulama akışı yok.
 - Vergi (Stripe Tax / KDV numarası toplama) YOK; B2B faturası için sahip kararı.
-- Uygulama içi kampanyalar (ilk aboneliğe %25 bonus kullanım, referans ödülü) ve deneme (kartlı/kartsız) kararı açık; promosyon kodu yalnız fiyatı etkiler.
+- Deneme: kayıtta kartsız 7 gün bağlandı (`docs/billing-quota.md`). Uygulama içi kampanyalar (ilk aboneliğe %25 bonus kullanım, referans ödülü) YAPILMIYOR (sahip kararı); promosyon kodu yalnız fiyatı etkiler.
 - Bir workspace aynı anda tek Stripe aboneliği taşır; paralel iki Checkout'un ikincisi `duplicate-subscription` olur (yukarıya bakın).
 - Faz 7: aynı akışlar gerçek Stripe TEST API'sine karşı elle doğrulanacak (bu fazdaki testlerde Stripe sahte ağ geçididir; istek şekilleri `gateway.test.ts`'te gerçek alan adlarıyla sabitlenmiştir).
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { afterAll, afterEach, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
@@ -359,6 +359,35 @@ describeIntegration("getBillingOverview", () => {
     expect(unknown.subscription?.stripeLinked).toBe(true);
   });
 
+  it("a TEST-mode first-month discount is not the live key's: the screen offers it again, the same way the server decides", async () => {
+    const now = new Date();
+    const fixture = await workspace();
+    await prisma.subscription.create({
+      data: {
+        workspaceId: fixture.workspaceId,
+        planKey: "growth",
+        interval: "MONTH",
+        status: "CANCELED",
+        paidThrough: new Date(now.getTime() - DAY_MS),
+        stripeSubscriptionId: `sub_t_${randomUUID().slice(0, 8)}`,
+        stripeLivemode: false,
+        introOffer: true,
+      },
+    });
+
+    const asLive = await getBillingOverview(fixture.workspaceId, now, "live");
+    const asTest = await getBillingOverview(fixture.workspaceId, now, "test");
+
+    expect(asLive.subscription).toMatchObject({
+      stripeLinked: false,
+      introOffer: false,
+    });
+    expect(asTest.subscription).toMatchObject({
+      stripeLinked: true,
+      introOffer: true,
+    });
+  });
+
   it("an old pack already used up does not inflate this window's bar", async () => {
     const fixture = await workspace();
     const now = new Date();
@@ -396,6 +425,100 @@ describeIntegration("getBillingOverview", () => {
       used: 10,
       available: 40,
       extraAvailable: 0,
+    });
+  });
+
+  describe("what the end of an allowance window means", () => {
+    // 100 images, 30 used in the current window, plus a 15-image pack that never expires.
+    async function withWindow(
+      row: {
+        status: string;
+        cancelAtPeriodEnd?: boolean;
+        windowEnd: (now: Date) => Date;
+      },
+      now: Date,
+    ) {
+      const fixture = await workspace();
+      await prisma.subscription.create({
+        data: {
+          workspaceId: fixture.workspaceId,
+          planKey: "growth",
+          interval: "MONTH",
+          status: row.status,
+          cancelAtPeriodEnd: row.cancelAtPeriodEnd ?? false,
+          quotaAnchor: new Date(now.getTime() - 20 * DAY_MS),
+          paidThrough: row.windowEnd(now),
+        },
+      });
+      await prisma.usageBalance.create({
+        data: {
+          id: randomUUID(),
+          workspaceId: fixture.workspaceId,
+          unit: "IMAGE",
+          periodStart: new Date(now.getTime() - 20 * DAY_MS),
+          periodEnd: row.windowEnd(now),
+          periodGranted: B(100),
+          periodUsed: B(30),
+          extraGranted: B(15),
+          extraUsed: B(0),
+          updatedAt: now,
+        },
+      });
+      return fixture;
+    }
+    const open = (now: Date) => new Date(now.getTime() + 10 * DAY_MS);
+    const over = (now: Date) => new Date(now.getTime() - 2 * DAY_MS);
+
+    it("an open window of a renewing plan renews; of a plan that is ending (or canceled with paid time left) it ends", async () => {
+      const now = new Date();
+      const renewing = await withWindow({ status: "ACTIVE", windowEnd: open }, now);
+      const leaving = await withWindow(
+        { status: "ACTIVE", cancelAtPeriodEnd: true, windowEnd: open },
+        now,
+      );
+      const canceled = await withWindow(
+        { status: "CANCELED", windowEnd: open },
+        now,
+      );
+
+      const view = async (workspaceId: string) =>
+        (await getBillingOverview(workspaceId, now, "test")).allowances[0];
+
+      expect(await view(renewing.workspaceId)).toMatchObject({
+        window: "renews",
+        granted: 115,
+        available: 85,
+      });
+      expect(await view(leaving.workspaceId)).toMatchObject({ window: "ends" });
+      expect(await view(canceled.workspaceId)).toMatchObject({ window: "ends" });
+    });
+
+    it("a window that is over grants nothing: only the bought extra usage is shown, whatever the plan state", async () => {
+      const now = new Date();
+      const cases = [
+        ["PAST_DUE", "overdue"],
+        ["CANCELED", "ended"],
+        ["ACTIVE", "renewing"],
+      ] as const;
+      for (const [status, window] of cases) {
+        const fixture = await withWindow({ status, windowEnd: over }, now);
+
+        const { allowances } = await getBillingOverview(
+          fixture.workspaceId,
+          now,
+          "test",
+        );
+
+        // 70 of the closed window's 100 were never used and are NOT spendable any more: they
+        // must not appear as "85 left of 115".
+        expect(allowances[0], status).toMatchObject({
+          window,
+          granted: 15,
+          used: 0,
+          available: 15,
+          extraAvailable: 15,
+        });
+      }
     });
   });
 

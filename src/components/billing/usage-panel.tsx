@@ -63,13 +63,42 @@ const tile = {
   boxShadow: "var(--ws-card-shadow)",
 } as const;
 
+// The line under the bar: what the end date of the window really means. Never "Renews" for a
+// plan that is ending or a date that has passed.
+function windowCaption(
+  window: AllowanceOverview["window"],
+  endsAt: string | null,
+): string {
+  const day = endsAt ? formatDay(endsAt) : null;
+  switch (window) {
+    case "ends":
+      return day ? `Available until ${day}` : "Ends with your plan";
+    case "overdue":
+      return "Paused: the renewal payment is overdue";
+    case "renewing":
+      return "Renewing: the new allowance appears as soon as the payment is recorded";
+    case "ended":
+      return "Your plan has ended";
+    default:
+      return day ? `Renews ${day}` : "No renewal date yet";
+  }
+}
+
 function AllowanceCard({ allowance }: { allowance: AllowanceOverview }) {
   const isImage = allowance.unit === "IMAGE";
-  const level = limitLevel(allowance.granted, allowance.available);
+  const windowOpen =
+    allowance.window === "renews" || allowance.window === "ends";
+  // A window that is over has nothing of its own left: only the extra packs, if any.
+  const nothingGranted = !windowOpen && allowance.granted <= 0;
+  const level = windowOpen
+    ? limitLevel(allowance.granted, allowance.available)
+    : "ok";
   const percent = usedPercent(allowance.granted, allowance.available);
   const Icon = isImage ? ImageIcon : Sparkles;
   const title = isImage ? "Post images" : "AI assistant usage";
   const renews = allowance.endsAt ? formatDay(allowance.endsAt) : null;
+  const what = isImage ? "post images" : "AI assistant usage";
+  const ending = allowance.window === "ends";
 
   return (
     <div className="flex flex-col gap-3 rounded-[13px] border p-4" style={tile}>
@@ -87,12 +116,18 @@ function AllowanceCard({ allowance }: { allowance: AllowanceOverview }) {
           className="font-heading text-[26px] leading-none font-semibold tracking-tight"
           style={{ color: "var(--ws-text)" }}
         >
-          {isImage ? allowance.available : `${100 - percent}%`}
+          {isImage
+            ? allowance.available
+            : nothingGranted
+              ? "0%"
+              : `${100 - percent}%`}
         </div>
         <p className="mt-1 text-xs" style={muted}>
-          {isImage
-            ? `left of ${allowance.granted}`
-            : `left this period (${percent}% used)`}
+          {nothingGranted
+            ? "left"
+            : isImage
+              ? `left of ${allowance.granted}`
+              : `left this period (${percent}% used)`}
         </p>
       </div>
       <UsageBar
@@ -101,7 +136,7 @@ function AllowanceCard({ allowance }: { allowance: AllowanceOverview }) {
         label={`${title} used`}
       />
       <p className="text-xs" style={faint}>
-        {renews ? `Renews ${renews}` : "No renewal date yet"}
+        {windowCaption(allowance.window, allowance.endsAt)}
         {allowance.extraAvailable > 0
           ? ` · includes ${isImage ? allowance.extraAvailable : "extra usage you bought"}`
           : ""}
@@ -118,8 +153,12 @@ function AllowanceCard({ allowance }: { allowance: AllowanceOverview }) {
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
           <span>
             {level === "out"
-              ? `You have used all of your ${isImage ? "post images" : "AI assistant usage"} for this period. Work that needs it waits and continues by itself when it renews or you add more.`
-              : `You are running low on ${isImage ? "post images" : "AI assistant usage"}. Add more below, or it renews${renews ? ` on ${renews}` : " soon"}.`}
+              ? ending
+                ? `You have used all of your ${what}. Work that needs it waits until you add more; it does not renew because your plan is ending.`
+                : `You have used all of your ${what} for this period. Work that needs it waits and continues by itself when it renews or you add more.`
+              : ending
+                ? `You are running low on ${what}. Add more below; your plan is ending${renews ? ` on ${renews}` : ""}, so it does not renew.`
+                : `You are running low on ${what}. Add more below, or it renews${renews ? ` on ${renews}` : " soon"}.`}
           </span>
         </div>
       ) : null}

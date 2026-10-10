@@ -3,7 +3,11 @@ import "server-only";
 import { startOfMonth, subDays } from "date-fns";
 
 import { paidPlanRunning } from "@/lib/billing/entitlements-core";
-import { linkedForMode, type StripeModeName } from "@/lib/billing/linkage";
+import {
+  linkedForMode,
+  rowInMode,
+  type StripeModeName,
+} from "@/lib/billing/linkage";
 import {
   BACKGROUND_SHARE_PCT,
   PLANS,
@@ -54,6 +58,16 @@ export type SubscriptionOverview = {
   endedReason: string | null;
 };
 
+// What the end date of an allowance window means. The card must not promise a renewal
+// that will not happen (or print "Renews" for a date in the past):
+//  renews    an open window of a subscription that renews
+//  ends      an open window of a plan that is set to end, or of a free trial: nothing renews
+//  overdue   the window is over and the renewal payment is overdue (the allowance is paused)
+//  renewing  the window is over but the plan is still paid: the renewal is being recorded
+//  ended     the window is over and the plan has ended
+export type AllowanceWindow =
+  "renews" | "ends" | "overdue" | "renewing" | "ended";
+
 export type AllowanceOverview = {
   unit: "IMAGE" | "AI_MICROS";
   // This window's allowance plus what is still left of the extra packs bought (their
@@ -68,6 +82,7 @@ export type AllowanceOverview = {
   // Of which bought separately; never expires with the window.
   extraAvailable: number;
   endsAt: string | null;
+  window: AllowanceWindow;
 };
 
 export type ModuleUsage = {
@@ -188,7 +203,8 @@ function toSubscriptionOverview(
       : null,
     exempt: row.exempt,
     stripeLinked: linked,
-    introOffer: row.introOffer,
+    // Yalnız çalışan modun indirimi sayılır (test denemesi canlı indirimi bitirmez).
+    introOffer: row.introOffer && (!stripeMode || rowInMode(row, stripeMode)),
     paidAccess: linked && paidPlanRunning(row, now),
     endedReason: row.endedReason,
   };
@@ -370,14 +386,33 @@ export async function getBillingOverview(
     .filter((row) => row.unit === "IMAGE" || row.unit === "AI_MICROS")
     .map((row) => {
       const view = toUsageView(row, now);
+      // A window that is over grants nothing (its allowance is not spendable any more, the
+      // reserve rule is the same): only the extra packs are left to show.
+      const open =
+        view.period.endsAt !== null &&
+        new Date(view.period.endsAt).getTime() > now.getTime();
+      const status = subscription?.status;
+      const window: AllowanceWindow = !open
+        ? status === "PAST_DUE"
+          ? "overdue"
+          : status === "ACTIVE"
+            ? "renewing"
+            : "ended"
+        : subscription &&
+            (subscription.cancelAtPeriodEnd ||
+              status === "CANCELED" ||
+              status === "TRIALING")
+          ? "ends"
+          : "renews";
       return {
         unit: view.unit as "IMAGE" | "AI_MICROS",
-        granted: view.period.granted + view.extra.available,
-        used: view.period.used,
-        reserved: view.period.reserved + view.extra.reserved,
+        granted: (open ? view.period.granted : 0) + view.extra.available,
+        used: open ? view.period.used : 0,
+        reserved: (open ? view.period.reserved : 0) + view.extra.reserved,
         available: view.available,
         extraAvailable: view.extra.available,
         endsAt: view.period.endsAt,
+        window,
       };
     })
     .sort((a, b) => (a.unit === b.unit ? 0 : a.unit === "IMAGE" ? -1 : 1));

@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 
 import { bannerFor } from "@/lib/billing/banner";
 import { comparisonRows, planCards } from "@/lib/billing/catalog";
@@ -139,7 +140,9 @@ export default async function BillingPage({
           </p>
         </div>
 
-        <ClearOneShotParams />
+        <Suspense fallback={null}>
+          <ClearOneShotParams />
+        </Suspense>
 
         {banner ? (
           <div

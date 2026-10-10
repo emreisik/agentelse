@@ -57,7 +57,13 @@ const INVOICE_STATUS_LABEL: Record<string, string> = {
 export function cancelDescription(
   paidThrough: string | null,
   mode: BillingOverview["mode"],
+  status: string = "ACTIVE",
 ): string {
+  // An overdue subscription has no paid time left: its date is the old, already passed
+  // period end, and the unpaid invoice is not cancelled by cancelling the plan.
+  if (status === "PAST_DUE") {
+    return "Your last payment did not go through, so this subscription is past due. Canceling stops it from renewing; it does not cancel the unpaid invoice. You can resume before the plan ends.";
+  }
   const until = paidThrough
     ? formatDay(paidThrough)
     : "the end of the paid period";
@@ -262,6 +268,7 @@ export function SubscriptionPanel({
                 description: cancelDescription(
                   subscription?.paidThrough ?? null,
                   overview.mode,
+                  subscription?.status,
                 ),
                 confirmLabel: "Cancel at period end",
               }}

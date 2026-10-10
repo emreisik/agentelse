@@ -423,6 +423,22 @@ describe("SubscriptionPanel with payments connected", () => {
     );
   });
 
+  it("an overdue subscription's cancel text never promises access 'until' a date that has passed or says nothing more is charged", () => {
+    const passed = "2026-10-07T00:00:00.000Z";
+    for (const mode of ["off", "enforce"] as const) {
+      const text = cancelDescription(passed, mode, "PAST_DUE");
+      expect(text).toContain("past due");
+      expect(text).toContain("does not cancel the unpaid invoice");
+      expect(text).not.toContain("Oct 7");
+      expect(text).not.toContain("Nothing more is charged");
+      expect(text).not.toContain("until");
+    }
+    // the healthy state keeps its text
+    expect(cancelDescription(passed, "enforce", "ACTIVE")).toContain(
+      "until Oct 7, 2026",
+    );
+  });
+
   it("shows the amount due for an unpaid invoice, hides drafts' noise and says when invoices could not load", () => {
     const row = {
       id: "in_open",
@@ -544,6 +560,7 @@ describe("UsagePanel", () => {
         available: 8,
         extraAvailable: 0,
         endsAt: "2026-11-01T00:00:00.000Z",
+        window: "renews",
       },
       {
         unit: "AI_MICROS",
@@ -553,6 +570,7 @@ describe("UsagePanel", () => {
         available: 0,
         extraAvailable: 0,
         endsAt: "2026-11-01T00:00:00.000Z",
+        window: "renews",
       },
     ],
     measured: {
@@ -591,6 +609,76 @@ describe("UsagePanel", () => {
     expect(markup).toContain("You have used all of your AI assistant usage");
     expect(markup).toContain("continues by itself");
     expect(markup).not.toContain("Usage is measured, not limited yet");
+  });
+
+  describe("the end date of the window says what is really going to happen", () => {
+    const withWindow = (
+      window: "renews" | "ends" | "overdue" | "renewing" | "ended",
+      patch: Partial<(typeof withAllowances)["allowances"][number]> = {},
+    ): BillingOverview => ({
+      ...withAllowances,
+      allowances: withAllowances.allowances.map((row) => ({
+        ...row,
+        ...patch,
+        window,
+      })),
+    });
+    const render = (overview: BillingOverview) =>
+      html(createElement(UsagePanel, { overview }));
+
+    it("a plan that is ending never says Renews or promises that the work continues by itself", () => {
+      const markup = render(withWindow("ends"));
+
+      expect(markup).toContain("Available until Nov 1, 2026");
+      expect(markup).not.toContain("Renews");
+      expect(markup).not.toContain("continues by itself");
+      expect(markup).toContain("does not renew because your plan is ending");
+      expect(markup).toContain("so it does not renew");
+    });
+
+    it("an overdue renewal says the allowance is paused instead of 'used all ... until it renews'", () => {
+      // The closed window has nothing of its own left (the overview zeroes it): only extras.
+      const markup = render(
+        withWindow("overdue", {
+          granted: 0,
+          used: 0,
+          available: 0,
+          extraAvailable: 0,
+        }),
+      );
+
+      expect(markup).toContain("Paused: the renewal payment is overdue");
+      expect(markup).not.toContain("Renews");
+      expect(markup).not.toContain("You have used all");
+      expect(markup).not.toContain("running low");
+      expect(markup).not.toContain("left of 0");
+      expect(markup).toContain(">0%<");
+    });
+
+    it("an ended plan says so, and still shows the extra usage that was bought and never expires", () => {
+      const markup = render(
+        withWindow("ended", {
+          granted: 15,
+          used: 0,
+          available: 15,
+          extraAvailable: 15,
+        }),
+      );
+
+      expect(markup).toContain("Your plan has ended");
+      expect(markup).not.toContain("Renews");
+      expect(markup).toContain("left of 15");
+      expect(markup).not.toContain("You have used all");
+    });
+
+    it("a window waiting for its renewal to be recorded says it is renewing, not that it renews on a past date", () => {
+      const markup = render(
+        withWindow("renewing", { granted: 0, used: 0, available: 0 }),
+      );
+
+      expect(markup).toContain("Renewing");
+      expect(markup).not.toContain("Renews Nov");
+    });
   });
 
   it("shows neither tokens nor dollars of cost", () => {
